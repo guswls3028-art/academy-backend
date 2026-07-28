@@ -39,11 +39,16 @@ def _public_job_result(
 
 
 def _scrub_terminal_job_payload(job) -> bool:
-    if job.job_type != "excel_parsing":
-        return False
-    from apps.domains.ai.services.excel_job_secrets import scrub_excel_job_payload
+    if job.job_type == "excel_parsing":
+        from apps.domains.ai.services.excel_job_secrets import scrub_excel_job_payload
 
-    scrubbed = scrub_excel_job_payload(job.payload or {})
+        scrubbed = scrub_excel_job_payload(job.payload or {})
+    elif job.job_type == "problem_studio_package":
+        from apps.domains.tools.problem_studio.services import scrub_problem_studio_job_payload
+
+        scrubbed = scrub_problem_studio_job_payload(job.payload or {})
+    else:
+        return False
     if scrubbed == (job.payload or {}):
         return False
     job.payload = scrubbed

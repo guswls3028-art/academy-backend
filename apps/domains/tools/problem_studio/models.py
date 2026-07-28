@@ -126,3 +126,170 @@ class ProblemStudioDocumentStyle(TimestampModel):
                 name="uq_problem_studio_style_user",
             ),
         ]
+
+
+class ProblemStudioVoiceProfile(TimestampModel):
+    class Status(models.TextChoices):
+        ACTIVE = "active", "사용 중"
+        ARCHIVED = "archived", "보관"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="problem_studio_voice_profiles",
+        db_index=True,
+    )
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="problem_studio_voice_profiles",
+    )
+    name = models.CharField(max_length=80)
+    subject = models.CharField(max_length=100, blank=True, default="")
+    style_instructions = models.TextField(blank=True, default="")
+    is_default = models.BooleanField(default=False)
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.ACTIVE,
+        db_index=True,
+    )
+    version = models.PositiveIntegerField(default=1)
+
+    objects = TenantQuerySet.as_manager()
+
+    class Meta:
+        db_table = "problem_studio_voice_profile"
+        ordering = ["-is_default", "name", "created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "owner", "name"],
+                name="uq_ps_voice_owner_name",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["tenant", "owner", "status"],
+                name="idx_ps_voice_owner_status",
+            ),
+        ]
+
+
+class ProblemStudioVoiceSample(TimestampModel):
+    class UsageScope(models.TextChoices):
+        STYLE = "style", "문체 학습"
+        CONTENT_REFERENCE = "content_reference", "내용 참고"
+
+    class Origin(models.TextChoices):
+        TEACHER_AUTHORED = "teacher_authored", "선생님 직접 작성"
+        APPROVED_OUTPUT = "approved_output", "검수 승인 결과"
+        MATCHUP_COMMENT = "matchup_comment", "매치업 강사 코멘트"
+        PUBLISHER_REFERENCE = "publisher_reference", "출판 자료 참고"
+        OTHER_REFERENCE = "other_reference", "기타 참고 자료"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="problem_studio_voice_samples",
+        db_index=True,
+    )
+    profile = models.ForeignKey(
+        ProblemStudioVoiceProfile,
+        on_delete=models.CASCADE,
+        related_name="samples",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="problem_studio_voice_samples",
+    )
+    usage_scope = models.CharField(max_length=24, choices=UsageScope.choices)
+    origin = models.CharField(max_length=32, choices=Origin.choices)
+    source_label = models.CharField(max_length=160, blank=True, default="")
+    problem_text = models.TextField(blank=True, default="")
+    answer = models.TextField(blank=True, default="")
+    explanation = models.TextField(blank=True, default="")
+    fingerprint = models.CharField(max_length=64)
+    rights_confirmed_at = models.DateTimeField(null=True, blank=True)
+    rights_note = models.CharField(max_length=240, blank=True, default="")
+    is_active = models.BooleanField(default=True, db_index=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    objects = TenantQuerySet.as_manager()
+
+    class Meta:
+        db_table = "problem_studio_voice_sample"
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["profile", "usage_scope", "fingerprint"],
+                name="uq_ps_voice_sample_fingerprint",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["tenant", "profile", "usage_scope", "is_active"],
+                name="idx_ps_voice_sample_scope",
+            ),
+        ]
+
+
+class ProblemStudioGenerationReview(TimestampModel):
+    class Outcome(models.TextChoices):
+        APPROVED = "approved", "승인"
+        EDITED = "edited", "수정 후 승인"
+        REJECTED = "rejected", "사용 안 함"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="problem_studio_generation_reviews",
+        db_index=True,
+    )
+    profile = models.ForeignKey(
+        ProblemStudioVoiceProfile,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="generation_reviews",
+    )
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="problem_studio_generation_reviews",
+    )
+    job_id = models.CharField(max_length=64)
+    question_index = models.PositiveSmallIntegerField()
+    outcome = models.CharField(max_length=16, choices=Outcome.choices)
+    original_payload = models.JSONField(default=dict)
+    final_payload = models.JSONField(default=dict)
+    feedback_note = models.CharField(max_length=500, blank=True, default="")
+    learned_sample = models.OneToOneField(
+        ProblemStudioVoiceSample,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="generation_review",
+    )
+
+    objects = TenantQuerySet.as_manager()
+
+    class Meta:
+        db_table = "problem_studio_generation_review"
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "reviewed_by", "job_id", "question_index"],
+                name="uq_ps_generation_review_item",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["tenant", "reviewed_by", "created_at"],
+                name="idx_ps_review_owner_created",
+            ),
+        ]

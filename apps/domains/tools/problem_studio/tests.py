@@ -258,6 +258,8 @@ class ProblemStudioServiceTests(SimpleTestCase):
             tenant_id="1",
             source_domain="tools_problem_studio",
             payload={
+                "tenant_id": "1",
+                "request_user_id": "1",
                 "problem_studio_payload": {
                     "variant_mode": "copy",
                     "use_ai": False,
@@ -897,6 +899,7 @@ class ProblemStudioTransferViewTests(TestCase):
             tenant_id=str(self.tenant.id),
             source_domain="tools_problem_studio",
             tier="basic",
+            payload={"tenant_id": str(self.tenant.id), "request_user_id": str(self.user.id)},
         )
         AIResultModel.objects.create(job=job, payload={
             "r2_key": f"tenants/{self.tenant.id}/tools/problem-studio/result/review.zip",
@@ -932,6 +935,7 @@ class ProblemStudioTransferViewTests(TestCase):
             tenant_id=str(self.tenant.id),
             source_domain="tools_problem_studio",
             tier="basic",
+            payload={"tenant_id": str(self.tenant.id), "request_user_id": str(self.user.id)},
         )
         AIResultModel.objects.create(job=job, payload={
             "r2_key": f"tenants/{self.tenant.id}/tools/problem-studio/result/review.zip",
@@ -987,6 +991,7 @@ class ProblemStudioTransferViewTests(TestCase):
             tenant_id=str(self.tenant.id),
             source_domain="tools_problem_studio",
             tier="basic",
+            payload={"tenant_id": str(self.tenant.id), "request_user_id": str(self.user.id)},
         )
         AIResultModel.objects.create(job=job, payload={
             "r2_key": f"tenants/{self.tenant.id}/tools/problem-studio/result/review.zip",

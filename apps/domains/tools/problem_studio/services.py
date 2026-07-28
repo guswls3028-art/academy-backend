@@ -4,6 +4,7 @@ import json
 import logging
 import zipfile
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from io import BytesIO
 from typing import Any, Iterable
 
@@ -334,7 +335,15 @@ def _normalize_count(value: Any) -> int:
     return max(1, min(MAX_VARIANT_COUNT, count))
 
 
-def _try_ai_generation(*, text: str, mode: str, count: int, note_policy: str, subject: str) -> list[dict[str, Any]]:
+def _try_ai_generation(
+    *,
+    text: str,
+    mode: str,
+    count: int,
+    note_policy: str,
+    subject: str,
+    voice_profile: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
     try:
         from academy.adapters.ai.problem.generator import generate_problem_package_from_text
         return generate_problem_package_from_text(
@@ -344,10 +353,64 @@ def _try_ai_generation(*, text: str, mode: str, count: int, note_policy: str, su
             note_policy=note_policy,
             subject=subject,
             max_questions=MAX_OUTPUT_QUESTIONS,
+            voice_profile=voice_profile,
         )
     except Exception:
         logger.info("problem_studio_ai_generation_fallback", exc_info=True)
         return []
+
+
+def _verbatim_similarity_risk(prompt: str, source_blocks: list[str]) -> bool:
+    normalized_prompt = _normalize_space(prompt).lower()
+    if len(normalized_prompt) < 100:
+        return False
+    for block in source_blocks[:MAX_OUTPUT_QUESTIONS]:
+        normalized_block = _normalize_space(block).lower()
+        if len(normalized_block) < 100:
+            continue
+        if normalized_prompt[:120] in normalized_block:
+            return True
+        if SequenceMatcher(
+            None,
+            normalized_prompt[:2000],
+            normalized_block[:2000],
+            autojunk=False,
+        ).ratio() >= 0.86:
+            return True
+    return False
+
+
+def _annotate_review_contract(
+    questions: list[dict[str, Any]],
+    *,
+    source_text: str,
+    voice_profile: dict[str, Any] | None,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    source_blocks = _split_source_questions(source_text)
+    warnings: list[str] = []
+    output: list[dict[str, Any]] = []
+    for question in questions:
+        item = dict(question)
+        item.setdefault("source_evidence", [int(item.get("source_index") or 1)])
+        item.setdefault("answer_check", "")
+        confidence = str(item.get("confidence") or "low").lower()
+        item["confidence"] = confidence if confidence in {"high", "medium", "low"} else "low"
+        item["review_status"] = "teacher_review_required"
+        item["voice_profile_version"] = int((voice_profile or {}).get("version") or 0)
+        item["quality_checks"] = {
+            "has_answer": bool(str(item.get("answer") or "").strip())
+            and str(item.get("answer") or "").strip() != "검수 필요",
+            "has_explanation": bool(str(item.get("explanation") or "").strip()),
+            "has_source_evidence": bool(item.get("source_evidence")),
+            "verbatim_similarity_risk": _verbatim_similarity_risk(
+                str(item.get("prompt") or ""),
+                source_blocks,
+            ),
+        }
+        if item["quality_checks"]["verbatim_similarity_risk"]:
+            warnings.append("원문과 문장이 유사한 후보가 있어 저작권·표현 검수가 필요합니다.")
+        output.append(item)
+    return output, list(dict.fromkeys(warnings))
 
 
 def build_problem_studio_package(
@@ -372,6 +435,8 @@ def build_problem_studio_package_from_sources(
     subject = str(payload.get("subject") or "")
     use_ai = bool(payload.get("use_ai", True))
     transfer_only = bool(payload.get("transfer_only", False))
+    raw_voice_profile = payload.get("_resolved_voice_profile")
+    voice_profile = raw_voice_profile if isinstance(raw_voice_profile, dict) else None
 
     sources = list(sources)
     combined_text = _normalize_space("\n\n".join(
@@ -394,6 +459,7 @@ def build_problem_studio_package_from_sources(
             count=count,
             note_policy=note_policy,
             subject=subject,
+            voice_profile=voice_profile,
         )
         if questions:
             generation_engine = "ai"
@@ -419,6 +485,15 @@ def build_problem_studio_package_from_sources(
         }]
         warnings.append("본문 텍스트가 없어 검수 안내 문항을 만들었습니다.")
 
+    questions, review_warnings = _annotate_review_contract(
+        questions,
+        source_text=combined_text,
+        voice_profile=voice_profile,
+    )
+    warnings.extend(review_warnings)
+    if voice_profile and not voice_profile.get("style_examples"):
+        warnings.append("선생님 문체 샘플이 없어 직접 입력한 문체 지시만 반영했습니다.")
+
     return {
         "generation_engine": generation_engine,
         "mode": mode,
@@ -437,6 +512,18 @@ def build_problem_studio_package_from_sources(
         ],
         "warnings": [w for w in warnings if w],
         "source_text_chars": len(combined_text),
+        "review_required": True,
+        "voice_profile": (
+            {
+                "id": str(voice_profile.get("id") or ""),
+                "name": str(voice_profile.get("name") or ""),
+                "version": int(voice_profile.get("version") or 0),
+                "style_sample_count": int(voice_profile.get("style_sample_count") or 0),
+                "reference_sample_count": int(voice_profile.get("reference_sample_count") or 0),
+            }
+            if voice_profile
+            else None
+        ),
     }
 
 
@@ -451,6 +538,33 @@ def build_problem_studio_package_from_worker_payload(worker_payload: dict[str, A
         if isinstance(source, dict)
     ]
     return build_problem_studio_package_from_sources(payload=payload, sources=sources)
+
+
+def scrub_problem_studio_job_payload(payload: Any) -> dict[str, Any]:
+    raw = payload if isinstance(payload, dict) else {}
+    studio = raw.get("problem_studio_payload")
+    studio = studio if isinstance(studio, dict) else {}
+    voice = studio.get("_resolved_voice_profile")
+    voice = voice if isinstance(voice, dict) else {}
+    scrubbed_studio: dict[str, Any] = {}
+    if studio.get("voice_profile_id"):
+        scrubbed_studio["voice_profile_id"] = str(studio["voice_profile_id"])
+    if voice.get("id"):
+        scrubbed_studio["_resolved_voice_profile"] = {
+            "id": str(voice["id"]),
+            "name": str(voice.get("name") or ""),
+            "version": int(voice.get("version") or 0),
+            "style_sample_count": int(voice.get("style_sample_count") or 0),
+            "reference_sample_count": int(voice.get("reference_sample_count") or 0),
+        }
+    source_files = raw.get("source_files")
+    return {
+        "tenant_id": str(raw.get("tenant_id") or ""),
+        "request_user_id": str(raw.get("request_user_id") or ""),
+        "problem_studio_payload": scrubbed_studio,
+        "source_file_count": len(source_files) if isinstance(source_files, list) else 0,
+        "privacy_scrubbed": True,
+    }
 
 
 def parse_payload(raw: Any) -> dict[str, Any]:

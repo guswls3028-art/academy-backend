@@ -15,6 +15,10 @@ from .problem_studio.views import (
     ProblemStudioFontCollectionView,
     ProblemStudioFontDetailView,
     ProblemStudioDocumentStyleView,
+    ProblemStudioVoiceProfileCollectionView,
+    ProblemStudioVoiceProfileDetailView,
+    ProblemStudioVoiceSampleCollectionView,
+    ProblemStudioGenerationReviewView,
 )
 from .timer_download_view import TimerDownloadView
 from apps.support.omr.route_dependencies import (
@@ -33,8 +37,12 @@ urlpatterns = [
     path("problem-studio/fonts/", ProblemStudioFontCollectionView.as_view(), name="tools-problem-studio-font-collection"),
     path("problem-studio/fonts/<uuid:font_id>/", ProblemStudioFontDetailView.as_view(), name="tools-problem-studio-font-detail"),
     path("problem-studio/document-style/", ProblemStudioDocumentStyleView.as_view(), name="tools-problem-studio-document-style"),
+    path("problem-studio/voice-profiles/", ProblemStudioVoiceProfileCollectionView.as_view(), name="tools-problem-studio-voice-profile-collection"),
+    path("problem-studio/voice-profiles/<uuid:profile_id>/", ProblemStudioVoiceProfileDetailView.as_view(), name="tools-problem-studio-voice-profile-detail"),
+    path("problem-studio/voice-profiles/<uuid:profile_id>/samples/", ProblemStudioVoiceSampleCollectionView.as_view(), name="tools-problem-studio-voice-sample-collection"),
     path("problem-studio/jobs/", ProblemStudioJobCreateView.as_view(), name="tools-problem-studio-job-create"),
     path("problem-studio/jobs/<str:job_id>/", ProblemStudioJobStatusView.as_view(), name="tools-problem-studio-job-status"),
+    path("problem-studio/jobs/<str:job_id>/reviews/", ProblemStudioGenerationReviewView.as_view(), name="tools-problem-studio-generation-review"),
     path("omr/preview/", ToolsOMRPreviewView.as_view(), name="tools-omr-preview"),
     path("omr/pdf/", ToolsOMRPdfView.as_view(), name="tools-omr-pdf"),
     path("timer/download/", TimerDownloadView.as_view(), name="tools-timer-download"),

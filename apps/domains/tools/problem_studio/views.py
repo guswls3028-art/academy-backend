@@ -34,6 +34,17 @@ from apps.domains.tools.problem_studio.font_assets import (
 from apps.domains.tools.problem_studio.models import (
     ProblemStudioDocumentStyle,
     ProblemStudioFontAsset,
+    ProblemStudioVoiceProfile,
+)
+from apps.domains.tools.problem_studio.voice_profiles import (
+    add_voice_sample,
+    create_voice_profile,
+    get_owned_voice_profile,
+    record_generation_review,
+    resolve_voice_profile_payload,
+    serialize_voice_profile,
+    serialize_voice_sample,
+    update_voice_profile,
 )
 from apps.domains.tools.problem_studio.transfer_documents import (
     build_transfer_package,
@@ -72,6 +83,20 @@ def _resolve_request_document_style(request, payload: dict) -> dict:
         tenant=request.tenant,
         user=request.user,
     )
+
+
+def _resolve_request_voice_profile(request, payload: dict) -> dict:
+    return resolve_voice_profile_payload(
+        payload,
+        tenant=request.tenant,
+        user=request.user,
+    )
+
+
+def _job_belongs_to_request_user(job, request) -> bool:
+    payload = job.payload if isinstance(job.payload, dict) else {}
+    request_user_id = payload.get("request_user_id")
+    return request_user_id is not None and str(request_user_id) == str(request.user.id)
 
 
 class ProblemStudioFontCollectionView(APIView):
@@ -211,6 +236,133 @@ class ProblemStudioDocumentStyleView(APIView):
         })
 
 
+class ProblemStudioVoiceProfileCollectionView(APIView):
+    """List or create reusable, teacher-owned explanation voice profiles."""
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+    parser_classes = [JSONParser]
+
+    def get(self, request):
+        profiles = ProblemStudioVoiceProfile.objects.filter(
+            tenant=request.tenant,
+            owner=request.user,
+            status=ProblemStudioVoiceProfile.Status.ACTIVE,
+        )
+        response = Response({
+            "profiles": [serialize_voice_profile(profile) for profile in profiles],
+        })
+        response["Cache-Control"] = "no-store"
+        return response
+
+    def post(self, request):
+        if not isinstance(request.data, dict):
+            return Response({"detail": "문체 프로필 값이 올바르지 않습니다."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            profile = create_voice_profile(
+                tenant=request.tenant,
+                user=request.user,
+                name=request.data.get("name"),
+                subject=request.data.get("subject"),
+                style_instructions=request.data.get("style_instructions"),
+                is_default=request.data.get("is_default") is True,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(serialize_voice_profile(profile), status=status.HTTP_201_CREATED)
+
+
+class ProblemStudioVoiceProfileDetailView(APIView):
+    """Inspect, rename, or archive one of the current teacher's profiles."""
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+    parser_classes = [JSONParser]
+
+    def _get_profile(self, request, profile_id, *, active_only: bool = True):
+        return get_owned_voice_profile(
+            tenant=request.tenant,
+            user=request.user,
+            profile_id=profile_id,
+            active_only=active_only,
+        )
+
+    def get(self, request, profile_id):
+        profile = self._get_profile(request, profile_id)
+        if profile is None:
+            return Response({"detail": "내 문체 프로필을 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+        response = Response(serialize_voice_profile(profile, include_samples=True))
+        response["Cache-Control"] = "no-store"
+        return response
+
+    def patch(self, request, profile_id):
+        profile = self._get_profile(request, profile_id, active_only=False)
+        if profile is None:
+            return Response({"detail": "내 문체 프로필을 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+        if not isinstance(request.data, dict):
+            return Response({"detail": "문체 프로필 값이 올바르지 않습니다."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            profile = update_voice_profile(
+                profile,
+                name=request.data.get("name") if "name" in request.data else None,
+                subject=request.data.get("subject") if "subject" in request.data else None,
+                style_instructions=(
+                    request.data.get("style_instructions")
+                    if "style_instructions" in request.data
+                    else None
+                ),
+                is_default=(
+                    request.data.get("is_default") is True
+                    if "is_default" in request.data
+                    else None
+                ),
+                status=request.data.get("status") if "status" in request.data else None,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(serialize_voice_profile(profile, include_samples=True))
+
+
+class ProblemStudioVoiceSampleCollectionView(APIView):
+    """Append a rights-confirmed style example or a content-only reference."""
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+    parser_classes = [JSONParser]
+
+    def post(self, request, profile_id):
+        profile = get_owned_voice_profile(
+            tenant=request.tenant,
+            user=request.user,
+            profile_id=profile_id,
+            active_only=True,
+        )
+        if profile is None:
+            return Response({"detail": "내 문체 프로필을 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+        if not isinstance(request.data, dict):
+            return Response({"detail": "문체 샘플 값이 올바르지 않습니다."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            sample, created = add_voice_sample(
+                profile=profile,
+                user=request.user,
+                usage_scope=request.data.get("usage_scope"),
+                origin=request.data.get("origin"),
+                source_label=request.data.get("source_label"),
+                problem_text=request.data.get("problem_text"),
+                answer=request.data.get("answer"),
+                explanation=request.data.get("explanation"),
+                rights_confirmed=request.data.get("rights_confirmed") is True,
+                rights_note=request.data.get("rights_note"),
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {
+                "sample": serialize_voice_sample(sample),
+                "profile": serialize_voice_profile(profile),
+                "created": created,
+            },
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
 class ProblemStudioTransferDocumentView(APIView):
     """POST /api/v1/tools/problem-studio/transfer-document/
 
@@ -345,6 +497,7 @@ class ProblemStudioJobCreateView(APIView):
             if not payload and isinstance(request.data, dict):
                 payload = dict(request.data)
             payload = _resolve_request_document_style(request, payload)
+            payload = _resolve_request_voice_profile(request, payload)
             sources = extract_sources(request.FILES.getlist("source_files"))
             source_payloads = [source_extraction_to_payload(source) for source in sources]
             result = dispatch_tools_ai_job(
@@ -402,7 +555,7 @@ class ProblemStudioJobStatusView(APIView):
             str(request.tenant.id),
             job_type="problem_studio_package",
         )
-        if not job:
+        if not job or not _job_belongs_to_request_user(job, request):
             return Response({"detail": "작업을 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
         result_payload = ai_repo.DjangoAIJobRepository().get_result_payload_for_job(job) if job.status == "DONE" else None
         return Response({
@@ -413,6 +566,88 @@ class ProblemStudioJobStatusView(APIView):
         })
 
 
+class ProblemStudioGenerationReviewView(APIView):
+    """Append teacher review feedback without mutating generated or Matchup source rows."""
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+    parser_classes = [JSONParser]
+
+    def post(self, request, job_id: str):
+        job = ai_repo.get_job_model_for_status(
+            str(job_id),
+            str(request.tenant.id),
+            job_type="problem_studio_package",
+        )
+        if (
+            not job
+            or not _job_belongs_to_request_user(job, request)
+            or job.status != "DONE"
+        ):
+            return Response({"detail": "검수할 완료 작업을 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+        if not isinstance(request.data, dict):
+            return Response({"detail": "검수 값이 올바르지 않습니다."}, status=status.HTTP_400_BAD_REQUEST)
+
+        job_payload = job.payload if isinstance(job.payload, dict) else {}
+        studio_payload = job_payload.get("problem_studio_payload")
+        if not isinstance(studio_payload, dict):
+            studio_payload = {}
+        voice_snapshot = studio_payload.get("_resolved_voice_profile")
+        if not isinstance(voice_snapshot, dict) or not voice_snapshot.get("id"):
+            return Response(
+                {"detail": "이 생성 작업에는 문체 프로필이 연결되지 않았습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        profile = get_owned_voice_profile(
+            tenant=request.tenant,
+            user=request.user,
+            profile_id=voice_snapshot["id"],
+            active_only=True,
+        )
+        if profile is None:
+            return Response({"detail": "내 문체 프로필을 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            question_index = int(request.data.get("question_index"))
+        except (TypeError, ValueError):
+            return Response({"detail": "검수할 문항 번호가 올바르지 않습니다."}, status=status.HTTP_400_BAD_REQUEST)
+        result_payload = ai_repo.DjangoAIJobRepository().get_result_payload_for_job(job)
+        questions = result_payload.get("questions") if isinstance(result_payload, dict) else None
+        if (
+            not isinstance(questions, list)
+            or question_index < 0
+            or question_index >= len(questions)
+            or not isinstance(questions[question_index], dict)
+        ):
+            return Response({"detail": "검수할 생성 문항을 찾을 수 없습니다."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            review, created = record_generation_review(
+                tenant=request.tenant,
+                user=request.user,
+                profile=profile,
+                job_id=str(job_id),
+                question_index=question_index,
+                original_question=questions[question_index],
+                final_question=request.data.get("final_question"),
+                outcome=request.data.get("outcome"),
+                feedback_note=request.data.get("feedback_note"),
+                learn_from_this=request.data.get("learn_from_this") is True,
+                rights_confirmed=request.data.get("rights_confirmed") is True,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            {
+                "review_id": str(review.id),
+                "created": created,
+                "learned": review.learned_sample_id is not None,
+                "profile": serialize_voice_profile(profile),
+            },
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
 class ProblemStudioTransferJobStatusView(APIView):
     """Staff-only transfer status with a freshly issued result URL."""
 
@@ -421,7 +656,11 @@ class ProblemStudioTransferJobStatusView(APIView):
 
     def get(self, request, job_id: str):
         job = ai_repo.get_job_model_for_status(str(job_id), str(request.tenant.id))
-        if not job or job.job_type not in self._JOB_TYPES:
+        if (
+            not job
+            or job.job_type not in self._JOB_TYPES
+            or not _job_belongs_to_request_user(job, request)
+        ):
             return Response({"detail": "작업을 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
 
         progress = None
@@ -507,7 +746,12 @@ class ProblemStudioHangulHandoffCreateView(APIView):
 
     def post(self, request, job_id: str):
         job = ai_repo.get_job_model_for_status(str(job_id), str(request.tenant.id))
-        if not job or job.job_type not in ProblemStudioTransferJobStatusView._JOB_TYPES or job.status != "DONE":
+        if (
+            not job
+            or job.job_type not in ProblemStudioTransferJobStatusView._JOB_TYPES
+            or job.status != "DONE"
+            or not _job_belongs_to_request_user(job, request)
+        ):
             return Response({"detail": "완료된 검수본을 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
         result_payload = ai_repo.DjangoAIJobRepository().get_result_payload_for_job(job) or {}
         result_key = str(result_payload.get("r2_key") or "")
