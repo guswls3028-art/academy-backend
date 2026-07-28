@@ -44,10 +44,11 @@ Last verified: 2026-07-28
 
 | 항목 | 상태 | 증거 또는 남은 작업 |
 |------|------|----------------------|
-| 소스/Windows COM 계약 | `repo-confirmed` | frontend `d3cb4dea`; 보이는 일반 편집 문서 선택, `InsertFile`, 보안 모듈 훅, 거부 폴백, 숨김/읽기 전용 차단, 문서 수명주기 비변경을 자동 검증한다. |
-| CI·운영 배포 경로 | `repo-confirmed` | GitHub Actions `29910478788`; Windows 게이트, 프런트 품질 게이트, Cloudflare 배포, 운영 canary/tenant/왕복 E2E가 통과했다. |
+| 소스/Windows COM 계약 | `repo-confirmed` | frontend `39e222fe`; 보이는 일반 편집 문서 선택, 스타일 보존 `InsertFile`, 개인 글꼴 무결성/설치 동의, 보안 모듈 훅, 거부 폴백, 숨김/읽기 전용 차단, 문서 수명주기 비변경을 자동 검증한다. |
+| CI·운영 배포 경로 | `production-confirmed` | Backend `30365901188`, frontend `30365955995`; Windows 게이트, 프런트 품질 게이트, Cloudflare 배포, 운영 canary/tenant/왕복 E2E가 통과했다. |
 | 반복 안정성 | `repo-confirmed` | 2026-07-22 봉인 Release 실행 파일 100회, 계약 시나리오 500건에서 실패 0건, 잔존 프로세스 0개, 관련 Windows 충돌 이벤트 0건이었다. |
-| HWPX 패키지 호환성 | `production-confirmed` | 2026-07-27 손상 파일 사고 뒤 수동 ZIP/XML 생성기를 호환 스켈레톤 기반 생성기로 교체했다. 배포 run `30286385427`에서는 표준 `version.xml` manifest 참조까지 봉인했다. tenant 1 비저장 운영 응답에서 ZIP 순서, 필수 header/settings/content/version 참조, 스키마, 패키지 재열기, preview/section 텍스트 동기화, 패키지 경고 0건을 확인했다. |
+| HWPX 패키지 호환성 | `production-confirmed` | 2026-07-27 손상 파일 사고 뒤 수동 ZIP/XML 생성기를 호환 스켈레톤 기반 생성기로 교체했다. 배포 run `30365901188`의 tenant 1 비저장 운영 응답에서 ZIP 순서, 필수 header/settings/content/version 참조, 스키마, 패키지 재열기, 글꼴/간격 manifest, 네이티브 수식, 패키지 경고 0건을 확인했다. |
+| 한컴 한글 2022 수식·글꼴 표본 | `production-confirmed` | `Hwp.exe` 12.0.0.535에서 손상 경고 없이 열고 제목 `함초롬돋움 22pt`, 본문 `함초롬바탕 11pt`를 확인했다. `H₂O` 더블클릭 시 네이티브 수식 편집기와 `H _ {2} O` 스크립트가 열렸다. 상세는 `docs/reports/problem-studio-typography-hwpx-verification-2026-07-28.md`에 있다. |
 | 정품 한컴 한글 2024 실기 | `needs-manual-validation` | 라이선스 편집 프로그램과 승인된 Automation 보안 모듈이 있는 PC에서 아래 실기 절차를 완료해야 한다. 뷰어 또는 모의 COM 결과만으로 합격 처리하지 않는다. |
 | 정확한 원본 HWP 레이아웃 재현 | `intentionally-unchanged` | 현재 산출물은 수정 가능한 선생님 검수본이며, 네이티브 `.hwp` 무손실 복제는 제품 약속이 아니다. |
 

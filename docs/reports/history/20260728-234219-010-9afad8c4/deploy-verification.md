@@ -5,7 +5,7 @@
 ## 배포 정보
 | 항목 | 값 |
 |------|-----|
-| 검증 시각 | 2026-07-28T23:43:10.4111739+09:00 |
+| 검증 시각 | 2026-07-28T23:40:33.2784977+09:00 |
 | 리전 | ap-northeast-2 |
 | 배포 스크립트 | scripts/v1/deploy.ps1 |
 | 근거·로그 | reports/audit.latest.md, reports/drift.latest.md, reports/runtime-images.latest.md |
@@ -19,21 +19,21 @@
 | API ASG min/desired/max | 1/1/3 | reports/audit.latest.md (apiAsg*) |
 | ALB target health | 1 / 1 healthy | AWS Console EC2 > Target Groups > academy-v1-api-tg |
 | ALB HTTP 80 redirect | HTTP 301 https://academy-v1-api-alb-1244943981.ap-northeast-2.elb.amazonaws.com/healthz | HTTP listener는 HTTPS로 redirect해야 함 |
-| API 공개 URL(도메인) /health | OK 37ms | API_PUBLIC_URL 또는 front.domains.api: https://api.hakwonplus.com |
-| API runtime image digest | PASS | docs/reports/runtime-images.latest.md (instances=1, ci=sha256:07732d5bd9a0015726414846043b1c802d13e437c638d4a9caea31a319ba144d) |
+| API 공개 URL(도메인) /health | OK 28ms | API_PUBLIC_URL 또는 front.domains.api: https://api.hakwonplus.com |
+| API runtime image digest | MISMATCH | docs/reports/runtime-images.latest.md (instances=1, ci=sha256:c17ad8dfe7a5e5345140ea14f1e81b892142c2f853afacf66f4f8d8d738f6e60) |
 | AI/Messaging ASG | 0/1 | reports/audit.latest.md (asgAi*, asgMessaging*) |
 | SQS queue 연결·DLQ | Messaging depth 0 (in-flight 0) DLQ 0 / AI depth 0 (in-flight 0) DLQ 0 | SQS Console 또는 get-queue-attributes |
 | Video Batch CE/Queue/JobDef | CE VALID Queue ENABLED JobDef rev 317 | reports/audit.latest.md, Batch Console |
 | Video Ops CE/Queue, EventBridge | Ops CE VALID Ops Queue ENABLED Reconcile ENABLED ScanStuck ENABLED | reports/audit.latest.md, rca.video.latest.md |
 | RDS 연결 가능 | available | RDS describe-db-instances (연결 테스트는 앱/psql 수동) |
 | Redis 연결 가능 | available | ElastiCache describe-replication-groups |
-| **섹션 1 종합** | **PASS** | |
+| **섹션 1 종합** | **FAIL** | |
 
 ## 2) 기능 Smoke Test (PASS/WARNING/FAIL/ADVISORY + 근거)
 
 | 항목 | 결과 | 근거 |
 |------|------|------|
-| /health | OK | 응답시간: 37ms (기준 p95 &lt; 2s, 샘플 1회) |
+| /health | OK | 응답시간: 28ms (기준 p95 &lt; 2s, 샘플 1회) |
 | API root | root not a health endpoint | 공개 HTTPS 도메인 기준, root는 필수 서비스 엔드포인트 아님 |
 | 핵심 API 1~2개(인증/CRUD) | 미검증(ADVISORY) | 이 read-only 스크립트는 인증·CRUD를 실행하지 않음. 변경 범위에 맞는 canary/E2E 근거를 별도 기록 |
 | **섹션 2 종합** | **ADVISORY** | |
@@ -82,12 +82,15 @@
 ## 7) 리스크 및 GO/NO-GO 권고
 
 ### 발견 사항(리스크)
+- **WARNING** [Drift] SSOT와 불일치 1건: API LT/academy-v1-api-lt
+- **FAIL** [RuntimeImage] API 런타임 image digest가 성공 release-manifest.latest.json의 academy-api digest와 불일치합니다. docs/reports/runtime-images.latest.md 확인 필요.
+- **FAIL** [Infrastructure] Infrastructure section summary is FAIL.
 - **WARNING** [FrontR2Cdn] FrontR2Cdn section summary is WARNING.
 
 ### GO/NO-GO
 | 판정 | 내용 |
 |------|------|
-| **CONDITIONAL GO** | WARNING 영향도·완화책·추적 계획 확인 후 배포 판단. 상세: 아래 리스크 섹션 및 deploy-verification-latest.md. |
+| **NO-GO** | FAIL 항목 해결 후 재검증 필요. |
 
 - **FAIL 1건 이상** → **NO-GO**. 재검증 후 재실행.
 - **WARNING만** → **CONDITIONAL GO**. 영향도·완화책·추적 계획 확인 후 배포 여부 결정.
@@ -97,9 +100,18 @@
 ---
 
 ## 최종 상태
-**WARNING**
+**FAIL**
 
 **연관 보고서:** audit.latest.md, drift.latest.md, runtime-images.latest.md (동시 갱신됨).
 
 
-**Verification Run ID:** 0011a27686e44d918ce85930ceb50e1f
+**Verification Run ID:** 6e1b4a02422640eb8e7e3777f03a7686
+
+## Immutable Evidence Bundle
+
+- [audit.latest.md](./audit.latest.md)
+- [drift.latest.md](./drift.latest.md)
+- [runtime-images.latest.md](./runtime-images.latest.md)
+- [consistency.latest.md](./consistency.latest.md)
+- [front-connection.latest.md](./front-connection.latest.md)
+- [release-manifest.latest.json](./release-manifest.latest.json)

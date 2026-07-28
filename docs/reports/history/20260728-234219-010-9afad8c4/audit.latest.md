@@ -1,5 +1,5 @@
 # Evidence / Audit
-**Generated:** 2026-07-28T23:44:03.1200711+09:00
+**Generated:** 2026-07-28T23:41:27.0271185+09:00
 
 - **batchVideoCeArn:** arn:aws:batch:ap-northeast-2:809466760795:compute-environment/academy-v1-video-batch-ce-200gb
 - **batchVideoCeStatus:** VALID
@@ -42,4 +42,4 @@
 - **ssmShapeCheck:** PASS
 - **sqsScalingEnforced:** yes
 
-**Verification Run ID:** 0011a27686e44d918ce85930ceb50e1f
+**Verification Run ID:** 6e1b4a02422640eb8e7e3777f03a7686

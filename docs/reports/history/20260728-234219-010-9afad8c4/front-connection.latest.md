@@ -1,6 +1,6 @@
 # Front V1 인프라 기준 연결 검증
 
-**Generated:** 2026-07-28T23:44:50.6730822+09:00
+**Generated:** 2026-07-28T23:42:18.9628019+09:00
 
 ## SSOT front.* / r2.* 확인
 | 항목 | 값 | 비고 |
@@ -24,4 +24,4 @@
 **배포 후 purge:** SSOT front.purgeOnDeploy 반영 여부는 배포 파이프라인에서 확인.
 
 
-**Verification Run ID:** 0011a27686e44d918ce85930ceb50e1f
+**Verification Run ID:** 6e1b4a02422640eb8e7e3777f03a7686
