@@ -200,9 +200,13 @@ def copy_object_r2_storage(*, source_key: str, dest_key: str) -> None:
     )
 
 
-def delete_object_r2_storage(*, key: str) -> None:
+def delete_object_r2_storage(
+    *,
+    key: str,
+    timeout_seconds: int | None = None,
+) -> None:
     """R2 Storage 버킷에서 객체 삭제. 이동 성공 확인 후에만 호출."""
-    s3 = _get_s3_client()
+    s3 = _get_s3_client(timeout_seconds=timeout_seconds)
     s3.delete_object(Bucket=_storage_bucket(), Key=key)
 
 

@@ -64,8 +64,11 @@ class AISQSQueue:
         queue_name_override: Optional[str] = None,
         *,
         wake_ai_workers: Optional[bool] = None,
+        request_timeout_seconds: Optional[int] = None,
     ):
-        self.queue_client = get_queue_client()
+        self.queue_client = get_queue_client(
+            request_timeout_seconds=request_timeout_seconds,
+        )
         self.queue_name_override = queue_name_override
         self.wake_ai_workers = (queue_name_override is None) if wake_ai_workers is None else bool(wake_ai_workers)
 

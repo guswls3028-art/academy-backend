@@ -17,6 +17,7 @@ AI_JOB_TYPES = frozenset({
     "attendance_excel_export",
     "staff_excel_export",
     "ppt_generation",
+    "wrong_note_pdf_generation",
     "problem_studio_package",
     "problem_studio_transfer",
     "problem_studio_transcription",
@@ -33,6 +34,7 @@ TOOL_WORKER_JOB_TYPES = frozenset({
     "excel_parsing",
     "attendance_excel_export",
     "staff_excel_export",
+    "wrong_note_pdf_generation",
 })
 
 LITE_ALLOWED_JOB_TYPES = frozenset({
@@ -47,6 +49,7 @@ BASIC_ALLOWED_JOB_TYPES = frozenset({
     "attendance_excel_export",
     "staff_excel_export",
     "ppt_generation",
+    "wrong_note_pdf_generation",
     "problem_studio_package",
     "problem_studio_transfer",
     "problem_studio_transcription",

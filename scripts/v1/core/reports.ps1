@@ -15,6 +15,27 @@ function Get-ReportsHistoryDir {
     return $ReportsHistory
 }
 
+function Remove-StaleVerificationArtifacts {
+    param(
+        [string]$ReportsDir,
+        [string]$HistoryDir,
+        [datetime]$Cutoff = (Get-Date).AddHours(-24)
+    )
+    $staleFiles = @(
+        Get-ChildItem -LiteralPath $HistoryDir -File -Filter "*.tmp" -ErrorAction SilentlyContinue
+        Get-ChildItem -LiteralPath $ReportsDir -File -Filter "deploy-verification-latest.md.*.tmp" -ErrorAction SilentlyContinue
+    ) | Where-Object { $_.LastWriteTime -lt $Cutoff }
+    foreach ($file in $staleFiles) {
+        Remove-Item -LiteralPath $file.FullName -Force
+    }
+    $staleDirs = @(
+        Get-ChildItem -LiteralPath $HistoryDir -Directory -Filter ".staging-*" -ErrorAction SilentlyContinue
+    ) | Where-Object { $_.LastWriteTime -lt $Cutoff }
+    foreach ($directory in $staleDirs) {
+        [System.IO.Directory]::Delete($directory.FullName, $true)
+    }
+}
+
 function Normalize-ReportContent {
     param([string]$Content)
     if ($null -eq $Content) { return "" }
@@ -37,6 +58,7 @@ function Save-DriftReport {
     param([System.Collections.ArrayList]$Rows)
     $dir = Get-ReportsDir
     $historyDir = Get-ReportsHistoryDir
+    Remove-StaleVerificationArtifacts -ReportsDir $dir -HistoryDir $historyDir
     $runId = New-ReportRunId
     $sb = [System.Text.StringBuilder]::new()
     [void]$sb.AppendLine("# Drift — SSOT vs actual")
@@ -91,37 +113,38 @@ function Save-DeployVerificationReport {
     param([string]$MarkdownContent)
     $dir = Get-ReportsDir
     $historyDir = Get-ReportsHistoryDir
+    Remove-StaleVerificationArtifacts -ReportsDir $dir -HistoryDir $historyDir
     $runId = New-ReportRunId
     $latestPath = Join-Path $dir "deploy-verification-latest.md"
     $content = Normalize-ReportContent -Content (Add-VerificationRunMarker -Content $MarkdownContent)
 
-    $bundle = [ordered]@{
-        "audit.latest.md" = "${runId}-audit.md"
-        "drift.latest.md" = "${runId}-drift.md"
-        "runtime-images.latest.md" = "${runId}-runtime-images.md"
-        "consistency.latest.md" = "${runId}-consistency.md"
-        "front-connection.latest.md" = "${runId}-front-connection.md"
-        "release-manifest.latest.json" = "${runId}-release-manifest.json"
-    }
-    $missing = @($bundle.Keys | Where-Object { -not (Test-Path -LiteralPath (Join-Path $dir $_) -PathType Leaf) })
+    $bundle = @(
+        "audit.latest.md"
+        "drift.latest.md"
+        "runtime-images.latest.md"
+        "consistency.latest.md"
+        "front-connection.latest.md"
+        "release-manifest.latest.json"
+    )
+    $missing = @($bundle | Where-Object { -not (Test-Path -LiteralPath (Join-Path $dir $_) -PathType Leaf) })
     if ($missing.Count -gt 0) {
         throw "Deploy verification history requires all companion evidence files. Missing: $($missing -join ', ')"
     }
 
-    $bundleLinks = [System.Collections.Generic.List[string]]::new()
-    $createdSnapshots = [System.Collections.Generic.List[string]]::new()
+    $historyBundleLinks = [System.Collections.Generic.List[string]]::new()
+    $localBundleLinks = [System.Collections.Generic.List[string]]::new()
     $sourceHashes = [ordered]@{}
     $verificationMarker = if ($script:VerificationRunId) { "**Verification Run ID:** $($script:VerificationRunId)" } else { "" }
-    foreach ($entry in $bundle.GetEnumerator()) {
-        $sourcePath = Join-Path $dir $entry.Key
-        if ($verificationMarker -and $entry.Key -ne "release-manifest.latest.json") {
+    foreach ($name in $bundle) {
+        $sourcePath = Join-Path $dir $name
+        if ($verificationMarker -and $name -ne "release-manifest.latest.json") {
             $sourceContent = Get-Content -Raw -LiteralPath $sourcePath
             if (-not $sourceContent.Contains($verificationMarker)) {
-                throw "Companion evidence does not belong to verification run $($script:VerificationRunId): $($entry.Key)"
+                throw "Companion evidence does not belong to verification run $($script:VerificationRunId): $name"
             }
         }
         $sourceHash = (Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash
-        if ($verificationMarker -and $entry.Key -eq "release-manifest.latest.json") {
+        if ($verificationMarker -and $name -eq "release-manifest.latest.json") {
             if (-not $script:VerificationReleaseManifestHash) {
                 throw "Release manifest hash is missing for verification run $($script:VerificationRunId)."
             }
@@ -135,23 +158,27 @@ function Save-DeployVerificationReport {
     $historyPath = Join-Path $historyDir "${runId}-deploy-verification.md"
     $historyTempPath = "${historyPath}.tmp"
     $latestTempPath = "${latestPath}.${runId}.tmp"
+    $stagingDir = Join-Path $historyDir ".staging-$runId"
+    $finalBundleDir = Join-Path $historyDir $runId
     $historyPublished = $false
+    $bundlePublished = $false
     try {
-        foreach ($entry in $bundle.GetEnumerator()) {
-            $sourcePath = Join-Path $dir $entry.Key
-            $snapshotPath = Join-Path $historyDir $entry.Value
+        [System.IO.Directory]::CreateDirectory($stagingDir) | Out-Null
+        foreach ($name in $bundle) {
+            $sourcePath = Join-Path $dir $name
+            $snapshotPath = Join-Path $stagingDir $name
             $sourceHashBefore = (Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash
             if ($sourceHashBefore -ne $sourceHashes[$sourcePath]) {
-                throw "Companion evidence set changed before snapshotting: $($entry.Key)"
+                throw "Companion evidence set changed before snapshotting: $name"
             }
             Copy-Item -LiteralPath $sourcePath -Destination $snapshotPath
-            $createdSnapshots.Add($snapshotPath)
             $sourceHashAfter = (Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash
             $snapshotHash = (Get-FileHash -LiteralPath $snapshotPath -Algorithm SHA256).Hash
             if ($sourceHashes[$sourcePath] -ne $sourceHashAfter -or $sourceHashAfter -ne $snapshotHash) {
-                throw "Companion evidence changed while snapshotting: $($entry.Key)"
+                throw "Companion evidence changed while snapshotting: $name"
             }
-            $bundleLinks.Add("- [$($entry.Key)](./$($entry.Value))")
+            $historyBundleLinks.Add("- [$name](./$runId/$name)")
+            $localBundleLinks.Add("- [$name](./$name)")
         }
         foreach ($entry in $sourceHashes.GetEnumerator()) {
             if ((Get-FileHash -LiteralPath $entry.Key -Algorithm SHA256).Hash -ne $entry.Value) {
@@ -161,7 +188,13 @@ function Save-DeployVerificationReport {
 
         $historyContent = $content
         $historyContent += "`n`n## Immutable Evidence Bundle`n`n"
-        $historyContent += $bundleLinks -join "`n"
+        $historyContent += $historyBundleLinks -join "`n"
+        $localHistoryContent = $content
+        $localHistoryContent += "`n`n## Immutable Evidence Bundle`n`n"
+        $localHistoryContent += $localBundleLinks -join "`n"
+        Set-Content -LiteralPath (Join-Path $stagingDir "deploy-verification.md") -Value $localHistoryContent -Encoding UTF8
+        [System.IO.Directory]::Move($stagingDir, $finalBundleDir)
+        $bundlePublished = $true
         Set-Content -LiteralPath $historyTempPath -Value $historyContent -Encoding UTF8
         [System.IO.File]::Move($historyTempPath, $historyPath, $false)
         $historyPublished = $true
@@ -175,10 +208,11 @@ function Save-DeployVerificationReport {
                 Remove-Item -LiteralPath $artifactPath -Force
             }
         }
-        foreach ($snapshotPath in $createdSnapshots) {
-            if (Test-Path -LiteralPath $snapshotPath) {
-                Remove-Item -LiteralPath $snapshotPath -Force
-            }
+        if (Test-Path -LiteralPath $stagingDir -PathType Container) {
+            [System.IO.Directory]::Delete($stagingDir, $true)
+        }
+        if ($bundlePublished -and (Test-Path -LiteralPath $finalBundleDir -PathType Container)) {
+            [System.IO.Directory]::Delete($finalBundleDir, $true)
         }
         throw
     }

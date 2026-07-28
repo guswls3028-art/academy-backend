@@ -85,23 +85,34 @@ class QueueClient(ABC):
 class SQSQueueClient(QueueClient):
     """AWS SQS 기반 큐 클라이언트 (프로덕션용)"""
 
-    def __init__(self, region_name: Optional[str] = None):
+    def __init__(
+        self,
+        region_name: Optional[str] = None,
+        request_timeout_seconds: Optional[int] = None,
+    ):
         try:
             import boto3
             self.region_name = region_name or os.getenv("AWS_REGION", "ap-northeast-2")
+            client_kwargs = {"region_name": self.region_name}
+            if request_timeout_seconds is not None:
+                from botocore.config import Config
+
+                timeout_seconds = max(1, int(request_timeout_seconds))
+                client_kwargs["config"] = Config(
+                    connect_timeout=min(2, timeout_seconds),
+                    read_timeout=timeout_seconds,
+                    retries={"total_max_attempts": 1, "mode": "standard"},
+                )
             # AWS_ACCESS_KEY_ID가 R2(Cloudflare) 자격증명으로 설정될 수 있으므로
             # AWS_ROOT_ACCESS_KEY_ID가 있으면 명시적으로 사용 (SQS는 AWS 서비스)
             root_key = os.getenv("AWS_ROOT_ACCESS_KEY_ID")
             root_secret = os.getenv("AWS_ROOT_SECRET_ACCESS_KEY")
             if root_key and root_secret:
-                self.sqs = boto3.client(
-                    "sqs",
-                    region_name=self.region_name,
+                client_kwargs.update(
                     aws_access_key_id=root_key,
                     aws_secret_access_key=root_secret,
                 )
-            else:
-                self.sqs = boto3.client("sqs", region_name=self.region_name)
+            self.sqs = boto3.client("sqs", **client_kwargs)
             logger.info(f"SQSQueueClient initialized: {self.region_name}")
         except ImportError:
             raise ImportError("boto3 package is required for SQSQueueClient")
@@ -218,8 +229,11 @@ class SQSQueueClient(QueueClient):
             return {"visible": 1, "not_visible": 1, "delayed": 0}
 
 
-def get_queue_client() -> QueueClient:
+def get_queue_client(
+    *,
+    request_timeout_seconds: Optional[int] = None,
+) -> QueueClient:
     """
     SQS 큐 클라이언트 반환 (Redis 제거됨)
     """
-    return SQSQueueClient()
+    return SQSQueueClient(request_timeout_seconds=request_timeout_seconds)

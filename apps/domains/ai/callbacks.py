@@ -24,6 +24,7 @@ from apps.support.ai.callback_dependencies import (
     get_matchup_problem_model,
     get_post_entity_model,
     get_submission_ai_result_applier,
+    get_wrong_note_pdf_callback_dependencies,
     handle_matchup_proposal_path,
     invalidate_matchup_tenant_similar_cache,
 )
@@ -45,6 +46,24 @@ def dispatch_ai_result_to_domain(
     AI Job 완료 후 도메인별 후속 처리 디스패처.
     source_domain에 따라 적절한 도메인 핸들러로 라우팅한다.
     """
+    if source_domain == "results_wrong_note_pdf":
+        try:
+            _handle_wrong_note_pdf_result(
+                job_id=job_id,
+                status=status,
+                result_payload=result_payload or {},
+                error=error,
+                source_id=source_id,
+            )
+        except Exception:
+            logger.exception(
+                "AI_CALLBACK_WRONG_NOTE_PDF_FAILED | job_id=%s | source_id=%s",
+                job_id,
+                source_id,
+            )
+            return False
+        return True
+
     # exams 도메인: question_segmentation 결과 처리
     if source_domain == "exams":
         try:
@@ -176,6 +195,85 @@ def dispatch_ai_result_to_domain(
             job_id, source_id, elapsed_ms,
         )
         return False
+
+
+def _handle_wrong_note_pdf_result(
+    *,
+    job_id: str,
+    status: str,
+    result_payload: Dict[str, Any],
+    error: Optional[str],
+    source_id: Optional[str],
+) -> None:
+    """Apply a tools-worker result to the tenant-scoped WrongNotePDF record."""
+    from django.db import transaction
+
+    from apps.domains.ai.models import AIJobModel
+    WrongNotePDF, wrong_note_pdf_storage_key = (
+        get_wrong_note_pdf_callback_dependencies()
+    )
+
+    ai_job = AIJobModel.objects.filter(job_id=job_id).first()
+    if not ai_job or not ai_job.tenant_id or not source_id:
+        raise ValueError("Wrong-note PDF callback scope is missing.")
+    if ai_job.source_domain != "results_wrong_note_pdf":
+        raise ValueError("Wrong-note PDF callback source domain mismatch.")
+    if str(ai_job.source_id or "") != str(source_id):
+        raise ValueError("Wrong-note PDF callback source id mismatch.")
+
+    pdf_job_id = int(source_id)
+    payload_job_id = result_payload.get("wrong_note_pdf_job_id")
+    if payload_job_id is not None and str(payload_job_id) != str(pdf_job_id):
+        raise ValueError("Wrong-note PDF callback payload id mismatch.")
+
+    with transaction.atomic():
+        pdf_job = (
+            WrongNotePDF.objects.select_for_update()
+            .select_related("enrollment__tenant")
+            .get(id=pdf_job_id, enrollment__tenant_id=int(ai_job.tenant_id))
+        )
+        if pdf_job.status == WrongNotePDF.Status.DONE:
+            return
+
+        outcome = str(result_payload.get("outcome") or "")
+        if status == "FAILED":
+            pdf_job.status = WrongNotePDF.Status.FAILED
+            pdf_job.error_message = str(
+                error or "PDF를 만들지 못했습니다. 잠시 후 다시 시도해 주세요."
+            )
+            pdf_job.file_path = ""
+        elif outcome == WrongNotePDF.Status.DONE:
+            file_path = str(result_payload.get("file_path") or "")
+            expected_path = wrong_note_pdf_storage_key(
+                job=pdf_job,
+                tenant=pdf_job.enrollment.tenant,
+            )
+            if file_path != expected_path:
+                raise ValueError("Wrong-note PDF callback file path mismatch.")
+            pdf_job.status = WrongNotePDF.Status.DONE
+            pdf_job.file_path = file_path
+            pdf_job.error_message = ""
+        elif outcome == WrongNotePDF.Status.FAILED:
+            file_path = str(result_payload.get("file_path") or "")
+            if file_path:
+                expected_path = wrong_note_pdf_storage_key(
+                    job=pdf_job,
+                    tenant=pdf_job.enrollment.tenant,
+                )
+                if file_path != expected_path:
+                    raise ValueError("Wrong-note PDF failed callback file path mismatch.")
+            pdf_job.status = WrongNotePDF.Status.FAILED
+            pdf_job.file_path = file_path
+            pdf_job.error_message = str(
+                result_payload.get("error_message")
+                or "PDF를 만들지 못했습니다. 잠시 후 다시 시도해 주세요."
+            )
+        else:
+            raise ValueError("Wrong-note PDF callback outcome is invalid.")
+
+        pdf_job.save(
+            update_fields=["status", "file_path", "error_message", "updated_at"]
+        )
 
 
 def _handle_submission_ai_result(

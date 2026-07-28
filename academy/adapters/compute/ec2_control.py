@@ -10,6 +10,8 @@ import os
 import boto3
 import logging
 
+from botocore.config import Config
+
 logger = logging.getLogger(__name__)
 
 REGION = "ap-northeast-2"
@@ -17,18 +19,31 @@ REGION = "ap-northeast-2"
 
 AI_WORKER_ASG_NAME = "academy-v1-ai-worker-asg"
 MESSAGING_WORKER_ASG_NAME = "academy-v1-messaging-worker-asg"
+TOOLS_WORKER_ASG_NAME = "academy-v1-tools-worker-asg"
 
 
-def _aws_client(service: str):
+def _aws_client(service: str, *, fast_fail: bool = False):
     """AWS 클라이언트 생성. ROOT 키가 있으면 명시적 사용 (R2 키 충돌 방지)."""
+    config = (
+        Config(
+            connect_timeout=2,
+            read_timeout=3,
+            retries={"total_max_attempts": 1, "mode": "standard"},
+        )
+        if fast_fail
+        else None
+    )
+    client_kwargs = {"region_name": REGION}
+    if config is not None:
+        client_kwargs["config"] = config
     root_key = os.getenv("AWS_ROOT_ACCESS_KEY_ID")
     root_secret = os.getenv("AWS_ROOT_SECRET_ACCESS_KEY")
     if root_key and root_secret:
-        return boto3.client(
-            service, region_name=REGION,
-            aws_access_key_id=root_key, aws_secret_access_key=root_secret,
+        client_kwargs.update(
+            aws_access_key_id=root_key,
+            aws_secret_access_key=root_secret,
         )
-    return boto3.client(service, region_name=REGION)
+    return boto3.client(service, **client_kwargs)
 
 
 def _ensure_worker_asg_min_capacity(
@@ -44,7 +59,7 @@ def _ensure_worker_asg_min_capacity(
         min_capacity = default_capacity
 
     try:
-        asg = _aws_client("autoscaling")
+        asg = _aws_client("autoscaling", fast_fail=True)
         resp = asg.describe_auto_scaling_groups(
             AutoScalingGroupNames=[asg_name]
         )
@@ -99,6 +114,16 @@ def ensure_messaging_worker_asg_min_capacity(min_capacity: int = 1) -> bool:
     return _ensure_worker_asg_min_capacity(
         asg_name=MESSAGING_WORKER_ASG_NAME,
         label="Messaging",
+        min_capacity=min_capacity,
+        default_capacity=1,
+    )
+
+
+def ensure_tools_worker_asg_min_capacity(min_capacity: int = 1) -> bool:
+    """Wake the scale-to-zero tools worker after a user-triggered document job."""
+    return _ensure_worker_asg_min_capacity(
+        asg_name=TOOLS_WORKER_ASG_NAME,
+        label="Tools",
         min_capacity=min_capacity,
         default_capacity=1,
     )

@@ -33,6 +33,7 @@ MAX_WRONG_NOTE_PDF_ITEMS = 100
 MAX_QUESTION_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_QUESTION_IMAGE_PIXELS = 20_000_000
 PDF_GENERATION_DEADLINE_SECONDS = 90
+PDF_OBJECT_CLEANUP_ATTEMPTS = 3
 
 
 class WrongNotePDFEmptyError(ValueError):
@@ -416,6 +417,10 @@ def build_wrong_note_pdf(
     return output.getvalue()
 
 
+def wrong_note_pdf_storage_key(*, job: Any, tenant: Any) -> str:
+    return f"tenants/{tenant.id}/results/wrong-notes/{job.id}.pdf"
+
+
 def generate_and_store_wrong_note_pdf(
     *,
     job: Any,
@@ -448,7 +453,7 @@ def generate_and_store_wrong_note_pdf(
         deadline_monotonic=deadline_monotonic,
     )
     upload_timeout = _remaining_seconds(deadline_monotonic)
-    key = f"tenants/{tenant.id}/results/wrong-notes/{job.id}.pdf"
+    key = wrong_note_pdf_storage_key(job=job, tenant=tenant)
     upload_fileobj_to_r2_storage(
         fileobj=io.BytesIO(pdf_bytes),
         key=key,
@@ -461,12 +466,21 @@ def generate_and_store_wrong_note_pdf(
 def delete_wrong_note_pdf_object(key: str) -> bool:
     if not key:
         return True
-    try:
-        delete_object_r2_storage(key=key)
-        return True
-    except Exception:
-        logger.exception(
-            "wrong-note PDF object cleanup failed",
-            extra={"key": key},
-        )
-        return False
+    for attempt in range(1, PDF_OBJECT_CLEANUP_ATTEMPTS + 1):
+        try:
+            delete_object_r2_storage(key=key, timeout_seconds=3)
+            return True
+        except Exception:
+            if attempt == PDF_OBJECT_CLEANUP_ATTEMPTS:
+                logger.exception(
+                    "wrong-note PDF object cleanup failed after retries",
+                    extra={"key": key, "attempts": attempt},
+                )
+                return False
+            logger.warning(
+                "wrong-note PDF object cleanup retry scheduled",
+                extra={"key": key, "attempt": attempt},
+                exc_info=True,
+            )
+            time.sleep(0.25 * attempt)
+    return False

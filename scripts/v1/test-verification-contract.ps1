@@ -28,6 +28,36 @@ function Assert-Throws {
 . (Join-Path $ScriptRoot "resources\jobdef.ps1")
 . (Join-Path $ScriptRoot "resources\api.ps1")
 . (Join-Path $ScriptRoot "core\evidence.ps1")
+. (Join-Path $ScriptRoot "core\verify_decision.ps1")
+
+$allVerifyPass = @{
+    NoOp = $true
+    BatchCompute = $true
+    BatchQueue = $true
+    EventBridge = $true
+    Asg = $true
+    ApiLaunchTemplate = $true
+    ApiHealth = $true
+    SsmWorkersEnv = $true
+    ReportSaved = $true
+}
+Assert-VerifyClosure @allVerifyPass
+foreach ($failureCase in @("NoOp", "ApiHealth", "SsmWorkersEnv", "ReportSaved")) {
+    $case = @{} + $allVerifyPass
+    $case[$failureCase] = $false
+    Assert-Throws { Assert-VerifyClosure @case } "$failureCase must fail verification closure"
+}
+$healthyDriftRows = @(
+    [PSCustomObject]@{ ResourceType = "Batch CE"; Actual = "VALID/ENABLED type=MANAGED"; Action = "NoOp" }
+    [PSCustomObject]@{ ResourceType = "Batch Queue"; Actual = "VALID/ENABLED"; Action = "NoOp" }
+    [PSCustomObject]@{ ResourceType = "EventBridge"; Actual = "schedule=rate(1 day) state=ENABLED"; Action = "NoOp" }
+)
+Assert-True (Test-VerifyDriftRows -Rows $healthyDriftRows -ResourceType "Batch CE" -ExpectedCount 1) "formatted healthy CE rows must pass"
+Assert-True (Test-VerifyDriftRows -Rows $healthyDriftRows -ResourceType "EventBridge" -ExpectedCount 1) "formatted healthy EventBridge rows must pass"
+$disabledQueueRows = @(
+    [PSCustomObject]@{ ResourceType = "Batch Queue"; Actual = "VALID/DISABLED"; Action = "Update" }
+)
+Assert-True (-not (Test-VerifyDriftRows -Rows $disabledQueueRows -ResourceType "Batch Queue" -ExpectedCount 1)) "disabled queue must fail"
 
 Assert-Equal (Resolve-EvidenceApiHealthUrl "api.hakwonplus.com" "http://internal-alb.example.com") "https://api.hakwonplus.com/health" "public API domain must take precedence over the internal ALB"
 Assert-Equal (Resolve-EvidenceApiHealthUrl "https://api.hakwonplus.com/" "http://internal-alb.example.com") "https://api.hakwonplus.com/health" "public API URL must be normalized"
@@ -130,7 +160,29 @@ try {
     $historyContent = Get-Content -Raw -LiteralPath $historyReport.FullName
     Assert-True ($historyContent.Contains("## Immutable Evidence Bundle")) "history report must link immutable evidence"
     Assert-Equal (Get-ChildItem -LiteralPath $ReportsHistory -Filter "*-deploy-verification.md" | Measure-Object).Count 2 "same-second reports must remain unique"
-    Assert-Equal (Get-ChildItem -LiteralPath $ReportsHistory | Measure-Object).Count 14 "each history report must keep six companions"
+    $historyBundles = @(Get-ChildItem -LiteralPath $ReportsHistory -Directory | Where-Object { $_.Name -notlike ".staging-*" })
+    Assert-Equal $historyBundles.Count 2 "each history report must keep one atomic bundle directory"
+    foreach ($historyBundle in $historyBundles) {
+        Assert-Equal (Get-ChildItem -LiteralPath $historyBundle.FullName -File | Measure-Object).Count 7 "each atomic bundle must contain the report and six companions"
+        $localReport = Get-Content -Raw -LiteralPath (Join-Path $historyBundle.FullName "deploy-verification.md")
+        foreach ($name in $companions) {
+            Assert-True ($localReport.Contains("[$name](./$name)")) "bundle-local report link must resolve locally: $name"
+            Assert-True (Test-Path -LiteralPath (Join-Path $historyBundle.FullName $name) -PathType Leaf) "bundle-local link target must exist: $name"
+        }
+    }
+    Assert-Equal (Get-ChildItem -LiteralPath $ReportsHistory | Measure-Object).Count 4 "history root must contain two reports and two complete bundles"
+
+    $staleStage = Join-Path $ReportsHistory ".staging-crash"
+    [System.IO.Directory]::CreateDirectory($staleStage) | Out-Null
+    Set-Content -LiteralPath (Join-Path $staleStage "partial") -Value "partial"
+    $staleTemp = Join-Path $ReportsHistory "crash-deploy-verification.md.tmp"
+    Set-Content -LiteralPath $staleTemp -Value "partial"
+    $oldTimestamp = (Get-Date).AddHours(-25)
+    (Get-Item -LiteralPath $staleStage).LastWriteTime = $oldTimestamp
+    (Get-Item -LiteralPath $staleTemp).LastWriteTime = $oldTimestamp
+    Remove-StaleVerificationArtifacts -ReportsDir $ReportsBase -HistoryDir $ReportsHistory
+    Assert-True (-not (Test-Path -LiteralPath $staleStage)) "stale crash staging directory must be swept"
+    Assert-True (-not (Test-Path -LiteralPath $staleTemp)) "stale crash temp file must be swept"
 
     $releaseManifestContent = Get-Content -Raw -LiteralPath $releaseManifestPath
     Set-Content -LiteralPath $releaseManifestPath -Value '{"status":"PASS","release":"changed"}' -Encoding UTF8
@@ -141,7 +193,7 @@ try {
         $changedManifestRejected = $true
     }
     Assert-True $changedManifestRejected "release manifest changed after runtime collection must fail closed"
-    Assert-Equal (Get-ChildItem -LiteralPath $ReportsHistory | Measure-Object).Count 14 "changed manifest rejection must not leave history artifacts"
+    Assert-Equal (Get-ChildItem -LiteralPath $ReportsHistory | Measure-Object).Count 4 "changed manifest rejection must not leave history artifacts"
     Set-Content -LiteralPath $releaseManifestPath -Value $releaseManifestContent -Encoding UTF8
     $script:VerificationReleaseManifestHash = (Get-SuccessfulReleaseImageDigests -Path $releaseManifestPath).ManifestHash
 
@@ -165,7 +217,7 @@ try {
         $mixedRunRejected = $true
     }
     Assert-True $mixedRunRejected "mixed verification run companions must fail closed"
-    Assert-Equal (Get-ChildItem -LiteralPath $ReportsHistory | Measure-Object).Count 14 "mixed run rejection must not leave history artifacts"
+    Assert-Equal (Get-ChildItem -LiteralPath $ReportsHistory | Measure-Object).Count 4 "mixed run rejection must not leave history artifacts"
 
     Set-Content -LiteralPath (Join-Path $ReportsBase "drift.latest.md") -Value "snapshot:drift.latest.md`n`n**Verification Run ID:** contract-run-a" -Encoding UTF8
     $latestPath = Join-Path $ReportsBase "deploy-verification-latest.md"
@@ -178,7 +230,7 @@ try {
         $latestPublishRejected = $true
     }
     Assert-True $latestPublishRejected "latest publish failure must be reported"
-    Assert-Equal (Get-ChildItem -LiteralPath $ReportsHistory | Measure-Object).Count 14 "latest publish failure must clean history report and companions"
+    Assert-Equal (Get-ChildItem -LiteralPath $ReportsHistory | Measure-Object).Count 4 "latest publish failure must clean history report and companions"
     Remove-Item -LiteralPath $latestPath
 } finally {
     $script:VerificationRunId = $null

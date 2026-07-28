@@ -59,6 +59,7 @@ def resolve_tier(
         "homework_video_analysis",
         "excel_parsing",
         "ppt_generation",
+        "wrong_note_pdf_generation",
         "problem_studio_package",
         "problem_studio_transfer",
     ):

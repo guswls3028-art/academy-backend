@@ -33,24 +33,52 @@ class ToolWorkerRoutingTests(TestCase):
         )
 
     @override_settings(TOOLS_SQS_QUEUE_NAME="test-tools-queue")
+    @patch(
+        "academy.adapters.compute.ec2_control.ensure_tools_worker_asg_min_capacity",
+        return_value=True,
+    )
     @patch("apps.support.ai.services.sqs_queue.get_queue_client")
-    def test_deterministic_document_jobs_publish_to_tools_queue(self, get_queue_client):
+    def test_deterministic_document_jobs_publish_to_tools_queue(
+        self,
+        get_queue_client,
+        wake_tools_worker,
+    ):
         for job_type in (
             "ppt_generation",
             "excel_parsing",
             "attendance_excel_export",
             "staff_excel_export",
             "problem_studio_transfer",
+            "wrong_note_pdf_generation",
         ):
             with self.subTest(job_type=job_type):
                 client = Mock()
                 client.send_message.return_value = True
                 get_queue_client.return_value = client
 
-                publish_ai_job_sqs(self._job(job_type))
+                assert publish_ai_job_sqs(self._job(job_type))
 
                 client.send_message.assert_called_once()
                 assert client.send_message.call_args.kwargs["queue_name"] == "test-tools-queue"
+        assert wake_tools_worker.call_count == 6
+
+    @override_settings(TOOLS_SQS_QUEUE_NAME="test-tools-queue")
+    @patch("apps.support.ai.services.sqs_queue.get_queue_client")
+    def test_failed_tool_enqueue_does_not_claim_success_or_wake_worker(
+        self,
+        get_queue_client,
+    ):
+        client = Mock()
+        client.send_message.return_value = False
+        get_queue_client.return_value = client
+
+        with patch(
+            "academy.adapters.compute.ec2_control.ensure_tools_worker_asg_min_capacity"
+        ) as wake_tools_worker:
+            assert not publish_ai_job_sqs(self._job("wrong_note_pdf_generation"))
+
+        get_queue_client.assert_called_once_with(request_timeout_seconds=3)
+        wake_tools_worker.assert_not_called()
 
     @patch("apps.support.ai.services.sqs_queue.get_queue_client")
     def test_non_tool_job_stays_on_ai_queue(self, get_queue_client):
@@ -58,8 +86,9 @@ class ToolWorkerRoutingTests(TestCase):
         client.send_message.return_value = True
         get_queue_client.return_value = client
 
-        publish_ai_job_sqs(self._job("ocr"))
+        assert publish_ai_job_sqs(self._job("ocr"))
 
+        get_queue_client.assert_called_once_with(request_timeout_seconds=3)
         client.send_message.assert_called_once()
         assert client.send_message.call_args.kwargs["queue_name"] == "test-ai-queue"
 
@@ -69,7 +98,7 @@ class ToolWorkerRoutingTests(TestCase):
         client.send_message.return_value = True
         get_queue_client.return_value = client
 
-        publish_ai_job_sqs(self._job("problem_studio_transcription"))
+        assert publish_ai_job_sqs(self._job("problem_studio_transcription"))
 
         client.send_message.assert_called_once()
         assert client.send_message.call_args.kwargs["queue_name"] == "test-ai-queue"
@@ -191,7 +220,12 @@ class ToolWorkerRoutingTests(TestCase):
         assert "Unsupported tools job type" in (result.error or "")
 
     def test_basic_tier_allows_deterministic_tools_jobs(self):
-        for job_type in ("attendance_excel_export", "staff_excel_export", "problem_studio_transfer"):
+        for job_type in (
+            "attendance_excel_export",
+            "staff_excel_export",
+            "problem_studio_transfer",
+            "wrong_note_pdf_generation",
+        ):
             with self.subTest(job_type=job_type):
                 allowed, error = enforce_tier_limits(tier="basic", job_type=job_type)
 

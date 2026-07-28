@@ -13,7 +13,8 @@
       "Action": "autoscaling:SetDesiredCapacity",
       "Resource": [
         "arn:aws:autoscaling:ap-northeast-2:809466760795:autoScalingGroup:*:autoScalingGroupName/academy-v1-ai-worker-asg",
-        "arn:aws:autoscaling:ap-northeast-2:809466760795:autoScalingGroup:*:autoScalingGroupName/academy-v1-messaging-worker-asg"
+        "arn:aws:autoscaling:ap-northeast-2:809466760795:autoScalingGroup:*:autoScalingGroupName/academy-v1-messaging-worker-asg",
+        "arn:aws:autoscaling:ap-northeast-2:809466760795:autoScalingGroup:*:autoScalingGroupName/academy-v1-tools-worker-asg"
       ]
     },
     {

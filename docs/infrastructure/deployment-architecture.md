@@ -81,10 +81,16 @@ git push main
 | `apps/worker/video_worker/`, `apps/support/video/`, `apps/domains/video/`, `apps/api/config/settings/worker.py`, `docker/video-worker/`, `requirements/worker-video.txt` | Video Worker |
 | `apps/worker/messaging_worker/`, `apps/support/messaging/`, `apps/domains/messaging/`, `apps/api/config/settings/worker.py`, `docker/messaging-worker/`, `requirements/worker-messaging.txt` | Messaging Worker |
 | `apps/worker/ai_worker/`, `apps/worker/omr/`, `apps/domains/`, `apps/support/ai/`, `apps/api/config/settings/(worker|base).py`, `models/`, `scripts/`, `academy/`, `libs/queue/`, `docker/ai-worker*`, `requirements/worker-ai*` | AI Worker |
-| `apps/worker/tools_worker/`, `apps/domains/tools/`, `apps/domains/ai/queueing/`, `apps/support/ai/services/sqs_queue.py`, `academy/(application/use_cases/tools|domain/tools|adapters/tools|framework/workers|adapters/queue/sqs)/`, `docker/tools-worker/`, `requirements/worker-tools.txt` | Tools Worker |
+| `apps/worker/tools_worker/`, `apps/domains/tools/`, `apps/domains/ai/queueing/`, PDF 오답노트 서비스/정답 포맷터/한글 폰트, `apps/support/ai/services/sqs_queue.py`, `academy/(application/use_cases/tools|domain/tools|adapters/tools|framework/workers|adapters/queue/sqs)/`, `docker/tools-worker/`, `requirements/worker-tools.txt` | Tools Worker |
 
 `force_full` is a correctness boundary for code imported by more than one runtime. It builds all six images, including `academy-base`; service-specific paths retain selective builds. `workflow_dispatch` always performs a full build/deploy.
 Change predicates use the `changed_matches` here-string helper instead of `echo | grep -q`; this avoids a `pipefail`/SIGPIPE false negative on large multi-commit push ranges.
+
+런타임 EC2 역할의 worker-scale inline policy가 바뀌는 릴리스는 main push
+전에 운영 권한으로 `pwsh scripts/v1/deploy.ps1 -AwsProfile default`를
+실행해 정책과 GitHub Actions readback 권한을 먼저 수렴한다. CI에는
+런타임 역할 정책 쓰기 권한을 주지 않으며, `iam:GetRolePolicy` 결과가
+저장소 SSOT와 완전 일치하지 않으면 이미지 빌드 전에 실패한다.
 
 ### Build Output
 
@@ -231,7 +237,7 @@ With `-Sha` omitted, ASG rollback derives the current digest from the Launch Tem
 
 `docs/reports/ci-build.latest.md` is build evidence only. The build job also produces a six-image candidate from exact run-unique SHA digests plus unchanged digests from the preceding successful release. Only after ASG health, actual container digest, all Video Batch job definitions, and compute environment gates pass does CI promote `docs/reports/release-manifest.latest.json` with `complete=true` and `status=successful`. Manual `deploy.ps1` resolves images exclusively from that manifest, so a partially pushed failed build cannot be mixed into a later manual release.
 
-All production mutation entrypoints share one atomic DynamoDB lock in the SSOT table `academy-v1-video-job-lock`: CI build/deploy, weekly ECR/Batch cleanup, manual deploy, and rollback. The fixed `__deployment_control__` item is acquired conditionally, renewed only by its current unexpired owner, and released only by that owner. ECR cleanup additionally protects every digest in the last complete/successful six-image manifest (including `academy-base`) and fails nonzero on incomplete Video job-definition inventory, partial deletions, or verification warnings.
+All production mutation entrypoints share one atomic DynamoDB lock in the SSOT table `academy-v1-video-job-lock`: CI build/deploy, weekly ECR/Batch cleanup, manual deploy, and rollback. The active `__deployment_control_v2__` item is acquired conditionally, renewed only by its current unexpired owner, and released only by that owner. The retired `__deployment_control__` key is permanently sealed so reruns of historical workflow definitions cannot bypass the current release-freshness guard. After acquiring the v2 lock, CI compares the candidate commit with the last successful release-manifest commit and proceeds only for the same commit or a descendant; stale and divergent candidates fail before any image or infrastructure mutation. ECR cleanup additionally protects every digest in the last complete/successful six-image manifest (including `academy-base`) and fails nonzero on incomplete Video job-definition inventory, partial deletions, or verification warnings.
 
 On a fresh environment, the lock table itself is the sole allowed pre-lock bootstrap mutation. `deploy.ps1` and `converge-release-prerequisites.ps1` idempotently create/read it and validate the exact `videoId` string HASH schema, PAY_PER_REQUEST billing, ACTIVE state, and TTL before normal lock acquisition. Default/strict manual deploy also exits nonzero when post-deploy ASG, ALB, Batch CE, or queue verification fails; only an explicit `-RelaxedValidation` diagnostic run may finish with verification warnings.
 

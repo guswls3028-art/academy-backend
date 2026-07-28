@@ -335,6 +335,7 @@ function Ensure-GitHubActionsDeployIAM {
         [ordered]@{Sid="LaunchTemplateInstanceUse";Effect="Allow";Action="ec2:RunInstances";Resource=$launchInstanceResources},
         $(if ($templatesRequireInstanceTags) { [ordered]@{Sid="LaunchTemplateInstanceTag";Effect="Allow";Action="ec2:CreateTags";Resource="arn:aws:ec2:$($script:Region):$($script:AccountId):instance/*";Condition=[ordered]@{StringEquals=[ordered]@{"ec2:CreateAction"="RunInstances"}}} }),
         [ordered]@{Sid="LaunchTemplatePassRole";Effect="Allow";Action="iam:PassRole";Resource=$runtimeInstanceRoleArns;Condition=[ordered]@{StringEquals=[ordered]@{"iam:PassedToService"="ec2.amazonaws.com"}}},
+        [ordered]@{Sid="RuntimeScalePolicyReadback";Effect="Allow";Action="iam:GetRolePolicy";Resource="arn:aws:iam::$($script:AccountId):role/academy-ec2-role"},
         [ordered]@{Sid="SsmSendDocument";Effect="Allow";Action="ssm:SendCommand";Resource="arn:aws:ssm:$($script:Region)::document/AWS-RunShellScript"},
         [ordered]@{Sid="SsmSendInstances";Effect="Allow";Action="ssm:SendCommand";Resource="arn:aws:ec2:$($script:Region):$($script:AccountId):instance/*";Condition=[ordered]@{StringEquals=[ordered]@{"ssm:resourceTag/Name"=$instanceTags}}},
         [ordered]@{Sid="SsmCommandRead";Effect="Allow";Action="ssm:GetCommandInvocation";Resource="*"},

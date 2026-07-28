@@ -33,7 +33,9 @@ ECR_RESOURCE = REPO_ROOT / "scripts" / "v1" / "resources" / "ecr.ps1"
 DYNAMODB_RESOURCE = REPO_ROOT / "scripts" / "v1" / "resources" / "dynamodb.ps1"
 ECR_CLEANUP = REPO_ROOT / "scripts" / "v1" / "ecr-cleanup.py"
 DEPLOYMENT_LOCK = REPO_ROOT / "scripts" / "v1" / "deployment_lock.py"
+RELEASE_FRESHNESS = REPO_ROOT / "scripts" / "v1" / "release_freshness.py"
 WEEKLY_CLEANUP_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "weekly-ecr-cleanup.yml"
+DEV_ALERTS_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "dev-alerts-cron.yml"
 STATIC_GHA_IAM = REPO_ROOT / "infra" / "worker_asg" / "iam_policy_gha_ecr_build.json"
 ROLLBACK_ASG = REPO_ROOT / "scripts" / "v1" / "rollback-asg.ps1"
 ROLLBACK_VIDEO = REPO_ROOT / "scripts" / "v1" / "rollback-video.ps1"
@@ -756,6 +758,11 @@ def test_selective_build_covers_cross_domain_worker_import_edges() -> None:
             "apps/domains/ai/callbacks.py",
             "apps/domains/ai/job_types.py",
             "apps/domains/ai/gateway.py",
+            "apps/domains/results/services/wrong_note_pdf_service.py",
+            "apps/domains/results/services/wrong_note_pdf_worker.py",
+            "apps/domains/results/services/wrong_note_service.py",
+            "apps/domains/results/services/answer_matching.py",
+            "apps/domains/assets/omr/renderer/fonts/NotoSansKR-Regular.ttf",
             "apps/domains/submissions/services/ai_omr_result_mapper.py",
             "apps/domains/submissions/services/lifecycle.py",
             "apps/support/ai/callback_dependencies.py",
@@ -894,7 +901,7 @@ def test_exact_workflow_iam_covers_full_contract_without_broad_ssm() -> None:
         "EcrAuth", "EcrPushPull", "EcrRepoManage", "AsgInstanceRefresh",
         "AsgDescribe", "LaunchTemplateImagePinRead", "LaunchTemplateImagePinWrite",
         "LaunchTemplateInstanceUse", "LaunchTemplateInstanceTag",
-        "LaunchTemplatePassRole", "SsmSendDocument",
+        "LaunchTemplatePassRole", "RuntimeScalePolicyReadback", "SsmSendDocument",
         "SsmSendInstances", "SsmCommandRead", "BatchRead",
         "BatchJobDefinitionRegister", "BatchJobDefinitionRevisionWrite",
         "BatchPassRoles", "ElbRead",
@@ -910,6 +917,7 @@ def test_exact_workflow_iam_covers_full_contract_without_broad_ssm() -> None:
         "autoscaling:CancelInstanceRefresh", "ec2:RunInstances", "ec2:CreateTags",
         "batch:RegisterJobDefinition",
         "batch:DeregisterJobDefinition", "batch:TagResource", "iam:PassRole",
+        "iam:GetRolePolicy",
         "elasticloadbalancing:DescribeTargetHealth", "sns:Publish",
         "dynamodb:UpdateItem",
     ):
@@ -934,6 +942,11 @@ def test_exact_workflow_iam_covers_full_contract_without_broad_ssm() -> None:
     assert "*" not in launch_use["Resource"]
     assert by_sid["LaunchTemplatePassRole"]["Resource"] == "arn:aws:iam::809466760795:role/academy-ec2-role"
     assert by_sid["LaunchTemplatePassRole"]["Condition"]["StringEquals"]["iam:PassedToService"] == "ec2.amazonaws.com"
+    assert by_sid["RuntimeScalePolicyReadback"]["Action"] == "iam:GetRolePolicy"
+    assert by_sid["RuntimeScalePolicyReadback"]["Resource"] == (
+        "arn:aws:iam::809466760795:role/academy-ec2-role"
+    )
+    assert "iam:PutRolePolicy" not in static
     assert set(by_sid["BatchPassRoles"]["Condition"]["StringEquals"]["iam:PassedToService"]) == {
         "batch.amazonaws.com", "ecs-tasks.amazonaws.com",
     }
@@ -1027,6 +1040,17 @@ def _load_deployment_lock_module():
     return module
 
 
+def _load_release_freshness_module():
+    spec = importlib.util.spec_from_file_location(
+        "release_freshness_contract",
+        RELEASE_FRESHNESS,
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_atomic_lock_uses_conditional_put_renew_and_owner_release(monkeypatch) -> None:
     lock = _load_deployment_lock_module()
     commands: list[list[str]] = []
@@ -1040,13 +1064,114 @@ def test_atomic_lock_uses_conditional_put_renew_and_owner_release(monkeypatch) -
     lock.acquire(lock.DEFAULT_TABLE, "owner-1", 600)
     lock.renew(lock.DEFAULT_TABLE, "owner-1", 600)
     lock.release(lock.DEFAULT_TABLE, "owner-1")
+    lock.seal_legacy(lock.DEFAULT_TABLE, "cutover")
 
     joined = [" ".join(command) for command in commands]
     assert "attribute_not_exists(videoId) OR #ttl < :now" in joined[0]
     assert "#owner = :owner AND #ttl >= :now" in joined[1]
     assert "#owner = :owner" in joined[2]
+    assert lock.LOCK_KEY == "__deployment_control_v2__"
+    assert lock.LEGACY_LOCK_KEY == "__deployment_control__"
+    assert "begins_with(#owner, :retired)" in joined[3]
+    assert "retired:cutover" in joined[3]
     assert all(lock.DEFAULT_TABLE in command for command in joined)
     assert all(lock.DEFAULT_REGION in command for command in joined)
+
+
+def test_release_freshness_allows_forward_only_and_rejects_stale_or_divergent(
+    tmp_path: Path,
+) -> None:
+    freshness = _load_release_freshness_module()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args: str) -> str:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout.strip()
+
+    git("init", "-b", "main")
+    git("config", "user.email", "contract@example.com")
+    git("config", "user.name", "Contract Test")
+    marker = repo / "marker.txt"
+    marker.write_text("a", encoding="utf-8")
+    git("add", "marker.txt")
+    git("commit", "-m", "A")
+    sha_a = git("rev-parse", "HEAD")
+    marker.write_text("b", encoding="utf-8")
+    git("commit", "-am", "B")
+    sha_b = git("rev-parse", "HEAD")
+    git("checkout", "-b", "divergent", sha_a)
+    marker.write_text("c", encoding="utf-8")
+    git("commit", "-am", "C")
+    sha_c = git("rev-parse", "HEAD")
+
+    assert freshness.classify_candidate(repo, sha_a, sha_a) == "same"
+    assert freshness.classify_candidate(repo, sha_b, sha_a) == "forward"
+    assert freshness.classify_candidate(repo, sha_a, sha_b) == "stale"
+    assert freshness.classify_candidate(repo, sha_c, sha_b) == "divergent"
+    git("checkout", "main")
+    evidence = repo / "docs" / "reports" / "ci-build.latest.md"
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text("evidence", encoding="utf-8")
+    git("add", "docs/reports/ci-build.latest.md")
+    git("commit", "-m", "evidence")
+    sha_evidence = git("rev-parse", "HEAD")
+    assert (
+        freshness.classify_candidate(repo, sha_b, sha_a, sha_evidence)
+        == "forward"
+    )
+    git("checkout", "-b", "off-main", sha_b)
+    marker.write_text("off-main", encoding="utf-8")
+    git("commit", "-am", "off-main")
+    sha_off_main = git("rev-parse", "HEAD")
+    assert (
+        freshness.classify_candidate(repo, sha_off_main, sha_a, sha_evidence)
+        == "off-main"
+    )
+
+
+def test_workflow_checks_release_freshness_under_lock_and_always_releases() -> None:
+    workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    acquire_block = _job_block(workflow, "acquire-production-lock")
+    freshness_block = _job_block(workflow, "verify-release-freshness")
+    iam_block = _job_block(workflow, "verify-runtime-iam")
+    build_block = _job_block(workflow, "build-and-push")
+    release_block = _job_block(workflow, "release-production-lock")
+
+    assert "deployment_lock.py seal-legacy" in acquire_block
+    assert acquire_block.index("deployment_lock.py seal-legacy") < acquire_block.index(
+        "deployment_lock.py acquire"
+    )
+    assert "needs: [acquire-production-lock]" in freshness_block
+    assert "fetch-depth: 0" in freshness_block
+    assert "scripts/v1/release_freshness.py" in freshness_block
+    assert "git fetch --no-tags origin main" in freshness_block
+    assert "release-manifest.latest.json" in freshness_block
+    assert '--main-sha "$MAIN_SHA"' in freshness_block
+    assert "needs: [acquire-production-lock, verify-release-freshness]" in iam_block
+    assert "iam get-role-policy" in iam_block
+    assert "iam put-role-policy" not in iam_block
+    assert "runtime worker-scale IAM readback mismatch" in iam_block
+    assert "verify-runtime-iam" in build_block
+    assert "verify-runtime-iam" in release_block
+    assert "verify-release-freshness" in release_block
+    assert "if: always() && needs.acquire-production-lock.result == 'success'" in release_block
+
+
+def test_dev_alerts_cron_reconciles_failed_wrong_note_pdf_objects_safely() -> None:
+    workflow = DEV_ALERTS_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "python manage.py help cleanup_failed_wrong_note_pdfs" in workflow
+    assert "python manage.py cleanup_failed_wrong_note_pdfs --silent --limit 50" in workflow
+    assert 'if [ "$DRY_RUN" = "true" ] || [ "$TEST_SMS" = "true" ]' in workflow
+    assert 'CLEANUP_COMMAND=""' in workflow
+    assert "${CLEANUP_COMMAND}${PUSH_COMMAND}python manage.py check_dev_alerts" in workflow
 
 
 def test_successful_release_manifest_protects_exactly_all_six_images(

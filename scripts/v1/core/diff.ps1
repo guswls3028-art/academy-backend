@@ -256,7 +256,16 @@ function Get-StructuralDrift {
             [void]$rows.Add([PSCustomObject]@{ ResourceType = "Batch Queue"; Name = $qName; Expected = "exists"; Actual = "missing"; Action = "Create" })
         } else {
             $q = @($matched)[0]
-            [void]$rows.Add([PSCustomObject]@{ ResourceType = "Batch Queue"; Name = $qName; Expected = "exists"; Actual = "exists"; Action = "NoOp" })
+            $queueStatus = "$($q.status)"
+            $queueState = "$($q.state)"
+            $queueAction = if ($queueStatus -eq "VALID" -and $queueState -eq "ENABLED") { "NoOp" } else { "Update" }
+            [void]$rows.Add([PSCustomObject]@{
+                ResourceType = "Batch Queue"
+                Name = $qName
+                Expected = "VALID/ENABLED"
+                Actual = "$queueStatus/$queueState"
+                Action = $queueAction
+            })
         }
     }
     Add-UnexpectedBatchResourceRows `

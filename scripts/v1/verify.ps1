@@ -100,9 +100,9 @@ try {
     $deployOut = if ($step5.Output) { $step5.Output | Out-String } else { "" }
     $noOp = ($deployOut -match "Idempotent|No changes required") -or ($deployOut -match "No changes")
     if (-not $noOp) {
-        Write-Log "WARN: No-op phrase not found in output (Idempotent / No changes required). Check log."
+        Write-Log "FAIL: No-op phrase not found in output (Idempotent / No changes required)."
     }
-    $results += [PSCustomObject]@{ Step = "5) deploy (No-op)"; Result = if ($noOp) { "OK" } else { "CHECK" }; Detail = if ($noOp) { "No-op confirmed" } else { "See log" } }
+    $results += [PSCustomObject]@{ Step = "5) deploy (No-op)"; Result = if ($noOp) { "OK" } else { "FAIL" }; Detail = if ($noOp) { "No-op confirmed" } else { "See log" } }
 
     # 6) Evidence 위치
     $results += [PSCustomObject]@{ Step = "6) Evidence"; Result = "-"; Detail = "docs/reports/, deploy stdout" }
@@ -120,28 +120,44 @@ $results | Format-Table -AutoSize
 Write-Log "`nLog: $LogFile"
 
 # Write verify.latest.md from current state (drift + evidence snapshot)
+$ceOk = $false
+$qOk = $false
+$ebOk = $false
+$asgOk = $false
+$apiLtOk = $false
+$apiOk = $false
+$ssmOk = $false
+$reportSaved = $false
+$locationPushed = $false
+$reportError = $null
 try {
     Push-Location $RepoRoot | Out-Null
+    $locationPushed = $true
     . (Join-Path $ScriptRoot "core\ssot.ps1")
     . (Join-Path $ScriptRoot "core\aws.ps1")
     . (Join-Path $ScriptRoot "core\diff.ps1")
     . (Join-Path $ScriptRoot "core\evidence.ps1")
     . (Join-Path $ScriptRoot "core\reports.ps1")
+    . (Join-Path $ScriptRoot "core\verify_decision.ps1")
     Load-SSOT -Env prod | Out-Null
     $script:PlanMode = $true
     $driftRows = Get-StructuralDrift
     $ev = Get-EvidenceSnapshot -NetprobeJobId "" -NetprobeStatus "see deploy"
     $sb = [System.Text.StringBuilder]::new()
     [void]$sb.AppendLine("## Checks")
-    $ceOk = ($driftRows | Where-Object { $_.ResourceType -eq "Batch CE" -and $_.Actual -eq "exists" }).Count -eq $script:SSOT_CE.Count
+    $ceOk = Test-VerifyDriftRows -Rows $driftRows -ResourceType "Batch CE" -ExpectedCount $script:SSOT_CE.Count
     [void]$sb.AppendLine("- Batch CE VALID/ENABLED: $(if ($ceOk) { 'PASS' } else { 'FAIL' })")
-    $qOk = ($driftRows | Where-Object { $_.ResourceType -eq "Batch Queue" -and $_.Actual -eq "exists" }).Count -eq $script:SSOT_Queue.Count
+    $qOk = Test-VerifyDriftRows -Rows $driftRows -ResourceType "Batch Queue" -ExpectedCount $script:SSOT_Queue.Count
     [void]$sb.AppendLine("- Batch Queue ENABLED: $(if ($qOk) { 'PASS' } else { 'FAIL' })")
-    $ebOk = ($driftRows | Where-Object { $_.ResourceType -eq "EventBridge" -and $_.Actual -eq "exists" }).Count -eq $script:SSOT_EventBridgeRule.Count
+    $ebOk = Test-VerifyDriftRows -Rows $driftRows -ResourceType "EventBridge" -ExpectedCount $script:SSOT_EventBridgeRule.Count
     [void]$sb.AppendLine("- EventBridge ENABLED: $(if ($ebOk) { 'PASS' } else { 'FAIL' })")
-    $asgOk = ($driftRows | Where-Object { $_.ResourceType -eq "ASG" -and $_.Actual -eq "exists" }).Count -eq $script:SSOT_ASG.Count
+    $asgOk = Test-VerifyDriftRows -Rows $driftRows -ResourceType "ASG" -ExpectedCount $script:SSOT_ASG.Count
     [void]$sb.AppendLine("- ASG desired/min/max (incl. API ASG): $(if ($asgOk) { 'PASS' } else { 'FAIL' })")
-    $apiLtOk = ($driftRows | Where-Object { $_.ResourceType -eq "API LT" -and ($_.Action -eq "NoOp" -or $_.Actual -eq "exists") }).Count -ge 1
+    $apiLtRows = @($driftRows | Where-Object { $_.ResourceType -eq "API LT" })
+    $apiLtOk = (
+        $apiLtRows.Count -ge 1 -and
+        @($apiLtRows | Where-Object { $_.Action -ne "NoOp" }).Count -eq 0
+    )
     [void]$sb.AppendLine("- API ASG/LT drift: $(if ($apiLtOk) { 'PASS' } else { 'FAIL' })")
     $apiOk = ($ev -and $ev["apiHealth"] -eq "OK")
     [void]$sb.AppendLine("- API health 200: $(if ($apiOk) { 'PASS' } else { 'FAIL' })")
@@ -153,10 +169,36 @@ try {
     [void]$sb.AppendLine("## Result table")
     foreach ($r in $results) { [void]$sb.AppendLine("- $($r.Step): $($r.Result) $($r.Detail)") }
     Save-VerifyReport -MarkdownContent $sb.ToString()
-    Pop-Location | Out-Null
+    $reportSaved = $true
 }
 catch {
-    Write-Log "  Could not write verify.latest.md: $_"
+    $reportError = $_
+    Write-Log "FAIL: Could not write verify.latest.md: $_"
+}
+finally {
+    if ($locationPushed) { Pop-Location | Out-Null }
+}
+
+try {
+    if (-not (Get-Command Assert-VerifyClosure -ErrorAction SilentlyContinue)) {
+        . (Join-Path $ScriptRoot "core\verify_decision.ps1")
+    }
+    Assert-VerifyClosure `
+        -NoOp $noOp `
+        -BatchCompute $ceOk `
+        -BatchQueue $qOk `
+        -EventBridge $ebOk `
+        -Asg $asgOk `
+        -ApiLaunchTemplate $apiLtOk `
+        -ApiHealth $apiOk `
+        -SsmWorkersEnv $ssmOk `
+        -ReportSaved $reportSaved
+} catch {
+    Write-Log "=== VERIFY FAILED CLOSED ==="
+    Write-Log "Failure: $($_.Exception.Message)"
+    if ($reportError) { Write-Log "Report error: $reportError" }
+    Write-Log "Log: $LogFile"
+    exit 1
 }
 
 Write-Log "=== Verify v1 done ===`n"

@@ -62,3 +62,12 @@ def get_matchup_problem_model():
     from apps.domains.matchup.models import MatchupProblem
 
     return MatchupProblem
+
+
+def get_wrong_note_pdf_callback_dependencies():
+    from apps.domains.results.models import WrongNotePDF
+    from apps.domains.results.services.wrong_note_pdf_service import (
+        wrong_note_pdf_storage_key,
+    )
+
+    return WrongNotePDF, wrong_note_pdf_storage_key

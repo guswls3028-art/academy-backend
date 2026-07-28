@@ -13,9 +13,10 @@ from academy.adapters.db.django import repositories_ai as ai_repo
 logger = logging.getLogger(__name__)
 
 DEFAULT_TOOLS_QUEUE_NAME = "academy-v1-tools-queue"
+ENQUEUE_AWS_TIMEOUT_SECONDS = 3
 
 
-def publish_ai_job_sqs(job_model: AIJobModel) -> None:
+def publish_ai_job_sqs(job_model: AIJobModel) -> bool:
     """
     SQS 큐에 AI 작업 발행 (Tier별 라우팅)
     
@@ -26,32 +27,49 @@ def publish_ai_job_sqs(job_model: AIJobModel) -> None:
 
     if is_tool_worker_job_type(job_model.job_type):
         queue_name = getattr(settings, "TOOLS_SQS_QUEUE_NAME", DEFAULT_TOOLS_QUEUE_NAME)
-        queue = AISQSQueue(queue_name_override=queue_name, wake_ai_workers=False)
-        queue.enqueue(job_model)
+        queue = AISQSQueue(
+            queue_name_override=queue_name,
+            wake_ai_workers=False,
+            request_timeout_seconds=ENQUEUE_AWS_TIMEOUT_SECONDS,
+        )
+        enqueued = queue.enqueue(job_model)
+        if not enqueued:
+            logger.error(
+                "Tool job enqueue failed: job_id=%s job_type=%s queue=%s",
+                job_model.job_id,
+                job_model.job_type,
+                queue_name,
+            )
+            return False
+        from academy.adapters.compute.ec2_control import (
+            ensure_tools_worker_asg_min_capacity,
+        )
+
+        ensure_tools_worker_asg_min_capacity()
         logger.info(
             "Tool job enqueued: job_id=%s job_type=%s queue=%s",
             job_model.job_id,
             job_model.job_type,
             queue_name,
         )
-        return
+        return True
 
-    queue = AISQSQueue()
-    queue.enqueue(job_model)
+    queue = AISQSQueue(request_timeout_seconds=ENQUEUE_AWS_TIMEOUT_SECONDS)
+    return queue.enqueue(job_model)
 
 
 # ----------------------------------------------------------------------
 # Backward-compat export (SSOT)
 # gateway.py 등에서 publish_job 이름을 기대하는 경우가 많아 alias로 봉인한다.
 # ----------------------------------------------------------------------
-def publish_job(job: AIJob) -> None:
+def publish_job(job: AIJob) -> bool:
     """
     Public publisher entrypoint (SSOT).
     SQS 큐만 사용. Tier는 AIJobModel에서 가져옴.
     """
     job_model = ai_repo.get_job_model_by_job_id(str(job.id))
     if job_model:
-        publish_ai_job_sqs(job_model)
+        return publish_ai_job_sqs(job_model)
     else:
         logger.warning("AIJobModel not found for job %s, using basic tier", job.id)
         job_model = ai_repo.job_create(
@@ -61,4 +79,4 @@ def publish_job(job: AIJob) -> None:
             status="PENDING",
             tier="basic",
         )
-        publish_ai_job_sqs(job_model)
+        return publish_ai_job_sqs(job_model)

@@ -12,15 +12,19 @@ Student.pk와 User.pk 공간 충돌로 타 학생 데이터에 우연히 접근 
 """
 from __future__ import annotations
 
+from datetime import timedelta
 from unittest.mock import patch
 
+from django.core.management import call_command
 from django.test import TestCase
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models.tenant import Tenant
 from apps.core.models.tenant_membership import TenantMembership
 from apps.core.models.user import user_internal_username
+from apps.domains.ai.callbacks import dispatch_ai_result_to_domain
 from apps.domains.students.models import Student
 from apps.domains.lectures.models import Lecture
 from apps.domains.exams.models import Exam, ExamEnrollment
@@ -35,8 +39,19 @@ from apps.domains.results.views.wrong_note_pdf_status_view import WrongNotePDFSt
 from apps.domains.results.views.wrong_note_view import WrongNoteView
 from apps.domains.results.views.wrong_note_pdf_view import WrongNotePDFCreateView
 from apps.domains.results.views.student_exam_attempts_view import MyExamAttemptsView
+from apps.domains.results.services.wrong_note_pdf_worker import (
+    handle_wrong_note_pdf_generation_job,
+)
+from apps.domains.results.services.wrong_note_pdf_service import (
+    delete_wrong_note_pdf_object,
+)
+from apps.shared.contracts.ai_job import AIJob
+from apps.support.results.wrong_note_pdf_dependencies import (
+    get_wrong_note_pdf_ai_job_model,
+)
 
 User = get_user_model()
+AIJobModel = get_wrong_note_pdf_ai_job_model()
 
 
 def _make_tenant():
@@ -194,10 +209,10 @@ class TestC4WrongNotePkCollisionGuard(_Mixin, TestCase):
         self.assertEqual(resp.status_code, 403)
 
     @patch(
-        "apps.domains.results.views.wrong_note_pdf_view.generate_and_store_wrong_note_pdf",
-        return_value="tenants/1/results/wrong-notes/1.pdf",
+        "apps.domains.results.views.wrong_note_pdf_view.publish_wrong_note_pdf_ai_job",
+        return_value=True,
     )
-    def test_pdf_create_finishes_job_in_request(self, generate_pdf):
+    def test_pdf_create_enqueues_tools_job_without_generating_in_request(self, publish):
         view = WrongNotePDFCreateView.as_view()
         req = self.factory.post(
             "/api/v1/results/wrong-notes/pdf/",
@@ -212,12 +227,233 @@ class TestC4WrongNotePkCollisionGuard(_Mixin, TestCase):
 
         resp = view(req)
 
-        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertEqual(resp.status_code, 202, resp.data)
         job = WrongNotePDF.objects.get(id=resp.data["job_id"])
-        self.assertEqual(job.status, WrongNotePDF.Status.DONE)
+        self.assertEqual(job.status, WrongNotePDF.Status.PENDING)
         self.assertEqual(job.lecture_id, self.lecture.id)
-        self.assertEqual(job.file_path, "tenants/1/results/wrong-notes/1.pdf")
-        generate_pdf.assert_called_once()
+        ai_job = AIJobModel.objects.get(source_domain="results_wrong_note_pdf")
+        self.assertEqual(ai_job.job_type, "wrong_note_pdf_generation")
+        self.assertEqual(ai_job.source_id, str(job.id))
+        self.assertEqual(ai_job.payload, {"wrong_note_pdf_job_id": job.id})
+        publish.assert_called_once_with(ai_job)
+
+    @patch(
+        "apps.domains.results.views.wrong_note_pdf_view.publish_wrong_note_pdf_ai_job",
+        return_value=False,
+    )
+    def test_pdf_create_marks_both_jobs_failed_when_queue_rejects(self, _publish):
+        view = WrongNotePDFCreateView.as_view()
+        req = self.factory.post(
+            "/api/v1/results/wrong-notes/pdf/",
+            data={"enrollment_id": self.enroll_a.id},
+            format="json",
+        )
+        force_authenticate(req, user=self.staff_user)
+        req.tenant = self.tenant
+
+        resp = view(req)
+
+        self.assertEqual(resp.status_code, 503, resp.data)
+        self.assertEqual(
+            WrongNotePDF.objects.get().status,
+            WrongNotePDF.Status.FAILED,
+        )
+        self.assertEqual(AIJobModel.objects.get().status, "FAILED")
+
+    def _wrong_note_ai_contract(self, pdf_job: WrongNotePDF) -> AIJob:
+        ai_job = AIJobModel.objects.create(
+            job_id=f"wrong-note-pdf-{pdf_job.id}",
+            job_type="wrong_note_pdf_generation",
+            status="PENDING",
+            tenant_id=str(self.tenant.id),
+            source_domain="results_wrong_note_pdf",
+            source_id=str(pdf_job.id),
+            payload={"wrong_note_pdf_job_id": pdf_job.id},
+            tier="basic",
+        )
+        return AIJob(
+            id=ai_job.job_id,
+            type="wrong_note_pdf_generation",
+            tenant_id=ai_job.tenant_id,
+            source_domain=ai_job.source_domain,
+            source_id=ai_job.source_id,
+            payload=ai_job.payload,
+        )
+
+    @patch(
+        "apps.domains.results.services.wrong_note_pdf_worker.generate_and_store_wrong_note_pdf"
+    )
+    def test_tools_worker_result_is_finalized_by_idempotent_callback(self, generate):
+        pdf_job = WrongNotePDF.objects.create(
+            enrollment=self.enroll_a,
+            lecture=self.lecture,
+            status=WrongNotePDF.Status.PENDING,
+        )
+        expected_key = (
+            f"tenants/{self.tenant.id}/results/wrong-notes/{pdf_job.id}.pdf"
+        )
+        generate.return_value = expected_key
+        contract = self._wrong_note_ai_contract(pdf_job)
+
+        result = handle_wrong_note_pdf_generation_job(contract)
+        pdf_job.refresh_from_db()
+        self.assertEqual(pdf_job.status, WrongNotePDF.Status.RUNNING)
+        self.assertEqual(result.status, "DONE")
+
+        handled = dispatch_ai_result_to_domain(
+            job_id=contract.id,
+            status=result.status,
+            result_payload=result.result,
+            error=result.error,
+            source_domain=contract.source_domain,
+            source_id=contract.source_id,
+        )
+
+        self.assertTrue(handled)
+        pdf_job.refresh_from_db()
+        self.assertEqual(pdf_job.status, WrongNotePDF.Status.DONE)
+        self.assertEqual(pdf_job.file_path, expected_key)
+
+    @patch(
+        "apps.domains.results.services.wrong_note_pdf_worker.generate_and_store_wrong_note_pdf"
+    )
+    def test_tools_worker_scopes_pdf_lookup_by_contract_tenant(self, generate):
+        pdf_job = WrongNotePDF.objects.create(
+            enrollment=self.enroll_a,
+            lecture=self.lecture,
+            status=WrongNotePDF.Status.PENDING,
+        )
+        contract = AIJob(
+            id="wrong-tenant-contract",
+            type="wrong_note_pdf_generation",
+            tenant_id=str(self.tenant.id + 999),
+            source_domain="results_wrong_note_pdf",
+            source_id=str(pdf_job.id),
+            payload={"wrong_note_pdf_job_id": pdf_job.id},
+        )
+
+        result = handle_wrong_note_pdf_generation_job(contract)
+
+        self.assertEqual(result.status, "FAILED")
+        pdf_job.refresh_from_db()
+        self.assertEqual(pdf_job.status, WrongNotePDF.Status.PENDING)
+        generate.assert_not_called()
+
+    @patch("apps.domains.results.services.wrong_note_pdf_service.time.sleep")
+    @patch(
+        "apps.domains.results.services.wrong_note_pdf_service.delete_object_r2_storage",
+        side_effect=[TimeoutError("transient"), None],
+    )
+    def test_pdf_object_cleanup_retries_transient_failure(self, delete, sleep):
+        self.assertTrue(delete_wrong_note_pdf_object("tracked.pdf"))
+        self.assertEqual(delete.call_count, 2)
+        sleep.assert_called_once_with(0.25)
+
+    @patch("apps.domains.results.services.wrong_note_pdf_service.time.sleep")
+    @patch(
+        "apps.domains.results.services.wrong_note_pdf_service.delete_object_r2_storage",
+        side_effect=TimeoutError("persistent"),
+    )
+    def test_pdf_object_cleanup_tracks_key_after_bounded_retries(self, delete, sleep):
+        self.assertFalse(delete_wrong_note_pdf_object("tracked.pdf"))
+        self.assertEqual(delete.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+
+    @patch(
+        "apps.domains.results.management.commands.cleanup_failed_wrong_note_pdfs."
+        "delete_wrong_note_pdf_object",
+        return_value=True,
+    )
+    def test_failed_pdf_reconciler_deletes_and_clears_tracked_key(self, delete):
+        job = WrongNotePDF.objects.create(
+            enrollment=self.enroll_a,
+            lecture=self.lecture,
+            status=WrongNotePDF.Status.FAILED,
+            file_path="tenants/1/results/wrong-notes/tracked.pdf",
+        )
+        WrongNotePDF.objects.filter(id=job.id).update(
+            updated_at=timezone.now() - timedelta(minutes=10),
+        )
+
+        call_command(
+            "cleanup_failed_wrong_note_pdfs",
+            limit=10,
+            older_than_minutes=5,
+            silent=True,
+        )
+
+        job.refresh_from_db()
+        self.assertEqual(job.file_path, "")
+        delete.assert_called_once_with(
+            "tenants/1/results/wrong-notes/tracked.pdf",
+        )
+
+    @patch(
+        "apps.domains.results.management.commands.cleanup_failed_wrong_note_pdfs."
+        "delete_wrong_note_pdf_object",
+        return_value=False,
+    )
+    def test_failed_pdf_reconciler_retains_key_when_delete_is_unconfirmed(self, _delete):
+        job = WrongNotePDF.objects.create(
+            enrollment=self.enroll_a,
+            lecture=self.lecture,
+            status=WrongNotePDF.Status.FAILED,
+            file_path="tenants/1/results/wrong-notes/unconfirmed.pdf",
+        )
+        WrongNotePDF.objects.filter(id=job.id).update(
+            updated_at=timezone.now() - timedelta(minutes=10),
+        )
+
+        call_command(
+            "cleanup_failed_wrong_note_pdfs",
+            limit=10,
+            older_than_minutes=5,
+            silent=True,
+        )
+
+        job.refresh_from_db()
+        self.assertEqual(
+            job.file_path,
+            "tenants/1/results/wrong-notes/unconfirmed.pdf",
+        )
+
+    @patch(
+        "apps.domains.results.services.wrong_note_pdf_worker.delete_wrong_note_pdf_object",
+        return_value=False,
+    )
+    @patch(
+        "apps.domains.results.services.wrong_note_pdf_worker.generate_and_store_wrong_note_pdf",
+        side_effect=TimeoutError("SDK response lost"),
+    )
+    def test_upload_response_loss_tracks_unconfirmed_object_key(
+        self,
+        _generate,
+        _delete,
+    ):
+        pdf_job = WrongNotePDF.objects.create(
+            enrollment=self.enroll_a,
+            lecture=self.lecture,
+            status=WrongNotePDF.Status.PENDING,
+        )
+        contract = self._wrong_note_ai_contract(pdf_job)
+
+        result = handle_wrong_note_pdf_generation_job(contract)
+        handled = dispatch_ai_result_to_domain(
+            job_id=contract.id,
+            status=result.status,
+            result_payload=result.result,
+            error=result.error,
+            source_domain=contract.source_domain,
+            source_id=contract.source_id,
+        )
+
+        self.assertTrue(handled)
+        pdf_job.refresh_from_db()
+        self.assertEqual(pdf_job.status, WrongNotePDF.Status.FAILED)
+        self.assertEqual(
+            pdf_job.file_path,
+            f"tenants/{self.tenant.id}/results/wrong-notes/{pdf_job.id}.pdf",
+        )
 
     @patch(
         "apps.domains.results.views.wrong_note_pdf_status_view.generate_presigned_get_url_storage",
@@ -326,9 +562,9 @@ class TestC4WrongNotePkCollisionGuard(_Mixin, TestCase):
         self.assertFalse(WrongNotePDF.objects.exists())
 
     @patch(
-        "apps.domains.results.views.wrong_note_pdf_view.generate_and_store_wrong_note_pdf"
+        "apps.domains.results.views.wrong_note_pdf_view.publish_wrong_note_pdf_ai_job"
     )
-    def test_pdf_create_allows_only_one_running_job_per_tenant(self, generate_pdf):
+    def test_pdf_create_allows_only_one_running_job_per_tenant(self, publish):
         WrongNotePDF.objects.create(
             enrollment_id=self.enroll_b.id,
             lecture_id=self.lecture.id,
@@ -347,7 +583,7 @@ class TestC4WrongNotePkCollisionGuard(_Mixin, TestCase):
 
         self.assertEqual(resp.status_code, 409)
         self.assertEqual(WrongNotePDF.objects.count(), 1)
-        generate_pdf.assert_not_called()
+        publish.assert_not_called()
 
     def test_pdf_create_staff_without_tenant_membership_rejected(self):
         """전역 is_staff라도 request.tenant 멤버십 없으면 PDF job 생성 불가."""

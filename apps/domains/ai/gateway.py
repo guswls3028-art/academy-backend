@@ -24,7 +24,8 @@ def _is_blank(value: Optional[str]) -> bool:
 def _publish_after_commit(job: AIJob, job_model) -> None:
     """DB commit 후 SQS에 job을 publish. 실패 시 job을 FAILED로 마킹."""
     try:
-        publish_job(job)
+        if not publish_job(job):
+            raise RuntimeError("SQS publisher rejected the job")
     except Exception as e:
         logger.exception("SQS publish failed after commit: job_id=%s error=%s", job.id, e)
         try:

@@ -18,18 +18,15 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from apps.core.models import Tenant
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.results.models.wrong_note_pdf import WrongNotePDF
-from apps.domains.results.services.wrong_note_pdf_service import (
-    WrongNotePDFEmptyError,
-    WrongNotePDFLimitError,
-    delete_wrong_note_pdf_object,
-    generate_and_store_wrong_note_pdf,
-)
 from apps.domains.results.throttles import WrongNotePDFCreateThrottle
 from apps.support.results.wrong_note_pdf_dependencies import (
     exam_exists_for_tenant,
     exam_is_attached_to_lecture,
+    create_wrong_note_pdf_ai_job,
     get_wrong_note_pdf_enrollment,
     lecture_exists_for_tenant,
+    mark_wrong_note_pdf_ai_job_failed,
+    publish_wrong_note_pdf_ai_job,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,8 +36,8 @@ class WrongNotePDFCreateView(APIView):
     """
     오답노트 PDF 생성 요청.
 
-    과거에는 PENDING job만 만들고 처리 주체가 없어 완료되지 않았다.
-    현재는 요청 안에서 PDF를 생성해 R2에 저장하고 DONE/FAILED를 확정한다.
+    API 요청에서는 job을 내구성 있게 기록하고 tools worker 큐에 발행한다.
+    실제 PDF 생성과 R2 저장은 ALB 요청 제한 밖에서 비동기로 처리한다.
 
     응답:
     {
@@ -149,73 +146,54 @@ class WrongNotePDFCreateView(APIView):
                 from_session_order=from_order,
                 status=WrongNotePDF.Status.PENDING,
             )
+            ai_job = create_wrong_note_pdf_ai_job(
+                pdf_job_id=int(job.id),
+                tenant_id=int(request.tenant.id),
+            )
 
         status_path = reverse("wrong-note-pdf-status", kwargs={"job_id": job.id})
         status_url = request.build_absolute_uri(status_path)
 
-        job.status = WrongNotePDF.Status.RUNNING
-        job.save(update_fields=["status", "updated_at"])
-        file_key = ""
         try:
-            job.file_path = generate_and_store_wrong_note_pdf(
-                job=job,
-                enrollment=enrollment,
-                tenant=request.tenant,
-            )
-            file_key = str(job.file_path)
-            job.status = WrongNotePDF.Status.DONE
-            job.error_message = ""
-            job.save(
-                update_fields=["status", "file_path", "error_message", "updated_at"]
-            )
-        except (WrongNotePDFEmptyError, WrongNotePDFLimitError) as exc:
-            job.status = WrongNotePDF.Status.FAILED
-            job.error_message = str(exc)
-            job.save(update_fields=["status", "error_message", "updated_at"])
-            return Response(
-                {
-                    "job_id": int(job.id),
-                    "status": str(job.status),
-                    "status_url": status_url,
-                    "detail": str(exc),
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            enqueued = publish_wrong_note_pdf_ai_job(ai_job)
         except Exception:
-            cleanup_succeeded = True
-            if file_key:
-                cleanup_succeeded = delete_wrong_note_pdf_object(file_key)
             logger.exception(
-                "wrong-note PDF generation failed",
+                "wrong-note PDF queue publish failed",
                 extra={
                     "job_id": int(job.id),
                     "tenant_id": int(request.tenant.id),
                     "enrollment_id": enrollment_id_i,
                 },
             )
-            job.status = WrongNotePDF.Status.FAILED
-            job.error_message = "PDF를 만들지 못했습니다. 잠시 후 다시 시도해 주세요."
-            job.file_path = "" if cleanup_succeeded else file_key
-            job.save(
-                update_fields=[
-                    "status",
-                    "file_path",
-                    "error_message",
-                    "updated_at",
-                ]
-            )
+            enqueued = False
+
+        if not enqueued:
+            error_message = "PDF 생성 작업을 등록하지 못했습니다. 잠시 후 다시 시도해 주세요."
+            with transaction.atomic():
+                WrongNotePDF.objects.filter(id=job.id).update(
+                    status=WrongNotePDF.Status.FAILED,
+                    error_message=error_message,
+                    updated_at=timezone.now(),
+                )
+                mark_wrong_note_pdf_ai_job_failed(
+                    ai_job_id=int(ai_job.id),
+                    error_message=error_message,
+                )
             return Response(
                 {
                     "job_id": int(job.id),
-                    "status": str(job.status),
+                    "status": WrongNotePDF.Status.FAILED,
                     "status_url": status_url,
-                    "detail": job.error_message,
+                    "detail": error_message,
                 },
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
-        return Response({
-            "job_id": int(job.id),
-            "status": str(job.status),
-            "status_url": status_url,
-        }, status=status.HTTP_201_CREATED)
+        return Response(
+            {
+                "job_id": int(job.id),
+                "status": WrongNotePDF.Status.PENDING,
+                "status_url": status_url,
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )

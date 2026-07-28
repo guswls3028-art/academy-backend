@@ -10,7 +10,9 @@ import subprocess
 import sys
 import time
 
-LOCK_KEY = "__deployment_control__"
+LOCK_KEY = "__deployment_control_v2__"
+LEGACY_LOCK_KEY = "__deployment_control__"
+LEGACY_SEAL_TTL = 4_102_444_800  # 2100-01-01 UTC
 DEFAULT_TABLE = "academy-v1-video-job-lock"
 DEFAULT_REGION = "ap-northeast-2"
 
@@ -92,9 +94,47 @@ def renew(table: str, owner: str, ttl_seconds: int) -> None:
         raise
 
 
+def seal_legacy(table: str, owner: str) -> None:
+    """Permanently fence workflows that still use the retired v1 lock key."""
+    now = int(time.time())
+    item = {
+        "videoId": {"S": LEGACY_LOCK_KEY},
+        "owner": {"S": f"retired:{owner}"},
+        "ttl": {"N": str(LEGACY_SEAL_TTL)},
+        "acquiredAt": {"N": str(now)},
+        "retiredAt": {"N": str(now)},
+    }
+    try:
+        _aws(
+            "put-item",
+            "--table-name",
+            table,
+            "--item",
+            json.dumps(item, separators=(",", ":")),
+            "--condition-expression",
+            "attribute_not_exists(videoId) OR #ttl < :now OR begins_with(#owner, :retired)",
+            "--expression-attribute-names",
+            json.dumps({"#ttl": "ttl", "#owner": "owner"}),
+            "--expression-attribute-values",
+            json.dumps({
+                ":now": {"N": str(now)},
+                ":retired": {"S": "retired:"},
+            }),
+        )
+    except RuntimeError as exc:
+        if "ConditionalCheckFailedException" in str(exc):
+            raise RuntimeError(
+                "legacy deployment lock is active; wait for its owner before sealing"
+            ) from exc
+        raise
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("acquire", "assert-owned", "renew", "release"))
+    parser.add_argument(
+        "action",
+        choices=("acquire", "assert-owned", "renew", "release", "seal-legacy"),
+    )
     parser.add_argument("--owner", required=True)
     parser.add_argument("--table-name", default=os.environ.get("ACADEMY_DEPLOY_LOCK_TABLE", DEFAULT_TABLE))
     parser.add_argument("--ttl-seconds", type=int, default=10_800)
@@ -115,8 +155,10 @@ def main() -> int:
             assert_owned(args.table_name, args.owner)
         elif args.action == "renew":
             renew(args.table_name, args.owner, args.ttl_seconds)
-        else:
+        elif args.action == "release":
             release(args.table_name, args.owner)
+        else:
+            seal_legacy(args.table_name, args.owner)
     except RuntimeError as exc:
         print(f"[deployment-lock] {exc}", file=sys.stderr)
         return 2

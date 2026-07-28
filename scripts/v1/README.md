@@ -65,7 +65,7 @@ pwsh scripts/v1/disable-legacy-deploy-crons.ps1 -Action Off -AwsProfile default
 - **ASG pin + 보상**: `pin-asg-image.ps1`은 `$Default`·`$Latest`·숫자 version을 모두 해석한다. 태그 기반 legacy template은 현재 인스턴스의 실제 `RepoDigest`로 먼저 불변 baseline version을 만들고 ASG를 `$Latest`로 전환한 뒤 candidate digest를 적용한다. 이전 LT/default/실제 runtime digest를 state에 기록하며, pin·refresh·runtime 검증 실패 시 이전 version을 빈 override로 정확히 복제한 새 보상 version을 만들고 refresh/runtime을 다시 검증한다. 비용 baseline 복귀나 autoscaling 직후에는 healthy InService 수와 현재 desired가 수렴할 때까지 기다려 scale-in race를 실패로 오판하지 않으며, desired=0 ASG도 candidate LT digest를 직접 검증한다.
 - **공통 운영 mutation 락**: 정식 CI, 주간 ECR/Batch cleanup, 수동 deploy/rollback은 SSOT DynamoDB table `academy-v1-video-job-lock`의 한 조건부 lock key를 공유한다. acquire/renew/release는 owner와 TTL 조건을 검사하므로 동시 실행·만료 후 잘못된 release를 허용하지 않는다.
 - **런타임 freshness 증거**: `deploy-api-and-verify-workers.ps1`은 성공 release manifest와 API/Messaging/AI/Tools LT 및 실제 InService 컨테이너 `RepoDigests`, 모든 Video Batch active job definition을 비교한다. refresh는 terminal `Successful`까지 기다리며 실패·취소·timeout을 실패 처리한다.
-- **selective-build 안전 경계**: `.dockerignore`, `docs/ssot/params.yaml`, `academy/`, `libs/`, `manage.py`, 공통 requirements, `apps/{shared,support,core,infrastructure}/`, `apps/api/common/`, worker settings 및 Django startup model/app/signal 변경은 모든 이미지를 빌드한다. Video가 import하는 messaging selector/service/scheduler, Messaging이 import하는 video Redis status cache, Tools가 import하는 AI callbacks/job_types도 각각 consumer image를 재빌드한다.
+- **selective-build 안전 경계**: `.dockerignore`, `docs/ssot/params.yaml`, `academy/`, `libs/`, `manage.py`, 공통 requirements, `apps/{shared,support,core,infrastructure}/`, `apps/api/common/`, worker settings 및 Django startup model/app/signal 변경은 모든 이미지를 빌드한다. Video가 import하는 messaging selector/service/scheduler, Messaging이 import하는 video Redis status cache, Tools가 import하는 AI callbacks/job_types와 오답노트 PDF 서비스·정답 포맷터·한글 폰트도 각각 consumer image를 재빌드한다.
 
 ### 안전 롤백
 
@@ -97,6 +97,12 @@ pwsh scripts/v1/deploy.ps1 -AwsProfile default
 ```
 
 IAM bootstrap 없이 workflow가 먼저 실행되면 image-pin 단계가 실패하고 instance refresh는 시작되지 않는다.
+
+API/worker의 ASG wake 대상처럼 런타임 EC2 역할 inline policy가 바뀌는
+릴리스도 main push 전에 위 수동 배포를 먼저 실행한다. 수동 배포가
+`academy-api-ai-worker-scale`과 GitHub Actions 역할을 수렴·readback한다.
+CI에는 런타임 역할 정책 쓰기 권한을 주지 않으며, 정확한
+`iam:GetRolePolicy` readback이 SSOT와 다르면 이미지 빌드 전에 실패한다.
 
 신규 환경에서는 공통 production-mutation lock table이 아직 없을 수 있다. `deploy.ps1`과 `converge-release-prerequisites.ps1`은 다른 mutation보다 먼저 이 테이블 하나만 조건부/idempotent 생성하고 key schema(`videoId` HASH string), PAY_PER_REQUEST, TTL을 검증한 뒤 락을 획득한다. 그 외 리소스 생성·갱신은 락 이후에만 수행한다. 기본/strict 배포는 사후 ASG·ALB·Batch 검증 실패를 nonzero로 종료하며, 경고 종료가 필요한 진단 실행은 명시적 `-RelaxedValidation`에서만 허용한다.
 
