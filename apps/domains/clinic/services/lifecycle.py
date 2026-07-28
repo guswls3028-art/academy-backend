@@ -13,7 +13,7 @@ from apps.support.clinic.session_dependencies import (
     active_enrolled_lecture_ids_for_student,
     clinic_enrollment_for_tenant,
     clinic_reason_for_unresolved_auto_links,
-    latest_active_enrollment_id_for_student,
+    preferred_active_enrollment_id_for_student_session,
 )
 
 
@@ -416,8 +416,19 @@ def _validate_student_session_eligibility(*, tenant, student, session) -> None:
             raise PermissionDenied("해당 클리닉은 특정 강의 수강생 대상입니다.")
 
 
-def _latest_active_enrollment_id(*, tenant, student) -> int | None:
-    return latest_active_enrollment_id_for_student(tenant, student)
+def _preferred_active_enrollment_id(
+    *,
+    tenant,
+    student,
+    session=None,
+    preferred_enrollment_id: int | None = None,
+) -> int | None:
+    return preferred_active_enrollment_id_for_student_session(
+        tenant,
+        student,
+        session,
+        preferred_enrollment_id=preferred_enrollment_id,
+    )
 
 
 def _clinic_reason_for_enrollment(*, tenant, enrollment_id: int | None) -> str | None:
@@ -551,7 +562,11 @@ def create_participant(
     participant_role = validated_data.get("participant_role") or participant_role
 
     if not enrollment_id and student:
-        enrollment_id = _latest_active_enrollment_id(tenant=tenant, student=student)
+        enrollment_id = _preferred_active_enrollment_id(
+            tenant=tenant,
+            student=student,
+            session=session,
+        )
 
     clinic_reason = validated_data.get("clinic_reason") or _clinic_reason_for_enrollment(
         tenant=tenant,
@@ -645,9 +660,12 @@ def change_participant_booking(
     if getattr(tenant, "clinic_auto_approve_booking", False):
         new_status = SessionParticipant.Status.BOOKED
 
-    enrollment_id = old_booking.enrollment_id
-    if not enrollment_id:
-        enrollment_id = _latest_active_enrollment_id(tenant=tenant, student=request_student)
+    enrollment_id = _preferred_active_enrollment_id(
+        tenant=tenant,
+        student=request_student,
+        session=new_session,
+        preferred_enrollment_id=old_booking.enrollment_id,
+    )
 
     try:
         new_booking = SessionParticipant.objects.create(

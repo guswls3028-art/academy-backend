@@ -108,7 +108,15 @@ class ClinicSessionSerializer(serializers.ModelSerializer):
         lectures = obj.target_lectures.all()
         if not lectures:
             return []
-        return [{"id": lec.id, "title": lec.title} for lec in lectures]
+        return [
+            {
+                "id": lec.id,
+                "title": lec.title,
+                "color": getattr(lec, "color", None),
+                "chip_label": getattr(lec, "chip_label", None),
+            }
+            for lec in lectures
+        ]
 
 
 class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
@@ -116,6 +124,7 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
     session_date = serializers.SerializerMethodField()  # ✅ session이 없을 수 있으므로 SerializerMethodField 사용
     session_start_time = serializers.SerializerMethodField()
     session_location = serializers.SerializerMethodField()
+    session_title = serializers.SerializerMethodField()
 
     # ✅ 파생 노출
     session_duration_minutes = serializers.SerializerMethodField()
@@ -164,6 +173,10 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
     def get_session_location(self, obj):
         """session이 있으면 session.location, 없으면 None"""
         return obj.session.location if obj.session else None
+
+    def get_session_title(self, obj):
+        """session이 있으면 학생/관리자 일정에 표시할 제목"""
+        return obj.session.title if obj.session else ""
     
     def get_session_duration_minutes(self, obj):
         """session이 있으면 duration_minutes, 없으면 None"""

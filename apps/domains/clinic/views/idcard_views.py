@@ -13,10 +13,10 @@ from rest_framework.permissions import IsAuthenticated
 from apps.core.permissions import TenantResolved
 from apps.domains.clinic.color_utils import get_effective_clinic_colors
 from apps.support.clinic.idcard_dependencies import (
-    latest_active_enrollment_for_student,
-    ordered_sessions_for_enrollment,
+    active_enrollments_for_student,
+    ordered_sessions_by_enrollment,
     student_for_idcard_user,
-    unresolved_auto_clinic_session_ids,
+    unresolved_auto_clinic_links,
 )
 
 
@@ -35,9 +35,12 @@ def _response_payload(
     profile_photo_url: str | None = None,
     colors: list[str],
     histories: list[dict] | None = None,
+    current_targets: list[dict] | None = None,
+    lectures: list[dict] | None = None,
 ):
     now = timezone.now()
     histories = histories or []
+    current_targets = current_targets or []
     return {
         "student_name": student_name,
         "profile_photo_url": profile_photo_url,
@@ -45,7 +48,13 @@ def _response_payload(
         "server_date": now.date().isoformat(),
         "server_datetime": now.isoformat(),
         "histories": histories,
-        "current_result": "FAIL" if any(h["clinic_required"] for h in histories) else "SUCCESS",
+        "current_targets": current_targets,
+        "lectures": lectures or [],
+        "current_result": (
+            "FAIL"
+            if current_targets or any(h["clinic_required"] for h in histories)
+            else "SUCCESS"
+        ),
     }
 
 
@@ -68,10 +77,14 @@ class StudentClinicIdcardView(APIView):
             return Response(_response_payload(colors=colors))
 
         # tenant is guaranteed by TenantResolved permission
-        # enrollment 선택 SSOT: 가장 최근 활성 등록 (booking/ops console과 동일 규칙)
-        enrollment = latest_active_enrollment_for_student(tenant=tenant, student=student)
+        # 활성 강의 전체를 기준으로 집계한다. 한 학생이 여러 강의를 수강해도
+        # 다른 강의의 미해결 ClinicLink가 패스카드에서 누락되면 안 된다.
+        enrollments = active_enrollments_for_student(
+            tenant=tenant,
+            student=student,
+        )
 
-        if not enrollment:
+        if not enrollments:
             return Response(
                 _response_payload(
                     student_name=getattr(student, "name", "") or "",
@@ -80,21 +93,64 @@ class StudentClinicIdcardView(APIView):
                 )
             )
 
-        # section_mode 대응: 학생이 배정된 반의 세션만 조회
-        sessions = ordered_sessions_for_enrollment(enrollment)
-        enrollment_id = enrollment.id
-        clinic_links = unresolved_auto_clinic_session_ids(
+        enrollment_ids = [int(enrollment.id) for enrollment in enrollments]
+        clinic_links = unresolved_auto_clinic_links(
             tenant=tenant,
-            enrollment_id=enrollment_id,
+            enrollment_ids=enrollment_ids,
+        )
+        unresolved_pairs = {
+            (int(link.enrollment_id), int(link.session_id))
+            for link in clinic_links
+        }
+        sessions_by_enrollment = ordered_sessions_by_enrollment(
+            tenant=tenant,
+            enrollments=enrollments,
         )
 
         histories = []
-        for sess in sessions:
-            clinic_required = sess.id in clinic_links
-            histories.append({
+        lectures = []
+        for enrollment in enrollments:
+            lecture = enrollment.lecture
+            lectures.append({
+                "id": int(lecture.id),
+                "title": lecture.title,
+                "color": getattr(lecture, "color", None),
+                "chip_label": getattr(lecture, "chip_label", None),
+            })
+            # section_mode 대응: 학생이 배정된 반의 세션만 조회
+            for sess in sessions_by_enrollment.get(int(enrollment.id), []):
+                clinic_required = (
+                    int(enrollment.id),
+                    int(sess.id),
+                ) in unresolved_pairs
+                histories.append({
+                    "enrollment_id": int(enrollment.id),
+                    "lecture_id": int(lecture.id),
+                    "lecture_title": lecture.title,
+                    "lecture_color": getattr(lecture, "color", None),
+                    "lecture_chip_label": getattr(lecture, "chip_label", None),
+                    "session_id": int(sess.id),
+                    "session_order": sess.order,
+                    "session_title": sess.title or "",
+                    "passed": not clinic_required,
+                    "clinic_required": clinic_required,
+                })
+
+        current_targets = []
+        for link in clinic_links:
+            sess = link.session
+            lecture = sess.lecture
+            current_targets.append({
+                "clinic_link_id": int(link.id),
+                "enrollment_id": int(link.enrollment_id),
+                "lecture_id": int(lecture.id),
+                "lecture_title": lecture.title,
+                "lecture_color": getattr(lecture, "color", None),
+                "lecture_chip_label": getattr(lecture, "chip_label", None),
+                "session_id": int(sess.id),
                 "session_order": sess.order,
-                "passed": not clinic_required,
-                "clinic_required": clinic_required,
+                "session_title": sess.title or "",
+                "source_type": getattr(link, "source_type", None),
             })
 
         # 프로필 사진 URL (신원 확인용) - 기존 방식 사용
@@ -104,5 +160,7 @@ class StudentClinicIdcardView(APIView):
                 profile_photo_url=_profile_photo_url(request, student),
                 colors=colors,
                 histories=histories,
+                current_targets=current_targets,
+                lectures=lectures,
             )
         )

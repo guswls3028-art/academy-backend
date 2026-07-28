@@ -60,16 +60,67 @@ def active_enrolled_lecture_ids_for_student(tenant, student) -> set[int]:
     )
 
 
-def latest_active_enrollment_id_for_student(tenant, student) -> int | None:
-    from apps.domains.enrollment.selectors import enrollments_for_tenant
+def preferred_active_enrollment_id_for_student_session(
+    tenant,
+    student,
+    session=None,
+    *,
+    preferred_enrollment_id: int | None = None,
+) -> int | None:
+    """Choose the active enrollment that owns this clinic booking.
 
-    enrollment = (
-        enrollments_for_tenant(tenant)
-        .filter(student=student, status="ACTIVE")
-        .order_by("-enrolled_at", "-id")
+    A student can have multiple active enrollments. Prefer an unresolved clinic
+    target and respect any lecture restriction on the destination session so a
+    booking never points at the student's latest unrelated course.
+    """
+    from apps.domains.enrollment.selectors import enrollments_for_tenant
+    from apps.domains.progress.models import ClinicLink
+
+    enrollments = enrollments_for_tenant(tenant).filter(
+        student=student,
+        status="ACTIVE",
+    )
+    if session is not None:
+        target_lecture_ids = list(
+            session.target_lectures.values_list("id", flat=True)
+        )
+        if target_lecture_ids:
+            enrollments = enrollments.filter(lecture_id__in=target_lecture_ids)
+
+    candidate_ids = list(enrollments.values_list("id", flat=True))
+    if not candidate_ids:
+        return None
+
+    preferred_id = (
+        int(preferred_enrollment_id)
+        if preferred_enrollment_id in candidate_ids
+        else None
+    )
+    unresolved = ClinicLink.objects.filter(
+        tenant=tenant,
+        enrollment_id__in=candidate_ids,
+        is_auto=True,
+        resolved_at__isnull=True,
+    )
+    if preferred_id and unresolved.filter(enrollment_id=preferred_id).exists():
+        return preferred_id
+
+    unresolved_id = (
+        unresolved.order_by("-created_at", "-id")
+        .values_list("enrollment_id", flat=True)
         .first()
     )
-    return enrollment.id if enrollment else None
+    if unresolved_id:
+        return int(unresolved_id)
+    if preferred_id:
+        return preferred_id
+
+    enrollment_id = (
+        enrollments.order_by("-enrolled_at", "-id")
+        .values_list("id", flat=True)
+        .first()
+    )
+    return int(enrollment_id) if enrollment_id else None
 
 
 def active_students_for_clinic_tenant(tenant):

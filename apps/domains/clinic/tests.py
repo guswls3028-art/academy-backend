@@ -1480,6 +1480,89 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
         self.assertEqual(participant.student_id, self.student.id)
         self.assertEqual(participant.status, SessionParticipant.Status.PENDING)
 
+    def test_student_booking_uses_target_enrollment_matching_session_lecture(self):
+        target_enrollment = self.data["enrollments"][0]
+        self.make_clinic_link(
+            target_enrollment,
+            self.data["lec_session"],
+            tenant=self.tenant,
+            source_type="exam",
+        )
+        unrelated_lecture = self.make_lecture(
+            self.tenant,
+            title="최근수강",
+            name="최근수강반",
+            subject="science",
+        )
+        unrelated_enrollment = self.make_enrollment(
+            self.tenant,
+            self.student,
+            unrelated_lecture,
+        )
+        self.assertGreater(unrelated_enrollment.id, target_enrollment.id)
+        self.data["clinic_session"].target_lectures.set([self.data["lecture"]])
+
+        resp = self.client.post(
+            "/api/v1/clinic/participants/",
+            {"session": self.data["clinic_session"].id},
+            format="json",
+            **self._headers(self.tenant),
+        )
+
+        self.assertEqual(resp.status_code, 201, resp.data)
+        participant = SessionParticipant.objects.get(id=resp.data["id"])
+        self.assertEqual(participant.enrollment_id, target_enrollment.id)
+        self.assertEqual(participant.clinic_reason, "exam")
+
+    def test_idcard_aggregates_targets_from_all_active_enrollments(self):
+        target_enrollment = self.data["enrollments"][0]
+        link = self.make_clinic_link(
+            target_enrollment,
+            self.data["lec_session"],
+            tenant=self.tenant,
+            source_type="exam",
+        )
+        unrelated_lecture = self.make_lecture(
+            self.tenant,
+            title="다른활성강의",
+            name="다른활성반",
+            subject="science",
+        )
+        unrelated_session = self.make_lecture_session(
+            unrelated_lecture,
+            order=1,
+            title="다른 강의 1차시",
+        )
+        self.make_enrollment(
+            self.tenant,
+            self.student,
+            unrelated_lecture,
+        )
+
+        resp = self.client.get(
+            "/api/v1/clinic/idcard/",
+            **self._headers(self.tenant),
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data["current_result"], "FAIL")
+        self.assertEqual(len(resp.data["lectures"]), 2)
+        self.assertTrue(
+            any(
+                target["clinic_link_id"] == link.id
+                and target["enrollment_id"] == target_enrollment.id
+                and target["lecture_id"] == self.data["lecture"].id
+                for target in resp.data["current_targets"]
+            )
+        )
+        self.assertTrue(
+            any(
+                history["session_id"] == unrelated_session.id
+                and history["clinic_required"] is False
+                for history in resp.data["histories"]
+            )
+        )
+
     def test_deleted_student_cannot_create_own_booking(self):
         self.student.deleted_at = timezone.now()
         self.student.save(update_fields=["deleted_at", "updated_at"])
