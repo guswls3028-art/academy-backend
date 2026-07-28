@@ -395,7 +395,10 @@ class ProblemStudioTeacherVoiceTests(TestCase):
         _quota,
         get_client,
     ):
-        config_load.return_value = SimpleNamespace(PROBLEM_GEN_MODEL="test-model")
+        config_load.return_value = SimpleNamespace(
+            OPENAI_API_KEY="test-key",
+            PROBLEM_GEN_MODEL="test-model",
+        )
         get_client.return_value.chat.completions.create.return_value = SimpleNamespace(
             choices=[
                 SimpleNamespace(
@@ -441,6 +444,58 @@ class ProblemStudioTeacherVoiceTests(TestCase):
         prompt = get_client.return_value.chat.completions.create.call_args.kwargs["messages"][1]["content"]
         self.assertIn("핵심부터 확인", prompt)
         self.assertIn("내용 참고 자료", prompt)
+
+    @patch("boto3.client")
+    @patch("apps.domains.ai.services.quota.consume_ai_quota")
+    @patch("academy.adapters.ai.problem.generator.AIConfig.load")
+    def test_generator_uses_bedrock_when_openai_key_is_absent(
+        self,
+        config_load,
+        _quota,
+        boto_client,
+    ):
+        config_load.return_value = SimpleNamespace(
+            OPENAI_API_KEY=None,
+            PROBLEM_GEN_MODEL="unused-openai-model",
+            PROBLEM_GEN_BEDROCK_MODEL="global.amazon.nova-2-lite-v1:0",
+            BEDROCK_REGION="ap-northeast-2",
+        )
+        boto_client.return_value.converse.return_value = {
+            "output": {
+                "message": {
+                    "content": [{
+                        "text": json.dumps(
+                            {
+                                "questions": [{
+                                    "prompt": "Bedrock 생성 문제",
+                                    "choices": ["① A", "② B"],
+                                    "answer": "①",
+                                    "explanation": "근거를 확인하면 ①입니다.",
+                                    "source_evidence": [1],
+                                    "answer_check": "근거 확인",
+                                    "confidence": "high",
+                                }],
+                            },
+                            ensure_ascii=False,
+                        ),
+                    }],
+                },
+            },
+        }
+
+        questions = generate_problem_package_from_text(
+            source_text="원본 문제",
+            mode="same-type",
+            variant_count=1,
+            note_policy="짧게",
+            subject="과학",
+            max_questions=1,
+        )
+
+        self.assertEqual(questions[0]["prompt"], "Bedrock 생성 문제")
+        converse = boto_client.return_value.converse.call_args.kwargs
+        self.assertEqual(converse["modelId"], "global.amazon.nova-2-lite-v1:0")
+        self.assertIn("신뢰할 수 없는 데이터", converse["system"][0]["text"])
 
     def test_sanitized_fixture_import_is_locked_to_tenant_9999(self):
         isolated = Tenant.objects.create(
