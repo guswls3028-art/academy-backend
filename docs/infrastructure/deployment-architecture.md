@@ -1,7 +1,7 @@
 # V1.1.0 Deployment Architecture
 
 **Version:** V1.1.0
-**Date:** 2026-03-14 (checked 2026-07-13)
+**Date:** 2026-03-14 (checked 2026-07-28)
 **SSOT Status:** Active
 
 ## 1. Service Decomposition
@@ -136,12 +136,14 @@ Dependencies:
 - Old instances are drained and terminated only after new ones pass ALB health checks
 - 평상시 API capacity는 SSOT `min=1 desired=1 max=3`이다. CI deploy는 refresh 직전에 일시적으로 `desired>=2` headroom을 만들고, refresh 성공 후 기존 desired baseline으로 되돌린다.
 - API runtime scale-out/scale-in은 ASG target tracking(`ASGAverageCPUUtilization`, target 55%)이 담당한다.
+- API Launch Template의 `DEPLOYMENT_ID`는 wall-clock 시간이 아니라 고정된 이미지 digest(또는 immutable SHA tag)에서 파생한다. 같은 이미지와 설정을 다시 배포하면 새 Launch Template version이나 불필요한 instance refresh를 만들지 않는다.
+- API readiness 대기는 HTTP ALB DNS의 HTTPS redirect를 실패로 오인하지 않도록 공개 `https://api.hakwonplus.com/health`를 사용한다. ALB target health는 별도 AWS readback으로 확인한다.
 
 ### Deployment Sequence
 
 1. The deploy job resolves its `sha-*` tag to an ECR digest and creates a new Launch Template version containing that digest. On the one-time legacy cutover, it first snapshots the actual running container digest into an immutable baseline version.
 2. The ASG tracks `$Latest` after that guarded cutover and launches a new EC2 instance from the candidate version.
-3. UserData installs Docker, logs in to ECR, pulls `repo@sha256:...`, fetches SSM env, and starts the container.
+3. UserData installs Docker, logs in to ECR, pulls `repo@sha256:...`, fetches SSM env, and starts the container. `/academy/api/env` 동기화는 `DJANGO_SETTINGS_MODULE=apps.api.config.settings.prod`를 강제하고 atomic file replacement 후 재시작한다. worker 런타임만 `apps.api.config.settings.worker`를 사용하며, SSM command 또는 `docker run` 실패는 배포 실패로 전파한다.
 4. ALB health check passes on the new instance.
 5. The old instance is drained and terminated.
 
