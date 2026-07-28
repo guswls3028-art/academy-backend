@@ -189,6 +189,9 @@ Assert-True ($verificationSource.Contains('if ($driftFail -and $driftFail.Count 
 Assert-True ($verificationSource.Contains('if (-not $msgVisibilityOk -or -not $aiVisibilityOk) { $consistencySummary = "WARNING" }')) "SQS visibility drift must affect consistency summary"
 Assert-True ($verificationSource.Contains('Add-Finding -Severity "WARNING" -Area "SQS" -Message "Messaging VisibilityTimeout mismatch:')) "SQS visibility drift must affect overall decision"
 Assert-True ($verificationSource.Contains('Save-RuntimeImagesUnknownReport -Reason $_.Exception.Message')) "runtime collection failure must replace stale evidence with UNKNOWN"
+Assert-True ($verificationSource.Contains('$sectionOutcomes = @(')) "section summaries must be mapped into the overall decision"
+Assert-True ($verificationSource.Contains('Add-Finding -Severity "WARNING" -Area $section.Area')) "section warnings must affect GO/NO-GO"
+Assert-True ($verificationSource.Contains('Add-Finding -Severity "FAIL" -Area $section.Area')) "section failures must affect GO/NO-GO"
 $runtimeCollectorSource = Get-Content -Raw -LiteralPath (Join-Path $ScriptRoot "resources\api.ps1")
 Assert-True ($runtimeCollectorSource.Contains('ManifestHash = $manifestHash')) "runtime evidence must expose the release manifest hash"
 Assert-True ($verificationSource.Contains('$manifestEvidence = Get-CurrentReleaseManifestEvidence')) "UNKNOWN runtime evidence must validate the successful release manifest"

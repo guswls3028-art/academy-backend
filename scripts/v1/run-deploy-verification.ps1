@@ -600,6 +600,22 @@ if ($videoE2EStatus -eq "SUCCEEDED") {
 $s6Obs = "PASS"
 if ($alarmSummary -eq "not listed" -or $alarmSummary -match "0 alarms") { $s6Obs = "WARNING" }
 
+$sectionOutcomes = @(
+    @{ Area = "Infrastructure"; Status = $s1Infra },
+    @{ Area = "FunctionalSmoke"; Status = $s2Smoke },
+    @{ Area = "FrontR2Cdn"; Status = $s3Front },
+    @{ Area = "WorkerQueue"; Status = $s4Sqs },
+    @{ Area = "Video"; Status = $s5Video },
+    @{ Area = "Observability"; Status = $s6Obs }
+)
+foreach ($section in $sectionOutcomes) {
+    if ($section.Status -eq "FAIL") {
+        Add-Finding -Severity "FAIL" -Area $section.Area -Message "$($section.Area) section summary is FAIL."
+    } elseif ($section.Status -eq "WARNING") {
+        Add-Finding -Severity "WARNING" -Area $section.Area -Message "$($section.Area) section summary is WARNING."
+    }
+}
+
 $goNoGo = "GO"
 $goNoGoDetail = ""
 if ($finalStatus -eq "FAIL") { $goNoGo = "NO-GO"; $goNoGoDetail = "FAIL 항목 해결 후 재검증 필요." }
