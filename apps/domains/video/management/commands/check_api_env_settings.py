@@ -15,7 +15,13 @@ import os
 from django.core.management.base import BaseCommand
 
 
-SECRET_KEYS = frozenset({"DB_PASSWORD", "R2_ACCESS_KEY", "R2_SECRET_KEY", "INTERNAL_WORKER_TOKEN"})
+SECRET_KEYS = frozenset({
+    "DB_PASSWORD",
+    "R2_ACCESS_KEY",
+    "R2_SECRET_KEY",
+    "CDN_HLS_SIGNING_SECRET",
+    "INTERNAL_WORKER_TOKEN",
+})
 
 
 def _mask(val: str | None, key: str, show_full: bool = False) -> str:
@@ -36,6 +42,8 @@ REQUIRED = [
     "R2_ACCESS_KEY",
     "R2_SECRET_KEY",
     "R2_ENDPOINT",
+    "CDN_HLS_BASE_URL",
+    "CDN_HLS_SIGNING_SECRET",
     "AWS_REGION",
     "VIDEO_BATCH_JOB_QUEUE",
     "VIDEO_BATCH_JOB_DEFINITION",
@@ -45,7 +53,6 @@ REQUIRED = [
 OPTIONAL = [
     "R2_VIDEO_BUCKET",
     "R2_PUBLIC_BASE_URL",
-    "CDN_HLS_BASE_URL",
     "INTERNAL_WORKER_TOKEN",
 ]
 

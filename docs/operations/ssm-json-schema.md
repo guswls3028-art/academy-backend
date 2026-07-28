@@ -1,4 +1,23 @@
-# SSM Parameter /academy/workers/env — JSON Schema (Source of Truth)
+# SSM Runtime Environment Parameters — JSON Schema (Source of Truth)
+
+## API parameter: `/academy/api/env`
+
+The production API reads one SecureString JSON object. In addition to the
+database, cache, AWS, and application keys maintained by the v1 deployment
+scripts, video playback requires:
+
+| Key | Contract |
+|-----|----------|
+| `CDN_HLS_BASE_URL` | Exactly `https://cdn.hakwonplus.com` |
+| `CDN_HLS_SIGNING_SECRET` | Non-empty secret with at least 32 characters |
+| `CDN_HLS_SIGNING_KEY_ID` | Active signing key identifier, currently `v1` |
+
+Production settings fail closed when the canonical CDN URL or signing secret is
+missing. `Sync-ApiEnvFromSSOT` validates the same contract before writing the
+parameter or refreshing API instances, so a deployment cannot silently fall
+back to an unsigned R2 URL.
+
+## Worker parameter: `/academy/workers/env`
 
 ## Format
 

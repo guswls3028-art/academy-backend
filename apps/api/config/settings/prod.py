@@ -225,6 +225,17 @@ if len(_messaging_binding_key) < 32:
     raise ImproperlyConfigured(
         "MESSAGING_TENANT_BINDING_KEY must be set via SSM/env (>=32 chars) in production."
     )
+_canonical_video_cdn = "https://cdn.hakwonplus.com"
+if CDN_HLS_BASE_URL.rstrip("/") != _canonical_video_cdn:
+    from django.core.exceptions import ImproperlyConfigured
+    raise ImproperlyConfigured(
+        f"CDN_HLS_BASE_URL must be {_canonical_video_cdn} in production."
+    )
+if len((CDN_HLS_SIGNING_SECRET or "").strip()) < 32:
+    from django.core.exceptions import ImproperlyConfigured
+    raise ImproperlyConfigured(
+        "CDN_HLS_SIGNING_SECRET must be set via SSM/env (>=32 chars) in production."
+    )
 if BILLING_KEY_ENCRYPTION_WRITE_ENABLED and not BILLING_KEY_ENCRYPTION_PRIMARY_KEY:
     from django.core.exceptions import ImproperlyConfigured
     raise ImproperlyConfigured(

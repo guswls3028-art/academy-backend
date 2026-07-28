@@ -39,6 +39,25 @@ function Assert-RuntimeEnvSettingsModule {
     }
 }
 
+function Assert-ApiVideoPlaybackEnv {
+    param(
+        [Parameter(Mandatory = $true)]$EnvObject,
+        [Parameter(Mandatory = $true)][string]$ParameterName
+    )
+    $canonicalBaseUrl = "https://cdn.hakwonplus.com"
+    $baseProperty = $EnvObject.PSObject.Properties["CDN_HLS_BASE_URL"]
+    $baseUrl = if ($baseProperty) { ([string]$baseProperty.Value).Trim().TrimEnd("/") } else { "" }
+    if ($baseUrl -ne $canonicalBaseUrl) {
+        throw "$ParameterName CDN_HLS_BASE_URL must be '$canonicalBaseUrl' (actual='$baseUrl'). Refusing to deploy broken video playback."
+    }
+
+    $secretProperty = $EnvObject.PSObject.Properties["CDN_HLS_SIGNING_SECRET"]
+    $signingSecret = if ($secretProperty) { ([string]$secretProperty.Value).Trim() } else { "" }
+    if ($signingSecret.Length -lt 32) {
+        throw "$ParameterName CDN_HLS_SIGNING_SECRET must contain at least 32 characters. Refusing to deploy unsigned video playback."
+    }
+}
+
 function Resolve-MessagingTenantBindingKey {
     <# Resolve one dedicated HMAC key shared by API and workers without printing it. #>
     $keys = @()
@@ -140,6 +159,7 @@ function Sync-ApiEnvFromSSOT {
         $obj | Add-Member -NotePropertyName "DB_SSL_MODE" -NotePropertyValue "require" -Force
     }
     Assert-RuntimeEnvSettingsModule -EnvObject $obj -Expected "apps.api.config.settings.prod" -ParameterName $script:SsmApiEnv
+    Assert-ApiVideoPlaybackEnv -EnvObject $obj -ParameterName $script:SsmApiEnv
     $newJson = $obj | ConvertTo-Json -Compress -Depth 10
     $newValue = $newJson
     $script:CandidateApiEnvValue = $newValue
