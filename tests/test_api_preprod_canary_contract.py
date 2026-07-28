@@ -21,6 +21,15 @@ def test_manual_deploy_prepares_and_tests_env_before_live_promotion() -> None:
     production = deploy.index("Ensure-API", canary)
 
     assert prepare < candidate_parameter < canary < promote < production
+    for production_runtime_mutation in (
+        "Ensure-ASGAi",
+        "Ensure-ASGMessaging",
+        "Ensure-ASGTools",
+        "Ensure-VideoCE",
+        "Ensure-EventBridgeRules",
+        "Ensure-ALBStack",
+    ):
+        assert promote < deploy.index(production_runtime_mutation, canary)
     assert "Invoke-RefreshApiEnvOnInstances" not in deploy
 
 
@@ -122,6 +131,8 @@ def test_api_env_sync_fails_closed_on_cross_role_or_missing_source() -> None:
     assert "Publish-ApiPreprodEnvCandidate" in sync
     assert "Publish-RuntimeEnvCandidates" in sync
     assert "restoring prior parameter values" in sync
+    assert '"--tier", "Advanced"' in sync
+    assert "Invoke-RequiredAwsJson" in sync
 
 
 def test_api_boot_and_env_refresh_require_prod_settings_and_real_health() -> None:

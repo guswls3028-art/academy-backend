@@ -270,13 +270,27 @@ function Invoke-SyncEnvFromSSOT {
     Sync-WorkersEnvFromSSOT -PrepareOnly:$PrepareOnly
 }
 
+function Invoke-RequiredAwsJson {
+    param(
+        [string[]]$ArgsArray,
+        [string]$ErrorMessage
+    )
+    $raw = Invoke-Aws -ArgsArray $ArgsArray -ErrorMessage $ErrorMessage
+    if (-not $raw) { throw "$ErrorMessage returned no output." }
+    try {
+        return (($raw | Out-String).Trim() | ConvertFrom-Json)
+    } catch {
+        throw "$ErrorMessage returned invalid JSON."
+    }
+}
+
 function Publish-ApiEnvCandidate {
     if (-not $script:CandidateApiEnvValue) { throw "API env candidate is not prepared." }
     if (-not $script:ApiEnvChanged) {
         Write-Ok "API env already matches SSOT: $($script:SsmApiEnv)"
         return
     }
-    $put = Invoke-AwsJson @(
+    $put = Invoke-RequiredAwsJson -ErrorMessage "API env promotion failed" -ArgsArray @(
         "ssm", "put-parameter",
         "--name", $script:SsmApiEnv,
         "--type", "SecureString",
@@ -297,7 +311,7 @@ function Publish-WorkersEnvCandidate {
         Write-Ok "Workers env already matches SSOT: $($script:SsmWorkersEnv)"
         return
     }
-    $put = Invoke-AwsJson @(
+    $put = Invoke-RequiredAwsJson -ErrorMessage "Workers env promotion failed" -ArgsArray @(
         "ssm", "put-parameter",
         "--name", $script:SsmWorkersEnv,
         "--type", "SecureString",
@@ -323,7 +337,7 @@ function Publish-RuntimeEnvCandidates {
         Write-Warn "Runtime env promotion failed; restoring prior parameter values."
         try {
             if ($script:ApiEnvChanged -and $script:OriginalApiEnvValue) {
-                $rollback = Invoke-AwsJson @(
+                $rollback = Invoke-RequiredAwsJson -ErrorMessage "API env rollback failed" -ArgsArray @(
                     "ssm", "put-parameter",
                     "--name", $script:SsmApiEnv,
                     "--type", "SecureString",
@@ -335,7 +349,7 @@ function Publish-RuntimeEnvCandidates {
                 if ($rollback -and $rollback.Version) { $script:ApiEnvVersion = [int]$rollback.Version }
             }
             if ($script:WorkersEnvChanged -and $script:OriginalWorkersEnvValue) {
-                Invoke-AwsJson @(
+                Invoke-RequiredAwsJson -ErrorMessage "Workers env rollback failed" -ArgsArray @(
                     "ssm", "put-parameter",
                     "--name", $script:SsmWorkersEnv,
                     "--type", "SecureString",
@@ -363,10 +377,11 @@ function Publish-ApiPreprodEnvCandidate {
     Assert-RuntimeEnvSettingsModule -EnvObject $obj -Expected "apps.api.config.settings.prod" -ParameterName "API preprod candidate"
     $obj | Add-Member -NotePropertyName "DB_NAME" -NotePropertyValue $DatabaseName -Force
     $value = $obj | ConvertTo-Json -Compress -Depth 10
-    $put = Invoke-AwsJson @(
+    $put = Invoke-RequiredAwsJson -ErrorMessage "API preprod env candidate write failed" -ArgsArray @(
         "ssm", "put-parameter",
         "--name", $ParameterName,
         "--type", "SecureString",
+        "--tier", "Advanced",
         "--value", $value,
         "--overwrite",
         "--region", $script:Region,

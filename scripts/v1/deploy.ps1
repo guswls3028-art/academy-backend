@@ -229,6 +229,29 @@ try {
     Ensure-ECRRepos
     Ensure-DynamoLockTable
     Ensure-DynamoUploadCheckpointTable
+
+    # Prepare candidate values in memory. Live API/worker parameters remain
+    # unchanged until the isolated server passes.
+    Invoke-SyncEnvFromSSOT -PrepareOnly
+
+    # Production mutation is gated by one isolated instance using a dedicated
+    # SSM parameter, instance profile, and non-production database.
+    if ($Env -eq "prod") {
+        $apiCanaryImage = Get-LatestApiImageUri
+        if (-not $apiCanaryImage) { throw "API pre-production canary could not resolve an immutable API image." }
+        $apiCanaryEnv = Publish-ApiPreprodEnvCandidate
+        & (Join-Path $ScriptRoot "run-api-preprod-canary.ps1") `
+            -ImageUri $apiCanaryImage `
+            -SsmApiEnvParameter $apiCanaryEnv `
+            -ExpectedDatabaseName $script:ApiPreprodDatabaseName `
+            -AwsProfile $AwsProfile
+    }
+
+    # Only a passing canary may promote live runtime parameters.
+    Publish-RuntimeEnvCandidates
+
+    # Only promoted, canary-verified values may open any production runtime
+    # mutation path. This includes API, workers, Batch, EventBridge, and ALB.
     Ensure-ASGAi
     Ensure-ASGMessaging
     Ensure-ASGTools
@@ -256,33 +279,9 @@ try {
     Ensure-ALBStack
     Ensure-ApiCloudWatchAlarms
     Ensure-ProjectCostAllocationTags
+    Ensure-API
     # Converge the CI role only after all four SSOT Launch Templates exist so
     # its write resources can be exact and read back in the same run.
-    Ensure-GitHubActionsDeployIAM
-
-    # Prepare candidate values in memory. Live API/worker parameters remain
-    # unchanged until the isolated server passes.
-    Invoke-SyncEnvFromSSOT -PrepareOnly
-
-    # Production mutation is gated by one isolated instance using a dedicated
-    # SSM parameter, instance profile, and non-production database.
-    if ($Env -eq "prod") {
-        $apiCanaryImage = Get-LatestApiImageUri
-        if (-not $apiCanaryImage) { throw "API pre-production canary could not resolve an immutable API image." }
-        $apiCanaryEnv = Publish-ApiPreprodEnvCandidate
-        & (Join-Path $ScriptRoot "run-api-preprod-canary.ps1") `
-            -ImageUri $apiCanaryImage `
-            -SsmApiEnvParameter $apiCanaryEnv `
-            -ExpectedDatabaseName $script:ApiPreprodDatabaseName `
-            -AwsProfile $AwsProfile
-    }
-
-    # Only a passing canary may promote live runtime parameters.
-    Publish-RuntimeEnvCandidates
-
-    # Only promoted, canary-verified values may open the production LT/ASG path.
-    Ensure-API
-    # Re-derive CI RunInstances scope after any desired LT/AMI/network change.
     Ensure-GitHubActionsDeployIAM
 
     if (-not $SkipBuild) {
