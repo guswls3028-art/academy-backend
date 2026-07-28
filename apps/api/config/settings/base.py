@@ -162,6 +162,7 @@ INSTALLED_APPS = [
     "apps.domains.progress",
     "apps.domains.ai.apps.AIDomainConfig",
     "apps.domains.assets",
+    "apps.domains.tools.problem_studio.apps.ProblemStudioConfig",
     "apps.domains.inventory",
     "apps.domains.matchup",
     "apps.domains.fees",

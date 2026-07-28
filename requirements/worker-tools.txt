@@ -9,3 +9,4 @@ openpyxl>=3.1.0
 olefile==0.47
 pytesseract
 python-hwpx==4.2.0
+fonttools==4.63.0

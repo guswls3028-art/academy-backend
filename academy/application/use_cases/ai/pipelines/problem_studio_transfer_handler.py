@@ -8,6 +8,9 @@ import shutil
 import uuid
 
 from apps.domains.tools.problem_studio.async_transfer import source_files_from_archive
+from apps.domains.tools.problem_studio.document_style import (
+    revalidate_resolved_document_style,
+)
 from apps.domains.tools.problem_studio.ocr import OcrResult, extract_ocr_text_from_image
 from apps.domains.tools.problem_studio.transfer_documents import TransferOcrContext, build_transfer_package
 from apps.shared.contracts.ai_job import AIJob
@@ -52,6 +55,8 @@ def handle_problem_studio_transfer_job(job: AIJob) -> AIResult:
     problem_payload = payload.get("problem_studio_payload")
     if not isinstance(problem_payload, dict):
         problem_payload = {}
+    else:
+        problem_payload = dict(problem_payload)
     if not tenant_id:
         return AIResult.failed(job.id, "tenant_id required")
     if payload_tenant_id and payload_tenant_id != tenant_id:
@@ -61,6 +66,16 @@ def handle_problem_studio_transfer_job(job: AIJob) -> AIResult:
     expected_archive_prefix = f"tenants/{tenant_id}/tools/problem-studio/tmp/"
     if not archive_key.startswith(expected_archive_prefix):
         return AIResult.failed(job.id, "source_archive_key tenant mismatch")
+
+    request_user_id = str(payload.get("request_user_id") or "")
+    try:
+        problem_payload["_resolved_document_style"] = revalidate_resolved_document_style(
+            problem_payload.get("_resolved_document_style"),
+            tenant_id=tenant_id,
+            user_id=request_user_id,
+        )
+    except ValueError as exc:
+        return AIResult.failed(job.id, str(exc))
 
     archive_path: str | None = None
     result_key = ""
@@ -202,6 +217,7 @@ def handle_problem_studio_transfer_job(job: AIJob) -> AIResult:
             "transcription_engine": transcription_engine,
             "ai_transcribed_units": ai_calls,
             "fallback_ocr_units": fallback_calls,
+            "_font_assets": package.font_assets,
         })
     except Exception as exc:
         logger.exception("PROBLEM_STUDIO_TRANSFER failed job_id=%s tenant_id=%s", job.id, tenant_id)

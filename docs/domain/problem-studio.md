@@ -1,6 +1,6 @@
 # Problem Studio Domain Note
 
-Last verified: 2026-07-27
+Last verified: 2026-07-28
 
 ## Product Philosophy
 
@@ -28,6 +28,7 @@ Do not describe the current product as "rewriting other textbooks" or "automatic
   - beta rewrite candidates for teacher review
   - text correction and question editor
   - PDF/print preview
+- `내 문서 스타일` keeps each teacher's title/body font, point size, line spacing, and question spacing. Teachers can upload private TTF/OTF files after confirming their usage rights.
 
 Keep this hierarchy. If the page starts feeling like a full authoring studio again, it is probably regressing for the current use case.
 
@@ -52,6 +53,7 @@ Frontend:
   - `use_ai: true`
   - `transfer_only: false`
 - The primary result is not auto-downloaded. A completed job exposes an explicit ZIP download button and a Windows Hangul-companion handoff. The page also exposes the sealed companion installer ZIP before a job is created. The ZIP includes `.doc` visual/reference documents and a text-focused editable `.hwpx` review workbook. Binary native `.hwp` writing is still not promised.
+- Browser preview, PDF, Office-compatible `.doc`, and HWPX use the same resolved document-style request. Unicode sub/superscript text is emitted as semantic HTML in browser/`.doc` output.
 - Answers and explanations are placed in an endnote-like section using Office/Hangul-compatible HTML markers.
 
 Backend:
@@ -65,6 +67,9 @@ Backend:
   - `POST /api/v1/tools/problem-studio/transfer-jobs/<job_id>/hangul-handoff/`
   - `GET /api/v1/tools/problem-studio/hangul-handoffs/<token>/`
   - `GET /api/v1/tools/problem-studio/hangul-companion/`
+  - `GET|POST /api/v1/tools/problem-studio/fonts/`
+  - `DELETE /api/v1/tools/problem-studio/fonts/<font_id>/`
+  - `GET|PUT /api/v1/tools/problem-studio/document-style/`
 - Views: `backend/apps/domains/tools/problem_studio/views.py`
 - Service: `backend/apps/domains/tools/problem_studio/services.py`
 - Transfer package builder: `backend/apps/domains/tools/problem_studio/transfer_documents.py`
@@ -77,7 +82,10 @@ Backend:
   - `problem_studio_transcription`: AI-worker source transcription path
 - Worker payload stores extracted source text and source metadata, so the async worker does not depend on request file lifetime.
 - Transfer-only output uses `generation_engine: "source_transfer"` when extracted text exists.
-- `03_자체양식_문제검수본.hwpx` is generated from the `python-hwpx==4.2.0` editor-compatible package skeleton, explicitly references the standard root `version.xml` from `Contents/content.hpf`, and synchronizes `Preview/PrvText.txt` with the section text. The API, AI CPU worker, and deterministic tools worker all pin the same writer dependency.
+- `03_자체양식_문제검수본.hwpx` is generated from the `python-hwpx==4.2.0` editor-compatible package skeleton, explicitly references the standard root `version.xml` from `Contents/content.hpf`, and synchronizes `Preview/PrvText.txt` with the section text. Unicode formula text such as `H₂O`/`SO₄²⁻` and explicit `[[수식:...]]`, `$...$`, or `\(...\)` formula markers are converted to editable native `hp:equation` objects. The API, AI CPU worker, and deterministic tools worker all pin the same writer dependency.
+- Personal fonts are validated with `fonttools==4.63.0`: only bounded TTF/OTF files with a real cmap/glyph table are accepted; TTC, WOFF/WOFF2, variable, malformed, extension-mismatched, and over-32MB files are rejected. Internal family names, SHA-256, coverage, and OS/2 embedding flags are recorded.
+- Font assets and saved styles are scoped to the exact tenant and uploading teacher. The API resolves a private internal snapshot, and the worker revalidates tenant, user, asset status, SHA-256, and R2 key before creating a package. Public/status responses never expose font R2 keys.
+- Font bytes are intentionally not embedded in HWPX or the result ZIP. A five-minute one-time Hangul handoff issues fresh font URLs only to the teacher who owns the selected assets. The companion verifies size/SHA-256/file magic and asks before current-user installation.
 - Beta rewrite uses the async job path only. If the AI adapter or quota fails, the service returns a rule-based teacher-review candidate and warning instead of blocking the base transfer feature.
 - The primary large source path uploads a tenant-prefixed temporary archive and dispatches `problem_studio_transcription` to the AI CPU worker. When `OPENAI_API_KEY` is configured the worker uses `PROBLEM_TRANSCRIPTION_MODEL`; otherwise it uses AWS Bedrock `PROBLEM_TRANSCRIPTION_BEDROCK_MODEL` (default `global.amazon.nova-2-lite-v1:0`) through the instance role, so production does not depend on a static provider secret. Up to `PROBLEM_STUDIO_AI_MAX_UNITS` image-only units are processed (default 24, hard bounded to 40). Provider failure falls back per unit to local OCR and reports the fallback count. The synchronous transfer endpoint remains a non-AI fallback. Both produce a ZIP containing Hangul/Word-compatible `.doc` HTML drafts plus:
   - `00_먼저열기_검수체크리스트.doc`
@@ -94,6 +102,7 @@ Backend:
   - `quality_level`
   - `structure.review_actions`
   - `template_outputs`
+  - safe `document_style` metadata without R2 storage keys
 - The response also exposes these headers:
   - `X-Problem-Studio-Structured-Item-Count`
   - `X-Problem-Studio-OCR-Candidate-Count`
@@ -104,7 +113,7 @@ Source extraction and structure support:
 - PDF: server attempts text extraction with PyMuPDF and records per-part text-layer results for structure analysis.
 - Transfer package PDF: server renders every source page to embedded page images, split into 60-page `.doc` parts. If the PDF has no text layer, the part is marked as an OCR candidate rather than treated as editable text.
 - Bounded OCR: scanned image/PDF pages without a text layer are attempted through local Tesseract OCR up to `PROBLEM_STUDIO_OCR_MAX_UNITS` per transfer package (default 8). Successful OCR text feeds the same structure analyzer; failed, skipped, or over-limit units remain in `02_OCR_연결후보.csv`.
-- Primary AI transcription: image-only units are sent without a persisted external URL and are instructed to transcribe visible text only, never solve/correct/infer. Page text feeds the same structure analyzer. Formulas, tables, figures, and `[판독불가]` remain mandatory teacher-review points.
+- Primary AI transcription: image-only units are sent without a persisted external URL and are instructed to transcribe visible text only, never solve/correct/infer. It preserves visible Unicode sub/superscripts and uses `[[수식:LaTeX]]` for structured formulas that cannot be faithfully represented as linear Unicode. Page text feeds the same structure analyzer. Formulas, tables, figures, and `[판독불가]` remain mandatory teacher-review points.
 - Privacy contract: before the user starts, source files remain local to the browser. Starting the job uploads a tenant-scoped temporary archive; image-only units within the bounded AI budget are sent to the configured external AI provider. Production currently uses the Nova 2 Lite `global.amazon.nova-2-lite-v1:0` profile because Nova 2 Lite has no Seoul in-region or APAC/JP geo profile available from `ap-northeast-2`. AWS can therefore route an inference request to any destination in that global profile. The UI identifies Amazon Bedrock, the global routing boundary, masking guidance, and the privacy policy before the CTA, and requires an explicit confirmation for both transcription and Beta rewrite. The worker deletes the temporary archive in its terminal cleanup path. Amazon Bedrock documents zero data retention for Nova inputs/outputs by default and does not use them to train Nova; narrowly scoped abuse-detection/legal exceptions remain governed by AWS policy.
 - HWPX: server reads `Preview/PrvText.txt` first, then XML content files.
 - DOCX: server reads `word/document.xml`.
@@ -134,7 +143,7 @@ Source extraction and structure support:
 - Problem/concept structure is heuristic. The system now produces a `01_자체양식_문제검수본.doc`, but teachers must still verify split boundaries, choices, answers, and explanations.
 - Automatic rewrite is available only as a collapsed Beta workflow. It is not the primary CTA and every result remains a teacher-review draft.
 - Template understanding is shallow. "매치업 기존 양식" and uploaded template names are recorded, but the system does not yet learn precise spacing/style rules from a template file.
-- The Windows companion source lives at `frontend/desktop/hangul-companion`. Its self-contained single-file build copies itself to `%LOCALAPPDATA%/Academy/HangulCompanion` and registers `academy-hangul://` for the current user without administrator permission. The staff-only download endpoint reads the sealed version/key/size/SHA-256 manifest and only issues an R2 URL when the uploaded object's HEAD size and SHA-256 metadata both match. The companion consumes a five-minute, one-time opaque handoff from `https://api.hakwonplus.com` only, bounds download size, verifies result size/SHA-256, requires exactly one bounded review HWPX, and only inserts into a visible normal-edit-mode HWP document. Otherwise it opens the HWPX as a new document. `--diagnose-handoff` exercises the production handoff/download/integrity/extraction chain without launching Hangul. External commercial distribution still requires Hancom Automation approval/security-module registration and trusted code signing; direct insert can fall back until those are complete.
+- The Windows companion source lives at `frontend/desktop/hangul-companion`. Its self-contained single-file build copies itself to `%LOCALAPPDATA%/Academy/HangulCompanion` and registers `academy-hangul://` for the current user without administrator permission. The staff-only download endpoint reads the sealed version/key/size/SHA-256 manifest and only issues an R2 URL when the uploaded object's HEAD size and SHA-256 metadata both match. The companion consumes a five-minute, one-time opaque handoff from `https://api.hakwonplus.com` only, bounds download size, verifies result/font size and SHA-256, and requires exactly one bounded review HWPX. Missing private fonts require explicit installation approval and are copied to the current user's Windows Fonts directory; a refusal continues with possible fallback fonts. `InsertFile` preserves section, character, paragraph, and style data and only targets a visible normal-edit-mode HWP document. Otherwise it opens the HWPX as a new document. `--diagnose-handoff` exercises the production handoff/download/integrity/extraction chain without launching Hangul. External commercial distribution still requires Hancom Automation approval/security-module registration and trusted code signing; direct insert can fall back until those are complete.
 - The generated answer/explanation fields are review aids, not authoritative. Teacher verification remains required.
 
 ## Hangul Companion Verification Status

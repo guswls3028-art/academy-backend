@@ -23,6 +23,7 @@ from apps.domains.tools.problem_studio.extractors import (
     normalize_hwp_image_data,
     safe_zip_members,
 )
+from apps.domains.tools.problem_studio.document_style import custom_font_snapshots
 from apps.domains.tools.problem_studio.hwpx_writer import build_hwpx_text_document
 from apps.domains.tools.problem_studio.ocr import (
     OcrResult,
@@ -90,6 +91,7 @@ class TransferPackage:
     ocr_candidate_count: int = 0
     quality_level: str = ""
     structure_limit_reached: bool = False
+    font_assets: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -122,6 +124,83 @@ class TransferOcrContext:
 
 def _escape(value: Any) -> str:
     return html.escape(str(value or ""), quote=True)
+
+
+_SUBSCRIPT_CHARS = frozenset("₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₕᵢⱼₖₗₘₙₒₚᵣₛₜᵤᵥₓ")
+_SUPERSCRIPT_CHARS = frozenset("⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁱⁿ")
+_SUBSCRIPT_HTML_MAP = str.maketrans("₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎", "0123456789+-=()")
+_SUPERSCRIPT_HTML_MAP = str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾", "0123456789+-=()")
+
+
+def _rich_text_html(value: Any) -> str:
+    """Escape text while retaining semantic sub/superscript runs in HTML/DOC."""
+    output: list[str] = []
+    active_tag = ""
+    for char in str(value or ""):
+        tag = "sub" if char in _SUBSCRIPT_CHARS else "sup" if char in _SUPERSCRIPT_CHARS else ""
+        if tag != active_tag:
+            if active_tag:
+                output.append(f"</{active_tag}>")
+            if tag:
+                output.append(f"<{tag}>")
+            active_tag = tag
+        normalized_char = (
+            char.translate(_SUBSCRIPT_HTML_MAP)
+            if tag == "sub"
+            else char.translate(_SUPERSCRIPT_HTML_MAP)
+            if tag == "sup"
+            else char
+        )
+        output.append(html.escape(normalized_char, quote=True))
+    if active_tag:
+        output.append(f"</{active_tag}>")
+    return "".join(output)
+
+
+def _css_string(value: Any) -> str:
+    escaped = (
+        str(value or "")
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\r", " ")
+        .replace("\n", " ")
+        .replace("<", "\\3C ")
+        .replace(">", "\\3E ")
+    )
+    return f'"{escaped}"'
+
+
+def _safe_document_style(resolved: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(resolved, dict):
+        return None
+    safe = {
+        key: resolved.get(key)
+        for key in (
+            "schema",
+            "title_size_pt",
+            "body_size_pt",
+            "line_spacing_percent",
+            "question_spacing_pt",
+            "native_equations",
+        )
+    }
+    for field in ("title_font", "body_font"):
+        font = resolved.get(field)
+        if not isinstance(font, dict):
+            continue
+        safe[field] = {
+            key: font.get(key)
+            for key in ("source", "key", "family_name")
+            if font.get(key) is not None
+        }
+        asset = font.get("asset")
+        if isinstance(asset, dict):
+            safe[field]["asset"] = {
+                key: asset.get(key)
+                for key in ("id", "family_name", "original_name", "sha256")
+                if asset.get(key) is not None
+            }
+    return safe
 
 
 def _safe_filename(value: str, *, default: str = "source") -> str:
@@ -711,6 +790,7 @@ def _build_manifest_json(
     documents: list[TransferDocument],
     warnings: list[str],
     structure: TransferStructure,
+    document_style: dict[str, Any] | None = None,
 ) -> str:
     manifest = {
         "schema": "problem-studio-transfer-manifest/v2",
@@ -730,6 +810,7 @@ def _build_manifest_json(
         "ocr_completed_unit_count": structure.ocr_completed_unit_count,
         "ocr_pending_unit_count": structure.ocr_pending_unit_count,
         "quality_level": structure.quality_level,
+        "document_style": _safe_document_style(document_style),
         "input_files": input_files,
         "documents": [
             {
@@ -778,6 +859,8 @@ def _build_manifest_json(
             "ocr_required_for_scanned_text": structure.ocr_candidate_count > 0,
             "native_hwp_output": False,
             "native_hwpx_output": True,
+            "native_hwpx_equations": True,
+            "personal_fonts_embedded": False,
         },
     }
     return json.dumps(manifest, ensure_ascii=False, indent=2)
@@ -864,12 +947,16 @@ def _build_ocr_queue_csv(structure: TransferStructure) -> str:
     return "\ufeff" + out.getvalue()
 
 
-def _build_structured_workbook_html(meta: dict[str, str], structure: TransferStructure) -> str:
+def _build_structured_workbook_html(
+    meta: dict[str, str],
+    structure: TransferStructure,
+    document_style: dict[str, Any] | None = None,
+) -> str:
     if structure.items:
         item_html = []
         for item in structure.items:
             choices = (
-                f'<ol class="choices">{"".join(f"<li>{_escape(choice)}</li>" for choice in item.choices)}</ol>'
+                f'<ol class="choices">{"".join(f"<li>{_rich_text_html(choice)}</li>" for choice in item.choices)}</ol>'
                 if item.choices
                 else '<p class="missing-field">보기 없음 · 원본 확인</p>'
             )
@@ -880,12 +967,12 @@ def _build_structured_workbook_html(meta: dict[str, str], structure: TransferStr
           <strong>{item.number}. {_escape("문제" if item.item_type == "problem" else "개념")}</strong>
           <span>{_escape(item.source_name)} · 신뢰도 {item.confidence:.2f} · {_escape(flags)}</span>
         </div>
-        <div class="prompt">{_escape(item.prompt)}</div>
+        <div class="prompt">{_rich_text_html(item.prompt)}</div>
         {choices}
         <table class="answer-table">
           <tbody>
-            <tr><th>정답</th><td>{_escape(item.answer or "검수 필요")}</td></tr>
-            <tr><th>해설</th><td>{_escape(item.explanation or "검수 후 작성")}</td></tr>
+            <tr><th>정답</th><td>{_rich_text_html(item.answer or "검수 필요")}</td></tr>
+            <tr><th>해설</th><td>{_rich_text_html(item.explanation or "검수 후 작성")}</td></tr>
           </tbody>
         </table>
       </article>
@@ -923,12 +1010,38 @@ def _build_structured_workbook_html(meta: dict[str, str], structure: TransferStr
     <tbody>{ocr_rows}</tbody>
   </table>
 """
+    title_font = (
+        document_style.get("title_font", {}).get("family_name", "함초롬돋움")
+        if isinstance(document_style, dict)
+        else "함초롬돋움"
+    )
+    body_font = (
+        document_style.get("body_font", {}).get("family_name", "함초롬바탕")
+        if isinstance(document_style, dict)
+        else "함초롬바탕"
+    )
+    title_size = document_style.get("title_size_pt", 20) if isinstance(document_style, dict) else 20
+    body_size = document_style.get("body_size_pt", 10.5) if isinstance(document_style, dict) else 10.5
+    line_spacing = (
+        document_style.get("line_spacing_percent", 155)
+        if isinstance(document_style, dict)
+        else 155
+    )
+    question_spacing = (
+        document_style.get("question_spacing_pt", 10)
+        if isinstance(document_style, dict)
+        else 10
+    )
     return _office_doc_shell(
         f"{meta['title']} 자체양식 문제검수본",
         body,
-        extra_style="""
+        extra_style=f"""
+    body {{ font-family: {_css_string(body_font)}, "함초롬바탕", serif; font-size: {body_size}pt; line-height: {float(line_spacing) / 100:.2f}; }}
+    h1 {{ font-family: {_css_string(title_font)}, "함초롬돋움", sans-serif; font-size: {title_size}pt; }}
+    .problem-card {{ page-break-inside: avoid; border: 0.7pt solid #cbd5e1; padding: 4mm; margin: 0 0 {question_spacing}pt; }}
+"""
+        + """
     h2 { margin: 9mm 0 3mm; font-size: 13pt; }
-    .problem-card { page-break-inside: avoid; border: 0.7pt solid #cbd5e1; padding: 4mm; margin: 0 0 5mm; }
     .problem-head { display: flex; justify-content: space-between; gap: 4mm; border-bottom: 0.5pt solid #e5e7eb; padding-bottom: 2mm; margin-bottom: 3mm; }
     .problem-head span { color: #64748b; font-size: 8.5pt; text-align: right; }
     .prompt { white-space: pre-wrap; margin: 0 0 3mm; }
@@ -983,11 +1096,16 @@ def _structured_workbook_text_paragraphs(meta: dict[str, str], structure: Transf
     return paragraphs
 
 
-def _build_structured_workbook_hwpx(meta: dict[str, str], structure: TransferStructure) -> bytes:
+def _build_structured_workbook_hwpx(
+    meta: dict[str, str],
+    structure: TransferStructure,
+    document_style: dict[str, Any] | None = None,
+) -> bytes:
     title = f"{meta['title']} 자체양식 문제검수본"
     return build_hwpx_text_document(
         title=title,
         paragraphs=_structured_workbook_text_paragraphs(meta, structure),
+        document_style=document_style,
     )
 
 
@@ -1037,6 +1155,10 @@ def build_transfer_package(
         warnings.append(warning)
 
     structure = analyze_transfer_documents(documents, warnings)
+    document_style = payload.get("_resolved_document_style")
+    if not isinstance(document_style, dict):
+        document_style = None
+    font_assets = custom_font_snapshots(document_style)
     now = datetime.now().strftime("%Y%m%d-%H%M%S")
     package_name = f"{_safe_filename(title, default='problem-studio')}_원본이관_{now}.zip"
     buffer = io.BytesIO()
@@ -1051,11 +1173,27 @@ def build_transfer_package(
             zf.writestr(zip_name, "\ufeff" + doc.html)
         zf.writestr("00_먼저열기_검수체크리스트.doc", "\ufeff" + _build_review_checklist_html(meta, input_files, documents, warnings, structure))
         zf.writestr("00_변환리포트.html", _build_report_html(title, documents, warnings, structure))
-        zf.writestr("00_manifest.json", _build_manifest_json(meta, input_files, documents, warnings, structure))
+        zf.writestr(
+            "00_manifest.json",
+            _build_manifest_json(
+                meta,
+                input_files,
+                documents,
+                warnings,
+                structure,
+                document_style=document_style,
+            ),
+        )
         zf.writestr("00_파일목록.csv", _build_file_list_csv(input_files, documents, warnings, structure))
-        zf.writestr("01_자체양식_문제검수본.doc", "\ufeff" + _build_structured_workbook_html(meta, structure))
+        zf.writestr(
+            "01_자체양식_문제검수본.doc",
+            "\ufeff" + _build_structured_workbook_html(meta, structure, document_style),
+        )
         zf.writestr("02_OCR_연결후보.csv", _build_ocr_queue_csv(structure))
-        zf.writestr("03_자체양식_문제검수본.hwpx", _build_structured_workbook_hwpx(meta, structure))
+        zf.writestr(
+            "03_자체양식_문제검수본.hwpx",
+            _build_structured_workbook_hwpx(meta, structure, document_style),
+        )
 
     return TransferPackage(
         filename=package_name,
@@ -1068,6 +1206,7 @@ def build_transfer_package(
         ocr_candidate_count=structure.ocr_candidate_count,
         quality_level=structure.quality_level,
         structure_limit_reached=structure.structure_limit_reached,
+        font_assets=font_assets,
     )
 
 

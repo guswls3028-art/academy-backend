@@ -1,0 +1,128 @@
+from __future__ import annotations
+
+import uuid
+
+from django.conf import settings
+from django.db import models
+
+from apps.api.common.models import TimestampModel
+from apps.core.db import TenantQuerySet
+from apps.core.models import Tenant
+
+
+class ProblemStudioFontAsset(TimestampModel):
+    class Status(models.TextChoices):
+        READY = "ready", "사용 가능"
+        DISABLED = "disabled", "사용 중지"
+
+    class LicenseBasis(models.TextChoices):
+        PURCHASED = "purchased", "직접 구매"
+        FREE = "free", "무료 배포"
+        ACADEMY = "academy", "학원 보유"
+        OTHER = "other", "기타"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="problem_studio_font_assets",
+        db_index=True,
+    )
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="problem_studio_font_assets",
+    )
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.READY, db_index=True)
+
+    display_name = models.CharField(max_length=160)
+    family_name = models.CharField(max_length=160)
+    subfamily_name = models.CharField(max_length=160, blank=True, default="")
+    full_name = models.CharField(max_length=200, blank=True, default="")
+    postscript_name = models.CharField(max_length=200, blank=True, default="")
+    font_revision = models.CharField(max_length=40, blank=True, default="")
+
+    original_name = models.CharField(max_length=255)
+    r2_key = models.CharField(max_length=512, unique=True)
+    size_bytes = models.PositiveBigIntegerField()
+    content_type = models.CharField(max_length=100)
+    sha256 = models.CharField(max_length=64, db_index=True)
+    file_format = models.CharField(max_length=8)
+
+    glyph_count = models.PositiveIntegerField(default=0)
+    supports_hangul = models.BooleanField(default=False)
+    supports_latin = models.BooleanField(default=False)
+    fs_type = models.PositiveIntegerField(default=0)
+    embedding_permission = models.CharField(max_length=32, default="installable")
+    no_subsetting = models.BooleanField(default=False)
+
+    license_basis = models.CharField(max_length=20, choices=LicenseBasis.choices)
+    license_name = models.CharField(max_length=160, blank=True, default="")
+    license_url = models.URLField(max_length=500, blank=True, default="")
+    license_note = models.TextField(blank=True, default="")
+    rights_confirmed_at = models.DateTimeField()
+    redistribution_allowed = models.BooleanField(default=False)
+
+    objects = TenantQuerySet.as_manager()
+
+    class Meta:
+        db_table = "problem_studio_font_asset"
+        ordering = ["family_name", "subfamily_name", "-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "uploaded_by", "sha256"],
+                name="uq_problem_studio_font_owner_sha",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["tenant", "uploaded_by", "status"],
+                name="idx_ps_font_owner_status",
+            ),
+        ]
+
+
+class ProblemStudioDocumentStyle(TimestampModel):
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="problem_studio_document_styles",
+        db_index=True,
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="problem_studio_document_styles",
+    )
+    title_font_key = models.CharField(max_length=40, default="hamchorom-dotum")
+    title_font_asset = models.ForeignKey(
+        ProblemStudioFontAsset,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    body_font_key = models.CharField(max_length=40, default="hamchorom-batang")
+    body_font_asset = models.ForeignKey(
+        ProblemStudioFontAsset,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    title_size_pt = models.DecimalField(max_digits=4, decimal_places=1, default=20)
+    body_size_pt = models.DecimalField(max_digits=4, decimal_places=1, default=10.5)
+    line_spacing_percent = models.PositiveSmallIntegerField(default=155)
+    question_spacing_pt = models.DecimalField(max_digits=4, decimal_places=1, default=10)
+
+    objects = TenantQuerySet.as_manager()
+
+    class Meta:
+        db_table = "problem_studio_document_style"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "user"],
+                name="uq_problem_studio_style_user",
+            ),
+        ]

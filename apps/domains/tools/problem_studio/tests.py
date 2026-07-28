@@ -5,6 +5,7 @@ import json
 import zipfile
 import zlib
 from io import BytesIO
+from pathlib import Path
 from unittest.mock import patch
 
 from django.apps import apps as django_apps
@@ -31,6 +32,10 @@ from apps.domains.tools.problem_studio.transfer_documents import (
 )
 from apps.domains.tools.problem_studio.extractors import extract_hwpx_text
 from apps.domains.tools.problem_studio.ocr import OcrResult
+from apps.domains.tools.problem_studio.models import (
+    ProblemStudioDocumentStyle,
+    ProblemStudioFontAsset,
+)
 from apps.domains.tools.problem_studio.async_transfer import (
     SOURCE_ARCHIVE_MANIFEST,
     build_source_archive,
@@ -60,6 +65,53 @@ _TINY_PNG = base64.b64decode(
 
 
 class ProblemStudioServiceTests(SimpleTestCase):
+    def test_hwpx_uses_native_equations_and_selected_fonts(self):
+        uploaded = _zip_file(
+            "chemistry.docx",
+            {
+                "word/document.xml": (
+                    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                    "<w:body><w:p><w:r><w:t>1. H₂O와 SO₄²⁻의 입자 수를 비교하고 "
+                    "[[수식:\\frac{x+1}{2}]]의 값을 구하시오.</w:t></w:r></w:p>"
+                    "<w:p><w:r><w:t>정답 2</w:t></w:r></w:p></w:body></w:document>"
+                )
+            },
+        )
+        style = {
+            "title_font": {"source": "asset", "family_name": "교사용 제목체"},
+            "body_font": {"source": "asset", "family_name": "교사용 본문체"},
+            "title_size_pt": 22,
+            "body_size_pt": 11,
+            "line_spacing_percent": 165,
+            "question_spacing_pt": 14,
+            "native_equations": True,
+        }
+
+        package = build_transfer_package(
+            payload={"title": "수식 검수", "_resolved_document_style": style},
+            source_files=[uploaded],
+        )
+
+        with zipfile.ZipFile(BytesIO(package.data)) as outer:
+            hwpx_data = outer.read("03_자체양식_문제검수본.hwpx")
+            manifest = json.loads(outer.read("00_manifest.json").decode("utf-8"))
+            html_doc = outer.read("01_자체양식_문제검수본.doc").decode("utf-8-sig")
+        with zipfile.ZipFile(BytesIO(hwpx_data)) as inner:
+            section = inner.read("Contents/section0.xml").decode("utf-8")
+            header = inner.read("Contents/header.xml").decode("utf-8")
+
+        self.assertIn("<hp:equation", section)
+        self.assertIn("H _ {2} O", section)
+        self.assertIn("S O _ {4} ^ {2 -}", section)
+        self.assertIn("{ x+1 } over { 2 }", section)
+        self.assertIn('face="교사용 제목체"', header)
+        self.assertIn('face="교사용 본문체"', header)
+        self.assertIn("교사용 본문체", html_doc)
+        self.assertEqual(manifest["document_style"]["body_size_pt"], 11)
+        self.assertTrue(manifest["review_contract"]["native_hwpx_equations"])
+        self.assertFalse(manifest["review_contract"]["personal_fonts_embedded"])
+        self.assertTrue(validate_package(hwpx_data).ok)
+
     def test_ai_ocr_context_injects_transcribed_text_into_hwpx(self):
         calls: list[tuple[int, str]] = []
 
@@ -593,13 +645,181 @@ class ProblemStudioTransferViewTests(TestCase):
         force_authenticate(request, user=self.user)
         return request
 
+    def _font_asset(self, *, owner=None, sha256: str = "c" * 64):
+        from django.utils import timezone
+
+        asset = ProblemStudioFontAsset(
+            tenant=self.tenant,
+            uploaded_by=owner or self.user,
+            display_name="내 교재체",
+            family_name="내 교재체",
+            original_name="teacher-font.ttf",
+            size_bytes=1234,
+            content_type="font/ttf",
+            sha256=sha256,
+            file_format="ttf",
+            glyph_count=100,
+            supports_hangul=True,
+            supports_latin=True,
+            license_basis=ProblemStudioFontAsset.LicenseBasis.ACADEMY,
+            rights_confirmed_at=timezone.now(),
+        )
+        asset.r2_key = (
+            f"tenants/{self.tenant.id}/tools/problem-studio/fonts/"
+            f"{asset.id}/{sha256[:16]}.ttf"
+        )
+        asset.save()
+        return asset
+
+    @patch(
+        "apps.domains.tools.problem_studio.font_assets.generate_presigned_get_url_storage",
+        return_value="https://download.example/teacher-font.ttf",
+    )
+    @patch("apps.domains.tools.problem_studio.font_assets.upload_fileobj_to_r2_storage")
+    def test_personal_font_upload_and_style_are_private_to_teacher(
+        self,
+        mock_upload,
+        _mock_presign,
+    ):
+        from django.contrib.auth import get_user_model
+        from rest_framework.test import APIRequestFactory, force_authenticate
+        from apps.core.models import TenantMembership
+        from apps.domains.tools.problem_studio.views import (
+            ProblemStudioDocumentStyleView,
+            ProblemStudioFontCollectionView,
+            ProblemStudioFontDetailView,
+        )
+
+        font_path = (
+            Path(__file__).resolve().parents[2]
+            / "assets"
+            / "omr"
+            / "renderer"
+            / "fonts"
+            / "NotoSansKR-Regular.ttf"
+        )
+        upload = SimpleUploadedFile(
+            "NotoSansKR-Regular.ttf",
+            font_path.read_bytes(),
+            content_type="font/ttf",
+        )
+        factory = APIRequestFactory()
+        request = factory.post(
+            "/api/v1/tools/problem-studio/fonts/",
+            {
+                "file": upload,
+                "display_name": "내 교재 본문체",
+                "license_basis": "academy",
+                "rights_confirmed": "true",
+            },
+            format="multipart",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.user)
+
+        upload_response = ProblemStudioFontCollectionView.as_view()(request)
+
+        self.assertEqual(upload_response.status_code, 201, upload_response.data)
+        self.assertEqual(upload_response.data["display_name"], "내 교재 본문체")
+        self.assertTrue(upload_response.data["supports_hangul"])
+        mock_upload.assert_called_once()
+        font_id = upload_response.data["id"]
+
+        style_request = factory.put(
+            "/api/v1/tools/problem-studio/document-style/",
+            {
+                "title_font": "builtin:hamchorom-dotum",
+                "body_font": f"asset:{font_id}",
+                "title_size_pt": 21,
+                "body_size_pt": 11,
+                "line_spacing_percent": 165,
+                "question_spacing_pt": 12,
+            },
+            format="json",
+        )
+        style_request.tenant = self.tenant
+        force_authenticate(style_request, user=self.user)
+        style_response = ProblemStudioDocumentStyleView.as_view()(style_request)
+        self.assertEqual(style_response.status_code, 200, style_response.data)
+        self.assertEqual(style_response.data["preference"]["body_font"], f"asset:{font_id}")
+
+        other = get_user_model().objects.create_user(
+            username="problem_studio_other_teacher",
+            password="test1234",
+            tenant=self.tenant,
+            is_staff=True,
+        )
+        TenantMembership.ensure_active(tenant=self.tenant, user=other, role="teacher")
+        other_request = factory.put(
+            "/api/v1/tools/problem-studio/document-style/",
+            {
+                "title_font": "builtin:hamchorom-dotum",
+                "body_font": f"asset:{font_id}",
+                "title_size_pt": 20,
+                "body_size_pt": 10.5,
+                "line_spacing_percent": 155,
+                "question_spacing_pt": 10,
+            },
+            format="json",
+        )
+        other_request.tenant = self.tenant
+        force_authenticate(other_request, user=other)
+        other_response = ProblemStudioDocumentStyleView.as_view()(other_request)
+        self.assertEqual(other_response.status_code, 400, other_response.data)
+        self.assertIn("사용할 수 없습니다", other_response.data["detail"])
+
+        delete_request = factory.delete(
+            f"/api/v1/tools/problem-studio/fonts/{font_id}/",
+        )
+        delete_request.tenant = self.tenant
+        force_authenticate(delete_request, user=self.user)
+        with patch(
+            "apps.domains.tools.problem_studio.font_assets.delete_object_r2_storage"
+        ) as mock_delete:
+            delete_response = ProblemStudioFontDetailView.as_view()(
+                delete_request,
+                font_id=font_id,
+            )
+        self.assertEqual(delete_response.status_code, 204)
+        self.assertFalse(ProblemStudioFontAsset.objects.filter(id=font_id).exists())
+        mock_delete.assert_called_once()
+        saved_style = ProblemStudioDocumentStyle.objects.get(
+            tenant=self.tenant,
+            user=self.user,
+        )
+        self.assertIsNone(saved_style.body_font_asset_id)
+        self.assertEqual(saved_style.body_font_key, "hamchorom-batang")
+
+    @patch("apps.domains.tools.problem_studio.font_assets.upload_fileobj_to_r2_storage")
+    def test_personal_font_upload_requires_rights_confirmation(self, mock_upload):
+        from rest_framework.test import APIRequestFactory, force_authenticate
+        from apps.domains.tools.problem_studio.views import ProblemStudioFontCollectionView
+
+        request = APIRequestFactory().post(
+            "/api/v1/tools/problem-studio/fonts/",
+            {
+                "file": SimpleUploadedFile("font.ttf", b"\x00\x01\x00\x00invalid"),
+                "license_basis": "other",
+                "rights_confirmed": "false",
+            },
+            format="multipart",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.user)
+
+        response = ProblemStudioFontCollectionView.as_view()(request)
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("권리", response.data["detail"])
+        mock_upload.assert_not_called()
+
     @patch(
         "academy.adapters.storage.r2_objects.create_storage_download_url",
-        return_value="https://download.example/Academy-Hangul-Companion-Windows-1.0.0.zip",
+        return_value="https://download.example/Academy-Hangul-Companion-Windows-1.1.0.zip",
     )
     @patch(
         "academy.adapters.storage.r2_objects.head_storage_object_integrity",
-        return_value=(67644035, "83ed43fed33a4eedb8aa92321bf672de9ce135a3429325d978ae96559b0fdda6"),
+        return_value=(67679859, "af9538f4aa3685384f0e638609348160dbdf04d61cc82a1d4a3f415bcf043bfd"),
     )
     def test_hangul_companion_download_is_staff_only_and_manifest_bound(self, mock_head, mock_presign):
         from apps.domains.tools.problem_studio.views import ProblemStudioHangulCompanionDownloadView
@@ -609,16 +829,16 @@ class ProblemStudioTransferViewTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertEqual(response.data["version"], "1.0.0")
-        self.assertEqual(response.data["size_bytes"], 67644035)
-        self.assertEqual(response.data["sha256"], "83ed43fed33a4eedb8aa92321bf672de9ce135a3429325d978ae96559b0fdda6")
+        self.assertEqual(response.data["version"], "1.1.0")
+        self.assertEqual(response.data["size_bytes"], 67679859)
+        self.assertEqual(response.data["sha256"], "af9538f4aa3685384f0e638609348160dbdf04d61cc82a1d4a3f415bcf043bfd")
         self.assertNotIn("r2_key", response.data)
         self.assertEqual(response["Cache-Control"], "no-store")
         mock_head.assert_called_once()
         mock_presign.assert_called_once()
 
     @patch("academy.adapters.storage.r2_objects.create_storage_download_url")
-    @patch("academy.adapters.storage.r2_objects.head_storage_object_integrity", return_value=(67644035, "b" * 64))
+    @patch("academy.adapters.storage.r2_objects.head_storage_object_integrity", return_value=(67679859, "b" * 64))
     def test_hangul_companion_download_fails_closed_on_object_mismatch(self, _mock_head, mock_presign):
         from apps.domains.tools.problem_studio.views import ProblemStudioHangulCompanionDownloadView
 
@@ -737,3 +957,72 @@ class ProblemStudioTransferViewTests(TestCase):
         self.assertEqual(first.data["sha256"], "a" * 64)
         self.assertEqual(second.status_code, 404, second.data)
         mock_presign.assert_called_once()
+
+    @patch(
+        "apps.domains.tools.problem_studio.views.font_asset_download_url",
+        return_value="https://download.example/teacher-font.ttf",
+    )
+    @patch(
+        "apps.infrastructure.storage.r2.generate_presigned_get_url_storage",
+        return_value="https://download.example/review.zip",
+    )
+    def test_hangul_handoff_includes_only_revalidated_owner_font(
+        self,
+        _mock_review_presign,
+        mock_font_presign,
+    ):
+        from urllib.parse import parse_qs, unquote, urlparse
+        from apps.domains.tools.problem_studio.views import (
+            ProblemStudioHangulHandoffConsumeView,
+            ProblemStudioHangulHandoffCreateView,
+        )
+
+        asset = self._font_asset()
+        AIJobModel = django_apps.get_model("ai_domain", "AIJobModel")
+        AIResultModel = django_apps.get_model("ai_domain", "AIResultModel")
+        job = AIJobModel.objects.create(
+            job_id="problem-font-handoff-job",
+            job_type="problem_studio_transcription",
+            status="DONE",
+            tenant_id=str(self.tenant.id),
+            source_domain="tools_problem_studio",
+            tier="basic",
+        )
+        AIResultModel.objects.create(job=job, payload={
+            "r2_key": f"tenants/{self.tenant.id}/tools/problem-studio/result/review.zip",
+            "filename": "검수본.zip",
+            "size_bytes": 12,
+            "sha256": "a" * 64,
+            "_font_assets": [{
+                "id": str(asset.id),
+                "r2_key": asset.r2_key,
+                "sha256": asset.sha256,
+            }],
+        })
+        create_response = ProblemStudioHangulHandoffCreateView.as_view()(
+            self._request(
+                "post",
+                f"/api/v1/tools/problem-studio/transfer-jobs/{job.job_id}/hangul-handoff/",
+            ),
+            job_id=job.job_id,
+        )
+        protocol = urlparse(create_response.data["protocol_url"])
+        handoff_url = unquote(parse_qs(protocol.query)["handoff"][0])
+        token = urlparse(handoff_url).path.rstrip("/").rsplit("/", 1)[-1]
+
+        response = ProblemStudioHangulHandoffConsumeView.as_view()(
+            self._request(
+                "get",
+                f"/api/v1/tools/problem-studio/hangul-handoffs/{token}/",
+            ),
+            token=token,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["fonts"][0]["id"], str(asset.id))
+        self.assertEqual(
+            response.data["fonts"][0]["download_url"],
+            "https://download.example/teacher-font.ttf",
+        )
+        self.assertNotIn("r2_key", response.data["fonts"][0])
+        mock_font_presign.assert_called_once()

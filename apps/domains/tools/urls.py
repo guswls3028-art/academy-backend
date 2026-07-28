@@ -12,6 +12,9 @@ from .problem_studio.views import (
     ProblemStudioHangulHandoffCreateView,
     ProblemStudioHangulHandoffConsumeView,
     ProblemStudioHangulCompanionDownloadView,
+    ProblemStudioFontCollectionView,
+    ProblemStudioFontDetailView,
+    ProblemStudioDocumentStyleView,
 )
 from .timer_download_view import TimerDownloadView
 from apps.support.omr.route_dependencies import (
@@ -27,6 +30,9 @@ urlpatterns = [
     path("problem-studio/transfer-jobs/<str:job_id>/hangul-handoff/", ProblemStudioHangulHandoffCreateView.as_view(), name="tools-problem-studio-hangul-handoff-create"),
     path("problem-studio/hangul-handoffs/<str:token>/", ProblemStudioHangulHandoffConsumeView.as_view(), name="tools-problem-studio-hangul-handoff-consume"),
     path("problem-studio/hangul-companion/", ProblemStudioHangulCompanionDownloadView.as_view(), name="tools-problem-studio-hangul-companion-download"),
+    path("problem-studio/fonts/", ProblemStudioFontCollectionView.as_view(), name="tools-problem-studio-font-collection"),
+    path("problem-studio/fonts/<uuid:font_id>/", ProblemStudioFontDetailView.as_view(), name="tools-problem-studio-font-detail"),
+    path("problem-studio/document-style/", ProblemStudioDocumentStyleView.as_view(), name="tools-problem-studio-document-style"),
     path("problem-studio/jobs/", ProblemStudioJobCreateView.as_view(), name="tools-problem-studio-job-create"),
     path("problem-studio/jobs/<str:job_id>/", ProblemStudioJobStatusView.as_view(), name="tools-problem-studio-job-status"),
     path("omr/preview/", ToolsOMRPreviewView.as_view(), name="tools-omr-preview"),

@@ -8,6 +8,7 @@ from functools import lru_cache
 from urllib.parse import quote
 
 from django.core.cache import cache
+from django.db import transaction
 from rest_framework import status
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -18,6 +19,22 @@ from apps.core.permissions import TenantResolvedAndStaff
 from academy.adapters.db.django import repositories_ai as ai_repo
 from apps.domains.tools.problem_studio.services import extract_sources, parse_payload, source_extraction_to_payload
 from apps.domains.tools.problem_studio.async_transfer import build_source_archive
+from apps.domains.tools.problem_studio.document_style import (
+    BUILTIN_FONTS,
+    resolve_document_style_payload,
+    save_document_style_preference,
+    serialize_document_style_preference,
+)
+from apps.domains.tools.problem_studio.font_assets import (
+    create_personal_font_asset,
+    delete_font_asset_file,
+    font_asset_download_url,
+    serialize_font_asset,
+)
+from apps.domains.tools.problem_studio.models import (
+    ProblemStudioDocumentStyle,
+    ProblemStudioFontAsset,
+)
 from apps.domains.tools.problem_studio.transfer_documents import (
     build_transfer_package,
     package_to_response,
@@ -49,6 +66,151 @@ def _load_hangul_companion_manifest() -> dict[str, str | int]:
     return manifest
 
 
+def _resolve_request_document_style(request, payload: dict) -> dict:
+    return resolve_document_style_payload(
+        payload,
+        tenant=request.tenant,
+        user=request.user,
+    )
+
+
+class ProblemStudioFontCollectionView(APIView):
+    """List or upload the current teacher's private Problem Studio fonts."""
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get(self, request):
+        fonts = ProblemStudioFontAsset.objects.filter(
+            tenant=request.tenant,
+            uploaded_by=request.user,
+            status=ProblemStudioFontAsset.Status.READY,
+        )
+        response = Response({
+            "built_in_fonts": list(BUILTIN_FONTS),
+            "custom_fonts": [
+                serialize_font_asset(font, include_download_url=True)
+                for font in fonts
+            ],
+        })
+        response["Cache-Control"] = "no-store"
+        return response
+
+    def post(self, request):
+        upload = request.FILES.get("file")
+        if upload is None:
+            return Response(
+                {"detail": "올릴 TTF 또는 OTF 글꼴 파일을 선택해 주세요."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            font = create_personal_font_asset(
+                tenant=request.tenant,
+                user=request.user,
+                upload=upload,
+                display_name=request.data.get("display_name"),
+                license_basis=request.data.get("license_basis"),
+                license_name=request.data.get("license_name"),
+                license_url=request.data.get("license_url"),
+                license_note=request.data.get("license_note"),
+                rights_confirmed=str(request.data.get("rights_confirmed") or "").lower()
+                in {"1", "true", "yes", "on"},
+                redistribution_allowed=str(request.data.get("redistribution_allowed") or "").lower()
+                in {"1", "true", "yes", "on"},
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            serialize_font_asset(font, include_download_url=True),
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class ProblemStudioFontDetailView(APIView):
+    """Remove a private font and reset any saved style that references it."""
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+
+    def delete(self, request, font_id):
+        font = ProblemStudioFontAsset.objects.filter(
+            id=font_id,
+            tenant=request.tenant,
+            uploaded_by=request.user,
+            status=ProblemStudioFontAsset.Status.READY,
+        ).first()
+        if font is None:
+            return Response({"detail": "내 글꼴을 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+
+        storage_snapshot = {
+            "tenant_id": font.tenant_id,
+            "asset_id": font.id,
+            "r2_key": font.r2_key,
+        }
+        with transaction.atomic():
+            preference = ProblemStudioDocumentStyle.objects.filter(
+                tenant=request.tenant,
+                user=request.user,
+            ).first()
+            if preference is not None:
+                update_fields = []
+                if preference.title_font_asset_id == font.id:
+                    preference.title_font_asset = None
+                    preference.title_font_key = "hamchorom-dotum"
+                    update_fields.extend(["title_font_asset", "title_font_key"])
+                if preference.body_font_asset_id == font.id:
+                    preference.body_font_asset = None
+                    preference.body_font_key = "hamchorom-batang"
+                    update_fields.extend(["body_font_asset", "body_font_key"])
+                if update_fields:
+                    preference.save(update_fields=[*update_fields, "updated_at"])
+            font.delete()
+        try:
+            delete_font_asset_file(**storage_snapshot)
+        except Exception:
+            logger.warning(
+                "PROBLEM_STUDIO_FONT_OBJECT_CLEANUP_FAILED font_id=%s tenant_id=%s",
+                font_id,
+                request.tenant.id,
+                exc_info=True,
+            )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ProblemStudioDocumentStyleView(APIView):
+    """Load or save the current teacher's reusable output typography."""
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+    parser_classes = [JSONParser]
+
+    def get(self, request):
+        response = Response({
+            "preference": serialize_document_style_preference(
+                tenant=request.tenant,
+                user=request.user,
+            ),
+        })
+        response["Cache-Control"] = "no-store"
+        return response
+
+    def put(self, request):
+        if not isinstance(request.data, dict):
+            return Response({"detail": "문서 스타일 값이 올바르지 않습니다."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            save_document_style_preference(
+                dict(request.data),
+                tenant=request.tenant,
+                user=request.user,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({
+            "preference": serialize_document_style_preference(
+                tenant=request.tenant,
+                user=request.user,
+            ),
+        })
+
+
 class ProblemStudioTransferDocumentView(APIView):
     """POST /api/v1/tools/problem-studio/transfer-document/
 
@@ -65,6 +227,7 @@ class ProblemStudioTransferDocumentView(APIView):
             payload = parse_payload(request.data.get("payload") if hasattr(request.data, "get") else request.data)
             if not payload and isinstance(request.data, dict):
                 payload = dict(request.data)
+            payload = _resolve_request_document_style(request, payload)
             package = build_transfer_package(
                 payload=payload,
                 source_files=request.FILES.getlist("source_files"),
@@ -92,6 +255,7 @@ class ProblemStudioTransferJobCreateView(APIView):
             payload = parse_payload(request.data.get("payload") if hasattr(request.data, "get") else request.data)
             if not payload and isinstance(request.data, dict):
                 payload = dict(request.data)
+            payload = _resolve_request_document_style(request, payload)
             source_files = request.FILES.getlist("source_files")
             if not source_files:
                 return Response({"detail": "원본으로 옮길 소스 파일을 먼저 올려 주세요."}, status=status.HTTP_400_BAD_REQUEST)
@@ -118,6 +282,7 @@ class ProblemStudioTransferJobCreateView(APIView):
                     "source_archive_key": archive_key,
                     "source_files": source_manifest,
                     "tenant_id": tenant_id,
+                    "request_user_id": str(request.user.id),
                 },
                 tenant_id=tenant_id,
                 source_domain="tools_problem_studio",
@@ -179,6 +344,7 @@ class ProblemStudioJobCreateView(APIView):
             payload = parse_payload(request.data.get("payload") if hasattr(request.data, "get") else request.data)
             if not payload and isinstance(request.data, dict):
                 payload = dict(request.data)
+            payload = _resolve_request_document_style(request, payload)
             sources = extract_sources(request.FILES.getlist("source_files"))
             source_payloads = [source_extraction_to_payload(source) for source in sources]
             result = dispatch_tools_ai_job(
@@ -187,6 +353,7 @@ class ProblemStudioJobCreateView(APIView):
                     "problem_studio_payload": payload,
                     "source_files": source_payloads,
                     "tenant_id": str(request.tenant.id),
+                    "request_user_id": str(request.user.id),
                 },
                 tenant_id=str(request.tenant.id),
                 source_domain="tools_problem_studio",
@@ -276,7 +443,7 @@ class ProblemStudioTransferJobStatusView(APIView):
                 result_payload = {
                     key: value
                     for key, value in raw_result.items()
-                    if key not in {"r2_key", "download_url"}
+                    if key not in {"r2_key", "download_url"} and not key.startswith("_")
                 }
                 result_payload["download_url"] = generate_presigned_get_url_storage(
                     key=result_key,
@@ -399,6 +566,33 @@ class ProblemStudioHangulHandoffConsumeView(APIView):
             from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
 
             filename = str(result_payload.get("filename") or "problem-studio.zip")
+            font_payloads = []
+            raw_font_assets = result_payload.get("_font_assets")
+            if isinstance(raw_font_assets, list):
+                for snapshot in raw_font_assets:
+                    if not isinstance(snapshot, dict):
+                        continue
+                    asset = ProblemStudioFontAsset.objects.filter(
+                        id=snapshot.get("id"),
+                        tenant_id=tenant_id,
+                        uploaded_by_id=str(handoff.get("user_id") or ""),
+                        status=ProblemStudioFontAsset.Status.READY,
+                        sha256=snapshot.get("sha256"),
+                    ).first()
+                    if asset is None or asset.r2_key != snapshot.get("r2_key"):
+                        return Response(
+                            {"detail": "검수본에 선택한 내 글꼴을 더 이상 사용할 수 없습니다. 웹에서 다시 생성해 주세요."},
+                            status=status.HTTP_409_CONFLICT,
+                        )
+                    font_payloads.append({
+                        "id": str(asset.id),
+                        "family_name": asset.family_name,
+                        "file_name": asset.original_name,
+                        "download_url": font_asset_download_url(asset, expires_in=300),
+                        "sha256": asset.sha256,
+                        "size_bytes": asset.size_bytes,
+                        "content_type": asset.content_type,
+                    })
             response = Response({
                 "download_url": generate_presigned_get_url_storage(
                     key=result_key,
@@ -409,6 +603,7 @@ class ProblemStudioHangulHandoffConsumeView(APIView):
                 "filename": filename,
                 "sha256": str(result_payload.get("sha256") or ""),
                 "size_bytes": int(result_payload.get("size_bytes") or 0),
+                "fonts": font_payloads,
             })
             response["Cache-Control"] = "no-store"
             return response
