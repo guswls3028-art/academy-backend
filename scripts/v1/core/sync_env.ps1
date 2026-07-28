@@ -26,6 +26,19 @@ function Convert-RuntimeEnvValueToObject {
     return $obj
 }
 
+function Assert-RuntimeEnvSettingsModule {
+    param(
+        [Parameter(Mandatory = $true)]$EnvObject,
+        [Parameter(Mandatory = $true)][string]$Expected,
+        [Parameter(Mandatory = $true)][string]$ParameterName
+    )
+    $property = $EnvObject.PSObject.Properties["DJANGO_SETTINGS_MODULE"]
+    $actual = if ($property) { ([string]$property.Value).Trim() } else { "" }
+    if ($actual -ne $Expected) {
+        throw "$ParameterName DJANGO_SETTINGS_MODULE must be '$Expected' (actual='$actual'). Refusing cross-role runtime env sync."
+    }
+}
+
 function Resolve-MessagingTenantBindingKey {
     <# Resolve one dedicated HMAC key shared by API and workers without printing it. #>
     $keys = @()
@@ -62,10 +75,10 @@ function Resolve-MessagingTenantBindingKey {
 function Sync-ApiEnvFromSSOT {
     <#
     .SYNOPSIS
-        Merges SSOT-derived keys (SQS, VIDEO_BATCH_*, REDIS_HOST, REDIS_PORT) into SSM /academy/api/env.
-        If parameter does not exist, creates it from SSOT+Redis; if workers env exists, uses it as base so API gets DB/R2 etc.
-        Idempotent: multiple runs produce the same env state.
+        Prepares SSOT-derived API env and optionally publishes it. Missing or
+        cross-role source data always fails closed.
     #>
+    param([switch]$PrepareOnly)
     if ($script:PlanMode) { Write-Ok "Sync API env skipped (Plan)"; return }
     if (-not $script:SsmApiEnv -or $script:SsmApiEnv.Trim() -eq "") { Write-Warn "SsmApiEnv not set; skip API env sync"; return }
 
@@ -82,29 +95,16 @@ function Sync-ApiEnvFromSSOT {
         if ($_.Exception.Message -notmatch "ParameterNotFound|InvalidParameter") { throw }
     }
 
-    $obj = $null
-    if ($valueRaw) {
-        $jsonStr = $valueRaw
-        if ($isBase64) {
-            try { $jsonStr = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($valueRaw)) } catch { $jsonStr = $valueRaw }
-        }
-        $obj = $jsonStr | ConvertFrom-Json
-    } else {
-        # API env missing: use workers env as base if present (so API gets DB/R2/secrets), then SSOT+Redis will overwrite where applicable.
-        if ($script:SsmWorkersEnv) {
-            try {
-                $w = Invoke-AwsJson @("ssm", "get-parameter", "--name", $script:SsmWorkersEnv, "--with-decryption", "--region", $script:Region, "--output", "json")
-                if ($w -and $w.Parameter -and $w.Parameter.Value) {
-                    $wRaw = $w.Parameter.Value
-                    if ($wRaw -match '^[A-Za-z0-9+/]+=*$') {
-                        try { $wRaw = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($wRaw)) } catch { }
-                    }
-                    $obj = $wRaw | ConvertFrom-Json
-                }
-            } catch { }
-        }
-        if (-not $obj) { $obj = [PSCustomObject]@{} }
+    if (-not $valueRaw) {
+        throw "API env $($script:SsmApiEnv) is missing or unreadable. Refusing to synthesize it from workers env."
     }
+    if ($isBase64) {
+        throw "API env $($script:SsmApiEnv) must be plain JSON, not base64-wrapped workers JSON."
+    }
+    $obj = $valueRaw | ConvertFrom-Json
+    Assert-RuntimeEnvSettingsModule -EnvObject $obj -Expected "apps.api.config.settings.prod" -ParameterName $script:SsmApiEnv
+    $script:OriginalApiEnvValue = $valueRaw
+    $script:ApiEnvVersion = [int]$existing.Parameter.Version
 
     # SSOT: SQS
     $obj | Add-Member -NotePropertyName "MESSAGING_SQS_QUEUE_NAME" -NotePropertyValue $script:MessagingSqsQueueName -Force
@@ -139,23 +139,16 @@ function Sync-ApiEnvFromSSOT {
     if ($script:RdsProxyRequireTls) {
         $obj | Add-Member -NotePropertyName "DB_SSL_MODE" -NotePropertyValue "require" -Force
     }
-    # /academy/api/env can be bootstrapped from the workers parameter. Never
-    # allow the worker-only settings module to leak into the API runtime.
-    $obj | Add-Member `
-        -NotePropertyName "DJANGO_SETTINGS_MODULE" `
-        -NotePropertyValue "apps.api.config.settings.prod" `
-        -Force
-
+    Assert-RuntimeEnvSettingsModule -EnvObject $obj -Expected "apps.api.config.settings.prod" -ParameterName $script:SsmApiEnv
     $newJson = $obj | ConvertTo-Json -Compress -Depth 10
     $newValue = $newJson
-    if ($isBase64) {
-        $newBytes = [System.Text.Encoding]::UTF8.GetBytes($newJson)
-        $newValue = [Convert]::ToBase64String($newBytes)
+    $script:CandidateApiEnvValue = $newValue
+    $script:ApiEnvChanged = ($newValue -ne $valueRaw)
+    if ($PrepareOnly) {
+        Write-Ok "API env candidate prepared without mutating $($script:SsmApiEnv)"
+        return
     }
-
-    Invoke-Aws @("ssm", "put-parameter", "--name", $script:SsmApiEnv, "--type", "SecureString", "--value", $newValue, "--overwrite", "--region", $script:Region) -ErrorMessage "put-parameter api env" | Out-Null
-    Write-Ok "API env synced with SSOT: $($script:SsmApiEnv) (SQS, Video Batch, Redis)"
-    $script:ChangesMade = $true
+    Publish-ApiEnvCandidate
 }
 
 function Sync-WorkersEnvFromSSOT {
@@ -164,6 +157,7 @@ function Sync-WorkersEnvFromSSOT {
         Merges SSOT-derived keys (SQS, REDIS_HOST, REDIS_PORT) into SSM /academy/workers/env.
         Parameter must exist (created by Bootstrap from .env). Idempotent.
     #>
+    param([switch]$PrepareOnly)
     if ($script:PlanMode) { Write-Ok "Sync Workers env skipped (Plan)"; return }
     if (-not $script:SsmWorkersEnv -or $script:SsmWorkersEnv.Trim() -eq "") { Write-Warn "SsmWorkersEnv not set; skip Workers env sync"; return }
 
@@ -188,6 +182,8 @@ function Sync-WorkersEnvFromSSOT {
         try { $jsonStr = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($valueRaw)) } catch { }
     }
     $obj = $jsonStr | ConvertFrom-Json
+    Assert-RuntimeEnvSettingsModule -EnvObject $obj -Expected "apps.api.config.settings.worker" -ParameterName $script:SsmWorkersEnv
+    $script:OriginalWorkersEnvValue = $valueRaw
 
     # SSOT: SQS
     $obj | Add-Member -NotePropertyName "MESSAGING_TENANT_BINDING_KEY" -NotePropertyValue $script:ResolvedMessagingTenantBindingKey -Force
@@ -218,13 +214,17 @@ function Sync-WorkersEnvFromSSOT {
         $obj | Add-Member -NotePropertyName "DB_SSL_MODE" -NotePropertyValue "require" -Force
     }
 
+    Assert-RuntimeEnvSettingsModule -EnvObject $obj -Expected "apps.api.config.settings.worker" -ParameterName $script:SsmWorkersEnv
     $newJson = $obj | ConvertTo-Json -Compress -Depth 10
     $newBytes = [System.Text.Encoding]::UTF8.GetBytes($newJson)
     $newValue = [Convert]::ToBase64String($newBytes)
-
-    Invoke-Aws @("ssm", "put-parameter", "--name", $script:SsmWorkersEnv, "--type", "SecureString", "--value", $newValue, "--overwrite", "--region", $script:Region) -ErrorMessage "put-parameter workers env" | Out-Null
-    Write-Ok "Workers env synced with SSOT: $($script:SsmWorkersEnv) (SQS, Redis)"
-    $script:ChangesMade = $true
+    $script:CandidateWorkersEnvValue = $newValue
+    $script:WorkersEnvChanged = ($newValue -ne $valueRaw)
+    if ($PrepareOnly) {
+        Write-Ok "Workers env candidate prepared without mutating $($script:SsmWorkersEnv)"
+        return
+    }
+    Publish-WorkersEnvCandidate
 }
 
 function Invoke-SyncEnvFromSSOT {
@@ -232,8 +232,122 @@ function Invoke-SyncEnvFromSSOT {
     .SYNOPSIS
         Runs API and Workers env sync with SSOT. Call after infrastructure (including Redis) is ensured.
     #>
-    Write-Step "Sync runtime env with SSOT"
+    param([switch]$PrepareOnly)
+    Write-Step $(if ($PrepareOnly) { "Prepare runtime env candidates" } else { "Sync runtime env with SSOT" })
+    $script:ApiEnvChanged = $false
+    $script:WorkersEnvChanged = $false
+    $script:CandidateApiEnvValue = $null
+    $script:CandidateWorkersEnvValue = $null
     $script:ResolvedMessagingTenantBindingKey = Resolve-MessagingTenantBindingKey
-    Sync-ApiEnvFromSSOT
-    Sync-WorkersEnvFromSSOT
+    Sync-ApiEnvFromSSOT -PrepareOnly:$PrepareOnly
+    Sync-WorkersEnvFromSSOT -PrepareOnly:$PrepareOnly
+}
+
+function Publish-ApiEnvCandidate {
+    if (-not $script:CandidateApiEnvValue) { throw "API env candidate is not prepared." }
+    if (-not $script:ApiEnvChanged) {
+        Write-Ok "API env already matches SSOT: $($script:SsmApiEnv)"
+        return
+    }
+    $put = Invoke-AwsJson @(
+        "ssm", "put-parameter",
+        "--name", $script:SsmApiEnv,
+        "--type", "SecureString",
+        "--value", $script:CandidateApiEnvValue,
+        "--overwrite",
+        "--region", $script:Region,
+        "--output", "json"
+    )
+    if (-not $put -or -not $put.Version) { throw "API env promotion returned no parameter version." }
+    $script:ApiEnvVersion = [int]$put.Version
+    $script:ChangesMade = $true
+    Write-Ok "API env candidate promoted to $($script:SsmApiEnv)"
+}
+
+function Publish-WorkersEnvCandidate {
+    if (-not $script:CandidateWorkersEnvValue) { throw "Workers env candidate is not prepared." }
+    if (-not $script:WorkersEnvChanged) {
+        Write-Ok "Workers env already matches SSOT: $($script:SsmWorkersEnv)"
+        return
+    }
+    $put = Invoke-AwsJson @(
+        "ssm", "put-parameter",
+        "--name", $script:SsmWorkersEnv,
+        "--type", "SecureString",
+        "--value", $script:CandidateWorkersEnvValue,
+        "--overwrite",
+        "--region", $script:Region,
+        "--output", "json"
+    )
+    if (-not $put -or -not $put.Version) { throw "Workers env promotion returned no parameter version." }
+    $script:ChangesMade = $true
+    Write-Ok "Workers env candidate promoted to $($script:SsmWorkersEnv)"
+}
+
+function Publish-RuntimeEnvCandidates {
+    if (-not $script:CandidateApiEnvValue -or -not $script:CandidateWorkersEnvValue) {
+        throw "Runtime env candidates must be prepared before promotion."
+    }
+    try {
+        Publish-ApiEnvCandidate
+        Publish-WorkersEnvCandidate
+    } catch {
+        $promotionError = $_
+        Write-Warn "Runtime env promotion failed; restoring prior parameter values."
+        try {
+            if ($script:ApiEnvChanged -and $script:OriginalApiEnvValue) {
+                $rollback = Invoke-AwsJson @(
+                    "ssm", "put-parameter",
+                    "--name", $script:SsmApiEnv,
+                    "--type", "SecureString",
+                    "--value", $script:OriginalApiEnvValue,
+                    "--overwrite",
+                    "--region", $script:Region,
+                    "--output", "json"
+                )
+                if ($rollback -and $rollback.Version) { $script:ApiEnvVersion = [int]$rollback.Version }
+            }
+            if ($script:WorkersEnvChanged -and $script:OriginalWorkersEnvValue) {
+                Invoke-AwsJson @(
+                    "ssm", "put-parameter",
+                    "--name", $script:SsmWorkersEnv,
+                    "--type", "SecureString",
+                    "--value", $script:OriginalWorkersEnvValue,
+                    "--overwrite",
+                    "--region", $script:Region,
+                    "--output", "json"
+                ) | Out-Null
+            }
+        } catch {
+            throw "Runtime env promotion failed and rollback also failed. Promotion error: $($promotionError.Exception.Message); rollback error: $($_.Exception.Message)"
+        }
+        throw $promotionError
+    }
+}
+
+function Publish-ApiPreprodEnvCandidate {
+    param(
+        [string]$ParameterName = "/academy/api/preprod/env",
+        [string]$DatabaseName = "academy_api_preprod"
+    )
+    if (-not $script:CandidateApiEnvValue) { throw "API env candidate is not prepared." }
+    if ($DatabaseName -notmatch '^[a-z][a-z0-9_]{2,62}$') { throw "Invalid API preprod database name." }
+    $obj = $script:CandidateApiEnvValue | ConvertFrom-Json
+    Assert-RuntimeEnvSettingsModule -EnvObject $obj -Expected "apps.api.config.settings.prod" -ParameterName "API preprod candidate"
+    $obj | Add-Member -NotePropertyName "DB_NAME" -NotePropertyValue $DatabaseName -Force
+    $value = $obj | ConvertTo-Json -Compress -Depth 10
+    $put = Invoke-AwsJson @(
+        "ssm", "put-parameter",
+        "--name", $ParameterName,
+        "--type", "SecureString",
+        "--value", $value,
+        "--overwrite",
+        "--region", $script:Region,
+        "--output", "json"
+    )
+    if (-not $put -or -not $put.Version) { throw "API preprod env candidate write returned no version." }
+    $script:SsmApiPreprodEnv = $ParameterName
+    $script:ApiPreprodDatabaseName = $DatabaseName
+    Write-Ok "API preprod env candidate published to isolated parameter."
+    return $ParameterName
 }

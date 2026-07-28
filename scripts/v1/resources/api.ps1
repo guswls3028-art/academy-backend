@@ -42,16 +42,33 @@ if [ "`$ecr_ok" != "true" ]; then
   log "ECR login/pull failed after retries. Image: $ApiImageUri"
   exit 1
 fi
-# 3) API env (SSM, 선택) -> env 파일로 저장
-API_ENV_FILE=""
-if [ -n "$SsmApiEnvParam" ]; then
-  ENV_JSON="`$(aws ssm get-parameter --name "$SsmApiEnvParam" --with-decryption --query Parameter.Value --output text --region $Region 2>/dev/null)" || true
-  if [ -n "`$ENV_JSON" ]; then
-    mkdir -p /opt
-    echo "`$ENV_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); [print(k+'='+str(v)) for k,v in d.items()]" 2>/dev/null > /opt/api.env || true
-    [ -s /opt/api.env ] && API_ENV_FILE="--env-file /opt/api.env"
-  fi
+# 3) API env (SSM) -> validated env file. API must never boot with worker
+# settings or without its production settings module.
+if [ -z "$SsmApiEnvParam" ]; then
+  log "API SSM env parameter is required"
+  exit 1
 fi
+mkdir -p /opt
+umask 077
+env_ok=false
+for attempt in 1 2 3 4 5; do
+  ENV_JSON="`$(aws ssm get-parameter --name "$SsmApiEnvParam" --with-decryption --query Parameter.Value --output text --region $Region 2>>"`$LOG")" || true
+  if [ -n "`$ENV_JSON" ] && printf '%s' "`$ENV_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); expected='apps.api.config.settings.prod'; actual=str(d.get('DJANGO_SETTINGS_MODULE','')).strip(); assert actual == expected, f'DJANGO_SETTINGS_MODULE must be {expected!r} (actual={actual!r})'; [print(k+'='+str(v)) for k,v in d.items()]" > /opt/api.env.next 2>>"`$LOG"; then
+    if [ -s /opt/api.env.next ]; then
+      mv /opt/api.env.next /opt/api.env
+      env_ok=true
+      break
+    fi
+  fi
+  rm -f /opt/api.env.next
+  log "API env attempt `$attempt failed, retrying in 10s"
+  sleep 10
+done
+if [ "`$env_ok" != "true" ]; then
+  log "API env fetch/validation failed after retries: $SsmApiEnvParam"
+  exit 1
+fi
+API_ENV_FILE="--env-file /opt/api.env"
 # 4) 기존 academy-api 컨테이너 정리 후 고정 digest 이미지로 실행
 docker stop academy-api 2>/dev/null || true
 docker rm academy-api 2>/dev/null || true
@@ -114,36 +131,49 @@ function Invoke-RefreshApiEnvOnInstances {
     $params = @{ commands = @($script) }
     $paramsJson = $params | ConvertTo-Json -Compress
     Write-Host "Refreshing API env on $($ids.Count) instance(s) from SSM $ssmParam..." -ForegroundColor Cyan
-    $failedIds = [System.Collections.Generic.List[string]]::new()
+    $failures = [System.Collections.ArrayList]::new()
     foreach ($instId in $ids) {
-        $succeeded = $false
         try {
             $sendOut = Invoke-AwsJson @("ssm", "send-command", "--instance-ids", $instId, "--document-name", "AWS-RunShellScript", "--parameters", $paramsJson, "--region", $region, "--output", "json") 2>$null
             $cmdId = $sendOut.Command.CommandId
-            if (-not $cmdId) { Write-Host "  $instId : send-command failed" -ForegroundColor Red; continue }
+            if (-not $cmdId) {
+                [void]$failures.Add("${instId}: send-command returned no command id")
+                continue
+            }
             $wait = 0
-            while ($wait -lt 90) {
+            $terminal = $false
+            while ($wait -lt 360) {
                 Start-Sleep -Seconds 3
                 $wait += 3
                 $inv = Invoke-AwsJson @("ssm", "get-command-invocation", "--command-id", $cmdId, "--instance-id", $instId, "--region", $region, "--output", "json") 2>$null
                 if ($inv.Status -eq "Success") {
-                    Write-Host "  $instId : env refreshed, container restarted" -ForegroundColor Green
-                    $succeeded = $true
+                    $terminal = $true
+                    if ([string]$inv.StandardOutputContent -notmatch "API_ENV_REFRESH_PASS") {
+                        [void]$failures.Add("${instId}: refresh returned no PASS marker")
+                    } else {
+                        Write-Host "  $instId : env refreshed and both health endpoints passed" -ForegroundColor Green
+                    }
                     break
                 }
-                if ($inv.Status -eq "Failed" -or $inv.Status -eq "Cancelled") {
-                    Write-Host "  $instId : $($inv.Status)" -ForegroundColor Red
-                    if ($inv.StandardErrorContent) { Write-Host $inv.StandardErrorContent -ForegroundColor Gray }
+                if ($inv.Status -in @("Failed", "Cancelled", "TimedOut", "Cancelling")) {
+                    $terminal = $true
+                    $detail = ([string]$inv.StandardErrorContent).Trim()
+                    [void]$failures.Add("${instId}: $($inv.Status) $detail")
                     break
                 }
             }
+            if (-not $terminal) {
+                [void]$failures.Add("${instId}: refresh timed out after 360s")
+            }
         } catch {
-            Write-Host "  $instId : $_" -ForegroundColor Red
+            [void]$failures.Add("${instId}: $($_.Exception.Message)")
         }
-        if (-not $succeeded) { $failedIds.Add([string]$instId) }
     }
-    if ($failedIds.Count -gt 0) {
-        throw "API env refresh failed for: $($failedIds -join ', ')"
+    if ($failures.Count -gt 0) {
+        throw "API env refresh failed closed: $($failures -join '; ')"
+    }
+    if ($script:ApiBaseUrl) {
+        Wait-ApiHealth200 -ApiBaseUrl $script:ApiBaseUrl -TimeoutSec 120
     }
 }
 
@@ -449,6 +479,9 @@ function Ensure-API-LaunchTemplate {
         $apiUri = Get-LatestApiImageUri
         if ($apiUri) {
             $deploymentId = Resolve-ApiLaunchTemplateDeploymentId -ApiImageUri $apiUri
+            if ($script:ApiEnvVersion -and [int]$script:ApiEnvVersion -gt 0) {
+                $deploymentId = "$deploymentId-env-v$([int]$script:ApiEnvVersion)"
+            }
             $userDataRaw = Get-ApiLaunchTemplateUserData -ApiImageUri $apiUri -Region $script:Region -SsmApiEnvParam $script:SsmApiEnv -DeploymentId $deploymentId
         } else {
             Write-Warn "No API image in ECR ($($script:EcrApiRepo)); Launch Template UserData left empty. Push academy-api image and re-run deploy."
@@ -662,26 +695,7 @@ function Ensure-API-Instance {
                     -ApiHealthUrl $healthUrl `
                     -TimeoutSec 300
             } catch {
-                Write-Warn "API health 200 timeout. $_. Deploy continues; check $($script:ApiBaseUrl)/$($script:ApiHealthPath) and ASG/ALB manually."
-                $minHealthy = if ($script:ApiInstanceRefreshMinHealthyPercentage -gt 0) { $script:ApiInstanceRefreshMinHealthyPercentage } else { 100 }
-                $warmup = if ($script:ApiInstanceRefreshInstanceWarmup -gt 0) { $script:ApiInstanceRefreshInstanceWarmup } else { 300 }
-                $prefs = Convert-JsonArgToFileRef (@{MinHealthyPercentage=$minHealthy;InstanceWarmup=$warmup} | ConvertTo-Json -Compress)
-                try {
-                    $refreshes = Invoke-AwsJson @("autoscaling", "describe-instance-refreshes", "--auto-scaling-group-name", $script:ApiASGName, "--region", $script:Region, "--output", "json") 2>$null
-                    $inProgress = $refreshes.InstanceRefreshes | Where-Object { $_.Status -eq "InProgress" -or $_.Status -eq "Pending" } | Select-Object -First 1
-                    if ($inProgress) {
-                        Write-Warn "API instance refresh already in progress (id=$($inProgress.InstanceRefreshId)); skip duplicate refresh after health timeout."
-                    } else {
-                        Invoke-Aws @("autoscaling", "start-instance-refresh", "--auto-scaling-group-name", $script:ApiASGName, "--preferences", $prefs, "--region", $script:Region) -ErrorMessage "start-instance-refresh failed" 2>$null | Out-Null
-                        $script:ChangesMade = $true
-                    }
-                } catch {
-                    if ($_.Exception.Message -match "InstanceRefreshInProgress") {
-                        Write-Warn "API instance refresh already in progress; skip duplicate refresh after health timeout."
-                    } else {
-                        Write-Warn "API health timeout recovery refresh skipped: $($_.Exception.Message)"
-                    }
-                }
+                throw "API health 200 timeout after production mutation: $($_.Exception.Message)"
             }
         }
     } else {

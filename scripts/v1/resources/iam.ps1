@@ -10,11 +10,138 @@ $EcsInstanceRoleName = "academy-batch-ecs-instance-role"
 $InstanceProfileName = "academy-batch-ecs-instance-profile"
 $JobRoleName = "academy-video-batch-job-role"
 $ExecutionRoleName = "academy-batch-ecs-task-execution-role"
+$ApiPreprodCanaryRoleName = "academy-api-preprod-canary-role"
+$ApiPreprodCanaryProfileName = "academy-api-preprod-canary"
+$ApiPreprodCanaryPolicyName = "academy-api-preprod-canary-runtime"
 
 function Get-ASGInstanceRefreshResourceArn {
     param([string]$AutoScalingGroupName)
     if (-not $AutoScalingGroupName -or $AutoScalingGroupName.Trim() -eq "") { return $null }
     return "arn:aws:autoscaling:$($script:Region):$($script:AccountId):autoScalingGroup:*:autoScalingGroupName/$AutoScalingGroupName"
+}
+
+function Ensure-ApiPreprodCanaryIAM {
+    if ($script:PlanMode) { return $ApiPreprodCanaryProfileName }
+    Write-Step "Ensure isolated API preprod canary IAM"
+
+    $trustPath = Join-Path $TemplatesPath "trust_ec2.json"
+    if (-not (Test-Path -LiteralPath $trustPath)) { throw "EC2 trust policy template not found: $trustPath" }
+    $trustRef = "file://$($trustPath -replace '\\','/')"
+    $role = Invoke-AwsJson @("iam", "get-role", "--role-name", $ApiPreprodCanaryRoleName, "--output", "json")
+    if (-not $role) {
+        Invoke-Aws @(
+            "iam", "create-role",
+            "--role-name", $ApiPreprodCanaryRoleName,
+            "--assume-role-policy-document", $trustRef
+        ) -ErrorMessage "create API preprod canary role" | Out-Null
+        $script:ChangesMade = $true
+    } else {
+        Invoke-Aws @(
+            "iam", "update-assume-role-policy",
+            "--role-name", $ApiPreprodCanaryRoleName,
+            "--policy-document", $trustRef
+        ) -ErrorMessage "update API preprod canary trust policy" | Out-Null
+    }
+
+    Invoke-Aws @(
+        "iam", "attach-role-policy",
+        "--role-name", $ApiPreprodCanaryRoleName,
+        "--policy-arn", "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+    ) -ErrorMessage "attach SSM core to API preprod canary role" | Out-Null
+
+    $runtimePolicy = [ordered]@{
+        Version = "2012-10-17"
+        Statement = @(
+            [ordered]@{Sid="EcrAuth";Effect="Allow";Action="ecr:GetAuthorizationToken";Resource="*"},
+            [ordered]@{
+                Sid = "ApiImagePull"
+                Effect = "Allow"
+                Action = @("ecr:BatchCheckLayerAvailability","ecr:BatchGetImage","ecr:GetDownloadUrlForLayer")
+                Resource = "arn:aws:ecr:$($script:Region):$($script:AccountId):repository/$($script:EcrApiRepo)"
+            },
+            [ordered]@{
+                Sid = "ApiPreprodEnvRead"
+                Effect = "Allow"
+                Action = "ssm:GetParameter"
+                Resource = "arn:aws:ssm:$($script:Region):$($script:AccountId):parameter/academy/api/preprod/env"
+            }
+        )
+    }
+    $runtimePolicyJson = $runtimePolicy | ConvertTo-Json -Depth 20 -Compress
+    $runtimePolicyRef = Convert-JsonArgToFileRef $runtimePolicyJson
+    $runtimePolicyFile = $runtimePolicyRef -replace '^file://', ''
+    try {
+        Invoke-Aws @(
+            "iam", "put-role-policy",
+            "--role-name", $ApiPreprodCanaryRoleName,
+            "--policy-name", $ApiPreprodCanaryPolicyName,
+            "--policy-document", $runtimePolicyRef
+        ) -ErrorMessage "put API preprod canary runtime policy" | Out-Null
+    } finally {
+        Remove-TempFiles @($runtimePolicyFile)
+    }
+
+    $profile = Invoke-AwsJson @(
+        "iam", "get-instance-profile",
+        "--instance-profile-name", $ApiPreprodCanaryProfileName,
+        "--output", "json"
+    )
+    if (-not $profile) {
+        Invoke-Aws @(
+            "iam", "create-instance-profile",
+            "--instance-profile-name", $ApiPreprodCanaryProfileName
+        ) -ErrorMessage "create API preprod canary instance profile" | Out-Null
+        Invoke-Aws @(
+            "iam", "add-role-to-instance-profile",
+            "--instance-profile-name", $ApiPreprodCanaryProfileName,
+            "--role-name", $ApiPreprodCanaryRoleName
+        ) -ErrorMessage "attach API preprod canary role to profile" | Out-Null
+        $script:ChangesMade = $true
+    } else {
+        $roles = @($profile.InstanceProfile.Roles)
+        $unexpected = @($roles | Where-Object { $_.RoleName -ne $ApiPreprodCanaryRoleName })
+        if ($unexpected.Count -gt 0) { throw "API preprod canary profile contains an unexpected role." }
+        if (-not ($roles | Where-Object { $_.RoleName -eq $ApiPreprodCanaryRoleName })) {
+            Invoke-Aws @(
+                "iam", "add-role-to-instance-profile",
+                "--instance-profile-name", $ApiPreprodCanaryProfileName,
+                "--role-name", $ApiPreprodCanaryRoleName
+            ) -ErrorMessage "attach API preprod canary role to profile" | Out-Null
+            $script:ChangesMade = $true
+        }
+    }
+
+    $readback = Invoke-AwsJson @(
+        "iam", "get-role-policy",
+        "--role-name", $ApiPreprodCanaryRoleName,
+        "--policy-name", $ApiPreprodCanaryPolicyName,
+        "--output", "json"
+    )
+    $actualJson = $readback.PolicyDocument | ConvertTo-Json -Depth 20 -Compress
+    if ($actualJson -ne $runtimePolicyJson) { throw "API preprod canary IAM readback mismatch." }
+    $attached = Invoke-AwsJson @(
+        "iam", "list-attached-role-policies",
+        "--role-name", $ApiPreprodCanaryRoleName,
+        "--output", "json"
+    )
+    $attachedArns = @($attached.AttachedPolicies | ForEach-Object { [string]$_.PolicyArn } | Sort-Object -Unique)
+    if (
+        $attachedArns.Count -ne 1 -or
+        $attachedArns[0] -ne "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+    ) {
+        throw "API preprod canary role has unexpected managed policies."
+    }
+    $inline = Invoke-AwsJson @(
+        "iam", "list-role-policies",
+        "--role-name", $ApiPreprodCanaryRoleName,
+        "--output", "json"
+    )
+    $inlineNames = @($inline.PolicyNames | Sort-Object -Unique)
+    if ($inlineNames.Count -ne 1 -or $inlineNames[0] -ne $ApiPreprodCanaryPolicyName) {
+        throw "API preprod canary role has unexpected inline policies."
+    }
+    Write-Ok "API preprod canary IAM is dedicated and least-privilege."
+    return $ApiPreprodCanaryProfileName
 }
 
 function Legacy-GitHubActionsDeployIAM {
@@ -306,6 +433,7 @@ function Ensure-GitHubActionsDeployIAM {
     $runtimeImageIds = @($runtimeImageIds | Sort-Object -Unique)
     $runtimeSecurityGroupIds = @($runtimeSecurityGroupIds | Sort-Object -Unique)
     $runtimeSubnetIds = @($runtimeSubnetIds | Sort-Object -Unique)
+    [void]$runtimeInstanceRoleArns.Add("arn:aws:iam::$($script:AccountId):role/$ApiPreprodCanaryRoleName")
     $runtimeInstanceRoleArns = @($runtimeInstanceRoleArns | Sort-Object -Unique)
     if ($runtimeImageIds.Count -eq 0 -or $runtimeSecurityGroupIds.Count -eq 0 -or $runtimeSubnetIds.Count -eq 0 -or $runtimeInstanceRoleArns.Count -eq 0) {
         throw "Launch Template use IAM derivation produced an incomplete runtime resource set."
@@ -322,7 +450,18 @@ function Ensure-GitHubActionsDeployIAM {
     $jobDefBaseArns = @($script:SSOT_JobDef | Where-Object { $_ } | Sort-Object -Unique | ForEach-Object { "arn:aws:batch:$($script:Region):$($script:AccountId):job-definition/${_}" })
     $jobDefRevisionArns = @($jobDefBaseArns | ForEach-Object { "${_}:*" })
     if ($jobDefBaseArns.Count -ne 8 -or $jobDefRevisionArns.Count -ne 8) { throw "Expected exactly eight video job definitions." }
+    $apiCanaryInstanceTag = "academy-v1-api-preprod-canary"
     $instanceTags = @($script:ApiInstanceTagValue, $script:MessagingInstanceTagValue, $script:AiInstanceTagValue, $script:ToolsInstanceTagValue | Where-Object { $_ } | Sort-Object -Unique)
+    $apiCanaryTagConditions = [ordered]@{
+        "ec2:ResourceTag/Name" = $apiCanaryInstanceTag
+        "ec2:ResourceTag/Project" = "academy"
+        "ec2:ResourceTag/ManagedBy" = "academy-deploy-canary"
+    }
+    $apiCanarySsmTagConditions = [ordered]@{
+        "ssm:resourceTag/Name" = $apiCanaryInstanceTag
+        "ssm:resourceTag/Project" = "academy"
+        "ssm:resourceTag/ManagedBy" = "academy-deploy-canary"
+    }
 
     $statements = @(
         [ordered]@{Sid="EcrAuth";Effect="Allow";Action="ecr:GetAuthorizationToken";Resource="*"},
@@ -336,8 +475,13 @@ function Ensure-GitHubActionsDeployIAM {
         $(if ($templatesRequireInstanceTags) { [ordered]@{Sid="LaunchTemplateInstanceTag";Effect="Allow";Action="ec2:CreateTags";Resource="arn:aws:ec2:$($script:Region):$($script:AccountId):instance/*";Condition=[ordered]@{StringEquals=[ordered]@{"ec2:CreateAction"="RunInstances"}}} }),
         [ordered]@{Sid="LaunchTemplatePassRole";Effect="Allow";Action="iam:PassRole";Resource=$runtimeInstanceRoleArns;Condition=[ordered]@{StringEquals=[ordered]@{"iam:PassedToService"="ec2.amazonaws.com"}}},
         [ordered]@{Sid="RuntimeScalePolicyReadback";Effect="Allow";Action="iam:GetRolePolicy";Resource="arn:aws:iam::$($script:AccountId):role/academy-ec2-role"},
+        [ordered]@{Sid="ApiCanaryInstanceRead";Effect="Allow";Action=@("ec2:DescribeInstances","ec2:DescribeInstanceStatus");Resource="*"},
+        [ordered]@{Sid="ApiCanaryInstanceCleanup";Effect="Allow";Action="ec2:TerminateInstances";Resource="arn:aws:ec2:$($script:Region):$($script:AccountId):instance/*";Condition=[ordered]@{StringEquals=$apiCanaryTagConditions}},
+        [ordered]@{Sid="ApiCanaryProfileRead";Effect="Allow";Action="iam:GetInstanceProfile";Resource="arn:aws:iam::$($script:AccountId):instance-profile/$ApiPreprodCanaryProfileName"},
+        [ordered]@{Sid="ApiCanarySsmRead";Effect="Allow";Action="ssm:DescribeInstanceInformation";Resource="*"},
         [ordered]@{Sid="SsmSendDocument";Effect="Allow";Action="ssm:SendCommand";Resource="arn:aws:ssm:$($script:Region)::document/AWS-RunShellScript"},
         [ordered]@{Sid="SsmSendInstances";Effect="Allow";Action="ssm:SendCommand";Resource="arn:aws:ec2:$($script:Region):$($script:AccountId):instance/*";Condition=[ordered]@{StringEquals=[ordered]@{"ssm:resourceTag/Name"=$instanceTags}}},
+        [ordered]@{Sid="SsmSendApiCanary";Effect="Allow";Action="ssm:SendCommand";Resource="arn:aws:ec2:$($script:Region):$($script:AccountId):instance/*";Condition=[ordered]@{StringEquals=$apiCanarySsmTagConditions}},
         [ordered]@{Sid="SsmCommandRead";Effect="Allow";Action="ssm:GetCommandInvocation";Resource="*"},
         [ordered]@{Sid="DevAlertsAlarmRead";Effect="Allow";Action="cloudwatch:DescribeAlarms";Resource="*"},
         [ordered]@{Sid="DevAlertsParameterRead";Effect="Allow";Action="ssm:GetParameter";Resource="arn:aws:ssm:$($script:Region):$($script:AccountId):parameter/academy/ops/dev-alerts-api-user-impact-state"},

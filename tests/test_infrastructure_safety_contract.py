@@ -113,10 +113,13 @@ def test_api_runtime_sync_and_refresh_fail_closed() -> None:
     assert "Resolve-EvidenceApiHealthUrl" in api_resource
     assert "set -euo pipefail" in refresh
     assert '|| echo "docker run failed"' not in refresh
-    assert 'echo "docker run failed"' in refresh
+    assert "API env refresh docker run failed" in refresh
+    assert "API_ENV_REFRESH_ROLLBACK_PASS previous container restored" in refresh
+    assert "API_ENV_REFRESH_ROLLBACK_FAILED" in refresh
+    assert "API_ENV_REFRESH_PASS healthz=200 health=200" in refresh
     assert "exit 1" in refresh
     assert "API env refresh failed for:" in refresh_ps1
-    assert "API env refresh failed for:" in api_resource
+    assert "API env refresh failed closed:" in api_resource
 
 
 def test_problem_studio_bedrock_policy_is_model_scoped_and_converged() -> None:
@@ -287,9 +290,13 @@ def test_worker_deploy_jobs_require_migration_gate() -> None:
 
     for job_name in ("deploy-messaging", "deploy-ai", "deploy-tools", "deploy-video"):
         block = _job_block(workflow, job_name)
-        assert "needs: [detect-changes, build-and-push, run-migrations]" in block
+        assert (
+            "needs: [detect-changes, build-and-push, verify-api-preprod, "
+            "run-migrations]"
+        ) in block
         assert "always() &&" in block
         assert "needs.build-and-push.result == 'success'" in block
+        assert "needs.verify-api-preprod.result == 'success'" in block
         assert "needs.run-migrations.result == 'success'" in block
         assert "needs.run-migrations.result == 'skipped'" in block
 
@@ -946,8 +953,11 @@ def test_exact_workflow_iam_covers_full_contract_without_broad_ssm() -> None:
         "EcrAuth", "EcrPushPull", "EcrRepoManage", "AsgInstanceRefresh",
         "AsgDescribe", "LaunchTemplateImagePinRead", "LaunchTemplateImagePinWrite",
         "LaunchTemplateInstanceUse", "LaunchTemplateInstanceTag",
-        "LaunchTemplatePassRole", "RuntimeScalePolicyReadback", "SsmSendDocument",
-        "SsmSendInstances", "SsmCommandRead", "BatchRead",
+        "LaunchTemplatePassRole", "RuntimeScalePolicyReadback",
+        "ApiCanaryInstanceRead", "ApiCanaryInstanceCleanup",
+        "ApiCanaryProfileRead", "ApiCanarySsmRead",
+        "SsmSendDocument", "SsmSendInstances", "SsmSendApiCanary",
+        "SsmCommandRead", "BatchRead",
         "BatchJobDefinitionRegister", "BatchJobDefinitionRevisionWrite",
         "BatchPassRoles", "ElbRead",
         "SnsFailureNotify", "StsIdentity", "DeploymentControlLock",
@@ -985,12 +995,25 @@ def test_exact_workflow_iam_covers_full_contract_without_broad_ssm() -> None:
     assert launch_use["Action"] == "ec2:RunInstances"
     assert len([resource for resource in launch_use["Resource"] if ":launch-template/lt-" in resource]) == 4
     assert "*" not in launch_use["Resource"]
-    assert by_sid["LaunchTemplatePassRole"]["Resource"] == "arn:aws:iam::809466760795:role/academy-ec2-role"
+    assert set(by_sid["LaunchTemplatePassRole"]["Resource"]) == {
+        "arn:aws:iam::809466760795:role/academy-api-preprod-canary-role",
+        "arn:aws:iam::809466760795:role/academy-ec2-role",
+    }
     assert by_sid["LaunchTemplatePassRole"]["Condition"]["StringEquals"]["iam:PassedToService"] == "ec2.amazonaws.com"
     assert by_sid["RuntimeScalePolicyReadback"]["Action"] == "iam:GetRolePolicy"
     assert by_sid["RuntimeScalePolicyReadback"]["Resource"] == (
         "arn:aws:iam::809466760795:role/academy-ec2-role"
     )
+    assert by_sid["ApiCanaryInstanceCleanup"]["Condition"]["StringEquals"] == {
+        "ec2:ResourceTag/Name": "academy-v1-api-preprod-canary",
+        "ec2:ResourceTag/Project": "academy",
+        "ec2:ResourceTag/ManagedBy": "academy-deploy-canary",
+    }
+    assert by_sid["SsmSendApiCanary"]["Condition"]["StringEquals"] == {
+        "ssm:resourceTag/Name": "academy-v1-api-preprod-canary",
+        "ssm:resourceTag/Project": "academy",
+        "ssm:resourceTag/ManagedBy": "academy-deploy-canary",
+    }
     assert "iam:PutRolePolicy" not in static
     assert set(by_sid["BatchPassRoles"]["Condition"]["StringEquals"]["iam:PassedToService"]) == {
         "batch.amazonaws.com", "ecs-tasks.amazonaws.com",

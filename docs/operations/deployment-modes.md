@@ -1,7 +1,7 @@
 # 배포 방식 개요
 
 **기준:** 실제 스크립트·워크플로우. 문서는 실행 방식과 일치하도록 유지한다.
-**최종 갱신:** 2026-07-07
+**최종 갱신:** 2026-07-28
 
 ---
 
@@ -24,10 +24,12 @@
 
 | 경로 | 트리거 | 서버 반영 방식 | 속도 |
 |------|--------|----------------|------|
-| **CI 자동 배포** | main push → GitHub Actions | build-and-push → run-migrations(필요 시) → deploy-api/messaging/ai/tools/video → verify-deployment | ~10~25분 |
-| **수동 정식 배포** | `pwsh scripts/v1/deploy.ps1 -AwsProfile default` | 전체 인프라 Ensure + API LT 갱신 + ASG instance refresh | 20~25분 |
+| **CI 자동 배포** | main push → GitHub Actions | build-and-push → 격리 preprod(전용 DB migration+health) → 운영 migration → deploy-api/messaging/ai/tools/video → verify-deployment | ~15~30분 |
+| **수동 정식 배포** | `pwsh scripts/v1/deploy.ps1 -AwsProfile default` | 후보 env 준비 → 격리 preprod → 운영 env 승격 → API LT/ASG rolling refresh | 20~30분 |
 
-- **env·이미지 소스:** SSM `/academy/api/env` → `/opt/api.env`, 마지막 완전 성공 `docs/reports/release-manifest.latest.json`의 `academy-api@sha256:...`.
+- **env·이미지 소스:** 운영은 SSM `/academy/api/env` → `/opt/api.env`, preprod는 `/academy/api/preprod/env`와 `academy_api_preprod` DB를 사용한다. 이미지는 완전 성공 `docs/reports/release-manifest.latest.json`의 `academy-api@sha256:...`를 사용한다.
+- **API 역할 불변조건:** `/academy/api/env`의 `DJANGO_SETTINGS_MODULE`은 `apps.api.config.settings.prod`, `/academy/workers/env`는 `apps.api.config.settings.worker`여야 한다. 누락·교차 오염·API env 조회 실패 시 배포를 중단하며 workers env에서 API env를 합성하지 않는다.
+- **격리 불변조건:** preprod EC2는 운영 ASG/ALB에 등록하지 않고, 전용 instance profile과 candidate-only SSM parameter 및 별도 DB를 사용한다.
 
 ---
 
@@ -37,12 +39,14 @@ main에 push하면 자동으로 서버 반영까지 완료된다:
 
 1. GitHub Actions `v1-build-and-push-latest.yml` 트리거
 2. 변경 감지 결과에 따라 필요한 이미지(base, api, video-worker, messaging-worker, ai-worker-cpu, tools-worker)만 linux/arm64 빌드 → ECR `:latest` + `:sha-*` 푸시. `workflow_dispatch` 또는 core/shared 변경은 전체 빌드.
-3. `run-migrations` job → 새 SHA 이미지로 one-shot `manage.py migrate`
-4. `deploy-api`, `deploy-messaging`, `deploy-ai`, `deploy-tools`, `deploy-video` job → 각 ASG/Batch 리소스 refresh
-5. 새 인스턴스 기동 → UserData로 ECR pull + SSM env + docker run
-6. `verify-deployment` job → API health, ASG 상태, tenant maintenance flag 확인 + API 변경 시 학생 영상 playback chain smoke
+3. `verify-api-preprod` job → candidate manifest의 API digest로 격리 EC2 1대를 기동하고 별도 DB에 migration을 적용한다. prod settings, candidate DB 경계, `/healthz`, DB 포함 `/health`를 모두 확인한 뒤 종료한다.
+4. preprod 성공 후에만 `run-migrations`가 운영 DB migration을 실행한다.
+5. 모든 `deploy-api`, `deploy-messaging`, `deploy-ai`, `deploy-tools`, `deploy-video` job은 같은 preprod 성공 결과를 공통 선행조건으로 사용한다.
+6. API Launch Template pin과 ASG rolling refresh를 실행한다. preprod 실패 또는 임시 서버 cleanup 실패 시 어떤 운영 서비스도 변경하지 않는다.
+7. 새 인스턴스 기동 → UserData로 ECR pull + 운영 SSM env 역할 검증 + docker run
+8. `verify-deployment` job → API health, ASG 상태, tenant maintenance flag 확인 + API 변경 시 학생 영상 playback chain smoke
 
-**IAM:** `academy-gha-ecr-build` 역할에 ECR 권한 + `autoscaling:StartInstanceRefresh` + 배포 헬스 계측용 ELB target group read 권한 적용 완료 (2026-05-20).
+**IAM:** `academy-gha-ecr-build`은 preprod 생성·정리와 운영 refresh에 필요한 태그 제한 권한만 갖고, preprod EC2는 `academy-api-preprod-canary-role`로 candidate SSM과 API ECR pull만 허용한다.
 
 ---
 
@@ -50,7 +54,7 @@ main에 push하면 자동으로 서버 반영까지 완료된다:
 
 - **목적:** 인프라 변경(Launch Template, UserData, ASG, ALB, SSM, Batch 등)을 반영할 때.
 - **실행:** `pwsh scripts/v1/deploy.ps1 -AwsProfile default`
-- **동작:** Bootstrap → Ensure-Network/ECR/API-LT/API-ASG → instance refresh → After-Deploy Verification
+- **동작:** Bootstrap → Ensure-Network/ECR → 운영 env 후보 준비(무변경) → candidate SSM/별도 DB 격리 검증 → 운영 env 원자 승격 → API-LT/API-ASG rolling refresh → After-Deploy Verification
 - **언제 써야 하는지:**
   - Launch Template, UserData, ASG, ALB, SSM 파라미터 등 인프라 설정 변경 시
   - 출시 전/후, 안정 반영이 필요할 때
@@ -64,7 +68,9 @@ main에 push하면 자동으로 서버 반영까지 완료된다:
 
 - **문서와 스크립트 불일치 금지.** 배포 설명은 실제 `scripts/v1/deploy.ps1`, `.github/workflows/v1-build-and-push-latest.yml` 기준으로만 기술한다.
 - **멀티테넌트:** 어떤 배포 경로를 쓰든 tenant fallback·default tenant·tenant 없는 query·cross-tenant 노출은 금지.
-- env는 SSM→/opt/api.env만 사용한다.
+- env는 SSM→/opt/api.env만 사용하며, preprod와 운영 parameter를 분리한다.
+- 운영 API 서버에 후보 이미지나 후보 env를 먼저 적용하지 않는다. `run-api-preprod-canary.ps1`의 격리 검증이 성공한 뒤에만 운영 Launch Template/ASG 또는 운영 컨테이너 변경이 허용된다.
+- 운영 env만 변경된 경우에도 컨테이너를 제자리 재시작하지 않는다. env parameter version이 포함된 Launch Template로 ASG rolling refresh한다.
 
 ---
 
@@ -81,7 +87,7 @@ main에 push하면 자동으로 서버 반영까지 완료된다:
 
 ## 6. 장애 시 확인 포인트
 
-- deploy.ps1 stderr, ASG/ALB/Batch 상태, SSM `/academy/api/env` 존재·형식.
+- deploy.ps1 stderr, `API_PREPROD_CANARY_PASS` 유무, ASG/ALB/Batch 상태, SSM `/academy/api/env` 존재·형식·prod settings module.
 - CI deploy-* 또는 verify-deployment job 실패 시: GitHub Actions 로그 확인 → IAM 권한/ASG/ALB/Batch 상태 확인.
 - health check 실패 시 `docker logs academy-api`.
 

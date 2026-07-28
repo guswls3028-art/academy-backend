@@ -19,7 +19,7 @@
 - **전체 인프라 + API 반영:**
   `pwsh scripts/v1/deploy.ps1 -AwsProfile default`
 - **main push만으로 이미지 반영 (CI 자동):**
-  main에 push → GitHub Actions `v1-build-and-push-latest.yml` 실행 → **build-and-push** → 필요한 경우 **run-migrations** → **deploy-api / deploy-messaging / deploy-ai / deploy-tools / deploy-video** → **verify-deployment**.
+  main에 push → GitHub Actions `v1-build-and-push-latest.yml` 실행 → **build-and-push** → **verify-api-preprod(전용 DB migration+health)** → 필요한 경우 **run-migrations(운영 DB)** → **deploy-api / deploy-messaging / deploy-ai / deploy-tools / deploy-video** → **verify-deployment**.
   즉, **push만 해도** CI가 ECR 푸시, 마이그레이션, 각 서비스 배포, health/ASG/tenant maintenance/video-chain 검증까지 수행한다.
   `run-migrations`는 실행 직전에 SSM `/academy/api/env`를 `/opt/api.env`로 원자적으로 갱신한 뒤 새 digest 이미지로 실행한다. 인스턴스에 남은 이전 env 파일을 재사용하지 않는다.
 
@@ -27,10 +27,12 @@
 
 1. Lock, Preflight, Drift 보고
 2. Bootstrap(선택): SSM, SQS, RDS engine, ECR 등 Ensure
-3. Ensure-Network, Ensure-ECR, Ensure-API-LaunchTemplate, Ensure-API-ASG, Ensure-API-Instance
-4. **Ensure-API:** API Launch Template 갱신 후, LT drift 시 `start-instance-refresh` 호출
-5. 새 인스턴스 기동 시 **UserData** 실행: ECR 로그인 → 검증된 release manifest의 `academy-api@sha256:...` pull → SSM `/academy/api/env` → `/opt/api.env` → digest-pinned `docker run`
-6. Netprobe(선택), Evidence 저장, After-Deploy Verification(ASG desired/inService, ALB target health, Batch CE/Queue)
+3. Ensure-Network/ECR/IAM 후 운영 env 후보를 메모리에서 준비한다. 이 단계에서는 `/academy/api/env`와 `/academy/workers/env`를 쓰지 않는다.
+4. 후보를 `/academy/api/preprod/env`에 기록하고 전용 IAM·`academy_api_preprod` DB를 쓰는 격리 EC2에서 migration, prod settings, `/healthz`, `/health`를 검증한다.
+5. 격리 검증 성공 후에만 운영 API/worker env를 승격하고 **Ensure-API**를 실행한다.
+6. env parameter version을 포함한 API Launch Template가 ASG rolling refresh를 유도한다. 운영 컨테이너 제자리 재시작은 정식 경로에서 사용하지 않는다.
+7. 새 인스턴스 기동 시 **UserData** 실행: ECR 로그인 → 검증된 release manifest의 `academy-api@sha256:...` pull → SSM `/academy/api/env` 역할 검증 → `/opt/api.env` → digest-pinned `docker run`
+8. Netprobe(선택), Evidence 저장, After-Deploy Verification(ASG desired/inService, ALB target health, Batch CE/Queue)
 
 **관련 파일:** `scripts/v1/deploy.ps1`, `scripts/v1/resources/api.ps1` (Get-ApiLaunchTemplateUserData, Ensure-API-ASG, Ensure-API-Instance).
 

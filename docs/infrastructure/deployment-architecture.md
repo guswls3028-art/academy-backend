@@ -45,9 +45,13 @@ git push main
     v
 [build-and-push] ─── build changed images ──> ECR (compat :latest + immutable :sha-XXXXXXXX)
     |
-    |── (if API changed) ──> [run-migrations] ─── resolve SHA to digest ──> docker run manage.py migrate
+    v
+[verify-api-preprod] ─── dedicated IAM + candidate SSM + preprod DB
+    |                     └── migrate + /healthz + /health, then terminate
     |                              |
     |                              v
+    |── (if API changed) ──> [run-migrations] ─── production DB migrate
+    |
     |── (if API changed) ──> [deploy-api] ─── pin LT to digest ──> ASG instance refresh
     |
     |── (if messaging changed) ──> [deploy-messaging] ─── pin LT to digest ──> ASG refresh
