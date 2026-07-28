@@ -331,9 +331,14 @@ echo "$video_chain_proof"
 echo "API_PREPROD_CANARY_PASS settings=prod database=preprod healthz=$healthz health=$health image=$image"
 '@
     $remote = $remote.Replace("__EXPECTED_DATABASE__", $ExpectedDatabaseName).Replace("__EXPECTED_IMAGE__", $ImageUri)
+    # AWS-RunShellScript invokes each command through /bin/sh. The canary uses
+    # bash-only pipefail and here-string behavior, so dispatch an encoded script
+    # explicitly through bash instead of relying on the host's /bin/sh.
+    $remoteB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($remote))
+    $remoteCommand = "echo $remoteB64 | base64 -d | bash"
     $paramsRef = Convert-JsonArgToFileRef (
         @{
-            commands = @($remote)
+            commands = @($remoteCommand)
             executionTimeout = @([string]$TimeoutSec)
         } | ConvertTo-Json -Compress
     )

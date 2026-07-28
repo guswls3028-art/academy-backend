@@ -76,6 +76,9 @@ def test_canary_is_isolated_and_checks_migrations_and_health() -> None:
     assert "http://127.0.0.1:8000/healthz" in canary
     assert "http://127.0.0.1:8000/health" in canary
     assert "API_PREPROD_CANARY_PASS" in canary
+    assert '[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($remote))' in canary
+    assert '"echo $remoteB64 | base64 -d | bash"' in canary
+    assert "commands = @($remoteCommand)" in canary
     assert "ec2\", \"terminate-instances" in canary
     assert "ec2\", \"wait\", \"instance-terminated" in canary
     assert "shutdown -h +30" in canary
