@@ -84,10 +84,13 @@ jobs:
             exit 0
           fi
 
-          # github.event.before covers the full push range (multi-commit safe)
-          PREV="${{ github.event.before }}"
-          if [ -z "$PREV" ] || [ "$PREV" = "0000000000000000000000000000000000000000" ]; then
-            echo "No previous ref — full build"
+          # Each runtime can lag behind HEAD after a selective release. Derive
+          # its diff base from the last verified image tag, not event.before:
+          # a failed workflow followed by a hotfix push must still rebuild all
+          # previously unshipped runtime changes.
+          MANIFEST="docs/reports/release-manifest.latest.json"
+          force_full_build() {
+            echo "$1 — full build"
             echo "build_all=true" >> $GITHUB_OUTPUT
             echo "build_base=true" >> $GITHUB_OUTPUT
             echo "build_api=true" >> $GITHUB_OUTPUT
@@ -96,9 +99,57 @@ jobs:
             echo "build_ai=true" >> $GITHUB_OUTPUT
             echo "build_tools=true" >> $GITHUB_OUTPUT
             exit 0
+          }
+          if ! jq -e '
+            .schemaVersion == 1 and
+            .status == "successful" and
+            .complete == true and
+            (.gitSha | type == "string" and test("^[0-9a-f]{40}$"))
+          ' "$MANIFEST" >/dev/null; then
+            force_full_build "No complete verified release manifest"
           fi
 
-          CHANGED=$(git diff --name-only "$PREV" HEAD)
+          resolve_image_base() {
+            local repo="$1"
+            local tag ref resolved
+            tag=$(jq -er --arg repo "$repo" '.images[$repo].tag | select(type == "string")' "$MANIFEST") || return 1
+            if [[ "$tag" =~ ^sha-([0-9a-f]{8,40})(-run-.+)?$ ]]; then
+              ref="${BASH_REMATCH[1]}"
+            else
+              return 1
+            fi
+            resolved=$(git rev-parse --verify "${ref}^{commit}" 2>/dev/null) || return 1
+            git merge-base --is-ancestor "$resolved" HEAD || return 1
+            printf '%s' "$resolved"
+          }
+
+          RELEASE_PREV=$(jq -r '.gitSha' "$MANIFEST")
+          git merge-base --is-ancestor "$RELEASE_PREV" HEAD ||
+            force_full_build "Verified release is not an ancestor of HEAD"
+          BASE_PREV=$(resolve_image_base "academy-base") ||
+            force_full_build "academy-base source commit is unavailable"
+          API_PREV=$(resolve_image_base "academy-api") ||
+            force_full_build "academy-api source commit is unavailable"
+          VIDEO_PREV=$(resolve_image_base "academy-video-worker") ||
+            force_full_build "academy-video-worker source commit is unavailable"
+          MSG_PREV=$(resolve_image_base "academy-messaging-worker") ||
+            force_full_build "academy-messaging-worker source commit is unavailable"
+          AI_PREV=$(resolve_image_base "academy-ai-worker-cpu") ||
+            force_full_build "academy-ai-worker-cpu source commit is unavailable"
+          TOOLS_PREV=$(resolve_image_base "academy-tools-worker") ||
+            force_full_build "academy-tools-worker source commit is unavailable"
+
+          CHANGED_RELEASE=$(git diff --name-only "$RELEASE_PREV" HEAD)
+          CHANGED_BASE=$(git diff --name-only "$BASE_PREV" HEAD)
+          CHANGED_API=$(git diff --name-only "$API_PREV" HEAD)
+          CHANGED_VIDEO=$(git diff --name-only "$VIDEO_PREV" HEAD)
+          CHANGED_MSG=$(git diff --name-only "$MSG_PREV" HEAD)
+          CHANGED_AI=$(git diff --name-only "$AI_PREV" HEAD)
+          CHANGED_TOOLS=$(git diff --name-only "$TOOLS_PREV" HEAD)
+          CHANGED=$(printf '%s\n' \
+            "$CHANGED_RELEASE" "$CHANGED_BASE" "$CHANGED_API" \
+            "$CHANGED_VIDEO" "$CHANGED_MSG" "$CHANGED_AI" "$CHANGED_TOOLS" |
+            sed '/^$/d' | sort -u)
           # Avoid echo|grep -q under GitHub's `bash -o pipefail`: on a large
           # multi-commit diff, grep can exit early and make echo fail with SIGPIPE.
           changed_matches() { grep -qE "$1" <<< "$CHANGED"; }
@@ -140,6 +191,7 @@ jobs:
           echo "build_all=false" >> $GITHUB_OUTPUT
 
           # Base image: only when Dockerfile.base, common requirements, or libs change
+          CHANGED="$CHANGED_BASE"
           BASE=false
           changed_matches "^docker/Dockerfile\.base$" && BASE=true
           changed_matches "^requirements/common\.txt$" && BASE=true
@@ -147,6 +199,7 @@ jobs:
           echo "build_base=$BASE" >> $GITHUB_OUTPUT
 
           # API: apps/ (대부분), docker/api/, requirements/api.txt
+          CHANGED="$CHANGED_API"
           API=false
           changed_matches "^apps/" && API=true
           changed_matches "^scripts/" && API=true
@@ -160,6 +213,7 @@ jobs:
           # 실행한다. 따라서 apps/domains/video/ 변경도 video 이미지 재빌드 + jobdef
           # rev 갱신이 필요하다. 2026-05-10: recover_dead_video_jobs 신규 시 trigger 누락
           # 사고로 ops jobdef가 옛 image를 가리킨 적 있음.
+          CHANGED="$CHANGED_VIDEO"
           VIDEO=false
           changed_matches "^apps/worker/video_worker/" && VIDEO=true
           changed_matches "^apps/support/video/" && VIDEO=true
@@ -177,6 +231,7 @@ jobs:
           # 워커가 alimtalk_content_builders / notification_dispatch / queue_service 등을
           # 직접 import하므로 도메인 코드 변경도 워커 이미지 재빌드 + ASG refresh 필요.
           # 누락 시 새 매핑/양식이 API에만 들어가고 워커는 옛 매핑으로 enqueue 처리 → 실효 X.
+          CHANGED="$CHANGED_MSG"
           MSG=false
           changed_matches "^apps/worker/messaging_worker/" && MSG=true
           changed_matches "^apps/support/messaging/" && MSG=true
@@ -194,6 +249,7 @@ jobs:
           # 워커 settings INSTALLED_APPS 동기화가 필요하고, 코드 image 자체에도
           # 새 모델 정의가 들어가야 한다. 누락 시 운영 콜백 ValueError로 swallow → DB stuck.
           # 경험상(2026-04-27 inventory 누락) 보수적 트리거가 필요해 도메인 패턴을 넓게 잡는다.
+          CHANGED="$CHANGED_AI"
           AI=false
           changed_matches "^apps/worker/ai_worker/" && AI=true
           changed_matches "^apps/worker/omr/" && AI=true
@@ -209,6 +265,7 @@ jobs:
           echo "build_ai=$AI" >> $GITHUB_OUTPUT
 
           # Tools worker: deterministic document conversion/spreadsheet jobs without AI model caches.
+          CHANGED="$CHANGED_TOOLS"
           TOOLS=false
           changed_matches "^apps/worker/tools_worker/" && TOOLS=true
           changed_matches "^apps/domains/tools/" && TOOLS=true

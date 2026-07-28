@@ -85,6 +85,7 @@ git push main
 
 `force_full` is a correctness boundary for code imported by more than one runtime. It builds all six images, including `academy-base`; service-specific paths retain selective builds. `workflow_dispatch` always performs a full build/deploy.
 Change predicates use the `changed_matches` here-string helper instead of `echo | grep -q`; this avoids a `pipefail`/SIGPIPE false negative on large multi-commit push ranges.
+Push change detection derives each service's diff base from that image's source commit in the last complete verified release manifest, not from `github.event.before`. Therefore a failed workflow followed by a small hotfix still includes earlier unshipped API/worker changes. Missing, non-ancestor, or malformed image source evidence fails safe to a full build.
 
 런타임 EC2 역할의 worker-scale inline policy가 바뀌는 릴리스는 main push
 전에 운영 권한으로 `pwsh scripts/v1/deploy.ps1 -AwsProfile default`를

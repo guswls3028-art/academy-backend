@@ -415,6 +415,29 @@ def test_selective_build_graph_covers_shared_runtime_and_copied_inputs() -> None
     assert 'changed_matches "^models/" && AI=true' in ai_section
 
 
+def test_selective_build_diffs_from_each_last_verified_runtime_image() -> None:
+    workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    detect = _job_block(workflow, "detect-changes")
+
+    assert "github.event.before" not in detect
+    assert 'MANIFEST="docs/reports/release-manifest.latest.json"' in detect
+    assert "resolve_image_base()" in detect
+    assert 'git merge-base --is-ancestor "$resolved" HEAD' in detect
+    assert 'CHANGED_RELEASE=$(git diff --name-only "$RELEASE_PREV" HEAD)' in detect
+    for flag, repo in {
+        "BASE": "academy-base",
+        "API": "academy-api",
+        "VIDEO": "academy-video-worker",
+        "MSG": "academy-messaging-worker",
+        "AI": "academy-ai-worker-cpu",
+        "TOOLS": "academy-tools-worker",
+    }.items():
+        assert f'{flag}_PREV=$(resolve_image_base "{repo}")' in detect
+        assert f'CHANGED_{flag}=$(git diff --name-only "${flag}_PREV" HEAD)' in detect
+        assert f'CHANGED="$CHANGED_{flag}"' in detect
+    assert 'force_full_build "academy-tools-worker source commit is unavailable"' in detect
+
+
 def test_deploy_freshness_uses_immutable_runtime_evidence_not_latest() -> None:
     source = DEPLOY_AND_VERIFY.read_text(encoding="utf-8-sig")
 
