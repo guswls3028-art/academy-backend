@@ -1,0 +1,114 @@
+# V1 Deployment Verification Report
+
+**명칭:** V1 통일 (V1.1 미사용). **SSOT:** docs/ssot/params.yaml. **리전:** ap-northeast-2. **전제:** 사용자 1,000~1,500, 동시 50~300 버스트, 운영 1인, 장애 대응 10~60분.
+
+## 배포 정보
+| 항목 | 값 |
+|------|-----|
+| 검증 시각 | 2026-07-28T18:51:30.8350239+09:00 |
+| 리전 | ap-northeast-2 |
+| 배포 스크립트 | scripts/v1/deploy.ps1 |
+| 근거·로그 | reports/audit.latest.md, reports/drift.latest.md, reports/runtime-images.latest.md |
+
+---
+
+## 1) 인프라 상태 (PASS/WARNING/FAIL + 근거)
+
+| 항목 | 결과 | 근거(로그/지표/스크린샷 경로) |
+|------|------|-------------------------------------|
+| API ASG min/desired/max | 1/1/3 | reports/audit.latest.md (apiAsg*) |
+| ALB target health | 1 / 1 healthy | AWS Console EC2 > Target Groups > academy-v1-api-tg |
+| ALB HTTP 80 redirect | HTTP 301 https://academy-v1-api-alb-1244943981.ap-northeast-2.elb.amazonaws.com/healthz | HTTP listener는 HTTPS로 redirect해야 함 |
+| API 공개 URL(도메인) /health | OK 40ms | API_PUBLIC_URL 또는 front.domains.api: https://api.hakwonplus.com |
+| API runtime image digest | PASS | docs/reports/runtime-images.latest.md (instances=1, ci=sha256:6e5524625191d336bafc072924de6bc73cea5b2e0b4465cbee3ccd7c1de8b2a4) |
+| AI/Messaging ASG | 0/1 | reports/audit.latest.md (asgAi*, asgMessaging*) |
+| SQS queue 연결·DLQ | Messaging depth 0 (in-flight 0) DLQ 0 / AI depth 0 (in-flight 0) DLQ 0 | SQS Console 또는 get-queue-attributes |
+| Video Batch CE/Queue/JobDef | CE VALID Queue ENABLED JobDef rev 315 | reports/audit.latest.md, Batch Console |
+| Video Ops CE/Queue, EventBridge | Ops CE VALID Ops Queue ENABLED Reconcile ENABLED ScanStuck ENABLED | reports/audit.latest.md, rca.video.latest.md |
+| RDS 연결 가능 | available | RDS describe-db-instances (연결 테스트는 앱/psql 수동) |
+| Redis 연결 가능 | available | ElastiCache describe-replication-groups |
+| **섹션 1 종합** | **PASS** | |
+
+## 2) 기능 Smoke Test (PASS/WARNING/FAIL/ADVISORY + 근거)
+
+| 항목 | 결과 | 근거 |
+|------|------|------|
+| /health | OK | 응답시간: 40ms (기준 p95 &lt; 2s, 샘플 1회) |
+| API root | root not a health endpoint | 공개 HTTPS 도메인 기준, root는 필수 서비스 엔드포인트 아님 |
+| 핵심 API 1~2개(인증/CRUD) | 미검증(ADVISORY) | 이 read-only 스크립트는 인증·CRUD를 실행하지 않음. 변경 범위에 맞는 canary/E2E 근거를 별도 기록 |
+| **섹션 2 종합** | **ADVISORY** | |
+
+## 3) 프론트 / R2 / CDN (PASS/WARNING/FAIL + 근거)
+
+| 항목 | 결과 | 근거 |
+|------|------|------|
+| 프론트 URL 접속 | OK | URL: https://hakwonplus.com/ 응답코드: 200 |
+| index.html Cache-Control | PASS (no-cache 계열) | public, must-revalidate, max-age=0 |
+| 해시 자산(JS/CSS) Cache-Control | PASS (1년) | 샘플: https://hakwonplus.com/assets/index-_kJEOpm4.js → public, max-age=31536000, immutable |
+| 정적 자산(JS/CSS) 로딩 | 자동 검사 완료 | 위 해시 자산 요청 근거 |
+| CDN 캐시 정책 | 근거 위 참조 | Cache-Control 헤더, 배포 시 purge: SSOT front.purgeOnDeploy |
+| 프론트→API(CORS/쿠키/CSRF) | 수동 검증 권장 | 동일 도메인/credentials 요청 |
+| CORS allowedOrigins 정적 검사 | OK | app 도메인 포함됨 |
+| R2 버킷 접근 | wrangler failed | wrangler r2 bucket list |
+| **섹션 3 종합** | **WARNING** | |
+
+## 4) SQS 워커 테스트 (PASS/WARNING/FAIL/ADVISORY + 근거)
+
+| 항목 | 결과 | 근거 |
+|------|------|------|
+| AI queue enqueue→consume | 미검증(ADVISORY) | 이 read-only 스크립트는 메시지를 enqueue하지 않음. AI 변경 시 통제된 실경로와 워커 로그를 별도 확인 |
+| Messaging queue enqueue→consume | 미검증(ADVISORY) | 이 read-only 스크립트는 메시지를 enqueue하지 않음. Messaging 변경 시 통제된 실경로와 provider/worker 로그를 별도 확인 |
+| DLQ 적재 없음 | Messaging DLQ=0 AI DLQ=0 | get-queue-attributes ApproximateNumberOfMessages (DLQ) |
+| **섹션 4 종합** | **ADVISORY** | |
+
+## 5) Video Pipeline 테스트 (3시간 영상 기준)
+
+| 항목 | 결과 | 근거 |
+|------|------|------|
+| 3시간 샘플 1건 end-to-end | 수동 검증 권장 | 인코딩→R2 staging→검증→READY, HLS 재생 |
+| 유령데이터 방지(READY 전 미공개) | 설계 반영 | API playback_mixin READY만 허용, 목록 READY 필터 |
+| 업로드 실패 재시도/복구 | 설계 반영 | DynamoDB checkpoint, 재인코딩 최소화 (V1-DEPLOYMENT-VERIFICATION §7.3) |
+| 동시 2~3건 | 수동 검증 권장 | 2~3건 동시 제출 후 Job 완료·queue depth 확인 |
+| **섹션 5 종합** | **ADVISORY** | 일반 배포 검증의 장기 비디오 샘플은 후속 권고이며 GO/NO-GO WARNING에 산입하지 않는다. 비디오 파이프라인 변경/릴리즈이면 VIDEO_E2E_TEST_JOB_ID 또는 video_playback_chain smoke 근거를 별도 기록한다. |
+
+## 6) 관측/알람
+
+| 항목 | 결과 | 근거 |
+|------|------|------|
+| 최소 알람 세트(API 5XX, SQS depth/DLQ, Batch failed/stuck/backlog, RDS, Redis) | 19 alarms (academy/v1) | CloudWatch > Alarms (academy/v1 필터) |
+| 로그 retention 30d | params observability.logRetentionDays | Ensure-VideoBatchLogRetention, Batch 로그 그룹 |
+| **섹션 6 종합** | **PASS** | |
+
+## 7) 리스크 및 GO/NO-GO 권고
+
+### 발견 사항(리스크)
+- **WARNING** [FrontR2Cdn] FrontR2Cdn section summary is WARNING.
+
+### GO/NO-GO
+| 판정 | 내용 |
+|------|------|
+| **CONDITIONAL GO** | WARNING 영향도·완화책·추적 계획 확인 후 배포 판단. 상세: 아래 리스크 섹션 및 deploy-verification-latest.md. |
+
+- **FAIL 1건 이상** → **NO-GO**. 재검증 후 재실행.
+- **WARNING만** → **CONDITIONAL GO**. 영향도·완화책·추적 계획 확인 후 배포 여부 결정.
+- **ADVISORY** → GO/NO-GO에 산입하지 않는 후속 권고. 변경 범위가 해당 도메인이면 별도 E2E 근거 필요.
+- **PASS만** → **GO**.
+
+---
+
+## 최종 상태
+**WARNING**
+
+**연관 보고서:** audit.latest.md, drift.latest.md, runtime-images.latest.md (동시 갱신됨).
+
+
+**Verification Run ID:** 04909b55675c45099f853b92d0f68c20
+
+## Immutable Evidence Bundle
+
+- [audit.latest.md](./20260728-185303-207-da32cc08/audit.latest.md)
+- [drift.latest.md](./20260728-185303-207-da32cc08/drift.latest.md)
+- [runtime-images.latest.md](./20260728-185303-207-da32cc08/runtime-images.latest.md)
+- [consistency.latest.md](./20260728-185303-207-da32cc08/consistency.latest.md)
+- [front-connection.latest.md](./20260728-185303-207-da32cc08/front-connection.latest.md)
+- [release-manifest.latest.json](./20260728-185303-207-da32cc08/release-manifest.latest.json)
