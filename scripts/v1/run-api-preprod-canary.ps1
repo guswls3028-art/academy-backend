@@ -209,6 +209,125 @@ if [ "$image" != "__EXPECTED_IMAGE__" ]; then
   echo "CANARY_FAIL image_mismatch" >&2
   exit 44
 fi
+
+# Prove the candidate's R2 and CDN signing configuration against a real,
+# read-only HLS object before any production env or ASG mutation.
+if ! video_chain_proof=$(docker exec -i "$container" python <<'PY'
+import os
+import time
+from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qs, urljoin, urlparse
+from urllib.request import Request, urlopen
+
+import boto3
+from django.conf import settings
+
+from apps.domains.video.cdn.cloudflare_signing import CloudflareSignedURL
+
+required = (
+    "R2_ENDPOINT",
+    "R2_ACCESS_KEY",
+    "R2_SECRET_KEY",
+    "R2_VIDEO_BUCKET",
+)
+missing = [name for name in required if not os.environ.get(name, "").strip()]
+if missing:
+    raise SystemExit("missing video storage env: " + ",".join(missing))
+
+client = boto3.client(
+    "s3",
+    endpoint_url=os.environ["R2_ENDPOINT"],
+    aws_access_key_id=os.environ["R2_ACCESS_KEY"],
+    aws_secret_access_key=os.environ["R2_SECRET_KEY"],
+    region_name="auto",
+)
+paginator = client.get_paginator("list_objects_v2")
+master_keys = []
+for page_number, page in enumerate(
+    paginator.paginate(
+        Bucket=os.environ["R2_VIDEO_BUCKET"],
+        Prefix="tenants/",
+        PaginationConfig={"PageSize": 1000, "MaxItems": 10000},
+    ),
+    start=1,
+):
+    for item in page.get("Contents", []):
+        key = str(item.get("Key", ""))
+        if key.endswith("/master.m3u8") and "/_tmp/" not in key:
+            master_keys.append(key)
+            if len(master_keys) >= 20:
+                break
+    if len(master_keys) >= 20 or page_number >= 10:
+        break
+if not master_keys:
+    raise SystemExit("no stable HLS master object found for CDN canary")
+
+signer = CloudflareSignedURL(
+    secret=settings.CDN_HLS_SIGNING_SECRET,
+    key_id=settings.CDN_HLS_SIGNING_KEY_ID,
+)
+
+
+def fetch(url, *, range_request=False):
+    headers = {"User-Agent": "Academy-API-Preprod-Canary/1.0"}
+    if range_request:
+        headers["Range"] = "bytes=0-1023"
+    with urlopen(Request(url, headers=headers), timeout=15) as response:
+        return response.status, response.read()
+
+
+def first_media_url(body, parent_url):
+    for raw_line in body.decode("utf-8-sig").splitlines():
+        line = raw_line.strip()
+        if line and not line.startswith("#"):
+            return urljoin(parent_url, line)
+    raise ValueError("playlist contains no media URL")
+
+
+def assert_signed(url):
+    query = parse_qs(urlparse(url).query)
+    if not query.get("sig") or not query.get("exp") or query.get("kid") != ["v1"]:
+        raise ValueError("playlist child URL is not signed with kid=v1")
+
+
+failures = []
+for master_key in master_keys:
+    master_url = signer.build_url(
+        cdn_base=settings.CDN_HLS_BASE_URL,
+        path="/" + master_key,
+        expires_at=int(time.time()) + 300,
+        user_id=0,
+    )
+    try:
+        master_status, master_body = fetch(master_url)
+        if master_status != 200 or not master_body.startswith(b"#EXTM3U"):
+            raise ValueError(f"master status={master_status}")
+        variant_url = first_media_url(master_body, master_url)
+        assert_signed(variant_url)
+        variant_status, variant_body = fetch(variant_url)
+        if variant_status != 200 or not variant_body.startswith(b"#EXTM3U"):
+            raise ValueError(f"variant status={variant_status}")
+        segment_url = first_media_url(variant_body, variant_url)
+        assert_signed(segment_url)
+        segment_status, segment_body = fetch(segment_url, range_request=True)
+        if segment_status not in (200, 206) or not segment_body:
+            raise ValueError(f"segment status={segment_status}")
+        print(
+            "CDN_PLAYBACK_CHAIN_PASS "
+            f"master={master_status} variant={variant_status} segment={segment_status}"
+        )
+        break
+    except (HTTPError, URLError, TimeoutError, ValueError) as exc:
+        failures.append(f"{type(exc).__name__}:{exc}")
+else:
+    summary = "; ".join(failures[-3:])
+    raise SystemExit(f"no HLS candidate completed the signed CDN chain: {summary}")
+PY
+); then
+  echo "CANARY_FAIL video_playback_chain" >&2
+  exit 45
+fi
+echo "$video_chain_proof"
 echo "API_PREPROD_CANARY_PASS settings=prod database=preprod healthz=$healthz health=$health image=$image"
 '@
     $remote = $remote.Replace("__EXPECTED_DATABASE__", $ExpectedDatabaseName).Replace("__EXPECTED_IMAGE__", $ImageUri)
@@ -256,6 +375,9 @@ echo "API_PREPROD_CANARY_PASS settings=prod database=preprod healthz=$healthz he
     $proof = ([string]$invocation.StandardOutputContent).Trim()
     if ($proof -notmatch "API_PREPROD_CANARY_PASS") {
         throw "API pre-production canary returned no PASS marker."
+    }
+    if ($proof -notmatch "CDN_PLAYBACK_CHAIN_PASS") {
+        throw "API pre-production canary returned no CDN playback PASS marker."
     }
     Write-Host $proof -ForegroundColor Green
 } finally {

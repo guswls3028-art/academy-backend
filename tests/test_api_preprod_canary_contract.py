@@ -86,6 +86,23 @@ def test_canary_is_isolated_and_checks_migrations_and_health() -> None:
     assert "$script:ApiSecurityGroupId" in canary
 
 
+def test_canary_proves_signed_cdn_master_variant_and_segment_chain() -> None:
+    canary = CANARY.read_text(encoding="utf-8-sig")
+
+    assert 'Prefix="tenants/"' in canary
+    assert 'key.endswith("/master.m3u8")' in canary
+    assert "CloudflareSignedURL" in canary
+    assert "settings.CDN_HLS_SIGNING_SECRET" in canary
+    assert "settings.CDN_HLS_SIGNING_KEY_ID" in canary
+    assert "settings.CDN_HLS_BASE_URL" in canary
+    assert "master_status" in canary
+    assert "variant_status" in canary
+    assert "segment_status" in canary
+    assert '"Range"] = "bytes=0-1023"' in canary
+    assert "CDN_PLAYBACK_CHAIN_PASS" in canary
+    assert 'if ($proof -notmatch "CDN_PLAYBACK_CHAIN_PASS")' in canary
+
+
 def test_api_env_sync_fails_closed_on_cross_role_or_missing_source() -> None:
     sync = SYNC_ENV.read_text(encoding="utf-8-sig")
 

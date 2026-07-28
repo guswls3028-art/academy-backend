@@ -60,6 +60,9 @@ then returned to its normal desired capacity.
   masked even with verbose output.
 - Added the same fail-closed validation to `Sync-ApiEnvFromSSOT` before any
   SSM write or API refresh.
+- Extended the isolated API pre-production canary to fetch a real signed HLS
+  master playlist, signed variant playlist, and ranged media segment before
+  any production env or ASG mutation.
 - Added settings and static runtime-contract regression tests.
 
 ## Verification Evidence
@@ -89,6 +92,9 @@ then returned to its normal desired capacity.
   configuration is unsafe.
 - Deployment synchronization now fails before mutating SSM or replacing an API
   instance when the same contract is unsafe.
+- Every candidate API image and environment must complete the read-only signed
+  CDN master -> variant -> segment chain in the isolated pre-production canary
+  before production promotion.
 - The canonical CDN contract is documented in
   [ssm-json-schema.md](../../operations/ssm-json-schema.md).
 - Production API replacement must preserve at least one healthy target through
