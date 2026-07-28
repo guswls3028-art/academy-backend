@@ -90,6 +90,8 @@ def test_canary_is_isolated_and_checks_migrations_and_health() -> None:
     assert "commands = @($remoteCommand)" in canary
     assert "ec2\", \"terminate-instances" in canary
     assert "ec2\", \"wait\", \"instance-terminated" in canary
+    assert "bash <<'API_PREPROD_CANARY_BASH'" in canary
+    assert "API_PREPROD_CANARY_BASH" in canary
     assert "shutdown -h +30" in canary
     assert "\"ssm\", \"get-parameter\"" not in canary
     assert canary.index("shutdown -h +30") < canary.index("docker run --rm")
