@@ -1,6 +1,6 @@
 # Incident 2026-07-28 — Limglish Student Video Playback
 
-**Status:** Resolved; recurrence prevention pending production rollout
+**Status:** Resolved; recurrence prevention deployed and production-verified
 
 **Incident date:** 2026-07-28 KST
 
@@ -78,13 +78,42 @@ then returned to its normal desired capacity.
   - signed CDN master playlist: HTTP 200
   - signed variant playlist: HTTP 200
   - ranged media segment: HTTP 206
-- Read-only production browser verification followed the student dashboard,
-  video menu, course `422`, session `394`, and video `562`.
-  Desktop `1366x768` and mobile `390x844` both rendered and played the video
-  without page errors, console errors, or player error text.
+- After the recurrence-prevention deployment, the same chain was executed from
+  the live API container with a freshly issued JWT for the affected student:
+  `api=200 master=200 variant=200 segment=206 host=cdn.hakwonplus.com kid=v1`.
+- The deployment candidate passed an isolated pre-production R2 -> signed CDN
+  master -> variant -> ranged segment canary before any production runtime
+  update.
+- Pre-deployment read-only browser verification followed the student dashboard,
+  video menu, course `422`, session `394`, and video `562`. Desktop `1366x768`
+  and mobile `390x844` fetched the playback API, master playlist, variant
+  playlist, and media segments without page, console, or player errors. Those
+  captures did not independently prove playback-clock advancement and are not
+  used as the post-deployment proof.
 - Local verification passed Django checks, migration drift checks, Ruff,
-  submission and refactor boundary guards, PowerShell parsing, and 27 smoke
-  tests plus five subtests.
+  submission and refactor boundary guards, PowerShell parsing and deployment
+  contracts, 37 smoke/CDN tests plus five subtests, 42 video
+  callback/progress tests plus nine subtests, and 37 security/access tests plus
+  16 subtests.
+- Backend workflow
+  [30341862808](https://github.com/guswls3028-art/academy-backend/actions/runs/30341862808)
+  completed successfully through isolated pre-production proof, migrations,
+  safe API refresh, runtime digest verification, manifest promotion, and lock
+  release. Attempts
+  [30339694570](https://github.com/guswls3028-art/academy-backend/actions/runs/30339694570)
+  and
+  [30341008029](https://github.com/guswls3028-art/academy-backend/actions/runs/30341008029)
+  failed closed before production mutation because of shell and line-ending
+  portability defects; both defects were corrected before the successful run.
+- Frontend workflow
+  [30338703381](https://github.com/guswls3028-art/academy-frontend/actions/runs/30338703381)
+  completed typecheck, lint, build, deployment, production canary, and tenant
+  availability checks.
+- The post-deploy production canary returned 30 PASS / 0 WARN / 0 FAIL. The
+  read-only deployment verifier returned CONDITIONAL GO solely because the
+  local operator shell could not run `wrangler r2 bucket list`; the direct R2
+  object inventory and authenticated signed-CDN chain above provide the
+  video-specific evidence.
 
 ## Prevention
 
@@ -99,8 +128,14 @@ then returned to its normal desired capacity.
   [ssm-json-schema.md](../../operations/ssm-json-schema.md).
 - Production API replacement must preserve at least one healthy target through
   the drain-and-refresh sequence.
+- Student playback retries now refetch the playback API to obtain a new signed
+  URL, and CDN authorization or service failures are reported as service-side
+  failures instead of blaming the student's device or network.
 
 ## Release Reference
 
-The sealed release and deployment evidence will be linked after the recurrence
-prevention rollout completes.
+- Backend runtime release:
+  `sha-e4549649c56874cc85eb7becb1777752aef47211-run-30341862808-1`
+- Promoted manifest commit: `e4e4c5e84`
+- Frontend production commit: `f72ad5e4`
+- Sealed release: [v1.11.36](../../releases/v1.11.36.md)
