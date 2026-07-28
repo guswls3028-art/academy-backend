@@ -168,9 +168,6 @@ try {
     Wait-SSMOnline -InstanceId $instanceId -Reg $script:Region -TimeoutSec $TimeoutSec
 
 $remote = @'
-# AWS-RunShellScript invokes commands through /bin/sh. Enter Bash explicitly
-# before using pipefail and the heredoc-based Django/CDN proof below.
-bash <<'API_PREPROD_CANARY_BASH'
 set -euo pipefail
 container=academy-api
 for i in $(seq 1 60); do
@@ -332,9 +329,11 @@ PY
 fi
 echo "$video_chain_proof"
 echo "API_PREPROD_CANARY_PASS settings=prod database=preprod healthz=$healthz health=$health image=$image"
-API_PREPROD_CANARY_BASH
 '@
     $remote = $remote.Replace("__EXPECTED_DATABASE__", $ExpectedDatabaseName).Replace("__EXPECTED_IMAGE__", $ImageUri)
+    # PowerShell on Windows materializes here-strings with CRLF. Normalize the
+    # bytes before sending the encoded script to Linux Bash.
+    $remote = $remote.Replace("`r", "")
     # AWS-RunShellScript invokes each command through /bin/sh. The canary uses
     # bash-only pipefail and here-string behavior, so dispatch an encoded script
     # explicitly through bash instead of relying on the host's /bin/sh.
