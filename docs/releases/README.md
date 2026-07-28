@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.11.36.md](v1.11.36.md) | **CURRENT** | 2026-07-28 KST | Limglish signed-video incident closure, fail-closed CDN delivery, isolated playback proof, and safe API replacement |
+| [v1.11.37.md](v1.11.37.md) | **CURRENT** | 2026-07-28 KST | HakwonPlus owner root-routing incident closure, explicit developer-console boundary preservation, and production verification |
+| [v1.11.36.md](v1.11.36.md) | production-deployed / v1.11.37로 승계 | 2026-07-28 KST | Limglish signed-video incident closure, fail-closed CDN delivery, isolated playback proof, and safe API replacement |
 | [v1.11.35.md](v1.11.35.md) | production-deployed / v1.11.36로 승계 | 2026-07-28 KST | Atomic deployment evidence, honest verification decisions, stable wrong-note PDF boundaries, and production closure |
 | [v1.11.34.md](v1.11.34.md) | production-deployed / v1.11.35로 승계 | 2026-07-28 KST | Advertised-function security audit, OpenCV 5 OMR compatibility, browser hardening, accurate global AI disclosure, and explicit transfer consent |
 | [v1.11.33.md](v1.11.33.md) | production-deployed / v1.11.34로 승계 | 2026-07-28 KST | Warning-free Problem Studio HWPX version manifest and final production package evidence |
