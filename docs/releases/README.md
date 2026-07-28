@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.12.3.md](v1.12.3.md) | **CURRENT** | 2026-07-28 KST | Teacher-owned document styles/fonts, native HWPX equations, and typography-preserving Hangul handoff |
+| [v1.12.4.md](v1.12.4.md) | **CURRENT** | 2026-07-29 KST | Target-aware clinic booking, multi-enrollment-safe student linkage, and clearer admin/student reservation operations |
+| [v1.12.3.md](v1.12.3.md) | production-deployed / v1.12.4로 승계 | 2026-07-28 KST | Teacher-owned document styles/fonts, native HWPX equations, and typography-preserving Hangul handoff |
 | [v1.12.2.md](v1.12.2.md) | production-deployed / v1.12.3로 승계 | 2026-07-28 KST | Header-driven clinic assessment classification and production incident closure |
 | [v1.12.1.md](v1.12.1.md) | production-deployed / v1.12.2로 승계 | 2026-07-28 KST | Hidden-bug stabilization, durable wrong-note PDF recovery, tenant-safe QnA verification, and production cleanup |
 | [v1.12.0.md](v1.12.0.md) ([정정](v1.12.0-errata.md)) | production-deployed / v1.12.1로 승계 | 2026-07-28 KST | Isolated pre-production deployment gate, fail-closed API environment handling, and outage recurrence prevention |

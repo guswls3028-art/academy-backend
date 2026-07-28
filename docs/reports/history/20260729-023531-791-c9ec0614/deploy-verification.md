@@ -5,7 +5,7 @@
 ## 배포 정보
 | 항목 | 값 |
 |------|-----|
-| 검증 시각 | 2026-07-29T03:39:30.8689018+09:00 |
+| 검증 시각 | 2026-07-29T02:34:06.5407306+09:00 |
 | 리전 | ap-northeast-2 |
 | 배포 스크립트 | scripts/v1/deploy.ps1 |
 | 근거·로그 | reports/audit.latest.md, reports/drift.latest.md, reports/runtime-images.latest.md |
@@ -20,10 +20,10 @@
 | ALB target health | 1 / 1 healthy | AWS Console EC2 > Target Groups > academy-v1-api-tg |
 | ALB HTTP 80 redirect | HTTP 301 https://academy-v1-api-alb-1244943981.ap-northeast-2.elb.amazonaws.com/healthz | HTTP listener는 HTTPS로 redirect해야 함 |
 | API 공개 URL(도메인) /health | OK 26ms | API_PUBLIC_URL 또는 front.domains.api: https://api.hakwonplus.com |
-| API runtime image digest | PASS | docs/reports/runtime-images.latest.md (instances=1, ci=sha256:2e5e26180f27fcd4c3584e4dfad74a8dc33e180be49a7d68237106621d2965ea) |
+| API runtime image digest | PASS | docs/reports/runtime-images.latest.md (instances=1, ci=sha256:a11e65839d207f74bfcbd7e34145ef5ca4abad23adbe8e08e29d3554500ae3e7) |
 | AI/Messaging ASG | 0/1 | reports/audit.latest.md (asgAi*, asgMessaging*) |
 | SQS queue 연결·DLQ | Messaging depth 0 (in-flight 0) DLQ 0 / AI depth 0 (in-flight 0) DLQ 0 | SQS Console 또는 get-queue-attributes |
-| Video Batch CE/Queue/JobDef | CE VALID Queue ENABLED JobDef rev 319 | reports/audit.latest.md, Batch Console |
+| Video Batch CE/Queue/JobDef | CE VALID Queue ENABLED JobDef rev 318 | reports/audit.latest.md, Batch Console |
 | Video Ops CE/Queue, EventBridge | Ops CE VALID Ops Queue ENABLED Reconcile ENABLED ScanStuck ENABLED | reports/audit.latest.md, rca.video.latest.md |
 | RDS 연결 가능 | available | RDS describe-db-instances (연결 테스트는 앱/psql 수동) |
 | Redis 연결 가능 | available | ElastiCache describe-replication-groups |
@@ -44,7 +44,7 @@
 |------|------|------|
 | 프론트 URL 접속 | OK | URL: https://hakwonplus.com/ 응답코드: 200 |
 | index.html Cache-Control | PASS (no-cache 계열) | public, must-revalidate, max-age=0 |
-| 해시 자산(JS/CSS) Cache-Control | PASS (1년) | 샘플: https://hakwonplus.com/assets/index-DSGsFNtI.js → public, max-age=31536000, immutable |
+| 해시 자산(JS/CSS) Cache-Control | PASS (1년) | 샘플: https://hakwonplus.com/assets/index-Bo-Pbnfd.js → public, max-age=31536000, immutable |
 | 정적 자산(JS/CSS) 로딩 | 자동 검사 완료 | 위 해시 자산 요청 근거 |
 | CDN 캐시 정책 | 근거 위 참조 | Cache-Control 헤더, 배포 시 purge: SSOT front.purgeOnDeploy |
 | 프론트→API(CORS/쿠키/CSRF) | 수동 검증 권장 | 동일 도메인/credentials 요청 |
@@ -102,4 +102,13 @@
 **연관 보고서:** audit.latest.md, drift.latest.md, runtime-images.latest.md (동시 갱신됨).
 
 
-**Verification Run ID:** 14045f3ab6b4466ea1800e16d2439c81
+**Verification Run ID:** 6035e25ac6e243629bcb02e01acb9dcf
+
+## Immutable Evidence Bundle
+
+- [audit.latest.md](./audit.latest.md)
+- [drift.latest.md](./drift.latest.md)
+- [runtime-images.latest.md](./runtime-images.latest.md)
+- [consistency.latest.md](./consistency.latest.md)
+- [front-connection.latest.md](./front-connection.latest.md)
+- [release-manifest.latest.json](./release-manifest.latest.json)

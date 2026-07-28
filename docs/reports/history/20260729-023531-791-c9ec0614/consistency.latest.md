@@ -1,6 +1,6 @@
 # SSOT ↔ 실제 인프라 ↔ 합의사항 정합성
 
-**Generated:** 2026-07-29T03:40:41.3953904+09:00
+**Generated:** 2026-07-29T02:35:31.7571275+09:00
 **SSOT:** docs/ssot/params.yaml (prod)
 
 ## 합의사항 체크리스트
@@ -22,4 +22,4 @@
 **Drift 상세:** [drift.latest.md](./drift.latest.md). 이 PHASE는 read-only이며 차이는 Fix needed로만 기록.
 
 
-**Verification Run ID:** 14045f3ab6b4466ea1800e16d2439c81
+**Verification Run ID:** 6035e25ac6e243629bcb02e01acb9dcf
