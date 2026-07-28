@@ -63,6 +63,14 @@ fi
     return $script.Trim()
 }
 
+function Resolve-ApiLaunchTemplateDeploymentId {
+    param([string]$ApiImageUri)
+    if (-not $ApiImageUri) { return "ssot" }
+    if ($ApiImageUri -match '@(sha256:[0-9a-f]{64})$') { return $matches[1] }
+    if ($ApiImageUri -match ':([^/:]+)$') { return $matches[1] }
+    return "ssot"
+}
+
 # ECR academy-api: legacy policy에서만 latest 허용. Production SSOT는 최신 sha-*를
 # digest로 해석하여 Launch Template userdata에 고정한다.
 function Get-LatestApiImageUri {
@@ -106,7 +114,9 @@ function Invoke-RefreshApiEnvOnInstances {
     $params = @{ commands = @($script) }
     $paramsJson = $params | ConvertTo-Json -Compress
     Write-Host "Refreshing API env on $($ids.Count) instance(s) from SSM $ssmParam..." -ForegroundColor Cyan
+    $failedIds = [System.Collections.Generic.List[string]]::new()
     foreach ($instId in $ids) {
+        $succeeded = $false
         try {
             $sendOut = Invoke-AwsJson @("ssm", "send-command", "--instance-ids", $instId, "--document-name", "AWS-RunShellScript", "--parameters", $paramsJson, "--region", $region, "--output", "json") 2>$null
             $cmdId = $sendOut.Command.CommandId
@@ -118,6 +128,7 @@ function Invoke-RefreshApiEnvOnInstances {
                 $inv = Invoke-AwsJson @("ssm", "get-command-invocation", "--command-id", $cmdId, "--instance-id", $instId, "--region", $region, "--output", "json") 2>$null
                 if ($inv.Status -eq "Success") {
                     Write-Host "  $instId : env refreshed, container restarted" -ForegroundColor Green
+                    $succeeded = $true
                     break
                 }
                 if ($inv.Status -eq "Failed" -or $inv.Status -eq "Cancelled") {
@@ -129,6 +140,10 @@ function Invoke-RefreshApiEnvOnInstances {
         } catch {
             Write-Host "  $instId : $_" -ForegroundColor Red
         }
+        if (-not $succeeded) { $failedIds.Add([string]$instId) }
+    }
+    if ($failedIds.Count -gt 0) {
+        throw "API env refresh failed for: $($failedIds -join ', ')"
     }
 }
 
@@ -433,7 +448,7 @@ function Ensure-API-LaunchTemplate {
     if (-not $userDataRaw -or $userDataRaw.Trim() -eq "") {
         $apiUri = Get-LatestApiImageUri
         if ($apiUri) {
-            $deploymentId = Get-Date -Format "o"
+            $deploymentId = Resolve-ApiLaunchTemplateDeploymentId -ApiImageUri $apiUri
             $userDataRaw = Get-ApiLaunchTemplateUserData -ApiImageUri $apiUri -Region $script:Region -SsmApiEnvParam $script:SsmApiEnv -DeploymentId $deploymentId
         } else {
             Write-Warn "No API image in ECR ($($script:EcrApiRepo)); Launch Template UserData left empty. Push academy-api image and re-run deploy."
@@ -639,7 +654,13 @@ function Ensure-API-Instance {
             Write-Warn "Skip API health wait (-SkipApiSSMWait). Check $($script:ApiBaseUrl)/$($script:ApiHealthPath) manually."
         } else {
             try {
-                Wait-ApiHealth200 -ApiBaseUrl $script:ApiBaseUrl -TimeoutSec 300
+                $healthUrl = Resolve-EvidenceApiHealthUrl `
+                    -PublicApiBaseUrl $script:FrontDomainApi `
+                    -FallbackApiBaseUrl $script:ApiBaseUrl
+                Wait-ApiHealth200 `
+                    -ApiBaseUrl $script:ApiBaseUrl `
+                    -ApiHealthUrl $healthUrl `
+                    -TimeoutSec 300
             } catch {
                 Write-Warn "API health 200 timeout. $_. Deploy continues; check $($script:ApiBaseUrl)/$($script:ApiHealthPath) and ASG/ALB manually."
                 $minHealthy = if ($script:ApiInstanceRefreshMinHealthyPercentage -gt 0) { $script:ApiInstanceRefreshMinHealthyPercentage } else { 100 }

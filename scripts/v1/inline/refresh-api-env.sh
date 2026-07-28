@@ -1,5 +1,7 @@
 #!/bin/bash
 # API 컨테이너에 최신 SSM env 적용 후 재시작
+set -euo pipefail
+
 SSM_PARAM="${1:-/academy/api/env}"
 REGION="${2:-ap-northeast-2}"
 export AWS_REGION="$REGION"
@@ -26,5 +28,8 @@ fi
 
 docker stop academy-api 2>/dev/null || true
 docker rm academy-api 2>/dev/null || true
-docker run -d --restart unless-stopped --name academy-api -p 8000:8000 --env-file /opt/api.env "$API_IMG" 2>&1 || echo "docker run failed"
+if ! docker run -d --restart unless-stopped --name academy-api -p 8000:8000 --env-file /opt/api.env "$API_IMG" 2>&1; then
+  echo "docker run failed"
+  exit 1
+fi
 echo "Done."

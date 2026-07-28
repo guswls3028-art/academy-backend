@@ -39,7 +39,9 @@ $paramsJson = $params | ConvertTo-Json -Compress
 Write-Host "API 인스턴스 $($ids -join ', ') 에 SSM env 적용 및 컨테이너 재시작 중..." -ForegroundColor Cyan
 Write-Host "SSM param: $ssmParam" -ForegroundColor Gray
 
+$failedIds = [System.Collections.Generic.List[string]]::new()
 foreach ($instId in $ids) {
+    $succeeded = $false
     try {
         $sendOut = Invoke-AwsJson @("ssm", "send-command", "--instance-ids", $instId, "--document-name", "AWS-RunShellScript", "--parameters", $paramsJson, "--region", $region, "--output", "json") 2>$null
         $cmdId = $sendOut.Command.CommandId
@@ -52,6 +54,7 @@ foreach ($instId in $ids) {
             if ($inv.Status -eq "Success") {
                 Write-Host "  $instId : OK" -ForegroundColor Green
                 if ($inv.StandardOutputContent) { Write-Host $inv.StandardOutputContent -ForegroundColor Gray }
+                $succeeded = $true
                 break
             }
             if ($inv.Status -eq "Failed" -or $inv.Status -eq "Cancelled") {
@@ -63,6 +66,11 @@ foreach ($instId in $ids) {
     } catch {
         Write-Host "  $instId : $_" -ForegroundColor Red
     }
+    if (-not $succeeded) { $failedIds.Add([string]$instId) }
+}
+
+if ($failedIds.Count -gt 0) {
+    throw "API env refresh failed for: $($failedIds -join ', ')"
 }
 
 Write-Host "`nhealthz 확인 후 업로드 테스트 진행 권장." -ForegroundColor Cyan

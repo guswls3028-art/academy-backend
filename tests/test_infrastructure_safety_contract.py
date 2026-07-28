@@ -21,8 +21,11 @@ DEPLOY_AND_VERIFY = REPO_ROOT / "scripts" / "v1" / "deploy-api-and-verify-worker
 RUN_DEPLOY_VERIFICATION = REPO_ROOT / "scripts" / "v1" / "run-deploy-verification.ps1"
 PIN_ASG_IMAGE = REPO_ROOT / "scripts" / "v1" / "pin-asg-image.ps1"
 DIFF = REPO_ROOT / "scripts" / "v1" / "core" / "diff.ps1"
+SYNC_ENV = REPO_ROOT / "scripts" / "v1" / "core" / "sync_env.ps1"
 WORKER_USERDATA = REPO_ROOT / "scripts" / "v1" / "resources" / "worker_userdata.ps1"
 API_RESOURCE = REPO_ROOT / "scripts" / "v1" / "resources" / "api.ps1"
+REFRESH_API_ENV = REPO_ROOT / "scripts" / "v1" / "inline" / "refresh-api-env.sh"
+REFRESH_API_ENV_PS1 = REPO_ROOT / "scripts" / "v1" / "refresh-api-env.ps1"
 CLOUDWATCH_RESOURCE = REPO_ROOT / "scripts" / "v1" / "resources" / "cloudwatch.ps1"
 IAM_RESOURCE = REPO_ROOT / "scripts" / "v1" / "resources" / "iam.ps1"
 WORKER_BEDROCK_POLICY = (
@@ -95,6 +98,25 @@ def test_api_user_impact_alarm_requires_zero_healthy_targets() -> None:
     assert "apiMinimumHealthyHosts" not in params
     assert "apiTargetUnhealthyThreshold" not in ssot
     assert "apiTargetUnhealthyThreshold" not in params
+
+
+def test_api_runtime_sync_and_refresh_fail_closed() -> None:
+    sync_env = SYNC_ENV.read_text(encoding="utf-8-sig")
+    api_resource = API_RESOURCE.read_text(encoding="utf-8-sig")
+    refresh = REFRESH_API_ENV.read_text(encoding="utf-8")
+    refresh_ps1 = REFRESH_API_ENV_PS1.read_text(encoding="utf-8-sig")
+
+    assert '"DJANGO_SETTINGS_MODULE"' in sync_env
+    assert '"apps.api.config.settings.prod"' in sync_env
+    assert "Resolve-ApiLaunchTemplateDeploymentId" in api_resource
+    assert '$deploymentId = Get-Date -Format "o"' not in api_resource
+    assert "Resolve-EvidenceApiHealthUrl" in api_resource
+    assert "set -euo pipefail" in refresh
+    assert '|| echo "docker run failed"' not in refresh
+    assert 'echo "docker run failed"' in refresh
+    assert "exit 1" in refresh
+    assert "API env refresh failed for:" in refresh_ps1
+    assert "API env refresh failed for:" in api_resource
 
 
 def test_problem_studio_bedrock_policy_is_model_scoped_and_converged() -> None:

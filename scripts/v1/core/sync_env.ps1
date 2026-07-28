@@ -139,6 +139,12 @@ function Sync-ApiEnvFromSSOT {
     if ($script:RdsProxyRequireTls) {
         $obj | Add-Member -NotePropertyName "DB_SSL_MODE" -NotePropertyValue "require" -Force
     }
+    # /academy/api/env can be bootstrapped from the workers parameter. Never
+    # allow the worker-only settings module to leak into the API runtime.
+    $obj | Add-Member `
+        -NotePropertyName "DJANGO_SETTINGS_MODULE" `
+        -NotePropertyValue "apps.api.config.settings.prod" `
+        -Force
 
     $newJson = $obj | ConvertTo-Json -Compress -Depth 10
     $newValue = $newJson

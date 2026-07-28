@@ -63,6 +63,9 @@ Assert-Equal (Resolve-EvidenceApiHealthUrl "api.hakwonplus.com" "http://internal
 Assert-Equal (Resolve-EvidenceApiHealthUrl "https://api.hakwonplus.com/" "http://internal-alb.example.com") "https://api.hakwonplus.com/health" "public API URL must be normalized"
 Assert-Equal (Resolve-EvidenceApiHealthUrl "" "http://internal-alb.example.com/") "http://internal-alb.example.com/health" "internal URL must remain a fallback when no public domain is configured"
 Assert-Equal (Resolve-EvidenceApiHealthUrl "" "") "" "missing API URLs must remain explicit"
+$digest = "sha256:$('a' * 64)"
+Assert-Equal (Resolve-ApiLaunchTemplateDeploymentId "registry.example/academy-api@$digest") $digest "API launch-template deployment id must be digest-stable"
+Assert-Equal (Resolve-ApiLaunchTemplateDeploymentId "registry.example/academy-api:sha-release") "sha-release" "tagged API launch-template deployment id must be tag-stable"
 
 $modern = @{
     image = "repo/image:sha"

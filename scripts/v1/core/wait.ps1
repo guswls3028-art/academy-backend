@@ -186,9 +186,17 @@ function Wait-SSMOnline {
 }
 
 function Wait-ApiHealth200 {
-    param([string]$ApiBaseUrl, [int]$TimeoutSec = 300)
+    param(
+        [string]$ApiBaseUrl,
+        [string]$ApiHealthUrl = "",
+        [int]$TimeoutSec = 300
+    )
     $elapsed = 0
-    $uri = "$ApiBaseUrl/health"
+    $uri = if ($ApiHealthUrl) {
+        $ApiHealthUrl.Trim()
+    } else {
+        "$($ApiBaseUrl.TrimEnd('/'))/health"
+    }
     while ($elapsed -lt $TimeoutSec) {
         try {
             $r = Invoke-WebRequest -Uri $uri -UseBasicParsing -TimeoutSec 15
