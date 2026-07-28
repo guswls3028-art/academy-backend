@@ -33,7 +33,7 @@ $apiBase = if ($albDns) { "http://$albDns" } else { "https://api.hakwonplus.com"
 $hostHdr = if ($albDns) { "api.hakwonplus.com" } else { "" }
 # 서버 env: Launch Template userdata가 SSM /academy/api/env → /opt/api.env 에 씀 (docs DEPLOY-API-ON-SERVER-FIX-REPORT)
 $envFile = "/opt/api.env"
-$bashCmd = "source /etc/profile 2>/dev/null; export PATH=/usr/local/bin:/usr/bin:`$PATH; ecr_img=`$(/usr/bin/docker inspect --format '{{.Config.Image}}' academy-api); echo `"`$ecr_img`" | grep -Eq '@sha256:[0-9a-f]{64}$' || { echo 'Running API image is not digest-pinned'; exit 1; }; /usr/bin/docker run --rm -e API_BASE_URL=$apiBase -e API_HOST_HEADER=$hostHdr --env-file $envFile `"`$ecr_img`" python manage.py verify_qna_e2e 2>&1"
+$bashCmd = "source /etc/profile 2>/dev/null; export PATH=/usr/local/bin:/usr/bin:`$PATH; ecr_img=`$(/usr/bin/docker inspect --format '{{.Config.Image}}' academy-api); echo `"`$ecr_img`" | grep -Eq '@sha256:[0-9a-f]{64}$' || { echo 'Running API image is not digest-pinned'; exit 1; }; /usr/bin/docker run --rm -e API_BASE_URL=$apiBase -e API_HOST_HEADER=$hostHdr --env-file $envFile `"`$ecr_img`" python manage.py verify_qna_e2e_safe --tenant-id 1 2>&1"
 $params = @{ commands = @($bashCmd) } | ConvertTo-Json -Compress
 $send = Invoke-AwsJson @("ssm", "send-command", "--instance-ids", $ids[0], "--document-name", "AWS-RunShellScript", "--parameters", $params, "--region", $script:Region, "--output", "json")
 $cid = $send.Command.CommandId
@@ -46,7 +46,7 @@ while ($wait -lt 60) {
         Write-Host "Status: $($inv.Status)"
         Write-Host $inv.StandardOutputContent
         if ($inv.StandardErrorContent) { Write-Host $inv.StandardErrorContent -ForegroundColor Yellow }
-        if ($inv.StandardOutputContent -match "OK: 질문 등록 및 목록 노출 정상") { exit 0 }
+        if ($inv.StandardOutputContent.Contains("[verify_qna_e2e_safe] ALL CHECKS PASSED")) { exit 0 }
         Write-Host "E2E 검증 실패: 예상 메시지 없음" -ForegroundColor Red
         exit 1
     }
