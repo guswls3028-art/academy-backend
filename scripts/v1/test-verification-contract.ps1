@@ -27,6 +27,12 @@ function Assert-Throws {
 . (Join-Path $ScriptRoot "core\batch.ps1")
 . (Join-Path $ScriptRoot "resources\jobdef.ps1")
 . (Join-Path $ScriptRoot "resources\api.ps1")
+. (Join-Path $ScriptRoot "core\evidence.ps1")
+
+Assert-Equal (Resolve-EvidenceApiHealthUrl "api.hakwonplus.com" "http://internal-alb.example.com") "https://api.hakwonplus.com/health" "public API domain must take precedence over the internal ALB"
+Assert-Equal (Resolve-EvidenceApiHealthUrl "https://api.hakwonplus.com/" "http://internal-alb.example.com") "https://api.hakwonplus.com/health" "public API URL must be normalized"
+Assert-Equal (Resolve-EvidenceApiHealthUrl "" "http://internal-alb.example.com/") "http://internal-alb.example.com/health" "internal URL must remain a fallback when no public domain is configured"
+Assert-Equal (Resolve-EvidenceApiHealthUrl "" "") "" "missing API URLs must remain explicit"
 
 $modern = @{
     image = "repo/image:sha"

@@ -3,6 +3,22 @@
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "batch.ps1")
 
+function Resolve-EvidenceApiHealthUrl {
+    param(
+        [string]$PublicApiBaseUrl = "",
+        [string]$FallbackApiBaseUrl = ""
+    )
+
+    $baseUrl = if (-not [string]::IsNullOrWhiteSpace($PublicApiBaseUrl)) {
+        $PublicApiBaseUrl.Trim()
+    } else {
+        $FallbackApiBaseUrl.Trim()
+    }
+    if ([string]::IsNullOrWhiteSpace($baseUrl)) { return "" }
+    if ($baseUrl -notmatch '^https?://') { $baseUrl = "https://$baseUrl" }
+    return "$($baseUrl.TrimEnd('/'))/health"
+}
+
 function Get-EvidenceSnapshot {
     param([string]$NetprobeJobId = "", [string]$NetprobeStatus = "")
     $R = $script:Region
@@ -86,9 +102,16 @@ function Get-EvidenceSnapshot {
         $ev["apiAsgDesired"] = "not found"
         $ev["apiAsgLtVersion"] = "-"
     }
+    $publicApiBaseUrl = $env:API_PUBLIC_URL
+    if ([string]::IsNullOrWhiteSpace($publicApiBaseUrl) -and -not [string]::IsNullOrWhiteSpace($script:FrontDomainApi)) {
+        $publicApiBaseUrl = $script:FrontDomainApi
+    }
+    $apiHealthUrl = Resolve-EvidenceApiHealthUrl -PublicApiBaseUrl $publicApiBaseUrl -FallbackApiBaseUrl $script:ApiBaseUrl
     $ev["apiBaseUrl"] = $script:ApiBaseUrl
+    $ev["apiHealthUrl"] = $apiHealthUrl
     try {
-        $hr = Invoke-WebRequest -Uri "$($script:ApiBaseUrl)/health" -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+        if ([string]::IsNullOrWhiteSpace($apiHealthUrl)) { throw "API health URL is not configured." }
+        $hr = Invoke-WebRequest -Uri $apiHealthUrl -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
         $ev["apiHealth"] = if ($hr.StatusCode -eq 200) { "OK" } else { "status=$($hr.StatusCode)" }
     } catch { $ev["apiHealth"] = "unreachable" }
     try {
