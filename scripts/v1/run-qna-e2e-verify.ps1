@@ -1,6 +1,6 @@
 ﻿# 배포 API에서 질문 등록·목록 E2E 검증.
 # Tenant 1 활성 학생이 정확히 1명일 때만 자동 선택하며, 그 외에는 fail closed.
-# ALB 내부 URL로 호출(공개 URL은 Cloudflare에서 403 가능). X-Tenant-Code로 테넌트 해석.
+# 공개 HTTPS API로 호출하고 X-Tenant-Code로 테넌트를 해석한다.
 # 사용: pwsh -File scripts/v1/run-qna-e2e-verify.ps1 [-AwsProfile default]
 param([string]$AwsProfile = "default")
 $ErrorActionPreference = "Stop"
@@ -20,18 +20,14 @@ if ($asg -and $asg.AutoScalingGroups -and $asg.AutoScalingGroups.Count -gt 0) {
     $ids = @($inService + $pending)
 }
 if (-not $ids -or $ids.Count -eq 0) { Write-Host "No API instance"; exit 1 }
-# ALB 내부 URL로 호출 후 Host 헤더로 테넌트 해석 (Cloudflare 403 회피)
-$albDns = ""
-if ($script:ApiAlbName) {
-    try {
-        $alb = Invoke-AwsJson @("elbv2", "describe-load-balancers", "--names", $script:ApiAlbName, "--region", $script:Region, "--output", "json")
-        if ($alb -and $alb.LoadBalancers -and $alb.LoadBalancers.Count -gt 0) {
-            $albDns = $alb.LoadBalancers[0].DNSName
-        }
-    } catch { }
+# POST must not traverse the ALB HTTP->HTTPS redirect because common clients
+# rewrite a redirected POST to GET. Use the canonical HTTPS API SSOT directly.
+$apiBase = ([string]$script:FrontDomainApi).Trim().TrimEnd("/")
+if (-not $apiBase) { $apiBase = ([string]$script:ApiBaseUrl).Trim().TrimEnd("/") }
+if (-not $apiBase.StartsWith("https://", [StringComparison]::OrdinalIgnoreCase)) {
+    throw "QnA E2E requires a canonical HTTPS API URL in SSOT."
 }
-$apiBase = if ($albDns) { "http://$albDns" } else { "https://api.hakwonplus.com" }
-$hostHdr = if ($albDns) { "api.hakwonplus.com" } else { "" }
+$hostHdr = ""
 # 서버 env: Launch Template userdata가 SSM /academy/api/env → /opt/api.env 에 씀 (docs DEPLOY-API-ON-SERVER-FIX-REPORT)
 $envFile = "/opt/api.env"
 $bashCmd = "source /etc/profile 2>/dev/null; export PATH=/usr/local/bin:/usr/bin:`$PATH; ecr_img=`$(/usr/bin/docker inspect --format '{{.Config.Image}}' academy-api); echo `"`$ecr_img`" | grep -Eq '@sha256:[0-9a-f]{64}$' || { echo 'Running API image is not digest-pinned'; exit 1; }; /usr/bin/docker run --rm -e API_BASE_URL=$apiBase -e API_HOST_HEADER=$hostHdr --env-file $envFile `"`$ecr_img`" python manage.py verify_qna_e2e_safe --tenant-id 1 2>&1"

@@ -625,6 +625,9 @@ def test_qna_e2e_wrapper_uses_tenant_scoped_cleanup_safe_command() -> None:
     assert "python manage.py verify_qna_e2e_safe --tenant-id 1" in source
     assert '[verify_qna_e2e_safe] ALL CHECKS PASSED' in source
     assert "python manage.py verify_qna_e2e 2>&1" not in source
+    assert "$script:FrontDomainApi" in source
+    assert 'StartsWith("https://"' in source
+    assert '"http://$albDns"' not in source
 
 
 def test_digest_resolution_and_userdata_render_with_mocked_ecr() -> None:
