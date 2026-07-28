@@ -29,7 +29,7 @@ function Remove-StaleVerificationArtifacts {
         Remove-Item -LiteralPath $file.FullName -Force
     }
     $staleDirs = @(
-        Get-ChildItem -LiteralPath $HistoryDir -Directory -Filter ".staging-*" -ErrorAction SilentlyContinue
+        Get-ChildItem -LiteralPath $HistoryDir -Directory -Filter ".staging-*" -Force -ErrorAction SilentlyContinue
     ) | Where-Object { $_.LastWriteTime -lt $Cutoff }
     foreach ($directory in $staleDirs) {
         [System.IO.Directory]::Delete($directory.FullName, $true)

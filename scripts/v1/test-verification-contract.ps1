@@ -181,7 +181,7 @@ try {
     $staleTemp = Join-Path $ReportsHistory "crash-deploy-verification.md.tmp"
     Set-Content -LiteralPath $staleTemp -Value "partial"
     $oldTimestamp = (Get-Date).AddHours(-25)
-    (Get-Item -LiteralPath $staleStage).LastWriteTime = $oldTimestamp
+    (Get-Item -LiteralPath $staleStage -Force).LastWriteTime = $oldTimestamp
     (Get-Item -LiteralPath $staleTemp).LastWriteTime = $oldTimestamp
     Remove-StaleVerificationArtifacts -ReportsDir $ReportsBase -HistoryDir $ReportsHistory
     Assert-True (-not (Test-Path -LiteralPath $staleStage)) "stale crash staging directory must be swept"
