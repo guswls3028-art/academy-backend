@@ -29,8 +29,8 @@
 2. Bootstrap(선택): SSM, SQS, RDS engine, ECR 등 Ensure
 3. Ensure-Network/ECR/IAM 후 운영 env 후보를 메모리에서 준비한다. 이 단계에서는 `/academy/api/env`와 `/academy/workers/env`를 쓰지 않는다.
 4. 후보를 `/academy/api/preprod/env`에 기록하고 전용 IAM·`academy_api_preprod` DB를 쓰는 격리 EC2에서 migration, prod settings, `/healthz`, `/health`를 검증한다.
-5. 격리 검증 성공 후에만 운영 API/worker env를 승격하고 **Ensure-API**를 실행한다.
-6. env parameter version을 포함한 API Launch Template가 ASG rolling refresh를 유도한다. 운영 컨테이너 제자리 재시작은 정식 경로에서 사용하지 않는다.
+5. 격리 검증 성공 후에만 운영 API/worker env를 승격한다. 실패하면 API뿐 아니라 worker ASG, Batch job definition, EventBridge, ALB를 포함한 운영 런타임 반영을 시작하지 않는다.
+6. 검증된 env 승격 뒤 worker/Batch/EventBridge/ALB와 **Ensure-API**를 순서대로 수렴한다. env parameter version을 포함한 API Launch Template가 ASG rolling refresh를 유도하며, 운영 컨테이너 제자리 재시작은 정식 경로에서 사용하지 않는다.
 7. 새 인스턴스 기동 시 **UserData** 실행: ECR 로그인 → 검증된 release manifest의 `academy-api@sha256:...` pull → SSM `/academy/api/env` 역할 검증 → `/opt/api.env` → digest-pinned `docker run`
 8. Netprobe(선택), Evidence 저장, After-Deploy Verification(ASG desired/inService, ALB target health, Batch CE/Queue)
 
