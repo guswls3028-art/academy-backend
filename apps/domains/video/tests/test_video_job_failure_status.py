@@ -174,10 +174,11 @@ class VideoProcessingCompleteViewTests(TestCase):
     @patch("apps.domains.video.redis_status_cache.delete_video_progress_key")
     @patch("apps.domains.video.redis_status_cache.cache_video_status")
     def test_current_job_id_completes_through_job_complete(self, mock_cache_status, mock_delete_progress):
+        hls_path = f"tenants/{self.tenant.id}/video/hls/{self.video.id}/master.m3u8"
         response = self._post_complete(
             {
                 "job_id": str(self.job.id),
-                "hls_path": "videos/hls/master.m3u8",
+                "hls_path": hls_path,
                 "duration": 12,
             }
         )
@@ -186,10 +187,54 @@ class VideoProcessingCompleteViewTests(TestCase):
         self.video.refresh_from_db()
         self.job.refresh_from_db()
         self.assertEqual(self.video.status, Video.Status.READY)
-        self.assertEqual(self.video.hls_path, "videos/hls/master.m3u8")
+        self.assertEqual(self.video.hls_path, hls_path)
         self.assertEqual(self.job.state, VideoTranscodeJob.State.SUCCEEDED)
         mock_cache_status.assert_called_once()
         mock_delete_progress.assert_called_once_with(self.tenant.id, self.video.id)
+
+    def test_rejects_hls_path_outside_video_tenant_prefix(self):
+        response = self._post_complete(
+            {
+                "job_id": str(self.job.id),
+                "hls_path": (
+                    f"tenants/{self.tenant.id + 1}/video/hls/"
+                    f"{self.video.id}/master.m3u8"
+                ),
+                "duration": 12,
+            }
+        )
+
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertEqual(response.data["detail"], "invalid_hls_path")
+        self.video.refresh_from_db()
+        self.job.refresh_from_db()
+        self.assertEqual(self.video.status, Video.Status.PROCESSING)
+        self.assertEqual(self.video.hls_path, "")
+        self.assertEqual(self.job.state, VideoTranscodeJob.State.RUNNING)
+
+    def test_rejects_thumbnail_path_outside_video_prefix(self):
+        response = self._post_complete(
+            {
+                "job_id": str(self.job.id),
+                "hls_path": (
+                    f"tenants/{self.tenant.id}/video/hls/"
+                    f"{self.video.id}/master.m3u8"
+                ),
+                "thumbnail_r2_key": (
+                    f"tenants/{self.tenant.id + 1}/video/hls/"
+                    f"{self.video.id}/thumbnail.jpg"
+                ),
+                "duration": 12,
+            }
+        )
+
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertEqual(response.data["detail"], "invalid_thumbnail_path")
+        self.video.refresh_from_db()
+        self.job.refresh_from_db()
+        self.assertEqual(self.video.status, Video.Status.PROCESSING)
+        self.assertEqual(self.video.thumbnail_r2_key, "")
+        self.assertEqual(self.job.state, VideoTranscodeJob.State.RUNNING)
 
     @patch("apps.domains.video.redis_status_cache.delete_video_progress_key")
     @patch("apps.domains.video.redis_status_cache.cache_video_status")

@@ -52,11 +52,12 @@ then returned to its normal desired capacity.
   - `CDN_HLS_SIGNING_KEY_ID=v1`
 - Refreshed API instances with a two-instance drain-and-replace sequence and
   returned the ASG to desired capacity 1.
-- Changed API and worker defaults to the canonical protected CDN.
+- Changed the API default to the canonical protected CDN.
 - Made production settings reject a non-canonical CDN URL or signing secret
   shorter than 32 characters.
 - Made the API environment inspection command require and mask the signing
-  secret.
+  secret and require the active signing key ID. The signing secret remains
+  masked even with verbose output.
 - Added the same fail-closed validation to `Sync-ApiEnvFromSSOT` before any
   SSM write or API refresh.
 - Added settings and static runtime-contract regression tests.

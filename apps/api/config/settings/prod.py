@@ -236,6 +236,12 @@ if len((CDN_HLS_SIGNING_SECRET or "").strip()) < 32:
     raise ImproperlyConfigured(
         "CDN_HLS_SIGNING_SECRET must be set via SSM/env (>=32 chars) in production."
     )
+_canonical_video_cdn_key_id = "v1"
+if os.getenv("CDN_HLS_SIGNING_KEY_ID", "").strip() != _canonical_video_cdn_key_id:
+    from django.core.exceptions import ImproperlyConfigured
+    raise ImproperlyConfigured(
+        f"CDN_HLS_SIGNING_KEY_ID must be {_canonical_video_cdn_key_id} in production."
+    )
 if BILLING_KEY_ENCRYPTION_WRITE_ENABLED and not BILLING_KEY_ENCRYPTION_PRIMARY_KEY:
     from django.core.exceptions import ImproperlyConfigured
     raise ImproperlyConfigured(

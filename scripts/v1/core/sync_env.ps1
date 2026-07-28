@@ -56,6 +56,13 @@ function Assert-ApiVideoPlaybackEnv {
     if ($signingSecret.Length -lt 32) {
         throw "$ParameterName CDN_HLS_SIGNING_SECRET must contain at least 32 characters. Refusing to deploy unsigned video playback."
     }
+
+    $canonicalKeyId = "v1"
+    $keyIdProperty = $EnvObject.PSObject.Properties["CDN_HLS_SIGNING_KEY_ID"]
+    $keyId = if ($keyIdProperty) { ([string]$keyIdProperty.Value).Trim() } else { "" }
+    if ($keyId -ne $canonicalKeyId) {
+        throw "$ParameterName CDN_HLS_SIGNING_KEY_ID must be '$canonicalKeyId' (actual='$keyId'). Refusing to deploy an unknown CDN signing key."
+    }
 }
 
 function Resolve-MessagingTenantBindingKey {

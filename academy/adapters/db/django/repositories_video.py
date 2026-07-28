@@ -765,11 +765,41 @@ def job_complete(
                 job.id,
             )
             return False, "stale_job"
-        video.hls_path = str(hls_path)
+        from apps.core.r2_paths import video_hls_master_path, video_hls_prefix
+        expected_hls_path = video_hls_master_path(
+            tenant_id=video.tenant_id,
+            video_id=video.id,
+        )
+        normalized_hls_path = str(hls_path or "").strip().lstrip("/")
+        if normalized_hls_path != expected_hls_path:
+            logger.warning(
+                "job_complete invalid HLS path: video_id=%s tenant_id=%s path=%s",
+                video.id,
+                video.tenant_id,
+                normalized_hls_path,
+            )
+            return False, "invalid_hls_path"
+
+        normalized_thumbnail_key = ""
+        if thumbnail_r2_key:
+            normalized_thumbnail_key = str(thumbnail_r2_key).strip().lstrip("/")
+            expected_thumbnail_key = (
+                f"{video_hls_prefix(video.tenant_id, video.id)}/thumbnail.jpg"
+            )
+            if normalized_thumbnail_key != expected_thumbnail_key:
+                logger.warning(
+                    "job_complete invalid thumbnail path: video_id=%s tenant_id=%s path=%s",
+                    video.id,
+                    video.tenant_id,
+                    normalized_thumbnail_key,
+                )
+                return False, "invalid_thumbnail_path"
+
+        video.hls_path = normalized_hls_path
         if duration is not None and duration >= 0:
             video.duration = int(duration)
-        if thumbnail_r2_key:
-            video.thumbnail_r2_key = str(thumbnail_r2_key)[:500]
+        if normalized_thumbnail_key:
+            video.thumbnail_r2_key = normalized_thumbnail_key
         video.status = Video.Status.READY
         video.error_reason = ""
         if hasattr(video, "leased_until"):
@@ -777,7 +807,7 @@ def job_complete(
         if hasattr(video, "leased_by"):
             video.leased_by = ""
         update_fields = ["hls_path", "duration", "status", "error_reason", "leased_until", "leased_by"]
-        if thumbnail_r2_key:
+        if normalized_thumbnail_key:
             update_fields.append("thumbnail_r2_key")
         video.save(update_fields=update_fields)
         job.state = VideoTranscodeJob.State.SUCCEEDED
@@ -793,7 +823,7 @@ def job_complete(
     _cache_video_status_safe(
         video.id, tenant_id,
         getattr(Video.Status.READY, "value", "READY"),
-        hls_path=str(hls_path),
+        hls_path=normalized_hls_path,
         duration=int(duration) if duration is not None and duration >= 0 else None,
         ttl=None,
     )

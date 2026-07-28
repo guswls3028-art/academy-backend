@@ -22,12 +22,13 @@ SECRET_KEYS = frozenset({
     "CDN_HLS_SIGNING_SECRET",
     "INTERNAL_WORKER_TOKEN",
 })
+NEVER_SHOW_FULL = frozenset({"CDN_HLS_SIGNING_SECRET"})
 
 
 def _mask(val: str | None, key: str, show_full: bool = False) -> str:
     if val is None or val == "":
         return "(empty)"
-    if show_full or key not in SECRET_KEYS:
+    if (show_full and key not in NEVER_SHOW_FULL) or key not in SECRET_KEYS:
         return val
     return f"{val[:2]}***"
 
@@ -44,6 +45,7 @@ REQUIRED = [
     "R2_ENDPOINT",
     "CDN_HLS_BASE_URL",
     "CDN_HLS_SIGNING_SECRET",
+    "CDN_HLS_SIGNING_KEY_ID",
     "AWS_REGION",
     "VIDEO_BATCH_JOB_QUEUE",
     "VIDEO_BATCH_JOB_DEFINITION",

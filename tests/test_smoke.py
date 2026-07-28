@@ -311,6 +311,7 @@ class TestSettingsIntegrity(TestCase):
                 "CDN_HLS_SIGNING_SECRET": (
                     "test-production-video-signing-secret"
                 ),
+                "CDN_HLS_SIGNING_KEY_ID": "v1",
                 "TOSS_AUTO_BILLING_ENABLED": "false",
                 "TOSS_PAYMENTS_CLIENT_KEY": "",
                 "TOSS_PAYMENTS_SECRET_KEY": "",
@@ -356,6 +357,7 @@ class TestSettingsIntegrity(TestCase):
         env["MESSAGING_TENANT_BINDING_KEY"] = "test-production-messaging-binding-key"
         env["CDN_HLS_BASE_URL"] = "https://cdn.hakwonplus.com"
         env["CDN_HLS_SIGNING_SECRET"] = "test-production-video-signing-secret"
+        env["CDN_HLS_SIGNING_KEY_ID"] = "v1"
         env.pop("DJANGO_SECURE_SSL_REDIRECT", None)
         code = (
             "import apps.api.config.settings.prod as s; "
@@ -403,6 +405,12 @@ class TestSettingsIntegrity(TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("CDN_HLS_SIGNING_SECRET", result.stderr or result.stdout)
+
+    def test_prod_rejects_missing_video_signing_key_id(self):
+        result = self._load_prod_settings(CDN_HLS_SIGNING_KEY_ID="")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("CDN_HLS_SIGNING_KEY_ID", result.stderr or result.stdout)
 
     def test_prod_auto_billing_rejects_unencrypted_key_storage(self):
         result = self._load_prod_settings(

@@ -1,3 +1,5 @@
+from urllib.parse import parse_qs, urlparse
+
 from django.test import TestCase, override_settings
 from rest_framework.test import APIRequestFactory, force_authenticate
 
@@ -524,6 +526,26 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         response = self._get_playback(enrollment_id=self.target_enrollment.id)
 
         self.assertEqual(response.status_code, 403)
+
+    @override_settings(
+        CDN_HLS_BASE_URL="https://cdn.hakwonplus.com",
+        CDN_HLS_SIGNING_SECRET="test-production-video-signing-secret",
+        CDN_HLS_SIGNING_KEY_ID="v1",
+    )
+    def test_playback_uses_canonical_signed_cdn_url(self):
+        response = self._get_playback(enrollment_id=self.target_enrollment.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        parsed = urlparse(response.data["play_url"])
+        query = parse_qs(parsed.query)
+        self.assertEqual(parsed.scheme, "https")
+        self.assertEqual(parsed.netloc, "cdn.hakwonplus.com")
+        self.assertEqual(query["kid"], ["v1"])
+        self.assertEqual(query["uid"], [str(self.user.id)])
+        self.assertEqual(len(query["exp"]), 1)
+        self.assertGreater(int(query["exp"][0]), 0)
+        self.assertEqual(len(query["sig"]), 1)
+        self.assertGreaterEqual(len(query["sig"][0]), 32)
 
     @override_settings(CDN_HLS_BASE_URL="https://cdn.example.test", CDN_HLS_SIGNING_SECRET="")
     def test_proctored_playback_issues_session_with_aware_expiry(self):

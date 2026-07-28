@@ -152,7 +152,7 @@ VIDEO_JOB_LOCK_TTL_SECONDS = int(os.getenv("VIDEO_JOB_LOCK_TTL_SECONDS", "43200"
 # ==================================================
 # Video / CDN
 # ==================================================
-CDN_HLS_BASE_URL = os.getenv("CDN_HLS_BASE_URL", "https://cdn.hakwonplus.com")
+CDN_HLS_BASE_URL = os.getenv("CDN_HLS_BASE_URL", "https://pub-54ae4dcb984d4491b08f6c57023a1621.r2.dev")
 
 # ==================================================
 # SOLAPI (Messaging Worker)
