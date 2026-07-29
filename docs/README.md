@@ -58,6 +58,7 @@ backend/docs/
 | 상시 개발 런타임 | [operations/persistent-development-runtime.md](operations/persistent-development-runtime.md) |
 | 수동 정식 배포 | [operations/formal-deploy.md](operations/formal-deploy.md) |
 | 개발자 문의 운영함 | [operations/dev-console-inbox.md](operations/dev-console-inbox.md) |
+| 강사 AI 문제 풀이 (Beta) | [domain/teacher-problem-solver.md](domain/teacher-problem-solver.md) |
 | 운영 runbook | [operations/runbooks/](operations/runbooks/) |
 
 ## 작성 규칙
