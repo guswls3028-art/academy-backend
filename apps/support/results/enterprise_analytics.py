@@ -255,7 +255,7 @@ def _build_weak_questions(result_ids: list[int]) -> list[dict[str, Any]]:
     )
     for item in items:
         exam_id = int(item.result.target_id)
-        question_number = int(getattr(item.question, "number", None) or item.question_id)
+        question_number = int(item.question.number)
         key = (exam_id, question_number)
         row = grouped.setdefault(
             key,

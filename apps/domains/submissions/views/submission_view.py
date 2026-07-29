@@ -294,7 +294,7 @@ class SubmissionViewSet(ModelViewSet):
         )
         answers.sort(
             key=lambda a: (
-                question_number_by_id.get(int(a.exam_question_id), int(a.exam_question_id)),
+                question_number_by_id.get(int(a.exam_question_id), 10**9),
                 int(a.exam_question_id),
             )
         )
@@ -305,7 +305,6 @@ class SubmissionViewSet(ModelViewSet):
             answers_data.append({
                 "question_id": a.exam_question_id,
                 "question_no": question_number_by_id.get(
-                    int(a.exam_question_id),
                     int(a.exam_question_id),
                 ),
                 "answer": a.answer or "",

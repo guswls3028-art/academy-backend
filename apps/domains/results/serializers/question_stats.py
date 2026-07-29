@@ -5,6 +5,7 @@ from rest_framework import serializers
 
 class QuestionStatSerializer(serializers.Serializer):
     question_id = serializers.IntegerField()
+    question_number = serializers.IntegerField()
     attempts = serializers.IntegerField()
     correct = serializers.IntegerField()
     accuracy = serializers.FloatField()
@@ -21,4 +22,5 @@ class WrongDistributionSerializer(serializers.Serializer):
 
 class TopWrongQuestionSerializer(serializers.Serializer):
     question_id = serializers.IntegerField()
+    question_number = serializers.IntegerField()
     wrong_count = serializers.IntegerField()

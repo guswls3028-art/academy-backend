@@ -402,8 +402,31 @@ class ExamResultExcelImportTests(TestCase):
                 source="legacy_import",
             )
 
+        unmapped_question_id = max(
+            self.choice_question.id,
+            self.short_question.id,
+        ) + 100_000
+        ResultFact.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.enrollment,
+            submission_id=0,
+            attempt=None,
+            question_id=unmapped_question_id,
+            answer="",
+            is_correct=False,
+            score=0,
+            max_score=1,
+            source="legacy_import",
+        )
+
         stats = QuestionStatsService.per_question_stats(exam_id=self.exam.id)
 
+        self.assertNotIn(
+            unmapped_question_id,
+            [row["question_id"] for row in stats],
+        )
+        self.assertEqual(stats[0]["question_number"], 1)
         self.assertEqual(stats[0]["attempts"], 2)
         self.assertEqual(stats[0]["correct"], 1)
 
@@ -617,12 +640,30 @@ class ExamResultExcelImportTests(TestCase):
         question_stats = QuestionStatsService.per_question_stats(exam_id=self.exam.id)
         self.assertEqual(
             [
-                (row["question_id"], row["attempts"], row["correct"])
+                (
+                    row["question_id"],
+                    row["question_number"],
+                    row["attempts"],
+                    row["correct"],
+                )
                 for row in question_stats
             ],
             [
-                (self.choice_question.id, 1, 1),
-                (self.short_question.id, 1, 0),
+                (self.choice_question.id, 1, 1, 1),
+                (self.short_question.id, 2, 1, 0),
+            ],
+        )
+        self.assertEqual(
+            QuestionStatsService.top_n_wrong_questions(
+                exam_id=self.exam.id,
+                n=1,
+            ),
+            [
+                {
+                    "question_id": self.short_question.id,
+                    "question_number": 2,
+                    "wrong_count": 1,
+                },
             ],
         )
         ranking = compute_exam_rankings(exam_id=self.exam.id, tenant=self.tenant)

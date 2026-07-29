@@ -14,6 +14,9 @@ from django.db.models import (
 )
 
 from apps.domains.results.models import ResultFact
+from apps.support.results.question_stats_dependencies import (
+    question_numbers_by_id_for_exam,
+)
 
 
 def _current_question_facts(
@@ -77,7 +80,7 @@ class QuestionStatsService:
             attempt_ids=attempt_ids,
         )
 
-        rows = (
+        rows = list(
             qs.values("question_id")
             .annotate(
                 attempts=Count("id"),
@@ -94,16 +97,29 @@ class QuestionStatsService:
             .order_by("question_id")
         )
 
+        question_numbers = question_numbers_by_id_for_exam(
+            exam_id=int(exam_id),
+            question_ids=[int(row["question_id"]) for row in rows],
+        )
+
         return [
             {
                 "question_id": row["question_id"],
+                "question_number": question_numbers[int(row["question_id"])],
                 "attempts": int(row["attempts"] or 0),
                 "correct": int(row["correct"] or 0),
                 "accuracy": round(float(row["accuracy"] or 0.0), 4),
                 "avg_score": float(row["avg_score"] or 0.0),
                 "max_score": float(row["max_score"] or 0.0),
             }
-            for row in rows
+            for row in sorted(
+                rows,
+                key=lambda item: question_numbers.get(
+                    int(item["question_id"]),
+                    10**9,
+                ),
+            )
+            if int(row["question_id"]) in question_numbers
         ]
 
     # ======================================================
@@ -159,16 +175,29 @@ class QuestionStatsService:
             is_correct=False,
         )
 
-        rows = (
+        rows = list(
             qs.values("question_id")
             .annotate(wrong_count=Count("id"))
-            .order_by("-wrong_count")[: int(n)]
+            .order_by("-wrong_count", "question_id")
         )
 
-        return [
+        question_numbers = question_numbers_by_id_for_exam(
+            exam_id=int(exam_id),
+            question_ids=[int(row["question_id"]) for row in rows],
+        )
+        data = [
             {
                 "question_id": int(r["question_id"]),
+                "question_number": question_numbers[int(r["question_id"])],
                 "wrong_count": int(r["wrong_count"]),
             }
             for r in rows
+            if int(r["question_id"]) in question_numbers
         ]
+        data.sort(
+            key=lambda item: (
+                -item["wrong_count"],
+                item["question_number"],
+            )
+        )
+        return data[:max(int(n), 0)]

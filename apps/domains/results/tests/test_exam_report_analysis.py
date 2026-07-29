@@ -25,3 +25,12 @@ def test_summarize_result_items_returns_empty_analysis_without_items():
         "accuracy_rate": None,
         "wrong_question_numbers": [],
     }
+
+
+def test_summarize_result_items_never_uses_internal_id_as_question_number():
+    analysis = summarize_result_items([
+        {"question_id": 4928, "question_number": None, "is_correct": False},
+    ])
+
+    assert analysis["wrong_count"] == 1
+    assert analysis["wrong_question_numbers"] == []

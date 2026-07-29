@@ -31,7 +31,7 @@ def summarize_result_items(items: Iterable[dict[str, Any]]) -> dict[str, Any]:
             correct += 1
             continue
 
-        raw_number = item.get("question_number") or item.get("question_id")
+        raw_number = item.get("question_number")
         try:
             wrong_numbers.append(int(raw_number))
         except (TypeError, ValueError):

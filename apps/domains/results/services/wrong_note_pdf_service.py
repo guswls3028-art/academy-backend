@@ -185,7 +185,7 @@ def _sorted_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         key=lambda item: (
             int(item.get("session_order") or 10**9),
             int(item.get("exam_id") or 0),
-            int(item.get("question_number") or item.get("question_id") or 0),
+            int(item.get("question_number") or 10**9),
         ),
     )
 
@@ -317,10 +317,11 @@ def build_wrong_note_pdf(
         )
         pdf.drawRightString(page_w - margin, page_h - 14 * mm, exam_title)
 
-        q_number = item.get("question_number") or item.get("question_id")
+        q_number = item.get("question_number")
+        question_label = f"{q_number}번" if q_number is not None else "문항 번호 미확인"
         pdf.setFillColor(HexColor(_INK))
         pdf.setFont(bold_font, 22)
-        pdf.drawString(margin, page_h - 38 * mm, f"{q_number}번")
+        pdf.drawString(margin, page_h - 38 * mm, question_label)
         pdf.setFont(regular_font, 9)
         pdf.setFillColor(HexColor(_MUTED))
         pdf.drawRightString(page_w - margin, page_h - 36 * mm, f"{index} / {len(rows)}")

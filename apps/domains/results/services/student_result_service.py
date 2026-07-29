@@ -166,7 +166,7 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
 
     for item in data.get("items") or []:
         q_id = item.get("question_id")
-        item["question_number"] = question_number_map.get(q_id, q_id)
+        item["question_number"] = question_number_map.get(q_id)
         item.setdefault("student_answer", item.get("answer"))
         if show_answers:
             correct = correct_answer_map.get(str(q_id or ""))
