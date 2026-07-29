@@ -188,6 +188,7 @@ def test_blue_green_development_deploy_preserves_old_instance_on_failure() -> No
     assert "register-targets" not in source
     assert "academy-v1-api-asg" not in source
     assert "ApiDevelopmentEnvParameter" in source
+    assert "ConvertTo-Json `\n    -InputObject $networkInterfacePayload" in source
     assert (
         '-ExpectedSettingsModule "apps.api.config.settings.development"'
         in source

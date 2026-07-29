@@ -211,7 +211,7 @@ if (
     throw "API development userdata failed the isolated env/worker boundary check."
 }
 
-$networkInterfaces = @(
+$networkInterfacePayload = @(
     [ordered]@{
         AssociatePublicIpAddress = $true
         DeleteOnTermination = $true
@@ -219,7 +219,11 @@ $networkInterfaces = @(
         Groups = @([string]$securityGroup.GroupId)
         SubnetId = $subnet
     }
-) | ConvertTo-Json -Depth 8 -Compress
+)
+$networkInterfaces = ConvertTo-Json `
+    -InputObject $networkInterfacePayload `
+    -Depth 8 `
+    -Compress
 $networkRef = Convert-JsonArgToFileRef $networkInterfaces
 $networkFile = $networkRef -replace '^file://', ''
 $tagSpec = (
@@ -489,4 +493,3 @@ echo DEVELOPMENT_RUNTIME_PASS
         }
     }
 }
-
