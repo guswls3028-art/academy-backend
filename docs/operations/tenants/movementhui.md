@@ -2,7 +2,7 @@
 
 **기준일:** 2026-07-29 KST
 
-**상태:** 가비아 → Cloudflare 네임서버 위임 확인 · 운영 배포 진행 중
+**상태:** 운영 도메인·테넌트 활성화 완료 · 대표 계정 등록 대기
 
 **운영 도메인:** `movementhui.com`
 
@@ -28,6 +28,8 @@
 - 주 강조색: `#FFDB5A`
 - 로그인·학생앱·성적표는 네이비를 주색, 노란색을 상태/포커스 강조로 사용
 - 로고 원본은 비율·문구를 바꾸지 않고 정적 리소스 크기만 파생
+- 로그인 화면은 흰 공용 카드가 아니라 딥 네이비 실험실 장면과 원자 궤도,
+  옐로 로그인 액션으로 구성
 
 ## 진행 상태
 
@@ -39,12 +41,15 @@
 - [x] 범용 `provision_tenant` 명령과 회귀 테스트 준비
 - [x] 가비아에 Cloudflare NS 1·2차 등록
 - [x] Cloudflare·Google 공용 DNS 위임 확인
-- [ ] backend 정식 배포
-- [ ] frontend 정식 배포
-- [ ] 운영 DB dry-run 및 실제 provision
+- [x] backend 정식 배포
+- [x] frontend 1차 정식 배포
+- [x] 운영 DB dry-run 및 실제 provision
+- [x] 30일 온보딩 이용기간 활성화 (`2026-08-28`까지)
 - [ ] 개발자 콘솔에서 대표 계정 생성
-- [ ] Pages apex/`www` 및 CNAME 활성화
-- [ ] 데스크톱·모바일·owner 로그인·tenant isolation 확인
+- [x] Pages apex/`www` 및 CNAME 활성화
+- [x] 리디자인 데스크톱·390px 모바일 로컬 시각 검증
+- [ ] 리디자인 frontend 정식 배포
+- [ ] owner 로그인·tenant isolation 확인
 
 ## 현재 발급된 네임서버
 
@@ -53,7 +58,8 @@
 2차: thaddeus.ns.cloudflare.com
 ```
 
-Pages/CNAME 활성화와 외부 접속 완료 판정은 배포·운영 DB 프로비저닝 뒤 수행한다.
+Cloudflare Pages와 apex/`www` CNAME은 활성화됐고 두 호스트 모두 HTTP 200을
+확인했다.
 
 ## 별도 제품 확인
 
