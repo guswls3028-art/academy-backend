@@ -84,6 +84,8 @@ def test_isolated_database_role_owns_and_can_migrate_public_schema() -> None:
     assert "schema_owner != ROLE" in source
     assert "not schema_usage" in source
     assert "not schema_create" in source
+    assert 'cursor.execute("CREATE EXTENSION IF NOT EXISTS vector")' in source
+    assert "or not vector_extension_version" in source
     assert (
         '"ALTER ROLE {} WITH LOGIN NOCREATEDB NOCREATEROLE "'
         in source

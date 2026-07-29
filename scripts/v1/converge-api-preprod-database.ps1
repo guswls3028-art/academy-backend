@@ -195,9 +195,15 @@ reowned = 0
 schema_owner = ""
 schema_usage = False
 schema_create = False
+vector_extension_version = ""
 try:
     preprod.autocommit = True
     with preprod.cursor() as cursor:
+        # pgvector is a trusted runtime dependency but RDS permits only the
+        # privileged bootstrap identity to install it. Application migrations
+        # can then execute CREATE EXTENSION IF NOT EXISTS without elevated
+        # privileges while every application table remains role-owned.
+        cursor.execute("CREATE EXTENSION IF NOT EXISTS vector")
         cursor.execute(
             sql.SQL("ALTER SCHEMA public OWNER TO {}").format(
                 sql.Identifier(ROLE)
@@ -252,6 +258,11 @@ try:
             [ROLE, ROLE],
         )
         schema_owner, schema_usage, schema_create = cursor.fetchone()
+        cursor.execute(
+            "SELECT extversion FROM pg_extension WHERE extname = 'vector'"
+        )
+        extension_row = cursor.fetchone()
+        vector_extension_version = extension_row[0] if extension_row else ""
 finally:
     preprod.close()
 
@@ -312,6 +323,7 @@ if (
     or schema_owner != ROLE
     or not schema_usage
     or not schema_create
+    or not vector_extension_version
 ):
     raise SystemExit("dedicated preprod database privilege verification failed")
 
@@ -326,6 +338,7 @@ print(
             "public_schema_owner": schema_owner,
             "public_schema_usage": schema_usage,
             "public_schema_create": schema_create,
+            "vector_extension_version": vector_extension_version,
             "objects_reowned": reowned,
         }
     )
