@@ -239,11 +239,19 @@ try {
     if ($Env -eq "prod") {
         $apiCanaryImage = Get-LatestApiImageUri
         if (-not $apiCanaryImage) { throw "API pre-production canary could not resolve an immutable API image." }
-        $apiCanaryEnv = Publish-ApiPreprodEnvCandidate
+        if ($apiCanaryImage -notmatch '@sha256:(?<digest>[0-9a-f]{64})$') {
+            throw "API pre-production canary image is not digest-pinned."
+        }
+        $apiCanaryReleaseId = "manual-sha256-$($matches['digest'])"
+        $apiCanaryEnv = Publish-ApiPreprodEnvCandidate -ReleaseId $apiCanaryReleaseId
         & (Join-Path $ScriptRoot "run-api-preprod-canary.ps1") `
             -ImageUri $apiCanaryImage `
-            -SsmApiEnvParameter $apiCanaryEnv `
-            -ExpectedDatabaseName $script:ApiPreprodDatabaseName `
+            -SsmApiEnvParameter $apiCanaryEnv.ParameterName `
+            -ExpectedEnvVersion $apiCanaryEnv.ParameterVersion `
+            -ExpectedReleaseId $apiCanaryEnv.ReleaseId `
+            -ExpectedDatabaseName $apiCanaryEnv.DatabaseName `
+            -ExpectedDatabaseUser $apiCanaryEnv.DatabaseUser `
+            -ExpectedProductionDatabaseName $apiCanaryEnv.ProductionDatabaseName `
             -AwsProfile $AwsProfile
     }
 

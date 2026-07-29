@@ -43,7 +43,7 @@ git push main
 [run-tests] ─── smoke tests deploy gate
     |
     v
-[build-and-push] ─── build changed images ──> ECR (compat :latest + immutable :sha-XXXXXXXX)
+[build-and-push] ─── build changed images ──> ECR (immutable :sha-XXXXXXXX candidate)
     |
     v
 [verify-api-development] ─── persistent production-shaped EC2
@@ -53,8 +53,9 @@ git push main
     |                             + blue/green promote, then retire prior host
     |
     v
-[verify-api-preprod] ─── dedicated IAM + candidate SSM + preprod DB
-    |                     └── migrate + /healthz + /health, then terminate
+[verify-api-preprod] ─── dedicated IAM + exact versioned SSM + dedicated DB role
+    |                     └── migrate + DB/role/prod-CONNECT denial
+    |                         + release identity + /healthz + /health + CDN, then terminate
     |                              |
     |                              v
     |── (if API changed) ──> [run-migrations] ─── production DB migrate
@@ -73,6 +74,7 @@ git push main
 [verify-deployment] ─── healthz 200 + health 200 + ASG healthy instances
     |                    + tenant maintenance flag guard
     |                    + API-change student video playback chain smoke ──> PASS/FAIL
+    |                    + promote verified digests to compatibility :latest
     |
     v
 [notify-on-failure] ─── failure-only notification
@@ -107,7 +109,9 @@ Push change detection derives each service's diff base from that image's source 
 ### Build Output
 
 Each image is tagged with:
-- `:latest` — compatibility alias only; never deployment evidence
+- `:latest` — compatibility alias only; moved only after every production
+  verification gate passes and exact digest readback succeeds; never
+  deployment evidence
 - `:sha-XXXXXXXX` — immutable source identity, first 8 chars of git commit SHA
 
 Service builds resolve `academy-base` to a digest before `FROM`. Migration, API/Messaging/AI/Tools runtime, and all Video Batch job definitions resolve the run-unique SHA tag to `repo@sha256:...`. `deploy-api-and-verify-workers.ps1` verifies the last complete successful release manifest, waits for terminal refresh success, then compares its digests with Launch Template userdata, actual InService containers, and every active Video Batch job definition.

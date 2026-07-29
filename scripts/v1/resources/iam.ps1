@@ -642,6 +642,12 @@ function Ensure-GitHubActionsDeployIAM {
         [ordered]@{Sid="SsmSendInstances";Effect="Allow";Action="ssm:SendCommand";Resource="arn:aws:ec2:$($script:Region):$($script:AccountId):instance/*";Condition=[ordered]@{StringEquals=[ordered]@{"ssm:resourceTag/Name"=$instanceTags}}},
         [ordered]@{Sid="SsmSendApiCanary";Effect="Allow";Action="ssm:SendCommand";Resource="arn:aws:ec2:$($script:Region):$($script:AccountId):instance/*";Condition=[ordered]@{StringEquals=$apiCanarySsmTagConditions}},
         [ordered]@{Sid="SsmCommandRead";Effect="Allow";Action="ssm:GetCommandInvocation";Resource="*"},
+        [ordered]@{Sid="ApiPreprodEnvSourceRead";Effect="Allow";Action="ssm:GetParameter";Resource=@(
+            "arn:aws:ssm:$($script:Region):$($script:AccountId):parameter/academy/api/env",
+            "arn:aws:ssm:$($script:Region):$($script:AccountId):parameter/academy/api/preprod/db-credentials",
+            "arn:aws:ssm:$($script:Region):$($script:AccountId):parameter/academy/api/preprod/env"
+        )},
+        [ordered]@{Sid="ApiPreprodEnvPublish";Effect="Allow";Action="ssm:PutParameter";Resource="arn:aws:ssm:$($script:Region):$($script:AccountId):parameter/academy/api/preprod/env"},
         [ordered]@{Sid="DevAlertsAlarmRead";Effect="Allow";Action="cloudwatch:DescribeAlarms";Resource="*"},
         [ordered]@{Sid="DevAlertsParameterRead";Effect="Allow";Action="ssm:GetParameter";Resource="arn:aws:ssm:$($script:Region):$($script:AccountId):parameter/academy/ops/dev-alerts-api-user-impact-state"},
         [ordered]@{Sid="DevAlertsTransitionWrite";Effect="Allow";Action="ssm:PutParameter";Resource="arn:aws:ssm:$($script:Region):$($script:AccountId):parameter/academy/ops/dev-alerts-api-user-impact-state"},

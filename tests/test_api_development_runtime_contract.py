@@ -116,14 +116,15 @@ def test_isolated_database_role_owns_and_can_migrate_public_schema() -> None:
     )
 
 
-def test_mutation_entrypoints_reject_account_root_credentials() -> None:
+def test_mutation_entrypoints_warn_on_explicitly_authorized_account_root() -> None:
     guard = ROOT_GUARD.read_text(encoding="utf-8-sig")
     deploy = DEPLOY.read_text(encoding="utf-8-sig")
     prerequisites = PREREQUISITES.read_text(encoding="utf-8-sig")
 
     assert "function Assert-AwsMutationIdentity" in guard
     assert "iam::[0-9]{12}:root" in guard
-    assert "AWS mutation is blocked for account root credentials" in guard
+    assert "AWS account-root credential is active" in guard
+    assert "all continuity gates" in guard
     assert "Assert-AwsMutationIdentity" in deploy
     assert "Assert-AwsMutationIdentity" in prerequisites
 

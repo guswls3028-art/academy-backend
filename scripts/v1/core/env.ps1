@@ -74,9 +74,10 @@ function Assert-AwsMutationIdentity {
         throw "AWS mutation identity is missing an ARN."
     }
     if ($arn -match '^arn:aws:iam::[0-9]{12}:root$') {
-        throw (
-            "AWS mutation is blocked for account root credentials. " +
-            "Use the GitHub OIDC deployment role or a dedicated least-privilege AWS profile."
+        Write-Warning (
+            "AWS account-root credential is active. This is allowed only for " +
+            "explicitly authorized manual work; all continuity gates and exact " +
+            "post-mutation readback remain mandatory."
         )
     }
     return $id

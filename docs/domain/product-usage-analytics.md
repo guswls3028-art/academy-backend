@@ -130,16 +130,22 @@ analytics_hash_key_missing`으로 거부된다. 일반 테넌트 관리자는 �
   인덱스만 추가한다. 기존 도메인 데이터는 변경하지 않는다.
 - `ProductUsageEvent`: 원본 익명 이벤트, 정책상 30일 보존.
 - `ProductUsageDailyActor`: 일별 익명 actor 집계, 정책상 400일 보존.
-- `python manage.py rollup_product_usage --target-date YYYY-MM-DD`는 같은
+- `python manage.py rollup_product_usage --date YYYY-MM-DD`는 같은
   날짜 재실행 결과가 동일하다.
 - `python manage.py purge_product_usage --before YYYY-MM-DD
   [--daily-before YYYY-MM-DD]`는 기본 dry-run이다.
 - 원본 날짜의 rollup이 없으면 purge를 차단한다.
-- 실제 삭제는 정확한 범위를 검토한 뒤 `--execute`를 붙이는 별도 승인
-  작업이다.
+- 수동 실행의 실제 삭제는 정확한 범위를 검토한 뒤 `--execute`를 붙인다.
+- `.github/workflows/product-usage-maintenance.yml`은 매일 03:25 KST에
+  전날을 idempotent rollup하고 원본 30일·일별 집계 400일 보존을
+  적용한다. GitHub OIDC로 healthy InService API 한 대에만 SSM command를
+  보내며 rollup 누락, 인스턴스 부재 또는 command 실패 시 삭제 없이
+  실패한다. 수동 dispatch 기본값은 purge dry-run이다.
 
-자동 rollup·purge 스케줄은 아직 활성화하지 않았다. 수집 플래그가 모두
-OFF이므로 운영 실사용 기준선도 아직 없다.
+`scripts/v1/ensure-product-analytics-hash-key.ps1`은 기존 production
+SecureString JSON을 보존한 채 전용 384-bit 난수 HMAC key가 없을 때만
+추가하고 exact parameter version을 readback한다. 키 값은 출력하지
+않으며 기존 키가 짧거나 prod settings가 아니면 교체하지 않고 실패한다.
 
 ## 6. 현재 운영 상태
 
@@ -173,8 +179,8 @@ Frontend focused 검증과 사용자 흐름은 프런트 정본을 따른다.
 
 생산 변경은 [deployment-modes.md](../operations/deployment-modes.md)의
 상시 개발환경 → 격리 preprod → 운영 게이트를 모두 통과해야 한다.
-기능 플래그 활성화, 자동 보존 스케줄, 메뉴 우선순위 변경은 각각 별도
-운영 결정이다.
+기능 플래그 활성화는 플랫폼 테넌트 상세 화면의 정식 API 경로로 tenant
+하나씩 수행한다. 메뉴 우선순위 변경은 28일 기준선 이후 별도 결정이다.
 
 남은 퍼널, 파일럿과 28일 리뷰는
 [product-usage-analytics-remaining-work.md](../refactor/product-usage-analytics-remaining-work.md)에서
