@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.12.7.md](v1.12.7.md) | **CURRENT** | 2026-07-29 KST | Privacy-safe role-based product usage signals, guarded tenant rollout, and evidence-based DB availability and tenant split gates |
+| [v1.12.8.md](v1.12.8.md) | **CURRENT** | 2026-07-29 KST | Scalable teacher tools hub and a privacy-bounded, review-required AI problem explanation Beta |
+| [v1.12.7.md](v1.12.7.md) | production-deployed / v1.12.8로 승계 | 2026-07-29 KST | Privacy-safe role-based product usage signals, guarded tenant rollout, and evidence-based DB availability and tenant split gates |
 | [v1.12.6.md](v1.12.6.md) | production-deployed / v1.12.7로 승계 | 2026-07-29 KST | Teacher-controlled correction completion, regular/supplement score separation, rank/percentile trends, responsive reports, and safe preprod delivery |
 | [v1.12.5.md](v1.12.5.md) | production-deployed / v1.12.6로 승계 | 2026-07-29 KST | Teacher-owned explanation voice profiles, rights-separated references, approval learning, and isolated Tenant 2 fixture proof |
 | [v1.12.4.md](v1.12.4.md) | production-deployed / v1.12.5로 승계 | 2026-07-29 KST | Target-aware clinic booking, multi-enrollment-safe student linkage, and clearer admin/student reservation operations |
