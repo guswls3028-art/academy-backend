@@ -9,7 +9,7 @@
 
 현재 제공 대상은 테넌트가 확정된 인증 강사·직원이다. 학생 앱에는 이
 기능을 노출하지 않는다. 프론트엔드 진입점과 상호작용 계약은
-[frontend 강사 도구 문서](../../../frontend/docs/TEACHER-TOOLS.md)가
+[frontend 강사 도구 문서](https://github.com/guswls3028-art/academy-frontend/blob/main/docs/TEACHER-TOOLS.md)가
 소유한다.
 
 ## API와 처리 흐름
