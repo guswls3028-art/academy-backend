@@ -10,6 +10,7 @@ PARAMS = REPO_ROOT / "docs" / "ssot" / "params.yaml"
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "v1-build-and-push-latest.yml"
 ROOT_GUARD = REPO_ROOT / "scripts" / "v1" / "core" / "env.ps1"
 DEPLOY = REPO_ROOT / "scripts" / "v1" / "deploy-api-development.ps1"
+API_RESOURCE = REPO_ROOT / "scripts" / "v1" / "resources" / "api.ps1"
 PREREQUISITES = (
     REPO_ROOT / "scripts" / "v1" / "converge-api-development-prerequisites.ps1"
 )
@@ -164,6 +165,7 @@ def test_development_oidc_policy_is_separate_exact_and_main_only() -> None:
 
 def test_blue_green_development_deploy_preserves_old_instance_on_failure() -> None:
     source = DEPLOY.read_text(encoding="utf-8-sig")
+    api_resource = API_RESOURCE.read_text(encoding="utf-8-sig")
 
     assert "match the production compute contract" in source
     assert "ApiDevelopmentSecurityGroupName" in source
@@ -186,6 +188,15 @@ def test_blue_green_development_deploy_preserves_old_instance_on_failure() -> No
     assert "register-targets" not in source
     assert "academy-v1-api-asg" not in source
     assert "ApiDevelopmentEnvParameter" in source
+    assert (
+        '-ExpectedSettingsModule "apps.api.config.settings.development"'
+        in source
+    )
+    assert (
+        '[string]$ExpectedSettingsModule = "apps.api.config.settings.prod"'
+        in api_resource
+    )
+    assert "expected='$ExpectedSettingsModule'" in api_resource
 
 
 def test_workflow_enforces_development_then_preprod_then_production() -> None:

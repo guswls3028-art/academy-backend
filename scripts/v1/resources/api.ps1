@@ -4,7 +4,17 @@ $ErrorActionPreference = "Stop"
 
 # EC2 부팅 시 Docker 설치 → ECR Pull → Django 컨테이너 8000 포트 실행. API_IMAGE_URI 등은 런타임 치환.
 function Get-ApiLaunchTemplateUserData {
-    param([string]$ApiImageUri, [string]$Region, [string]$SsmApiEnvParam, [string]$DeploymentId = "")
+    param(
+        [string]$ApiImageUri,
+        [string]$Region,
+        [string]$SsmApiEnvParam,
+        [string]$DeploymentId = "",
+        [ValidateSet(
+            "apps.api.config.settings.prod",
+            "apps.api.config.settings.development"
+        )]
+        [string]$ExpectedSettingsModule = "apps.api.config.settings.prod"
+    )
     if (-not $ApiImageUri -or -not $Region) { return "" }
     $ecrHost = $ApiImageUri.Split("/")[0]
     $deployComment = if ($DeploymentId) { "# DEPLOYMENT_ID=$DeploymentId" } else { "# DEPLOYMENT_ID=" }
@@ -43,7 +53,7 @@ if [ "`$ecr_ok" != "true" ]; then
   exit 1
 fi
 # 3) API env (SSM) -> validated env file. API must never boot with worker
-# settings or without its production settings module.
+# settings or without its explicitly selected API settings module.
 if [ -z "$SsmApiEnvParam" ]; then
   log "API SSM env parameter is required"
   exit 1
@@ -53,7 +63,7 @@ umask 077
 env_ok=false
 for attempt in 1 2 3 4 5; do
   ENV_JSON="`$(aws ssm get-parameter --name "$SsmApiEnvParam" --with-decryption --query Parameter.Value --output text --region $Region 2>>"`$LOG")" || true
-  if [ -n "`$ENV_JSON" ] && printf '%s' "`$ENV_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); expected='apps.api.config.settings.prod'; actual=str(d.get('DJANGO_SETTINGS_MODULE','')).strip(); assert actual == expected, f'DJANGO_SETTINGS_MODULE must be {expected!r} (actual={actual!r})'; [print(k+'='+str(v)) for k,v in d.items()]" > /opt/api.env.next 2>>"`$LOG"; then
+  if [ -n "`$ENV_JSON" ] && printf '%s' "`$ENV_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); expected='$ExpectedSettingsModule'; actual=str(d.get('DJANGO_SETTINGS_MODULE','')).strip(); assert actual == expected, f'DJANGO_SETTINGS_MODULE must be {expected!r} (actual={actual!r})'; [print(k+'='+str(v)) for k,v in d.items()]" > /opt/api.env.next 2>>"`$LOG"; then
     if [ -s /opt/api.env.next ]; then
       mv /opt/api.env.next /opt/api.env
       env_ok=true
