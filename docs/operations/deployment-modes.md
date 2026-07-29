@@ -1,7 +1,7 @@
 # 배포 방식 개요
 
 **기준:** 실제 스크립트·워크플로우. 문서는 실행 방식과 일치하도록 유지한다.
-**최종 갱신:** 2026-07-28
+**최종 갱신:** 2026-07-29
 
 ---
 
@@ -24,12 +24,12 @@
 
 | 경로 | 트리거 | 서버 반영 방식 | 속도 |
 |------|--------|----------------|------|
-| **CI 자동 배포** | main push → GitHub Actions | build-and-push → 격리 preprod(전용 DB migration+health) → 운영 migration → deploy-api/messaging/ai/tools/video → verify-deployment | ~15~30분 |
+| **CI 자동 배포** | main push → GitHub Actions | build-and-push → 상시 격리 development(실사용 smoke) → 임시 격리 preprod(전용 DB migration+health) → 운영 migration → deploy-api/messaging/ai/tools/video → verify-deployment | ~20~40분 |
 | **수동 정식 배포** | `pwsh scripts/v1/deploy.ps1 -AwsProfile default` | 후보 env 준비 → 격리 preprod → 운영 env 승격 → API/worker/Batch/EventBridge/ALB 런타임 반영 | 20~30분 |
 
-- **env·이미지 소스:** 운영은 SSM `/academy/api/env` → `/opt/api.env`, preprod는 4KB를 넘는 환경을 보존하는 Advanced SecureString `/academy/api/preprod/env`와 `academy_api_preprod` DB를 사용한다. 이미지는 완전 성공 `docs/reports/release-manifest.latest.json`의 `academy-api@sha256:...`를 사용한다.
+- **env·이미지 소스:** 운영은 SSM `/academy/api/env` → `/opt/api.env`, development는 버전 고정 `/academy/api/development/env`·`/academy/workers/development/env`, `academy_api_development` DB와 개발 전용 큐/R2를 사용한다. preprod는 4KB를 넘는 환경을 보존하는 Advanced SecureString `/academy/api/preprod/env`와 `academy_api_preprod` DB를 사용한다. 이미지는 완전 성공 `docs/reports/release-manifest.latest.json`의 `academy-api@sha256:...`를 사용한다.
 - **API 역할 불변조건:** `/academy/api/env`의 `DJANGO_SETTINGS_MODULE`은 `apps.api.config.settings.prod`, `/academy/workers/env`는 `apps.api.config.settings.worker`여야 한다. 누락·교차 오염·API env 조회 실패 시 배포를 중단하며 workers env에서 API env를 합성하지 않는다.
-- **격리 불변조건:** preprod EC2는 운영 ASG/ALB에 등록하지 않고, 전용 instance profile과 candidate-only SSM parameter 및 별도 DB를 사용한다.
+- **격리 불변조건:** development와 preprod EC2는 운영 ASG/ALB에 등록하지 않는다. development는 inbound 없는 전용 보안그룹·instance profile·DB/큐/R2를 사용하고, preprod는 전용 instance profile·candidate-only SSM parameter·별도 DB를 사용한다.
 
 ---
 
@@ -39,14 +39,15 @@ main에 push하면 자동으로 서버 반영까지 완료된다:
 
 1. GitHub Actions `v1-build-and-push-latest.yml` 트리거
 2. 변경 감지 결과에 따라 필요한 이미지(base, api, video-worker, messaging-worker, ai-worker-cpu, tools-worker)만 linux/arm64 빌드 → ECR `:latest` + `:sha-*` 푸시. `workflow_dispatch` 또는 core/shared 변경은 전체 빌드.
-3. `verify-api-preprod` job → candidate manifest의 API digest로 격리 EC2 1대를 기동하고 별도 DB에 migration을 적용한다. prod settings, candidate DB 경계, `/healthz`, DB 포함 `/health`를 모두 확인한 뒤 종료한다.
-4. preprod 성공 후에만 `run-migrations`가 운영 DB migration을 실행한다.
-5. 모든 `deploy-api`, `deploy-messaging`, `deploy-ai`, `deploy-tools`, `deploy-video` job은 같은 preprod 성공 결과를 공통 선행조건으로 사용한다.
-6. API Launch Template pin과 ASG rolling refresh를 실행한다. preprod 실패 또는 임시 서버 cleanup 실패 시 어떤 운영 서비스도 변경하지 않는다.
-7. 새 인스턴스 기동 → UserData로 ECR pull + 운영 SSM env 역할 검증 + docker run
-8. `verify-deployment` job → API health, ASG 상태, tenant maintenance flag 확인 + API 변경 시 학생 영상 playback chain smoke
+3. `verify-api-development` job → 같은 release manifest의 API/Tools digest를 상시 격리 development에 blue/green 방식으로 배포한다. 전용 DB migration, 운영 DB·R2 접근 거부, 개발 큐/R2/Redis, `/healthz`, `/health`, 이미지 identity와 합성 XLSX/PPT/R2 실사용 smoke가 모두 통과해야 candidate를 active로 승격한다.
+4. `verify-api-preprod` job → development를 통과한 API digest로 임시 격리 EC2 1대를 기동하고 별도 DB에 migration을 적용한다. prod settings, candidate DB 경계, `/healthz`, DB 포함 `/health`를 모두 확인한 뒤 종료한다.
+5. preprod 성공 후에만 `run-migrations`가 운영 DB migration을 실행한다.
+6. 모든 `deploy-api`, `deploy-messaging`, `deploy-ai`, `deploy-tools`, `deploy-video` job은 같은 development·preprod 성공 결과를 공통 선행조건으로 사용한다.
+7. API Launch Template pin과 ASG rolling refresh를 실행한다. development, preprod 또는 임시 서버 cleanup 실패 시 어떤 운영 서비스도 변경하지 않는다.
+8. 새 인스턴스 기동 → UserData로 ECR pull + 운영 SSM env 역할 검증 + docker run
+9. `verify-deployment` job → API health, ASG 상태, tenant maintenance flag 확인 + API 변경 시 학생 영상 playback chain smoke
 
-**IAM:** `academy-gha-ecr-build`은 preprod 생성·정리와 운영 refresh에 필요한 태그 제한 권한만 갖고, preprod EC2는 `academy-api-preprod-canary-role`로 candidate SSM과 API ECR pull만 허용한다.
+**IAM:** 일반 CI는 장기 access key가 아니라 main 브랜치만 신뢰하는 GitHub OIDC 역할 `academy-gha-ecr-build`을 사용한다. development 권한은 별도 관리형 정책 `academy-gha-development-deploy`로 제한하고, development EC2는 `academy-api-development-role`, preprod EC2는 `academy-api-preprod-canary-role`을 사용한다. AWS 계정 루트 자격증명은 mutation guard가 거부한다.
 
 ---
 
@@ -68,8 +69,8 @@ main에 push하면 자동으로 서버 반영까지 완료된다:
 
 - **문서와 스크립트 불일치 금지.** 배포 설명은 실제 `scripts/v1/deploy.ps1`, `.github/workflows/v1-build-and-push-latest.yml` 기준으로만 기술한다.
 - **멀티테넌트:** 어떤 배포 경로를 쓰든 tenant fallback·default tenant·tenant 없는 query·cross-tenant 노출은 금지.
-- env는 SSM→/opt/api.env만 사용하며, preprod와 운영 parameter를 분리한다.
-- 운영 API 서버에 후보 이미지나 후보 env를 먼저 적용하지 않는다. `run-api-preprod-canary.ps1`의 격리 검증이 성공한 뒤에만 운영 API/worker Launch Template·ASG, Batch job definition, EventBridge, ALB 또는 운영 컨테이너 변경이 허용된다.
+- env는 SSM→/opt/api.env만 사용하며, development, preprod와 운영 parameter를 분리한다.
+- 운영 API 서버에 후보 이미지나 후보 env를 먼저 적용하지 않는다. 상시 development 검토와 `run-api-preprod-canary.ps1`의 임시 격리 검증이 모두 성공한 뒤에만 운영 API/worker Launch Template·ASG, Batch job definition, EventBridge, ALB 또는 운영 컨테이너 변경이 허용된다.
 - 운영 env만 변경된 경우에도 컨테이너를 제자리 재시작하지 않는다. env parameter version이 포함된 Launch Template로 ASG rolling refresh한다.
 
 ---
