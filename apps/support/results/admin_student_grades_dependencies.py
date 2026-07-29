@@ -121,6 +121,7 @@ def primary_session_metadata_by_exam_and_lecture(
                 if session.regular_order is not None
                 else None
             ),
+            "session_type": session.session_type,
             "session_date": session.date,
             "lecture_id": session.lecture_id,
             "lecture_title": lecture.title if lecture else None,

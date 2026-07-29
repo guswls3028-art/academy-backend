@@ -13,6 +13,7 @@ from rest_framework.permissions import IsAuthenticated
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.models import Result
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement_bulk
+from apps.domains.results.utils.ranking import compute_exam_rankings_batch
 from apps.support.results.admin_student_grades_dependencies import (
     active_student_for_grades,
     enrollment_ids_for_student,
@@ -172,6 +173,7 @@ class AdminStudentGradesView(APIView):
                 "session_id": session_id, "session_title": session_title,
                 "session_order": session_meta.get("session_order"),
                 "session_regular_order": session_meta.get("session_regular_order"),
+                "session_type": session_meta.get("session_type"),
                 "session_date": session_meta.get("session_date"),
                 "lecture_id": lecture_id, "lecture_title": lecture_title,
                 "lecture_color": lecture_color, "lecture_chip_label": lecture_chip_label,
@@ -195,6 +197,11 @@ class AdminStudentGradesView(APIView):
         bulk_ach = compute_exam_achievement_bulk(
             items=bulk_items, use_session_filter=False, tenant=tenant,
         )
+        exam_rank_maps = compute_exam_rankings_batch(
+            exam_ids=[int(row["eid"]) for row in exam_rows],
+            enrollment_ids=enrollment_ids,
+            tenant=tenant,
+        )
 
         # ── Stage 3: 응답 row 조립
         exam_list = []
@@ -207,6 +214,7 @@ class AdminStudentGradesView(APIView):
             meta_status = ach_data.get("meta_status")
             is_not_submitted = meta_status == "NOT_SUBMITTED"
             max_attempt = retake_counts.get((enroll_id, eid), 1)
+            rank_info = exam_rank_maps.get(int(eid), {}).get(int(enroll_id), {})
 
             exam_list.append({
                 "exam_id": eid,
@@ -222,6 +230,7 @@ class AdminStudentGradesView(APIView):
                 "session_title": row["session_title"],
                 "session_order": row["session_order"],
                 "session_regular_order": row["session_regular_order"],
+                "session_type": row["session_type"],
                 "session_date": row["session_date"].isoformat() if row["session_date"] else None,
                 "lecture_id": row["lecture_id"],
                 "lecture_title": row["lecture_title"],
@@ -230,6 +239,10 @@ class AdminStudentGradesView(APIView):
                 "submitted_at": r["submitted_at"].isoformat() if r.get("submitted_at") else None,
                 "recorded_at": r["recorded_at"].isoformat(),
                 "archived": not info["is_active"],
+                "rank": rank_info.get("rank"),
+                "percentile": rank_info.get("percentile"),
+                "cohort_size": rank_info.get("cohort_size"),
+                "cohort_avg": rank_info.get("cohort_avg"),
             })
 
         exam_trend, exam_summary = _build_exam_progression(exam_list)

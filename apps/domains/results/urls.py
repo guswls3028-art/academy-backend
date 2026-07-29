@@ -22,7 +22,10 @@ from apps.domains.results.views.admin_exam_result_excel_import_view import (
 from apps.domains.results.views.admin_session_exams_view import AdminSessionExamsView
 from apps.domains.results.views.admin_session_exams_summary_view import AdminSessionExamsSummaryView
 from apps.domains.results.views.session_score_summary_view import SessionScoreSummaryView
-from apps.domains.results.views.session_scores_view import SessionScoresView
+from apps.domains.results.views.session_scores_view import (
+    SessionScoreCorrectionView,
+    SessionScoresView,
+)
 from apps.domains.results.views.score_draft_view import ScoreDraftView, ScoreDraftCommitView
 from apps.domains.results.views.session_reorder_view import SessionReorderView
 
@@ -119,6 +122,11 @@ urlpatterns = [
         name="session-score-summary",
     ),
     path("admin/sessions/<int:session_id>/scores/", SessionScoresView.as_view(), name="admin-session-scores"),
+    path(
+        "admin/sessions/<int:session_id>/score-correction/",
+        SessionScoreCorrectionView.as_view(),
+        name="admin-session-score-correction",
+    ),
     path("admin/sessions/<int:session_id>/reorder/", SessionReorderView.as_view(), name="admin-session-reorder"),
     path("admin/sessions/<int:session_id>/score-draft/", ScoreDraftView.as_view(), name="admin-session-score-draft"),
     path("admin/sessions/<int:session_id>/score-draft/commit/", ScoreDraftCommitView.as_view(), name="admin-session-score-draft-commit"),

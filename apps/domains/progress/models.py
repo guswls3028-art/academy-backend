@@ -316,6 +316,65 @@ class ClinicLink(TimestampModel):
         return f"ClinicLink(enroll={self.enrollment_id}, session={self.session_id}, reason={self.reason}, cycle={self.cycle_no})"
 
 
+class AssessmentCorrection(TimestampModel):
+    """시험/과제 점수와 독립적으로 교사가 확인한 오답 완료 상태."""
+
+    class SourceType(models.TextChoices):
+        EXAM = "exam", "시험"
+        HOMEWORK = "homework", "과제"
+
+    tenant = models.ForeignKey(
+        "core.Tenant",
+        on_delete=models.CASCADE,
+        related_name="assessment_corrections",
+    )
+    enrollment = models.ForeignKey(
+        "enrollment.Enrollment",
+        on_delete=models.CASCADE,
+        related_name="assessment_corrections",
+    )
+    session = models.ForeignKey(
+        "lectures.Session",
+        on_delete=models.CASCADE,
+        related_name="assessment_corrections",
+    )
+    source_type = models.CharField(max_length=20, choices=SourceType.choices)
+    source_id = models.PositiveIntegerField()
+    completed = models.BooleanField(default=False)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    source_updated_at_snapshot = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="완료 확인 당시 원본 점수의 updated_at. 점수가 바뀌면 완료 상태를 무효화한다.",
+    )
+    updated_by = models.ForeignKey(
+        "core.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="updated_assessment_corrections",
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "enrollment", "session", "source_type", "source_id"],
+                name="uniq_assess_correction_source",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["session", "enrollment"],
+                name="progress_ac_session_enroll_idx",
+            ),
+            models.Index(
+                fields=["tenant", "completed"],
+                name="progress_ac_tenant_done_idx",
+            ),
+        ]
+        ordering = ["-updated_at", "-id"]
+
+
 class RiskLog(TimestampModel):
     class RiskLevel(models.TextChoices):
         WARNING = "WARNING", "Warning"

@@ -45,6 +45,17 @@ class ScoreBlockSerializer(serializers.Serializer):
     achievement = serializers.CharField(allow_null=True, allow_blank=True, required=False, default=None)
     is_provisional = serializers.BooleanField(required=False, default=False)
     clinic_retake = serializers.DictField(allow_null=True, required=False, default=None)
+    correction_status = serializers.ChoiceField(
+        choices=["PENDING", "COMPLETED", "NOT_REQUIRED"],
+        allow_null=True,
+        required=False,
+        default=None,
+    )
+    correction_completed_at = serializers.DateTimeField(
+        allow_null=True,
+        required=False,
+        default=None,
+    )
 
 
 class AttemptSummarySerializer(serializers.Serializer):
@@ -112,9 +123,19 @@ class SessionScoreRowSerializer(serializers.Serializer):
     name_highlight_clinic_target = serializers.BooleanField(default=False)
     # 현재 대표 결과 기준 누적 시험 미응시 횟수. 1회 이상이면 이름 음영 표시.
     exam_not_submitted_count = serializers.IntegerField(default=0, min_value=0)
+    correction_pending_count = serializers.IntegerField(default=0, min_value=0)
+    # 점수 합불과 별개인 오답 확인 상태를 우선하고, 미응시 등 점수 없는 클리닉 대상도 포함한다.
+    name_highlight_followup_required = serializers.BooleanField(default=False)
 
     # ✅ 학생 SSOT 표시용: 아바타 + 강의 딱지
     profile_photo_url = serializers.CharField(allow_null=True, allow_blank=True, required=False, default=None)
     lecture_title = serializers.CharField(allow_null=True, allow_blank=True, required=False, default=None)
     lecture_color = serializers.CharField(allow_null=True, allow_blank=True, required=False, default=None)
     lecture_chip_label = serializers.CharField(allow_null=True, allow_blank=True, required=False, default=None)
+
+
+class AssessmentCorrectionUpdateSerializer(serializers.Serializer):
+    enrollment_id = serializers.IntegerField(min_value=1)
+    source_type = serializers.ChoiceField(choices=["exam", "homework"])
+    source_id = serializers.IntegerField(min_value=1)
+    completed = serializers.BooleanField()

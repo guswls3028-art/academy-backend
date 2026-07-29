@@ -60,6 +60,7 @@ class AdminStudentGradesScopeTest(TestCase, ClinicTestMixin):
         submitted_offset: int = 0,
         is_active: bool = True,
         not_submitted: bool = False,
+        session_type: str = "REGULAR",
     ) -> tuple[object, Result]:
         session_model = self.data["lec_session"].__class__
         exam_model = self.data["lec_session"].exams.model
@@ -74,6 +75,7 @@ class AdminStudentGradesScopeTest(TestCase, ClinicTestMixin):
                 order=order,
                 title=f"{order}차시",
                 date=date(2026, 7, order),
+                session_type=session_type,
             )
         exam = exam_model.objects.create(
             tenant=self.tenant,
@@ -230,6 +232,84 @@ class AdminStudentGradesScopeTest(TestCase, ClinicTestMixin):
         )
         self.assertEqual(refreshed.data["exam_summary"]["latest_score_pct"], 96.0)
         self.assertEqual(refreshed.data["exam_summary"]["best_score_pct"], 96.0)
+
+    def test_exam_history_exposes_regular_and_supplement_session_types(self):
+        self._score(
+            title="본수업 대수",
+            order=2,
+            score=80,
+            max_score=100,
+        )
+        self._score(
+            title="주말 보강 공수",
+            order=3,
+            score=70,
+            max_score=100,
+            session_type="SUPPLEMENT",
+        )
+
+        response = self._get(self.student.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(
+            [row["session_type"] for row in response.data["exam_trend"]],
+            ["REGULAR", "SUPPLEMENT"],
+        )
+        self.assertEqual(
+            {row["title"]: row["session_type"] for row in response.data["exams"]},
+            {
+                "본수업 대수": "REGULAR",
+                "주말 보강 공수": "SUPPLEMENT",
+            },
+        )
+
+    def test_exam_history_exposes_rank_and_top_percentile_in_list_and_trend(self):
+        exam, _ = self._score(
+            title="석차 추이 테스트",
+            order=2,
+            score=80,
+            max_score=100,
+        )
+        peer_user = User.objects.create_user(
+            username="student_grades_rank_peer",
+            password="test1234",
+        )
+        TenantMembership.ensure_active(
+            tenant=self.tenant,
+            user=peer_user,
+            role="student",
+        )
+        peer_student = self.student.__class__.objects.create(
+            tenant=self.tenant,
+            user=peer_user,
+            name="비교 학생",
+            ps_number="RANK-PEER",
+            omr_code="88000001",
+            phone="01088000001",
+            parent_phone="01088000002",
+        )
+        peer_enrollment = self.data["enrollments"][0].__class__.objects.create(
+            tenant=self.tenant,
+            student=peer_student,
+            lecture=self.data["lecture"],
+            status="ACTIVE",
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=peer_enrollment,
+            total_score=70,
+            max_score=100,
+        )
+
+        response = self._get(self.student.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        for row in (response.data["exams"][0], response.data["exam_trend"][0]):
+            self.assertEqual(row["rank"], 1)
+            self.assertEqual(row["percentile"], 50.0)
+            self.assertEqual(row["cohort_size"], 2)
+            self.assertEqual(row["cohort_avg"], 75.0)
 
     def test_not_submitted_is_null_in_list_and_excluded_from_trend(self):
         self._score(

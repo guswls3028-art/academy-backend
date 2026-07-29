@@ -11,5 +11,5 @@ from apps.domains.exams.services.template_resolver import resolve_template_exam
 from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.homework_results.models import Homework, HomeworkScore
 from apps.domains.lectures.models import Session
-from apps.domains.progress.models import ClinicLink, SessionProgress
+from apps.domains.progress.models import AssessmentCorrection, ClinicLink, SessionProgress
 from apps.domains.submissions.models import Submission

@@ -8,14 +8,17 @@ from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.exams.models import AnswerKey, ExamQuestion, Sheet
 from apps.domains.exams.models import Exam, ExamEnrollment
 from apps.domains.homework.models import HomeworkAssignment
-from apps.domains.homework_results.models import Homework
+from apps.domains.homework_results.models import Homework, HomeworkScore
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.progress.models import ClinicLink, SessionProgress
 from apps.domains.progress.services.clinic_remediation_service import ClinicRemediationService
 from apps.domains.results.services.clinic_target_service import ClinicTargetService
 from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
 from apps.domains.results.models import Result, ExamAttempt
-from apps.domains.results.views.session_scores_view import SessionScoresView
+from apps.domains.results.views.session_scores_view import (
+    SessionScoreCorrectionView,
+    SessionScoresView,
+)
 from apps.domains.students.models import Student
 from apps.domains.submissions.models import Submission
 from apps.domains.submissions.views.submission_view import SubmissionViewSet
@@ -258,6 +261,189 @@ class SessionScoresRosterScopeTests(TestCase):
         self.assertEqual(block["meta"]["status"], "OMR_REVIEW_REQUIRED")
         self.assertTrue(block["meta"]["manual_review_required"])
         self.assertEqual(block["meta"]["manual_review_reasons"], ["ANSWER_STATUS_NOT_OK"])
+
+    def test_exam_correction_completion_is_manual_persistent_and_score_versioned(self):
+        result = Result.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.active_enrollment,
+            total_score=50,
+            max_score=100,
+        )
+
+        score_request = self.factory.get(
+            f"/api/v1/results/admin/sessions/{self.session.id}/scores/"
+        )
+        score_request.tenant = self.tenant
+        force_authenticate(score_request, user=self.admin)
+        initial = SessionScoresView.as_view()(score_request, session_id=self.session.id)
+        initial_row = initial.data["rows"][0]
+
+        self.assertEqual(
+            initial_row["exams"][0]["block"]["correction_status"],
+            "PENDING",
+        )
+        self.assertEqual(initial_row["correction_pending_count"], 1)
+        self.assertTrue(initial_row["name_highlight_followup_required"])
+
+        correction_request = self.factory.patch(
+            f"/api/v1/results/admin/sessions/{self.session.id}/score-correction/",
+            {
+                "enrollment_id": self.active_enrollment.id,
+                "source_type": "exam",
+                "source_id": self.exam.id,
+                "completed": True,
+            },
+            format="json",
+        )
+        correction_request.tenant = self.tenant
+        force_authenticate(correction_request, user=self.admin)
+        completion = SessionScoreCorrectionView.as_view()(
+            correction_request,
+            session_id=self.session.id,
+        )
+
+        self.assertEqual(completion.status_code, 200, completion.data)
+        self.assertEqual(completion.data["correction_status"], "COMPLETED")
+
+        refreshed_request = self.factory.get(
+            f"/api/v1/results/admin/sessions/{self.session.id}/scores/"
+        )
+        refreshed_request.tenant = self.tenant
+        force_authenticate(refreshed_request, user=self.admin)
+        refreshed = SessionScoresView.as_view()(
+            refreshed_request,
+            session_id=self.session.id,
+        )
+        refreshed_row = refreshed.data["rows"][0]
+        self.assertEqual(
+            refreshed_row["exams"][0]["block"]["correction_status"],
+            "COMPLETED",
+        )
+        self.assertEqual(refreshed_row["correction_pending_count"], 0)
+        self.assertFalse(refreshed_row["name_highlight_followup_required"])
+
+        result.total_score = 55
+        result.save(update_fields=["total_score", "updated_at"])
+        stale_request = self.factory.get(
+            f"/api/v1/results/admin/sessions/{self.session.id}/scores/"
+        )
+        stale_request.tenant = self.tenant
+        force_authenticate(stale_request, user=self.admin)
+        stale = SessionScoresView.as_view()(stale_request, session_id=self.session.id)
+
+        self.assertEqual(
+            stale.data["rows"][0]["exams"][0]["block"]["correction_status"],
+            "PENDING",
+        )
+        self.assertTrue(
+            stale.data["rows"][0]["name_highlight_followup_required"]
+        )
+
+    def test_homework_correction_completion_can_be_reopened(self):
+        HomeworkScore.objects.create(
+            enrollment=self.active_enrollment,
+            session=self.session,
+            homework=self.homework,
+            score=70,
+            max_score=100,
+        )
+
+        for completed, expected_status in (
+            (True, "COMPLETED"),
+            (False, "PENDING"),
+        ):
+            request = self.factory.patch(
+                f"/api/v1/results/admin/sessions/{self.session.id}/score-correction/",
+                {
+                    "enrollment_id": self.active_enrollment.id,
+                    "source_type": "homework",
+                    "source_id": self.homework.id,
+                    "completed": completed,
+                },
+                format="json",
+            )
+            request.tenant = self.tenant
+            force_authenticate(request, user=self.admin)
+            response = SessionScoreCorrectionView.as_view()(
+                request,
+                session_id=self.session.id,
+            )
+
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertEqual(response.data["correction_status"], expected_status)
+
+    def test_correction_rejects_student_outside_attendance_roster(self):
+        Result.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.stale_enrollment,
+            total_score=50,
+            max_score=100,
+        )
+        request = self.factory.patch(
+            f"/api/v1/results/admin/sessions/{self.session.id}/score-correction/",
+            {
+                "enrollment_id": self.stale_enrollment.id,
+                "source_type": "exam",
+                "source_id": self.exam.id,
+                "completed": True,
+            },
+            format="json",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+
+        response = SessionScoreCorrectionView.as_view()(
+            request,
+            session_id=self.session.id,
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("enrollment_id", response.data)
+
+    def test_perfect_score_is_automatically_not_required(self):
+        Result.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.active_enrollment,
+            total_score=100,
+            max_score=100,
+        )
+        score_request = self.factory.get(
+            f"/api/v1/results/admin/sessions/{self.session.id}/scores/"
+        )
+        score_request.tenant = self.tenant
+        force_authenticate(score_request, user=self.admin)
+        score_response = SessionScoresView.as_view()(
+            score_request,
+            session_id=self.session.id,
+        )
+        self.assertEqual(
+            score_response.data["rows"][0]["exams"][0]["block"]["correction_status"],
+            "NOT_REQUIRED",
+        )
+        self.assertFalse(
+            score_response.data["rows"][0]["name_highlight_followup_required"]
+        )
+
+        correction_request = self.factory.patch(
+            f"/api/v1/results/admin/sessions/{self.session.id}/score-correction/",
+            {
+                "enrollment_id": self.active_enrollment.id,
+                "source_type": "exam",
+                "source_id": self.exam.id,
+                "completed": False,
+            },
+            format="json",
+        )
+        correction_request.tenant = self.tenant
+        force_authenticate(correction_request, user=self.admin)
+        correction_response = SessionScoreCorrectionView.as_view()(
+            correction_request,
+            session_id=self.session.id,
+        )
+        self.assertEqual(correction_response.status_code, 400)
 
     def test_completed_progress_overrides_unresolved_clinic_link(self):
         link = ClinicLink.objects.create(

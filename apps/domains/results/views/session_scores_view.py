@@ -33,8 +33,10 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Set
 
+from django.db import transaction
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
+from rest_framework.exceptions import ValidationError
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -46,8 +48,12 @@ from apps.domains.results.utils.result_queries import latest_results_per_enrollm
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement_bulk
 from apps.domains.results.utils.exam_absence import current_exam_absence_counts
 from apps.support.omr.score_shape import get_exam_score_shape
-from apps.domains.results.serializers.session_scores import SessionScoreRowSerializer
+from apps.domains.results.serializers.session_scores import (
+    AssessmentCorrectionUpdateSerializer,
+    SessionScoreRowSerializer,
+)
 from apps.support.results.session_scores_dependencies import (
+    AssessmentCorrection,
     Attendance,
     ClinicLink,
     Enrollment,
@@ -232,6 +238,70 @@ def _build_exam_attempt_summary(
     return entry
 
 
+def _session_score_enrollment_ids(*, tenant, session) -> List[int]:
+    """성적표 GET과 오답 확인 PATCH가 공유하는 차시 roster."""
+    session_enrollment_ids = list(
+        SessionEnrollment.objects
+        .filter(
+            tenant=tenant,
+            session=session,
+            enrollment__lecture=session.lecture,
+            enrollment__status="ACTIVE",
+            enrollment__student__deleted_at__isnull=True,
+        )
+        .values_list("enrollment_id", flat=True)
+        .distinct()
+    )
+    attendance_enrollment_ids = list(
+        Attendance.objects
+        .filter(
+            tenant=tenant,
+            session=session,
+            enrollment__lecture=session.lecture,
+            enrollment__status="ACTIVE",
+            enrollment__student__deleted_at__isnull=True,
+        )
+        .values_list("enrollment_id", flat=True)
+        .distinct()
+    )
+    return attendance_enrollment_ids or session_enrollment_ids
+
+
+def _assessment_correction_payload(
+    *,
+    score: Optional[float],
+    max_score: Optional[float],
+    source_updated_at,
+    correction: Optional[AssessmentCorrection],
+) -> Dict[str, Any]:
+    if score is None:
+        return {
+            "correction_status": None,
+            "correction_completed_at": None,
+        }
+    if max_score is None or max_score <= 0:
+        return {
+            "correction_status": None,
+            "correction_completed_at": None,
+        }
+    if score >= max_score:
+        return {
+            "correction_status": "NOT_REQUIRED",
+            "correction_completed_at": None,
+        }
+    is_current_completion = bool(
+        correction
+        and correction.completed
+        and correction.source_updated_at_snapshot == source_updated_at
+    )
+    return {
+        "correction_status": "COMPLETED" if is_current_completion else "PENDING",
+        "correction_completed_at": (
+            correction.completed_at if is_current_completion else None
+        ),
+    }
+
+
 class SessionScoresView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
@@ -257,32 +327,10 @@ class SessionScoresView(APIView):
         # -------------------------------------------------
         # 1) Enrollment 모수
         # -------------------------------------------------
-        active_session_enrollment_ids = list(
-            SessionEnrollment.objects
-            .filter(
-                tenant=tenant,
-                session=session,
-                enrollment__lecture=session.lecture,
-                enrollment__status="ACTIVE",
-                enrollment__student__deleted_at__isnull=True,
-            )
-            .values_list("enrollment_id", flat=True)
-            .distinct()
+        active_session_enrollment_ids = _session_score_enrollment_ids(
+            tenant=tenant,
+            session=session,
         )
-        attendance_enrollment_ids = list(
-            Attendance.objects
-            .filter(
-                tenant=tenant,
-                session=session,
-                enrollment__lecture=session.lecture,
-                enrollment__status="ACTIVE",
-                enrollment__student__deleted_at__isnull=True,
-            )
-            .values_list("enrollment_id", flat=True)
-            .distinct()
-        )
-        if attendance_enrollment_ids:
-            active_session_enrollment_ids = attendance_enrollment_ids
 
         # SSOT: 성적탭은 차시에 붙은 학생 roster를 먼저 보여준다.
         # OMR 채점은 명시 ExamEnrollment가 없어도 이 roster 학생을 후보로 삼고,
@@ -382,6 +430,18 @@ class SessionScoresView(APIView):
         exam_ids = [int(e.id) for e in exams]
         homeworks = sorted(homeworks, key=lambda h: (getattr(h, "display_order", 0) or 0, h.created_at, h.id))
         homework_ids = [int(hw.id) for hw in homeworks]
+        correction_map: Dict[tuple[int, str, int], AssessmentCorrection] = {
+            (
+                int(correction.enrollment_id),
+                str(correction.source_type),
+                int(correction.source_id),
+            ): correction
+            for correction in AssessmentCorrection.objects.filter(
+                tenant=tenant,
+                session=session,
+                enrollment_id__in=enrollment_ids,
+            )
+        }
 
         # Homework 대표 max_score: HomeworkScore 레코드에서 집계 (과제별 최대값, 없으면 100)
         hw_max_scores: Dict[int, float] = {}
@@ -819,6 +879,14 @@ class SessionScoresView(APIView):
                     block["clinic_retake"] = achievement_data.get("clinic_retake")
                     if achievement_data.get("meta_status") and not block.get("meta"):
                         block["meta"] = {"status": achievement_data.get("meta_status")}
+                block.update(
+                    _assessment_correction_payload(
+                        score=block.get("score"),
+                        max_score=block.get("max_score"),
+                        source_updated_at=updated_at,
+                        correction=correction_map.get((eid, "exam", exid)),
+                    )
+                )
 
                 items_payload: List[Dict[str, Any]] = []
                 if r is not None and hasattr(r, "items"):
@@ -884,6 +952,14 @@ class SessionScoresView(APIView):
                         "meta": getattr(hs, "meta", None),
                     }
                     updated_at = hs.updated_at
+                block.update(
+                    _assessment_correction_payload(
+                        score=block.get("score"),
+                        max_score=block.get("max_score"),
+                        source_updated_at=updated_at,
+                        correction=correction_map.get((eid, "homework", int(hw.id))),
+                    )
+                )
 
                 homeworks_payload.append(
                     {
@@ -912,6 +988,38 @@ class SessionScoresView(APIView):
             name_highlight_clinic_target = (
                 clinic_required and eid not in enrollment_ids_clinic_attended
             )
+            correction_status_by_source = {
+                ("exam", int(exam["exam_id"])): exam["block"].get("correction_status")
+                for exam in exams_payload
+            }
+            correction_status_by_source.update({
+                ("homework", int(homework["homework_id"])): homework["block"].get("correction_status")
+                for homework in homeworks_payload
+            })
+            correction_pending_count = sum(
+                1
+                for status in correction_status_by_source.values()
+                if status == "PENDING"
+            )
+            unresolved_source_needs_followup = False
+            if clinic_required:
+                for clinic_row in clinic_link_rows:
+                    if int(clinic_row["enrollment_id"]) != eid:
+                        continue
+                    exam_id = _clinic_source_id(clinic_row, "exam")
+                    homework_id = _clinic_source_id(clinic_row, "homework")
+                    if exam_id is not None:
+                        source_status = correction_status_by_source.get(("exam", exam_id))
+                    elif homework_id is not None:
+                        source_status = correction_status_by_source.get(("homework", homework_id))
+                    else:
+                        source_status = None
+                    if source_status not in {"COMPLETED", "NOT_REQUIRED"}:
+                        unresolved_source_needs_followup = True
+                        break
+            name_highlight_followup_required = (
+                correction_pending_count > 0 or unresolved_source_needs_followup
+            )
 
             # 학생 SSOT 표시용 필드 (아바타 + 강의 딱지)
             display = _get_enrollment_display_fields(enrollment_map.get(eid))
@@ -929,6 +1037,8 @@ class SessionScoresView(APIView):
                     "progress_status": progress_status,
                     "name_highlight_clinic_target": name_highlight_clinic_target,
                     "exam_not_submitted_count": exam_absence_count_map.get(eid, 0),
+                    "correction_pending_count": correction_pending_count,
+                    "name_highlight_followup_required": name_highlight_followup_required,
                     **display,
                 }
             )
@@ -938,4 +1048,143 @@ class SessionScoresView(APIView):
                 "meta": response_meta,
                 "rows": SessionScoreRowSerializer(rows, many=True).data,
             }
+        )
+
+
+class SessionScoreCorrectionView(APIView):
+    """점수 합불을 바꾸지 않고 시험/과제별 오답 확인 상태만 저장한다."""
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+
+    @transaction.atomic
+    def patch(self, request, session_id: int):
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "Tenant required"}, status=403)
+
+        serializer = AssessmentCorrectionUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        payload = serializer.validated_data
+
+        session = get_object_or_404(
+            Session.objects.select_related("lecture"),
+            id=int(session_id),
+            lecture__tenant=tenant,
+        )
+        enrollment_id = int(payload["enrollment_id"])
+        if enrollment_id not in set(
+            _session_score_enrollment_ids(tenant=tenant, session=session)
+        ):
+            raise ValidationError(
+                {"enrollment_id": "이 차시 성적표에 포함된 학생이 아닙니다."}
+            )
+
+        source_type = str(payload["source_type"])
+        source_id = int(payload["source_id"])
+        source_updated_at = None
+        score = None
+        max_score = None
+
+        if source_type == AssessmentCorrection.SourceType.EXAM:
+            exam_ids = set(
+                get_exams_for_session(session)
+                .filter(tenant=tenant)
+                .values_list("id", flat=True)
+            )
+            if source_id not in exam_ids:
+                raise ValidationError(
+                    {"source_id": "이 차시에 등록된 시험이 아닙니다."}
+                )
+            result = (
+                Result.objects
+                .select_for_update()
+                .select_related("attempt")
+                .filter(
+                    target_type="exam",
+                    target_id=source_id,
+                    enrollment_id=enrollment_id,
+                )
+                .first()
+            )
+            attempt_meta = (
+                result.attempt.meta
+                if result and result.attempt and isinstance(result.attempt.meta, dict)
+                else {}
+            )
+            if result is None or attempt_meta.get("status") == "NOT_SUBMITTED":
+                raise ValidationError(
+                    {"source_id": "점수가 입력된 시험만 오답 확인 상태를 바꿀 수 있습니다."}
+                )
+            score = _float_or_none(result.total_score)
+            max_score = _float_or_none(result.max_score)
+            source_updated_at = result.updated_at
+        else:
+            homework = (
+                Homework.objects
+                .filter(
+                    id=source_id,
+                    tenant=tenant,
+                    session=session,
+                )
+                .exclude(meta__removed_from_session_at__isnull=False)
+                .first()
+            )
+            if homework is None or not HomeworkAssignment.objects.filter(
+                tenant=tenant,
+                session=session,
+                homework_id=source_id,
+                enrollment_id=enrollment_id,
+            ).exists():
+                raise ValidationError(
+                    {"source_id": "이 학생에게 등록된 과제가 아닙니다."}
+                )
+            homework_score = (
+                HomeworkScore.objects
+                .select_for_update()
+                .filter(
+                    session=session,
+                    enrollment_id=enrollment_id,
+                    homework_id=source_id,
+                    attempt_index=1,
+                )
+                .first()
+            )
+            if homework_score is None or homework_score.score is None:
+                raise ValidationError(
+                    {"source_id": "점수가 입력된 과제만 오답 확인 상태를 바꿀 수 있습니다."}
+                )
+            score = _float_or_none(homework_score.score)
+            max_score = _float_or_none(homework_score.max_score)
+            source_updated_at = homework_score.updated_at
+
+        if score is None or max_score is None or max_score <= 0:
+            raise ValidationError(
+                {"source_id": "점수와 만점이 확인된 항목만 오답 확인 상태를 바꿀 수 있습니다."}
+            )
+        if score >= max_score:
+            raise ValidationError(
+                {"source_id": "오답이 없는 만점 결과는 확인 완료로 자동 처리됩니다."}
+            )
+
+        completed = bool(payload["completed"])
+        correction, _ = AssessmentCorrection.objects.update_or_create(
+            tenant=tenant,
+            enrollment_id=enrollment_id,
+            session=session,
+            source_type=source_type,
+            source_id=source_id,
+            defaults={
+                "completed": completed,
+                "completed_at": timezone.now() if completed else None,
+                "source_updated_at_snapshot": source_updated_at,
+                "updated_by": request.user,
+            },
+        )
+        return Response(
+            _assessment_correction_payload(
+                score=score,
+                max_score=max_score,
+                source_updated_at=source_updated_at,
+                correction=correction,
+            )
         )

@@ -285,6 +285,9 @@ class MyGradesSummaryHomeworkTests(TestCase):
         self.assertEqual(response.data["exams"][0]["rank"], 1)
         self.assertEqual(response.data["exams"][0]["cohort_size"], 1)
         self.assertEqual(response.data["exams"][0]["cohort_avg"], 80.0)
+        self.assertEqual(response.data["exam_trend"][0]["rank"], 1)
+        self.assertEqual(response.data["exam_trend"][0]["percentile"], 100.0)
+        self.assertEqual(response.data["exam_trend"][0]["cohort_size"], 1)
 
     def test_rank_cohort_excludes_nonfinite_peer_and_response_renders(self):
         local_result = self._score_exam(

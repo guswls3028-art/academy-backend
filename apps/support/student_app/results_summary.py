@@ -14,6 +14,7 @@ from apps.domains.progress.models import ClinicLink
 from apps.domains.results.services.student_result_service import get_my_exam_result_data
 from apps.domains.results.utils.ranking import compute_exam_rankings_batch
 from apps.support.results.student_grade_history import (
+    build_exam_progression,
     build_student_exam_history,
     empty_exam_summary,
 )
@@ -165,6 +166,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             "accuracy_rate": item_analysis["accuracy_rate"],
             "wrong_question_numbers": item_analysis["wrong_question_numbers"],
         })
+    exam_trend, exam_summary = build_exam_progression(exam_list)
 
     homework_scores = (
         HomeworkScore.objects.filter(
