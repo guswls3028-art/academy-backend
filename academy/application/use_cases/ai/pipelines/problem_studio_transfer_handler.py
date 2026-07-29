@@ -12,7 +12,11 @@ from apps.domains.tools.problem_studio.document_style import (
     revalidate_resolved_document_style,
 )
 from apps.domains.tools.problem_studio.ocr import OcrResult, extract_ocr_text_from_image
+from apps.domains.tools.problem_studio.structure import TransferStructure
 from apps.domains.tools.problem_studio.transfer_documents import TransferOcrContext, build_transfer_package
+from apps.domains.tools.problem_studio.voice_profiles import (
+    revalidate_resolved_voice_profile,
+)
 from apps.shared.contracts.ai_job import AIJob
 from apps.shared.contracts.ai_result import AIResult
 
@@ -74,6 +78,11 @@ def handle_problem_studio_transfer_job(job: AIJob) -> AIResult:
             tenant_id=tenant_id,
             user_id=request_user_id,
         )
+        problem_payload["_resolved_voice_profile"] = revalidate_resolved_voice_profile(
+            problem_payload.get("_resolved_voice_profile"),
+            tenant_id=tenant_id,
+            user_id=request_user_id,
+        )
     except ValueError as exc:
         return AIResult.failed(job.id, str(exc))
 
@@ -100,6 +109,8 @@ def handle_problem_studio_transfer_job(job: AIJob) -> AIResult:
         transcription_engine = "local_ocr"
         ai_calls = 0
         fallback_calls = 0
+        explanation_calls = 0
+        explanation_engine = ""
         ocr_context = None
         if transcription_requested:
             from academy.adapters.ai.config import AIConfig
@@ -156,11 +167,82 @@ def handle_problem_studio_transfer_job(job: AIJob) -> AIResult:
 
             ocr_context = TransferOcrContext(max_units=max_units, extractor=_transcribe)
 
+        explanation_builder = None
+        auto_explanations = (
+            transcription_requested
+            and problem_payload.get("auto_explanations", True) is not False
+        )
+        problem_payload["auto_explanations"] = auto_explanations
+        if auto_explanations:
+            from academy.adapters.ai.config import AIConfig
+            from academy.adapters.ai.problem.generator import (
+                generate_transcribed_explanations,
+            )
+
+            explanation_cfg = AIConfig.load()
+            explanation_engine = (
+                f"openai:{explanation_cfg.PROBLEM_GEN_MODEL}"
+                if explanation_cfg.OPENAI_API_KEY
+                else f"bedrock:{explanation_cfg.PROBLEM_GEN_BEDROCK_MODEL}"
+            )
+
+            def _build_explanations(structure: TransferStructure) -> list[dict]:
+                nonlocal explanation_calls
+                indexed_questions = [
+                    (
+                        structure_index,
+                        {
+                            "prompt": item.prompt,
+                            "choices": item.choices,
+                            "answer": item.answer,
+                            "explanation": item.explanation,
+                        },
+                    )
+                    for structure_index, item in enumerate(structure.items, start=1)
+                    if item.item_type == "problem"
+                ]
+                generated: list[dict] = []
+                for start in range(0, len(indexed_questions), 10):
+                    batch = indexed_questions[start:start + 10]
+                    try:
+                        batch_results = generate_transcribed_explanations(
+                            questions=[question for _index, question in batch],
+                            subject=str(problem_payload.get("subject") or ""),
+                            note_policy=str(problem_payload.get("note_policy") or ""),
+                            voice_profile=problem_payload.get("_resolved_voice_profile"),
+                        )
+                        explanation_calls += 1
+                    except Exception as exc:
+                        reason_lines = str(exc).splitlines()
+                        logger.warning(
+                            "PROBLEM_STUDIO_EXPLANATION_BATCH_FAILED job_id=%s start=%d error=%s reason=%s",
+                            job.id,
+                            start,
+                            type(exc).__name__,
+                            reason_lines[0][:240] if reason_lines else "<empty>",
+                        )
+                        continue
+                    for value in batch_results:
+                        try:
+                            local_index = int(value.get("index"))
+                        except (AttributeError, TypeError, ValueError):
+                            continue
+                        if not 1 <= local_index <= len(batch):
+                            continue
+                        generated.append({
+                            **value,
+                            "index": batch[local_index - 1][0],
+                        })
+                return generated
+
+            explanation_builder = _build_explanations
+
         with source_files_from_archive(archive_path) as source_files:
             package = build_transfer_package(
                 payload=problem_payload,
                 source_files=source_files,
                 ocr_context=ocr_context,
+                explanation_builder=explanation_builder,
             )
 
         _record_progress(
@@ -217,6 +299,11 @@ def handle_problem_studio_transfer_job(job: AIJob) -> AIResult:
             "transcription_engine": transcription_engine,
             "ai_transcribed_units": ai_calls,
             "fallback_ocr_units": fallback_calls,
+            "generated_explanation_count": package.explanation_count,
+            "explanation_engine": explanation_engine if package.explanation_count else "",
+            "explanation_ai_calls": explanation_calls,
+            "detected_layout": package.detected_layout,
+            "reconstruction_quality": package.reconstruction_quality,
             "_font_assets": package.font_assets,
         })
     except Exception as exc:

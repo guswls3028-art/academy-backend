@@ -44,5 +44,7 @@ opencv-python-headless
 pywebpush>=2.0.0
 # URL loading imports the Problem Studio HWPX writer in API/smoke runtimes.
 python-hwpx==4.2.0
+# Problem Studio legacy .hwp OLE text/image extraction.
+olefile
 # Problem Studio private TTF/OTF metadata and license-flag validation.
 fonttools==4.63.0

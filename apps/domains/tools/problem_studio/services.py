@@ -20,6 +20,9 @@ from apps.domains.tools.problem_studio.structure import (
     normalize_space,
     split_source_blocks,
 )
+from apps.domains.tools.problem_studio.voice_profiles import (
+    augment_voice_profile_with_source_items,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -445,6 +448,28 @@ def build_problem_studio_package_from_sources(
     ))[:MAX_TEXT_CHARS]
 
     warnings = [src.warning for src in sources if src.warning]
+    source_tone_requested = payload.get("learn_source_explanation_style") is True
+    source_tone_rights = payload.get("source_style_rights_confirmed") is True
+    if source_tone_requested and not source_tone_rights:
+        warnings.append("업로드 해설의 작성·사용 권한 확인이 없어 문체 샘플로 사용하지 않았습니다.")
+    source_style_items = [
+        extract_problem_fields(block)
+        for block in split_source_blocks(
+            combined_text,
+            max_blocks=MAX_OUTPUT_QUESTIONS,
+        )
+    ]
+    voice_profile = augment_voice_profile_with_source_items(
+        voice_profile,
+        items=source_style_items,
+        enabled=source_tone_requested,
+        rights_confirmed=source_tone_rights,
+    )
+    if source_tone_requested and source_tone_rights and not (
+        voice_profile
+        and voice_profile.get("ephemeral_source_style_sample_count")
+    ):
+        warnings.append("업로드 자료에서 문체로 사용할 선생님 작성 해설을 찾지 못했습니다.")
     generation_engine = "rule_fallback"
     questions: list[dict[str, Any]] = []
 

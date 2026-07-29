@@ -62,6 +62,7 @@ def resolve_tier(
         "wrong_note_pdf_generation",
         "problem_studio_package",
         "problem_studio_transfer",
+        "problem_studio_transcription",
     ):
         return "basic"
     

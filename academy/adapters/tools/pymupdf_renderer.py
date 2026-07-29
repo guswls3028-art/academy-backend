@@ -26,6 +26,16 @@ class TextBlock:
     y1: float
 
 
+@dataclass
+class VisualBlock:
+    """Non-text page block with a PDF-space bounding box."""
+
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+
+
 class PdfDocument:
     """Context manager that opens a PDF once and exposes all page operations.
 
@@ -147,6 +157,42 @@ class PdfBytesDocument:
         if page_index < 0 or page_index >= self.page_count():
             raise IndexError(f"Page index {page_index} out of range (0-{self.page_count() - 1})")
         return self._doc[page_index].get_text("text") or ""
+
+    def extract_page_text_blocks(self, page_index: int) -> List[TextBlock]:
+        if page_index < 0 or page_index >= self.page_count():
+            raise IndexError(f"Page index {page_index} out of range (0-{self.page_count() - 1})")
+        blocks: List[TextBlock] = []
+        for block in self._doc[page_index].get_text("blocks"):
+            if len(block) < 7 or block[6] != 0:
+                continue
+            text = str(block[4] or "").strip()
+            if text:
+                blocks.append(TextBlock(
+                    text=text,
+                    x0=float(block[0]),
+                    y0=float(block[1]),
+                    x1=float(block[2]),
+                    y1=float(block[3]),
+                ))
+        return blocks
+
+    def extract_page_visual_blocks(self, page_index: int) -> List[VisualBlock]:
+        if page_index < 0 or page_index >= self.page_count():
+            raise IndexError(f"Page index {page_index} out of range (0-{self.page_count() - 1})")
+        blocks: List[VisualBlock] = []
+        for block in self._doc[page_index].get_text("dict").get("blocks", []):
+            if int(block.get("type", 0)) != 1:
+                continue
+            bbox = block.get("bbox")
+            if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+                continue
+            blocks.append(VisualBlock(
+                x0=float(bbox[0]),
+                y0=float(bbox[1]),
+                x1=float(bbox[2]),
+                y1=float(bbox[3]),
+            ))
+        return blocks
 
     def page_size(self, page_index: int) -> tuple[float, float]:
         if page_index < 0 or page_index >= self.page_count():

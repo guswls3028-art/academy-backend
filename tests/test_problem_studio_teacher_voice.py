@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import TestCase
@@ -28,6 +29,7 @@ from apps.domains.tools.problem_studio.views import (
     ProblemStudioJobCreateView,
     ProblemStudioJobStatusView,
     ProblemStudioTransferJobStatusView,
+    ProblemStudioTransferJobCreateView,
     ProblemStudioVoiceProfileCollectionView,
     ProblemStudioVoiceSampleCollectionView,
 )
@@ -202,6 +204,63 @@ class ProblemStudioTeacherVoiceTests(TestCase):
         self.assertNotIn("공격자", json.dumps(snapshot, ensure_ascii=False))
         self.assertEqual(payload["tenant_id"], str(self.tenant.id))
         self.assertEqual(payload["request_user_id"], str(self.user.id))
+
+    @patch("apps.domains.tools.problem_studio.views.dispatch_tools_ai_job")
+    @patch("apps.infrastructure.storage.r2.upload_fileobj_to_r2_storage")
+    def test_scan_transfer_dispatches_teacher_voice_and_auto_explanations(
+        self,
+        upload_file,
+        dispatch,
+    ):
+        profile = self._profile()
+        add_voice_sample(
+            profile=profile,
+            user=self.user,
+            usage_scope="style",
+            origin="teacher_authored",
+            explanation="결론부터 보면, 핵심 조건은 세포막의 선택적 투과성입니다.",
+            rights_confirmed=True,
+        )
+        dispatch.return_value = {"ok": True, "job_id": str(uuid.uuid4())}
+        request = self.factory.post(
+            "/api/v1/tools/problem-studio/transfer-jobs/",
+            {
+                "payload": json.dumps({
+                    "title": "스캔 문제집",
+                    "subject": "생명과학",
+                    "ai_transcription": True,
+                    "voice_profile_id": str(profile.id),
+                    "page_layout": {
+                        "mode": "korean_two_column",
+                        "margin_top_mm": 12,
+                        "margin_bottom_mm": 12,
+                        "margin_left_mm": 12,
+                        "margin_right_mm": 12,
+                        "column_gap_mm": 8,
+                        "center_line": True,
+                    },
+                }, ensure_ascii=False),
+                "source_files": SimpleUploadedFile(
+                    "scan.png",
+                    b"\x89PNG\r\n\x1a\nscan",
+                    content_type="image/png",
+                ),
+            },
+            format="multipart",
+        )
+
+        response = ProblemStudioTransferJobCreateView.as_view()(self._auth(request))
+
+        self.assertEqual(response.status_code, 202, response.data)
+        upload_file.assert_called_once()
+        worker_payload = dispatch.call_args.kwargs["payload"]
+        studio_payload = worker_payload["problem_studio_payload"]
+        self.assertTrue(studio_payload["auto_explanations"])
+        self.assertEqual(studio_payload["_resolved_voice_profile"]["id"], str(profile.id))
+        self.assertEqual(
+            studio_payload["_resolved_document_style"]["page_layout"]["mode"],
+            "korean_two_column",
+        )
 
     def test_job_status_is_hidden_from_other_teacher_in_same_tenant(self):
         job = AIJobModel.objects.create(

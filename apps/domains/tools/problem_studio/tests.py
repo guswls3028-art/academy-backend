@@ -25,13 +25,17 @@ from apps.domains.tools.problem_studio.services import (
 from apps.domains.tools.problem_studio.worker import handle_problem_studio_package_job
 from apps.domains.tools.problem_studio.transfer_documents import (
     TRANSFER_MAX_ZIP_MEMBERS,
+    _detect_page_columns,
+    _visual_fragments_from_pdf_blocks,
     build_transfer_package,
     package_to_response,
     _normalize_hwp_image_data,
+    QuestionVisual,
     TransferOcrContext,
 )
 from apps.domains.tools.problem_studio.extractors import extract_hwpx_text
-from apps.domains.tools.problem_studio.ocr import OcrResult
+from apps.domains.tools.problem_studio.ocr import OcrResult, OcrTextBlock
+from apps.domains.tools.problem_studio.structure import structure_text
 from apps.domains.tools.problem_studio.models import (
     ProblemStudioDocumentStyle,
     ProblemStudioFontAsset,
@@ -65,6 +69,38 @@ _TINY_PNG = base64.b64decode(
 
 
 class ProblemStudioServiceTests(SimpleTestCase):
+    def test_structure_ignores_pdf_page_markers_and_source_headers(self):
+        items = structure_text(
+            source_name="scan.pdf",
+            text=(
+                "[1쪽]\n"
+                "40\n[2021년 고1 9월 학평 통합과학 2번]\n"
+                "31. 그림을 보고 옳은 것을 고르시오.\n① ㄱ\n② ㄴ\n"
+                "32. 다음 설명으로 옳은 것은?\n① A\n② B"
+            ),
+        )
+
+        self.assertEqual([item.number for item in items], [31, 32])
+
+    def test_scan_center_rule_detects_korean_two_column_layout(self):
+        from PIL import Image, ImageDraw
+
+        image = Image.new("RGB", (1000, 1400), "white")
+        draw = ImageDraw.Draw(image)
+        draw.line((500, 180, 500, 1260), fill="black", width=3)
+        buffer = BytesIO()
+        image.save(buffer, format="PNG")
+
+        column_count, source = _detect_page_columns(
+            buffer.getvalue(),
+            mime="image/png",
+            page_width=595.28,
+            page_height=841.89,
+        )
+
+        self.assertEqual(column_count, 2)
+        self.assertEqual(source, "pixel_center_rule")
+
     def test_hwpx_uses_native_equations_and_selected_fonts(self):
         uploaded = _zip_file(
             "chemistry.docx",
@@ -73,6 +109,8 @@ class ProblemStudioServiceTests(SimpleTestCase):
                     '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
                     "<w:body><w:p><w:r><w:t>1. H₂O와 SO₄²⁻의 입자 수를 비교하고 "
                     "[[수식:\\frac{x+1}{2}]]의 값을 구하시오.</w:t></w:r></w:p>"
+                    "<w:p><w:r><w:t>[[수식:v_{\\mathrm{max}}="
+                    "\\sin\\theta,\\;m=10\\,\\mathrm{kg}]]</w:t></w:r></w:p>"
                     "<w:p><w:r><w:t>정답 2</w:t></w:r></w:p></w:body></w:document>"
                 )
             },
@@ -101,9 +139,11 @@ class ProblemStudioServiceTests(SimpleTestCase):
             header = inner.read("Contents/header.xml").decode("utf-8")
 
         self.assertIn("<hp:equation", section)
-        self.assertIn("H _ {2} O", section)
-        self.assertIn("S O _ {4} ^ {2 -}", section)
+        self.assertIn("{rm H _ {2} O}", section)
+        self.assertIn("{rm S O _ {4} ^ {2 -}}", section)
         self.assertIn("{ x+1 } over { 2 }", section)
+        self.assertIn("v_{{rm max}}={rm sin}theta", section)
+        self.assertIn("m=10 {rm kg}", section)
         self.assertIn('face="교사용 제목체"', header)
         self.assertIn('face="교사용 본문체"', header)
         self.assertIn("교사용 본문체", html_doc)
@@ -135,6 +175,173 @@ class ProblemStudioServiceTests(SimpleTestCase):
         with zipfile.ZipFile(BytesIO(package.data)) as zf:
             preview = zf.read("03_자체양식_문제검수본.hwpx")
         self.assertIn("산화 환원 반응", extract_hwpx_text(preview))
+
+    def test_scan_preserves_source_pages_without_duplicating_full_question_crop(self):
+        from PIL import Image, ImageDraw
+
+        image = Image.new("RGB", (1000, 1400), "white")
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((120, 250, 420, 520), outline="black", width=5)
+        draw.line((160, 470, 380, 300), fill="black", width=4)
+        image_buffer = BytesIO()
+        image.save(image_buffer, format="PNG")
+
+        def transcribe(data: bytes, mime: str) -> OcrResult:
+            return OcrResult(
+                text=(
+                    "1. 다음 그림을 보고 반응을 고르시오.\n① 반응 A\n② 반응 B\n"
+                    "2. 다음 설명에 해당하는 물질을 고르시오.\n① 물질 A\n② 물질 B"
+                ),
+                status="extracted",
+                engine="openai:test-model",
+                blocks=(
+                    OcrTextBlock("1. 다음 그림을 보고 반응을 고르시오.", 80, 100, 480, 150),
+                    OcrTextBlock("① 반응 A ② 반응 B", 100, 560, 450, 610),
+                    OcrTextBlock("2. 다음 설명에 해당하는 물질을 고르시오.", 80, 760, 520, 810),
+                    OcrTextBlock("① 물질 A ② 물질 B", 100, 900, 450, 950),
+                ),
+            )
+
+        package = build_transfer_package(
+            payload={"title": "고정밀 스캔 재작성"},
+            source_files=[
+                SimpleUploadedFile(
+                    "chemistry-scan.png",
+                    image_buffer.getvalue(),
+                )
+            ],
+            ocr_context=TransferOcrContext(max_units=1, extractor=transcribe),
+        )
+
+        self.assertEqual(package.reconstruction_quality["gate"], "hybrid_review_required")
+        self.assertEqual(package.reconstruction_quality["source_page_preserved_count"], 1)
+        self.assertEqual(package.reconstruction_quality["embedded_visual_question_count"], 0)
+        with zipfile.ZipFile(BytesIO(package.data)) as outer:
+            problem_hwpx = outer.read("03_자체양식_문제검수본.hwpx")
+            fidelity_hwpx = outer.read("05_원본충실_레이아웃대조본.hwpx")
+            manifest = json.loads(outer.read("00_manifest.json").decode("utf-8"))
+        with zipfile.ZipFile(BytesIO(problem_hwpx)) as inner:
+            problem_section = inner.read("Contents/section0.xml").decode("utf-8")
+            self.assertFalse(any(name.startswith("BinData/") for name in inner.namelist()))
+        with zipfile.ZipFile(BytesIO(fidelity_hwpx)) as inner:
+            fidelity_section = inner.read("Contents/section0.xml").decode("utf-8")
+            self.assertTrue(any(name.startswith("BinData/") for name in inner.namelist()))
+
+        self.assertNotIn("<hp:pic", problem_section)
+        self.assertIn("<hp:pic", fidelity_section)
+        self.assertIn('horzRelTo="PAPER"', fidelity_section)
+        self.assertEqual(manifest["schema"], "problem-studio-transfer-manifest/v4")
+        self.assertTrue(manifest["review_contract"]["source_fidelity_hwpx"])
+        self.assertFalse(manifest["review_contract"]["source_question_visuals_embedded"])
+        self.assertTrue(validate_package(problem_hwpx).ok)
+        self.assertTrue(validate_package(fidelity_hwpx).ok)
+
+    def test_pdf_visual_fragment_excludes_full_width_decorative_images(self):
+        from types import SimpleNamespace
+        from PIL import Image, ImageDraw
+
+        image = Image.new("RGB", (1000, 1400), "white")
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((250, 300, 650, 500), outline="black", width=5)
+        image_buffer = BytesIO()
+        image.save(image_buffer, format="PNG")
+        question = QuestionVisual(
+            source_name="source.pdf",
+            page_number=1,
+            question_number=31,
+            mime="image/jpeg",
+            data=b"question",
+            width_px=800,
+            height_px=600,
+            semantic_flags=("visual_context",),
+            bbox=(60.0, 80.0, 560.0, 500.0),
+        )
+
+        fragments = _visual_fragments_from_pdf_blocks(
+            source_name="source.pdf",
+            page_number=1,
+            image_data=image_buffer.getvalue(),
+            question_visuals=[question],
+            visual_blocks=[
+                SimpleNamespace(x0=160, y0=180, x1=420, y1=250),
+                SimpleNamespace(x0=70, y0=300, x1=530, y1=330),
+            ],
+            coordinate_width=612,
+            coordinate_height=864,
+        )
+
+        self.assertEqual(len(fragments), 1)
+        self.assertEqual(fragments[0].role, "visual_fragment")
+        self.assertEqual(fragments[0].question_number, 31)
+        self.assertLess(fragments[0].width_px, 800)
+
+    def test_auto_explanations_preserve_problem_and_build_two_column_solution_hwpx(self):
+        uploaded = _zip_file(
+            "chemistry.docx",
+            {
+                "word/document.xml": (
+                    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                    "<w:body>"
+                    "<w:p><w:r><w:t>1. H₂O의 생성 반응을 고르시오.</w:t></w:r></w:p>"
+                    "<w:p><w:r><w:t>① 반응 A</w:t></w:r></w:p>"
+                    "<w:p><w:r><w:t>② 반응 B</w:t></w:r></w:p>"
+                    "</w:body></w:document>"
+                )
+            },
+        )
+        style = {
+            "title_font": {"source": "builtin", "family_name": "함초롬돋움"},
+            "body_font": {"source": "builtin", "family_name": "함초롬바탕"},
+            "native_equations": True,
+            "page_layout": {
+                "mode": "korean_two_column",
+                "margin_top_mm": 12,
+                "margin_bottom_mm": 12,
+                "margin_left_mm": 12,
+                "margin_right_mm": 12,
+                "column_gap_mm": 8,
+                "center_line": True,
+            },
+        }
+
+        def explain(structure):
+            self.assertEqual(structure.items[0].prompt, "H₂O의 생성 반응을 고르시오.")
+            return [{
+                "index": 1,
+                "answer": "②",
+                "explanation": "결론부터 보면 H₂O가 생성되는 조건은 ②입니다.",
+                "answer_check": "생성물에 H₂O가 있는지 확인합니다.",
+                "confidence": "high",
+            }]
+
+        package = build_transfer_package(
+            payload={
+                "title": "화학 실전",
+                "auto_explanations": True,
+                "_resolved_document_style": style,
+            },
+            source_files=[uploaded],
+            explanation_builder=explain,
+        )
+
+        self.assertEqual(package.explanation_count, 1)
+        self.assertEqual(package.detected_layout["column_count"], 2)
+        with zipfile.ZipFile(BytesIO(package.data)) as outer:
+            problem_hwpx = outer.read("03_자체양식_문제검수본.hwpx")
+            solution_hwpx = outer.read("04_선생님문체_해설검수본.hwpx")
+            manifest = json.loads(outer.read("00_manifest.json").decode("utf-8"))
+        with zipfile.ZipFile(BytesIO(problem_hwpx)) as inner:
+            problem_section = inner.read("Contents/section0.xml").decode("utf-8")
+        self.assertIn("H₂O의 생성 반응을 고르시오.", extract_hwpx_text(problem_hwpx))
+        self.assertNotIn("결론부터 보면", extract_hwpx_text(problem_hwpx))
+        self.assertIn("결론부터 보면", extract_hwpx_text(solution_hwpx))
+        self.assertIn("<hp:colPr", problem_section)
+        self.assertIn('colCount="2"', problem_section)
+        self.assertIn("<hp:colLine", problem_section)
+        self.assertEqual(manifest["generated_explanation_count"], 1)
+        self.assertTrue(manifest["review_contract"]["auto_explanations"])
+        self.assertTrue(validate_package(problem_hwpx).ok)
+        self.assertTrue(validate_package(solution_hwpx).ok)
 
     def test_extracts_hwpx_preview_text(self):
         uploaded = _zip_file(
@@ -314,7 +521,7 @@ class ProblemStudioServiceTests(SimpleTestCase):
             source_files=[uploaded],
         )
 
-        self.assertEqual(package.review_file_count, 7)
+        self.assertEqual(package.review_file_count, 10)
         self.assertEqual(len(package.documents), 1)
         self.assertEqual(len(package.warnings), 1)
         with zipfile.ZipFile(BytesIO(package.data)) as zf:
@@ -327,9 +534,11 @@ class ProblemStudioServiceTests(SimpleTestCase):
         self.assertIn("01_자체양식_문제검수본.doc", checklist)
         self.assertIn("02_OCR_연결후보.csv", checklist)
         self.assertIn("03_자체양식_문제검수본.hwpx", checklist)
+        self.assertIn("04_선생님문체_해설검수본.hwpx", checklist)
+        self.assertIn("05_원본충실_레이아웃대조본.hwpx", checklist)
         self.assertIn("legacy.doc", checklist)
         self.assertIn("DOCX/PDF로 저장", checklist)
-        self.assertEqual(manifest["schema"], "problem-studio-transfer-manifest/v2")
+        self.assertEqual(manifest["schema"], "problem-studio-transfer-manifest/v4")
         self.assertEqual(manifest["title"], "화학2 1단원")
         self.assertEqual(manifest["class_name"], "고3")
         self.assertEqual(manifest["document_count"], 1)
@@ -342,7 +551,7 @@ class ProblemStudioServiceTests(SimpleTestCase):
         self.assertEqual(manifest["documents"][0]["status"], "확인 필요")
         self.assertEqual(manifest["template_outputs"][0]["filename"], "01_자체양식_문제검수본.doc")
         self.assertEqual(manifest["template_outputs"][1]["filename"], "03_자체양식_문제검수본.hwpx")
-        self.assertEqual(manifest["template_outputs"][2]["filename"], "02_OCR_연결후보.csv")
+        self.assertEqual(manifest["template_outputs"][3]["filename"], "02_OCR_연결후보.csv")
         self.assertIn("산출물", csv_text)
         self.assertIn("검수본", csv_text)
         self.assertIn("legacy_원본이관.doc", csv_text)
@@ -350,6 +559,7 @@ class ProblemStudioServiceTests(SimpleTestCase):
         self.assertIn("01_자체양식_문제검수본.doc", names)
         self.assertIn("02_OCR_연결후보.csv", names)
         self.assertIn("03_자체양식_문제검수본.hwpx", names)
+        self.assertIn("05_원본충실_레이아웃대조본.hwpx", names)
 
     def test_transfer_package_builds_structured_workbook_from_docx_text(self):
         uploaded = _zip_file(
@@ -370,7 +580,7 @@ class ProblemStudioServiceTests(SimpleTestCase):
         package = build_transfer_package(payload={"title": "화학2 구조화"}, source_files=[uploaded])
         response = package_to_response(package)
 
-        self.assertEqual(package.review_file_count, 7)
+        self.assertEqual(package.review_file_count, 10)
         self.assertEqual(package.structured_item_count, 1)
         self.assertEqual(package.ocr_candidate_count, 0)
         self.assertEqual(response["X-Problem-Studio-Structured-Item-Count"], "1")
@@ -394,7 +604,7 @@ class ProblemStudioServiceTests(SimpleTestCase):
 
         package = build_transfer_package(payload={"title": "스캔 검수"}, source_files=[uploaded])
 
-        self.assertEqual(package.review_file_count, 7)
+        self.assertEqual(package.review_file_count, 10)
         self.assertEqual(package.ocr_candidate_count, 1)
         self.assertEqual(package.quality_level, "visual_only_ocr_required")
         with zipfile.ZipFile(BytesIO(package.data)) as zf:
@@ -590,8 +800,8 @@ class ProblemStudioServiceTests(SimpleTestCase):
         self.assertTrue(package.structure_limit_reached)
         self.assertEqual(package.structured_item_count, 80)
         with zipfile.ZipFile(BytesIO(package.data)) as zf:
-            hwpx = zf.read("03_자체양식_문제검수본.hwpx")
-        self.assertIn("최대 80개", extract_hwpx_text(hwpx))
+            checklist = zf.read("00_먼저열기_검수체크리스트.doc").decode("utf-8-sig")
+        self.assertIn("최대 80개", checklist)
 
     def test_parse_payload_rejects_broken_json(self):
         with self.assertRaises(ValueError):

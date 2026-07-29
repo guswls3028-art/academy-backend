@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Iterable
 
 
@@ -10,17 +10,25 @@ MAX_ITEM_TEXT = 4500
 
 _QUESTION_NUMBER_TOKEN = r"(?:[1-9]|[1-7]\d|80)"
 _QUESTION_SPLIT_RE = re.compile(
-    rf"\n(?=\s*(?:{_QUESTION_NUMBER_TOKEN}\s*(?:[.)]|\n)|문제\s*{_QUESTION_NUMBER_TOKEN}|Q\s*{_QUESTION_NUMBER_TOKEN})\s*)",
+    rf"\n(?=\s*(?:{_QUESTION_NUMBER_TOKEN}\s*[.)]|문제\s*{_QUESTION_NUMBER_TOKEN}|Q\s*{_QUESTION_NUMBER_TOKEN})\s*)",
     re.IGNORECASE,
 )
 _LEADING_NUMBER_RE = re.compile(
-    rf"^\s*(?:{_QUESTION_NUMBER_TOKEN}\s*(?:[.)]|\n)|문제\s*{_QUESTION_NUMBER_TOKEN}|Q\s*{_QUESTION_NUMBER_TOKEN})\s*",
+    rf"^\s*(?:{_QUESTION_NUMBER_TOKEN}\s*[.)]|문제\s*{_QUESTION_NUMBER_TOKEN}|Q\s*{_QUESTION_NUMBER_TOKEN})\s*",
     re.IGNORECASE,
 )
-_NUMBER_RE = re.compile(rf"^\s*(?P<number>{_QUESTION_NUMBER_TOKEN})\s*(?:[.)]|\n)")
+_NUMBER_RE = re.compile(rf"^\s*(?P<number>{_QUESTION_NUMBER_TOKEN})\s*[.)]")
 _CHOICE_RE = re.compile(r"^\s*(?:[①②③④⑤⑥⑦⑧⑨]|\([1-9]\)|[1-9]\)|[A-Ea-e][.)])\s*")
+_INLINE_CIRCLED_CHOICE_RE = re.compile(r"(?=[①②③④⑤⑥⑦⑧⑨])")
 _ANSWER_RE = re.compile(r"(?:정답|답)\s*[:：]?\s*(?P<answer>[①②③④⑤⑥⑦⑧⑨1-9A-Ea-e]+)")
+_ANSWER_LABEL_RE = re.compile(r"^\s*(?:정답|답)\s*[:：]?\s*$", re.MULTILINE)
 _EXPLANATION_RE = re.compile(r"(?:해설|풀이)\s*[:：]?\s*(?P<explanation>.+)", re.DOTALL)
+_PAGE_SCAFFOLD_RE = re.compile(r"^\[\s*\d+\s*(?:쪽|페이지)(?:\s+OCR)?\s*\]$")
+_SOURCE_HEADER_ONLY_RE = re.compile(r"^\[[^\]\n]{2,120}\]$")
+_EXPLICIT_QUESTION_LINE_RE = re.compile(
+    rf"^\s*(?:{_QUESTION_NUMBER_TOKEN}\s*[.)]|문제\s*{_QUESTION_NUMBER_TOKEN}|Q\s*{_QUESTION_NUMBER_TOKEN})\s*",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -34,6 +42,9 @@ class StructuredItem:
     explanation: str = ""
     confidence: float = 0.0
     review_flags: list[str] = field(default_factory=list)
+    answer_check: str = ""
+    explanation_confidence: str = ""
+    explanation_source: str = ""
 
 
 @dataclass(frozen=True)
@@ -76,6 +87,32 @@ def split_source_blocks(text: str, *, max_blocks: int = MAX_STRUCTURED_ITEMS) ->
     normalized = normalize_space(text)
     if not normalized:
         return []
+    first_question = next(
+        (
+            match
+            for match in (
+                _EXPLICIT_QUESTION_LINE_RE.match(line)
+                for line in normalized.splitlines()
+            )
+            if match
+        ),
+        None,
+    )
+    if first_question:
+        lines = normalized.splitlines()
+        first_index = next(
+            index
+            for index, line in enumerate(lines)
+            if _EXPLICIT_QUESTION_LINE_RE.match(line)
+        )
+        prefix_lines = [line for line in lines[:first_index] if line.strip()]
+        if prefix_lines and all(
+            _PAGE_SCAFFOLD_RE.fullmatch(line)
+            or _SOURCE_HEADER_ONLY_RE.fullmatch(line)
+            or re.fullmatch(r"\d{1,4}", line)
+            for line in prefix_lines
+        ):
+            normalized = "\n".join(lines[first_index:])
     blocks = [block.strip() for block in _QUESTION_SPLIT_RE.split(f"\n{normalized}") if block.strip()]
     if len(blocks) == 1 and len(blocks[0]) > 1800:
         paragraphs = [p.strip() for p in re.split(r"\n\s*\n", blocks[0]) if p.strip()]
@@ -88,32 +125,45 @@ def extract_problem_fields(block: str) -> dict[str, Any]:
     raw = normalize_space(block)
     number_match = _NUMBER_RE.match(raw)
     clean = _LEADING_NUMBER_RE.sub("", raw).strip()
-    lines = [line.strip() for line in clean.splitlines() if line.strip()]
+    answer_match = _ANSWER_RE.search(clean)
+    answer_label_match = _ANSWER_LABEL_RE.search(clean)
+    explanation_match = _EXPLANATION_RE.search(clean)
+    question_text = (
+        clean[:explanation_match.start()].rstrip()
+        if explanation_match
+        else clean
+    )
+    lines = [line.strip() for line in question_text.splitlines() if line.strip()]
     choices: list[str] = []
     body_lines: list[str] = []
     for line in lines:
         if _CHOICE_RE.match(line):
-            choices.append(line)
-        elif not _ANSWER_RE.search(line) and not line.startswith(("해설", "풀이")):
+            inline_choices = [
+                value.strip()
+                for value in _INLINE_CIRCLED_CHOICE_RE.split(line)
+                if value.strip()
+            ]
+            choices.extend(inline_choices if len(inline_choices) > 1 else [line])
+        elif not _ANSWER_RE.search(line) and not _ANSWER_LABEL_RE.fullmatch(line):
             body_lines.append(line)
 
-    answer_match = _ANSWER_RE.search(clean)
-    explanation_match = _EXPLANATION_RE.search(clean)
     flags: list[str] = []
     if not choices:
         flags.append("보기 확인")
-    if not answer_match:
+    if not answer_match and not answer_label_match:
         flags.append("정답 확인")
+    elif not answer_match and choices:
+        flags.append("정답 원본 확인")
     if not explanation_match:
         flags.append("해설 확인")
 
-    is_problem = bool(number_match or choices or answer_match)
+    is_problem = bool(number_match or choices or answer_match or answer_label_match)
     confidence = 0.55
     if number_match:
         confidence += 0.15
     if choices:
         confidence += 0.15
-    if answer_match:
+    if answer_match or answer_label_match:
         confidence += 0.1
     if explanation_match:
         confidence += 0.05
@@ -123,7 +173,15 @@ def extract_problem_fields(block: str) -> dict[str, Any]:
         "item_type": "problem" if is_problem else "concept",
         "prompt": normalize_space("\n".join(body_lines))[:MAX_ITEM_TEXT] or clean[:MAX_ITEM_TEXT],
         "choices": choices[:10],
-        "answer": answer_match.group("answer").strip() if answer_match else "",
+        "answer": (
+            answer_match.group("answer").strip()
+            if answer_match
+            else "원본 정답 확인"
+            if answer_label_match and choices
+            else "서술형"
+            if answer_label_match
+            else ""
+        ),
         "explanation": normalize_space(explanation_match.group("explanation"))[:1200] if explanation_match else "",
         "confidence": min(confidence, 0.95),
         "review_flags": flags,
@@ -140,12 +198,22 @@ def structure_text(
     items: list[StructuredItem] = []
     for index, block in enumerate(split_source_blocks(text, max_blocks=max_blocks), start=start_number):
         fields = extract_problem_fields(block)
+        prompt = str(fields["prompt"])
+        if _PAGE_SCAFFOLD_RE.fullmatch(prompt):
+            continue
+        if (
+            fields["item_type"] == "problem"
+            and not fields["choices"]
+            and not fields["answer"]
+            and _SOURCE_HEADER_ONLY_RE.fullmatch(prompt)
+        ):
+            continue
         number = int(fields["number"] or index)
         items.append(StructuredItem(
             number=number,
             item_type=str(fields["item_type"]),
             source_name=source_name,
-            prompt=str(fields["prompt"]),
+            prompt=prompt,
             choices=list(fields["choices"]),
             answer=str(fields["answer"]),
             explanation=str(fields["explanation"]),
@@ -257,5 +325,67 @@ def analyze_transfer_documents(documents: Iterable[Any], warnings: Iterable[str]
         structure_limit_reached=structure_limit_reached,
         items=items,
         ocr_candidates=ocr_candidates,
+        review_actions=review_actions,
+    )
+
+
+def apply_generated_explanations(
+    structure: TransferStructure,
+    generated: Iterable[dict[str, Any]],
+) -> TransferStructure:
+    """Attach AI answers/explanations by 1-based structure index without changing source text."""
+
+    by_index: dict[int, dict[str, Any]] = {}
+    for value in generated:
+        if not isinstance(value, dict):
+            continue
+        try:
+            index = int(value.get("index"))
+        except (TypeError, ValueError):
+            continue
+        if 1 <= index <= len(structure.items):
+            by_index[index] = value
+
+    enriched: list[StructuredItem] = []
+    generated_count = 0
+    for index, item in enumerate(structure.items, start=1):
+        value = by_index.get(index)
+        explanation = str((value or {}).get("explanation") or "").strip()
+        if item.item_type != "problem" or not explanation:
+            enriched.append(item)
+            continue
+        source_answer = item.answer.strip()
+        generated_answer = str((value or {}).get("answer") or "").strip()
+        answer = source_answer or generated_answer or "검수 필요"
+        flags = [
+            flag
+            for flag in item.review_flags
+            if flag not in {"정답 확인", "해설 확인"}
+        ]
+        if not source_answer:
+            flags.append("AI 정답 검수")
+        flags.append("AI 해설 검수")
+        enriched.append(replace(
+            item,
+            answer=answer,
+            explanation=explanation,
+            review_flags=flags,
+            answer_check=str((value or {}).get("answer_check") or "").strip()[:600],
+            explanation_confidence=str(
+                (value or {}).get("confidence") or "low"
+            ).strip().lower()[:12],
+            explanation_source="teacher_voice_ai",
+        ))
+        generated_count += 1
+
+    review_actions = list(structure.review_actions)
+    if generated_count:
+        review_actions.insert(
+            0,
+            f"AI가 작성한 정답·해설 {generated_count}개는 원문과 대조해 선생님이 최종 확정하세요.",
+        )
+    return replace(
+        structure,
+        items=enriched,
         review_actions=review_actions,
     )

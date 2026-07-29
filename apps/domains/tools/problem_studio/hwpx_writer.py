@@ -23,6 +23,26 @@ _SUBSCRIPT_MAP = str.maketrans("₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎", 
 _SUPERSCRIPT_MAP = str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿ", "0123456789+-=()n")
 _SUBSCRIPT_CHARS = "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎"
 _SUPERSCRIPT_CHARS = "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿ"
+_CHEMICAL_ELEMENT_SYMBOLS = frozenset(
+    (
+        "H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe "
+        "Co Ni Cu Zn Ga Ge As Se Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In "
+        "Sn Sb Te I Xe Cs Ba La Ce Pr Nd Pm Sm Eu Gd Tb Dy Ho Er Tm Yb Lu Hf "
+        "Ta W Re Os Ir Pt Au Hg Tl Pb Bi Po At Rn Fr Ra Ac Th Pa U Np Pu Am Cm "
+        "Bk Cf Es Fm Md No Lr Rf Db Sg Bh Hs Mt Ds Rg Cn Nh Fl Mc Lv Ts Og"
+    ).split()
+)
+_ROMAN_FUNCTION_NAMES = (
+    "sin",
+    "cos",
+    "tan",
+    "log",
+    "ln",
+    "lim",
+    "max",
+    "min",
+    "exp",
+)
 _UNICODE_FORMULA_RE = re.compile(
     rf"(?<![A-Za-z0-9])"
     rf"(?P<formula>[A-Za-z0-9()+\-·=]*[{_SUBSCRIPT_CHARS}{_SUPERSCRIPT_CHARS}]"
@@ -31,12 +51,29 @@ _UNICODE_FORMULA_RE = re.compile(
 )
 
 
+def _is_chemical_formula(value: str) -> bool:
+    if not any(
+        character in _SUBSCRIPT_CHARS or character in _SUPERSCRIPT_CHARS
+        for character in value
+    ):
+        return False
+    letters = "".join(character for character in value if character.isalpha())
+    symbols = re.findall(r"[A-Z][a-z]?", letters)
+    return bool(
+        symbols
+        and "".join(symbols) == letters
+        and all(symbol in _CHEMICAL_ELEMENT_SYMBOLS for symbol in symbols)
+    )
+
+
 @dataclass(frozen=True)
 class DocumentStyle:
     title_font_family: str = "함초롬돋움"
     body_font_family: str = "함초롬바탕"
     title_size_pt: float = 20.0
     body_size_pt: float = 10.5
+    body_width_ratio_percent: int = 100
+    body_letter_spacing_percent: int = 0
     line_spacing_percent: int = 155
     question_spacing_pt: float = 10.0
     native_equations: bool = True
@@ -60,6 +97,15 @@ class DocumentStyle:
             )[:160],
             title_size_pt=float(value.get("title_size_pt", cls.title_size_pt)),
             body_size_pt=float(value.get("body_size_pt", cls.body_size_pt)),
+            body_width_ratio_percent=int(
+                value.get("body_width_ratio_percent", cls.body_width_ratio_percent)
+            ),
+            body_letter_spacing_percent=int(
+                value.get(
+                    "body_letter_spacing_percent",
+                    cls.body_letter_spacing_percent,
+                )
+            ),
             line_spacing_percent=int(
                 value.get("line_spacing_percent", cls.line_spacing_percent)
             ),
@@ -67,6 +113,43 @@ class DocumentStyle:
                 value.get("question_spacing_pt", cls.question_spacing_pt)
             ),
             native_equations=bool(value.get("native_equations", True)),
+        )
+
+
+@dataclass(frozen=True)
+class PageLayout:
+    page_width_mm: float = 210.0
+    page_height_mm: float = 297.0
+    margin_top_mm: float = 12.0
+    margin_bottom_mm: float = 12.0
+    margin_left_mm: float = 12.0
+    margin_right_mm: float = 12.0
+    column_count: int = 1
+    column_gap_mm: float = 8.0
+    center_line: bool = False
+    center_line_style: str = "DASH"
+
+    @classmethod
+    def from_mapping(cls, value: Any) -> "PageLayout":
+        raw = value.get("page_layout") if isinstance(value, dict) else None
+        if not isinstance(raw, dict):
+            return cls()
+        return cls(
+            page_width_mm=float(raw.get("page_width_mm", cls.page_width_mm)),
+            page_height_mm=float(raw.get("page_height_mm", cls.page_height_mm)),
+            margin_top_mm=float(raw.get("margin_top_mm", cls.margin_top_mm)),
+            margin_bottom_mm=float(raw.get("margin_bottom_mm", cls.margin_bottom_mm)),
+            margin_left_mm=float(raw.get("margin_left_mm", cls.margin_left_mm)),
+            margin_right_mm=float(raw.get("margin_right_mm", cls.margin_right_mm)),
+            column_count=2 if int(raw.get("column_count", 1)) == 2 else 1,
+            column_gap_mm=float(raw.get("column_gap_mm", cls.column_gap_mm)),
+            center_line=bool(raw.get("center_line", False)),
+            center_line_style=(
+                str(raw.get("center_line_style", cls.center_line_style)).upper()
+                if str(raw.get("center_line_style", cls.center_line_style)).upper()
+                in {"SOLID", "DASH", "DOT"}
+                else cls.center_line_style
+            ),
         )
 
 
@@ -150,6 +233,37 @@ def _ensure_font_face(document: HwpxDocument, family_name: str) -> None:
     header.mark_dirty()
 
 
+def _apply_run_metrics(
+    document: HwpxDocument,
+    *,
+    char_pr_id: str,
+    width_ratio_percent: int,
+    letter_spacing_percent: int,
+) -> None:
+    header = document.headers[0]
+    char_pr = next(
+        (
+            element
+            for element in header.element.findall(f".//{{{_HH_NAMESPACE}}}charPr")
+            if element.get("id") == str(char_pr_id)
+        ),
+        None,
+    )
+    if char_pr is None:
+        raise RuntimeError("HWPX character style is missing.")
+    language_keys = ("hangul", "latin", "hanja", "japanese", "other", "symbol", "user")
+    ratio = char_pr.find(f"{{{_HH_NAMESPACE}}}ratio")
+    if ratio is None:
+        ratio = etree.SubElement(char_pr, f"{{{_HH_NAMESPACE}}}ratio")
+    spacing = char_pr.find(f"{{{_HH_NAMESPACE}}}spacing")
+    if spacing is None:
+        spacing = etree.SubElement(char_pr, f"{{{_HH_NAMESPACE}}}spacing")
+    for key in language_keys:
+        ratio.set(key, str(width_ratio_percent))
+        spacing.set(key, str(letter_spacing_percent))
+    header.mark_dirty()
+
+
 def _unicode_formula_to_eqedit(value: str) -> str:
     parts: list[str] = []
     index = 0
@@ -173,7 +287,8 @@ def _unicode_formula_to_eqedit(value: str) -> str:
             continue
         parts.append(character)
         index += 1
-    return " ".join(part for part in parts if part).strip()
+    script = " ".join(part for part in parts if part).strip()
+    return f"{{rm {script}}}" if _is_chemical_formula(value) else script
 
 
 def _balanced_group(value: str, start: int) -> tuple[str, int] | None:
@@ -218,6 +333,9 @@ def _latex_to_eqedit(value: str) -> str:
     replacements = {
         r"\left": "",
         r"\right": "",
+        r"\,": " ",
+        r"\;": " ",
+        r"\quad": " ",
         r"\sqrt": "sqrt",
         r"\cdot": "cdot",
         r"\times": "times",
@@ -235,12 +353,28 @@ def _latex_to_eqedit(value: str) -> str:
         r"\gamma": "gamma",
         r"\Delta": "DELTA",
         r"\delta": "delta",
+        r"\sin": "{rm sin}",
+        r"\cos": "{rm cos}",
+        r"\tan": "{rm tan}",
+        r"\log": "{rm log}",
+        r"\ln": "{rm ln}",
+        r"\lim": "{rm lim}",
+        r"\max": "{rm max}",
+        r"\min": "{rm min}",
+        r"\exp": "{rm exp}",
     }
     for source, target in replacements.items():
         script = script.replace(source, target)
-    script = re.sub(r"\\mathrm\s*{([^{}]+)}", r"\1", script)
-    script = re.sub(r"\\text\s*{([^{}]+)}", r"\1", script)
+    script = re.sub(r"\\mathrm\s*{([^{}]+)}", r"{rm \1}", script)
+    script = re.sub(r"\\text\s*{([^{}]+)}", r"{rm \1}", script)
+    script = re.sub(r"\\operatorname\s*{([^{}]+)}", r"{rm \1}", script)
     script = re.sub(r"\\([A-Za-z]+)", r"\1", script)
+    function_names = "|".join(_ROMAN_FUNCTION_NAMES)
+    script = re.sub(
+        rf"(?<!rm )\b({function_names})\b",
+        r"{rm \1}",
+        script,
+    )
     return re.sub(r"\s+", " ", script).strip()
 
 
@@ -383,6 +517,112 @@ def _iter_custom_question_paragraphs(paragraphs: Iterable[str]) -> list[int]:
     ]
 
 
+def _mm_to_hwpunit(value: float) -> int:
+    return max(0, round(float(value) * 7200 / 25.4))
+
+
+def _fit_title_size_pt(
+    title: str,
+    *,
+    requested_size_pt: float,
+    page_layout: PageLayout,
+    body_size_pt: float,
+) -> float:
+    if page_layout.column_count != 2:
+        return requested_size_pt
+    content_width_mm = (
+        page_layout.page_width_mm
+        - page_layout.margin_left_mm
+        - page_layout.margin_right_mm
+        - page_layout.column_gap_mm
+    )
+    column_width_pt = max(1.0, content_width_mm / 2 * 72.0 / 25.4)
+    weighted_chars = sum(
+        0.45 if char.isspace() else 0.62 if char.isascii() else 1.0
+        for char in title
+    )
+    fitted_size = column_width_pt / max(1.0, weighted_chars * 0.72)
+    minimum_size = max(10.0, min(requested_size_pt, body_size_pt + 1.0))
+    return round(max(minimum_size, min(requested_size_pt, fitted_size)), 1)
+
+
+def _apply_page_layout(document: HwpxDocument, layout: PageLayout) -> None:
+    _apply_page_layout_to_paragraph(document.paragraphs[0], layout)
+
+
+def _apply_page_layout_to_paragraph(paragraph: Any, layout: PageLayout) -> None:
+    page_pr = paragraph.element.find(f".//{{{_HP_NAMESPACE}}}pagePr")
+    if page_pr is None:
+        return
+    page_pr.set("landscape", "LANDSCAPE" if layout.page_width_mm > layout.page_height_mm else "PORTRAIT")
+    page_pr.set("width", str(_mm_to_hwpunit(layout.page_width_mm)))
+    page_pr.set("height", str(_mm_to_hwpunit(layout.page_height_mm)))
+    margin = page_pr.find(f"{{{_HP_NAMESPACE}}}margin")
+    if margin is not None:
+        margin.set("top", str(_mm_to_hwpunit(layout.margin_top_mm)))
+        margin.set("bottom", str(_mm_to_hwpunit(layout.margin_bottom_mm)))
+        margin.set("left", str(_mm_to_hwpunit(layout.margin_left_mm)))
+        margin.set("right", str(_mm_to_hwpunit(layout.margin_right_mm)))
+    paragraph.section.mark_dirty()
+
+
+def _image_format(mime: str) -> str:
+    return "jpg" if mime == "image/jpeg" else "png"
+
+
+def _append_question_visual(
+    document: HwpxDocument,
+    *,
+    visual: dict[str, Any],
+    page_layout: PageLayout,
+) -> None:
+    data = visual.get("data")
+    if not isinstance(data, bytes) or not data:
+        return
+    width_px = max(1, int(visual.get("width_px") or 1))
+    height_px = max(1, int(visual.get("height_px") or 1))
+    content_width_mm = (
+        page_layout.page_width_mm
+        - page_layout.margin_left_mm
+        - page_layout.margin_right_mm
+        - (page_layout.column_gap_mm if page_layout.column_count == 2 else 0)
+    )
+    available_width_mm = content_width_mm / page_layout.column_count
+    available_height_mm = min(88.0, page_layout.page_height_mm * 0.32)
+    width_mm = max(20.0, available_width_mm)
+    height_mm = width_mm * height_px / width_px
+    if height_mm > available_height_mm:
+        height_mm = available_height_mm
+        width_mm = height_mm * width_px / height_px
+    item_id = document.add_image(data, _image_format(str(visual.get("mime") or "")))
+    paragraph = document.add_paragraph("")
+    paragraph.add_picture(
+        item_id,
+        width=_mm_to_hwpunit(width_mm),
+        height=_mm_to_hwpunit(height_mm),
+        align="CENTER",
+    )
+
+
+def _append_document_paragraph(
+    document: HwpxDocument,
+    *,
+    text: str,
+    char_pr_id: str,
+    base_unit: int,
+    native_equations: bool,
+) -> tuple[Any, str]:
+    paragraph = document.add_paragraph("")
+    preview = _replace_paragraph_content(
+        paragraph,
+        text=text,
+        char_pr_id=char_pr_id,
+        base_unit=base_unit,
+        native_equations=native_equations,
+    )
+    return paragraph, preview
+
+
 def build_hwpx_text_document(
     *,
     title: str,
@@ -406,6 +646,12 @@ def build_hwpx_text_document(
         body_style_id = document.ensure_run_style(
             font=style.body_font_family,
             size=style.body_size_pt,
+        )
+        _apply_run_metrics(
+            document,
+            char_pr_id=body_style_id,
+            width_ratio_percent=style.body_width_ratio_percent,
+            letter_spacing_percent=style.body_letter_spacing_percent,
         )
 
         preview_paragraphs.append(
@@ -448,4 +694,249 @@ def build_hwpx_text_document(
         _ensure_version_manifest_reference(document)
         preview_text = normalize_space("\n".join(preview_paragraphs)) + "\n"
         document.package.set_part("Preview/PrvText.txt", preview_text.encode("utf-8"))
+        return document.to_bytes()
+
+
+def build_hwpx_exam_document(
+    *,
+    title: str,
+    meta_lines: list[str],
+    items: list[dict[str, Any]],
+    document_style: dict[str, Any] | None = None,
+    solutions: bool = False,
+    question_visuals: dict[int, dict[str, Any]] | None = None,
+) -> bytes:
+    """Build a Korean exam/solution sheet with source-sized pages and flowing columns."""
+
+    style = DocumentStyle.from_mapping(document_style)
+    page_layout = PageLayout.from_mapping(document_style)
+    preview_paragraphs: list[str] = []
+    question_paragraph_indexes: list[int] = []
+    title_text = title.strip() or ("해설지" if solutions else "문제지")
+    title_size_pt = _fit_title_size_pt(
+        title_text,
+        requested_size_pt=style.title_size_pt,
+        page_layout=page_layout,
+        body_size_pt=style.body_size_pt,
+    )
+
+    with HwpxDocument.new() as document:
+        _ensure_font_face(document, style.title_font_family)
+        _ensure_font_face(document, style.body_font_family)
+        title_style_id = document.ensure_run_style(
+            bold=True,
+            font=style.title_font_family,
+            size=title_size_pt,
+        )
+        body_style_id = document.ensure_run_style(
+            font=style.body_font_family,
+            size=style.body_size_pt,
+        )
+        heading_style_id = document.ensure_run_style(
+            bold=True,
+            font=style.body_font_family,
+            size=style.body_size_pt,
+        )
+        for char_pr_id in (body_style_id, heading_style_id):
+            _apply_run_metrics(
+                document,
+                char_pr_id=char_pr_id,
+                width_ratio_percent=style.body_width_ratio_percent,
+                letter_spacing_percent=style.body_letter_spacing_percent,
+            )
+
+        preview_paragraphs.append(
+            _replace_paragraph_content(
+                document.paragraphs[0],
+                text=title_text,
+                char_pr_id=title_style_id,
+                base_unit=round(title_size_pt * 100),
+                native_equations=False,
+            )
+        )
+        for line in meta_lines:
+            _paragraph, preview = _append_document_paragraph(
+                document,
+                text=str(line or ""),
+                char_pr_id=body_style_id,
+                base_unit=round(style.body_size_pt * 100),
+                native_equations=False,
+            )
+            preview_paragraphs.append(preview)
+
+        if page_layout.column_count == 2:
+            column_control = document.add_paragraph("")
+            column_control.add_column_definition(
+                col_count=2,
+                same_size=True,
+                same_gap=_mm_to_hwpunit(page_layout.column_gap_mm),
+                separator_type=(
+                    page_layout.center_line_style
+                    if page_layout.center_line
+                    else None
+                ),
+                separator_width="0.4 mm" if page_layout.center_line else None,
+                separator_color="#7A7A7A" if page_layout.center_line else None,
+            )
+
+        if not items:
+            _paragraph, preview = _append_document_paragraph(
+                document,
+                text="자동으로 분리된 문항이 없습니다. 원본 및 OCR 검수표를 확인하세요.",
+                char_pr_id=body_style_id,
+                base_unit=round(style.body_size_pt * 100),
+                native_equations=False,
+            )
+            preview_paragraphs.append(preview)
+
+        for item in items:
+            number = int(item.get("number") or 0)
+            question_visual = (question_visuals or {}).get(number)
+            if solutions:
+                heading = f"{number}번 정답  {str(item.get('answer') or '검수 필요')}"
+                body_lines = [
+                    str(item.get("answer_check") or "").strip(),
+                    str(item.get("explanation") or "검수 후 작성").strip(),
+                ]
+            else:
+                heading = f"{number}."
+                prompt = str(item.get("prompt") or "").strip()
+                choices = [
+                    str(choice).strip()
+                    for choice in (item.get("choices") or [])
+                    if str(choice).strip()
+                ]
+                body_lines = [prompt, *choices]
+
+            _heading_paragraph, preview = _append_document_paragraph(
+                document,
+                text=heading,
+                char_pr_id=heading_style_id,
+                base_unit=round(style.body_size_pt * 100),
+                native_equations=style.native_equations,
+            )
+            question_paragraph_indexes.append(len(document.paragraphs) - 1)
+            preview_paragraphs.append(preview)
+            if solutions and question_visual:
+                _append_question_visual(
+                    document,
+                    visual=question_visual,
+                    page_layout=page_layout,
+                )
+                preview_paragraphs.append(f"[{number}번 원본 그림·표]")
+            for body_index, line in enumerate(body_lines):
+                if not line:
+                    continue
+                for paragraph_line in normalize_space(line).splitlines():
+                    _paragraph, preview = _append_document_paragraph(
+                        document,
+                        text=paragraph_line,
+                        char_pr_id=body_style_id,
+                        base_unit=round(style.body_size_pt * 100),
+                        native_equations=style.native_equations,
+                    )
+                    preview_paragraphs.append(preview)
+                if not solutions and body_index == 0 and question_visual:
+                    _append_question_visual(
+                        document,
+                        visual=question_visual,
+                        page_layout=page_layout,
+                    )
+                    preview_paragraphs.append(f"[{number}번 원본 그림·표]")
+
+        _apply_page_layout(document, page_layout)
+        document.set_paragraph_format(
+            line_spacing_percent=style.line_spacing_percent,
+        )
+        document.set_paragraph_format(
+            paragraph_index=0,
+            spacing_after_pt=6,
+            keep_with_next=True,
+        )
+        if question_paragraph_indexes:
+            document.set_paragraph_format(
+                paragraph_indexes=question_paragraph_indexes,
+                spacing_before_pt=style.question_spacing_pt,
+                spacing_after_pt=2,
+                keep_with_next=True,
+            )
+
+        _ensure_version_manifest_reference(document)
+        preview_text = normalize_space("\n".join(preview_paragraphs)) + "\n"
+        document.package.set_part("Preview/PrvText.txt", preview_text.encode("utf-8"))
+        return document.to_bytes()
+
+
+def build_hwpx_source_fidelity_document(
+    *,
+    title: str,
+    source_pages: list[dict[str, Any]],
+) -> bytes:
+    """Build a page-for-page HWPX visual reference with exact source proportions."""
+
+    if not source_pages:
+        return build_hwpx_text_document(
+            title=title,
+            paragraphs=["보존할 PDF·스캔 원본 페이지가 없습니다."],
+        )
+
+    preview_lines = [title.strip() or "원본 충실 대조본"]
+    with HwpxDocument.new() as document:
+        for index, source_page in enumerate(source_pages):
+            section = document.sections[0] if index == 0 else document.add_section()
+            paragraph = section.paragraphs[0]
+            width_pt = float(source_page.get("page_width_pt") or 0)
+            height_pt = float(source_page.get("page_height_pt") or 0)
+            width_mm = width_pt * 25.4 / 72.0
+            height_mm = height_pt * 25.4 / 72.0
+            if not (90 <= width_mm <= 500 and 90 <= height_mm <= 500):
+                width_px = max(1, int(source_page.get("width_px") or 1))
+                height_px = max(1, int(source_page.get("height_px") or 1))
+                width_mm, height_mm = (
+                    (297.0, 210.0)
+                    if width_px > height_px
+                    else (210.0, 297.0)
+                )
+            layout = PageLayout(
+                page_width_mm=width_mm,
+                page_height_mm=height_mm,
+                margin_top_mm=0,
+                margin_bottom_mm=0,
+                margin_left_mm=0,
+                margin_right_mm=0,
+            )
+            _apply_page_layout_to_paragraph(paragraph, layout)
+            data = source_page.get("data")
+            if not isinstance(data, bytes) or not data:
+                continue
+            item_id = document.add_image(
+                data,
+                _image_format(str(source_page.get("mime") or "")),
+            )
+            paragraph.add_picture(
+                item_id,
+                width=_mm_to_hwpunit(width_mm),
+                height=_mm_to_hwpunit(height_mm),
+                treat_as_char=False,
+                text_wrap="IN_FRONT_OF_TEXT",
+                pos_overrides={
+                    "horzRelTo": "PAPER",
+                    "vertRelTo": "PAPER",
+                    "horzAlign": "LEFT",
+                    "vertAlign": "TOP",
+                    "horzOffset": 0,
+                    "vertOffset": 0,
+                    "allowOverlap": "1",
+                },
+            )
+            preview_lines.append(
+                f"{source_page.get('source_name') or '원본'} "
+                f"{source_page.get('page_number') or index + 1}쪽"
+            )
+
+        _ensure_version_manifest_reference(document)
+        document.package.set_part(
+            "Preview/PrvText.txt",
+            (normalize_space("\n".join(preview_lines)) + "\n").encode("utf-8"),
+        )
         return document.to_bytes()

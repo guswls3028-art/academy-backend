@@ -5,7 +5,9 @@ import csv
 import html
 import io
 import json
+import os
 import re
+import tempfile
 import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -19,12 +21,20 @@ from apps.domains.tools.problem_studio.extractors import (
     extract_docx_text,
     extract_hwp_text as extract_hwp_text_only,
     extract_hwp_text_and_images,
+    extract_hwpx_document_profile,
+    extract_hwpx_question_images,
     extract_hwpx_text,
     normalize_hwp_image_data,
     safe_zip_members,
 )
-from apps.domains.tools.problem_studio.document_style import custom_font_snapshots
-from apps.domains.tools.problem_studio.hwpx_writer import build_hwpx_text_document
+from apps.domains.tools.problem_studio.document_style import (
+    DEFAULT_PAGE_LAYOUT,
+    custom_font_snapshots,
+)
+from apps.domains.tools.problem_studio.hwpx_writer import (
+    build_hwpx_exam_document,
+    build_hwpx_source_fidelity_document,
+)
 from apps.domains.tools.problem_studio.ocr import (
     OcrResult,
     extract_ocr_text_from_image,
@@ -33,8 +43,12 @@ from apps.domains.tools.problem_studio.ocr import (
 )
 from apps.domains.tools.problem_studio.structure import (
     TransferStructure,
+    apply_generated_explanations,
     analyze_transfer_documents,
     normalize_space,
+)
+from apps.domains.tools.problem_studio.voice_profiles import (
+    augment_voice_profile_with_source_items,
 )
 
 
@@ -59,6 +73,32 @@ SUPPORTED_TRANSFER_SUFFIXES = {
 
 
 @dataclass
+class SourcePageVisual:
+    source_name: str
+    page_number: int
+    mime: str
+    data: bytes = field(repr=False)
+    width_px: int = 0
+    height_px: int = 0
+    page_width_pt: float = 0.0
+    page_height_pt: float = 0.0
+
+
+@dataclass
+class QuestionVisual:
+    source_name: str
+    page_number: int
+    question_number: int
+    mime: str
+    data: bytes = field(repr=False)
+    width_px: int = 0
+    height_px: int = 0
+    semantic_flags: tuple[str, ...] = ()
+    bbox: tuple[float, float, float, float] = ()
+    role: str = "question_crop"
+
+
+@dataclass
 class TransferDocument:
     filename: str
     html: str
@@ -77,6 +117,13 @@ class TransferDocument:
     ocr_status: str = "not_applicable"
     ocr_engine: str = ""
     ocr_warning: str | None = None
+    page_width_pt: float = 0.0
+    page_height_pt: float = 0.0
+    detected_column_count: int = 0
+    layout_source: str = ""
+    source_pages: list[SourcePageVisual] = field(default_factory=list, repr=False)
+    question_visuals: list[QuestionVisual] = field(default_factory=list, repr=False)
+    document_style_hint: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
 @dataclass
@@ -92,6 +139,9 @@ class TransferPackage:
     quality_level: str = ""
     structure_limit_reached: bool = False
     font_assets: list[dict[str, Any]] = field(default_factory=list)
+    explanation_count: int = 0
+    detected_layout: dict[str, Any] = field(default_factory=dict)
+    reconstruction_quality: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -179,8 +229,11 @@ def _safe_document_style(resolved: dict[str, Any] | None) -> dict[str, Any] | No
             "schema",
             "title_size_pt",
             "body_size_pt",
+            "body_width_ratio_percent",
+            "body_letter_spacing_percent",
             "line_spacing_percent",
             "question_spacing_pt",
+            "match_source_style",
             "native_equations",
         )
     }
@@ -200,6 +253,27 @@ def _safe_document_style(resolved: dict[str, Any] | None) -> dict[str, Any] | No
                 for key in ("id", "family_name", "original_name", "sha256")
                 if asset.get(key) is not None
             }
+    page_layout = resolved.get("page_layout")
+    if isinstance(page_layout, dict):
+        safe["page_layout"] = {
+            key: page_layout.get(key)
+            for key in (
+                "mode",
+                "page_width_mm",
+                "page_height_mm",
+                "margin_top_mm",
+                "margin_bottom_mm",
+                "margin_left_mm",
+                "margin_right_mm",
+                "column_count",
+                "source_column_count",
+                "column_gap_mm",
+                "center_line",
+                "center_line_style",
+                "source_dimension_name",
+            )
+            if page_layout.get(key) is not None
+        }
     return safe
 
 
@@ -228,6 +302,437 @@ def _mime_for_suffix(suffix: str) -> str:
     if suffix == ".gif":
         return "image/gif"
     return "application/octet-stream"
+
+
+def _image_page_size_points(data: bytes) -> tuple[float, float]:
+    try:
+        from PIL import Image
+
+        with Image.open(io.BytesIO(data)) as image:
+            width_px, height_px = image.size
+            dpi_value = image.info.get("dpi")
+            if (
+                isinstance(dpi_value, tuple)
+                and len(dpi_value) >= 2
+                and 50 <= float(dpi_value[0]) <= 1200
+                and 50 <= float(dpi_value[1]) <= 1200
+            ):
+                return (
+                    width_px * 72.0 / float(dpi_value[0]),
+                    height_px * 72.0 / float(dpi_value[1]),
+                )
+            if width_px > height_px:
+                return 841.89, 595.28
+            return 595.28, 841.89
+    except Exception:
+        return 595.28, 841.89
+
+
+def _hwpx_raster_image(data: bytes, mime: str) -> tuple[str, bytes, int, int]:
+    """Return a Hancom-safe PNG/JPEG and its pixel dimensions."""
+
+    from PIL import Image
+
+    with Image.open(io.BytesIO(data)) as image:
+        width_px, height_px = image.size
+        if mime in {"image/jpeg", "image/png"}:
+            return mime, data, int(width_px), int(height_px)
+        converted = image.convert("RGB") if image.mode not in {"RGB", "L"} else image
+        output = io.BytesIO()
+        converted.save(output, format="PNG", optimize=True)
+        return "image/png", output.getvalue(), int(width_px), int(height_px)
+
+
+def _question_visuals_from_blocks(
+    *,
+    source_name: str,
+    page_number: int,
+    image_data: bytes,
+    mime: str,
+    text_blocks: Iterable[Any],
+    coordinate_width: float,
+    coordinate_height: float,
+) -> list[QuestionVisual]:
+    """Reuse the Matchup splitter to preserve problem-level figures and tables."""
+
+    blocks = list(text_blocks)
+    if not blocks or coordinate_width <= 0 or coordinate_height <= 0:
+        return []
+    try:
+        from PIL import Image
+        from academy.domain.tools.question_splitter import (
+            TextBlock as SplitterTextBlock,
+            split_questions,
+        )
+
+        splitter_blocks = [
+            SplitterTextBlock(
+                text=str(block.text),
+                x0=float(block.x0),
+                y0=float(block.y0),
+                x1=float(block.x1),
+                y1=float(block.y1),
+            )
+            for block in blocks
+            if str(getattr(block, "text", "") or "").strip()
+        ]
+        regions = split_questions(
+            splitter_blocks,
+            page_width=float(coordinate_width),
+            page_height=float(coordinate_height),
+            page_index=page_number - 1,
+        )
+        if not regions:
+            return []
+
+        with Image.open(io.BytesIO(image_data)) as image:
+            image = image.convert("RGB")
+            scale_x = image.width / float(coordinate_width)
+            scale_y = image.height / float(coordinate_height)
+            visuals: list[QuestionVisual] = []
+            for region in regions:
+                raw_bbox = region.display_bbox or region.bbox
+                x0 = max(0, min(image.width - 1, round(raw_bbox[0] * scale_x)))
+                y0 = max(0, min(image.height - 1, round(raw_bbox[1] * scale_y)))
+                x1 = max(x0 + 1, min(image.width, round(raw_bbox[2] * scale_x)))
+                y1 = max(y0 + 1, min(image.height, round(raw_bbox[3] * scale_y)))
+                if x1 - x0 < 8 or y1 - y0 < 8:
+                    continue
+                crop = image.crop((x0, y0, x1, y1))
+                output = io.BytesIO()
+                crop.save(output, format="JPEG", quality=90, optimize=True)
+                visuals.append(QuestionVisual(
+                    source_name=source_name,
+                    page_number=page_number,
+                    question_number=int(region.number),
+                    mime="image/jpeg",
+                    data=output.getvalue(),
+                    width_px=crop.width,
+                    height_px=crop.height,
+                    semantic_flags=tuple(region.semantic_flags or ()),
+                    bbox=tuple(float(value) for value in raw_bbox),
+                ))
+            return visuals
+    except Exception:
+        return []
+
+
+def _visual_fragments_from_pdf_blocks(
+    *,
+    source_name: str,
+    page_number: int,
+    image_data: bytes,
+    question_visuals: Iterable[QuestionVisual],
+    visual_blocks: Iterable[Any],
+    coordinate_width: float,
+    coordinate_height: float,
+) -> list[QuestionVisual]:
+    """Crop only PDF image objects that belong to a visual-reference question."""
+
+    blocks = list(visual_blocks)
+    if not blocks:
+        return []
+    try:
+        from PIL import Image
+
+        with Image.open(io.BytesIO(image_data)) as image:
+            image = image.convert("RGB")
+            scale_x = image.width / coordinate_width
+            scale_y = image.height / coordinate_height
+            fragments: list[QuestionVisual] = []
+            for question in question_visuals:
+                if "visual_context" not in question.semantic_flags or len(question.bbox) != 4:
+                    continue
+                qx0, qy0, qx1, qy1 = question.bbox
+                question_width = max(1.0, qx1 - qx0)
+                candidates: list[tuple[float, float, float, float]] = []
+                for block in blocks:
+                    bx0 = float(block.x0)
+                    by0 = float(block.y0)
+                    bx1 = float(block.x1)
+                    by1 = float(block.y1)
+                    overlap_x = max(0.0, min(qx1, bx1) - max(qx0, bx0))
+                    overlap_y = max(0.0, min(qy1, by1) - max(qy0, by0))
+                    block_area = max(1.0, (bx1 - bx0) * (by1 - by0))
+                    if overlap_x * overlap_y / block_area < 0.65:
+                        continue
+                    width_ratio = (bx1 - bx0) / question_width
+                    if not 0.12 <= width_ratio <= 0.85:
+                        continue
+                    candidates.append((bx0, by0, bx1, by1))
+                if not candidates:
+                    continue
+                padding_x = coordinate_width * 0.006
+                padding_y = coordinate_height * 0.004
+                x0 = max(0.0, min(candidate[0] for candidate in candidates) - padding_x)
+                y0 = max(0.0, min(candidate[1] for candidate in candidates) - padding_y)
+                x1 = min(coordinate_width, max(candidate[2] for candidate in candidates) + padding_x)
+                y1 = min(coordinate_height, max(candidate[3] for candidate in candidates) + padding_y)
+                pixel_bbox = (
+                    max(0, round(x0 * scale_x)),
+                    max(0, round(y0 * scale_y)),
+                    min(image.width, round(x1 * scale_x)),
+                    min(image.height, round(y1 * scale_y)),
+                )
+                if pixel_bbox[2] - pixel_bbox[0] < 8 or pixel_bbox[3] - pixel_bbox[1] < 8:
+                    continue
+                crop = image.crop(pixel_bbox)
+                output = io.BytesIO()
+                crop.save(output, format="JPEG", quality=94, optimize=True)
+                fragments.append(QuestionVisual(
+                    source_name=source_name,
+                    page_number=page_number,
+                    question_number=question.question_number,
+                    mime="image/jpeg",
+                    data=output.getvalue(),
+                    width_px=crop.width,
+                    height_px=crop.height,
+                    semantic_flags=question.semantic_flags,
+                    bbox=(x0, y0, x1, y1),
+                    role="visual_fragment",
+                ))
+            return fragments
+    except Exception:
+        return []
+
+
+def _detect_page_columns(
+    image_data: bytes,
+    *,
+    mime: str,
+    page_width: float,
+    page_height: float,
+    text_blocks: list[Any] | None = None,
+    has_embedded_text: bool = False,
+) -> tuple[int, str]:
+    try:
+        from PIL import Image
+
+        with Image.open(io.BytesIO(image_data)) as image:
+            if image.width < 200 or image.height < 200:
+                return 1, "image_too_small"
+    except Exception:
+        return 1, "image_unreadable"
+    try:
+        import cv2
+        import numpy as np
+
+        image_bgr = cv2.imdecode(np.frombuffer(image_data, dtype=np.uint8), cv2.IMREAD_COLOR)
+        if image_bgr is not None:
+            gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+            height, width = gray.shape[:2]
+            edges = cv2.Canny(gray, 60, 160)
+            lines = cv2.HoughLinesP(
+                edges,
+                1,
+                np.pi / 360,
+                threshold=max(40, height // 20),
+                minLineLength=max(120, int(height * 0.24)),
+                maxLineGap=max(20, int(height * 0.10)),
+            )
+            if lines is not None:
+                for raw_line in lines.reshape(-1, 4):
+                    x1, y1, x2, y2 = (int(value) for value in raw_line)
+                    midpoint_x = (x1 + x2) / 2
+                    if (
+                        width * 0.40 <= midpoint_x <= width * 0.60
+                        and abs(x2 - x1) <= max(width * 0.12, abs(y2 - y1) * 0.12)
+                        and abs(y2 - y1) >= height * 0.24
+                    ):
+                        return 2, "pixel_center_rule"
+    except Exception:
+        pass
+    suffix = {
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+        "image/bmp": ".bmp",
+    }.get(mime, ".png")
+    image_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as image_file:
+            image_file.write(image_data)
+            image_path = image_file.name
+        from academy.domain.tools.paper_type import classify_paper_type
+
+        result = classify_paper_type(
+            text_blocks=text_blocks,
+            image_path=image_path,
+            page_width=page_width,
+            page_height=page_height,
+            has_embedded_text=has_embedded_text,
+        )
+        return (2 if result.is_dual_column else 1), str(result.paper_type.value)
+    except Exception:
+        return 1, "layout_fallback"
+    finally:
+        if image_path:
+            try:
+                os.unlink(image_path)
+            except OSError:
+                pass
+
+
+def _effective_document_style(
+    resolved: dict[str, Any] | None,
+    documents: list[TransferDocument],
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    style: dict[str, Any] = {
+        "schema": "problem-studio-document-style/v1",
+        "title_font": {
+            "source": "builtin",
+            "key": "hamchorom-dotum",
+            "family_name": "함초롬돋움",
+            "asset": None,
+        },
+        "body_font": {
+            "source": "builtin",
+            "key": "hamchorom-batang",
+            "family_name": "함초롬바탕",
+            "asset": None,
+        },
+        "title_size_pt": 20.0,
+        "body_size_pt": 10.5,
+        "body_width_ratio_percent": 100,
+        "body_letter_spacing_percent": 0,
+        "line_spacing_percent": 155,
+        "question_spacing_pt": 10.0,
+        "match_source_style": True,
+        "native_equations": True,
+    }
+    if isinstance(resolved, dict):
+        style.update(resolved)
+    source_style_document = max(
+        (
+            doc
+            for doc in documents
+            if isinstance(doc.document_style_hint, dict)
+            and doc.document_style_hint
+        ),
+        key=lambda doc: doc.text_chars,
+        default=None,
+    )
+    source_hint = (
+        dict(source_style_document.document_style_hint)
+        if source_style_document is not None
+        else {}
+    )
+    match_source_style = bool(style.get("match_source_style", True))
+    if match_source_style and source_hint:
+        source_font = str(source_hint.get("body_font_family") or "").strip()
+        if source_font:
+            selected_body_font = style.get("body_font")
+            selected_family = (
+                str(selected_body_font.get("family_name") or "").strip()
+                if isinstance(selected_body_font, dict)
+                else ""
+            )
+            # Keep the selected tenant font asset when it is the actual source font;
+            # this preserves the authorized download snapshot in the result package.
+            if selected_family.casefold() != source_font.casefold():
+                style["body_font"] = {
+                    "source": "source_document",
+                    "family_name": source_font,
+                    "asset": None,
+                }
+        for key in (
+            "body_size_pt",
+            "body_width_ratio_percent",
+            "body_letter_spacing_percent",
+            "line_spacing_percent",
+        ):
+            if source_hint.get(key) is not None:
+                style[key] = source_hint[key]
+    style["match_source_style"] = match_source_style
+    requested_layout = style.get("page_layout")
+    layout = dict(DEFAULT_PAGE_LAYOUT)
+    if isinstance(requested_layout, dict):
+        layout.update({
+            key: requested_layout[key]
+            for key in layout
+            if key in requested_layout
+        })
+
+    dimension_source = next(
+        (
+            doc
+            for doc in documents
+            if doc.page_width_pt > 0 and doc.page_height_pt > 0
+        ),
+        None,
+    )
+    source_dimensions_preserved = False
+    if dimension_source is not None:
+        width_mm = dimension_source.page_width_pt * 25.4 / 72.0
+        height_mm = dimension_source.page_height_pt * 25.4 / 72.0
+        if not (90 <= width_mm <= 500 and 90 <= height_mm <= 500):
+            width_mm, height_mm = 210.0, 297.0
+        else:
+            source_dimensions_preserved = True
+    else:
+        width_mm, height_mm = 210.0, 297.0
+
+    detected_columns = [
+        doc.detected_column_count
+        for doc in documents
+        if doc.detected_column_count in {1, 2}
+    ]
+    dual_count = sum(1 for count in detected_columns if count == 2)
+    source_column_count = (
+        2
+        if dual_count >= max(1, (len(detected_columns) + 2) // 3)
+        else 1
+    )
+    mode = str(layout.get("mode") or "source")
+    if match_source_style and source_hint and mode == "source":
+        source_margins = source_hint.get("margins_mm")
+        if isinstance(source_margins, dict):
+            for side in ("top", "bottom", "left", "right"):
+                value = source_margins.get(side)
+                if value is not None:
+                    layout[f"margin_{side}_mm"] = float(value)
+        for key in ("column_gap_mm", "center_line", "center_line_style"):
+            if source_hint.get(key) is not None:
+                layout[key] = source_hint[key]
+    if mode == "korean_two_column":
+        width_mm, height_mm = 210.0, 297.0
+        column_count = 2
+    elif mode == "single_column":
+        column_count = 1
+    else:
+        column_count = source_column_count
+
+    layout.update({
+        "page_width_mm": round(width_mm, 2),
+        "page_height_mm": round(height_mm, 2),
+        "column_count": column_count,
+        "source_column_count": source_column_count,
+        "source_dimension_name": (
+            dimension_source.source_name if dimension_source is not None else ""
+        ),
+        "source_dimensions_preserved": source_dimensions_preserved,
+        "center_line": bool(layout.get("center_line", True) and column_count == 2),
+    })
+    style["page_layout"] = layout
+    detected_layout = {
+        "mode": mode,
+        "page_width_mm": layout["page_width_mm"],
+        "page_height_mm": layout["page_height_mm"],
+        "column_count": column_count,
+        "source_column_count": source_column_count,
+        "center_line": layout["center_line"],
+        "center_line_style": layout.get("center_line_style", "DASH"),
+        "column_gap_mm": layout["column_gap_mm"],
+        "source_dimension_name": layout["source_dimension_name"],
+        "source_dimensions_preserved": source_dimensions_preserved,
+        "source_style_matched": bool(match_source_style and source_hint),
+        "source_style_name": (
+            source_style_document.source_name
+            if match_source_style and source_style_document is not None
+            else ""
+        ),
+    }
+    return (style or None), detected_layout
 
 
 def _normalize_hwp_image_data(filename: str, data: bytes) -> tuple[str, bytes]:
@@ -392,8 +897,25 @@ def _ocr_note_html(result: OcrResult) -> str:
 
 def _image_transfer_doc(name: str, data: bytes, *, ocr_context: TransferOcrContext) -> TransferDocument:
     mime = _mime_for_suffix(Path(name).suffix)
+    page_width_pt, page_height_pt = _image_page_size_points(data)
+    source_mime, source_data, width_px, height_px = _hwpx_raster_image(data, mime)
+    detected_columns, layout_source = _detect_page_columns(
+        data,
+        mime=mime,
+        page_width=page_width_pt,
+        page_height=page_height_pt,
+    )
     ocr_result = ocr_context.extract(data, mime=mime)
     ocr_text = ocr_result.text if ocr_result.status == "extracted" else ""
+    question_visuals = _question_visuals_from_blocks(
+        source_name=name,
+        page_number=1,
+        image_data=source_data,
+        mime=source_mime,
+        text_blocks=ocr_result.blocks,
+        coordinate_width=float(width_px),
+        coordinate_height=float(height_px),
+    )
     ocr_html = ""
     if ocr_text:
         ocr_html = f"""
@@ -432,6 +954,23 @@ def _image_transfer_doc(name: str, data: bytes, *, ocr_context: TransferOcrConte
         ocr_status=_ocr_status_from_units(ocr_completed, ocr_pending),
         ocr_engine=ocr_result.engine if ocr_text else "",
         ocr_warning=None if ocr_text else (ocr_result.warning or ocr_result.status),
+        page_width_pt=page_width_pt,
+        page_height_pt=page_height_pt,
+        detected_column_count=detected_columns,
+        layout_source=layout_source,
+        source_pages=[
+            SourcePageVisual(
+                source_name=name,
+                page_number=1,
+                mime=source_mime,
+                data=source_data,
+                width_px=width_px,
+                height_px=height_px,
+                page_width_pt=page_width_pt,
+                page_height_pt=page_height_pt,
+            )
+        ],
+        question_visuals=question_visuals,
     )
 
 
@@ -446,12 +985,17 @@ def _pdf_transfer_docs(name: str, data: bytes, *, ocr_context: TransferOcrContex
         page_count = pdf.page_count()
         for start in range(0, page_count, TRANSFER_PDF_PAGES_PER_DOC):
             end = min(start + TRANSFER_PDF_PAGES_PER_DOC, page_count)
+            page_width_pt, page_height_pt = pdf.page_size(start)
+            detected_page_columns: list[int] = []
+            detected_layout_sources: list[str] = []
             part_text_chunks: list[str] = []
             part_ocr_completed = 0
             part_ocr_pending = 0
             part_ocr_engine = ""
             part_ocr_warning = ""
             part_ocr_text_chars = 0
+            part_source_pages: list[SourcePageVisual] = []
+            part_question_visuals: list[QuestionVisual] = []
             page_html: list[str] = [
                 _meta_block(
                     "PDF 원본 페이지 이관",
@@ -464,7 +1008,41 @@ def _pdf_transfer_docs(name: str, data: bytes, *, ocr_context: TransferOcrContex
                 if page_text:
                     part_text_chunks.append(f"[{index + 1}쪽]\n{page_text}")
                 mime, image_bytes = pdf.render_page_bytes(index, zoom=TRANSFER_PDF_RENDER_ZOOM, jpg_quality=82)
+                current_width_pt, current_height_pt = pdf.page_size(index)
+                text_blocks = pdf.extract_page_text_blocks(index) if page_text else []
+                page_visual_blocks = (
+                    pdf.extract_page_visual_blocks(index)
+                    if page_text
+                    else []
+                )
+                page_columns, layout_source = _detect_page_columns(
+                    image_bytes,
+                    mime=mime,
+                    page_width=current_width_pt,
+                    page_height=current_height_pt,
+                    text_blocks=text_blocks,
+                    has_embedded_text=bool(page_text),
+                )
+                detected_page_columns.append(page_columns)
+                detected_layout_sources.append(layout_source)
+                source_mime, source_data, width_px, height_px = _hwpx_raster_image(
+                    image_bytes,
+                    mime,
+                )
+                part_source_pages.append(SourcePageVisual(
+                    source_name=name,
+                    page_number=index + 1,
+                    mime=source_mime,
+                    data=source_data,
+                    width_px=width_px,
+                    height_px=height_px,
+                    page_width_pt=current_width_pt,
+                    page_height_pt=current_height_pt,
+                ))
                 ocr_page_html = ""
+                visual_blocks: Iterable[Any] = text_blocks
+                coordinate_width = current_width_pt
+                coordinate_height = current_height_pt
                 if not page_text:
                     ocr_result = ocr_context.extract(image_bytes, mime=mime)
                     if ocr_result.status == "extracted" and ocr_result.text:
@@ -473,10 +1051,32 @@ def _pdf_transfer_docs(name: str, data: bytes, *, ocr_context: TransferOcrContex
                         part_ocr_text_chars += len(ocr_result.text)
                         part_text_chunks.append(f"[{index + 1}쪽 OCR]\n{ocr_result.text}")
                         ocr_page_html = f'<div class="source-text ocr-text"><strong>자동 OCR 텍스트</strong><br />{_escape(ocr_result.text)}</div>'
+                        visual_blocks = ocr_result.blocks
+                        coordinate_width = float(width_px)
+                        coordinate_height = float(height_px)
                     else:
                         part_ocr_pending += 1
                         part_ocr_warning = part_ocr_warning or ocr_result.warning or ocr_result.status
                         ocr_page_html = _ocr_note_html(ocr_result)
+                page_question_visuals = _question_visuals_from_blocks(
+                    source_name=name,
+                    page_number=index + 1,
+                    image_data=source_data,
+                    mime=source_mime,
+                    text_blocks=visual_blocks,
+                    coordinate_width=coordinate_width,
+                    coordinate_height=coordinate_height,
+                )
+                part_question_visuals.extend(page_question_visuals)
+                part_question_visuals.extend(_visual_fragments_from_pdf_blocks(
+                    source_name=name,
+                    page_number=index + 1,
+                    image_data=source_data,
+                    question_visuals=page_question_visuals,
+                    visual_blocks=page_visual_blocks,
+                    coordinate_width=current_width_pt,
+                    coordinate_height=current_height_pt,
+                ))
                 page_no = index + 1
                 page_html.append(
                     f'<section class="source-page">'
@@ -488,6 +1088,12 @@ def _pdf_transfer_docs(name: str, data: bytes, *, ocr_context: TransferOcrContex
             part_label = f"_part{(start // TRANSFER_PDF_PAGES_PER_DOC) + 1:02d}" if page_count > TRANSFER_PDF_PAGES_PER_DOC else ""
             filename = _doc_filename(f"{Path(name).stem}{part_label}.pdf")
             plain_text = normalize_space("\n\n".join(part_text_chunks))
+            dual_page_count = sum(1 for count in detected_page_columns if count == 2)
+            detected_column_count = (
+                2
+                if dual_page_count >= max(1, (len(detected_page_columns) + 2) // 3)
+                else 1
+            )
             documents.append(TransferDocument(
                 filename=filename,
                 html=_office_doc_shell(
@@ -512,6 +1118,12 @@ def _pdf_transfer_docs(name: str, data: bytes, *, ocr_context: TransferOcrContex
                 ocr_status=_ocr_status_from_units(part_ocr_completed, part_ocr_pending),
                 ocr_engine=part_ocr_engine,
                 ocr_warning=part_ocr_warning or None,
+                page_width_pt=page_width_pt,
+                page_height_pt=page_height_pt,
+                detected_column_count=detected_column_count,
+                layout_source=", ".join(sorted(set(detected_layout_sources))),
+                source_pages=part_source_pages,
+                question_visuals=part_question_visuals,
             ))
     return documents
 
@@ -607,7 +1219,31 @@ def _docs_from_named_bytes(
             return [_fast_hwp_transfer_doc(name, data)], warnings
         if suffix == ".hwpx":
             text = _extract_hwpx_text(data)
-            return [_simple_text_transfer_doc(name, text, "HWPX 본문 텍스트 이관")], warnings
+            profile = extract_hwpx_document_profile(data)
+            extracted_visuals = extract_hwpx_question_images(data)
+            document = _simple_text_transfer_doc(name, text, "HWPX 본문 텍스트·서식 이관")
+            document.page_width_pt = float(profile.get("page_width_pt") or 0)
+            document.page_height_pt = float(profile.get("page_height_pt") or 0)
+            document.detected_column_count = int(profile.get("column_count") or 0)
+            document.layout_source = "hwpx_native_profile"
+            document.page_count = int(profile.get("estimated_min_pages") or 0)
+            document.document_style_hint = profile
+            document.image_count = len(extracted_visuals)
+            document.question_visuals = [
+                QuestionVisual(
+                    source_name=name,
+                    page_number=0,
+                    question_number=int(visual["question_number"]),
+                    mime=str(visual["mime"]),
+                    data=bytes(visual["data"]),
+                    width_px=int(visual["width_px"]),
+                    height_px=int(visual["height_px"]),
+                    semantic_flags=("visual_context", "hwpx_embedded"),
+                    role="visual_fragment",
+                )
+                for visual in extracted_visuals
+            ]
+            return [document], warnings
         if suffix == ".docx":
             text = _extract_docx_text(data)
             return [_simple_text_transfer_doc(name, text, "DOCX 본문 텍스트 이관")], warnings
@@ -727,7 +1363,9 @@ def _build_review_checklist_html(
   <h2>1. 실사용 검수 순서</h2>
   <ol>
     <li><strong>01_자체양식_문제검수본.doc</strong>에서 자동 분리된 문제/개념 블록을 먼저 확인합니다.</li>
-    <li><strong>03_자체양식_문제검수본.hwpx</strong>를 한글에서 열어 텍스트 중심 검수본으로 사용할 수 있는지 확인합니다.</li>
+    <li><strong>03_자체양식_문제검수본.hwpx</strong>에서 원본 페이지 크기·단 구성·중앙선과 전사 내용을 확인합니다.</li>
+    <li><strong>04_선생님문체_해설검수본.hwpx</strong>에서 정답 근거와 선생님 문체 해설을 확인합니다.</li>
+    <li><strong>05_원본충실_레이아웃대조본.hwpx</strong>에서 스캔의 표·박스·그림·상대 배치가 빠짐없이 보존됐는지 확인합니다.</li>
     <li><strong>00_변환리포트.html</strong>에서 경고와 문서 수를 먼저 확인합니다.</li>
     <li><strong>02_OCR_연결후보.csv</strong>에서 자동 OCR 후에도 남은 스캔/이미지 원본을 별도 처리 목록으로 확인합니다.</li>
     <li>각 산출물 `.doc`을 한글 또는 Word에서 열고 편집 가능 여부를 확인합니다.</li>
@@ -739,7 +1377,7 @@ def _build_review_checklist_html(
   <table>
     <tbody>
       <tr><th>구조화</th><td>자동 분리 항목 {structure.structured_item_count}개, 문제 후보 {structure.structured_problem_count}개. 상태: {_escape(_quality_label(structure.quality_level))}</td></tr>
-      <tr><th>열림</th><td>한글/Word에서 모든 `.doc` 파일이 열리고, 한글에서 `03_자체양식_문제검수본.hwpx`가 열립니다.</td></tr>
+      <tr><th>열림</th><td>한글/Word에서 모든 `.doc` 파일이 열리고, 한글에서 문제·해설·원본충실 HWPX 3개가 모두 열립니다.</td></tr>
       <tr><th>누락</th><td>원본 페이지 또는 주요 그림/표가 빠지지 않았습니다.</td></tr>
       <tr><th>수정성</th><td>선생님이 수업용으로 직접 고칠 수 있는 상태입니다.</td></tr>
       <tr><th>OCR</th><td>자동 OCR 처리 {structure.ocr_completed_unit_count}단위, 남은 OCR 후보 {structure.ocr_candidate_count}개/{structure.ocr_pending_unit_count}단위.</td></tr>
@@ -784,6 +1422,129 @@ def _build_review_checklist_html(
     )
 
 
+def _source_page_payloads(documents: Iterable[TransferDocument]) -> list[dict[str, Any]]:
+    return [
+        {
+            "source_name": page.source_name,
+            "page_number": page.page_number,
+            "mime": page.mime,
+            "data": page.data,
+            "width_px": page.width_px,
+            "height_px": page.height_px,
+            "page_width_pt": page.page_width_pt,
+            "page_height_pt": page.page_height_pt,
+        }
+        for document in documents
+        for page in document.source_pages
+    ]
+
+
+def _question_visual_map(
+    documents: Iterable[TransferDocument],
+) -> dict[int, dict[str, Any]]:
+    selected: dict[int, QuestionVisual] = {}
+    for document in documents:
+        for visual in document.question_visuals:
+            if visual.role != "visual_fragment":
+                continue
+            current = selected.get(visual.question_number)
+            if current is None or (
+                "visual_context" in visual.semantic_flags
+                and "visual_context" not in current.semantic_flags
+            ):
+                selected[visual.question_number] = visual
+    return {
+        number: {
+            "mime": visual.mime,
+            "data": visual.data,
+            "width_px": visual.width_px,
+            "height_px": visual.height_px,
+            "source_name": visual.source_name,
+            "page_number": visual.page_number,
+            "semantic_flags": list(visual.semantic_flags),
+        }
+        for number, visual in selected.items()
+        if "visual_context" in visual.semantic_flags
+    }
+
+
+def _reconstruction_quality(
+    documents: Iterable[TransferDocument],
+    structure: TransferStructure,
+) -> dict[str, Any]:
+    docs = list(documents)
+    expected_source_pages = sum(
+        max(int(doc.page_count or 0), int(doc.image_count or 0))
+        for doc in docs
+        if doc.kind in {"PDF", "이미지"}
+    )
+    preserved_source_pages = sum(len(doc.source_pages) for doc in docs)
+    source_page_coverage = (
+        min(1.0, preserved_source_pages / expected_source_pages)
+        if expected_source_pages
+        else 1.0
+    )
+    problem_numbers = {
+        item.number for item in structure.items if item.item_type == "problem"
+    }
+    crop_numbers = {
+        visual.question_number
+        for doc in docs
+        for visual in doc.question_visuals
+        if visual.role == "question_crop"
+    }
+    question_crop_coverage = (
+        len(problem_numbers & crop_numbers) / len(problem_numbers)
+        if problem_numbers
+        else 0.0
+    )
+    embedded_visual_numbers = set(_question_visual_map(docs))
+    visual_context_numbers = {
+        visual.question_number
+        for doc in docs
+        for visual in doc.question_visuals
+        if visual.role == "question_crop"
+        and "visual_context" in visual.semantic_flags
+    }
+    visual_fragment_coverage = (
+        len(visual_context_numbers & embedded_visual_numbers)
+        / len(visual_context_numbers)
+        if visual_context_numbers
+        else 1.0
+    )
+    if (
+        structure.quality_level == "structured_review_ready"
+        and structure.ocr_pending_unit_count == 0
+        and source_page_coverage == 1.0
+        and (not expected_source_pages or question_crop_coverage >= 0.9)
+        and visual_fragment_coverage == 1.0
+    ):
+        gate = "benchmark_candidate"
+    elif problem_numbers and source_page_coverage == 1.0:
+        gate = "hybrid_review_required"
+    else:
+        gate = "source_review_required"
+    return {
+        "schema": "problem-studio-reconstruction-quality/v1",
+        "gate": gate,
+        "benchmark_target": "editable_text_equations_plus_pixel_faithful_visuals",
+        "source_page_count": expected_source_pages,
+        "source_page_preserved_count": preserved_source_pages,
+        "source_page_coverage": round(source_page_coverage, 4),
+        "question_crop_count": sum(
+            1
+            for doc in docs
+            for visual in doc.question_visuals
+            if visual.role == "question_crop"
+        ),
+        "question_crop_coverage": round(question_crop_coverage, 4),
+        "embedded_visual_question_count": len(embedded_visual_numbers),
+        "visual_fragment_coverage": round(visual_fragment_coverage, 4),
+        "native_equations": True,
+        "teacher_review_required": True,
+    }
+
+
 def _build_manifest_json(
     meta: dict[str, str],
     input_files: list[dict[str, Any]],
@@ -791,9 +1552,12 @@ def _build_manifest_json(
     warnings: list[str],
     structure: TransferStructure,
     document_style: dict[str, Any] | None = None,
+    explanation_count: int = 0,
+    detected_layout: dict[str, Any] | None = None,
+    reconstruction_quality: dict[str, Any] | None = None,
 ) -> str:
     manifest = {
-        "schema": "problem-studio-transfer-manifest/v2",
+        "schema": "problem-studio-transfer-manifest/v4",
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "title": meta["title"],
         "class_name": meta["class_name"],
@@ -810,6 +1574,9 @@ def _build_manifest_json(
         "ocr_completed_unit_count": structure.ocr_completed_unit_count,
         "ocr_pending_unit_count": structure.ocr_pending_unit_count,
         "quality_level": structure.quality_level,
+        "generated_explanation_count": explanation_count,
+        "detected_layout": detected_layout or {},
+        "reconstruction_quality": reconstruction_quality or {},
         "document_style": _safe_document_style(document_style),
         "input_files": input_files,
         "documents": [
@@ -826,6 +1593,10 @@ def _build_manifest_json(
                 "ocr_status": doc.ocr_status,
                 "ocr_engine": doc.ocr_engine,
                 "ocr_warning": doc.ocr_warning,
+                "page_width_pt": round(doc.page_width_pt, 2),
+                "page_height_pt": round(doc.page_height_pt, 2),
+                "detected_column_count": doc.detected_column_count,
+                "layout_source": doc.layout_source,
                 "status": _review_status(doc),
                 "review_focus": _review_focus(doc),
                 "warning": doc.warning,
@@ -843,12 +1614,30 @@ def _build_manifest_json(
             {
                 "filename": "03_자체양식_문제검수본.hwpx",
                 "type": "academy_review_workbook_hwpx",
-                "status": "한글 HWPX 텍스트 검수본",
+                "status": "원본 규격 기반 한글 HWPX 문제지",
+            },
+            {
+                "filename": "04_선생님문체_해설검수본.hwpx",
+                "type": "academy_solution_workbook_hwpx",
+                "status": f"AI 해설 {explanation_count}개 · 선생님 최종 검수 필요",
             },
             {
                 "filename": "02_OCR_연결후보.csv",
                 "type": "ocr_work_queue",
                 "status": "남은 OCR 후보 " + str(structure.ocr_candidate_count) + "개",
+            },
+            {
+                "filename": "05_원본충실_레이아웃대조본.hwpx",
+                "type": "source_fidelity_reference_hwpx",
+                "status": (
+                    f"원본 페이지 {int((reconstruction_quality or {}).get('source_page_preserved_count') or 0)}쪽 "
+                    "픽셀 보존"
+                ),
+            },
+            {
+                "filename": "06_업로드원본_그대로/",
+                "type": "byte_identical_source_archive",
+                "status": "업로드 원본 바이트 그대로 보존",
             },
         ],
         "review_contract": {
@@ -860,7 +1649,24 @@ def _build_manifest_json(
             "native_hwp_output": False,
             "native_hwpx_output": True,
             "native_hwpx_equations": True,
+            "auto_explanations": explanation_count > 0,
+            "generated_explanation_count": explanation_count,
+            "source_page_dimensions_preserved": bool(
+                (detected_layout or {}).get("source_dimensions_preserved")
+            ),
+            "source_column_layout_detected": any(
+                doc.detected_column_count in {1, 2} for doc in documents
+            ),
+            "center_rule_supported": True,
             "personal_fonts_embedded": False,
+            "source_fidelity_hwpx": True,
+            "original_upload_bytes_preserved": True,
+            "source_question_visuals_embedded": bool(
+                (reconstruction_quality or {}).get("embedded_visual_question_count")
+            ),
+            "reconstruction_gate": (
+                (reconstruction_quality or {}).get("gate") or "source_review_required"
+            ),
         },
     }
     return json.dumps(manifest, ensure_ascii=False, indent=2)
@@ -920,6 +1726,34 @@ def _build_file_list_csv(
         structure.ocr_completed_unit_count,
         structure.ocr_pending_unit_count,
         _quality_label(structure.quality_level),
+        "",
+    ])
+    writer.writerow([
+        "검수본",
+        3,
+        "04_선생님문체_해설검수본.hwpx",
+        "",
+        "HWPX",
+        structure.structured_problem_count,
+        "",
+        structure.text_chars,
+        structure.ocr_completed_unit_count,
+        structure.ocr_pending_unit_count,
+        "정답·해설 검수 필요",
+        "",
+    ])
+    writer.writerow([
+        "검수본",
+        4,
+        "05_원본충실_레이아웃대조본.hwpx",
+        "",
+        "HWPX",
+        sum(len(doc.source_pages) for doc in documents),
+        "",
+        "",
+        "",
+        "",
+        "원본 시각 대조",
         "",
     ])
     return "\ufeff" + out.getvalue()
@@ -1022,6 +1856,16 @@ def _build_structured_workbook_html(
     )
     title_size = document_style.get("title_size_pt", 20) if isinstance(document_style, dict) else 20
     body_size = document_style.get("body_size_pt", 10.5) if isinstance(document_style, dict) else 10.5
+    body_width_ratio = (
+        document_style.get("body_width_ratio_percent", 100)
+        if isinstance(document_style, dict)
+        else 100
+    )
+    body_letter_spacing = (
+        document_style.get("body_letter_spacing_percent", 0)
+        if isinstance(document_style, dict)
+        else 0
+    )
     line_spacing = (
         document_style.get("line_spacing_percent", 155)
         if isinstance(document_style, dict)
@@ -1036,7 +1880,7 @@ def _build_structured_workbook_html(
         f"{meta['title']} 자체양식 문제검수본",
         body,
         extra_style=f"""
-    body {{ font-family: {_css_string(body_font)}, "함초롬바탕", serif; font-size: {body_size}pt; line-height: {float(line_spacing) / 100:.2f}; }}
+    body {{ font-family: {_css_string(body_font)}, "함초롬바탕", serif; font-size: {body_size}pt; font-stretch: {body_width_ratio}%; letter-spacing: {float(body_size) * float(body_letter_spacing) / 100:.2f}pt; line-height: {float(line_spacing) / 100:.2f}; }}
     h1 {{ font-family: {_css_string(title_font)}, "함초롬돋움", sans-serif; font-size: {title_size}pt; }}
     .problem-card {{ page-break-inside: avoid; border: 0.7pt solid #cbd5e1; padding: 4mm; margin: 0 0 {question_spacing}pt; }}
 """
@@ -1099,13 +1943,78 @@ def _structured_workbook_text_paragraphs(meta: dict[str, str], structure: Transf
 def _build_structured_workbook_hwpx(
     meta: dict[str, str],
     structure: TransferStructure,
+    documents: list[TransferDocument],
     document_style: dict[str, Any] | None = None,
 ) -> bytes:
-    title = f"{meta['title']} 자체양식 문제검수본"
-    return build_hwpx_text_document(
-        title=title,
-        paragraphs=_structured_workbook_text_paragraphs(meta, structure),
+    items = [
+        {
+            "number": item.number,
+            "prompt": item.prompt,
+            "choices": item.choices,
+            "answer": item.answer,
+            "explanation": item.explanation,
+            "answer_check": item.answer_check,
+        }
+        for item in structure.items
+        if item.item_type == "problem"
+    ]
+    meta_lines = [
+        " · ".join(
+            value
+            for value in (
+                meta["class_name"],
+                meta["subject"],
+                "원본 자동 재작성 · 배포 전 선생님 검수 필수",
+            )
+            if value
+        )
+    ]
+    return build_hwpx_exam_document(
+        title=meta["title"],
+        meta_lines=meta_lines,
+        items=items,
         document_style=document_style,
+        solutions=False,
+        question_visuals=_question_visual_map(documents),
+    )
+
+
+def _build_solution_workbook_hwpx(
+    meta: dict[str, str],
+    structure: TransferStructure,
+    documents: list[TransferDocument],
+    document_style: dict[str, Any] | None = None,
+) -> bytes:
+    items = [
+        {
+            "number": item.number,
+            "prompt": item.prompt,
+            "choices": item.choices,
+            "answer": item.answer,
+            "explanation": item.explanation,
+            "answer_check": item.answer_check,
+        }
+        for item in structure.items
+        if item.item_type == "problem"
+    ]
+    meta_lines = [
+        " · ".join(
+            value
+            for value in (
+                meta["class_name"],
+                meta["subject"],
+                "AI 작성 해설 · 배포 전 정답과 풀이 검수 필수",
+            )
+            if value
+        )
+    ]
+    return build_hwpx_exam_document(
+        title=f"{meta['title']} 해설",
+        meta_lines=meta_lines,
+        items=items,
+        document_style=document_style,
+        solutions=True,
+        question_visuals=_question_visual_map(documents),
     )
 
 
@@ -1114,16 +2023,19 @@ def build_transfer_package(
     payload: dict[str, Any],
     source_files: Iterable[Any],
     ocr_context: TransferOcrContext | None = None,
+    explanation_builder: Callable[[TransferStructure], list[dict[str, Any]]] | None = None,
 ) -> TransferPackage:
     meta = _payload_meta(payload)
     title = meta["title"]
     documents: list[TransferDocument] = []
     warnings: list[str] = []
     input_files: list[dict[str, Any]] = []
+    original_files: list[tuple[str, bytes]] = []
     ocr_context = ocr_context or TransferOcrContext()
 
     for uploaded in source_files:
         name, data = _read_upload(uploaded)
+        original_files.append((name, data))
         input_files.append({
             "name": name,
             "kind": _source_kind(name),
@@ -1155,10 +2067,60 @@ def build_transfer_package(
         warnings.append(warning)
 
     structure = analyze_transfer_documents(documents, warnings)
-    document_style = payload.get("_resolved_document_style")
-    if not isinstance(document_style, dict):
-        document_style = None
-    font_assets = custom_font_snapshots(document_style)
+    source_tone_requested = payload.get("learn_source_explanation_style") is True
+    source_tone_rights = payload.get("source_style_rights_confirmed") is True
+    if source_tone_requested and not source_tone_rights:
+        warnings.append("업로드 해설의 작성·사용 권한 확인이 없어 문체 샘플로 사용하지 않았습니다.")
+    augmented_voice_profile = augment_voice_profile_with_source_items(
+        payload.get("_resolved_voice_profile")
+        if isinstance(payload.get("_resolved_voice_profile"), dict)
+        else None,
+        items=list(structure.items),
+        enabled=source_tone_requested,
+        rights_confirmed=source_tone_rights,
+    )
+    if augmented_voice_profile is not None:
+        payload["_resolved_voice_profile"] = augmented_voice_profile
+    if source_tone_requested and source_tone_rights and not (
+        augmented_voice_profile
+        and augmented_voice_profile.get("ephemeral_source_style_sample_count")
+    ):
+        warnings.append("업로드 자료에서 문체로 사용할 선생님 작성 해설을 찾지 못했습니다.")
+    generated_explanations: list[dict[str, Any]] = []
+    auto_explanations = payload.get("auto_explanations") is True
+    if auto_explanations and explanation_builder and structure.structured_problem_count:
+        try:
+            generated_explanations = explanation_builder(structure)
+        except Exception as exc:
+            warnings.append(
+                f"AI 해설 작성 중 오류가 발생해 전사 문제지만 생성했습니다. ({str(exc)[:180]})"
+            )
+    if auto_explanations and structure.structured_problem_count:
+        generated_indexes = {
+            int(item.get("index"))
+            for item in generated_explanations
+            if isinstance(item, dict) and str(item.get("index") or "").isdigit()
+        }
+        if len(generated_indexes) < structure.structured_problem_count:
+            warnings.append(
+                "일부 문항은 AI 해설을 만들지 못했습니다. 해설 검수본의 '검수 후 작성' 항목을 확인하세요."
+            )
+    structure = analyze_transfer_documents(documents, warnings)
+    if generated_explanations:
+        structure = apply_generated_explanations(structure, generated_explanations)
+    explanation_count = sum(
+        1 for item in structure.items if item.explanation_source == "teacher_voice_ai"
+    )
+
+    resolved_document_style = payload.get("_resolved_document_style")
+    if not isinstance(resolved_document_style, dict):
+        resolved_document_style = None
+    document_style, detected_layout = _effective_document_style(
+        resolved_document_style,
+        documents,
+    )
+    reconstruction_quality = _reconstruction_quality(documents, structure)
+    font_assets = custom_font_snapshots(resolved_document_style)
     now = datetime.now().strftime("%Y%m%d-%H%M%S")
     package_name = f"{_safe_filename(title, default='problem-studio')}_원본이관_{now}.zip"
     buffer = io.BytesIO()
@@ -1182,6 +2144,9 @@ def build_transfer_package(
                 warnings,
                 structure,
                 document_style=document_style,
+                explanation_count=explanation_count,
+                detected_layout=detected_layout,
+                reconstruction_quality=reconstruction_quality,
             ),
         )
         zf.writestr("00_파일목록.csv", _build_file_list_csv(input_files, documents, warnings, structure))
@@ -1192,8 +2157,40 @@ def build_transfer_package(
         zf.writestr("02_OCR_연결후보.csv", _build_ocr_queue_csv(structure))
         zf.writestr(
             "03_자체양식_문제검수본.hwpx",
-            _build_structured_workbook_hwpx(meta, structure, document_style),
+            _build_structured_workbook_hwpx(
+                meta,
+                structure,
+                documents,
+                document_style,
+            ),
         )
+        zf.writestr(
+            "04_선생님문체_해설검수본.hwpx",
+            _build_solution_workbook_hwpx(
+                meta,
+                structure,
+                documents,
+                document_style,
+            ),
+        )
+        zf.writestr(
+            "05_원본충실_레이아웃대조본.hwpx",
+            build_hwpx_source_fidelity_document(
+                title=f"{meta['title']} 원본충실 레이아웃 대조본",
+                source_pages=_source_page_payloads(documents),
+            ),
+        )
+        original_names: set[str] = set()
+        for index, (source_name, source_data) in enumerate(original_files, start=1):
+            base_name = _safe_filename(source_name, default=f"원본_{index}")
+            archive_name = f"06_업로드원본_그대로/{base_name}"
+            if archive_name in original_names:
+                archive_name = (
+                    "06_업로드원본_그대로/"
+                    f"{Path(base_name).stem}_{index}{Path(base_name).suffix}"
+                )
+            original_names.add(archive_name)
+            zf.writestr(archive_name, source_data)
 
     return TransferPackage(
         filename=package_name,
@@ -1201,12 +2198,15 @@ def build_transfer_package(
         data=buffer.getvalue(),
         documents=documents,
         warnings=warnings,
-        review_file_count=7,
+        review_file_count=10,
         structured_item_count=structure.structured_item_count,
         ocr_candidate_count=structure.ocr_candidate_count,
         quality_level=structure.quality_level,
         structure_limit_reached=structure.structure_limit_reached,
         font_assets=font_assets,
+        explanation_count=explanation_count,
+        detected_layout=detected_layout,
+        reconstruction_quality=reconstruction_quality,
     )
 
 
@@ -1272,4 +2272,7 @@ def package_to_response(package: TransferPackage) -> HttpResponse:
     response["X-Problem-Studio-Structured-Item-Count"] = str(package.structured_item_count)
     response["X-Problem-Studio-OCR-Candidate-Count"] = str(package.ocr_candidate_count)
     response["X-Problem-Studio-Quality-Level"] = package.quality_level
+    response["X-Problem-Studio-Reconstruction-Gate"] = str(
+        package.reconstruction_quality.get("gate") or "source_review_required"
+    )
     return response

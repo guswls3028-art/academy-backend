@@ -299,8 +299,8 @@ def add_voice_sample(
     return sample, created
 
 
-def _style_signature(samples: list[ProblemStudioVoiceSample]) -> str:
-    explanations = [sample.explanation.strip() for sample in samples if sample.explanation.strip()]
+def _style_signature_from_explanations(explanations: list[str]) -> str:
+    explanations = [value.strip() for value in explanations if value.strip()]
     if not explanations:
         return "학습 샘플 없음"
     sentences = [
@@ -317,6 +317,71 @@ def _style_signature(samples: list[ProblemStudioVoiceSample]) -> str:
     ).most_common(3)
     ending_text = ", ".join(ending for ending, _count in endings) or "혼합 종결"
     return f"평균 문장 길이 약 {average}자 · 자주 쓰는 종결 {ending_text}"
+
+
+def _style_signature(samples: list[ProblemStudioVoiceSample]) -> str:
+    return _style_signature_from_explanations(
+        [sample.explanation for sample in samples]
+    )
+
+
+def augment_voice_profile_with_source_items(
+    voice_profile: dict[str, Any] | None,
+    *,
+    items: list[Any],
+    enabled: bool,
+    rights_confirmed: bool,
+) -> dict[str, Any] | None:
+    """Add job-scoped teacher-authored examples without persisting source text."""
+    if not enabled or not rights_confirmed:
+        return voice_profile
+    source_examples: list[dict[str, str]] = []
+    for item in items:
+        getter = item.get if isinstance(item, dict) else lambda key, default="": getattr(item, key, default)
+        explanation = sanitize_voice_text(
+            getter("explanation", ""),
+            max_chars=1600,
+        )
+        if len(explanation) < 20:
+            continue
+        source_examples.append({
+            "problem": sanitize_voice_text(
+                getter("prompt", ""),
+                max_chars=1200,
+            ),
+            "answer": sanitize_voice_text(
+                getter("answer", ""),
+                max_chars=400,
+            ),
+            "explanation": explanation,
+        })
+        if len(source_examples) >= MAX_SNAPSHOT_STYLE_SAMPLES:
+            break
+    if not source_examples:
+        return voice_profile
+
+    augmented = dict(voice_profile or {})
+    existing_examples = augmented.get("style_examples")
+    existing_examples = existing_examples if isinstance(existing_examples, list) else []
+    merged_examples = [*source_examples, *existing_examples][:MAX_SNAPSHOT_STYLE_SAMPLES]
+    augmented.update({
+        "name": str(augmented.get("name") or "업로드 자료 문체"),
+        "subject": str(augmented.get("subject") or ""),
+        "version": int(augmented.get("version") or 0),
+        "style_instructions": str(augmented.get("style_instructions") or ""),
+        "style_examples": merged_examples,
+        "content_references": list(augmented.get("content_references") or []),
+        "style_signature": _style_signature_from_explanations(
+            [str(example.get("explanation") or "") for example in merged_examples]
+        ),
+        "style_sample_count": max(
+            int(augmented.get("style_sample_count") or 0),
+            len(merged_examples),
+        ),
+        "reference_sample_count": int(augmented.get("reference_sample_count") or 0),
+        "ephemeral_source_style_sample_count": len(source_examples),
+    })
+    return augmented
 
 
 def build_voice_profile_snapshot(
@@ -399,6 +464,38 @@ def resolve_voice_profile_payload(
     resolved["voice_profile_id"] = snapshot["id"]
     resolved["_resolved_voice_profile"] = snapshot
     return resolved
+
+
+def revalidate_resolved_voice_profile(
+    resolved: dict[str, Any] | None,
+    *,
+    tenant_id: str,
+    user_id: str,
+) -> dict[str, Any] | None:
+    """Rebuild a worker voice snapshot from tenant/user-owned database state."""
+
+    if not isinstance(resolved, dict):
+        return None
+    profile_id = resolved.get("id")
+    if not profile_id:
+        raise ValueError("내 문체 프로필 정보가 올바르지 않습니다.")
+    profile = (
+        ProblemStudioVoiceProfile.objects.filter(
+            id=profile_id,
+            tenant_id=tenant_id,
+            owner_id=user_id,
+            status=ProblemStudioVoiceProfile.Status.ACTIVE,
+        )
+        .select_related("tenant", "owner")
+        .first()
+    )
+    if profile is None:
+        raise ValueError("선택한 내 문체 프로필을 더 이상 사용할 수 없습니다.")
+    return build_voice_profile_snapshot(
+        tenant=profile.tenant,
+        user=profile.owner,
+        profile_id=profile.id,
+    )
 
 
 def normalize_review_question(value: Any) -> dict[str, Any]:

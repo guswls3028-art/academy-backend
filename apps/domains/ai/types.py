@@ -18,6 +18,7 @@ AIJobType = Literal[
     "wrong_note_pdf_generation",
     "problem_studio_package",
     "problem_studio_transfer",
+    "problem_studio_transcription",
     "matchup_analysis",
     "matchup_index_exam",
     "matchup_search_qna",

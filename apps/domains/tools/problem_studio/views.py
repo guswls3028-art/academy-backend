@@ -408,6 +408,8 @@ class ProblemStudioTransferJobCreateView(APIView):
             if not payload and isinstance(request.data, dict):
                 payload = dict(request.data)
             payload = _resolve_request_document_style(request, payload)
+            payload = _resolve_request_voice_profile(request, payload)
+            payload["auto_explanations"] = payload.get("auto_explanations", True) is not False
             source_files = request.FILES.getlist("source_files")
             if not source_files:
                 return Response({"detail": "원본으로 옮길 소스 파일을 먼저 올려 주세요."}, status=status.HTTP_400_BAD_REQUEST)

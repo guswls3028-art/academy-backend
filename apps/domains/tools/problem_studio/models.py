@@ -113,8 +113,17 @@ class ProblemStudioDocumentStyle(TimestampModel):
     )
     title_size_pt = models.DecimalField(max_digits=4, decimal_places=1, default=20)
     body_size_pt = models.DecimalField(max_digits=4, decimal_places=1, default=10.5)
+    body_width_ratio_percent = models.PositiveSmallIntegerField(
+        default=100,
+        db_default=100,
+    )
+    body_letter_spacing_percent = models.SmallIntegerField(
+        default=0,
+        db_default=0,
+    )
     line_spacing_percent = models.PositiveSmallIntegerField(default=155)
     question_spacing_pt = models.DecimalField(max_digits=4, decimal_places=1, default=10)
+    match_source_style = models.BooleanField(default=True, db_default=True)
 
     objects = TenantQuerySet.as_manager()
 
