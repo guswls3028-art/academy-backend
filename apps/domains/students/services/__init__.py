@@ -1,6 +1,16 @@
 # PATH: apps/domains/students/services/__init__.py
 from .school import normalize_school_from_name, get_valid_school_types, get_valid_grades, is_valid_grade, ALL_SCHOOL_TYPES, GRADE_RANGE
 from .creation import StudentAccountCreationResult, create_student_account
+from .custom_fields import (
+    MAX_CUSTOM_FIELDS_PER_TENANT,
+    MAX_OPTIONS,
+    StudentCustomFieldError,
+    active_custom_field_definitions,
+    custom_field_values_from_import_row,
+    normalize_custom_field_values,
+    normalize_string_list,
+    validate_definition_headers,
+)
 from .registration_approval import (
     RegistrationApprovalError,
     RegistrationApprovalNotice,
@@ -52,6 +62,14 @@ __all__ = [
     "normalize_school_from_name",
     "StudentAccountCreationResult",
     "create_student_account",
+    "MAX_CUSTOM_FIELDS_PER_TENANT",
+    "MAX_OPTIONS",
+    "StudentCustomFieldError",
+    "active_custom_field_definitions",
+    "custom_field_values_from_import_row",
+    "normalize_custom_field_values",
+    "normalize_string_list",
+    "validate_definition_headers",
     "RegistrationApprovalError",
     "RegistrationApprovalNotice",
     "RegistrationApprovalResult",

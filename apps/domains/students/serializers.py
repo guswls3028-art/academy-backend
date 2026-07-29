@@ -2,7 +2,20 @@
 
 from rest_framework import serializers
 
-from apps.domains.students.models import Student, Tag, StudentRegistrationRequest
+from apps.domains.students.models import (
+    Student,
+    StudentCustomFieldDefinition,
+    StudentRegistrationRequest,
+    Tag,
+)
+from apps.domains.students.services.custom_fields import (
+    MAX_CUSTOM_FIELDS_PER_TENANT,
+    MAX_OPTIONS,
+    StudentCustomFieldError,
+    normalize_custom_field_values,
+    normalize_string_list,
+    validate_definition_headers,
+)
 from apps.domains.students.services.identity import (
     StudentIdentityError,
     derive_student_omr_code,
@@ -16,6 +29,100 @@ from apps.support.students.serializer_dependencies import (
 )
 
 Enrollment = get_enrollment_model()
+
+
+def _request_tenant(serializer):
+    request = serializer.context.get("request")
+    tenant = getattr(request, "tenant", None) if request else None
+    if tenant is None:
+        raise serializers.ValidationError("Tenant가 resolve되지 않았습니다.")
+    return tenant
+
+
+def _validated_custom_field_values(serializer, value):
+    try:
+        return normalize_custom_field_values(
+            tenant=_request_tenant(serializer),
+            values=value,
+        )
+    except StudentCustomFieldError as exc:
+        raise serializers.ValidationError(exc.detail) from exc
+
+
+class StudentCustomFieldDefinitionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StudentCustomFieldDefinition
+        fields = [
+            "id",
+            "key",
+            "label",
+            "field_type",
+            "aliases",
+            "options",
+            "position",
+            "is_active",
+            "created_by",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "key", "created_by", "created_at", "updated_at"]
+
+    def validate(self, attrs):
+        tenant = _request_tenant(self)
+        instance = self.instance
+        label = str(attrs.get("label", getattr(instance, "label", "")) or "").strip()
+        if not label:
+            raise serializers.ValidationError({"label": "표시명은 필수입니다."})
+
+        try:
+            aliases = normalize_string_list(
+                attrs.get("aliases", getattr(instance, "aliases", [])),
+                field_name="aliases",
+                max_items=20,
+            )
+            field_type = attrs.get(
+                "field_type",
+                getattr(instance, "field_type", StudentCustomFieldDefinition.TEXT),
+            )
+            options = normalize_string_list(
+                attrs.get("options", getattr(instance, "options", [])),
+                field_name="options",
+                max_items=MAX_OPTIONS,
+            )
+            if instance is not None and label != instance.label:
+                aliases = normalize_string_list(
+                    [*aliases, instance.label],
+                    field_name="aliases",
+                    max_items=20,
+                )
+            if field_type == StudentCustomFieldDefinition.SELECT and not options:
+                raise StudentCustomFieldError(
+                    {"options": "선택 타입은 한 개 이상의 선택지가 필요합니다."}
+                )
+            if field_type != StudentCustomFieldDefinition.SELECT:
+                options = []
+            validate_definition_headers(
+                tenant=tenant,
+                label=label,
+                aliases=aliases,
+                exclude_definition_id=instance.id if instance else None,
+            )
+        except StudentCustomFieldError as exc:
+            raise serializers.ValidationError(exc.detail) from exc
+
+        if (
+            instance is None
+            and StudentCustomFieldDefinition.objects.filter(tenant=tenant).count()
+            >= MAX_CUSTOM_FIELDS_PER_TENANT
+        ):
+            raise serializers.ValidationError(
+                {"detail": f"사용자 정의 컬럼은 최대 {MAX_CUSTOM_FIELDS_PER_TENANT}개입니다."}
+            )
+
+        attrs["label"] = label
+        attrs["aliases"] = aliases
+        attrs["options"] = options
+        return attrs
 
 
 class TagSerializer(serializers.ModelSerializer):
@@ -59,7 +166,7 @@ class StudentListSerializer(serializers.ModelSerializer):
             "phone", "parent_phone", "uses_identifier", "parent",
             "elementary_school", "high_school", "high_school_class", "major",
             "middle_school", "origin_middle_school",
-            "memo", "address", "is_managed", "deleted_at",
+            "memo", "address", "custom_fields", "is_managed", "deleted_at",
             "created_at", "updated_at",
             # computed
             "tags", "enrollments", "is_enrolled", "profile_photo_url",
@@ -158,7 +265,7 @@ class StudentDetailSerializer(serializers.ModelSerializer):
             "phone", "parent_phone", "uses_identifier", "parent",
             "elementary_school", "high_school", "high_school_class", "major",
             "middle_school", "origin_middle_school",
-            "memo", "address", "is_managed", "deleted_at",
+            "memo", "address", "custom_fields", "is_managed", "deleted_at",
             "created_at", "updated_at",
             # computed
             "tags", "enrollments", "profile_photo_url",
@@ -203,7 +310,11 @@ class StudentBulkItemSerializer(serializers.Serializer):
     major = serializers.CharField(allow_blank=True, default="", required=False, max_length=100)
     grade = serializers.IntegerField(allow_null=True, required=False)
     memo = serializers.CharField(allow_blank=True, default="", required=False, max_length=500)
+    custom_fields = serializers.DictField(required=False, default=dict)
     is_managed = serializers.BooleanField(default=True, required=False)
+
+    def validate_custom_fields(self, value):
+        return _validated_custom_field_values(self, value)
 
     def validate_phone(self, value):
         # 학생 전화번호는 선택사항
@@ -228,6 +339,7 @@ class StudentBulkCreateSerializer(serializers.Serializer):
 
 
 class StudentCreateSerializer(serializers.ModelSerializer):
+    custom_fields = serializers.DictField(required=False, default=dict)
     initial_password = serializers.CharField(
         write_only=True,
         required=True,
@@ -265,6 +377,9 @@ class StudentCreateSerializer(serializers.ModelSerializer):
             )
         except StudentIdentityError as exc:
             raise serializers.ValidationError(exc.detail.get("parent_phone", str(exc.detail))) from exc
+
+    def validate_custom_fields(self, value):
+        return _validated_custom_field_values(self, value)
 
     class Meta:
         model = Student
@@ -370,6 +485,8 @@ class StudentCreateSerializer(serializers.ModelSerializer):
 
 
 class StudentUpdateSerializer(serializers.ModelSerializer):
+    custom_fields = serializers.DictField(required=False)
+
     class Meta:
         model = Student
         fields = [
@@ -391,6 +508,7 @@ class StudentUpdateSerializer(serializers.ModelSerializer):
             "origin_middle_school",
             "memo",
             "address",
+            "custom_fields",
             "is_managed",
         ]
         read_only_fields = ("id", "omr_code")
@@ -457,6 +575,9 @@ class StudentUpdateSerializer(serializers.ModelSerializer):
                 )
 
         return attrs
+
+    def validate_custom_fields(self, value):
+        return _validated_custom_field_values(self, value)
 
 
 # ========== 학생 가입 신청 (로그인 전 회원가입) ==========

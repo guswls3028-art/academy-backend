@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Student, Tag, StudentTag
+from .models import Student, StudentCustomFieldDefinition, Tag, StudentTag
 
 
 class TenantScopedAdmin(admin.ModelAdmin):
@@ -67,6 +67,22 @@ class TagAdmin(TenantScopedAdmin):
     list_display = ("id", "tenant", "name", "color")
     list_filter = ("tenant",)
     search_fields = ("name",)
+
+
+@admin.register(StudentCustomFieldDefinition)
+class StudentCustomFieldDefinitionAdmin(TenantScopedAdmin):
+    list_display = (
+        "id",
+        "tenant",
+        "key",
+        "label",
+        "field_type",
+        "position",
+        "is_active",
+    )
+    list_filter = ("tenant", "field_type", "is_active")
+    search_fields = ("key", "label")
+    readonly_fields = ("key", "created_by")
 
 
 @admin.register(StudentTag)

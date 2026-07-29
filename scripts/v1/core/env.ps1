@@ -1,5 +1,5 @@
-﻿# .env 는 스크립트에서 로드하지 않음. AWS·Cloudflare(클플) 인증은 Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키를 환경변수로 넣어 배포·검증·인증을 진행한다.
-# Cursor(에이전트)가 루트 .env를 열람해 환경변수로 설정한 뒤 스크립트를 실행한다. 이 파일은 Assert-AwsCredentials 등 공통 함수만 제공. Load-EnvFile 은 사용하지 않음.
+﻿# AWS/Cloudflare credentials are supplied by the caller through the intended profile or process environment; this script does not load backend/.env.
+# Use the caller-provided profile or process environment; never print credential values.
 $ErrorActionPreference = "Stop"
 $script:EnvLoaded = $false
 
@@ -54,11 +54,30 @@ function Assert-AwsCredentials {
         $msg = @"
 AWS 자격 증명이 없거나 만료되었습니다.
   - 호출 전에 루트 .env의 AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION 을 환경변수로 설정해 주세요.
-  - Cursor에서 배포 시: 에이전트가 .env를 열람해 환경변수로 등록한 뒤 스크립트를 실행합니다.
+  - 로컬 수동 배포: `-AwsProfile default` 또는 의도한 process environment를 사용합니다.
   - 프로파일 사용 시: -AwsProfile <이름> 으로 실행하세요.
 "@
         throw $msg
     }
     $id = $out | ConvertFrom-Json
+    return $id
+}
+
+function Assert-AwsMutationIdentity {
+    param(
+        [object]$Identity = $null,
+        [string]$RepoRoot = (Get-RepoRoot)
+    )
+    $id = if ($Identity) { $Identity } else { Assert-AwsCredentials -RepoRoot $RepoRoot }
+    $arn = [string]$id.Arn
+    if (-not $arn) {
+        throw "AWS mutation identity is missing an ARN."
+    }
+    if ($arn -match '^arn:aws:iam::[0-9]{12}:root$') {
+        throw (
+            "AWS mutation is blocked for account root credentials. " +
+            "Use the GitHub OIDC deployment role or a dedicated least-privilege AWS profile."
+        )
+    }
     return $id
 }

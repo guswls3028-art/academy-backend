@@ -4,6 +4,7 @@ from django.urls import path
 from rest_framework.routers import DefaultRouter
 from .views import (
     StudentViewSet,
+    StudentCustomFieldDefinitionViewSet,
     TagViewSet,
     RegistrationRequestViewSet,
     StudentPasswordFindRequestView,
@@ -21,6 +22,11 @@ router = DefaultRouter()
 
 # 🔥 basename 명시 (queryset 없는 ViewSet 대응)
 router.register(r"tags", TagViewSet, basename="student-tag")
+router.register(
+    r"custom-fields",
+    StudentCustomFieldDefinitionViewSet,
+    basename="student-custom-field",
+)
 router.register(r"registration_requests", RegistrationRequestViewSet, basename="student-registration-request")
 router.register(r"", StudentViewSet, basename="student")
 

@@ -822,15 +822,86 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # ============================================================
-  # Phase 3: Isolated preprod server (before any production mutation)
+  # Phase 3: Persistent isolated development review (before preprod/production)
   # ============================================================
-  verify-api-preprod:
-    name: Verify candidate on isolated API preprod server
+  verify-api-development:
+    name: Verify candidate on persistent isolated development runtime
     runs-on: ubuntu-latest
     needs: [detect-changes, build-and-push]
     if: |
       always() &&
-      needs.build-and-push.result == 'success'
+      needs.build-and-push.result == 'success' &&
+      (
+        needs.detect-changes.outputs.build_api == 'true' ||
+        needs.detect-changes.outputs.build_tools == 'true' ||
+        needs.detect-changes.outputs.force_full == 'true'
+      )
+    steps:
+      - name: Checkout deployment scripts
+        uses: actions/checkout@v6
+
+      - name: Download exact release candidate
+        uses: actions/download-artifact@v8
+        with:
+          name: ci-build-report
+          path: /tmp/api-development-candidate
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
+          aws-region: ${{ env.AWS_REGION }}
+          action-timeout-s: 180
+
+      - name: Publish release-bound isolated development environment
+        id: development-env
+        shell: pwsh
+        run: |
+          ./scripts/v1/publish-api-development-env.ps1 `
+            -ReleaseId "${{ env.RELEASE_IMAGE_TAG }}" `
+            -GithubOutputPath $env:GITHUB_OUTPUT `
+            -Ci
+
+      - name: Blue/green candidate review on persistent development runtime
+        shell: pwsh
+        run: |
+          python3 scripts/v1/deployment_lock.py renew `
+            --owner "$env:ACADEMY_DEPLOY_LOCK_OWNER" `
+            --ttl-seconds 10800
+          $candidate = Get-Content `
+            /tmp/api-development-candidate/release-manifest.candidate.json `
+            -Raw | ConvertFrom-Json
+          $apiDigest = [string]$candidate.images.'academy-api'.digest
+          $toolsDigest = [string]$candidate.images.'academy-tools-worker'.digest
+          if ($apiDigest -notmatch '^sha256:[0-9a-f]{64}$') {
+            throw "Invalid API digest in release candidate: $apiDigest"
+          }
+          if ($toolsDigest -notmatch '^sha256:[0-9a-f]{64}$') {
+            throw "Invalid Tools digest in release candidate: $toolsDigest"
+          }
+          ./scripts/v1/deploy-api-development.ps1 `
+            -ApiImageUri "${{ env.ECR_REGISTRY }}/academy-api@$apiDigest" `
+            -ToolsImageUri "${{ env.ECR_REGISTRY }}/academy-tools-worker@$toolsDigest" `
+            -ExpectedEnvVersion "${{ steps.development-env.outputs.parameter_version }}" `
+            -ExpectedWorkersEnvVersion "${{ steps.development-env.outputs.workers_parameter_version }}" `
+            -ExpectedReleaseId "${{ steps.development-env.outputs.release_id }}" `
+            -ExpectedProductionDatabaseName "${{ steps.development-env.outputs.production_database_name }}" `
+            -Ci
+
+  # ============================================================
+  # Phase 4: Isolated preprod server (before any production mutation)
+  # ============================================================
+  verify-api-preprod:
+    name: Verify candidate on isolated API preprod server
+    runs-on: ubuntu-latest
+    needs: [detect-changes, build-and-push, verify-api-development]
+    if: |
+      always() &&
+      needs.build-and-push.result == 'success' &&
+      (
+        needs.verify-api-development.result == 'success' ||
+        needs.verify-api-development.result == 'skipped'
+      )
     steps:
       - name: Checkout deployment scripts
         uses: actions/checkout@v6
@@ -862,7 +933,7 @@ jobs:
             -Ci
 
   # ============================================================
-  # Phase 4: Production database migrations (after preprod passed)
+  # Phase 5: Production database migrations (after development and preprod passed)
   # ============================================================
   run-migrations:
     name: Run database migrations
@@ -2189,7 +2260,7 @@ jobs:
   release-production-lock:
     name: Release shared production mutation lock
     runs-on: ubuntu-latest
-    needs: [acquire-production-lock, verify-release-freshness, verify-runtime-iam, build-and-push, verify-api-preprod, run-migrations, deploy-api, deploy-messaging, deploy-ai, deploy-tools, deploy-video, verify-deployment]
+    needs: [acquire-production-lock, verify-release-freshness, verify-runtime-iam, build-and-push, verify-api-development, verify-api-preprod, run-migrations, deploy-api, deploy-messaging, deploy-ai, deploy-tools, deploy-video, verify-deployment]
     if: always() && needs.acquire-production-lock.result == 'success'
     steps:
       - name: Checkout lock helper
@@ -2216,7 +2287,7 @@ jobs:
   notify-on-failure:
     name: Notify on failure
     runs-on: ubuntu-latest
-    needs: [detect-changes, run-lint, run-tests, acquire-production-lock, verify-release-freshness, verify-runtime-iam, build-and-push, verify-api-preprod, run-migrations, deploy-api, deploy-messaging, deploy-ai, deploy-tools, deploy-video, verify-deployment, release-production-lock]
+    needs: [detect-changes, run-lint, run-tests, acquire-production-lock, verify-release-freshness, verify-runtime-iam, build-and-push, verify-api-development, verify-api-preprod, run-migrations, deploy-api, deploy-messaging, deploy-ai, deploy-tools, deploy-video, verify-deployment, release-production-lock]
     if: always() && contains(needs.*.result, 'failure')
     steps:
       - name: Configure AWS credentials (OIDC)
@@ -2229,7 +2300,7 @@ jobs:
       - name: Publish SNS alert
         run: |
           FAILED_JOBS=""
-          for j in run-lint run-tests acquire-production-lock verify-release-freshness verify-runtime-iam build-and-push verify-api-preprod run-migrations deploy-api deploy-messaging deploy-ai deploy-tools deploy-video verify-deployment release-production-lock; do
+          for j in run-lint run-tests acquire-production-lock verify-release-freshness verify-runtime-iam build-and-push verify-api-development verify-api-preprod run-migrations deploy-api deploy-messaging deploy-ai deploy-tools deploy-video verify-deployment release-production-lock; do
             R=$(echo '${{ toJson(needs) }}' | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('$j', {}).get('result',''))")
             if [ "$R" = "failure" ]; then
               FAILED_JOBS="${FAILED_JOBS}${j} "

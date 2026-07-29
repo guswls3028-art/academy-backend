@@ -491,6 +491,12 @@ def parse_student_excel_file(local_path: str) -> tuple[list[dict[str, Any]], str
     school_col = col.get("school")
     grade_col = col.get("grade")
     remark_col = col.get("remark")
+    mapped_indices = {index for index in col.values() if index is not None}
+    extra_headers = [
+        (index, str(value or "").strip())
+        for index, value in enumerate(header_row)
+        if index not in mapped_indices and str(value or "").strip()
+    ]
 
     result: list[dict[str, Any]] = []
     validation_errors: list[dict[str, Any]] = []
@@ -548,6 +554,12 @@ def parse_student_excel_file(local_path: str) -> tuple[list[dict[str, Any]], str
         grade = grade_parsed or grade_cell
         school_type = _infer_school_type(school)
 
+        extra_columns: dict[str, str] = {}
+        for index, header in extra_headers:
+            value = _cell_str(row, index)
+            if value and header not in extra_columns:
+                extra_columns[header] = value
+
         result.append({
             "name": name,
             "parent_phone": parent_final,
@@ -562,6 +574,7 @@ def parse_student_excel_file(local_path: str) -> tuple[list[dict[str, Any]], str
             "gender": _cell_str(row, col.get("gender")).upper()[:1] or None,
             "uses_identifier": uses_identifier,
             "high_school_class": _cell_str(row, col.get("school_class")),
+            "_extra_columns": extra_columns,
         })
 
     if validation_errors:

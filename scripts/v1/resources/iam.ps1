@@ -1,5 +1,5 @@
 ﻿# IAM: Batch roles + instance profile. Uses v1/templates/iam.
-# AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키 사용. 배포·검증 시 에이전트가 환경변수로 설정한 뒤 호출.
+# AWS/Cloudflare credentials are supplied by the caller through the intended profile or process environment; this script does not load backend/.env.
 $ErrorActionPreference = "Stop"
 $IamDir = $PSScriptRoot
 $V4Root = (Resolve-Path (Join-Path $IamDir "..")).Path
@@ -13,6 +13,7 @@ $ExecutionRoleName = "academy-batch-ecs-task-execution-role"
 $ApiPreprodCanaryRoleName = "academy-api-preprod-canary-role"
 $ApiPreprodCanaryProfileName = "academy-api-preprod-canary"
 $ApiPreprodCanaryPolicyName = "academy-api-preprod-canary-runtime"
+$ApiDevelopmentPolicyName = "academy-api-development-runtime"
 
 function Get-ASGInstanceRefreshResourceArn {
     param([string]$AutoScalingGroupName)
@@ -142,6 +143,164 @@ function Ensure-ApiPreprodCanaryIAM {
     }
     Write-Ok "API preprod canary IAM is dedicated and least-privilege."
     return $ApiPreprodCanaryProfileName
+}
+
+function Ensure-ApiDevelopmentIAM {
+    if ($script:PlanMode) { return $script:ApiDevelopmentInstanceProfileName }
+    Write-Step "Ensure isolated persistent API development IAM"
+
+    $roleName = [string]$script:ApiDevelopmentRoleName
+    $profileName = [string]$script:ApiDevelopmentInstanceProfileName
+    if (-not $roleName -or -not $profileName) {
+        throw "API development role/profile names are missing from SSOT."
+    }
+    $trustPath = Join-Path $TemplatesPath "trust_ec2.json"
+    if (-not (Test-Path -LiteralPath $trustPath)) {
+        throw "EC2 trust policy template not found: $trustPath"
+    }
+    $trustRef = "file://$($trustPath -replace '\\','/')"
+    $role = Invoke-AwsJson @("iam", "get-role", "--role-name", $roleName, "--output", "json")
+    if (-not $role) {
+        Invoke-Aws @(
+            "iam", "create-role",
+            "--role-name", $roleName,
+            "--assume-role-policy-document", $trustRef
+        ) -ErrorMessage "create API development role" | Out-Null
+        $script:ChangesMade = $true
+    } else {
+        Invoke-Aws @(
+            "iam", "update-assume-role-policy",
+            "--role-name", $roleName,
+            "--policy-document", $trustRef
+        ) -ErrorMessage "update API development trust policy" | Out-Null
+    }
+
+    Invoke-Aws @(
+        "iam", "attach-role-policy",
+        "--role-name", $roleName,
+        "--policy-arn", "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+    ) -ErrorMessage "attach SSM core to API development role" | Out-Null
+
+    $runtimePolicy = [ordered]@{
+        Version = "2012-10-17"
+        Statement = @(
+            [ordered]@{Sid="EcrAuth";Effect="Allow";Action="ecr:GetAuthorizationToken";Resource="*"},
+            [ordered]@{
+                Sid = "DevelopmentImagePull"
+                Effect = "Allow"
+                Action = @("ecr:BatchCheckLayerAvailability","ecr:BatchGetImage","ecr:GetDownloadUrlForLayer")
+                Resource = @(
+                    "arn:aws:ecr:$($script:Region):$($script:AccountId):repository/$($script:EcrApiRepo)",
+                    "arn:aws:ecr:$($script:Region):$($script:AccountId):repository/$($script:EcrToolsRepo)"
+                )
+            },
+            [ordered]@{
+                Sid = "DevelopmentEnvRead"
+                Effect = "Allow"
+                Action = "ssm:GetParameter"
+                Resource = @(
+                    "arn:aws:ssm:$($script:Region):$($script:AccountId):parameter/academy/api/development/env",
+                    "arn:aws:ssm:$($script:Region):$($script:AccountId):parameter/academy/workers/development/env"
+                )
+            },
+            [ordered]@{
+                Sid = "DevelopmentQueueAccess"
+                Effect = "Allow"
+                Action = @(
+                    "sqs:GetQueueUrl",
+                    "sqs:GetQueueAttributes",
+                    "sqs:SendMessage",
+                    "sqs:ReceiveMessage",
+                    "sqs:DeleteMessage",
+                    "sqs:ChangeMessageVisibility"
+                )
+                Resource = @(
+                    "arn:aws:sqs:$($script:Region):$($script:AccountId):$($script:ApiDevelopmentAiQueueName)",
+                    "arn:aws:sqs:$($script:Region):$($script:AccountId):$($script:ApiDevelopmentToolsQueueName)",
+                    "arn:aws:sqs:$($script:Region):$($script:AccountId):$($script:ApiDevelopmentMessagingQueueName)"
+                )
+            }
+        )
+    }
+    $runtimePolicyJson = $runtimePolicy | ConvertTo-Json -Depth 20 -Compress
+    $runtimePolicyRef = Convert-JsonArgToFileRef $runtimePolicyJson
+    $runtimePolicyFile = $runtimePolicyRef -replace '^file://', ''
+    try {
+        Invoke-Aws @(
+            "iam", "put-role-policy",
+            "--role-name", $roleName,
+            "--policy-name", $ApiDevelopmentPolicyName,
+            "--policy-document", $runtimePolicyRef
+        ) -ErrorMessage "put API development runtime policy" | Out-Null
+    } finally {
+        Remove-TempFiles @($runtimePolicyFile)
+    }
+
+    $profile = Invoke-AwsJson @(
+        "iam", "get-instance-profile",
+        "--instance-profile-name", $profileName,
+        "--output", "json"
+    )
+    if (-not $profile) {
+        Invoke-Aws @(
+            "iam", "create-instance-profile",
+            "--instance-profile-name", $profileName
+        ) -ErrorMessage "create API development instance profile" | Out-Null
+        Invoke-Aws @(
+            "iam", "add-role-to-instance-profile",
+            "--instance-profile-name", $profileName,
+            "--role-name", $roleName
+        ) -ErrorMessage "attach API development role to profile" | Out-Null
+        $script:ChangesMade = $true
+    } else {
+        $roles = @($profile.InstanceProfile.Roles)
+        $unexpected = @($roles | Where-Object { $_.RoleName -ne $roleName })
+        if ($unexpected.Count -gt 0) {
+            throw "API development profile contains an unexpected role."
+        }
+        if (-not ($roles | Where-Object { $_.RoleName -eq $roleName })) {
+            Invoke-Aws @(
+                "iam", "add-role-to-instance-profile",
+                "--instance-profile-name", $profileName,
+                "--role-name", $roleName
+            ) -ErrorMessage "attach API development role to profile" | Out-Null
+            $script:ChangesMade = $true
+        }
+    }
+
+    $readback = Invoke-AwsJson @(
+        "iam", "get-role-policy",
+        "--role-name", $roleName,
+        "--policy-name", $ApiDevelopmentPolicyName,
+        "--output", "json"
+    )
+    $actualJson = $readback.PolicyDocument | ConvertTo-Json -Depth 20 -Compress
+    if ($actualJson -ne $runtimePolicyJson) {
+        throw "API development IAM readback mismatch."
+    }
+    $attached = Invoke-AwsJson @(
+        "iam", "list-attached-role-policies",
+        "--role-name", $roleName,
+        "--output", "json"
+    )
+    $attachedArns = @($attached.AttachedPolicies | ForEach-Object { [string]$_.PolicyArn } | Sort-Object -Unique)
+    if (
+        $attachedArns.Count -ne 1 -or
+        $attachedArns[0] -ne "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+    ) {
+        throw "API development role has unexpected managed policies."
+    }
+    $inline = Invoke-AwsJson @(
+        "iam", "list-role-policies",
+        "--role-name", $roleName,
+        "--output", "json"
+    )
+    $inlineNames = @($inline.PolicyNames | Sort-Object -Unique)
+    if ($inlineNames.Count -ne 1 -or $inlineNames[0] -ne $ApiDevelopmentPolicyName) {
+        throw "API development role has unexpected inline policies."
+    }
+    Write-Ok "API development IAM is dedicated and least-privilege."
+    return $profileName
 }
 
 function Legacy-GitHubActionsDeployIAM {

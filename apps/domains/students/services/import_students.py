@@ -21,6 +21,11 @@ from academy.adapters.db.django import repositories_enrollment as enroll_repo
 from academy.adapters.db.django import repositories_students as student_repo
 
 from .creation import create_student_account
+from .custom_fields import (
+    StudentCustomFieldError,
+    active_custom_field_definitions,
+    custom_field_values_from_import_row,
+)
 from .identity import (
     StudentIdentityError,
     derive_student_omr_code,
@@ -137,8 +142,10 @@ def _validate_school_level(
 
 def _normalize_import_row(
     *,
+    tenant,
     raw: dict[str, Any],
     valid_school_types: frozenset[str],
+    custom_field_definitions=None,
 ) -> _NormalizedImportRow:
     name = str(raw.get("name") or "").strip()
     if not name:
@@ -172,6 +179,18 @@ def _normalize_import_row(
     gender = str(raw.get("gender") or "").strip().upper()[:1] or None
     if gender not in ("M", "F", None):
         gender = None
+    try:
+        custom_fields = custom_field_values_from_import_row(
+            tenant=tenant,
+            row=raw,
+            definitions=custom_field_definitions,
+        )
+    except StudentCustomFieldError as exc:
+        if isinstance(exc.detail, dict) and exc.detail:
+            detail = str(next(iter(exc.detail.values())))
+        else:
+            detail = str(exc.detail)
+        raise StudentImportRowError(detail) from exc
 
     base_profile = {
         "name": name,
@@ -187,6 +206,7 @@ def _normalize_import_row(
         "major": major,
         "grade": grade,
         "memo": str(raw.get("memo") or "").strip() or None,
+        "custom_fields": custom_fields,
         "is_managed": raw.get("is_managed", True),
     }
     restore_data = {
@@ -227,6 +247,7 @@ def resolve_student_import_row(
     *,
     identity_policy: StudentImportIdentityPolicy = "phone_if_available",
     valid_school_types: frozenset[str] | None = None,
+    custom_field_definitions=None,
 ) -> StudentImportRowResolution:
     """Resolve one imported row to an active student in one tenant."""
     initial_password = (initial_password or "").strip()
@@ -234,8 +255,10 @@ def resolve_student_import_row(
         raise ValueError("initial_password는 4자 이상이어야 합니다.")
 
     normalized = _normalize_import_row(
+        tenant=tenant,
         raw=row,
         valid_school_types=valid_school_types or student_import_valid_school_types(tenant),
+        custom_field_definitions=custom_field_definitions,
     )
 
     existing = student_repo.student_filter_tenant_name_parent_phone_active(
@@ -372,6 +395,7 @@ def import_students_from_rows(
     total = len(students_data)
     skipped_empty = 0
     valid_school_types = student_import_valid_school_types(tenant)
+    custom_field_definitions = active_custom_field_definitions(tenant)
 
     for row_index, raw in enumerate(students_data, start=1):
         if on_row_progress and total > 0:
@@ -393,6 +417,7 @@ def import_students_from_rows(
                 row_password,
                 identity_policy="phone_if_available",
                 valid_school_types=valid_school_types,
+                custom_field_definitions=custom_field_definitions,
             )
         except StudentImportRowError as exc:
             failed.append({
@@ -511,6 +536,7 @@ def resolve_student_import_conflicts(
     created_students: list[Any] = []
     parent_password_by_phone: dict[str, str] = {}
     valid_school_types = student_import_valid_school_types(tenant)
+    custom_field_definitions = active_custom_field_definitions(tenant)
 
     for resolution in resolutions:
         item = resolution if isinstance(resolution, dict) else {}
@@ -546,10 +572,36 @@ def resolve_student_import_conflicts(
                 continue
 
             if action == "restore":
+                existing_school = (
+                    deleted_student.elementary_school
+                    or deleted_student.middle_school
+                    or deleted_student.high_school
+                    or ""
+                )
+                restoration_row = {
+                    "name": deleted_student.name,
+                    "parent_phone": deleted_student.parent_phone,
+                    "phone": deleted_student.phone,
+                    "uses_identifier": deleted_student.uses_identifier,
+                    "gender": deleted_student.gender,
+                    "school_type": deleted_student.school_type,
+                    "school": existing_school,
+                    "high_school_class": deleted_student.high_school_class,
+                    "major": deleted_student.major,
+                    "grade": deleted_student.grade,
+                    "memo": deleted_student.memo,
+                    **student_data,
+                }
+                normalized = _normalize_import_row(
+                    tenant=tenant,
+                    raw=restoration_row,
+                    valid_school_types=valid_school_types,
+                    custom_field_definitions=custom_field_definitions,
+                )
                 restore_student(
                     deleted_student,
                     tenant=tenant,
-                    profile_data=student_data,
+                    profile_data=normalized.restore_data,
                 )
                 restored_count += 1
                 continue
@@ -565,6 +617,7 @@ def resolve_student_import_conflicts(
                     initial_password,
                     identity_policy="phone_if_available",
                     valid_school_types=valid_school_types,
+                    custom_field_definitions=custom_field_definitions,
                 )
             if resolved.created:
                 created_count += 1

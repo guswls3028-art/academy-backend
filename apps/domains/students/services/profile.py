@@ -62,6 +62,7 @@ PROFILE_FIELDS = {
     "high_school_class",
     "major",
     "memo",
+    "custom_fields",
     "is_managed",
     "uses_identifier",
 }
@@ -206,7 +207,19 @@ def update_student_profile(
         if field not in data:
             continue
         value = data[field]
-        if field in PHONE_FIELDS:
+        if field == "custom_fields":
+            if not isinstance(value, dict):
+                raise StudentProfileUpdateError(
+                    {"custom_fields": "객체 형식이어야 합니다."}
+                )
+            merged = dict(student.custom_fields or {})
+            for key, custom_value in value.items():
+                if custom_value is None:
+                    merged.pop(str(key), None)
+                else:
+                    merged[str(key)] = custom_value
+            value = merged
+        elif field in PHONE_FIELDS:
             value = normalize_phone(value, required=(field == "parent_phone"), field_label=("학부모 전화번호" if field == "parent_phone" else "전화번호"))
             if field == "parent_phone" and not value:
                 continue

@@ -112,6 +112,10 @@ CI에는 런타임 역할 정책 쓰기 권한을 주지 않으며, 정확한
 
 ## 주의
 
+상시 개발 런타임의 최초 구성, 경계, 접속, 개발→preprod→운영 순서는
+`docs/operations/persistent-development-runtime.md`가 정본이다. AWS 계정 루트 키로
+mutation 스크립트를 실행할 수 없으며 일반 CI 배포는 GitHub OIDC 역할을 사용한다.
+
 - **PruneLegacy**: 계정 전체나 `academy-*` 이름을 스캔하지 않는다. `core/ssot.ps1`의 명시적 폐기 allowlist와 일치하는 리소스만 후보가 되며, 실행 전 `-Plan -PruneLegacy`로 후보를 확인한다. 실제 삭제는 `-PruneLegacy`를 별도 수동 실행할 때만 발생한다.
 
 ---

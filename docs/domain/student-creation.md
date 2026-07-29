@@ -1,8 +1,8 @@
 # 학생 생성 SSOT
 
 **상태:** Active  
-**최종 점검:** 2026-07-27
-**코드 기준:** `apps/domains/students/services/creation.py`, `apps/domains/students/services/registration_approval.py`, `apps/domains/students/services/import_students.py`, `apps/domains/students/services/import_passwords.py`, `apps/domains/students/views/student_views.py`, `apps/domains/students/views/registration_views.py`, `apps/domains/students/services/lecture_enroll.py`, `apps/domains/students/services/bulk_from_excel.py`
+**최종 점검:** 2026-07-29
+**코드 기준:** `apps/domains/students/services/creation.py`, `apps/domains/students/services/registration_approval.py`, `apps/domains/students/services/import_students.py`, `apps/domains/students/services/import_passwords.py`, `apps/domains/students/services/custom_fields.py`, `apps/domains/students/views/student_views.py`, `apps/domains/students/views/registration_views.py`, `apps/domains/students/services/lecture_enroll.py`, `apps/domains/students/services/bulk_from_excel.py`
 
 ## 1. 책임 경계
 
@@ -34,6 +34,14 @@ Excel/import/JSON bulk row orchestration SSOT는 `import_students_from_rows()`, 
 Excel 신규 학생 초기 비밀번호 정책 SSOT는 `build_student_import_password_policy()`다. `fixed`는 공통 4자 이상 비밀번호, `phone_last4`는 실제 학생 전화번호 뒤 4자리, `random`은 학생별 4자리 랜덤 비밀번호를 사용한다. `phone_last4`는 학생 전화번호가 없거나 자동 식별자를 사용한 행이 하나라도 있으면 생성 전에 전체 작업을 차단한다. 모든 Excel 신규 계정은 첫 로그인에서 비밀번호 변경이 필요하다. `fixed` 입력값과 `random` 결과는 서버 비밀키로 암호화해 AI job/result DB에 저장하고, 작업 종료 시 입력값은 제거한다. 랜덤 결과는 스태프 전용 tenant-scoped 상태 조회에서 완료 후 한 시간 동안만 복호화하며 Redis에는 평문을 캐시하지 않는다. 학생 생성과 암호화된 작업 완료 결과는 같은 DB 트랜잭션으로 커밋한다.
 
 Excel 파서의 학생 행 판별은 유효한 학부모/학생 전화번호가 있으면 이름 50자까지 허용한다. 긴 이름을 무조건 비학생 행으로 버리면 실제 외국 이름, 관리 접두어, QA 태그가 있는 정상 행이 `등록할 학생 데이터가 없습니다.`로 실패할 수 있다.
+
+테넌트 맞춤 학생 컬럼은 `StudentCustomFieldDefinition`의 안정적인 `key`와
+`Student.custom_fields` JSON 값으로 저장한다. Excel 파서는 기존 핵심 헤더를
+먼저 매핑하고, 나머지 헤더/값을 `_extra_columns`로 import 서비스까지
+전달한다. import 서비스만 현재 테넌트의 활성 컬럼 라벨/별칭을 해석한다.
+정의 이름을 바꾸면 이전 이름은 별칭으로 남으며, 컬럼 숨김은 기존 값을
+삭제하지 않는다. 맞춤 컬럼이 없는 테넌트의 기존 Excel/JSON 계약은
+변경되지 않는다.
 
 알림톡 outbox화와 단건 생성 duplicate response shape 수렴은 별도 슬라이스다.
 
@@ -71,6 +79,9 @@ Excel 파서의 학생 행 판별은 유효한 학부모/학생 전화번호가 
 - admin/teacher Excel 업로드는 `phone_last4`를 기본으로 표시하고 `fixed`, `random`을 선택할 수 있다.
 - teacher 모바일 Excel 업로드도 파일 선택 직후 즉시 업로드하지 않는다. `StudentListPage`의 Excel import bottom sheet에서 초기 비밀번호 방식을 명시 확정한 뒤 shared upload contract를 호출한다.
 - `random` 작업 완료 시 작업박스에서 비밀번호 목록을 자동 다운로드하며, 완료 항목의 `비밀번호 목록` 버튼으로 다시 받을 수 있다.
+- admin의 맞춤 컬럼 관리에서 만든 활성 컬럼은 단건 등록/수정, 목록 컬럼
+  선택, 상세, teacher 모바일, Excel 양식/내보내기에 동일한 안정 키로
+  투영한다.
 
 ## 5. 검증 기준
 
