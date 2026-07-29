@@ -192,9 +192,23 @@ params = connection.get_connection_params().copy()
 params["dbname"] = PREPROD_DB
 preprod = connection.Database.connect(**params)
 reowned = 0
+schema_owner = ""
+schema_usage = False
+schema_create = False
 try:
     preprod.autocommit = True
     with preprod.cursor() as cursor:
+        cursor.execute(
+            sql.SQL("ALTER SCHEMA public OWNER TO {}").format(
+                sql.Identifier(ROLE)
+            )
+        )
+        cursor.execute("REVOKE ALL ON SCHEMA public FROM PUBLIC")
+        cursor.execute(
+            sql.SQL("GRANT USAGE, CREATE ON SCHEMA public TO {}").format(
+                sql.Identifier(ROLE)
+            )
+        )
         cursor.execute(
             """
             SELECT namespace.nspname, relation.relname, relation.relkind
@@ -226,6 +240,18 @@ try:
                 )
             )
             reowned += 1
+        cursor.execute(
+            """
+            SELECT
+                pg_get_userbyid(namespace.nspowner),
+                has_schema_privilege(%s, 'public', 'USAGE'),
+                has_schema_privilege(%s, 'public', 'CREATE')
+            FROM pg_namespace namespace
+            WHERE namespace.nspname = 'public'
+            """,
+            [ROLE, ROLE],
+        )
+        schema_owner, schema_usage, schema_create = cursor.fetchone()
 finally:
     preprod.close()
 
@@ -283,6 +309,9 @@ if (
     or can_create_db
     or can_create_role
     or can_inherit
+    or schema_owner != ROLE
+    or not schema_usage
+    or not schema_create
 ):
     raise SystemExit("dedicated preprod database privilege verification failed")
 
@@ -294,6 +323,9 @@ print(
             "role": ROLE,
             "production_connect": production_connect,
             "preprod_connect": preprod_connect,
+            "public_schema_owner": schema_owner,
+            "public_schema_usage": schema_usage,
+            "public_schema_create": schema_create,
             "objects_reowned": reowned,
         }
     )
@@ -380,5 +412,4 @@ if ($proof -notmatch '"status": "PREPROD_DATABASE_CONVERGED"' -or $proof -notmat
     throw "Preprod database convergence returned no fail-closed privilege proof."
 }
 Write-Host $proof -ForegroundColor Green
-
 

@@ -26,6 +26,9 @@ OIDC_POLICY = (
 OIDC_CONVERGE = (
     REPO_ROOT / "scripts" / "v1" / "converge-api-development-oidc.ps1"
 )
+DATABASE_CONVERGE = (
+    REPO_ROOT / "scripts" / "v1" / "converge-api-preprod-database.ps1"
+)
 
 
 def _job_block(source: str, name: str) -> str:
@@ -70,6 +73,17 @@ def test_development_ssot_is_isolated_and_matches_production_compute() -> None:
         "/academy/r2/development/credentials"
     )
     assert development["r2BucketName"].startswith("academy-development-")
+
+
+def test_isolated_database_role_owns_and_can_migrate_public_schema() -> None:
+    source = DATABASE_CONVERGE.read_text(encoding="utf-8-sig")
+
+    assert "ALTER SCHEMA public OWNER TO" in source
+    assert "REVOKE ALL ON SCHEMA public FROM PUBLIC" in source
+    assert "GRANT USAGE, CREATE ON SCHEMA public TO" in source
+    assert "schema_owner != ROLE" in source
+    assert "not schema_usage" in source
+    assert "not schema_create" in source
 
 
 def test_mutation_entrypoints_reject_account_root_credentials() -> None:
