@@ -11,11 +11,36 @@
 - 비밀번호는 채팅 외 문서·Git·셸 명령·감사 로그에 저장하지 않는다.
 - 가비아 네임서버 위임 전에는 Pages CNAME을 만들지 않는다.
 - 운영 DB에는 코드가 배포된 뒤 `provision_tenant`로 반영한다.
-- 백엔드 배포는 격리 preproduction gate와 ASG 무중단 교체를 통과해야 한다.
+- 백엔드 배포는 상시 격리 development, 임시 격리 preproduction,
+  ASG 무중단 교체를 순서대로 통과해야 한다.
 - 같은 명령을 다시 실행해도 중복 생성되지 않아야 한다.
 
 `setup_three_tenants`는 기존 테넌트 복구용 레거시 명령이다. 신규 온보딩 목록에
 테넌트를 추가하지 않는다.
+
+## 운영자 빠른 실행표
+
+매번 [onboarding-run-sheet.md](onboarding-run-sheet.md)를 테넌트별 메모로
+복사하고 아래 게이트를 위에서부터 실행한다. 작업이 중단되면 첫 번째 미완료
+게이트부터 재개하되, 변경 명령을 반복하기 전에 읽기 전용 확인과 dry-run을 다시
+실행한다.
+
+| 게이트 | 실행 | 통과 증거 |
+|---|---|---|
+| G0 입력 확정 | 코드·ID·도메인·표시명·기간·브랜드 입력 | 비밀정보 없는 입력표 |
+| G1 충돌 확인 | `check_tenants`, 호스트·코드 검색 | 사용할 ID·코드·도메인 확정 |
+| G2 DNS 준비 | Cloudflare zone 생성, NS 1·2차 전달 | zone과 발급 NS |
+| G3 코드 준비 | backend host/origin, frontend 전체 브랜딩 | 로컬 검사와 시각 검증 |
+| G4 위임·배포 | 공용 DNS NS 확인, 양쪽 정식 배포 | 배포 revision과 성공 run |
+| G5 운영 DB | `provision_tenant` dry-run/적용, 구독 dry-run/적용 | tenant/code/domain/만기일 |
+| G6 Pages·HTTPS | apex/`www` Pages·CNAME 활성화 | 두 URL HTTP 200 |
+| G7 대표 계정 | 개발자 콘솔 소유자 탭에서 1회 생성 | 소유자 수와 role `owner` |
+| G8 실제 인계 | 커스텀 도메인 로그인·최초 비밀번호 변경·격리 확인 | owner 화면과 빈 초기 데이터 |
+
+운영 신규 테넌트에는 개발자 콘솔의 목록 화면에 있는 간편 생성 폼을 사용하지
+않는다. 이 폼만으로는 명시적 운영 ID, 양쪽 코드 배포, DNS, 구독, 전체 브랜딩을
+완료할 수 없다. 운영 DB 생성은 G4 이후 범용 `provision_tenant`만 사용하고,
+개발자 콘솔은 G7의 대표 계정 등록에만 사용한다.
 
 ## 1. 입력 시트
 
@@ -180,7 +205,10 @@ Resolve-DnsName -Type NS saebom.com -Server 8.8.8.8
 
 - 백엔드: `.github/workflows/v1-build-and-push-latest.yml`
   - immutable digest 후보
-  - 격리 preproduction DB/health 검증
+  - 상시 격리 development에서 전용 DB·큐·R2, 운영 자원 접근 거부,
+    `/healthz`·`/health`, 이미지 identity, 합성 XLSX/PPT/R2 실사용 smoke
+  - development 통과 후보를 임시 격리 preproduction에서 전용 DB migration,
+    production settings 경계, health, CDN playback으로 검증
   - 운영 migration
   - ASG/ALB health-gated rolling refresh
   - 배포 후 digest·worker·queue·health 확인
@@ -206,9 +234,34 @@ cd C:\academy\backend
 .\scripts\v1\run-api-management-remote.ps1 -Command 'provision_tenant saebom --tenant-id 10 --name "새봄수학" --domain saebom.com --login-title "새봄수학" --login-subtitle "saebom.com" --window-title "새봄수학" --logo-url /tenants/saebom/logo.png --primary-color "#123456"'
 ```
 
-대표 계정은 HTTPS 개발자 콘솔의 테넌트 상세 → Owner 등록에서 만든다. 비밀번호를
-셸 인수로 전달하지 않는다. 신규 owner는 첫 로그인 후 비밀번호 변경이 강제되며,
-감사 로그에는 `password_changed=true`만 기록되고 원문은 저장되지 않는다.
+### 대표 계정 표준 절차
+
+대표 계정은 테넌트·Program·구독이 준비된 뒤 HTTPS 개발자 콘솔에서 만든다.
+`provision_tenant`의 owner 인수나 운영 셸 환경변수는 신규 온보딩의 표준 경로로
+사용하지 않는다.
+
+1. 승인된 플랫폼 운영 계정의 기존 브라우저 세션 또는 비밀 저장소를 사용해
+   `https://dev.hakwonplus.com/dev/tenants/<tenant-id>`로 이동한다. 플랫폼
+   계정 값을 고객에게 다시 요청하거나 작업 기록에 복사하지 않는다.
+2. `소유자` 탭에서 대상 테넌트명·ID와 현재 소유자 수를 먼저 확인한다.
+3. 소유자가 없을 때만 `+ 소유자 추가`를 열고 고객이 전달한 로그인 ID, 임시
+   비밀번호, 표시명, 선택 전화번호를 한 번 입력한다.
+4. 생성 뒤 소유자 수가 1 증가했고 해당 행의 역할이 `소유자`인지 확인한다.
+5. 개발자 콘솔의 `로그인`(임퍼소네이션)이 아니라 별도 탭의 실제 커스텀 도메인
+   `/login`에서 임시 비밀번호로 인증한다.
+6. `/admin` 진입 뒤 `비밀번호 변경` 화면이 나오면 초기 인증 통과다. 최종
+   비밀번호는 대표자가 직접 정하게 인계한다.
+7. 변경 뒤 새 비밀번호로 다시 로그인해 role `owner`, 테넌트 브랜드, 빈 초기
+   학생·강의·성적 목록, 다른 테넌트 데이터 미노출을 확인한다.
+
+기존 소유자 행이 있으면 추가 폼을 다시 제출하지 않는다. 현재 owner 등록 API는
+동일 테넌트·동일 ID가 이미 있을 때 비밀번호가 함께 전달되면 그 계정의 비밀번호를
+강제 재설정한다. 재설정이 목적이라면 별도 승인과 영향 확인 후 수행한다.
+
+신규 owner는 첫 로그인 후 비밀번호 변경이 강제된다. 비밀번호 원문은 문서·Git·
+셸 명령·스크린샷·작업 결과에 기록하지 않고, 감사 로그에는
+`password_changed=true`만 남긴다. 초기 비밀번호 변경 전에는 로그인 인증만
+통과한 상태이며 G8 완료로 표시하지 않는다.
 
 Program 생성 직후에는 이용기간이 비어 있어 로그인 화면에 이용 연장 안내가 뜬다.
 입력 시트에서 확정한 기간으로 공식 구독 명령을 dry-run한 뒤 적용한다. 아래 30일은
@@ -281,6 +334,10 @@ Remove-Item Env:TENANT_AVAILABILITY_URLS
 | tenant required/404 | 운영 DB의 `TenantDomain` apex/`www`와 활성 상태 확인 |
 | 다른 학원 브랜딩 | frontend registry hostname/code/ID 확인 |
 | 다른 학원 데이터 노출 | 즉시 도메인 비활성화 후 tenant isolation incident로 처리 |
+| 소유자 0명 | 대상 tenant ID 재확인 후 개발자 콘솔 소유자 탭에서 1회 생성 |
+| 소유자는 있으나 로그인 실패 | ID를 재생성하지 말고 대상 도메인·테넌트와 계정 활성 상태 확인 |
+| 로그인 후 비밀번호 변경 화면 | 정상 초기 인증 상태. 대표자에게 최종 비밀번호 설정 인계 |
+| 개발자 콘솔 임퍼소네이션만 성공 | 실제 비밀번호·도메인 인증 증거가 아니므로 G8 미완료 |
 
 관련 스크립트:
 
