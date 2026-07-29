@@ -19,5 +19,3 @@ Load-SSOT -Env prod | Out-Null
     -PreprodDatabaseUser $script:ApiDevelopmentDatabaseUser `
     -TimeoutSec $TimeoutSec `
     -AwsProfile $AwsProfile
-
-

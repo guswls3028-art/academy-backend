@@ -42,5 +42,3 @@ Write-Host "Development API tunnel: http://127.0.0.1:$LocalPort -> $instanceId:8
 if ($LASTEXITCODE -ne 0) {
     throw "SSM port-forwarding session failed."
 }
-
-

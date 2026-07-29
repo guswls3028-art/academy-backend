@@ -340,5 +340,3 @@ Write-Host (
     $developmentDatabaseName,
     $developmentDatabaseUser
 ) -ForegroundColor Green
-
-

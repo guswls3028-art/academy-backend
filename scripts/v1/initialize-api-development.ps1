@@ -76,4 +76,3 @@ try {
 } finally {
     Remove-Item -LiteralPath $outputPath -ErrorAction SilentlyContinue
 }
-
