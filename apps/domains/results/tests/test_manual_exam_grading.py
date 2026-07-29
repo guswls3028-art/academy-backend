@@ -1,0 +1,286 @@
+from __future__ import annotations
+
+from django.contrib.auth import get_user_model
+from django.test import TestCase
+
+from apps.core.models import Tenant, TenantMembership
+from apps.domains.enrollment.models import Enrollment
+from apps.domains.exams.models import (
+    Exam,
+    ExamEnrollment,
+    ExamQuestion,
+    Sheet,
+)
+from apps.domains.lectures.models import Lecture, Session
+from apps.domains.results.models import Result, ResultItem
+from apps.domains.results.services.manual_exam_grading import (
+    ManualExamGradingError,
+    apply_manual_grading,
+    build_manual_grading_sheet,
+    plan_manual_grading,
+)
+from apps.domains.students.models import Student
+
+
+User = get_user_model()
+
+
+class ManualExamGradingTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(
+            name="Manual Grading",
+            code="manual-grading",
+            is_active=True,
+        )
+        self.admin = User.objects.create_user(
+            username="manual-grading-admin",
+            password="pw1234",
+            tenant=self.tenant,
+            is_staff=True,
+        )
+        TenantMembership.ensure_active(
+            tenant=self.tenant,
+            user=self.admin,
+            role="admin",
+        )
+        self.lecture = Lecture.objects.create(
+            tenant=self.tenant,
+            title="대수",
+            name="대수",
+            subject="MATH",
+        )
+        self.session = Session.objects.create(
+            lecture=self.lecture,
+            order=1,
+            title="1차시",
+        )
+        student_user = User.objects.create_user(
+            username="manual-grading-student",
+            password="pw1234",
+            tenant=self.tenant,
+        )
+        student = Student.objects.create(
+            tenant=self.tenant,
+            user=student_user,
+            name="김학생",
+            ps_number="MG-001",
+            omr_code="00000001",
+        )
+        self.enrollment = Enrollment.objects.create(
+            tenant=self.tenant,
+            lecture=self.lecture,
+            student=student,
+            status="ACTIVE",
+        )
+
+    def _exam(
+        self,
+        *,
+        grading_mode: str,
+        manual_method: str,
+    ) -> tuple[Exam, ExamQuestion, ExamQuestion]:
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="직접 채점 시험",
+            exam_type=Exam.ExamType.REGULAR,
+            grading_mode=grading_mode,
+            manual_grading_method=manual_method,
+            max_score=100,
+        )
+        exam.sessions.add(self.session)
+        ExamEnrollment.objects.create(
+            exam=exam,
+            enrollment=self.enrollment,
+        )
+        sheet = Sheet.objects.create(
+            exam=exam,
+            total_questions=2,
+            choice_count=1 if grading_mode == Exam.GradingMode.MIXED else 0,
+            essay_count=(
+                1 if grading_mode == Exam.GradingMode.MIXED else 2
+            ),
+        )
+        first = ExamQuestion.objects.create(
+            sheet=sheet,
+            number=1,
+            score=40,
+            question_kind=(
+                ExamQuestion.QuestionKind.CHOICE
+                if grading_mode == Exam.GradingMode.MIXED
+                else ExamQuestion.QuestionKind.ESSAY
+            ),
+        )
+        second = ExamQuestion.objects.create(
+            sheet=sheet,
+            number=2,
+            score=60,
+            question_kind=ExamQuestion.QuestionKind.ESSAY,
+        )
+        return exam, first, second
+
+    def test_correctness_preview_does_not_write_and_publish_keeps_review_semantics(
+        self,
+    ):
+        exam, first, second = self._exam(
+            grading_mode=Exam.GradingMode.WRITTEN,
+            manual_method=Exam.ManualGradingMethod.CORRECTNESS,
+        )
+        sheet = build_manual_grading_sheet(exam=exam, tenant=self.tenant)
+        row = sheet["rows"][0]
+        payload = {
+            "rows": [
+                {
+                    "enrollment_id": self.enrollment.id,
+                    "expected_version": row["expected_version"],
+                    "attendance": "present",
+                    "cells": {
+                        str(first.id): {"state": "review"},
+                        str(second.id): {"state": "incorrect"},
+                    },
+                }
+            ]
+        }
+
+        plan = plan_manual_grading(
+            exam=exam,
+            tenant=self.tenant,
+            payload=payload,
+        )
+
+        self.assertTrue(plan.can_apply, plan.errors)
+        self.assertEqual(plan.rows[0].review_question_numbers, (1,))
+        self.assertEqual(plan.rows[0].wrong_question_numbers, (2,))
+        self.assertEqual(plan.rows[0].total_score, 40.0)
+        self.assertFalse(Result.objects.filter(target_id=exam.id).exists())
+
+        apply_manual_grading(plan=plan)
+
+        result = Result.objects.get(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.enrollment,
+        )
+        self.assertEqual(float(result.total_score), 40.0)
+        review_item = ResultItem.objects.get(result=result, question=first)
+        wrong_item = ResultItem.objects.get(result=result, question=second)
+        self.assertTrue(review_item.is_correct)
+        self.assertTrue(review_item.include_in_wrong_note)
+        self.assertFalse(wrong_item.is_correct)
+        self.assertTrue(wrong_item.include_in_wrong_note)
+
+    def test_score_mode_accepts_partial_score(self):
+        exam, first, second = self._exam(
+            grading_mode=Exam.GradingMode.WRITTEN,
+            manual_method=Exam.ManualGradingMethod.SCORE,
+        )
+        sheet = build_manual_grading_sheet(exam=exam, tenant=self.tenant)
+        plan = plan_manual_grading(
+            exam=exam,
+            tenant=self.tenant,
+            payload={
+                "rows": [
+                    {
+                        "enrollment_id": self.enrollment.id,
+                        "expected_version": sheet["rows"][0][
+                            "expected_version"
+                        ],
+                        "attendance": "present",
+                        "cells": {
+                            str(first.id): {"score": 30},
+                            str(second.id): {"score": 60},
+                        },
+                    }
+                ]
+            },
+        )
+
+        self.assertTrue(plan.can_apply, plan.errors)
+        self.assertEqual(plan.rows[0].total_score, 90.0)
+        self.assertEqual(plan.rows[0].wrong_question_numbers, (1,))
+
+    def test_mixed_exam_preserves_omr_choice_item(self):
+        exam, choice, essay = self._exam(
+            grading_mode=Exam.GradingMode.MIXED,
+            manual_method=Exam.ManualGradingMethod.SCORE,
+        )
+        result = Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.enrollment,
+            total_score=40,
+            max_score=100,
+            objective_score=40,
+        )
+        ResultItem.objects.create(
+            result=result,
+            question=choice,
+            answer="2",
+            is_correct=True,
+            score=40,
+            max_score=40,
+            source="omr",
+        )
+        sheet = build_manual_grading_sheet(exam=exam, tenant=self.tenant)
+        plan = plan_manual_grading(
+            exam=exam,
+            tenant=self.tenant,
+            payload={
+                "rows": [
+                    {
+                        "enrollment_id": self.enrollment.id,
+                        "expected_version": sheet["rows"][0][
+                            "expected_version"
+                        ],
+                        "attendance": "present",
+                        "cells": {str(essay.id): {"score": 50}},
+                    }
+                ]
+            },
+        )
+
+        self.assertTrue(plan.can_apply, plan.errors)
+        apply_manual_grading(plan=plan)
+
+        result.refresh_from_db()
+        self.assertEqual(float(result.objective_score), 40.0)
+        self.assertEqual(float(result.total_score), 90.0)
+        self.assertEqual(
+            ResultItem.objects.get(result=result, question=choice).source,
+            "omr",
+        )
+
+    def test_publish_rejects_stale_result_version(self):
+        exam, first, second = self._exam(
+            grading_mode=Exam.GradingMode.WRITTEN,
+            manual_method=Exam.ManualGradingMethod.CORRECTNESS,
+        )
+        sheet = build_manual_grading_sheet(exam=exam, tenant=self.tenant)
+        plan = plan_manual_grading(
+            exam=exam,
+            tenant=self.tenant,
+            payload={
+                "rows": [
+                    {
+                        "enrollment_id": self.enrollment.id,
+                        "expected_version": sheet["rows"][0][
+                            "expected_version"
+                        ],
+                        "attendance": "present",
+                        "cells": {
+                            str(first.id): {"state": "correct"},
+                            str(second.id): {"state": "correct"},
+                        },
+                    }
+                ]
+            },
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.enrollment,
+            total_score=0,
+            max_score=100,
+        )
+
+        with self.assertRaises(ManualExamGradingError):
+            apply_manual_grading(plan=plan)

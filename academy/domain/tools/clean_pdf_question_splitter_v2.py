@@ -7,6 +7,9 @@ from typing import Any
 
 
 _MAX_QUESTION_NUMBER = 500
+_IGNORABLE_PDF_CONTROL_RE = re.compile(
+    r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]"
+)
 _FOOTER_RE = re.compile(r"[-–—]?\d{1,3}(?:[/／]\d{1,3})?[-–—]?")
 _MARGINAL_NUMBER_RE = re.compile(r"^\s*(\d{1,3})(?:\s+\1)?\s*\.?\s*$")
 _QUESTION_START_RE = re.compile(
@@ -167,7 +170,10 @@ def split_clean_pdf_questions_v2(
 def _coerce_block(index: int, raw: Any) -> _Block:
     return _Block(
         index=index,
-        text=str(getattr(raw, "text", "") or "").strip(),
+        text=_IGNORABLE_PDF_CONTROL_RE.sub(
+            " ",
+            str(getattr(raw, "text", "") or ""),
+        ).strip(),
         x0=float(getattr(raw, "x0", 0.0) or 0.0),
         y0=float(getattr(raw, "y0", 0.0) or 0.0),
         x1=float(getattr(raw, "x1", 0.0) or 0.0),

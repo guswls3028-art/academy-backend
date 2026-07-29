@@ -24,6 +24,9 @@ class ExamUpdateSerializer(serializers.ModelSerializer):
             "max_attempts",
             "pass_score",
             "max_score",
+            "grading_mode",
+            "manual_grading_method",
+            "choice_question_count",
             "display_order",
             "open_at",
             "close_at",
@@ -49,6 +52,45 @@ class ExamUpdateSerializer(serializers.ModelSerializer):
             errors["close_at"] = "마감 시각이 시작 시각 이후여야 합니다."
         if errors:
             raise serializers.ValidationError(errors)
+
+        grading_mode = attrs.get("grading_mode", exam.grading_mode)
+        choice_question_count = attrs.get(
+            "choice_question_count",
+            exam.choice_question_count,
+        )
+        if (
+            grading_mode == Exam.GradingMode.MIXED
+            and int(choice_question_count or 0) < 1
+        ):
+            raise serializers.ValidationError(
+                {
+                    "choice_question_count": (
+                        "혼합형 시험은 앞쪽 선택형 문항 수를 1개 이상 입력해 주세요."
+                    )
+                }
+            )
+
+        grading_fields = {
+            "grading_mode",
+            "manual_grading_method",
+            "choice_question_count",
+        }
+        grading_changed = any(
+            field in attrs and attrs[field] != getattr(exam, field)
+            for field in grading_fields
+        )
+        if (
+            grading_changed
+            and Exam.objects.filter(pk=exam.pk, sheet__isnull=False).exists()
+        ):
+            raise serializers.ValidationError(
+                {
+                    "grading_mode": (
+                        "문항이 생성된 시험의 채점 방식은 변경할 수 없습니다. "
+                        "빈 시험을 새로 만들거나 문항 생성 전에 변경해 주세요."
+                    )
+                }
+            )
 
         if exam.exam_type == Exam.ExamType.TEMPLATE:
             return attrs

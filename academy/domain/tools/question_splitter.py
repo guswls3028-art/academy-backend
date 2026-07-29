@@ -20,6 +20,14 @@ if TYPE_CHECKING:
 # tenant2 과거 수동 GT에는 clean PDF workbook 문항 번호가 399까지 존재한다.
 # 500 초과는 연도/페이지/잡음 숫자일 가능성이 커 anchor로 쓰지 않는다.
 _MAX_LEGIT_QUESTION_NUMBER = 500
+_IGNORABLE_PDF_CONTROL_RE = re.compile(
+    r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]"
+)
+
+
+def _normalize_pdf_match_text(text: str) -> str:
+    """Replace non-printing PDF extraction artifacts before anchor matching."""
+    return _IGNORABLE_PDF_CONTROL_RE.sub(" ", text or "")
 
 
 @dataclass
@@ -344,6 +352,7 @@ def is_non_question_page(blocks: List[TextBlock]) -> bool:
     design_cover_markers = re.findall(
         r"(?:WORKBOOK|PROJECT|Runner['’]?s\s*High|GOD\s*MIN|"
         r"\bTEST\s*[-–—]|TEST\s+\d|"
+        r"Routine\s*복습\s*Test|Welcome\s*Test|"
         r"신과\s*함께|객\s*[·‧・·]\s*서\s*최종\s*대비|"
         r"객서\s*심화|객\s*·\s*서|"
         r"최종\s*대비|중간고사\s*대비|기말고사\s*대비|"
@@ -426,7 +435,7 @@ def is_non_question_page(blocks: List[TextBlock]) -> bool:
     non_question_indicators = [
         "진도", "운영 방침", "재시험", "클리닉", "홈페이지",
         "대단원", "중단원", "세부 내용", "난이도",
-        "주차", "복습과제", "워크북",
+        "주차", "복습과제", "워크북", "시험일자", "일정", "등원",
     ]
     non_q_count = sum(1 for kw in non_question_indicators if kw in full_text)
     if non_q_count >= 3:
@@ -586,7 +595,7 @@ def _extract_marginal_question_number(text: str) -> Optional[int]:
       - 첫 줄 length ≤ 5 char (e.g. "3.", "12.", "3")
       - 첫 줄 regex: 숫자 + 선택적 점 + 공백 외 다른 문자 없음
     """
-    stripped = text.strip()
+    stripped = _normalize_pdf_match_text(text).strip()
     if not stripped:
         return None
     # multi-line block 첫 줄 추출 (production blocks 모드 대응).
@@ -982,7 +991,7 @@ def _extract_question_number(text: str) -> Optional[int]:
     선택형 1~60 그대로. 서술형 N → 100+N. 논술형 N → 200+N. 단답형 N → 300+N.
     번호 공간을 분리해 서술형 리셋 번호가 선택형과 충돌하지 않게 한다.
     """
-    text = text.strip()
+    text = _normalize_pdf_match_text(text).strip()
     if not text:
         return None
 

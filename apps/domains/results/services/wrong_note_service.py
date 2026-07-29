@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
+from django.db.models import Q
+
 from apps.domains.results.models import ResultItem
 from apps.domains.results.services.answer_matching import format_answer_for_display
 from apps.support.results.wrong_note_dependencies import (
@@ -106,8 +108,8 @@ def list_wrong_notes_for_enrollment(
         .filter(
             result__enrollment_id=enrollment_id,
             result__target_type="exam",
-            is_correct=False,
         )
+        .filter(Q(is_correct=False) | Q(include_in_wrong_note=True))
         .select_related(
             "result__attempt",
             "result__enrollment",
@@ -198,7 +200,8 @@ def list_wrong_notes_for_enrollment(
             "student_answer": str(item.answer or ""),
             "correct_answer": str(correct_answer or ""),
 
-            "is_correct": False,
+            "is_correct": bool(item.is_correct),
+            "include_in_wrong_note": bool(item.include_in_wrong_note),
             "score": float(item.score or 0.0),
             "max_score": float(item.max_score or 0.0),
 
