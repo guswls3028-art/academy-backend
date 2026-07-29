@@ -36,25 +36,17 @@
 
 ## 진행 상태
 
-- [x] Cloudflare zone 생성
-- [x] Cloudflare 네임서버 발급
-- [x] backend 허용 host/CORS/CSRF 코드 준비
-- [x] frontend tenant registry·로그인·학생앱·성적표·OG/PWA 코드 준비
-- [x] 로고 정적 리소스 준비
-- [x] 범용 `provision_tenant` 명령과 회귀 테스트 준비
-- [x] 가비아에 Cloudflare NS 1·2차 등록
-- [x] Cloudflare·Google 공용 DNS 위임 확인
-- [x] backend 정식 배포
-- [x] frontend 1차 정식 배포
-- [x] 운영 DB dry-run 및 실제 provision
-- [x] 30일 온보딩 이용기간 활성화 (`2026-08-28`까지)
-- [x] 개발자 콘솔에서 대표 계정 생성
-- [x] Pages apex/`www` 및 CNAME 활성화
-- [x] 리디자인 데스크톱·390px 모바일 로컬 시각 검증
-- [x] 역할별 공용 헤더 팔레트 로컬 빌드·라이트/다크·1366/390px 검증
-- [x] 리디자인 frontend 정식 배포
-- [x] owner 초기 로그인 인증 및 최초 비밀번호 변경 게이트 확인
-- [ ] 최초 비밀번호 변경 후 admin 화면·tenant isolation 확인
+- [x] **G0 입력 확정** — 코드·ID·도메인·브랜드·30일 온보딩 기간
+- [x] **G1 충돌 확인** — 운영 ID `10`, code `movementhui`, 도메인 소유 관계
+- [x] **G2 Cloudflare 준비** — zone·NS 발급, 가비아 1·2차 등록
+- [x] **G3 코드·브랜딩 준비** — backend host/origin, frontend 전체 경계,
+  데스크톱·390px와 역할·라이트/다크 로컬 검증
+- [x] **G4 위임·정식 배포** — Cloudflare·Google 공용 DNS 확인,
+  backend·frontend 정식 배포
+- [x] **G5 운영 DB·구독** — dry-run·실제 provision, `2026-08-28`까지 활성화
+- [x] **G6 Pages·HTTPS** — apex/`www`·CNAME 활성화와 두 호스트 HTTP 200
+- [x] **G7 대표 계정** — 개발자 콘솔에서 1회 생성, owner 초기 로그인 인증 확인
+- [ ] **G8 실제 인계** — 대표자 최초 비밀번호 변경 후 admin 화면·tenant isolation 확인
 
 ## 현재 발급된 네임서버
 

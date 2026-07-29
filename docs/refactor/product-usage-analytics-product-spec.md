@@ -1,6 +1,14 @@
 # 역할별 기능 사용 분석 기획서
 
-**Status:** [IMPLEMENTED LOCALLY / ROLLOUT OFF]
+> Historical design snapshot (2026-07-29). 구현·배포 전후의 상세 기획
+> 근거를 보존한 문서이며 현재 동작의 정본이 아니다. 현재 제품·API 계약은
+> [제품 사용 분석](../domain/product-usage-analytics.md), DB 구조 판단 기준은
+> [DB 확장·테넌트 분리](../infrastructure/database-scaling-and-tenant-isolation.md),
+> 남은 작업은
+> [제품 사용 분석 잔여 작업](product-usage-analytics-remaining-work.md)을
+> 따른다.
+
+**Status:** [HISTORICAL DESIGN SNAPSHOT]
 
 **작성일:** 2026-07-29 KST
 
@@ -8,9 +16,10 @@
 
 **짝 문서:** [역할별 기능 사용 분석 실행 계획서](product-usage-analytics-execution-plan.md)
 
-**구현 상태:** 1차 관측 수직 슬라이스가 코드와 로컬 검증 환경에 구현되었다. 운영 배포·기능 플래그 활성화·RDS 변경은 하지 않았으며, 아래 계약은 계속 제품 판단의 기준으로 사용한다.
+**기록 시점 상태:** 아래 내용은 2026-07-29 최초 구현·배포 판단 당시의
+스냅샷이다. 운영 배포 이후의 현재 계약과 상태는 상단 정본 링크를 따른다.
 
-## 0. 현재 구현 경계
+## 0. 기록 시점 구현 경계
 
 2026-07-29 기준 상태를 다음처럼 구분한다.
 
