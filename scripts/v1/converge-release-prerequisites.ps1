@@ -22,6 +22,7 @@ $script:PlanMode = $false
 $script:ChangesMade = $false
 . (Join-Path $ScriptRoot "core\ssot.ps1")
 . (Join-Path $ScriptRoot "core\logging.ps1")
+. (Join-Path $ScriptRoot "core\env.ps1")
 . (Join-Path $ScriptRoot "core\aws.ps1")
 . (Join-Path $ScriptRoot "core\guard.ps1")
 . (Join-Path $ScriptRoot "resources\ecr.ps1")
@@ -29,6 +30,7 @@ $script:ChangesMade = $false
 . (Join-Path $ScriptRoot "resources\dynamodb.ps1")
 
 Load-SSOT -Env $Env | Out-Null
+Assert-AwsMutationIdentity | Out-Null
 
 # The shared mutation lock must exist before the first regular deploy can
 # acquire it. This idempotent prerequisite is the only pre-lock bootstrap.

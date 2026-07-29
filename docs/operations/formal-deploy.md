@@ -33,7 +33,7 @@ GitHub Actions의 persistent development와 isolated preproduction을 모두
 1. Lock, Preflight, Drift 보고
 2. Bootstrap(선택): SSM, SQS, RDS engine, ECR 등 Ensure
 3. Ensure-Network/ECR/IAM 후 운영 env 후보를 메모리에서 준비한다. 이 단계에서는 `/academy/api/env`와 `/academy/workers/env`를 쓰지 않는다.
-4. 후보를 `/academy/api/preprod/env`에 기록하고 전용 IAM·`academy_api_preprod` DB를 쓰는 격리 EC2에서 migration, prod settings, `/healthz`, `/health`를 검증한다.
+4. 후보를 `/academy/api/preprod/env`의 새 버전에 기록하되 `/academy/api/preprod/db-credentials`의 전용 DB 역할로 사용자·비밀번호를 교체하고 릴리스 ID를 고정한다. 격리 EC2에서 migration, prod settings, 정확한 parameter version·릴리스 ID, DB 이름·역할, 운영 DB CONNECT 거부, `/healthz`, `/health`, CDN playback을 검증한다.
 5. 격리 검증 성공 후에만 운영 API/worker env를 승격한다. 실패하면 API뿐 아니라 worker ASG, Batch job definition, EventBridge, ALB를 포함한 운영 런타임 반영을 시작하지 않는다.
 6. 검증된 env 승격 뒤 worker/Batch/EventBridge/ALB와 **Ensure-API**를 순서대로 수렴한다. env parameter version을 포함한 API Launch Template가 ASG rolling refresh를 유도하며, 운영 컨테이너 제자리 재시작은 정식 경로에서 사용하지 않는다.
 7. 새 인스턴스 기동 시 **UserData** 실행: ECR 로그인 → 검증된 release manifest의 `academy-api@sha256:...` pull → SSM `/academy/api/env` 역할 검증 → `/opt/api.env` → digest-pinned `docker run`
@@ -64,9 +64,11 @@ GitHub Actions의 persistent development와 isolated preproduction을 모두
 - "한 번만 수동으로 정식 배포"하고 싶을 때.
 
 > 일상적인 코드 변경은 `git push main` → CI 자동 배포로 충분하다. deploy.ps1은 인프라 변경이 있을 때만 사용.
-> 실행 전 `check-credentials.ps1`에서 비-root 운영자 역할을 확인한다. 로컬
-> identity가 AWS account root이면 실행하지 않고 GitHub Actions OIDC 경로를
-> 사용한다.
+> 실행 전 `check-credentials.ps1`에서 identity를 확인한다. 일반 배포는
+> GitHub Actions OIDC 또는 최소권한 운영자 역할을 사용한다. 사용자가
+> account-root를 명시적으로 허용한 수동 작업은 경고 후 실행할 수 있지만,
+> 비밀값을 출력하거나 development/preprod/rolling-health/readback 게이트를
+> 줄이거나 건너뛰면 안 된다.
 
 ---
 

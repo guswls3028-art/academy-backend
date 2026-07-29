@@ -1,7 +1,7 @@
 # ==============================================================================
 # V1 ECR build/push + selective deploy — OIDC 전용. Access Key 미사용.
 # Backend repo: guswls3028-art/academy-backend. SSOT: docs/infrastructure/deployment-architecture.md
-# 6개 이미지 linux/arm64 빌드·푸시 (latest + sha 태그). 변경된 서비스만 ASG refresh.
+# 6개 이미지 linux/arm64 immutable 후보 빌드·푸시. 검증 완료 후에만 latest 승격.
 # V1.1.0: Zero-downtime deployment — SHA tagging, selective worker deploy,
 #          pre-deploy migration, deploy verification.
 # ==============================================================================
@@ -400,7 +400,7 @@ jobs:
           ./scripts/v1/test-verification-contract.ps1
 
   # ============================================================
-  # Phase 2: Build and push images (latest + sha tag)
+  # Phase 2: Build and push immutable candidate images
   # ----------------------------------------------------------------
   # Note: every build-push-action step sets `provenance: false` and
   # `sbom: false`. Default v7 behavior emits SLSA provenance + SBOM
@@ -587,7 +587,6 @@ jobs:
           provenance: false
           sbom: false
           tags: |
-            ${{ env.ECR_REGISTRY }}/academy-base:latest
             ${{ env.ECR_REGISTRY }}/academy-base:${{ env.RELEASE_IMAGE_TAG }}
           cache-from: type=gha,scope=base
           cache-to: type=gha,mode=max,scope=base
@@ -631,7 +630,6 @@ jobs:
           provenance: false
           sbom: false
           tags: |
-            ${{ env.ECR_REGISTRY }}/academy-api:latest
             ${{ env.ECR_REGISTRY }}/academy-api:${{ env.RELEASE_IMAGE_TAG }}
           cache-from: type=gha,scope=api
           cache-to: type=gha,mode=max,scope=api
@@ -649,7 +647,6 @@ jobs:
           provenance: false
           sbom: false
           tags: |
-            ${{ env.ECR_REGISTRY }}/academy-video-worker:latest
             ${{ env.ECR_REGISTRY }}/academy-video-worker:${{ env.RELEASE_IMAGE_TAG }}
           cache-from: type=gha,scope=video
           cache-to: type=gha,mode=max,scope=video
@@ -667,7 +664,6 @@ jobs:
           provenance: false
           sbom: false
           tags: |
-            ${{ env.ECR_REGISTRY }}/academy-messaging-worker:latest
             ${{ env.ECR_REGISTRY }}/academy-messaging-worker:${{ env.RELEASE_IMAGE_TAG }}
           cache-from: type=gha,scope=messaging
           cache-to: type=gha,mode=max,scope=messaging
@@ -685,7 +681,6 @@ jobs:
           provenance: false
           sbom: false
           tags: |
-            ${{ env.ECR_REGISTRY }}/academy-ai-worker-cpu:latest
             ${{ env.ECR_REGISTRY }}/academy-ai-worker-cpu:${{ env.RELEASE_IMAGE_TAG }}
           cache-from: type=gha,scope=ai-cpu
           cache-to: type=gha,mode=max,scope=ai-cpu
@@ -703,7 +698,6 @@ jobs:
           provenance: false
           sbom: false
           tags: |
-            ${{ env.ECR_REGISTRY }}/academy-tools-worker:latest
             ${{ env.ECR_REGISTRY }}/academy-tools-worker:${{ env.RELEASE_IMAGE_TAG }}
           cache-from: type=gha,scope=tools
           cache-to: type=gha,mode=max,scope=tools
@@ -946,6 +940,15 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           action-timeout-s: 180
 
+      - name: Publish release-bound preprod environment
+        id: preprod-env
+        shell: pwsh
+        run: |
+          ./scripts/v1/publish-api-preprod-env.ps1 `
+            -ReleaseId "${{ env.RELEASE_IMAGE_TAG }}" `
+            -GithubOutputPath $env:GITHUB_OUTPUT `
+            -Ci
+
       - name: Run isolated server, migration, and health gate
         run: |
           set -euo pipefail
@@ -957,6 +960,11 @@ jobs:
           fi
           pwsh ./scripts/v1/run-api-preprod-canary.ps1 \
             -ImageUri "${{ env.ECR_REGISTRY }}/academy-api@$API_DIGEST" \
+            -ExpectedEnvVersion "${{ steps.preprod-env.outputs.parameter_version }}" \
+            -ExpectedReleaseId "${{ steps.preprod-env.outputs.release_id }}" \
+            -ExpectedDatabaseName "${{ steps.preprod-env.outputs.preprod_database_name }}" \
+            -ExpectedDatabaseUser "${{ steps.preprod-env.outputs.preprod_database_user }}" \
+            -ExpectedProductionDatabaseName "${{ steps.preprod-env.outputs.production_database_name }}" \
             -Ci
 
   # ============================================================
@@ -2203,8 +2211,8 @@ jobs:
           E2E_TENANT_CODE: hakwonplus
         run: |
           if [ -z "$E2E_STUDENT_USER" ] || [ -z "$E2E_STUDENT_PASS" ]; then
-            echo "::warning::E2E_STUDENT_USER/PASS secret 미설정 — chain smoke skip"
-            exit 0
+            echo "::error::E2E_STUDENT_USER/PASS secret 미설정 — production chain smoke cannot be skipped"
+            exit 1
           fi
           python3 scripts/post_deploy_smoke/video_playback_chain.py
 
@@ -2248,6 +2256,45 @@ jobs:
           fi
 
           echo "Deploy verification PASS" >> $GITHUB_STEP_SUMMARY
+
+      - name: Promote verified digests to latest aliases
+        run: |
+          set -euo pipefail
+          CANDIDATE=docs/reports/release-manifest.candidate.json
+          for repo in academy-base academy-api academy-video-worker academy-messaging-worker academy-ai-worker-cpu academy-tools-worker; do
+            digest=$(jq -r --arg repo "$repo" '.images[$repo].digest // empty' "$CANDIDATE")
+            if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error::Invalid verified digest for $repo"
+              exit 1
+            fi
+            manifest=$(aws ecr batch-get-image \
+              --repository-name "$repo" \
+              --image-ids "imageDigest=$digest" \
+              --accepted-media-types application/vnd.docker.distribution.manifest.list.v2+json application/vnd.oci.image.index.v1+json application/vnd.docker.distribution.manifest.v2+json \
+              --region "${{ env.AWS_REGION }}" \
+              --query 'images[0].imageManifest' \
+              --output text)
+            if [ -z "$manifest" ] || [ "$manifest" = "None" ]; then
+              echo "::error::Verified manifest read failed for $repo@$digest"
+              exit 1
+            fi
+            aws ecr put-image \
+              --repository-name "$repo" \
+              --image-tag latest \
+              --image-manifest "$manifest" \
+              --region "${{ env.AWS_REGION }}" >/dev/null
+            latest_digest=$(aws ecr describe-images \
+              --repository-name "$repo" \
+              --image-ids imageTag=latest \
+              --region "${{ env.AWS_REGION }}" \
+              --query 'imageDetails[0].imageDigest' \
+              --output text)
+            if [ "$latest_digest" != "$digest" ]; then
+              echo "::error::latest readback mismatch for $repo"
+              exit 1
+            fi
+            echo "LATEST_PROMOTION_PASS repository=$repo digest=$digest"
+          done
 
       - name: Promote verified complete release manifest
         run: |

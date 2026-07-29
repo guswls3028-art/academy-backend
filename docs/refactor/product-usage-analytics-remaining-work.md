@@ -16,20 +16,23 @@
 - 선생님 출석, 학생 시험 제출, 클리닉 대표 task funnel
 - 메모리 queue, 제한된 1회 재시도와 본 업무 fail-open
 - rollup, dry-run-first purge와 tenant DB capacity report 명령
+- 전용 HMAC key의 값 비노출·exact-version 수렴 스크립트
+- GitHub OIDC + SSM 기반 일별 rollup·30/400일 보존 자동화
 - 운영 배포와 전체 tenant 수집 OFF 확인
 
 ## 별도 승인 전 실행하지 않는 항목
 
-- 테넌트 기능 플래그 활성화와 HMAC secret 변경
-- 자동 rollup·purge 스케줄
+- 대표 tenant 추가 활성화
+- 기존 HMAC secret 교체
 - 메뉴·CTA 문구·위치·우선순위 변경
 - Multi-AZ, read replica, `DATABASE_ROUTERS`
 - tenant schema/database, data copy, dual-write, routing 전환
 
 ## 파일럿
 
-1. 전용 secret 경계와 명시된 내부 파일럿 tenant를 승인한다.
-2. 해당 tenant만 플래그를 켜고 7일간 품질·DB 증가량을 본다.
+1. 전용 secret 경계가 배포된 상태에서 명시된 내부 파일럿 tenant 하나만
+   정식 플랫폼 API로 활성화한다.
+2. 해당 tenant를 7일간 품질·DB 증가량으로 관측한다.
 3. 수집 거부율, 중복, unknown feature, 역할 혼합, cross-tenant,
    제품 업무 오류와 DB overhead를 확인한다.
 4. 대표 tenant 2~3곳을 별도 승인해 7일 더 관측한다.
@@ -47,7 +50,7 @@
 - 이전 28일 대비 trend
 - 운영 대시보드 권한·반응형·빈 상태 E2E
 - PostgreSQL 실행계획·index·실데이터 증가량 검증
-- 자동 보존 스케줄의 정확한 운영 소유 경로
+- maintenance workflow 실행 실패 알림과 장기 실행 이력 검토
 
 각 퍼널은 기존 업무 성공을 바꾸지 않고 `useTrackedTask` 또는 동등한
 명시 경계에서만 추가한다.

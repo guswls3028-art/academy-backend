@@ -1,0 +1,120 @@
+name: Product Usage Analytics Maintenance
+
+on:
+  schedule:
+    - cron: "25 18 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Roll up yesterday but do not delete expired analytics rows"
+        required: true
+        type: boolean
+        default: true
+
+concurrency:
+  group: product-usage-analytics-maintenance
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-northeast-2
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  maintain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Require production main ref
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Product analytics maintenance can only run from refs/heads/main"
+            exit 1
+          fi
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
+          aws-region: ${{ env.AWS_REGION }}
+          action-timeout-s: 180
+
+      - name: Resolve healthy production API instance
+        id: instance
+        run: |
+          set -euo pipefail
+          INSTANCE_ID=$(aws autoscaling describe-auto-scaling-groups \
+            --auto-scaling-group-names academy-v1-api-asg \
+            --region "$AWS_REGION" \
+            --query 'AutoScalingGroups[0].Instances[?LifecycleState==`InService` && HealthStatus==`Healthy`].InstanceId | [0]' \
+            --output text)
+          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
+            echo "::error::No healthy InService production API instance found"
+            exit 1
+          fi
+          echo "id=$INSTANCE_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Roll up and enforce analytics retention
+        env:
+          DRY_RUN_INPUT: ${{ github.event.inputs.dry_run }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          read -r TARGET_DATE RAW_BEFORE DAILY_BEFORE < <(
+            python3 - <<'PY'
+          from datetime import datetime, timedelta
+          from zoneinfo import ZoneInfo
+
+          today = datetime.now(ZoneInfo("Asia/Seoul")).date()
+          print(today - timedelta(days=1), today - timedelta(days=30), today - timedelta(days=400))
+          PY
+          )
+          EXECUTE="--execute"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "${DRY_RUN_INPUT:-true}" = "true" ]; then
+            EXECUTE=""
+          fi
+          CMD="set -eu; docker inspect academy-api >/dev/null; docker exec academy-api python manage.py rollup_product_usage --date '$TARGET_DATE'; docker exec academy-api python manage.py purge_product_usage --before '$RAW_BEFORE' --daily-before '$DAILY_BEFORE' $EXECUTE"
+          PARAMS=$(jq -n --arg cmd "$CMD" '{commands: [$cmd]}')
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "${{ steps.instance.outputs.id }}" \
+            --document-name AWS-RunShellScript \
+            --parameters "$PARAMS" \
+            --timeout-seconds 600 \
+            --region "$AWS_REGION" \
+            --query 'Command.CommandId' \
+            --output text)
+          for attempt in $(seq 1 60); do
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "$COMMAND_ID" \
+              --instance-id "${{ steps.instance.outputs.id }}" \
+              --region "$AWS_REGION" \
+              --query Status \
+              --output text 2>/dev/null || echo Pending)
+            case "$STATUS" in
+              Success)
+                aws ssm get-command-invocation \
+                  --command-id "$COMMAND_ID" \
+                  --instance-id "${{ steps.instance.outputs.id }}" \
+                  --region "$AWS_REGION" \
+                  --query StandardOutputContent \
+                  --output text
+                echo "PRODUCT_ANALYTICS_MAINTENANCE_PASS target=$TARGET_DATE raw_before=$RAW_BEFORE daily_before=$DAILY_BEFORE execute=$([ -n "$EXECUTE" ] && echo true || echo false)"
+                exit 0
+                ;;
+              Failed|Cancelled|TimedOut)
+                echo "::error::Product analytics maintenance failed with SSM status=$STATUS"
+                aws ssm get-command-invocation \
+                  --command-id "$COMMAND_ID" \
+                  --instance-id "${{ steps.instance.outputs.id }}" \
+                  --region "$AWS_REGION" \
+                  --query StandardErrorContent \
+                  --output text
+                exit 1
+                ;;
+            esac
+            sleep 10
+          done
+          echo "::error::Product analytics maintenance timed out"
+          exit 1

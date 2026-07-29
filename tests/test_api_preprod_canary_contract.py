@@ -9,6 +9,7 @@ API_RESOURCE = REPO_ROOT / "scripts" / "v1" / "resources" / "api.ps1"
 SYNC_ENV = REPO_ROOT / "scripts" / "v1" / "core" / "sync_env.ps1"
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "v1-build-and-push-latest.yml"
 IAM = REPO_ROOT / "scripts" / "v1" / "resources" / "iam.ps1"
+PUBLISH_PREPROD = REPO_ROOT / "scripts" / "v1" / "publish-api-preprod-env.ps1"
 
 
 def test_manual_deploy_prepares_and_tests_env_before_live_promotion() -> None:
@@ -43,6 +44,10 @@ def test_ci_runs_common_canary_before_migrations_and_every_deploy() -> None:
     )[0]
 
     assert "run-api-preprod-canary.ps1" in canary_job
+    assert "publish-api-preprod-env.ps1" in canary_job
+    assert "steps.preprod-env.outputs.parameter_version" in canary_job
+    assert "steps.preprod-env.outputs.release_id" in canary_job
+    assert "steps.preprod-env.outputs.preprod_database_user" in canary_job
     assert "release-manifest.candidate.json" in canary_job
     assert workflow.index("  verify-api-preprod:") < workflow.index(
         "  run-migrations:"
@@ -79,7 +84,13 @@ def test_canary_is_isolated_and_checks_migrations_and_health() -> None:
     assert "academy-api-preprod-canary-role" in canary
     assert "academy-api-preprod-canary" in canary
     assert "academy_api_preprod" in canary
+    assert "academy_api_preprod_app" in canary
     assert "apps.api.config.settings.prod" in canary
+    assert '"${SsmApiEnvParameter}:$ExpectedEnvVersion"' in canary
+    assert "ACADEMY_PREPROD_RELEASE_ID" in canary
+    assert "has_database_privilege" in canary
+    assert "production_connect=false" in canary
+    assert "DB_ROLE_BOUNDARY_PASS" in canary
     assert "python manage.py migrate --noinput" in canary
     assert "CREATE DATABASE" not in canary
     assert "dbname='postgres'" not in canary
@@ -138,6 +149,43 @@ def test_api_env_sync_fails_closed_on_cross_role_or_missing_source() -> None:
     assert "restoring prior parameter values" in sync
     assert '"--tier", "Advanced"' in sync
     assert "Invoke-RequiredAwsJson" in sync
+    assert "/academy/api/preprod/db-credentials" in sync
+    assert "ACADEMY_PREPROD_RELEASE_ID" in sync
+    assert "ParameterVersion = $version" in sync
+
+
+def test_ci_preprod_publisher_binds_dedicated_role_and_exact_parameter_version() -> None:
+    publisher = PUBLISH_PREPROD.read_text(encoding="utf-8-sig")
+
+    assert "/academy/api/env" in publisher
+    assert "/academy/api/preprod/db-credentials" in publisher
+    assert "/academy/api/preprod/env" in publisher
+    assert "academy_api_preprod_app" in publisher
+    assert "ACADEMY_PREPROD_RELEASE_ID" in publisher
+    assert '"--name", "${PreprodEnvParameter}:$version"' in publisher
+    assert "DB_PASSWORD=$credentialPassword" not in publisher
+    assert "preprod_database_user" in publisher
+
+
+def test_latest_alias_moves_only_after_complete_production_verification() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8-sig")
+    build_job = workflow.split("  build-and-push:", maxsplit=1)[1].split(
+        "  verify-api-development:", maxsplit=1
+    )[0]
+    verify_job = workflow.split("  verify-deployment:", maxsplit=1)[1].split(
+        "  release-production-lock:", maxsplit=1
+    )[0]
+
+    assert ":latest" not in "\n".join(
+        line for line in build_job.splitlines() if "ECR_REGISTRY" in line
+    )
+    promotion = verify_job.index("Promote verified digests to latest aliases")
+    summary = verify_job.index("Deployment summary")
+    manifest = verify_job.index("Promote verified complete release manifest")
+    assert summary < promotion < manifest
+    assert "ecr put-image" in verify_job
+    assert "latest readback mismatch" in verify_job
+    assert "production chain smoke cannot be skipped" in verify_job
 
 
 def test_api_boot_and_env_refresh_require_prod_settings_and_real_health() -> None:
@@ -169,6 +217,9 @@ def test_canary_roles_and_cleanup_are_least_privilege() -> None:
     assert 'Sid="ApiCanaryProfileRead"' in iam
     assert 'Sid="ApiCanarySsmRead"' in iam
     assert 'Sid="SsmSendApiCanary"' in iam
+    assert 'Sid="ApiPreprodEnvSourceRead"' in iam
+    assert 'Sid="ApiPreprodEnvPublish"' in iam
+    assert "parameter/academy/api/preprod/db-credentials" in iam
     assert '"ssm:DescribeInstanceInformation"' in iam
     assert '"ec2:ResourceTag/Name" = $apiCanaryInstanceTag' in iam
     assert '"ec2:ResourceTag/Project" = "academy"' in iam

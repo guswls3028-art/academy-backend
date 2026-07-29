@@ -499,7 +499,8 @@ def test_immutable_evidence_and_selective_build_docs_match_execution() -> None:
     architecture = DEPLOY_ARCH_DOC.read_text(encoding="utf-8")
     readme = V1_README.read_text(encoding="utf-8")
 
-    assert "`:latest` — compatibility alias only; never deployment evidence" in architecture
+    assert "`:latest` — compatibility alias only; moved only after every production" in architecture
+    assert "exact digest readback succeeds" in architecture
     assert "actual InService containers, and every active Video Batch job definition" in architecture
     assert "apps/{shared,support,core,infrastructure}/" in architecture
     assert "Django startup import" in architecture
@@ -968,7 +969,9 @@ def test_exact_workflow_iam_covers_full_contract_without_broad_ssm() -> None:
         "ApiCanaryInstanceRead", "ApiCanaryInstanceCleanup",
         "ApiCanaryProfileRead", "ApiCanarySsmRead",
         "SsmSendDocument", "SsmSendInstances", "SsmSendApiCanary",
-        "SsmCommandRead", "BatchRead",
+        "SsmCommandRead", "ApiPreprodEnvSourceRead", "ApiPreprodEnvPublish",
+        "DevAlertsAlarmRead", "DevAlertsParameterRead",
+        "DevAlertsTransitionWrite", "BatchRead",
         "BatchJobDefinitionRegister", "BatchJobDefinitionRevisionWrite",
         "BatchPassRoles", "ElbRead",
         "SnsFailureNotify", "StsIdentity", "DeploymentControlLock",
@@ -1025,6 +1028,19 @@ def test_exact_workflow_iam_covers_full_contract_without_broad_ssm() -> None:
         "ssm:resourceTag/Project": "academy",
         "ssm:resourceTag/ManagedBy": "academy-deploy-canary",
     }
+    assert by_sid["ApiPreprodEnvSourceRead"]["Action"] == "ssm:GetParameter"
+    assert {
+        resource.rsplit(":parameter/", maxsplit=1)[-1]
+        for resource in by_sid["ApiPreprodEnvSourceRead"]["Resource"]
+    } == {
+        "academy/api/env",
+        "academy/api/preprod/db-credentials",
+        "academy/api/preprod/env",
+    }
+    assert by_sid["ApiPreprodEnvPublish"]["Action"] == "ssm:PutParameter"
+    assert by_sid["ApiPreprodEnvPublish"]["Resource"].endswith(
+        ":parameter/academy/api/preprod/env"
+    )
     assert "iam:PutRolePolicy" not in static
     assert set(by_sid["BatchPassRoles"]["Condition"]["StringEquals"]["iam:PassedToService"]) == {
         "batch.amazonaws.com", "ecs-tasks.amazonaws.com",

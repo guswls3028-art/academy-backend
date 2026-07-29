@@ -11,8 +11,18 @@ param(
     [int]$TimeoutSec = 900,
     [ValidatePattern('^/academy/api/preprod/env$')]
     [string]$SsmApiEnvParameter = "/academy/api/preprod/env",
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(1, 2147483647)]
+    [int]$ExpectedEnvVersion,
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern('^(?:sha-[0-9a-fA-F]{40}-run-[0-9]+-[0-9]+|manual-sha256-[0-9a-fA-F]{64})$')]
+    [string]$ExpectedReleaseId,
     [ValidatePattern('^[a-z][a-z0-9_]{2,62}$')]
     [string]$ExpectedDatabaseName = "academy_api_preprod",
+    [ValidatePattern('^[a-z][a-z0-9_]{2,62}$')]
+    [string]$ExpectedDatabaseUser = "academy_api_preprod_app",
+    [ValidatePattern('^[a-z][a-z0-9_]{2,62}$')]
+    [string]$ExpectedProductionDatabaseName = "postgres",
     [ValidatePattern('^[A-Za-z0-9+=,.@_-]{3,128}$')]
     [string]$CanaryInstanceProfileName = "academy-api-preprod-canary",
     [switch]$Ci = $false,
@@ -33,6 +43,7 @@ if ($Ci) {
 $script:PlanMode = $false
 . (Join-Path $ScriptRoot "core\ssot.ps1")
 . (Join-Path $ScriptRoot "core\logging.ps1")
+. (Join-Path $ScriptRoot "core\env.ps1")
 . (Join-Path $ScriptRoot "core\aws.ps1")
 . (Join-Path $ScriptRoot "core\wait.ps1")
 . (Join-Path $ScriptRoot "core\sync_env.ps1")
@@ -40,6 +51,7 @@ $script:PlanMode = $false
 . (Join-Path $ScriptRoot "resources\api.ps1")
 
 Load-SSOT -Env prod | Out-Null
+Assert-AwsMutationIdentity | Out-Null
 if (-not $script:EcrImmutableTagRequired -or $script:EcrUseLatestTag) {
     throw "API pre-production canary requires immutable digest-pinned images."
 }
@@ -108,7 +120,7 @@ $deploymentId = if ($ImageTag) { $ImageTag } else { ($ImageUri -split '@')[-1] }
 $userData = Get-ApiLaunchTemplateUserData `
     -ApiImageUri $ImageUri `
     -Region $script:Region `
-    -SsmApiEnvParam $SsmApiEnvParameter `
+    -SsmApiEnvParam "${SsmApiEnvParameter}:$ExpectedEnvVersion" `
     -DeploymentId "preprod-$deploymentId"
 if (-not $userData) { throw "API canary userdata rendering failed." }
 # Schedule cleanup before any fallible bootstrap command. With
@@ -193,6 +205,56 @@ if [ "$database_name" != "__EXPECTED_DATABASE__" ]; then
   echo "CANARY_FAIL database_boundary" >&2
   exit 42
 fi
+database_user=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$container" | sed -n 's/^DB_USER=//p')
+if [ "$database_user" != "__EXPECTED_DATABASE_USER__" ]; then
+  echo "CANARY_FAIL database_role_boundary" >&2
+  exit 46
+fi
+release_id=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$container" | sed -n 's/^ACADEMY_PREPROD_RELEASE_ID=//p')
+if [ "$release_id" != "__EXPECTED_RELEASE_ID__" ]; then
+  echo "CANARY_FAIL release_env_boundary" >&2
+  exit 47
+fi
+if ! db_boundary_proof=$(docker exec -i "$container" python <<'PY'
+import os
+
+import psycopg2
+
+expected_database = "__EXPECTED_DATABASE__"
+expected_user = "__EXPECTED_DATABASE_USER__"
+production_database = "__EXPECTED_PRODUCTION_DATABASE__"
+connection = psycopg2.connect(
+    host=os.environ["DB_HOST"],
+    port=os.environ.get("DB_PORT", "5432"),
+    dbname=os.environ["DB_NAME"],
+    user=os.environ["DB_USER"],
+    password=os.environ["DB_PASSWORD"],
+    connect_timeout=10,
+)
+try:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT current_database(), current_user, "
+            "has_database_privilege(current_user, %s, 'CONNECT')",
+            (production_database,),
+        )
+        actual_database, actual_user, production_connect = cursor.fetchone()
+finally:
+    connection.close()
+if actual_database != expected_database or actual_user != expected_user:
+    raise SystemExit("preprod database identity mismatch")
+if production_connect:
+    raise SystemExit("preprod database role can connect to production database")
+print(
+    "DB_ROLE_BOUNDARY_PASS "
+    f"database={actual_database} role={actual_user} production_connect=false"
+)
+PY
+); then
+  echo "CANARY_FAIL database_privilege_boundary" >&2
+  exit 48
+fi
+echo "$db_boundary_proof"
 healthz=000
 health=000
 for i in $(seq 1 45); do
@@ -330,9 +392,14 @@ PY
   exit 45
 fi
 echo "$video_chain_proof"
-echo "API_PREPROD_CANARY_PASS settings=prod database=preprod healthz=$healthz health=$health image=$image"
+echo "API_PREPROD_CANARY_PASS settings=prod database=preprod env_version=__EXPECTED_ENV_VERSION__ release=__EXPECTED_RELEASE_ID__ healthz=$healthz health=$health image=$image"
 '@
-    $remote = $remote.Replace("__EXPECTED_DATABASE__", $ExpectedDatabaseName).Replace("__EXPECTED_IMAGE__", $ImageUri)
+    $remote = $remote.Replace("__EXPECTED_DATABASE__", $ExpectedDatabaseName)
+    $remote = $remote.Replace("__EXPECTED_DATABASE_USER__", $ExpectedDatabaseUser)
+    $remote = $remote.Replace("__EXPECTED_PRODUCTION_DATABASE__", $ExpectedProductionDatabaseName)
+    $remote = $remote.Replace("__EXPECTED_RELEASE_ID__", $ExpectedReleaseId)
+    $remote = $remote.Replace("__EXPECTED_ENV_VERSION__", [string]$ExpectedEnvVersion)
+    $remote = $remote.Replace("__EXPECTED_IMAGE__", $ImageUri)
     # PowerShell on Windows materializes here-strings with CRLF. Normalize the
     # bytes before sending the encoded script to Linux Bash.
     $remote = $remote.Replace("`r", "")
@@ -388,6 +455,9 @@ echo "API_PREPROD_CANARY_PASS settings=prod database=preprod healthz=$healthz he
     }
     if ($proof -notmatch "CDN_PLAYBACK_CHAIN_PASS") {
         throw "API pre-production canary returned no CDN playback PASS marker."
+    }
+    if ($proof -notmatch "DB_ROLE_BOUNDARY_PASS") {
+        throw "API pre-production canary returned no database role boundary PASS marker."
     }
     Write-Host $proof -ForegroundColor Green
 } finally {

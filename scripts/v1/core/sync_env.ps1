@@ -369,13 +369,52 @@ function Publish-RuntimeEnvCandidates {
 function Publish-ApiPreprodEnvCandidate {
     param(
         [string]$ParameterName = "/academy/api/preprod/env",
-        [string]$DatabaseName = "academy_api_preprod"
+        [string]$CredentialParameterName = "/academy/api/preprod/db-credentials",
+        [string]$DatabaseName = "academy_api_preprod",
+        [string]$DatabaseUser = "academy_api_preprod_app",
+        [Parameter(Mandatory = $true)]
+        [ValidatePattern('^(?:sha-[0-9a-fA-F]{40}-run-[0-9]+-[0-9]+|manual-sha256-[0-9a-fA-F]{64})$')]
+        [string]$ReleaseId
     )
     if (-not $script:CandidateApiEnvValue) { throw "API env candidate is not prepared." }
     if ($DatabaseName -notmatch '^[a-z][a-z0-9_]{2,62}$') { throw "Invalid API preprod database name." }
+    if ($DatabaseUser -notmatch '^[a-z][a-z0-9_]{2,62}$') { throw "Invalid API preprod database user." }
     $obj = $script:CandidateApiEnvValue | ConvertFrom-Json
     Assert-RuntimeEnvSettingsModule -EnvObject $obj -Expected "apps.api.config.settings.prod" -ParameterName "API preprod candidate"
+    $productionDatabaseName = [string]$obj.DB_NAME
+    $productionDatabaseUser = [string]$obj.DB_USER
+    if (-not $productionDatabaseName -or $productionDatabaseName -eq $DatabaseName) {
+        throw "Production and preprod database names must be distinct."
+    }
+    $credential = Invoke-RequiredAwsJson -ErrorMessage "API preprod credential read failed" -ArgsArray @(
+        "ssm", "get-parameter",
+        "--name", $CredentialParameterName,
+        "--with-decryption",
+        "--region", $script:Region,
+        "--output", "json"
+    )
+    if (-not $credential -or -not $credential.Parameter -or -not $credential.Parameter.Value) {
+        throw "API preprod credential parameter is missing."
+    }
+    try {
+        $credentialObject = [string]$credential.Parameter.Value | ConvertFrom-Json
+    } catch {
+        throw "API preprod credential parameter must contain a JSON object."
+    }
+    if ([string]$credentialObject.DB_USER -ne $DatabaseUser) {
+        throw "API preprod credential parameter is not bound to the dedicated database role."
+    }
+    if (-not $productionDatabaseUser -or $productionDatabaseUser -eq $DatabaseUser) {
+        throw "Production and preprod database users must be distinct."
+    }
+    $credentialPassword = [string]$credentialObject.DB_PASSWORD
+    if (-not $credentialPassword -or $credentialPassword.Length -lt 32) {
+        throw "API preprod database password is missing or too short."
+    }
     $obj | Add-Member -NotePropertyName "DB_NAME" -NotePropertyValue $DatabaseName -Force
+    $obj | Add-Member -NotePropertyName "DB_USER" -NotePropertyValue $DatabaseUser -Force
+    $obj | Add-Member -NotePropertyName "DB_PASSWORD" -NotePropertyValue $credentialPassword -Force
+    $obj | Add-Member -NotePropertyName "ACADEMY_PREPROD_RELEASE_ID" -NotePropertyValue $ReleaseId -Force
     $value = $obj | ConvertTo-Json -Compress -Depth 10
     $put = Invoke-RequiredAwsJson -ErrorMessage "API preprod env candidate write failed" -ArgsArray @(
         "ssm", "put-parameter",
@@ -388,8 +427,35 @@ function Publish-ApiPreprodEnvCandidate {
         "--output", "json"
     )
     if (-not $put -or -not $put.Version) { throw "API preprod env candidate write returned no version." }
+    $version = [int]$put.Version
+    $readback = Invoke-RequiredAwsJson -ErrorMessage "API preprod env candidate readback failed" -ArgsArray @(
+        "ssm", "get-parameter",
+        "--name", "${ParameterName}:$version",
+        "--with-decryption",
+        "--region", $script:Region,
+        "--output", "json"
+    )
+    if (-not $readback -or -not $readback.Parameter -or -not $readback.Parameter.Value) {
+        throw "API preprod env candidate versioned readback is missing."
+    }
+    $actual = [string]$readback.Parameter.Value | ConvertFrom-Json
+    if (
+        [string]$actual.DB_NAME -ne $DatabaseName -or
+        [string]$actual.DB_USER -ne $DatabaseUser -or
+        [string]$actual.ACADEMY_PREPROD_RELEASE_ID -ne $ReleaseId
+    ) {
+        throw "API preprod env candidate versioned readback mismatch."
+    }
     $script:SsmApiPreprodEnv = $ParameterName
     $script:ApiPreprodDatabaseName = $DatabaseName
+    $script:ApiPreprodDatabaseUser = $DatabaseUser
     Write-Ok "API preprod env candidate published to isolated parameter."
-    return $ParameterName
+    return [pscustomobject]@{
+        ParameterName = $ParameterName
+        ParameterVersion = $version
+        ReleaseId = $ReleaseId
+        DatabaseName = $DatabaseName
+        DatabaseUser = $DatabaseUser
+        ProductionDatabaseName = $productionDatabaseName
+    }
 }
