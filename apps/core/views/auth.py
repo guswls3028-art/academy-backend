@@ -1,6 +1,7 @@
 # PATH: apps/core/views/auth.py
 import logging
 from django.conf import settings
+from django.utils import timezone
 
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
@@ -93,3 +94,24 @@ class MeView(APIView):
                 payload,
                 status=500,
             )
+
+
+class CompleteFirstLoginGuideView(APIView):
+    """현재 계정의 비차단형 첫 접속 안내를 확인 완료로 기록한다."""
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
+
+    @swagger_auto_schema(auto_schema=None)
+    def post(self, request):
+        completed_at = request.user.first_login_guide_completed_at
+        if completed_at is None:
+            completed_at = timezone.now()
+            request.user.first_login_guide_completed_at = completed_at
+            request.user.save(update_fields=["first_login_guide_completed_at"])
+
+        return Response(
+            {
+                "first_login_guide_required": False,
+                "completed_at": completed_at,
+            }
+        )
