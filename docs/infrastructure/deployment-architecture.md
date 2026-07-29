@@ -1,7 +1,7 @@
 # V1.1.0 Deployment Architecture
 
 **Version:** V1.1.0
-**Date:** 2026-03-14 (checked 2026-07-28)
+**Date:** 2026-03-14 (checked 2026-07-29)
 **SSOT Status:** Active
 
 ## 1. Service Decomposition
@@ -44,6 +44,13 @@ git push main
     |
     v
 [build-and-push] ─── build changed images ──> ECR (compat :latest + immutable :sha-XXXXXXXX)
+    |
+    v
+[verify-api-development] ─── persistent production-shaped EC2
+    |                         + dedicated IAM/DB/queues/R2 + local Redis
+    |                         └── migrate + production denial checks
+    |                             + /healthz + /health + Excel/PPT/R2 smoke
+    |                             + blue/green promote, then retire prior host
     |
     v
 [verify-api-preprod] ─── dedicated IAM + candidate SSM + preprod DB
