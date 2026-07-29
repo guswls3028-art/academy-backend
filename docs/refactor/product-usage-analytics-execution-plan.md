@@ -1,6 +1,14 @@
 # 역할별 기능 사용 분석 실행 계획서
 
-**Status:** [LOCAL IMPLEMENTATION COMPLETE / ROLLOUT PENDING]
+> Historical execution snapshot (2026-07-29). 최초 구현·배포 계획과 검증
+> 근거를 보존한 문서이며 현재 실행 절차가 아니다. 현재 제품·API 계약은
+> [제품 사용 분석](../domain/product-usage-analytics.md), DB 구조 판단 기준은
+> [DB 확장·테넌트 분리](../infrastructure/database-scaling-and-tenant-isolation.md),
+> 남은 작업은
+> [제품 사용 분석 잔여 작업](product-usage-analytics-remaining-work.md)을
+> 따른다.
+
+**Status:** [HISTORICAL EXECUTION SNAPSHOT]
 
 **작성일:** 2026-07-29 KST
 
@@ -8,7 +16,8 @@
 
 **범위:** `C:\academy\backend`, `C:\academy\frontend`, 사전검증·운영 집계 경로
 
-**구현 상태:** 1차 수직 슬라이스는 로컬 구현·검증 단계까지 완료했다. 이 문서는 남은 운영 검증, 파일럿, 28일 의사결정과 조건부 DB epic의 실행 체크리스트로 계속 사용한다.
+**기록 시점 상태:** 아래 내용은 2026-07-29 최초 구현·배포 계획의
+스냅샷이다. 현재 남은 작업은 상단의 잔여 작업 문서만 갱신한다.
 
 ### 현재 판정
 
