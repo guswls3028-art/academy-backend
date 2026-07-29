@@ -16,6 +16,7 @@ PREREQUISITES = (
 )
 PUBLISH = REPO_ROOT / "scripts" / "v1" / "publish-api-development-env.ps1"
 INITIALIZE = REPO_ROOT / "scripts" / "v1" / "initialize-api-development.ps1"
+REAL_USE_SMOKE = REPO_ROOT / "scripts" / "v1" / "run-api-development-smoke.ps1"
 SETTINGS = REPO_ROOT / "apps" / "api" / "config" / "settings" / "development.py"
 IAM = REPO_ROOT / "scripts" / "v1" / "resources" / "iam.ps1"
 OIDC_POLICY = (
@@ -50,6 +51,24 @@ def test_development_host_keeps_tools_worker_warm_without_production_capacity_ch
     assert tools["maxSize"] == 2
     assert "academy-tools-development" in deploy
     assert "Development Tools worker stays a separate container/process" in deploy
+
+
+def test_development_gate_runs_synthetic_excel_ppt_and_r2_review() -> None:
+    deploy = DEPLOY.read_text(encoding="utf-8-sig")
+    smoke = REAL_USE_SMOKE.read_text(encoding="utf-8-sig")
+
+    assert 'Join-Path $ScriptRoot "run-api-development-smoke.ps1"' in deploy
+    assert "-InstanceId $instanceId" in deploy
+    assert deploy.index("run-api-development-smoke.ps1") < deploy.index(
+        '"Key=Lifecycle,Value=active"'
+    )
+    assert "parse_student_excel_file" in smoke
+    assert "PptComposer" in smoke
+    assert "R2_STORAGE_BUCKET.startswith(\"academy-development-\")" in smoke
+    assert "put_object" in smoke
+    assert "delete_object" in smoke
+    assert "academy-api-asg" not in smoke
+    assert "/academy/api/env" not in smoke
 
 
 def test_development_ssot_is_isolated_and_matches_production_compute() -> None:

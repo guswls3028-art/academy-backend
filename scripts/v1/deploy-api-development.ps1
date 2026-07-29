@@ -424,6 +424,12 @@ echo DEVELOPMENT_RUNTIME_PASS
         throw "API development candidate verification failed: status=$($invocation.Status) stderr=$stderr"
     }
 
+    & (Join-Path $ScriptRoot "run-api-development-smoke.ps1") `
+        -InstanceId $instanceId `
+        -TimeoutSec ([Math]::Min($TimeoutSec, 600)) `
+        -Ci:$Ci `
+        -AwsProfile $AwsProfile
+
     Invoke-Aws @(
         "ec2", "create-tags",
         "--resources", $instanceId,

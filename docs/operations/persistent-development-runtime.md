@@ -60,10 +60,12 @@ manifest의 API/Tools digest를 사용해 첫 개발 인스턴스를 만든다. 
 3. `deploy-api-development.ps1`이 새 candidate 인스턴스를 만들고 migration, DB 역할,
    운영 DB 접근 거부, 개발 큐, 개발 R2와 운영 R2 접근 거부, Redis, `/healthz`,
    `/health`, 정확한 API/Tools digest를 검증한다.
-4. 모든 검증이 성공한 뒤에만 candidate를 active로 승격하고 이전 개발 인스턴스를
+4. `run-api-development-smoke.ps1`이 합성 학생 XLSX 파싱, 1장 PPTX 생성·재열기,
+   개발 R2 객체 put/get/delete를 실행하고 각 처리시간을 기록한다.
+5. 모든 검증이 성공한 뒤에만 candidate를 active로 승격하고 이전 개발 인스턴스를
    종료한다. 실패하면 candidate만 종료하고 기존 active 인스턴스를 보존한다.
-5. 이어서 별도 임시 preprod EC2 게이트가 통과해야 한다.
-6. 그 뒤에만 운영 migration과 ASG/ALB 무중단 교체를 허용한다.
+6. 이어서 별도 임시 preprod EC2 게이트가 통과해야 한다.
+7. 그 뒤에만 운영 migration과 ASG/ALB 무중단 교체를 허용한다.
 
 ## 사용과 확인
 
@@ -82,6 +84,7 @@ pwsh scripts/v1/connect-api-development.ps1 -AwsProfile <profile>
 - 개발 DB 현재 사용자/DB 일치 및 운영 DB `CONNECT=false`
 - 개발 SQS 세 큐 조회 성공
 - 개발 R2 객체 round-trip 성공, 운영 R2 버킷 접근 거부
+- 합성 XLSX 파싱과 PPTX 생성·재열기 성공 및 처리시간 제한 통과
 - `/healthz`, `/health`, 로컬 Redis/Valkey `PONG`
 
 개발 검토 중 실패는 운영 배포 차단 사유다. 개발 게이트를 skipped/success 이외의 상태로
