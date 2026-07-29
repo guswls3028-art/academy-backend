@@ -188,6 +188,40 @@ class WrongNoteServiceSessionExamTests(TestCase):
         self.assertEqual(total, 0)
         self.assertEqual(items, [])
 
+    def test_correct_item_marked_for_review_is_included_without_changing_score(self):
+        regular, question = self._create_wrong_result(
+            title="복습 지정 시험",
+            session=self.session2,
+        )
+        result_item = ResultItem.objects.get(
+            result__target_id=regular.id,
+            question=question,
+        )
+        result_item.is_correct = True
+        result_item.include_in_wrong_note = True
+        result_item.score = 5
+        result_item.save(
+            update_fields=[
+                "is_correct",
+                "include_in_wrong_note",
+                "score",
+                "updated_at",
+            ]
+        )
+
+        total, items = list_wrong_notes_for_enrollment(
+            enrollment_id=self.enrollment.id,
+            q=WrongNoteQuery(
+                lecture_id=self.lecture.id,
+                from_session_order=1,
+            ),
+        )
+
+        self.assertEqual(total, 1)
+        self.assertTrue(items[0]["is_correct"])
+        self.assertTrue(items[0]["include_in_wrong_note"])
+        self.assertEqual(items[0]["score"], 5.0)
+
     def test_api_returns_week_and_image_contract_without_storage_keys(self):
         regular, _ = self._create_wrong_result(
             title="3차시 실전 시험",

@@ -380,6 +380,22 @@ def _handle_exam_ai_result(
     해설이 포함되어 있으면 QuestionExplanation도 생성.
     """
     if status == "FAILED":
+        try:
+            from apps.domains.ai.models import AIJobModel
+
+            Exam, _, _, _ = get_exam_segmentation_models()
+            ai_job = AIJobModel.objects.filter(job_id=job_id).first()
+            if ai_job and ai_job.tenant_id and source_id:
+                Exam.objects.filter(
+                    id=int(source_id),
+                    tenant_id=int(ai_job.tenant_id),
+                    segmentation_status=Exam.SegmentationStatus.PROCESSING,
+                ).update(segmentation_status=Exam.SegmentationStatus.FAILED)
+        except Exception:
+            logger.exception(
+                "AI_CALLBACK_EXAM_FAILED_STATUS_UPDATE_ERROR | job_id=%s",
+                job_id,
+            )
         logger.warning(
             "AI_CALLBACK_EXAM_FAILED_STATUS | job_id=%s | error=%s",
             job_id, error,
@@ -397,6 +413,22 @@ def _handle_exam_ai_result(
     question_image_keys = result_payload.get("question_image_keys") or {}
 
     if not boxes and not questions_data:
+        try:
+            from apps.domains.ai.models import AIJobModel
+
+            Exam, _, _, _ = get_exam_segmentation_models()
+            ai_job = AIJobModel.objects.filter(job_id=job_id).first()
+            if ai_job and ai_job.tenant_id:
+                Exam.objects.filter(
+                    id=int(exam_id),
+                    tenant_id=int(ai_job.tenant_id),
+                    segmentation_status=Exam.SegmentationStatus.PROCESSING,
+                ).update(segmentation_status=Exam.SegmentationStatus.FAILED)
+        except Exception:
+            logger.exception(
+                "AI_CALLBACK_EXAM_EMPTY_STATUS_UPDATE_ERROR | job_id=%s",
+                job_id,
+            )
         logger.info(
             "AI_CALLBACK_EXAM_NO_BOXES | job_id=%s | exam_id=%s",
             job_id, exam_id,
@@ -422,11 +454,33 @@ def _handle_exam_ai_result(
                         )
                         return
 
-            # Template exam만 구조 변경 가능
-            if exam.exam_type != Exam.ExamType.TEMPLATE:
+            is_guided_regular = exam.exam_type == Exam.ExamType.REGULAR
+            if (
+                is_guided_regular
+                and exam.segmentation_status
+                != Exam.SegmentationStatus.PROCESSING
+            ):
                 logger.warning(
-                    "AI_CALLBACK_EXAM_NOT_TEMPLATE | job_id=%s | exam_id=%s | type=%s",
-                    job_id, exam_id, exam.exam_type,
+                    "AI_CALLBACK_EXAM_REGULAR_NOT_PROCESSING | "
+                    "job_id=%s | exam_id=%s | status=%s",
+                    job_id,
+                    exam_id,
+                    exam.segmentation_status,
+                )
+                return
+
+            if is_guided_regular and ExamQuestion.objects.filter(
+                sheet__exam=exam,
+            ).exists():
+                exam.segmentation_status = Exam.SegmentationStatus.FAILED
+                exam.save(
+                    update_fields=["segmentation_status", "updated_at"]
+                )
+                logger.warning(
+                    "AI_CALLBACK_EXAM_REGULAR_STRUCTURE_COLLISION | "
+                    "job_id=%s | exam_id=%s",
+                    job_id,
+                    exam_id,
                 )
                 return
 
@@ -441,10 +495,33 @@ def _handle_exam_ai_result(
             if total == 0:
                 return
 
-            # total_questions 동기화
-            if sheet.total_questions != total:
-                sheet.total_questions = total
-                sheet.save(update_fields=["total_questions", "updated_at"])
+            sheet.total_questions = total
+            if is_guided_regular:
+                if exam.grading_mode == Exam.GradingMode.CHOICE:
+                    choice_count = total
+                elif exam.grading_mode == Exam.GradingMode.WRITTEN:
+                    choice_count = 0
+                else:
+                    choice_count = (
+                        min(
+                            max(int(exam.choice_question_count or 1), 1),
+                            total - 1,
+                        )
+                        if total > 1
+                        else 0
+                    )
+                sheet.choice_count = choice_count
+                sheet.essay_count = max(total - choice_count, 0)
+                if int(exam.choice_question_count or 0) != choice_count:
+                    exam.choice_question_count = choice_count
+            sheet.save(
+                update_fields=[
+                    "total_questions",
+                    "choice_count",
+                    "essay_count",
+                    "updated_at",
+                ]
+            )
 
             # 기존 문항 정리 (범위 밖 삭제)
             existing_numbers = set(
@@ -457,6 +534,11 @@ def _handle_exam_ai_result(
 
             # 문항 생성/갱신
             created_questions = []
+            guided_base_score = (
+                round(float(exam.max_score or 0.0) / total, 2)
+                if is_guided_regular and total > 0
+                else 0.0
+            )
             for idx in range(1, total + 1):
                 # questions_data가 있으면 사용, 없으면 boxes에서 직접
                 if questions_data and idx <= len(questions_data):
@@ -488,13 +570,30 @@ def _handle_exam_ai_result(
                 # question_image_keys는 {문항번호(int): r2_key(str)} 형태
                 q_image_key = question_image_keys.get(idx) or question_image_keys.get(str(idx)) or ""
 
+                defaults = {
+                    "region_meta": region_meta,
+                    "image_key": q_image_key,
+                }
+                if is_guided_regular:
+                    defaults["question_kind"] = (
+                        ExamQuestion.QuestionKind.CHOICE
+                        if idx <= int(sheet.choice_count or 0)
+                        else ExamQuestion.QuestionKind.ESSAY
+                    )
+                    defaults["score"] = (
+                        round(
+                            float(exam.max_score or 0.0)
+                            - guided_base_score * (total - 1),
+                            2,
+                        )
+                        if idx == total
+                        else guided_base_score
+                    )
+
                 obj, _ = ExamQuestion.objects.update_or_create(
                     sheet=sheet,
                     number=idx,
-                    defaults={
-                        "region_meta": region_meta,
-                        "image_key": q_image_key,
-                    },
+                    defaults=defaults,
                 )
                 created_questions.append(obj)
 
@@ -522,6 +621,16 @@ def _handle_exam_ai_result(
                 "AI_CALLBACK_EXAM_SUCCESS | job_id=%s | exam_id=%s | questions=%d | explanations=%d",
                 job_id, exam_id, len(created_questions), len(explanations_data),
             )
+
+            if is_guided_regular:
+                exam.segmentation_status = Exam.SegmentationStatus.READY
+                exam.save(
+                    update_fields=[
+                        "segmentation_status",
+                        "choice_question_count",
+                        "updated_at",
+                    ]
+                )
 
             # 매치업 자동 인덱싱: 시험 문제 → MatchupProblem
             try:

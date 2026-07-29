@@ -31,6 +31,7 @@ class WrongNoteItemSerializer(serializers.Serializer):
     correct_answer = serializers.CharField(required=False, allow_blank=True)
 
     is_correct = serializers.BooleanField()
+    include_in_wrong_note = serializers.BooleanField(required=False)
     score = serializers.FloatField()
     max_score = serializers.FloatField()
 

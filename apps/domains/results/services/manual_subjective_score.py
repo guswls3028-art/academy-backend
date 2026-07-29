@@ -48,7 +48,10 @@ def explicit_manual_subjective_score_for_result(
 
     manual_item_score = 0.0
     has_manual_essay_item = False
-    for item in ResultItem.objects.filter(result=result, source="manual"):
+    for item in ResultItem.objects.filter(
+        result=result,
+        source__in=["manual", "manual_grid"],
+    ):
         if score_shape.question_kind(int(item.question_id)) == "essay":
             manual_item_score += safe_float(item.score)
             has_manual_essay_item = True

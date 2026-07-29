@@ -91,6 +91,11 @@ class AdminRepresentativeAttemptView(APIView):
                 defaults={
                     "answer": str(f.answer or ""),
                     "is_correct": bool(f.is_correct),
+                    "include_in_wrong_note": bool(
+                        (f.meta or {}).get("include_in_wrong_note")
+                        if isinstance(f.meta, dict)
+                        else False
+                    ),
                     "score": score,
                     "max_score": max_score,
                     "source": str(f.source or ""),
