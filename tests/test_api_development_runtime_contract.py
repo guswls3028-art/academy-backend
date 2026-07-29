@@ -15,6 +15,7 @@ PREREQUISITES = (
     REPO_ROOT / "scripts" / "v1" / "converge-api-development-prerequisites.ps1"
 )
 PUBLISH = REPO_ROOT / "scripts" / "v1" / "publish-api-development-env.ps1"
+INITIALIZE = REPO_ROOT / "scripts" / "v1" / "initialize-api-development.ps1"
 SETTINGS = REPO_ROOT / "apps" / "api" / "config" / "settings" / "development.py"
 IAM = REPO_ROOT / "scripts" / "v1" / "resources" / "iam.ps1"
 OIDC_POLICY = (
@@ -148,6 +149,9 @@ def test_development_role_cannot_read_production_env_or_touch_prod_queues() -> N
         "function Legacy-GitHubActionsDeployIAM", maxsplit=1
     )[0]
 
+    assert "$script:EcrToolsRepo" in block
+    assert "EcrToolsWorkerRepo" not in block
+    assert "EcrToolsWorkerRepo" not in INITIALIZE.read_text(encoding="utf-8-sig")
     assert "/academy/api/development/env" in block
     assert "/academy/workers/development/env" in block
     assert "/academy/api/env" not in block

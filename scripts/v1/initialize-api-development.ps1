@@ -26,7 +26,7 @@ Load-SSOT -Env prod | Out-Null
     -AwsProfile $AwsProfile
 
 $apiRelease = Get-ReleaseManifestImage -RepoName $script:EcrApiRepo
-$toolsRelease = Get-ReleaseManifestImage -RepoName $script:EcrToolsWorkerRepo
+$toolsRelease = Get-ReleaseManifestImage -RepoName $script:EcrToolsRepo
 if (
     [string]$apiRelease.GitSha -notmatch '^[0-9a-fA-F]{40}$' -or
     [string]$toolsRelease.GitSha -ne [string]$apiRelease.GitSha
@@ -40,7 +40,7 @@ $apiImageUri = (
 )
 $toolsImageUri = (
     "$($script:AccountId).dkr.ecr.$($script:Region).amazonaws.com/" +
-    "$($script:EcrToolsWorkerRepo)@$([string]$toolsRelease.Digest)"
+    "$($script:EcrToolsRepo)@$([string]$toolsRelease.Digest)"
 )
 
 $outputPath = [System.IO.Path]::GetTempFileName()
@@ -76,5 +76,4 @@ try {
 } finally {
     Remove-Item -LiteralPath $outputPath -ErrorAction SilentlyContinue
 }
-
 
