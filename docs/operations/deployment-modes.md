@@ -12,7 +12,7 @@
 | 항목 | 내용 |
 |------|------|
 | **트리거** | `git push origin main` (frontend 레포) |
-| **배포 대상** | Cloudflare Pages (자동 빌드·배포) |
+| **배포 대상** | GitHub Actions가 검증한 bundle을 Wrangler direct upload로 Cloudflare Pages에 배포 |
 | **스크립트** | backend 배포 스크립트로 프론트를 배포하지 않는다. |
 
 ---
@@ -25,7 +25,7 @@
 | 경로 | 트리거 | 서버 반영 방식 | 속도 |
 |------|--------|----------------|------|
 | **CI 자동 배포** | main push → GitHub Actions | build-and-push → 상시 격리 development(실사용 smoke) → 임시 격리 preprod(전용 DB migration+health) → 운영 migration → deploy-api/messaging/ai/tools/video → verify-deployment | ~20~40분 |
-| **수동 정식 배포** | `pwsh scripts/v1/deploy.ps1 -AwsProfile default` | 후보 env 준비 → 격리 preprod → 운영 env 승격 → API/worker/Batch/EventBridge/ALB 런타임 반영 | 20~30분 |
+| **수동 인프라 수렴** | `pwsh scripts/v1/deploy.ps1 -AwsProfile <approved-operator>` | 이미 검증·승격된 digest로 후보 env 준비 → 격리 preprod → 운영 env 승격 → API/worker/Batch/EventBridge/ALB 런타임 반영 | 20~30분 |
 
 - **env·이미지 소스:** 운영은 SSM `/academy/api/env` → `/opt/api.env`, development는 버전 고정 `/academy/api/development/env`·`/academy/workers/development/env`, `academy_api_development` DB와 개발 전용 큐/R2를 사용한다. preprod는 4KB를 넘는 환경을 보존하는 Advanced SecureString `/academy/api/preprod/env`와 `academy_api_preprod` DB를 사용한다. 이미지는 완전 성공 `docs/reports/release-manifest.latest.json`의 `academy-api@sha256:...`를 사용한다.
 - **API 역할 불변조건:** `/academy/api/env`의 `DJANGO_SETTINGS_MODULE`은 `apps.api.config.settings.prod`, `/academy/workers/env`는 `apps.api.config.settings.worker`여야 한다. 누락·교차 오염·API env 조회 실패 시 배포를 중단하며 workers env에서 API env를 합성하지 않는다.
@@ -38,7 +38,7 @@
 main에 push하면 자동으로 서버 반영까지 완료된다:
 
 1. GitHub Actions `v1-build-and-push-latest.yml` 트리거
-2. 변경 감지 결과에 따라 필요한 이미지(base, api, video-worker, messaging-worker, ai-worker-cpu, tools-worker)만 linux/arm64 빌드 → ECR `:latest` + `:sha-*` 푸시. `workflow_dispatch` 또는 core/shared 변경은 전체 빌드.
+2. lint, expand/contract migration guard와 smoke가 통과한 뒤 변경 감지 결과에 따라 필요한 이미지(base, api, video-worker, messaging-worker, ai-worker-cpu, tools-worker)만 linux/arm64 빌드 → ECR `:latest` + run-unique `:sha-*` 푸시. 자동 push는 contract migration을 차단하고, 이미 expand release가 완전히 배포된 contract만 주석과 사유를 기록한 뒤 명시적 `workflow_dispatch` 입력으로 허용한다. `workflow_dispatch` 또는 core/shared 변경은 전체 빌드.
 3. `verify-api-development` job → 같은 release manifest의 API/Tools digest를 상시 격리 development에 blue/green 방식으로 배포한다. 전용 DB migration, 운영 DB·R2 접근 거부, 개발 큐/R2/Redis, `/healthz`, `/health`, 이미지 identity와 합성 XLSX/PPT/R2 실사용 smoke가 모두 통과해야 candidate를 active로 승격한다.
 4. `verify-api-preprod` job → development를 통과한 API digest로 임시 격리 EC2 1대를 기동하고 별도 DB에 migration을 적용한다. prod settings, candidate DB 경계, `/healthz`, DB 포함 `/health`를 모두 확인한 뒤 종료한다.
 5. preprod 성공 후에만 `run-migrations`가 운영 DB migration을 실행한다.
@@ -51,15 +51,20 @@ main에 push하면 자동으로 서버 반영까지 완료된다:
 
 ---
 
-## 3. 수동 정식 배포 (deploy.ps1)
+## 3. 수동 인프라 수렴 (deploy.ps1)
 
 - **목적:** 인프라 변경(Launch Template, UserData, ASG, ALB, SSM, Batch 등)을 반영할 때.
-- **실행:** `pwsh scripts/v1/deploy.ps1 -AwsProfile default`
+- **실행:** `check-credentials.ps1`을 통과한 비-root 운영자 profile로 `pwsh scripts/v1/deploy.ps1 -AwsProfile <approved-operator>`
 - **동작:** Bootstrap → Ensure-Network/ECR → 운영 env 후보 준비(무변경) → candidate SSM/별도 DB 격리 검증 → 운영 env 원자 승격 → API/worker/Batch/EventBridge/ALB 런타임 반영 → After-Deploy Verification
 - **언제 써야 하는지:**
   - Launch Template, UserData, ASG, ALB, SSM 파라미터 등 인프라 설정 변경 시
   - 출시 전/후, 안정 반영이 필요할 때
   - "서버 상태를 정석 경로로 통째로 맞추고 싶을 때"
+
+새 애플리케이션 digest를 처음 승격하는 용도로 사용하지 않는다. 새 후보는
+먼저 GitHub Actions OIDC 경로의 persistent development와 isolated
+preproduction을 통과해야 한다. 계정 root principal이면 수동 실행을
+중단한다.
 
 **상세:** [formal-deploy.md](formal-deploy.md)
 
