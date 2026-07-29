@@ -64,6 +64,8 @@ ALLOWED_HOSTS = [
     "www.sswe.co.kr",
     "dnbacademy.co.kr",
     "www.dnbacademy.co.kr",
+    "movementhui.com",
+    "www.movementhui.com",
     "academy-frontend.pages.dev",
     # 로컬/EC2 내부 health check·ALB 타깃·Lambda backlog (Host: private IP)
     "localhost",
@@ -100,6 +102,8 @@ CORS_ALLOWED_ORIGINS = [
     "https://www.sswe.co.kr",
     "https://dnbacademy.co.kr",
     "https://www.dnbacademy.co.kr",
+    "https://movementhui.com",
+    "https://www.movementhui.com",
     "https://dev-web.hakwonplus.com",
     # 로컬 개발용 (프론트엔드 localhost:5174에서 배포된 API 서버 사용)
     "http://localhost:5174",
@@ -139,6 +143,8 @@ CSRF_TRUSTED_ORIGINS = [
     "https://www.sswe.co.kr",
     "https://dnbacademy.co.kr",
     "https://www.dnbacademy.co.kr",
+    "https://movementhui.com",
+    "https://www.movementhui.com",
 ]
 
 # ==================================================

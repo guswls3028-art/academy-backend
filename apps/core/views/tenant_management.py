@@ -301,6 +301,7 @@ class TenantOwnerView(APIView):
                         email="",
                         name=name or "",
                         phone=phone or "",
+                        must_change_password=True,
                     )
 
                 membership = core_repo.membership_ensure_active(
@@ -323,7 +324,12 @@ class TenantOwnerView(APIView):
                 target_tenant=tenant,
                 target_user=user,
                 summary=f"Owner registered: {username} -> {tenant.code}",
-                payload={"username": username, "password": password, "name": name, "phone": phone},
+                payload={
+                    "username": username,
+                    "password_changed": bool(password),
+                    "name": name,
+                    "phone": phone,
+                },
             )
             return Response({
                 "tenantId": tenant.id,

@@ -11,6 +11,9 @@ param(
 $ErrorActionPreference = 'Stop'
 $Domain = $Domain.Trim().ToLower()
 if (-not $Domain) { throw "Domain is required." }
+if ([System.Uri]::CheckHostName($Domain) -ne [System.UriHostNameType]::Dns -or -not $Domain.Contains('.')) {
+    throw "Domain must be an apex hostname such as example.com."
+}
 $envFile = Join-Path $PSScriptRoot '..\.env'
 if (-not (Test-Path $envFile)) {
     Write-Host "backend\.env not found."
@@ -42,6 +45,21 @@ $body = @{
 } | ConvertTo-Json
 
 $uri = 'https://api.cloudflare.com/client/v4/zones'
+$encodedDomain = [System.Uri]::EscapeDataString($Domain)
+$existing = Invoke-RestMethod -Uri "${uri}?name=${encodedDomain}&account.id=${account}" -Headers $headers -Method Get
+if (-not $existing.success) {
+    throw "Unable to check whether Cloudflare zone already exists."
+}
+if ($existing.result.Count -gt 0) {
+    $z = $existing.result[0]
+    Write-Host ""
+    Write-Host "=== $Domain already exists. Use these in Gabia (네임서버 설정) ==="
+    Write-Host ""
+    Write-Host "  1차: $($z.name_servers[0])"
+    Write-Host "  2차: $($z.name_servers[1])"
+    Write-Host ""
+    return
+}
 if (-not $PSCmdlet.ShouldProcess($Domain, "Create Cloudflare zone with jump_start enabled")) {
     return
 }

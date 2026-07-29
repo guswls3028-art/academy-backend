@@ -17,7 +17,14 @@ from rest_framework_simplejwt.tokens import AccessToken
 from apps.api.common.auth_jwt import TenantAwareTokenObtainPairSerializer
 from apps.core.authentication import TokenVersionJWTAuthentication
 from apps.core.management.commands.audit_tenant_access import _confirmation_token
-from apps.core.models import PendingPasswordReset, Program, Tenant, TenantDomain, TenantMembership
+from apps.core.models import (
+    OpsAuditLog,
+    PendingPasswordReset,
+    Program,
+    Tenant,
+    TenantDomain,
+    TenantMembership,
+)
 from apps.core.models.user import user_internal_username
 from apps.core.permissions import TenantResolvedAndMember, TenantResolvedAndStaff
 from apps.core.services.password import create_pending_password_reset
@@ -25,7 +32,11 @@ from apps.core.services.tenant_access import reconcile_user_tenant_access
 from apps.core.tenant.context import clear_current_tenant
 from apps.core.views.dev_tenant_ops import DevImpersonateView
 from apps.core.views.program import SubscriptionView
-from apps.core.views.tenant_management import TenantCreateView, TenantOwnerDetailView
+from apps.core.views.tenant_management import (
+    TenantCreateView,
+    TenantOwnerDetailView,
+    TenantOwnerView,
+)
 from apps.domains.clinic.models import SessionParticipant
 from apps.domains.clinic.views.participant_views import ParticipantViewSet
 from apps.domains.parents.models import Parent
@@ -696,6 +707,35 @@ class TenantProvisioningInvariantTests(TestCase):
         force_authenticate(request, user=self.actor)
         with override_settings(OWNER_TENANT_ID=self.platform.id):
             return TenantCreateView.as_view()(request)
+
+    def test_owner_registration_audit_never_stores_password(self):
+        target = _tenant("audit-redaction-target")
+        request = APIRequestFactory().post(
+            f"/api/v1/core/tenants/{target.id}/owner/",
+            {
+                "username": "new-owner",
+                "password": "temporary-password",
+                "name": "New Owner",
+            },
+            format="json",
+        )
+        request.tenant = self.platform
+        force_authenticate(request, user=self.actor)
+
+        with override_settings(OWNER_TENANT_ID=self.platform.id):
+            response = TenantOwnerView.as_view()(request, tenant_id=target.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        created_owner = User.objects.get(
+            username=user_internal_username(target, "new-owner")
+        )
+        self.assertTrue(created_owner.must_change_password)
+        audit = OpsAuditLog.objects.get(
+            action="owner.register",
+            target_tenant=target,
+        )
+        self.assertNotIn("password", audit.payload)
+        self.assertTrue(audit.payload["password_changed"])
 
     def test_creation_normalizes_and_atomically_provisions_domain_and_program(self):
         response = self._post({

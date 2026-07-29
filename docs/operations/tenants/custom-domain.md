@@ -1,167 +1,228 @@
-# 새 테넌트 커스텀 도메인 추가 메뉴얼
+# 신규 테넌트 온보딩 — 커스텀 도메인
 
-고객이 **도메인 주소만** 가져오면, 운영자는 가비아 네임서버만 등록하고 **「등록했다」**라고 알리면, 에이전트가 인프라 구축 전부를 수행한다.
+고객이 도메인·브랜드·대표 계정 정보를 전달한 시점부터 실제 로그인 검증까지의
+정본 절차다. Cloudflare, 운영 DB, 백엔드, 프론트엔드 중 하나라도 빠지면 완료가
+아니다.
 
----
+## 원칙
 
-## 역할 분담
+- 테넌트 코드와 도메인을 추정하지 않는다.
+- 운영 DB에서 ID 충돌을 먼저 확인하고 비어 있는 ID를 명시한다.
+- 비밀번호는 채팅 외 문서·Git·셸 명령·감사 로그에 저장하지 않는다.
+- 가비아 네임서버 위임 전에는 Pages CNAME을 만들지 않는다.
+- 운영 DB에는 코드가 배포된 뒤 `provision_tenant`로 반영한다.
+- 백엔드 배포는 격리 preproduction gate와 ASG 무중단 교체를 통과해야 한다.
+- 같은 명령을 다시 실행해도 중복 생성되지 않아야 한다.
 
-| 단계 | 담당 | 할 일 |
-|------|------|--------|
-| 1 | **에이전트** | Cloudflare zone 추가 후 **가비아에 넣을 네임서버 2개**를 운영자에게 전달 |
-| 2 | **운영자** | 가비아 도메인 관리 → 네임서버 설정에 1차·2차 등록 후 **「등록했다」** 알림 |
-| 3 | **에이전트** | Pages 커스텀 도메인, 백엔드, 프론트, DB 반영 등 **인프라 전부** 수행 |
+`setup_three_tenants`는 기존 테넌트 복구용 레거시 명령이다. 신규 온보딩 목록에
+테넌트를 추가하지 않는다.
 
----
+## 1. 입력 시트
 
-## Phase 1 — 고객이 새 도메인만 가져온 경우 (에이전트 실행)
+작업 전에 아래 값을 확정한다. 비밀번호는 입력 시트에 적지 않는다.
 
-### 1-1. Cloudflare zone 추가 + 네임서버 확인
+| 값 | 예시 | 규칙 |
+|---|---|---|
+| 표시명 | 새봄수학 | 고객 화면에 표시할 정식 이름 |
+| 코드 | saebom | 소문자 영문·숫자·하이픈 |
+| 운영 ID | 10 | 운영 DB에서 비어 있는 양의 정수 |
+| apex 도메인 | saebom.com | `www` 제외 |
+| 대표자 표시명 | 홍길동 | 직원관리 대표 행 |
+| 대표 로그인 ID | 별도 전달 | 문서·커밋에 기록하지 않음 |
+| 브랜드 색상 | `#123456`, `#fedcba` | 로고 실측 또는 고객 지정 |
+| 로고 원본 | PNG/SVG | 고객 제공 원본 보존 |
+| 고객 메모 | 요청 기능·운영 방식 | 비밀정보 제외 |
 
-```powershell
-cd C:\academy\backend
-.\scripts\add-cloudflare-zone.ps1 -Domain "새도메인.co.kr" -WhatIf
-.\scripts\add-cloudflare-zone.ps1 -Domain "새도메인.co.kr"
-```
-
-- `-WhatIf` 출력에서 zone 이름과 생성 작업을 확인한 뒤 실제 실행에 승인한다.
-- 출력된 **1차·2차 네임서버**를 운영자에게 전달.
-- 예시 안내 문구:  
-  「가비아 [도메인 관리](https://domain.gabia.com) → 해당 도메인 → 네임서버 설정에 아래 2개를 등록해 주세요.  
-  1차: ○○○.ns.cloudflare.com  
-  2차: ○○○.ns.cloudflare.com  
-  등록 완료하시면 **「등록했다」**라고만 알려주세요.」
-
-### 1-2. 주의
-
-- Phase 1에서는 **zone에 CNAME을 넣지 않는다.** (가비아 NS만 등록.)
-- Pages 커스텀 도메인 + zone CNAME 추가는 Phase 2에서 `pages-add-custom-domain.ps1` 한 번에 수행. zone CNAME 타깃은 **academy-frontend-26b.pages.dev** (다른 테넌트와 동일).
-
----
-
-## Phase 2 — 운영자가 「등록했다」고 알린 경우 (에이전트 실행)
-
-아래 순서대로 수행. `새도메인.co.kr`, 테넌트 코드 `새코드`, 표시명 `새이름`은 실제 값으로 치환.
-
-### 2-1. Pages 커스텀 도메인 + zone CNAME (1014·1016 방지)
+운영 ID와 기존 코드를 읽기 전용으로 확인한다.
 
 ```powershell
 cd C:\academy\backend
-.\scripts\pages-add-custom-domain.ps1 -Domain "새도메인.co.kr" -WhatIf
-.\scripts\pages-add-custom-domain.ps1 -Domain "새도메인.co.kr"
+.\scripts\v1\run-api-management-remote.ps1 -Command "check_tenants"
 ```
 
-- `-WhatIf`에서 삭제할 기존 CNAME, Pages 등록, 새 CNAME 대상을 확인한 뒤
-  실제 실행에 승인한다.
-- 잘못된 CNAME 제거 → **Workers & Pages → academy-frontend → Custom domains**에 도메인·www 추가 → **zone에 CNAME @, www → `academy-frontend-26b.pages.dev`** 추가 (실제 Pages 타깃은 `academy-frontend-26b.pages.dev`. `academy-frontend.pages.dev` 사용 시 1016/1014 발생 가능).
+## 2. Phase 1 — Cloudflare zone과 네임서버
 
-### 2-1-2. 연결 확인 (필수)
-
-```powershell
-curl -sI -o NUL -w "%{http_code}" https://새도메인.co.kr
-curl -sI -o NUL -w "%{http_code}" https://www.새도메인.co.kr
-```
-
-- 둘 다 **200**이 나와야 함. 1016(Origin DNS error)이면 zone에 CNAME이 없거나 타깃이 잘못된 것 → `backend/scripts/zone-dns-add-pages-cname.ps1 -Domain "새도메인.co.kr"` 로 CNAME 추가 또는 `get-zone-dns.ps1`로 기존 테넌트(tchul.com)와 동일한지 확인.
-
-### 2-2. 백엔드 설정
-
-**파일 1: `backend/apps/core/management/commands/setup_three_tenants.py`**
-
-- `TENANTS_CONFIG`에 항목 추가:
-
-```python
-{
-    "code": "새코드",
-    "name": "새이름",
-    "hosts": ["새도메인.co.kr", "www.새도메인.co.kr"],
-    "primary_host": "새도메인.co.kr",
-},
-```
-
-- docstring·help·완료 메시지에 새 도메인명 반영.
-
-**파일 2: `backend/apps/api/config/settings/prod.py`**
-
-- `ALLOWED_HOSTS`: `"새도메인.co.kr"`, `"www.새도메인.co.kr"` 추가
-- `CORS_ALLOWED_ORIGINS`: `"https://새도메인.co.kr"`, `"https://www.새도메인.co.kr"` 추가
-- `CSRF_TRUSTED_ORIGINS`: 위와 동일 2개 추가
-
-### 2-3. 프론트엔드 설정
-
-**1) TenantId 확장**
-
-- `frontend/src/shared/tenant/tenants/types.ts`: `TenantId`에 새 숫자 추가 (예: `5 | 9999` → `5 | 6 | 9999`).
-
-**2) 새 테넌트 정의**
-
-- `frontend/src/shared/tenant/tenants/새코드.ts` 생성 (ymath.ts / sswe.ts 참고).
-- `frontend/src/shared/tenant/tenants/index.ts`: import 및 `TENANTS` 배열에 추가.
-- `frontend/src/shared/tenant/config.ts`: 주석에 새 테넌트 설명 추가.
-
-**3) 로그인·라우트**
-
-- `frontend/src/auth/pages/LoginPage.tsx`: 새 테넌트의 전용 로그인 요구사항 반영.
-- `frontend/src/core/router/AuthRouter.tsx`: 로그인 라우트와 TenantId 분기 반영.
-
-**4) OG/타이틀 (Pages Function)**
-
-- `frontend/functions/[[path]].ts`: `host === "새도메인.co.kr"` / `"www.새도메인.co.kr"` 분기 추가, `<title>`·`og:title`·`og:description`·`twitter:title`·`twitter:description` 치환.
-
-**5) 학생앱 테마·로고**
-
-- `frontend/src/app_student/layout/StudentLayout.tsx`: `COMMON_THEME_TENANTS`에 `"새코드"` 추가.
-- `frontend/src/app_student/shared/tenant/studentTenantBranding.ts`: `COMMON_LOGO_CODES`에 `"새코드"` 추가.
-
-### 2-4. DB 반영
+먼저 변경 대상을 확인하고 zone을 생성한다.
 
 ```powershell
 cd C:\academy\backend
-python manage.py setup_three_tenants
+.\scripts\add-cloudflare-zone.ps1 -Domain "saebom.com" -WhatIf
+.\scripts\add-cloudflare-zone.ps1 -Domain "saebom.com" -Confirm:$false
 ```
 
-- 배포 서버 또는 로컬에서 실제 DB 기준으로 실행. 새 테넌트·TenantDomain·Program 생성/연결.
+스크립트는 멱등형이다. 이미 zone이 있으면 새로 만들지 않고 해당 zone의
+네임서버 1·2차를 다시 출력한다.
 
-### 2-5. 메시징 경계 확인
+운영자가 가비아에 전달할 문구:
 
-테넌트 생성 과정에서 tenant별 PFID/API key를 DB나 UI에 설정하거나, 신규
-알림톡 템플릿 검수·일괄 신청을 수행하지 않는다. 모든 실발송은 공용 owner
-설정과 기존 승인 템플릿만 사용하며, exact trigger 또는 명시된 unified
-category가 없으면 fail-closed가 정답이다.
+> 가비아 도메인 관리 → 네임서버 설정에서 가비아 기본 1·2·3차를 지우고,
+> 전달드린 Cloudflare 1·2차만 입력해 주세요. IP 칸은 비워 두고 저장한 뒤
+> “등록했다”라고 알려주세요.
 
-상세 정책은 `docs/ssot/messaging-policy.md`와
-`docs/domain/messaging-alimtalk.md`를 따른다. 커스텀 도메인 등록이 메시징
-정책을 확장하거나 템플릿 재검수를 자동 승인하지 않는다.
+### 수동 중단 게이트
 
-### 2-6. 배포·확인
+가비아 저장 완료 확인 전에는 다음 작업을 실행하지 않는다.
 
-- 프론트 변경분 배포(Cloudflare Pages).
-- **연결 확인**: `curl -sI -o NUL -w "%{http_code}" https://새도메인.co.kr` 및 www → **200** 확인.
-- https://새도메인.co.kr 접속 후 로그인·동작 확인.
+- `pages-add-custom-domain.ps1` 실제 실행
+- apex/`www` CNAME 생성
+- 외부 HTTPS 성공 판정
 
----
+코드와 로고 준비는 병행할 수 있지만, DNS 활성화로 오인해 완료 처리하지 않는다.
 
-## 참고: sswe.co.kr 적용 요약
+## 3. 코드·브랜딩 준비
 
-- **Phase 1**: `add-cloudflare-zone.ps1 -Domain "sswe.co.kr"` → 네임서버 2개 전달 → 가비아 등록 완료 알림.
-- **Phase 2**:  
-  - `pages-add-custom-domain.ps1 -Domain "sswe.co.kr"` (Pages 등록 + zone CNAME → academy-frontend-26b.pages.dev).  
-  - 1016 발생 시 `zone-dns-add-pages-cname.ps1 -Domain "sswe.co.kr"` 로 CNAME 추가, www가 잘못된 타깃이면 `zone-dns-update-record.ps1`로 academy-frontend-26b.pages.dev 로 수정.  
-  - setup_three_tenants·prod.py·프론트(sswe 테넌트·라우트·OG·테마)·`setup_three_tenants` 실행.  
-- **연결 확인**: `curl -sI -o NUL -w "%{http_code}" https://sswe.co.kr` 및 www → 200 확인 완료.
+### 백엔드
 
----
+`apps/api/config/settings/prod.py`의 세 위치에 apex와 `www`를 추가한다.
 
-## 관련 파일·스크립트
+- `ALLOWED_HOSTS`
+- `CORS_ALLOWED_ORIGINS`
+- `CSRF_TRUSTED_ORIGINS`
+
+DB 프로비저닝 코드는 고객별 목록에 추가하지 않는다. 배포 후 범용 명령
+`provision_tenant`를 사용한다.
+
+### 프론트엔드
+
+다음 경계를 모두 반영한다.
+
+| 경계 | 파일 |
+|---|---|
+| ID·호스트·브랜드 레지스트리 | `src/shared/tenant/tenants/` |
+| 로그인 테마 | `src/auth/themes/<code>.css`, `LoginPage.tsx` |
+| 학생앱 테마 | `src/app_student/shared/ui/theme/tenants/`, `StudentLayout.tsx` |
+| 성적표 색상 | `src/app_admin/domains/scores/utils/studentScoreReportTheme.ts` |
+| PWA 아이콘 | `src/shared/pwa/tenantPwaMeta.ts` |
+| 서버 렌더 OG·manifest·sitemap | `functions/[[path]].ts` |
+| 정적 로고 | `public/tenants/<code>/` |
+
+필수 정적 파일:
+
+```text
+logo.png
+icon.png
+favicon.png
+og-image.png
+apple-touch-icon.png
+pwa-192.png
+pwa-512.png
+```
+
+네이버 Search Advisor 코드는 발급된 경우에만 `functions/[[path]].ts`에
+추가한다. 임의 값을 만들지 않는다.
+
+## 4. Phase 2 — 가비아 위임 확인 후
+
+공용 DNS에서 Cloudflare 네임서버가 보이는지 확인한다.
+
+```powershell
+Resolve-DnsName -Type NS saebom.com -Server 1.1.1.1
+Resolve-DnsName -Type NS saebom.com -Server 8.8.8.8
+```
+
+두 조회 모두 Phase 1에서 발급한 값이어야 한다. 가비아 기본
+`ns.gabia.*`가 보이면 전파를 기다리고 중단한다.
+
+## 5. 배포
+
+백엔드와 프론트엔드는 각각 독립 저장소의 정식 배포 경로를 사용한다.
+
+- 백엔드: `.github/workflows/v1-build-and-push-latest.yml`
+  - immutable digest 후보
+  - 격리 preproduction DB/health 검증
+  - 운영 migration
+  - ASG/ALB health-gated rolling refresh
+  - 배포 후 digest·worker·queue·health 확인
+- 프론트엔드: `.github/workflows/quality-gate.yml`
+  - typecheck/lint/build/E2E gate
+  - GitHub Actions가 Cloudflare Pages의 단일 production deploy owner인지 확인
+
+배포된 revision에 신규 도메인 설정과 `provision_tenant` 명령이 포함됐는지
+확인한 뒤 운영 DB를 변경한다.
+
+## 6. 운영 DB 프로비저닝
+
+먼저 owner 없이 dry-run을 실행한다. 표시명에 공백이 있으면 따옴표를 유지한다.
+
+```powershell
+cd C:\academy\backend
+.\scripts\v1\run-api-management-remote.ps1 -Command 'provision_tenant saebom --tenant-id 10 --name "새봄수학" --domain saebom.com --login-title "새봄수학" --login-subtitle "saebom.com" --window-title "새봄수학" --logo-url /tenants/saebom/logo.png --primary-color "#123456" --dry-run'
+```
+
+출력의 코드·ID·primary domain이 입력 시트와 정확히 같을 때만 실제 실행한다.
+
+```powershell
+.\scripts\v1\run-api-management-remote.ps1 -Command 'provision_tenant saebom --tenant-id 10 --name "새봄수학" --domain saebom.com --login-title "새봄수학" --login-subtitle "saebom.com" --window-title "새봄수학" --logo-url /tenants/saebom/logo.png --primary-color "#123456"'
+```
+
+대표 계정은 HTTPS 개발자 콘솔의 테넌트 상세 → Owner 등록에서 만든다. 비밀번호를
+셸 인수로 전달하지 않는다. 신규 owner는 첫 로그인 후 비밀번호 변경이 강제되며,
+감사 로그에는 `password_changed=true`만 기록되고 원문은 저장되지 않는다.
+
+## 7. Pages·DNS 활성화
+
+DB와 양쪽 배포가 준비된 뒤 실행한다.
+
+```powershell
+cd C:\academy\backend
+.\scripts\pages-add-custom-domain.ps1 -Domain "saebom.com" -WhatIf
+.\scripts\pages-add-custom-domain.ps1 -Domain "saebom.com" -Confirm:$false
+```
+
+스크립트가 수행하는 일:
+
+1. Pages 프로젝트 `academy-frontend`에 apex와 `www` 등록
+2. 잘못된 apex/`www` CNAME만 제거
+3. 올바른 proxied CNAME은 유지
+4. 누락된 레코드를 `academy-frontend-26b.pages.dev`로 생성
+
+## 8. 완료 검증
+
+```powershell
+Resolve-DnsName -Type NS saebom.com -Server 1.1.1.1
+curl.exe -sS -o NUL -w "%{http_code}`n" https://saebom.com/login
+curl.exe -sS -o NUL -w "%{http_code}`n" https://www.saebom.com/login
+```
+
+다음 항목을 모두 확인한다.
+
+- apex와 `www`가 HTTP 200
+- 인증서 정상
+- 제목·favicon·OG·PWA manifest가 해당 브랜드
+- 데스크톱 1366px·모바일 390px 로그인 화면
+- 대표 계정 로그인과 최초 비밀번호 변경
+- 로그인 후 역할이 owner
+- 새 테넌트의 학생·강의·성적 목록이 비어 있음
+- 다른 테넌트 데이터가 보이지 않음
+- 백엔드 `/healthz`, `/health` 정상
+
+프론트 가용성 스크립트로 신규 URL만 좁게 재검증할 수 있다.
+
+```powershell
+cd C:\academy\frontend
+$env:TENANT_AVAILABILITY_URLS = "https://saebom.com/login,https://www.saebom.com/login"
+pnpm verify:tenant-availability
+Remove-Item Env:TENANT_AVAILABILITY_URLS
+```
+
+## 9. 실패 시 중단·복구
+
+| 증상 | 확인·조치 |
+|---|---|
+| NS가 가비아 값 | 가비아 저장/전파 대기. Pages 실제 실행 중단 |
+| Cloudflare 1014/1016 | `get-zone-dns.ps1`로 apex/`www`와 Pages target 확인 |
+| CORS/CSRF 오류 | 배포된 backend revision과 `prod.py` 두 origin 확인 |
+| tenant required/404 | 운영 DB의 `TenantDomain` apex/`www`와 활성 상태 확인 |
+| 다른 학원 브랜딩 | frontend registry hostname/code/ID 확인 |
+| 다른 학원 데이터 노출 | 즉시 도메인 비활성화 후 tenant isolation incident로 처리 |
+
+관련 스크립트:
 
 | 용도 | 경로 |
-|------|------|
-| 가비아 네임서버 안내용 문서 | `backend/docs/operations/tenants/gabia-nameserver.md` |
-| Cloudflare zone 추가 | `backend/scripts/add-cloudflare-zone.ps1` |
-| Pages 커스텀 도메인 + zone CNAME(1014·1016 방지) | `backend/scripts/pages-add-custom-domain.ps1` |
-| zone DNS에 Pages CNAME만 추가(1016 시 보정용) | `backend/scripts/zone-dns-add-pages-cname.ps1` |
-| zone DNS 조회(기존 테넌트 참고용) | `backend/scripts/get-zone-dns.ps1` |
-| 테넌트·도메인·Program DB 반영 | `python manage.py setup_three_tenants` |
-| Cursor 룰(역할 분담·메뉴얼 참조) | `.cursor/rules/14_tenant_custom_domain_add.mdc` |
-
-다음에 고객이 새 주소만 가져오면, 위 Phase 1 → 운영자 가비아 등록 → Phase 2 순서로 실행하면 된다.
+|---|---|
+| zone 생성·NS 재조회 | `scripts/add-cloudflare-zone.ps1` |
+| Cloudflare 전체 NS 조회 | `scripts/get-cloudflare-nameservers.ps1` |
+| Pages·CNAME 활성화 | `scripts/pages-add-custom-domain.ps1` |
+| zone 레코드 조회 | `scripts/get-zone-dns.ps1` |
+| DB 범용 프로비저닝 | `python manage.py provision_tenant` |
+| 운영 Django 명령 | `scripts/v1/run-api-management-remote.ps1` |

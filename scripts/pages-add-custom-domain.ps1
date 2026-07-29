@@ -10,6 +10,9 @@ param(
 
 $Domain = $Domain.Trim().ToLower()
 if (-not $Domain) { Write-Host "Usage: .\pages-add-custom-domain.ps1 -Domain newdomain.co.kr"; exit 1 }
+if ([System.Uri]::CheckHostName($Domain) -ne [System.UriHostNameType]::Dns -or -not $Domain.Contains('.')) {
+    throw "Domain must be an apex hostname such as example.com."
+}
 
 # Pages 실제 타깃 (다른 테넌트와 동일). academy-frontend.pages.dev 가 아님.
 $PagesCnameTarget = "academy-frontend-26b.pages.dev"
@@ -42,8 +45,21 @@ if (-not $list.success -or $list.result.Count -eq 0) {
 $zoneId = $list.result[0].id
 $dnsUri = "https://api.cloudflare.com/client/v4/zones/$zoneId/dns_records"
 $recs   = Invoke-RestMethod -Uri $dnsUri -Headers $headers -Method Get
+$keptRecords = @{}
 foreach ($r in $recs.result) {
-    if (($r.type -eq 'CNAME') -and (($r.name -eq '@' -or $r.name -eq $Domain -or $r.name -eq 'www'))) {
+    $recordLabel = $null
+    if ($r.name -eq '@' -or $r.name -eq $Domain) {
+        $recordLabel = '@'
+    } elseif ($r.name -eq 'www' -or $r.name -eq "www.$Domain") {
+        $recordLabel = 'www'
+    }
+    if ($r.type -eq 'CNAME' -and $recordLabel) {
+        $normalizedContent = ([string]$r.content).TrimEnd('.').ToLower()
+        if ($normalizedContent -eq $PagesCnameTarget -and $r.proxied -eq $true) {
+            $keptRecords[$recordLabel] = $true
+            Write-Host "Kept DNS: CNAME $recordLabel -> $PagesCnameTarget (proxied)"
+            continue
+        }
         $delUri = "$dnsUri/$($r.id)"
         if (-not $PSCmdlet.ShouldProcess(
             "$($r.type) $($r.name) -> $($r.content)",
@@ -62,7 +78,18 @@ foreach ($r in $recs.result) {
 $projectName = 'academy-frontend'
 $base = "https://api.cloudflare.com/client/v4/accounts/$accountId/pages/projects/$projectName"
 $wwwDomain = if ($Domain.StartsWith('www.')) { $Domain } else { "www.$Domain" }
+$pagesDomainList = Invoke-RestMethod -Uri "$base/domains" -Headers $headers -Method Get
+$existingPageDomains = @{}
+if ($pagesDomainList.success) {
+    foreach ($existingPageDomain in $pagesDomainList.result) {
+        $existingPageDomains[[string]$existingPageDomain.name] = $true
+    }
+}
 foreach ($d in @($Domain, $wwwDomain)) {
+    if ($existingPageDomains.ContainsKey($d)) {
+        Write-Host "Pages custom domain exists: $d"
+        continue
+    }
     $body = @{ name = $d } | ConvertTo-Json
     if (-not $PSCmdlet.ShouldProcess($d, "Add Cloudflare Pages custom domain")) {
         continue
@@ -93,6 +120,9 @@ foreach ($rec in @(
     @{ type = "CNAME"; name = "@"; content = $PagesCnameTarget; ttl = 1; proxied = $true },
     @{ type = "CNAME"; name = "www"; content = $PagesCnameTarget; ttl = 1; proxied = $true }
 )) {
+    if ($keptRecords.ContainsKey($rec.name)) {
+        continue
+    }
     $body = $rec | ConvertTo-Json
     if (-not $PSCmdlet.ShouldProcess(
         "$($rec.name) -> $($rec.content)",
