@@ -267,29 +267,36 @@ def _dispatch_terminal_callback_from_message(job_id: str, message: dict, tier_fr
 
 def _cleanup_terminal_artifacts(prepared: PreparedJob) -> None:
     """Best-effort cleanup for artifacts no longer needed after DB terminal state."""
-    if (prepared.job_type or "").strip().lower() not in {
+    job_type = (prepared.job_type or "").strip().lower()
+    if job_type not in {
         "problem_studio_transfer",
         "problem_studio_transcription",
+        "teacher_problem_explanation",
     }:
         return
     payload = prepared.payload if isinstance(prepared.payload, dict) else {}
-    source_archive_key = str(payload.get("source_archive_key") or "").strip()
-    if not source_archive_key:
+    if job_type == "teacher_problem_explanation":
+        source_key = str(payload.get("source_image_key") or "").strip()
+        expected_prefix = f"tenants/{prepared.tenant_id}/tools/problem-solver/tmp/"
+    else:
+        source_key = str(payload.get("source_archive_key") or "").strip()
+        expected_prefix = f"tenants/{prepared.tenant_id}/tools/problem-studio/tmp/"
+    if not source_key or not source_key.startswith(expected_prefix):
         return
     try:
         from apps.infrastructure.storage.r2 import delete_object_r2_storage
 
-        delete_object_r2_storage(key=source_archive_key)
+        delete_object_r2_storage(key=source_key)
         logger.info(
             "AI_JOB_TERMINAL_ARTIFACT_CLEANUP_DONE | job_id=%s | key=%s",
             prepared.job_id,
-            source_archive_key,
+            source_key,
         )
     except Exception:
         logger.warning(
             "AI_JOB_TERMINAL_ARTIFACT_CLEANUP_FAILED | job_id=%s | key=%s",
             prepared.job_id,
-            source_archive_key,
+            source_key,
             exc_info=True,
         )
 

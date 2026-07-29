@@ -47,6 +47,9 @@ def _scrub_terminal_job_payload(job) -> bool:
         from apps.domains.tools.problem_studio.services import scrub_problem_studio_job_payload
 
         scrubbed = scrub_problem_studio_job_payload(job.payload or {})
+    elif job.job_type == "teacher_problem_explanation":
+        scrubbed = dict(job.payload or {})
+        scrubbed.pop("source_image_key", None)
     else:
         return False
     if scrubbed == (job.payload or {}):
