@@ -158,6 +158,19 @@ def _apply_restore_profile(student: Student, profile_data: dict[str, Any] | None
             student.memo = memo
             changed.append("memo")
 
+    if "custom_fields" in profile_data:
+        incoming = profile_data.get("custom_fields")
+        if isinstance(incoming, dict):
+            merged = dict(student.custom_fields or {})
+            for key, value in incoming.items():
+                if value is None:
+                    merged.pop(str(key), None)
+                else:
+                    merged[str(key)] = value
+            if student.custom_fields != merged:
+                student.custom_fields = merged
+                changed.append("custom_fields")
+
     if "gender" in profile_data:
         gender = str(profile_data.get("gender") or "").strip().upper()[:1] or None
         gender = gender if gender in ("M", "F") else None

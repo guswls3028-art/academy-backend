@@ -6,6 +6,7 @@
 
 from .tag_views import TagViewSet
 from .student_views import StudentListPagination, StudentViewSet
+from .custom_field_views import StudentCustomFieldDefinitionViewSet
 from .registration_views import _approve_registration_request, RegistrationRequestViewSet
 from .password_views import (
     _pw_reset_cache_key,
@@ -21,6 +22,7 @@ __all__ = [
     "TagViewSet",
     "StudentListPagination",
     "StudentViewSet",
+    "StudentCustomFieldDefinitionViewSet",
     "_approve_registration_request",
     "RegistrationRequestViewSet",
     "_pw_reset_cache_key",

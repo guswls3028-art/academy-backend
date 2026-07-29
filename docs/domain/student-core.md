@@ -1,7 +1,7 @@
 # Student Domain Core SSOT
 
 **Status:** Active
-**Last checked:** 2026-06-07 KST
+**Last checked:** 2026-07-29 KST
 **Truth basis:** code inspection of `apps/domains/students/`, `apps/core/views/account_recovery.py`, `apps/core/services/password.py`, `apps/domains/results/services/submission_scope_guard.py`, `apps/domains/results/services/student_result_service.py`, and frontend shared student contracts.
 
 This document is the integration SSOT for the student domain. More specific
@@ -88,6 +88,34 @@ Current canonical entry points:
 | signup approval | `approve_registration_request()` -> `create_student_account(password_hash=...)` |
 | admin/student profile write | `update_student_profile()` |
 | deleted conflict restore/delete | `restore_student()` / `permanently_delete_students()` through import conflict resolver |
+
+## 2.1 Tenant Custom Student Fields
+
+Teacher-specific profile columns are a tenant-scoped extension of the canonical
+`Student` row, not a second student identity or profile table.
+
+- `StudentCustomFieldDefinition` owns each tenant's label, stable generated key,
+  value type, Excel aliases/options, order, and active state.
+- `Student.custom_fields` stores values by the stable definition key. Display
+  label changes therefore do not migrate or orphan student values.
+- definitions and values are always resolved through `request.tenant`; a key
+  from another tenant or an unknown/inactive key is rejected on write.
+- supported value types are `text`, `number`, `date`, and `select`.
+- deactivation is non-destructive. It hides the field from active forms and
+  tables but never removes definitions or existing student values. Reactivation
+  exposes the preserved values again.
+- profile updates merge submitted active custom values into the existing JSON
+  object. Core fields and inactive custom values are preserved.
+- canonical core Excel headers keep precedence. Unknown Excel headers are
+  preserved by `ExcelParsingService` and the student import service maps them
+  only when they match an active definition label or alias.
+- renaming a definition retains its previous label as an Excel alias.
+- frontend table visibility remains a per-browser teacher preference; it does
+  not change tenant data or the shared definition.
+
+Changing this boundary requires tenant-isolation, rename/alias, deactivate/
+reactivate, single-create/update, and Excel round-trip tests. Do not introduce
+per-teacher physical database columns or repurpose core student columns.
 
 ## 3. Signup, ID Recovery, Password Recovery
 

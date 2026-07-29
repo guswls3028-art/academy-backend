@@ -1,5 +1,7 @@
 # PATH: apps/domains/students/models.py
 
+import uuid
+
 from django.db import models
 from django.conf import settings
 
@@ -7,6 +9,10 @@ from apps.api.common.models import TimestampModel
 from apps.core.models import Tenant
 from apps.core.db import TenantQuerySet  # ✅ 추가
 from apps.support.students.lifecycle_dependencies import update_inventory_student_ps
+
+
+def generate_student_custom_field_key() -> str:
+    return f"cf_{uuid.uuid4().hex[:12]}"
 
 
 class Student(TimestampModel):
@@ -113,6 +119,12 @@ class Student(TimestampModel):
 
     memo = models.TextField(null=True, blank=True)
     address = models.CharField(max_length=255, null=True, blank=True, help_text="주소 (선택)")
+    custom_fields = models.JSONField(
+        default=dict,
+        db_default={},
+        blank=True,
+        help_text="테넌트별 학생 사용자 정의 필드 값. 정의의 stable key를 사용한다.",
+    )
     is_managed = models.BooleanField(default=True)
 
     # 학생이 학생앱에서만 설정 (관리자 편집 불가)
@@ -199,6 +211,78 @@ class Student(TimestampModel):
 
     def __str__(self):
         return self.name
+
+
+class StudentCustomFieldDefinition(TimestampModel):
+    TEXT = "text"
+    NUMBER = "number"
+    DATE = "date"
+    SELECT = "select"
+    FIELD_TYPE_CHOICES = (
+        (TEXT, "텍스트"),
+        (NUMBER, "숫자"),
+        (DATE, "날짜"),
+        (SELECT, "선택"),
+    )
+
+    objects = TenantQuerySet.as_manager()
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="student_custom_field_definitions",
+        db_index=True,
+    )
+    key = models.CharField(
+        max_length=32,
+        default=generate_student_custom_field_key,
+        editable=False,
+        help_text="표시명 변경과 무관한 안정적인 학생 사용자 정의 필드 키",
+    )
+    label = models.CharField(max_length=50)
+    field_type = models.CharField(
+        max_length=12,
+        choices=FIELD_TYPE_CHOICES,
+        default=TEXT,
+    )
+    aliases = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Excel 헤더 호환 별칭. 이전 표시명도 유지한다.",
+    )
+    options = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="select 타입에서 허용하는 값 목록",
+    )
+    position = models.PositiveSmallIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_student_custom_field_definitions",
+    )
+
+    class Meta:
+        ordering = ["position", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "key"],
+                name="uniq_student_custom_field_key_per_tenant",
+            ),
+            models.UniqueConstraint(
+                fields=["tenant", "label"],
+                name="uniq_student_custom_field_label_per_tenant",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["tenant", "is_active", "position"]),
+        ]
+
+    def __str__(self):
+        return f"{self.tenant_id}:{self.label}"
 
 
 class Tag(models.Model):
