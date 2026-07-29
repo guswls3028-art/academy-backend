@@ -9,7 +9,6 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.ai.callbacks import _handle_exam_ai_result
-from apps.domains.ai.models import AIJobModel
 from apps.domains.exams.models import (
     Exam,
     ExamAsset,
@@ -20,9 +19,11 @@ from apps.domains.exams.serializers.exam_update import ExamUpdateSerializer
 from apps.domains.exams.views.pdf_question_extract_view import (
     PdfQuestionExtractView,
 )
+from apps.support.exams.view_dependencies import get_exam_ai_job_model
 
 
 User = get_user_model()
+AIJobModel = get_exam_ai_job_model()
 
 
 class GuidedExamSourceWorkflowTests(TestCase):

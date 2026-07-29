@@ -39,6 +39,12 @@ def dispatch_ai_job(**kwargs):
     return dispatch_job(**kwargs)
 
 
+def get_exam_ai_job_model():
+    from apps.domains.ai.models import AIJobModel
+
+    return AIJobModel
+
+
 def active_enrollment_ids_for_session(**kwargs) -> set[int]:
     from apps.domains.enrollment.selectors import active_enrollment_ids_for_session as _ids
 
