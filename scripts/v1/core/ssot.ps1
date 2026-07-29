@@ -1,5 +1,5 @@
 # params.yaml loader — sets script: variables. Single source of truth; no env/prod.ps1.
-# AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키 사용. 배포·검증 시 에이전트가 환경변수로 설정한 뒤 호출.
+# AWS/Cloudflare credentials are supplied by the caller through the intended profile or process environment; this script does not load backend/.env.
 $ErrorActionPreference = "Stop"
 $SsotDir = $PSScriptRoot
 $RepoRoot = (Resolve-Path (Join-Path $SsotDir "..\..\..")).Path
@@ -164,6 +164,27 @@ function Load-SSOT {
     $script:ApiInstanceRefreshInstanceWarmup = Coerce-Int $p["api"]["instanceRefreshInstanceWarmup"] 300
     $script:ApiHealthCheckGracePeriodSeconds = Coerce-Int $p["api"]["healthCheckGracePeriodSeconds"] 300
     $script:ApiScalingTargetCpuPercent = Coerce-Int $p["api"]["scalingPolicyTargetCpuPercent"] 55
+
+    $apiDevelopment = $p["apiDevelopment"]
+    if (-not $apiDevelopment) { $apiDevelopment = @{} }
+    $script:ApiDevelopmentEnabled = ($apiDevelopment["enabled"] -eq $true -or $apiDevelopment["enabled"] -eq "true")
+    $script:ApiDevelopmentInstanceName = if ($apiDevelopment["instanceName"]) { $apiDevelopment["instanceName"] } else { "academy-v1-api-development" }
+    $script:ApiDevelopmentManagedByTag = if ($apiDevelopment["managedByTag"]) { $apiDevelopment["managedByTag"] } else { "academy-api-development" }
+    $script:ApiDevelopmentInstanceProfileName = if ($apiDevelopment["instanceProfileName"]) { $apiDevelopment["instanceProfileName"] } else { "academy-api-development" }
+    $script:ApiDevelopmentRoleName = if ($apiDevelopment["roleName"]) { $apiDevelopment["roleName"] } else { "academy-api-development-role" }
+    $script:ApiDevelopmentSecurityGroupName = if ($apiDevelopment["securityGroupName"]) { $apiDevelopment["securityGroupName"] } else { "academy-v1-api-development-sg" }
+    $script:ApiDevelopmentEnvParameter = if ($apiDevelopment["ssmEnvParameter"]) { $apiDevelopment["ssmEnvParameter"] } else { "/academy/api/development/env" }
+    $script:ApiDevelopmentWorkersEnvParameter = if ($apiDevelopment["workersEnvParameter"]) { $apiDevelopment["workersEnvParameter"] } else { "/academy/workers/development/env" }
+    $script:ApiDevelopmentCredentialParameter = if ($apiDevelopment["credentialParameter"]) { $apiDevelopment["credentialParameter"] } else { "/academy/api/development/db-credentials" }
+    $script:ApiDevelopmentDatabaseName = if ($apiDevelopment["databaseName"]) { $apiDevelopment["databaseName"] } else { "academy_api_development" }
+    $script:ApiDevelopmentDatabaseUser = if ($apiDevelopment["databaseUser"]) { $apiDevelopment["databaseUser"] } else { "academy_api_development_app" }
+    $script:ApiDevelopmentAiQueueName = if ($apiDevelopment["aiQueueName"]) { $apiDevelopment["aiQueueName"] } else { "academy-v1-development-ai-queue" }
+    $script:ApiDevelopmentToolsQueueName = if ($apiDevelopment["toolsQueueName"]) { $apiDevelopment["toolsQueueName"] } else { "academy-v1-development-tools-queue" }
+    $script:ApiDevelopmentMessagingQueueName = if ($apiDevelopment["messagingQueueName"]) { $apiDevelopment["messagingQueueName"] } else { "academy-v1-development-messaging-queue" }
+    $script:ApiDevelopmentR2CredentialParameter = if ($apiDevelopment["r2CredentialParameter"]) { $apiDevelopment["r2CredentialParameter"] } else { "/academy/r2/development/credentials" }
+    $script:ApiDevelopmentR2BucketName = if ($apiDevelopment["r2BucketName"]) { $apiDevelopment["r2BucketName"] } else { "academy-development-artifacts" }
+    $script:ApiDevelopmentAccessMode = if ($apiDevelopment["accessMode"]) { $apiDevelopment["accessMode"] } else { "ssm-only" }
+    $script:ApiDevelopmentMatchProductionCompute = ($apiDevelopment["matchProductionCompute"] -eq $true -or $apiDevelopment["matchProductionCompute"] -eq "true")
 
     # Build server DEPRECATED: 빌드는 GitHub Actions에서만 수행한다.
     $script:BuildTagKey = ""

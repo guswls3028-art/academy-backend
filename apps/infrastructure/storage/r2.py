@@ -27,10 +27,10 @@ def _get_s3_client(*, timeout_seconds: int | None = None):
         )
     return boto3.client(
         "s3",
-        endpoint_url=settings.R2_ENDPOINT,
-        aws_access_key_id=settings.R2_ACCESS_KEY,
-        aws_secret_access_key=settings.R2_SECRET_KEY,
-        region_name="auto",
+        endpoint_url=settings.R2_ENDPOINT or None,
+        aws_access_key_id=settings.R2_ACCESS_KEY or None,
+        aws_secret_access_key=settings.R2_SECRET_KEY or None,
+        region_name=getattr(settings, "R2_REGION", "auto"),
         **kwargs,
     )
 

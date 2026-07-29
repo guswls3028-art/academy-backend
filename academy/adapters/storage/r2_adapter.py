@@ -18,10 +18,12 @@ def _get_s3_client() -> Any:
         endpoint = getattr(settings, "R2_ENDPOINT", None) or os.environ.get("R2_ENDPOINT")
         access_key = getattr(settings, "R2_ACCESS_KEY", None) or os.environ.get("R2_ACCESS_KEY")
         secret_key = getattr(settings, "R2_SECRET_KEY", None) or os.environ.get("R2_SECRET_KEY")
+        region = getattr(settings, "R2_REGION", None) or os.environ.get("R2_REGION") or "auto"
     except Exception:
         endpoint = os.environ.get("R2_ENDPOINT")
         access_key = os.environ.get("R2_ACCESS_KEY")
         secret_key = os.environ.get("R2_SECRET_KEY")
+        region = os.environ.get("R2_REGION") or "auto"
 
     import boto3
 
@@ -30,7 +32,7 @@ def _get_s3_client() -> Any:
         endpoint_url=endpoint,
         aws_access_key_id=access_key,
         aws_secret_access_key=secret_key,
-        region_name="auto",
+        region_name=region,
     )
 
 

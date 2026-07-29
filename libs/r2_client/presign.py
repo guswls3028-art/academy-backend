@@ -17,10 +17,10 @@ PRESIGN_STREAM_EXPIRES = 60 * 60    # 1 hour
 
 _s3 = boto3.client(
     "s3",
-    region_name="auto",
-    endpoint_url=settings.R2_ENDPOINT,
-    aws_access_key_id=settings.R2_ACCESS_KEY,
-    aws_secret_access_key=settings.R2_SECRET_KEY,
+    region_name=getattr(settings, "R2_REGION", "auto"),
+    endpoint_url=settings.R2_ENDPOINT or None,
+    aws_access_key_id=settings.R2_ACCESS_KEY or None,
+    aws_secret_access_key=settings.R2_SECRET_KEY or None,
     config=Config(
         signature_version="s3v4",
         s3={"addressing_style": "path"},  # ✅ 로컬/운영 모두 안정적

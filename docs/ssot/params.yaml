@@ -93,6 +93,28 @@ api:
   # 배포된 ALB URL. alb.ps1에서 ALB DNS로 자동 설정됨. api.hakwonplus.com 사용 시 params에 명시.
   apiBaseUrl: ""
 
+# 상시 개발 API: 운영과 같은 AMI/instance type/컨테이너를 사용하되 운영
+# ASG·ALB·SSM·DB·IAM에는 연결하지 않는다. 외부 inbound 없이 SSM으로만 접근한다.
+apiDevelopment:
+  enabled: true
+  instanceName: academy-v1-api-development
+  managedByTag: academy-api-development
+  instanceProfileName: academy-api-development
+  roleName: academy-api-development-role
+  securityGroupName: academy-v1-api-development-sg
+  ssmEnvParameter: /academy/api/development/env
+  workersEnvParameter: /academy/workers/development/env
+  credentialParameter: /academy/api/development/db-credentials
+  databaseName: academy_api_development
+  databaseUser: academy_api_development_app
+  aiQueueName: academy-v1-development-ai-queue
+  toolsQueueName: academy-v1-development-tools-queue
+  messagingQueueName: academy-v1-development-messaging-queue
+  r2CredentialParameter: /academy/r2/development/credentials
+  r2BucketName: academy-development-artifacts
+  accessMode: ssm-only
+  matchProductionCompute: true
+
 messagingWorker:
   asgName: academy-v1-messaging-worker-asg
   launchTemplateName: academy-v1-messaging-worker-lt

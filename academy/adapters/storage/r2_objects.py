@@ -16,10 +16,10 @@ def _r2_client(*, retry_max_attempts: int | None = None):
 
     kwargs: dict[str, Any] = {
         "service_name": "s3",
-        "region_name": "auto",
-        "endpoint_url": settings.R2_ENDPOINT,
-        "aws_access_key_id": settings.R2_ACCESS_KEY,
-        "aws_secret_access_key": settings.R2_SECRET_KEY,
+        "region_name": getattr(settings, "R2_REGION", "auto"),
+        "endpoint_url": settings.R2_ENDPOINT or None,
+        "aws_access_key_id": settings.R2_ACCESS_KEY or None,
+        "aws_secret_access_key": settings.R2_SECRET_KEY or None,
     }
     if retry_max_attempts is not None:
         from botocore.config import Config as BotoConfig
