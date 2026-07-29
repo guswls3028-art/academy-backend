@@ -149,6 +149,11 @@ class ProblemStudioServiceTests(SimpleTestCase):
         self.assertIn("교사용 본문체", html_doc)
         self.assertEqual(manifest["document_style"]["body_size_pt"], 11)
         self.assertTrue(manifest["review_contract"]["native_hwpx_equations"])
+        self.assertTrue(manifest["review_contract"]["native_hwpx_equations_supported"])
+        self.assertGreater(
+            manifest["review_contract"]["native_hwpx_equation_counts"]["problem"],
+            0,
+        )
         self.assertFalse(manifest["review_contract"]["personal_fonts_embedded"])
         self.assertTrue(validate_package(hwpx_data).ok)
 
@@ -332,7 +337,9 @@ class ProblemStudioServiceTests(SimpleTestCase):
             manifest = json.loads(outer.read("00_manifest.json").decode("utf-8"))
         with zipfile.ZipFile(BytesIO(problem_hwpx)) as inner:
             problem_section = inner.read("Contents/section0.xml").decode("utf-8")
-        self.assertIn("H₂O의 생성 반응을 고르시오.", extract_hwpx_text(problem_hwpx))
+        problem_text = extract_hwpx_text(problem_hwpx)
+        self.assertIn("[[수식:{rm H _ {2} O}]]", problem_text)
+        self.assertIn("생성 반응을 고르시오.", problem_text)
         self.assertNotIn("결론부터 보면", extract_hwpx_text(problem_hwpx))
         self.assertIn("결론부터 보면", extract_hwpx_text(solution_hwpx))
         self.assertIn("<hp:colPr", problem_section)

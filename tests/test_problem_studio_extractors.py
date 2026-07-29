@@ -54,7 +54,7 @@ def test_hwpx_prefers_complete_section_text_over_truncated_preview():
 
 def test_hwpx_extracts_nested_paragraph_once_and_keeps_equation_script():
     data = _hwpx_with_text(
-        preview="",
+        preview="표 안의 문장\n물 분자 {rm H _ {2} O}",
         section=(
             '<hs:sec xmlns:hs="urn:section" xmlns:hp="urn:paragraph">'
             "<hp:p><hp:run><hp:tbl><hp:tr><hp:tc><hp:subList>"

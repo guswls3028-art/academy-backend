@@ -15,7 +15,10 @@ from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
-from academy.adapters.ai.problem.generator import generate_problem_package_from_text
+from academy.adapters.ai.problem.generator import (
+    generate_problem_package_from_text,
+    generate_transcribed_explanations,
+)
 from academy.adapters.db.django.repositories_ai import DjangoAIJobRepository
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.ai.models import AIJobModel, AIResultModel
@@ -503,6 +506,61 @@ class ProblemStudioTeacherVoiceTests(TestCase):
         prompt = get_client.return_value.chat.completions.create.call_args.kwargs["messages"][1]["content"]
         self.assertIn("핵심부터 확인", prompt)
         self.assertIn("내용 참고 자료", prompt)
+
+    @patch("academy.adapters.ai.problem.generator._get_client")
+    @patch("apps.domains.ai.services.quota.consume_ai_quota")
+    @patch("academy.adapters.ai.problem.generator.AIConfig.load")
+    def test_transcribed_explanations_restore_source_equation_markers(
+        self,
+        config_load,
+        _quota,
+        get_client,
+    ):
+        config_load.return_value = SimpleNamespace(
+            OPENAI_API_KEY="test-key",
+            PROBLEM_GEN_MODEL="test-model",
+        )
+        get_client.return_value.chat.completions.create.return_value = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content=json.dumps(
+                            {
+                                "explanations": [{
+                                    "index": 1,
+                                    "answer": "②",
+                                    "explanation": "H^+ + OH^- → H_2O이므로 물이 생성됩니다.",
+                                    "answer_check": "H^+와 OH^-가 모두 반응합니다.",
+                                    "confidence": "high",
+                                }],
+                            },
+                            ensure_ascii=False,
+                        ),
+                    ),
+                ),
+            ],
+        )
+
+        explanations = generate_transcribed_explanations(
+            questions=[{
+                "prompt": (
+                    "[[수식:H^+]]와 [[수식:OH^-]]가 반응할 때 "
+                    "[[수식:H^+ + OH^- arrow H_2O]]의 생성물을 고르시오."
+                ),
+                "choices": ["① 산소", "② 물"],
+                "answer": "②",
+                "explanation": "",
+            }],
+            subject="과학",
+            note_policy="핵심 반응을 먼저 설명합니다.",
+        )
+
+        self.assertIn(
+            "[[수식:H^+ + OH^- arrow H_2O]]",
+            explanations[0]["explanation"],
+        )
+        self.assertIn("[[수식:H^+]]", explanations[0]["answer_check"])
+        self.assertIn("[[수식:OH^-]]", explanations[0]["answer_check"])
 
     @patch("boto3.client")
     @patch("apps.domains.ai.services.quota.consume_ai_quota")

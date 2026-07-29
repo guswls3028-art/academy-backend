@@ -282,6 +282,8 @@ def extract_hwpx_text(data: bytes) -> str:
         chunks = [hwpx_section_text(zf.read(name)) for name in section_names]
         section_text = normalize_space("\n".join(chunks))
         if section_text:
+            if "[[수식:" in section_text:
+                return section_text
             if "Preview/PrvText.txt" in names:
                 preview_text = normalize_space(
                     zf.read("Preview/PrvText.txt").decode("utf-8", "ignore")

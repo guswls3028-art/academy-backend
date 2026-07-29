@@ -1530,7 +1530,10 @@ def _build_manifest_json(
     explanation_count: int = 0,
     detected_layout: dict[str, Any] | None = None,
     reconstruction_quality: dict[str, Any] | None = None,
+    native_equation_counts: dict[str, int] | None = None,
 ) -> str:
+    equation_counts = native_equation_counts or {}
+    contains_native_equations = sum(equation_counts.values()) > 0
     manifest = {
         "schema": "problem-studio-transfer-manifest/v4",
         "generated_at": datetime.now().isoformat(timespec="seconds"),
@@ -1623,7 +1626,9 @@ def _build_manifest_json(
             "ocr_required_for_scanned_text": structure.ocr_candidate_count > 0,
             "native_hwp_output": False,
             "native_hwpx_output": True,
-            "native_hwpx_equations": True,
+            "native_hwpx_equations": contains_native_equations,
+            "native_hwpx_equations_supported": True,
+            "native_hwpx_equation_counts": equation_counts,
             "auto_explanations": explanation_count > 0,
             "generated_explanation_count": explanation_count,
             "source_page_dimensions_preserved": bool(
@@ -1645,6 +1650,15 @@ def _build_manifest_json(
         },
     }
     return json.dumps(manifest, ensure_ascii=False, indent=2)
+
+
+def _count_native_hwpx_equations(data: bytes) -> int:
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        return sum(
+            archive.read(name).count(b"<hp:equation")
+            for name in archive.namelist()
+            if re.fullmatch(r"Contents/section\d+\.xml", name, re.IGNORECASE)
+        )
 
 
 def _build_file_list_csv(
@@ -2096,6 +2110,31 @@ def build_transfer_package(
     )
     reconstruction_quality = _reconstruction_quality(documents, structure)
     font_assets = custom_font_snapshots(resolved_document_style)
+    problem_hwpx = _build_structured_workbook_hwpx(
+        meta,
+        structure,
+        documents,
+        document_style,
+    )
+    solution_hwpx = _build_solution_workbook_hwpx(
+        meta,
+        structure,
+        documents,
+        document_style,
+    )
+    source_fidelity_hwpx = build_hwpx_source_fidelity_document(
+        title=f"{meta['title']} 원본충실 레이아웃 대조본",
+        source_pages=_source_page_payloads(documents),
+    )
+    native_equation_counts = {
+        "problem": _count_native_hwpx_equations(problem_hwpx),
+        "solution": _count_native_hwpx_equations(solution_hwpx),
+    }
+    reconstruction_quality = {
+        **reconstruction_quality,
+        "native_equations": sum(native_equation_counts.values()) > 0,
+        "native_equation_counts": native_equation_counts,
+    }
     now = datetime.now().strftime("%Y%m%d-%H%M%S")
     package_name = f"{_safe_filename(title, default='problem-studio')}_원본이관_{now}.zip"
     buffer = io.BytesIO()
@@ -2122,6 +2161,7 @@ def build_transfer_package(
                 explanation_count=explanation_count,
                 detected_layout=detected_layout,
                 reconstruction_quality=reconstruction_quality,
+                native_equation_counts=native_equation_counts,
             ),
         )
         zf.writestr("00_파일목록.csv", _build_file_list_csv(input_files, documents, warnings, structure))
@@ -2132,28 +2172,15 @@ def build_transfer_package(
         zf.writestr("02_OCR_연결후보.csv", _build_ocr_queue_csv(structure))
         zf.writestr(
             "03_자체양식_문제검수본.hwpx",
-            _build_structured_workbook_hwpx(
-                meta,
-                structure,
-                documents,
-                document_style,
-            ),
+            problem_hwpx,
         )
         zf.writestr(
             "04_선생님문체_해설검수본.hwpx",
-            _build_solution_workbook_hwpx(
-                meta,
-                structure,
-                documents,
-                document_style,
-            ),
+            solution_hwpx,
         )
         zf.writestr(
             "05_원본충실_레이아웃대조본.hwpx",
-            build_hwpx_source_fidelity_document(
-                title=f"{meta['title']} 원본충실 레이아웃 대조본",
-                source_pages=_source_page_payloads(documents),
-            ),
+            source_fidelity_hwpx,
         )
         original_names: set[str] = set()
         for index, (source_name, source_data) in enumerate(original_files, start=1):
