@@ -20,6 +20,10 @@ from .problem_studio.views import (
     ProblemStudioVoiceSampleCollectionView,
     ProblemStudioGenerationReviewView,
 )
+from .problem_solver.views import (
+    TeacherProblemExplanationJobCreateView,
+    TeacherProblemExplanationJobStatusView,
+)
 from .timer_download_view import TimerDownloadView
 from apps.support.omr.route_dependencies import (
     ToolsOMRPreviewView,
@@ -43,6 +47,8 @@ urlpatterns = [
     path("problem-studio/jobs/", ProblemStudioJobCreateView.as_view(), name="tools-problem-studio-job-create"),
     path("problem-studio/jobs/<str:job_id>/", ProblemStudioJobStatusView.as_view(), name="tools-problem-studio-job-status"),
     path("problem-studio/jobs/<str:job_id>/reviews/", ProblemStudioGenerationReviewView.as_view(), name="tools-problem-studio-generation-review"),
+    path("problem-solver/jobs/", TeacherProblemExplanationJobCreateView.as_view(), name="tools-problem-solver-job-create"),
+    path("problem-solver/jobs/<str:job_id>/", TeacherProblemExplanationJobStatusView.as_view(), name="tools-problem-solver-job-status"),
     path("omr/preview/", ToolsOMRPreviewView.as_view(), name="tools-omr-preview"),
     path("omr/pdf/", ToolsOMRPdfView.as_view(), name="tools-omr-pdf"),
     path("timer/download/", TimerDownloadView.as_view(), name="tools-timer-download"),

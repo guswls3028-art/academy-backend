@@ -191,6 +191,11 @@ def handle_ai_job(job: AIJob) -> AIResult:
                 handle_problem_studio_transfer_job,
             )
             return handle_problem_studio_transfer_job(job)
+        if job_type_lower == "teacher_problem_explanation":
+            from academy.application.use_cases.ai.pipelines.teacher_problem_explanation import (
+                handle_teacher_problem_explanation_job,
+            )
+            return handle_teacher_problem_explanation_job(job)
 
         # Matchup index exam (download 불필요 — DB에서 직접 읽음)
         if job.type == "matchup_index_exam":

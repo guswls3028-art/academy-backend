@@ -28,11 +28,34 @@ def _publish_after_commit(job: AIJob, job_model) -> None:
             raise RuntimeError("SQS publisher rejected the job")
     except Exception as e:
         logger.exception("SQS publish failed after commit: job_id=%s error=%s", job.id, e)
+        _cleanup_publish_failure_artifact(job)
         try:
             ai_repo.job_save_failed(job_model, str(e), str(e))
         except Exception:
             pass
         _propagate_publish_failure(job_model, str(e))
+
+
+def _cleanup_publish_failure_artifact(job: AIJob) -> None:
+    """Delete teacher problem photos when a job never reaches a worker."""
+    if (job.type or "").strip().lower() != "teacher_problem_explanation":
+        return
+    payload = job.payload if isinstance(job.payload, dict) else {}
+    tenant_id = str(job.tenant_id or "").strip()
+    source_key = str(payload.get("source_image_key") or "").strip()
+    expected_prefix = f"tenants/{tenant_id}/tools/problem-solver/tmp/"
+    if not tenant_id or not source_key.startswith(expected_prefix):
+        return
+    try:
+        from apps.infrastructure.storage.r2 import delete_object_r2_storage
+
+        delete_object_r2_storage(key=source_key)
+    except Exception:
+        logger.warning(
+            "Teacher problem source cleanup failed after publish failure: job_id=%s",
+            job.id,
+            exc_info=True,
+        )
 
 
 def _propagate_publish_failure(job_model, error_message: str) -> None:

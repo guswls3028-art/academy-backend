@@ -23,6 +23,7 @@ AIJobType = Literal[
     "problem_studio_package",
     "problem_studio_transfer",
     "problem_studio_transcription",
+    "teacher_problem_explanation",
     "matchup_analysis",
     "matchup_index_exam",
     "matchup_search_qna",

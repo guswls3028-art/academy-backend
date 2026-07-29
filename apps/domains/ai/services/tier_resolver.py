@@ -63,6 +63,7 @@ def resolve_tier(
         "problem_studio_package",
         "problem_studio_transfer",
         "problem_studio_transcription",
+        "teacher_problem_explanation",
     ):
         return "basic"
     

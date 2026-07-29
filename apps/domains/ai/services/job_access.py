@@ -6,6 +6,7 @@ STAFF_ONLY_JOB_TYPES = frozenset({
     "problem_studio_package",
     "problem_studio_transfer",
     "problem_studio_transcription",
+    "teacher_problem_explanation",
 })
 
 
