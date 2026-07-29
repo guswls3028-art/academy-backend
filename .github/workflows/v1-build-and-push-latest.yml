@@ -17,6 +17,12 @@ on:
       - '.gitignore'
       - 'LICENSE'
   workflow_dispatch:
+    inputs:
+      allow_contract_migrations:
+        description: "Allow an annotated contract migration after its expand release is fully deployed"
+        required: true
+        default: false
+        type: boolean
 
 concurrency:
   group: academy-production-mutation
@@ -336,6 +342,27 @@ jobs:
       - name: Refactor boundary baseline guard
         run: |
           python scripts/lint/refactor_boundary_snapshot.py --enforce-baseline
+
+      - name: Expand/contract migration guard
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_BEFORE: ${{ github.event.before }}
+          ALLOW_CONTRACT_MIGRATIONS: ${{ inputs.allow_contract_migrations || false }}
+        run: |
+          set -euo pipefail
+          python -m unittest scripts.lint.test_check_expand_contract_migrations
+          BASE_REF="HEAD^"
+          if [ "$EVENT_NAME" = "push" ] && \
+             [ -n "$EVENT_BEFORE" ] && \
+             [ "$EVENT_BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            BASE_REF="$EVENT_BEFORE"
+          fi
+          ARGS=(--base-ref "$BASE_REF")
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && \
+             [ "$ALLOW_CONTRACT_MIGRATIONS" = "true" ]; then
+            ARGS+=(--allow-contract)
+          fi
+          python scripts/lint/check_expand_contract_migrations.py "${ARGS[@]}"
 
   # ============================================================
   # Phase 1.5: Run smoke tests (deploy gate)

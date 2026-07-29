@@ -17,13 +17,18 @@
 ### 2.1 진입점
 
 - **전체 인프라 + API 반영:**
-  `pwsh scripts/v1/deploy.ps1 -AwsProfile default`
+  `pwsh scripts/v1/deploy.ps1 -AwsProfile <approved-operator>`
 - **main push만으로 이미지 반영 (CI 자동):**
-  main에 push → GitHub Actions `v1-build-and-push-latest.yml` 실행 → **build-and-push** → **verify-api-preprod(전용 DB migration+health)** → 필요한 경우 **run-migrations(운영 DB)** → **deploy-api / deploy-messaging / deploy-ai / deploy-tools / deploy-video** → **verify-deployment**.
+  main에 push → GitHub Actions `v1-build-and-push-latest.yml` 실행 → **build-and-push** → **verify-api-development(상시 격리 runtime의 실사용 smoke)** → **verify-api-preprod(전용 DB migration+health)** → 필요한 경우 **run-migrations(운영 DB)** → **deploy-api / deploy-messaging / deploy-ai / deploy-tools / deploy-video** → **verify-deployment**.
   즉, **push만 해도** CI가 ECR 푸시, 마이그레이션, 각 서비스 배포, health/ASG/tenant maintenance/video-chain 검증까지 수행한다.
   `run-migrations`는 실행 직전에 SSM `/academy/api/env`를 `/opt/api.env`로 원자적으로 갱신한 뒤 새 digest 이미지로 실행한다. 인스턴스에 남은 이전 env 파일을 재사용하지 않는다.
 
 ### 2.2 deploy.ps1 동작 순서 (요약)
+
+`deploy.ps1`은 이미 검증·승격된 digest로 인프라를 수렴시키는 경로다. 새
+애플리케이션 후보를 처음 운영에 올리는 경로가 아니며, 새 digest는 먼저
+GitHub Actions의 persistent development와 isolated preproduction을 모두
+통과해야 한다.
 
 1. Lock, Preflight, Drift 보고
 2. Bootstrap(선택): SSM, SQS, RDS engine, ECR 등 Ensure
@@ -59,6 +64,9 @@
 - "한 번만 수동으로 정식 배포"하고 싶을 때.
 
 > 일상적인 코드 변경은 `git push main` → CI 자동 배포로 충분하다. deploy.ps1은 인프라 변경이 있을 때만 사용.
+> 실행 전 `check-credentials.ps1`에서 비-root 운영자 역할을 확인한다. 로컬
+> identity가 AWS account root이면 실행하지 않고 GitHub Actions OIDC 경로를
+> 사용한다.
 
 ---
 

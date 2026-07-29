@@ -14,6 +14,7 @@ class UserSerializer(serializers.ModelSerializer):
     linkedStudentId = serializers.SerializerMethodField()
     linkedStudentName = serializers.SerializerMethodField()
     linkedStudents = serializers.SerializerMethodField()
+    first_login_guide_required = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -29,6 +30,7 @@ class UserSerializer(serializers.ModelSerializer):
             "linkedStudentName",
             "linkedStudents",
             "must_change_password",
+            "first_login_guide_required",
         ]
 
     def get_tenantRole(self, user):
@@ -106,6 +108,18 @@ class UserSerializer(serializers.ModelSerializer):
             return [{"id": sid, "name": (name or "").strip() or "학생"} for sid, name in students]
         except Exception:
             return None
+
+    def get_first_login_guide_required(self, user):
+        """현재 테넌트의 활성 계정이 첫 접속 안내를 아직 확인하지 않았는지 반환."""
+        try:
+            request = self.context.get("request")
+            tenant = getattr(request, "tenant", None)
+            if not tenant:
+                return False
+            membership = core_repo.membership_get(tenant=tenant, user=user, is_active=True)
+            return bool(membership and user.first_login_guide_completed_at is None)
+        except Exception:
+            return False
 
 
 class ProgramPublicSerializer(serializers.ModelSerializer):

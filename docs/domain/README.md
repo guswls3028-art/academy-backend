@@ -9,6 +9,7 @@
 | [state-transitions.md](state-transitions.md) | 시험/클리닉/과제 | 상태머신과 결과 경계 |
 | [messaging.md](messaging.md) | 메시징 | 메시징 SSOT 인덱스 |
 | [messaging-alimtalk.md](messaging-alimtalk.md) | 알림톡 | 4종 ITEM_LIST 봉투 + 본문 자유 정책 |
+| [account-first-use.md](account-first-use.md) | 로그인 | 신규 계정 첫 접속 안내와 1회 완료 상태 |
 | [account-recovery.md](account-recovery.md) | 로그인 | 아이디/비밀번호 찾기 |
 | [parent-account.md](parent-account.md) | 학부모 | 학부모 계정 생성/로그인 |
 | [student-core.md](student-core.md) | 학생 | 학생 중심 계정·식별자·연결 도메인 통합 SSOT |

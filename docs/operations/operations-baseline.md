@@ -1,75 +1,102 @@
-# V1.1.1 Operations Baseline
+# Operations Baseline
 
-## 배포 경로 (사실 기준)
+**Executable truth:** `.github/workflows/v1-build-and-push-latest.yml`,
+`scripts/v1/`, `docs/ssot/params.yaml`, and current runtime readback.
 
-### CI 성공 = 운영 반영인 경우
-- **API 서버 코드 변경** → `git push origin main` → CI smoke test → build → Deploy API (ASG refresh) → 운영 반영
-- **Worker 코드 변경** → 동일 파이프라인, 변경된 워커만 selective deploy
+## Release path
 
-### CI 성공 ≠ 운영 반영인 경우
-- **ASG 설정 변경** (min/max/desired, scale-in protection) → `params.yaml` 수정 후 `deploy.ps1` 수동 실행 필요. CI/CD는 ASG 설정을 변경하지 않음.
-- **Launch Template 변경** (UserData, AMI, instance type) → `deploy.ps1` 수동 실행 필요.
-- **SkipMatching 이슈** → CI Deploy API가 SkipMatching=true 사용. 같은 launch template이면 인스턴스 미교체. Dockerfile만 변경 시 ECR 이미지는 바뀌지만 인스턴스가 같은 이미지를 캐시할 수 있음. 확실한 교체 필요 시: 수동 `start-instance-refresh --preferences '{"SkipMatching":false}'` 또는 인스턴스 terminate.
+An application release is complete only when the same immutable candidate
+passes every gate below:
 
-### 수동 운영 절차가 필요한 경우
+1. GitHub Actions checks out `main` and uses the repository OIDC role. AWS
+   account-root credentials and long-lived access-key secrets are rejected.
+2. Lint, migration safety and smoke tests pass before image build.
+3. Changed ARM64 images are pushed with a run-unique `sha-...-run-...` tag and
+   resolved to immutable `sha256` digests.
+4. `verify-api-development` deploys the API/Tools digests to the persistent,
+   isolated development runtime. Dedicated DB, queues, R2, Redis, production
+   resource denial, migrations, `/healthz`, database `/health`, image identity,
+   and synthetic XLSX/PPT/R2 real-use smoke must pass.
+5. `verify-api-preprod` runs the API digest on a temporary isolated EC2 with
+   the dedicated preproduction role, SSM env and `academy_api_preprod` DB.
+   Migration, settings/DB boundary, health, image identity and CDN playback
+   checks must pass, and the instance must terminate.
+6. Only then may production migration run on the digest-pinned candidate.
+7. API deployment pins a new Launch Template version to the digest, creates
+   replacement headroom, and performs an ALB-health-gated ASG refresh with
+   `SkipMatching=false`. The known-good instance remains until replacements
+   are healthy.
+8. `verify-deployment` compares expected digests with Launch Templates, actual
+   InService container `RepoDigests`, worker/queue state and Video Batch
+   definitions, then runs public health and affected real-use smoke.
 
-| 상황 | 자동 (CI/CD) | 수동 필요 |
-|------|------------|----------|
-| 앱 코드 변경 | ✅ | — |
-| DB 마이그레이션 | ✅ (SSM RunCommand) | — |
-| ASG 설정 변경 | ❌ | `deploy.ps1` |
-| 환경변수 추가 | ❌ | SSM Parameter Store 업데이트 + instance refresh |
-| AWS 키 로테이션 | ❌ | AWS Console + `~/.aws/credentials` |
-| ECR lifecycle 변경 | ❌ | `ecr-cleanup.py` 또는 Console |
+The workflow uses a shared production mutation lock and does not cancel an
+in-progress refresh. A successful build alone is not a production release.
 
-## Requirements 운영 규칙
+## Change ownership
 
-### 의존성 추가 시 수정할 파일
-1. 해당 requirements 파일에 패키지 추가 (예: `requirements.txt`, `worker-ai-cpu.txt`)
-2. 핵심 패키지면 `requirements/constraints.txt`에 버전 추가
-3. 모든 Dockerfile에 `constraints.txt` COPY가 이미 있으므로 추가 작업 불필요
+| Change | Owning path |
+|--------|-------------|
+| Application code or migration | Merge to `main`; GitHub Actions OIDC release path |
+| Launch Template, UserData, ASG, ALB, IAM, SSM shape | `scripts/v1/deploy.ps1`, only with a non-root authorized operator identity |
+| Frontend | Frontend `quality-gate.yml`: checks → isolated preview → baseline/ownership check → direct Cloudflare Pages deploy → production E2E |
+| Runtime env correction | Owning runbook/script; preserve rollback candidate and verify `/healthz` plus DB-backed `/health` |
 
-### constraints.txt 관리 원칙
-- **핵심 12개 패키지만** pin (Django, DRF, boto3, psycopg2, pydantic, gunicorn, gevent, redis 등)
-- AI/ML 패키지(torch, transformers)는 pin 하지 않음 (GPU/CPU 분리 빌드)
-- 버전 업그레이드: constraints.txt 수정 → CI 통과 확인 → 운영 `pip show`로 실측 검증
-- **운영 실측과 constraints 불일치 시**: 운영 버전을 기준으로 constraints 교정
+`deploy.ps1` converges infrastructure around an already verified/promoted
+digest. It is not a shortcut for introducing a new application image. A new
+candidate must still pass persistent development and isolated preproduction
+through the GitHub Actions workflow before any production mutation.
 
-## CI 파이프라인 구조
+Local AWS execution must first pass `scripts/v1/check-credentials.ps1`. If the
+resolved principal is account root, missing, or outside the intended role, stop
+and use the repository OIDC workflow. Do not copy credentials to
+`~/.aws/credentials`, repository secrets, reports, or command output.
 
-```
-detect-changes → run-tests (7 smoke tests)
-                      ↓
-              build-and-push (ECR, latest + sha tag)
-                      ↓
-              run-migrations (SSM, API 인스턴스)
-                      ↓
-              deploy-api ← needs: build-and-push.result == 'success'
-              deploy-messaging (변경 시만)
-              deploy-ai (변경 시만)
-                      ↓
-              verify-deployment (healthz + health + ASG)
-```
+## Database and migrations
 
-**테스트 실패 → 배포 차단**: run-tests 실패 → build-and-push skip → 모든 deploy skip.
-증거: run `23158855514` (2026-03-17).
+- Production connects directly to `academy-db`; the retired RDS Proxy is not
+  in the request path.
+- API `DB_CONN_MAX_AGE=0` is required for the current gevent/direct-RDS
+  concurrency model. `/healthz` is liveness only; database availability is
+  proven by `/health` and the RDS connection alarm.
+- Migrations must be backward-compatible while old and new API instances
+  overlap. Nullable additions and independent data backfills are expand-safe.
+  removals, renames, blocking indexes and incompatible field changes require a
+  separately reviewed contract release after the expand release is fully
+  deployed.
+- Migration execution uses the newly built digest, not the old API container,
+  and reads the production env through the SSM-backed `/opt/api.env` path.
 
-## 보안 현황
+## Requirements
 
-| 항목 | 상태 | 비고 |
-|------|------|------|
-| CI/CD 인증 | OIDC | 장기 키 미사용 |
-| 운영 인스턴스 | IAM role | 장기 키 미사용 |
-| 로컬 수동 작업 | `~/.aws/credentials` | **로테이션 필요** (git history 노출) |
-| 레포 현재 파일 | 깨끗 | credential 없음 |
-| git history | 노출됨 | `scripts/DEPLOY_COMMANDS.md` (삭제됨) 7회 |
+1. Add a package to the owning file under `requirements/`.
+2. Pin compatibility-sensitive packages in `requirements/constraints.txt`.
+3. Build the affected image and verify the installed version inside the
+   candidate/runtime; do not treat a local `pip show` as production truth.
 
-## Observability 현황
+## Security and data boundaries
 
-| 항목 | 상태 | 파일 |
-|------|------|------|
-| Correlation ID | 운영 검증 완료 | `apps/api/common/correlation.py` |
-| JSON logging | 운영 검증 완료 | `apps/api/common/logging_json.py` |
-| Health endpoints | 3개 | `/healthz`, `/health`, `/readyz` |
-| Sentry | 설치됨 | `sentry_sdk` in settings |
-| 사용자 오류 운영자 SMS | 5분 cron + 통제번호 고정 + fingerprint/alarm-transition 중복 억제 | `check_dev_alerts`, `runbooks/incidents.md` |
+- Tenant resolution fails closed. No default tenant, cross-tenant fallback or
+  tenant-less query is allowed.
+- User-authored, manually approved and canonical data is preserved.
+- Messaging uses only an exact approved Alimtalk template; SMS/LMS is disabled.
+- Video runs only on AWS Batch. Messaging, AI and Tools remain separate worker
+  boundaries.
+- Secret values are never printed. Validation records only parameter presence,
+  version, digest/hash or reference.
+
+## Observability baseline
+
+| Signal | Expected evidence |
+|--------|-------------------|
+| API liveness/readiness | `/healthz` 200 and `/health` 200 with database connected |
+| API replacement | ASG desired/InService and ALB healthy targets match; old instance drains only after replacement health |
+| Runtime identity | release manifest digest = Launch Template = actual container `RepoDigests` |
+| Workers | Messaging warm baseline; AI/Tools scale to queue demand; Video Batch queue/CE/job definition healthy |
+| Database | RDS available, connection alarm `OK`, no API connection accumulation |
+| Frontend | live `version.json` equals deployed Git SHA; required lazy assets and production E2E pass |
+| User-impact alerts | five-minute alert cron succeeds without exposing payload or recipient secrets |
+
+Current values and the latest incident/readback belong in
+`docs/ssot/runtime-current.md` and `docs/reports/`, not in this invariant
+baseline.

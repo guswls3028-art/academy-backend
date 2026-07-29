@@ -61,6 +61,11 @@ class User(AbstractUser):
         default=False,
         help_text="True이면 로그인 후 비밀번호 변경 강제. 신규 학부모 계정 생성 시 설정.",
     )
+    first_login_guide_completed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="첫 접속 계정 안내를 확인한 시각. null이면 안내 대상.",
+    )
     token_version = models.PositiveIntegerField(
         default=0,
         help_text="비밀번호 변경 시 +1. JWT claim과 비교하여 기존 토큰 무효화.",
