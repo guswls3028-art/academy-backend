@@ -4,9 +4,9 @@
 | 항목 | 값 |
 |---|---|
 | RDS 인스턴스 | db.t4g.medium |
-| max_connections | ~405 expected on current db.t4g.medium |
-| rds_superuser_reserved | 2 (기본값) |
-| 유효 max | ~403 expected |
+| max_connections | 400 (2026-07-30 production readback) |
+| superuser_reserved_connections | 3 |
+| 유효 application max | 397 |
 
 ## API 서버
 | 항목 | 값 |
@@ -14,7 +14,7 @@
 | GUNICORN_WORKERS | 4 |
 | GUNICORN_WORKER_CLASS | gevent |
 | GUNICORN_WORKER_CONNECTIONS | 1000 |
-| DB_CONN_MAX_AGE | 5 |
+| DB_CONN_MAX_AGE | 0 |
 | 평시 커넥션 (1대) | ~2-6 |
 | 비용 baseline | API 1대 |
 | 배포 headroom | API 2대 이상(일시), refresh 후 1대로 복귀 |
@@ -40,8 +40,24 @@
 - 평시 사용률 30% 이하 유지
 - Rolling refresh 중 동시 인스턴스 수 주의 (MinHealthyPercentage 설정)
 - 비밀번호 변경 시 구 인스턴스 빠른 종료로 좀비 커넥션 방지
-- Django persistent DB connection is intentionally short in production
-  (`DB_CONN_MAX_AGE=5`). Do not raise it without a fresh RDS connection budget
-  review.
+- Production API connections close at request completion
+  (`DB_CONN_MAX_AGE=0`). The direct-RDS, gevent runtime must not enable
+  persistent Django connections without a fresh concurrency soak, RDS
+  connection-budget review, and an isolated pre-production proof.
 - `academy-rds-DatabaseConnectionsHigh` remains calibrated at 320 connections
-  (~80% of the expected db.t4g.medium connection budget).
+  (80% of the measured db.t4g.medium connection budget).
+
+## 2026-07-30 saturation evidence
+
+- Repeated production E2E traffic increased `DatabaseConnections` from 143 to
+  391 over 55 minutes.
+- The single `academy-api` container owned 390 established PostgreSQL sockets
+  while RDS rejected new application connections with
+  `remaining connection slots are reserved`.
+- Applying `DB_CONN_MAX_AGE=0` through `/academy/api/env` version 74 and the
+  rollback-protected API env refresh reduced the API container's established
+  PostgreSQL sockets from 390 to 0. Both `/healthz` and database-backed
+  `/health` returned HTTP 200 after replacement.
+- See
+  [incident-2026-07-30-db-connection-exhaustion.md](../reports/incidents/incident-2026-07-30-db-connection-exhaustion.md)
+  for the impact, recovery, and recurrence-prevention evidence.
