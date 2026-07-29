@@ -84,6 +84,14 @@ def test_isolated_database_role_owns_and_can_migrate_public_schema() -> None:
     assert "schema_owner != ROLE" in source
     assert "not schema_usage" in source
     assert "not schema_create" in source
+    assert (
+        '"ALTER ROLE {} WITH LOGIN NOCREATEDB NOCREATEROLE "'
+        in source
+    )
+    assert (
+        '"CREATE ROLE {} WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "'
+        in source
+    )
 
 
 def test_mutation_entrypoints_reject_account_root_credentials() -> None:

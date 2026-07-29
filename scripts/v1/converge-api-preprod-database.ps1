@@ -153,7 +153,7 @@ with connection.cursor() as cursor:
     cursor.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", [ROLE])
     role_exists = cursor.fetchone() is not None
     role_sql = sql.SQL(
-        "ALTER ROLE {} WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
+        "ALTER ROLE {} WITH LOGIN NOCREATEDB NOCREATEROLE "
         "NOINHERIT PASSWORD %s"
         if role_exists
         else "CREATE ROLE {} WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
@@ -412,4 +412,3 @@ if ($proof -notmatch '"status": "PREPROD_DATABASE_CONVERGED"' -or $proof -notmat
     throw "Preprod database convergence returned no fail-closed privilege proof."
 }
 Write-Host $proof -ForegroundColor Green
-
