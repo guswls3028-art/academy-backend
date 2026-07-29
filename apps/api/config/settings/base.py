@@ -202,6 +202,7 @@ MIDDLEWARE = [
 
     # 🔒 Tenant SSOT (Host-based, after host normalization)
     "apps.core.middleware.tenant.TenantMiddleware",
+    "apps.core.middleware.tenant_db_usage.TenantDatabaseUsageMiddleware",
 
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -393,6 +394,7 @@ VIDEO_PLAYBACK_TTL_SECONDS = int(os.getenv("VIDEO_PLAYBACK_TTL_SECONDS", "600"))
 R2_ACCESS_KEY = os.getenv("R2_ACCESS_KEY")
 R2_SECRET_KEY = os.getenv("R2_SECRET_KEY")
 R2_ENDPOINT = os.getenv("R2_ENDPOINT")
+R2_REGION = os.getenv("R2_REGION", "auto")
 R2_PUBLIC_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL")
 R2_AI_BUCKET = os.getenv("R2_AI_BUCKET", "academy-ai")
 R2_VIDEO_BUCKET = os.getenv("R2_VIDEO_BUCKET", "academy-video")
@@ -430,6 +432,23 @@ VAPID_CONTACT_EMAIL = os.getenv("VAPID_CONTACT_EMAIL", "devhyun7466@gmail.com")
 
 # 공용 알림톡 owner tenant. SMS/LMS 실발송 허용 용도가 아니다.
 OWNER_TENANT_ID = int(os.getenv("OWNER_TENANT_ID", "1"))
+
+# 제품 기능 사용 분석 전용 HMAC 키. Django SECRET_KEY와 분리하며,
+# 키가 없으면 기능 플래그가 켜져 있어도 이벤트를 저장하지 않는다.
+PRODUCT_ANALYTICS_HASH_KEY = os.getenv("PRODUCT_ANALYTICS_HASH_KEY", "").strip()
+
+# 테넌트별 DB 부하 판단용 저비용 계측. SQL과 parameter는 기록하지 않는다.
+# 운영 활성화 전 focused overhead 검증을 거쳐 env에서 명시적으로 켠다.
+TENANT_DB_USAGE_ENABLED = os.getenv(
+    "TENANT_DB_USAGE_ENABLED",
+    "",
+).lower() in ("1", "true", "yes")
+TENANT_DB_USAGE_SAMPLE_RATE = float(
+    os.getenv("TENANT_DB_USAGE_SAMPLE_RATE", "0.1")
+)
+TENANT_DB_USAGE_SLOW_REQUEST_MS = int(
+    os.getenv("TENANT_DB_USAGE_SLOW_REQUEST_MS", "1000")
+)
 
 # /dev 운영 콘솔 알림 webhook (Slack incoming webhook URL).
 # 비어 있으면 전송 생략 — check_dev_alerts 커맨드는 조건 평가만 수행.
