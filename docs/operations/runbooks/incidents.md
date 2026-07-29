@@ -345,6 +345,12 @@ curl -s https://api.hakwonplus.com/health
 RUN_ENV aws rds describe-db-instances \
   --query "DBInstances[*].{Id:DBInstanceIdentifier,Status:DBInstanceStatus,Class:DBInstanceClass}" \
   --output table
+
+# 연결 예산 경보 확인
+RUN_ENV aws cloudwatch describe-alarms \
+  --alarm-names academy-rds-DatabaseConnectionsHigh \
+  --query "MetricAlarms[0].{State:StateValue,Reason:StateReason}" \
+  --output table
 ```
 
 ### 즉시 조치 (5분)
@@ -364,6 +370,18 @@ RUN_ENV aws rds describe-db-instances \
 - Security Group 규칙 변경 여부 확인
 - API 인스턴스의 네트워크(VPC/서브넷) 확인
 - 최근 인프라 변경이 있었는지 확인
+- 로그에 `remaining connection slots are reserved`가 있으면 RDS를
+  재부팅하지 말고 먼저 API 컨테이너의 PostgreSQL 소켓 점유와
+  `DB_CONN_MAX_AGE` readback을 확인한다.
+- 단일 API 컨테이너가 연결을 포화시키고 `DB_CONN_MAX_AGE`가 `0`이
+  아니면 `/academy/api/env`의 해당 키만 `0`으로 변경하고
+  `pwsh scripts/v1/refresh-api-env.ps1 -AwsProfile default`로
+  롤백 보호 교체를 실행한다. SecureString 전체 값은 터미널이나
+  보고서에 출력하지 않는다.
+- SSM readback, `/healthz`, database-backed `/health`, API 컨테이너의
+  PostgreSQL 소켓 감소를 모두 확인한다. 설정이 이미 `0`인데 포화가
+  반복되면 관리자 연결로 `pg_stat_activity`의 사용자·클라이언트·상태
+  분포를 수집하고 점유 서비스를 격리한다.
 
 **RDS 재시작 필요 시:**
 ```bash
@@ -376,6 +394,10 @@ RUN_ENV aws rds reboot-db-instance \
 ```bash
 curl -s https://api.hakwonplus.com/health   # 200 + "database": "connected"
 ```
+
+`/healthz`는 DB를 확인하지 않으므로 단독 복구 증거로 사용하지 않는다.
+`academy-rds-DatabaseConnectionsHigh`는 설정된 평가 기준에 따라 `OK`로
+복귀할 때까지 감시한다.
 
 ### 에스컬레이션 기준
 - RDS 상태가 10분 이상 비정상

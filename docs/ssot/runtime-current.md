@@ -23,7 +23,7 @@ Steady-state running EC2 in the academy VPC is only API 1 + Messaging 1. Batch-m
 
 | Component | Current runtime |
 |-----------|-----------------|
-| RDS | `academy-db`, PostgreSQL `15.17`, `db.t4g.medium`, Single-AZ, 20 GB, status `available`, pending `{}` |
+| RDS | `academy-db`, PostgreSQL `15.17`, `db.t4g.medium`, Single-AZ, 20 GB, status `available`, pending `{}`; direct-RDS API runtime uses `DB_CONN_MAX_AGE=0` |
 | Redis | `academy-v1-redis-001`, Redis `7.1.0`, `cache.t4g.small`, 1 node, status `available` |
 
 ## Video Batch And Ops
@@ -70,3 +70,8 @@ Latest local verification after the cost pass:
 - `pwsh scripts/v1/run-cost-waste-audit.ps1 -AwsProfile default` -> 30/90-day usage captured; `Project` cost-allocation tag Active.
 - Messaging runtime -> `t4g.small`, 1.8 GiB total, 1.24 GiB available, container 62.82 MiB, SQS visible/in-flight/DLQ all 0.
 - Full deploy verification is intentionally deferred until the stale local release manifest is reconciled with the ECR-valid `origin/main` manifest; the targeted refresh and production canary are the deployment evidence for this change.
+- 2026-07-30 connection-incident readback: RDS `max_connections=400`,
+  `superuser_reserved_connections=3`; `/academy/api/env` version 74 applies
+  `DB_CONN_MAX_AGE=0`. The rollback-protected API env refresh passed both
+  `/healthz` and database-backed `/health`, and the API container's established
+  PostgreSQL socket count fell from 390 to 0.
