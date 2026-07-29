@@ -46,6 +46,9 @@ manifest의 API/Tools digest를 사용해 첫 개발 인스턴스를 만든다. 
 
 계정 루트 ARN은 `Assert-AwsMutationIdentity`에서 차단한다. CI와 일반 배포는
 `academy-gha-ecr-build` GitHub OIDC 역할만 사용하며 장기 AWS access key를 요구하지 않는다.
+개발 권한은 기존 운영 inline 정책과 분리된 고객 관리형
+`academy-gha-development-deploy` 정책으로 관리하며
+`converge-api-development-oidc.ps1`이 main-only trust와 정책 readback을 강제한다.
 
 ## 릴리스 순서
 

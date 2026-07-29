@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import re
 
@@ -15,6 +16,15 @@ PREREQUISITES = (
 PUBLISH = REPO_ROOT / "scripts" / "v1" / "publish-api-development-env.ps1"
 SETTINGS = REPO_ROOT / "apps" / "api" / "config" / "settings" / "development.py"
 IAM = REPO_ROOT / "scripts" / "v1" / "resources" / "iam.ps1"
+OIDC_POLICY = (
+    REPO_ROOT
+    / "infra"
+    / "worker_asg"
+    / "iam_policy_gha_development_deploy.json"
+)
+OIDC_CONVERGE = (
+    REPO_ROOT / "scripts" / "v1" / "converge-api-development-oidc.ps1"
+)
 
 
 def _job_block(source: str, name: str) -> str:
@@ -124,6 +134,34 @@ def test_development_role_cannot_read_production_env_or_touch_prod_queues() -> N
     assert '"s3:' not in block
 
 
+def test_development_oidc_policy_is_separate_exact_and_main_only() -> None:
+    policy = json.loads(OIDC_POLICY.read_text(encoding="utf-8"))
+    by_sid = {statement["Sid"]: statement for statement in policy["Statement"]}
+    converge = OIDC_CONVERGE.read_text(encoding="utf-8-sig")
+    prerequisites = PREREQUISITES.read_text(encoding="utf-8-sig")
+
+    assert len(by_sid) == len(policy["Statement"])
+    run_resources = by_sid["DevelopmentRunInstances"]["Resource"]
+    assert any("security-group/sg-" in resource for resource in run_resources)
+    assert sum("/subnet-" in resource for resource in run_resources) == 2
+    assert by_sid["DevelopmentPassRole"]["Resource"].endswith(
+        "role/academy-api-development-role"
+    )
+    assert by_sid["DevelopmentLifecycle"]["Condition"]["StringEquals"] == {
+        "ec2:ResourceTag/Name": "academy-v1-api-development",
+        "ec2:ResourceTag/Project": "academy",
+        "ec2:ResourceTag/ManagedBy": "academy-api-development",
+    }
+    env_read = by_sid["DevelopmentEnvRead"]["Resource"]
+    assert any(resource.endswith("parameter/academy/api/env") for resource in env_read)
+    assert all("preprod" not in resource for resource in env_read)
+    assert "autoscaling:" not in OIDC_POLICY.read_text(encoding="utf-8")
+    assert "Assert-AwsMutationIdentity" in converge
+    assert "refs/heads/main" in converge
+    assert "academy-gha-development-deploy" in converge
+    assert "converge-api-development-oidc.ps1" in prerequisites
+
+
 def test_blue_green_development_deploy_preserves_old_instance_on_failure() -> None:
     source = DEPLOY.read_text(encoding="utf-8-sig")
 
@@ -169,4 +207,3 @@ def test_workflow_enforces_development_then_preprod_then_production() -> None:
     assert workflow.index("  verify-api-preprod:") < workflow.index(
         "  run-migrations:"
     )
-

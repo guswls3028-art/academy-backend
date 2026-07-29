@@ -227,6 +227,8 @@ function Ensure-DevelopmentSecurityGroup {
 Assert-DevelopmentR2CredentialParameter
 Ensure-DevelopmentSecurityGroup
 Ensure-ApiDevelopmentIAM | Out-Null
+& (Join-Path $ScriptRoot "converge-api-development-oidc.ps1") `
+    -AwsProfile $AwsProfile
 Ensure-DevelopmentQueue -QueueName $script:ApiDevelopmentAiQueueName
 Ensure-DevelopmentQueue -QueueName $script:ApiDevelopmentToolsQueueName
 Ensure-DevelopmentQueue -QueueName $script:ApiDevelopmentMessagingQueueName -VisibilityTimeout 900
