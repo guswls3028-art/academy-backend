@@ -7,7 +7,6 @@ from typing import Any
 from django.db import transaction
 from django.utils import timezone
 
-from apps.domains.exams.models import Exam
 from apps.domains.results.guards.exam_enrollment_guard import (
     validate_exam_enrollment_assigned,
 )
@@ -600,9 +599,9 @@ def _editable_question_ids(
     exam: Any,
     questions: list[QuestionSpec],
 ) -> set[int]:
-    if exam.grading_mode == Exam.GradingMode.CHOICE:
+    if exam.grading_mode == "choice":
         return set()
-    if exam.grading_mode == Exam.GradingMode.WRITTEN:
+    if exam.grading_mode == "written":
         return {question.question_id for question in questions}
     return {
         question.question_id
@@ -645,7 +644,7 @@ def _parse_manual_cell(
     if not isinstance(raw_cell, dict):
         return None, "채점값을 입력해 주세요."
 
-    if method == Exam.ManualGradingMethod.CORRECTNESS:
+    if method == "correctness":
         state = str(raw_cell.get("state") or "").strip().lower()
         if state == "correct":
             return CorrectnessMark(
