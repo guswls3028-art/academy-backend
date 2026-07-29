@@ -156,12 +156,25 @@ function Ensure-DevelopmentSecurityGroup {
     if (@($group.IpPermissions).Count -ne 0) {
         throw "API development security group must have no inbound rules."
     }
-    if (-not $script:SecurityGroupData) {
-        throw "The shared data security group is missing from network SSOT."
+    $dataSecurityGroupId = [string]$script:SecurityGroupData
+    if (-not $dataSecurityGroupId) {
+        $dataGroupByName = Invoke-AwsJson @(
+            "ec2", "describe-security-groups",
+            "--filters",
+            "Name=vpc-id,Values=$($script:VpcId)",
+            "Name=group-name,Values=$($script:SgDataName)",
+            "--region", $script:Region,
+            "--output", "json"
+        )
+        $matchingDataGroups = @($dataGroupByName.SecurityGroups)
+        if ($matchingDataGroups.Count -ne 1) {
+            throw "Expected exactly one shared data security group named $($script:SgDataName)."
+        }
+        $dataSecurityGroupId = [string]$matchingDataGroups[0].GroupId
     }
     $dataGroupResult = Invoke-AwsJson @(
         "ec2", "describe-security-groups",
-        "--group-ids", $script:SecurityGroupData,
+        "--group-ids", $dataSecurityGroupId,
         "--region", $script:Region,
         "--output", "json"
     )
@@ -180,7 +193,7 @@ function Ensure-DevelopmentSecurityGroup {
     if (-not $hasPostgresIngress) {
         Invoke-Aws @(
             "ec2", "authorize-security-group-ingress",
-            "--group-id", $script:SecurityGroupData,
+            "--group-id", $dataSecurityGroupId,
             "--protocol", "tcp",
             "--port", "5432",
             "--source-group", [string]$group.GroupId,
@@ -188,7 +201,7 @@ function Ensure-DevelopmentSecurityGroup {
         ) -ErrorMessage "authorize development PostgreSQL path" | Out-Null
         $dataGroupResult = Invoke-AwsJson @(
             "ec2", "describe-security-groups",
-            "--group-ids", $script:SecurityGroupData,
+            "--group-ids", $dataSecurityGroupId,
             "--region", $script:Region,
             "--output", "json"
         )
@@ -226,4 +239,3 @@ Write-Ok (
     "API development prerequisites converged without production runtime mutation " +
     "(dedicated IAM, DB role/database, queues, and pre-provisioned development-only R2)."
 )
-

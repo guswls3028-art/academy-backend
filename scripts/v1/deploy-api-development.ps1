@@ -114,8 +114,16 @@ if ($ami -ne [string]$script:ApiAmiId -or $instanceType -ne [string]$script:ApiI
 }
 
 $subnets = @($script:PublicSubnets | Where-Object { $_ })
+$productionSubnets = @(
+    ([string]$productionAsg.VPCZoneIdentifier -split ",") |
+        ForEach-Object { $_.Trim() } |
+        Where-Object { $_ }
+)
 if ($subnets.Count -eq 0) {
-    throw "NAT is disabled and no public subnet is available for the SSM-only development host."
+    $subnets = $productionSubnets
+}
+if ($subnets.Count -eq 0) {
+    throw "No production API subnet is available for the SSM-only development host."
 }
 $subnet = [string]$subnets[0]
 
@@ -481,5 +489,4 @@ echo DEVELOPMENT_RUNTIME_PASS
         }
     }
 }
-
 
