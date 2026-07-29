@@ -351,3 +351,30 @@ class TeacherProblemExplanationWorkerTests(SimpleTestCase):
         self.assertEqual(result.status, "FAILED")
         self.assertEqual(result.error, "tenant_id mismatch")
         delete_source.assert_not_called()
+
+    @patch(
+        "academy.application.use_cases.ai.pipelines.teacher_problem_explanation.delete_object_r2_storage"
+    )
+    def test_worker_deletes_owned_source_when_payload_is_invalid(self, delete_source):
+        from academy.application.use_cases.ai.pipelines.teacher_problem_explanation import (
+            handle_teacher_problem_explanation_job,
+        )
+
+        source_key = "tenants/7/tools/problem-solver/tmp/test/problem.png"
+        job = AIJob.new(
+            type="teacher_problem_explanation",
+            tenant_id="7",
+            source_domain="tools_problem_solver",
+            payload={
+                "tenant_id": "7",
+                "request_user_id": "11",
+                "source_image_key": source_key,
+                "content_type": "image/gif",
+            },
+        )
+
+        result = handle_teacher_problem_explanation_job(job)
+
+        self.assertEqual(result.status, "FAILED")
+        self.assertEqual(result.error, "invalid content type")
+        delete_source.assert_called_once_with(key=source_key)

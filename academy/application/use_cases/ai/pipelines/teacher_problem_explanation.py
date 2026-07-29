@@ -32,15 +32,16 @@ def handle_teacher_problem_explanation_job(job: AIJob) -> AIResult:
 
     if not tenant_id or payload_tenant_id != tenant_id:
         return AIResult.failed(job.id, "tenant_id mismatch")
-    if not request_user_id:
-        return AIResult.failed(job.id, "request_user_id is required")
     if not source_image_key.startswith(expected_prefix):
         return AIResult.failed(job.id, "invalid source image key")
-    if content_type not in ALLOWED_CONTENT_TYPES:
-        return AIResult.failed(job.id, "invalid content type")
 
     local_path: str | None = None
     try:
+        if not request_user_id:
+            return AIResult.failed(job.id, "request_user_id is required")
+        if content_type not in ALLOWED_CONTENT_TYPES:
+            return AIResult.failed(job.id, "invalid content type")
+
         local_path = download_r2_key_to_tmp(
             r2_key=source_image_key,
             job_id=job.id,
