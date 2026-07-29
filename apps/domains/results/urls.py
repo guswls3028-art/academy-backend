@@ -18,6 +18,9 @@ from apps.domains.results.views.admin_exam_result_excel_import_view import (
     AdminExamResultExcelImportView,
     AdminExamResultExcelTemplateView,
 )
+from apps.domains.results.views.admin_exam_manual_grading_view import (
+    AdminExamManualGradingView,
+)
 
 from apps.domains.results.views.admin_session_exams_view import AdminSessionExamsView
 from apps.domains.results.views.admin_session_exams_summary_view import AdminSessionExamsSummaryView
@@ -69,6 +72,11 @@ urlpatterns = [
         "admin/exams/<int:exam_id>/result-import/",
         AdminExamResultExcelImportView.as_view(),
         name="admin-exam-result-import",
+    ),
+    path(
+        "admin/exams/<int:exam_id>/manual-grading/",
+        AdminExamManualGradingView.as_view(),
+        name="admin-exam-manual-grading",
     ),
     path(
         "admin/exams/<int:exam_id>/enrollments/<int:enrollment_id>/",

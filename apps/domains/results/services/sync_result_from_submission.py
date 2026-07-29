@@ -417,6 +417,7 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
             defaults={
                 "answer": item["answer"],
                 "is_correct": item["is_correct"],
+                "include_in_wrong_note": False,
                 "score": item["score"],
                 "max_score": item["max_score"],
                 "source": item["source"],

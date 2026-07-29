@@ -39,6 +39,12 @@ def dispatch_ai_job(**kwargs):
     return dispatch_job(**kwargs)
 
 
+def get_exam_ai_job_model():
+    from apps.domains.ai.models import AIJobModel
+
+    return AIJobModel
+
+
 def active_enrollment_ids_for_session(**kwargs) -> set[int]:
     from apps.domains.enrollment.selectors import active_enrollment_ids_for_session as _ids
 
@@ -52,14 +58,25 @@ def active_session_enrollments_for_session(**kwargs):
 
 
 def pdf_extract_exam_validation_error(*, tenant, exam_id: int) -> str | None:
-    from apps.domains.exams.models import Exam
+    from apps.domains.exams.models import Exam, ExamQuestion
+    from apps.domains.results.models import Result
 
     try:
         exam = Exam.objects.get(id=int(exam_id), tenant=tenant)
     except Exam.DoesNotExist:
         return "not_found"
-    if exam.exam_type != Exam.ExamType.TEMPLATE:
-        return "not_template"
+    if exam.exam_type == Exam.ExamType.REGULAR:
+        if exam.segmentation_status == Exam.SegmentationStatus.PROCESSING:
+            return "processing"
+        if (
+            ExamQuestion.objects.filter(sheet__exam=exam).exists()
+            or Result.objects.filter(
+                target_type="exam",
+                target_id=int(exam.id),
+            ).exists()
+            or exam.attempts.exists()
+        ):
+            return "regular_locked"
     return None
 
 

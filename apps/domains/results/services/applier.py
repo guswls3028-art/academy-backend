@@ -68,6 +68,11 @@ class ResultApplier:
             max_score = float(item.get("max_score") or 0.0)
             source = str(item.get("source") or "")
             meta = item.get("meta", None)
+            include_in_wrong_note = bool(
+                meta.get("include_in_wrong_note")
+                if isinstance(meta, dict)
+                else False
+            )
 
             # 1️⃣ Fact (append-only)
             ResultFact.objects.create(
@@ -93,6 +98,7 @@ class ResultApplier:
                 defaults={
                     "answer": ans,
                     "is_correct": is_correct,
+                    "include_in_wrong_note": include_in_wrong_note,
                     "score": score,
                     "max_score": max_score,
                     "source": source,

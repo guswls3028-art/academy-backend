@@ -3,6 +3,7 @@ from __future__ import annotations
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -13,7 +14,6 @@ from PIL import Image
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.ai.models import AIJobModel, AIResultModel
 from apps.domains.tools.problem_solver.views import (
     TeacherProblemExplanationJobCreateView,
     TeacherProblemExplanationJobStatusView,
@@ -149,7 +149,7 @@ class TeacherProblemExplanationViewTests(TestCase):
         self.assertEqual(response.status_code, 403)
 
     def test_status_is_scoped_to_requesting_teacher_and_whitelists_result(self):
-        job = AIJobModel.objects.create(
+        job = SimpleNamespace(
             job_id="solver-done-job",
             job_type="teacher_problem_explanation",
             status="DONE",
@@ -160,25 +160,33 @@ class TeacherProblemExplanationViewTests(TestCase):
                 "source_image_key": "must-not-leak",
             },
         )
-        AIResultModel.objects.create(
-            job=job,
-            payload={
-                "answer": "3",
-                "explanation": "양변을 정리하면 3입니다.",
-                "answer_check": "대입하면 등식이 성립합니다.",
-                "confidence": "high",
-                "subject": "수학",
-                "provider_debug": "must-not-leak",
-            },
-        )
+        stored_result = {
+            "answer": "3",
+            "explanation": "양변을 정리하면 3입니다.",
+            "answer_check": "대입하면 등식이 성립합니다.",
+            "confidence": "high",
+            "subject": "수학",
+            "provider_debug": "must-not-leak",
+        }
 
         request = self.factory.get(
             "/api/v1/tools/problem-solver/jobs/solver-done-job/"
         )
-        response = TeacherProblemExplanationJobStatusView.as_view()(
-            self._authenticate(request),
-            job_id=job.job_id,
-        )
+        with (
+            patch(
+                "apps.domains.tools.problem_solver.views.ai_repo.get_job_model_for_status",
+                return_value=job,
+            ),
+            patch(
+                "apps.domains.tools.problem_solver.views.ai_repo."
+                "DjangoAIJobRepository.get_result_payload_for_job",
+                return_value=stored_result,
+            ),
+        ):
+            response = TeacherProblemExplanationJobStatusView.as_view()(
+                self._authenticate(request),
+                job_id=job.job_id,
+            )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["result"]["review_status"], "teacher_review_required")
@@ -199,14 +207,18 @@ class TeacherProblemExplanationViewTests(TestCase):
         other_request = self.factory.get(
             "/api/v1/tools/problem-solver/jobs/solver-done-job/"
         )
-        other_response = TeacherProblemExplanationJobStatusView.as_view()(
-            self._authenticate(other_request, user=other_teacher),
-            job_id=job.job_id,
-        )
+        with patch(
+            "apps.domains.tools.problem_solver.views.ai_repo.get_job_model_for_status",
+            return_value=job,
+        ):
+            other_response = TeacherProblemExplanationJobStatusView.as_view()(
+                self._authenticate(other_request, user=other_teacher),
+                job_id=job.job_id,
+            )
         self.assertEqual(other_response.status_code, 404)
 
     def test_failed_status_does_not_expose_provider_error(self):
-        job = AIJobModel.objects.create(
+        job = SimpleNamespace(
             job_id="solver-failed-job",
             job_type="teacher_problem_explanation",
             status="FAILED",
@@ -222,10 +234,14 @@ class TeacherProblemExplanationViewTests(TestCase):
             "/api/v1/tools/problem-solver/jobs/solver-failed-job/"
         )
 
-        response = TeacherProblemExplanationJobStatusView.as_view()(
-            self._authenticate(request),
-            job_id=job.job_id,
-        )
+        with patch(
+            "apps.domains.tools.problem_solver.views.ai_repo.get_job_model_for_status",
+            return_value=job,
+        ):
+            response = TeacherProblemExplanationJobStatusView.as_view()(
+                self._authenticate(request),
+                job_id=job.job_id,
+            )
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("다시 시도", response.data["error"])

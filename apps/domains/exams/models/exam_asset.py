@@ -20,6 +20,7 @@ class ExamAsset(BaseModel):
 
     class AssetType(models.TextChoices):
         PROBLEM_PDF = "problem_pdf", "Problem PDF"
+        PROBLEM_SOURCE = "problem_source", "Original problem source"
         OMR_SHEET = "omr_sheet", "OMR Sheet"
 
     exam = models.ForeignKey(

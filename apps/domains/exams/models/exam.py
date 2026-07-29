@@ -36,6 +36,22 @@ class Exam(BaseModel):
         AFTER_CLOSED = "after_closed", "마감 후 공개"
         ALWAYS = "always", "항상 공개"
 
+    class GradingMode(models.TextChoices):
+        CHOICE = "choice", "선택형"
+        WRITTEN = "written", "답변형"
+        MIXED = "mixed", "혼합형"
+
+    class ManualGradingMethod(models.TextChoices):
+        CORRECTNESS = "correctness", "정오 입력"
+        SCORE = "score", "점수 입력"
+
+    class SegmentationStatus(models.TextChoices):
+        NONE = "none", "원본 없음"
+        PROCESSING = "processing", "문항 분리 중"
+        READY = "ready", "문항 분리 완료"
+        FAILED = "failed", "문항 분리 실패"
+        CONVERSION_REQUIRED = "conversion_required", "PDF 변환 필요"
+
     # 🔐 Tenant isolation — template exam도 세션 없이 tenant에 소속
     tenant = models.ForeignKey(
         Tenant,
@@ -91,6 +107,28 @@ class Exam(BaseModel):
         default=100.0,
         help_text="만점. 답안등록 없이 합산 입력 시 사용. 답안등록 시 문항 합산으로 자동 재계산.",
     )
+    grading_mode = models.CharField(
+        max_length=12,
+        choices=GradingMode.choices,
+        default=GradingMode.CHOICE,
+        help_text="선택형은 OMR, 답변형은 수기 채점, 혼합형은 두 흐름을 함께 사용한다.",
+    )
+    manual_grading_method = models.CharField(
+        max_length=12,
+        choices=ManualGradingMethod.choices,
+        default=ManualGradingMethod.SCORE,
+        help_text="답변형 문항을 문항별 점수 또는 정오로 입력하는 방식.",
+    )
+    choice_question_count = models.PositiveIntegerField(
+        default=0,
+        help_text="혼합형 시험에서 앞쪽 선택형 문항 수.",
+    )
+    segmentation_status = models.CharField(
+        max_length=24,
+        choices=SegmentationStatus.choices,
+        default=SegmentationStatus.NONE,
+    )
+    source_filename = models.CharField(max_length=255, blank=True, default="")
     display_order = models.PositiveIntegerField(
         default=0,
         help_text="성적탭 내 표시 순서 (작을수록 앞)",

@@ -30,6 +30,9 @@ class ExamCreateSerializer(serializers.ModelSerializer):
             "max_attempts",
             "pass_score",
             "max_score",
+            "grading_mode",
+            "manual_grading_method",
+            "choice_question_count",
             "answer_visibility",
             "open_at",
             "close_at",
@@ -73,5 +76,19 @@ class ExamCreateSerializer(serializers.ModelSerializer):
             errors["close_at"] = "마감 시각이 시작 시각 이후여야 합니다."
         if errors:
             raise serializers.ValidationError(errors)
+
+        grading_mode = attrs.get("grading_mode", Exam.GradingMode.CHOICE)
+        choice_question_count = attrs.get("choice_question_count", 0)
+        if (
+            grading_mode == Exam.GradingMode.MIXED
+            and int(choice_question_count or 0) < 1
+        ):
+            raise serializers.ValidationError(
+                {
+                    "choice_question_count": (
+                        "혼합형 시험은 앞쪽 선택형 문항 수를 1개 이상 입력해 주세요."
+                    )
+                }
+            )
 
         return attrs

@@ -13,6 +13,7 @@ from academy.application.use_cases.ai.pipelines.matchup_pipeline import (
 )
 from academy.domain.tools.paper_type import PaperType, PaperTypeResult
 from academy.domain.tools.question_splitter import TextBlock, split_questions
+from academy.domain.tools.question_splitter import is_non_question_page
 
 
 def _paper_type(*, dual: bool) -> PaperTypeResult:
@@ -48,6 +49,64 @@ def _write_blank_png(path: Path, *, width: int, height: int) -> None:
 
 
 class CleanPdfQuestionSplitterV2Tests(TestCase):
+    def test_pdf_control_character_after_number_is_ignored(self):
+        page_width = 612.0
+        page_height = 864.0
+        blocks = [
+            TextBlock("10.\x01", 42.0, 110.0, 61.0, 122.0),
+            TextBlock(
+                "최고차항의 계수가 1인 함수의 값을 구하시오.",
+                70.0,
+                110.0,
+                270.0,
+                132.0,
+            ),
+            TextBlock("11.", 306.0, 110.0, 322.0, 122.0),
+            TextBlock(
+                "실수 전체의 집합에서 정의된 함수의 값을 구하시오.",
+                334.0,
+                110.0,
+                560.0,
+                132.0,
+            ),
+        ]
+
+        regions = split_questions(
+            blocks,
+            page_width=page_width,
+            page_height=page_height,
+            page_index=6,
+            paper_type=_paper_type(dual=True),
+            prefer_marginal=True,
+        )
+
+        self.assertEqual([region.number for region in regions], [10, 11])
+
+    def test_ymath_cover_and_clinic_schedule_are_non_question_pages(self):
+        cover = [
+            TextBlock(
+                "2026 고2 Hyper 미적분1 Routine 복습 Test "
+                "4. 함수의 극한, 연속",
+                80.0,
+                120.0,
+                520.0,
+                360.0,
+            ),
+        ]
+        clinic = [
+            TextBlock(
+                "시험일자: 1/12(월) Y_math 고2 Hyper 1월 클리닉 일정 "
+                "추가 클리닉 등원을 희망하는 학생은 일정을 조율해 주세요.",
+                70.0,
+                100.0,
+                540.0,
+                700.0,
+            ),
+        ]
+
+        self.assertTrue(is_non_question_page(cover))
+        self.assertTrue(is_non_question_page(clinic))
+
     def test_two_column_flow_uses_same_column_next_anchor(self):
         page_width = 612.0
         page_height = 864.0

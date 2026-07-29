@@ -54,6 +54,20 @@ def _workbook_bytes(rows: list[list[object]]) -> bytes:
     return stream.getvalue()
 
 
+def _multi_sheet_workbook_bytes(
+    sheets: list[tuple[str, list[list[object]]]],
+) -> bytes:
+    workbook = Workbook()
+    workbook.remove(workbook.active)
+    for title, rows in sheets:
+        sheet = workbook.create_sheet(title=title)
+        for row in rows:
+            sheet.append(row)
+    stream = io.BytesIO()
+    workbook.save(stream)
+    return stream.getvalue()
+
+
 def _without_worksheet_dimension(payload: bytes) -> bytes:
     source_stream = io.BytesIO(payload)
     output_stream = io.BytesIO()
@@ -291,6 +305,255 @@ class ExamResultExcelImportTests(TestCase):
         self.assertEqual(row.total_score, 40.0)
         self.assertEqual(row.max_score, 100.0)
         self.assertFalse(row.is_not_submitted)
+
+    def test_numeric_zero_is_correct_but_included_in_wrong_note(self):
+        payload = _workbook_bytes(
+            [
+                ["이름", "응시 여부", 1, 2],
+                ["김학생", "응시", 0, "X"],
+            ]
+        )
+
+        plan = plan_exam_result_import(
+            exam=self.exam,
+            tenant=self.tenant,
+            filename="ymath.xlsx",
+            workbook_bytes=payload,
+        )
+
+        self.assertTrue(plan.can_apply, plan.errors)
+        row = plan.rows[0]
+        self.assertEqual(row.correct_count, 1)
+        self.assertEqual(row.wrong_question_numbers, (2,))
+        self.assertEqual(row.review_question_numbers, (1,))
+        self.assertEqual(row.total_score, 40.0)
+        self.assertEqual(plan.as_payload()["rows"][0]["review_questions"], [1])
+
+        apply_exam_result_import(plan=plan)
+
+        review_item = ResultItem.objects.get(
+            result__target_id=self.exam.id,
+            result__enrollment=self.enrollment,
+            question=self.choice_question,
+        )
+        wrong_item = ResultItem.objects.get(
+            result__target_id=self.exam.id,
+            result__enrollment=self.enrollment,
+            question=self.short_question,
+        )
+        self.assertTrue(review_item.is_correct)
+        self.assertTrue(review_item.include_in_wrong_note)
+        self.assertEqual(float(review_item.score), 40.0)
+        self.assertFalse(wrong_item.is_correct)
+        self.assertTrue(wrong_item.include_in_wrong_note)
+
+    def test_ymath_period_is_wrong_and_zero_is_review(self):
+        payload = _workbook_bytes(
+            [
+                [
+                    "학교",
+                    "이름",
+                    "부모님연락처",
+                    "학생연락처",
+                    "출석",
+                    "결시",
+                    1,
+                    2,
+                    "점수",
+                    "등수",
+                    1,
+                    2,
+                ],
+                [
+                    "테스트고",
+                    "김학생",
+                    "010-9876-5432",
+                    "010-1234-5678",
+                    "",
+                    "",
+                    ".",
+                    0,
+                    60,
+                    1,
+                    "",
+                    ".",
+                ],
+            ]
+        )
+
+        plan = plan_exam_result_import(
+            exam=self.exam,
+            tenant=self.tenant,
+            filename="Ymath-기존양식.xlsx",
+            workbook_bytes=payload,
+        )
+
+        self.assertTrue(plan.can_apply, plan.errors)
+        row = plan.rows[0]
+        self.assertEqual(row.wrong_question_numbers, (1,))
+        self.assertEqual(row.review_question_numbers, (2,))
+        self.assertEqual(row.correct_count, 1)
+        self.assertEqual(row.total_score, 60.0)
+
+    def test_blank_absence_column_confirms_perfect_score_in_ymath_sheet(self):
+        payload = _workbook_bytes(
+            [
+                ["이름", "결시", 1, 2],
+                ["김학생", "", "", ""],
+            ]
+        )
+
+        plan = plan_exam_result_import(
+            exam=self.exam,
+            tenant=self.tenant,
+            filename="Ymath-만점.xlsx",
+            workbook_bytes=payload,
+        )
+
+        self.assertTrue(plan.can_apply, plan.errors)
+        row = plan.rows[0]
+        self.assertFalse(row.is_not_submitted)
+        self.assertEqual(row.correct_count, 2)
+        self.assertEqual(row.total_score, 100.0)
+
+    def test_period_in_absence_column_marks_not_submitted(self):
+        payload = _workbook_bytes(
+            [
+                ["이름", "결시", 1, 2],
+                ["김학생", ".", "", ""],
+            ]
+        )
+
+        plan = plan_exam_result_import(
+            exam=self.exam,
+            tenant=self.tenant,
+            filename="Ymath-결시.xlsx",
+            workbook_bytes=payload,
+        )
+
+        self.assertTrue(plan.can_apply, plan.errors)
+        self.assertTrue(plan.rows[0].is_not_submitted)
+        self.assertEqual(plan.rows[0].total_score, 0.0)
+
+    def test_multi_sheet_workbook_selects_sheet_matching_exam_roster(self):
+        payload = _multi_sheet_workbook_bytes(
+            [
+                (
+                    "다른 시험",
+                    [
+                        ["이름", "결시", 1, 2],
+                        ["다른학생", "", ".", ""],
+                    ],
+                ),
+                (
+                    "현재 시험",
+                    [
+                        ["이름", "결시", 1, 2],
+                        ["김학생", "", ".", ""],
+                    ],
+                ),
+            ]
+        )
+
+        plan = plan_exam_result_import(
+            exam=self.exam,
+            tenant=self.tenant,
+            filename="Ymath-통합.xlsx",
+            workbook_bytes=payload,
+        )
+
+        self.assertTrue(plan.can_apply, plan.errors)
+        self.assertEqual(plan.worksheet_names, ["현재 시험"])
+        self.assertEqual(plan.rows[0].source_sheet, "현재 시험")
+        self.assertEqual(plan.rows[0].wrong_question_numbers, (1,))
+
+    def test_multi_sheet_workbook_rejects_overlapping_ambiguous_sheets(self):
+        payload = _multi_sheet_workbook_bytes(
+            [
+                (
+                    "A반",
+                    [
+                        ["이름", "결시", 1, 2],
+                        ["김학생", "", ".", ""],
+                    ],
+                ),
+                (
+                    "B반",
+                    [
+                        ["이름", "결시", 1, 2],
+                        ["김학생", "", "", "."],
+                    ],
+                ),
+            ]
+        )
+
+        plan = plan_exam_result_import(
+            exam=self.exam,
+            tenant=self.tenant,
+            filename="Ymath-모호.xlsx",
+            workbook_bytes=payload,
+        )
+
+        self.assertFalse(plan.can_apply)
+        self.assertEqual(plan.errors[0]["field"], "file")
+        self.assertIn("가져올 시트를 하나로 판별할 수 없습니다", plan.errors[0]["message"])
+
+    def test_multi_sheet_workbook_combines_disjoint_cohort_sheets(self):
+        second_enrollment = self._create_enrollment(
+            name="이학생",
+            username="excel-student-second-sheet",
+            ps_number="EX-002",
+            phone="01011112222",
+            parent_phone="01033334444",
+        )
+        ExamEnrollment.objects.create(
+            exam=self.exam,
+            enrollment=second_enrollment,
+        )
+        self.exam.title = "7/23(목) 대수 Remake 복습 Test (2)"
+        self.exam.save(update_fields=["title", "updated_at"])
+        payload = _multi_sheet_workbook_bytes(
+            [
+                (
+                    "7.23(목) 2회차",
+                    [
+                        ["이름", "결시", 1, 2],
+                        ["김학생", "", ".", ""],
+                    ],
+                ),
+                (
+                    "7.23(목) 2회차 민사",
+                    [
+                        ["이름", "결시", 1, 2],
+                        ["이학생", "", "", "."],
+                    ],
+                ),
+                (
+                    "7.21(화) 1회차",
+                    [
+                        ["이름", "결시", 1, 2],
+                        ["김학생", "", "", "."],
+                    ],
+                ),
+            ]
+        )
+
+        plan = plan_exam_result_import(
+            exam=self.exam,
+            tenant=self.tenant,
+            filename="Ymath-통합.xlsx",
+            workbook_bytes=payload,
+        )
+
+        self.assertTrue(plan.can_apply, plan.errors)
+        self.assertEqual(
+            plan.worksheet_names,
+            ["7.23(목) 2회차", "7.23(목) 2회차 민사"],
+        )
+        self.assertEqual(
+            {row.candidate.enrollment_id for row in plan.rows},
+            {self.enrollment.id, second_enrollment.id},
+        )
 
     def test_existing_absence_column_marks_student_not_submitted(self):
         payload = _workbook_bytes(
