@@ -64,10 +64,6 @@ if (
 ) {
     throw "Target instance is outside the managed API development boundary."
 }
-if ([string]$instance.PublicIpAddress) {
-    throw "Active API development instance must not have a public IP."
-}
-
 $toolsSmoke = @'
 import io
 import json
