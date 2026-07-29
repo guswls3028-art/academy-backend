@@ -81,7 +81,11 @@ def test_canary_is_isolated_and_checks_migrations_and_health() -> None:
     assert "academy_api_preprod" in canary
     assert "apps.api.config.settings.prod" in canary
     assert "python manage.py migrate --noinput" in canary
-    assert "CREATE DATABASE" in canary
+    assert "CREATE DATABASE" not in canary
+    assert "dbname='postgres'" not in canary
+    assert "CANARY_MIGRATION_START" in canary
+    assert "CANARY_MIGRATION_COMPLETE" in canary
+    assert "academy-api-userdata.log 2>&1" in canary
     assert "http://127.0.0.1:8000/healthz" in canary
     assert "http://127.0.0.1:8000/health" in canary
     assert "API_PREPROD_CANARY_PASS" in canary

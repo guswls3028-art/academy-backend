@@ -122,11 +122,13 @@ $userData = [regex]::Replace(
 )
 if ($userData -notmatch 'shutdown -h \+30') { throw "API canary shutdown backstop injection failed." }
 $dbBootstrap = @'
-# Preprod-only database: create once, then validate candidate migrations before
-# starting the server. No production database schema is changed in this phase.
+# The isolated preprod database is provisioned ahead of releases. The canary
+# role intentionally cannot connect to the production database or create
+# databases; it may migrate only its dedicated preprod database.
 CANARY_IMAGE="__CANARY_IMAGE__"
-docker run --rm --env-file /opt/api.env "$CANARY_IMAGE" python -c "import os, psycopg2; from psycopg2 import sql; conn=psycopg2.connect(dbname='postgres', user=os.environ['DB_USER'], password=os.environ['DB_PASSWORD'], host=os.environ['DB_HOST'], port=os.environ.get('DB_PORT','5432'), sslmode=os.environ.get('DB_SSL_MODE','require')); conn.set_session(autocommit=True); cur=conn.cursor(); cur.execute('SELECT 1 FROM pg_database WHERE datname=%s',(os.environ['DB_NAME'],)); exists=cur.fetchone(); cur.execute(sql.SQL('CREATE DATABASE {}').format(sql.Identifier(os.environ['DB_NAME']))) if not exists else None; cur.close(); conn.close()"
-docker run --rm --env-file /opt/api.env "$CANARY_IMAGE" python manage.py migrate --noinput
+echo "CANARY_MIGRATION_START" >> /var/log/academy-api-userdata.log
+docker run --rm --env-file /opt/api.env "$CANARY_IMAGE" python manage.py migrate --noinput >> /var/log/academy-api-userdata.log 2>&1
+echo "CANARY_MIGRATION_COMPLETE" >> /var/log/academy-api-userdata.log
 '@
 $dbBootstrap = $dbBootstrap.Replace("__CANARY_IMAGE__", $ImageUri)
 $userData = [regex]::Replace($userData, '(?m)^# 4\)', "$dbBootstrap`n# 4)", 1)
