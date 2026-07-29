@@ -70,6 +70,8 @@ INTERNAL_WORKER_TOKEN = "test-worker-token"
 MESSAGING_TENANT_BINDING_KEY = "test-messaging-tenant-binding-key"
 MESSAGING_TENANT_BINDING_FALLBACK_KEYS = ()
 MESSAGING_TENANT_BINDING_ENFORCED = True
+PRODUCT_ANALYTICS_HASH_KEY = "test-product-analytics-hash-key"
+TENANT_DB_USAGE_ENABLED = False
 
 # Worker instance IDs — None (no real instances)
 AI_WORKER_INSTANCE_ID = None

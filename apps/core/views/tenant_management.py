@@ -2,6 +2,7 @@
 import logging
 import re
 
+from django.conf import settings
 from django.db import IntegrityError, transaction
 
 from rest_framework.views import APIView
@@ -121,6 +122,7 @@ class TenantDetailView(APIView):
             "primaryDomain": primary_domain.host if primary_domain else None,
             "domains": [{"host": d.host, "isPrimary": d.is_primary} for d in domains],
             "hasProgram": program is not None,
+            "featureFlags": program.feature_flags if program else {},
         }
         return Response(data)
 
@@ -132,14 +134,50 @@ class TenantDetailView(APIView):
             return Response({"detail": "Tenant not found."}, status=404)
 
         changes = {}
+        analytics_enabled = None
+        analytics_program = None
+        if "productUsageAnalyticsEnabled" in request.data:
+            analytics_enabled = parse_bool(
+                request.data["productUsageAnalyticsEnabled"],
+                field_name="productUsageAnalyticsEnabled",
+            )
+            if (
+                analytics_enabled
+                and not getattr(settings, "PRODUCT_ANALYTICS_HASH_KEY", "")
+            ):
+                return Response(
+                    {
+                        "detail": "PRODUCT_ANALYTICS_HASH_KEY must be configured before rollout.",
+                        "code": "analytics_hash_key_missing",
+                    },
+                    status=409,
+                )
+            analytics_program = core_repo.program_get_by_tenant(tenant)
+            if analytics_program is None:
+                return Response(
+                    {"detail": "Program not found.", "code": "program_missing"},
+                    status=409,
+                )
+
+        tenant_update_fields = []
         if "name" in request.data:
             tenant.name = request.data["name"]
             changes["name"] = tenant.name
+            tenant_update_fields.append("name")
         if "isActive" in request.data:
             # parse_bool: "false" 문자열을 False로 처리. bool("false") == True 회귀 방지.
             tenant.is_active = parse_bool(request.data["isActive"], field_name="isActive")
             changes["isActive"] = tenant.is_active
-        tenant.save(update_fields=["name", "is_active"])
+            tenant_update_fields.append("is_active")
+        if tenant_update_fields:
+            tenant.save(update_fields=tenant_update_fields)
+
+        if analytics_enabled is not None and analytics_program is not None:
+            next_flags = dict(analytics_program.feature_flags or {})
+            next_flags["product_usage_analytics_enabled"] = analytics_enabled
+            analytics_program.feature_flags = next_flags
+            analytics_program.save(update_fields=["feature_flags"])
+            changes["productUsageAnalyticsEnabled"] = analytics_enabled
 
         if changes:
             record_audit(

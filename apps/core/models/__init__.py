@@ -12,6 +12,7 @@ from .platform_inbox import PlatformInboxIncidentState
 from .platform_push_outbox import PlatformPushOutbox
 from .worker_heartbeat import WorkerHeartbeatModel
 from .login_throttle import LoginThrottleBucket
+from .product_analytics import ProductUsageDailyActor, ProductUsageEvent
 
 __all__ = [
     "Tenant",
@@ -30,4 +31,6 @@ __all__ = [
     "PlatformPushOutbox",
     "WorkerHeartbeatModel",
     "LoginThrottleBucket",
+    "ProductUsageEvent",
+    "ProductUsageDailyActor",
 ]

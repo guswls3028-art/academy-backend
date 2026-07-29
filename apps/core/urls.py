@@ -53,6 +53,10 @@ from apps.core.views_landing import (
     LandingManifestView,
     LandingHitReportToggleView,
 )
+from apps.core.product_analytics.views import (
+    ProductUsageBatchView,
+    ProductUsageOverviewView,
+)
 
 router = DefaultRouter()
 router.register("profile", ProfileViewSet, basename="profile")
@@ -88,6 +92,16 @@ urlpatterns = [
     path("dev/audit/", DevAuditLogListView.as_view(), name="core-dev-audit"),
     path("dev/cron/", DevCronListView.as_view(), name="core-dev-cron-list"),
     path("dev/cron/run/", DevCronTriggerView.as_view(), name="core-dev-cron-run"),
+    path(
+        "dev/product-analytics/overview/",
+        ProductUsageOverviewView.as_view(),
+        name="core-dev-product-analytics-overview",
+    ),
+    path(
+        "product-analytics/events/batch/",
+        ProductUsageBatchView.as_view(),
+        name="core-product-analytics-events-batch",
+    ),
     # Landing page
     path("landing/public/", LandingPublicView.as_view(), name="core-landing-public"),
     path("landing/has-published/", LandingHasPublishedView.as_view(), name="core-landing-has-published"),
