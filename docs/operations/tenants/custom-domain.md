@@ -91,6 +91,7 @@ DB 프로비저닝 코드는 고객별 목록에 추가하지 않는다. 배포 
 |---|---|
 | ID·호스트·브랜드 레지스트리 | `src/shared/tenant/tenants/` |
 | 로그인 테마 | `src/auth/themes/<code>.css`, `LoginPage.tsx` |
+| 공용 헤더 팔레트 | `src/shared/tenant/tenants/<code>.ts`의 `headerPalette` |
 | 학생앱 테마 | `src/app_student/shared/ui/theme/tenants/`, `StudentLayout.tsx` |
 | 성적표 색상 | `src/app_admin/domains/scores/utils/studentScoreReportTheme.ts` |
 | PWA 아이콘 | `src/shared/pwa/tenantPwaMeta.ts` |
@@ -142,6 +143,24 @@ pwa-512.png
 - `prefers-reduced-motion`에서 필수 정보가 애니메이션에 의존하지 않음
 - DOM에서 올바른 `data-tenant`, 제목, 로그인 폼을 확인
 - 스크린샷을 직접 검토해 로고 배경 경계와 문구 겹침이 없음
+
+### 로그인 후 공용 헤더 브랜딩 게이트
+
+프런트 세부 계약은 워크스페이스의 `frontend/docs/TENANT-BRANDING.md`를 따른다.
+로그인 화면만 브랜딩하고 내부 상단바에 원본 로고를 축소 배치한 상태는 완료가
+아니다.
+
+- 관리자·선생·학생·학부모 헤더를 모두 확인한다. 학부모는 학생 레이아웃을
+  공유하지만 별도 역할로 로그인해 프로필 영역까지 확인한다.
+- 투명 로고는 공용 헤더 표면을 유지한다.
+- 불투명 단색·사진 배경 로고는 `headerPalette`에 이미지 모서리 배경색,
+  중간 표면색, 제목색, 강조색을 등록한다.
+- 팔레트가 있는 테넌트는 Program의 큰 `logo_url`보다 레지스트리의
+  `headerLogoUrl`을 상단바에서 우선한다.
+- 라이트·다크와 1366px·390px 조합에서 로고 모서리 경계, 제목 대비,
+  가로 넘침, 홈·메뉴·알림·프로필 동작을 확인한다.
+- 좁은 화면에서 제목이 줄어드는 것은 허용하지만 로고가 다른 조작과 겹치거나
+  사라지는 것은 허용하지 않는다.
 
 ## 4. Phase 2 — 가비아 위임 확인 후
 
@@ -235,6 +254,8 @@ curl.exe -sS -o NUL -w "%{http_code}`n" https://www.saebom.com/login
 - 제목·favicon·OG·PWA manifest가 해당 브랜드
 - 데스크톱 1366px·모바일 390px 로그인 화면
 - 로고가 페이지 배경·로그인 패널과 시각적으로 이어지고 흰 공용 카드에 고립되지 않음
+- 관리자·선생·학생·학부모의 라이트·다크 공용 헤더에서 로고가 네모 사진처럼
+  고립되지 않고, 헤더 전용 에셋·팔레트가 적용됨
 - 대표 계정 로그인과 최초 비밀번호 변경
 - 로그인 후 역할이 owner
 - 새 테넌트의 학생·강의·성적 목록이 비어 있음
