@@ -56,6 +56,11 @@ class ScoreBlockSerializer(serializers.Serializer):
         required=False,
         default=None,
     )
+    correction_note = serializers.CharField(
+        allow_blank=True,
+        required=False,
+        default="",
+    )
 
 
 class AttemptSummarySerializer(serializers.Serializer):
@@ -139,3 +144,8 @@ class AssessmentCorrectionUpdateSerializer(serializers.Serializer):
     source_type = serializers.ChoiceField(choices=["exam", "homework"])
     source_id = serializers.IntegerField(min_value=1)
     completed = serializers.BooleanField()
+    note = serializers.CharField(
+        allow_blank=True,
+        max_length=500,
+        required=False,
+    )

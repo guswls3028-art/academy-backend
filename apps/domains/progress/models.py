@@ -317,7 +317,7 @@ class ClinicLink(TimestampModel):
 
 
 class AssessmentCorrection(TimestampModel):
-    """시험/과제 점수와 독립적으로 교사가 확인한 오답 완료 상태."""
+    """시험 오답/과제 검사를 점수와 독립적으로 교사가 확인한 상태."""
 
     class SourceType(models.TextChoices):
         EXAM = "exam", "시험"
@@ -342,6 +342,11 @@ class AssessmentCorrection(TimestampModel):
     source_id = models.PositiveIntegerField()
     completed = models.BooleanField(default=False)
     completed_at = models.DateTimeField(null=True, blank=True)
+    note = models.TextField(
+        blank=True,
+        default="",
+        help_text="교사가 남긴 미완료 범위 또는 확인 메모.",
+    )
     source_updated_at_snapshot = models.DateTimeField(
         null=True,
         blank=True,

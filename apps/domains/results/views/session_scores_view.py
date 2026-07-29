@@ -269,25 +269,40 @@ def _session_score_enrollment_ids(*, tenant, session) -> List[int]:
 
 def _assessment_correction_payload(
     *,
+    source_type: str,
     score: Optional[float],
     max_score: Optional[float],
     source_updated_at,
     correction: Optional[AssessmentCorrection],
 ) -> Dict[str, Any]:
+    note = correction.note if correction else ""
+    if source_type == AssessmentCorrection.SourceType.HOMEWORK and correction:
+        return {
+            "correction_status": (
+                "COMPLETED" if correction.completed else "PENDING"
+            ),
+            "correction_completed_at": (
+                correction.completed_at if correction.completed else None
+            ),
+            "correction_note": note,
+        }
     if score is None:
         return {
             "correction_status": None,
             "correction_completed_at": None,
+            "correction_note": note,
         }
     if max_score is None or max_score <= 0:
         return {
             "correction_status": None,
             "correction_completed_at": None,
+            "correction_note": note,
         }
     if score >= max_score:
         return {
             "correction_status": "NOT_REQUIRED",
             "correction_completed_at": None,
+            "correction_note": note,
         }
     is_current_completion = bool(
         correction
@@ -299,6 +314,7 @@ def _assessment_correction_payload(
         "correction_completed_at": (
             correction.completed_at if is_current_completion else None
         ),
+        "correction_note": note,
     }
 
 
@@ -881,6 +897,7 @@ class SessionScoresView(APIView):
                         block["meta"] = {"status": achievement_data.get("meta_status")}
                 block.update(
                     _assessment_correction_payload(
+                        source_type=AssessmentCorrection.SourceType.EXAM,
                         score=block.get("score"),
                         max_score=block.get("max_score"),
                         source_updated_at=updated_at,
@@ -954,6 +971,7 @@ class SessionScoresView(APIView):
                     updated_at = hs.updated_at
                 block.update(
                     _assessment_correction_payload(
+                        source_type=AssessmentCorrection.SourceType.HOMEWORK,
                         score=block.get("score"),
                         max_score=block.get("max_score"),
                         source_updated_at=updated_at,
@@ -1149,39 +1167,62 @@ class SessionScoreCorrectionView(APIView):
                 )
                 .first()
             )
-            if homework_score is None or homework_score.score is None:
-                raise ValidationError(
-                    {"source_id": "점수가 입력된 과제만 오답 확인 상태를 바꿀 수 있습니다."}
-                )
-            score = _float_or_none(homework_score.score)
-            max_score = _float_or_none(homework_score.max_score)
-            source_updated_at = homework_score.updated_at
+            if homework_score is not None:
+                score = _float_or_none(homework_score.score)
+                max_score = _float_or_none(homework_score.max_score)
+                source_updated_at = homework_score.updated_at
 
-        if score is None or max_score is None or max_score <= 0:
-            raise ValidationError(
-                {"source_id": "점수와 만점이 확인된 항목만 오답 확인 상태를 바꿀 수 있습니다."}
-            )
-        if score >= max_score:
-            raise ValidationError(
-                {"source_id": "오답이 없는 만점 결과는 확인 완료로 자동 처리됩니다."}
-            )
+        if source_type == AssessmentCorrection.SourceType.EXAM:
+            if score is None or max_score is None or max_score <= 0:
+                raise ValidationError(
+                    {"source_id": "점수와 만점이 확인된 항목만 오답 확인 상태를 바꿀 수 있습니다."}
+                )
+            if score >= max_score:
+                raise ValidationError(
+                    {"source_id": "오답이 없는 만점 결과는 확인 완료로 자동 처리됩니다."}
+                )
 
         completed = bool(payload["completed"])
+        existing_correction = (
+            AssessmentCorrection.objects
+            .select_for_update()
+            .filter(
+                tenant=tenant,
+                enrollment_id=enrollment_id,
+                session=session,
+                source_type=source_type,
+                source_id=source_id,
+            )
+            .first()
+        )
+        completed_at = None
+        if completed:
+            completed_at = (
+                existing_correction.completed_at
+                if existing_correction
+                and existing_correction.completed
+                and existing_correction.completed_at
+                else timezone.now()
+            )
+        correction_defaults = {
+            "completed": completed,
+            "completed_at": completed_at,
+            "source_updated_at_snapshot": source_updated_at,
+            "updated_by": request.user,
+        }
+        if "note" in payload:
+            correction_defaults["note"] = payload["note"]
         correction, _ = AssessmentCorrection.objects.update_or_create(
             tenant=tenant,
             enrollment_id=enrollment_id,
             session=session,
             source_type=source_type,
             source_id=source_id,
-            defaults={
-                "completed": completed,
-                "completed_at": timezone.now() if completed else None,
-                "source_updated_at_snapshot": source_updated_at,
-                "updated_by": request.user,
-            },
+            defaults=correction_defaults,
         )
         return Response(
             _assessment_correction_payload(
+                source_type=source_type,
                 score=score,
                 max_score=max_score,
                 source_updated_at=source_updated_at,

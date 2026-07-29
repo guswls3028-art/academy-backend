@@ -10,7 +10,7 @@ from apps.domains.exams.models import Exam, ExamEnrollment
 from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.homework_results.models import Homework, HomeworkScore
 from apps.domains.lectures.models import Lecture, Session
-from apps.domains.progress.models import ClinicLink, SessionProgress
+from apps.domains.progress.models import AssessmentCorrection, ClinicLink, SessionProgress
 from apps.domains.progress.services.clinic_remediation_service import ClinicRemediationService
 from apps.domains.results.services.clinic_target_service import ClinicTargetService
 from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
@@ -293,6 +293,7 @@ class SessionScoresRosterScopeTests(TestCase):
                 "source_type": "exam",
                 "source_id": self.exam.id,
                 "completed": True,
+                "note": "서술형 3번 풀이를 다시 확인함",
             },
             format="json",
         )
@@ -305,6 +306,10 @@ class SessionScoresRosterScopeTests(TestCase):
 
         self.assertEqual(completion.status_code, 200, completion.data)
         self.assertEqual(completion.data["correction_status"], "COMPLETED")
+        self.assertEqual(
+            completion.data["correction_note"],
+            "서술형 3번 풀이를 다시 확인함",
+        )
 
         refreshed_request = self.factory.get(
             f"/api/v1/results/admin/sessions/{self.session.id}/scores/"
@@ -319,6 +324,10 @@ class SessionScoresRosterScopeTests(TestCase):
         self.assertEqual(
             refreshed_row["exams"][0]["block"]["correction_status"],
             "COMPLETED",
+        )
+        self.assertEqual(
+            refreshed_row["exams"][0]["block"]["correction_note"],
+            "서술형 3번 풀이를 다시 확인함",
         )
         self.assertEqual(refreshed_row["correction_pending_count"], 0)
         self.assertFalse(refreshed_row["name_highlight_followup_required"])
@@ -335,6 +344,10 @@ class SessionScoresRosterScopeTests(TestCase):
         self.assertEqual(
             stale.data["rows"][0]["exams"][0]["block"]["correction_status"],
             "PENDING",
+        )
+        self.assertEqual(
+            stale.data["rows"][0]["exams"][0]["block"]["correction_note"],
+            "서술형 3번 풀이를 다시 확인함",
         )
         self.assertTrue(
             stale.data["rows"][0]["name_highlight_followup_required"]
@@ -372,6 +385,171 @@ class SessionScoresRosterScopeTests(TestCase):
 
             self.assertEqual(response.status_code, 200, response.data)
             self.assertEqual(response.data["correction_status"], expected_status)
+
+    def test_homework_inspection_without_score_persists_status_and_note(self):
+        score_request = self.factory.get(
+            f"/api/v1/results/admin/sessions/{self.session.id}/scores/"
+        )
+        score_request.tenant = self.tenant
+        force_authenticate(score_request, user=self.admin)
+        initial = SessionScoresView.as_view()(
+            score_request,
+            session_id=self.session.id,
+        )
+        initial_block = initial.data["rows"][0]["homeworks"][0]["block"]
+        self.assertIsNone(initial_block["correction_status"])
+        self.assertEqual(initial_block["correction_note"], "")
+
+        incomplete_request = self.factory.patch(
+            f"/api/v1/results/admin/sessions/{self.session.id}/score-correction/",
+            {
+                "enrollment_id": self.active_enrollment.id,
+                "source_type": "homework",
+                "source_id": self.homework.id,
+                "completed": False,
+                "note": "연습문제 12~15번 미완료",
+            },
+            format="json",
+        )
+        incomplete_request.tenant = self.tenant
+        force_authenticate(incomplete_request, user=self.admin)
+        incomplete = SessionScoreCorrectionView.as_view()(
+            incomplete_request,
+            session_id=self.session.id,
+        )
+
+        self.assertEqual(incomplete.status_code, 200, incomplete.data)
+        self.assertEqual(incomplete.data["correction_status"], "PENDING")
+        self.assertEqual(
+            incomplete.data["correction_note"],
+            "연습문제 12~15번 미완료",
+        )
+        correction = AssessmentCorrection.objects.get(
+            tenant=self.tenant,
+            enrollment=self.active_enrollment,
+            session=self.session,
+            source_type=AssessmentCorrection.SourceType.HOMEWORK,
+            source_id=self.homework.id,
+        )
+        self.assertFalse(correction.completed)
+        self.assertEqual(correction.updated_by, self.admin)
+        self.assertEqual(correction.note, "연습문제 12~15번 미완료")
+        self.assertFalse(
+            HomeworkScore.objects.filter(
+                enrollment=self.active_enrollment,
+                session=self.session,
+                homework=self.homework,
+            ).exists()
+        )
+
+        refreshed_request = self.factory.get(
+            f"/api/v1/results/admin/sessions/{self.session.id}/scores/"
+        )
+        refreshed_request.tenant = self.tenant
+        force_authenticate(refreshed_request, user=self.admin)
+        refreshed = SessionScoresView.as_view()(
+            refreshed_request,
+            session_id=self.session.id,
+        )
+        refreshed_row = refreshed.data["rows"][0]
+        self.assertEqual(
+            refreshed_row["homeworks"][0]["block"]["correction_status"],
+            "PENDING",
+        )
+        self.assertEqual(
+            refreshed_row["homeworks"][0]["block"]["correction_note"],
+            "연습문제 12~15번 미완료",
+        )
+        self.assertEqual(refreshed_row["correction_pending_count"], 1)
+        self.assertTrue(refreshed_row["name_highlight_followup_required"])
+
+        complete_request = self.factory.patch(
+            f"/api/v1/results/admin/sessions/{self.session.id}/score-correction/",
+            {
+                "enrollment_id": self.active_enrollment.id,
+                "source_type": "homework",
+                "source_id": self.homework.id,
+                "completed": True,
+            },
+            format="json",
+        )
+        complete_request.tenant = self.tenant
+        force_authenticate(complete_request, user=self.admin)
+        complete = SessionScoreCorrectionView.as_view()(
+            complete_request,
+            session_id=self.session.id,
+        )
+        self.assertEqual(complete.status_code, 200, complete.data)
+        self.assertEqual(complete.data["correction_status"], "COMPLETED")
+        self.assertEqual(
+            complete.data["correction_note"],
+            "연습문제 12~15번 미완료",
+        )
+
+    def test_homework_manual_completion_is_independent_from_later_score_entry(self):
+        request = self.factory.patch(
+            f"/api/v1/results/admin/sessions/{self.session.id}/score-correction/",
+            {
+                "enrollment_id": self.active_enrollment.id,
+                "source_type": "homework",
+                "source_id": self.homework.id,
+                "completed": True,
+                "note": "종이 과제 검사 완료",
+            },
+            format="json",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        response = SessionScoreCorrectionView.as_view()(
+            request,
+            session_id=self.session.id,
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+
+        HomeworkScore.objects.create(
+            enrollment=self.active_enrollment,
+            session=self.session,
+            homework=self.homework,
+            score=40,
+            max_score=100,
+        )
+        score_request = self.factory.get(
+            f"/api/v1/results/admin/sessions/{self.session.id}/scores/"
+        )
+        score_request.tenant = self.tenant
+        force_authenticate(score_request, user=self.admin)
+        refreshed = SessionScoresView.as_view()(
+            score_request,
+            session_id=self.session.id,
+        )
+        block = refreshed.data["rows"][0]["homeworks"][0]["block"]
+        self.assertEqual(block["score"], 40.0)
+        self.assertEqual(block["correction_status"], "COMPLETED")
+        self.assertEqual(block["correction_note"], "종이 과제 검사 완료")
+
+    def test_correction_note_is_limited_to_500_characters(self):
+        request = self.factory.patch(
+            f"/api/v1/results/admin/sessions/{self.session.id}/score-correction/",
+            {
+                "enrollment_id": self.active_enrollment.id,
+                "source_type": "homework",
+                "source_id": self.homework.id,
+                "completed": False,
+                "note": "가" * 501,
+            },
+            format="json",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+
+        response = SessionScoreCorrectionView.as_view()(
+            request,
+            session_id=self.session.id,
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("note", response.data)
+        self.assertFalse(AssessmentCorrection.objects.exists())
 
     def test_correction_rejects_student_outside_attendance_roster(self):
         Result.objects.create(
