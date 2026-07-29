@@ -36,6 +36,46 @@ class VisualBlock:
     y1: float
 
 
+def has_vertical_center_rule(image_data: bytes) -> bool:
+    """Return whether a raster page contains a long rule near its center."""
+
+    try:
+        import cv2
+        import numpy as np
+
+        image_bgr = cv2.imdecode(
+            np.frombuffer(image_data, dtype=np.uint8),
+            cv2.IMREAD_COLOR,
+        )
+        if image_bgr is None:
+            return False
+        gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+        height, width = gray.shape[:2]
+        edges = cv2.Canny(gray, 60, 160)
+        lines = cv2.HoughLinesP(
+            edges,
+            1,
+            np.pi / 360,
+            threshold=max(40, height // 20),
+            minLineLength=max(120, int(height * 0.24)),
+            maxLineGap=max(20, int(height * 0.10)),
+        )
+        if lines is None:
+            return False
+        for raw_line in lines.reshape(-1, 4):
+            x1, y1, x2, y2 = (int(value) for value in raw_line)
+            midpoint_x = (x1 + x2) / 2
+            if (
+                width * 0.40 <= midpoint_x <= width * 0.60
+                and abs(x2 - x1) <= max(width * 0.12, abs(y2 - y1) * 0.12)
+                and abs(y2 - y1) >= height * 0.24
+            ):
+                return True
+    except Exception:
+        return False
+    return False
+
+
 class PdfDocument:
     """Context manager that opens a PDF once and exposes all page operations.
 

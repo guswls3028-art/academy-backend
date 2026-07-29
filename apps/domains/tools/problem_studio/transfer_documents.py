@@ -513,35 +513,10 @@ def _detect_page_columns(
                 return 1, "image_too_small"
     except Exception:
         return 1, "image_unreadable"
-    try:
-        import cv2
-        import numpy as np
+    from academy.adapters.tools.pymupdf_renderer import has_vertical_center_rule
 
-        image_bgr = cv2.imdecode(np.frombuffer(image_data, dtype=np.uint8), cv2.IMREAD_COLOR)
-        if image_bgr is not None:
-            gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
-            height, width = gray.shape[:2]
-            edges = cv2.Canny(gray, 60, 160)
-            lines = cv2.HoughLinesP(
-                edges,
-                1,
-                np.pi / 360,
-                threshold=max(40, height // 20),
-                minLineLength=max(120, int(height * 0.24)),
-                maxLineGap=max(20, int(height * 0.10)),
-            )
-            if lines is not None:
-                for raw_line in lines.reshape(-1, 4):
-                    x1, y1, x2, y2 = (int(value) for value in raw_line)
-                    midpoint_x = (x1 + x2) / 2
-                    if (
-                        width * 0.40 <= midpoint_x <= width * 0.60
-                        and abs(x2 - x1) <= max(width * 0.12, abs(y2 - y1) * 0.12)
-                        and abs(y2 - y1) >= height * 0.24
-                    ):
-                        return 2, "pixel_center_rule"
-    except Exception:
-        pass
+    if has_vertical_center_rule(image_data):
+        return 2, "pixel_center_rule"
     suffix = {
         "image/jpeg": ".jpg",
         "image/png": ".png",
