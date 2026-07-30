@@ -423,6 +423,7 @@ class Command(BaseCommand):
         from apps.domains.exams.models.exam import Exam
         from apps.domains.fees.models import FeeTemplate
         from apps.domains.homework_results.models.homework import Homework
+        from apps.domains.lectures.models import Lecture, Session
         from apps.domains.matchup.models import MatchupDocument
         from apps.domains.messaging.models import MessageTemplate
         from apps.domains.students.models import Student
@@ -455,6 +456,16 @@ class Command(BaseCommand):
             ),
             "homeworks": self._count_residue(
                 Homework.objects.filter(tenant=tenant),
+                fields=("title",),
+                sample_limit=sample_limit,
+            ),
+            "lectures": self._count_residue(
+                Lecture.objects.filter(tenant=tenant, is_system=False),
+                fields=("title",),
+                sample_limit=sample_limit,
+            ),
+            "sessions": self._count_residue(
+                Session.objects.filter(lecture__tenant=tenant),
                 fields=("title",),
                 sample_limit=sample_limit,
             ),

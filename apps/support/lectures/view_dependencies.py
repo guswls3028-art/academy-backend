@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from django.db.models import Count
+from django.db.models import Count, Q
 
 
 def active_enrollment_total_by_lecture_ref(lecture_id_ref: Any):
@@ -70,4 +70,26 @@ def first_session_delete_blocker(sessions: Any) -> str | None:
     for label, qs in checks:
         if qs.exists():
             return label
+    return None
+
+
+def first_lecture_delete_blocker(lecture: Any) -> str | None:
+    from apps.domains.lectures.models import SectionAssignment, Session
+
+    if lecture.enrollments.exists():
+        return "lecture enrollments"
+    if lecture.lecture_progress_rows.exists():
+        return "lecture progress"
+    if lecture.clinic_sessions_by_lecture.exists():
+        return "clinic sessions"
+    if SectionAssignment.objects.filter(
+        Q(class_section__lecture=lecture) | Q(clinic_section__lecture=lecture)
+    ).exists():
+        return "section assignments"
+
+    session_blocker = first_session_delete_blocker(
+        Session.objects.filter(lecture=lecture)
+    )
+    if session_blocker:
+        return f"sessions with {session_blocker}"
     return None

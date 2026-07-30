@@ -11,6 +11,7 @@ from django.utils import timezone
 
 from apps.core.models import Tenant, WorkerHeartbeatModel
 from apps.core.models.program import Program
+from apps.domains.lectures.models import Lecture, Session
 from apps.domains.messaging.models import AutoSendConfig, MessageTemplate
 from apps.domains.students.models import Student
 from apps.domains.video.models import Video, VideoTranscodeJob
@@ -136,6 +137,31 @@ class ProductionCanaryTests(TestCase):
         self.assertFalse(check["ok"])
         self.assertEqual(check["data"]["total"], 1)
         self.assertEqual(check["data"]["groups"]["students"]["count"], 1)
+
+    def test_e2e_lecture_and_session_residue_fail(self):
+        lecture = Lecture.objects.create(
+            tenant=self.tenant,
+            title="[E2E-123456] OMR lecture",
+            name="E2E",
+            subject="MATH",
+        )
+        Session.objects.create(
+            lecture=lecture,
+            title="[E2E-123456] OMR session",
+            order=1,
+        )
+
+        payload = self._call_expect_fail()
+
+        check = next(
+            item
+            for item in payload["checks"]
+            if item["name"] == "production_e2e_residue_absent"
+        )
+        self.assertFalse(check["ok"])
+        self.assertEqual(check["data"]["total"], 2)
+        self.assertEqual(check["data"]["groups"]["lectures"]["count"], 1)
+        self.assertEqual(check["data"]["groups"]["sessions"]["count"], 1)
 
     def test_ready_video_without_hls_fails(self):
         Video.objects.create(
