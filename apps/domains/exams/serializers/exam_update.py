@@ -70,23 +70,18 @@ class ExamUpdateSerializer(serializers.ModelSerializer):
                 }
             )
 
-        grading_fields = {
-            "grading_mode",
-            "manual_grading_method",
-            "choice_question_count",
-        }
-        grading_changed = any(
-            field in attrs and attrs[field] != getattr(exam, field)
-            for field in grading_fields
+        choice_boundary_changed = (
+            "choice_question_count" in attrs
+            and attrs["choice_question_count"] != exam.choice_question_count
         )
         if (
-            grading_changed
+            choice_boundary_changed
             and Exam.objects.filter(pk=exam.pk, sheet__isnull=False).exists()
         ):
             raise serializers.ValidationError(
                 {
-                    "grading_mode": (
-                        "문항이 생성된 시험의 채점 방식은 변경할 수 없습니다. "
+                    "choice_question_count": (
+                        "문항이 생성된 시험의 선택형 문항 경계는 변경할 수 없습니다. "
                         "빈 시험을 새로 만들거나 문항 생성 전에 변경해 주세요."
                     )
                 }

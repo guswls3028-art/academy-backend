@@ -250,23 +250,69 @@ class GuidedExamSourceWorkflowTests(TestCase):
         )
         dispatch_matchup.assert_called_once()
 
-    def test_grading_contract_cannot_change_after_questions_exist(self):
+    def test_grading_workflow_can_change_after_questions_exist(self):
         exam = Exam.objects.create(
             tenant=self.tenant,
             title="채점 방식 고정 시험",
             exam_type=Exam.ExamType.REGULAR,
-            grading_mode=Exam.GradingMode.WRITTEN,
+            grading_mode=Exam.GradingMode.CHOICE,
+            manual_grading_method=Exam.ManualGradingMethod.SCORE,
         )
-        Sheet.objects.create(exam=exam, total_questions=1, essay_count=1)
+        sheet = Sheet.objects.create(
+            exam=exam,
+            total_questions=1,
+            choice_count=1,
+        )
+        question = ExamQuestion.objects.create(
+            sheet=sheet,
+            number=1,
+            question_kind=ExamQuestion.QuestionKind.CHOICE,
+        )
 
         serializer = ExamUpdateSerializer(
             exam,
             data={
-                "grading_mode": Exam.GradingMode.MIXED,
-                "choice_question_count": 1,
+                "grading_mode": Exam.GradingMode.WRITTEN,
+                "manual_grading_method": Exam.ManualGradingMethod.CORRECTNESS,
             },
             partial=True,
         )
 
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        serializer.save()
+        exam.refresh_from_db()
+        question.refresh_from_db()
+        self.assertEqual(exam.grading_mode, Exam.GradingMode.WRITTEN)
+        self.assertEqual(
+            exam.manual_grading_method,
+            Exam.ManualGradingMethod.CORRECTNESS,
+        )
+        self.assertEqual(question.sheet_id, sheet.id)
+        self.assertEqual(
+            question.question_kind,
+            ExamQuestion.QuestionKind.CHOICE,
+        )
+
+    def test_choice_question_boundary_cannot_change_after_questions_exist(self):
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="혼합형 경계 고정 시험",
+            exam_type=Exam.ExamType.REGULAR,
+            grading_mode=Exam.GradingMode.MIXED,
+            choice_question_count=1,
+        )
+        Sheet.objects.create(
+            exam=exam,
+            total_questions=2,
+            choice_count=1,
+            essay_count=1,
+        )
+
+        serializer = ExamUpdateSerializer(
+            exam,
+            data={"choice_question_count": 2},
+            partial=True,
+        )
+
         self.assertFalse(serializer.is_valid())
-        self.assertIn("grading_mode", serializer.errors)
+        self.assertIn("choice_question_count", serializer.errors)
