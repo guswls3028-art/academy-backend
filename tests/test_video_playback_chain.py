@@ -43,6 +43,10 @@ def test_find_first_video_reports_all_empty_enrolled_sessions(capsys: pytest.Cap
     }
     with (
         patch(
+            "scripts.post_deploy_smoke.video_playback_chain.STUDENT_USER",
+            "secret-student-username",
+        ),
+        patch(
             "scripts.post_deploy_smoke.video_playback_chain._get_json",
             side_effect=[
                 (200, video_me),
@@ -54,7 +58,9 @@ def test_find_first_video_reports_all_empty_enrolled_sessions(capsys: pytest.Cap
     ):
         find_first_video("token")
 
-    assert "checked sessions=[158, 160]" in capsys.readouterr().err
+    error = capsys.readouterr().err
+    assert "checked sessions=[158, 160]" in error
+    assert "secret-student-username" not in error
 
 
 def test_find_first_video_falls_back_to_public_session() -> None:

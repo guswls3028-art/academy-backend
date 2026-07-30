@@ -98,7 +98,7 @@ def login_student() -> str:
     )
     if status != 200 or "access" not in body:
         raise SmokeFail(f"student login {status}: {body}")
-    print(f"[1/7] student login OK (user={STUDENT_USER})")
+    print("[1/7] student login OK (credential reference configured)")
     return body["access"]
 
 
@@ -148,8 +148,7 @@ def find_first_video(token: str) -> tuple[int, int, int]:
         return public_video
     raise SmokeFail(
         f"student has no playable enrolled or public video "
-        f"(checked sessions={checked_sessions}, public session={public.get('session_id')}) "
-        f"- E2E_STUDENT_USER={STUDENT_USER}"
+        f"(checked sessions={checked_sessions}, public session={public.get('session_id')})"
     )
 
 
@@ -260,7 +259,7 @@ def main() -> None:
     print(f"  API:    {API_URL}")
     print(f"  CDN:    {CDN_URL}")
     print(f"  Tenant: {TENANT_CODE}")
-    print(f"  User:   {STUDENT_USER}")
+    print(f"  Student credential: {'configured' if STUDENT_USER and STUDENT_PASS else 'missing'}")
     print()
     token = login_student()
     if EXPLICIT_VIDEO_ID:
