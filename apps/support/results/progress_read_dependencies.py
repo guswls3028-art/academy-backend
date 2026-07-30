@@ -185,7 +185,12 @@ def lock_score_edit_scope_for_session(
     )
     sessions = list(
         Session.objects
-        .select_for_update()
+        # Score editing never changes Session primary keys.  FOR NO KEY UPDATE
+        # still serializes competing editors, while remaining compatible with
+        # deferred FK checks from SessionProgress/ScoreEditDraft writes at
+        # commit time.  Plain FOR UPDATE can deadlock with a second editor
+        # queued on the same session while the first transaction commits.
+        .select_for_update(no_key=True, of=("self",))
         .filter(id__in=scope_ids, lecture__tenant=tenant)
         .select_related("lecture")
         .order_by("id")
@@ -216,7 +221,7 @@ def lock_score_edit_scope_for_exam(*, exam_id: int, tenant: Any) -> list[int]:
     )
     list(
         Session.objects
-        .select_for_update()
+        .select_for_update(no_key=True, of=("self",))
         .filter(id__in=scope_ids, lecture__tenant=tenant)
         .order_by("id")
         .values_list("id", flat=True)
