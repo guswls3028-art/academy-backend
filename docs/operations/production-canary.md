@@ -42,9 +42,15 @@ python manage.py cleanup_e2e_residue --tenant-id 1 --execute --confirm-token <dr
 The execute path fails closed when the token is stale, a matched student is
 still active, a message template is a default or is referenced by an
 auto-send configuration, a Matchup document contains a manual/owner-pinned
-problem, or a Matchup report contains authored state. Soft-deleted students
-use the official permanent lifecycle service so their tenant membership and
-orphaned account are handled consistently. Community attachments and Matchup
+problem, or a Matchup report contains authored state. Timestamp-marked E2E
+lectures are eligible only when every child session has the same strict
+automation marker. A marked lecture or isolated marked session is deleted
+only after the ordinary product deletion guard proves that no enrollment,
+attendance, assessment, progress, clinic, video, or other user history remains;
+an otherwise orphaned score-edit draft is the sole blocker the cleanup may
+remove before retrying that guard. Soft-deleted students use the official
+permanent lifecycle service so their tenant membership and orphaned account
+are handled consistently. Community attachments and Matchup
 inventory/source/crop/page objects are removed from R2 and read back as absent
 before the database transaction removes their rows.
 

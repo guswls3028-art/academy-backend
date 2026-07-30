@@ -66,7 +66,7 @@ def build_confirmation_token(*, tenant_id: int, target_groups: dict[str, list]) 
 
 
 class Command(BaseCommand):
-    help = "Tenant별 E2E 자동화 잔재 데이터(학생·게시글·메시지 템플릿·매치업 문서·수납 비목)를 식별/삭제한다."
+    help = "Tenant별 E2E 자동화 잔재 데이터(학생·강의·차시·시험·게시글·메시지 템플릿·매치업 문서·수납 비목)를 식별/삭제한다."
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -111,6 +111,7 @@ class Command(BaseCommand):
         from apps.domains.messaging.models import MessageTemplate
         from apps.domains.exams.models.exam import Exam
         from apps.domains.homework_results.models.homework import Homework
+        from apps.domains.lectures.models import Lecture, Session
         from apps.domains.fees.models import FeeTemplate, InvoiceItem
         from apps.domains.progress.models import ClinicLink
         from apps.domains.results.models import Result
@@ -160,7 +161,22 @@ class Command(BaseCommand):
             if matches_residue(h.title or "")
         ]
 
-        # 7. 수납 비목 — name. 연결된 학생비용/청구항목이 있으면 삭제 대신 비활성화한다.
+        # 7. 강의/차시 — title. 강의와 그 하위 차시가 모두 strict marker일 때만
+        #    강의 단위로 정리하고, 정상 강의 아래의 marker 차시는 별도 대상으로 둔다.
+        lectures = [
+            lecture
+            for lecture in Lecture.objects.filter(tenant_id=tenant_id, is_system=False)
+            if matches_residue(lecture.title or "")
+        ]
+        lecture_ids = {lecture.id for lecture in lectures}
+        sessions = [
+            session
+            for session in Session.objects.filter(lecture__tenant_id=tenant_id)
+            if session.lecture_id not in lecture_ids
+            and matches_residue(session.title or "")
+        ]
+
+        # 8. 수납 비목 — name. 연결된 학생비용/청구항목이 있으면 삭제 대신 비활성화한다.
         fee_templates = [
             f for f in FeeTemplate.objects.filter(tenant_id=tenant_id)
             if matches_residue(f.name or "")
@@ -177,7 +193,8 @@ class Command(BaseCommand):
 
         total = (
             len(students) + len(posts) + len(matchups) + len(templates)
-            + len(exams) + len(homeworks) + len(fee_templates)
+            + len(exams) + len(homeworks) + len(lectures) + len(sessions)
+            + len(fee_templates)
         )
 
         self._print_group(
@@ -211,6 +228,24 @@ class Command(BaseCommand):
         self._print_group("시험 (Exam)", exams, limit, lambda e: f"id={e.id} type={e.exam_type} title={e.title!r}")
         self._print_group("과제 (Homework)", homeworks, limit, lambda h: f"id={h.id} title={h.title!r}")
         self._print_group(
+            "강의 (Lecture)",
+            lectures,
+            limit,
+            lambda lecture: (
+                f"id={lecture.id} title={lecture.title!r} "
+                f"sessions={lecture.sessions.count()}"
+            ),
+        )
+        self._print_group(
+            "고립 차시 (Session)",
+            sessions,
+            limit,
+            lambda session: (
+                f"id={session.id} lecture_id={session.lecture_id} "
+                f"title={session.title!r}"
+            ),
+        )
+        self._print_group(
             "수납 비목 (FeeTemplate)",
             fee_templates,
             limit,
@@ -224,8 +259,10 @@ class Command(BaseCommand):
             "exams": exams,
             "fee_templates": fee_templates,
             "homeworks": homeworks,
+            "lectures": lectures,
             "matchups": matchups,
             "posts": posts,
+            "sessions": sessions,
             "students": students,
             "templates": templates,
         }
@@ -256,7 +293,9 @@ class Command(BaseCommand):
 
         self._validate_execute_targets(
             students=students,
+            lectures=lectures,
             matchups=matchups,
+            sessions=sessions,
             templates=templates,
         )
         storage_deleted = self._delete_external_storage(
@@ -300,6 +339,10 @@ class Command(BaseCommand):
             )
             e_del = sum(e.delete()[0] for e in exams)
             h_del = sum(h.delete()[0] for h in homeworks)
+            lecture_del, session_del, score_draft_del = self._delete_lecture_residue(
+                lectures=lectures,
+                sessions=sessions,
+            )
             f_del = 0
             f_deactivated = 0
             for fee_template in fee_templates:
@@ -324,12 +367,22 @@ class Command(BaseCommand):
             f"  - 시험 클리닉 링크 cascade rows: {clinic_link_del}\n"
             f"  - 시험 cascade rows: {e_del}\n"
             f"  - 과제 cascade rows: {h_del}\n"
+            f"  - 강의 cascade rows: {lecture_del}\n"
+            f"  - 고립 차시 cascade rows: {session_del}\n"
+            f"  - 점수 편집 draft cascade rows: {score_draft_del}\n"
             f"  - 수납 비목 cascade rows: {f_del}\n"
             f"  - 수납 비목 비활성화: {f_deactivated}"
         ))
 
     @staticmethod
-    def _validate_execute_targets(*, students, matchups, templates) -> None:
+    def _validate_execute_targets(
+        *,
+        students,
+        lectures,
+        matchups,
+        sessions,
+        templates,
+    ) -> None:
         active_student_ids = [student.id for student in students if student.deleted_at is None]
         if active_student_ids:
             raise CommandError(
@@ -347,6 +400,24 @@ class Command(BaseCommand):
                 "기본/자동발송 참조 템플릿은 자동 정리하지 않습니다: "
                 f"ids={referenced_template_ids}"
             )
+
+        unsafe_lecture_ids = [
+            lecture.id
+            for lecture in lectures
+            if lecture.is_system
+            or any(
+                not matches_residue(title or "")
+                for title in lecture.sessions.values_list("title", flat=True)
+            )
+        ]
+        if unsafe_lecture_ids:
+            raise CommandError(
+                "시스템 강의 또는 strict marker가 없는 하위 차시를 포함한 강의는 "
+                f"자동 정리하지 않습니다: ids={unsafe_lecture_ids}"
+            )
+
+        if any(session.lecture_id in {lecture.id for lecture in lectures} for session in sessions):
+            raise CommandError("강의 대상과 고립 차시 대상이 중복되었습니다.")
 
         from apps.domains.matchup.services import document_has_protected_matchup_problems
 
@@ -368,6 +439,52 @@ class Command(BaseCommand):
                 "수동 컷/핀 또는 작성된 보고서가 있는 매치업 문서는 자동 정리하지 않습니다: "
                 f"ids={protected_document_ids}"
             )
+
+    @staticmethod
+    def _delete_lecture_residue(*, lectures, sessions) -> tuple[int, int, int]:
+        from apps.domains.results.models import ScoreEditDraft
+        from apps.support.lectures.view_dependencies import (
+            first_lecture_delete_blocker,
+            first_session_delete_blocker,
+        )
+
+        lecture_deleted = 0
+        session_deleted = 0
+        score_draft_deleted = 0
+
+        for lecture in lectures:
+            blocker = first_lecture_delete_blocker(lecture)
+            if blocker == "sessions with score edit drafts":
+                deleted, _ = ScoreEditDraft.objects.filter(
+                    session__lecture=lecture,
+                ).delete()
+                score_draft_deleted += deleted
+                blocker = first_lecture_delete_blocker(lecture)
+            if blocker:
+                raise CommandError(
+                    f"E2E 강의 id={lecture.id}에 보호 대상이 남아 정리를 거부합니다: {blocker}"
+                )
+            deleted, _ = lecture.delete()
+            lecture_deleted += deleted
+
+        for session in sessions:
+            blocker = first_session_delete_blocker(
+                session.__class__.objects.filter(id=session.id)
+            )
+            if blocker == "score edit drafts":
+                deleted, _ = ScoreEditDraft.objects.filter(session=session).delete()
+                score_draft_deleted += deleted
+                blocker = first_session_delete_blocker(
+                    session.__class__.objects.filter(id=session.id)
+                )
+            if blocker:
+                raise CommandError(
+                    f"E2E 차시 id={session.id}에 보호 대상이 남아 정리를 거부합니다: {blocker}"
+                )
+            deleted, _ = session.delete()
+            session_deleted += deleted
+
+        return lecture_deleted, session_deleted, score_draft_deleted
 
     @staticmethod
     def _delete_external_storage(*, tenant_id: int, posts, matchups) -> int:

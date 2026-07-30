@@ -13,9 +13,10 @@ from apps.core.models import Tenant
 from apps.domains.exams.models import Exam
 from apps.domains.fees.models import FeeTemplate, StudentFee
 from apps.domains.inventory.models import InventoryFile
+from apps.domains.lectures.models import Lecture, Session
 from apps.domains.matchup.models import MatchupDocument
 from apps.domains.messaging.models import MessageTemplate
-from apps.domains.results.models import Result
+from apps.domains.results.models import Result, ScoreEditDraft
 from apps.domains.students.models import Student
 from apps.domains.submissions.models import Submission
 
@@ -207,6 +208,55 @@ class CleanupE2EResidueTests(TestCase):
         self.assertFalse(Exam.objects.filter(id=exam.id).exists())
         self.assertFalse(Result.objects.filter(id=result.id).exists())
         self.assertFalse(Submission.objects.filter(id=submission.id).exists())
+
+    def test_lecture_cleanup_removes_marker_session_and_score_draft(self):
+        editor = User.objects.create_user(
+            tenant=self.tenant,
+            username="cleanup-e2e-editor",
+            password="test1234",
+        )
+        lecture = Lecture.objects.create(
+            tenant=self.tenant,
+            title="[E2E-123456] OMR lecture",
+            name="E2E",
+            subject="MATH",
+        )
+        session = Session.objects.create(
+            lecture=lecture,
+            title="[E2E-123456] OMR session",
+            order=1,
+        )
+        draft = ScoreEditDraft.objects.create(
+            tenant=self.tenant,
+            session=session,
+            editor_user=editor,
+            payload={"client_id": "e2e", "changes": []},
+        )
+
+        self.execute_cleanup()
+
+        self.assertFalse(Lecture.objects.filter(id=lecture.id).exists())
+        self.assertFalse(Session.objects.filter(id=session.id).exists())
+        self.assertFalse(ScoreEditDraft.objects.filter(id=draft.id).exists())
+
+    def test_lecture_cleanup_refuses_non_marker_child_session(self):
+        lecture = Lecture.objects.create(
+            tenant=self.tenant,
+            title="[E2E-123456] Mixed lecture",
+            name="E2E",
+            subject="MATH",
+        )
+        session = Session.objects.create(
+            lecture=lecture,
+            title="사용자 정규 차시",
+            order=1,
+        )
+
+        with self.assertRaisesMessage(CommandError, "strict marker"):
+            self.execute_cleanup()
+
+        self.assertTrue(Lecture.objects.filter(id=lecture.id).exists())
+        self.assertTrue(Session.objects.filter(id=session.id).exists())
 
     def test_only_explicit_e2e_template_residue_is_removed(self):
         residue = MessageTemplate.objects.create(

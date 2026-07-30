@@ -18,6 +18,7 @@ from academy.adapters.db.django import repositories_teachers as teacher_repo
 from academy.adapters.db.django import repositories_video as video_repo
 from apps.support.lectures.view_dependencies import (
     active_enrollment_total_by_lecture_ref,
+    first_lecture_delete_blocker,
     first_session_delete_blocker,
     list_unassigned_active_enrollments,
 )
@@ -32,26 +33,6 @@ from .serializers import (
 from apps.core.models import TenantMembership
 from rest_framework.permissions import IsAuthenticated
 from apps.core.permissions import TenantResolvedAndStaff
-
-
-def _first_lecture_delete_blocker(lecture: Lecture) -> str | None:
-    if lecture.enrollments.exists():
-        return "lecture enrollments"
-    if lecture.lecture_progress_rows.exists():
-        return "lecture progress"
-    if lecture.clinic_sessions_by_lecture.exists():
-        return "clinic sessions"
-    if SectionAssignment.objects.filter(
-        Q(class_section__lecture=lecture) | Q(clinic_section__lecture=lecture)
-    ).exists():
-        return "section assignments"
-
-    session_blocker = first_session_delete_blocker(
-        Session.objects.filter(lecture=lecture)
-    )
-    if session_blocker:
-        return f"sessions with {session_blocker}"
-    return None
 
 
 def _session_scope(lecture: Lecture, section: Section | None):
@@ -168,7 +149,7 @@ class LectureViewSet(ModelViewSet):
 
     def destroy(self, request, *args, **kwargs):
         lecture = self.get_object()
-        blocker = _first_lecture_delete_blocker(lecture)
+        blocker = first_lecture_delete_blocker(lecture)
         if blocker:
             raise PermissionDenied(
                 f"This lecture has {blocker} and cannot be deleted."
