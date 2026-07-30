@@ -1918,6 +1918,17 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           action-timeout-s: 180
 
+      - name: Ensure shared production mutation lock for verification
+        run: |
+          set -euo pipefail
+          if ! python3 scripts/v1/deployment_lock.py renew \
+            --owner "$ACADEMY_DEPLOY_LOCK_OWNER" \
+            --ttl-seconds 10800; then
+            python3 scripts/v1/deployment_lock.py acquire \
+              --owner "$ACADEMY_DEPLOY_LOCK_OWNER" \
+              --ttl-seconds 10800
+          fi
+
       - name: Verify health endpoints (with retry)
         id: health
         run: |
@@ -2267,6 +2278,16 @@ jobs:
               echo "::error::Invalid verified digest for $repo"
               exit 1
             fi
+            latest_digest=$(aws ecr describe-images \
+              --repository-name "$repo" \
+              --image-ids imageTag=latest \
+              --region "${{ env.AWS_REGION }}" \
+              --query 'imageDetails[0].imageDigest' \
+              --output text 2>/dev/null || true)
+            if [ "$latest_digest" = "$digest" ]; then
+              echo "LATEST_PROMOTION_PASS repository=$repo digest=$digest already_current=true"
+              continue
+            fi
             manifest=$(aws ecr batch-get-image \
               --repository-name "$repo" \
               --image-ids "imageDigest=$digest" \
@@ -2278,11 +2299,26 @@ jobs:
               echo "::error::Verified manifest read failed for $repo@$digest"
               exit 1
             fi
-            aws ecr put-image \
+            put_error=$(mktemp)
+            if ! aws ecr put-image \
               --repository-name "$repo" \
               --image-tag latest \
               --image-manifest "$manifest" \
-              --region "${{ env.AWS_REGION }}" >/dev/null
+              --region "${{ env.AWS_REGION }}" >/dev/null 2>"$put_error"; then
+              latest_after_error=$(aws ecr describe-images \
+                --repository-name "$repo" \
+                --image-ids imageTag=latest \
+                --region "${{ env.AWS_REGION }}" \
+                --query 'imageDetails[0].imageDigest' \
+                --output text 2>/dev/null || true)
+              if [ "$latest_after_error" != "$digest" ]; then
+                cat "$put_error"
+                rm -f "$put_error"
+                echo "::error::latest promotion failed for $repo"
+                exit 1
+              fi
+            fi
+            rm -f "$put_error"
             latest_digest=$(aws ecr describe-images \
               --repository-name "$repo" \
               --image-ids imageTag=latest \
@@ -2302,6 +2338,11 @@ jobs:
           CANDIDATE=docs/reports/release-manifest.candidate.json
           VERIFIED_AT=$(date -Iseconds)
           PROMOTED=$(mktemp)
+          CANDIDATE_TAG=$(jq -r '.releaseImageTag // empty' "$CANDIDATE")
+          if [[ ! "$CANDIDATE_TAG" =~ ^sha-[0-9a-f]{40}-run-[0-9]+-[0-9]+$ ]]; then
+            echo "::error::Candidate release tag is invalid"
+            exit 1
+          fi
           jq --arg verifiedAt "$VERIFIED_AT" '.status="successful" | .complete=true | .verifiedAt=$verifiedAt' "$CANDIDATE" > "$PROMOTED"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -2312,7 +2353,7 @@ jobs:
             cp "$PROMOTED" docs/reports/release-manifest.latest.json
             git add docs/reports/release-manifest.latest.json
             if git diff --staged --quiet; then exit 0; fi
-            git commit -m "chore(release): promote verified image manifest (${{ env.RELEASE_IMAGE_TAG }}) [skip ci]"
+            git commit -m "chore(release): promote verified image manifest ($CANDIDATE_TAG) [skip ci]"
             if git push origin HEAD:main; then exit 0; fi
             sleep $((attempt * 2))
           done
