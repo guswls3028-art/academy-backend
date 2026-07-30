@@ -6,6 +6,7 @@ from django.test import TestCase
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.exams.models import (
+    AnswerKey,
     Exam,
     ExamEnrollment,
     ExamQuestion,
@@ -95,9 +96,19 @@ class ManualExamGradingTests(TestCase):
         sheet = Sheet.objects.create(
             exam=exam,
             total_questions=2,
-            choice_count=1 if grading_mode == Exam.GradingMode.MIXED else 0,
+            choice_count=(
+                2
+                if grading_mode == Exam.GradingMode.CHOICE
+                else 1
+                if grading_mode == Exam.GradingMode.MIXED
+                else 0
+            ),
             essay_count=(
-                1 if grading_mode == Exam.GradingMode.MIXED else 2
+                0
+                if grading_mode == Exam.GradingMode.CHOICE
+                else 1
+                if grading_mode == Exam.GradingMode.MIXED
+                else 2
             ),
         )
         first = ExamQuestion.objects.create(
@@ -106,7 +117,11 @@ class ManualExamGradingTests(TestCase):
             score=40,
             question_kind=(
                 ExamQuestion.QuestionKind.CHOICE
-                if grading_mode == Exam.GradingMode.MIXED
+                if grading_mode
+                in {
+                    Exam.GradingMode.CHOICE,
+                    Exam.GradingMode.MIXED,
+                }
                 else ExamQuestion.QuestionKind.ESSAY
             ),
         )
@@ -114,9 +129,75 @@ class ManualExamGradingTests(TestCase):
             sheet=sheet,
             number=2,
             score=60,
-            question_kind=ExamQuestion.QuestionKind.ESSAY,
+            question_kind=(
+                ExamQuestion.QuestionKind.CHOICE
+                if grading_mode == Exam.GradingMode.CHOICE
+                else ExamQuestion.QuestionKind.ESSAY
+            ),
         )
         return exam, first, second
+
+    def test_exam_without_questions_returns_quick_start_sheet(self):
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="문항 없는 시험",
+            exam_type=Exam.ExamType.REGULAR,
+            grading_mode=Exam.GradingMode.CHOICE,
+            manual_grading_method=Exam.ManualGradingMethod.CORRECTNESS,
+            max_score=100,
+        )
+        exam.sessions.add(self.session)
+        ExamEnrollment.objects.create(
+            exam=exam,
+            enrollment=self.enrollment,
+        )
+
+        sheet = build_manual_grading_sheet(exam=exam, tenant=self.tenant)
+
+        self.assertFalse(sheet["has_manual_questions"])
+        self.assertEqual(sheet["questions"], [])
+        self.assertEqual(sheet["exam_max_score"], 100.0)
+        self.assertEqual(sheet["question_score_total"], 0)
+        self.assertEqual(len(sheet["rows"]), 1)
+
+    def test_sheet_exposes_unordered_choice_and_numeric_answer_types(self):
+        exam, first, second = self._exam(
+            grading_mode=Exam.GradingMode.MIXED,
+            manual_method=Exam.ManualGradingMethod.SCORE,
+        )
+        third = ExamQuestion.objects.create(
+            sheet=second.sheet,
+            number=3,
+            score=0,
+            question_kind=ExamQuestion.QuestionKind.CHOICE,
+        )
+        second.sheet.total_questions = 3
+        second.sheet.choice_count = 2
+        second.sheet.save(
+            update_fields=[
+                "total_questions",
+                "choice_count",
+                "updated_at",
+            ]
+        )
+        AnswerKey.objects.create(
+            exam=exam,
+            answers={
+                str(first.id): "2",
+                str(second.id): "007",
+                str(third.id): "4",
+            },
+        )
+
+        sheet = build_manual_grading_sheet(exam=exam, tenant=self.tenant)
+
+        self.assertEqual(
+            [
+                question["answer_type"]
+                for question in sheet["questions"]
+            ],
+            ["choice", "numeric_short_answer", "choice"],
+        )
 
     def test_correctness_preview_does_not_write_and_publish_keeps_review_semantics(
         self,
@@ -248,6 +329,181 @@ class ManualExamGradingTests(TestCase):
             ResultItem.objects.get(result=result, question=choice).source,
             "omr",
         )
+
+    def test_choice_exam_can_review_automatic_marks_and_preserves_answers(self):
+        exam, first, second = self._exam(
+            grading_mode=Exam.GradingMode.CHOICE,
+            manual_method=Exam.ManualGradingMethod.CORRECTNESS,
+        )
+        result = Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.enrollment,
+            total_score=0,
+            max_score=100,
+            objective_score=0,
+        )
+        ResultItem.objects.create(
+            result=result,
+            question=first,
+            answer="3",
+            is_correct=False,
+            score=0,
+            max_score=40,
+            source="omr",
+        )
+        ResultItem.objects.create(
+            result=result,
+            question=second,
+            answer="4",
+            is_correct=False,
+            score=0,
+            max_score=60,
+            source="omr",
+        )
+
+        sheet = build_manual_grading_sheet(exam=exam, tenant=self.tenant)
+
+        self.assertTrue(sheet["has_manual_questions"])
+        self.assertTrue(all(question["editable"] for question in sheet["questions"]))
+        self.assertEqual(
+            sheet["rows"][0]["cells"][str(first.id)]["state"],
+            "incorrect",
+        )
+
+        payload = {
+            "question_scores": {
+                str(first.id): 30,
+                str(second.id): 70,
+            },
+            "expected_question_scores": {
+                str(first.id): 40,
+                str(second.id): 60,
+            },
+            "rows": [
+                {
+                    "enrollment_id": self.enrollment.id,
+                    "expected_version": sheet["rows"][0]["expected_version"],
+                    "attendance": "present",
+                    "cells": {
+                        str(first.id): {"state": "correct"},
+                        str(second.id): {"state": "incorrect"},
+                    },
+                }
+            ],
+        }
+        plan = plan_manual_grading(
+            exam=exam,
+            tenant=self.tenant,
+            payload=payload,
+        )
+
+        self.assertTrue(plan.can_apply, plan.errors)
+        self.assertEqual(plan.rows[0].total_score, 30.0)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual((float(first.score), float(second.score)), (40.0, 60.0))
+
+        apply_manual_grading(plan=plan)
+
+        first.refresh_from_db()
+        second.refresh_from_db()
+        result.refresh_from_db()
+        first_item = ResultItem.objects.get(result=result, question=first)
+        second_item = ResultItem.objects.get(result=result, question=second)
+        self.assertEqual((float(first.score), float(second.score)), (30.0, 70.0))
+        self.assertEqual(float(result.total_score), 30.0)
+        self.assertEqual(float(result.objective_score), 30.0)
+        self.assertEqual(first_item.answer, "3")
+        self.assertEqual(second_item.answer, "4")
+        self.assertTrue(first_item.is_correct)
+        self.assertFalse(second_item.is_correct)
+        self.assertEqual(float(first_item.max_score), 30.0)
+        self.assertEqual(float(second_item.max_score), 70.0)
+
+    def test_question_score_changes_must_keep_exam_total(self):
+        exam, first, second = self._exam(
+            grading_mode=Exam.GradingMode.CHOICE,
+            manual_method=Exam.ManualGradingMethod.CORRECTNESS,
+        )
+        sheet = build_manual_grading_sheet(exam=exam, tenant=self.tenant)
+
+        plan = plan_manual_grading(
+            exam=exam,
+            tenant=self.tenant,
+            payload={
+                "question_scores": {
+                    str(first.id): 20,
+                    str(second.id): 60,
+                },
+                "expected_question_scores": {
+                    str(first.id): 40,
+                    str(second.id): 60,
+                },
+                "rows": [
+                    {
+                        "enrollment_id": self.enrollment.id,
+                        "expected_version": sheet["rows"][0][
+                            "expected_version"
+                        ],
+                        "attendance": "present",
+                        "cells": {
+                            str(first.id): {"state": "correct"},
+                            str(second.id): {"state": "correct"},
+                        },
+                    }
+                ],
+            },
+        )
+
+        self.assertFalse(plan.can_apply)
+        self.assertIn("시험 만점 100점", str(plan.errors))
+
+    def test_publish_rejects_stale_question_score(self):
+        exam, first, second = self._exam(
+            grading_mode=Exam.GradingMode.CHOICE,
+            manual_method=Exam.ManualGradingMethod.CORRECTNESS,
+        )
+        sheet = build_manual_grading_sheet(exam=exam, tenant=self.tenant)
+        plan = plan_manual_grading(
+            exam=exam,
+            tenant=self.tenant,
+            payload={
+                "question_scores": {
+                    str(first.id): 30,
+                    str(second.id): 70,
+                },
+                "expected_question_scores": {
+                    str(first.id): 40,
+                    str(second.id): 60,
+                },
+                "rows": [
+                    {
+                        "enrollment_id": self.enrollment.id,
+                        "expected_version": sheet["rows"][0][
+                            "expected_version"
+                        ],
+                        "attendance": "present",
+                        "cells": {
+                            str(first.id): {"state": "correct"},
+                            str(second.id): {"state": "incorrect"},
+                        },
+                    }
+                ],
+            },
+        )
+        self.assertTrue(plan.can_apply, plan.errors)
+        first.score = 35
+        first.save(update_fields=["score", "updated_at"])
+
+        with self.assertRaisesRegex(
+            ManualExamGradingError,
+            "다른 화면에서 변경",
+        ):
+            apply_manual_grading(plan=plan)
+
+        second.refresh_from_db()
+        self.assertEqual(float(second.score), 60.0)
 
     def test_publish_rejects_stale_result_version(self):
         exam, first, second = self._exam(

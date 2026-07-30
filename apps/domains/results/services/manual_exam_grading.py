@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from django.db import transaction
 from django.utils import timezone
 
+from apps.domains.exams.models import ExamQuestion
 from apps.domains.results.guards.exam_enrollment_guard import (
     validate_exam_enrollment_assigned,
 )
@@ -25,8 +26,13 @@ from apps.domains.results.services.exam_result_excel_import import (
     _score_adjustments,
     _score_row,
 )
+from apps.support.exams.numeric_short_answer import (
+    math_numeric_short_answer_question_ids,
+)
+from apps.support.omr.score_shape import get_exam_score_shape
 from apps.support.results.admin_exam_dependencies import dispatch_progress_pipeline
 from apps.support.results.exam_result_excel_import_dependencies import (
+    get_answer_key_answers,
     get_locked_enrollment_for_tenant,
 )
 
@@ -57,6 +63,8 @@ class ManualPlannedRow:
 class ManualGradePlan:
     exam: Any
     questions: list[QuestionSpec]
+    question_score_updates: dict[int, float] = field(default_factory=dict)
+    original_question_scores: dict[int, float] = field(default_factory=dict)
     rows: list[ManualPlannedRow] = field(default_factory=list)
     errors: list[dict[str, Any]] = field(default_factory=list)
 
@@ -103,9 +111,22 @@ class ManualGradePlan:
 
 
 def build_manual_grading_sheet(*, exam: Any, tenant: Any) -> dict[str, Any]:
-    questions = _question_specs(exam=exam, tenant=tenant)
+    try:
+        questions = _question_specs(exam=exam, tenant=tenant)
+    except ExamResultWorkbookError as exc:
+        if "시험 문항을 먼저 등록해 주세요." not in str(exc):
+            raise
+        questions = []
     candidates = _exam_candidates(exam=exam, tenant=tenant)
     editable_ids = _editable_question_ids(exam=exam, questions=questions)
+    question_answer_types = _question_answer_types(
+        exam=exam,
+        questions=questions,
+    )
+    _, score_adjustment_total = _score_adjustments(
+        exam=exam,
+        questions=questions,
+    )
 
     results = {
         int(result.enrollment_id): result
@@ -166,11 +187,18 @@ def build_manual_grading_sheet(*, exam: Any, tenant: Any) -> dict[str, Any]:
         "grading_mode": str(exam.grading_mode),
         "manual_grading_method": str(exam.manual_grading_method),
         "has_manual_questions": bool(editable_ids),
+        "exam_max_score": float(exam.max_score or 0.0),
+        "question_score_total": round(
+            sum(question.max_score for question in questions),
+            2,
+        ),
+        "score_adjustment_total": round(score_adjustment_total, 2),
         "questions": [
             {
                 "question_id": question.question_id,
                 "number": question.number,
                 "kind": question.kind,
+                "answer_type": question_answer_types[question.question_id],
                 "max_score": question.max_score,
                 "editable": question.question_id in editable_ids,
                 "entry_method": (
@@ -185,6 +213,39 @@ def build_manual_grading_sheet(*, exam: Any, tenant: Any) -> dict[str, Any]:
     }
 
 
+def _question_answer_types(
+    *,
+    exam: Any,
+    questions: list[QuestionSpec],
+) -> dict[int, str]:
+    score_shape = get_exam_score_shape(exam)
+    answers = get_answer_key_answers(
+        template_exam_id=score_shape.template_exam_id,
+    )
+    question_kind_by_id = {
+        int(question.question_id): str(question.kind)
+        for question in questions
+    }
+    numeric_question_ids = math_numeric_short_answer_question_ids(
+        exam=exam,
+        question_ids=question_kind_by_id,
+        question_kind=lambda question_id: question_kind_by_id.get(
+            int(question_id)
+        ),
+        answers=answers,
+    )
+    return {
+        question_id: (
+            "numeric_short_answer"
+            if question_id in numeric_question_ids
+            else "choice"
+            if kind == "choice"
+            else "written"
+        )
+        for question_id, kind in question_kind_by_id.items()
+    }
+
+
 def plan_manual_grading(
     *,
     exam: Any,
@@ -193,8 +254,22 @@ def plan_manual_grading(
 ) -> ManualGradePlan:
     questions = _question_specs(exam=exam, tenant=tenant)
     candidates = _exam_candidates(exam=exam, tenant=tenant)
-    plan = ManualGradePlan(exam=exam, questions=questions)
     editable_ids = _editable_question_ids(exam=exam, questions=questions)
+    questions, question_score_updates, original_question_scores, score_errors = (
+        _question_score_overrides(
+            exam=exam,
+            questions=questions,
+            editable_ids=editable_ids,
+            payload=payload,
+        )
+    )
+    plan = ManualGradePlan(
+        exam=exam,
+        questions=questions,
+        question_score_updates=question_score_updates,
+        original_question_scores=original_question_scores,
+        errors=score_errors,
+    )
     if not editable_ids:
         plan.errors.append(
             _error(None, "exam", "이 시험은 OMR 채점 대상입니다.")
@@ -402,6 +477,7 @@ def apply_manual_grading(*, plan: ManualGradePlan) -> dict[str, Any]:
         exam=exam,
         tenant=exam.tenant,
     )
+    _apply_question_score_updates(plan=plan)
     questions_by_id = {
         question.question_id: question for question in plan.questions
     }
@@ -514,7 +590,11 @@ def apply_manual_grading(*, plan: ManualGradePlan) -> dict[str, Any]:
                     submission_id=0,
                     attempt_id=int(attempt.id),
                     question_id=question_id,
-                    answer="",
+                    answer=(
+                        str(existing_item.answer or "")
+                        if existing_item is not None
+                        else ""
+                    ),
                     is_correct=mark.is_correct,
                     score=earned,
                     max_score=float(question.max_score),
@@ -531,7 +611,11 @@ def apply_manual_grading(*, plan: ManualGradePlan) -> dict[str, Any]:
                 result=result,
                 question_id=question_id,
                 defaults={
-                    "answer": "",
+                    "answer": (
+                        str(existing_item.answer or "")
+                        if existing_item is not None
+                        else ""
+                    ),
                     "is_correct": mark.is_correct,
                     "include_in_wrong_note": mark.include_in_wrong_note,
                     "score": earned,
@@ -600,7 +684,7 @@ def _editable_question_ids(
     questions: list[QuestionSpec],
 ) -> set[int]:
     if exam.grading_mode == "choice":
-        return set()
+        return {question.question_id for question in questions}
     if exam.grading_mode == "written":
         return {question.question_id for question in questions}
     return {
@@ -608,6 +692,179 @@ def _editable_question_ids(
         for question in questions
         if question.kind == "essay"
     }
+
+
+def _question_score_overrides(
+    *,
+    exam: Any,
+    questions: list[QuestionSpec],
+    editable_ids: set[int],
+    payload: Any,
+) -> tuple[
+    list[QuestionSpec],
+    dict[int, float],
+    dict[int, float],
+    list[dict[str, Any]],
+]:
+    if not isinstance(payload, dict) or "question_scores" not in payload:
+        return questions, {}, {}, []
+
+    raw_scores = payload.get("question_scores")
+    raw_expected = payload.get("expected_question_scores")
+    if not isinstance(raw_scores, dict) or not isinstance(raw_expected, dict):
+        return (
+            questions,
+            {},
+            {},
+            [
+                _error(
+                    None,
+                    "question_scores",
+                    "문항 배점 정보를 새로 불러와 주세요.",
+                )
+            ],
+        )
+
+    question_by_id = {
+        question.question_id: question for question in questions
+    }
+    updates: dict[int, float] = {}
+    originals: dict[int, float] = {}
+    errors: list[dict[str, Any]] = []
+
+    for raw_question_id, raw_score in raw_scores.items():
+        try:
+            question_id = int(raw_question_id)
+        except (TypeError, ValueError):
+            errors.append(
+                _error(None, "question_scores", "문항 배점 대상을 확인해 주세요.")
+            )
+            continue
+        question = question_by_id.get(question_id)
+        if question is None or question_id not in editable_ids:
+            errors.append(
+                _error(
+                    None,
+                    f"question_{question_id}",
+                    "이 채점표에서 수정할 수 없는 문항입니다.",
+                )
+            )
+            continue
+        try:
+            score = round(float(raw_score), 2)
+            expected_score = round(
+                float(
+                    raw_expected.get(
+                        str(question_id),
+                        raw_expected.get(question_id),
+                    )
+                ),
+                2,
+            )
+        except (TypeError, ValueError):
+            errors.append(
+                _error(
+                    None,
+                    f"question_{question.number}",
+                    f"{question.number}번 배점을 0점 이상으로 입력해 주세요.",
+                )
+            )
+            continue
+        if score < 0:
+            errors.append(
+                _error(
+                    None,
+                    f"question_{question.number}",
+                    f"{question.number}번 배점을 0점 이상으로 입력해 주세요.",
+                )
+            )
+            continue
+        if abs(expected_score - float(question.max_score)) > 0.001:
+            errors.append(
+                _error(
+                    None,
+                    f"question_{question.number}",
+                    (
+                        f"{question.number}번 배점이 다른 화면에서 변경됐습니다. "
+                        "채점표를 새로 불러와 주세요."
+                    ),
+                )
+            )
+            continue
+        if abs(score - float(question.max_score)) > 0.001:
+            updates[question_id] = score
+            originals[question_id] = expected_score
+
+    effective_questions = [
+        replace(
+            question,
+            max_score=updates.get(question.question_id, question.max_score),
+        )
+        for question in questions
+    ]
+    if updates and not errors:
+        _, score_adjustment_total = _score_adjustments(
+            exam=exam,
+            questions=effective_questions,
+        )
+        configured_total = round(
+            sum(question.max_score for question in effective_questions)
+            + score_adjustment_total,
+            2,
+        )
+        exam_max_score = round(float(exam.max_score or 0.0), 2)
+        if abs(configured_total - exam_max_score) > 0.01:
+            errors.append(
+                _error(
+                    None,
+                    "question_scores",
+                    (
+                        f"문항 배점 합계는 시험 만점 {exam_max_score:g}점과 "
+                        f"같아야 합니다. 현재 {configured_total:g}점입니다."
+                    ),
+                )
+            )
+
+    return effective_questions, updates, originals, errors
+
+
+def _apply_question_score_updates(*, plan: ManualGradePlan) -> None:
+    if not plan.question_score_updates:
+        return
+
+    locked_questions = {
+        int(question.id): question
+        for question in ExamQuestion.objects.select_for_update()
+        .filter(
+            id__in=plan.question_score_updates,
+            sheet__exam__tenant=plan.exam.tenant,
+        )
+        .select_related("sheet")
+    }
+    if set(locked_questions) != set(plan.question_score_updates):
+        raise ManualExamGradingError(
+            "문항 배점 대상을 찾지 못했습니다. 채점표를 새로 불러와 주세요."
+        )
+    if any(
+        int(question.sheet.exam_id) != int(plan.exam.id)
+        for question in locked_questions.values()
+    ):
+        raise ManualExamGradingError(
+            "공유 중인 시험 문항은 여기서 배점을 바꿀 수 없습니다. 답안 등록에서 문항을 먼저 준비해 주세요."
+        )
+
+    for question_id, next_score in plan.question_score_updates.items():
+        question = locked_questions[question_id]
+        expected_score = plan.original_question_scores[question_id]
+        if abs(float(question.score or 0.0) - expected_score) > 0.001:
+            raise ManualExamGradingError(
+                (
+                    f"{question.number}번 배점이 다른 화면에서 변경됐습니다. "
+                    "채점표를 새로 불러와 주세요."
+                )
+            )
+        question.score = next_score
+        question.save(update_fields=["score", "updated_at"])
 
 
 def _item_cell_payload(
