@@ -1,6 +1,6 @@
 # Front V1 인프라 기준 연결 검증
 
-**Generated:** 2026-07-31T09:19:05.6069339+09:00
+**Generated:** 2026-07-31T09:13:27.8535664+09:00
 
 ## SSOT front.* / r2.* 확인
 | 항목 | 값 | 비고 |
@@ -17,11 +17,11 @@
 | app 도메인 200 | PASS | URL: https://hakwonplus.com/ |
 | API 공개 /health | OK | https://api.hakwonplus.com |
 | index.html Cache-Control | no-cache 계열 | |
-| 해시 자산 Cache-Control | 1년 | 샘플: https://hakwonplus.com/assets/index-Cxuq2od3.js |
+| 해시 자산 Cache-Control | fetch failed: Response status code does not indicate success: 404 (Not Found). | 샘플: https://hakwonplus.com/assets/index-Cxuq2od3.js |
 | CORS 정적 검사 | OK | app 도메인 포함됨 |
 | R2 버킷 | wrangler failed | wrangler r2 bucket list |
 
 **배포 후 purge:** SSOT front.purgeOnDeploy 반영 여부는 배포 파이프라인에서 확인.
 
 
-**Verification Run ID:** ca8f5027ac2843ce844937ac4410a8ff
+**Verification Run ID:** 424872f450804a09afa927db3f5749a8

@@ -5,7 +5,7 @@
 ## 요약
 | 항목 | 값 |
 |------|-----|
-| 검증 시각 | 2026-07-29T03:39:30.8689018+09:00 |
+| 검증 시각 | 2026-07-31T09:15:04.7354744+09:00 |
 | 최종 상태 | WARNING |
 | SSOT↔Actual 정합성 | **PASS** |
 | GO/NO-GO | **CONDITIONAL GO** |
@@ -45,4 +45,4 @@ WARNING 영향도·완화책·추적 계획 확인 후 배포 판단. 상세: �
 
 
 
-**Verification Run ID:** 14045f3ab6b4466ea1800e16d2439c81
+**Verification Run ID:** ca8f5027ac2843ce844937ac4410a8ff

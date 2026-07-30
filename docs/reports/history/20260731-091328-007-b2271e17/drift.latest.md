@@ -1,5 +1,5 @@
 # Drift — SSOT vs actual
-**Generated:** 2026-07-31T09:16:15.0518794+09:00
+**Generated:** 2026-07-31T09:10:28.0327087+09:00
 
 | ResourceType | Name | Expected | Actual | Action |
 |--------------|------|----------|--------|--------|
@@ -20,4 +20,4 @@
 | API LT | academy-v1-api-lt | exists | exists | NoOp |
 
 
-**Verification Run ID:** ca8f5027ac2843ce844937ac4410a8ff
+**Verification Run ID:** 424872f450804a09afa927db3f5749a8

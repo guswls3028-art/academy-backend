@@ -5,7 +5,7 @@
 ## 배포 정보
 | 항목 | 값 |
 |------|-----|
-| 검증 시각 | 2026-07-31T09:15:04.7354744+09:00 |
+| 검증 시각 | 2026-07-31T09:09:06.2647971+09:00 |
 | 리전 | ap-northeast-2 |
 | 배포 스크립트 | scripts/v1/deploy.ps1 |
 | 근거·로그 | reports/audit.latest.md, reports/drift.latest.md, reports/runtime-images.latest.md |
@@ -19,7 +19,7 @@
 | API ASG min/desired/max | 1/1/3 | reports/audit.latest.md (apiAsg*) |
 | ALB target health | 1 / 1 healthy | AWS Console EC2 > Target Groups > academy-v1-api-tg |
 | ALB HTTP 80 redirect | HTTP 301 https://academy-v1-api-alb-1244943981.ap-northeast-2.elb.amazonaws.com/healthz | HTTP listener는 HTTPS로 redirect해야 함 |
-| API 공개 URL(도메인) /health | OK 57ms | API_PUBLIC_URL 또는 front.domains.api: https://api.hakwonplus.com |
+| API 공개 URL(도메인) /health | OK 37ms | API_PUBLIC_URL 또는 front.domains.api: https://api.hakwonplus.com |
 | API runtime image digest | PASS | docs/reports/runtime-images.latest.md (instances=1, ci=sha256:62e15e72e65424916d186d73db874aaed8f7d5c3b85c3ae61a49b1cce6ea600e) |
 | AI/Messaging ASG | 0/1 | reports/audit.latest.md (asgAi*, asgMessaging*) |
 | SQS queue 연결·DLQ | Messaging depth 0 (in-flight 0) DLQ 0 / AI depth 0 (in-flight 0) DLQ 0 | SQS Console 또는 get-queue-attributes |
@@ -33,7 +33,7 @@
 
 | 항목 | 결과 | 근거 |
 |------|------|------|
-| /health | OK | 응답시간: 57ms (기준 p95 &lt; 2s, 샘플 1회) |
+| /health | OK | 응답시간: 37ms (기준 p95 &lt; 2s, 샘플 1회) |
 | API root | root not a health endpoint | 공개 HTTPS 도메인 기준, root는 필수 서비스 엔드포인트 아님 |
 | 핵심 API 1~2개(인증/CRUD) | 미검증(ADVISORY) | 이 read-only 스크립트는 인증·CRUD를 실행하지 않음. 변경 범위에 맞는 canary/E2E 근거를 별도 기록 |
 | **섹션 2 종합** | **ADVISORY** | |
@@ -44,7 +44,7 @@
 |------|------|------|
 | 프론트 URL 접속 | OK | URL: https://hakwonplus.com/ 응답코드: 200 |
 | index.html Cache-Control | PASS (no-cache 계열) | public, must-revalidate, max-age=0 |
-| 해시 자산(JS/CSS) Cache-Control | PASS (1년) | 샘플: https://hakwonplus.com/assets/index-Cxuq2od3.js → public, max-age=31536000, immutable |
+| 해시 자산(JS/CSS) Cache-Control | WARNING/수동 확인 | 샘플: https://hakwonplus.com/assets/index-Cxuq2od3.js → fetch failed: Response status code does not indicate success: 404 (Not Found). |
 | 정적 자산(JS/CSS) 로딩 | 자동 검사 완료 | 위 해시 자산 요청 근거 |
 | CDN 캐시 정책 | 근거 위 참조 | Cache-Control 헤더, 배포 시 purge: SSOT front.purgeOnDeploy |
 | 프론트→API(CORS/쿠키/CSRF) | 수동 검증 권장 | 동일 도메인/credentials 요청 |
@@ -82,6 +82,7 @@
 ## 7) 리스크 및 GO/NO-GO 권고
 
 ### 발견 사항(리스크)
+- **WARNING** [Front] 자산 요청 실패: https://hakwonplus.com/assets/index-Cxuq2od3.js
 - **WARNING** [FrontR2Cdn] FrontR2Cdn section summary is WARNING.
 
 ### GO/NO-GO
@@ -102,4 +103,13 @@
 **연관 보고서:** audit.latest.md, drift.latest.md, runtime-images.latest.md (동시 갱신됨).
 
 
-**Verification Run ID:** ca8f5027ac2843ce844937ac4410a8ff
+**Verification Run ID:** 424872f450804a09afa927db3f5749a8
+
+## Immutable Evidence Bundle
+
+- [audit.latest.md](./audit.latest.md)
+- [drift.latest.md](./drift.latest.md)
+- [runtime-images.latest.md](./runtime-images.latest.md)
+- [consistency.latest.md](./consistency.latest.md)
+- [front-connection.latest.md](./front-connection.latest.md)
+- [release-manifest.latest.json](./release-manifest.latest.json)
