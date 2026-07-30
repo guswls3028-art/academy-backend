@@ -119,6 +119,11 @@ class SessionScoresRosterScopeTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         rows = response.data["rows"]
         self.assertEqual(response.data["meta"]["exams"][0]["exam_id"], self.exam.id)
+        self.assertEqual(response.data["meta"]["exams"][0]["grading_mode"], "choice")
+        self.assertEqual(
+            response.data["meta"]["exams"][0]["manual_grading_method"],
+            "score",
+        )
         self.assertEqual(response.data["meta"]["homeworks"][0]["homework_id"], self.homework.id)
         self.assertEqual([row["enrollment_id"] for row in rows], [self.active_enrollment.id])
         self.assertEqual(rows[0]["student_name"], "현재 학생")

@@ -686,7 +686,7 @@ def _editable_question_ids(
     questions: list[QuestionSpec],
 ) -> set[int]:
     if exam.grading_mode == "choice":
-        return {question.question_id for question in questions}
+        return set()
     if exam.grading_mode == "written":
         return {question.question_id for question in questions}
     return {
