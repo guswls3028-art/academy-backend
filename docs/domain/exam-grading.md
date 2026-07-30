@@ -109,6 +109,14 @@ commit 후 진행도 파이프라인을 요청한다.
 충돌하거나 한 학생이라도 대상·문항·값 검증에 실패해도 일부 행만 저장하지
 않는다.
 
+성적 편집 lease는 동일 시험을 공유하는 세션 묶음을 ID 순서로 잠가 서로
+다른 화면의 쓰기를 직렬화한다. 세션 PK를 바꾸지 않으므로 PostgreSQL
+`FOR NO KEY UPDATE`를 사용한다. 이는 편집 충돌 차단은 유지하면서
+`SessionProgress`와 임시저장처럼 세션 FK를 쓰는 transaction의 지연 FK
+검사와 교착하지 않게 한다. 운영 회귀 검증은 실제 PostgreSQL에서 첫
+편집자가 세션 잠금과 FK 쓰기를 보유한 동안 두 번째 편집자가 같은 잠금을
+기다리는 두-thread 시나리오로 수행한다.
+
 권한은 인증된 같은 tenant의 teacher/admin으로 제한한다. 시험과 학생
 후보 조회는 tenant와 차시 roster를 벗어나지 않으며 기본 tenant나
 cross-tenant fallback을 사용하지 않는다.
