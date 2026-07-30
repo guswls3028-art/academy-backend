@@ -7,7 +7,6 @@ from typing import Any
 from django.db import transaction
 from django.utils import timezone
 
-from apps.domains.exams.models import ExamQuestion
 from apps.domains.results.guards.exam_enrollment_guard import (
     validate_exam_enrollment_assigned,
 )
@@ -34,6 +33,9 @@ from apps.support.results.admin_exam_dependencies import dispatch_progress_pipel
 from apps.support.results.exam_result_excel_import_dependencies import (
     get_answer_key_answers,
     get_locked_enrollment_for_tenant,
+)
+from apps.support.results.manual_exam_grading_dependencies import (
+    get_locked_exam_questions_for_manual_grading,
 )
 
 
@@ -832,15 +834,10 @@ def _apply_question_score_updates(*, plan: ManualGradePlan) -> None:
     if not plan.question_score_updates:
         return
 
-    locked_questions = {
-        int(question.id): question
-        for question in ExamQuestion.objects.select_for_update()
-        .filter(
-            id__in=plan.question_score_updates,
-            sheet__exam__tenant=plan.exam.tenant,
-        )
-        .select_related("sheet")
-    }
+    locked_questions = get_locked_exam_questions_for_manual_grading(
+        question_ids=set(plan.question_score_updates),
+        tenant=plan.exam.tenant,
+    )
     if set(locked_questions) != set(plan.question_score_updates):
         raise ManualExamGradingError(
             "문항 배점 대상을 찾지 못했습니다. 채점표를 새로 불러와 주세요."
