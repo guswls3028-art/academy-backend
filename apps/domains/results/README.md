@@ -139,6 +139,26 @@ Manual Scoring
 `Result`, `ResultItem`, `ExamAttempt.meta`를 일관되게 갱신해야 하며,
 objective + subjective 합산과 문항별 만점 검증을 깨면 안 된다.
 
+Session Assessment Inspection
+-----------------------------
+
+차시 성적 드로어의 시험 오답 확인과 과제 검사는 점수 합불을 덮어쓰지 않는 별도
+교사 확인 기록이다.
+
+- 조회는 `GET /results/admin/sessions/{session_id}/scores/`, 저장은
+  `PATCH /results/admin/sessions/{session_id}/score-correction/`가 담당한다.
+- 시험 저장은 조회와 같은 최신 대표 `Result`를 선택하고 그 `Result` 행만 잠근다.
+  nullable `Result.attempt`를 `select_related()`한 채 `FOR UPDATE`하지 않는다.
+  PostgreSQL은 nullable outer join의 반대편 잠금을 거부하기 때문이다.
+- 과제는 종이 검사처럼 점수가 없어도 `PENDING`/`COMPLETED`와 메모를 저장할 수 있다.
+  시험은 유효한 점수와 만점이 있는 비만점 결과에서만 오답 확인 상태를 바꾼다.
+- `COMPLETED` 당시 원본 수정 시각을 저장하며, 이후 점수가 바뀌면 조회 시 다시
+  `PENDING`으로 돌려 교사가 변경된 결과를 재확인하게 한다.
+- tenant 차시 roster 밖 학생, 다른 차시 평가, 만점 시험의 수동 변경은 실패 폐쇄한다.
+- 회귀 검증은
+  `apps/domains/results/tests/test_session_scores_roster_scope.py`의 correction 테스트가
+  저장·재열기·메모·roster와 잠금 SQL의 nullable outer join 부재를 함께 확인한다.
+
 Aggregation
 -----------
 

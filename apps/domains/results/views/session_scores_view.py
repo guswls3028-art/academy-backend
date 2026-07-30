@@ -1117,15 +1117,16 @@ class SessionScoreCorrectionView(APIView):
                 raise ValidationError(
                     {"source_id": "이 차시에 등록된 시험이 아닙니다."}
                 )
+            # Lock only the representative Result row. Joining the nullable
+            # attempt FK here makes PostgreSQL reject FOR UPDATE because the
+            # nullable side of an outer join cannot be locked.
             result = (
-                Result.objects
-                .select_for_update()
-                .select_related("attempt")
-                .filter(
+                latest_results_per_enrollment(
                     target_type="exam",
                     target_id=source_id,
-                    enrollment_id=enrollment_id,
                 )
+                .select_for_update()
+                .filter(enrollment_id=enrollment_id)
                 .first()
             )
             attempt_meta = (
