@@ -486,6 +486,10 @@ class SessionScoresView(APIView):
                     "title": str(getattr(ex, "title", "")),
                     "pass_score": float(getattr(ex, "pass_score", 0.0) or 0.0),
                     "max_score": float(getattr(ex, "max_score", 100.0) or 100.0),
+                    "grading_mode": str(getattr(ex, "grading_mode", "choice") or "choice"),
+                    "manual_grading_method": str(
+                        getattr(ex, "manual_grading_method", "score") or "score"
+                    ),
                     "choice_count": int(score_shape_by_exam[int(ex.id)].choice_count),
                     "essay_count": int(score_shape_by_exam[int(ex.id)].essay_count),
                     "objective_max_score": float(score_shape_by_exam[int(ex.id)].objective_max_score),

@@ -330,7 +330,7 @@ class ManualExamGradingTests(TestCase):
             "omr",
         )
 
-    def test_choice_exam_can_review_automatic_marks_and_preserves_answers(self):
+    def test_choice_exam_is_read_only_and_keeps_omr_as_correction_source(self):
         exam, first, second = self._exam(
             grading_mode=Exam.GradingMode.CHOICE,
             manual_method=Exam.ManualGradingMethod.CORRECTNESS,
@@ -364,8 +364,10 @@ class ManualExamGradingTests(TestCase):
 
         sheet = build_manual_grading_sheet(exam=exam, tenant=self.tenant)
 
-        self.assertTrue(sheet["has_manual_questions"])
-        self.assertTrue(all(question["editable"] for question in sheet["questions"]))
+        self.assertFalse(sheet["has_manual_questions"])
+        self.assertTrue(
+            all(not question["editable"] for question in sheet["questions"])
+        )
         self.assertEqual(
             sheet["rows"][0]["cells"][str(first.id)]["state"],
             "incorrect",
@@ -398,32 +400,22 @@ class ManualExamGradingTests(TestCase):
             payload=payload,
         )
 
-        self.assertTrue(plan.can_apply, plan.errors)
-        self.assertEqual(plan.rows[0].total_score, 30.0)
-        first.refresh_from_db()
-        second.refresh_from_db()
-        self.assertEqual((float(first.score), float(second.score)), (40.0, 60.0))
-
-        apply_manual_grading(plan=plan)
-
-        first.refresh_from_db()
-        second.refresh_from_db()
-        result.refresh_from_db()
+        self.assertFalse(plan.can_apply)
+        self.assertIn("OMR 채점 대상", str(plan.errors))
         first_item = ResultItem.objects.get(result=result, question=first)
         second_item = ResultItem.objects.get(result=result, question=second)
-        self.assertEqual((float(first.score), float(second.score)), (30.0, 70.0))
-        self.assertEqual(float(result.total_score), 30.0)
-        self.assertEqual(float(result.objective_score), 30.0)
         self.assertEqual(first_item.answer, "3")
         self.assertEqual(second_item.answer, "4")
-        self.assertTrue(first_item.is_correct)
+        self.assertFalse(first_item.is_correct)
         self.assertFalse(second_item.is_correct)
-        self.assertEqual(float(first_item.max_score), 30.0)
-        self.assertEqual(float(second_item.max_score), 70.0)
+        self.assertEqual(first_item.source, "omr")
+        self.assertEqual(second_item.source, "omr")
+        self.assertEqual((float(first.score), float(second.score)), (40.0, 60.0))
+        self.assertEqual(float(result.total_score), 0.0)
 
     def test_question_score_changes_must_keep_exam_total(self):
         exam, first, second = self._exam(
-            grading_mode=Exam.GradingMode.CHOICE,
+            grading_mode=Exam.GradingMode.WRITTEN,
             manual_method=Exam.ManualGradingMethod.CORRECTNESS,
         )
         sheet = build_manual_grading_sheet(exam=exam, tenant=self.tenant)
@@ -461,7 +453,7 @@ class ManualExamGradingTests(TestCase):
 
     def test_publish_rejects_stale_question_score(self):
         exam, first, second = self._exam(
-            grading_mode=Exam.GradingMode.CHOICE,
+            grading_mode=Exam.GradingMode.WRITTEN,
             manual_method=Exam.ManualGradingMethod.CORRECTNESS,
         )
         sheet = build_manual_grading_sheet(exam=exam, tenant=self.tenant)
