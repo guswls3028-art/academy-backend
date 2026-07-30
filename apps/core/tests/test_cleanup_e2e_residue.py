@@ -10,6 +10,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from apps.core.models import Tenant
+from apps.core.management.commands.cleanup_e2e_residue import matches_residue
 from apps.domains.exams.models import Exam
 from apps.domains.fees.models import FeeTemplate, StudentFee
 from apps.domains.inventory.models import InventoryFile
@@ -209,6 +210,59 @@ class CleanupE2EResidueTests(TestCase):
         self.assertFalse(Result.objects.filter(id=result.id).exists())
         self.assertFalse(Submission.objects.filter(id=submission.id).exists())
 
+    def test_legacy_omr_timestamp_graph_is_strict_residue(self):
+        user = User.objects.create_user(
+            tenant=self.tenant,
+            username="cleanup-e2e-legacy-omr",
+            password="test1234",
+        )
+        marker = "[E2E-OMR-REAL-20260524143859]"
+        lecture = Lecture.objects.create(
+            tenant=self.tenant,
+            title=f"{marker} OMR 실측 25장 채점 검증",
+            name="E2E",
+            subject="MATH",
+        )
+        session = Session.objects.create(
+            lecture=lecture,
+            title=f"{marker} 실측 OMR",
+            order=1,
+        )
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title=f"{marker} OMR 실측 배치 시험",
+            exam_type=Exam.ExamType.REGULAR,
+            max_score=100,
+            pass_score=80,
+        )
+        exam.sessions.add(session)
+        result = Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            total_score=100,
+            max_score=100,
+        )
+        submission = Submission.objects.create(
+            tenant=self.tenant,
+            user=user,
+            target_type=Submission.TargetType.EXAM,
+            target_id=exam.id,
+            source=Submission.Source.OMR_SCAN,
+            status=Submission.Status.DONE,
+        )
+
+        self.assertTrue(matches_residue(lecture.title))
+        self.assertFalse(matches_residue("[E2E-OMR] 사용자 강의"))
+        self.assertFalse(matches_residue("[E2E-OMR-20260524] 사용자 강의"))
+
+        self.execute_cleanup()
+
+        self.assertFalse(Lecture.objects.filter(id=lecture.id).exists())
+        self.assertFalse(Session.objects.filter(id=session.id).exists())
+        self.assertFalse(Exam.objects.filter(id=exam.id).exists())
+        self.assertFalse(Result.objects.filter(id=result.id).exists())
+        self.assertFalse(Submission.objects.filter(id=submission.id).exists())
+
     def test_lecture_cleanup_removes_marker_session_and_score_draft(self):
         editor = User.objects.create_user(
             tenant=self.tenant,
@@ -257,6 +311,35 @@ class CleanupE2EResidueTests(TestCase):
 
         self.assertTrue(Lecture.objects.filter(id=lecture.id).exists())
         self.assertTrue(Session.objects.filter(id=session.id).exists())
+
+    def test_lecture_cleanup_refuses_non_marker_child_exam(self):
+        marker = "[E2E-OMR-20260524103023]"
+        lecture = Lecture.objects.create(
+            tenant=self.tenant,
+            title=f"{marker} OMR 실사용 검증",
+            name="E2E",
+            subject="MATH",
+        )
+        session = Session.objects.create(
+            lecture=lecture,
+            title=f"{marker} 1차시",
+            order=1,
+        )
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="사용자 정규 시험",
+            exam_type=Exam.ExamType.REGULAR,
+            max_score=100,
+            pass_score=80,
+        )
+        exam.sessions.add(session)
+
+        with self.assertRaisesMessage(CommandError, "strict marker 대상이 아닌 시험"):
+            self.execute_cleanup()
+
+        self.assertTrue(Lecture.objects.filter(id=lecture.id).exists())
+        self.assertTrue(Session.objects.filter(id=session.id).exists())
+        self.assertTrue(Exam.objects.filter(id=exam.id).exists())
 
     def test_only_explicit_e2e_template_residue_is_removed(self):
         residue = MessageTemplate.objects.create(

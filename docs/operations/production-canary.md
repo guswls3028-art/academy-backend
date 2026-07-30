@@ -44,11 +44,18 @@ still active, a message template is a default or is referenced by an
 auto-send configuration, a Matchup document contains a manual/owner-pinned
 problem, or a Matchup report contains authored state. Timestamp-marked E2E
 lectures are eligible only when every child session has the same strict
-automation marker. A marked lecture or isolated marked session is deleted
+automation marker. This includes the legacy OMR real-use fingerprint
+`[E2E-OMR[-PURPOSE]-YYYYMMDDhhmmss]`; the 14-digit timestamp and uppercase
+automation label are both required, so `[E2E-OMR]` or date-only names never
+match. A marked lecture or isolated marked session is deleted
 only after the ordinary product deletion guard proves that no enrollment,
-attendance, assessment, progress, clinic, video, or other user history remains;
-an otherwise orphaned score-edit draft is the sole blocker the cleanup may
-remove before retrying that guard. Soft-deleted students use the official
+attendance, progress, clinic, video, or other user history remains. If a child
+exam exists, the exam itself must be in the same strict residue target set;
+otherwise cleanup fails before external-storage or database mutation. Matched
+exam results, submissions, and clinic links are removed before the lecture
+guard is retried. An otherwise orphaned score-edit draft is the sole non-exam
+blocker the cleanup may remove before retrying that guard. Soft-deleted students
+use the official
 permanent lifecycle service so their tenant membership and orphaned account
 are handled consistently. Community attachments and Matchup
 inventory/source/crop/page objects are removed from R2 and read back as absent
