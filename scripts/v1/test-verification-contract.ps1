@@ -256,5 +256,9 @@ Assert-True ($verificationSource.Contains('Add-Finding -Severity "FAIL" -Area $s
 $runtimeCollectorSource = Get-Content -Raw -LiteralPath (Join-Path $ScriptRoot "resources\api.ps1")
 Assert-True ($runtimeCollectorSource.Contains('ManifestHash = $manifestHash')) "runtime evidence must expose the release manifest hash"
 Assert-True ($verificationSource.Contains('$manifestEvidence = Get-CurrentReleaseManifestEvidence')) "UNKNOWN runtime evidence must validate the successful release manifest"
+$pinAsgSource = Get-Content -Raw -LiteralPath (Join-Path $ScriptRoot "pin-asg-image.ps1")
+Assert-True ($pinAsgSource.Contains('$runtimeInventory = Wait-AsgRuntimeInventory -AsgName $deployment.ASG')) "ASG pin must wait for wake-up or scale-in inventory convergence"
+$workflowSource = Get-Content -Raw -LiteralPath (Join-Path $ScriptRoot "..\..\.github\workflows\v1-build-and-push-latest.yml")
+Assert-True ($workflowSource.Contains('Deploy verification FAILED: an owning deploy job ended as $deploy_result')) "manifest promotion must fail closed after any owning deploy-job failure"
 
 Write-Host "Verification contract checks passed." -ForegroundColor Green

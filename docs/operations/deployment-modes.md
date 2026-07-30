@@ -43,10 +43,22 @@ main에 push하면 자동으로 서버 반영까지 완료된다:
 4. `verify-api-preprod` job → development를 통과한 API digest로 릴리스 고정 env 버전을 만들고 임시 격리 EC2 1대를 기동해 별도 DB에 migration을 적용한다. prod settings, DB 이름·전용 역할, 운영 DB CONNECT 거부, env version·release ID, `/healthz`, DB 포함 `/health`, 실제 CDN chain을 모두 확인한 뒤 종료한다.
 5. preprod 성공 후에만 `run-migrations`가 운영 DB migration을 실행한다.
 6. 모든 `deploy-api`, `deploy-messaging`, `deploy-ai`, `deploy-tools`, `deploy-video` job은 같은 development·preprod 성공 결과를 공통 선행조건으로 사용한다.
-7. API Launch Template pin과 ASG rolling refresh를 실행한다. development, preprod 또는 임시 서버 cleanup 실패 시 어떤 운영 서비스도 변경하지 않는다.
+7. API Launch Template pin과 ASG rolling refresh를 실행한다. worker가 큐 입력으로
+   `desired=0`에서 기동하거나 idle scale-in 중이면 pin 전에
+   `Healthy/InService == desired`가 될 때까지 기다린다. 수렴하지 않은 0→N
+   과도 상태를 기존 runtime digest로 오판하지 않는다. development, preprod
+   또는 임시 서버 cleanup 실패 시 어떤 운영 서비스도 변경하지 않는다.
 8. 새 인스턴스 기동 → UserData로 ECR pull + 운영 SSM env 역할 검증 + docker run
 9. `verify-deployment` job → API health, ASG 상태, tenant maintenance flag, 실제 digest 확인 + API 변경 시 학생 영상 playback chain smoke. 검증 직전 자동 확장된 worker는 EC2 `Healthy/InService` 이후에도 SSM과 Docker가 준비되는 시간이 필요하므로 실제 digest readback을 최대 18회, 10초 간격으로 재시도한다. 끝까지 컨테이너가 준비되지 않거나 후보 digest가 아니면 실패 폐쇄한다. 학생 계정 secret이 없으면 skip하지 않고 실패한다.
-10. 모든 검증 성공 뒤에만 여섯 저장소의 `:latest`를 검증된 digest로 옮겨 exact readback하고 `release-manifest.latest.json`을 승격한다. 이미 같은 digest인 `:latest`는 성공한 no-op으로 처리한다. failed-job 재실행은 새 `run_attempt` 소유자로 공용 production mutation lock을 갱신하거나 조건부 재획득한 뒤 검증·승격을 계속하므로, 이전 attempt의 lock 해제 뒤에도 잠금 없이 compatibility alias를 변경하지 않는다.
+10. 모든 owning deploy job이 `success` 또는 의도된 `skipped`이고 이후 검증도
+    모두 성공한 뒤에만 여섯 저장소의 `:latest`를 검증된 digest로 옮겨 exact
+    readback하고 `release-manifest.latest.json`을 승격한다. 한 서비스라도
+    `failure`/`cancelled`이면 desired=0 서비스의 runtime 검사가 생략됐더라도
+    manifest와 alias 승격 전에 실패 폐쇄한다. 이미 같은 digest인 `:latest`는
+    성공한 no-op으로 처리한다. failed-job 재실행은 새 `run_attempt` 소유자로
+    공용 production mutation lock을 갱신하거나 조건부 재획득한 뒤 검증·승격을
+    계속하므로, 이전 attempt의 lock 해제 뒤에도 잠금 없이 compatibility
+    alias를 변경하지 않는다.
 
 **IAM:** 일반 CI는 장기 access key가 아니라 main 브랜치만 신뢰하는 GitHub OIDC 역할 `academy-gha-ecr-build`을 사용한다. development 권한은 별도 관리형 정책 `academy-gha-development-deploy`로 제한하고, development EC2는 `academy-api-development-role`, preprod EC2는 `academy-api-preprod-canary-role`을 사용한다. 사용자가 명시적으로 승인한 수동 작업은 이미 구성된 account-root 또는 master credential을 사용할 수 있지만, mutation guard 경고 이후에도 동일한 lock·development·preprod·migration·rolling-health·readback 게이트를 모두 지켜야 하며 비밀값은 출력하지 않는다.
 

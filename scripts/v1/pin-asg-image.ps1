@@ -340,6 +340,11 @@ if (-not $asg) { throw "ASG not found: $($deployment.ASG)" }
 if (-not $asg.LaunchTemplate -or $asg.LaunchTemplate.LaunchTemplateId -ne $lt.LaunchTemplateId) {
     throw "ASG $($deployment.ASG) does not use SSOT Launch Template $($deployment.LaunchTemplate). Refusing to mutate it."
 }
+$runtimeInventory = Wait-AsgRuntimeInventory -AsgName $deployment.ASG
+$asg = $runtimeInventory.Asg
+if (-not $asg.LaunchTemplate -or $asg.LaunchTemplate.LaunchTemplateId -ne $lt.LaunchTemplateId) {
+    throw "ASG $($deployment.ASG) changed Launch Templates while its runtime inventory converged. Refusing to mutate it."
+}
 $originalAsgVersionReference = [string]$asg.LaunchTemplate.Version
 if ($originalAsgVersionReference -notin @('$Default', '$Latest') -and $originalAsgVersionReference -notmatch '^\d+$') {
     throw "ASG $($deployment.ASG) has an unsupported Launch Template version selector: $originalAsgVersionReference."

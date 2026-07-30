@@ -2271,6 +2271,21 @@ jobs:
           echo "| deploy-tools | ${{ needs.deploy-tools.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
+          for deploy_result in \
+            "${{ needs.deploy-api.result }}" \
+            "${{ needs.deploy-messaging.result }}" \
+            "${{ needs.deploy-ai.result }}" \
+            "${{ needs.deploy-tools.result }}" \
+            "${{ needs.deploy-video.result }}"; do
+            case "$deploy_result" in
+              success|skipped) ;;
+              *)
+                echo "::error::Deploy verification FAILED: an owning deploy job ended as $deploy_result"
+                exit 1
+                ;;
+            esac
+          done
+
           if [ "${{ steps.health.outputs.health_pass }}" != "true" ]; then
             echo "::error::Deploy verification FAILED: health check failure"
             exit 1
