@@ -30,6 +30,10 @@ from django.db import transaction
 # 명백한 E2E 지문 — 자연어와 겹치지 않는 식별자 패턴만 허용
 RESIDUE_PATTERNS = [
     re.compile(r"\[E2E-\d{6,}"),
+    # 2026-05 OMR 실측 자동화: [E2E-OMR[-PURPOSE]-YYYYMMDDhhmmss]
+    # 14자리 실행 시각과 대문자 automation label을 모두 요구해 자연어와
+    # 겹치지 않도록 한다.
+    re.compile(r"^\[E2E-[A-Z][A-Z0-9-]*-\d{14}\]"),
     re.compile(r"\[E2E\] "),                 # 2026-05-02: 운영 잔재 [E2E] 공지... 형식
     re.compile(r"\[AUDIT-\w*-?\d{6,}"),
     re.compile(r"\[CHAOS-\d{3,}"),
@@ -292,6 +296,7 @@ class Command(BaseCommand):
             )
 
         self._validate_execute_targets(
+            exams=exams,
             students=students,
             lectures=lectures,
             matchups=matchups,
@@ -377,6 +382,7 @@ class Command(BaseCommand):
     @staticmethod
     def _validate_execute_targets(
         *,
+        exams,
         students,
         lectures,
         matchups,
@@ -414,6 +420,19 @@ class Command(BaseCommand):
             raise CommandError(
                 "시스템 강의 또는 strict marker가 없는 하위 차시를 포함한 강의는 "
                 f"자동 정리하지 않습니다: ids={unsafe_lecture_ids}"
+            )
+
+        target_exam_ids = {exam.id for exam in exams}
+        non_target_exam_ids = sorted({
+            exam_id
+            for lecture in lectures
+            for exam_id in lecture.sessions.values_list("exams__id", flat=True)
+            if exam_id is not None and exam_id not in target_exam_ids
+        })
+        if non_target_exam_ids:
+            raise CommandError(
+                "E2E 강의에 strict marker 대상이 아닌 시험이 연결되어 정리를 "
+                f"거부합니다: exam_ids={non_target_exam_ids}"
             )
 
         if any(session.lecture_id in {lecture.id for lecture in lectures} for session in sessions):
