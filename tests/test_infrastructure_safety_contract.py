@@ -882,6 +882,19 @@ def test_release_manifest_is_complete_exact_and_promoted_only_after_runtime_gate
     assert "newest sha" not in userdata.lower()
 
 
+def test_runtime_digest_gate_waits_for_fresh_autoscale_instances() -> None:
+    workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    verify = _job_block(workflow, "verify-deployment")
+
+    assert "RUNTIME_DIGEST_MAX_ATTEMPTS=18" in verify
+    assert "runtime readiness attempt" in verify
+    assert 'sleep 10' in verify
+    assert "did not expose the expected immutable runtime digest" in verify
+    assert verify.index("RUNTIME_DIGEST_MAX_ATTEMPTS=18") < verify.index(
+        "Promote verified complete release manifest"
+    )
+
+
 def test_video_and_messaging_deploys_fail_closed_on_runtime_preconditions() -> None:
     workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
     video = _job_block(workflow, "deploy-video")
