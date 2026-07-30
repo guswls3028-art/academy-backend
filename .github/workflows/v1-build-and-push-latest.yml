@@ -2051,22 +2051,47 @@ jobs:
             fi
 
             for INSTANCE_ID in $INSTANCE_IDS; do
+              RUNTIME_DIGEST_MAX_ATTEMPTS=18
+              RUNTIME_DIGEST_READY=false
+              LAST_STATUS=NotStarted
               REMOTE_CMD=$(printf '%s\n' \
                 'set -e' \
                 "IMAGE_ID=\$(docker inspect --format '{{.Image}}' '$CONTAINER')" \
                 "docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' \"\$IMAGE_ID\"")
               PARAMS=$(jq -n --arg cmd "$REMOTE_CMD" '{commands:[$cmd],executionTimeout:["120"]}')
-              COMMAND_ID=$(aws ssm send-command \
-                --instance-ids "$INSTANCE_ID" --document-name AWS-RunShellScript \
-                --parameters "$PARAMS" --timeout-seconds 180 --region ${{ env.AWS_REGION }} \
-                --query 'Command.CommandId' --output text)
-              aws ssm wait command-executed --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" --region ${{ env.AWS_REGION }} || true
-              RESULT=$(aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" --region ${{ env.AWS_REGION }} --output json)
-              STATUS=$(jq -r '.Status' <<< "$RESULT")
-              OUTPUT=$(jq -r '.StandardOutputContent // ""' <<< "$RESULT")
               EXPECTED_URI="${{ env.ECR_REGISTRY }}/${REPO}@${EXPECTED}"
-              if [ "$STATUS" != "Success" ] || ! grep -Fxq "$EXPECTED_URI" <<< "$OUTPUT"; then
-                echo "::error::$ASG/$INSTANCE_ID actual runtime does not contain $EXPECTED_URI (status=$STATUS output=$OUTPUT)"
+
+              for ATTEMPT in $(seq 1 "$RUNTIME_DIGEST_MAX_ATTEMPTS"); do
+                COMMAND_ID=$(aws ssm send-command \
+                  --instance-ids "$INSTANCE_ID" --document-name AWS-RunShellScript \
+                  --parameters "$PARAMS" --timeout-seconds 180 --region ${{ env.AWS_REGION }} \
+                  --query 'Command.CommandId' --output text 2>/dev/null || true)
+                if [ -z "$COMMAND_ID" ] || [ "$COMMAND_ID" = "None" ]; then
+                  LAST_STATUS=CommandNotReady
+                else
+                  aws ssm wait command-executed --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" --region ${{ env.AWS_REGION }} || true
+                  RESULT=$(aws ssm get-command-invocation \
+                    --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" \
+                    --region ${{ env.AWS_REGION }} --output json 2>/dev/null || true)
+                  if [ -z "$RESULT" ]; then
+                    RESULT='{}'
+                  fi
+                  LAST_STATUS=$(jq -r '.Status // "InvocationNotReady"' <<< "$RESULT")
+                  OUTPUT=$(jq -r '.StandardOutputContent // ""' <<< "$RESULT")
+                  if [ "$LAST_STATUS" = "Success" ] && grep -Fxq "$EXPECTED_URI" <<< "$OUTPUT"; then
+                    RUNTIME_DIGEST_READY=true
+                    break
+                  fi
+                fi
+
+                echo "$ASG/$INSTANCE_ID runtime readiness attempt $ATTEMPT/$RUNTIME_DIGEST_MAX_ATTEMPTS (status=$LAST_STATUS)"
+                if [ "$ATTEMPT" -lt "$RUNTIME_DIGEST_MAX_ATTEMPTS" ]; then
+                  sleep 10
+                fi
+              done
+
+              if [ "$RUNTIME_DIGEST_READY" != "true" ]; then
+                echo "::error::$ASG/$INSTANCE_ID did not expose the expected immutable runtime digest after $RUNTIME_DIGEST_MAX_ATTEMPTS attempts (status=$LAST_STATUS)"
                 exit 1
               fi
               echo "$ASG/$INSTANCE_ID: $EXPECTED_URI"
