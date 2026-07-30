@@ -1,5 +1,7 @@
 from django.contrib.auth import get_user_model
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
@@ -356,6 +358,45 @@ class SessionScoresRosterScopeTests(TestCase):
         )
         self.assertTrue(
             stale.data["rows"][0]["name_highlight_followup_required"]
+        )
+
+    def test_exam_correction_locks_result_without_nullable_attempt_join(self):
+        Result.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.active_enrollment,
+            total_score=50,
+            max_score=100,
+        )
+        correction_request = self.factory.patch(
+            f"/api/v1/results/admin/sessions/{self.session.id}/score-correction/",
+            {
+                "enrollment_id": self.active_enrollment.id,
+                "source_type": "exam",
+                "source_id": self.exam.id,
+                "completed": True,
+            },
+            format="json",
+        )
+        correction_request.tenant = self.tenant
+        force_authenticate(correction_request, user=self.admin)
+
+        with CaptureQueriesContext(connection) as captured:
+            response = SessionScoreCorrectionView.as_view()(
+                correction_request,
+                session_id=self.session.id,
+            )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        result_queries = [
+            query["sql"]
+            for query in captured.captured_queries
+            if "results_result" in query["sql"] and "LIMIT 1" in query["sql"]
+        ]
+        self.assertTrue(result_queries)
+        self.assertFalse(
+            any("LEFT OUTER JOIN" in query.upper() for query in result_queries),
+            result_queries,
         )
 
     def test_homework_correction_completion_can_be_reopened(self):
