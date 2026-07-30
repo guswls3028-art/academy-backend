@@ -59,6 +59,7 @@ backend/docs/
 | 배포 경로 비교 | [operations/deployment-modes.md](operations/deployment-modes.md) |
 | 상시 개발 런타임 | [operations/persistent-development-runtime.md](operations/persistent-development-runtime.md) |
 | 수동 정식 배포 | [operations/formal-deploy.md](operations/formal-deploy.md) |
+| 운영 canary·E2E 잔재 정리 | [operations/production-canary.md](operations/production-canary.md) |
 | 개발자 문의 운영함 | [operations/dev-console-inbox.md](operations/dev-console-inbox.md) |
 | 제품 사용 분석 | [domain/product-usage-analytics.md](domain/product-usage-analytics.md) |
 | DB 확장·테넌트 분리 판단 | [infrastructure/database-scaling-and-tenant-isolation.md](infrastructure/database-scaling-and-tenant-isolation.md) |
