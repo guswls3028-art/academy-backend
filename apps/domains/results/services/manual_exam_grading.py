@@ -26,8 +26,13 @@ from apps.domains.results.services.exam_result_excel_import import (
     _score_adjustments,
     _score_row,
 )
+from apps.support.exams.numeric_short_answer import (
+    math_numeric_short_answer_question_ids,
+)
+from apps.support.omr.score_shape import get_exam_score_shape
 from apps.support.results.admin_exam_dependencies import dispatch_progress_pipeline
 from apps.support.results.exam_result_excel_import_dependencies import (
+    get_answer_key_answers,
     get_locked_enrollment_for_tenant,
 )
 
@@ -114,6 +119,10 @@ def build_manual_grading_sheet(*, exam: Any, tenant: Any) -> dict[str, Any]:
         questions = []
     candidates = _exam_candidates(exam=exam, tenant=tenant)
     editable_ids = _editable_question_ids(exam=exam, questions=questions)
+    question_answer_types = _question_answer_types(
+        exam=exam,
+        questions=questions,
+    )
     _, score_adjustment_total = _score_adjustments(
         exam=exam,
         questions=questions,
@@ -189,6 +198,7 @@ def build_manual_grading_sheet(*, exam: Any, tenant: Any) -> dict[str, Any]:
                 "question_id": question.question_id,
                 "number": question.number,
                 "kind": question.kind,
+                "answer_type": question_answer_types[question.question_id],
                 "max_score": question.max_score,
                 "editable": question.question_id in editable_ids,
                 "entry_method": (
@@ -200,6 +210,39 @@ def build_manual_grading_sheet(*, exam: Any, tenant: Any) -> dict[str, Any]:
             for question in questions
         ],
         "rows": rows,
+    }
+
+
+def _question_answer_types(
+    *,
+    exam: Any,
+    questions: list[QuestionSpec],
+) -> dict[int, str]:
+    score_shape = get_exam_score_shape(exam)
+    answers = get_answer_key_answers(
+        template_exam_id=score_shape.template_exam_id,
+    )
+    question_kind_by_id = {
+        int(question.question_id): str(question.kind)
+        for question in questions
+    }
+    numeric_question_ids = math_numeric_short_answer_question_ids(
+        exam=exam,
+        question_ids=question_kind_by_id,
+        question_kind=lambda question_id: question_kind_by_id.get(
+            int(question_id)
+        ),
+        answers=answers,
+    )
+    return {
+        question_id: (
+            "numeric_short_answer"
+            if question_id in numeric_question_ids
+            else "choice"
+            if kind == "choice"
+            else "written"
+        )
+        for question_id, kind in question_kind_by_id.items()
     }
 
 

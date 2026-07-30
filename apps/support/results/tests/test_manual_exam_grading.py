@@ -6,6 +6,7 @@ from django.test import TestCase
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.exams.models import (
+    AnswerKey,
     Exam,
     ExamEnrollment,
     ExamQuestion,
@@ -158,6 +159,45 @@ class ManualExamGradingTests(TestCase):
         self.assertEqual(sheet["exam_max_score"], 100.0)
         self.assertEqual(sheet["question_score_total"], 0)
         self.assertEqual(len(sheet["rows"]), 1)
+
+    def test_sheet_exposes_unordered_choice_and_numeric_answer_types(self):
+        exam, first, second = self._exam(
+            grading_mode=Exam.GradingMode.MIXED,
+            manual_method=Exam.ManualGradingMethod.SCORE,
+        )
+        third = ExamQuestion.objects.create(
+            sheet=second.sheet,
+            number=3,
+            score=0,
+            question_kind=ExamQuestion.QuestionKind.CHOICE,
+        )
+        second.sheet.total_questions = 3
+        second.sheet.choice_count = 2
+        second.sheet.save(
+            update_fields=[
+                "total_questions",
+                "choice_count",
+                "updated_at",
+            ]
+        )
+        AnswerKey.objects.create(
+            exam=exam,
+            answers={
+                str(first.id): "2",
+                str(second.id): "007",
+                str(third.id): "4",
+            },
+        )
+
+        sheet = build_manual_grading_sheet(exam=exam, tenant=self.tenant)
+
+        self.assertEqual(
+            [
+                question["answer_type"]
+                for question in sheet["questions"]
+            ],
+            ["choice", "numeric_short_answer", "choice"],
+        )
 
     def test_correctness_preview_does_not_write_and_publish_keeps_review_semantics(
         self,

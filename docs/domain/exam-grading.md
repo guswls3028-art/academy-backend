@@ -89,6 +89,18 @@ tenant가 없거나 다른 tenant의 시험이면 거부한다. 이미 분리 �
 - 학생을 `absent`로 확정하면 `NOT_SUBMITTED` attempt로 저장하고 점수,
   평균, 석차, 합불, 문항 통계에서 0점 응시자로 계산하지 않는다.
 
+문항 순서는 유형별 블록으로 재정렬하지 않는다. 예를 들어
+`1 객관식 / 2 숫자 단답형 / 3 객관식`은 그대로 반환한다. 각 문항에는
+`kind`와 함께 다음 `answer_type`을 제공한다.
+
+- `choice`: 선택지 답안을 쓰는 객관식
+- `numeric_short_answer`: 수학 시험에서 정답지가 `0~999` 정수인 단답형
+- `written`: 그 밖의 답변형·서술형
+
+`answer_type`은 표시와 입력 안내용이며, 수정 가능 여부는 기존
+`editable`과 `entry_method` 계약을 따른다. 따라서 자동채점된 문항도
+정오표에서 결과를 볼 수 있고, 잠긴 `mixed` 선택형은 조회만 가능하다.
+
 채점 표의 문항 머리글에서는 직접 채점 가능한 문항의 배점을 함께
 수정할 수 있다. 요청은 현재 배점을 `expected_question_scores`, 변경
 배점을 `question_scores`로 함께 보내며, 유효 배점 합계와 시험 단위
@@ -186,6 +198,7 @@ python -m pytest tests/results/test_exam_result_excel_import.py -q
 ```
 
 검증은 PDF 처리 상태, HWP 변환 안내, 잠긴 시험 보호, 정오·부분점수,
-`0` 복습 의미, 선택형 자동채점 정오 조회·보정과 답안 보존, 문항 배점
+`0` 복습 의미, 선택형 자동채점 정오 조회·보정과 답안 보존,
+객관식·숫자 단답형이 섞인 원래 순서와 `answer_type`, 문항 배점
 합계·stale 배점 거부, 혼합형 OMR 보존, stale result version 거부,
 다중 시트 선택, tenant 차단과 오답노트 포함을 포함한다.
