@@ -184,8 +184,17 @@ def test_latest_alias_moves_only_after_complete_production_verification() -> Non
     manifest = verify_job.index("Promote verified complete release manifest")
     assert summary < promotion < manifest
     assert "ecr put-image" in verify_job
+    assert "already_current=true" in verify_job
+    assert 'latest_after_error" != "$digest"' in verify_job
     assert "latest readback mismatch" in verify_job
     assert "production chain smoke cannot be skipped" in verify_job
+    lock = verify_job.index("Ensure shared production mutation lock for verification")
+    health = verify_job.index("Verify health endpoints (with retry)")
+    assert lock < health
+    assert "deployment_lock.py renew" in verify_job
+    assert "deployment_lock.py acquire" in verify_job
+    assert 'CANDIDATE_TAG=$(jq -r' in verify_job
+    assert "promote verified image manifest ($CANDIDATE_TAG)" in verify_job
 
 
 def test_api_boot_and_env_refresh_require_prod_settings_and_real_health() -> None:
