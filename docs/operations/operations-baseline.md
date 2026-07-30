@@ -44,7 +44,7 @@ in-progress refresh. A successful build alone is not a production release.
 | Frontend | Frontend `quality-gate.yml`: checks → isolated preview → baseline/ownership check → direct Cloudflare Pages deploy → production E2E |
 | Runtime env correction | Owning runbook/script; preserve rollback candidate and verify `/healthz` plus DB-backed `/health` |
 
-`deploy.ps1` converges infrastructure around an already verified/promoted
+`scripts/v1/deploy.ps1` converges infrastructure around an already verified/promoted
 digest. It is not a shortcut for introducing a new application image. A new
 candidate must still pass persistent development and isolated preproduction
 through the GitHub Actions workflow before any production mutation.

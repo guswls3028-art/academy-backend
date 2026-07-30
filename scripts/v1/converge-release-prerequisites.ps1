@@ -20,6 +20,8 @@ if (-not $env:AWS_DEFAULT_REGION) {
 
 $script:PlanMode = $false
 $script:ChangesMade = $false
+. (Join-Path $ScriptRoot "core\env.ps1")
+Assert-AwsMutationIdentity | Out-Null
 . (Join-Path $ScriptRoot "core\ssot.ps1")
 . (Join-Path $ScriptRoot "core\logging.ps1")
 . (Join-Path $ScriptRoot "core\env.ps1")

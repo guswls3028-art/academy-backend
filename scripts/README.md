@@ -14,10 +14,12 @@
 | **새 PC 준비** | `scripts/v1/bootstrap.ps1` |
 | **검증(5단계)** | `scripts/v1/verify.ps1` → reports/verify.latest.md |
 | **배포 후 검증** | `scripts/v1/run-production-canary.ps1`, `scripts/v1/run-deploy-verification.ps1` |
-| **옵션** | `-Plan`, `-PruneLegacy`, `-PurgeAndRecreate`, `-PurgeAndRecreate -DryRun`, `-AwsProfile default` |
+| **옵션** | 운영: `-Plan`, `-AwsProfile default`. 삭제·복구성 옵션은 Plan/비운영 전용이며 정상 운영 mutation에서 거부된다. |
 
 수동 정식 배포는 `cd C:\academy\backend; pwsh scripts/v1/deploy.ps1 -AwsProfile default`.
-이미지는 로컬에서 빌드하지 않고 GitHub Actions가 ECR에 올린 `:latest`를 사용한다.
+이미지는 로컬에서 빌드하지 않고, GitHub Actions가 preprod와 운영 런타임 검증을
+마친 `release-manifest.latest.json`의 digest를 사용한다. `:latest`는 검증 성공
+후 같은 digest로 이동하는 호환 alias이며 배포 입력이 아니다.
 
 ---
 

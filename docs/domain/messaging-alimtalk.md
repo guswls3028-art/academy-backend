@@ -7,7 +7,7 @@
 
 ## 🚨 §0. 학원장 mental model (절대 원칙, 모든 알림톡 작업의 base)
 
-이 박스를 **반드시 먼저 읽고** 알림톡/메시징 작업 진행. AI가 한 달 반 동안 학원장 의도를 못 따라가서 격분 누적된 핵심 원칙. 메모리 [[feedback-alimtalk-envelope-model]] 1:1 동기화.
+이 박스를 **반드시 먼저 읽고** 알림톡/메시징 작업을 진행한다. 상세 발송 정책은 `backend/docs/ssot/messaging-policy.md`가 정본이다.
 
 ### 비유: 봉투와 편지
 
@@ -56,9 +56,9 @@
 2. 모든 새 안내 문구 / 카테고리 / 트리거 → 4종 봉투 중 의미 가까운 것 선택 + `#{선생님메모}` 본문 자유 작성으로 cover
 3. 학원장이 명시적으로 "새 카카오 양식 검수 받자" 한 경우만 신규 검수 진행
 4. NONE 자동발송 매핑(withdrawal_complete/payment_complete/payment_due_days_before) 제거 금지 — 시스템 안내 자동발송이 정상
-5. UI에서 양식 본문 편집 잠금 금지 — domain.md §5 "잠금/플래그 강제 금지" 정신
+5. UI에서 `#{선생님메모}` 본문 편집을 잠그지 않는다.
 
-관련: `.claude/rules/domain.md §5 / §5.5` / `feedback-alimtalk-envelope-model` memory
+관련: `backend/docs/ssot/messaging-policy.md`, `backend/docs/domain/messaging.md`
 
 ---
 

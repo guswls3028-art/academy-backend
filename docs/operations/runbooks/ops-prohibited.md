@@ -9,7 +9,7 @@
 
 ## 1. CI에서 인프라 프로비저닝 금지
 
-`deploy.ps1`은 **로컬 또는 SSH에서만** 실행한다. GitHub Actions에서 ASG/ALB/RDS 등 인프라를 생성/삭제하는 코드를 넣지 않는다.
+`scripts/v1/deploy.ps1`은 **로컬 또는 SSH에서만** 실행한다. GitHub Actions에서 ASG/ALB/RDS 등 인프라를 생성/삭제하는 코드를 넣지 않는다.
 
 CI는 **이미지 빌드 → 푸시 → ASG refresh**만 한다. 인프라 변경은 수동.
 
@@ -31,7 +31,7 @@ API ASG는 비용 기준선으로 `MinSize=1`, `DesiredCapacity=1`, `MaxSize=3`�
 
 ```
 academy-v1-api-asg              → min=1 desired=1 max=3
-academy-v1-messaging-worker-asg → min = 0, queue alarm scale-out
+academy-v1-messaging-worker-asg → min=1 desired>=1 max=3, queue alarm scale-out
 academy-v1-ai-worker-asg        → min = 0, queue/API wake-up scale-out
 academy-v1-tools-worker-asg     → min = 0, queue alarm scale-out
 ```

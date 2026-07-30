@@ -58,9 +58,32 @@ pwsh scripts/v1/disable-legacy-deploy-crons.ps1 -Action Off -AwsProfile default
 - **위치**: `docs/ssot/params.yaml`
 - **수정**: 환경별 값(리전, 계정, VPC 등)만 변경. 스크립트는 이 파일만 참조.
 - **API ASG 용량**: 평시 min/desired=1, max=3. 배포 시 CI가 일시적으로 desired>=2를 만들고, CPU target tracking이 평상시 자동 증감/복귀를 담당한다.
-- **ECR 이미지**: 6개 repo는 `IMMUTABLE_WITH_EXCLUSION`이며 단 하나의 `latest` wildcard exclusion만 둔다. CI 태그는 `sha-<full git sha>-run-<run id>-<attempt>`라 재실행도 같은 태그를 덮어쓰지 않는다.
+- **상시 development gate**: 최초 1회
+  `initialize-api-development.ps1 -AwsProfile <least-privilege-profile>`로
+  전용 IAM/DB/SQS/SG와 개발 전용 R2 SecureString을 수렴하고 마지막 검증 release로 active 서버를
+  기동한다. CI는 이후 API/Tools 후보를
+  `deploy-api-development.ps1`의 blue/green 검증에 통과시킨 뒤에만 임시
+  preprod로 진행한다. root ARN은 mutation 진입점에서 차단한다.
+- **development 접속**:
+  `connect-api-development.ps1 -AwsProfile <profile>`은 active instance를
+  정확히 1대로 확인한 뒤 localhost:18000 SSM tunnel만 연다. public
+  listener/ALB는 만들지 않는다.
+- **Tools development warm path**: Excel/PPT는 AI queue가 아니라 Tools queue로
+  라우팅한다. 운영 Tools ASG는 `t4g.small` min/desired=0 scale-to-zero를
+  유지하고, persistent development host만 별도 Tools container/process를
+  함께 실행해 Excel/PPT/R2 실사용 smoke를 검증한다.
+- **ECR 이미지**: 6개 repo는 `IMMUTABLE_WITH_EXCLUSION`이며 단 하나의 `latest` wildcard exclusion만 둔다. CI는 먼저 `sha-<full git sha>-run-<run id>-<attempt>` 후보만 push하고, preprod·운영 런타임·학생 영상 검증 성공 후에만 여섯 digest를 `latest`로 승격·readback한다.
 - **런타임 불변성**: migration과 API/Messaging/AI/Tools Launch Template, Video Batch 8개 job definition은 모두 해당 빌드 tag를 `repo@sha256:...`로 해석해 사용한다. `latest`는 호환성 alias일 뿐 증거가 아니다.
-- **성공 릴리스 manifest**: CI는 이번 빌드 digest와 직전 성공 릴리스의 변경 없는 digest로 candidate를 만들고, 실제 ASG 컨테이너·Batch jobdef·CE 검증 후에만 `docs/reports/release-manifest.latest.json`을 `complete=true,status=successful`로 승격한다. `deploy.ps1`은 ECR의 newest image가 아니라 이 manifest만 사용한다.
+- **격리 DB 경계**: `converge-api-preprod-database.ps1`이
+  `/academy/api/preprod/db-credentials`와 `academy_api_preprod_app` 역할을
+  수렴한다. `publish-api-preprod-env.ps1`은 매 release마다 새 preprod SSM
+  version을 만들고, canary는 exact version/release ID와 운영 DB
+  `CONNECT=false`를 검증한다.
+- **expand/contract gate**:
+  `scripts/lint/check_expand_contract_migrations.py`가 기존 migration 의미 변경과
+  파괴적 operation을 차단한다. contract phase는 명시 metadata와
+  `workflow_dispatch` 승인 없이는 실행되지 않는다.
+- **성공 릴리스 manifest**: CI는 이번 빌드 digest와 직전 성공 릴리스의 변경 없는 digest로 candidate를 만들고, 실제 ASG 컨테이너·Batch jobdef·CE 검증 후에만 `docs/reports/release-manifest.latest.json`을 `complete=true,status=successful`로 승격한다. `scripts/v1/deploy.ps1`은 ECR의 newest image가 아니라 이 manifest만 사용한다.
 - **ECR cleanup fail-closed**: cleanup은 ASG/LT와 실제 desired InService 컨테이너 `RepoDigests`, 정확히 8개인 Video ACTIVE job definition, 마지막 complete/successful 6-image manifest(공통 base 포함)를 먼저 보호한다. inventory 누락, 부분 삭제 실패, verify 경고가 하나라도 있으면 nonzero로 종료한다.
 - **ASG pin + 보상**: `pin-asg-image.ps1`은 `$Default`·`$Latest`·숫자 version을 모두 해석한다. 태그 기반 legacy template은 현재 인스턴스의 실제 `RepoDigest`로 먼저 불변 baseline version을 만들고 ASG를 `$Latest`로 전환한 뒤 candidate digest를 적용한다. 이전 LT/default/실제 runtime digest를 state에 기록하며, pin·refresh·runtime 검증 실패 시 이전 version을 빈 override로 정확히 복제한 새 보상 version을 만들고 refresh/runtime을 다시 검증한다. 비용 baseline 복귀나 autoscaling 직후에는 healthy InService 수와 현재 desired가 수렴할 때까지 기다려 scale-in race를 실패로 오판하지 않으며, desired=0 ASG도 candidate LT digest를 직접 검증한다.
 - **공통 운영 mutation 락**: 정식 CI, 주간 ECR/Batch cleanup, 수동 deploy/rollback은 SSOT DynamoDB table `academy-v1-video-job-lock`의 한 조건부 lock key를 공유한다. acquire/renew/release는 owner와 TTL 조건을 검사하므로 동시 실행·만료 후 잘못된 release를 허용하지 않는다.
@@ -104,9 +127,9 @@ API/worker의 ASG wake 대상처럼 런타임 EC2 역할 inline policy가 바뀌
 CI에는 런타임 역할 정책 쓰기 권한을 주지 않으며, 정확한
 `iam:GetRolePolicy` readback이 SSOT와 다르면 이미지 빌드 전에 실패한다.
 
-신규 환경에서는 공통 production-mutation lock table이 아직 없을 수 있다. `deploy.ps1`과 `converge-release-prerequisites.ps1`은 다른 mutation보다 먼저 이 테이블 하나만 조건부/idempotent 생성하고 key schema(`videoId` HASH string), PAY_PER_REQUEST, TTL을 검증한 뒤 락을 획득한다. 그 외 리소스 생성·갱신은 락 이후에만 수행한다. 기본/strict 배포는 사후 ASG·ALB·Batch 검증 실패를 nonzero로 종료하며, 경고 종료가 필요한 진단 실행은 명시적 `-RelaxedValidation`에서만 허용한다.
+신규 환경에서는 공통 production-mutation lock table이 아직 없을 수 있다. `scripts/v1/deploy.ps1`과 `scripts/v1/converge-release-prerequisites.ps1`은 다른 mutation보다 먼저 이 테이블 하나만 조건부/idempotent 생성하고 key schema(`videoId` HASH string), PAY_PER_REQUEST, TTL을 검증한 뒤 락을 획득한다. 그 외 리소스 생성·갱신은 락 이후에만 수행한다. 운영 mutation은 strict 전체 경로만 허용하고 사후 ASG·ALB·Batch 검증 실패를 nonzero로 종료한다. `-RelaxedValidation`, purge/prune, 검증·대기 생략은 Plan 또는 비운영 진단/복구에만 사용할 수 있다.
 
-최초 전환 시 `docs/reports/release-manifest.latest.json`이 아직 없으면 수동 `deploy.ps1`은 의도적으로 실패한다. 기존 운영 Launch Template 4개가 존재하는지 확인한 뒤 `pwsh scripts/v1/converge-release-prerequisites.ps1 -AwsProfile default`로 ECR latest-only mutability와 GHA IAM을 수렴·readback한다. 이 전용 스크립트는 LT/ASG/Batch 런타임을 변경하지 않는다. 이어 GitHub Actions의 `workflow_dispatch`를 한 번 실행해 6개 이미지를 모두 빌드·배포·검증하고 최초 complete/successful manifest를 생성한다. 이후부터 selective build와 수동 deploy가 그 manifest를 기준으로 동작한다.
+최초 전환 시 `docs/reports/release-manifest.latest.json`이 아직 없으면 수동 `scripts/v1/deploy.ps1`은 의도적으로 실패한다. 기존 운영 Launch Template 4개가 존재하는지 확인한 뒤 `pwsh scripts/v1/converge-release-prerequisites.ps1 -AwsProfile default`로 ECR latest-only mutability와 GHA IAM을 수렴·readback한다. 이 전용 스크립트는 LT/ASG/Batch 런타임을 변경하지 않는다. 이어 GitHub Actions의 `workflow_dispatch`를 한 번 실행해 6개 이미지를 모두 빌드·배포·검증하고 최초 complete/successful manifest를 생성한다. 이후부터 selective build와 수동 deploy가 그 manifest를 기준으로 동작한다.
 
 ---
 
@@ -120,9 +143,9 @@ mutation 스크립트를 실행할 수 없으며 일반 CI 배포는 GitHub OIDC
 
 ---
 
-## Cursor / 새 셸에서 인증 에러 날 때
+## 새 셸에서 인증 에러 날 때
 
-- **원인**: `$env:AWS_ACCESS_KEY_ID` 등은 현재 터미널 세션에만 적용됨. Cursor가 새 프로세스로 실행하면 인증이 없음.
+- **원인**: `$env:AWS_ACCESS_KEY_ID` 등은 현재 터미널 세션에만 적용되므로 새 프로세스에는 인증이 없을 수 있다.
 - **진단**: `pwsh scripts/v1/aws-diagnose.ps1` — credential source·에러 메시지 확인.
 - **해결**  
   - **방법 1**: `aws configure` 로 default 프로파일 저장 → 어떤 셸에서든 동작.  

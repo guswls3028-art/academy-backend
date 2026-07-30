@@ -3,7 +3,6 @@
 **Version:** 1.0.0  
 **Status:** DRAFT  
 **Created:** 2026-04-15  
-**Author:** Claude Code  
 
 ---
 

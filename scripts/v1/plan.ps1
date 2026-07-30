@@ -1,6 +1,6 @@
 ﻿# ==============================================================================
 # Plan 래퍼 — deploy.ps1 -Plan 호출. 가독성용.
-# AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키를 환경변수로 넣어 배포·검증·인증을 진행한다.
+# AWS/Cloudflare credentials are supplied by the caller through the intended profile or process environment; this script does not load backend/.env.
 # Usage: pwsh scripts/v1/plan.ps1 [-PruneLegacy]
 # ==============================================================================
 $ScriptRoot = $PSScriptRoot

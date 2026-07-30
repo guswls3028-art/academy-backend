@@ -27,7 +27,7 @@
 - 알림톡 템플릿 fallback은 금지한다. exact 공용 승인 템플릿 또는 명시 unified category가 없으면 발송하지 않는다.
 - 공용 트리거 운영 실발송 검증은 `scripts/v1/run-messaging-verify-send.ps1` → `messaging_verify_common_alimtalk`을 사용한다. 수동 UI 경로 검증은 프론트의 `e2e/stability/controlled-real-alimtalk-send.spec.ts`를 사용한다. 둘 다 수신번호를 `01031217466` 하나로 강제하며, 한 검증에서는 한 경로만 1회 실행하고 `NotificationLog.provider_message_id`와 공급사 최종 성공을 확인한다.
 - `password_find_otp`는 legacy OTP 경로용 트리거다. 공개 로그인 화면의 현재 정본은 `/api/v1/auth/account-recovery/dispatch/`다.
-- 수동/자동 발송 UX와 템플릿 본문 자유 정책은 [messaging-alimtalk.md](messaging-alimtalk.md)와 `.claude/rules/domain.md §5-6`을 우선한다.
+- 수동/자동 발송 UX와 템플릿 본문 자유 정책은 [messaging-alimtalk.md](messaging-alimtalk.md)와 `backend/docs/ssot/messaging-policy.md`를 우선한다.
 - 클리닉 변경 알림처럼 도메인 상태에서 파생되는 수동 발송 변수/대상자는 프론트에서 재구현하지 않고 `context_source`로 백엔드 정본에 위임한다.
 - `context_source`가 만든 변수 키는 서버 계산값이 정본이다. 요청 `context`/`context_per_student`가 같은 키를 보내면 미리보기 API에서 거부한다.
 - 수동 발송의 최종 카카오 미리보기는 preflight의 `preview_recipients[].full_message_body`가 정본이다. 이 값은 실제 Solapi replacements와 같은 서버 계산값으로 만들며, 클라이언트 샘플 문구로 대체하지 않는다.

@@ -7,7 +7,7 @@
 | 문서 | 스코프 | 사용 시점 |
 |------|--------|-----------|
 | [deployment-modes.md](deployment-modes.md) | CI 자동 배포 vs 수동 정식 배포 | 배포 경로 선택 |
-| [formal-deploy.md](formal-deploy.md) | `deploy.ps1` 동작 상세 | 인프라 반영/정식 배포 |
+| [formal-deploy.md](formal-deploy.md) | `scripts/v1/deploy.ps1` 동작 상세 | 인프라 반영/정식 배포 |
 | [배포.md](배포.md) | legacy 인프라 부트스트랩 노트 | 새 환경/리전 셋업 전 `deployment-modes.md`와 실행 스크립트 재확인 |
 | [ssm-json-schema.md](ssm-json-schema.md) | SSM `/academy/api/env` JSON 스키마 | env 키 추가/변경 |
 

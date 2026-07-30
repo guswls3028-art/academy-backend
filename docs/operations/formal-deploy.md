@@ -23,9 +23,9 @@
   즉, **push만 해도** CI가 ECR 푸시, 마이그레이션, 각 서비스 배포, health/ASG/tenant maintenance/video-chain 검증까지 수행한다.
   `run-migrations`는 실행 직전에 SSM `/academy/api/env`를 `/opt/api.env`로 원자적으로 갱신한 뒤 새 digest 이미지로 실행한다. 인스턴스에 남은 이전 env 파일을 재사용하지 않는다.
 
-### 2.2 deploy.ps1 동작 순서 (요약)
+### 2.2 scripts/v1/deploy.ps1 동작 순서 (요약)
 
-`deploy.ps1`은 이미 검증·승격된 digest로 인프라를 수렴시키는 경로다. 새
+`scripts/v1/deploy.ps1`은 이미 검증·승격된 digest로 인프라를 수렴시키는 경로다. 새
 애플리케이션 후보를 처음 운영에 올리는 경로가 아니며, 새 digest는 먼저
 GitHub Actions의 persistent development와 isolated preproduction을 모두
 통과해야 한다.
@@ -63,7 +63,7 @@ GitHub Actions의 persistent development와 isolated preproduction을 모두
 - **안정 반영**이 필요할 때(출시 전/후, 하루 마감).
 - "한 번만 수동으로 정식 배포"하고 싶을 때.
 
-> 일상적인 코드 변경은 `git push main` → CI 자동 배포로 충분하다. deploy.ps1은 인프라 변경이 있을 때만 사용.
+> 일상적인 코드 변경은 `git push main` → CI 자동 배포로 충분하다. `scripts/v1/deploy.ps1`은 인프라 변경이 있을 때만 사용.
 > 실행 전 `check-credentials.ps1`에서 identity를 확인한다. 일반 배포는
 > GitHub Actions OIDC 또는 최소권한 운영자 역할을 사용한다. 사용자가
 > account-root를 명시적으로 허용한 수동 작업은 경고 후 실행할 수 있지만,
@@ -74,7 +74,7 @@ GitHub Actions의 persistent development와 isolated preproduction을 모두
 
 ## 5. 실행 후 검증
 
-- **deploy.ps1 내장:** After-Deploy Verification에서 ASG desired/inService, ALB target health, Batch Video CE/Queue 상태 출력. 실패 시 경고.
+- **`scripts/v1/deploy.ps1` 내장:** After-Deploy Verification에서 ASG desired/inService, ALB target health, Batch Video CE/Queue 상태를 확인한다. strict 기본 경로는 실패 시 nonzero로 종료하며, 명시적 `-RelaxedValidation`은 비운영 진단에서만 경고로 계속할 수 있다.
 - **수동 검증:** `run-deploy-verification.ps1`은 read-only 인프라·health·drift·
   런타임 이미지 증빙을 수집한다. 인증 CRUD와 AI/Messaging enqueue→consume은
   실행하지 않으므로, 변경 도메인의 동작은
