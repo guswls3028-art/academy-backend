@@ -1,7 +1,7 @@
 # ==============================================================================
 # Academy v1 — 새 PC 6단계 검증 자동화.
 # 1) bootstrap  2) deploy -Plan  3) PruneLegacy 후보 미리보기  4) deploy  5) deploy 재실행(No-op)  6) Evidence 위치 안내
-# AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키를 환경변수로 넣어 배포·검증·인증을 진행한다. 스크립트는 .env를 로드하지 않음.
+# AWS/Cloudflare credentials are supplied by the caller through the intended profile or process environment; this script does not load backend/.env.
 # 로그: logs/v1/YYYYMMDD-HHMMSS-verify.log
 # ==============================================================================
 param([string]$AwsProfile = "")

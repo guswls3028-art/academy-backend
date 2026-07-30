@@ -1,5 +1,5 @@
 ﻿# Drift: structure comparison. SSOT expected vs actual. Used by -Plan and deploy.
-# AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키 사용. 배포·검증 시 에이전트가 환경변수로 설정한 뒤 호출.
+# AWS/Cloudflare credentials are supplied by the caller through the intended profile or process environment; this script does not load backend/.env.
 # Existence = same Describe as Evidence; filter by resource name for correct detection.
 $ErrorActionPreference = "Stop"
 

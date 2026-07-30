@@ -52,7 +52,7 @@ main에 push하면 자동으로 서버 반영까지 완료된다:
 
 ---
 
-## 3. 수동 인프라 수렴 (deploy.ps1)
+## 3. 수동 인프라 수렴 (scripts/v1/deploy.ps1)
 
 - **목적:** 인프라 변경(Launch Template, UserData, ASG, ALB, SSM, Batch 등)을 반영할 때.
 - **실행:** `check-credentials.ps1`을 통과한 승인된 profile로 `pwsh scripts/v1/deploy.ps1 -AwsProfile <approved-operator>`
@@ -94,7 +94,7 @@ preproduction을 통과해야 한다. account-root는 명시적으로 승인된 
 
 ## 6. 장애 시 확인 포인트
 
-- deploy.ps1 stderr, `API_PREPROD_CANARY_PASS` 유무, ASG/ALB/Batch 상태, SSM `/academy/api/env` 존재·형식·prod settings module.
+- `scripts/v1/deploy.ps1` stderr, `API_PREPROD_CANARY_PASS` 유무, ASG/ALB/Batch 상태, SSM `/academy/api/env` 존재·형식·prod settings module.
 - CI deploy-* 또는 verify-deployment job 실패 시: GitHub Actions 로그 확인 → IAM 권한/ASG/ALB/Batch 상태 확인.
 - health check 실패 시 `docker logs academy-api`.
 

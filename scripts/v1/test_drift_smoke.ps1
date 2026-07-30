@@ -1,5 +1,5 @@
 ﻿# Smoke check: Describe wrappers and DRIFT consistency. No AWS changes.
-# AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키를 환경변수로 넣어 배포·검증·인증을 진행한다. 스크립트는 .env를 로드하지 않는다.
+# AWS/Cloudflare credentials are supplied by the caller through the intended profile or process environment; this script does not load backend/.env.
 # Run from repo root: pwsh scripts/v1/test_drift_smoke.ps1
 # Requires: AWS configured, params.yaml, and existing SSOT resources (or run will report missing).
 $ErrorActionPreference = "Stop"

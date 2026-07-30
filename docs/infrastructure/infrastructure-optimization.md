@@ -376,7 +376,7 @@ done
 | `ecr-cleanup.py --verify` in post-deploy | Catch evaluation failures early |
 | Weekly `lastEvaluatedAt` check | Detect if lifecycle stops evaluating |
 | CI build report includes image count | Visibility into accumulation trends |
-| CLAUDE.md `feedback_ecr_cleanup` memory | Ensures Claude always checks ECR on new repo creation |
+| Weekly cleanup workflow and verification scripts | Keep ECR cleanup executable and independently verifiable |
 
 ---
 

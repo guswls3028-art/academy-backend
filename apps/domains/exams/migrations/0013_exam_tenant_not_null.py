@@ -20,7 +20,7 @@ def backfill_remaining_null_tenant(apps, schema_editor):
     if count == 0:
         return
 
-    # Tenant 1 = dev/test tenant (per CLAUDE.md)
+    # Historical migration invariant: these orphan rows belonged to Tenant 1.
     tenant_1 = Tenant.objects.filter(id=1).first()
     if not tenant_1:
         raise Exception(

@@ -1,6 +1,6 @@
 ﻿# Worker UserData: Messaging/AI ASG EC2 부팅 시 Docker + ECR pull + SSM env + run.
 # SSM /academy/workers/env: base64(JSON) 저장 → 디코딩 후 KEY=VALUE env 파일 생성.
-# AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키 사용.
+# AWS/Cloudflare credentials are supplied by the caller through the intended profile or process environment; this script does not load backend/.env.
 $ErrorActionPreference = "Stop"
 
 function Assert-ImmutableEcrImageUri {
