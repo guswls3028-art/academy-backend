@@ -102,30 +102,31 @@ def login_student() -> str:
     return body["access"]
 
 
+def _find_public_video(token: str, public: dict) -> tuple[int, int, int] | None:
+    session_id = public.get("session_id")
+    lecture_id = public.get("lecture_id")
+    if not session_id:
+        return None
+    status, body = _get_json(
+        f"{API_URL}/api/v1/student/video/sessions/{session_id}/videos/",
+        token=token,
+    )
+    if status != 200:
+        raise SmokeFail(f"/sessions/{session_id}/videos/ {status}: {body}")
+    items = body.get("items") or []
+    if not items:
+        return None
+    print(f"[2/7] public video session lecture={lecture_id} session={session_id}")
+    return int(lecture_id or 0), int(session_id), int(items[0]["id"])
+
+
 def find_first_video(token: str) -> tuple[int, int, int]:
     """Returns (lecture_id, session_id, video_id) of first enrolled video."""
     status, body = _get_json(f"{API_URL}/api/v1/student/video/me/", token=token)
     if status != 200:
         raise SmokeFail(f"/student/video/me/ {status}: {body}")
     lectures = body.get("lectures") or []
-    if not lectures:
-        public = body.get("public") or {}
-        session_id = public.get("session_id")
-        lecture_id = public.get("lecture_id")
-        if session_id:
-            print(f"[2/7] public video session lecture={lecture_id} session={session_id}")
-            status, body = _get_json(
-                f"{API_URL}/api/v1/student/video/sessions/{session_id}/videos/",
-                token=token,
-            )
-            if status != 200:
-                raise SmokeFail(f"/sessions/{session_id}/videos/ {status}: {body}")
-            items = body.get("items") or []
-            if not items:
-                raise SmokeFail(f"public session {session_id} has no videos")
-            return int(lecture_id or 0), int(session_id), int(items[0]["id"])
-    if not lectures:
-        raise SmokeFail(f"student has no enrolled lectures with videos - E2E_STUDENT_USER={STUDENT_USER}")
+    public = body.get("public") or {}
     checked_sessions = []
     for lec in lectures:
         for sess in lec.get("sessions") or []:
@@ -142,9 +143,13 @@ def find_first_video(token: str) -> tuple[int, int, int]:
                 continue
             print(f"[2/7] enrolled lecture={lec.get('id')} session={session_id}")
             return int(lec["id"]), int(session_id), int(items[0]["id"])
+    public_video = _find_public_video(token, public)
+    if public_video:
+        return public_video
     raise SmokeFail(
-        f"student has no enrolled sessions with videos "
-        f"(checked sessions={checked_sessions}) - E2E_STUDENT_USER={STUDENT_USER}"
+        f"student has no playable enrolled or public video "
+        f"(checked sessions={checked_sessions}, public session={public.get('session_id')}) "
+        f"- E2E_STUDENT_USER={STUDENT_USER}"
     )
 
 
