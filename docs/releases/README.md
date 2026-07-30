@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.12.9.md](v1.12.9.md) | **CURRENT** | 2026-07-30 KST | Fail-closed first-login guidance, public product updates, and zero-downtime migration release enforcement |
+| [v1.12.10.md](v1.12.10.md) | **CURRENT** | 2026-07-30 KST | Release-bound preproduction isolation, retry-safe image promotion, single-tenant product-analytics pilot operations, and official mock-exam month correction |
+| [v1.12.9.md](v1.12.9.md) | production-deployed / v1.12.10로 승계 | 2026-07-30 KST | Fail-closed first-login guidance, public product updates, and zero-downtime migration release enforcement |
 | [v1.12.8.md](v1.12.8.md) ([정정](v1.12.8-errata.md)) | production-deployed / v1.12.9로 승계 | 2026-07-29 KST | Scalable teacher tools hub and a privacy-bounded, review-required AI problem explanation Beta |
 | [v1.12.7.md](v1.12.7.md) | production-deployed / v1.12.8로 승계 | 2026-07-29 KST | Privacy-safe role-based product usage signals, guarded tenant rollout, and evidence-based DB availability and tenant split gates |
 | [v1.12.6.md](v1.12.6.md) | production-deployed / v1.12.7로 승계 | 2026-07-29 KST | Teacher-controlled correction completion, regular/supplement score separation, rank/percentile trends, responsive reports, and safe preprod delivery |
