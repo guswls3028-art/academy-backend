@@ -26,9 +26,16 @@
 | `choice_question_count` | 0 이상의 정수 | 원본 자동 분리 시 앞에서부터 선택형으로 만들 문항 수. 혼합형은 1 이상이어야 한다. |
 | `segmentation_status` | `none`, `processing`, `ready`, `failed`, `conversion_required` | 원본 문항 분리 상태다. |
 
-문항이 생성된 시험은 채점 방식과 선택형 경계를 바꿀 수 없다. 이미 문항
-또는 성적이 있는 운영 시험에 새 원본을 올려 자동으로 덮어쓰는 것도
-금지한다. 다른 계약이 필요하면 빈 시험을 새로 만든다.
+문항이 생성된 뒤에도 `grading_mode`와 `manual_grading_method`는 시험
+설정에서 바꿀 수 있다. 이 전환은 문항, 정답, 기존 OMR·직접 입력 결과를
+삭제하거나 다시 계산하지 않고 이후 사용할 채점 화면과 수정 가능 범위만
+바꾼다. `choice`에서 `written/correctness`로 바꾸면 기존 문항 전체가
+정오표 입력 대상이 되고, 다시 `choice`로 바꾸면 기존 결과는 보존된 채
+정오표가 잠기고 OMR 흐름을 사용한다.
+
+반면 `choice_question_count`는 실제 혼합형 문항 구조의 경계이므로 문항
+생성 뒤에는 바꿀 수 없다. 이미 문항 또는 성적이 있는 운영 시험에 새
+원본을 올려 자동으로 덮어쓰는 것도 금지한다.
 
 기존 시험의 문항별 `question_kind`가 있으면 직접 채점 가능 여부는 실제
 문항 유형을 기준으로 결정한다. 따라서 기존 답안 등록 화면에서 만든
@@ -181,6 +188,7 @@ cross-tenant fallback을 사용하지 않는다.
 | Method | Path | 역할 |
 |--------|------|------|
 | POST | `/exams/` | 시험과 채점 계약 생성 |
+| PATCH | `/exams/{id}/` | 채점 방식 전환. 문항·정답·기존 결과는 보존 |
 | POST | `/exams/pdf-extract/` | 원본 보관과 PDF/이미지 문항 분리 요청 |
 | GET | `/results/admin/exams/{id}/manual-grading/` | 직접 채점 표와 버전 조회 |
 | POST | `/results/admin/exams/{id}/manual-grading/` | 직접 채점 미리보기 또는 원자적 확정 |
