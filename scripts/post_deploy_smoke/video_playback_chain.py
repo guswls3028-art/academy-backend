@@ -126,23 +126,26 @@ def find_first_video(token: str) -> tuple[int, int, int]:
             return int(lecture_id or 0), int(session_id), int(items[0]["id"])
     if not lectures:
         raise SmokeFail(f"student has no enrolled lectures with videos - E2E_STUDENT_USER={STUDENT_USER}")
-    lec = lectures[0]
-    sessions = lec.get("sessions") or []
-    if not sessions:
-        raise SmokeFail(f"lecture {lec.get('id')} has no sessions")
-    sess = sessions[0]
-    print(f"[2/7] enrolled lecture={lec.get('id')} session={sess.get('id')}")
-    # 영상 list
-    status, body = _get_json(
-        f"{API_URL}/api/v1/student/video/sessions/{sess['id']}/videos/?enrollment={lec.get('enrollment_id') or ''}",
-        token=token,
+    checked_sessions = []
+    for lec in lectures:
+        for sess in lec.get("sessions") or []:
+            session_id = sess.get("id")
+            checked_sessions.append(session_id)
+            status, body = _get_json(
+                f"{API_URL}/api/v1/student/video/sessions/{session_id}/videos/?enrollment={lec.get('enrollment_id') or ''}",
+                token=token,
+            )
+            if status != 200:
+                raise SmokeFail(f"/sessions/{session_id}/videos/ {status}: {body}")
+            items = body.get("items") or []
+            if not items:
+                continue
+            print(f"[2/7] enrolled lecture={lec.get('id')} session={session_id}")
+            return int(lec["id"]), int(session_id), int(items[0]["id"])
+    raise SmokeFail(
+        f"student has no enrolled sessions with videos "
+        f"(checked sessions={checked_sessions}) - E2E_STUDENT_USER={STUDENT_USER}"
     )
-    if status != 200:
-        raise SmokeFail(f"/sessions/{sess['id']}/videos/ {status}: {body}")
-    items = body.get("items") or []
-    if not items:
-        raise SmokeFail(f"session {sess['id']} has no videos")
-    return lec["id"], sess["id"], items[0]["id"]
 
 
 def fetch_play_url(token: str, video_id: int, enrollment_id: int | None) -> str:

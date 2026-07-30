@@ -86,7 +86,7 @@ preproduction을 통과해야 한다. account-root는 명시적으로 승인된 
 | 목적 | 방법 |
 |------|------|
 | 배포 후 API·인프라 상태 | `run-production-canary.ps1 -Mode PostDeploy -AwsProfile default -WriteReport` 후 `run-deploy-verification.ps1 -AwsProfile default`. |
-| 학생 영상 재생 경로 좁은 회귀 | `python scripts/post_deploy_smoke/video_playback_chain.py` |
+| 학생 영상 재생 경로 좁은 회귀 | `python scripts/post_deploy_smoke/video_playback_chain.py`. 명시적 `E2E_VIDEO_ID`가 없으면 등록 강의·회차를 순회해 영상이 실제로 있는 첫 회차를 사용하며, 빈 회차는 건너뛴다. |
 | 성공 릴리스 digest와 서버 이미지 일치 | `release-manifest.latest.json`의 digest와 Launch Template, 실제 InService 컨테이너, Video Batch job definition을 `deploy-api-and-verify-workers.ps1`로 비교. |
 | API health | API 공개 URL로 `/healthz`, `/health` 200 확인. |
 
