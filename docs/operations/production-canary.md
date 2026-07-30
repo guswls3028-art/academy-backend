@@ -21,6 +21,37 @@ The command fails on critical user-facing risks:
 - auto billing enabled without a matching live Toss client/server key pair
 - auto billing enabled without encrypted billing-key writes and a primary KEK
 
+## Explicit E2E residue cleanup
+
+`production_e2e_residue_absent` is release-blocking. Do not suppress the
+finding or delete rows directly. First enumerate the exact tenant-scoped
+targets:
+
+```powershell
+python manage.py cleanup_e2e_residue --tenant-id 1 --dry-run --limit 100
+```
+
+The dry-run prints every matched ID, relationship summary, total, and an
+exact-target confirmation token. Review the list and then execute only against
+that unchanged target set:
+
+```powershell
+python manage.py cleanup_e2e_residue --tenant-id 1 --execute --confirm-token <dry-run-token>
+```
+
+The execute path fails closed when the token is stale, a matched student is
+still active, a message template is a default or is referenced by an
+auto-send configuration, a Matchup document contains a manual/owner-pinned
+problem, or a Matchup report contains authored state. Soft-deleted students
+use the official permanent lifecycle service so their tenant membership and
+orphaned account are handled consistently. Community attachments and Matchup
+inventory/source/crop/page objects are removed from R2 and read back as absent
+before the database transaction removes their rows.
+
+After execution, rerun the dry-run and the PostDeploy production canary. Both
+must report zero residue. Never broaden the matcher to natural-language names
+such as `테스트학생`; only timestamped automation fingerprints are eligible.
+
 Warnings are emitted for operational debt that should be reviewed but may be accepted temporarily:
 
 - overdue or failed messaging jobs

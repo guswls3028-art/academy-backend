@@ -20,8 +20,9 @@ E2E 테스트 잔재 데이터 정리 커맨드.
 
 사용:
     python manage.py cleanup_e2e_residue --tenant-id 1 --dry-run
-    python manage.py cleanup_e2e_residue --tenant-id 1 --execute
+    python manage.py cleanup_e2e_residue --tenant-id 1 --execute --confirm-token <dry-run token>
 """
+import hashlib
 import re
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
@@ -55,6 +56,15 @@ def matches_template_residue(text: str) -> bool:
     return matches_residue(text)
 
 
+def build_confirmation_token(*, tenant_id: int, target_groups: dict[str, list]) -> str:
+    """Bind an execute attempt to the exact dry-run target set."""
+    target_parts = [f"tenant:{tenant_id}"]
+    for label in sorted(target_groups):
+        ids = sorted(int(item.id) for item in target_groups[label])
+        target_parts.append(f"{label}:{','.join(str(item_id) for item_id in ids)}")
+    return hashlib.sha256("|".join(target_parts).encode("utf-8")).hexdigest()
+
+
 class Command(BaseCommand):
     help = "Tenant별 E2E 자동화 잔재 데이터(학생·게시글·메시지 템플릿·매치업 문서·수납 비목)를 식별/삭제한다."
 
@@ -74,7 +84,12 @@ class Command(BaseCommand):
         parser.add_argument(
             "--execute",
             action="store_true",
-            help="실제 삭제 실행. --dry-run 보다 우선.",
+            help="실제 삭제 실행. 직전 dry-run의 --confirm-token이 함께 필요.",
+        )
+        parser.add_argument(
+            "--confirm-token",
+            default="",
+            help="직전 dry-run이 출력한 exact-target 확인 토큰.",
         )
         parser.add_argument(
             "--limit",
@@ -87,6 +102,7 @@ class Command(BaseCommand):
         tenant_id: int = options["tenant_id"]
         execute: bool = options["execute"]
         limit: int = options["limit"]
+        confirm_token: str = (options["confirm_token"] or "").strip()
 
         # 모델 지연 import (apps 레지스트리 완료 후)
         from apps.domains.students.models import Student
@@ -164,10 +180,34 @@ class Command(BaseCommand):
             + len(exams) + len(homeworks) + len(fee_templates)
         )
 
-        self._print_group("학생 (Student)", students, limit, lambda s: f"id={s.id} ps={s.ps_number} name={s.name!r}")
+        self._print_group(
+            "학생 (Student)",
+            students,
+            limit,
+            lambda s: (
+                f"id={s.id} ps={s.ps_number} name={s.name!r} "
+                f"deleted={s.deleted_at is not None} user_id={s.user_id}"
+            ),
+        )
         self._print_group("게시글 (PostEntity)", posts, limit, lambda p: f"id={p.id} title={p.title!r}")
-        self._print_group("매치업 문서 (MatchupDocument)", matchups, limit, lambda m: f"id={m.id} title={m.title!r}")
-        self._print_group("메시지 템플릿 (MessageTemplate)", templates, limit, lambda t: f"id={t.id} name={t.name!r}")
+        self._print_group(
+            "매치업 문서 (MatchupDocument)",
+            matchups,
+            limit,
+            lambda m: (
+                f"id={m.id} inventory_id={m.inventory_file_id} title={m.title!r} "
+                f"problems={m.problems.count()} reports={m.hit_reports.count()}"
+            ),
+        )
+        self._print_group(
+            "메시지 템플릿 (MessageTemplate)",
+            templates,
+            limit,
+            lambda t: (
+                f"id={t.id} name={t.name!r} default={t.is_user_default} "
+                f"autosend_refs={t.auto_send_configs.count()}"
+            ),
+        )
         self._print_group("시험 (Exam)", exams, limit, lambda e: f"id={e.id} type={e.exam_type} title={e.title!r}")
         self._print_group("과제 (Homework)", homeworks, limit, lambda h: f"id={h.id} title={h.title!r}")
         self._print_group(
@@ -180,12 +220,27 @@ class Command(BaseCommand):
             ),
         )
 
+        target_groups = {
+            "exams": exams,
+            "fee_templates": fee_templates,
+            "homeworks": homeworks,
+            "matchups": matchups,
+            "posts": posts,
+            "students": students,
+            "templates": templates,
+        }
+        exact_token = build_confirmation_token(
+            tenant_id=tenant_id,
+            target_groups=target_groups,
+        )
+
         self.stdout.write(self.style.HTTP_INFO(f"\n=== 합계: {total}건 ==="))
+        self.stdout.write(f"확인 토큰 (exact targets): {exact_token}")
 
         if not execute:
             self.stdout.write(self.style.WARNING(
                 "--dry-run 모드 (기본값). 실제 삭제하지 않음.\n"
-                "삭제하려면 다시 실행 시 --execute 추가."
+                "삭제하려면 동일 대상에 대해 --execute --confirm-token <위 토큰>을 사용."
             ))
             return
 
@@ -193,11 +248,34 @@ class Command(BaseCommand):
             self.stdout.write("삭제할 잔재 없음 — 종료.")
             return
 
-        # 삭제 실행
+        if confirm_token != exact_token:
+            raise CommandError(
+                "확인 토큰이 없거나 현재 exact target set과 일치하지 않습니다. "
+                "dry-run을 다시 실행해 대상 ID를 검토하세요."
+            )
+
+        self._validate_execute_targets(
+            students=students,
+            matchups=matchups,
+            templates=templates,
+        )
+        storage_deleted = self._delete_external_storage(
+            tenant_id=tenant_id,
+            posts=posts,
+            matchups=matchups,
+        )
+
+        # 외부 저장소 삭제가 모두 검증된 뒤 DB를 한 트랜잭션으로 정리한다.
         with transaction.atomic():
-            s_del = sum(s.delete()[0] for s in students)
+            from apps.domains.students.services.lifecycle import permanently_delete_students
+
+            student_result = permanently_delete_students(
+                tenant=tenant,
+                student_ids=[student.id for student in students],
+            )
+            s_del = student_result.deleted_count
             p_del = sum(p.delete()[0] for p in posts)
-            m_del = sum(m.delete()[0] for m in matchups)
+            m_del = sum(m.inventory_file.delete()[0] for m in matchups)
             t_del = sum(t.delete()[0] for t in templates)
             exam_ids = [exam.id for exam in exams]
             result_del = (
@@ -238,7 +316,8 @@ class Command(BaseCommand):
             f"\n삭제 완료:\n"
             f"  - 학생 cascade rows: {s_del}\n"
             f"  - 게시글 cascade rows: {p_del}\n"
-            f"  - 매치업 cascade rows: {m_del}\n"
+            f"  - 매치업/인벤토리 cascade rows: {m_del}\n"
+            f"  - R2 objects verified deleted: {storage_deleted}\n"
             f"  - 템플릿 cascade rows: {t_del}\n"
             f"  - 시험 결과 cascade rows: {result_del}\n"
             f"  - 시험 제출 cascade rows: {submission_del}\n"
@@ -248,6 +327,102 @@ class Command(BaseCommand):
             f"  - 수납 비목 cascade rows: {f_del}\n"
             f"  - 수납 비목 비활성화: {f_deactivated}"
         ))
+
+    @staticmethod
+    def _validate_execute_targets(*, students, matchups, templates) -> None:
+        active_student_ids = [student.id for student in students if student.deleted_at is None]
+        if active_student_ids:
+            raise CommandError(
+                "활성 학생은 E2E 표식만으로 영구 삭제하지 않습니다. "
+                f"먼저 공식 soft-delete 수명주기를 완료하세요: ids={active_student_ids}"
+            )
+
+        referenced_template_ids = [
+            template.id
+            for template in templates
+            if template.is_user_default or template.auto_send_configs.exists()
+        ]
+        if referenced_template_ids:
+            raise CommandError(
+                "기본/자동발송 참조 템플릿은 자동 정리하지 않습니다: "
+                f"ids={referenced_template_ids}"
+            )
+
+        from apps.domains.matchup.services import document_has_protected_matchup_problems
+
+        protected_document_ids = []
+        for document in matchups:
+            has_authored_report = document.hit_reports.exclude(
+                status="draft",
+                submitted_at__isnull=True,
+                summary="",
+                entries__isnull=True,
+            ).exists()
+            if (
+                document_has_protected_matchup_problems(document)
+                or has_authored_report
+            ):
+                protected_document_ids.append(document.id)
+        if protected_document_ids:
+            raise CommandError(
+                "수동 컷/핀 또는 작성된 보고서가 있는 매치업 문서는 자동 정리하지 않습니다: "
+                f"ids={protected_document_ids}"
+            )
+
+    @staticmethod
+    def _delete_external_storage(*, tenant_id: int, posts, matchups) -> int:
+        from apps.domains.community.models import PostAttachment
+        from apps.domains.matchup.models import ProblemSegmentationProposal
+        from apps.infrastructure.storage.r2 import (
+            delete_object_r2_storage,
+            head_object_r2_storage,
+        )
+
+        keys: list[str] = list(
+            PostAttachment.objects.filter(post__in=posts)
+            .exclude(r2_key="")
+            .values_list("r2_key", flat=True)
+        )
+        for document in matchups:
+            if document.r2_key:
+                keys.append(document.r2_key)
+            if document.inventory_file.r2_key:
+                keys.append(document.inventory_file.r2_key)
+            for image_key, meta in document.problems.values_list("image_key", "meta"):
+                if image_key:
+                    keys.append(image_key)
+                cleanup = (meta or {}).get("public_cleanup")
+                public_key = cleanup.get("public_image_key") if isinstance(cleanup, dict) else ""
+                if public_key:
+                    keys.append(public_key)
+            keys.extend(
+                key
+                for key in ((document.meta or {}).get("page_image_keys") or [])
+                if isinstance(key, str) and key
+            )
+            keys.extend(
+                ProblemSegmentationProposal.objects.filter(document=document)
+                .exclude(image_key="")
+                .values_list("image_key", flat=True)
+            )
+
+        unique_keys = list(dict.fromkeys(keys))
+        wrong_tenant_keys = [
+            key for key in unique_keys
+            if not key.startswith(f"tenants/{tenant_id}/")
+        ]
+        if wrong_tenant_keys:
+            raise CommandError(
+                "테넌트 prefix 밖의 R2 key가 포함되어 저장소 정리를 중단합니다. "
+                f"count={len(wrong_tenant_keys)}"
+            )
+
+        for key in unique_keys:
+            delete_object_r2_storage(key=key)
+            exists, _size = head_object_r2_storage(key=key)
+            if exists:
+                raise CommandError("R2 삭제 readback 실패. DB 정리를 중단합니다.")
+        return len(unique_keys)
 
     def _print_group(self, label: str, items, limit: int, fmt):
         self.stdout.write(f"\n--- {label}: {len(items)}건 ---")
