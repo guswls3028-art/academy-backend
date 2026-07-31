@@ -80,7 +80,9 @@ function Get-RulesetBody {
         name = $rulesetName
         target = "branch"
         enforcement = "active"
-        bypass_actors = @($BypassActors)
+        bypass_actors = @(
+            $BypassActors | Where-Object { $null -ne $_ }
+        )
         conditions = [ordered]@{
             ref_name = [ordered]@{
                 include = @("~DEFAULT_BRANCH")
