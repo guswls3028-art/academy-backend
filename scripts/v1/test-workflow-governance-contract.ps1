@@ -57,6 +57,7 @@ foreach ($marker in @(
     "automated-security-fixes",
     "required_status_checks",
     "protection_rules",
+    "rollbackReviewRules",
     "allowed_actions"
 )) {
     if (-not $governanceScript.Contains($marker)) {

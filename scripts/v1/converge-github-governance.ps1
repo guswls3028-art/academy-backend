@@ -357,8 +357,12 @@ function Assert-RepositoryGovernance {
             $rollback = Invoke-GhJson -Arguments @(
                 "$repoPath/environments/production-rollback"
             )
+            $rollbackReviewRules = @(
+                $rollback.protection_rules |
+                    Where-Object { [string]$_.type -eq "required_reviewers" }
+            )
             if (
-                @($rollback.protection_rules).Count -ne 0 -or
+                $rollbackReviewRules.Count -ne 0 -or
                 -not [bool]$rollback.deployment_branch_policy.protected_branches -or
                 [bool]$rollback.deployment_branch_policy.custom_branch_policies
             ) {
