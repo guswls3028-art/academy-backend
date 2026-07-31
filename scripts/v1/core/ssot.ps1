@@ -129,6 +129,7 @@ function Load-SSOT {
     $script:EcrUseLatestTag = ($p["ecr"]["useLatestTag"] -eq "true")
     $script:GitHubActionsDeployRoleName = if ($p["githubActions"] -and $p["githubActions"]["deployRoleName"]) { $p["githubActions"]["deployRoleName"] } else { "academy-gha-ecr-build" }
     $script:GitHubActionsDeployPolicyName = if ($p["githubActions"] -and $p["githubActions"]["deployPolicyName"]) { $p["githubActions"]["deployPolicyName"] } else { "EcrBuildPush" }
+    $script:GitHubActionsDevelopmentDeployPolicyName = if ($p["githubActions"] -and $p["githubActions"]["developmentDeployPolicyName"]) { $p["githubActions"]["developmentDeployPolicyName"] } else { "academy-gha-development-deploy" }
 
     $script:ApiAllocationId = Get-ParamFromRaw $raw "allocationId"
     if (-not $script:ApiAllocationId) { $script:ApiAllocationId = "" }

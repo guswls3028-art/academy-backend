@@ -29,6 +29,9 @@ USER appuser
 # Shared requirements (API + Worker same file)
 COPY requirements/constraints.txt requirements/requirements.txt ./requirements/
 RUN pip install --user --no-cache-dir -r requirements/requirements.txt
+# Batch must remain the only video entry boundary; validate the SSM bootstrap
+# module without starting a job or touching production resources.
+RUN python -c "from apps.worker.video_worker.batch_entrypoint import REQUIRED_KEYS, load_env_from_ssm_json; assert 'DJANGO_SETTINGS_MODULE' in REQUIRED_KEYS; print('video Batch entrypoint import OK')"
 # 헬스체크
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD kill -0 1 2>/dev/null || exit 1

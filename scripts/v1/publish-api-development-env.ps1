@@ -3,7 +3,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidatePattern('^sha-[0-9a-fA-F]{40}-run-[0-9]+-[0-9]+$')]
+    [ValidatePattern('^(?:sha-[0-9a-fA-F]{40}-run-[0-9]+-[0-9]+|manual-sha256-[0-9a-fA-F]{64})$')]
     [string]$ReleaseId,
     [string]$GithubOutputPath = "",
     [switch]$Ci = $false,

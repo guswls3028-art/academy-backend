@@ -9,6 +9,8 @@ param(
     [string]$ProductionEnvParameter = "/academy/api/env",
     [ValidatePattern('^/academy/api/preprod/db-credentials$')]
     [string]$PreprodCredentialParameter = "/academy/api/preprod/db-credentials",
+    [ValidatePattern('^/academy/r2/preprod/credentials$')]
+    [string]$PreprodR2CredentialParameter = "/academy/r2/preprod/credentials",
     [ValidatePattern('^/academy/api/preprod/env$')]
     [string]$PreprodEnvParameter = "/academy/api/preprod/env",
     [ValidatePattern('^[a-z][a-z0-9_]{2,62}$')]
@@ -32,6 +34,7 @@ if (-not $env:AWS_DEFAULT_REGION) { $env:AWS_DEFAULT_REGION = "ap-northeast-2" }
 $script:PlanMode = $false
 . (Join-Path $ScriptRoot "core\env.ps1")
 . (Join-Path $ScriptRoot "core\aws.ps1")
+. (Join-Path $ScriptRoot "core\candidate_env.ps1")
 Assert-AwsMutationIdentity | Out-Null
 
 function Get-RequiredSecureParameterValue {
@@ -51,9 +54,11 @@ function Get-RequiredSecureParameterValue {
 
 $productionEnvValue = Get-RequiredSecureParameterValue -Name $ProductionEnvParameter
 $credentialValue = Get-RequiredSecureParameterValue -Name $PreprodCredentialParameter
+$r2CredentialValue = Get-RequiredSecureParameterValue -Name $PreprodR2CredentialParameter
 try {
     $production = $productionEnvValue | ConvertFrom-Json
     $credential = $credentialValue | ConvertFrom-Json
+    $r2Credential = $r2CredentialValue | ConvertFrom-Json
 } catch {
     throw "API preprod source parameters must contain valid JSON objects."
 }
@@ -63,6 +68,9 @@ $productionDatabaseName = [string]$production.DB_NAME
 $productionDatabaseUser = [string]$production.DB_USER
 $credentialUser = [string]$credential.DB_USER
 $credentialPassword = [string]$credential.DB_PASSWORD
+$productionR2AccessKey = [string]$production.R2_ACCESS_KEY
+$productionR2SecretKey = [string]$production.R2_SECRET_KEY
+$productionVideoBucket = [string]$production.R2_VIDEO_BUCKET
 if ($settingsModule -ne "apps.api.config.settings.prod") {
     throw "Production API env does not select the production settings module."
 }
@@ -82,7 +90,18 @@ if (-not $credentialPassword -or $credentialPassword.Length -lt 32) {
 $production | Add-Member -NotePropertyName "DB_NAME" -NotePropertyValue $PreprodDatabaseName -Force
 $production | Add-Member -NotePropertyName "DB_USER" -NotePropertyValue $credentialUser -Force
 $production | Add-Member -NotePropertyName "DB_PASSWORD" -NotePropertyValue $credentialPassword -Force
-$production | Add-Member -NotePropertyName "ACADEMY_PREPROD_RELEASE_ID" -NotePropertyValue $ReleaseId -Force
+Set-IsolatedPreprodR2Values `
+    -Target $production `
+    -Credential $r2Credential `
+    -ProductionAccessKey $productionR2AccessKey `
+    -ProductionSecretKey $productionR2SecretKey `
+    -ProductionVideoBucket $productionVideoBucket
+Set-IsolatedPreprodApiValues `
+    -Target $production `
+    -ReleaseId $ReleaseId `
+    -CredentialPassword $credentialPassword
+Assert-IsolatedPreprodApiValues -Target $production -ReleaseId $ReleaseId
+Assert-IsolatedPreprodR2Values -Target $production -Credential $r2Credential
 $value = $production | ConvertTo-Json -Compress -Depth 20
 $put = Invoke-AwsJson @(
     "ssm", "put-parameter",
@@ -119,6 +138,8 @@ if (
 ) {
     throw "Versioned API preprod env readback does not match the release boundary."
 }
+Assert-IsolatedPreprodApiValues -Target $actual -ReleaseId $ReleaseId
+Assert-IsolatedPreprodR2Values -Target $actual -Credential $r2Credential
 
 $safeOutputs = [ordered]@{
     parameter_name = $PreprodEnvParameter

@@ -85,6 +85,7 @@ ENV TRANSFORMERS_OFFLINE=1
 RUN python -c "from apps.infrastructure.storage.r2_adapter import R2ObjectStorageAdapter" || (echo "ERROR: R2ObjectStorageAdapter not importable" && exit 1)
 # AI 파이프라인 의존: academy.adapters.ai.storage.downloader
 RUN python -c "from academy.adapters.ai.storage.downloader import download_to_tmp" || (echo "ERROR: download_to_tmp not importable" && exit 1)
+RUN python -c "import apps.worker.ai_worker.sqs_main_cpu; from academy.framework.workers.ai_sqs_worker import run_ai_sqs_worker; print('AI entrypoint import OK')"
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD kill -0 1 2>/dev/null || exit 1

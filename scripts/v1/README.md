@@ -61,9 +61,9 @@ pwsh scripts/v1/disable-legacy-deploy-crons.ps1 -Action Off -AwsProfile default
 - **상시 development gate**: 최초 1회
   `initialize-api-development.ps1 -AwsProfile <least-privilege-profile>`로
   전용 IAM/DB/SQS/SG와 개발 전용 R2 SecureString을 수렴하고 마지막 검증 release로 active 서버를
-  기동한다. CI는 이후 API/Tools 후보를
+  기동한다. CI는 이후 worker-only release를 포함한 모든 후보에서 API/Tools digest를
   `deploy-api-development.ps1`의 blue/green 검증에 통과시킨 뒤에만 임시
-  preprod로 진행한다. root ARN은 mutation 진입점에서 차단한다.
+  preprod로 진행한다. 수동 `deploy.ps1`도 같은 gate를 실행한다.
 - **development 접속**:
   `connect-api-development.ps1 -AwsProfile <profile>`은 active instance를
   정확히 1대로 확인한 뒤 localhost:18000 SSM tunnel만 연다. public
@@ -72,13 +72,15 @@ pwsh scripts/v1/disable-legacy-deploy-crons.ps1 -Action Off -AwsProfile default
   라우팅한다. 운영 Tools ASG는 `t4g.small` min/desired=0 scale-to-zero를
   유지하고, persistent development host만 별도 Tools container/process를
   함께 실행해 Excel/PPT/R2 실사용 smoke를 검증한다.
-- **ECR 이미지**: 6개 repo는 `IMMUTABLE_WITH_EXCLUSION`이며 단 하나의 `latest` wildcard exclusion만 둔다. CI는 먼저 `sha-<full git sha>-run-<run id>-<attempt>` 후보만 push하고, preprod·운영 런타임·학생 영상 검증 성공 후에만 여섯 digest를 `latest`로 승격·readback한다.
+- **ECR 이미지**: 6개 repo는 `IMMUTABLE_WITH_EXCLUSION`, 단 하나의 `latest` wildcard exclusion, `scanOnPush=true`를 exact readback한다. CI는 신규 digest scan 완료와 critical=0을 요구하고, preprod·운영 검증 성공 후에만 여섯 digest를 `latest`로 승격한다.
 - **런타임 불변성**: migration과 API/Messaging/AI/Tools Launch Template, Video Batch 8개 job definition은 모두 해당 빌드 tag를 `repo@sha256:...`로 해석해 사용한다. `latest`는 호환성 alias일 뿐 증거가 아니다.
 - **격리 DB 경계**: `converge-api-preprod-database.ps1`이
   `/academy/api/preprod/db-credentials`와 `academy_api_preprod_app` 역할을
   수렴한다. `publish-api-preprod-env.ps1`은 매 release마다 새 preprod SSM
-  version을 만들고, canary는 exact version/release ID와 운영 DB
-  `CONNECT=false`를 검증한다.
+  version을 만들 때 production signing secret과 messaging/billing/external-AI/
+  VAPID/static-AWS credential을 제거하고 production R2 key를
+  `/academy/r2/preprod/credentials`의 bucket-scoped read-only key로 교체한다.
+  canary는 exact version/release ID와 운영 DB `CONNECT=false`를 검증한다.
 - **expand/contract gate**:
   `scripts/lint/check_expand_contract_migrations.py`가 기존 migration 의미 변경과
   파괴적 operation을 차단한다. contract phase는 명시 metadata와
@@ -87,6 +89,10 @@ pwsh scripts/v1/disable-legacy-deploy-crons.ps1 -Action Off -AwsProfile default
 - **ECR cleanup fail-closed**: cleanup은 ASG/LT와 실제 desired InService 컨테이너 `RepoDigests`, 정확히 8개인 Video ACTIVE job definition, 마지막 complete/successful 6-image manifest(공통 base 포함)를 먼저 보호한다. inventory 누락, 부분 삭제 실패, verify 경고가 하나라도 있으면 nonzero로 종료한다.
 - **ASG pin + 보상**: `pin-asg-image.ps1`은 `$Default`·`$Latest`·숫자 version을 모두 해석한다. 태그 기반 legacy template은 현재 인스턴스의 실제 `RepoDigest`로 먼저 불변 baseline version을 만들고 ASG를 `$Latest`로 전환한 뒤 candidate digest를 적용한다. 이전 LT/default/실제 runtime digest를 state에 기록하며, pin·refresh·runtime 검증 실패 시 이전 version을 빈 override로 정확히 복제한 새 보상 version을 만들고 refresh/runtime을 다시 검증한다. 비용 baseline 복귀나 autoscaling 직후에는 healthy InService 수와 현재 desired가 수렴할 때까지 기다려 scale-in race를 실패로 오판하지 않으며, desired=0 ASG도 candidate LT digest를 직접 검증한다.
 - **공통 운영 mutation 락**: 정식 CI, 주간 ECR/Batch cleanup, 수동 deploy/rollback은 SSOT DynamoDB table `academy-v1-video-job-lock`의 한 조건부 lock key를 공유한다. acquire/renew/release는 owner와 TTL 조건을 검사하므로 동시 실행·만료 후 잘못된 release를 허용하지 않는다.
+- **수동 source freshness**: production `deploy.ps1`은 lock table 접근 전에
+  clean `main`, exact latest `origin/main`, complete/successful manifest ancestor를
+  요구한다. feature branch·dirty tree·stale checkout은
+  `assert-production-source-freshness.ps1`에서 실패한다.
 - **런타임 freshness 증거**: `deploy-api-and-verify-workers.ps1`은 성공 release manifest와 API/Messaging/AI/Tools LT 및 실제 InService 컨테이너 `RepoDigests`, 모든 Video Batch active job definition을 비교한다. refresh는 terminal `Successful`까지 기다리며 실패·취소·timeout을 실패 처리한다.
 - **selective-build 안전 경계**: `.dockerignore`, `docs/ssot/params.yaml`, `academy/`, `libs/`, `manage.py`, 공통 requirements, `apps/{shared,support,core,infrastructure}/`, `apps/api/common/`, worker settings 및 Django startup model/app/signal 변경은 모든 이미지를 빌드한다. Video가 import하는 messaging selector/service/scheduler, Messaging이 import하는 video Redis status cache, Tools가 import하는 AI callbacks/job_types와 오답노트 PDF 서비스·정답 포맷터·한글 폰트도 각각 consumer image를 재빌드한다.
 

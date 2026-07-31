@@ -19,6 +19,10 @@ USER appuser
 COPY requirements/constraints.txt requirements/common.txt requirements/worker-messaging.txt ./requirements/
 RUN pip install --user --no-cache-dir -r requirements/worker-messaging.txt
 
+# Candidate contract: the exact worker entrypoint and its queue/config imports
+# must load before an immutable image can be published.
+RUN python -c "import apps.worker.messaging_worker.sqs_main; print('messaging entrypoint import OK')"
+
 # 헬스체크
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD kill -0 1 2>/dev/null || exit 1

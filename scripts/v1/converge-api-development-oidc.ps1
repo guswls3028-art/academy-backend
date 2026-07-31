@@ -20,7 +20,7 @@ $script:PlanMode = $false
 Assert-AwsMutationIdentity | Out-Null
 Load-SSOT -Env prod | Out-Null
 
-$policyName = "academy-gha-development-deploy"
+$policyName = [string]$script:GitHubActionsDevelopmentDeployPolicyName
 $policyArn = "arn:aws:iam::$($script:AccountId):policy/$policyName"
 $roleName = [string]$script:GitHubActionsDeployRoleName
 $policyPath = Join-Path (
@@ -149,8 +149,11 @@ $attached = Invoke-AwsJson @(
     "--role-name", $roleName,
     "--output", "json"
 )
-if ($policyArn -notin @($attached.AttachedPolicies.PolicyArn)) {
-    throw "Development GitHub OIDC managed policy is not attached."
+if (
+    @($attached.AttachedPolicies).Count -ne 1 -or
+    [string]$attached.AttachedPolicies[0].PolicyArn -ne $policyArn
+) {
+    throw "Development GitHub OIDC policy must be the role's only attached managed policy."
 }
 
 Write-Host (

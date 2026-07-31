@@ -3,6 +3,7 @@
 # - Workers env: merge SQS, Redis into /academy/workers/env (preserves existing secrets from Bootstrap).
 # AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키 사용.
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "candidate_env.ps1")
 
 function Get-RuntimeApiBaseUrl {
     if ($script:FrontDomainApi -and $script:FrontDomainApi.Trim() -ne "") {
@@ -370,6 +371,8 @@ function Publish-ApiPreprodEnvCandidate {
     param(
         [string]$ParameterName = "/academy/api/preprod/env",
         [string]$CredentialParameterName = "/academy/api/preprod/db-credentials",
+        [ValidatePattern('^/academy/r2/preprod/credentials$')]
+        [string]$R2CredentialParameterName = "/academy/r2/preprod/credentials",
         [string]$DatabaseName = "academy_api_preprod",
         [string]$DatabaseUser = "academy_api_preprod_app",
         [Parameter(Mandatory = $true)]
@@ -411,10 +414,39 @@ function Publish-ApiPreprodEnvCandidate {
     if (-not $credentialPassword -or $credentialPassword.Length -lt 32) {
         throw "API preprod database password is missing or too short."
     }
+    $r2CredentialResult = Invoke-RequiredAwsJson -ErrorMessage "API preprod R2 credential read failed" -ArgsArray @(
+        "ssm", "get-parameter",
+        "--name", $R2CredentialParameterName,
+        "--with-decryption",
+        "--region", $script:Region,
+        "--output", "json"
+    )
+    if (-not $r2CredentialResult -or -not $r2CredentialResult.Parameter.Value) {
+        throw "API preprod R2 credential parameter is missing."
+    }
+    try {
+        $r2CredentialObject = [string]$r2CredentialResult.Parameter.Value | ConvertFrom-Json
+    } catch {
+        throw "API preprod R2 credential parameter must contain a JSON object."
+    }
+    $productionR2AccessKey = [string]$obj.R2_ACCESS_KEY
+    $productionR2SecretKey = [string]$obj.R2_SECRET_KEY
+    $productionVideoBucket = [string]$obj.R2_VIDEO_BUCKET
     $obj | Add-Member -NotePropertyName "DB_NAME" -NotePropertyValue $DatabaseName -Force
     $obj | Add-Member -NotePropertyName "DB_USER" -NotePropertyValue $DatabaseUser -Force
     $obj | Add-Member -NotePropertyName "DB_PASSWORD" -NotePropertyValue $credentialPassword -Force
-    $obj | Add-Member -NotePropertyName "ACADEMY_PREPROD_RELEASE_ID" -NotePropertyValue $ReleaseId -Force
+    Set-IsolatedPreprodR2Values `
+        -Target $obj `
+        -Credential $r2CredentialObject `
+        -ProductionAccessKey $productionR2AccessKey `
+        -ProductionSecretKey $productionR2SecretKey `
+        -ProductionVideoBucket $productionVideoBucket
+    Set-IsolatedPreprodApiValues `
+        -Target $obj `
+        -ReleaseId $ReleaseId `
+        -CredentialPassword $credentialPassword
+    Assert-IsolatedPreprodApiValues -Target $obj -ReleaseId $ReleaseId
+    Assert-IsolatedPreprodR2Values -Target $obj -Credential $r2CredentialObject
     $value = $obj | ConvertTo-Json -Compress -Depth 10
     $put = Invoke-RequiredAwsJson -ErrorMessage "API preprod env candidate write failed" -ArgsArray @(
         "ssm", "put-parameter",
@@ -446,6 +478,8 @@ function Publish-ApiPreprodEnvCandidate {
     ) {
         throw "API preprod env candidate versioned readback mismatch."
     }
+    Assert-IsolatedPreprodApiValues -Target $actual -ReleaseId $ReleaseId
+    Assert-IsolatedPreprodR2Values -Target $actual -Credential $r2CredentialObject
     $script:SsmApiPreprodEnv = $ParameterName
     $script:ApiPreprodDatabaseName = $DatabaseName
     $script:ApiPreprodDatabaseUser = $DatabaseUser

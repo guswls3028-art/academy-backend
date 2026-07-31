@@ -1,0 +1,79 @@
+$ErrorActionPreference = "Stop"
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+$workflowRoot = Join-Path $repoRoot ".github\workflows"
+$failures = @()
+
+foreach ($file in Get-ChildItem -LiteralPath $workflowRoot -File) {
+    $lineNumber = 0
+    foreach ($line in Get-Content -LiteralPath $file.FullName) {
+        $lineNumber++
+        if ($line -match 'uses:\s+([^\s#]+)') {
+            $action = $matches[1]
+            if ($action -notmatch '^\./' -and $action -notmatch '@[0-9a-f]{40}$') {
+                $failures += "$($file.Name):$lineNumber action is not commit-pinned: $action"
+            }
+        }
+    }
+}
+
+$productionWorkflow = Get-Content -LiteralPath (
+    Join-Path $workflowRoot "v1-build-and-push-latest.yml"
+) -Raw
+$qualityWorkflow = Get-Content -LiteralPath (
+    Join-Path $workflowRoot "quality-gate.yml"
+) -Raw
+$governanceScript = Get-Content -LiteralPath (
+    Join-Path $PSScriptRoot "converge-github-governance.ps1"
+) -Raw
+
+$requiredProductionMarkers = @(
+    "environment: production",
+    "Gate newly built images on completed ECR critical scan",
+    ".imageScanningConfiguration.scanOnPush == true",
+    "needs.build-and-push.result == 'success'",
+    "contents: read",
+    'ssh-key: ${{ secrets.ACADEMY_RELEASE_DEPLOY_KEY }}'
+)
+foreach ($marker in $requiredProductionMarkers) {
+    if (-not $productionWorkflow.Contains($marker)) {
+        $failures += "Production workflow is missing governance marker: $marker"
+    }
+}
+foreach ($marker in @(
+    "Backend static and migration contract",
+    "Backend Django smoke and deployment contracts",
+    "permissions:",
+    "contents: read"
+)) {
+    if (-not $qualityWorkflow.Contains($marker)) {
+        $failures += "Backend quality workflow is missing marker: $marker"
+    }
+}
+foreach ($marker in @(
+    "sha_pinning_required = `$true",
+    "academy-main-governance",
+    "production-rollback",
+    "Get-RequiredApprovingReviewCount",
+    "required_approving_review_count = `$RequiredApprovingReviewCount",
+    "automated-security-fixes",
+    "vulnerability-alerts",
+    "Ensure-ReleaseDeployKey",
+    'actor_type = "DeployKey"',
+    'actor_id = $null',
+    "required_status_checks",
+    "protection_rules",
+    "rollbackReviewRules",
+    "allowed_actions"
+)) {
+    if (-not $governanceScript.Contains($marker)) {
+        $failures += "GitHub governance script is missing marker: $marker"
+    }
+}
+if (-not (Test-Path -LiteralPath (Join-Path $repoRoot ".github\dependabot.yml"))) {
+    $failures += "Backend Dependabot configuration is missing."
+}
+
+if ($failures.Count -gt 0) {
+    throw ($failures -join [Environment]::NewLine)
+}
+Write-Host "WORKFLOW_GOVERNANCE_CONTRACT_PASS" -ForegroundColor Green

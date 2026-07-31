@@ -1,7 +1,7 @@
 # 배포 방식 개요
 
 **기준:** 실제 스크립트·워크플로우. 문서는 실행 방식과 일치하도록 유지한다.
-**최종 갱신:** 2026-07-30
+**최종 갱신:** 2026-07-31
 
 ---
 
@@ -25,9 +25,9 @@
 | 경로 | 트리거 | 서버 반영 방식 | 속도 |
 |------|--------|----------------|------|
 | **CI 자동 배포** | main push → GitHub Actions | build-and-push → 상시 격리 development(실사용 smoke) → 임시 격리 preprod(전용 DB migration+health) → 운영 migration → deploy-api/messaging/ai/tools/video → verify-deployment | ~20~40분 |
-| **수동 인프라 수렴** | `pwsh scripts/v1/deploy.ps1 -AwsProfile <approved-operator>` | 이미 검증·승격된 digest로 후보 env 준비 → 격리 preprod → 운영 env 승격 → API/worker/Batch/EventBridge/ALB 런타임 반영 | 20~30분 |
+| **수동 인프라 수렴** | clean·최신 `main`에서 `pwsh scripts/v1/deploy.ps1 -AwsProfile <approved-operator>` | 검증·승격된 digest → persistent development → 격리 preprod → 운영 env 승격 → API/worker/Batch/EventBridge/ALB 반영 | 30~45분 |
 
-- **env·이미지 소스:** 운영은 SSM `/academy/api/env` → `/opt/api.env`, development는 버전 고정 `/academy/api/development/env`·`/academy/workers/development/env`, `academy_api_development` DB와 개발 전용 큐/R2를 사용한다. preprod는 릴리스마다 운영 env에서 새 Advanced SecureString 버전을 만들되 `/academy/api/preprod/db-credentials`의 전용 `academy_api_preprod_app` 역할로 DB 사용자·비밀번호를 교체하고 릴리스 ID를 함께 고정한다. 이미지는 완전 성공 `docs/reports/release-manifest.latest.json`의 `academy-api@sha256:...`를 사용한다.
+- **env·이미지 소스:** 운영은 SSM `/academy/api/env` → `/opt/api.env`, development는 버전 고정 `/academy/api/development/env`·`/academy/workers/development/env`, `academy_api_development` DB와 개발 전용 큐/R2를 사용한다. preprod는 릴리스마다 운영 env에서 새 Advanced SecureString 버전을 만들되 `/academy/api/preprod/db-credentials`의 전용 `academy_api_preprod_app` 역할로 DB 사용자·비밀번호를 교체한다. 동시에 Django·tenant-binding secret을 preprod 전용으로 파생하고 SOLAPI, Toss/billing, 외부 AI, VAPID, 정적 AWS credential을 제거한다. CDN playback은 `/academy/r2/preprod/credentials`의 production key와 다른 bucket-scoped read-only R2 key로만 검증한다. 이미지는 완전 성공 `docs/reports/release-manifest.latest.json`의 digest만 사용한다.
 - **API 역할 불변조건:** `/academy/api/env`의 `DJANGO_SETTINGS_MODULE`은 `apps.api.config.settings.prod`, `/academy/workers/env`는 `apps.api.config.settings.worker`여야 한다. 누락·교차 오염·API env 조회 실패 시 배포를 중단하며 workers env에서 API env를 합성하지 않는다.
 - **격리 불변조건:** development와 preprod EC2는 운영 ASG/ALB에 등록하지 않는다. development는 inbound 없는 전용 보안그룹·instance profile·DB/큐/R2를 사용한다. preprod는 전용 instance profile, 정확한 SSM parameter version·릴리스 ID, 별도 DB·전용 DB 역할을 사용하며 그 역할의 운영 DB `CONNECT`가 거부되는지 실연결로 증명한다.
 
@@ -38,8 +38,8 @@
 main에 push하면 자동으로 서버 반영까지 완료된다:
 
 1. GitHub Actions `v1-build-and-push-latest.yml` 트리거
-2. lint, expand/contract migration guard와 smoke가 통과한 뒤 변경 감지 결과에 따라 필요한 이미지(base, api, video-worker, messaging-worker, ai-worker-cpu, tools-worker)만 linux/arm64 빌드해 ECR run-unique `:sha-*` 후보로 푸시한다. `:latest`는 이 시점에 움직이지 않는다. 자동 push는 contract migration을 차단하고, 이미 expand release가 완전히 배포된 contract만 주석과 사유를 기록한 뒤 명시적 `workflow_dispatch` 입력으로 허용한다. `workflow_dispatch` 또는 core/shared 변경은 전체 빌드.
-3. `verify-api-development` job → 같은 release manifest의 API/Tools digest를 상시 격리 development에 blue/green 방식으로 배포한다. 전용 DB migration, 운영 DB·R2 접근 거부, 개발 큐/R2/Redis, `/healthz`, `/health`, 이미지 identity와 합성 XLSX/PPT/R2 실사용 smoke가 모두 통과해야 candidate를 active로 승격한다.
+2. lint, expand/contract migration guard와 smoke가 통과한 뒤 변경 감지 결과에 따라 필요한 이미지(base, api, video-worker, messaging-worker, ai-worker-cpu, tools-worker)만 linux/arm64 빌드해 ECR run-unique `:sha-*` 후보로 푸시한다. 각 worker Dockerfile은 실제 entrypoint import를 build-time에 검증한다. 모든 ECR repo는 scan-on-push이며 새로 빌드한 digest의 scan 완료와 critical finding 0을 요구한다(high은 경고와 remediation 대상으로 남긴다). `:latest`는 이 시점에 움직이지 않는다.
+3. `verify-api-development` job → API/Tools 변경 여부와 무관하게 모든 release candidate에서 같은 manifest의 API/Tools digest를 상시 격리 development에 blue/green 방식으로 배포한다. 전용 DB migration, 운영 DB·R2 접근 거부, 개발 큐/R2/Redis, `/healthz`, `/health`, 이미지 identity와 합성 XLSX/PPT/R2 실사용 smoke가 모두 통과해야 candidate를 active로 승격한다.
 4. `verify-api-preprod` job → development를 통과한 API digest로 릴리스 고정 env 버전을 만들고 임시 격리 EC2 1대를 기동해 별도 DB에 migration을 적용한다. prod settings, DB 이름·전용 역할, 운영 DB CONNECT 거부, env version·release ID, `/healthz`, DB 포함 `/health`, 실제 CDN chain을 모두 확인한 뒤 종료한다.
 5. preprod 성공 후에만 `run-migrations`가 운영 DB migration을 실행한다.
 6. 모든 `deploy-api`, `deploy-messaging`, `deploy-ai`, `deploy-tools`, `deploy-video` job은 같은 development·preprod 성공 결과를 공통 선행조건으로 사용한다.
@@ -60,7 +60,7 @@ main에 push하면 자동으로 서버 반영까지 완료된다:
     계속하므로, 이전 attempt의 lock 해제 뒤에도 잠금 없이 compatibility
     alias를 변경하지 않는다.
 
-**IAM:** 일반 CI는 장기 access key가 아니라 main 브랜치만 신뢰하는 GitHub OIDC 역할 `academy-gha-ecr-build`을 사용한다. development 권한은 별도 관리형 정책 `academy-gha-development-deploy`로 제한하고, development EC2는 `academy-api-development-role`, preprod EC2는 `academy-api-preprod-canary-role`을 사용한다. 사용자가 명시적으로 승인한 수동 작업은 이미 구성된 account-root 또는 master credential을 사용할 수 있지만, mutation guard 경고 이후에도 동일한 lock·development·preprod·migration·rolling-health·readback 게이트를 모두 지켜야 하며 비밀값은 출력하지 않는다.
+**IAM:** 일반 CI는 장기 access key가 아니라 main 브랜치만 신뢰하는 GitHub OIDC 역할 `academy-gha-ecr-build`을 사용한다. production inline policy와 별도 관리형 development policy `academy-gha-development-deploy`를 저장소가 함께 소유하며, attached policy inventory가 정확히 그 하나인지 readback한다. development EC2는 `academy-api-development-role`, preprod EC2는 `academy-api-preprod-canary-role`을 사용한다. production mutation은 GitHub `production` environment 승인 뒤 시작한다. 상세 저장소 설정은 [github-governance.md](github-governance.md)를 따른다.
 
 ---
 
@@ -68,7 +68,7 @@ main에 push하면 자동으로 서버 반영까지 완료된다:
 
 - **목적:** 인프라 변경(Launch Template, UserData, ASG, ALB, SSM, Batch 등)을 반영할 때.
 - **실행:** `check-credentials.ps1`을 통과한 승인된 profile로 `pwsh scripts/v1/deploy.ps1 -AwsProfile <approved-operator>`
-- **동작:** Bootstrap → Ensure-Network/ECR → 운영 env 후보 준비(무변경) → candidate SSM/별도 DB 격리 검증 → 운영 env 원자 승격 → API/worker/Batch/EventBridge/ALB 런타임 반영 → After-Deploy Verification
+- **동작:** clean·최신 `origin/main`/성공 manifest 선조 관계 확인 → lock → Bootstrap/Ensure → 운영 env 후보 준비 → persistent development 실사용 검증 → fail-closed preprod/별도 DB 검증 → 운영 env 원자 승격 → 런타임 반영 → After-Deploy Verification
 - **언제 써야 하는지:**
   - Launch Template, UserData, ASG, ALB, SSM 파라미터 등 인프라 설정 변경 시
   - 출시 전/후, 안정 반영이 필요할 때
@@ -86,6 +86,7 @@ preproduction을 통과해야 한다. account-root는 명시적으로 승인된 
 ## 4. 주의사항
 
 - **문서와 스크립트 불일치 금지.** 배포 설명은 실제 `scripts/v1/deploy.ps1`, `.github/workflows/v1-build-and-push-latest.yml` 기준으로만 기술한다.
+- 수동 production mutation은 dirty tree, detached HEAD, `main` 이외 branch, `origin/main`보다 앞서거나 뒤진 checkout에서 시작하지 않는다. `assert-production-source-freshness.ps1` 실패는 우회하지 않는다.
 - **멀티테넌트:** 어떤 배포 경로를 쓰든 tenant fallback·default tenant·tenant 없는 query·cross-tenant 노출은 금지.
 - env는 SSM→/opt/api.env만 사용하며, development, preprod와 운영 parameter를 분리한다.
 - 운영 API 서버에 후보 이미지나 후보 env를 먼저 적용하지 않는다. 상시 development 검토와 `run-api-preprod-canary.ps1`의 임시 격리 검증이 모두 성공한 뒤에만 운영 API/worker Launch Template·ASG, Batch job definition, EventBridge, ALB 또는 운영 컨테이너 변경이 허용된다.

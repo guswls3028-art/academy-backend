@@ -1,7 +1,7 @@
 # V1.1.0 Deployment Architecture
 
 **Version:** V1.1.0
-**Date:** 2026-03-14 (checked 2026-07-29)
+**Date:** 2026-03-14 (checked 2026-07-31)
 **SSOT Status:** Active
 
 ## 1. Service Decomposition
@@ -43,7 +43,8 @@ git push main
 [run-tests] ─── smoke tests deploy gate
     |
     v
-[build-and-push] ─── build changed images ──> ECR (immutable :sha-XXXXXXXX candidate)
+[build-and-push] ─── entrypoint import + build ──> ECR immutable candidate
+    |                 └── scan-on-push complete + critical=0
     |
     v
 [verify-api-development] ─── persistent production-shaped EC2
@@ -53,8 +54,9 @@ git push main
     |                             + blue/green promote, then retire prior host
     |
     v
-[verify-api-preprod] ─── dedicated IAM + exact versioned SSM + dedicated DB role
+[verify-api-preprod] ─── dedicated IAM + exact versioned SSM + dedicated DB/R2 read roles
     |                     └── migrate + DB/role/prod-CONNECT denial
+    |                         + production provider/R2 key denial
     |                         + release identity + /healthz + /health + CDN, then terminate
     |                              |
     |                              v
@@ -96,7 +98,7 @@ git push main
 | `apps/worker/ai_worker/`, `apps/worker/omr/`, `apps/domains/`, `apps/support/ai/`, `apps/api/config/settings/(worker|base).py`, `models/`, `scripts/`, `academy/`, `libs/queue/`, `docker/ai-worker*`, `requirements/worker-ai*` | AI Worker |
 | `apps/worker/tools_worker/`, `apps/domains/tools/`, `apps/domains/ai/queueing/`, PDF 오답노트 서비스/정답 포맷터/한글 폰트, `apps/support/ai/services/sqs_queue.py`, `academy/(application/use_cases/tools|domain/tools|adapters/tools|framework/workers|adapters/queue/sqs)/`, `docker/tools-worker/`, `requirements/worker-tools.txt` | Tools Worker |
 
-`force_full` is a correctness boundary for code imported by more than one runtime. It builds all six images, including `academy-base`; service-specific paths retain selective builds. `workflow_dispatch` always performs a full build/deploy.
+`force_full` is a correctness boundary for code imported by more than one runtime. It builds all six images, including `academy-base`; service-specific paths retain selective builds. `workflow_dispatch` always performs a full build/deploy. Every worker Dockerfile imports its actual runtime entrypoint during the immutable build, so a candidate with a missing module or incompatible import cannot reach production deployment. Every release, including worker-only selective releases, still runs the persistent API/Tools development gate before preprod.
 Change predicates use the `changed_matches` here-string helper instead of `echo | grep -q`; this avoids a `pipefail`/SIGPIPE false negative on large multi-commit push ranges.
 Push change detection derives each service's diff base from that image's source commit in the last complete verified release manifest, not from `github.event.before`. Therefore a failed workflow followed by a small hotfix still includes earlier unshipped API/worker changes. Missing, non-ancestor, or malformed image source evidence fails safe to a full build.
 
@@ -261,7 +263,7 @@ On a fresh environment, the lock table itself is the sole allowed pre-lock boots
 
 On the first immutable-release cutover, manual deploy intentionally fails until that manifest exists. With all four existing runtime Launch Templates present, run `pwsh scripts/v1/converge-release-prerequisites.ps1 -AwsProfile default`; it converges and reads back only GitHub Actions IAM and ECR mutability, without changing LT, ASG, or Batch runtime state. The role can create versions only on those four templates; its `RunInstances` dry-run resources are derived from their actual AMI, security groups, ASG subnets, and instance profile, while PassRole stays restricted to the exact EC2/Batch roles. Then run one full `workflow_dispatch`; its verified six-image rollout bootstraps the first complete successful manifest. Selective builds are allowed only after that bootstrap.
 
-All six ECR repositories use `IMMUTABLE_WITH_EXCLUSION` with one `WILDCARD=latest` exclusion. CI and bootstrap both configure and read back that exact policy. Weekly cleanup inventories every ASG-level and running-instance Launch Template version, every desired InService container's actual `RepoDigests` through SSM, and every ACTIVE Batch job definition before deletion. It protects referenced parent and child manifests even when they fall outside the newest-ten retention window, and aborts all deletion if any required runtime cannot be inventoried exactly.
+All six ECR repositories use `IMMUTABLE_WITH_EXCLUSION` with one `WILDCARD=latest` exclusion and `scanOnPush=true`. CI and bootstrap both configure and read back that exact policy. Newly built digests must reach a completed ECR basic scan with zero critical findings before development/preprod; high findings are emitted as remediation warnings and are not silently discarded. Weekly cleanup inventories every ASG-level and running-instance Launch Template version, every desired InService container's actual `RepoDigests` through SSM, and every ACTIVE Batch job definition before deletion. It protects referenced parent and child manifests even when they fall outside the newest-ten retention window, and aborts all deletion if any required runtime cannot be inventoried exactly.
 
 Structural drift checks compare the API ASG's effective `$Latest` Launch Template version with the successful release manifest. The legacy `$Default` version is intentionally retained as historical state during the immutable cutover and is not runtime drift when the ASG is correctly pinned to `$Latest`.
 
@@ -348,3 +350,5 @@ This keeps 10 rollback points and aggressively cleans untagged manifests. See `I
 | `scripts/v1/resources/batch.ps1` | Video Batch CE/queue/job definition management |
 | `scripts/v1/resources/api.ps1` | API ASG + launch template management |
 | `scripts/v1/deploy.ps1` | Manual/bootstrap deployment (not used in CI/CD) |
+| `scripts/v1/assert-production-source-freshness.ps1` | Manual production clean/latest-main and successful-manifest guard |
+| `scripts/v1/converge-github-governance.ps1` | Read-only audit or explicit repository ruleset/Actions/environment convergence |

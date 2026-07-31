@@ -17,6 +17,34 @@ missing. `Sync-ApiEnvFromSSOT` validates the same contract before writing the
 parameter or refreshing API instances, so a deployment cannot silently fall
 back to an unsigned R2 URL.
 
+## Preprod API parameter: `/academy/api/preprod/env`
+
+This is a release-bound Advanced SecureString version, never a mutable alias for
+production. It keeps `DJANGO_SETTINGS_MODULE=apps.api.config.settings.prod` and
+the production-shaped CDN/R2 playback read path, but must change or remove all
+side-effect authority before publication:
+
+| Boundary | Contract |
+|----------|----------|
+| Runtime identity | `ACADEMY_RUNTIME_ENV=preprod`, exact `ACADEMY_PREPROD_RELEASE_ID` |
+| Database | `academy_api_preprod`, dedicated `academy_api_preprod_app` role, production DB `CONNECT` denied |
+| Signing | derived preprod `SECRET_KEY` and `MESSAGING_TENANT_BINDING_KEY`; no production values |
+| Messaging | `SOLAPI_MOCK=true`, credential fields empty, `MESSAGING_DRY_RUN_TRIGGERS=*` |
+| Billing | Toss disabled and keys empty; bank transfer and billing-key writes disabled |
+| External providers | OpenAI, Anthropic, VAPID private key, static AWS credential fields empty |
+| CDN/R2 | signing config는 유지하되 production R2 key는 제거. `/academy/r2/preprod/credentials`의 `ACCESS_MODE=read-only`, production과 다른 key pair, 같은 video bucket만 허용 |
+
+`Set-IsolatedPreprodApiValues` applies the boundary and
+`Assert-IsolatedPreprodApiValues` verifies both the in-memory candidate and the
+exact versioned SSM readback.
+
+`/academy/r2/preprod/credentials`는 bucket-scoped Object Read/List 전용
+Cloudflare R2 key를 담는다. JSON은 `ACCESS_MODE`, `R2_ENDPOINT`, `R2_REGION`,
+`R2_ACCESS_KEY`, `R2_SECRET_KEY`, `R2_VIDEO_BUCKET`을 포함한다. 코드의
+`ACCESS_MODE=read-only` 검증은 credential 발급 권한 자체를 증명하지 않으므로,
+운영자는 Cloudflare에서 대상 video bucket의 Object Read/List 외 권한이 없는
+token인지 별도 readback하고 증거를 보존한다.
+
 ## Worker parameter: `/academy/workers/env`
 
 ## Format

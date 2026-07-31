@@ -17,7 +17,7 @@ param(
     [ValidateRange(1, 100000)]
     [int]$ExpectedWorkersEnvVersion,
     [Parameter(Mandatory = $true)]
-    [ValidatePattern('^sha-[0-9a-fA-F]{40}-run-[0-9]+-[0-9]+$')]
+    [ValidatePattern('^(?:sha-[0-9a-fA-F]{40}-run-[0-9]+-[0-9]+|manual-sha256-[0-9a-fA-F]{64})$')]
     [string]$ExpectedReleaseId,
     [Parameter(Mandatory = $true)]
     [ValidatePattern('^[a-z][a-z0-9_]{2,62}$')]
