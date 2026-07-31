@@ -1,4 +1,5 @@
 # test.txt — complete local/CI backend test environment
+-r ./requirements.txt
 -r ./api.txt
 
 # Test runner and coverage reporting

@@ -34,6 +34,7 @@ def test_test_manifest_covers_runner_api_and_pdf_fixture_imports() -> None:
     requirements = TEST_REQUIREMENTS.read_text(encoding="utf-8")
 
     for required in (
+        "-r ./requirements.txt",
         "-r ./api.txt",
         "pytest==",
         "pytest-django==",
