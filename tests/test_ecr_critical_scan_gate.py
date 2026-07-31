@@ -118,3 +118,26 @@ def test_missing_scan_result_is_started_then_polled(monkeypatch: pytest.MonkeyPa
 
     assert completed["imageScanStatus"]["status"] == "COMPLETE"
     assert starts and starts[0][:2] == ["ecr", "start-image-scan"]
+
+
+def test_scan_start_quota_still_requires_completed_readback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    descriptions = iter(
+        [
+            {"imageScanStatus": None, "imageScanFindings": None},
+            {"imageScanStatus": {"status": "COMPLETE"}, "imageScanFindings": {}},
+        ]
+    )
+    monkeypatch.setattr(gate, "_describe_scan", lambda *_args: next(descriptions))
+
+    def _quota(*_args, **_kwargs):
+        raise gate.GateError("AWS ECR command failed: LimitExceededException")
+
+    monkeypatch.setattr(gate, "_run_aws_json", _quota)
+
+    completed = gate.wait_for_completed_scan(
+        "academy-base", "sha256:" + "b" * 64, "ap-northeast-2", 2, 0
+    )
+
+    assert completed["imageScanStatus"]["status"] == "COMPLETE"

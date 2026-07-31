@@ -138,19 +138,27 @@ def wait_for_completed_scan(
     status_block = findings.get("imageScanStatus") or {}
     status = status_block.get("status")
     if not status:
-        _run_aws_json(
-            [
-                "ecr",
-                "start-image-scan",
-                "--repository-name",
-                repository,
-                "--image-id",
-                f"imageDigest={digest}",
-                "--region",
-                region,
-            ]
-        )
-        print(f"ECR_SCAN_STARTED repo={repository} digest={digest}")
+        try:
+            _run_aws_json(
+                [
+                    "ecr",
+                    "start-image-scan",
+                    "--repository-name",
+                    repository,
+                    "--image-id",
+                    f"imageDigest={digest}",
+                    "--region",
+                    region,
+                ]
+            )
+            print(f"ECR_SCAN_STARTED repo={repository} digest={digest}")
+        except GateError as exc:
+            if "LimitExceededException" not in str(exc):
+                raise
+            print(
+                f"::warning::ECR scan start quota is already consumed for "
+                f"{repository}@{digest}; require the existing scan to complete"
+            )
 
     for attempt in range(1, attempts + 1):
         findings = _describe_scan(repository, digest, region)

@@ -20,7 +20,8 @@
 
 1. 후보 manifest에 `source=built`인 각 digest의 scan 결과가 없으면 CI가
    repository-scoped `ecr:StartImageScan` 권한으로 scan을 호출한다. 재사용
-   digest라는 이유로 scan을 건너뛰지 않는다.
+   digest라는 이유로 scan을 건너뛰지 않는다. ECR이 동일 digest scan quota가
+   이미 소비됐다고 응답해도 기존 scan의 `COMPLETE` readback은 끝까지 요구한다.
 2. scan이 `COMPLETE`가 아니거나 finding identity(CVE, package, version)가
    불완전하면 실패 폐쇄한다.
 3. 승인되지 않은 Critical은 하나라도 있으면 development/preprod/production으로
