@@ -69,6 +69,7 @@ class HomeworkPolicyViewSet(viewsets.ModelViewSet):
                 return qs_base.none()
         return qs_base.filter(id=obj.id)
 
+    @transaction.atomic
     def partial_update(self, request, *args, **kwargs):
         obj = self.get_object()
 

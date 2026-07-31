@@ -5,23 +5,17 @@ HomeworkPolicy 변경 시 HomeworkScore 스냅샷(passed/clinic_required) 재계
 분리 사유: HomeworkPolicy(homework 도메인)는 HomeworkScore(homework_results 도메인)를 직접 조작하면 안 된다.
 정책 변경 → 결과 갱신은 homework_results 도메인의 책임이므로 service로 격리한다.
 
-2026-05-13: passed=False → True 로 전환되는 row 에 대해 ClinicLink 자동 해소.
-학원장 mental model — 커트라인 하향 시 학생들이 새로 합격되고 clinic 대상에서 빠짐.
-이전엔 HomeworkScore.passed/clinic_required 만 갱신하고 ClinicLink 잔존 → 셀은 PASS
-표시되지만 학생 이름 형광펜 + clinic 큐 잔존하는 결함이 있었음.
+정책 변경으로 판정이 바뀐 모든 row의 ClinicLink를 양방향 동기화한다.
+커트라인 하향 시 새 합격자의 링크를 해소하고, 상향 시 새 미달자의 링크를 만든다.
+HomeworkScore만 갱신해 성적표 판정과 clinic 큐가 어긋나는 상태를 허용하지 않는다.
 """
 
 from __future__ import annotations
 
-import logging
-
 from django.utils import timezone
 
 from apps.domains.homework_results.models import HomeworkScore
-from apps.support.homework_results.score_dependencies import resolve_homework_clinic_pass
-
-logger = logging.getLogger(__name__)
-
+from apps.support.homework_results.score_dependencies import sync_homework_clinic_link
 
 def recalc_scores_for_policy_change(*, policy) -> int:
     """
@@ -30,17 +24,20 @@ def recalc_scores_for_policy_change(*, policy) -> int:
     NOTE:
     - 점수 입력 시점에만 passed 계산하면, 정책(커트라인) 변경이 결과 화면에 반영되지 않는 문제가 발생한다.
     - 여기서는 score/max_score와 policy만으로 재계산 가능한 필드만 갱신한다.
-    - meta.status="NOT_SUBMITTED" 등 Progress/ClinicLink 연동은 다른 파이프라인(SSOT)이 담당한다.
+    - meta.status="NOT_SUBMITTED" 등 Progress 연동은 다른 파이프라인(SSOT)이 담당한다.
+    - 변경된 판정의 ClinicLink는 이 서비스가 같은 정책 변경 흐름에서 동기화한다.
     """
     session = policy.session
     tenant = policy.tenant
 
-    qs = HomeworkScore.objects.filter(
+    qs = HomeworkScore.objects.select_related("homework").filter(
         session=session,
         session__lecture__tenant=tenant,
         attempt_index=1,
     ).only(
         "id",
+        "homework_id",
+        "homework__meta",
         "score",
         "max_score",
         "passed",
@@ -59,11 +56,10 @@ def recalc_scores_for_policy_change(*, policy) -> int:
 
     now = timezone.now()
     changed: list[HomeworkScore] = []
-    newly_passed: list[HomeworkScore] = []
 
     for hs in qs.iterator(chunk_size=500):
         score = hs.score
-        max_score = hs.max_score
+        max_score = hs.homework.default_max_score if score is not None else None
 
         passed = False
         clinic_required = False
@@ -98,10 +94,12 @@ def recalc_scores_for_policy_change(*, policy) -> int:
                 passed = bool(rounded >= threshold)
                 clinic_required = bool(clinic_enabled and clinic_on_fail and (not passed))
 
-        if hs.passed != bool(passed) or hs.clinic_required != bool(clinic_required):
-            # passed False → True 전환 row 추적: 정책 하향에 의한 신규 합격
-            if (not hs.passed) and bool(passed):
-                newly_passed.append(hs)
+        if (
+            hs.max_score != max_score
+            or hs.passed != bool(passed)
+            or hs.clinic_required != bool(clinic_required)
+        ):
+            hs.max_score = max_score
             hs.passed = bool(passed)
             hs.clinic_required = bool(clinic_required)
             hs.updated_at = now
@@ -110,27 +108,21 @@ def recalc_scores_for_policy_change(*, policy) -> int:
     if changed:
         HomeworkScore.objects.bulk_update(
             changed,
-            fields=["passed", "clinic_required", "updated_at"],
+            fields=["max_score", "passed", "clinic_required", "updated_at"],
             batch_size=500,
         )
 
-    # 정책 하향으로 신규 합격된 row 의 미해소 ClinicLink 자동 해소.
-    # ClinicResolutionService.resolve_by_homework_pass 호출 (per-source).
-    if newly_passed:
-        for hs in newly_passed:
-            try:
-                resolve_homework_clinic_pass(
-                    enrollment_id=int(hs.enrollment_id),
-                    session_id=int(hs.session_id),
-                    homework_id=int(hs.homework_id),
-                    score=hs.score,
-                    max_score=hs.max_score,
-                )
-            except Exception:
-                logger.exception(
-                    "recalc_scores: resolve_by_homework_pass failed "
-                    "(hs=%s, enrollment=%s, homework=%s)",
-                    hs.id, hs.enrollment_id, hs.homework_id,
-                )
+    # 정책 상향/하향 모두 현재 합불과 ClinicLink를 같은 상태로 맞춘다.
+    for hs in changed:
+        if hs.score is None:
+            continue
+        sync_homework_clinic_link(
+            enrollment_id=int(hs.enrollment_id),
+            session=policy.session,
+            homework_id=int(hs.homework_id),
+            passed=bool(hs.passed),
+            score=hs.score,
+            max_score=hs.max_score,
+        )
 
     return len(changed)

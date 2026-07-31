@@ -13,6 +13,7 @@ from __future__ import annotations
 from rest_framework import serializers
 
 from apps.domains.homework.models import HomeworkPolicy
+from apps.support.homework.view_dependencies import minimum_live_homework_max_score
 
 
 class HomeworkPolicySerializer(serializers.ModelSerializer):
@@ -48,3 +49,25 @@ class HomeworkPolicyPatchSerializer(serializers.ModelSerializer):
             "clinic_enabled",
             "clinic_on_fail",
         ]
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if self.instance is None:
+            return attrs
+
+        mode = attrs.get("cutline_mode", self.instance.cutline_mode)
+        value = attrs.get("cutline_value", self.instance.cutline_value)
+        if mode != HomeworkPolicy.CutlineMode.COUNT:
+            return attrs
+
+        minimum = minimum_live_homework_max_score(session=self.instance.session)
+        if minimum is not None and float(value) > float(minimum[0]):
+            raise serializers.ValidationError(
+                {
+                    "cutline_value": (
+                        f"점수 커트라인({float(value):g}점)은 과제 '{minimum[1]}'의 "
+                        f"만점({float(minimum[0]):g}점)을 넘을 수 없습니다."
+                    )
+                }
+            )
+        return attrs

@@ -132,6 +132,31 @@ class SessionScoresRosterScopeTests(TestCase):
         self.assertEqual(len(rows[0]["exams"]), 1)
         self.assertEqual(len(rows[0]["homeworks"]), 1)
 
+    def test_session_scores_uses_configured_homework_max_score(self):
+        self.homework.meta = {"default_max_score": 43}
+        self.homework.save(update_fields=["meta", "updated_at"])
+        HomeworkScore.objects.create(
+            enrollment=self.active_enrollment,
+            session=self.session,
+            homework=self.homework,
+            score=41,
+            max_score=100,
+            passed=False,
+        )
+
+        request = self.factory.get(f"/api/v1/results/admin/sessions/{self.session.id}/scores/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+
+        response = SessionScoresView.as_view()(request, session_id=self.session.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["meta"]["homeworks"][0]["max_score"], 43.0)
+        self.assertEqual(
+            response.data["rows"][0]["homeworks"][0]["block"]["max_score"],
+            43.0,
+        )
+
     def test_session_scores_treats_session_student_as_omr_exam_target(self):
         ExamEnrollment.objects.filter(exam=self.exam, enrollment=self.active_enrollment).delete()
 

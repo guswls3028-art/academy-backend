@@ -45,3 +45,19 @@ def recalc_scores_for_policy_change(*, policy: Any) -> None:
     from apps.domains.homework_results.services.policy_recalc import recalc_scores_for_policy_change as _recalc
 
     _recalc(policy=policy)
+
+
+def minimum_live_homework_max_score(*, session: Any) -> tuple[float, str] | None:
+    from apps.domains.homework_results.models import Homework
+
+    homeworks = (
+        Homework.objects
+        .filter(session=session)
+        .exclude(meta__removed_from_session_at__isnull=False)
+        .order_by("id")
+    )
+    values = [
+        (homework.default_max_score, str(homework.title))
+        for homework in homeworks
+    ]
+    return min(values, key=lambda item: item[0]) if values else None

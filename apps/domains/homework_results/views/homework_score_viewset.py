@@ -36,6 +36,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status as drf_status
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
@@ -90,13 +91,24 @@ def _apply_score_and_policy(
     """
     HomeworkScore에 점수 반영 + HomeworkPolicy 계산
     """
+    configured_max_score = obj.homework.default_max_score
+    if score is not None and float(score) > configured_max_score:
+        raise ValidationError(
+            {
+                "score": (
+                    f"점수({float(score):g})가 설정된 과제 만점"
+                    f"({configured_max_score:g})을 초과할 수 없습니다."
+                )
+            }
+        )
+
     obj.score = score
-    obj.max_score = max_score
+    obj.max_score = configured_max_score if score is not None else None
 
     passed, clinic_required, _ = calc_homework_passed_and_clinic(
         session=obj.session,
         score=score,
-        max_score=max_score,
+        max_score=obj.max_score,
     )
 
     obj.passed = bool(passed)
@@ -452,7 +464,7 @@ class HomeworkScoreViewSet(ModelViewSet):
                 HomeworkScoreSerializer(obj).data,
                 status=drf_status.HTTP_200_OK,
             )
-        except Http404:
+        except (Http404, ValidationError):
             raise
         except Exception as e:
             logger.exception("quick_patch failed: %s", e)
