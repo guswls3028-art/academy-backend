@@ -38,8 +38,9 @@ implemented behavior into the current-state owner.
 - Preserve manual, user-authored, approved content and protected references.
   Automated analysis enters proposal/review flow where one exists.
 - Before delete, reset, recut, bulk rewrite, or storage cleanup, enumerate
-  exact tenant/object targets and counts, exclude user-created data, obtain
-  explicit approval, and verify post-state.
+  exact tenant/object targets and counts, exclude user-created data, confirm
+  the operation is inside the assigned task, and verify post-state. Ask only
+  when the exact target or scope cannot be resolved safely.
 - Keep business decisions inside the owning domain/application boundary.
 - Video, Messaging, AI, and Tools workers have separate queues and mutable
   state. Video encoding is AWS Batch only.
@@ -66,6 +67,28 @@ python -m pytest tests/test_smoke.py -v --tb=short -x
 
 Finish with `git diff --check` and `git status --short`. Stage explicit files
 only. Preserve pre-existing changes.
+
+## Standing task authority
+
+An assigned implementation, release, operations, or cleanup task authorizes
+its normal in-scope commit, push, PR, merge, messaging, deployment, production
+mutation, and residue cleanup steps. Proceed through the owning workflow
+without repeated approval prompts. This authority does not expand task scope,
+resolve an ambiguous destructive target, waive tenant or user-data protection,
+bypass a release window or continuity gate, or replace an approval required by
+an external platform.
+
+## Concurrent task isolation
+
+Keep canonical `C:\academy\backend` and `C:\academy\frontend` on clean `main`.
+For any change, create a uniquely owned worktree from current `origin/main`
+with `scripts/codex/session-worktree.ps1 -Action Start`; never share a
+worktree or edit a foreign dirty tree. One task is the release owner and all
+other tasks stop at an exact committed SHA plus CI evidence. A task closes only
+after its branch is merged or fully patch-equivalent and its worktree is clean;
+`-Action Close` refuses dirty, foreign, and uniquely unmerged worktrees. Use
+`-Action Sync` only after active tasks and releases finish. The full lifecycle
+and WIP handoff rules are in `docs/operations/concurrent-codex-sessions.md`.
 
 ## Mandatory preproduction and zero-downtime delivery
 
@@ -98,8 +121,8 @@ For every backend production release:
    flows. Only after all verification may compatibility `latest` aliases and
    the successful release manifest be promoted.
 
-Ordinary automation uses the repository GitHub OIDC role. Explicitly
-authorized manual work may use an already configured AWS account-root or
+Ordinary automation uses the repository GitHub OIDC role. Assigned manual
+production work may use an already configured AWS account-root or
 Cloudflare master credential, but must never print/copy its value or weaken
 the development, preproduction, migration, rolling-health, or post-deploy
 gates. Manual production mutation additionally requires a clean, exact latest

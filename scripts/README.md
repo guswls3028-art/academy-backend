@@ -31,6 +31,11 @@
 | 템플릿/데이터 점검 | `seed_templates.py`, `submit_templates_review.py`, `check_data_integrity.py`, `integrity_snapshot.py` |
 | legacy deploy cron 정리 | `scripts/v1/disable-legacy-deploy-crons.ps1` |
 
+동시 Codex 작업은 `scripts/codex/session-worktree.ps1`로 세션별 worktree를
+생성·점검·정리한다. 이 스크립트는 제품 배포 경로가 아니며, dirty 또는
+`origin/main`에 미병합된 worktree를 자동 삭제하지 않는다. 계약 테스트는
+`pwsh scripts/codex/test-session-worktree.ps1`이다.
+
 legacy hot/rapid deploy 스크립트는 live tree에서 제거했다. 운영 반영은 CI workflow 또는
 `scripts/v1/deploy.ps1` 기준으로만 판단한다.
 
