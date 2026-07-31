@@ -285,6 +285,32 @@ class AdminStudentGradesScopeTest(TestCase, ClinicTestMixin):
         self.assertIsNone(response.data["exams"][0]["session_type"])
         self.assertIsNone(response.data["exam_trend"][0]["session_type"])
 
+    def test_exam_history_keeps_type_but_not_session_when_multiple_same_type_sessions_link(self):
+        exam, _result = self._score(
+            title="여러 정규 차시 공통 시험",
+            order=2,
+            score=85,
+            max_score=100,
+        )
+        another_regular = self.data["lec_session"].__class__.objects.create(
+            lecture=self.data["lecture"],
+            order=3,
+            title="공통 시험 두 번째 정규 차시",
+            session_type="REGULAR",
+        )
+        exam.sessions.add(another_regular)
+
+        response = self._get(self.student.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        for row in (response.data["exams"][0], response.data["exam_trend"][0]):
+            self.assertEqual(row["session_type"], "REGULAR")
+            self.assertIsNone(row["session_id"])
+            self.assertIsNone(row["session_title"])
+            self.assertIsNone(row["session_order"])
+            self.assertIsNone(row["session_regular_order"])
+            self.assertIsNone(row["session_date"])
+
     def test_exam_history_exposes_rank_and_top_percentile_in_list_and_trend(self):
         exam, _ = self._score(
             title="석차 추이 테스트",

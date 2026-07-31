@@ -137,7 +137,7 @@ def primary_session_metadata_by_exam_and_lecture(
     metadata: dict[tuple[int, int], dict[str, Any]] = {}
     for key, rows in candidates.items():
         linked_types = {row["session_type"] for row in rows}
-        if len(linked_types) == 1:
+        if len(rows) == 1:
             metadata[key] = rows[0]
             continue
         metadata[key] = {
@@ -146,7 +146,7 @@ def primary_session_metadata_by_exam_and_lecture(
             "session_title": None,
             "session_order": None,
             "session_regular_order": None,
-            "session_type": None,
+            "session_type": rows[0]["session_type"] if len(linked_types) == 1 else None,
             "session_date": None,
         }
     return metadata

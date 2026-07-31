@@ -20,8 +20,9 @@
 - 연결된 차시 유형이 모두 `SUPPLEMENT`이면 `보강수업`이다.
 - 차시가 없거나 같은 시험·강의에 두 유형이 함께 연결되면 `UNCLASSIFIED`다.
 - `UNCLASSIFIED`는 `전체 결과`에만 포함한다. 정규나 보강으로 추측하지 않는다.
-- 학생 상세 성적 API도 혼합 연결을 `session_type=null`로 반환해 같은 규칙을
-  유지한다.
+- 학생 상세 성적 API도 혼합 연결을 `session_type=null`로 반환한다. 같은 유형의
+  여러 차시에 연결된 시험은 유형만 유지하고, 특정 차시 ID·제목·순서·날짜는
+  하나를 임의 선택하지 않고 `null`로 반환한다.
 
 현재 `Result`는 차시 외래키를 직접 갖지 않으므로 `(시험, 결과 수강 강의)`의 차시
 연결이 분류 근거다. 한 시험을 두 유형에 함께 연결해야 한다면 결과 단위 차시를 저장하는
@@ -34,6 +35,8 @@
 - 권한: 인증된 동일 테넌트 `teacher` 또는 `admin`
 - `session_type`: `all`(기본), `REGULAR`, `SUPPLEMENT`
 - 지원하지 않는 값은 `400 session_type invalid`로 실패한다.
+- 정규·보강 값은 `source=academy`에서만 유효하다. 다른 출처와 조합하면 화면에
+  보이지 않는 부분 필터가 생기지 않도록 `400`으로 실패한다.
 - `summary.session_type_result_count`는 현재 기간·강의·학생 검색·학년 범위 안의
   `all`, `REGULAR`, `SUPPLEMENT`, `UNCLASSIFIED` 최신 결과 건수를 반환한다. 탭을
   바꿔도 세 탭의 기준 건수는 유지된다.
@@ -57,7 +60,8 @@
   - 혼합 연결의 `UNCLASSIFIED` 실패 폐쇄
   - 잘못된 필터, 테넌트 격리, 캐시와 쿼리 수
 - `apps/domains/results/tests/test_admin_student_grades_scope.py`
-  - 학생 상세의 정규·보강 메타데이터와 혼합 연결 `null`
+  - 학생 상세의 정규·보강 메타데이터, 혼합 연결 `null`, 같은 유형의 여러 차시
+    연결에서 특정 차시를 추정하지 않는 계약
 - `frontend/e2e/admin/student-score-trend.spec.ts`
   - 상단 탭 접근성, 탭별 건수, 요약·명단·상세 동시 변경, 관리자 1366/1100px
   - 390px에서는 기존 반응형 라우팅에 따라 선생 모바일 학생 상세 추이 검증
