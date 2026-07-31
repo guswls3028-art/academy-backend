@@ -620,9 +620,12 @@ def test_stateful_image_rollback_fails_closed_before_aws(service: str) -> None:
     )
 
     output = completed.stdout + completed.stderr
+    normalized_output = " ".join(
+        re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", output).split()
+    )
     assert completed.returncode != 0
-    assert f"STATEFUL_IMAGE_ROLLBACK_BLOCKED service={service}" in output
-    assert "immutable release image" in output
+    assert f"STATEFUL_IMAGE_ROLLBACK_BLOCKED service={service}" in normalized_output
+    assert "immutable release image" in normalized_output
 
 
 def test_remote_api_tools_reuse_the_running_digest_pinned_image() -> None:
