@@ -64,7 +64,7 @@ class VideoPlaybackMixin:
         
         Policy behavior:
         - PROCTORED_CLASS: allow_seek=False or bounded_forward, max_speed=1.0, watermark enabled
-        - FREE_REVIEW: allow_seek=True, no restrictions, minimal logging
+        - FREE_REVIEW: monitoring/session writes disabled; video-level playback controls preserved
         """
         # Resolve access mode using SSOT
         access_mode = get_effective_access_mode(video=video, enrollment=enrollment)
@@ -125,14 +125,12 @@ class VideoPlaybackMixin:
             if not perm or perm.show_watermark_override is None:
                 watermark_enabled = True
         elif access_mode == AccessMode.FREE_REVIEW:
-            # FREE_REVIEW: no restrictions
-            if not perm or perm.allow_skip_override is None:
-                allow_seek = True
-                seek_policy = {
-                    "mode": "free",
-                    "forward_limit": None,
-                    "grace_seconds": 3,
-                }
+            # 복습은 모니터링만 해제하고 강사/학생별 재생 설정은 유지한다.
+            seek_policy = {
+                "mode": "free" if allow_seek else "blocked",
+                "forward_limit": None,
+                "grace_seconds": 3,
+            }
 
         return {
             "access_mode": access_mode.value,

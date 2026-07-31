@@ -761,10 +761,14 @@ class StudentVideoPlaybackView(APIView):
             f"play_url={play_url[:100] if play_url else None}..."
         )
 
-        # PROCTORED_CLASS: 탐색 제한 + 배속 1x + 워터마크
+        # FREE_REVIEW는 모니터링만 해제한다. 강사가 영상에 저장한
+        # 탐색/배속/워터마크 설정은 복습에서도 그대로 적용한다.
         is_proctored = access_mode_value == "PROCTORED_CLASS"
+        allow_seek = False if is_proctored else bool(getattr(video, "allow_skip", False))
+        max_speed = 1.0 if is_proctored else float(getattr(video, "max_speed", 1.0) or 1.0)
+        watermark_enabled = True if is_proctored else bool(getattr(video, "show_watermark", True))
         seek_policy = {
-            "mode": "bounded_forward" if is_proctored else "free",
+            "mode": "bounded_forward" if is_proctored else ("free" if allow_seek else "blocked"),
             "forward_limit": "max_watched" if is_proctored else None,
             "grace_seconds": 3,
         }
@@ -863,14 +867,14 @@ class StudentVideoPlaybackView(APIView):
             "policy": {
                 "access_mode": access_mode_value,
                 "monitoring_enabled": is_proctored,
-                "allow_seek": not is_proctored,
+                "allow_seek": allow_seek,
                 "seek": seek_policy,
                 "playback_rate": {
-                    "max": 1.0 if is_proctored else 16.0,
+                    "max": max_speed,
                     "ui_control": True,
                 },
                 "watermark": {
-                    "enabled": is_proctored,
+                    "enabled": watermark_enabled,
                     "mode": "overlay",
                 },
                 "source": {

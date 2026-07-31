@@ -256,6 +256,20 @@ cd C:\academy\backend
 python -m pytest tests\test_student_video_progress_enrollment_resolution.py -v --tb=short -x
 ```
 
+### Student video playback controls
+
+`FREE_REVIEW` and `PROCTORED_CLASS` decide whether monitored playback sessions
+and event writes are required. They do not erase the teacher's saved video
+controls. In review mode, `Video.allow_skip`, `Video.max_speed`, and
+`Video.show_watermark` are returned as the effective seek, playback-rate, and
+watermark policy. In proctored mode the stricter class controls remain in
+force. The student player must consume the nested `policy` returned by
+`GET /api/v1/student/video/videos/{video_id}/playback/`; the flat video fields
+are display metadata, not a second policy source.
+
+If playback policy cannot be resolved for the selected active enrollment, the
+request fails closed rather than choosing another enrollment or tenant.
+
 Add for frontend account/student UI changes:
 
 ```powershell
