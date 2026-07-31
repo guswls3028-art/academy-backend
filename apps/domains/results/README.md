@@ -94,12 +94,16 @@ Wrong-note PDF
   선택한다. 누적 범위는 차시 순서로 묶이며, 문제 이미지·학생 답·정답을 PDF에 싣는다.
 - 문제 이미지는 시험 설정의 답안 등록 → 이미지 등록에서 `ExamQuestion.image_key`로
   저장한다. 해설 이미지는 `QuestionExplanation.image_key`로 분리해 유지한다.
-- `POST /results/wrong-notes/pdf/`는 생성 책임이 없는 대기 job을 남기지 않는다.
-  요청 안에서 PDF를 만든 뒤 R2에 저장하고 `DONE` 또는 `FAILED`를 확정한다.
+- `POST /results/wrong-notes/pdf/`는 tenant 범위의 `WrongNotePDF`와 AI job을
+  transaction에서 기록한 뒤 tools worker 큐에 발행한다. 발행 성공은
+  `202 PENDING`, 발행 실패는 두 job을 `FAILED`로 닫고 `503`을 반환한다.
+  worker가 PDF를 R2에 저장하고 callback이 `DONE` 또는 `FAILED`를 확정한다.
   상태 API는 local media URL이 아니라 `application/pdf` attachment presigned URL을
   반환한다.
 - 조회·생성·다운로드는 교직원 전용이다. 한 학원에서 한 번에 한 PDF만 만들고,
-  생성은 최대 100문항·90초로 제한한다. 범위를 넘으면 현재 시험으로 좁혀 다시 만든다.
+  생성은 최대 100문항·90초로 제한한다. 현재 범위는 단일 시험 또는
+  `lecture_id + from_session_order`부터 현재까지이며 종료 회차 지정은 없다.
+  범위를 넘으면 현재 시험으로 좁혀 다시 만든다.
 - R2 이미지는 10MB·2천만 픽셀 상한과 제한 읽기/타임아웃을 적용하고 한 장씩
   처리한다. 학생 영구 삭제는 진행 중인 PDF가 있으면 중단하며, 저장된 PDF 객체를
   먼저 제거한 뒤 삭제를 계속한다.
@@ -138,6 +142,14 @@ Manual Scoring
 죽은 legacy serializer/service override 경로는 사용하지 않는다. 수동 입력은 반드시
 `Result`, `ResultItem`, `ExamAttempt.meta`를 일관되게 갱신해야 하며,
 objective + subjective 합산과 문항별 만점 검증을 깨면 안 된다.
+
+직접 채점표는 `GET/POST /results/admin/exams/{exam_id}/manual-grading/`의
+조회 → 미리보기(`apply=false`) → 원자적 확정(`apply=true`) 순서를 사용한다.
+화면의 **전원 결시로 설정**은 서버 쓰기 없이 현재 초안의 응시 상태만 바꾸며,
+제출한 학생을 다시 응시로 전환해 정오를 입력한 뒤 기존 미리보기·확정 절차를
+거친다. 결시 확정은 `ExamAttempt.meta.status=NOT_SUBMITTED`로 저장하고 문항
+결과를 제거한다. 결시 행은 상세 기록에는 남지만 점수·석차·백분위·응시자 평균
+및 추이 집계에서는 제외하며, 조회 응답 조립 단계에서도 이 값을 다시 차단한다.
 
 Session Assessment Inspection
 -----------------------------

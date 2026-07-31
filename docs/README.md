@@ -54,6 +54,7 @@ backend/docs/
 | 실행 파라미터 | [ssot/params.yaml](ssot/params.yaml) |
 | 레이어/코드 배치 | [architecture/hexagonal-cutover-policy.md](architecture/hexagonal-cutover-policy.md) |
 | 시험 생성·혼합 채점·오답노트 | [domain/exam-grading.md](domain/exam-grading.md) |
+| 시험 원본→회차 범위 HWPX 오답노트 계획 | [refactor/exam-wrong-note-hwpx-plan.md](refactor/exam-wrong-note-hwpx-plan.md) |
 | OMR 출력·인식 | [domain/omr.md](domain/omr.md) |
 | 배포 아키텍처 | [infrastructure/deployment-architecture.md](infrastructure/deployment-architecture.md) |
 | 배포 경로 비교 | [operations/deployment-modes.md](operations/deployment-modes.md) |

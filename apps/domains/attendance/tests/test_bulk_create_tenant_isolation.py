@@ -82,6 +82,15 @@ class TestBulkCreateTenantIsolation(TestCase):
         })
         self.assertEqual(resp.status_code, 201, f"응답: {resp.data}")
         self.assertEqual(len(resp.data), 1)
+        self.assertEqual(resp.data[0]["status"], "UNSET")
+        self.assertEqual(
+            Attendance.objects.get(
+                tenant=self.tenant_a,
+                session=self.session_a,
+                enrollment__student=self.student_a,
+            ).status,
+            "UNSET",
+        )
 
     def test_same_roster_request_is_idempotent(self):
         """같은 학생을 같은 차시에 반복 등록해도 로스터/출결은 1개만 유지된다."""

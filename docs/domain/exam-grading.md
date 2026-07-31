@@ -67,15 +67,24 @@ tenant가 없거나 다른 tenant의 시험이면 거부한다. 이미 분리 �
 
 ### 정오 입력
 
-| 화면 입력 | 저장 의미 | 점수 | 오답노트 |
+| 화면 표시 | 저장 의미 | 점수 | 오답노트 |
 |-----------|-----------|------|----------|
 | `O` | 정답 | 문항 만점 | 제외 |
 | `X` | 오답 | 0점 | 포함 |
-| `0` | 정답이지만 복습 지정 | 문항 만점 | 포함 |
+| `오답노트` | 정답이지만 복습 지정 | 문항 만점 | 포함 |
 
-여기서 `0`은 숫자 점수가 아니라 Ymath 채점표의 복습 표식이다.
+일반 화면은 세 번째 상태를 `오답노트` 또는 좁은 셀에서 `노트`로 표시한다.
+기본 단축키와 기존 Ymath 엑셀의 숫자 `0`은 호환 입력이며 숫자 점수가
+아니다.
 `ResultItem.is_correct=true`,
 `ResultItem.include_in_wrong_note=true`로 저장한다.
+
+**전원 결시로 설정**은 조회된 채점표의 로컬 초안만 일괄 변경한다. 조교는
+일부 답안만 먼저 받은 경우 전원을 결시로 놓고 제출한 학생만 응시로 되돌린 뒤
+정오를 입력할 수 있다. 이 동작은 실행 취소와 전체 초기화가 가능하며,
+`apply=false` 미리보기를 거쳐 `apply=true`를 누르기 전에는 결과를 쓰지 않는다.
+확정된 결시는 `NOT_SUBMITTED`로 남고 점수·석차·백분위·응시자 평균과 추이에서
+제외된다.
 
 ### 점수 입력
 
@@ -175,13 +184,26 @@ cross-tenant fallback을 사용하지 않는다.
 ## 오답노트와 통계
 
 오답노트 대상은 `ResultItem.is_correct=false` 또는
-`include_in_wrong_note=true`다. 따라서 `0`/복습 지정 문항은 점수와
+`include_in_wrong_note=true`다. 따라서 오답노트/복습 지정 문항은 점수와
 정답률에는 정답으로 남으면서 학생 오답노트에는 포함된다. 재채점으로
 오답도 아니고 복습 지정도 아닌 상태가 되면 누적 오답노트에서 빠진다.
 
 결시를 제외한 확정 결과는 기존 시험 요약, 문항 통계, 합격 판정과
 진행도 파이프라인이 읽는다. 선택형·답변형·혼합형이 별도 통계 저장소를
 만들지 않는다.
+
+현재 교직원 화면은 단일 시험 또는 수강 강의의 1회차부터 현재까지를
+선택하고 최대 100문항의 PDF를 만든다. API는 `WrongNotePDF`와 tools worker
+job을 tenant 범위에서 기록해 비동기로 생성하고, 완료 뒤 R2 attachment
+URL을 반환한다. `from_session_order`는 있지만 종료 회차를 지정하는
+`to_session_order`와 HWPX 출력은 아직 없다.
+
+Problem Studio의 HWPX 검수본 생성은 별도 교사 보조 흐름이다. 그 결과가
+시험 문항에 자동 저장되거나 오답노트 HWPX로 직접 이어진다고 안내하지
+않는다. 검수된 원본 문항 저장, 정확한 회차 범위와 편집 가능한 HWPX
+출력의 제안 계약은
+[시험 원본 → 회차 범위 오답노트 HWPX](../refactor/exam-wrong-note-hwpx-plan.md)에
+둔다.
 
 ## API 요약
 
@@ -194,6 +216,9 @@ cross-tenant fallback을 사용하지 않는다.
 | POST | `/results/admin/exams/{id}/manual-grading/` | 직접 채점 미리보기 또는 원자적 확정 |
 | GET | `/results/admin/exams/{id}/result-import/template/` | 시험 전용 엑셀 양식 다운로드 |
 | POST | `/results/admin/exams/{id}/result-import/` | 엑셀 미리보기 또는 원자적 확정 |
+| GET | `/results/wrong-notes` | 학생의 현재 대표 오답·복습 문항 조회 |
+| POST | `/results/wrong-notes/pdf/` | 비동기 PDF job 생성·tools worker 발행 |
+| GET | `/results/wrong-notes/pdf/{job_id}/` | job 상태와 완료된 attachment URL 조회 |
 
 ## 집중 검증
 
@@ -204,10 +229,15 @@ python manage.py test `
   --settings apps.api.config.settings.test
 
 python -m pytest tests/results/test_exam_result_excel_import.py -q
+
+python manage.py test `
+  apps.domains.results.tests.test_wrong_note_service `
+  apps.domains.results.tests.test_security_regression `
+  --settings apps.api.config.settings.test
 ```
 
 검증은 PDF 처리 상태, HWP 변환 안내, 잠긴 시험 보호, 정오·부분점수,
-`0` 복습 의미, 선택형 자동채점 정오 조회·직접 수정 차단과 OMR 보정 경계,
+오답노트와 기존 `0` 호환 의미, 선택형 자동채점 정오 조회·직접 수정 차단과 OMR 보정 경계,
 객관식·숫자 단답형이 섞인 원래 순서와 `answer_type`, 문항 배점
 합계·stale 배점 거부, 혼합형 OMR 보존, stale result version 거부,
-다중 시트 선택, tenant 차단과 오답노트 포함을 포함한다.
+다중 시트 선택, tenant 차단, 오답노트 포함과 PDF worker/R2 상태를 포함한다.

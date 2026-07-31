@@ -214,7 +214,11 @@ class AdminStudentGradesView(APIView):
             meta_status = ach_data.get("meta_status")
             is_not_submitted = meta_status == "NOT_SUBMITTED"
             max_attempt = retake_counts.get((enroll_id, eid), 1)
-            rank_info = exam_rank_maps.get(int(eid), {}).get(int(enroll_id), {})
+            rank_info = (
+                {}
+                if is_not_submitted
+                else exam_rank_maps.get(int(eid), {}).get(int(enroll_id), {})
+            )
 
             exam_list.append({
                 "exam_id": eid,
