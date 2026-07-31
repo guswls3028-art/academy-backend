@@ -1,6 +1,7 @@
 # Converge the separate customer-managed GitHub OIDC policy used only by the
 # persistent development runtime. The production inline deploy policy and
-# main-only OIDC trust are read back but never broadened here.
+# exact main-ref plus approved-production-environment OIDC trust are read back
+# but never broadened here.
 [CmdletBinding()]
 param(
     [string]$AwsProfile = "default"
@@ -51,15 +52,19 @@ $expectedProvider = (
     "arn:aws:iam::$($script:AccountId):oidc-provider/" +
     "token.actions.githubusercontent.com"
 )
-$expectedSubject = (
+$expectedSubjects = @(
+    "repo:guswls3028-art/academy-backend:environment:production",
     "repo:guswls3028-art/academy-backend:ref:refs/heads/main"
-)
+) | Sort-Object
+$actualSubjects = @(
+    $condition.'token.actions.githubusercontent.com:sub'
+) | Sort-Object
 if (
     [string]$trustStatement[0].Principal.Federated -ne $expectedProvider -or
     [string]$condition.'token.actions.githubusercontent.com:aud' -ne "sts.amazonaws.com" -or
-    [string]$condition.'token.actions.githubusercontent.com:sub' -ne $expectedSubject
+    ($actualSubjects -join "`n") -cne ($expectedSubjects -join "`n")
 ) {
-    throw "GitHub OIDC trust must remain backend main-only."
+    throw "GitHub OIDC trust must remain backend main-ref and production-environment only."
 }
 
 $current = Invoke-AwsJson @(
@@ -157,7 +162,7 @@ if (
 }
 
 Write-Host (
-    "API_DEVELOPMENT_OIDC_PASS role={0} policy={1} trust=main-only" -f
+    "API_DEVELOPMENT_OIDC_PASS role={0} policy={1} trust=main-and-production-environment" -f
     $roleName,
     $policyArn
 ) -ForegroundColor Green
