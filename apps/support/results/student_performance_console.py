@@ -16,7 +16,7 @@ from django.utils import timezone
 
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.exams.models import Exam
-from apps.domains.lectures.models import Lecture
+from apps.domains.lectures.models import Lecture, Session
 from apps.domains.results.models import Result, StudentReportedScore
 from apps.domains.students.models import Student
 from apps.support.results.student_reported_scores import serialize_reported_score
@@ -155,6 +155,7 @@ def _build_student_performance_console_uncached(
     search: str = "",
     grade: int | None = None,
     source: str = "overall",
+    session_type: str = "all",
     subject: str = "",
     score_band: str = "all",
     trend: str = "all",
@@ -266,6 +267,24 @@ def _build_student_performance_console_uncached(
     ).values("id", "title")
     exam_titles = {int(row["id"]): row["title"] for row in exam_rows}
 
+    session_types_by_exam_and_lecture: defaultdict[tuple[int, int], set[str]] = defaultdict(set)
+    for row in Session.objects.filter(
+        lecture__tenant=tenant,
+        lecture_id__in={lecture_id for _student_id, lecture_id in enrollment_student_lecture.values()},
+        exams__id__in=exam_titles,
+    ).values("exams__id", "lecture_id", "session_type"):
+        session_types_by_exam_and_lecture[
+            (int(row["exams__id"]), int(row["lecture_id"]))
+        ].add(str(row["session_type"]))
+
+    def classified_session_type(*, exam_id: int, row_lecture_id: int) -> str:
+        linked_types = session_types_by_exam_and_lecture.get((exam_id, row_lecture_id), set())
+        if linked_types == {Session.SessionType.REGULAR}:
+            return Session.SessionType.REGULAR
+        if linked_types == {Session.SessionType.SUPPLEMENT}:
+            return Session.SessionType.SUPPLEMENT
+        return "UNCLASSIFIED"
+
     result_query = (
         Result.objects.filter(
             target_type="exam",
@@ -304,13 +323,26 @@ def _build_student_performance_console_uncached(
         latest_result_by_exam[(student_id, int(result["target_id"]))] = {
             "exam_id": int(result["target_id"]),
             "lecture_id": row_lecture_id,
+            "session_type": classified_session_type(
+                exam_id=int(result["target_id"]),
+                row_lecture_id=row_lecture_id,
+            ),
             "title": exam_titles[int(result["target_id"])],
             "score_pct": score_pct,
             "recorded_at": result["recorded_at"],
         }
 
+    session_type_result_count = {
+        "all": len(latest_result_by_exam),
+        Session.SessionType.REGULAR: 0,
+        Session.SessionType.SUPPLEMENT: 0,
+        "UNCLASSIFIED": 0,
+    }
     results_by_student: defaultdict[int, list[dict[str, Any]]] = defaultdict(list)
     for (student_id, _exam_id), result in latest_result_by_exam.items():
+        session_type_result_count[result["session_type"]] += 1
+        if session_type != "all" and result["session_type"] != session_type:
+            continue
         results_by_student[student_id].append(result)
 
     reported_rows = list(
@@ -542,6 +574,7 @@ def _build_student_performance_console_uncached(
             "verified_mock_score_count": sum(
                 row["source_summaries"]["mock"]["scored_count"] for row in filtered_students
             ),
+            "session_type_result_count": session_type_result_count,
         },
         "filter_options": {
             "lectures": sorted(
@@ -576,10 +609,19 @@ def _performance_data_version(*, tenant: Any) -> tuple[tuple[int, str], ...]:
         values = queryset.aggregate(row_count=Count("pk"), latest_update=Max("updated_at"))
         return int(values["row_count"] or 0), str(values["latest_update"] or "")
 
+    session_exam_relations = Exam.sessions.through.objects.filter(exam__tenant=tenant).aggregate(
+        row_count=Count("pk"),
+        latest_id=Max("pk"),
+    )
     return (
         stamp(Student.objects.filter(tenant=tenant)),
         stamp(Enrollment.objects.filter(tenant=tenant)),
         stamp(Exam.objects.filter(tenant=tenant, exam_type=Exam.ExamType.REGULAR)),
+        stamp(Session.objects.filter(lecture__tenant=tenant)),
+        (
+            int(session_exam_relations["row_count"] or 0),
+            str(session_exam_relations["latest_id"] or ""),
+        ),
         stamp(Result.objects.filter(enrollment__tenant=tenant, target_type="exam")),
         stamp(StudentReportedScore.objects.filter(tenant=tenant)),
     )
@@ -594,6 +636,7 @@ def build_student_performance_console(
     search: str = "",
     grade: int | None = None,
     source: str = "overall",
+    session_type: str = "all",
     subject: str = "",
     score_band: str = "all",
     trend: str = "all",
@@ -614,6 +657,7 @@ def build_student_performance_console(
         search,
         grade,
         source,
+        session_type,
         subject,
         score_band,
         trend,
@@ -624,7 +668,7 @@ def build_student_performance_console(
         review_page_size,
     )
     digest = hashlib.sha256(repr(key_parts).encode("utf-8")).hexdigest()
-    cache_key = f"student-performance-console:v2:{tenant.id}:{digest}"
+    cache_key = f"student-performance-console:v3:{tenant.id}:{digest}"
     cached = cache.get(cache_key)
     if isinstance(cached, dict):
         return cached
@@ -636,6 +680,7 @@ def build_student_performance_console(
         search=search,
         grade=grade,
         source=source,
+        session_type=session_type,
         subject=subject,
         score_band=score_band,
         trend=trend,

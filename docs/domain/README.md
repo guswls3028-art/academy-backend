@@ -17,6 +17,7 @@
 | [student-lifecycle.md](student-lifecycle.md) | 학생 | 삭제/복원/영구삭제 생명주기 |
 | [staff-operations.md](staff-operations.md) | 직원 | 권한·퇴사·근태·비용·월마감·정산 표시 계약 |
 | [homework-grading.md](homework-grading.md) | 과제 | 과제별 만점, 차시 공통 합격 정책, 성적·클리닉 동기화 |
+| [student-performance-console.md](student-performance-console.md) | 성적 | 학생별 누적 성적과 정규·보강 결과 범위 |
 
 ## 도메인별
 

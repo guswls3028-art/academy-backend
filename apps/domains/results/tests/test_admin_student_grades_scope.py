@@ -264,6 +264,27 @@ class AdminStudentGradesScopeTest(TestCase, ClinicTestMixin):
             },
         )
 
+    def test_exam_history_does_not_guess_when_one_exam_links_both_session_types(self):
+        exam, _result = self._score(
+            title="정규 보강 혼합 시험",
+            order=2,
+            score=85,
+            max_score=100,
+        )
+        supplement = self.data["lec_session"].__class__.objects.create(
+            lecture=self.data["lecture"],
+            order=90,
+            title="혼합 시험 보강",
+            session_type="SUPPLEMENT",
+        )
+        exam.sessions.add(supplement)
+
+        response = self._get(self.student.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertIsNone(response.data["exams"][0]["session_type"])
+        self.assertIsNone(response.data["exam_trend"][0]["session_type"])
+
     def test_exam_history_exposes_rank_and_top_percentile_in_list_and_trend(self):
         exam, _ = self._score(
             title="석차 추이 테스트",

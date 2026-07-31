@@ -70,7 +70,7 @@ def primary_session_metadata_by_exam_and_lecture(
     tenant: Any,
     exam_lecture_pairs: set[tuple[int, int]],
 ) -> dict[tuple[int, int], dict[str, Any]]:
-    """Return the first matching session for each ``(exam, lecture)`` pair.
+    """Return unambiguous session metadata for each ``(exam, lecture)`` pair.
 
     Archived exams remain part of a student's score history, so this read does
     not require ``is_active=True``.  Scoping by the result enrollment's lecture
@@ -109,7 +109,7 @@ def primary_session_metadata_by_exam_and_lecture(
         .order_by("lecture_id", "order", "id")
     )
 
-    metadata: dict[tuple[int, int], dict[str, Any]] = {}
+    candidates: dict[tuple[int, int], list[dict[str, Any]]] = {}
     for session in sessions:
         lecture = session.lecture
         row = {
@@ -132,7 +132,23 @@ def primary_session_metadata_by_exam_and_lecture(
         for exam in session._student_grade_exams:
             key = (int(exam.id), int(session.lecture_id))
             if key in exam_lecture_pairs:
-                metadata.setdefault(key, row)
+                candidates.setdefault(key, []).append(row)
+
+    metadata: dict[tuple[int, int], dict[str, Any]] = {}
+    for key, rows in candidates.items():
+        linked_types = {row["session_type"] for row in rows}
+        if len(linked_types) == 1:
+            metadata[key] = rows[0]
+            continue
+        metadata[key] = {
+            **rows[0],
+            "session_id": None,
+            "session_title": None,
+            "session_order": None,
+            "session_regular_order": None,
+            "session_type": None,
+            "session_date": None,
+        }
     return metadata
 
 

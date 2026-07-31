@@ -54,11 +54,13 @@ class AdminStudentPerformanceView(APIView):
             parsed_ints[key] = value
 
         source = str(request.query_params.get("source") or "overall").strip()
+        session_type = str(request.query_params.get("session_type") or "all").strip()
         score_band = str(request.query_params.get("score_band") or "all").strip()
         trend = str(request.query_params.get("trend") or "all").strip()
         sort = str(request.query_params.get("sort") or "attention").strip()
         allowed_values = {
             "source": ({"overall", "academy", "school", "mock"}, source),
+            "session_type": ({"all", "REGULAR", "SUPPLEMENT"}, session_type),
             "score_band": ({"all", "under_60", "60_to_79", "80_plus", "unscored"}, score_band),
             "trend": ({"all", "up", "down", "flat", "insufficient"}, trend),
             "sort": ({"attention", "latest_desc", "change_desc", "name"}, sort),
@@ -79,6 +81,7 @@ class AdminStudentPerformanceView(APIView):
                 search=search,
                 grade=parsed_ints["grade"],
                 source=source,
+                session_type=session_type,
                 subject=subject,
                 score_band=score_band,
                 trend=trend,
