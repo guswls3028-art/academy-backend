@@ -18,6 +18,54 @@
       "rationale": "Debian classifies this as a no-DSA minor issue. The vulnerable native scanf %mc path with an explicit oversized width is not invoked by Academy's Python processes; ingress TLS terminates at ALB. Keep exact package-version matching until Debian publishes a stable fix."
     },
     {
+      "cve": "CVE-2026-12087",
+      "packageName": "perl",
+      "packageVersion": "5.40.1-6",
+      "repositories": [
+        "academy-base",
+        "academy-api",
+        "academy-video-worker",
+        "academy-messaging-worker",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ],
+      "expiresOn": "2026-08-14",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-12087",
+      "rationale": "Debian has no stable update for this constrained Perl pack_ip path. Perl is inherited from the reviewed upstream slim image, but Academy has no Perl script, interpreter invocation, or pack_ip call in any runtime entrypoint. Keep exact package-version matching until Debian publishes a stable fix."
+    },
+    {
+      "cve": "CVE-2026-13221",
+      "packageName": "perl",
+      "packageVersion": "5.40.1-6",
+      "repositories": [
+        "academy-base",
+        "academy-api",
+        "academy-video-worker",
+        "academy-messaging-worker",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ],
+      "expiresOn": "2026-08-14",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-13221",
+      "rationale": "Debian has no stable update for the oversized-regex trie path. Perl is inherited from the reviewed upstream slim image, while Academy has no Perl script or interpreter invocation and does not pass user-controlled regular expressions to Perl. Keep exact package-version matching until a stable fix exists."
+    },
+    {
+      "cve": "CVE-2026-57433",
+      "packageName": "perl",
+      "packageVersion": "5.40.1-6",
+      "repositories": [
+        "academy-base",
+        "academy-api",
+        "academy-video-worker",
+        "academy-messaging-worker",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ],
+      "expiresOn": "2026-08-14",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-57433",
+      "rationale": "Debian stable remains affected by crafted Storable deserialization. Perl is inherited from the reviewed upstream slim image, but Academy has no Perl execution path and never invokes Perl Storable on user-controlled data. Keep exact package-version matching until Debian publishes a stable fix."
+    },
+    {
       "cve": "CVE-2026-34872",
       "packageName": "mbedtls",
       "packageVersion": "3.6.5-0.1~deb13u1",
