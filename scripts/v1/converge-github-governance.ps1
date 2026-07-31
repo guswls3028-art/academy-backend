@@ -10,6 +10,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $rulesetName = "academy-main-governance"
+$releaseDeployKeyTitle = "academy-release-manifest-actions"
+$releaseDeployKeySecret = "ACADEMY_RELEASE_DEPLOY_KEY"
 
 function Invoke-GhJson {
     param(
@@ -69,6 +71,7 @@ function Get-RequiredApprovingReviewCount {
 function Get-RulesetBody {
     param(
         [string[]]$RequiredChecks,
+        [object[]]$BypassActors = @(),
         [ValidateRange(0, 1)]
         [int]$RequiredApprovingReviewCount
     )
@@ -77,13 +80,7 @@ function Get-RulesetBody {
         name = $rulesetName
         target = "branch"
         enforcement = "active"
-        bypass_actors = @(
-            [ordered]@{
-                actor_id = 15368
-                actor_type = "Integration"
-                bypass_mode = "always"
-            }
-        )
+        bypass_actors = @($BypassActors)
         conditions = [ordered]@{
             ref_name = [ordered]@{
                 include = @("~DEFAULT_BRANCH")
@@ -119,11 +116,68 @@ function Get-RulesetBody {
     }
 }
 
+function Ensure-ReleaseDeployKey {
+    param([string]$Repository)
+
+    $repoPath = "repos/$Owner/$Repository"
+    $keys = @(Invoke-GhJson -Arguments @("$repoPath/keys?per_page=100"))
+    $matchingKeys = @(
+        $keys | Where-Object { [string]$_.title -eq $releaseDeployKeyTitle }
+    )
+    $secrets = Invoke-GhJson -Arguments @("$repoPath/actions/secrets?per_page=100")
+    $hasSecret = @(
+        $secrets.secrets |
+            Where-Object { [string]$_.name -eq $releaseDeployKeySecret }
+    ).Count -eq 1
+    if (
+        $matchingKeys.Count -eq 1 -and
+        -not [bool]$matchingKeys[0].read_only -and
+        $hasSecret
+    ) {
+        return
+    }
+
+    foreach ($key in $matchingKeys) {
+        [void](Invoke-GhJson -Arguments @(
+            "-X", "DELETE", "$repoPath/keys/$($key.id)"
+        ))
+    }
+
+    $tempBase = Join-Path ([IO.Path]::GetTempPath()) (
+        "academy-release-deploy-" + [guid]::NewGuid().ToString("N")
+    )
+    try {
+        $keygenOutput = @(
+            & ssh-keygen -q -t ed25519 -N "" `
+                -C "$Owner/$Repository release manifest" -f $tempBase 2>&1
+        )
+        if ($LASTEXITCODE -ne 0) {
+            throw "ssh-keygen failed: $($keygenOutput -join [Environment]::NewLine)"
+        }
+        $publicKey = (Get-Content -LiteralPath "$tempBase.pub" -Raw).Trim()
+        [void](Invoke-GhJson -Arguments @("-X", "POST", "$repoPath/keys") -Body ([ordered]@{
+            title = $releaseDeployKeyTitle
+            key = $publicKey
+            read_only = $false
+        }))
+        Get-Content -LiteralPath $tempBase -Raw |
+            & gh secret set $releaseDeployKeySecret `
+                --repo "$Owner/$Repository" 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to store the release deploy key in GitHub Actions."
+        }
+    } finally {
+        Remove-Item -LiteralPath $tempBase, "$tempBase.pub" `
+            -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Set-RepositoryGovernance {
     param(
         [string]$Repository,
         [string[]]$RequiredChecks,
-        [bool]$NeedsPreviewEnvironment
+        [bool]$NeedsPreviewEnvironment,
+        [bool]$NeedsReleaseDeployKey
     )
     $repoPath = "repos/$Owner/$Repository"
     [void](Invoke-GhJson -Arguments @(
@@ -141,13 +195,31 @@ function Set-RepositoryGovernance {
         default_workflow_permissions = "read"
         can_approve_pull_request_reviews = $false
     }))
+    [void](Invoke-GhJson -Arguments @("-X", "PUT", "$repoPath/vulnerability-alerts"))
     [void](Invoke-GhJson -Arguments @("-X", "PUT", "$repoPath/automated-security-fixes"))
+
+    if ($NeedsReleaseDeployKey) {
+        Ensure-ReleaseDeployKey -Repository $Repository
+    }
 
     $ruleset = Get-RepositoryRuleset -Repository $Repository
     $requiredReviewCount = Get-RequiredApprovingReviewCount `
         -Repository $Repository
     $body = Get-RulesetBody `
         -RequiredChecks $RequiredChecks `
+        -BypassActors $(
+            if ($NeedsReleaseDeployKey) {
+                @(
+                    [ordered]@{
+                        actor_id = $null
+                        actor_type = "DeployKey"
+                        bypass_mode = "always"
+                    }
+                )
+            } else {
+                @()
+            }
+        ) `
         -RequiredApprovingReviewCount $requiredReviewCount
     if ($ruleset) {
         [void](Invoke-GhJson -Arguments @(
@@ -256,13 +328,34 @@ function Assert-RepositoryGovernance {
             [void]$drift.Add("Ruleset target, enforcement, or default-branch condition does not match.")
         }
         $bypassActors = @($rulesetDetails.bypass_actors)
-        if (
-            $bypassActors.Count -ne 1 -or
-            [int64]$bypassActors[0].actor_id -ne 15368 -or
-            [string]$bypassActors[0].actor_type -ne "Integration" -or
-            [string]$bypassActors[0].bypass_mode -ne "always"
-        ) {
-            [void]$drift.Add("Ruleset bypass inventory must contain only the GitHub Actions integration.")
+        if ($Repository -eq $BackendRepository) {
+            if (
+                $bypassActors.Count -ne 1 -or
+                $null -ne $bypassActors[0].actor_id -or
+                [string]$bypassActors[0].actor_type -ne "DeployKey" -or
+                [string]$bypassActors[0].bypass_mode -ne "always"
+            ) {
+                [void]$drift.Add("Backend ruleset bypass inventory must contain only the release deploy-key boundary.")
+            }
+            $deployKeys = @(Invoke-GhJson -Arguments @("$repoPath/keys?per_page=100"))
+            $releaseKeys = @(
+                $deployKeys |
+                    Where-Object { [string]$_.title -eq $releaseDeployKeyTitle }
+            )
+            $secrets = Invoke-GhJson -Arguments @("$repoPath/actions/secrets?per_page=100")
+            $releaseSecrets = @(
+                $secrets.secrets |
+                    Where-Object { [string]$_.name -eq $releaseDeployKeySecret }
+            )
+            if (
+                $releaseKeys.Count -ne 1 -or
+                [bool]$releaseKeys[0].read_only -or
+                $releaseSecrets.Count -ne 1
+            ) {
+                [void]$drift.Add("Backend release deploy key or Actions secret is missing or not write-scoped.")
+            }
+        } elseif ($bypassActors.Count -ne 0) {
+            [void]$drift.Add("Frontend ruleset must not have a bypass actor.")
         }
         foreach ($ruleType in @("deletion", "non_fast_forward")) {
             if (@($rulesetDetails.rules | Where-Object { [string]$_.type -eq $ruleType }).Count -ne 1) {
@@ -394,14 +487,16 @@ if ($Apply) {
             "Backend static and migration contract",
             "Backend Django smoke and deployment contracts"
         ) `
-        -NeedsPreviewEnvironment $false
+        -NeedsPreviewEnvironment $false `
+        -NeedsReleaseDeployKey $true
     Set-RepositoryGovernance `
         -Repository $FrontendRepository `
         -RequiredChecks @(
             "Hangul companion Windows COM contract",
             "Typecheck + Lint + Build"
         ) `
-        -NeedsPreviewEnvironment $true
+        -NeedsPreviewEnvironment $true `
+        -NeedsReleaseDeployKey $false
 }
 
 $auditFailures = [System.Collections.Generic.List[string]]::new()

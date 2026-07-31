@@ -25,12 +25,15 @@
 | preview/rollback | 해당 없음 | `preview`는 운영 mutation 없음. `production-rollback`은 승인 대기 없이 main 실패 보상만 허용 |
 | 보안 업데이트 | Dependabot security updates + 주간 dependency/Actions PR | 동일 |
 
-`academy-main-governance` ruleset의 유일한 bypass actor는 GitHub 공식
-`github-actions` Integration(id `15368`)이다. 백엔드 workflow가 검증 증빙
-파일을 `main`에 쓰는 현재 호환 경계 때문에 필요하다. 저장소 기본 token은
-read-only이고, `contents:write`는 production workflow의 build evidence와
-최종 release manifest job에만 선언한다. 다른 workflow에 write 권한을 추가할
-때는 bypass 범위가 넓어지는 것으로 보고 이 문서를 함께 재검토한다.
+개인 계정 소유 저장소 ruleset은 소유 조직에 속하지 않은 GitHub App을 bypass
+actor로 받을 수 없다. 따라서 백엔드 `academy-main-governance`의 유일한 bypass는
+`academy-release-manifest-actions` write deploy key이고, private key는 값 조회 없이
+`ACADEMY_RELEASE_DEPLOY_KEY` Actions secret에만 저장한다. 이 키는 production
+workflow가 검증 증빙과 최종 release manifest를 `main`에 쓰는 현재 호환 경계에만
+사용한다. 프론트엔드 ruleset에는 bypass actor가 없다. 저장소 기본 token은
+read-only이고, deploy key를 받는 checkout은 두 evidence-push job으로 제한한다.
+다른 workflow에 write 경계를 추가할 때는 bypass 범위가 넓어지는 것으로 보고 이
+문서를 함께 재검토한다.
 
 승인 수는 저장소의 실제 direct collaborator를 읽어 수렴한다. 현재처럼 push
 가능한 사람이 1명뿐이면 자기 PR을 스스로 승인할 수 없으므로 독립 승인을
@@ -65,7 +68,8 @@ Wrangler deploy step에 전달하지 않는다.
    bucket Object Read/List 전용 credential을 저장하고 Cloudflare 권한
    readback을 증거로 남긴다. 이 값들이 준비되기 전에는 두 PR을 merge하지
    않는다. 기존 global key를 제거하는 것은 새 workflow가 token으로 성공한
-   뒤다.
+   뒤다. 백엔드 release deploy key와 Actions secret은 4단계 `-Apply`가 생성하며,
+   개인키는 로컬 임시 파일에서 곧바로 secret store로 전달한 뒤 삭제한다.
 3. read-only audit를 실행한다. 미적용 상태에서는 nonzero가 정상이다.
 
    ```powershell
@@ -93,8 +97,9 @@ ruleset이나 environment를 먼저 삭제하는 방식으로 복구하지 않�
 
 - `converge-github-governance.ps1` 기본 실행은 read-only이며 drift에서 실패한다.
 - `-Apply`는 ruleset, Actions 기본 권한/SHA pinning, production/preview
-  environment, Dependabot security updates만 변경한다. 코드 push, merge,
-  workflow 실행 승인은 하지 않는다.
+  environment, vulnerability alerts, Dependabot security updates 및 백엔드 전용
+  release deploy key/secret만 변경한다. 코드 push, merge, workflow 실행 승인은
+  하지 않는다.
 - production environment 승인이 보이지 않으면 배포를 계속하지 않는다.
 - frontend token 오류는 global key 복귀보다 token scope/account/project binding을
   먼저 교정한다.

@@ -31,7 +31,8 @@ $requiredProductionMarkers = @(
     "Gate newly built images on completed ECR critical scan",
     ".imageScanningConfiguration.scanOnPush == true",
     "needs.build-and-push.result == 'success'",
-    "contents: read"
+    "contents: read",
+    'ssh-key: ${{ secrets.ACADEMY_RELEASE_DEPLOY_KEY }}'
 )
 foreach ($marker in $requiredProductionMarkers) {
     if (-not $productionWorkflow.Contains($marker)) {
@@ -55,6 +56,10 @@ foreach ($marker in @(
     "Get-RequiredApprovingReviewCount",
     "required_approving_review_count = `$RequiredApprovingReviewCount",
     "automated-security-fixes",
+    "vulnerability-alerts",
+    "Ensure-ReleaseDeployKey",
+    'actor_type = "DeployKey"',
+    'actor_id = $null',
     "required_status_checks",
     "protection_rules",
     "rollbackReviewRules",
