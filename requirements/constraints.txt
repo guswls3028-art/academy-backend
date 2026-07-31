@@ -20,7 +20,7 @@ botocore==1.42.62
 psycopg2-binary==2.9.11
 
 # Serialization / Validation
-pydantic==2.12.5
+pydantic==2.13.4
 
 # Spreadsheet import/export
 openpyxl==3.1.5
