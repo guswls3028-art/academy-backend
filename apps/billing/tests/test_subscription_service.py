@@ -10,7 +10,7 @@ SubscriptionService 단위 테스트.
 - exempt 테넌트 제외
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone as dt_timezone
 
 from django.test import TestCase
 from django.utils import timezone
@@ -345,6 +345,10 @@ class TestSinglePlanInvariant(SubscriptionServiceTestBase):
             name="Ymath", code="ymath", is_active=True
         )
         program = Program.objects.get(tenant=tenant)
+        Program.objects.filter(pk=program.pk).update(
+            created_at=datetime(2026, 7, 27, tzinfo=dt_timezone.utc),
+        )
+        program.refresh_from_db()
         program.plan = "pro"
         program.monthly_price = 198_000
         program.save(update_fields=["plan", "monthly_price"])

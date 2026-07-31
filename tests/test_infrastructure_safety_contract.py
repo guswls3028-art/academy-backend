@@ -66,6 +66,19 @@ CLOUDFLARE_MUTATION_SCRIPTS = (
     REPO_ROOT / "scripts" / "zone-dns-update-record.ps1",
 )
 
+PINNED_CHECKOUT_ACTION = re.compile(
+    r"uses: actions/checkout@[0-9a-f]{40} # v6"
+)
+PINNED_AWS_CREDENTIALS_ACTION = re.compile(
+    r"uses: aws-actions/configure-aws-credentials@[0-9a-f]{40} # v6"
+)
+
+
+def _pinned_action_position(block: str, pattern: re.Pattern[str]) -> int:
+    match = pattern.search(block)
+    assert match, f"pinned action not found: {pattern.pattern}"
+    return match.start()
+
 
 def test_cloudflare_mutation_scripts_require_explicit_should_process() -> None:
     for path in CLOUDFLARE_MUTATION_SCRIPTS:
@@ -183,8 +196,7 @@ def test_every_lock_renewing_deploy_job_checks_out_scripts_first() -> None:
     ):
         block = _job_block(workflow, job_name)
         assert "deployment_lock.py renew" in block
-        assert "actions/checkout@v6" in block
-        assert block.index("actions/checkout@v6") < block.index(
+        assert _pinned_action_position(block, PINNED_CHECKOUT_ACTION) < block.index(
             "deployment_lock.py renew"
         )
 
@@ -202,8 +214,10 @@ def test_release_and_weekly_workflows_share_repository_and_atomic_lock_concurren
 
 def test_every_deploy_oidc_step_has_a_bounded_action_timeout() -> None:
     workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
-    credential_action = "uses: aws-actions/configure-aws-credentials@v6"
-    credential_steps = workflow.split(credential_action)[1:]
+    steps = re.split(r"(?m)(?=^      - name: )", workflow)
+    credential_steps = [
+        step for step in steps if PINNED_AWS_CREDENTIALS_ACTION.search(step)
+    ]
 
     assert credential_steps
     for step in credential_steps:
@@ -312,7 +326,7 @@ def test_workflow_pins_build_inputs_migration_and_asg_runtime_images() -> None:
     assert 'IMAGE_TAG="${{ env.RELEASE_IMAGE_TAG }}"' in migrations
     assert 'ECR_IMAGE="${ECR_HOST}/academy-api@${IMAGE_DIGEST}"' in migrations
     assert "academy-api:latest" not in migrations
-    assert migrations.index("actions/checkout@v6") < migrations.index(
+    assert _pinned_action_position(migrations, PINNED_CHECKOUT_ACTION) < migrations.index(
         "deployment_lock.py renew"
     )
 

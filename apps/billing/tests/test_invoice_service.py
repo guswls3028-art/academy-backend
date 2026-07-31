@@ -9,7 +9,7 @@ InvoiceService 단위 테스트.
 - exempt 테넌트 제외
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone as dt_timezone
 from io import StringIO
 from unittest.mock import patch
 
@@ -36,6 +36,11 @@ class InvoiceServiceTestBase(TestCase):
             name="테스트학원", code="test_inv", is_active=True
         )
         self.program = Program.objects.get(tenant=self.tenant)
+        Program.objects.filter(pk=self.program.pk).update(
+            created_at=datetime(2026, 9, 1, tzinfo=dt_timezone.utc),
+            monthly_price=180_000,
+        )
+        self.program.refresh_from_db()
         self.program.subscription_status = "active"
         self.program.subscription_started_at = date(2026, 3, 13)
         self.program.subscription_expires_at = date(2026, 4, 12)

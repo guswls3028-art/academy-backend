@@ -40,6 +40,11 @@ class BillingApiTestBase(APITestCase):
         # ── Tenant A (주 테스트 대상) ──
         self.tenant_a = Tenant.objects.create(name="Academy A", code="api_test_a", is_active=True)
         self.program_a = Program.objects.get(tenant=self.tenant_a)
+        Program.objects.filter(pk=self.program_a.pk).update(
+            created_at=datetime(2026, 7, 27, tzinfo=dt_timezone.utc),
+            monthly_price=180_000,
+        )
+        self.program_a.refresh_from_db()
         self.program_a.subscription_status = "active"
         self.program_a.subscription_started_at = date(2026, 3, 13)
         self.program_a.subscription_expires_at = date(2026, 4, 12)
@@ -49,6 +54,11 @@ class BillingApiTestBase(APITestCase):
         # ── Tenant B (격리 테스트용) ──
         self.tenant_b = Tenant.objects.create(name="Academy B", code="api_test_b", is_active=True)
         self.program_b = Program.objects.get(tenant=self.tenant_b)
+        Program.objects.filter(pk=self.program_b.pk).update(
+            created_at=datetime(2026, 7, 27, tzinfo=dt_timezone.utc),
+            monthly_price=180_000,
+        )
+        self.program_b.refresh_from_db()
         self.program_b.subscription_status = "active"
         self.program_b.subscription_expires_at = date(2026, 5, 12)
         self.program_b.save()

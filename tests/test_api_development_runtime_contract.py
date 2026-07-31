@@ -188,6 +188,7 @@ def test_development_oidc_policy_is_separate_exact_and_main_only() -> None:
     by_sid = {statement["Sid"]: statement for statement in policy["Statement"]}
     converge = OIDC_CONVERGE.read_text(encoding="utf-8-sig")
     prerequisites = PREREQUISITES.read_text(encoding="utf-8-sig")
+    params = yaml.safe_load(PARAMS.read_text(encoding="utf-8"))
 
     assert len(by_sid) == len(policy["Statement"])
     run_resources = by_sid["DevelopmentRunInstances"]["Resource"]
@@ -207,7 +208,14 @@ def test_development_oidc_policy_is_separate_exact_and_main_only() -> None:
     assert "autoscaling:" not in OIDC_POLICY.read_text(encoding="utf-8")
     assert "Assert-AwsMutationIdentity" in converge
     assert "refs/heads/main" in converge
-    assert "academy-gha-development-deploy" in converge
+    assert (
+        '$policyName = [string]$script:GitHubActionsDevelopmentDeployPolicyName'
+        in converge
+    )
+    assert (
+        params["githubActions"]["developmentDeployPolicyName"]
+        == "academy-gha-development-deploy"
+    )
     assert "converge-api-development-oidc.ps1" in prerequisites
 
 
