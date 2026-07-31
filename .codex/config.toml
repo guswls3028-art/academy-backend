@@ -1,0 +1,4 @@
+# Academy tasks run without interactive approval prompts. Durable AGENTS.md
+# scope, data-protection, session-ownership, and release gates still apply.
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
