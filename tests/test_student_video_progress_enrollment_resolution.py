@@ -548,6 +548,38 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         self.assertGreaterEqual(len(query["sig"][0]), 32)
 
     @override_settings(CDN_HLS_BASE_URL="https://cdn.example.test", CDN_HLS_SIGNING_SECRET="")
+    def test_free_review_playback_preserves_teacher_video_controls(self):
+        self.video.allow_skip = False
+        self.video.max_speed = 1.0
+        self.video.show_watermark = True
+        self.video.save(update_fields=["allow_skip", "max_speed", "show_watermark"])
+
+        response = self._get_playback(enrollment_id=self.target_enrollment.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["policy"]["access_mode"], AccessMode.FREE_REVIEW.value)
+        self.assertFalse(response.data["policy"]["monitoring_enabled"])
+        self.assertFalse(response.data["policy"]["allow_seek"])
+        self.assertEqual(response.data["policy"]["seek"]["mode"], "blocked")
+        self.assertEqual(response.data["policy"]["playback_rate"]["max"], 1.0)
+        self.assertTrue(response.data["policy"]["watermark"]["enabled"])
+
+    @override_settings(CDN_HLS_BASE_URL="https://cdn.example.test", CDN_HLS_SIGNING_SECRET="")
+    def test_free_review_playback_allows_explicit_relaxed_video_controls(self):
+        self.video.allow_skip = True
+        self.video.max_speed = 2.0
+        self.video.show_watermark = False
+        self.video.save(update_fields=["allow_skip", "max_speed", "show_watermark"])
+
+        response = self._get_playback(enrollment_id=self.target_enrollment.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data["policy"]["allow_seek"])
+        self.assertEqual(response.data["policy"]["seek"]["mode"], "free")
+        self.assertEqual(response.data["policy"]["playback_rate"]["max"], 2.0)
+        self.assertFalse(response.data["policy"]["watermark"]["enabled"])
+
+    @override_settings(CDN_HLS_BASE_URL="https://cdn.example.test", CDN_HLS_SIGNING_SECRET="")
     def test_proctored_playback_issues_session_with_aware_expiry(self):
         Attendance.objects.create(
             tenant=self.tenant,

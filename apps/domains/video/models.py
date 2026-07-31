@@ -31,7 +31,7 @@ class AccessMode(models.TextChoices):
     """
     Video access mode enum.
     
-    - FREE_REVIEW: Free review mode (no restrictions)
+    - FREE_REVIEW: Review mode without monitoring; saved playback controls still apply
     - PROCTORED_CLASS: Proctored class mode (restrictions apply)
     - BLOCKED: Access blocked
     """
