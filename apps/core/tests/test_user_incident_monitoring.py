@@ -924,8 +924,9 @@ class DevAlertsWorkflowContractTests(SimpleTestCase):
             self.workflow,
         )
         self.assertIn('PUSH_COMMAND=""', self.workflow)
+        self.assertIn('CLEANUP_COMMAND=""', self.workflow)
         self.assertIn(
-            "sh -c '${PUSH_COMMAND}python manage.py check_dev_alerts",
+            "sh -c '${CLEANUP_COMMAND}${PUSH_COMMAND}python manage.py check_dev_alerts",
             self.workflow,
         )
 

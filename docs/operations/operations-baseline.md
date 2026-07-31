@@ -11,7 +11,13 @@ passes every gate below:
 1. GitHub Actions checks out `main` and uses the repository OIDC role.
    Explicitly authorized manual work may use an already configured account-root
    credential, but its value is never printed and no continuity gate changes.
-2. Lint, migration safety and smoke tests pass before image build.
+2. Lint, migration safety, smoke tests, and the complete backend pytest suite
+   pass before image build. The quality gate installs `requirements/test.txt`,
+   runs every default-collected test in three isolated coverage shards, combines
+   the data, and publishes the missing-line summary in the job log; a focused
+   smoke run remains the early fail-fast check. Product-code line coverage
+   excludes tests and migrations and may not fall below the measured 60.5%
+   baseline.
 3. Changed ARM64 images are pushed with a run-unique `sha-...-run-...` tag and
    resolved to immutable `sha256` digests.
 4. `verify-api-development` deploys the API/Tools digests to the persistent,
@@ -77,6 +83,10 @@ reports, or command output.
 2. Pin compatibility-sensitive packages in `requirements/constraints.txt`.
 3. Build the affected image and verify the installed version inside the
    candidate/runtime; do not treat a local `pip show` as production truth.
+4. Backend test-only packages belong in `requirements/test.txt`; this manifest
+   includes the API import surface plus PDF fixture dependencies so default
+   `pytest` collection and the CI coverage run use the same reproducible
+   environment.
 
 ## Security and data boundaries
 

@@ -1,0 +1,12 @@
+# test.txt — complete local/CI backend test environment
+-r ./requirements.txt
+-r ./api.txt
+
+# Test runner and coverage reporting
+pytest==9.1.1
+pytest-django==4.12.0
+coverage==7.15.2
+
+# PDF fixtures exercised by the broad suite but not required by the API runtime
+pdfplumber==0.11.10
+pdf2image==1.17.0

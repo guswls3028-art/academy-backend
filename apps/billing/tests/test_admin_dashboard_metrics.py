@@ -30,6 +30,6 @@ class AdminDashboardMetricTests(TestCase):
         response = AdminDashboardView.as_view()(request)
 
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertEqual(response.data["mrr"], 180_000)
+        self.assertEqual(response.data["mrr"], active.program.billing_monthly_price)
         self.assertEqual(response.data["total_tenants"], 1)
         self.assertEqual(response.data["status_counts"], {"active": 1})

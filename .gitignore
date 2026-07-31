@@ -76,6 +76,9 @@ tmp_api_env.json
 # 로컬 테스트 자료 (git 제외)
 로컬테스트자료/
 test-results/
+.coverage
+.coverage.*
+.coverage-*
 docs/reports/history/.staging-*/
 docs/reports/history/*.tmp
 docs/reports/deploy-verification-latest.md.*.tmp
