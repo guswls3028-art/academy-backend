@@ -42,6 +42,27 @@ def test_current_acceptance_is_exact_and_time_bounded() -> None:
     assert len(accepted) == 1
 
 
+def test_upstream_perl_findings_are_exact_and_expiring() -> None:
+    acceptances = gate.load_acceptances(
+        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-critical-risk-acceptance.json",
+        date(2026, 7, 31),
+    )
+    accepted = gate.evaluate_findings(
+        "academy-base",
+        _scan(
+            _finding("CVE-2026-12087", "perl", "5.40.1-6"),
+            _finding("CVE-2026-13221", "perl", "5.40.1-6"),
+            _finding("CVE-2026-57433", "perl", "5.40.1-6"),
+        ),
+        acceptances,
+    )
+    assert {key[1] for key, _ in accepted} == {
+        "CVE-2026-12087",
+        "CVE-2026-13221",
+        "CVE-2026-57433",
+    }
+
+
 @pytest.mark.parametrize(
     ("cve", "package", "version"),
     [

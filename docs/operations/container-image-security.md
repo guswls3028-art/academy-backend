@@ -11,7 +11,8 @@
   OCI index digest로 고정한다. 태그가 이동해도 승인되지 않은 OS 변경이 빌드에
   섞이지 않는다.
 - Docker Dependabot이 `/docker`를 매주 확인하며, base digest 변경은 일반 PR과
-  ECR scan을 다시 통과해야 한다.
+  ECR scan을 다시 통과해야 한다. Python 3.11 minor line을 유지하고 3.12+
+  전환은 별도 호환성 검증 없이는 자동 제안하지 않는다.
 - 런타임에는 앱이 실제 사용하는 패키지만 둔다. DB migration과 점검은 Django와
   AWS/RDS readback을 사용하므로 `postgresql-client` CLI는 제거했고, Python
   PostgreSQL 연결에 필요한 `libpq5`는 유지한다.
@@ -33,15 +34,19 @@
 5. 만료일 다음 날부터는 scan 전에 전체 게이트가 실패한다. 만료 연장은 새
    vendor 상태와 실제 사용 경로를 다시 검토한 PR로만 가능하다.
 
-현재 한시 항목은 Debian stable에 수정본이 아직 없고 Debian이 `no-dsa`/minor로
-분류한 glibc·Mbed TLS finding이다. glibc 취약 native `scanf` 경로와 Mbed TLS
-FFDH/TLS-session 경로는 Academy Python 앱의 실행 경로가 아니며, 공개 TLS는 ALB가
-종단한다. Mbed TLS는 API/Video/AI 이미지의 미디어 도구 전이 의존성이다. 이
-판단은 위험을 삭제하지 않으므로 정확한 버전에서만 2026-08-14까지 유효하다.
+현재 한시 항목은 Debian stable에 수정본이 아직 없거나 Debian이
+`no-dsa`/minor로 분류한 glibc·Mbed TLS·Perl finding이다. glibc 취약 native
+`scanf` 경로와 Mbed TLS FFDH/TLS-session 경로는 Academy Python 앱의 실행
+경로가 아니며, 공개 TLS는 ALB가 종단한다. Mbed TLS는 API/Video/AI 이미지의
+미디어 도구 전이 의존성이다. Perl은 고정한 upstream slim base에서 상속되지만
+저장소의 runtime 코드·Docker entrypoint·운영 스크립트에는 Perl script,
+interpreter, `pack_ip`, Storable 실행 경로가 없다. 이 판단은 위험을 삭제하지
+않으므로 정확한 버전에서만 2026-08-14까지 유효하다.
 
-불필요한 `postgresql-client`가 끌어오던 Perl Critical은 예외 처리하지 않고
-패키지 자체를 제거한다. vendor 수정 base digest가 제공되면 acceptance를
-삭제하고 전체 6-image scan과 release 연속성 게이트를 다시 실행한다.
+사용하지 않는 `postgresql-client` CLI는 런타임 공격 표면과 이미지 크기를 줄이기
+위해 제거했지만 ECR 재검증 결과 Perl source finding의 원인은 아니었다. vendor
+수정 base digest가 제공되면 acceptance를 삭제하고 전체 6-image scan과 release
+연속성 게이트를 다시 실행한다.
 
 집중 검증:
 

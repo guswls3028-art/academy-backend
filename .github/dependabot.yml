@@ -27,3 +27,8 @@ updates:
       timezone: Asia/Seoul
     open-pull-requests-limit: 3
     labels: [dependencies, security]
+    ignore:
+      - dependency-name: python
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
