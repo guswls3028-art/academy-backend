@@ -22,7 +22,7 @@ django-extensions
 sqlparse
 asgiref
 psycopg2-binary
-redis>=5.0.0
+redis>=8.0.1
 djangorestframework
 django-filter
 django-cors-headers>=4.0.0
