@@ -625,7 +625,7 @@ function Ensure-GitHubActionsDeployIAM {
     $statements = @(
         [ordered]@{Sid="EcrAuth";Effect="Allow";Action="ecr:GetAuthorizationToken";Resource="*"},
         [ordered]@{Sid="EcrPushPull";Effect="Allow";Action=@("ecr:BatchCheckLayerAvailability","ecr:BatchDeleteImage","ecr:BatchGetImage","ecr:CompleteLayerUpload","ecr:GetDownloadUrlForLayer","ecr:InitiateLayerUpload","ecr:PutImage","ecr:UploadLayerPart");Resource=$repoArns},
-        [ordered]@{Sid="EcrRepoManage";Effect="Allow";Action=@("ecr:CreateRepository","ecr:DescribeImages","ecr:DescribeRepositories","ecr:GetLifecyclePolicy","ecr:ListImages","ecr:PutImageTagMutability");Resource=$repoArns},
+        [ordered]@{Sid="EcrRepoManage";Effect="Allow";Action=@("ecr:CreateRepository","ecr:DescribeImageScanFindings","ecr:DescribeImages","ecr:DescribeRepositories","ecr:GetLifecyclePolicy","ecr:ListImages","ecr:PutImageScanningConfiguration","ecr:PutImageTagMutability");Resource=$repoArns},
         [ordered]@{Sid="AsgInstanceRefresh";Effect="Allow";Action=@("autoscaling:CancelInstanceRefresh","autoscaling:SetInstanceProtection","autoscaling:StartInstanceRefresh","autoscaling:UpdateAutoScalingGroup");Resource=$asgArns},
         [ordered]@{Sid="AsgDescribe";Effect="Allow";Action=@("autoscaling:DescribeAutoScalingGroups","autoscaling:DescribeInstanceRefreshes");Resource="*"},
         [ordered]@{Sid="LaunchTemplateImagePinRead";Effect="Allow";Action=@("ec2:DescribeLaunchTemplates","ec2:DescribeLaunchTemplateVersions");Resource="*"},
@@ -645,6 +645,7 @@ function Ensure-GitHubActionsDeployIAM {
         [ordered]@{Sid="ApiPreprodEnvSourceRead";Effect="Allow";Action="ssm:GetParameter";Resource=@(
             "arn:aws:ssm:$($script:Region):$($script:AccountId):parameter/academy/api/env",
             "arn:aws:ssm:$($script:Region):$($script:AccountId):parameter/academy/api/preprod/db-credentials",
+            "arn:aws:ssm:$($script:Region):$($script:AccountId):parameter/academy/r2/preprod/credentials",
             "arn:aws:ssm:$($script:Region):$($script:AccountId):parameter/academy/api/preprod/env"
         )},
         [ordered]@{Sid="ApiPreprodEnvPublish";Effect="Allow";Action="ssm:PutParameter";Resource="arn:aws:ssm:$($script:Region):$($script:AccountId):parameter/academy/api/preprod/env"},
@@ -673,7 +674,31 @@ function Ensure-GitHubActionsDeployIAM {
     $readback = Invoke-AwsJson @("iam", "get-role-policy", "--role-name", $roleName, "--policy-name", $policyName, "--output", "json")
     $actualJson = $readback.PolicyDocument | ConvertTo-Json -Depth 50 -Compress
     if ($actualJson -ne $expectedJson) { throw "GitHub Actions IAM full-policy readback does not exactly match the managed least-privilege contract." }
-    Write-Ok "GitHub Actions deploy IAM converged and exact readback passed"
+    $developmentConverger = Join-Path (Get-Item $PSScriptRoot).Parent.FullName "converge-api-development-oidc.ps1"
+    & $developmentConverger -AwsProfile (
+        if ($env:AWS_PROFILE) { [string]$env:AWS_PROFILE } else { "default" }
+    )
+    $developmentPolicyArn = (
+        "arn:aws:iam::$($script:AccountId):policy/" +
+        [string]$script:GitHubActionsDevelopmentDeployPolicyName
+    )
+    $attached = Invoke-AwsJson @(
+        "iam", "list-attached-role-policies",
+        "--role-name", $roleName,
+        "--output", "json"
+    )
+    $attachedArns = @(
+        $attached.AttachedPolicies |
+            ForEach-Object { [string]$_.PolicyArn } |
+            Sort-Object -Unique
+    )
+    if (
+        $attachedArns.Count -ne 1 -or
+        $attachedArns[0] -ne $developmentPolicyArn
+    ) {
+        throw "GitHub Actions role must have exactly the owned development managed policy attached."
+    }
+    Write-Ok "GitHub Actions deploy IAM converged with exact inline and attached policy inventory"
 }
 
 function Ensure-BatchIAM {

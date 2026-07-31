@@ -43,6 +43,7 @@ function Ensure-ECRRepos {
                 "--repository-name", $repo,
                 "--image-tag-mutability", "IMMUTABLE_WITH_EXCLUSION",
                 "--image-tag-mutability-exclusion-filters", "filterType=WILDCARD,filter=latest",
+                "--image-scanning-configuration", "scanOnPush=true",
                 "--region", $script:Region
             ) -ErrorMessage "create-repository $repo" | Out-Null
         } else {
@@ -64,6 +65,15 @@ function Ensure-ECRRepos {
                 ) -ErrorMessage "put-image-tag-mutability $repo" | Out-Null
                 $script:ChangesMade = $true
             }
+            if (-not [bool]$current.imageScanningConfiguration.scanOnPush) {
+                Invoke-Aws @(
+                    "ecr", "put-image-scanning-configuration",
+                    "--repository-name", $repo,
+                    "--image-scanning-configuration", "scanOnPush=true",
+                    "--region", $script:Region
+                ) -ErrorMessage "put-image-scanning-configuration $repo" | Out-Null
+                $script:ChangesMade = $true
+            }
         }
         $verified = Invoke-AwsJson @("ecr", "describe-repositories", "--repository-names", $repo, "--region", $script:Region, "--output", "json")
         $verifiedRepo = @($verified.repositories)[0]
@@ -71,13 +81,14 @@ function Ensure-ECRRepos {
         if (
             -not $verifiedRepo -or
             [string]$verifiedRepo.imageTagMutability -ne "IMMUTABLE_WITH_EXCLUSION" -or
+            -not [bool]$verifiedRepo.imageScanningConfiguration.scanOnPush -or
             $verifiedFilters.Count -ne 1 -or
             [string]$verifiedFilters[0].filterType -ne "WILDCARD" -or
             [string]$verifiedFilters[0].filter -ne "latest"
         ) {
             throw "ECR repository $repo must be immutable with a single latest-only exclusion."
         }
-        Write-Ok "$repo (sha-* immutable; latest mutable compatibility alias)"
+        Write-Ok "$repo (sha-* immutable; latest-only mutable; scan-on-push)"
     }
     foreach ($repo in $script:SSOT_ECR) {
         Set-ECRLifecyclePolicy -RepositoryName $repo

@@ -1,0 +1,107 @@
+name: Backend Quality Gate
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: backend-quality-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  static-contract:
+    name: Backend static and migration contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
+      - name: Install static tooling
+        run: python -m pip install --disable-pip-version-check --quiet ruff
+      - name: Ruff and architecture boundaries
+        run: |
+          python -m ruff check apps/ academy/
+          python scripts/lint/check_submission_lifecycle_boundary.py
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            python scripts/lint/refactor_boundary_snapshot.py \
+              --strict-touched \
+              --base-ref "${{ github.event.pull_request.base.sha }}"
+          else
+            python scripts/lint/refactor_boundary_snapshot.py --strict-touched
+          fi
+          python scripts/lint/refactor_boundary_snapshot.py --enforce-baseline
+      - name: Expand/contract migration boundary
+        run: |
+          python -m unittest scripts.lint.test_check_expand_contract_migrations
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE_REF="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE_REF="HEAD^"
+          fi
+          python scripts/lint/check_expand_contract_migrations.py --base-ref "$BASE_REF"
+
+  django-contract:
+    name: Backend Django smoke and deployment contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements/requirements.txt
+      - name: Install application test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements/requirements.txt
+          python -m pip install pytest pytest-django
+      - name: Django configuration and migrations
+        env:
+          DJANGO_SETTINGS_MODULE: apps.api.config.settings.test
+        run: |
+          python manage.py check --settings apps.api.config.settings.test
+          python manage.py makemigrations --check --dry-run --settings apps.api.config.settings.test
+      - name: Smoke tests
+        env:
+          DJANGO_SETTINGS_MODULE: apps.api.config.settings.test
+        run: python -m pytest tests/test_smoke.py -v --tb=short -x
+      - name: Deployment contract tests
+        shell: pwsh
+        run: |
+          ./scripts/v1/test-verification-contract.ps1
+          ./scripts/v1/test-candidate-env-contract.ps1
+          ./scripts/v1/test-production-source-freshness.ps1
+          ./scripts/v1/test-workflow-governance-contract.ps1
+      - name: Parse every deployment PowerShell script
+        shell: pwsh
+        run: |
+          $errors = @()
+          Get-ChildItem scripts/v1 -Recurse -Filter *.ps1 | ForEach-Object {
+            $tokens = $null
+            $parseErrors = $null
+            [void][Management.Automation.Language.Parser]::ParseFile(
+              $_.FullName,
+              [ref]$tokens,
+              [ref]$parseErrors
+            )
+            if ($parseErrors) {
+              $errors += $parseErrors | ForEach-Object {
+                "$($_.Extent.File):$($_.Extent.StartLineNumber): $($_.Message)"
+              }
+            }
+          }
+          if ($errors) { throw ($errors -join [Environment]::NewLine) }
+          Write-Host "POWERSHELL_PARSE_PASS"

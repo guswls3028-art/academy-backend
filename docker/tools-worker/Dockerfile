@@ -29,6 +29,7 @@ COPY requirements/constraints.txt requirements/common.txt requirements/worker-to
 RUN pip install --user --no-cache-dir -r requirements/worker-tools.txt
 
 RUN python -c "from academy.application.use_cases.tools.worker_dispatcher import handle_tools_job; from academy.application.services.excel_parsing_service import ExcelParsingService; print(handle_tools_job.__name__, ExcelParsingService.__name__)"
+RUN python -c "import apps.worker.tools_worker.sqs_main; from academy.framework.workers.ai_sqs_worker import run_ai_sqs_worker; print('tools entrypoint import OK')"
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD kill -0 1 2>/dev/null || exit 1

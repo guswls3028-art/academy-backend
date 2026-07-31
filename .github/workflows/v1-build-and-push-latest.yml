@@ -45,8 +45,7 @@ env:
   DOCKER_BUILD_RECORD_UPLOAD: false
 
 permissions:
-  id-token: write
-  contents: write
+  contents: read
 
 jobs:
   # ============================================================
@@ -65,7 +64,7 @@ jobs:
       short_sha: ${{ steps.meta.outputs.short_sha }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
 
@@ -309,12 +308,12 @@ jobs:
     needs: detect-changes
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.11"
 
@@ -373,10 +372,10 @@ jobs:
     needs: detect-changes
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.11"
           cache: "pip"
@@ -398,6 +397,9 @@ jobs:
         shell: pwsh
         run: |
           ./scripts/v1/test-verification-contract.ps1
+          ./scripts/v1/test-candidate-env-contract.ps1
+          ./scripts/v1/test-production-source-freshness.ps1
+          ./scripts/v1/test-workflow-governance-contract.ps1
 
   # ============================================================
   # Phase 2: Build and push immutable candidate images
@@ -416,10 +418,14 @@ jobs:
   acquire-production-lock:
     name: Acquire shared production mutation lock
     runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
     needs: [detect-changes, run-lint, run-tests]
     steps:
       - name: Checkout deployment guards
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
           sparse-checkout: |
@@ -427,7 +433,7 @@ jobs:
             scripts/v1/release_freshness.py
           sparse-checkout-cone-mode: false
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
@@ -447,7 +453,7 @@ jobs:
     needs: [acquire-production-lock]
     steps:
       - name: Checkout release guard
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
           sparse-checkout: |
@@ -469,15 +475,18 @@ jobs:
   verify-runtime-iam:
     name: Verify exact runtime worker-scale IAM
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     needs: [acquire-production-lock, verify-release-freshness]
     steps:
       - name: Checkout exact runtime policy
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           sparse-checkout: scripts/v1/templates/iam/policy_api_ai_worker_scale.json
           sparse-checkout-cone-mode: false
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
@@ -504,6 +513,9 @@ jobs:
 
   build-and-push:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     needs: [detect-changes, run-lint, run-tests, acquire-production-lock, verify-release-freshness, verify-runtime-iam]
     if: |
       needs.detect-changes.outputs.build_base == 'true' ||
@@ -522,18 +534,18 @@ jobs:
       DOCKER_BUILD_SUMMARY: false
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
       - name: Configure AWS credentials (OIDC only)
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
@@ -544,7 +556,7 @@ jobs:
 
       - name: Login to Amazon ECR
         id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
+        uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2
 
       - name: Ensure ECR repos
         run: |
@@ -555,6 +567,7 @@ jobs:
                 --repository-name "$repo" \
                 --image-tag-mutability IMMUTABLE_WITH_EXCLUSION \
                 --image-tag-mutability-exclusion-filters filterType=WILDCARD,filter=latest \
+                --image-scanning-configuration scanOnPush=true \
                 --region ${{ env.AWS_REGION }} >/dev/null
             else
               aws ecr put-image-tag-mutability \
@@ -562,10 +575,15 @@ jobs:
                 --image-tag-mutability IMMUTABLE_WITH_EXCLUSION \
                 --image-tag-mutability-exclusion-filters filterType=WILDCARD,filter=latest \
                 --region ${{ env.AWS_REGION }} >/dev/null
+              aws ecr put-image-scanning-configuration \
+                --repository-name "$repo" \
+                --image-scanning-configuration scanOnPush=true \
+                --region ${{ env.AWS_REGION }} >/dev/null
             fi
             CONFIG=$(aws ecr describe-repositories --repository-names "$repo" --region ${{ env.AWS_REGION }} --query 'repositories[0]' --output json)
             if ! jq -e '
               .imageTagMutability == "IMMUTABLE_WITH_EXCLUSION" and
+              .imageScanningConfiguration.scanOnPush == true and
               (.imageTagMutabilityExclusionFilters | length == 1) and
               (.imageTagMutabilityExclusionFilters[0].filterType == "WILDCARD") and
               (.imageTagMutabilityExclusionFilters[0].filter == "latest")
@@ -578,7 +596,7 @@ jobs:
       # ── Base image (only when base-relevant files change) ──
       - name: Build and push academy-base (arm64)
         if: needs.detect-changes.outputs.build_base == 'true' || needs.detect-changes.outputs.force_full == 'true'
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: docker/Dockerfile.base
@@ -620,7 +638,7 @@ jobs:
       # ── API ──
       - name: Build and push academy-api (arm64)
         if: needs.detect-changes.outputs.build_api == 'true' || needs.detect-changes.outputs.force_full == 'true'
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: docker/api/Dockerfile
@@ -637,7 +655,7 @@ jobs:
       # ── Video worker ──
       - name: Build and push academy-video-worker (arm64)
         if: needs.detect-changes.outputs.build_video == 'true' || needs.detect-changes.outputs.force_full == 'true'
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: docker/video-worker/Dockerfile
@@ -654,7 +672,7 @@ jobs:
       # ── Messaging worker ──
       - name: Build and push academy-messaging-worker (arm64)
         if: needs.detect-changes.outputs.build_messaging == 'true' || needs.detect-changes.outputs.force_full == 'true'
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: docker/messaging-worker/Dockerfile
@@ -671,7 +689,7 @@ jobs:
       # ── AI worker ──
       - name: Build and push academy-ai-worker-cpu (arm64)
         if: needs.detect-changes.outputs.build_ai == 'true' || needs.detect-changes.outputs.force_full == 'true'
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: docker/ai-worker-cpu/Dockerfile
@@ -688,7 +706,7 @@ jobs:
       # ── Tools worker ──
       - name: Build and push academy-tools-worker (arm64)
         if: needs.detect-changes.outputs.build_tools == 'true' || needs.detect-changes.outputs.force_full == 'true'
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: docker/tools-worker/Dockerfile
@@ -791,6 +809,50 @@ jobs:
 
           echo "buildTime=$BUILD_TIME" >> $GITHUB_OUTPUT
 
+      - name: Gate newly built images on completed ECR critical scan
+        run: |
+          set -euo pipefail
+          CANDIDATE="docs/reports/release-manifest.candidate.json"
+          for repo in academy-base academy-api academy-video-worker academy-messaging-worker academy-ai-worker-cpu academy-tools-worker; do
+            if [ "$(jq -r --arg repo "$repo" '.images[$repo].source' "$CANDIDATE")" != "built" ]; then
+              continue
+            fi
+            DIGEST=$(jq -r --arg repo "$repo" '.images[$repo].digest' "$CANDIDATE")
+            FINDINGS=""
+            for attempt in $(seq 1 40); do
+              if FINDINGS=$(aws ecr describe-image-scan-findings \
+                --repository-name "$repo" \
+                --image-id "imageDigest=$DIGEST" \
+                --region "${{ env.AWS_REGION }}" \
+                --output json 2>/dev/null); then
+                STATUS=$(jq -r '.imageScanStatus.status // empty' <<<"$FINDINGS")
+                if [ "$STATUS" = "COMPLETE" ]; then
+                  break
+                fi
+                if [ "$STATUS" = "FAILED" ] || [ "$STATUS" = "UNSUPPORTED_IMAGE" ]; then
+                  echo "::error::ECR scan failed for $repo@$DIGEST (status=$STATUS)"
+                  exit 1
+                fi
+              fi
+              FINDINGS=""
+              sleep 15
+            done
+            if [ -z "$FINDINGS" ] || [ "$(jq -r '.imageScanStatus.status // empty' <<<"$FINDINGS")" != "COMPLETE" ]; then
+              echo "::error::ECR scan did not complete for $repo@$DIGEST"
+              exit 1
+            fi
+            CRITICAL=$(jq -r '.imageScanFindings.findingSeverityCounts.CRITICAL // 0' <<<"$FINDINGS")
+            HIGH=$(jq -r '.imageScanFindings.findingSeverityCounts.HIGH // 0' <<<"$FINDINGS")
+            if [ "$CRITICAL" -gt 0 ]; then
+              echo "::error::ECR critical findings block $repo@$DIGEST (critical=$CRITICAL high=$HIGH)"
+              exit 1
+            fi
+            if [ "$HIGH" -gt 0 ]; then
+              echo "::warning::ECR high findings require remediation review for $repo@$DIGEST (high=$HIGH)"
+            fi
+            echo "ECR_SCAN_PASS repo=$repo digest=$DIGEST critical=$CRITICAL high=$HIGH"
+          done
+
       - name: Workflow summary
         run: |
           echo "## V1.1.0 Build and Push (OIDC)" >> $GITHUB_STEP_SUMMARY
@@ -801,7 +863,7 @@ jobs:
           cat docs/reports/ci-build.latest.md >> $GITHUB_STEP_SUMMARY
 
       - name: Upload ci-build.latest.md artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ci-build-report
           path: |
@@ -848,27 +910,25 @@ jobs:
   verify-api-development:
     name: Verify candidate on persistent isolated development runtime
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     needs: [detect-changes, build-and-push]
     if: |
       always() &&
-      needs.build-and-push.result == 'success' &&
-      (
-        needs.detect-changes.outputs.build_api == 'true' ||
-        needs.detect-changes.outputs.build_tools == 'true' ||
-        needs.detect-changes.outputs.force_full == 'true'
-      )
+      needs.build-and-push.result == 'success'
     steps:
       - name: Checkout deployment scripts
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Download exact release candidate
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: ci-build-report
           path: /tmp/api-development-candidate
 
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
@@ -915,6 +975,9 @@ jobs:
   verify-api-preprod:
     name: Verify candidate on isolated API preprod server
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     needs: [detect-changes, build-and-push, verify-api-development]
     if: |
       always() &&
@@ -925,16 +988,16 @@ jobs:
       )
     steps:
       - name: Checkout deployment scripts
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Download exact release candidate
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: ci-build-report
           path: /tmp/api-preprod-candidate
 
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
@@ -973,6 +1036,9 @@ jobs:
   run-migrations:
     name: Run database migrations
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     needs: [detect-changes, build-and-push, verify-api-preprod]
     if: |
       always() &&
@@ -981,10 +1047,10 @@ jobs:
       (needs.detect-changes.outputs.build_api == 'true' || needs.detect-changes.outputs.force_full == 'true')
     steps:
       - name: Checkout deployment scripts
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
@@ -1123,6 +1189,9 @@ jobs:
   deploy-api:
     name: Deploy API (ASG refresh)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     needs: [detect-changes, build-and-push, verify-api-preprod, run-migrations]
     if: |
       always() &&
@@ -1135,10 +1204,10 @@ jobs:
       API_INSTANCE_WARMUP: "300"
     steps:
       - name: Checkout deployment scripts
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
@@ -1340,6 +1409,9 @@ jobs:
   deploy-messaging:
     name: Deploy Messaging Worker (ASG refresh)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     needs: [detect-changes, build-and-push, verify-api-preprod, run-migrations]
     if: |
       always() &&
@@ -1351,10 +1423,10 @@ jobs:
       MESSAGING_ASG_NAME: academy-v1-messaging-worker-asg
     steps:
       - name: Checkout deployment scripts
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
@@ -1440,6 +1512,9 @@ jobs:
   deploy-ai:
     name: Deploy AI Worker (ASG refresh)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     needs: [detect-changes, build-and-push, verify-api-preprod, run-migrations]
     if: |
       always() &&
@@ -1451,10 +1526,10 @@ jobs:
       AI_ASG_NAME: academy-v1-ai-worker-asg
     steps:
       - name: Checkout deployment scripts
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
@@ -1558,6 +1633,9 @@ jobs:
   deploy-tools:
     name: Deploy Tools Worker (ASG refresh)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     needs: [detect-changes, build-and-push, verify-api-preprod, run-migrations]
     if: |
       always() &&
@@ -1569,10 +1647,10 @@ jobs:
       TOOLS_ASG_NAME: academy-v1-tools-worker-asg
     steps:
       - name: Checkout deployment scripts
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
@@ -1669,6 +1747,9 @@ jobs:
   deploy-video:
     name: Deploy video worker (Batch job defs)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     needs: [detect-changes, build-and-push, verify-api-preprod, run-migrations]
     if: |
       always() &&
@@ -1689,10 +1770,10 @@ jobs:
         academy-v1-video-ops-recover-dead
     steps:
       - name: Checkout deployment scripts
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
@@ -1893,18 +1974,21 @@ jobs:
   verify-deployment:
     name: Verify deployment
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     needs: [detect-changes, build-and-push, deploy-api, deploy-messaging, deploy-ai, deploy-tools, deploy-video]
     if: |
       always() && needs.build-and-push.result == 'success' &&
       (needs.deploy-api.result == 'success' || needs.deploy-messaging.result == 'success' || needs.deploy-ai.result == 'success' || needs.deploy-tools.result == 'success' || needs.deploy-video.result == 'success')
     steps:
       - name: Checkout verification scripts
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
 
       - name: Download exact release candidate
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: ci-build-report
           # upload-artifact computes docs/reports as the least-common-ancestor,
@@ -1912,7 +1996,7 @@ jobs:
           path: docs/reports
 
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
@@ -2415,16 +2499,19 @@ jobs:
   release-production-lock:
     name: Release shared production mutation lock
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     needs: [acquire-production-lock, verify-release-freshness, verify-runtime-iam, build-and-push, verify-api-development, verify-api-preprod, run-migrations, deploy-api, deploy-messaging, deploy-ai, deploy-tools, deploy-video, verify-deployment]
     if: always() && needs.acquire-production-lock.result == 'success'
     steps:
       - name: Checkout lock helper
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           sparse-checkout: scripts/v1/deployment_lock.py
           sparse-checkout-cone-mode: false
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
@@ -2442,11 +2529,14 @@ jobs:
   notify-on-failure:
     name: Notify on failure
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     needs: [detect-changes, run-lint, run-tests, acquire-production-lock, verify-release-freshness, verify-runtime-iam, build-and-push, verify-api-development, verify-api-preprod, run-migrations, deploy-api, deploy-messaging, deploy-ai, deploy-tools, deploy-video, verify-deployment, release-production-lock]
     if: always() && contains(needs.*.result, 'failure')
     steps:
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}

@@ -116,8 +116,59 @@ if ($PurgeAndRecreate) { Write-Host "MODE: PurgeAndRecreate" -ForegroundColor Ye
 if ($MinimalDeploy) { Write-Host "MODE: MinimalDeploy (Video Long, Ops, EventBridge skipped)" -ForegroundColor Cyan }
 if ($DryRun) { Write-Host "MODE: DryRun (no changes)" -ForegroundColor Yellow }
 
+function Invoke-ManualApiDevelopmentGate {
+    param(
+        [Parameter(Mandatory = $true)][string]$ApiImageUri,
+        [Parameter(Mandatory = $true)][string]$ToolsImageUri
+    )
+    if ($ApiImageUri -notmatch '@sha256:(?<digest>[0-9a-f]{64})$') {
+        throw "API development candidate image is not digest-pinned."
+    }
+    $apiDigest = $matches["digest"]
+    Assert-ImmutableEcrImageUri -ImageUri $ToolsImageUri
+    $releaseId = "manual-sha256-$apiDigest"
+    $outputPath = [IO.Path]::GetTempFileName()
+    try {
+        & (Join-Path $ScriptRoot "publish-api-development-env.ps1") `
+            -ReleaseId $releaseId `
+            -GithubOutputPath $outputPath `
+            -AwsProfile $AwsProfile
+        $outputs = @{}
+        foreach ($line in Get-Content -LiteralPath $outputPath) {
+            $parts = [string]$line -split "=", 2
+            if ($parts.Count -eq 2 -and $parts[0]) {
+                $outputs[$parts[0]] = $parts[1]
+            }
+        }
+        foreach ($required in @(
+            "parameter_version",
+            "workers_parameter_version",
+            "release_id",
+            "production_database_name"
+        )) {
+            if (-not $outputs[$required]) {
+                throw "Development env publisher returned no '$required' output."
+            }
+        }
+        & (Join-Path $ScriptRoot "deploy-api-development.ps1") `
+            -ApiImageUri $ApiImageUri `
+            -ToolsImageUri $ToolsImageUri `
+            -ExpectedEnvVersion ([int]$outputs["parameter_version"]) `
+            -ExpectedWorkersEnvVersion ([int]$outputs["workers_parameter_version"]) `
+            -ExpectedReleaseId $outputs["release_id"] `
+            -ExpectedProductionDatabaseName $outputs["production_database_name"] `
+            -AwsProfile $AwsProfile
+    } finally {
+        Remove-Item -LiteralPath $outputPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 try {
     Assert-NoLegacyScripts -Ci:$Ci
+    if ($Env -eq "prod" -and -not $Plan -and -not $DryRun) {
+        & (Join-Path $ScriptRoot "assert-production-source-freshness.ps1") `
+            -RepoRoot $RepoRoot
+    }
     # The lock table is the only production mutation allowed before acquiring
     # the lock itself. Its create is conditional/idempotent and is required to
     # make a fresh bootstrap reachable; all other mutations stay behind it.
@@ -243,6 +294,13 @@ try {
             throw "API pre-production canary image is not digest-pinned."
         }
         $apiCanaryReleaseId = "manual-sha256-$($matches['digest'])"
+        $toolsCanaryImage = Get-LatestWorkerImageUri -RepoName $script:EcrToolsRepo
+        if (-not $toolsCanaryImage) {
+            throw "Tools development candidate could not resolve an immutable image."
+        }
+        Invoke-ManualApiDevelopmentGate `
+            -ApiImageUri $apiCanaryImage `
+            -ToolsImageUri $toolsCanaryImage
         $apiCanaryEnv = Publish-ApiPreprodEnvCandidate -ReleaseId $apiCanaryReleaseId
         & (Join-Path $ScriptRoot "run-api-preprod-canary.ps1") `
             -ImageUri $apiCanaryImage `

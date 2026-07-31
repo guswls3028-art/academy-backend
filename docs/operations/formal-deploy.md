@@ -30,14 +30,21 @@
 GitHub Actions의 persistent development와 isolated preproduction을 모두
 통과해야 한다.
 
-1. Lock, Preflight, Drift 보고
-2. Bootstrap(선택): SSM, SQS, RDS engine, ECR 등 Ensure
-3. Ensure-Network/ECR/IAM 후 운영 env 후보를 메모리에서 준비한다. 이 단계에서는 `/academy/api/env`와 `/academy/workers/env`를 쓰지 않는다.
-4. 후보를 `/academy/api/preprod/env`의 새 버전에 기록하되 `/academy/api/preprod/db-credentials`의 전용 DB 역할로 사용자·비밀번호를 교체하고 릴리스 ID를 고정한다. 격리 EC2에서 migration, prod settings, 정확한 parameter version·릴리스 ID, DB 이름·역할, 운영 DB CONNECT 거부, `/healthz`, `/health`, CDN playback을 검증한다.
-5. 격리 검증 성공 후에만 운영 API/worker env를 승격한다. 실패하면 API뿐 아니라 worker ASG, Batch job definition, EventBridge, ALB를 포함한 운영 런타임 반영을 시작하지 않는다.
-6. 검증된 env 승격 뒤 worker/Batch/EventBridge/ALB와 **Ensure-API**를 순서대로 수렴한다. env parameter version을 포함한 API Launch Template가 ASG rolling refresh를 유도하며, 운영 컨테이너 제자리 재시작은 정식 경로에서 사용하지 않는다.
-7. 새 인스턴스 기동 시 **UserData** 실행: ECR 로그인 → 검증된 release manifest의 `academy-api@sha256:...` pull → SSM `/academy/api/env` 역할 검증 → `/opt/api.env` → digest-pinned `docker run`
-8. Netprobe(선택), Evidence 저장, After-Deploy Verification(ASG desired/inService, ALB target health, Batch CE/Queue)
+사전 조건으로 `/academy/r2/preprod/credentials`에 production key와 다른
+video bucket Object Read/List 전용 R2 credential이 있어야 한다. credential의
+`ACCESS_MODE=read-only` 선언만 신뢰하지 않고 Cloudflare 권한 readback을
+배포 증거에 포함한다.
+
+1. AWS mutation 전에 `assert-production-source-freshness.ps1`이 clean `main`, 최신 `origin/main`, complete/successful release manifest와 그 `gitSha`의 선조 관계를 검증한다. dirty/detached/stale/divergent source는 lock table 접근 전 실패한다.
+2. production lock, Preflight, Drift 보고
+3. Bootstrap(선택): SSM, SQS, RDS engine, ECR 등 Ensure. ECR은 immutable SHA + latest 단일 exclusion + scan-on-push를 exact readback한다.
+4. Ensure-Network/ECR/IAM 후 운영 env 후보를 메모리에서 준비한다. 이 단계에서는 `/academy/api/env`와 `/academy/workers/env`를 쓰지 않는다.
+5. 성공 release manifest의 API/Tools digest를 버전 고정 development env에 발행하고 `deploy-api-development.ps1`의 blue/green 실사용 gate를 실행한다. 이전 active instance는 새 후보가 migration, 운영자원 denial, health, image identity, XLSX/PPT/R2 smoke를 통과하기 전까지 유지한다.
+6. 같은 API digest의 preprod env를 만들 때 전용 DB 역할로 교체하고 production Django/tenant signing secret, SOLAPI, Toss/billing, 외부 AI, VAPID, 정적 AWS credential을 제거한다. production R2 key도 제거하고 `/academy/r2/preprod/credentials`의 bucket-scoped read-only key로 교체한다. 격리 EC2에서 migration, prod settings, parameter version·릴리스 ID, DB 이름·역할, 운영 DB CONNECT 거부, `/healthz`, `/health`, CDN playback을 검증한다.
+7. 두 격리 검증 성공 후에만 운영 API/worker env를 승격한다. 실패하면 worker ASG, Batch job definition, EventBridge, ALB를 포함한 운영 런타임 반영을 시작하지 않는다.
+8. 검증된 env 승격 뒤 worker/Batch/EventBridge/ALB와 **Ensure-API**를 순서대로 수렴한다. env parameter version을 포함한 API Launch Template가 ASG rolling refresh를 유도하며, 운영 컨테이너 제자리 재시작은 정식 경로에서 사용하지 않는다.
+9. 새 인스턴스 기동 시 **UserData** 실행: ECR 로그인 → 검증된 release manifest digest pull → SSM 역할 검증 → `/opt/api.env` → digest-pinned `docker run`
+10. Netprobe(선택), Evidence 저장, After-Deploy Verification(ASG desired/inService, ALB target health, Batch CE/Queue)
 
 **관련 파일:** `scripts/v1/deploy.ps1`, `scripts/v1/resources/api.ps1` (Get-ApiLaunchTemplateUserData, Ensure-API-ASG, Ensure-API-Instance).
 
@@ -53,6 +60,7 @@ GitHub Actions의 persistent development와 isolated preproduction을 모두
 
 - **느리지만 정석.** 반영 범위가 넓고, 새 인스턴스 기동·검증 성격.
 - **빌드는 하지 않음.** `-SkipBuild` 기본. 이미지는 GitHub Actions가 ECR에 푸시한 것을 사용.
+- **source가 배포 입력.** production 실행은 clean·최신 `main`만 허용한다. feature branch나 로컬 수정으로 인프라를 직접 반영하지 않는다.
 - **실행 시간:** API health 대기(최대 300s), Netprobe(cold start 시 최대 600s) 등으로 20~25분 넘을 수 있음. CI/터미널 타임아웃 30분 이상 권장.
 
 ---
@@ -99,3 +107,4 @@ GitHub Actions의 persistent development와 isolated preproduction을 모두
 - `docs/operations/deployment-modes.md` — 배포 방식 개요
 - `docs/operations/배포.md` — 인프라 부트스트랩 (RDS/SQS/EC2/IAM)
 - `.github/workflows/v1-build-and-push-latest.yml` — CI 빌드·마이그레이션·서비스별 deploy·검증 흐름
+- `docs/operations/github-governance.md` — branch ruleset, environment 승인, Actions/secret 제어면

@@ -70,6 +70,7 @@ only. Preserve pre-existing changes.
 ## Mandatory preproduction and zero-downtime delivery
 
 Current executable entry points are
+`.github/workflows/quality-gate.yml`,
 `.github/workflows/v1-build-and-push-latest.yml`, `scripts/v1/deploy.ps1`,
 `scripts/v1/deploy-api-development.ps1`,
 `scripts/v1/run-api-preprod-canary.ps1`, and `scripts/v1/verify.ps1`.
@@ -82,7 +83,10 @@ For every backend production release:
 3. Require migration, production-resource denial, `/healthz`, `/health`,
    image identity, and synthetic Excel/PPT/R2 real-use smoke.
 4. Publish a release-bound, versioned preprod env using the dedicated preprod
-   DB role and credential, then run the isolated preprod EC2 gate.
+   DB role and credential. Replace production signing secrets and remove
+   messaging, billing, external-AI, VAPID, and static AWS credentials before
+   running the isolated preprod EC2 gate; CDN playback uses a separate
+   `/academy/r2/preprod/credentials` read-only R2 key, never the production key.
 5. Require migration, prod settings, exact DB name and role, denial of
    production DB CONNECT, exact env version/release ID, health, image identity,
    and signed CDN playback. Confirm termination.
@@ -98,4 +102,6 @@ Ordinary automation uses the repository GitHub OIDC role. Explicitly
 authorized manual work may use an already configured AWS account-root or
 Cloudflare master credential, but must never print/copy its value or weaken
 the development, preproduction, migration, rolling-health, or post-deploy
-gates.
+gates. Manual production mutation additionally requires a clean, exact latest
+`main` checkout and a complete successful release manifest ancestor; never
+bypass `assert-production-source-freshness.ps1`.
