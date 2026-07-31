@@ -220,6 +220,16 @@ class StudentPerformanceConsoleTest(TestCase, ClinicTestMixin):
         invalid_session_type = self._get({"session_type": "mixed"})
         self.assertEqual(invalid_session_type.status_code, 400)
 
+        hidden_session_scope = self._get({
+            "source": "overall",
+            "session_type": "REGULAR",
+        })
+        self.assertEqual(hidden_session_scope.status_code, 400)
+        self.assertEqual(
+            hidden_session_scope.data["detail"],
+            "session_type requires academy source",
+        )
+
     def test_query_count_does_not_scale_with_exam_history(self):
         self._score(title="쿼리 기준 시험", score=70, days_ago=10)
         with CaptureQueriesContext(connection) as initial_queries:

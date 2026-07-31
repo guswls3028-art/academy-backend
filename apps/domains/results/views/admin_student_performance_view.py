@@ -68,6 +68,11 @@ class AdminStudentPerformanceView(APIView):
         for key, (choices, value) in allowed_values.items():
             if value not in choices:
                 return Response({"detail": f"{key} invalid"}, status=400)
+        if source != "academy" and session_type != "all":
+            return Response(
+                {"detail": "session_type requires academy source"},
+                status=400,
+            )
         search = str(request.query_params.get("search") or "").strip()[:80]
         subject = str(request.query_params.get("subject") or "").strip()[:50]
 
