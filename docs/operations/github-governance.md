@@ -17,7 +17,7 @@
 | 경계 | 백엔드 | 프론트엔드 |
 |------|--------|------------|
 | 기본 브랜치 | `main` | `main` |
-| merge | PR 1회 승인, 마지막 push 작성자 외 승인, stale 승인 해제, review thread 해소 | 동일 |
+| merge | PR·필수 check·review thread 해소. push 가능한 직접 유지관리자가 1명이면 승인 0, 2명 이상이면 마지막 push 작성자 외 1명 승인과 stale 승인 해제 | 동일 |
 | 금지 | default branch 삭제, force push | 동일 |
 | 필수 check | `Backend static and migration contract`, `Backend Django smoke and deployment contracts` | `Hangul companion Windows COM contract`, `Typecheck + Lint + Build` |
 | Actions | 모든 외부 action을 40자 commit SHA로 고정, 기본 `GITHUB_TOKEN=contents:read` | 동일 |
@@ -31,6 +31,12 @@
 read-only이고, `contents:write`는 production workflow의 build evidence와
 최종 release manifest job에만 선언한다. 다른 workflow에 write 권한을 추가할
 때는 bypass 범위가 넓어지는 것으로 보고 이 문서를 함께 재검토한다.
+
+승인 수는 저장소의 실제 direct collaborator를 읽어 수렴한다. 현재처럼 push
+가능한 사람이 1명뿐이면 자기 PR을 스스로 승인할 수 없으므로 독립 승인을
+요구하지 않는다. 이 경우에도 direct push가 아니라 PR을 사용하고, 필수 check와
+review thread 해소는 그대로 강제된다. 두 번째 push 권한자가 추가되면 다음
+수렴에서 승인 수가 1로 올라가며 마지막 push 작성자는 그 승인을 할 수 없다.
 
 ## 3. Cloudflare secret 경계
 

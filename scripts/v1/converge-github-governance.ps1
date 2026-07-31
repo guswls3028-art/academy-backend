@@ -46,8 +46,33 @@ function Get-RepositoryRuleset {
         Select-Object -First 1
 }
 
+function Get-RequiredApprovingReviewCount {
+    param([string]$Repository)
+    $collaborators = @(
+        Invoke-GhJson -Arguments @(
+            "repos/$Owner/$Repository/collaborators?affiliation=direct&per_page=100"
+        )
+    )
+    $eligibleReviewers = @(
+        $collaborators |
+            Where-Object {
+                [bool]$_.permissions.push -and
+                [string]$_.type -ne "Bot"
+            }
+    )
+    if ($eligibleReviewers.Count -ge 2) {
+        return 1
+    }
+    return 0
+}
+
 function Get-RulesetBody {
-    param([string[]]$RequiredChecks)
+    param(
+        [string[]]$RequiredChecks,
+        [ValidateRange(0, 1)]
+        [int]$RequiredApprovingReviewCount
+    )
+    $requiresIndependentApproval = $RequiredApprovingReviewCount -eq 1
     return [ordered]@{
         name = $rulesetName
         target = "branch"
@@ -73,8 +98,8 @@ function Get-RulesetBody {
                 parameters = [ordered]@{
                     dismiss_stale_reviews_on_push = $true
                     require_code_owner_review = $false
-                    require_last_push_approval = $true
-                    required_approving_review_count = 1
+                    require_last_push_approval = $requiresIndependentApproval
+                    required_approving_review_count = $RequiredApprovingReviewCount
                     required_review_thread_resolution = $true
                 }
             },
@@ -119,7 +144,11 @@ function Set-RepositoryGovernance {
     [void](Invoke-GhJson -Arguments @("-X", "PUT", "$repoPath/automated-security-fixes"))
 
     $ruleset = Get-RepositoryRuleset -Repository $Repository
-    $body = Get-RulesetBody -RequiredChecks $RequiredChecks
+    $requiredReviewCount = Get-RequiredApprovingReviewCount `
+        -Repository $Repository
+    $body = Get-RulesetBody `
+        -RequiredChecks $RequiredChecks `
+        -RequiredApprovingReviewCount $requiredReviewCount
     if ($ruleset) {
         [void](Invoke-GhJson -Arguments @(
             "-X", "PUT",
@@ -212,6 +241,9 @@ function Assert-RepositoryGovernance {
         $rulesetDetails = Invoke-GhJson -Arguments @(
             "$repoPath/rulesets/$($ruleset.id)"
         )
+        $requiredReviewCount = Get-RequiredApprovingReviewCount `
+            -Repository $Repository
+        $requiresIndependentApproval = $requiredReviewCount -eq 1
         $includes = @($rulesetDetails.conditions.ref_name.include)
         $excludes = @($rulesetDetails.conditions.ref_name.exclude)
         if (
@@ -245,11 +277,15 @@ function Assert-RepositoryGovernance {
             $pullRequestRules.Count -ne 1 -or
             -not [bool]$pullRequestRules[0].parameters.dismiss_stale_reviews_on_push -or
             [bool]$pullRequestRules[0].parameters.require_code_owner_review -or
-            -not [bool]$pullRequestRules[0].parameters.require_last_push_approval -or
-            [int]$pullRequestRules[0].parameters.required_approving_review_count -ne 1 -or
+            [bool]$pullRequestRules[0].parameters.require_last_push_approval -ne
+                $requiresIndependentApproval -or
+            [int]$pullRequestRules[0].parameters.required_approving_review_count -ne
+                $requiredReviewCount -or
             -not [bool]$pullRequestRules[0].parameters.required_review_thread_resolution
         ) {
-            [void]$drift.Add("Pull-request review policy does not match the one-approval fail-closed contract.")
+            [void]$drift.Add(
+                "Pull-request review policy does not match the available-maintainer contract."
+            )
         }
         $statusRules = @(
             $rulesetDetails.rules |
