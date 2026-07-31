@@ -812,47 +812,10 @@ jobs:
 
       - name: Gate newly built images on completed ECR critical scan
         run: |
-          set -euo pipefail
-          CANDIDATE="docs/reports/release-manifest.candidate.json"
-          for repo in academy-base academy-api academy-video-worker academy-messaging-worker academy-ai-worker-cpu academy-tools-worker; do
-            if [ "$(jq -r --arg repo "$repo" '.images[$repo].source' "$CANDIDATE")" != "built" ]; then
-              continue
-            fi
-            DIGEST=$(jq -r --arg repo "$repo" '.images[$repo].digest' "$CANDIDATE")
-            FINDINGS=""
-            for attempt in $(seq 1 40); do
-              if FINDINGS=$(aws ecr describe-image-scan-findings \
-                --repository-name "$repo" \
-                --image-id "imageDigest=$DIGEST" \
-                --region "${{ env.AWS_REGION }}" \
-                --output json 2>/dev/null); then
-                STATUS=$(jq -r '.imageScanStatus.status // empty' <<<"$FINDINGS")
-                if [ "$STATUS" = "COMPLETE" ]; then
-                  break
-                fi
-                if [ "$STATUS" = "FAILED" ] || [ "$STATUS" = "UNSUPPORTED_IMAGE" ]; then
-                  echo "::error::ECR scan failed for $repo@$DIGEST (status=$STATUS)"
-                  exit 1
-                fi
-              fi
-              FINDINGS=""
-              sleep 15
-            done
-            if [ -z "$FINDINGS" ] || [ "$(jq -r '.imageScanStatus.status // empty' <<<"$FINDINGS")" != "COMPLETE" ]; then
-              echo "::error::ECR scan did not complete for $repo@$DIGEST"
-              exit 1
-            fi
-            CRITICAL=$(jq -r '.imageScanFindings.findingSeverityCounts.CRITICAL // 0' <<<"$FINDINGS")
-            HIGH=$(jq -r '.imageScanFindings.findingSeverityCounts.HIGH // 0' <<<"$FINDINGS")
-            if [ "$CRITICAL" -gt 0 ]; then
-              echo "::error::ECR critical findings block $repo@$DIGEST (critical=$CRITICAL high=$HIGH)"
-              exit 1
-            fi
-            if [ "$HIGH" -gt 0 ]; then
-              echo "::warning::ECR high findings require remediation review for $repo@$DIGEST (high=$HIGH)"
-            fi
-            echo "ECR_SCAN_PASS repo=$repo digest=$DIGEST critical=$CRITICAL high=$HIGH"
-          done
+          python scripts/v1/ecr-critical-scan-gate.py \
+            --candidate docs/reports/release-manifest.candidate.json \
+            --acceptances docs/ssot/ecr-critical-risk-acceptance.json \
+            --region "${{ env.AWS_REGION }}"
 
       - name: Workflow summary
         run: |

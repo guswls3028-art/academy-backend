@@ -29,6 +29,8 @@ $governanceScript = Get-Content -LiteralPath (
 $requiredProductionMarkers = @(
     "environment: production",
     "Gate newly built images on completed ECR critical scan",
+    "scripts/v1/ecr-critical-scan-gate.py",
+    "docs/ssot/ecr-critical-risk-acceptance.json",
     ".imageScanningConfiguration.scanOnPush == true",
     "needs.build-and-push.result == 'success'",
     "contents: read",
@@ -71,6 +73,15 @@ foreach ($marker in @(
 }
 if (-not (Test-Path -LiteralPath (Join-Path $repoRoot ".github\dependabot.yml"))) {
     $failures += "Backend Dependabot configuration is missing."
+}
+foreach ($relativePath in @(
+    "scripts\v1\ecr-critical-scan-gate.py",
+    "docs\ssot\ecr-critical-risk-acceptance.json",
+    "docs\operations\container-image-security.md"
+)) {
+    if (-not (Test-Path -LiteralPath (Join-Path $repoRoot $relativePath))) {
+        $failures += "Container image security contract is missing: $relativePath"
+    }
 }
 
 if ($failures.Count -gt 0) {
