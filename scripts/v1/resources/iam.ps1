@@ -530,6 +530,79 @@ function Ensure-GitHubActionsDeployIAM {
     Write-Step "Converge exact GitHub Actions least-privilege policy"
     $role = Invoke-AwsJson @("iam", "get-role", "--role-name", $roleName, "--output", "json")
     if (-not $role.Role.Arn) { throw "GitHub Actions role not found: $roleName" }
+
+    # Jobs without an environment use the main-ref subject. Jobs protected by
+    # the GitHub production environment use the environment subject instead.
+    # Keep the trust inventory exact so PRs, tags, and other environments fail
+    # closed while both halves of the release workflow can use OIDC.
+    $expectedSubjects = @(
+        "repo:guswls3028-art/academy-backend:environment:production",
+        "repo:guswls3028-art/academy-backend:ref:refs/heads/main"
+    ) | Sort-Object
+    $expectedTrust = [ordered]@{
+        Version = "2012-10-17"
+        Statement = @(
+            [ordered]@{
+                Effect = "Allow"
+                Principal = [ordered]@{
+                    Federated = (
+                        "arn:aws:iam::$($script:AccountId):oidc-provider/" +
+                        "token.actions.githubusercontent.com"
+                    )
+                }
+                Action = "sts:AssumeRoleWithWebIdentity"
+                Condition = [ordered]@{
+                    StringEquals = [ordered]@{
+                        "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+                        "token.actions.githubusercontent.com:sub" = $expectedSubjects
+                    }
+                }
+            }
+        )
+    }
+    $expectedTrustJson = $expectedTrust | ConvertTo-Json -Depth 20 -Compress
+    $actualTrustJson = $role.Role.AssumeRolePolicyDocument |
+        ConvertTo-Json -Depth 20 -Compress
+    if ($actualTrustJson -ne $expectedTrustJson) {
+        $trustRef = Convert-JsonArgToFileRef $expectedTrustJson
+        $trustFile = $trustRef -replace '^file://', ''
+        try {
+            Invoke-Aws @(
+                "iam", "update-assume-role-policy",
+                "--role-name", $roleName,
+                "--policy-document", $trustRef
+            ) -ErrorMessage "update GitHub Actions OIDC trust" | Out-Null
+        } finally {
+            Remove-TempFiles @($trustFile)
+        }
+        $script:ChangesMade = $true
+    }
+
+    $trustReadback = Invoke-AwsJson @(
+        "iam", "get-role", "--role-name", $roleName, "--output", "json"
+    )
+    $trustStatements = @($trustReadback.Role.AssumeRolePolicyDocument.Statement)
+    $trustCondition = if ($trustStatements.Count -eq 1) {
+        $trustStatements[0].Condition.StringEquals
+    } else {
+        $null
+    }
+    $actualSubjects = @(
+        $trustCondition.'token.actions.githubusercontent.com:sub'
+    ) | Sort-Object
+    if (
+        $trustStatements.Count -ne 1 -or
+        [string]$trustStatements[0].Effect -ne "Allow" -or
+        [string]$trustStatements[0].Action -ne "sts:AssumeRoleWithWebIdentity" -or
+        [string]$trustStatements[0].Principal.Federated -ne
+            $expectedTrust.Statement[0].Principal.Federated -or
+        [string]$trustCondition.'token.actions.githubusercontent.com:aud' -ne
+            "sts.amazonaws.com" -or
+        ($actualSubjects -join "`n") -cne ($expectedSubjects -join "`n")
+    ) {
+        throw "GitHub Actions OIDC trust readback mismatch."
+    }
+
     $currentPolicy = $null
     try { $currentPolicy = Invoke-AwsJson @("iam", "get-role-policy", "--role-name", $roleName, "--policy-name", $policyName, "--output", "json") }
     catch { if ($_.Exception.Message -notmatch "NoSuchEntity") { throw } }

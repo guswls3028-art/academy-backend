@@ -60,7 +60,7 @@ main에 push하면 자동으로 서버 반영까지 완료된다:
     계속하므로, 이전 attempt의 lock 해제 뒤에도 잠금 없이 compatibility
     alias를 변경하지 않는다.
 
-**IAM:** 일반 CI는 장기 access key가 아니라 main 브랜치만 신뢰하는 GitHub OIDC 역할 `academy-gha-ecr-build`을 사용한다. production inline policy와 별도 관리형 development policy `academy-gha-development-deploy`를 저장소가 함께 소유하며, attached policy inventory가 정확히 그 하나인지 readback한다. development EC2는 `academy-api-development-role`, preprod EC2는 `academy-api-preprod-canary-role`을 사용한다. production mutation은 GitHub `production` environment 승인 뒤 시작한다. 상세 저장소 설정은 [github-governance.md](github-governance.md)를 따른다.
+**IAM:** 일반 CI는 장기 access key가 아니라 backend `main` ref와 승인된 GitHub `production` environment subject만 정확히 신뢰하는 GitHub OIDC 역할 `academy-gha-ecr-build`을 사용한다. 환경 없는 build/development/preprod job은 main-ref subject를, production environment로 보호되는 job은 environment subject를 사용한다. production inline policy와 별도 관리형 development policy `academy-gha-development-deploy`를 저장소가 함께 소유하며, attached policy inventory가 정확히 그 하나인지 readback한다. development EC2는 `academy-api-development-role`, preprod EC2는 `academy-api-preprod-canary-role`을 사용한다. production mutation은 GitHub `production` environment 승인 뒤 시작한다. 상세 저장소 설정은 [github-governance.md](github-governance.md)를 따른다.
 
 ---
 
