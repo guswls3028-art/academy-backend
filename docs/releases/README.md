@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.12.12.md](v1.12.12.md) ([정정](v1.12.12-errata.md)) | **CURRENT** | 2026-07-30 KST | Enterprise mixed-order correctness workspace, auto-graded answer review, spreadsheet-speed score entry, and production verification closure |
+| [v1.12.13.md](v1.12.13.md) | **CURRENT** | 2026-08-01 KST | Teacher grading and attendance safety, configurable homework scoring, result-scope separation, deployment hardening, and expanded CI coverage |
+| [v1.12.12.md](v1.12.12.md) ([정정](v1.12.12-errata.md)) | production-deployed / v1.12.13로 승계 | 2026-07-30 KST | Enterprise mixed-order correctness workspace, auto-graded answer review, spreadsheet-speed score entry, and production verification closure |
 | [v1.12.11.md](v1.12.11.md) | production-deployed / v1.12.12로 승계 | 2026-07-30 KST | Preserved dirty-worktree integration, canonical workspace navigation, Problem Studio compatibility, score/report/YMath regression closure, and production stabilization |
 | [v1.12.10.md](v1.12.10.md) | production-deployed / v1.12.11로 승계 | 2026-07-30 KST | Release-bound preproduction isolation, retry-safe image promotion, single-tenant product-analytics pilot operations, and official mock-exam month correction |
 | [v1.12.9.md](v1.12.9.md) | production-deployed / v1.12.10로 승계 | 2026-07-30 KST | Fail-closed first-login guidance, public product updates, and zero-downtime migration release enforcement |
