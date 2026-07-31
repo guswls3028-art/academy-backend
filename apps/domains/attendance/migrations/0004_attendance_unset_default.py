@@ -3,6 +3,13 @@
 from django.db import migrations, models
 
 
+ACADEMY_MIGRATION_PHASE = "contract"
+ACADEMY_MIGRATION_REASON = (
+    "Update Django choices and the application-side default only; PostgreSQL column "
+    "shape and existing attendance rows remain unchanged during rolling overlap."
+)
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
