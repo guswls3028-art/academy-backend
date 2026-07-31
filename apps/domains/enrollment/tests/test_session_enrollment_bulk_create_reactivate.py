@@ -178,7 +178,7 @@ class SessionEnrollmentBulkCreateReactivateTests(APITestCase):
             tenant=self.tenant, session=self.session, enrollment=enrollment
         ).first()
         self.assertIsNotNone(att)
-        self.assertEqual(att.status, "PRESENT")
+        self.assertEqual(att.status, "UNSET")
 
     def test_active_enrollment_reactivates_auto_assigned_student_fee(self):
         enrollment = self._create_student_and_enrollment(21, enrollment_status="ACTIVE")

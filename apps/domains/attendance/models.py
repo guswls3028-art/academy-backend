@@ -32,6 +32,7 @@ class Attendance(models.Model):
     status = models.CharField(
         max_length=20,
         choices=[
+            ("UNSET", "미입력"),
             ("PRESENT", "출석"),
             ("LATE", "지각"),
             ("ONLINE", "온라인"),
@@ -43,7 +44,7 @@ class Attendance(models.Model):
             ("INACTIVE", "부재"),
             ("SECESSION", "탈퇴"),
         ],
-        default="PRESENT",
+        default="UNSET",
     )
 
     attended_section = models.ForeignKey(

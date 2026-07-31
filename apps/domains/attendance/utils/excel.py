@@ -7,6 +7,7 @@ from academy.adapters.db.django import repositories_enrollment as enroll_repo
 
 
 STATUS_LABEL_MAP = {
+    "UNSET": "미입력",
     "PRESENT": "현장",
     "LATE": "지각",
     "ONLINE": "영상",
@@ -20,6 +21,7 @@ STATUS_LABEL_MAP = {
 }
 
 STATUS_FILL_MAP = {
+    "UNSET": "F2F2F2",
     "PRESENT": "C6EFCE",
     "ABSENT": "FFC7CE",
     "LATE": "FFEB9C",

@@ -85,7 +85,7 @@ def ensure_session_roster_membership(*, tenant, session, enrollment) -> SessionR
         tenant=tenant,
         enrollment=enrollment,
         session=session,
-        defaults={"status": "PRESENT"},
+        defaults={"status": "UNSET"},
     )
     return SessionRosterMembership(
         session_enrollment=session_enrollment,

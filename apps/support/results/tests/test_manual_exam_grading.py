@@ -13,13 +13,14 @@ from apps.domains.exams.models import (
     Sheet,
 )
 from apps.domains.lectures.models import Lecture, Session
-from apps.domains.results.models import Result, ResultItem
+from apps.domains.results.models import ExamAttempt, Result, ResultItem
 from apps.domains.results.services.manual_exam_grading import (
     ManualExamGradingError,
     apply_manual_grading,
     build_manual_grading_sheet,
     plan_manual_grading,
 )
+from apps.domains.results.utils.ranking import compute_exam_rankings
 from apps.domains.students.models import Student
 
 
@@ -532,3 +533,43 @@ class ManualExamGradingTests(TestCase):
 
         with self.assertRaises(ManualExamGradingError):
             apply_manual_grading(plan=plan)
+
+    def test_absent_row_round_trips_without_cells_or_ranking(self):
+        exam, _, _ = self._exam(
+            grading_mode=Exam.GradingMode.WRITTEN,
+            manual_method=Exam.ManualGradingMethod.CORRECTNESS,
+        )
+        sheet = build_manual_grading_sheet(exam=exam, tenant=self.tenant)
+
+        plan = plan_manual_grading(
+            exam=exam,
+            tenant=self.tenant,
+            payload={
+                "rows": [
+                    {
+                        "enrollment_id": self.enrollment.id,
+                        "expected_version": sheet["rows"][0]["expected_version"],
+                        "attendance": "absent",
+                    }
+                ]
+            },
+        )
+
+        self.assertTrue(plan.can_apply, plan.errors)
+        self.assertEqual(plan.as_payload()["not_submitted_count"], 1)
+        apply_manual_grading(plan=plan)
+
+        result = Result.objects.get(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.enrollment,
+        )
+        attempt = ExamAttempt.objects.get(id=result.attempt_id)
+        self.assertEqual((attempt.meta or {}).get("status"), "NOT_SUBMITTED")
+        self.assertFalse(ResultItem.objects.filter(result=result).exists())
+        self.assertNotIn(
+            self.enrollment.id,
+            compute_exam_rankings(exam_id=exam.id, tenant=self.tenant),
+        )
+        refreshed = build_manual_grading_sheet(exam=exam, tenant=self.tenant)
+        self.assertTrue(refreshed["rows"][0]["is_not_submitted"])
