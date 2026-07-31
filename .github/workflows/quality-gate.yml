@@ -51,7 +51,7 @@ jobs:
           python scripts/lint/check_expand_contract_migrations.py --base-ref "$BASE_REF"
 
   django-contract:
-    name: Backend Django full suite and deployment contracts
+    name: Backend Django smoke and deployment contracts
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
