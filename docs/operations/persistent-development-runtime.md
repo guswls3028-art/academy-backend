@@ -48,7 +48,10 @@ manifest의 API/Tools digest를 사용해 첫 개발 인스턴스를 만든다. 
 `academy-gha-ecr-build` GitHub OIDC 역할만 사용하며 장기 AWS access key를 요구하지 않는다.
 개발 권한은 기존 운영 inline 정책과 분리된 고객 관리형
 `academy-gha-development-deploy` 정책으로 관리하며
-`converge-api-development-oidc.ps1`이 main-only trust와 정책 readback을 강제한다.
+`converge-api-development-oidc.ps1`이 backend main-ref와 승인된 production
+environment 두 subject만 허용하는 trust와 정책 readback을 강제한다. 환경 없는
+development job은 main-ref subject를 사용하고, production environment가 붙은
+lock/mutation job은 environment subject를 사용한다.
 
 ## 릴리스 순서
 

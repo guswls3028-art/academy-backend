@@ -25,6 +25,12 @@ $qualityWorkflow = Get-Content -LiteralPath (
 $governanceScript = Get-Content -LiteralPath (
     Join-Path $PSScriptRoot "converge-github-governance.ps1"
 ) -Raw
+$deployIam = Get-Content -LiteralPath (
+    Join-Path $PSScriptRoot "resources\iam.ps1"
+) -Raw
+$developmentOidc = Get-Content -LiteralPath (
+    Join-Path $PSScriptRoot "converge-api-development-oidc.ps1"
+) -Raw
 
 $requiredProductionMarkers = @(
     "environment: production",
@@ -47,6 +53,25 @@ foreach ($marker in @(
 )) {
     if (-not $qualityWorkflow.Contains($marker)) {
         $failures += "Backend quality workflow is missing marker: $marker"
+    }
+}
+foreach ($marker in @(
+    "repo:guswls3028-art/academy-backend:ref:refs/heads/main",
+    "repo:guswls3028-art/academy-backend:environment:production",
+    "update-assume-role-policy",
+    "GitHub Actions OIDC trust readback mismatch"
+)) {
+    if (-not $deployIam.Contains($marker)) {
+        $failures += "Deploy IAM is missing OIDC trust marker: $marker"
+    }
+}
+foreach ($marker in @(
+    "repo:guswls3028-art/academy-backend:ref:refs/heads/main",
+    "repo:guswls3028-art/academy-backend:environment:production",
+    "main-ref and production-environment only"
+)) {
+    if (-not $developmentOidc.Contains($marker)) {
+        $failures += "Development OIDC audit is missing trust marker: $marker"
     }
 }
 foreach ($marker in @(

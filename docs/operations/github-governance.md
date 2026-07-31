@@ -86,6 +86,9 @@ Wrangler deploy step에 전달하지 않는다.
    `GITHUB_GOVERNANCE_PASS`인지 확인한다.
 6. 승인된 PR을 merge한다. 첫 production workflow는 environment 승인을
    요구해야 하며, 승인 전에는 AWS/Cloudflare mutation이 없어야 한다.
+   백엔드 AWS OIDC trust는 환경 없는 main job의 main-ref subject와 승인된
+   production job의 environment subject만 허용해야 한다. 둘 중 하나가 빠지거나
+   PR/tag/다른 environment subject가 추가되면 수렴 실패로 본다.
 7. 배포 성공 후 Actions 설정의 SHA pinning, ruleset, environment reviewer,
    Dependabot security updates를 다시 읽어 증거에 기록한다.
 
