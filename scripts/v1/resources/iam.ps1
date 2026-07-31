@@ -582,11 +582,11 @@ function Ensure-GitHubActionsDeployIAM {
         "iam", "get-role", "--role-name", $roleName, "--output", "json"
     )
     $trustStatements = @($trustReadback.Role.AssumeRolePolicyDocument.Statement)
-    $trustCondition = if ($trustStatements.Count -eq 1) {
+    $trustCondition = $(if ($trustStatements.Count -eq 1) {
         $trustStatements[0].Condition.StringEquals
     } else {
         $null
-    }
+    })
     $actualSubjects = @(
         $trustCondition.'token.actions.githubusercontent.com:sub'
     ) | Sort-Object
@@ -748,9 +748,12 @@ function Ensure-GitHubActionsDeployIAM {
     $actualJson = $readback.PolicyDocument | ConvertTo-Json -Depth 50 -Compress
     if ($actualJson -ne $expectedJson) { throw "GitHub Actions IAM full-policy readback does not exactly match the managed least-privilege contract." }
     $developmentConverger = Join-Path (Get-Item $PSScriptRoot).Parent.FullName "converge-api-development-oidc.ps1"
-    & $developmentConverger -AwsProfile (
-        if ($env:AWS_PROFILE) { [string]$env:AWS_PROFILE } else { "default" }
-    )
+    $convergerAwsProfile = if ($env:AWS_PROFILE) {
+        [string]$env:AWS_PROFILE
+    } else {
+        "default"
+    }
+    & $developmentConverger -AwsProfile $convergerAwsProfile
     $developmentPolicyArn = (
         "arn:aws:iam::$($script:AccountId):policy/" +
         [string]$script:GitHubActionsDevelopmentDeployPolicyName
