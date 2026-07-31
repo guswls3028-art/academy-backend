@@ -72,7 +72,7 @@ pwsh scripts/v1/disable-legacy-deploy-crons.ps1 -Action Off -AwsProfile default
   라우팅한다. 운영 Tools ASG는 `t4g.small` min/desired=0 scale-to-zero를
   유지하고, persistent development host만 별도 Tools container/process를
   함께 실행해 Excel/PPT/R2 실사용 smoke를 검증한다.
-- **ECR 이미지**: 6개 repo는 `IMMUTABLE_WITH_EXCLUSION`, 단 하나의 `latest` wildcard exclusion, `scanOnPush=true`를 exact readback한다. CI는 신규 digest scan 완료와 critical=0을 요구하고, preprod·운영 검증 성공 후에만 여섯 digest를 `latest`로 승격한다.
+- **ECR 이미지**: 6개 repo는 `IMMUTABLE_WITH_EXCLUSION`, 단 하나의 `latest` wildcard exclusion, `scanOnPush=true`를 exact readback한다. CI는 신규·재사용 build digest의 scan 완료와 승인되지 않은 critical=0을 요구한다. 예외는 `docs/ssot/ecr-critical-risk-acceptance.json`의 exact·expiring 항목만 허용하고, preprod·운영 검증 성공 후에만 여섯 digest를 `latest`로 승격한다.
 - **런타임 불변성**: migration과 API/Messaging/AI/Tools Launch Template, Video Batch 8개 job definition은 모두 해당 빌드 tag를 `repo@sha256:...`로 해석해 사용한다. `latest`는 호환성 alias일 뿐 증거가 아니다.
 - **격리 DB 경계**: `converge-api-preprod-database.ps1`이
   `/academy/api/preprod/db-credentials`와 `academy_api_preprod_app` 역할을

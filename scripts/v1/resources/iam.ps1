@@ -698,7 +698,7 @@ function Ensure-GitHubActionsDeployIAM {
     $statements = @(
         [ordered]@{Sid="EcrAuth";Effect="Allow";Action="ecr:GetAuthorizationToken";Resource="*"},
         [ordered]@{Sid="EcrPushPull";Effect="Allow";Action=@("ecr:BatchCheckLayerAvailability","ecr:BatchDeleteImage","ecr:BatchGetImage","ecr:CompleteLayerUpload","ecr:GetDownloadUrlForLayer","ecr:InitiateLayerUpload","ecr:PutImage","ecr:UploadLayerPart");Resource=$repoArns},
-        [ordered]@{Sid="EcrRepoManage";Effect="Allow";Action=@("ecr:CreateRepository","ecr:DescribeImageScanFindings","ecr:DescribeImages","ecr:DescribeRepositories","ecr:GetLifecyclePolicy","ecr:ListImages","ecr:PutImageScanningConfiguration","ecr:PutImageTagMutability");Resource=$repoArns},
+        [ordered]@{Sid="EcrRepoManage";Effect="Allow";Action=@("ecr:CreateRepository","ecr:DescribeImageScanFindings","ecr:DescribeImages","ecr:DescribeRepositories","ecr:GetLifecyclePolicy","ecr:ListImages","ecr:PutImageScanningConfiguration","ecr:PutImageTagMutability","ecr:StartImageScan");Resource=$repoArns},
         [ordered]@{Sid="AsgInstanceRefresh";Effect="Allow";Action=@("autoscaling:CancelInstanceRefresh","autoscaling:SetInstanceProtection","autoscaling:StartInstanceRefresh","autoscaling:UpdateAutoScalingGroup");Resource=$asgArns},
         [ordered]@{Sid="AsgDescribe";Effect="Allow";Action=@("autoscaling:DescribeAutoScalingGroups","autoscaling:DescribeInstanceRefreshes");Resource="*"},
         [ordered]@{Sid="LaunchTemplateImagePinRead";Effect="Allow";Action=@("ec2:DescribeLaunchTemplates","ec2:DescribeLaunchTemplateVersions");Resource="*"},

@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "acceptedFindings": [
+    {
+      "cve": "CVE-2026-5450",
+      "packageName": "glibc",
+      "packageVersion": "2.41-12+deb13u3",
+      "repositories": [
+        "academy-base",
+        "academy-api",
+        "academy-video-worker",
+        "academy-messaging-worker",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ],
+      "expiresOn": "2026-08-14",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-5450",
+      "rationale": "Debian classifies this as a no-DSA minor issue. The vulnerable native scanf %mc path with an explicit oversized width is not invoked by Academy's Python processes; ingress TLS terminates at ALB. Keep exact package-version matching until Debian publishes a stable fix."
+    },
+    {
+      "cve": "CVE-2026-34872",
+      "packageName": "mbedtls",
+      "packageVersion": "3.6.5-0.1~deb13u1",
+      "repositories": [
+        "academy-api",
+        "academy-video-worker",
+        "academy-ai-worker-cpu"
+      ],
+      "expiresOn": "2026-08-14",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-34872",
+      "rationale": "Debian classifies this as a no-DSA minor issue. Mbed TLS is a transitive media-tool dependency in these images and Academy does not expose or invoke its finite-field Diffie-Hellman API. Keep exact package-version matching until Debian publishes a stable fix."
+    },
+    {
+      "cve": "CVE-2026-34873",
+      "packageName": "mbedtls",
+      "packageVersion": "3.6.5-0.1~deb13u1",
+      "repositories": [
+        "academy-api",
+        "academy-video-worker",
+        "academy-ai-worker-cpu"
+      ],
+      "expiresOn": "2026-08-14",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-34873",
+      "rationale": "Debian classifies this as a no-DSA minor issue. Mbed TLS is a transitive media-tool dependency and is not Academy's TLS client, server, or TLS 1.3 session-resumption implementation; ALB terminates public TLS. Keep exact package-version matching until a stable fix exists."
+    },
+    {
+      "cve": "CVE-2026-34875",
+      "packageName": "mbedtls",
+      "packageVersion": "3.6.5-0.1~deb13u1",
+      "repositories": [
+        "academy-api",
+        "academy-video-worker",
+        "academy-ai-worker-cpu"
+      ],
+      "expiresOn": "2026-08-14",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-34875",
+      "rationale": "Debian classifies this as a no-DSA minor issue. Mbed TLS is installed transitively by media tools and Academy does not call its finite-field Diffie-Hellman key-export API. Keep exact package-version matching until Debian publishes a stable fix."
+    }
+  ]
+}

@@ -35,6 +35,8 @@ $developmentOidc = Get-Content -LiteralPath (
 $requiredProductionMarkers = @(
     "environment: production",
     "Gate newly built images on completed ECR critical scan",
+    "scripts/v1/ecr-critical-scan-gate.py",
+    "docs/ssot/ecr-critical-risk-acceptance.json",
     ".imageScanningConfiguration.scanOnPush == true",
     "needs.build-and-push.result == 'success'",
     "contents: read",
@@ -59,7 +61,8 @@ foreach ($marker in @(
     "repo:guswls3028-art/academy-backend:ref:refs/heads/main",
     "repo:guswls3028-art/academy-backend:environment:production",
     "update-assume-role-policy",
-    "GitHub Actions OIDC trust readback mismatch"
+    "GitHub Actions OIDC trust readback mismatch",
+    "ecr:StartImageScan"
 )) {
     if (-not $deployIam.Contains($marker)) {
         $failures += "Deploy IAM is missing OIDC trust marker: $marker"
@@ -96,6 +99,15 @@ foreach ($marker in @(
 }
 if (-not (Test-Path -LiteralPath (Join-Path $repoRoot ".github\dependabot.yml"))) {
     $failures += "Backend Dependabot configuration is missing."
+}
+foreach ($relativePath in @(
+    "scripts\v1\ecr-critical-scan-gate.py",
+    "docs\ssot\ecr-critical-risk-acceptance.json",
+    "docs\operations\container-image-security.md"
+)) {
+    if (-not (Test-Path -LiteralPath (Join-Path $repoRoot $relativePath))) {
+        $failures += "Container image security contract is missing: $relativePath"
+    }
 }
 
 if ($failures.Count -gt 0) {

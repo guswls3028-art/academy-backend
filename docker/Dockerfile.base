@@ -7,7 +7,7 @@
 # ==============================================================================
 # Stage 1: Builder (빌드 도구 포함)
 # ==============================================================================
-FROM python:3.11-slim AS builder
+FROM python:3.11-slim@sha256:db3ff2e1800a8581e2c48a27c3995339d47bdf046da21c7627accd3d51053a93 AS builder
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -30,7 +30,7 @@ RUN pip install --upgrade pip && pip install --user --no-cache-dir -r requiremen
 # ==============================================================================
 # Stage 2: Runtime (최종 이미지 - 빌드 도구 제거, non-root)
 # ==============================================================================
-FROM python:3.11-slim
+FROM python:3.11-slim@sha256:db3ff2e1800a8581e2c48a27c3995339d47bdf046da21c7627accd3d51053a93
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -38,7 +38,6 @@ ENV PYTHONPATH=/app
 
 # 런타임 의존성만 설치 (빌드 도구 제외)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    postgresql-client \
     libpq5 \
     ca-certificates \
     fonts-nanum \

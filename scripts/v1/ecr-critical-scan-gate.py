@@ -1,0 +1,284 @@
+#!/usr/bin/env python3
+"""Fail-closed ECR critical finding gate with exact, expiring acceptances."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+import time
+from datetime import date, datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+REPOSITORIES = {
+    "academy-base",
+    "academy-api",
+    "academy-video-worker",
+    "academy-messaging-worker",
+    "academy-ai-worker-cpu",
+    "academy-tools-worker",
+}
+
+
+class GateError(RuntimeError):
+    pass
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise GateError(f"cannot read valid JSON from {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise GateError(f"JSON root must be an object: {path}")
+    return value
+
+
+def load_acceptances(path: Path, today: date) -> dict[tuple[str, str, str, str], dict[str, Any]]:
+    document = _read_json(path)
+    if document.get("schemaVersion") != 1:
+        raise GateError("critical risk acceptance schemaVersion must be 1")
+    entries = document.get("acceptedFindings")
+    if not isinstance(entries, list):
+        raise GateError("acceptedFindings must be an array")
+
+    accepted: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            raise GateError(f"acceptedFindings[{index}] must be an object")
+        cve = entry.get("cve")
+        package = entry.get("packageName")
+        version = entry.get("packageVersion")
+        repositories = entry.get("repositories")
+        expires_raw = entry.get("expiresOn")
+        rationale = entry.get("rationale")
+        tracker = entry.get("vendorTracker")
+        if not isinstance(cve, str) or not re.fullmatch(r"CVE-\d{4}-\d{4,}", cve):
+            raise GateError(f"acceptedFindings[{index}] has an invalid CVE")
+        if not isinstance(package, str) or not package:
+            raise GateError(f"acceptedFindings[{index}] has an invalid packageName")
+        if not isinstance(version, str) or not version:
+            raise GateError(f"acceptedFindings[{index}] has an invalid packageVersion")
+        if not isinstance(repositories, list) or not repositories:
+            raise GateError(f"acceptedFindings[{index}] must name repositories")
+        if not isinstance(rationale, str) or len(rationale.strip()) < 40:
+            raise GateError(f"acceptedFindings[{index}] needs a durable rationale")
+        if not isinstance(tracker, str) or not tracker.startswith(
+            "https://security-tracker.debian.org/tracker/"
+        ):
+            raise GateError(f"acceptedFindings[{index}] needs a Debian vendor tracker URL")
+        try:
+            expires_on = date.fromisoformat(expires_raw)
+        except (TypeError, ValueError) as exc:
+            raise GateError(f"acceptedFindings[{index}] has an invalid expiresOn") from exc
+        if today > expires_on:
+            raise GateError(f"critical risk acceptance expired: {cve} expired {expires_on}")
+
+        for repository in repositories:
+            if repository not in REPOSITORIES:
+                raise GateError(f"acceptedFindings[{index}] names unknown repository {repository}")
+            key = (repository, cve, package, version)
+            if key in accepted:
+                raise GateError(f"duplicate critical risk acceptance: {key}")
+            accepted[key] = {**entry, "expiresOn": expires_on.isoformat()}
+    return accepted
+
+
+def _run_aws_json(arguments: list[str], *, scan_may_be_absent: bool = False) -> dict[str, Any]:
+    process = subprocess.run(
+        ["aws", *arguments, "--output", "json"],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    if process.returncode != 0:
+        stderr = process.stderr.strip()
+        if scan_may_be_absent and "ScanNotFoundException" in stderr:
+            return {}
+        concise = stderr.splitlines()[-1] if stderr else "unknown AWS CLI error"
+        raise GateError(f"AWS ECR command failed: {concise}")
+    if not process.stdout.strip():
+        return {}
+    try:
+        value = json.loads(process.stdout)
+    except json.JSONDecodeError as exc:
+        raise GateError("AWS ECR command returned invalid JSON") from exc
+    return value if isinstance(value, dict) else {}
+
+
+def _describe_scan(repository: str, digest: str, region: str) -> dict[str, Any]:
+    return _run_aws_json(
+        [
+            "ecr",
+            "describe-image-scan-findings",
+            "--repository-name",
+            repository,
+            "--image-id",
+            f"imageDigest={digest}",
+            "--region",
+            region,
+        ],
+        scan_may_be_absent=True,
+    )
+
+
+def wait_for_completed_scan(
+    repository: str,
+    digest: str,
+    region: str,
+    attempts: int,
+    interval_seconds: float,
+) -> dict[str, Any]:
+    findings = _describe_scan(repository, digest, region)
+    status_block = findings.get("imageScanStatus") or {}
+    status = status_block.get("status")
+    if not status:
+        try:
+            _run_aws_json(
+                [
+                    "ecr",
+                    "start-image-scan",
+                    "--repository-name",
+                    repository,
+                    "--image-id",
+                    f"imageDigest={digest}",
+                    "--region",
+                    region,
+                ]
+            )
+            print(f"ECR_SCAN_STARTED repo={repository} digest={digest}")
+        except GateError as exc:
+            if "LimitExceededException" not in str(exc):
+                raise
+            print(
+                f"::warning::ECR scan start quota is already consumed for "
+                f"{repository}@{digest}; require the existing scan to complete"
+            )
+
+    for attempt in range(1, attempts + 1):
+        findings = _describe_scan(repository, digest, region)
+        status_block = findings.get("imageScanStatus") or {}
+        status = status_block.get("status")
+        if status == "COMPLETE":
+            return findings
+        if status in {"FAILED", "UNSUPPORTED_IMAGE"}:
+            raise GateError(
+                f"ECR scan failed repo={repository} digest={digest} status={status}"
+            )
+        if attempt < attempts:
+            time.sleep(interval_seconds)
+    raise GateError(f"ECR scan did not complete repo={repository} digest={digest}")
+
+
+def critical_finding_keys(
+    repository: str, findings: dict[str, Any]
+) -> list[tuple[str, str, str, str]]:
+    keys: list[tuple[str, str, str, str]] = []
+    findings_block = findings.get("imageScanFindings") or {}
+    raw_findings = findings_block.get("findings", [])
+    if not isinstance(raw_findings, list):
+        raise GateError(f"ECR findings are malformed for {repository}")
+    for finding in raw_findings:
+        if not isinstance(finding, dict) or finding.get("severity") != "CRITICAL":
+            continue
+        attributes = {
+            item.get("key"): item.get("value")
+            for item in finding.get("attributes", [])
+            if isinstance(item, dict)
+        }
+        cve = finding.get("name")
+        package = attributes.get("package_name")
+        version = attributes.get("package_version")
+        if not all(isinstance(value, str) and value for value in (cve, package, version)):
+            raise GateError(f"critical ECR finding lacks exact identity for {repository}")
+        keys.append((repository, cve, package, version))
+    return sorted(set(keys))
+
+
+def evaluate_findings(
+    repository: str,
+    findings: dict[str, Any],
+    acceptances: dict[tuple[str, str, str, str], dict[str, Any]],
+) -> list[tuple[tuple[str, str, str, str], dict[str, Any]]]:
+    accepted_live: list[tuple[tuple[str, str, str, str], dict[str, Any]]] = []
+    unaccepted: list[tuple[str, str, str, str]] = []
+    for key in critical_finding_keys(repository, findings):
+        acceptance = acceptances.get(key)
+        if acceptance is None:
+            unaccepted.append(key)
+        else:
+            accepted_live.append((key, acceptance))
+    if unaccepted:
+        detail = ", ".join(f"{cve}/{package}/{version}" for _, cve, package, version in unaccepted)
+        raise GateError(f"unaccepted critical ECR findings repo={repository}: {detail}")
+    return accepted_live
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--candidate", type=Path, required=True)
+    parser.add_argument("--acceptances", type=Path, required=True)
+    parser.add_argument("--region", required=True)
+    parser.add_argument("--attempts", type=int, default=40)
+    parser.add_argument("--interval-seconds", type=float, default=15)
+    args = parser.parse_args()
+    if args.attempts < 1 or args.interval_seconds < 0:
+        raise GateError("scan retry settings are invalid")
+
+    candidate = _read_json(args.candidate)
+    images = candidate.get("images")
+    if not isinstance(images, dict) or set(images) != REPOSITORIES:
+        raise GateError("release candidate must contain exactly the six governed repositories")
+    today = datetime.now(timezone.utc).date()
+    acceptances = load_acceptances(args.acceptances, today)
+
+    for repository in sorted(REPOSITORIES):
+        image = images[repository]
+        if not isinstance(image, dict):
+            raise GateError(f"candidate image entry is malformed: {repository}")
+        if image.get("source") != "built":
+            continue
+        digest = image.get("digest")
+        if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+            raise GateError(f"candidate digest is invalid: {repository}")
+        findings = wait_for_completed_scan(
+            repository,
+            digest,
+            args.region,
+            args.attempts,
+            args.interval_seconds,
+        )
+        accepted_live = evaluate_findings(repository, findings, acceptances)
+        for (_, cve, package, version), acceptance in accepted_live:
+            print(
+                "ECR_CRITICAL_ACCEPTED "
+                f"repo={repository} cve={cve} package={package} version={version} "
+                f"expires={acceptance['expiresOn']}"
+            )
+        findings_block = findings.get("imageScanFindings") or {}
+        counts = findings_block.get("findingSeverityCounts", {})
+        critical = counts.get("CRITICAL", 0)
+        high = counts.get("HIGH", 0)
+        if high:
+            print(
+                f"::warning::ECR high findings require remediation review for "
+                f"{repository}@{digest} (high={high})"
+            )
+        print(
+            f"ECR_SCAN_PASS repo={repository} digest={digest} "
+            f"critical={critical} acceptedCritical={len(accepted_live)} high={high}"
+        )
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except GateError as exc:
+        print(f"::error::{exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
