@@ -47,7 +47,15 @@ class StudentPerformanceConsoleTest(TestCase, ClinicTestMixin):
         force_authenticate(request, user=self.admin)
         return AdminStudentPerformanceView.as_view()(request)
 
-    def _score(self, *, title, score, days_ago, enrollment=None):
+    def _score(
+        self,
+        *,
+        title,
+        score,
+        days_ago,
+        enrollment=None,
+        session_type="REGULAR",
+    ):
         exam_model = self.data["lec_session"].exams.model
         exam = exam_model.objects.create(
             tenant=self.tenant,
@@ -57,7 +65,15 @@ class StudentPerformanceConsoleTest(TestCase, ClinicTestMixin):
             pass_score=60,
             max_score=100,
         )
-        exam.sessions.add(self.data["lec_session"])
+        session = self.data["lec_session"]
+        if session_type == "SUPPLEMENT":
+            session = session.__class__.objects.create(
+                lecture=self.data["lecture"],
+                order=100 + exam.id,
+                title=f"{title} 보강",
+                session_type="SUPPLEMENT",
+            )
+        exam.sessions.add(session)
         return Result.objects.create(
             target_type="exam",
             target_id=exam.id,
@@ -115,6 +131,56 @@ class StudentPerformanceConsoleTest(TestCase, ClinicTestMixin):
         self.assertEqual(selected.data["summary"]["student_count"], 1)
         self.assertEqual(selected.data["students"][0]["scored_count"], 2)
 
+    def test_session_type_filter_recomputes_the_entire_academy_scope(self):
+        self._score(title="정규 1회", score=70, days_ago=3)
+        self._score(title="정규 2회", score=90, days_ago=2)
+        self._score(
+            title="보강 1회",
+            score=60,
+            days_ago=1,
+            session_type="SUPPLEMENT",
+        )
+
+        regular = self._get({"days": "all", "source": "academy", "session_type": "REGULAR"})
+        supplement = self._get(
+            {"days": "all", "source": "academy", "session_type": "SUPPLEMENT"}
+        )
+
+        self.assertEqual(regular.status_code, 200, regular.data)
+        self.assertEqual(regular.data["summary"]["result_count"], 2)
+        self.assertEqual(regular.data["summary"]["average_score_pct"], 80.0)
+        self.assertEqual(regular.data["students"][0]["scored_count"], 2)
+        self.assertEqual(supplement.data["summary"]["result_count"], 1)
+        self.assertEqual(supplement.data["students"][0]["latest_score_pct"], 60.0)
+        self.assertEqual(
+            regular.data["summary"]["session_type_result_count"],
+            {"all": 3, "REGULAR": 2, "SUPPLEMENT": 1, "UNCLASSIFIED": 0},
+        )
+
+    def test_mixed_session_exam_is_unclassified_and_only_visible_in_all_scope(self):
+        result = self._score(title="혼합 연결 시험", score=88, days_ago=1)
+        supplement = self.data["lec_session"].__class__.objects.create(
+            lecture=self.data["lecture"],
+            order=900,
+            title="혼합 연결 보강",
+            session_type="SUPPLEMENT",
+        )
+        result_exam = self.data["lec_session"].exams.model.objects.get(id=result.target_id)
+        result_exam.sessions.add(supplement)
+
+        all_scope = self._get({"days": "all", "source": "academy"})
+        regular = self._get({"days": "all", "source": "academy", "session_type": "REGULAR"})
+        supplement_scope = self._get(
+            {"days": "all", "source": "academy", "session_type": "SUPPLEMENT"}
+        )
+
+        self.assertEqual(
+            all_scope.data["summary"]["session_type_result_count"],
+            {"all": 1, "REGULAR": 0, "SUPPLEMENT": 0, "UNCLASSIFIED": 1},
+        )
+        self.assertEqual(regular.data["summary"]["result_count"], 0)
+        self.assertEqual(supplement_scope.data["summary"]["result_count"], 0)
+
     def test_foreign_tenant_data_and_lecture_ids_are_not_exposed(self):
         other = self.setup_full_tenant("student-performance-console-other", student_count=1)
         exam_model = other["lec_session"].exams.model
@@ -150,6 +216,9 @@ class StudentPerformanceConsoleTest(TestCase, ClinicTestMixin):
         invalid_days = self._get({"days": "not-a-period"})
         self.assertEqual(invalid_days.status_code, 200)
         self.assertEqual(invalid_days.data["period"]["days"], 180)
+
+        invalid_session_type = self._get({"session_type": "mixed"})
+        self.assertEqual(invalid_session_type.status_code, 400)
 
     def test_query_count_does_not_scale_with_exam_history(self):
         self._score(title="쿼리 기준 시험", score=70, days_ago=10)
