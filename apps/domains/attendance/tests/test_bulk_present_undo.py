@@ -5,9 +5,12 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.attendance.models import Attendance
 from apps.domains.attendance.views import AttendanceViewSet
-from apps.domains.enrollment.models import Enrollment
-from apps.domains.lectures.models import Lecture, Session
-from apps.domains.students.models import Student
+from apps.domains.enrollment.test_support import create_enrollment_fixture
+from apps.domains.lectures.test_support import (
+    create_lecture_fixture,
+    create_session_fixture,
+)
+from apps.domains.students.test_support import create_student_fixture
 
 
 User = get_user_model()
@@ -45,12 +48,12 @@ class AttendanceBulkPresentUndoTests(TestCase):
             role="admin",
         )
 
-        self.lecture = Lecture.objects.create(
+        self.lecture = create_lecture_fixture(
             tenant=self.tenant,
             name="되돌리기 강의",
             title="되돌리기 강의",
         )
-        self.session = Session.objects.create(
+        self.session = create_session_fixture(
             lecture=self.lecture,
             order=1,
             title="1회차",
@@ -66,7 +69,7 @@ class AttendanceBulkPresentUndoTests(TestCase):
             password="test1234",
             tenant=self.tenant,
         )
-        student = Student.objects.create(
+        student = create_student_fixture(
             tenant=self.tenant,
             user=user,
             ps_number=f"UNDO{sequence:03d}",
@@ -74,7 +77,7 @@ class AttendanceBulkPresentUndoTests(TestCase):
             name=name,
             parent_phone=f"0100000{sequence:04d}",
         )
-        enrollment = Enrollment.objects.create(
+        enrollment = create_enrollment_fixture(
             tenant=self.tenant,
             student=student,
             lecture=self.lecture,
