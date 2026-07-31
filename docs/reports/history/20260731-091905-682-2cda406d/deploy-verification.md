@@ -103,3 +103,12 @@
 
 
 **Verification Run ID:** ca8f5027ac2843ce844937ac4410a8ff
+
+## Immutable Evidence Bundle
+
+- [audit.latest.md](./audit.latest.md)
+- [drift.latest.md](./drift.latest.md)
+- [runtime-images.latest.md](./runtime-images.latest.md)
+- [consistency.latest.md](./consistency.latest.md)
+- [front-connection.latest.md](./front-connection.latest.md)
+- [release-manifest.latest.json](./release-manifest.latest.json)
