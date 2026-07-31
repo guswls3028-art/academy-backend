@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.db import connection
@@ -312,7 +313,7 @@ class AdminStudentGradesScopeTest(TestCase, ClinicTestMixin):
             self.assertEqual(row["cohort_avg"], 75.0)
 
     def test_not_submitted_is_null_in_list_and_excluded_from_trend(self):
-        self._score(
+        exam, _ = self._score(
             title="Ymath 주간 테스트 미응시",
             order=2,
             score=0,
@@ -320,11 +321,30 @@ class AdminStudentGradesScopeTest(TestCase, ClinicTestMixin):
             not_submitted=True,
         )
 
-        response = self._get(self.student.id)
+        poisoned_rank = {
+            exam.id: {
+                self.data["enrollments"][0].id: {
+                    "rank": 1,
+                    "percentile": 1.0,
+                    "cohort_size": 99,
+                    "cohort_avg": 100.0,
+                }
+            }
+        }
+        with patch(
+            "apps.domains.results.views.admin_student_grades_view.compute_exam_rankings_batch",
+            return_value=poisoned_rank,
+        ):
+            response = self._get(self.student.id)
 
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(len(response.data["exams"]), 1)
-        self.assertIsNone(response.data["exams"][0]["total_score"])
+        row = response.data["exams"][0]
+        self.assertIsNone(row["total_score"])
+        self.assertIsNone(row["rank"])
+        self.assertIsNone(row["percentile"])
+        self.assertIsNone(row["cohort_size"])
+        self.assertIsNone(row["cohort_avg"])
         self.assertEqual(response.data["exam_trend"], [])
         self.assertEqual(response.data["exam_summary"]["scored_count"], 0)
 

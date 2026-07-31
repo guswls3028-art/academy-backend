@@ -241,7 +241,11 @@ class AdminExamResultsView(ListAPIView):
             # 학생 SSOT 표시용 필드 (아바타 + 강의 딱지)
             display = _get_enrollment_display_fields(enrollment_map.get(enrollment_id))
 
-            rank_info = rank_map.get(enrollment_id, {})
+            rank_info = (
+                {}
+                if achievement_data["meta_status"] == "NOT_SUBMITTED"
+                else rank_map.get(enrollment_id, {})
+            )
 
             rows.append({
                 "enrollment_id": enrollment_id,

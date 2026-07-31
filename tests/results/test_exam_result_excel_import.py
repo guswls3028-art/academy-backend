@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import re
 import zipfile
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -836,15 +837,35 @@ class ExamResultExcelImportTests(TestCase):
             "get",
             f"/results/admin/exams/{self.exam.id}/results/",
         )
-        list_response = AdminExamResultsView.as_view()(
-            list_request,
-            exam_id=self.exam.id,
-        )
+        with patch(
+            "apps.domains.results.views.admin_exam_results_view.compute_exam_rankings",
+            return_value={
+                self.enrollment.id: {
+                    "rank": 1,
+                    "percentile": 1.0,
+                    "cohort_size": 99,
+                    "cohort_avg": 100.0,
+                }
+            },
+        ):
+            list_response = AdminExamResultsView.as_view()(
+                list_request,
+                exam_id=self.exam.id,
+            )
         self.assertEqual(list_response.status_code, 200)
-        self.assertIsNone(list_response.data["results"][0]["final_score"])
+        result_row = list_response.data["results"][0]
+        self.assertIsNone(result_row["final_score"])
+        self.assertIsNone(result_row["rank"])
+        self.assertIsNone(result_row["percentile"])
+        self.assertIsNone(result_row["cohort_size"])
+        self.assertIsNone(result_row["cohort_avg"])
         self.assertEqual(
-            list_response.data["results"][0]["exam_not_submitted_count"],
+            result_row["exam_not_submitted_count"],
             1,
+        )
+        self.assertNotIn(
+            self.enrollment.id,
+            compute_exam_rankings(exam_id=self.exam.id, tenant=self.tenant),
         )
 
         summary_request = self._request(

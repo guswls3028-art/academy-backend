@@ -127,6 +127,8 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
 
     is_not_submitted = achievement_data["meta_status"] == "NOT_SUBMITTED"
     is_provisional = achievement_data["is_provisional"]
+    if is_not_submitted:
+        data["total_score"] = None
 
     # 정답 공개 정책 적용
     # provisional/미응시/불합격 → 비공개, 합격/기준없음 → 정책 따름
@@ -178,7 +180,7 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
 
     # 석차 정보 추가
     rank_map = compute_exam_rankings(exam_id=exam_id, tenant=tenant)
-    rank_info = rank_map.get(enrollment_id, {})
+    rank_info = {} if is_not_submitted else rank_map.get(enrollment_id, {})
     data["rank"] = rank_info.get("rank")
     data["percentile"] = rank_info.get("percentile")
     data["cohort_size"] = rank_info.get("cohort_size")

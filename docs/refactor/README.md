@@ -17,6 +17,7 @@
 | [validation-matrix.md](validation-matrix.md) | proposed | 단계별 검증 매트릭스 |
 | [hardening-plan.md](hardening-plan.md) | active | 기존 사용자 흐름 완결성·데이터 안전·UX·구조·운영 하드닝 실행 계획 |
 | [matchup-segmentation-risk-backlog.md](matchup-segmentation-risk-backlog.md) | proposed | 매치업 문항분리 숨은 버그·잠재 리스크와 실행 단위 |
+| [exam-wrong-note-hwpx-plan.md](exam-wrong-note-hwpx-plan.md) | proposed | 시험 원본 검수·문항 정본 저장·회차 범위 학생별 HWPX 오답노트 단계와 수용 기준 |
 | [backlog-student-grade-comparison.md](backlog-student-grade-comparison.md) | backlog | 학생 성적 비교 시스템 |
 
 ## 작성 규칙

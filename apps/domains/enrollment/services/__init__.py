@@ -226,7 +226,7 @@ def lecture_enroll_from_excel_rows(
                 tenant=tenant,
                 enrollment=enrollment,
                 session=target_session,
-                defaults={"status": "PRESENT"},
+                defaults={"status": "UNSET"},
             )
 
         result = {
