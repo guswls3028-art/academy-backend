@@ -11,6 +11,8 @@ class AttendanceRaceGuardTests(SimpleTestCase):
     def test_status_mutations_use_row_locks(self):
         queryset_source = inspect.getsource(AttendanceViewSet.get_queryset)
         bulk_source = inspect.getsource(AttendanceViewSet.bulk_set_present)
+        undo_source = inspect.getsource(AttendanceViewSet.bulk_undo_present)
 
         self.assertIn("select_for_update", queryset_source)
         self.assertIn("select_for_update", bulk_source)
+        self.assertIn("select_for_update", undo_source)
