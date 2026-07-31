@@ -138,6 +138,201 @@ class HomeworkPolicyApiTests(APITestCase):
 
         hs.refresh_from_db()
         self.assertTrue(hs.passed)
+        self.assertEqual(hs.max_score, 100.0)
+
+    def test_raising_policy_cutline_creates_a_homework_clinic_link(self):
+        ClinicLink = apps.get_model("progress", "ClinicLink")
+        res = self.client.get(
+            f"/api/v1/homework/policies/?session={self.session.id}",
+            **self.req_headers,
+        )
+        pid = res.data["results"][0]["id"]
+        homework = Homework.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title="43점 과제",
+            meta={"default_max_score": 43},
+        )
+        score = HomeworkScore.objects.create(
+            enrollment=self.enrollment,
+            session=self.session,
+            homework=homework,
+            score=30,
+            max_score=100,
+            passed=True,
+            clinic_required=False,
+        )
+
+        response = self.client.patch(
+            f"/api/v1/homework/policies/{pid}/",
+            {"cutline_mode": "PERCENT", "cutline_value": 80},
+            format="json",
+            **self.req_headers,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        score.refresh_from_db()
+        self.assertEqual(score.max_score, 43.0)
+        self.assertFalse(score.passed)
+        self.assertTrue(score.clinic_required)
+        self.assertTrue(
+            ClinicLink.objects.filter(
+                enrollment=self.enrollment,
+                session=self.session,
+                source_type="homework",
+                source_id=homework.id,
+                resolved_at__isnull=True,
+            ).exists()
+        )
+
+    def test_raw_score_cutline_cannot_exceed_a_homework_max_score(self):
+        homework = Homework.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title="20점 과제",
+            meta={"default_max_score": 20},
+        )
+        res = self.client.get(
+            f"/api/v1/homework/policies/?session={self.session.id}",
+            **self.req_headers,
+        )
+        pid = res.data["results"][0]["id"]
+
+        response = self.client.patch(
+            f"/api/v1/homework/policies/{pid}/",
+            {"cutline_mode": "COUNT", "cutline_value": 30},
+            format="json",
+            **self.req_headers,
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("cutline_value", response.data)
+        homework.refresh_from_db()
+        self.assertEqual(homework.meta["default_max_score"], 20)
+
+    def test_updating_homework_max_score_syncs_existing_primary_scores(self):
+        ClinicLink = apps.get_model("progress", "ClinicLink")
+        policy_res = self.client.get(
+            f"/api/v1/homework/policies/?session={self.session.id}",
+            **self.req_headers,
+        )
+        self.assertEqual(policy_res.status_code, 200, policy_res.data)
+        homework = Homework.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title="43점 과제",
+            meta={"default_max_score": 100},
+        )
+        score = HomeworkScore.objects.create(
+            enrollment=self.enrollment,
+            session=self.session,
+            homework=homework,
+            score=41,
+            max_score=100,
+            passed=False,
+            clinic_required=True,
+        )
+        link = ClinicLink.objects.create(
+            tenant=self.tenant,
+            enrollment=self.enrollment,
+            session=self.session,
+            source_type="homework",
+            source_id=homework.id,
+            reason=ClinicLink.Reason.AUTO_FAILED,
+            is_auto=True,
+        )
+
+        response = self.client.patch(
+            f"/api/v1/homeworks/{homework.id}/",
+            {"max_score": 43},
+            format="json",
+            **self.req_headers,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["max_score"], 43.0)
+        score.refresh_from_db()
+        self.assertEqual(score.max_score, 43.0)
+        self.assertTrue(score.passed)
+        self.assertFalse(score.clinic_required)
+        link.refresh_from_db()
+        self.assertIsNotNone(link.resolved_at)
+
+    def test_homework_max_score_cannot_be_lower_than_an_existing_score(self):
+        homework = Homework.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title="보존 과제",
+            meta={"default_max_score": 100},
+        )
+        HomeworkScore.objects.create(
+            enrollment=self.enrollment,
+            session=self.session,
+            homework=homework,
+            score=41,
+            max_score=100,
+        )
+
+        response = self.client.patch(
+            f"/api/v1/homeworks/{homework.id}/",
+            {"max_score": 40},
+            format="json",
+            **self.req_headers,
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        homework.refresh_from_db()
+        self.assertEqual(homework.meta["default_max_score"], 100)
+
+    def test_resaving_configured_max_score_repairs_a_legacy_score_snapshot(self):
+        homework = Homework.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title="기존 43점 과제",
+            meta={"default_max_score": 43},
+        )
+        score = HomeworkScore.objects.create(
+            enrollment=self.enrollment,
+            session=self.session,
+            homework=homework,
+            score=41,
+            max_score=100,
+            passed=False,
+            clinic_required=True,
+        )
+
+        response = self.client.patch(
+            f"/api/v1/homeworks/{homework.id}/",
+            {"max_score": 43},
+            format="json",
+            **self.req_headers,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        score.refresh_from_db()
+        self.assertEqual(score.max_score, 43.0)
+        self.assertTrue(score.passed)
+        self.assertFalse(score.clinic_required)
+
+    def test_unrelated_meta_patch_preserves_the_configured_max_score(self):
+        homework = Homework.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title="메타 보존 과제",
+            meta={"default_max_score": 43},
+        )
+
+        response = self.client.patch(
+            f"/api/v1/homeworks/{homework.id}/",
+            {"meta": {"due_date": "2026-08-05"}},
+            format="json",
+            **self.req_headers,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        homework.refresh_from_db()
+        self.assertEqual(homework.meta["default_max_score"], 43)
+        self.assertEqual(homework.meta["due_date"], "2026-08-05")
 
     def test_assignment_removal_resolves_homework_clinic_link(self):
         SessionEnrollment.objects.create(
@@ -183,4 +378,3 @@ class HomeworkPolicyApiTests(APITestCase):
         self.assertIsNotNone(link.resolved_at)
         self.assertEqual(link.resolution_type, ClinicLink.ResolutionType.SOURCE_REMOVED)
         self.assertEqual(link.resolution_evidence["reason"], "homework_assignment_removed")
-

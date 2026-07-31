@@ -459,20 +459,6 @@ class SessionScoresView(APIView):
             )
         }
 
-        # Homework 대표 max_score: HomeworkScore 레코드에서 집계 (과제별 최대값, 없으면 100)
-        hw_max_scores: Dict[int, float] = {}
-        if homeworks:
-            from django.db.models import Max
-            hw_max_agg = (
-                HomeworkScore.objects
-                .filter(homework_id__in=homework_ids)
-                .values("homework_id")
-                .annotate(rep_max=Max("max_score"))
-            )
-            for row in hw_max_agg:
-                if row["rep_max"] is not None:
-                    hw_max_scores[int(row["homework_id"])] = float(row["rep_max"])
-
         # SSOT (2026-05-13): 발송 컨텍스트 — frontend가 어디서든 정확히 강의명/차시명 인용 가능하도록 응답 meta에 항상 포함.
         # 직전 결함: drawer 발송 path가 row.lecture_title / qc.getQueryData fallback에 의존 → 캐시 miss 시 알림톡 봉투 변수 빈 값으로 발송 (학원장 limglish 보고).
         _session_lecture = getattr(session, "lecture", None)
@@ -505,7 +491,7 @@ class SessionScoresView(APIView):
                     "homework_id": int(hw.id),
                     "title": str(hw.title),
                     "unit": None,  # 서버 단일 진실
-                    "max_score": hw_max_scores.get(int(hw.id), 100.0),
+                    "max_score": hw.default_max_score,
                     "display_order": int(getattr(hw, "display_order", 0) or 0),
                 }
                 for hw in homeworks
@@ -950,7 +936,7 @@ class SessionScoresView(APIView):
                 if hs is None:
                     block = {
                         "score": None,
-                        "max_score": None,
+                        "max_score": hw.default_max_score,
                         "passed": None,
                         "clinic_required": clinic_required,
                         "is_locked": False,
@@ -961,7 +947,7 @@ class SessionScoresView(APIView):
                 else:
                     block = {
                         "score": hs.score,
-                        "max_score": hs.max_score,
+                        "max_score": hw.default_max_score,
                         "passed": (
                             bool(hs.passed)
                             if hs.passed is not None

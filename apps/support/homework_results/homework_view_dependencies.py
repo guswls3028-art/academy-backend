@@ -28,3 +28,15 @@ def delete_homework_assignments(*, tenant: Any, homework: Any) -> int:
         homework=homework,
     ).delete()
     return int(deleted_count)
+
+
+def get_homework_raw_score_cutline(*, session: Any) -> float | None:
+    from apps.domains.homework.models import HomeworkPolicy
+
+    policy = HomeworkPolicy.objects.filter(
+        tenant_id=session.lecture.tenant_id,
+        session=session,
+    ).first()
+    if policy is None or policy.cutline_mode != HomeworkPolicy.CutlineMode.COUNT:
+        return None
+    return float(policy.cutline_value)

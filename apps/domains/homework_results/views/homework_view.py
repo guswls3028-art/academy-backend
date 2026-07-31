@@ -11,6 +11,7 @@ Homework API (List/Retrieve/Create)
 from __future__ import annotations
 
 from importlib import import_module
+from math import isfinite
 
 from rest_framework import status
 from rest_framework.viewsets import ModelViewSet
@@ -28,8 +29,13 @@ from apps.core.permissions import TenantResolvedAndMember
 
 from apps.domains.homework_results.models import Homework
 from apps.domains.homework_results.serializers.homework import HomeworkSerializer
+from apps.domains.homework_results.services.max_score_sync import (
+    sync_homework_primary_score_max,
+    validate_homework_max_score,
+)
 from apps.support.homework_results.homework_view_dependencies import (
     delete_homework_assignments,
+    get_homework_raw_score_cutline,
     get_session_for_homework,
     get_teacher_or_admin_permission,
 )
@@ -155,6 +161,26 @@ class HomeworkViewSet(ModelViewSet):
                         {"detail": "해당 차시를 찾을 수 없습니다."},
                         status=status.HTTP_400_BAD_REQUEST,
                     )
+                requested_max_score = data.get("max_score")
+                if requested_max_score is None:
+                    candidate_max_score = template.default_max_score
+                else:
+                    try:
+                        candidate_max_score = float(requested_max_score)
+                    except (TypeError, ValueError, OverflowError):
+                        raise ValidationError({"max_score": "만점은 1 이상의 숫자여야 합니다."})
+                    if not isfinite(candidate_max_score) or candidate_max_score < 1:
+                        raise ValidationError({"max_score": "만점은 1 이상이어야 합니다."})
+                raw_cutline = get_homework_raw_score_cutline(session=session)
+                if raw_cutline is not None and raw_cutline > candidate_max_score:
+                    raise ValidationError(
+                        {
+                            "max_score": (
+                                f"점수 커트라인({raw_cutline:g}점)보다 만점"
+                                f"({candidate_max_score:g}점)을 낮게 설정할 수 없습니다."
+                            )
+                        }
+                    )
                 title = (data.get("title") or "").strip() or template.title
                 instance = Homework.objects.create(
                     tenant=tenant,
@@ -162,6 +188,7 @@ class HomeworkViewSet(ModelViewSet):
                     session=session,
                     template_homework=template,
                     title=title,
+                    meta={"default_max_score": candidate_max_score},
                     display_order=self._next_display_order(
                         tenant=tenant,
                         session_id=int(session.id),
@@ -191,6 +218,18 @@ class HomeworkViewSet(ModelViewSet):
             )
             if session is None:
                 raise ValidationError({"detail": "해당 차시를 찾을 수 없습니다."})
+            candidate_meta = serializer.validated_data.get("meta")
+            candidate_max_score = Homework.max_score_from_meta(candidate_meta)
+            raw_cutline = get_homework_raw_score_cutline(session=session)
+            if raw_cutline is not None and raw_cutline > candidate_max_score:
+                raise ValidationError(
+                    {
+                        "max_score": (
+                            f"점수 커트라인({raw_cutline:g}점)보다 만점"
+                            f"({candidate_max_score:g}점)을 낮게 설정할 수 없습니다."
+                        )
+                    }
+                )
             serializer.save(
                 tenant=tenant,
                 homework_type=Homework.HomeworkType.REGULAR,
@@ -201,6 +240,43 @@ class HomeworkViewSet(ModelViewSet):
                     session_id=int(session.id),
                 ),
             )
+
+    @transaction.atomic
+    def partial_update(self, request, *args, **kwargs):
+        instance = get_object_or_404(
+            self.filter_queryset(self.get_queryset().select_for_update()),
+            pk=kwargs["pk"],
+        )
+        self.check_object_permissions(request, instance)
+        old_max_score = instance.default_max_score
+        serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        candidate_meta = serializer.validated_data.get("meta", instance.meta)
+        candidate_max_score = Homework.max_score_from_meta(candidate_meta)
+
+        explicit_max_score = "max_score" in request.data or (
+            isinstance(request.data.get("meta"), dict)
+            and "default_max_score" in request.data["meta"]
+        )
+        should_sync_scores = candidate_max_score != old_max_score or explicit_max_score
+
+        if should_sync_scores:
+            try:
+                validate_homework_max_score(
+                    homework=instance,
+                    max_score=candidate_max_score,
+                )
+            except ValueError as exc:
+                raise ValidationError({"max_score": str(exc)}) from exc
+
+        self.perform_update(serializer)
+        if should_sync_scores:
+            sync_homework_primary_score_max(
+                homework=serializer.instance,
+                max_score=candidate_max_score,
+            )
+
+        return Response(self.get_serializer(serializer.instance).data)
 
     @transaction.atomic
     def destroy(self, request, *args, **kwargs):

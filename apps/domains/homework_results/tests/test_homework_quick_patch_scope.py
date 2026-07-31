@@ -169,6 +169,49 @@ class HomeworkQuickPatchScopeTests(TestCase):
         self.assertEqual(response.data["id"], score.id)
         self.assertEqual(score.score, 80)
 
+    def test_uses_configured_homework_max_score_when_request_omits_it(self):
+        self.homework.meta = {"default_max_score": 43}
+        self.homework.save(update_fields=["meta", "updated_at"])
+
+        response = self._quick_patch(
+            {
+                "session_id": self.session.id,
+                "homework_id": self.homework.id,
+                "enrollment_id": self.assigned_enrollment.id,
+                "score": 41,
+            }
+        )
+
+        score = HomeworkScore.objects.get(
+            homework=self.homework,
+            session=self.session,
+            enrollment=self.assigned_enrollment,
+            attempt_index=1,
+        )
+        self.assertEqual(response.data["max_score"], 43.0)
+        self.assertEqual(score.max_score, 43.0)
+
+    def test_rejects_score_above_configured_homework_max_score(self):
+        self.homework.meta = {"default_max_score": 43}
+        self.homework.save(update_fields=["meta", "updated_at"])
+
+        self._quick_patch(
+            {
+                "session_id": self.session.id,
+                "homework_id": self.homework.id,
+                "enrollment_id": self.assigned_enrollment.id,
+                "score": 44,
+            },
+            expected_status=400,
+        )
+
+        self.assertFalse(
+            HomeworkScore.objects.filter(
+                homework=self.homework,
+                enrollment=self.assigned_enrollment,
+            ).exists()
+        )
+
     def test_partial_update_does_not_move_score_relationships(self):
         score = HomeworkScore.objects.create(
             homework=self.homework,

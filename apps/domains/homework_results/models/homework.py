@@ -16,6 +16,7 @@ Homework Entity (Runtime / Operational)
 
 from __future__ import annotations
 
+from math import isfinite
 from typing import Any
 
 from django.db import models
@@ -36,6 +37,8 @@ class Homework(TimestampModel):
         DRAFT = "DRAFT", "초안"       # Legacy — 신규 생성 시 사용하지 않음
         OPEN = "OPEN", "진행중"
         CLOSED = "CLOSED", "마감"
+
+    DEFAULT_MAX_SCORE = 100.0
 
     tenant = models.ForeignKey(
         "core.Tenant",
@@ -93,6 +96,21 @@ class Homework(TimestampModel):
 
     def __str__(self) -> str:
         return f"Homework(id={self.id}, type={self.homework_type}, session={self.session_id}, title={self.title})"
+
+    @staticmethod
+    def max_score_from_meta(meta: Any) -> float:
+        if not isinstance(meta, dict):
+            return Homework.DEFAULT_MAX_SCORE
+        try:
+            value = float(meta.get("default_max_score"))
+        except (TypeError, ValueError, OverflowError):
+            return Homework.DEFAULT_MAX_SCORE
+        return value if isfinite(value) and value > 0 else Homework.DEFAULT_MAX_SCORE
+
+    @property
+    def default_max_score(self) -> float:
+        """과제 점수·표시·정책 계산이 함께 사용하는 과제별 만점."""
+        return self.max_score_from_meta(self.meta)
 
     # =========================================================
     # ✅ 추가: SessionScores 메타용 대표 과제 제목 헬퍼
