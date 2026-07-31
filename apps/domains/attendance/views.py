@@ -1,6 +1,7 @@
 # PATH: apps/domains/attendance/views.py
 
 import logging
+from django.core import signing
 from django.db import transaction
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.decorators import action
@@ -38,6 +39,9 @@ from apps.support.attendance.view_dependencies import (
 )
 
 logger = logging.getLogger(__name__)
+
+BULK_PRESENT_UNDO_SALT = "attendance.bulk-present.undo.v1"
+BULK_PRESENT_UNDO_MAX_AGE_SECONDS = 600
 
 
 def _secession_status_conflict(instance, requested_status):
@@ -329,7 +333,8 @@ class AttendanceViewSet(ModelViewSet):
         if session.lecture.tenant_id != tenant.id:
             raise NotFound("세션을 찾을 수 없습니다.")
 
-        # 변경 대상 ID를 먼저 수집 (알림톡 발송용)
+        # 변경 대상과 직전 상태를 잠근 채 수집한다. 응답의 서명 토큰으로만
+        # 같은 테넌트/차시에서 원자적으로 되돌릴 수 있다.
         target_qs = Attendance.objects.filter(
             tenant=tenant, session=session,
         ).exclude(
@@ -339,15 +344,144 @@ class AttendanceViewSet(ModelViewSet):
         ).exclude(
             enrollment__status="INACTIVE",
         )
-        target_ids = list(target_qs.select_for_update().values_list("id", flat=True))
+        target_rows = list(
+            target_qs.select_for_update()
+            .order_by("id")
+            .values_list("id", "status")
+        )
+        target_ids = [attendance_id for attendance_id, _ in target_rows]
 
         updated = Attendance.objects.filter(id__in=target_ids).update(status="PRESENT")
+
+        undo_token = None
+        if target_rows:
+            undo_token = signing.dumps(
+                {
+                    "version": 1,
+                    "tenant_id": tenant.id,
+                    "session_id": session.id,
+                    "changes": target_rows,
+                },
+                salt=BULK_PRESENT_UNDO_SALT,
+                compress=True,
+            )
 
         # 일반 강의 전체 출석은 행정 작업 — 알림톡 발송하지 않음.
         # 입실/결석 알림은 클리닉 전용 기능.
 
         return Response(
-            {"updated": updated, "session": session_id},
+            {
+                "updated": updated,
+                "session": session.id,
+                "undo_token": undo_token,
+                "undo_expires_in": BULK_PRESENT_UNDO_MAX_AGE_SECONDS if undo_token else None,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    # =========================================================
+    # 0-2️⃣ 전체 현장 출석 되돌리기 (서명된 직전 상태를 원자적으로 복원)
+    # =========================================================
+    @transaction.atomic
+    @action(detail=False, methods=["post"], url_path="bulk_undo_present")
+    def bulk_undo_present(self, request):
+        tenant = getattr(request, "tenant", None)
+        undo_token = request.data.get("undo_token")
+        if not isinstance(undo_token, str) or not undo_token:
+            return Response(
+                {"detail": "undo_token은 필수입니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            payload = signing.loads(
+                undo_token,
+                salt=BULK_PRESENT_UNDO_SALT,
+                max_age=BULK_PRESENT_UNDO_MAX_AGE_SECONDS,
+            )
+        except signing.SignatureExpired:
+            return Response(
+                {"detail": "되돌리기 가능 시간이 지났습니다. 현재 출결을 확인해 주세요."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        except signing.BadSignature:
+            return Response(
+                {"detail": "유효하지 않은 되돌리기 요청입니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not isinstance(payload, dict) or payload.get("version") != 1:
+            return Response(
+                {"detail": "지원하지 않는 되돌리기 요청입니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if payload.get("tenant_id") != tenant.id:
+            raise NotFound("되돌릴 출결 기록을 찾을 수 없습니다.")
+
+        session_id = payload.get("session_id")
+        changes = payload.get("changes")
+        if not isinstance(session_id, int) or not isinstance(changes, list) or not changes:
+            return Response(
+                {"detail": "되돌릴 출결 기록이 없습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        previous_status_by_id = {}
+        valid_statuses = {choice for choice, _ in Attendance._meta.get_field("status").choices}
+        for change in changes:
+            if (
+                not isinstance(change, (list, tuple))
+                or len(change) != 2
+                or not isinstance(change[0], int)
+                or not isinstance(change[1], str)
+                or change[1] not in valid_statuses
+                or change[1] in {"PRESENT", "SECESSION"}
+            ):
+                return Response(
+                    {"detail": "유효하지 않은 출결 복원 정보입니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            previous_status_by_id[change[0]] = change[1]
+
+        if len(previous_status_by_id) != len(changes):
+            return Response(
+                {"detail": "중복된 출결 복원 정보입니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        session = (
+            Session.objects.select_related("lecture")
+            .filter(id=session_id, lecture__tenant=tenant)
+            .first()
+        )
+        if not session:
+            raise NotFound("세션을 찾을 수 없습니다.")
+
+        rows = list(
+            Attendance.objects.select_for_update()
+            .filter(
+                tenant=tenant,
+                session=session,
+                id__in=previous_status_by_id,
+            )
+            .select_related("enrollment")
+            .order_by("id")
+        )
+        if (
+            len(rows) != len(previous_status_by_id)
+            or any(row.status != "PRESENT" or row.enrollment.status == "INACTIVE" for row in rows)
+        ):
+            return Response(
+                {"detail": "일부 출결이 이미 변경되어 안전하게 되돌릴 수 없습니다. 현재 상태를 확인해 주세요."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        for row in rows:
+            row.status = previous_status_by_id[row.id]
+        Attendance.objects.bulk_update(rows, ["status"])
+
+        return Response(
+            {"restored": len(rows), "session": session.id},
             status=status.HTTP_200_OK,
         )
 
