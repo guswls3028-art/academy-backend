@@ -70,6 +70,31 @@ Allowed with triage:
 - `manifest_gt_precision_low` when recall is perfect and extra boxes are visually non-destructive.
 - Count-ratio flags when manual GT physical recall is perfect or the document has no GT and sampled overlays show usable crops.
 
+Workbook display-crop visual gate:
+
+- A graph, coordinate plane, table, or diagram placed immediately below the prompt must be fully inside the same green display box.
+- The display box must not cross into the next question, the opposite column, the page footer, or a copyright band.
+- A text-only question must not retain a large blank tail that would make the question illegible when fitted into a wrong-note page.
+- Count-only reports are insufficient for this gate. Render overlays for every page in a new workbook format and inspect every changed page before accepting it.
+
+Reproduce a local workbook batch without DB/R2 writes:
+
+```powershell
+$env:DJANGO_SETTINGS_MODULE = "apps.api.config.settings.test"
+$env:PYTHONUTF8 = "1"
+python manage.py matchup_golden_eval `
+  --dir "<workbook-pdf-directory>" `
+  --source-type academy_workbook `
+  --dispatcher-only `
+  --output "<audit-output-directory>" `
+  --overlay-limit-pages 20
+```
+
+The 2026-08-02 YMath regression batch contained 23 PDFs, 194 pages, and 403
+display boxes. Its acceptance required all 194 page overlays plus an actual
+wrong-note PDF rendered from graph-bearing crops; `quality_flag_counts={}` by
+itself was not accepted as visual proof.
+
 ## v55 Warning Triage
 
 | Flag | v55 count | Meaning | Action |
@@ -92,6 +117,7 @@ python -m ruff check apps/ academy/ tests/test_question_splitter_t2_fixes.py tes
 python -m pytest `
   tests/test_question_splitter_t2_fixes.py `
   tests/test_segment_scan_layout.py `
+  tests/test_segment_dispatcher_validate_regression.py `
   apps/domains/matchup/tests/test_manifest_segmentation_audit.py `
   apps/domains/matchup/tests/test_matchup_manual_gt_eval.py `
   tests/test_matchup_search_cache.py `

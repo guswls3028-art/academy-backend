@@ -53,6 +53,21 @@
 5. 성공 콜백은 문항 구조와 이미지를 연결하고 시험 만점을 문항 배점으로
    분배한다. 실패 시 `failed`로 남겨 사용자가 다시 시도할 수 있게 한다.
 
+문항 작업은 공통 dispatcher가 확정한 페이지별 박스와 원본 문항 번호를
+그대로 사용한다. worker pipeline이 같은 PDF를 별도 `question_splitter`로
+다시 자르지 않으므로 그래프·도형까지 확장한 표시 영역, cross-page 번호
+검증과 scan fallback 결과가 실제 저장 문항 이미지에도 동일하게 반영된다.
+날짜와 `Hyper`/`Routine|Remake`/`복습 Test` 표제가 함께 있는 짧은 학원
+복습지 표지는 범위 회차(`1. 평면좌표` 등)를 문항 번호로 오인하지 않고
+비문항 페이지로 제외한다. 같은 헤더가 반복되더라도 실제 문제 본문이 있는
+페이지는 이 짧은 표지 조건에 포함되지 않는다.
+
+문제 뒤에 `정답 및 해설`, `정답과 풀이`처럼 명시적인 교사용 구간이 붙은
+PDF는 앞선 페이지에서 문항이 확인된 경우 그 표제 페이지부터 문서 끝까지를
+문항 후보에서 제외한다. 이 구간은 버리지 않고 표제가 반복되지 않는 다음
+페이지까지 번호별 해설로 읽는다. 분리된 실제 문항 번호와 일치하는 해설만
+콜백 결과에 포함하며, legacy `boxes`에도 제외된 해설 박스를 섞지 않는다.
+
 허용 확장자는 PDF, PNG, JPG/JPEG, HWP/HWPX이고 최대 크기는 50MB다.
 HWP/HWPX 원본은 보관하지만 운영 Linux에서 수식과 쪽 배치를 안전하게
 재현하지 않는다. 이 경우 `202 Accepted`와
@@ -233,6 +248,8 @@ python manage.py test `
   apps.support.results.tests.test_manual_exam_grading `
   --settings apps.api.config.settings.test
 
+python -m pytest tests/test_pdf_question_pipeline_regression.py -q
+
 python -m pytest tests/results/test_exam_result_excel_import.py -q
 
 python manage.py test `
@@ -242,6 +259,8 @@ python manage.py test `
 ```
 
 검증은 PDF 처리 상태, HWP 변환 안내, 잠긴 시험 보호, 정오·부분점수,
+공통 dispatcher 크롭 재사용, 짧은 복습지 표지 제외,
+후행 정답·해설의 문항 제외와 연속 해설 추출,
 오답노트와 기존 `0` 호환 의미, 선택형 자동채점 정오 조회·직접 수정 차단과 OMR 보정 경계,
 객관식·숫자 단답형이 섞인 원래 순서와 `answer_type`, 문항 배점
 합계·stale 배점 거부, 혼합형 OMR 보존, stale result version 거부,

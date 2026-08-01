@@ -47,6 +47,13 @@ _EXPLANATION_NUM_RE = re.compile(
     re.MULTILINE,
 )
 
+# 문항 뒤에 붙은 교사용 정답·해설 묶음의 시작. 일반 문제 본문에 등장할 수
+# 있는 단독 "풀이"보다 의도가 명확한 결합 표지만 문항 제외 경계로 사용한다.
+_SOLUTION_TAIL_MARKER = re.compile(
+    r"^[ \t]*정[ \t]*답[ \t]*(?:및|과|&)[ \t]*(?:해[ \t]*설|풀[ \t]*이)[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
 
 def run_pdf_question_pipeline(
     *,
@@ -95,62 +102,62 @@ def run_pdf_question_pipeline(
     text_blocks_by_page: Dict[int, List[Dict]] = {}
     full_text_by_page: Dict[int, str] = {}
     questions: List[Dict] = []
+    solution_tail_start: Optional[int] = None
+    excluded_pages: set[int] = set()
 
     if is_pdf:
         text_blocks_by_page, full_text_by_page = _extract_pdf_text(local_path)
 
-        # 텍스트 기반 문항 분할 시도 (question_splitter 사용)
-        questions = _split_questions_by_text(local_path, text_blocks_by_page)
-        if questions:
-            logger.info(
-                "PDF_TEXT_SPLIT_OK | job_id=%s | questions=%d",
-                job.id, len(questions),
+        # dispatcher가 이미 text/OCR/OpenCV 우선순위, cross-page 검증과
+        # product-facing display bbox를 적용했다. 여기서 question_splitter를
+        # 다시 호출하면 그래프 확장·품질 보정이 사라지므로 그 결과를 문항의
+        # 단일 정본으로 사용한다.
+        ocr_page_texts = _extract_ocr_page_texts(
+            [p for p in pages if not p.get("has_embedded_text")]
+        )
+        for page_idx, page_text in ocr_page_texts.items():
+            if not full_text_by_page.get(page_idx):
+                full_text_by_page[page_idx] = page_text
+
+        solution_tail_start = _find_solution_tail_start(
+            full_text_by_page,
+            pages,
+        )
+        excluded_pages = _find_academy_review_cover_pages(
+            full_text_by_page,
+            pages,
+        )
+        if solution_tail_start is not None:
+            excluded_pages.update(
+                {
+                    p["page_index"]
+                    for p in pages
+                    if p["page_index"] >= solution_tail_start
+                }
             )
-
-        # OCR 기반 fallback — 텍스트 분할이 커버하지 못한 페이지(스캔본)에 적용
-        text_covered_pages = {q["page_index"] for q in questions}
-        ocr_target_pages = [
-            p for p in pages if p["page_index"] not in text_covered_pages
-        ]
-        if ocr_target_pages:
-            ocr_questions, ocr_page_texts = _split_questions_by_ocr(ocr_target_pages)
-
-            # 스캔본 페이지의 OCR 전체 텍스트를 full_text_by_page에 주입
-            # → 해설 섹션이 스캔본에 포함된 경우 _extract_explanations가 찾을 수 있게 함.
-            if ocr_page_texts:
-                logger.info(
-                    "PDF_OCR_PAGE_TEXTS | job_id=%s | pages=%d",
-                    job.id, len(ocr_page_texts),
-                )
-                for pi, ptext in ocr_page_texts.items():
-                    # 기존(PyMuPDF) 텍스트와 충돌하지 않도록: 비어있을 때만 주입
-                    if not full_text_by_page.get(pi):
-                        full_text_by_page[pi] = ptext
-
-            if ocr_questions:
-                logger.info(
-                    "PDF_OCR_SPLIT_OK | job_id=%s | pages=%d | questions=%d",
-                    job.id, len(ocr_target_pages), len(ocr_questions),
-                )
-                questions.extend(ocr_questions)
-
-                # 병합 후 페이지 순서 정렬 + 번호 중복 dedup (surgical)
-                questions.sort(
-                    key=lambda q: (q["page_index"], q["bbox"][1])
-                )
-                _resolve_number_conflicts(questions, source="PDF_MERGE")
-            else:
-                logger.info(
-                    "PDF_OCR_SPLIT_EMPTY | job_id=%s | pages=%d",
-                    job.id, len(ocr_target_pages),
-                )
+        questions = _build_question_list(
+            pages,
+            text_blocks_by_page,
+            excluded_page_indexes=excluded_pages,
+        )
+        logger.info(
+            "PDF_SEGMENTATION_RESULT_USED | job_id=%s | questions=%d | "
+            "solution_tail_start=%s",
+            job.id,
+            len(questions),
+            solution_tail_start,
+        )
 
     # 텍스트·OCR 둘 다 실패 → OpenCV fallback (페이지 단위)
     if not questions:
         logger.info(
             "PDF_FALLBACK_OPENCV | job_id=%s", job.id,
         )
-        questions = _build_question_list(pages, text_blocks_by_page)
+        questions = _build_question_list(
+            pages,
+            text_blocks_by_page,
+            excluded_page_indexes=excluded_pages,
+        )
 
     total_boxes = len(questions)
 
@@ -174,7 +181,14 @@ def run_pdf_question_pipeline(
         tenant_id=tenant_id,
     )
 
-    explanations = _extract_explanations(full_text_by_page) if is_pdf else []
+    explanations = (
+        _extract_explanations(
+            full_text_by_page,
+            solution_tail_start=solution_tail_start,
+        )
+        if is_pdf
+        else []
+    )
 
     record_progress(
         job.id, "extracting_text", 75,
@@ -225,10 +239,18 @@ def run_pdf_question_pipeline(
     # 하위 호환: boxes 필드 유지 (flat list)
     flat_boxes = []
     for page in pages:
+        if page["page_index"] in excluded_pages:
+            continue
         flat_boxes.extend(page["boxes"])
 
-    # 매칭된 해설만 결과에 포함 (question_number=None은 DB에 저장 불가)
-    matched_explanations = [e for e in explanations if e.get("question_number") is not None]
+    # 실제 분리된 문항과 번호가 일치하는 해설만 결과에 포함한다. 번호가
+    # 있어도 해당 문항이 없으면 callback의 FK/조회 경계로 넘기지 않는다.
+    question_numbers = {q["number"] for q in questions}
+    matched_explanations = [
+        explanation
+        for explanation in explanations
+        if explanation.get("question_number") in question_numbers
+    ]
     unmatched_count = len(explanations) - len(matched_explanations)
     if unmatched_count > 0:
         logger.warning(
@@ -307,118 +329,68 @@ def _classify_segmentation_method(
     return "mixed"
 
 
-def _is_non_question_page(blocks: List[Dict]) -> bool:
+def _find_solution_tail_start(
+    full_text_by_page: Dict[int, str],
+    pages: List[Dict],
+) -> Optional[int]:
+    """Return the first trailing teacher answer/solution page, if present.
+
+    A marker is trusted only after at least one earlier page produced a problem
+    box. This avoids treating a cover or table of contents that merely mentions
+    answer material as the start of the document's problem-free tail.
     """
-    비문항 페이지 감지 — academy.domain.tools.question_splitter.is_non_question_page로 위임.
-    blocks는 {"text", "x0", "y0", "x1", "y1"} dict 리스트.
+    question_page_indexes = {
+        int(page.get("page_index", 0))
+        for page in pages
+        if page.get("boxes")
+    }
+    for page_idx in sorted(full_text_by_page):
+        page_text = full_text_by_page.get(page_idx) or ""
+        if not _SOLUTION_TAIL_MARKER.search(page_text):
+            continue
+        if not any(previous < page_idx for previous in question_page_indexes):
+            continue
+        logger.info("PDF_SOLUTION_TAIL_FOUND | page=%d", page_idx)
+        return page_idx
+    return None
+
+
+def _find_academy_review_cover_pages(
+    full_text_by_page: Dict[int, str],
+    pages: List[Dict],
+) -> set[int]:
+    """Find short dated academy review covers without changing split routing.
+
+    The range label on these covers (for example ``1. 평면좌표``) is useful to
+    the dispatcher's document-level workbook detection, but it is not a saved
+    question. Filtering after segmentation preserves that routing signal while
+    keeping the cover out of exam questions and legacy boxes.
     """
-    from academy.domain.tools.question_splitter import (
-        TextBlock as SplitterTextBlock,
-        is_non_question_page,
-    )
-
-    tbs = [
-        SplitterTextBlock(
-            text=b.get("text", ""),
-            x0=b.get("x0", 0.0), y0=b.get("y0", 0.0),
-            x1=b.get("x1", 0.0), y1=b.get("y1", 0.0),
-        )
-        for b in blocks
-    ]
-    return is_non_question_page(tbs)
-
-
-def _split_questions_by_text(
-    pdf_path: str,
-    text_blocks_by_page: Dict[int, List[Dict]],
-) -> List[Dict]:
-    """
-    PDF 텍스트 블록 기반 문항 분할 (question_splitter 활용).
-
-    텍스트에서 문항 번호 패턴("1.", "2)", "(1)" 등)을 찾아
-    문항 경계를 결정한다. OpenCV보다 정확하며 2단 레이아웃도 처리.
-
-    bbox는 PDF 좌표계(points)이므로 이미지 좌표로 변환 필요.
-    (200 DPI 렌더링 기준: scale = 200/72)
-
-    Returns:
-        [{ "number": int, "bbox": [x,y,w,h], "page_index": int, "text": str? }]
-        빈 리스트면 텍스트 기반 분할 실패 → OpenCV fallback 사용.
-    """
-    try:
-        from academy.adapters.tools.pymupdf_renderer import PdfDocument
-        from academy.domain.tools.question_splitter import (
-            split_questions,
-            TextBlock as SplitterTextBlock,
-        )
-    except ImportError as e:
-        logger.warning("TEXT_SPLIT_IMPORT_FAIL | %s", e)
-        return []
-
-    if not text_blocks_by_page:
-        return []
-
-    scale = 200.0 / 72.0  # PDF points → 200 DPI pixels
-
-    all_questions: List[Dict] = []
-
-    try:
-        with PdfDocument(pdf_path) as doc:
-            for page_idx in range(doc.page_count()):
-                blocks_raw = text_blocks_by_page.get(page_idx, [])
-                if not blocks_raw:
-                    continue
-
-                pw, ph = doc.page_dimensions(page_idx)
-
-                # 비문항 페이지 필터: 표지, 진도표, 안내문 등 스킵
-                if _is_non_question_page(blocks_raw):
-                    logger.info("TEXT_SPLIT_SKIP_PAGE | page=%d | non-question page", page_idx)
-                    continue
-
-                # Dict → SplitterTextBlock 변환
-                splitter_blocks = [
-                    SplitterTextBlock(
-                        text=b["text"],
-                        x0=b["x0"], y0=b["y0"],
-                        x1=b["x1"], y1=b["y1"],
-                    )
-                    for b in blocks_raw
-                ]
-
-                regions = split_questions(
-                    text_blocks=splitter_blocks,
-                    page_width=pw,
-                    page_height=ph,
-                    page_index=page_idx,
-                )
-
-                for region in regions:
-                    # bbox: (x0, y0, x1, y1) in PDF points → (x, y, w, h) in pixels
-                    rx0, ry0, rx1, ry1 = region.bbox
-                    x = int(rx0 * scale)
-                    y = int(ry0 * scale)
-                    w = int((rx1 - rx0) * scale)
-                    h = int((ry1 - ry0) * scale)
-
-                    all_questions.append({
-                        "number": region.number,
-                        "bbox": [x, y, w, h],
-                        "page_index": page_idx,
-                        "text": None,
-                    })
-    except Exception as e:
-        logger.warning("TEXT_SPLIT_ERROR | %s", e)
-        return []
-
-    if not all_questions:
-        return []
-
-    # 중복 번호 정리 — 앞선 번호 유지, 중복만 다음 가용 번호로 재할당
-    _resolve_number_conflicts(all_questions, source="TEXT_SPLIT")
-
-    logger.info("TEXT_SPLIT_DONE | questions=%d", len(all_questions))
-    return all_questions
+    pages_with_boxes = {
+        int(page.get("page_index", 0))
+        for page in pages
+        if page.get("boxes")
+    }
+    cover_pages: set[int] = set()
+    for page_idx, page_text in full_text_by_page.items():
+        if page_idx not in pages_with_boxes or len(page_text) > 240:
+            continue
+        if not re.search(
+            r"\d{1,2}\s*/\s*\d{1,2}\s*\([월화수목금토일]\)",
+            page_text,
+        ):
+            continue
+        if not re.search(r"\bHyper\b", page_text, re.IGNORECASE):
+            continue
+        if not re.search(
+            r"(?:Routine|Remake).*복습\s*Test",
+            page_text,
+            re.IGNORECASE | re.DOTALL,
+        ):
+            continue
+        cover_pages.add(page_idx)
+        logger.info("PDF_ACADEMY_REVIEW_COVER_FOUND | page=%d", page_idx)
+    return cover_pages
 
 
 def _resolve_number_conflicts(questions: List[Dict], *, source: str) -> None:
@@ -469,36 +441,26 @@ def _resolve_number_conflicts(questions: List[Dict], *, source: str) -> None:
         )
 
 
-def _split_questions_by_ocr(
-    pages: List[Dict],
-) -> Tuple[List[Dict], Dict[int, str]]:
-    """
-    스캔본 페이지에 OCR을 적용하여 문항 영역+번호 추출, 페이지 전체 텍스트도 함께 반환.
+def _extract_ocr_page_texts(pages: List[Dict]) -> Dict[int, str]:
+    """Return OCR text needed for explanation parsing on scan-only pages.
 
-    Args:
-        pages: [{"page_index": int, "image_path": str, "boxes": [...]}, ...]
-
-    Returns:
-        (questions, page_texts)
-        - questions: [{"number": int, "bbox": [x,y,w,h], "page_index": int, "text": None}]
-        - page_texts: {page_index: "전체 OCR 텍스트"} — 해설 추출용
-        Vision 크레덴셜이 없거나 OCR이 모두 실패하면 ([], {}).
+    Question boxes and numbers already come from ``segment_questions_multipage``;
+    this helper intentionally does not create a second segmentation result.
     """
+    if not pages:
+        return {}
+
     try:
-        from academy.adapters.ai.detection.segment_ocr import (
-            is_ocr_available,
-            segment_questions_ocr_regions,
-        )
+        from academy.adapters.ai.detection.segment_ocr import is_ocr_available
         from academy.adapters.ai.ocr.google import google_ocr_blocks
     except ImportError as e:
-        logger.warning("OCR_SPLIT_IMPORT_FAIL | %s", e)
-        return [], {}
+        logger.warning("OCR_TEXT_IMPORT_FAIL | %s", e)
+        return {}
 
     if not is_ocr_available():
-        logger.info("OCR_SPLIT_SKIP | reason=no_credentials")
-        return [], {}
+        logger.info("OCR_TEXT_SKIP | reason=no_credentials")
+        return {}
 
-    all_questions: List[Dict] = []
     page_texts: Dict[int, str] = {}
 
     for page in pages:
@@ -507,50 +469,18 @@ def _split_questions_by_ocr(
         if not image_path:
             continue
 
-        # embedded text가 있는 페이지는 text-based 분할이 커버했어야 함.
-        # 여기까지 왔다는 건 비문항 페이지(정답지 등) → OCR 스킵.
-        if page.get("has_embedded_text"):
-            logger.info(
-                "OCR_SPLIT_SKIP_TEXT_PAGE | page=%d (text exists, non-question page)",
-                page_idx,
-            )
-            continue
-
-        # OCR 문항 영역 추출 (segment_questions_ocr_regions는 google_ocr_blocks 사용 → 캐시 공유)
         try:
-            regions = segment_questions_ocr_regions(image_path)
-        except Exception as e:
-            logger.warning(
-                "OCR_SPLIT_PAGE_ERROR | page=%d | error=%s",
-                page_idx, e,
-            )
-            continue
-
-        # 페이지 전체 텍스트도 캐싱된 OCR 블록에서 재조합 (해설 추출용)
-        try:
-            blocks = google_ocr_blocks(image_path)  # lru_cache hit
+            blocks = google_ocr_blocks(image_path)
             if blocks:
-                # y 좌표 기준 정렬해서 자연스러운 읽기 순서로 연결
                 sorted_blocks = sorted(blocks, key=lambda b: (b.y0, b.x0))
                 page_texts[page_idx] = "\n".join(b.text for b in sorted_blocks)
         except Exception as e:
             logger.warning(
-                "OCR_SPLIT_FULL_TEXT_FAIL | page=%d | error=%s",
+                "OCR_TEXT_PAGE_FAIL | page=%d | error=%s",
                 page_idx, e,
             )
 
-        for x0, y0, x1, y1, num in regions:
-            all_questions.append({
-                "number": int(num),
-                "bbox": [int(x0), int(y0), int(x1 - x0), int(y1 - y0)],
-                "page_index": page_idx,
-                "text": None,
-            })
-
-    # 중복 번호 처리 — 페이지 순서 유지, 중복만 재할당
-    _resolve_number_conflicts(all_questions, source="OCR_SPLIT")
-
-    return all_questions, page_texts
+    return page_texts
 
 
 def _extract_pdf_text(
@@ -590,51 +520,55 @@ def _extract_pdf_text(
 def _build_question_list(
     pages: List[Dict],
     text_blocks_by_page: Dict[int, List[Dict]],
+    *,
+    excluded_page_indexes: Optional[set[int]] = None,
 ) -> List[Dict]:
     """
-    세그멘테이션 박스에 문항 번호를 부여.
+    공통 dispatcher가 확정한 박스와 번호로 문항 목록을 만든다.
 
     전략:
-    1. PDF 텍스트 블록이 있으면, 각 박스 영역과 겹치는 텍스트에서 번호 추출 시도.
-    2. 텍스트가 없거나 번호 추출 실패 시, 순차 번호 부여 (1, 2, 3...).
+    1. dispatcher의 numbers를 우선 사용한다.
+    2. 번호가 없는 OpenCV 박스만 텍스트 매칭 후 순차 번호를 사용한다.
+    3. 정답·해설 꼬리 페이지는 문항 후보에서 제외한다.
     """
     questions = []
     global_number = 0
+    excluded_page_indexes = excluded_page_indexes or set()
 
     for page in pages:
         page_idx = page["page_index"]
+        if page_idx in excluded_page_indexes:
+            logger.info("QUESTION_LIST_SKIP_SOLUTION_PAGE | page=%d", page_idx)
+            continue
         boxes = page["boxes"]
+        segmented_numbers = list(page.get("numbers") or [])
         text_blocks = text_blocks_by_page.get(page_idx, [])
 
-        for bbox in boxes:
+        for box_index, bbox in enumerate(boxes):
             global_number += 1
-            x, y, w, h = bbox
 
-            # 텍스트 블록에서 번호 추출 시도
-            detected_number = None
+            detected_number = (
+                segmented_numbers[box_index]
+                if box_index < len(segmented_numbers)
+                else None
+            )
             matched_text = None
 
-            if text_blocks:
+            if detected_number is None and text_blocks:
                 detected_number, matched_text = _match_text_to_bbox(
                     bbox, text_blocks,
                 )
 
+            number = int(detected_number or global_number)
             questions.append({
-                "number": detected_number or global_number,
+                "number": number,
                 "bbox": bbox,
                 "page_index": page_idx,
                 "text": matched_text,
+                "meta": {"original_number": number},
             })
 
-    # 번호 중복 정리: 중복이 있으면 순차 번호로 폴백
-    numbers = [q["number"] for q in questions]
-    if len(set(numbers)) != len(numbers):
-        logger.warning(
-            "QUESTION_NUMBER_DEDUP | detected=%s → fallback to sequential",
-            numbers,
-        )
-        for i, q in enumerate(questions):
-            q["number"] = i + 1
+    _resolve_number_conflicts(questions, source="SEGMENTATION_RESULT")
 
     return questions
 
@@ -773,6 +707,8 @@ def _crop_and_upload_question_images(
 
 def _extract_explanations(
     full_text_by_page: Dict[int, str],
+    *,
+    solution_tail_start: Optional[int] = None,
 ) -> List[Dict]:
     """
     PDF 텍스트에서 해설 섹션을 찾고, 개별 해설을 번호별로 추출.
@@ -782,21 +718,34 @@ def _extract_explanations(
     """
     explanations = []
 
-    for page_idx, full_text in full_text_by_page.items():
+    for page_idx in sorted(full_text_by_page):
+        full_text = full_text_by_page[page_idx]
         if not full_text:
             continue
 
-        # 해설 섹션 마커 검색
+        in_solution_tail = (
+            solution_tail_start is not None
+            and page_idx >= solution_tail_start
+        )
         marker_match = _EXPLANATION_MARKERS.search(full_text)
-        if not marker_match:
-            continue
-
-        # 해설 섹션 텍스트 (마커 이후)
-        explanation_section = full_text[marker_match.start():]
+        if in_solution_tail:
+            # 꼬리의 첫 장에만 표제가 있고 다음 장들은 번호부터 이어지는
+            # 실사용 교사용 PDF를 끝까지 해설로 읽는다.
+            explanation_section = (
+                full_text[marker_match.end():]
+                if marker_match
+                else full_text
+            )
+        else:
+            if not marker_match:
+                continue
+            explanation_section = full_text[marker_match.end():]
 
         logger.info(
             "EXPLANATION_SECTION_FOUND | page=%d | start_pos=%d | length=%d",
-            page_idx, marker_match.start(), len(explanation_section),
+            page_idx,
+            marker_match.start() if marker_match else 0,
+            len(explanation_section),
         )
 
         # 개별 해설 추출 (번호별)
@@ -804,7 +753,7 @@ def _extract_explanations(
 
         if not matches:
             # 번호 없이 해설 전체를 하나로 취급
-            clean_text = explanation_section[marker_match.end() - marker_match.start():].strip()
+            clean_text = explanation_section.strip()
             if clean_text:
                 explanations.append({
                     "question_number": None,
