@@ -248,6 +248,13 @@ class GuidedExamSourceWorkflowTests(TestCase):
             [float(question.score) for question in questions],
             [50.0, 50.0],
         )
+        self.assertEqual(
+            [question.image_key for question in questions],
+            [
+                f"tenants/{self.tenant.id}/exams/{exam.id}/1.png",
+                f"tenants/{self.tenant.id}/exams/{exam.id}/2.png",
+            ],
+        )
         dispatch_matchup.assert_called_once()
 
     def test_grading_workflow_can_change_after_questions_exist(self):

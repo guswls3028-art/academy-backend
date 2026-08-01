@@ -38,6 +38,7 @@ class WrongNotePDF(BaseModel):
     )
 
     from_session_order = models.PositiveIntegerField(default=2)
+    to_session_order = models.PositiveIntegerField(null=True, blank=True)
 
     status = models.CharField(
         max_length=20,

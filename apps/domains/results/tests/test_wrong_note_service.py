@@ -154,6 +154,48 @@ class WrongNoteServiceSessionExamTests(TestCase):
         self.assertEqual(total, 1)
         self.assertEqual([item["exam_id"] for item in items], [regular.id])
 
+    def test_lecture_order_filter_applies_inclusive_end(self):
+        self._create_wrong_result(title="1차시 시험", session=self.session1)
+        included_exam, _ = self._create_wrong_result(
+            title="2차시 시험",
+            session=self.session2,
+        )
+        self._create_wrong_result(title="3차시 시험", session=self.session3)
+
+        total, items = list_wrong_notes_for_enrollment(
+            enrollment_id=self.enrollment.id,
+            q=WrongNoteQuery(
+                lecture_id=self.lecture.id,
+                from_session_order=2,
+                to_session_order=2,
+            ),
+        )
+
+        self.assertEqual(total, 1)
+        self.assertEqual([item["exam_id"] for item in items], [included_exam.id])
+        self.assertEqual(items[0]["session_order"], 2)
+
+    def test_multi_session_exam_uses_session_inside_requested_range(self):
+        regular, _ = self._create_wrong_result(
+            title="공유 범위 시험",
+            session=self.session1,
+        )
+        regular.sessions.add(self.session3)
+
+        total, items = list_wrong_notes_for_enrollment(
+            enrollment_id=self.enrollment.id,
+            q=WrongNoteQuery(
+                lecture_id=self.lecture.id,
+                from_session_order=3,
+                to_session_order=3,
+            ),
+        )
+
+        self.assertEqual(total, 1)
+        self.assertEqual(items[0]["exam_id"], regular.id)
+        self.assertEqual(items[0]["session_order"], 3)
+        self.assertEqual(items[0]["session_title"], "3차시")
+
     def test_append_only_wrong_fact_does_not_override_corrected_snapshot(self):
         regular, question = self._create_wrong_result(title="재채점 시험", session=self.session2)
         result_item = ResultItem.objects.get(
@@ -317,6 +359,7 @@ class WrongNoteServiceSessionExamTests(TestCase):
             exam_id=None,
             lecture_id=self.lecture.id,
             from_session_order=1,
+            to_session_order=3,
         )
 
         with self.assertRaisesRegex(WrongNotePDFLimitError, "101문항"):
@@ -327,5 +370,9 @@ class WrongNoteServiceSessionExamTests(TestCase):
             )
 
         self.assertEqual(list_wrong_notes.call_args.kwargs["q"].limit, 100)
+        self.assertEqual(
+            list_wrong_notes.call_args.kwargs["q"].to_session_order,
+            3,
+        )
         build_pdf.assert_not_called()
         upload_pdf.assert_not_called()

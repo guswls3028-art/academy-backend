@@ -26,7 +26,7 @@ class WrongNoteView(APIView):
     오답노트 조회 API
 
     ✅ STEP 3-3 고정:
-    - lecture_id/from_session_order 필터는 Service 단일 진실
+    - lecture_id/from_session_order/to_session_order 필터는 Service 단일 진실
     - View는 보안 + query parsing + serializer만 담당
     """
 
@@ -43,6 +43,7 @@ class WrongNoteView(APIView):
         - exam_id (optional)
         - lecture_id (optional)
         - from_session_order (optional, default=2)
+        - to_session_order (optional, inclusive)
         - offset (optional, default=0)
         - limit (optional, default=50)
         """
@@ -63,6 +64,12 @@ class WrongNoteView(APIView):
                 else None
             )
             from_order = int(request.query_params.get("from_session_order", 2))
+            to_session_order = request.query_params.get("to_session_order")
+            to_order = (
+                int(to_session_order)
+                if to_session_order not in (None, "")
+                else None
+            )
             offset = int(request.query_params.get("offset", 0))
             limit = min(int(request.query_params.get("limit", 50)), 200)
             if (
@@ -70,6 +77,7 @@ class WrongNoteView(APIView):
                 or (exam_id_i is not None and exam_id_i < 1)
                 or (requested_lecture_id is not None and requested_lecture_id < 1)
                 or from_order < 1
+                or (to_order is not None and to_order < from_order)
                 or offset < 0
                 or limit < 1
             ):
@@ -103,6 +111,7 @@ class WrongNoteView(APIView):
             exam_id=exam_id_i,
             lecture_id=lecture_id_i,
             from_session_order=from_order,
+            to_session_order=to_order,
             offset=offset,
             limit=limit,
         )

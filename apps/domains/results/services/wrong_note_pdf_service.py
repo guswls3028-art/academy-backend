@@ -173,6 +173,8 @@ def _session_label(item: dict[str, Any]) -> str:
     order = item.get("session_order")
     title = str(item.get("session_title") or "")
     if order is not None and title:
+        if title.replace(" ", "") in {f"{order}주차", f"{order}회차"}:
+            return title
         return f"{order}주차 · {title}"
     if order is not None:
         return f"{order}주차"
@@ -196,6 +198,7 @@ def build_wrong_note_pdf(
     tenant_name: str,
     items: list[dict[str, Any]],
     from_session_order: int,
+    to_session_order: int | None = None,
     exam_id: int | None,
     deadline_monotonic: float | None = None,
 ) -> bytes:
@@ -230,7 +233,11 @@ def build_wrong_note_pdf(
     pdf.setFont(bold_font, 30)
     pdf.drawString(20 * mm, page_h - 45 * mm, "오답노트")
     pdf.setFont(regular_font, 12)
-    pdf.drawString(20 * mm, page_h - 58 * mm, "틀린 문항만 다시 풀 수 있도록 주차별로 묶었습니다.")
+    pdf.drawString(
+        20 * mm,
+        page_h - 58 * mm,
+        "틀린 문항과 다시 볼 문항을 주차별로 묶었습니다.",
+    )
 
     pdf.setFillColor(HexColor(_INK))
     pdf.setFont(bold_font, 19)
@@ -239,15 +246,16 @@ def build_wrong_note_pdf(
     pdf.setFillColor(HexColor(_MUTED))
     pdf.drawString(20 * mm, page_h - 112 * mm, lecture_title)
 
-    scope_text = (
-        str(rows[0].get("exam_title") or "선택 시험")
-        if exam_id is not None
-        else f"{from_session_order}주차부터 누적"
-    )
+    if exam_id is not None:
+        scope_text = str(rows[0].get("exam_title") or "선택 시험")
+    elif to_session_order is not None:
+        scope_text = f"{from_session_order}~{to_session_order}회차"
+    else:
+        scope_text = f"{from_session_order}회차부터 누적"
     image_count = sum(1 for item in rows if item.get("has_question_image"))
     stats = [
         ("범위", scope_text),
-        ("오답 문항", f"{len(rows)}문항"),
+        ("수록 문항", f"{len(rows)}문항"),
         ("문제 이미지", f"{image_count}/{len(rows)}문항"),
         ("생성일", generated_at.strftime("%Y.%m.%d")),
     ]
@@ -435,6 +443,11 @@ def generate_and_store_wrong_note_pdf(
             exam_id=int(job.exam_id) if job.exam_id else None,
             lecture_id=int(job.lecture_id) if job.lecture_id else int(enrollment.lecture_id),
             from_session_order=int(job.from_session_order or 1),
+            to_session_order=(
+                int(job.to_session_order)
+                if job.to_session_order is not None
+                else None
+            ),
             offset=0,
             limit=MAX_WRONG_NOTE_PDF_ITEMS,
         ),
@@ -450,6 +463,11 @@ def generate_and_store_wrong_note_pdf(
         tenant_name=str(getattr(tenant, "name", "") or "학원"),
         items=items,
         from_session_order=int(job.from_session_order or 1),
+        to_session_order=(
+            int(job.to_session_order)
+            if job.to_session_order is not None
+            else None
+        ),
         exam_id=int(job.exam_id) if job.exam_id else None,
         deadline_monotonic=deadline_monotonic,
     )

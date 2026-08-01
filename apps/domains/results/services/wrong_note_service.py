@@ -34,6 +34,7 @@ class WrongNoteQuery:
     exam_id: Optional[int] = None
     lecture_id: Optional[int] = None
     from_session_order: int = 2
+    to_session_order: Optional[int] = None
 
     offset: int = 0
     limit: int = 50
@@ -49,7 +50,12 @@ def _safe_int(v: Any, default: Optional[int] = None) -> Optional[int]:
         return default
 
 
-def _get_exam_ids_by_lecture_and_order(*, lecture_id: int, from_order: int) -> List[int]:
+def _get_exam_ids_by_lecture_and_order(
+    *,
+    lecture_id: int,
+    from_order: int,
+    to_order: Optional[int],
+) -> List[int]:
     """
     lecture_id + from_session_order로 exam_id 목록 구하기
 
@@ -60,6 +66,7 @@ def _get_exam_ids_by_lecture_and_order(*, lecture_id: int, from_order: int) -> L
     return regular_exam_ids_by_lecture_and_order(
         lecture_id=int(lecture_id),
         from_order=int(from_order),
+        to_order=int(to_order) if to_order is not None else None,
     )
 
 
@@ -126,6 +133,7 @@ def list_wrong_notes_for_enrollment(
         exam_ids = _get_exam_ids_by_lecture_and_order(
             lecture_id=int(q.lecture_id),
             from_order=int(q.from_session_order or 2),
+            to_order=q.to_session_order,
         )
         if not exam_ids:
             return 0, []
@@ -153,6 +161,16 @@ def list_wrong_notes_for_enrollment(
         exam_ids=exam_ids,
         lecture_id=q.lecture_id,
         tenant_id=tenant_id,
+        from_order=(
+            int(q.from_session_order or 1)
+            if q.exam_id is None and q.lecture_id is not None
+            else None
+        ),
+        to_order=(
+            int(q.to_session_order)
+            if q.exam_id is None and q.to_session_order is not None
+            else None
+        ),
     )
 
     answer_key_cache: Dict[int, Dict[str, Any]] = {
