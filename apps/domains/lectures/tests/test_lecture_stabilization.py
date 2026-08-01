@@ -208,7 +208,7 @@ class TestSessionCreateOrdering(LectureTestBase):
         self.assertEqual(second.order, 3)
 
     def test_supplement_display_label_preserves_custom_title(self):
-        """보강 이름은 고정 라벨로 덮지 않고 생성·조회 응답에 보존한다."""
+        """보강 이름은 생성·수정 응답에서 같은 세션 ID와 함께 보존한다."""
         response = self._create_session({
             "title": "토요일 심화 클리닉",
             "session_type": "SUPPLEMENT",
@@ -217,6 +217,17 @@ class TestSessionCreateOrdering(LectureTestBase):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.data["title"], "토요일 심화 클리닉")
         self.assertEqual(response.data["display_label"], "토요일 심화 클리닉")
+
+        session = Session.objects.get(pk=response.data["id"])
+        update_response = self._patch_session(
+            session,
+            {"title": "일요일 취약 단원 클리닉"},
+        )
+
+        self.assertEqual(update_response.status_code, 200)
+        self.assertEqual(update_response.data["id"], session.id)
+        self.assertEqual(update_response.data["title"], "일요일 취약 단원 클리닉")
+        self.assertEqual(update_response.data["display_label"], "일요일 취약 단원 클리닉")
 
     def test_regular_order_null_update_rejected(self):
         """정규 차시는 PATCH에서도 regular_order null을 허용하지 않는다."""
