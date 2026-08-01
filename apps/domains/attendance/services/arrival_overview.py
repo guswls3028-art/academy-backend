@@ -13,6 +13,7 @@ from apps.support.attendance.arrival_dependencies import (
 
 
 SOON_WINDOW_MINUTES = 60
+OVERVIEW_DAYS = 7
 SUPPLEMENT_EXCLUDED_STATUSES = {"INACTIVE", "SECESSION"}
 CLINIC_VISIBLE_STATUSES = {"booked", "attended", "no_show"}
 CLINIC_RESOLVED_STATUSES = {"attended", "no_show"}
@@ -93,10 +94,11 @@ def _serialize_item(item: dict, now) -> dict:
 
 
 def build_arrival_overview(*, tenant, now=None) -> dict:
-    """Return today's and tomorrow's operational arrival projection in two queries."""
+    """Return the next seven days of operational arrivals in two queries."""
     current = timezone.localtime(now) if now is not None else timezone.localtime()
     today = current.date()
     tomorrow = today + timedelta(days=1)
+    range_end = today + timedelta(days=OVERVIEW_DAYS - 1)
 
     supplement_rows = (
         Attendance.objects
@@ -106,13 +108,13 @@ def build_arrival_overview(*, tenant, now=None) -> dict:
             enrollment__student__deleted_at__isnull=True,
         )
         .exclude(status__in=SUPPLEMENT_EXCLUDED_STATUSES)
-        .filter(planned_arrival_date__range=(today, tomorrow))
+        .filter(planned_arrival_date__range=(today, range_end))
         .select_related("session", "session__lecture", "enrollment", "enrollment__student")
     )
     clinic_rows = clinic_arrival_participants_for_tenant(
         tenant=tenant,
         start_date=today,
-        end_date=tomorrow,
+        end_date=range_end,
         statuses=CLINIC_VISIBLE_STATUSES,
     )
 
@@ -122,7 +124,7 @@ def build_arrival_overview(*, tenant, now=None) -> dict:
     ]
     items.sort(
         key=lambda item: (
-            item["date"] or tomorrow,
+            item["date"] or range_end,
             item["time"] or time.max,
             item["student_name"],
             item["key"],
@@ -137,7 +139,7 @@ def build_arrival_overview(*, tenant, now=None) -> dict:
     for item in serialized_items:
         if item["is_overdue"]:
             overdue += 1
-        if item["date"] == today.isoformat() and item["time"] is None and not item["is_resolved"]:
+        if item["time"] is None and not item["is_resolved"]:
             time_unset += 1
         planned_at = _aware_datetime(
             datetime.fromisoformat(item["date"]).date() if item["date"] else None,
@@ -154,11 +156,14 @@ def build_arrival_overview(*, tenant, now=None) -> dict:
         "generated_at": current.isoformat(),
         "today": today.isoformat(),
         "tomorrow": tomorrow.isoformat(),
+        "range_end": range_end.isoformat(),
+        "range_days": OVERVIEW_DAYS,
         "soon_window_minutes": SOON_WINDOW_MINUTES,
         "summary": {
             "soon": soon,
             "today": sum(item["date"] == today.isoformat() for item in serialized_items),
             "tomorrow": sum(item["date"] == tomorrow.isoformat() for item in serialized_items),
+            "upcoming": len(serialized_items),
             "time_unset": time_unset,
             "overdue": overdue,
         },
