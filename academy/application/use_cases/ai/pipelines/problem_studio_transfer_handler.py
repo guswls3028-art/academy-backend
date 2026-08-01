@@ -119,11 +119,11 @@ def handle_problem_studio_transfer_job(job: AIJob) -> AIResult:
 
             cfg = AIConfig.load()
             try:
-                configured_max_units = int(os.getenv("PROBLEM_STUDIO_AI_MAX_UNITS", "24"))
+                configured_max_units = int(os.getenv("PROBLEM_STUDIO_AI_MAX_UNITS", "240"))
             except (TypeError, ValueError):
-                logger.warning("Invalid PROBLEM_STUDIO_AI_MAX_UNITS; using default 24")
-                configured_max_units = 24
-            max_units = max(1, min(40, configured_max_units))
+                logger.warning("Invalid PROBLEM_STUDIO_AI_MAX_UNITS; using default 240")
+                configured_max_units = 240
+            max_units = max(1, min(250, configured_max_units))
 
             def _transcribe(data: bytes, mime: str) -> OcrResult:
                 nonlocal ai_calls, fallback_calls, transcription_engine
@@ -181,12 +181,15 @@ def handle_problem_studio_transfer_job(job: AIJob) -> AIResult:
 
             explanation_cfg = AIConfig.load()
             explanation_engine = (
-                f"openai:{explanation_cfg.PROBLEM_GEN_MODEL}"
+                f"openai:{explanation_cfg.PROBLEM_STUDIO_EXPLANATION_MODEL}"
                 if explanation_cfg.OPENAI_API_KEY
                 else f"bedrock:{explanation_cfg.PROBLEM_GEN_BEDROCK_MODEL}"
             )
 
-            def _build_explanations(structure: TransferStructure) -> list[dict]:
+            def _build_explanations(
+                structure: TransferStructure,
+                question_visuals: dict[tuple[str, int], dict],
+            ) -> list[dict]:
                 nonlocal explanation_calls
                 indexed_questions = [
                     (
@@ -196,6 +199,7 @@ def handle_problem_studio_transfer_job(job: AIJob) -> AIResult:
                             "choices": item.choices,
                             "answer": item.answer,
                             "explanation": item.explanation,
+                            "visual": question_visuals.get((item.source_name, item.number)),
                         },
                     )
                     for structure_index, item in enumerate(structure.items, start=1)
@@ -210,6 +214,7 @@ def handle_problem_studio_transfer_job(job: AIJob) -> AIResult:
                             subject=str(problem_payload.get("subject") or ""),
                             note_policy=str(problem_payload.get("note_policy") or ""),
                             voice_profile=problem_payload.get("_resolved_voice_profile"),
+                            model=explanation_cfg.PROBLEM_STUDIO_EXPLANATION_MODEL,
                         )
                         explanation_calls += 1
                     except Exception as exc:
@@ -233,6 +238,17 @@ def handle_problem_studio_transfer_job(job: AIJob) -> AIResult:
                             **value,
                             "index": batch[local_index - 1][0],
                         })
+                    completed = min(start + len(batch), len(indexed_questions))
+                    _record_progress(
+                        job.id,
+                        "processing",
+                        22 + int(55 * completed / max(1, len(indexed_questions))),
+                        tenant_id=tenant_id,
+                        step_index=2,
+                        step_total=4,
+                        step_name_display=f"Beta 해설 생성 {completed}/{len(indexed_questions)}",
+                        step_percent=int(100 * completed / max(1, len(indexed_questions))),
+                    )
                 return generated
 
             explanation_builder = _build_explanations
@@ -283,7 +299,7 @@ def handle_problem_studio_transfer_job(job: AIJob) -> AIResult:
             len(package.documents),
             len(package.data),
         )
-        return AIResult.done(job.id, {
+        result_payload = {
             "download_url": download_url,
             "filename": package.filename,
             "r2_key": result_key,
@@ -305,7 +321,14 @@ def handle_problem_studio_transfer_job(job: AIJob) -> AIResult:
             "detected_layout": package.detected_layout,
             "reconstruction_quality": package.reconstruction_quality,
             "_font_assets": package.font_assets,
-        })
+        }
+        if isinstance(problem_payload.get("beta"), dict):
+            result_payload["beta"] = {
+                "label": "Beta",
+                "free_trial": True,
+                "review_required": True,
+            }
+        return AIResult.done(job.id, result_payload)
     except Exception as exc:
         logger.exception("PROBLEM_STUDIO_TRANSFER failed job_id=%s tenant_id=%s", job.id, tenant_id)
         return AIResult.failed(job.id, str(exc)[:2000])

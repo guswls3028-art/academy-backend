@@ -19,6 +19,15 @@ from apps.core.permissions import TenantResolvedAndStaff
 from academy.adapters.db.django import repositories_ai as ai_repo
 from apps.domains.tools.problem_studio.services import extract_sources, parse_payload, source_extraction_to_payload
 from apps.domains.tools.problem_studio.async_transfer import build_source_archive
+from apps.domains.tools.problem_studio.beta_access import (
+    ProblemStudioBetaLimitReached,
+    beta_access_snapshot,
+    beta_run_id_from_job_payload,
+    bind_beta_run,
+    release_beta_run,
+    reserve_beta_run,
+    settle_beta_run,
+)
 from apps.domains.tools.problem_studio.document_style import (
     BUILTIN_FONTS,
     resolve_document_style_payload,
@@ -389,6 +398,17 @@ class ProblemStudioTransferDocumentView(APIView):
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
 
+class ProblemStudioBetaAccessView(APIView):
+    """Return the tenant-wide three-run Beta trial balance."""
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+
+    def get(self, request):
+        response = Response({"beta_access": beta_access_snapshot(tenant=request.tenant)})
+        response["Cache-Control"] = "no-store"
+        return response
+
+
 class ProblemStudioTransferJobCreateView(APIView):
     """POST /api/v1/tools/problem-studio/transfer-jobs/
 
@@ -403,6 +423,8 @@ class ProblemStudioTransferJobCreateView(APIView):
     def post(self, request):
         archive_file = None
         archive_key = ""
+        beta_run = None
+        job_started = False
         try:
             payload = parse_payload(request.data.get("payload") if hasattr(request.data, "get") else request.data)
             if not payload and isinstance(request.data, dict):
@@ -415,6 +437,23 @@ class ProblemStudioTransferJobCreateView(APIView):
                 return Response({"detail": "원본으로 옮길 소스 파일을 먼저 올려 주세요."}, status=status.HTTP_400_BAD_REQUEST)
 
             archive_file, source_manifest = build_source_archive(source_files)
+            try:
+                beta_run = reserve_beta_run(tenant=request.tenant, user=request.user)
+            except ProblemStudioBetaLimitReached:
+                return Response(
+                    {
+                        "detail": "문제집 해설 Beta 무료 체험 3회를 모두 사용했습니다.",
+                        "rejection_code": "problem_studio_beta_limit_reached",
+                        "beta_access": beta_access_snapshot(tenant=request.tenant),
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            payload["beta"] = {
+                "label": "Beta",
+                "free_trial": True,
+                "run_id": str(beta_run.id),
+                "review_required": True,
+            }
 
             import uuid
             from apps.infrastructure.storage.r2 import delete_object_r2_storage, upload_fileobj_to_r2_storage
@@ -456,6 +495,8 @@ class ProblemStudioTransferJobCreateView(APIView):
                     },
                     status=status.HTTP_503_SERVICE_UNAVAILABLE,
                 )
+            job_started = True
+            bind_beta_run(run=beta_run, job_id=str(result["job_id"]))
             return Response(
                 {
                     "job_id": result["job_id"],
@@ -472,12 +513,15 @@ class ProblemStudioTransferJobCreateView(APIView):
                     ],
                     "warnings": [],
                     "source_text_chars": 0,
+                    "beta_access": beta_access_snapshot(tenant=request.tenant),
                 },
                 status=status.HTTP_202_ACCEPTED,
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         finally:
+            if beta_run is not None and not job_started:
+                release_beta_run(run_id=str(beta_run.id), reason="job_not_started")
             if archive_file is not None:
                 archive_file.close()
 
@@ -665,6 +709,20 @@ class ProblemStudioTransferJobStatusView(APIView):
         ):
             return Response({"detail": "작업을 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
 
+        if job.status in {
+            "DONE",
+            "FAILED",
+            "REJECTED_BAD_INPUT",
+            "FALLBACK_TO_GPU",
+            "REVIEW_REQUIRED",
+        }:
+            settle_beta_run(
+                run_id=beta_run_id_from_job_payload(job.payload),
+                job_id=str(job.job_id),
+                terminal_status=str(job.status),
+                error=job.error_message or job.last_error or "",
+            )
+
         progress = None
         try:
             from academy.adapters.cache.redis_progress_adapter import RedisProgressAdapter
@@ -700,6 +758,7 @@ class ProblemStudioTransferJobStatusView(APIView):
             "progress": progress,
             "result": result_payload,
             "error_message": job.error_message or job.last_error or None,
+            "beta_access": beta_access_snapshot(tenant=request.tenant),
         })
 
 

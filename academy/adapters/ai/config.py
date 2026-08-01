@@ -79,6 +79,7 @@ class AIConfig:
     # Problem generation
     PROBLEM_GEN_MODEL: str = "gpt-4.1-mini"  # default
     PROBLEM_GEN_BEDROCK_MODEL: str = "global.amazon.nova-2-lite-v1:0"
+    PROBLEM_STUDIO_EXPLANATION_MODEL: str = "gpt-5.6-luna"
     PROBLEM_TRANSCRIPTION_MODEL: str = "gpt-5.6-luna"
     PROBLEM_TRANSCRIPTION_BEDROCK_MODEL: str = "global.amazon.nova-2-lite-v1:0"
     BEDROCK_REGION: str = "ap-northeast-2"
@@ -109,6 +110,10 @@ class AIConfig:
             PROBLEM_GEN_BEDROCK_MODEL=(
                 _env("PROBLEM_GEN_BEDROCK_MODEL", "global.amazon.nova-2-lite-v1:0")
                 or "global.amazon.nova-2-lite-v1:0"
+            ),
+            PROBLEM_STUDIO_EXPLANATION_MODEL=(
+                _env("PROBLEM_STUDIO_EXPLANATION_MODEL", "gpt-5.6-luna")
+                or "gpt-5.6-luna"
             ),
             PROBLEM_TRANSCRIPTION_MODEL=(
                 _env("PROBLEM_TRANSCRIPTION_MODEL", "gpt-5.6-luna") or "gpt-5.6-luna"

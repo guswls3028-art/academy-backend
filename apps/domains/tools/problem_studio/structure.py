@@ -5,10 +5,10 @@ from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Iterable
 
 
-MAX_STRUCTURED_ITEMS = 80
+MAX_STRUCTURED_ITEMS = 1000
 MAX_ITEM_TEXT = 4500
 
-_QUESTION_NUMBER_TOKEN = r"(?:[1-9]|[1-7]\d|80)"
+_QUESTION_NUMBER_TOKEN = r"(?:[1-9]\d{0,2}|1000)"
 _QUESTION_SPLIT_RE = re.compile(
     rf"\n(?=\s*(?:{_QUESTION_NUMBER_TOKEN}\s*[.)]|문제\s*{_QUESTION_NUMBER_TOKEN}|Q\s*{_QUESTION_NUMBER_TOKEN})\s*)",
     re.IGNORECASE,

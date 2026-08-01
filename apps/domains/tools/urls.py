@@ -9,6 +9,7 @@ from .problem_studio.views import (
     ProblemStudioTransferDocumentView,
     ProblemStudioTransferJobCreateView,
     ProblemStudioTransferJobStatusView,
+    ProblemStudioBetaAccessView,
     ProblemStudioHangulHandoffCreateView,
     ProblemStudioHangulHandoffConsumeView,
     ProblemStudioHangulCompanionDownloadView,
@@ -33,6 +34,7 @@ from apps.support.omr.route_dependencies import (
 urlpatterns = [
     path("ppt/generate/", PptGenerateView.as_view(), name="tools-ppt-generate"),
     path("problem-studio/transfer-document/", ProblemStudioTransferDocumentView.as_view(), name="tools-problem-studio-transfer-document"),
+    path("problem-studio/beta-access/", ProblemStudioBetaAccessView.as_view(), name="tools-problem-studio-beta-access"),
     path("problem-studio/transfer-jobs/", ProblemStudioTransferJobCreateView.as_view(), name="tools-problem-studio-transfer-job-create"),
     path("problem-studio/transfer-jobs/<str:job_id>/", ProblemStudioTransferJobStatusView.as_view(), name="tools-problem-studio-transfer-job-status"),
     path("problem-studio/transfer-jobs/<str:job_id>/hangul-handoff/", ProblemStudioHangulHandoffCreateView.as_view(), name="tools-problem-studio-hangul-handoff-create"),

@@ -1443,6 +1443,29 @@ def _question_visual_map(
     }
 
 
+def _question_visual_map_by_source(
+    documents: Iterable[TransferDocument],
+) -> dict[tuple[str, int], dict[str, Any]]:
+    mapped: dict[tuple[str, int], dict[str, Any]] = {}
+    for document in documents:
+        for visual in document.question_visuals:
+            if visual.role != "visual_fragment" or "visual_context" not in visual.semantic_flags:
+                continue
+            key = (visual.source_name, visual.question_number)
+            if key in mapped:
+                continue
+            mapped[key] = {
+                "mime": visual.mime,
+                "data": visual.data,
+                "width_px": visual.width_px,
+                "height_px": visual.height_px,
+                "source_name": visual.source_name,
+                "page_number": visual.page_number,
+                "semantic_flags": list(visual.semantic_flags),
+            }
+    return mapped
+
+
 def _reconstruction_quality(
     documents: Iterable[TransferDocument],
     structure: TransferStructure,
@@ -2012,7 +2035,10 @@ def build_transfer_package(
     payload: dict[str, Any],
     source_files: Iterable[Any],
     ocr_context: TransferOcrContext | None = None,
-    explanation_builder: Callable[[TransferStructure], list[dict[str, Any]]] | None = None,
+    explanation_builder: Callable[
+        [TransferStructure, dict[tuple[str, int], dict[str, Any]]],
+        list[dict[str, Any]],
+    ] | None = None,
 ) -> TransferPackage:
     meta = _payload_meta(payload)
     title = meta["title"]
@@ -2079,7 +2105,10 @@ def build_transfer_package(
     auto_explanations = payload.get("auto_explanations") is True
     if auto_explanations and explanation_builder and structure.structured_problem_count:
         try:
-            generated_explanations = explanation_builder(structure)
+            generated_explanations = explanation_builder(
+                structure,
+                _question_visual_map_by_source(documents),
+            )
         except Exception as exc:
             warnings.append(
                 f"AI 해설 작성 중 오류가 발생해 전사 문제지만 생성했습니다. ({str(exc)[:180]})"

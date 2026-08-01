@@ -389,7 +389,7 @@ def test_transfer_uses_uploaded_teacher_explanations_as_ephemeral_voice_only():
     }
     captured: dict[str, object] = {}
 
-    def explanation_builder(_structure):
+    def explanation_builder(_structure, _question_visuals):
         captured["profile"] = payload.get("_resolved_voice_profile")
         return []
 
