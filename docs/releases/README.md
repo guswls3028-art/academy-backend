@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.12.17.md](v1.12.17.md) | **CURRENT** | 2026-08-02 KST | Regular/supplement lecture-session separation, compatible full-list view, editable supplement titles, interaction hardening, and production continuity verification |
+| [v1.12.18.md](v1.12.18.md) | **CURRENT** | 2026-08-02 KST | Seven-day supplement and clinic arrival preparation, operational dashboard and notification surfaces, actionable empty states, and production verification |
+| [v1.12.17.md](v1.12.17.md) | production-deployed / v1.12.18로 승계 | 2026-08-02 KST | Regular/supplement lecture-session separation, compatible full-list view, editable supplement titles, interaction hardening, and production continuity verification |
 | [v1.12.16.md](v1.12.16.md) | production-deployed / v1.12.17로 승계 | 2026-08-01 KST | Tenant-wide attendance roster ordering, account-and-PC persisted sort preference, full-list server ordering, and production continuity verification |
 | [v1.12.15.md](v1.12.15.md) | production-deployed / v1.12.16로 승계 | 2026-08-01 KST | React Router advisory closure, arrival operations, preproduction readback reliability, and full production continuity verification |
 | [v1.12.14.md](v1.12.14.md) | production-deployed / v1.12.15로 승계 | 2026-08-01 KST | Secretless automated dependency gates, compatible dependency refreshes, production continuity verification, and release cleanup |
