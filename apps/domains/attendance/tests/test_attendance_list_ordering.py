@@ -6,9 +6,12 @@ from apps.core.models.tenant import Tenant
 from apps.core.models.tenant_membership import TenantMembership
 from apps.domains.attendance.models import Attendance
 from apps.domains.attendance.views import AttendanceViewSet
-from apps.domains.enrollment.models import Enrollment
-from apps.domains.lectures.models import Lecture, Session
-from apps.domains.students.models import Student
+from apps.domains.enrollment.test_support import create_enrollment_fixture
+from apps.domains.lectures.test_support import (
+    create_lecture_fixture,
+    create_session_fixture,
+)
+from apps.domains.students.test_support import create_student_fixture
 
 
 User = get_user_model()
@@ -27,13 +30,13 @@ class TestAttendanceListOrdering(TestCase):
             name="정렬 관리자",
         )
         TenantMembership.ensure_active(tenant=self.tenant, user=self.admin, role="owner")
-        self.lecture = Lecture.objects.create(
+        self.lecture = create_lecture_fixture(
             tenant=self.tenant,
             title="정렬 강의",
             name="정렬 강의",
             subject="수학",
         )
-        self.session = Session.objects.create(lecture=self.lecture, order=1, title="1차시")
+        self.session = create_session_fixture(lecture=self.lecture, order=1, title="1차시")
 
         self._create_attendance("하늘", "ABSENT", "01030000000", "01090000003", 1)
         self._create_attendance("가람", "UNSET", "01010000000", "01090000001", 2)
@@ -45,7 +48,7 @@ class TestAttendanceListOrdering(TestCase):
             tenant=self.other_tenant,
             name="다른 관리자",
         )
-        other_student = Student.objects.create(
+        other_student = create_student_fixture(
             tenant=self.other_tenant,
             user=other_admin,
             ps_number="OTHER-1",
@@ -54,14 +57,14 @@ class TestAttendanceListOrdering(TestCase):
             phone="01000000000",
             parent_phone="01099999999",
         )
-        other_lecture = Lecture.objects.create(
+        other_lecture = create_lecture_fixture(
             tenant=self.other_tenant,
             title="다른 강의",
             name="다른 강의",
             subject="수학",
         )
-        other_session = Session.objects.create(lecture=other_lecture, order=1, title="1차시")
-        other_enrollment = Enrollment.objects.create(
+        other_session = create_session_fixture(lecture=other_lecture, order=1, title="1차시")
+        other_enrollment = create_enrollment_fixture(
             tenant=self.other_tenant,
             student=other_student,
             lecture=other_lecture,
@@ -80,7 +83,7 @@ class TestAttendanceListOrdering(TestCase):
             tenant=self.tenant,
             name=name,
         )
-        student = Student.objects.create(
+        student = create_student_fixture(
             tenant=self.tenant,
             user=user,
             ps_number=f"ORDER-{suffix}",
@@ -89,7 +92,7 @@ class TestAttendanceListOrdering(TestCase):
             phone=phone,
             parent_phone=parent_phone,
         )
-        enrollment = Enrollment.objects.create(
+        enrollment = create_enrollment_fixture(
             tenant=self.tenant,
             student=student,
             lecture=self.lecture,
