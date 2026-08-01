@@ -72,22 +72,11 @@ class Attendance(models.Model):
     class Meta:
         indexes = [
             models.Index(fields=["tenant", "recorded_at"]),  # ✅ 복합 인덱스 추가
-            models.Index(
-                fields=["tenant", "planned_arrival_date", "planned_arrival_time"],
-                name="att_arrival_plan_idx",
-            ),
         ]
         constraints = [
             models.UniqueConstraint(
                 fields=["tenant", "enrollment", "session"],
                 name="unique_attendance_per_tenant_session",
-            ),
-            models.CheckConstraint(
-                condition=(
-                    models.Q(planned_arrival_time__isnull=True)
-                    | models.Q(planned_arrival_date__isnull=False)
-                ),
-                name="att_arrival_time_requires_date",
             ),
         ]
 

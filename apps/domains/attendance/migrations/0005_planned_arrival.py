@@ -31,22 +31,4 @@ class Migration(migrations.Migration):
                 null=True,
             ),
         ),
-        migrations.AddIndex(
-            model_name="attendance",
-            index=models.Index(
-                fields=["tenant", "planned_arrival_date", "planned_arrival_time"],
-                name="att_arrival_plan_idx",
-            ),
-        ),
-        migrations.AddConstraint(
-            model_name="attendance",
-            constraint=models.CheckConstraint(
-                condition=models.Q(
-                    ("planned_arrival_time__isnull", True),
-                    ("planned_arrival_date__isnull", False),
-                    _connector="OR",
-                ),
-                name="att_arrival_time_requires_date",
-            ),
-        ),
     ]
