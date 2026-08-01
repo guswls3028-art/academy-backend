@@ -214,6 +214,12 @@ cross-tenant fallback을 사용하지 않는다.
 검증한다. 같은 시험이 여러 회차에 연결되어도 문항은 한 번만 싣고, 선택
 범위 안의 가장 이른 회차를 표시한다.
 
+여기서 회차는 화면 배치 순서인 `Session.order`가 아니라 정규 수업 번호인
+`Session.regular_order`다. 보강(`session_type=SUPPLEMENT`)은 정규 회차 범위에
+포함하지 않는다. 따라서 정규 수업 사이에 보강을 삽입하거나 카드를
+재배치해도 `2~3회차`는 정규 2차시와 3차시만 뜻하며, 조회 결과의
+`session_order`도 같은 정규 수업 번호를 반환한다.
+
 API는 `WrongNotePDF`와 tools worker job을 tenant 범위에서 기록해 비동기로
 생성하고, 완료 뒤 R2 attachment URL을 반환한다. 출력 job에도 선택한 시작·
 종료 회차를 저장하므로 미리보기와 worker 조회 범위가 달라지지 않는다.
