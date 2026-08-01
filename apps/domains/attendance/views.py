@@ -3,6 +3,7 @@
 import logging
 from django.core import signing
 from django.db import transaction
+from django.db.models import Case, IntegerField, Value, When
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.decorators import action
 from rest_framework.filters import SearchFilter
@@ -43,6 +44,56 @@ logger = logging.getLogger(__name__)
 
 BULK_PRESENT_UNDO_SALT = "attendance.bulk-present.undo.v1"
 BULK_PRESENT_UNDO_MAX_AGE_SECONDS = 600
+ATTENDANCE_STATUS_ORDER = (
+    "UNSET",
+    "PRESENT",
+    "ONLINE",
+    "SUPPLEMENT",
+    "LATE",
+    "EARLY_LEAVE",
+    "ABSENT",
+    "RUNAWAY",
+    "MATERIAL",
+    "INACTIVE",
+    "SECESSION",
+)
+ATTENDANCE_ORDERING_FIELDS = {
+    "id": "id",
+    "name": "enrollment__student__name",
+    "status": "_attendance_status_order",
+    "parent_phone": "enrollment__student__parent_phone",
+    "phone": "enrollment__student__phone",
+}
+
+
+def _apply_attendance_ordering(queryset, requested_ordering):
+    """Apply one whitelisted, stable ordering before list pagination."""
+    raw_ordering = (requested_ordering or "name").strip()
+    descending = raw_ordering.startswith("-")
+    key = raw_ordering[1:] if descending else raw_ordering
+    if key not in ATTENDANCE_ORDERING_FIELDS:
+        key = "name"
+        descending = False
+
+    if key == "status":
+        queryset = queryset.annotate(
+            _attendance_status_order=Case(
+                *(
+                    When(status=status_code, then=Value(rank))
+                    for rank, status_code in enumerate(ATTENDANCE_STATUS_ORDER)
+                ),
+                default=Value(len(ATTENDANCE_STATUS_ORDER)),
+                output_field=IntegerField(),
+            )
+        )
+
+    prefix = "-" if descending else ""
+    ordering = [f"{prefix}{ATTENDANCE_ORDERING_FIELDS[key]}"]
+    if key not in {"id", "name"}:
+        ordering.append("enrollment__student__name")
+    if key != "id":
+        ordering.append("id")
+    return queryset.order_by(*ordering)
 
 
 def _secession_status_conflict(instance, requested_status):
@@ -158,7 +209,13 @@ class AttendanceViewSet(ModelViewSet):
                 "enrollment__student",
             )
         )
-        if getattr(self, "action", None) in {"destroy", "partial_update", "update"}:
+        action = getattr(self, "action", None)
+        if action == "list":
+            qs = _apply_attendance_ordering(
+                qs,
+                self.request.query_params.get("ordering"),
+            )
+        elif action in {"destroy", "partial_update", "update"}:
             qs = qs.select_for_update()
         return qs
 
