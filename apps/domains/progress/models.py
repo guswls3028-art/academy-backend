@@ -352,6 +352,12 @@ class AssessmentCorrection(TimestampModel):
         blank=True,
         help_text="완료 확인 당시 원본 점수의 updated_at. 점수가 바뀌면 완료 상태를 무효화한다.",
     )
+    source_fingerprint = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        help_text="완료 확인 당시 시험 점수·답안 내용의 SHA-256 지문.",
+    )
     updated_by = models.ForeignKey(
         "core.User",
         on_delete=models.SET_NULL,

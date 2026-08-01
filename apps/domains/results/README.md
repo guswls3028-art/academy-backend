@@ -164,8 +164,11 @@ Session Assessment Inspection
   PostgreSQL은 nullable outer join의 반대편 잠금을 거부하기 때문이다.
 - 과제는 종이 검사처럼 점수가 없어도 `PENDING`/`COMPLETED`와 메모를 저장할 수 있다.
   시험은 유효한 점수와 만점이 있는 비만점 결과에서만 오답 확인 상태를 바꾼다.
-- `COMPLETED` 당시 원본 수정 시각을 저장하며, 이후 점수가 바뀌면 조회 시 다시
-  `PENDING`으로 돌려 교사가 변경된 결과를 재확인하게 한다.
+- `COMPLETED` 당시 시험의 대표 결과·대표 시도·점수·문항별 답안/정오/배점을
+  SHA-256 내용 지문으로 저장한다. 같은 값을 다시 동기화해 `updated_at`만 바뀐
+  경우에는 완료를 유지하고, 실제 점수나 답안 내용이 바뀐 경우에만 조회 시
+  `PENDING`으로 돌려 교사가 변경된 결과를 재확인하게 한다. 지문 도입 전의 기존
+  완료 기록은 교사 입력을 보존해 완료로 읽고, 다음 수동 저장부터 지문을 기록한다.
 - tenant 차시 roster 밖 학생, 다른 차시 평가, 만점 시험의 수동 변경은 실패 폐쇄한다.
 - 회귀 검증은
   `apps/domains/results/tests/test_session_scores_roster_scope.py`의 correction 테스트가

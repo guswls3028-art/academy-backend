@@ -363,6 +363,29 @@ class SessionScoresRosterScopeTests(TestCase):
         )
         self.assertEqual(refreshed_row["correction_pending_count"], 0)
         self.assertFalse(refreshed_row["name_highlight_followup_required"])
+        correction = AssessmentCorrection.objects.get(
+            tenant=self.tenant,
+            enrollment=self.active_enrollment,
+            session=self.session,
+            source_type=AssessmentCorrection.SourceType.EXAM,
+            source_id=self.exam.id,
+        )
+        self.assertEqual(len(correction.source_fingerprint), 64)
+
+        result.save(update_fields=["updated_at"])
+        timestamp_only_request = self.factory.get(
+            f"/api/v1/results/admin/sessions/{self.session.id}/scores/"
+        )
+        timestamp_only_request.tenant = self.tenant
+        force_authenticate(timestamp_only_request, user=self.admin)
+        timestamp_only = SessionScoresView.as_view()(
+            timestamp_only_request,
+            session_id=self.session.id,
+        )
+        self.assertEqual(
+            timestamp_only.data["rows"][0]["exams"][0]["block"]["correction_status"],
+            "COMPLETED",
+        )
 
         result.total_score = 55
         result.save(update_fields=["total_score", "updated_at"])
@@ -383,6 +406,38 @@ class SessionScoresRosterScopeTests(TestCase):
         )
         self.assertTrue(
             stale.data["rows"][0]["name_highlight_followup_required"]
+        )
+
+    def test_legacy_exam_completion_without_fingerprint_remains_complete(self):
+        result = Result.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.active_enrollment,
+            total_score=50,
+            max_score=100,
+        )
+        AssessmentCorrection.objects.create(
+            tenant=self.tenant,
+            enrollment=self.active_enrollment,
+            session=self.session,
+            source_type=AssessmentCorrection.SourceType.EXAM,
+            source_id=self.exam.id,
+            completed=True,
+            source_updated_at_snapshot=result.updated_at,
+        )
+        result.save(update_fields=["updated_at"])
+
+        request = self.factory.get(
+            f"/api/v1/results/admin/sessions/{self.session.id}/scores/"
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        response = SessionScoresView.as_view()(request, session_id=self.session.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(
+            response.data["rows"][0]["exams"][0]["block"]["correction_status"],
+            "COMPLETED",
         )
 
     def test_exam_correction_locks_result_without_nullable_attempt_join(self):
