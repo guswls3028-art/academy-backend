@@ -70,13 +70,17 @@ only. Preserve pre-existing changes.
 
 ## Standing task authority
 
-An assigned implementation, release, operations, or cleanup task authorizes
-its normal in-scope commit, push, PR, merge, messaging, deployment, production
-mutation, and residue cleanup steps. Proceed through the owning workflow
-without repeated approval prompts. This authority does not expand task scope,
-resolve an ambiguous destructive target, waive tenant or user-data protection,
-bypass a release window or continuity gate, or replace an approval required by
-an external platform.
+Unless the user explicitly limits the task to local-only, no-deploy,
+draft/PR-only, or read-only work, an assigned implementation, change, or build
+includes its normal in-scope commit, push, PR, merge, messaging, deployment,
+production verification, and residue cleanup. Do not stop merely because
+GitHub publication or production deployment was not requested as a separate
+step; the implementation assignment itself authorizes the owning end-to-end
+workflow. Release, operations, and cleanup assignments carry the same standing
+authority. This authority does not expand task scope, resolve an ambiguous
+destructive target, waive tenant or user-data protection, bypass a release
+window or continuity gate, or replace an approval required by an external
+platform.
 
 ## Concurrent task isolation
 
