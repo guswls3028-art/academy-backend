@@ -123,6 +123,7 @@ class TransferDocument:
     layout_source: str = ""
     source_pages: list[SourcePageVisual] = field(default_factory=list, repr=False)
     question_visuals: list[QuestionVisual] = field(default_factory=list, repr=False)
+    reference_answers: dict[int, str] = field(default_factory=dict, repr=False)
     document_style_hint: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
@@ -361,6 +362,7 @@ def _question_visuals_from_blocks(
     try:
         from PIL import Image
         from academy.domain.tools.question_splitter import (
+            QuestionRegion,
             TextBlock as SplitterTextBlock,
             split_questions,
         )
@@ -382,6 +384,58 @@ def _question_visuals_from_blocks(
             page_height=float(coordinate_height),
             page_index=page_number - 1,
         )
+        page_text = "\n".join(block.text for block in splitter_blocks)
+        workbook_indexes = [
+            int(match.group("number"))
+            for match in _PDF_WORKBOOK_INDEX_RE.finditer(page_text)
+        ]
+        workbook_stems = [
+            int(match.group("number"))
+            for match in _PDF_WORKBOOK_QUESTION_RE.finditer(page_text)
+        ]
+        if len(workbook_indexes) >= 2 and workbook_stems:
+            lower = max(1, min(workbook_indexes) - 1)
+            upper = max(workbook_indexes)
+            allowed_numbers = {
+                number for number in workbook_stems if lower <= number <= upper
+            }
+            regions = [region for region in regions if region.number in allowed_numbers]
+            found_numbers = {region.number for region in regions}
+            anchor_blocks: dict[int, SplitterTextBlock] = {}
+            for block in splitter_blocks:
+                for match in _PDF_WORKBOOK_QUESTION_RE.finditer(block.text):
+                    number = int(match.group("number"))
+                    if number in allowed_numbers:
+                        anchor_blocks.setdefault(number, block)
+            mid_x = float(coordinate_width) / 2
+            for number in sorted(allowed_numbers - found_numbers):
+                anchor = anchor_blocks.get(number)
+                if anchor is None:
+                    continue
+                is_left = ((anchor.x0 + anchor.x1) / 2) < mid_x
+                next_y = min(
+                    (
+                        other.y0
+                        for other_number, other in anchor_blocks.items()
+                        if other_number != number
+                        and (((other.x0 + other.x1) / 2) < mid_x) == is_left
+                        and other.y0 > anchor.y0
+                    ),
+                    default=float(coordinate_height) * 0.96,
+                )
+                bbox = (
+                    0.0 if is_left else mid_x,
+                    max(0.0, anchor.y0 - 4.0),
+                    mid_x if is_left else float(coordinate_width),
+                    min(float(coordinate_height), max(anchor.y1 + 12.0, next_y - 3.0)),
+                )
+                regions.append(QuestionRegion(
+                    number=number,
+                    bbox=bbox,
+                    page_index=page_number - 1,
+                    semantic_flags=("workbook_anchor_fallback", "visual_context"),
+                ))
+            regions.sort(key=lambda region: region.number)
         if not regions:
             return []
 
@@ -870,6 +924,129 @@ def _ocr_note_html(result: OcrResult) -> str:
     return f'<p class="ocr-note"><strong>OCR 대기</strong> {_escape(label)}{warning}</p>'
 
 
+_PDF_WORKBOOK_INDEX_RE = re.compile(r"(?m)^\s*(?P<number>[1-9]\d{0,2})\)\s*$")
+_PDF_WORKBOOK_ANSWER_RE = re.compile(r"(?m)^\s*(?P<number>[1-9]\d{0,2})\)\s*")
+_PDF_WORKBOOK_QUESTION_RE = re.compile(
+    r"(?m)^\s*(?P<number>[1-9]\d{0,2})\.\s*(?=\S)"
+)
+_PDF_BROKEN_CIRCLED_CHOICE_RE = re.compile(
+    r"(?m)^\s*[◯○]\s*\n\s*(?P<number>[1-9])\s+(?=\S)"
+)
+_PDF_RUNNING_LINE_RE = re.compile(
+    r"(?:대성마이맥|두각학원|DUGAK|과목별 최고의 전문강사|^\s*[•·]?\s*\d{1,3}\s*[•·]?\s*$)",
+    re.IGNORECASE,
+)
+_PDF_TRAILING_SOURCE_LINE_RE = re.compile(
+    r"(?:기출\s*$|^\s*\[\s*\d{4}년?\s*\]\s*$|^\s*\d{1,2}(?:-\d{1,2}){1,3}\s*$|"
+    r"^\s*\([1-9]\)\s*(?:지구 환경 변화와 생물 다양성|화학 변화|생태계 환경 변화|"
+    r"천체 스펙트럼 분석|에너지 전환과 활용)\s*$)"
+)
+
+
+def _pdf_workbook_page_kind(text: str) -> str:
+    """Classify workbook pages with paired ``N)`` index and ``N.`` stems.
+
+    Commercial workbooks often render a small source index immediately before
+    the visible question number.  Answer appendices reuse only the ``N)`` form.
+    Treating both as question anchors duplicates every item and then parses the
+    answer appendix as another workbook.
+    """
+
+    source = str(text or "")
+    index_numbers = {
+        int(match.group("number")) for match in _PDF_WORKBOOK_INDEX_RE.finditer(source)
+    }
+    question_numbers = {
+        int(match.group("number")) for match in _PDF_WORKBOOK_QUESTION_RE.finditer(source)
+    }
+    matched = index_numbers & question_numbers
+    if index_numbers and len(matched) >= max(1, (len(index_numbers) * 4 + 4) // 5):
+        return "questions"
+
+    answer_count = sum(1 for _match in _PDF_WORKBOOK_ANSWER_RE.finditer(source))
+    if answer_count >= 5 and len(matched) < max(1, answer_count // 2):
+        return "answers"
+    return "other"
+
+
+def _trim_pdf_question_block(value: str) -> str:
+    lines = [line.rstrip() for line in str(value or "").splitlines()]
+    while lines and not lines[-1].strip():
+        lines.pop()
+    while lines and (
+        _PDF_TRAILING_SOURCE_LINE_RE.search(lines[-1])
+        or _PDF_RUNNING_LINE_RE.search(lines[-1])
+    ):
+        lines.pop()
+    return normalize_space("\n".join(lines))
+
+
+def _pdf_workbook_question_text(text: str) -> str:
+    """Keep exactly the indexed top-level questions from one workbook page."""
+
+    source = _PDF_BROKEN_CIRCLED_CHOICE_RE.sub(
+        lambda match: f"{('①②③④⑤⑥⑦⑧⑨')[int(match.group('number')) - 1]} ",
+        str(text or ""),
+    )
+    markers = list(_PDF_WORKBOOK_INDEX_RE.finditer(source))
+    blocks: list[str] = []
+    for index, marker in enumerate(markers):
+        number = int(marker.group("number"))
+        end = markers[index + 1].start() if index + 1 < len(markers) else len(source)
+        segment = source[marker.end():end]
+        stem = next(
+            (
+                match
+                for match in _PDF_WORKBOOK_QUESTION_RE.finditer(segment)
+                if int(match.group("number")) == number
+            ),
+            None,
+        )
+        if stem is None:
+            continue
+        block = _trim_pdf_question_block(segment[stem.start():])
+        if block:
+            lines = block.splitlines()
+            for line_index in range(1, len(lines)):
+                nested = _PDF_WORKBOOK_QUESTION_RE.match(lines[line_index])
+                if nested:
+                    dot_index = lines[line_index].find(".", nested.start(), nested.end())
+                    if dot_index >= 0:
+                        lines[line_index] = (
+                            lines[line_index][:dot_index]
+                            + "．"
+                            + lines[line_index][dot_index + 1:]
+                        )
+            blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
+
+
+def _clean_pdf_reference_text(value: str) -> str:
+    lines = [
+        line.strip()
+        for line in str(value or "").splitlines()
+        if line.strip() and not _PDF_RUNNING_LINE_RE.search(line)
+    ]
+    return normalize_space("\n".join(lines))
+
+
+def _pdf_workbook_reference_answers(text: str) -> tuple[str, dict[int, str]]:
+    """Return page-leading continuation and answer entries keyed by question."""
+
+    source = str(text or "")
+    markers = list(_PDF_WORKBOOK_ANSWER_RE.finditer(source))
+    if not markers:
+        return _clean_pdf_reference_text(source), {}
+    leading = _clean_pdf_reference_text(source[:markers[0].start()])
+    answers: dict[int, str] = {}
+    for index, marker in enumerate(markers):
+        end = markers[index + 1].start() if index + 1 < len(markers) else len(source)
+        answers[int(marker.group("number"))] = _clean_pdf_reference_text(
+            source[marker.end():end]
+        )
+    return leading, answers
+
+
 def _image_transfer_doc(name: str, data: bytes, *, ocr_context: TransferOcrContext) -> TransferDocument:
     mime = _mime_for_suffix(Path(name).suffix)
     page_width_pt, page_height_pt = _image_page_size_points(data)
@@ -956,8 +1133,25 @@ def _pdf_transfer_docs(name: str, data: bytes, *, ocr_context: TransferOcrContex
         raise ValueError("PDF 렌더링 모듈을 사용할 수 없습니다.") from exc
 
     documents: list[TransferDocument] = []
+    reference_answers: dict[int, str] = {}
+    last_reference_number: int | None = None
     with PdfBytesDocument(data) as pdf:
         page_count = pdf.page_count()
+        page_texts = [
+            normalize_space(pdf.extract_page_text(index))
+            for index in range(page_count)
+        ]
+        page_kinds = [_pdf_workbook_page_kind(text) for text in page_texts]
+        workbook_mode = page_kinds.count("questions") >= 2
+        workbook_question_text = (
+            _pdf_workbook_question_text("\n".join(
+                text
+                for text, kind in zip(page_texts, page_kinds, strict=True)
+                if kind == "questions"
+            ))
+            if workbook_mode
+            else ""
+        )
         for start in range(0, page_count, TRANSFER_PDF_PAGES_PER_DOC):
             end = min(start + TRANSFER_PDF_PAGES_PER_DOC, page_count)
             page_width_pt, page_height_pt = pdf.page_size(start)
@@ -979,8 +1173,22 @@ def _pdf_transfer_docs(name: str, data: bytes, *, ocr_context: TransferOcrContex
                 )
             ]
             for index in range(start, end):
-                page_text = normalize_space(pdf.extract_page_text(index))
-                if page_text:
+                page_text = page_texts[index]
+                page_kind = page_kinds[index]
+                if page_kind == "questions":
+                    question_text = _pdf_workbook_question_text(page_text)
+                    if question_text and not workbook_mode:
+                        part_text_chunks.append(f"[{index + 1}쪽]\n{question_text}")
+                elif page_kind == "answers":
+                    leading, page_answers = _pdf_workbook_reference_answers(page_text)
+                    if leading and last_reference_number is not None:
+                        reference_answers[last_reference_number] = normalize_space(
+                            "\n".join((reference_answers.get(last_reference_number, ""), leading))
+                        )
+                    reference_answers.update(page_answers)
+                    if page_answers:
+                        last_reference_number = max(page_answers)
+                elif page_text and not workbook_mode:
                     part_text_chunks.append(f"[{index + 1}쪽]\n{page_text}")
                 mime, image_bytes = pdf.render_page_bytes(index, zoom=TRANSFER_PDF_RENDER_ZOOM, jpg_quality=82)
                 current_width_pt, current_height_pt = pdf.page_size(index)
@@ -1018,7 +1226,8 @@ def _pdf_transfer_docs(name: str, data: bytes, *, ocr_context: TransferOcrContex
                 visual_blocks: Iterable[Any] = text_blocks
                 coordinate_width = current_width_pt
                 coordinate_height = current_height_pt
-                if not page_text:
+                should_ocr = not page_text and not workbook_mode
+                if should_ocr:
                     ocr_result = ocr_context.extract(image_bytes, mime=mime)
                     if ocr_result.status == "extracted" and ocr_result.text:
                         part_ocr_completed += 1
@@ -1033,15 +1242,17 @@ def _pdf_transfer_docs(name: str, data: bytes, *, ocr_context: TransferOcrContex
                         part_ocr_pending += 1
                         part_ocr_warning = part_ocr_warning or ocr_result.warning or ocr_result.status
                         ocr_page_html = _ocr_note_html(ocr_result)
-                page_question_visuals = _question_visuals_from_blocks(
-                    source_name=name,
-                    page_number=index + 1,
-                    image_data=source_data,
-                    mime=source_mime,
-                    text_blocks=visual_blocks,
-                    coordinate_width=coordinate_width,
-                    coordinate_height=coordinate_height,
-                )
+                page_question_visuals = []
+                if page_kind == "questions" or not workbook_mode:
+                    page_question_visuals = _question_visuals_from_blocks(
+                        source_name=name,
+                        page_number=index + 1,
+                        image_data=source_data,
+                        mime=source_mime,
+                        text_blocks=visual_blocks,
+                        coordinate_width=coordinate_width,
+                        coordinate_height=coordinate_height,
+                    )
                 part_question_visuals.extend(page_question_visuals)
                 part_question_visuals.extend(_visual_fragments_from_pdf_blocks(
                     source_name=name,
@@ -1100,6 +1311,11 @@ def _pdf_transfer_docs(name: str, data: bytes, *, ocr_context: TransferOcrContex
                 source_pages=part_source_pages,
                 question_visuals=part_question_visuals,
             ))
+    if documents and workbook_question_text:
+        documents[0].plain_text = workbook_question_text
+        documents[0].text_chars = len(workbook_question_text)
+    if documents and reference_answers:
+        documents[-1].reference_answers = reference_answers
     return documents
 
 
