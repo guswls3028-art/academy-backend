@@ -103,6 +103,125 @@ def test_expand_single_text_regions_to_visual_content_ignores_far_decoration(tmp
     assert 145.0 < region.bbox[2] < 170.0
 
 
+def test_expand_workbook_region_includes_trailing_diagram_before_next_question(tmp_path):
+    """본문 바로 아래 그래프는 product-facing crop에 포함한다."""
+    import cv2
+    import numpy as np
+
+    from academy.adapters.ai.detection.segment_dispatcher import (
+        _expand_workbook_regions_to_trailing_visual_content,
+    )
+
+    image = np.full((400, 400), 255, dtype=np.uint8)
+    image[30:70, 25:175] = 0       # question 1 text
+    image[76:145, 65:155] = 0      # detached graph below question 1
+    image[190:230, 25:175] = 0     # next question in the same column
+    image[30:70, 225:375] = 0      # opposite-column question
+    image_path = str(tmp_path / "workbook-page.png")
+    cv2.imwrite(image_path, image)
+
+    question = QuestionRegion(1, (20.0, 25.0, 180.0, 72.0), 0)
+    next_question = QuestionRegion(2, (20.0, 185.0, 180.0, 235.0), 0)
+    opposite_question = QuestionRegion(3, (220.0, 25.0, 380.0, 72.0), 0)
+
+    _expand_workbook_regions_to_trailing_visual_content(
+        image_path,
+        [question, next_question, opposite_question],
+        page_width=400.0,
+        page_height=400.0,
+    )
+
+    assert question.bbox[3] > 145.0
+    assert question.bbox[3] < next_question.bbox[1]
+    assert "trailing_visual_content" in question.semantic_flags
+    assert opposite_question.bbox == (220.0, 25.0, 380.0, 72.0)
+
+
+def test_expand_workbook_region_ignores_distant_footer(tmp_path):
+    """큰 공백 뒤의 푸터는 문항 도형으로 합치지 않는다."""
+    import cv2
+    import numpy as np
+
+    from academy.adapters.ai.detection.segment_dispatcher import (
+        _expand_workbook_regions_to_trailing_visual_content,
+    )
+
+    image = np.full((400, 400), 255, dtype=np.uint8)
+    image[30:70, 25:175] = 0
+    image[330:345, 25:175] = 0
+    image_path = str(tmp_path / "workbook-footer.png")
+    cv2.imwrite(image_path, image)
+    region = QuestionRegion(1, (20.0, 25.0, 180.0, 72.0), 0)
+
+    _expand_workbook_regions_to_trailing_visual_content(
+        image_path,
+        [region],
+        page_width=400.0,
+        page_height=400.0,
+    )
+
+    assert region.bbox == (20.0, 25.0, 180.0, 72.0)
+    assert "trailing_visual_content" not in region.semantic_flags
+
+
+def test_trim_workbook_region_removes_large_blank_tail(tmp_path):
+    """다음 문항 위치까지 늘어난 빈 여백은 product-facing crop에서 제거한다."""
+    import cv2
+    import numpy as np
+
+    from academy.adapters.ai.detection.segment_dispatcher import (
+        _trim_other_source_text_regions_to_ink,
+    )
+
+    image = np.full((400, 400), 255, dtype=np.uint8)
+    image[35:82, 25:175] = 0
+    image_path = str(tmp_path / "workbook-blank-tail.png")
+    cv2.imwrite(image_path, image)
+    region = QuestionRegion(1, (20.0, 30.0, 180.0, 300.0), 0)
+
+    _trim_other_source_text_regions_to_ink(
+        image_path,
+        [region],
+        page_width=400.0,
+        page_height=400.0,
+        source_type=None,
+        workbook_doc=True,
+    )
+
+    assert 80.0 < region.bbox[3] < 120.0
+    assert region.bbox[:3] == (20.0, 30.0, 180.0)
+    assert "ink_trimmed" in region.semantic_flags
+
+
+def test_trim_workbook_region_keeps_attached_diagram(tmp_path):
+    """빈 여백을 줄여도 본문 아래에 결합된 그래프 전체는 보존한다."""
+    import cv2
+    import numpy as np
+
+    from academy.adapters.ai.detection.segment_dispatcher import (
+        _trim_other_source_text_regions_to_ink,
+    )
+
+    image = np.full((400, 400), 255, dtype=np.uint8)
+    image[35:75, 25:175] = 0
+    image[82:175, 55:155] = 0
+    image_path = str(tmp_path / "workbook-diagram-tail.png")
+    cv2.imwrite(image_path, image)
+    region = QuestionRegion(1, (20.0, 30.0, 180.0, 300.0), 0)
+
+    _trim_other_source_text_regions_to_ink(
+        image_path,
+        [region],
+        page_width=400.0,
+        page_height=400.0,
+        source_type="academy_workbook",
+        workbook_doc=True,
+    )
+
+    assert 175.0 < region.bbox[3] < 215.0
+    assert region.bbox[:3] == (20.0, 30.0, 180.0)
+
+
 def test_should_expand_visual_x_for_pixel_dual_without_text_dual():
     from academy.adapters.ai.detection.segment_dispatcher import (
         _should_expand_text_regions_by_visual_x,
