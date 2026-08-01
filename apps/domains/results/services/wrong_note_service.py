@@ -199,7 +199,7 @@ def list_wrong_notes_for_enrollment(
         out.append({
             "exam_id": exid,
             "exam_title": str(getattr(exam, "title", "") or ""),
-            "session_order": getattr(session, "order", None),
+            "session_order": getattr(session, "regular_order", None),
             "session_title": str(getattr(session, "title", "") or ""),
             "attempt_id": int(getattr(item.result, "attempt_id", 0) or 0),
             "attempt_created_at": (

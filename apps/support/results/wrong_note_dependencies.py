@@ -14,13 +14,15 @@ def regular_exam_ids_by_lecture_and_order(
     to_order: int | None,
 ) -> list[int]:
     from apps.domains.exams.models import Exam
+    from apps.domains.lectures.models import Session
 
     session_filters = {
         "sessions__lecture_id": int(lecture_id),
-        "sessions__order__gte": int(from_order),
+        "sessions__session_type": Session.SessionType.REGULAR,
+        "sessions__regular_order__gte": int(from_order),
     }
     if to_order is not None:
-        session_filters["sessions__order__lte"] = int(to_order)
+        session_filters["sessions__regular_order__lte"] = int(to_order)
 
     return list(
         Exam.objects.filter(
@@ -81,13 +83,15 @@ def exams_with_wrong_note_sessions_by_id(
     from apps.domains.exams.models import Exam
     from apps.domains.lectures.models import Session
 
-    sessions = Session.objects.order_by("order", "id")
+    sessions = Session.objects.filter(
+        session_type=Session.SessionType.REGULAR,
+    ).order_by("regular_order", "id")
     if lecture_id is not None:
         sessions = sessions.filter(lecture_id=int(lecture_id))
     if from_order is not None:
-        sessions = sessions.filter(order__gte=int(from_order))
+        sessions = sessions.filter(regular_order__gte=int(from_order))
     if to_order is not None:
-        sessions = sessions.filter(order__lte=int(to_order))
+        sessions = sessions.filter(regular_order__lte=int(to_order))
 
     return {
         int(exam.id): exam
@@ -98,7 +102,14 @@ def exams_with_wrong_note_sessions_by_id(
             .prefetch_related(
                 Prefetch(
                     "sessions",
-                    queryset=sessions.only("id", "lecture_id", "order", "title"),
+                    queryset=sessions.only(
+                        "id",
+                        "lecture_id",
+                        "order",
+                        "regular_order",
+                        "session_type",
+                        "title",
+                    ),
                     to_attr="wrong_note_sessions",
                 )
             )

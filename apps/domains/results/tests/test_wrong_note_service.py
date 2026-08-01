@@ -175,6 +175,39 @@ class WrongNoteServiceSessionExamTests(TestCase):
         self.assertEqual([item["exam_id"] for item in items], [included_exam.id])
         self.assertEqual(items[0]["session_order"], 2)
 
+    def test_lecture_range_uses_regular_order_and_excludes_supplements(self):
+        Session.objects.filter(pk=self.session3.pk).update(order=4)
+        Session.objects.filter(pk=self.session2.pk).update(order=3)
+        supplement = Session.objects.create(
+            lecture=self.lecture,
+            order=2,
+            session_type=Session.SessionType.SUPPLEMENT,
+            title="주말 보강",
+        )
+        supplement_exam, _ = self._create_wrong_result(
+            title="보강 시험",
+            session=supplement,
+        )
+        included_exam, _ = self._create_wrong_result(
+            title="정규 2차시 시험",
+            session=self.session2,
+        )
+
+        total, items = list_wrong_notes_for_enrollment(
+            enrollment_id=self.enrollment.id,
+            q=WrongNoteQuery(
+                lecture_id=self.lecture.id,
+                from_session_order=2,
+                to_session_order=2,
+            ),
+        )
+
+        self.assertEqual(total, 1)
+        self.assertEqual([item["exam_id"] for item in items], [included_exam.id])
+        self.assertNotEqual(items[0]["exam_id"], supplement_exam.id)
+        self.assertEqual(items[0]["session_order"], 2)
+        self.assertEqual(items[0]["session_title"], "2차시")
+
     def test_multi_session_exam_uses_session_inside_requested_range(self):
         regular, _ = self._create_wrong_result(
             title="공유 범위 시험",

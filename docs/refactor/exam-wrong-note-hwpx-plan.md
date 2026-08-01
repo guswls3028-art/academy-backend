@@ -43,7 +43,9 @@ HWPX 시험지를 만드는 것이 목표다.
   이벤트 때문에 다시 싣지 않는다.
 - 단일 시험 조회 또는 `lecture_id + from_session_order + 선택적
   to_session_order` 범위 조회를 지원한다. 양끝 회차를 모두 포함하고
-  `1 <= from <= to`를 검증한다.
+  `1 <= from <= to`를 검증한다. 범위의 회차는 정규 수업의
+  `Session.regular_order`이며 보강과 화면 배치 `Session.order`는 포함하지
+  않는다.
 - 관리자 UI는 시작~종료 회차를 지정하거나 종료를 비워 현재까지 누적하며,
   한 번에 최대 100문항이다.
 
