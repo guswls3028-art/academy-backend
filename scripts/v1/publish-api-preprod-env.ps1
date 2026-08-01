@@ -118,15 +118,26 @@ if (-not $put -or -not $put.Version) {
 }
 $version = [int]$put.Version
 
-$readback = Invoke-AwsJson @(
-    "ssm", "get-parameter",
-    "--name", "${PreprodEnvParameter}:$version",
-    "--with-decryption",
-    "--region", $env:AWS_DEFAULT_REGION,
-    "--output", "json"
-)
+$versionedParameterName = "${PreprodEnvParameter}:$version"
+$readback = $null
+$readbackAttempts = 6
+for ($attempt = 1; $attempt -le $readbackAttempts; $attempt++) {
+    $readback = Invoke-AwsJson @(
+        "ssm", "get-parameter",
+        "--name", $versionedParameterName,
+        "--with-decryption",
+        "--region", $env:AWS_DEFAULT_REGION,
+        "--output", "json"
+    )
+    if ($readback -and $readback.Parameter -and $readback.Parameter.Value) {
+        break
+    }
+    if ($attempt -lt $readbackAttempts) {
+        Start-Sleep -Seconds 2
+    }
+}
 if (-not $readback -or -not $readback.Parameter -or -not $readback.Parameter.Value) {
-    throw "Versioned API preprod env readback failed."
+    throw "Versioned API preprod env readback failed after $readbackAttempts attempts."
 }
 $actual = [string]$readback.Parameter.Value | ConvertFrom-Json
 if (

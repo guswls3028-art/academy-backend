@@ -80,7 +80,9 @@ pwsh scripts/v1/disable-legacy-deploy-crons.ps1 -Action Off -AwsProfile default
   version을 만들 때 production signing secret과 messaging/billing/external-AI/
   VAPID/static-AWS credential을 제거하고 production R2 key를
   `/academy/r2/preprod/credentials`의 bucket-scoped read-only key로 교체한다.
-  canary는 exact version/release ID와 운영 DB `CONNECT=false`를 검증한다.
+  publisher는 SSM 쓰기 직후의 짧은 전파 지연을 제한된 exact-version
+  readback retry로 흡수하되, 시간 안에 읽히지 않으면 실패한다. canary는 그
+  exact version/release ID와 운영 DB `CONNECT=false`를 검증한다.
 - **expand/contract gate**:
   `scripts/lint/check_expand_contract_migrations.py`가 기존 migration 의미 변경과
   파괴적 operation을 차단한다. contract phase는 명시 metadata와
