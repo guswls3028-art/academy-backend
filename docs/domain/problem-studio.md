@@ -150,6 +150,9 @@ Source extraction and structure support:
   not match the selected choice are retried instead of being silently accepted.
   After retry exhaustion, that question is isolated as a low-confidence
   `검수 필요` entry so one ambiguous diagram does not discard the whole book.
+  Independent verification can be limited to AI-generated answers so the
+  benchmark spends the second pass on blank source entries rather than
+  re-litigating authoritative appendix answers.
   Its checkpoint contract has not yet replaced the production worker's single
   60-minute execution boundary.
 - Beta allowance state is exposed by `GET /api/v1/tools/problem-studio/beta-access/`. `ProblemStudioBetaRun` reservations are tenant scoped and finalized idempotently from the AI terminal callback. `DONE` consumes a run; system terminal failures release it. The UI must not imply that the three runs belong to an individual teacher.

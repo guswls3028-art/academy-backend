@@ -473,6 +473,7 @@ def verify_solutions(
     limit: int = 0,
     force: bool = False,
     mismatches_only: bool = False,
+    ai_generated_only: bool = False,
 ) -> dict[str, Any]:
     from academy.adapters.ai.config import AIConfig
     from academy.adapters.ai.problem.generator import generate_transcribed_explanations
@@ -490,6 +491,8 @@ def verify_solutions(
             or str(solution.get("input_sha256") or "")
             != str(item.get("input_sha256") or "")
         ):
+            continue
+        if ai_generated_only and solution.get("answer_source") != "ai_generated":
             continue
         if item.get("source_answer") and not item.get("choices"):
             solution["verification_status"] = "source_reference_written"
@@ -546,7 +549,14 @@ def verify_solutions(
             next_remaining: list[dict[str, Any]] = []
             for local_index, item in enumerate(remaining, start=1):
                 result = by_local_index.get(local_index)
-                if not result or not str(result.get("answer") or "").strip():
+                if result:
+                    result = _reconcile_objective_answer(item, result)
+                if (
+                    not result
+                    or not str(result.get("answer") or "").strip()
+                    or not _is_korean_explanation(str(result.get("explanation") or ""))
+                    or not _objective_result_is_consistent(item, result)
+                ):
                     next_remaining.append(item)
                     continue
                 number = int(item["number"])
@@ -842,6 +852,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--allow-incomplete", action="store_true")
     parser.add_argument("--force-verify", action="store_true")
     parser.add_argument("--mismatches-only", action="store_true")
+    parser.add_argument("--ai-generated-only", action="store_true")
     parser.add_argument(
         "--blank-bedrock-model",
         default=DEFAULT_BLANK_BEDROCK_MODEL,
@@ -910,6 +921,7 @@ def main() -> int:
             limit=args.limit,
             force=args.force_verify,
             mismatches_only=args.mismatches_only,
+            ai_generated_only=args.ai_generated_only,
         )
         if state.get("verify_failures"):
             return 3
