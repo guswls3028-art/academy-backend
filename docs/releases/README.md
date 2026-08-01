@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.12.15.md](v1.12.15.md) | **CURRENT** | 2026-08-01 KST | React Router advisory closure, arrival operations, preproduction readback reliability, and full production continuity verification |
+| [v1.12.16.md](v1.12.16.md) | **CURRENT** | 2026-08-01 KST | Tenant-wide attendance roster ordering, account-and-PC persisted sort preference, full-list server ordering, and production continuity verification |
+| [v1.12.15.md](v1.12.15.md) | production-deployed / v1.12.16로 승계 | 2026-08-01 KST | React Router advisory closure, arrival operations, preproduction readback reliability, and full production continuity verification |
 | [v1.12.14.md](v1.12.14.md) | production-deployed / v1.12.15로 승계 | 2026-08-01 KST | Secretless automated dependency gates, compatible dependency refreshes, production continuity verification, and release cleanup |
 | [v1.12.13.md](v1.12.13.md) | production-deployed / v1.12.14로 승계 | 2026-08-01 KST | Teacher grading and attendance safety, configurable homework scoring, result-scope separation, deployment hardening, and expanded CI coverage |
 | [v1.12.12.md](v1.12.12.md) ([정정](v1.12.12-errata.md)) | production-deployed / v1.12.13로 승계 | 2026-07-30 KST | Enterprise mixed-order correctness workspace, auto-graded answer review, spreadsheet-speed score entry, and production verification closure |
