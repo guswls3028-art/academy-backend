@@ -162,7 +162,11 @@ def test_ci_preprod_publisher_binds_dedicated_role_and_exact_parameter_version()
     assert "/academy/api/preprod/env" in publisher
     assert "academy_api_preprod_app" in publisher
     assert "ACADEMY_PREPROD_RELEASE_ID" in publisher
-    assert '"--name", "${PreprodEnvParameter}:$version"' in publisher
+    assert '$versionedParameterName = "${PreprodEnvParameter}:$version"' in publisher
+    assert "$readbackAttempts = 6" in publisher
+    assert "for ($attempt = 1; $attempt -le $readbackAttempts; $attempt++)" in publisher
+    assert "Start-Sleep -Seconds 2" in publisher
+    assert "readback failed after $readbackAttempts attempts" in publisher
     assert "DB_PASSWORD=$credentialPassword" not in publisher
     assert "preprod_database_user" in publisher
 
