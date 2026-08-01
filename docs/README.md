@@ -54,6 +54,7 @@ backend/docs/
 | 실행 파라미터 | [ssot/params.yaml](ssot/params.yaml) |
 | 레이어/코드 배치 | [architecture/hexagonal-cutover-policy.md](architecture/hexagonal-cutover-policy.md) |
 | 시험 생성·혼합 채점·오답노트 | [domain/exam-grading.md](domain/exam-grading.md) |
+| 출결 명단 정렬·페이지네이션 | [domain/attendance.md](domain/attendance.md) |
 | 과제 만점·합격 정책·성적 저장 | [domain/homework-grading.md](domain/homework-grading.md) |
 | 학생별 누적 성적·정규/보강 범위 | [domain/student-performance-console.md](domain/student-performance-console.md) |
 | 보강·클리닉 등원 예정 운영 | [domain/arrival-operations.md](domain/arrival-operations.md) |
