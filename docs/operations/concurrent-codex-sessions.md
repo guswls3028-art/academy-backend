@@ -7,9 +7,12 @@ continuity gates.
 
 ## Standing task authority
 
-When a user assigns implementation, release, operations, or cleanup work, the
-normal in-scope commit, push, PR, merge, messaging, deployment, production
-mutation, and residue cleanup steps are already authorized. Do not pause for a
+Unless the user explicitly limits the task to local-only, no-deploy,
+draft/PR-only, or read-only work, an assigned implementation, change, or build
+includes the normal in-scope commit, push, PR, merge, messaging, deployment,
+production verification, and residue cleanup steps. GitHub publication and
+production deployment do not require a separate request. Release, operations,
+and cleanup assignments carry the same standing authority. Do not pause for a
 second approval at each step; record the exact source SHA, target, checks, and
 readback instead. This does not broaden the task, make an ambiguous destructive
 target safe, waive tenant or user-data protection, bypass a release window or
