@@ -13,10 +13,11 @@ from apps.core.models import Tenant, TenantMembership
 from apps.domains.attendance.models import Attendance
 from apps.domains.attendance.services.arrival_overview import build_arrival_overview
 from apps.domains.attendance.views import AttendanceViewSet
-from apps.domains.clinic.models import Session as ClinicSession
-from apps.domains.clinic.models import SessionParticipant
+from apps.domains.clinic.test_support import (
+    create_clinic_participant_fixture,
+    create_clinic_session_fixture,
+)
 from apps.domains.enrollment.test_support import create_enrollment_fixture
-from apps.domains.lectures.models import Session as LectureSession
 from apps.domains.lectures.test_support import create_lecture_fixture, create_session_fixture
 from apps.domains.students.test_support import create_student_fixture
 
@@ -41,14 +42,14 @@ class ArrivalOverviewTests(TestCase):
             lecture=self.lecture,
             order=1,
             title="보강",
-            session_type=LectureSession.SessionType.SUPPLEMENT,
+            session_type="SUPPLEMENT",
             date=timezone.localdate(),
         )
         self.regular = create_session_fixture(
             lecture=self.lecture,
             order=2,
             title="1차시",
-            session_type=LectureSession.SessionType.REGULAR,
+            session_type="REGULAR",
             regular_order=1,
             date=timezone.localdate(),
         )
@@ -191,7 +192,7 @@ class ArrivalOverviewTests(TestCase):
             session=self.supplement,
             status="UNSET",
         )
-        clinic_session = ClinicSession.objects.create(
+        clinic_session = create_clinic_session_fixture(
             tenant=self.tenant,
             title="오답 클리닉",
             date=today,
@@ -200,7 +201,7 @@ class ArrivalOverviewTests(TestCase):
             location="2강의실",
             max_participants=8,
         )
-        SessionParticipant.objects.create(
+        create_clinic_participant_fixture(
             tenant=self.tenant,
             session=clinic_session,
             student=second_student,
@@ -220,7 +221,7 @@ class ArrivalOverviewTests(TestCase):
             lecture=other_lecture,
             order=1,
             title="보강",
-            session_type=LectureSession.SessionType.SUPPLEMENT,
+            session_type="SUPPLEMENT",
             date=today,
         )
         _, other_enrollment = self._student_enrollment(
