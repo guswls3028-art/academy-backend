@@ -627,6 +627,127 @@ def _expand_single_text_regions_to_visual_content(
             region.bbox = new_bbox
 
 
+def _expand_workbook_regions_to_trailing_visual_content(
+    image_path: str,
+    regions: List,
+    *,
+    page_width: float,
+    page_height: float,
+) -> None:
+    """Include a graph or diagram placed directly below a workbook prompt.
+
+    Born-digital PDF text blocks do not describe vector drawings.  The text
+    splitter therefore stops at the final text line even when the question's
+    graph continues immediately below it.  Extend only the product-facing
+    crop, only through nearby rendered ink, and never past the next question
+    in the same column.
+    """
+    if not regions or page_width <= 0 or page_height <= 0:
+        return
+    gray = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if gray is None or gray.size == 0:
+        return
+
+    img_h, img_w = gray.shape[:2]
+    scale_x = img_w / page_width
+    scale_y = img_h / page_height
+    ink = gray < 245
+    frame_band = max(2, int(img_w * 0.025))
+    ink[:, :frame_band] = False
+    ink[:, img_w - frame_band:] = False
+
+    display_boxes = [
+        getattr(region, "display_bbox", None) or region.bbox
+        for region in regions
+    ]
+    same_column_distance = page_width * 0.24
+    max_attach_gap = max(12, int(img_h * 0.035))
+    max_internal_gap = max(8, int(img_h * 0.018))
+    bottom_guard = page_height * 0.93
+    point_pad = page_height * 0.006
+
+    for index, region in enumerate(regions):
+        x0, y0, x1, y1 = display_boxes[index]
+        if y1 <= y0 or x1 <= x0:
+            continue
+        # Full-width/shared-context regions need a semantic layout decision;
+        # extending them from page pixels can absorb the opposite column.
+        if x1 - x0 >= page_width * 0.78:
+            continue
+
+        center_x = (x0 + x1) / 2.0
+        next_tops = []
+        for other_index, other_box in enumerate(display_boxes):
+            if other_index == index:
+                continue
+            ox0, oy0, ox1, _ = other_box
+            if oy0 <= y0 + page_height * 0.02:
+                continue
+            other_center_x = (ox0 + ox1) / 2.0
+            if abs(other_center_x - center_x) <= same_column_distance:
+                next_tops.append(oy0)
+        search_bottom = min(next_tops) - point_pad if next_tops else bottom_guard
+        search_bottom = min(search_bottom, bottom_guard)
+        if search_bottom <= y1 + point_pad:
+            continue
+
+        px0 = max(0, int(x0 * scale_x))
+        px1 = min(img_w, int(x1 * scale_x))
+        # Column divider and crop-border rules must not look like a diagram.
+        edge_guard = max(3, int((px1 - px0) * 0.018))
+        px0 += edge_guard
+        px1 -= edge_guard
+        py0 = max(0, int(y1 * scale_y))
+        py1 = min(img_h, int(search_bottom * scale_y))
+        if px1 - px0 < 20 or py1 - py0 < 12:
+            continue
+
+        roi = ink[py0:py1, px0:px1]
+        min_row_ink = max(2, int((px1 - px0) * 0.002))
+        active_rows = np.flatnonzero(roi.sum(axis=1) >= min_row_ink)
+        if active_rows.size == 0:
+            continue
+
+        runs: List[Tuple[int, int]] = []
+        run_start = int(active_rows[0])
+        previous = int(active_rows[0])
+        for raw_y in active_rows[1:]:
+            current = int(raw_y)
+            if current - previous > max_internal_gap:
+                runs.append((run_start, previous))
+                run_start = current
+            previous = current
+        runs.append((run_start, previous))
+
+        first_start, selected_end = runs[0]
+        if first_start > max_attach_gap:
+            continue
+        for run_start, run_end in runs[1:]:
+            if run_start - selected_end > max_attach_gap:
+                break
+            selected_end = run_end
+
+        extension_pixels = selected_end + 1
+        min_visual_height = max(12, int(img_h * 0.012))
+        selected_ink = int(roi[:extension_pixels].sum())
+        min_visual_ink = max(30, int((px1 - px0) * 0.04))
+        if extension_pixels < min_visual_height or selected_ink < min_visual_ink:
+            continue
+
+        target_y1 = min(
+            search_bottom,
+            y1 + (float(extension_pixels) / scale_y) + point_pad,
+        )
+        if target_y1 <= y1 + point_pad:
+            continue
+        _add_region_semantic_flag(region, "trailing_visual_content")
+        new_bbox = (x0, y0, x1, target_y1)
+        if hasattr(region, "set_display_bbox"):
+            region.set_display_bbox(new_bbox)
+        else:
+            region.bbox = new_bbox
+
+
 def _expand_commercial_written_response_answer_space(
     regions: List,
     *,
@@ -767,16 +888,29 @@ def _trim_other_source_text_regions_to_ink(
     page_width: float,
     page_height: float,
     source_type: Optional[str],
+    workbook_doc: bool = False,
 ) -> None:
-    """Trim overextended school/exam text-PDF crops to the visible content island.
+    """Trim overextended text-PDF crops to the visible content island.
 
     ``other`` tenant-2 PDFs include school exams whose last written-response
     question can be classified as single-column when the opposite column is
     blank. The text splitter then stretches the crop to the footer/copyright
     note. This keeps product display boxes rectangular, but drops isolated
     footer bands after a large blank gap and shrinks x to the selected content.
+
+    Workbook layouts can likewise stretch a short prompt to the next question
+    in its column.  For those documents, trim only the empty bottom of the
+    product-facing crop after rendered graphs/diagrams have been attached;
+    preserve the split column width so visual context is not narrowed again.
     """
-    if source_type != "other" or not regions or page_width <= 0 or page_height <= 0:
+    trim_other = source_type == "other"
+    trim_workbook = workbook_doc and source_type != "commercial_workbook"
+    if (
+        not (trim_other or trim_workbook)
+        or not regions
+        or page_width <= 0
+        or page_height <= 0
+    ):
         return
     gray = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
     if gray is None or gray.size == 0:
@@ -821,7 +955,11 @@ def _trim_other_source_text_regions_to_ink(
         x0, y0, x1, y1 = getattr(region, "display_bbox", None) or region.bbox
         region_w = x1 - x0
         region_h = y1 - y0
-        if region_h < page_height * 0.30 and region_w < page_width * 0.78:
+        min_tall_region_ratio = 0.18 if trim_workbook else 0.30
+        if (
+            region_h < page_height * min_tall_region_ratio
+            and region_w < page_width * 0.78
+        ):
             continue
         if "shared_group" in flags:
             continue
@@ -868,8 +1006,12 @@ def _trim_other_source_text_regions_to_ink(
 
         pad_x = page_width * 0.012
         pad_bottom = page_height * 0.025
-        new_x0 = max(0.0, (px0 + int(xs[0])) / scale_x - pad_x)
-        new_x1 = min(page_width, (px0 + int(xs[-1])) / scale_x + pad_x)
+        if trim_workbook:
+            new_x0 = x0
+            new_x1 = x1
+        else:
+            new_x0 = max(0.0, (px0 + int(xs[0])) / scale_x - pad_x)
+            new_x1 = min(page_width, (px0 + int(xs[-1])) / scale_x + pad_x)
         new_y0 = y0
         new_y1 = min(y1, (py0 + keep_y1) / scale_y + pad_bottom)
 
@@ -1340,12 +1482,20 @@ def _pdf_to_images(
                         page_width=p["page_width"],
                         page_height=p["page_height"],
                     )
+                if workbook_doc:
+                    _expand_workbook_regions_to_trailing_visual_content(
+                        p["image_path"],
+                        regions,
+                        page_width=p["page_width"],
+                        page_height=p["page_height"],
+                    )
                 _trim_other_source_text_regions_to_ink(
                     p["image_path"],
                     regions,
                     page_width=p["page_width"],
                     page_height=p["page_height"],
                     source_type=source_type,
+                    workbook_doc=workbook_doc,
                 )
                 text_regions = list(regions)
                 for r in regions:
