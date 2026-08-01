@@ -345,7 +345,7 @@ class Session(TimestampModel):
     @property
     def display_label(self):
         if self.session_type == self.SessionType.SUPPLEMENT:
-            return "보강"
+            return (self.title or "").strip() or "보강"
         order = self.regular_order or self.order
         return f"{order}차시"
 

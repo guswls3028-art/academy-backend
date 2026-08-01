@@ -207,6 +207,17 @@ class TestSessionCreateOrdering(LectureTestBase):
         second.refresh_from_db()
         self.assertEqual(second.order, 3)
 
+    def test_supplement_display_label_preserves_custom_title(self):
+        """보강 이름은 고정 라벨로 덮지 않고 생성·조회 응답에 보존한다."""
+        response = self._create_session({
+            "title": "토요일 심화 클리닉",
+            "session_type": "SUPPLEMENT",
+        })
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["title"], "토요일 심화 클리닉")
+        self.assertEqual(response.data["display_label"], "토요일 심화 클리닉")
+
     def test_regular_order_null_update_rejected(self):
         """정규 차시는 PATCH에서도 regular_order null을 허용하지 않는다."""
         session = Session.objects.create(lecture=self.lecture, order=1, title="1차시")
