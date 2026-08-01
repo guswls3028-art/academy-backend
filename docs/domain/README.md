@@ -18,6 +18,7 @@
 | [staff-operations.md](staff-operations.md) | 직원 | 권한·퇴사·근태·비용·월마감·정산 표시 계약 |
 | [homework-grading.md](homework-grading.md) | 과제 | 과제별 만점, 차시 공통 합격 정책, 성적·클리닉 동기화 |
 | [student-performance-console.md](student-performance-console.md) | 성적 | 학생별 누적 성적과 정규·보강 결과 범위 |
+| [arrival-operations.md](arrival-operations.md) | 출결·클리닉 | 보강 예정 저장과 클리닉 예약을 합친 오늘·내일 등원 운영 현황 |
 
 ## 도메인별
 

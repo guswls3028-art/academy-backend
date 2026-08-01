@@ -63,6 +63,8 @@ class AttendanceSerializer(serializers.ModelSerializer):
             "student_id",
             "status",
             "memo",
+            "planned_arrival_date",
+            "planned_arrival_time",
             "name",
             "parent_phone",
             "phone",
@@ -105,6 +107,26 @@ class AttendanceSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {"enrollment_id": "해당 차시의 강의에 등록된 수강생만 출결에 추가할 수 있습니다."}
                 )
+
+        plan_fields = {"planned_arrival_date", "planned_arrival_time"}
+        if plan_fields.intersection(attrs) and session is not None:
+            if session.session_type != session.SessionType.SUPPLEMENT:
+                raise serializers.ValidationError(
+                    {"planned_arrival_date": "등원 예정은 보강 차시에서만 입력할 수 있습니다."}
+                )
+
+        planned_date = attrs.get(
+            "planned_arrival_date",
+            getattr(instance, "planned_arrival_date", None),
+        )
+        planned_time = attrs.get(
+            "planned_arrival_time",
+            getattr(instance, "planned_arrival_time", None),
+        )
+        if planned_time is not None and planned_date is None:
+            raise serializers.ValidationError(
+                {"planned_arrival_time": "예정 시간을 입력하려면 날짜도 선택해 주세요."}
+            )
 
         return attrs
 

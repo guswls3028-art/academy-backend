@@ -21,6 +21,7 @@ from .serializers import (
 )
 from .filters import AttendanceFilter
 from .services import create_attendance_roster
+from .services.arrival_overview import build_arrival_overview
 
 from rest_framework.permissions import IsAuthenticated
 from apps.core.permissions import TenantResolvedAndStaff
@@ -173,6 +174,14 @@ class AttendanceViewSet(ModelViewSet):
             {"detail": "출결 등록은 bulk_create 엔드포인트를 사용해야 합니다."},
             status=status.HTTP_405_METHOD_NOT_ALLOWED,
         )
+
+    @action(detail=False, methods=["get"], url_path="arrival-overview")
+    def arrival_overview(self, request):
+        tenant = getattr(request, "tenant", None)
+        if tenant is None:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Tenant is required.")
+        return Response(build_arrival_overview(tenant=tenant))
 
     @transaction.atomic
     def update(self, request, *args, **kwargs):

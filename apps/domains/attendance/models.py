@@ -57,17 +57,38 @@ class Attendance(models.Model):
     )
 
     memo = models.TextField(blank=True)
+    planned_arrival_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="보강 학생의 예정 등원 날짜. 값이 있을 때 등원 예정으로 집계한다.",
+    )
+    planned_arrival_time = models.TimeField(
+        null=True,
+        blank=True,
+        help_text="보강 학생의 예정 등원 시간. 날짜만 정해진 경우 비워둘 수 있다.",
+    )
     recorded_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         indexes = [
             models.Index(fields=["tenant", "recorded_at"]),  # ✅ 복합 인덱스 추가
+            models.Index(
+                fields=["tenant", "planned_arrival_date", "planned_arrival_time"],
+                name="att_arrival_plan_idx",
+            ),
         ]
         constraints = [
             models.UniqueConstraint(
                 fields=["tenant", "enrollment", "session"],
                 name="unique_attendance_per_tenant_session",
-            )
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(planned_arrival_time__isnull=True)
+                    | models.Q(planned_arrival_date__isnull=False)
+                ),
+                name="att_arrival_time_requires_date",
+            ),
         ]
 
     def __str__(self):
