@@ -31,6 +31,8 @@ GET /api/v1/results/admin/sessions/<session_id>/scores/
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, Dict, List, Optional, Set
 
 from django.db import transaction
@@ -272,7 +274,7 @@ def _assessment_correction_payload(
     source_type: str,
     score: Optional[float],
     max_score: Optional[float],
-    source_updated_at,
+    source_fingerprint: Optional[str],
     correction: Optional[AssessmentCorrection],
 ) -> Dict[str, Any]:
     note = correction.note if correction else ""
@@ -307,7 +309,10 @@ def _assessment_correction_payload(
     is_current_completion = bool(
         correction
         and correction.completed
-        and correction.source_updated_at_snapshot == source_updated_at
+        and (
+            not correction.source_fingerprint
+            or correction.source_fingerprint == source_fingerprint
+        )
     )
     return {
         "correction_status": "COMPLETED" if is_current_completion else "PENDING",
@@ -316,6 +321,35 @@ def _assessment_correction_payload(
         ),
         "correction_note": note,
     }
+
+
+def _exam_correction_fingerprint(*, result: Result, items) -> str:
+    """Meaningful exam-result version, excluding timestamp-only rewrites."""
+    payload = {
+        "result_id": int(result.id),
+        "attempt_id": int(result.attempt_id) if result.attempt_id else None,
+        "total_score": _float_or_none(result.total_score),
+        "max_score": _float_or_none(result.max_score),
+        "objective_score": _float_or_none(result.objective_score),
+        "items": [
+            {
+                "question_id": int(item.question_id),
+                "answer": str(item.answer or ""),
+                "is_correct": bool(item.is_correct),
+                "include_in_wrong_note": bool(item.include_in_wrong_note),
+                "score": _float_or_none(item.score),
+                "max_score": _float_or_none(item.max_score),
+            }
+            for item in sorted(items, key=lambda candidate: (candidate.question_id, candidate.id))
+        ],
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 class SessionScoresView(APIView):
@@ -828,6 +862,7 @@ class SessionScoresView(APIView):
                         "meta": omr_review_meta,
                     }
                     updated_at = None
+                    source_fingerprint = None
                 else:
                     attempt_status = (
                         attempt_status_map.get(int(r.attempt_id), "")
@@ -871,6 +906,10 @@ class SessionScoresView(APIView):
                         "meta": {"status": "NOT_SUBMITTED"} if is_not_submitted else None,
                     }
                     updated_at = r.updated_at
+                    source_fingerprint = _exam_correction_fingerprint(
+                        result=r,
+                        items=items_list,
+                    )
 
                 if updated_at:
                     exam_updated_ats.append(updated_at)
@@ -890,7 +929,7 @@ class SessionScoresView(APIView):
                         source_type=AssessmentCorrection.SourceType.EXAM,
                         score=block.get("score"),
                         max_score=block.get("max_score"),
-                        source_updated_at=updated_at,
+                        source_fingerprint=source_fingerprint,
                         correction=correction_map.get((eid, "exam", exid)),
                     )
                 )
@@ -964,7 +1003,7 @@ class SessionScoresView(APIView):
                         source_type=AssessmentCorrection.SourceType.HOMEWORK,
                         score=block.get("score"),
                         max_score=block.get("max_score"),
-                        source_updated_at=updated_at,
+                        source_fingerprint=None,
                         correction=correction_map.get((eid, "homework", int(hw.id))),
                     )
                 )
@@ -1090,6 +1129,7 @@ class SessionScoreCorrectionView(APIView):
         source_type = str(payload["source_type"])
         source_id = int(payload["source_id"])
         source_updated_at = None
+        source_fingerprint = None
         score = None
         max_score = None
 
@@ -1112,6 +1152,7 @@ class SessionScoreCorrectionView(APIView):
                     target_id=source_id,
                 )
                 .select_for_update()
+                .prefetch_related("items")
                 .filter(enrollment_id=enrollment_id)
                 .first()
             )
@@ -1127,6 +1168,10 @@ class SessionScoreCorrectionView(APIView):
             score = _float_or_none(result.total_score)
             max_score = _float_or_none(result.max_score)
             source_updated_at = result.updated_at
+            source_fingerprint = _exam_correction_fingerprint(
+                result=result,
+                items=result.items.all(),
+            )
         else:
             homework = (
                 Homework.objects
@@ -1199,6 +1244,7 @@ class SessionScoreCorrectionView(APIView):
             "completed": completed,
             "completed_at": completed_at,
             "source_updated_at_snapshot": source_updated_at,
+            "source_fingerprint": source_fingerprint,
             "updated_by": request.user,
         }
         if "note" in payload:
@@ -1216,7 +1262,7 @@ class SessionScoreCorrectionView(APIView):
                 source_type=source_type,
                 score=score,
                 max_score=max_score,
-                source_updated_at=source_updated_at,
+                source_fingerprint=source_fingerprint,
                 correction=correction,
             )
         )
