@@ -7,14 +7,25 @@ from typing import Any
 from django.db.models import Prefetch
 
 
-def regular_exam_ids_by_lecture_and_order(*, lecture_id: int, from_order: int) -> list[int]:
+def regular_exam_ids_by_lecture_and_order(
+    *,
+    lecture_id: int,
+    from_order: int,
+    to_order: int | None,
+) -> list[int]:
     from apps.domains.exams.models import Exam
+
+    session_filters = {
+        "sessions__lecture_id": int(lecture_id),
+        "sessions__order__gte": int(from_order),
+    }
+    if to_order is not None:
+        session_filters["sessions__order__lte"] = int(to_order)
 
     return list(
         Exam.objects.filter(
             exam_type=Exam.ExamType.REGULAR,
-            sessions__lecture_id=int(lecture_id),
-            sessions__order__gte=int(from_order),
+            **session_filters,
         )
         .values_list("id", flat=True)
         .distinct()
@@ -64,6 +75,8 @@ def exams_with_wrong_note_sessions_by_id(
     exam_ids: list[int],
     lecture_id: int | None,
     tenant_id: int,
+    from_order: int | None = None,
+    to_order: int | None = None,
 ) -> dict[int, Any]:
     from apps.domains.exams.models import Exam
     from apps.domains.lectures.models import Session
@@ -71,6 +84,10 @@ def exams_with_wrong_note_sessions_by_id(
     sessions = Session.objects.order_by("order", "id")
     if lecture_id is not None:
         sessions = sessions.filter(lecture_id=int(lecture_id))
+    if from_order is not None:
+        sessions = sessions.filter(order__gte=int(from_order))
+    if to_order is not None:
+        sessions = sessions.filter(order__lte=int(to_order))
 
     return {
         int(exam.id): exam

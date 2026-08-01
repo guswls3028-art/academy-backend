@@ -192,16 +192,21 @@ cross-tenant fallback을 사용하지 않는다.
 진행도 파이프라인이 읽는다. 선택형·답변형·혼합형이 별도 통계 저장소를
 만들지 않는다.
 
-현재 교직원 화면은 단일 시험 또는 수강 강의의 1회차부터 현재까지를
-선택하고 최대 100문항의 PDF를 만든다. API는 `WrongNotePDF`와 tools worker
-job을 tenant 범위에서 기록해 비동기로 생성하고, 완료 뒤 R2 attachment
-URL을 반환한다. `from_session_order`는 있지만 종료 회차를 지정하는
-`to_session_order`와 HWPX 출력은 아직 없다.
+현재 교직원 화면은 단일 시험 또는 수강 강의의 시작~종료 회차를 선택하고
+최대 100문항의 PDF를 만든다. 시작과 종료 회차는 모두 포함하며 종료 회차를
+비우면 시작 회차부터 현재까지 누적한다. 조회와 PDF 생성은 동일한
+`from_session_order`/`to_session_order` 규칙을 사용하고 `1 <= from <= to`를
+검증한다. 같은 시험이 여러 회차에 연결되어도 문항은 한 번만 싣고, 선택
+범위 안의 가장 이른 회차를 표시한다.
+
+API는 `WrongNotePDF`와 tools worker job을 tenant 범위에서 기록해 비동기로
+생성하고, 완료 뒤 R2 attachment URL을 반환한다. 출력 job에도 선택한 시작·
+종료 회차를 저장하므로 미리보기와 worker 조회 범위가 달라지지 않는다.
+HWPX 출력은 아직 없다.
 
 Problem Studio의 HWPX 검수본 생성은 별도 교사 보조 흐름이다. 그 결과가
 시험 문항에 자동 저장되거나 오답노트 HWPX로 직접 이어진다고 안내하지
-않는다. 검수된 원본 문항 저장, 정확한 회차 범위와 편집 가능한 HWPX
-출력의 제안 계약은
+않는다. 검수된 원본 문항 저장과 편집 가능한 HWPX 출력의 제안 계약은
 [시험 원본 → 회차 범위 오답노트 HWPX](../refactor/exam-wrong-note-hwpx-plan.md)에
 둔다.
 
@@ -216,8 +221,8 @@ Problem Studio의 HWPX 검수본 생성은 별도 교사 보조 흐름이다. �
 | POST | `/results/admin/exams/{id}/manual-grading/` | 직접 채점 미리보기 또는 원자적 확정 |
 | GET | `/results/admin/exams/{id}/result-import/template/` | 시험 전용 엑셀 양식 다운로드 |
 | POST | `/results/admin/exams/{id}/result-import/` | 엑셀 미리보기 또는 원자적 확정 |
-| GET | `/results/wrong-notes` | 학생의 현재 대표 오답·복습 문항 조회 |
-| POST | `/results/wrong-notes/pdf/` | 비동기 PDF job 생성·tools worker 발행 |
+| GET | `/results/wrong-notes` | 학생의 현재 대표 오답·복습 문항 조회. `from_session_order`~선택적 `to_session_order` 포함 |
+| POST | `/results/wrong-notes/pdf/` | 같은 회차 범위의 비동기 PDF job 생성·tools worker 발행 |
 | GET | `/results/wrong-notes/pdf/{job_id}/` | job 상태와 완료된 attachment URL 조회 |
 
 ## 집중 검증
@@ -240,4 +245,5 @@ python manage.py test `
 오답노트와 기존 `0` 호환 의미, 선택형 자동채점 정오 조회·직접 수정 차단과 OMR 보정 경계,
 객관식·숫자 단답형이 섞인 원래 순서와 `answer_type`, 문항 배점
 합계·stale 배점 거부, 혼합형 OMR 보존, stale result version 거부,
-다중 시트 선택, tenant 차단, 오답노트 포함과 PDF worker/R2 상태를 포함한다.
+다중 시트 선택, tenant 차단, 양끝을 포함하는 회차 범위, 다중 회차 시험의
+중복 제거, 오답노트 포함과 PDF worker/R2 상태를 포함한다.

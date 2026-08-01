@@ -196,6 +196,19 @@ class TestC4WrongNotePkCollisionGuard(_Mixin, TestCase):
 
         self.assertEqual(resp.status_code, 403)
 
+    def test_wrong_note_list_rejects_reversed_session_range(self):
+        view = WrongNoteView.as_view()
+        resp = self._get(
+            view,
+            user=self.staff_user,
+            enrollment_id=self.enroll_a.id,
+            from_session_order=4,
+            to_session_order=2,
+        )
+
+        self.assertEqual(resp.status_code, 400, resp.data)
+        self.assertIn("detail", resp.data)
+
     def test_pdf_create_user_b_cannot_use_student_a_enrollment(self):
         """WrongNotePDFCreate도 동일한 가드. PK 충돌로 타인 enrollment PDF 생성 불가."""
         view = WrongNotePDFCreateView.as_view()
@@ -219,6 +232,7 @@ class TestC4WrongNotePkCollisionGuard(_Mixin, TestCase):
             data={
                 "enrollment_id": self.enroll_a.id,
                 "from_session_order": 1,
+                "to_session_order": 4,
             },
             format="json",
         )
@@ -231,11 +245,33 @@ class TestC4WrongNotePkCollisionGuard(_Mixin, TestCase):
         job = WrongNotePDF.objects.get(id=resp.data["job_id"])
         self.assertEqual(job.status, WrongNotePDF.Status.PENDING)
         self.assertEqual(job.lecture_id, self.lecture.id)
+        self.assertEqual(job.from_session_order, 1)
+        self.assertEqual(job.to_session_order, 4)
         ai_job = AIJobModel.objects.get(source_domain="results_wrong_note_pdf")
         self.assertEqual(ai_job.job_type, "wrong_note_pdf_generation")
         self.assertEqual(ai_job.source_id, str(job.id))
         self.assertEqual(ai_job.payload, {"wrong_note_pdf_job_id": job.id})
         publish.assert_called_once_with(ai_job)
+
+    def test_pdf_create_rejects_reversed_session_range(self):
+        view = WrongNotePDFCreateView.as_view()
+        req = self.factory.post(
+            "/api/v1/results/wrong-notes/pdf/",
+            data={
+                "enrollment_id": self.enroll_a.id,
+                "from_session_order": 4,
+                "to_session_order": 2,
+            },
+            format="json",
+        )
+        force_authenticate(req, user=self.staff_user)
+        req.tenant = self.tenant
+
+        resp = view(req)
+
+        self.assertEqual(resp.status_code, 400, resp.data)
+        self.assertIn("시작 회차", resp.data["detail"])
+        self.assertFalse(WrongNotePDF.objects.exists())
 
     @patch(
         "apps.domains.results.views.wrong_note_pdf_view.publish_wrong_note_pdf_ai_job",

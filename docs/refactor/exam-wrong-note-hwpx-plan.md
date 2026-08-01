@@ -41,10 +41,11 @@ HWPX 시험지를 만드는 것이 목표다.
 - 오답 조회는 append-only `ResultFact`가 아니라 현재 대표 결과의
   `ResultItem`을 읽는다. 재채점 또는 대표 시도 변경으로 맞은 문항을 과거
   이벤트 때문에 다시 싣지 않는다.
-- 단일 시험 조회 또는 `lecture_id + from_session_order` 누적 조회를
-  지원한다. `to_session_order`는 현재 없다.
-- 관리자 UI의 강의 누적은 1회차부터 현재까지이며 한 번에 최대
-  100문항이다.
+- 단일 시험 조회 또는 `lecture_id + from_session_order + 선택적
+  to_session_order` 범위 조회를 지원한다. 양끝 회차를 모두 포함하고
+  `1 <= from <= to`를 검증한다.
+- 관리자 UI는 시작~종료 회차를 지정하거나 종료를 비워 현재까지 누적하며,
+  한 번에 최대 100문항이다.
 
 ### 2.3 출력과 작업 경계
 
@@ -98,9 +99,9 @@ tenant별 모델 학습 파이프라인이 현재 실행 중이라고 문서화�
 
 ## 4. 구현 단계
 
-### Slice A — 정확한 회차 범위
+### Slice A — 정확한 회차 범위 `[IMPLEMENTED]`
 
-현재 `from_session_order` 계약에 선택적 `to_session_order`를 추가한다.
+현재 `from_session_order` 계약에 선택적 `to_session_order`를 추가했다.
 
 - 조회와 PDF 생성이 동일한 범위 규칙을 사용한다.
 - `1 <= from <= to`를 검증한다.
@@ -196,12 +197,11 @@ python manage.py test `
 
 1. 이 문서와 현재 정본 세 문서를 읽고 실제 코드·마이그레이션을 다시
    측정한다.
-2. 가장 작은 독립 단위인 Slice A의 `to_session_order`부터 구현한다.
-3. 현재 문항 분리 callback이 canonical write를 어디서 수행하는지와 수동
+2. 현재 문항 분리 callback이 canonical write를 어디서 수행하는지와 수동
    보정 데이터 모델을 감사한다.
-4. Problem Studio HWPX writer가 시험 문항 이미지 입력을 받을 때 필요한
+3. Problem Studio HWPX writer가 시험 문항 이미지 입력을 받을 때 필요한
    최소 adapter를 설계한다.
-5. 각 slice의 focused test를 통과한 뒤에만 다음 slice로 간다.
+4. 각 slice의 focused test를 통과한 뒤에만 다음 slice로 간다.
 
 완료 선언은 “파일이 만들어졌다”가 아니라 실제 조교 흐름에서 원본, 승인한
 문항, 정오, 회차 범위, 다운로드 결과가 재열기까지 같은 데이터로 이어지고

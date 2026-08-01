@@ -93,10 +93,18 @@ class WrongNotePDFCreateView(APIView):
         try:
             enrollment_id_i = int(enrollment_id)
             from_order = int(request.data.get("from_session_order", 2) or 2)
-            if from_order < 1:
+            requested_to_order = request.data.get("to_session_order")
+            to_order = (
+                int(requested_to_order)
+                if requested_to_order not in (None, "")
+                else None
+            )
+            if from_order < 1 or (to_order is not None and to_order < from_order):
                 raise ValueError
         except (TypeError, ValueError):
-            raise ValidationError({"detail": "enrollment_id/from_session_order must be valid integers."})
+            raise ValidationError(
+                {"detail": "시작 회차와 종료 회차를 다시 확인해 주세요."}
+            )
 
         enrollment = self._get_allowed_enrollment(request, enrollment_id_i)
         try:
@@ -144,6 +152,7 @@ class WrongNotePDFCreateView(APIView):
                 lecture_id=lecture_id_i or int(enrollment.lecture_id),
                 exam_id=exam_id_i,
                 from_session_order=from_order,
+                to_session_order=to_order,
                 status=WrongNotePDF.Status.PENDING,
             )
             ai_job = create_wrong_note_pdf_ai_job(
