@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 
 from django.contrib.auth import get_user_model
 from django.db import connection
@@ -192,6 +192,33 @@ class ArrivalOverviewTests(TestCase):
             session=self.supplement,
             status="UNSET",
         )
+        future_student, future_enrollment = self._student_enrollment(
+            self.tenant,
+            self.lecture,
+            "arrival-student-future",
+            "ARRIVAL004",
+        )
+        Attendance.objects.create(
+            tenant=self.tenant,
+            enrollment=future_enrollment,
+            session=self.supplement,
+            planned_arrival_date=today + timedelta(days=6),
+            status="UNSET",
+        )
+        outside_student, outside_enrollment = self._student_enrollment(
+            self.tenant,
+            self.lecture,
+            "arrival-student-outside",
+            "ARRIVAL005",
+        )
+        Attendance.objects.create(
+            tenant=self.tenant,
+            enrollment=outside_enrollment,
+            session=self.supplement,
+            planned_arrival_date=today + timedelta(days=7),
+            planned_arrival_time=time(11, 0),
+            status="UNSET",
+        )
         clinic_session = create_clinic_session_fixture(
             tenant=self.tenant,
             title="오답 클리닉",
@@ -246,9 +273,12 @@ class ArrivalOverviewTests(TestCase):
             "soon": 1,
             "today": 3,
             "tomorrow": 0,
-            "time_unset": 1,
+            "upcoming": 4,
+            "time_unset": 2,
             "overdue": 0,
         })
+        self.assertEqual(overview["range_days"], 7)
+        self.assertEqual(overview["range_end"], (today + timedelta(days=6)).isoformat())
         self.assertEqual(
             {item["source"] for item in overview["items"]},
             {"supplement", "clinic"},
@@ -257,6 +287,12 @@ class ArrivalOverviewTests(TestCase):
             item["student_name"] for item in overview["items"]
         })
         self.assertNotIn(unplanned_student.name, {
+            item["student_name"] for item in overview["items"]
+        })
+        self.assertIn(future_student.name, {
+            item["student_name"] for item in overview["items"]
+        })
+        self.assertNotIn(outside_student.name, {
             item["student_name"] for item in overview["items"]
         })
 

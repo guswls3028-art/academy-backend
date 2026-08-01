@@ -37,16 +37,20 @@
 ## 통합 조회 계약
 
 `GET /api/v1/lectures/attendance/arrival-overview/`는 요청의 인증된 테넌트에서
-오늘과 내일만 조회한다. 보강 출결과 클리닉 참여자를 각각 한 번 조회한 뒤
+오늘을 포함한 향후 7일을 조회한다. 학생이 주중에 주말 등원을 예약해도 교직원이
+미리 준비할 수 있는 범위이며, 별도 조회 조건은 받지 않는다. 보강 출결과 클리닉
+참여자를 각각 한 번 조회한 뒤
 애플리케이션 계층에서 날짜, 시간, 학생 이름 순으로 병합한다.
 
 클리닉 출처는 `clinic.SessionParticipant`의 `booked`, `attended`, `no_show`를
 대상으로 한다. 연결된 세션이 있으면 세션 날짜·시각·장소를 사용하고, 없으면
 요청 날짜·시각을 사용한다. `attended`, `no_show`는 처리됨이다.
 
-응답은 `generated_at`, `today`, `tomorrow`, 60분 임박 창, 요약과 항목을
-포함한다. 요약의 `soon`, `overdue`, `time_unset`은 미처리 항목만 세고,
-`today`, `tomorrow`는 해당 날짜의 전체 예정 인원을 센다. 각 항목에는 출처,
+응답은 `generated_at`, `today`, `tomorrow`, `range_end`, `range_days`, 60분
+임박 창, 요약과 항목을 포함한다. 요약의 `soon`, `overdue`, `time_unset`은
+미처리 항목만 세며, `time_unset`은 7일 범위 전체의 시각 미정 준비 건을 센다.
+`today`, `tomorrow`는 해당 날짜의 전체 예정 인원, `upcoming`은 7일 전체
+예정 인원을 센다. 각 항목에는 출처,
 학생, 강의·차시 또는 클리닉 세션 연결 ID, 위치, 메모, 처리·지연 여부가 있어
 프론트가 자연스러운 상세 화면으로 이동할 수 있다.
 
@@ -78,4 +82,5 @@ python manage.py check --settings apps.api.config.settings.test
 ```
 
 핵심 회귀는 보강 전용 저장, 날짜 없는 시간 거부, 미입력 보강 학생의 비집계,
-두 출처의 2-query 병합, 테넌트 격리, 요청 테넌트 사용이다.
+7일 경계, 미래 시각 미정 집계, 두 출처의 2-query 병합, 테넌트 격리, 요청
+테넌트 사용이다.
