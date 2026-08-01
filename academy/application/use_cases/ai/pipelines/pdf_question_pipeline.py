@@ -50,8 +50,8 @@ _EXPLANATION_NUM_RE = re.compile(
 # 문항 뒤에 붙은 교사용 정답·해설 묶음의 시작. 일반 문제 본문에 등장할 수
 # 있는 단독 "풀이"보다 의도가 명확한 결합 표지만 문항 제외 경계로 사용한다.
 _SOLUTION_TAIL_MARKER = re.compile(
-    r"정\s*답\s*(?:및|과|&)\s*(?:해\s*설|풀\s*이)",
-    re.IGNORECASE,
+    r"^[ \t]*정[ \t]*답[ \t]*(?:및|과|&)[ \t]*(?:해[ \t]*설|풀[ \t]*이)[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
 )
 
 

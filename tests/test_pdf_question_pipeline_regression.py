@@ -47,6 +47,13 @@ def test_solution_tail_requires_an_earlier_problem_page():
     assert _find_solution_tail_start({0: "표지", 1: "정답 및 해설"}, pages) is None
 
     pages.append(_page(2, 1, (10, 20, 100, 300)))
+    assert (
+        _find_solution_tail_start(
+            {2: "2. 다음 정답 및 해설을 참고하여 물음에 답하시오."},
+            pages,
+        )
+        is None
+    )
     assert _find_solution_tail_start({2: "정 답 및 해 설\n1. 풀이"}, pages) == 2
 
 
