@@ -41,6 +41,20 @@ read-only이고, deploy key를 받는 checkout은 두 evidence-push job으로 �
 review thread 해소는 그대로 강제된다. 두 번째 push 권한자가 추가되면 다음
 수렴에서 승인 수가 1로 올라가며 마지막 push 작성자는 그 승인을 할 수 없다.
 
+### 배포 지시와 environment 승인
+
+사용자가 특정 변경이나 릴리스에 대해 `배포`, `운영 반영`, `계속 진행`을
+명시하면 그 지시는 해당 실행의 GitHub `production` environment review를 공식
+API로 제출할 운영 권한까지 포함한다. 실행이 `pending_deployments`에 도달하면
+저장소, run ID, environment ID가 정확히 그 지시 범위인지 열거하고, 구성된 인증
+계정으로 `approved` review를 제출한 뒤 pending 해소와 보호 job 시작을 다시
+읽는다. 같은 승인을 위해 사용자에게 재확인하지 않는다.
+
+사용자 지시 자체를 GitHub 승인 기록으로 간주해서는 안 된다. 인증 계정이
+eligible reviewer가 아니거나 API가 review를 거부하면 reviewer 규칙을 삭제하거나
+우회하지 않고 응답을 보존해 기술적 blocker로 보고한다. 이 standing 권한은
+지시받은 정확한 run에만 적용되며 다른 대기 실행을 함께 승인하지 않는다.
+
 ## 3. Cloudflare secret 경계
 
 전역 API key와 계정 이메일을 workflow에 주입하지 않는다.
@@ -103,7 +117,7 @@ ruleset이나 environment를 먼저 삭제하는 방식으로 복구하지 않�
   environment, vulnerability alerts, Dependabot security updates 및 백엔드 전용
   release deploy key/secret만 변경한다. 코드 push, merge, workflow 실행 승인은
   하지 않는다.
-- production environment 승인이 보이지 않으면 배포를 계속하지 않는다.
+- production environment 승인 readback이 보이지 않으면 배포를 계속하지 않는다.
 - frontend token 오류는 global key 복귀보다 token scope/account/project binding을
   먼저 교정한다.
 - GitHub plan/API 제약으로 environment reviewer 또는 ruleset 저장이 거부되면

@@ -79,8 +79,16 @@ step; the implementation assignment itself authorizes the owning end-to-end
 workflow. Release, operations, and cleanup assignments carry the same standing
 authority. This authority does not expand task scope, resolve an ambiguous
 destructive target, waive tenant or user-data protection, bypass a release
-window or continuity gate, or replace an approval required by an external
-platform.
+window or continuity gate, or make an external approval true without platform
+readback. When the user explicitly instructs Codex to deploy, release, apply to
+production, or continue an in-scope rollout, that instruction also authorizes
+Codex to submit the exact rollout's GitHub `production` environment approval
+through the official authenticated API without asking for a second
+confirmation. The platform must record the approval before mutation; never
+remove or bypass the protection, approve an unrelated run, or claim approval
+from the instruction alone. If GitHub rejects the review or no eligible
+authenticated reviewer is available, preserve the error and report the
+technical blocker without asking the user to repeat the same authorization.
 
 ## Concurrent task isolation
 
