@@ -64,7 +64,7 @@ jobs:
       short_sha: ${{ steps.meta.outputs.short_sha }}
     steps:
       - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -308,7 +308,7 @@ jobs:
     needs: detect-changes
     steps:
       - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -372,7 +372,7 @@ jobs:
     needs: detect-changes
     steps:
       - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python 3.11
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -426,7 +426,7 @@ jobs:
     needs: [detect-changes, run-lint, run-tests]
     steps:
       - name: Checkout deployment guards
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           sparse-checkout: |
@@ -454,7 +454,7 @@ jobs:
     needs: [acquire-production-lock]
     steps:
       - name: Checkout release guard
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           sparse-checkout: |
@@ -482,7 +482,7 @@ jobs:
     needs: [acquire-production-lock, verify-release-freshness]
     steps:
       - name: Checkout exact runtime policy
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           sparse-checkout: scripts/v1/templates/iam/policy_api_ai_worker_scale.json
           sparse-checkout-cone-mode: false
@@ -535,7 +535,7 @@ jobs:
       DOCKER_BUILD_SUMMARY: false
     steps:
       - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           ssh-key: ${{ secrets.ACADEMY_RELEASE_DEPLOY_KEY }}
@@ -884,7 +884,7 @@ jobs:
       needs.build-and-push.result == 'success'
     steps:
       - name: Checkout deployment scripts
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Download exact release candidate
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -953,7 +953,7 @@ jobs:
       )
     steps:
       - name: Checkout deployment scripts
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Download exact release candidate
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -1012,7 +1012,7 @@ jobs:
       (needs.detect-changes.outputs.build_api == 'true' || needs.detect-changes.outputs.force_full == 'true')
     steps:
       - name: Checkout deployment scripts
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
@@ -1169,7 +1169,7 @@ jobs:
       API_INSTANCE_WARMUP: "300"
     steps:
       - name: Checkout deployment scripts
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
@@ -1388,7 +1388,7 @@ jobs:
       MESSAGING_ASG_NAME: academy-v1-messaging-worker-asg
     steps:
       - name: Checkout deployment scripts
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
@@ -1491,7 +1491,7 @@ jobs:
       AI_ASG_NAME: academy-v1-ai-worker-asg
     steps:
       - name: Checkout deployment scripts
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
@@ -1612,7 +1612,7 @@ jobs:
       TOOLS_ASG_NAME: academy-v1-tools-worker-asg
     steps:
       - name: Checkout deployment scripts
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
@@ -1735,7 +1735,7 @@ jobs:
         academy-v1-video-ops-recover-dead
     steps:
       - name: Checkout deployment scripts
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
@@ -1948,7 +1948,7 @@ jobs:
       (needs.deploy-api.result == 'success' || needs.deploy-messaging.result == 'success' || needs.deploy-ai.result == 'success' || needs.deploy-tools.result == 'success' || needs.deploy-video.result == 'success')
     steps:
       - name: Checkout verification scripts
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           ssh-key: ${{ secrets.ACADEMY_RELEASE_DEPLOY_KEY }}
@@ -2472,7 +2472,7 @@ jobs:
     if: always() && needs.acquire-production-lock.result == 'success'
     steps:
       - name: Checkout lock helper
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           sparse-checkout: scripts/v1/deployment_lock.py
           sparse-checkout-cone-mode: false
