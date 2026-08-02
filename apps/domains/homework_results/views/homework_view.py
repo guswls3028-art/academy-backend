@@ -26,6 +26,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
 from apps.core.permissions import TenantResolvedAndMember
+from apps.core.optimistic_concurrency import assert_expected_updated_at
 
 from apps.domains.homework_results.models import Homework
 from apps.domains.homework_results.serializers.homework import HomeworkSerializer
@@ -277,6 +278,7 @@ class HomeworkViewSet(ModelViewSet):
             pk=kwargs["pk"],
         )
         self.check_object_permissions(request, instance)
+        assert_expected_updated_at(request=request, instance=instance)
         old_max_score = instance.default_max_score
         old_cutline = (
             instance.cutline_mode,

@@ -37,6 +37,12 @@
 생성 뒤에는 바꿀 수 없다. 이미 문항 또는 성적이 있는 운영 시험에 새
 원본을 올려 자동으로 덮어쓰는 것도 금지한다.
 
+단, 과거 데이터에서 `choice_question_count=0`인데 이미 저장된 시험지의
+`choice_count`가 1 이상이고 전체 문항 수보다 작은 경우는 실제 문항 구조와
+같은 값으로 한 번 복구할 수 있다. 이 예외는 혼합형 전환의 막힌 상태를
+해소하기 위한 것이며, 저장된 시험지와 다른 경계로 바꾸는 요청은 계속
+거부한다.
+
 기존 시험의 문항별 `question_kind`가 있으면 직접 채점 가능 여부는 실제
 문항 유형을 기준으로 결정한다. 따라서 기존 답안 등록 화면에서 만든
 임의 순서 혼합형도 번호와 유형을 유지한다.
@@ -233,6 +239,14 @@ Problem Studio의 HWPX 검수본 생성은 별도 교사 보조 흐름이다. �
 
 ## API 요약
 
+시험 운영 설정을 수정하는 현재 화면은 조회 응답의 `updated_at`을
+`X-Expected-Updated-At` 헤더로 보낸다. 서버는 해당 시험 행을 잠근 뒤 같은
+버전일 때만 저장하고, 다른 화면이 먼저 저장했으면 `409`와
+`code=stale_resource`, 현재 `updated_at`을 반환한다. 헤더가 없는 기존
+클라이언트는 호환을 위해 기존 동작을 유지한다. 성공 응답은 부분 수정
+필드만이 아니라 전체 `Exam` 표현을 반환하므로 클라이언트 캐시가 누락
+필드를 기본값으로 오인하지 않는다.
+
 | Method | Path | 역할 |
 |--------|------|------|
 | POST | `/exams/` | 시험과 채점 계약 생성 |
@@ -250,6 +264,7 @@ Problem Studio의 HWPX 검수본 생성은 별도 교사 보조 흐름이다. �
 
 ```powershell
 python manage.py test `
+  apps.domains.exams.tests.test_exam_policy_update `
   apps.domains.exams.tests.test_guided_exam_source_workflow `
   apps.support.results.tests.test_manual_exam_grading `
   --settings apps.api.config.settings.test
@@ -269,6 +284,7 @@ python manage.py test `
 후행 정답·해설의 문항 제외와 연속 해설 추출,
 오답노트와 기존 `0` 호환 의미, 선택형 자동채점 정오 조회·직접 수정 차단과 OMR 보정 경계,
 객관식·숫자 단답형이 섞인 원래 순서와 `answer_type`, 문항 배점
-합계·stale 배점 거부, 혼합형 OMR 보존, stale result version 거부,
+합계·stale 배점 거부, 과거 혼합형 경계 복구, 시험 설정 stale version 거부와
+전체 PATCH 응답, 혼합형 OMR 보존, stale result version 거부,
 다중 시트 선택, tenant 차단, 양끝을 포함하는 회차 범위, 다중 회차 시험의
 중복 제거, 오답노트 포함과 PDF worker/R2 상태를 포함한다.

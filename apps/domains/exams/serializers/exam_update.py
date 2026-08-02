@@ -74,9 +74,19 @@ class ExamUpdateSerializer(serializers.ModelSerializer):
             "choice_question_count" in attrs
             and attrs["choice_question_count"] != exam.choice_question_count
         )
+        sheet = getattr(exam, "sheet", None)
+        sheet_choice_count = int(getattr(sheet, "choice_count", 0) or 0)
+        sheet_total_questions = int(getattr(sheet, "total_questions", 0) or 0)
+        repairs_legacy_boundary = (
+            choice_boundary_changed
+            and int(exam.choice_question_count or 0) == 0
+            and int(attrs["choice_question_count"] or 0) == sheet_choice_count
+            and 0 < sheet_choice_count < sheet_total_questions
+        )
         if (
             choice_boundary_changed
-            and Exam.objects.filter(pk=exam.pk, sheet__isnull=False).exists()
+            and sheet is not None
+            and not repairs_legacy_boundary
         ):
             raise serializers.ValidationError(
                 {

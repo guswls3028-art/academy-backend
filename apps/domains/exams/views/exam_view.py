@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from django.db import transaction
 from django.db.models import Max, Q
+from django.shortcuts import get_object_or_404
 
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
@@ -9,6 +10,7 @@ from rest_framework.exceptions import ValidationError, PermissionDenied
 from rest_framework.response import Response
 
 from apps.core.permissions import TenantResolvedAndMember
+from apps.core.optimistic_concurrency import assert_expected_updated_at
 from apps.domains.exams.models import Exam, ExamEnrollment
 from apps.domains.exams.serializers.exam import ExamSerializer
 from apps.domains.exams.serializers.exam_create import ExamCreateSerializer
@@ -228,26 +230,42 @@ class ExamViewSet(ModelViewSet):
 
     def update(self, request, *args, **kwargs):
         self._reject_immutable_fields_on_update(request)
-        return self._update_with_recalc(super().update, request, *args, **kwargs)
+        return self._update_with_recalc(request, partial=False, **kwargs)
 
     def partial_update(self, request, *args, **kwargs):
         self._reject_immutable_fields_on_update(request)
-        return self._update_with_recalc(super().partial_update, request, *args, **kwargs)
+        return self._update_with_recalc(request, partial=True, **kwargs)
 
-    def _update_with_recalc(self, upstream, request, *args, **kwargs):
+    def _update_with_recalc(self, request, *, partial: bool, **kwargs):
         """
         2026-05-13: pass_score 변경 시 progress pipeline 재실행.
         ClinicTriggerService.auto_create_per_exam 가 exam_meta.passed 기준으로
         ClinicLink 생성/해소를 idempotent 하게 처리하므로, pipeline 만 트리거하면
         하향(예: 70→50) 시 PASS 학생의 미해소 ClinicLink 가 자동 해소됨.
         """
-        try:
-            obj: Exam = self.get_object()
+        with transaction.atomic():
+            obj: Exam = get_object_or_404(
+                self.filter_queryset(self.get_queryset().select_for_update()),
+                pk=kwargs["pk"],
+            )
+            self.check_object_permissions(request, obj)
+            assert_expected_updated_at(request=request, instance=obj)
             prev_pass = float(getattr(obj, "pass_score", 0) or 0)
-        except Exception:
-            prev_pass = None
 
-        response = upstream(request, *args, **kwargs)
+            serializer = self.get_serializer(
+                obj,
+                data=request.data,
+                partial=partial,
+            )
+            serializer.is_valid(raise_exception=True)
+            self.perform_update(serializer)
+            updated = serializer.instance
+            response = Response(
+                ExamSerializer(
+                    updated,
+                    context=self.get_serializer_context(),
+                ).data
+            )
 
         try:
             new_pass = response.data.get("pass_score") if hasattr(response, "data") else None
