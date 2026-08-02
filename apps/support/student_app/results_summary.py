@@ -10,8 +10,15 @@ from django.db.models import F, Max
 from apps.domains.enrollment.selectors import active_enrollment_ids_for_student
 from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.homework_results.models import HomeworkScore
-from apps.domains.progress.models import ClinicLink
+from apps.core.services.student_grade_report_layout import (
+    get_student_grade_report_layout,
+)
+from apps.domains.progress.models import AssessmentCorrection, ClinicLink
 from apps.domains.results.services.student_result_service import get_my_exam_result_data
+from apps.domains.results.services.assessment_correction_status import (
+    assessment_correction_payload,
+    exam_correction_fingerprint,
+)
 from apps.domains.results.utils.ranking import compute_exam_rankings_batch
 from apps.support.results.student_grade_history import (
     build_exam_progression,
@@ -103,6 +110,7 @@ def _safe_homework_number(value: Any, *, positive: bool = False) -> float | None
 
 
 def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]:
+    report_layout = get_student_grade_report_layout(tenant=tenant)
     enrollment_ids = active_enrollment_ids_for_student(
         tenant=tenant,
         student=student,
@@ -113,6 +121,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             "homeworks": [],
             "exam_trend": [],
             "exam_summary": empty_exam_summary(),
+            "report_layout": report_layout,
         }
 
     exam_list, exam_trend, exam_summary = build_student_exam_history(
@@ -129,17 +138,50 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
     if result_ids:
         from apps.domains.results.models import Result
 
-        result_rows = (
+        result_rows = list(
             Result.objects
             .filter(id__in=result_ids)
             .prefetch_related("items__question__sheet")
         )
+        result_by_id = {int(result.id): result for result in result_rows}
         result_analysis_map = {
             int(result.id): _summarize_grade_result_items(
                 result,
                 structure_exam_id=structure_exam_id_by_result_id[int(result.id)],
             )
             for result in result_rows
+        }
+        result_fingerprint_map = {
+            int(result.id): exam_correction_fingerprint(
+                result=result,
+                items=result.items.all(),
+            )
+            for result in result_rows
+        }
+    else:
+        result_by_id = {}
+        result_fingerprint_map = {}
+
+    correction_map = {}
+    correction_session_ids = [
+        int(exam["session_id"])
+        for exam in exam_list
+        if exam.get("session_id") is not None
+    ]
+    if correction_session_ids and exam_ids:
+        correction_map = {
+            (
+                int(correction.enrollment_id),
+                int(correction.session_id),
+                int(correction.source_id),
+            ): correction
+            for correction in AssessmentCorrection.objects.filter(
+                tenant=tenant,
+                enrollment_id__in=enrollment_ids,
+                session_id__in=correction_session_ids,
+                source_type=AssessmentCorrection.SourceType.EXAM,
+                source_id__in=exam_ids,
+            )
         }
 
     exam_rank_maps = compute_exam_rankings_batch(
@@ -155,6 +197,23 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
         enrollment_id = int(exam["enrollment_id"])
         rank_info = exam_rank_maps.get(exam_id, {}).get(enrollment_id, {})
         item_analysis = result_analysis_map.get(result_id) or _empty_result_item_analysis()
+        session_id = exam.get("session_id")
+        correction = correction_map.get((
+            enrollment_id,
+            int(session_id),
+            exam_id,
+        )) if session_id is not None else None
+        correction_status = assessment_correction_payload(
+            source_type=AssessmentCorrection.SourceType.EXAM,
+            score=exam.get("total_score"),
+            max_score=exam.get("max_score"),
+            source_fingerprint=(
+                result_fingerprint_map.get(result_id)
+                if result_by_id.get(result_id) is not None
+                else None
+            ),
+            correction=correction,
+        )["correction_status"]
         exam.update({
             "rank": rank_info.get("rank"),
             "percentile": rank_info.get("percentile"),
@@ -165,6 +224,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             "wrong_count": item_analysis["wrong_count"],
             "accuracy_rate": item_analysis["accuracy_rate"],
             "wrong_question_numbers": item_analysis["wrong_question_numbers"],
+            "correction_status": correction_status,
         })
     exam_trend, exam_summary = build_exam_progression(exam_list)
 
@@ -305,4 +365,5 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             "pass": (getattr(tenant, "pass_label", None) or "").strip(),
             "fail": (getattr(tenant, "fail_label", None) or "").strip(),
         },
+        "report_layout": report_layout,
     }

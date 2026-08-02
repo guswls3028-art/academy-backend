@@ -34,6 +34,7 @@ from apps.core.views import (
     DevCronListView,
     DevCronTriggerView,
     UserIncidentReportView,
+    StudentGradeReportLayoutView,
 )
 from apps.core.views_landing import (
     LandingPublicView,
@@ -82,6 +83,11 @@ urlpatterns = [
     path("tenants/", TenantListView.as_view(), name="core-tenants"),
     path("tenants/<int:tenant_id>/", TenantDetailView.as_view(), name="core-tenant-detail"),
     path("tenant-info/", TenantInfoView.as_view(), name="core-tenant-info"),
+    path(
+        "student-grade-report-layout/",
+        StudentGradeReportLayoutView.as_view(),
+        name="core-student-grade-report-layout",
+    ),
     path("og-meta/", PublicOgMetaView.as_view(), name="core-og-meta"),
     path("legal-config/", LegalConfigView.as_view(), name="core-legal-config"),
     path("tenants/create/", TenantCreateView.as_view(), name="core-tenant-create"),

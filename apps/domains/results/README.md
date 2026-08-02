@@ -174,6 +174,9 @@ Session Assessment Inspection
   `apps/domains/results/tests/test_session_scores_roster_scope.py`의 correction 테스트가
   저장·재열기·메모·roster와 잠금 SQL의 nullable outer join 부재를 함께 확인한다.
 
+학생 카드의 상태 projection과 학원별 성장 그래프 구성은
+`docs/domain/student-grade-report.md`가 소유한다.
+
 Aggregation
 -----------
 

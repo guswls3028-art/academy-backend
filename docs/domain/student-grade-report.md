@@ -1,0 +1,75 @@
+# 학생 성적표 표시와 구성
+
+학생·학부모가 교사의 오답 확인 상태를 성적 보드에서 직접 확인하고, 학원 관리자는
+성장 그래프에 필요한 정보와 순서를 학원 단위로 정하는 현재 계약이다. 프론트엔드
+동선과 반응형 계약은 `frontend/docs/STUDENT-GRADE-REPORT.md`를 함께 따른다.
+
+## 사용자와 진입점
+
+- 학생·학부모: `GET /api/v1/student/grades/`를 통해 시험 카드의 오답 확인 상태와
+  성장 그래프 구성을 읽는다.
+- 학원 관리자: 관리자 또는 교사 모바일 앱의 **설정 → 학원 정보 → 학생 성적표**에서
+  `GET/PATCH /api/v1/core/student-grade-report-layout/`을 사용한다.
+- 구성 수정 권한은 같은 테넌트의 `owner`와 `admin`이다. 일반 교사·직원,
+  학생·학부모는 실패 폐쇄한다.
+
+## 오답 완료·미완료 상태
+
+학생 시험 카드의 `correction_status`는 차시 성적표에서 교사가 저장한
+`AssessmentCorrection`을 읽은 값이다. 프론트엔드는 점수나 오답 개수로 상태를
+재구성하지 않는다.
+
+- 유효한 비만점 시험에 현재 완료 기록이 없으면 `PENDING`이다.
+- 교사가 완료했고 대표 결과·대표 시도·점수·문항별 답안/정오/배점의 내용 지문이
+  같으면 `COMPLETED`다.
+- 완료 뒤 점수나 답안 내용이 바뀌면 `PENDING`으로 읽는다. `updated_at`만 바뀐
+  재저장은 완료를 유지한다.
+- 만점 시험은 `NOT_REQUIRED`, 미응시·무효 점수는 `null`이다.
+- 시험과 수강 강의의 차시를 하나로 확정할 수 없으면 다른 차시의 교사 확인 기록을
+  추정하지 않고 `null`을 반환한다.
+- 학생 응답에는 상태만 포함한다. 교사 메모와 완료 시각은 노출하지 않는다.
+
+구현은 `apps/domains/results/services/assessment_correction_status.py`의 내용 지문과
+상태 판정을 교사용 차시 성적표와 학생 성적 요약이 함께 사용한다.
+
+## 성장 그래프 구성
+
+표시 순서와 노출 여부는 `Program.ui_config.student_grade_report_layout`에 저장한다.
+런타임에서 YMath 또는 다른 테넌트 코드를 분기하지 않는다.
+
+| 섹션 ID | 의미 |
+|---|---|
+| `score_trend` | 회차별 성적 추이 |
+| `score_comparison` | 평균·통과율·전체 평균 비교 |
+| `lecture_average` | 강좌별 평균 득점률 |
+| `improvement_priority` | 반복 오답·약점 시험·자동 해석 문구 |
+| `exam_summary` | 시험 평균·합격률·시험 수·평균 등수 |
+| `rank_position` | 상·중·하위권 위치 분석 |
+| `weakest_lecture` | 약점 강좌 안내 |
+| `homework_summary` | 과제 채점·평균·합격률 |
+
+PATCH는 모든 알려진 섹션을 중복 없이 포함하고 `visible`을 boolean으로 보내야 하며,
+하나 이상을 표시해야 한다. 읽을 때 알 수 없는 과거 섹션은 버리고 새 섹션은 기본 표시
+상태로 보완한다. 저장은 다른 `ui_config` 키를 보존하고
+`student_grade_report.layout.update` 감사 로그를 남긴다.
+
+기본값은 기존 화면과 같은 전체 표시다. 데이터 마이그레이션은 YMath의 최초 구성만
+`score_trend`, `score_comparison`, `lecture_average` 표시로 저장한다. 이는 편집 가능한
+초깃값이므로 관리자는 같은 API에서 나머지 섹션을 다시 켜거나 순서를 변경할 수 있다.
+
+## 실패와 호환
+
+- `Program`이 비정상적으로 없으면 학생 조회는 전체 표시 기본값을 사용하고, 설정 저장은
+  `400`으로 중단한다. 조회 중 새 `Program`을 만들지 않는다.
+- 수강이 없는 학생도 `report_layout`은 받아 학원 구성이 안정적으로 유지된다.
+- 구버전 응답처럼 `report_layout`이 없으면 프론트엔드는 전체 표시 기본값을 사용한다.
+- 분석 API 실패는 오답 상태, 회차별 성적, 다른 독립 섹션을 지우지 않는다.
+
+## 검증
+
+- `apps/core/tests/test_student_grade_report_layout.py`: owner/admin 권한, 일반 교사 차단,
+  정규화, 검증, 다른 `ui_config` 보존
+- `apps/domains/student_app/tests/test_grades_summary_homework.py`: 학생 응답의 현재 완료 상태,
+  점수 변경 뒤 미완료 전이, 테넌트 구성 projection
+- `apps/domains/results/tests/test_session_scores_roster_scope.py`: 교사용 저장·재조회와 같은
+  지문 판정 유지
