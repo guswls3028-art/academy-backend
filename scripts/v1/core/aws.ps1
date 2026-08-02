@@ -74,10 +74,23 @@ function Invoke-AwsJson {
     }
     $fullArgs = Get-AwsArgsWithProfile -ArgsArray $ArgsArray
     $prev = $ErrorActionPreference
+    $prevPythonIoEncoding = $env:PYTHONIOENCODING
+    $prevPythonUtf8 = $env:PYTHONUTF8
     $ErrorActionPreference = "Continue"
-    $out = & aws @fullArgs 2>&1
-    $exit = $LASTEXITCODE
-    $ErrorActionPreference = $prev
+    try {
+        # AWS CLI v2 inherits the Windows console code page unless Python's
+        # native stdout encoding is explicit. PowerShell 7 decodes native
+        # output as UTF-8 here, so a CP949 payload silently corrupts Hangul
+        # before ConvertFrom-Json and can then be written back to SSM.
+        $env:PYTHONIOENCODING = "utf-8"
+        $env:PYTHONUTF8 = "1"
+        $out = & aws @fullArgs 2>&1
+        $exit = $LASTEXITCODE
+    } finally {
+        $env:PYTHONIOENCODING = $prevPythonIoEncoding
+        $env:PYTHONUTF8 = $prevPythonUtf8
+        $ErrorActionPreference = $prev
+    }
     if ($exit -ne 0) { return $null }
     if (-not $out) { return $null }
     try {
@@ -94,10 +107,19 @@ function Invoke-Aws {
     }
     $fullArgs = Get-AwsArgsWithProfile -ArgsArray $ArgsArray
     $prev = $ErrorActionPreference
+    $prevPythonIoEncoding = $env:PYTHONIOENCODING
+    $prevPythonUtf8 = $env:PYTHONUTF8
     $ErrorActionPreference = "Continue"
-    $out = & aws @fullArgs 2>&1
-    $exit = $LASTEXITCODE
-    $ErrorActionPreference = $prev
+    try {
+        $env:PYTHONIOENCODING = "utf-8"
+        $env:PYTHONUTF8 = "1"
+        $out = & aws @fullArgs 2>&1
+        $exit = $LASTEXITCODE
+    } finally {
+        $env:PYTHONIOENCODING = $prevPythonIoEncoding
+        $env:PYTHONUTF8 = $prevPythonUtf8
+        $ErrorActionPreference = $prev
+    }
     if ($exit -ne 0) {
         $text = ($out | Out-String).Trim()
         if (-not $text) { $text = "no output" }

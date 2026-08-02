@@ -37,6 +37,9 @@ video bucket Object Read/List 전용 R2 credential이 있어야 한다. credenti
 
 1. AWS mutation 전에 `assert-production-source-freshness.ps1`이 clean `main`, 최신 `origin/main`, complete/successful release manifest와 그 `gitSha`의 선조 관계를 검증한다. dirty/detached/stale/divergent source는 lock table 접근 전 실패한다.
 2. production lock, Preflight, Drift 보고
+   - AWS CLI JSON은 Windows 코드페이지와 무관하게 UTF-8로 읽고, 호출 뒤
+     프로세스 환경을 원복한다. 한글 등 비ASCII 운영 설정이 SSM 후보 생성
+     과정에서 손상되지 않는지 `test-aws-json-utf8-contract.ps1`로 검증한다.
 3. Bootstrap(선택): SSM, SQS, RDS engine, ECR 등 Ensure. ECR은 immutable SHA + latest 단일 exclusion + scan-on-push를 exact readback한다.
 4. Ensure-Network/ECR/IAM 후 운영 env 후보를 메모리에서 준비한다. 이 단계에서는 `/academy/api/env`와 `/academy/workers/env`를 쓰지 않는다.
 5. 성공 release manifest의 API/Tools digest를 버전 고정 development env에 발행하고 `deploy-api-development.ps1`의 blue/green 실사용 gate를 실행한다. 이전 active instance는 새 후보가 migration, 운영자원 denial, health, image identity, XLSX/PPT/R2 smoke를 통과하기 전까지 유지한다.
