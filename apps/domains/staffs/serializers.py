@@ -831,6 +831,11 @@ class ExpenseRecordSerializer(serializers.ModelSerializer):
             tenant = request.tenant
             self.fields["staff"].queryset = Staff.objects.filter(tenant=tenant)
 
+    def validate_amount(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("금액은 1원 이상이어야 합니다.")
+        return value
+
 
 # ---------------------------
 # WorkMonthLock / Payroll

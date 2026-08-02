@@ -183,6 +183,49 @@ class StaffOperationsContractTests(TestCase):
         self.assertIsNone(expense.approved_at)
         self.assertIsNone(expense.approved_by_id)
 
+    def test_expense_create_rejects_zero_amount(self):
+        staff = self._staff("0원 비용 직원")
+        request = self._request(
+            "post",
+            "/staffs/expense-records/",
+            {
+                "staff": staff.id,
+                "date": "2026-07-01",
+                "title": "잘못된 비용",
+                "amount": 0,
+            },
+        )
+
+        response = ExpenseRecordViewSet.as_view({"post": "create"})(request)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("amount", response.data)
+        self.assertFalse(ExpenseRecord.objects.filter(staff=staff).exists())
+
+    def test_expense_update_rejects_zero_amount_without_mutation(self):
+        staff = self._staff("비용 수정 직원")
+        expense = ExpenseRecord.objects.create(
+            tenant=self.tenant,
+            staff=staff,
+            date=date(2026, 7, 1),
+            title="교재 구입",
+            amount=30_000,
+        )
+        request = self._request(
+            "patch",
+            f"/staffs/expense-records/{expense.id}/",
+            {"amount": 0},
+        )
+
+        response = ExpenseRecordViewSet.as_view({"patch": "partial_update"})(
+            request,
+            pk=expense.id,
+        )
+
+        self.assertEqual(response.status_code, 400)
+        expense.refresh_from_db()
+        self.assertEqual(expense.amount, 30_000)
+
     def test_closed_work_record_cannot_start_break(self):
         staff = self._staff("종료 근무자")
         record = WorkRecord.objects.create(
