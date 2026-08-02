@@ -312,6 +312,13 @@ class ProblemStudioBetaRun(TimestampModel):
         COMPLETED = "completed", "사용 완료"
         RELEASED = "released", "차감 취소"
 
+    class Stage(models.TextChoices):
+        EXTRACT = "extract", "문항 분석"
+        SOLVE = "solve", "정답·해설 생성"
+        VERIFY = "verify", "독립 검산"
+        BUILD = "build", "PDF 생성"
+        DONE = "done", "완료"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     tenant = models.ForeignKey(
         Tenant,
@@ -333,6 +340,25 @@ class ProblemStudioBetaRun(TimestampModel):
         db_index=True,
     )
     release_reason = models.CharField(max_length=240, blank=True, default="")
+    stage = models.CharField(
+        max_length=16,
+        choices=Stage.choices,
+        default=Stage.EXTRACT,
+        db_index=True,
+    )
+    source_name = models.CharField(max_length=255, blank=True, default="")
+    source_archive_key = models.CharField(max_length=512, blank=True, default="")
+    checkpoint_key = models.CharField(max_length=512, blank=True, default="")
+    solutions_key = models.CharField(max_length=512, blank=True, default="")
+    result_key = models.CharField(max_length=512, blank=True, default="")
+    result_filename = models.CharField(max_length=255, blank=True, default="")
+    request_payload = models.JSONField(default=dict, blank=True)
+    result_payload = models.JSONField(default=dict, blank=True)
+    question_count = models.PositiveIntegerField(default=0)
+    completed_question_count = models.PositiveIntegerField(default=0)
+    verified_question_count = models.PositiveIntegerField(default=0)
+    review_required_count = models.PositiveIntegerField(default=0)
+    last_error = models.TextField(blank=True, default="")
 
     objects = TenantQuerySet.as_manager()
 
@@ -350,5 +376,9 @@ class ProblemStudioBetaRun(TimestampModel):
             models.Index(
                 fields=["tenant", "status", "created_at"],
                 name="idx_ps_beta_tenant_status",
+            ),
+            models.Index(
+                fields=["tenant", "requested_by", "created_at"],
+                name="idx_ps_beta_owner_created",
             ),
         ]

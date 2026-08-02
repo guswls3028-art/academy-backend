@@ -69,6 +69,9 @@ Backend:
   - `POST /api/v1/tools/problem-studio/transfer-document/`
   - `POST /api/v1/tools/problem-studio/transfer-jobs/`
   - `GET /api/v1/tools/problem-studio/transfer-jobs/<job_id>/`
+  - `POST /api/v1/tools/problem-studio/explanation-runs/`
+  - `GET /api/v1/tools/problem-studio/explanation-runs/<run_id>/`
+  - `POST /api/v1/tools/problem-studio/explanation-runs/<run_id>/resume/`
   - `POST /api/v1/tools/problem-studio/transfer-jobs/<job_id>/hangul-handoff/`
   - `GET /api/v1/tools/problem-studio/hangul-handoffs/<token>/`
   - `GET /api/v1/tools/problem-studio/hangul-companion/`
@@ -153,9 +156,33 @@ Source extraction and structure support:
   Independent verification can be limited to AI-generated answers so the
   benchmark spends the second pass on blank source entries rather than
   re-litigating authoritative appendix answers.
-  Its checkpoint contract has not yet replaced the production worker's single
-  60-minute execution boundary.
-- Beta allowance state is exposed by `GET /api/v1/tools/problem-studio/beta-access/`. `ProblemStudioBetaRun` reservations are tenant scoped and finalized idempotently from the AI terminal callback. `DONE` consumes a run; system terminal failures release it. The UI must not imply that the three runs belong to an individual teacher.
+- The tenant worker now uses the same manifest/solution contract through
+  `ProblemStudioBetaRun`. One uploaded PDF advances through `extract`, `solve`,
+  `verify`, and `build`. Extraction writes an immutable checkpoint ZIP; solve
+  and verification run as separate ten-question AI jobs and replace only the
+  tenant-prefixed `tmp/explanation-runs/` solution JSON. Each child job stays below the common
+  60-minute worker boundary. The final stage appends a Korean explanation
+  section to the untouched source PDF and stores one tenant-scoped result.
+- The production Beta keeps the economy route for both passes: OpenAI uses
+  `PROBLEM_STUDIO_EXPLANATION_MODEL`, while Bedrock uses Nova 2 Lite even for
+  source entries without an answer. Only AI-generated answers receive the
+  second independent pass. A disagreement, Korean/choice validation failure,
+  or provider verification failure remains an explicit red `검수 필요` item;
+  it does not silently become an authoritative answer.
+- The browser can close while a run continues. It stores only `run_id`, and
+  reopening the page re-reads DB progress. A worker terminal failure releases
+  the Beta reservation but preserves the tenant checkpoint and failed stage;
+  `POST .../resume/` creates a forced idempotent rerun from that stage. A
+  completed run deletes the temporary source/checkpoint/solution objects after
+  the final PDF is durable. Failed-run artifacts remain only for explicit
+  resume and require the existing Problem Studio temporary-object operational
+  cleanup boundary.
+- Beta allowance state is exposed by `GET /api/v1/tools/problem-studio/beta-access/`.
+  `ProblemStudioBetaRun` reservations are tenant scoped. `DONE` consumes a
+  run; system terminal failures release it, and a resume occupies an available
+  tenant slot again without creating a second completed charge. The legacy
+  terminal callback still settles transfer jobs dispatched before this split.
+  The UI must not imply that the three runs belong to an individual teacher.
 - Fixture verification script: `backend/scripts/problem_studio_transfer_fixtures.py` converts a local source folder into the same transfer ZIP and JSON summary for regression checks.
 - UAT runbook: `backend/docs/operations/runbooks/problem-studio-source-transfer-uat.md`
 

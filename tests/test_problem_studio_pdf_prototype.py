@@ -1,3 +1,7 @@
+import json
+from types import SimpleNamespace
+from unittest.mock import patch
+
 from scripts.problem_studio_pdf_prototype import (
     _display_answer,
     _is_korean_explanation,
@@ -6,6 +10,7 @@ from scripts.problem_studio_pdf_prototype import (
     _verification_answers_match,
     _item_input_sha256,
     _verification_label,
+    verify_solutions,
 )
 
 
@@ -45,6 +50,10 @@ def test_verification_label_distinguishes_manual_and_low_confidence_source():
         "answer_source": "ai_generated",
         "verification_status": "solve_validation_failed",
     })[0] == "검수 필요 · 자동 풀이 검증 실패"
+    assert _verification_label({
+        "answer_source": "ai_generated",
+        "verification_status": "verification_failed",
+    })[0] == "검수 필요 · 독립 검산 실패"
 
 
 def test_korean_explanation_gate_rejects_non_korean_output():
@@ -84,3 +93,53 @@ def test_objective_result_gate_requires_answer_choice_truth_consistency():
     assert reconciled["answer"] == "③"
     assert reconciled["selected_choice_text"] == "③ ㄱ, ㄴ"
     assert _objective_result_is_consistent(item, reconciled)
+
+
+def test_verification_provider_failure_is_persisted_as_review_required(tmp_path):
+    item = {
+        "number": 1,
+        "prompt": "옳은 것을 고르시오.",
+        "choices": ["① A", "② B"],
+        "source_answer": "",
+        "input_sha256": "input-1",
+    }
+    (tmp_path / "solutions.json").write_text(
+        json.dumps({
+            "items": {
+                "1": {
+                    "number": 1,
+                    "input_sha256": "input-1",
+                    "answer": "①",
+                    "explanation": "정답 근거를 한국어 문장으로 충분히 설명합니다.",
+                    "answer_source": "ai_generated",
+                },
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    with (
+        patch(
+            "academy.adapters.ai.config.AIConfig.load",
+            return_value=SimpleNamespace(
+                OPENAI_API_KEY="test-key",
+                PROBLEM_STUDIO_EXPLANATION_MODEL="test-model",
+                PROBLEM_GEN_BEDROCK_MODEL="test-bedrock",
+            ),
+        ),
+        patch(
+            "academy.adapters.ai.problem.generator.generate_transcribed_explanations",
+            side_effect=RuntimeError("provider unavailable"),
+        ),
+    ):
+        state = verify_solutions(
+            manifest={"items": [item]},
+            work_dir=tmp_path,
+            batch_size=1,
+            max_retries=1,
+            ai_generated_only=True,
+        )
+
+    assert state["items"]["1"]["verification_status"] == "verification_failed"
+    persisted = json.loads((tmp_path / "solutions.json").read_text(encoding="utf-8"))
+    assert persisted["items"]["1"]["verification_status"] == "verification_failed"

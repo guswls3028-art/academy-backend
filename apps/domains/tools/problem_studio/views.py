@@ -22,11 +22,8 @@ from apps.domains.tools.problem_studio.async_transfer import build_source_archiv
 from apps.domains.tools.problem_studio.beta_access import (
     ProblemStudioBetaLimitReached,
     beta_access_snapshot,
-    beta_run_id_from_job_payload,
-    bind_beta_run,
     release_beta_run,
     reserve_beta_run,
-    settle_beta_run,
 )
 from apps.domains.tools.problem_studio.document_style import (
     BUILTIN_FONTS,
@@ -41,9 +38,15 @@ from apps.domains.tools.problem_studio.font_assets import (
     serialize_font_asset,
 )
 from apps.domains.tools.problem_studio.models import (
+    ProblemStudioBetaRun,
     ProblemStudioDocumentStyle,
     ProblemStudioFontAsset,
     ProblemStudioVoiceProfile,
+)
+from apps.domains.tools.problem_studio.explanation_workflow import (
+    ProblemStudioExplanationResumeUnavailable,
+    resume_explanation_workflow,
+    start_explanation_workflow,
 )
 from apps.domains.tools.problem_studio.voice_profiles import (
     add_voice_sample,
@@ -409,6 +412,211 @@ class ProblemStudioBetaAccessView(APIView):
         return response
 
 
+def _serialize_explanation_run(run: ProblemStudioBetaRun) -> dict:
+    total = int(run.question_count or 0)
+    completed = int(run.completed_question_count or 0)
+    verified = int(run.verified_question_count or 0)
+    stage = str(run.stage or ProblemStudioBetaRun.Stage.EXTRACT)
+    if run.status == ProblemStudioBetaRun.Status.COMPLETED:
+        public_status = "DONE"
+        percent = 100
+    elif run.status == ProblemStudioBetaRun.Status.RELEASED:
+        public_status = "FAILED"
+        percent = 0 if not total else min(99, int(100 * completed / total))
+    else:
+        public_status = "PENDING" if stage == ProblemStudioBetaRun.Stage.EXTRACT else "RUNNING"
+        if stage == ProblemStudioBetaRun.Stage.EXTRACT:
+            percent = 5
+        elif stage == ProblemStudioBetaRun.Stage.SOLVE:
+            percent = 10 + int(55 * completed / max(1, total))
+        elif stage == ProblemStudioBetaRun.Stage.VERIFY:
+            percent = 65 + int(25 * verified / max(1, completed))
+        else:
+            percent = 95
+    stage_meta = {
+        ProblemStudioBetaRun.Stage.EXTRACT: (1, "문항과 정답표 분석"),
+        ProblemStudioBetaRun.Stage.SOLVE: (2, "정답·해설 생성"),
+        ProblemStudioBetaRun.Stage.VERIFY: (3, "빈 정답 독립 검산"),
+        ProblemStudioBetaRun.Stage.BUILD: (4, "정답·해설 PDF 조립"),
+        ProblemStudioBetaRun.Stage.DONE: (4, "완료"),
+    }
+    step_index, step_name = stage_meta.get(stage, (1, "준비"))
+    result_payload = None
+    expected_prefix = f"tenants/{run.tenant_id}/tools/problem-studio/explanation-runs/{run.id}/result/"
+    if public_status == "DONE" and run.result_key.startswith(expected_prefix):
+        from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
+
+        result_payload = dict(run.result_payload or {})
+        result_payload["download_url"] = generate_presigned_get_url_storage(
+            key=run.result_key,
+            expires_in=900,
+            filename=run.result_filename or "정답해설_Beta.pdf",
+            content_type="application/pdf",
+        )
+    return {
+        "run_id": str(run.id),
+        "status": public_status,
+        "stage": stage,
+        "source_name": run.source_name,
+        "progress": {
+            "percent": max(0, min(100, percent)),
+            "step_index": step_index,
+            "step_total": 4,
+            "step_name": stage,
+            "step_name_display": step_name,
+            "completed_questions": completed,
+            "total_questions": total,
+            "verified_questions": verified,
+            "review_required_questions": int(run.review_required_count or 0),
+        },
+        "result": result_payload,
+        "error_message": run.last_error or run.release_reason or None,
+        "can_resume": (
+            run.status == ProblemStudioBetaRun.Status.RELEASED
+            and bool(run.source_archive_key)
+        ),
+        "beta_access": beta_access_snapshot(tenant=run.tenant),
+    }
+
+
+class ProblemStudioExplanationRunCreateView(APIView):
+    """Reserve one tenant Beta run and start the resumable full-workbook PDF flow."""
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def post(self, request):
+        archive_file = None
+        archive_key = ""
+        run = None
+        workflow_started = False
+        try:
+            source_files = request.FILES.getlist("source_files")
+            if len(source_files) != 1 or not str(source_files[0].name).lower().endswith(".pdf"):
+                return Response(
+                    {"detail": "정답·해설 PDF Beta는 한 번에 PDF 한 파일만 처리합니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            payload = parse_payload(request.data.get("payload") if hasattr(request.data, "get") else {})
+            subject = str(payload.get("subject") or "").strip()[:100]
+            note_policy = str(payload.get("note_policy") or "").strip()[:2000]
+            archive_file, source_manifest = build_source_archive(source_files)
+            try:
+                run = reserve_beta_run(tenant=request.tenant, user=request.user)
+            except ProblemStudioBetaLimitReached:
+                return Response(
+                    {
+                        "detail": "문제집 해설 Beta 무료 체험 3회를 모두 사용했습니다.",
+                        "rejection_code": "problem_studio_beta_limit_reached",
+                        "beta_access": beta_access_snapshot(tenant=request.tenant),
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            archive_key = (
+                f"tenants/{request.tenant.id}/tools/problem-studio/"
+                f"tmp/explanation-runs/{run.id}/sources.zip"
+            )
+            from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_storage
+
+            upload_fileobj_to_r2_storage(
+                fileobj=archive_file,
+                key=archive_key,
+                content_type="application/zip",
+            )
+            run.source_name = str(source_manifest[0]["name"])
+            run.source_archive_key = archive_key
+            run.request_payload = {
+                "subject": subject,
+                "note_policy": note_policy,
+            }
+            run.save(
+                update_fields=[
+                    "source_name",
+                    "source_archive_key",
+                    "request_payload",
+                    "updated_at",
+                ]
+            )
+            start_explanation_workflow(
+                run_id=str(run.id),
+                tenant_id=str(request.tenant.id),
+            )
+            workflow_started = True
+            run.refresh_from_db()
+            response = Response(_serialize_explanation_run(run), status=status.HTTP_202_ACCEPTED)
+            response["Cache-Control"] = "no-store"
+            return response
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            logger.exception("Problem Studio explanation run start failed")
+            return Response(
+                {"detail": "정답·해설 PDF 작업을 시작할 수 없습니다. 잠시 뒤 다시 시도해 주세요."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        finally:
+            if run is not None and not workflow_started:
+                release_beta_run(
+                    run_id=str(run.id),
+                    tenant_id=str(request.tenant.id),
+                    reason="job_not_started",
+                )
+            if archive_key and not workflow_started:
+                try:
+                    from apps.infrastructure.storage.r2 import delete_object_r2_storage
+
+                    delete_object_r2_storage(key=archive_key)
+                    if run is not None:
+                        ProblemStudioBetaRun.objects.filter(
+                            pk=run.id,
+                            tenant=request.tenant,
+                        ).update(source_archive_key="")
+                except Exception:
+                    pass
+            if archive_file is not None:
+                archive_file.close()
+
+
+class ProblemStudioExplanationRunStatusView(APIView):
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+
+    def get(self, request, run_id):
+        run = ProblemStudioBetaRun.objects.filter(
+            pk=run_id,
+            tenant=request.tenant,
+            requested_by=request.user,
+        ).first()
+        if run is None:
+            return Response({"detail": "정답·해설 작업을 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+        response = Response(_serialize_explanation_run(run))
+        response["Cache-Control"] = "no-store"
+        return response
+
+
+class ProblemStudioExplanationRunResumeView(APIView):
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+    parser_classes = [JSONParser]
+
+    def post(self, request, run_id):
+        try:
+            resume_explanation_workflow(
+                run_id=str(run_id),
+                tenant=request.tenant,
+                user=request.user,
+            )
+        except ProblemStudioExplanationResumeUnavailable as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        run = ProblemStudioBetaRun.objects.get(
+            pk=run_id,
+            tenant=request.tenant,
+            requested_by=request.user,
+        )
+        response = Response(_serialize_explanation_run(run), status=status.HTTP_202_ACCEPTED)
+        response["Cache-Control"] = "no-store"
+        return response
+
+
 class ProblemStudioTransferJobCreateView(APIView):
     """POST /api/v1/tools/problem-studio/transfer-jobs/
 
@@ -423,8 +631,6 @@ class ProblemStudioTransferJobCreateView(APIView):
     def post(self, request):
         archive_file = None
         archive_key = ""
-        beta_run = None
-        job_started = False
         try:
             payload = parse_payload(request.data.get("payload") if hasattr(request.data, "get") else request.data)
             if not payload and isinstance(request.data, dict):
@@ -437,24 +643,6 @@ class ProblemStudioTransferJobCreateView(APIView):
                 return Response({"detail": "원본으로 옮길 소스 파일을 먼저 올려 주세요."}, status=status.HTTP_400_BAD_REQUEST)
 
             archive_file, source_manifest = build_source_archive(source_files)
-            try:
-                beta_run = reserve_beta_run(tenant=request.tenant, user=request.user)
-            except ProblemStudioBetaLimitReached:
-                return Response(
-                    {
-                        "detail": "문제집 해설 Beta 무료 체험 3회를 모두 사용했습니다.",
-                        "rejection_code": "problem_studio_beta_limit_reached",
-                        "beta_access": beta_access_snapshot(tenant=request.tenant),
-                    },
-                    status=status.HTTP_403_FORBIDDEN,
-                )
-            payload["beta"] = {
-                "label": "Beta",
-                "free_trial": True,
-                "run_id": str(beta_run.id),
-                "review_required": True,
-            }
-
             import uuid
             from apps.infrastructure.storage.r2 import delete_object_r2_storage, upload_fileobj_to_r2_storage
 
@@ -495,8 +683,6 @@ class ProblemStudioTransferJobCreateView(APIView):
                     },
                     status=status.HTTP_503_SERVICE_UNAVAILABLE,
                 )
-            job_started = True
-            bind_beta_run(run=beta_run, job_id=str(result["job_id"]))
             return Response(
                 {
                     "job_id": result["job_id"],
@@ -520,8 +706,6 @@ class ProblemStudioTransferJobCreateView(APIView):
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         finally:
-            if beta_run is not None and not job_started:
-                release_beta_run(run_id=str(beta_run.id), reason="job_not_started")
             if archive_file is not None:
                 archive_file.close()
 
@@ -708,20 +892,6 @@ class ProblemStudioTransferJobStatusView(APIView):
             or not _job_belongs_to_request_user(job, request)
         ):
             return Response({"detail": "작업을 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
-
-        if job.status in {
-            "DONE",
-            "FAILED",
-            "REJECTED_BAD_INPUT",
-            "FALLBACK_TO_GPU",
-            "REVIEW_REQUIRED",
-        }:
-            settle_beta_run(
-                run_id=beta_run_id_from_job_payload(job.payload),
-                job_id=str(job.job_id),
-                terminal_status=str(job.status),
-                error=job.error_message or job.last_error or "",
-            )
 
         progress = None
         try:

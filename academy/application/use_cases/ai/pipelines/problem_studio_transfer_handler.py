@@ -53,6 +53,14 @@ def _record_progress(
 
 def handle_problem_studio_transfer_job(job: AIJob) -> AIResult:
     payload = job.payload or {}
+    from apps.domains.tools.problem_studio.explanation_workflow import (
+        handle_problem_studio_explanation_step,
+        is_explanation_step_payload,
+    )
+
+    if is_explanation_step_payload(payload):
+        return handle_problem_studio_explanation_step(job)
+
     tenant_id = str(job.tenant_id or "")
     payload_tenant_id = str(payload.get("tenant_id") or "")
     archive_key = str(payload.get("source_archive_key") or "")

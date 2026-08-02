@@ -327,6 +327,8 @@ def solve_manifest(
     limit: int = 0,
     blank_bedrock_model: str = DEFAULT_BLANK_BEDROCK_MODEL,
     blank_bedrock_region: str = DEFAULT_BLANK_BEDROCK_REGION,
+    subject: str = "통합과학",
+    note_policy: str = DEFAULT_NOTE_POLICY,
 ) -> dict[str, Any]:
     from academy.adapters.ai.config import AIConfig
     from academy.adapters.ai.problem.generator import generate_transcribed_explanations
@@ -374,8 +376,8 @@ def solve_manifest(
             try:
                 generated = generate_transcribed_explanations(
                     questions=[_question_payload(item, work_dir=work_dir) for item in remaining],
-                    subject="통합과학",
-                    note_policy=DEFAULT_NOTE_POLICY,
+                    subject=str(subject or ""),
+                    note_policy=str(note_policy or DEFAULT_NOTE_POLICY),
                     model=cfg.PROBLEM_STUDIO_EXPLANATION_MODEL,
                     bedrock_model=selected_bedrock_model,
                     bedrock_region=selected_bedrock_region,
@@ -484,6 +486,7 @@ def verify_solutions(
     force: bool = False,
     mismatches_only: bool = False,
     ai_generated_only: bool = False,
+    subject: str = "통합과학",
 ) -> dict[str, Any]:
     from academy.adapters.ai.config import AIConfig
     from academy.adapters.ai.problem.generator import generate_transcribed_explanations
@@ -533,7 +536,7 @@ def verify_solutions(
             try:
                 generated = generate_transcribed_explanations(
                     questions=independent_payloads,
-                    subject="통합과학",
+                    subject=str(subject or ""),
                     note_policy=(
                         "앞선 풀이를 보지 않은 독립 검산입니다. 문제를 처음부터 다시 풀고 "
                         "정답 근거를 짧게 제시하세요."
@@ -603,6 +606,12 @@ def verify_solutions(
             if remaining and attempt < max_retries:
                 time.sleep(min(10, 2 ** attempt))
         failures.extend(int(item["number"]) for item in remaining)
+        for item in remaining:
+            solution = solved.get(str(item["number"]))
+            if isinstance(solution, dict):
+                solution["verification_status"] = "verification_failed"
+        if remaining:
+            _save_solutions(solution_path, state)
         completed += len(batch) - len(remaining)
         print(json.dumps({
             "event": "verify_progress",
@@ -642,6 +651,8 @@ def _verification_label(solution: dict[str, Any]) -> tuple[str, str]:
         return "검수 필요 · AI 정답 불일치", "#b91c1c"
     if status == "solve_validation_failed":
         return "검수 필요 · 자동 풀이 검증 실패", "#b91c1c"
+    if status == "verification_failed":
+        return "검수 필요 · 독립 검산 실패", "#b91c1c"
     return "검수 필요 · AI 1차 풀이", "#b45309"
 
 
@@ -871,6 +882,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--force-verify", action="store_true")
     parser.add_argument("--mismatches-only", action="store_true")
     parser.add_argument("--ai-generated-only", action="store_true")
+    parser.add_argument("--subject", default="통합과학")
+    parser.add_argument("--note-policy", default=DEFAULT_NOTE_POLICY)
     parser.add_argument(
         "--blank-bedrock-model",
         default=DEFAULT_BLANK_BEDROCK_MODEL,
@@ -924,6 +937,8 @@ def main() -> int:
             limit=args.limit,
             blank_bedrock_model=args.blank_bedrock_model,
             blank_bedrock_region=args.blank_bedrock_region,
+            subject=args.subject,
+            note_policy=args.note_policy,
         )
         if state.get("solve_failures"):
             return 2
@@ -940,6 +955,7 @@ def main() -> int:
             force=args.force_verify,
             mismatches_only=args.mismatches_only,
             ai_generated_only=args.ai_generated_only,
+            subject=args.subject,
         )
         if state.get("verify_failures"):
             return 3

@@ -65,9 +65,10 @@ def bind_beta_run(*, run: ProblemStudioBetaRun, job_id: str) -> None:
     ).update(job_id=str(job_id))
 
 
-def release_beta_run(*, run_id: str, reason: str) -> None:
+def release_beta_run(*, run_id: str, tenant_id: str, reason: str) -> None:
     ProblemStudioBetaRun.objects.filter(
         pk=run_id,
+        tenant_id=tenant_id,
         status=ProblemStudioBetaRun.Status.RESERVED,
     ).update(
         status=ProblemStudioBetaRun.Status.RELEASED,

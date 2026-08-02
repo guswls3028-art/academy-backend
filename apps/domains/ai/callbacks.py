@@ -59,6 +59,16 @@ def dispatch_ai_result_to_domain(
                 .values_list("payload", flat=True)
                 .first()
             )
+            from apps.domains.tools.problem_studio.explanation_workflow import (
+                settle_explanation_step_failure,
+            )
+
+            settle_explanation_step_failure(
+                job_id=job_id,
+                status=status,
+                payload=job_payload,
+                error=error or "",
+            )
             settle_beta_run(
                 run_id=beta_run_id_from_job_payload(job_payload),
                 job_id=job_id,
