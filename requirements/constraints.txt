@@ -10,7 +10,7 @@ django-cors-headers==4.9.0
 djangorestframework-simplejwt==5.5.1
 
 # Security
-cryptography==48.0.1
+cryptography==49.0.0
 
 # AWS / Infrastructure
 boto3==1.42.62
