@@ -45,6 +45,34 @@ class Migration(migrations.Migration):
                 ),
                 ("release_reason", models.CharField(blank=True, default="", max_length=240)),
                 (
+                    "stage",
+                    models.CharField(
+                        choices=[
+                            ("extract", "문항 분석"),
+                            ("solve", "정답·해설 생성"),
+                            ("verify", "독립 검산"),
+                            ("build", "PDF 생성"),
+                            ("done", "완료"),
+                        ],
+                        db_index=True,
+                        default="extract",
+                        max_length=16,
+                    ),
+                ),
+                ("source_name", models.CharField(blank=True, default="", max_length=255)),
+                ("source_archive_key", models.CharField(blank=True, default="", max_length=512)),
+                ("checkpoint_key", models.CharField(blank=True, default="", max_length=512)),
+                ("solutions_key", models.CharField(blank=True, default="", max_length=512)),
+                ("result_key", models.CharField(blank=True, default="", max_length=512)),
+                ("result_filename", models.CharField(blank=True, default="", max_length=255)),
+                ("request_payload", models.JSONField(blank=True, default=dict)),
+                ("result_payload", models.JSONField(blank=True, default=dict)),
+                ("question_count", models.PositiveIntegerField(default=0)),
+                ("completed_question_count", models.PositiveIntegerField(default=0)),
+                ("verified_question_count", models.PositiveIntegerField(default=0)),
+                ("review_required_count", models.PositiveIntegerField(default=0)),
+                ("last_error", models.TextField(blank=True, default="")),
+                (
                     "requested_by",
                     models.ForeignKey(
                         null=True,
@@ -65,21 +93,23 @@ class Migration(migrations.Migration):
             options={
                 "db_table": "problem_studio_beta_run",
                 "ordering": ["-created_at"],
+                "constraints": [
+                    models.UniqueConstraint(
+                        condition=~models.Q(job_id=""),
+                        fields=("job_id",),
+                        name="uq_ps_beta_run_job",
+                    ),
+                ],
+                "indexes": [
+                    models.Index(
+                        fields=["tenant", "status", "created_at"],
+                        name="idx_ps_beta_tenant_status",
+                    ),
+                    models.Index(
+                        fields=["tenant", "requested_by", "created_at"],
+                        name="idx_ps_beta_owner_created",
+                    ),
+                ],
             },
-        ),
-        migrations.AddConstraint(
-            model_name="problemstudiobetarun",
-            constraint=models.UniqueConstraint(
-                condition=~models.Q(job_id=""),
-                fields=("job_id",),
-                name="uq_ps_beta_run_job",
-            ),
-        ),
-        migrations.AddIndex(
-            model_name="problemstudiobetarun",
-            index=models.Index(
-                fields=["tenant", "status", "created_at"],
-                name="idx_ps_beta_tenant_status",
-            ),
         ),
     ]
