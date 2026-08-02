@@ -133,7 +133,7 @@ def save_student_grade_report_layout(*, tenant: Any, value: Any) -> dict[str, An
     except Program.DoesNotExist as exc:
         raise ValidationError({"detail": "이 학원의 프로그램 설정을 찾을 수 없습니다."}) from exc
 
-    ui_config = dict(program.ui_config or {})
+    ui_config = dict(program.ui_config) if isinstance(program.ui_config, dict) else {}
     ui_config[STUDENT_GRADE_REPORT_LAYOUT_KEY] = layout
     program.ui_config = ui_config
     program.save(update_fields=["ui_config", "updated_at"])

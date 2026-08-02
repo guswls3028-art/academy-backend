@@ -57,3 +57,17 @@ class SetupThreeTenantsTests(TestCase):
             "anonymous_billboard",
         )
         self.assertIn(STUDENT_GRADE_REPORT_LAYOUT_KEY, program.ui_config)
+
+    def test_existing_ymath_non_object_ui_config_is_repaired(self):
+        tenant = Tenant.objects.create(code="ymath", name="Ymath", is_active=True)
+        program = Program.objects.get(tenant=tenant)
+        program.ui_config = ["broken"]
+        program.save(update_fields=["ui_config"])
+
+        self._call_command()
+
+        program.refresh_from_db()
+        self.assertEqual(
+            program.ui_config[STUDENT_GRADE_REPORT_LAYOUT_KEY]["version"],
+            1,
+        )
