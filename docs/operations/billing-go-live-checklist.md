@@ -24,6 +24,9 @@
 | 테스트 148건 | ✅ 전부 통과 | 22개 신규 + 126 회귀 |
 
 현재 상태: **TOSS_AUTO_BILLING_ENABLED=False** (휴면 상태. 배치가 돌아도 실제 결제 안 함.)
+운영 이용료 수납은 `BILLING_BANK_TRANSFER_ENABLED=true`인 계좌이체 경로만
+사용한다. 카드 등록·결제 UI는 Toss 카드 결제 계약을 시작할 때까지 숨기며,
+기존 카드 데이터와 서버 호환 경로는 삭제하지 않는다.
 운영 SSM에는 전용 빌링키 암호화 KEK와 암호문 writer가 준비돼 있지만,
 Toss 서버/클라이언트 키는 아직 없다. 일반 결제 웹훅에는 서명 secret이
 제공되지 않으므로 별도 `TOSS_WEBHOOK_SECRET`을 만들거나 요구하지 않는다.
@@ -83,12 +86,13 @@ UI/API 소비자는 `monthly_supply_amount`, `monthly_tax_amount`,
 수 있고, 입금 확인과 `PaymentTransaction(provider=manual, SUCCESS)` 기록은
 원자적으로 처리된다.
 
-### PG 계약 전 즉시 수납 경로: 계좌이체
+### 현재 운영 수납 경로: 계좌이체
 
 `TOSS_AUTO_BILLING_ENABLED=false`인 동안에도 B2B 프로그램 이용료를 받을 수
-있도록 아래 운영 경로를 사용한다.
+있도록 아래 운영 경로를 사용한다. 계좌 정보는 소스·문서·프론트 빌드에
+하드코딩하지 않고 `/academy/api/env`의 SSM 환경값으로만 관리한다.
 
-1. `/academy/api/env`에 아래 값을 저장하고 API instance refresh를 수행한다.
+1. `/academy/api/env`에 아래 값을 저장한 뒤 API instance refresh를 수행한다.
    - `BILLING_BANK_TRANSFER_ENABLED=true`
    - `BILLING_BANK_NAME`
    - `BILLING_BANK_ACCOUNT_NUMBER`
@@ -102,6 +106,13 @@ UI/API 소비자는 `monthly_supply_amount`, `monthly_tax_amount`,
 5. 입금 확인 시에만 청구서가 `PAID`가 되고 구독과 수납 장부에 반영된다.
 6. 세금계산서 요청 건은 `READY` 대기열에서 홈택스로 실제 발행한 뒤 국세청
    승인번호를 `발행 완료 기록`에 입력한다.
+
+프론트 현재 계약은
+[`frontend/docs/USER-GUIDE-ADMIN.md`](../../../frontend/docs/USER-GUIDE-ADMIN.md#14-4-구독결제)에
+기록한다. 결제 설정 화면은 계좌이체 청구·입금 신고만 노출하고 카드 섹션은
+렌더링하지 않는다. 내부 `AUTO_CARD` 상태가 남아 있는 기존 테넌트도 화면에서는
+`계좌이체 선택 전`으로 안내하며, 오너가 계좌이체를 선택할 때만 예정 청구서를
+`INVOICE_REQUEST`로 전환한다.
 
 고객의 입금 신고만으로 결제 완료 처리하지 않는다. `READY`도 홈택스 발행 완료가
 아니며, 승인번호가 기록된 `ISSUED`만 발행 완료다. 운영 계좌 값은 소스나 문서에
