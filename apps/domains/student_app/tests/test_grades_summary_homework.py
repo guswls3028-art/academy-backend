@@ -1,4 +1,6 @@
 from datetime import date, timedelta
+import hashlib
+import json
 
 from django.contrib.auth import get_user_model
 from django.apps import apps as django_apps
@@ -6,6 +8,9 @@ from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
+from apps.core.services.student_grade_report_layout import (
+    STUDENT_GRADE_REPORT_LAYOUT_KEY,
+)
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.homework_results.models import Homework, HomeworkScore
@@ -15,6 +20,38 @@ from apps.domains.students.models import Student
 
 
 User = get_user_model()
+
+
+def _exam_correction_fingerprint(result) -> str:
+    """Mirror the persisted result-content contract without a cross-domain import."""
+    payload = {
+        "result_id": int(result.id),
+        "attempt_id": int(result.attempt_id) if result.attempt_id else None,
+        "total_score": float(result.total_score) if result.total_score is not None else None,
+        "max_score": float(result.max_score) if result.max_score is not None else None,
+        "objective_score": float(result.objective_score) if result.objective_score is not None else None,
+        "items": [
+            {
+                "question_id": int(item.question_id),
+                "answer": str(item.answer or ""),
+                "is_correct": bool(item.is_correct),
+                "include_in_wrong_note": bool(item.include_in_wrong_note),
+                "score": float(item.score) if item.score is not None else None,
+                "max_score": float(item.max_score) if item.max_score is not None else None,
+            }
+            for item in sorted(
+                result.items.all(),
+                key=lambda candidate: (candidate.question_id, candidate.id),
+            )
+        ],
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 class MyGradesSummaryHomeworkTests(TestCase):
@@ -61,6 +98,7 @@ class MyGradesSummaryHomeworkTests(TestCase):
         self.ExamAttempt = django_apps.get_model("results", "ExamAttempt")
         self.Result = django_apps.get_model("results", "Result")
         self.ResultItem = django_apps.get_model("results", "ResultItem")
+        self.AssessmentCorrection = django_apps.get_model("progress", "AssessmentCorrection")
 
     def _call(self):
         request = self.factory.get("/api/v1/student/grades/")
@@ -127,6 +165,51 @@ class MyGradesSummaryHomeworkTests(TestCase):
             "best_score_pct": 90.0,
         })
         self.assertTrue(all("recorded_at" in row for row in response.data["exam_trend"]))
+
+    def test_student_summary_returns_tenant_layout_and_current_teacher_correction_status(self):
+        program = self.tenant.program
+        program.ui_config = {
+            STUDENT_GRADE_REPORT_LAYOUT_KEY: {
+                "version": 1,
+                "sections": [
+                    {"id": "score_comparison", "visible": True},
+                    {"id": "score_trend", "visible": False},
+                ],
+            },
+        }
+        program.save(update_fields=["ui_config"])
+        result = self._score_exam(
+            title="오답 확인 시험",
+            order=1,
+            score=70,
+            max_score=100,
+        )
+        exam = self.Exam.objects.get(id=result.target_id)
+        session = exam.sessions.get()
+        self.AssessmentCorrection.objects.create(
+            tenant=self.tenant,
+            enrollment=self.enrollment,
+            session=session,
+            source_type="exam",
+            source_id=exam.id,
+            completed=True,
+            source_fingerprint=_exam_correction_fingerprint(result),
+        )
+
+        completed = self._call()
+
+        self.assertEqual(completed.status_code, 200, completed.data)
+        self.assertEqual(completed.data["exams"][0]["correction_status"], "COMPLETED")
+        self.assertEqual(completed.data["report_layout"]["sections"][0], {
+            "id": "score_comparison",
+            "visible": True,
+        })
+        result.total_score = 60
+        result.save(update_fields=["total_score", "updated_at"])
+
+        stale = self._call()
+
+        self.assertEqual(stale.data["exams"][0]["correction_status"], "PENDING")
 
     def test_foreign_and_template_exam_metadata_is_fail_closed(self):
         other_tenant = Tenant.objects.create(code="student-grades-foreign", name="Foreign", is_active=True)

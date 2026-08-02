@@ -4,6 +4,9 @@ from django.core.management import call_command
 from django.test import TestCase
 
 from apps.core.models import Program, Tenant
+from apps.core.services.student_grade_report_layout import (
+    STUDENT_GRADE_REPORT_LAYOUT_KEY,
+)
 
 
 class SetupThreeTenantsTests(TestCase):
@@ -22,6 +25,13 @@ class SetupThreeTenantsTests(TestCase):
             ymath_program.feature_flags["score_output_mode"],
             "anonymous_billboard",
         )
+        visible = {
+            row["id"]: row["visible"]
+            for row in ymath_program.ui_config[STUDENT_GRADE_REPORT_LAYOUT_KEY]["sections"]
+        }
+        self.assertTrue(visible["lecture_average"])
+        self.assertFalse(visible["improvement_priority"])
+        self.assertFalse(visible["exam_summary"])
 
         tchul_program = Program.objects.get(tenant__code="tchul")
         self.assertNotIn("score_output_mode", tchul_program.feature_flags)
@@ -46,3 +56,4 @@ class SetupThreeTenantsTests(TestCase):
             program.feature_flags["score_output_mode"],
             "anonymous_billboard",
         )
+        self.assertIn(STUDENT_GRADE_REPORT_LAYOUT_KEY, program.ui_config)
