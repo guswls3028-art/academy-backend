@@ -14,6 +14,10 @@ from django.core.management.base import BaseCommand
 
 from academy.adapters.db.django import repositories_core as core_repo
 from apps.core.models import Program
+from apps.core.services.student_grade_report_layout import (
+    STUDENT_GRADE_REPORT_LAYOUT_KEY,
+    ymath_student_grade_report_layout,
+)
 
 DEFAULT_FEATURE_FLAGS = {
     "student_app_enabled": True,
@@ -93,7 +97,14 @@ class Command(BaseCommand):
                     "login_variant": Program.LoginVariant.HAKWONPLUS,
                     "plan": Program.Plan.ALL,
                     "feature_flags": build_feature_flags(code),
-                    "ui_config": {"login_title": f"{name} 로그인"},
+                    "ui_config": {
+                        "login_title": f"{name} 로그인",
+                        **(
+                            {STUDENT_GRADE_REPORT_LAYOUT_KEY: ymath_student_grade_report_layout()}
+                            if code == "ymath"
+                            else {}
+                        ),
+                    },
                     "is_active": True,
                 },
             )
@@ -106,6 +117,12 @@ class Command(BaseCommand):
                     program.feature_flags = feature_flags
                     program.save(update_fields=["feature_flags"])
                     self.stdout.write(self.style.WARNING("  Program feature_flags: ymath mode updated"))
+                ui_config = dict(program.ui_config or {})
+                if STUDENT_GRADE_REPORT_LAYOUT_KEY not in ui_config:
+                    ui_config[STUDENT_GRADE_REPORT_LAYOUT_KEY] = ymath_student_grade_report_layout()
+                    program.ui_config = ui_config
+                    program.save(update_fields=["ui_config"])
+                    self.stdout.write(self.style.WARNING("  Program student grade report layout: ymath preference applied"))
 
             # Signal이 host=code 로 이미 primary 도메인을 만들었을 수 있음 → primary 해제 후 우리 도메인만 primary 사용
             existing_domains = core_repo.tenant_domain_filter_by_tenant(tenant)

@@ -30,6 +30,7 @@ from apps.core.views.tenant_info import (
     PublicOgMetaView,
     LegalConfigView,
 )
+from apps.core.views.student_grade_report_layout import StudentGradeReportLayoutView
 from apps.core.views.dev_dashboard import DevDashboardSummaryView
 from apps.core.views.dev_tenant_ops import (
     DevTenantUsageView,
@@ -67,6 +68,7 @@ __all__ = [
     "TenantInfoView",
     "PublicOgMetaView",
     "LegalConfigView",
+    "StudentGradeReportLayoutView",
     "DevDashboardSummaryView",
     "DevTenantUsageView",
     "DevTenantActivityView",
