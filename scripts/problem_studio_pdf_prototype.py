@@ -308,6 +308,16 @@ def _reconcile_objective_answer(
     return reconciled
 
 
+def _verification_answers_match(first: str, second: str) -> bool:
+    first_answer = _normalize_answer(first)
+    second_answer = _normalize_answer(second)
+    return bool(
+        first_answer
+        and first_answer != "검수필요"
+        and first_answer == second_answer
+    )
+
+
 def solve_manifest(
     *,
     manifest: dict[str, Any],
@@ -561,10 +571,11 @@ def verify_solutions(
                     continue
                 number = int(item["number"])
                 solution = solved[str(number)]
-                first_answer = _normalize_answer(str(solution.get("answer") or ""))
-                second_answer = _normalize_answer(str(result.get("answer") or ""))
                 source_reference = bool(item.get("source_answer"))
-                answers_match = bool(first_answer and first_answer == second_answer)
+                answers_match = _verification_answers_match(
+                    str(solution.get("answer") or ""),
+                    str(result.get("answer") or ""),
+                )
                 solution.update({
                     "verification_answer": str(result.get("answer") or "").strip(),
                     "verification_explanation": str(result.get("explanation") or "").strip(),
@@ -617,6 +628,8 @@ def _verification_label(solution: dict[str, Any]) -> tuple[str, str]:
         return "원본 모범답안 · AI 해설 검수 필요", "#0f766e"
     if status == "manual_source_review":
         return "원본 모범답안 · 직접 검산", "#047857"
+    if status == "manual_ai_review":
+        return "직접 검산 완료", "#047857"
     if status == "source_reference_ai_match":
         return "원본 모범답안 · 독립 풀이 일치", "#0f766e"
     if status == "source_reference_written":
@@ -630,6 +643,11 @@ def _verification_label(solution: dict[str, Any]) -> tuple[str, str]:
     if status == "solve_validation_failed":
         return "검수 필요 · 자동 풀이 검증 실패", "#b91c1c"
     return "검수 필요 · AI 1차 풀이", "#b45309"
+
+
+def _display_answer(value: Any) -> str:
+    answer = str(value or "").strip()
+    return "검수 필요" if "검수 필요" in answer else answer or "검수 필요"
 
 
 def _build_appendix_pdf(
@@ -751,7 +769,7 @@ def _build_appendix_pdf(
     for item in manifest["items"]:
         number = int(item["number"])
         solution = solved.get(str(number)) or {}
-        answer = html.escape(str(solution.get("answer") or "검수 필요"))
+        answer = html.escape(_display_answer(solution.get("answer")))
         label, color = _verification_label(solution)
         explanation = html.escape(str(solution.get("explanation") or "해설 생성 실패 · 검수 필요")).replace("\n", "<br/>")
         check = html.escape(str(solution.get("answer_check") or "근거 기록 없음")).replace("\n", "<br/>")

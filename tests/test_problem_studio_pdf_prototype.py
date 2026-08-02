@@ -1,7 +1,9 @@
 from scripts.problem_studio_pdf_prototype import (
+    _display_answer,
     _is_korean_explanation,
     _objective_result_is_consistent,
     _reconcile_objective_answer,
+    _verification_answers_match,
     _item_input_sha256,
     _verification_label,
 )
@@ -37,6 +39,10 @@ def test_verification_label_distinguishes_manual_and_low_confidence_source():
     })[0] == "원본 모범답안 · 직접 검산"
     assert _verification_label({
         "answer_source": "ai_generated",
+        "verification_status": "manual_ai_review",
+    })[0] == "직접 검산 완료"
+    assert _verification_label({
+        "answer_source": "ai_generated",
         "verification_status": "solve_validation_failed",
     })[0] == "검수 필요 · 자동 풀이 검증 실패"
 
@@ -45,6 +51,12 @@ def test_korean_explanation_gate_rejects_non_korean_output():
     assert _is_korean_explanation("정답 근거를 한국어 문장으로 충분히 설명합니다.")
     assert not _is_korean_explanation("选择①正确，因为图示条件相符。")
     assert not _is_korean_explanation("너무 짧음")
+
+
+def test_verification_never_treats_review_required_as_a_match():
+    assert _verification_answers_match("③ ㄱ, ㄴ", "③")
+    assert not _verification_answers_match("검수 필요", "검수 필요")
+    assert _display_answer("정답 또는 검수 필요") == "검수 필요"
 
 
 def test_objective_result_gate_requires_answer_choice_truth_consistency():
