@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 from django.apps import apps
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from apps.core.models import Tenant, TenantMembership
@@ -108,6 +111,64 @@ class HomeworkPolicyApiTests(APITestCase):
         self.assertEqual(res2.status_code, 200, res2.data)
         self.assertEqual(res2.data["cutline_mode"], "PERCENT")
         self.assertEqual(int(res2.data["cutline_value"]), 70)
+
+    def test_title_only_patch_preserves_session_cutline_default(self):
+        self.client.get(
+            f"/api/v1/homework/policies/?session={self.session.id}",
+            **self.req_headers,
+        )
+        homework = Homework.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title="기존 과제",
+        )
+        detail = self.client.get(
+            f"/api/v1/homeworks/{homework.id}/",
+            **self.req_headers,
+        )
+        self.assertTrue(detail.data["uses_session_cutline_default"])
+
+        response = self.client.patch(
+            f"/api/v1/homeworks/{homework.id}/",
+            {"title": "이름만 변경"},
+            format="json",
+            HTTP_X_EXPECTED_UPDATED_AT=detail.data["updated_at"],
+            **self.req_headers,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data["uses_session_cutline_default"])
+        homework.refresh_from_db()
+        self.assertIsNone(homework.cutline_mode)
+        self.assertIsNone(homework.cutline_value)
+
+    def test_homework_patch_rejects_stale_version(self):
+        homework = Homework.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title="동시 수정 과제",
+        )
+        detail = self.client.get(
+            f"/api/v1/homeworks/{homework.id}/",
+            **self.req_headers,
+        )
+        Homework.objects.filter(pk=homework.id).update(
+            title="다른 선생님 수정",
+            updated_at=timezone.now() + timedelta(seconds=1),
+        )
+
+        response = self.client.patch(
+            f"/api/v1/homeworks/{homework.id}/",
+            {"title": "오래된 화면 수정"},
+            format="json",
+            HTTP_X_EXPECTED_UPDATED_AT=detail.data["updated_at"],
+            **self.req_headers,
+        )
+
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertEqual(response.data["code"], "stale_resource")
+        homework.refresh_from_db()
+        self.assertEqual(homework.title, "다른 선생님 수정")
 
     def test_patch_policy_recalculates_existing_homework_scores(self):
         # ensure policy exists

@@ -252,11 +252,12 @@ class TestCorsPolicy(TestCase):
         origins = getattr(settings, "CORS_ALLOWED_ORIGINS", [])
         self.assertGreater(len(origins), 0, "No CORS allowed origins configured")
 
-    def test_score_edit_headers_are_allowed(self):
-        """Score edit lease headers must survive browser CORS preflight."""
+    def test_concurrent_edit_headers_are_allowed(self):
+        """Concurrent edit protection headers must survive browser CORS preflight."""
         headers = {header.lower() for header in settings.CORS_ALLOW_HEADERS}
         self.assertIn("x-score-editor-client", headers)
         self.assertIn("x-score-session-id", headers)
+        self.assertIn("x-expected-updated-at", headers)
 
 
 class TestAuthFailure(TestCase):
@@ -367,6 +368,7 @@ class TestSettingsIntegrity(TestCase):
             "headers = {header.lower() for header in s.CORS_ALLOW_HEADERS}; "
             "assert 'x-score-editor-client' in headers; "
             "assert 'x-score-session-id' in headers; "
+            "assert 'x-expected-updated-at' in headers; "
             "assert 'https://dev.hakwonplus.com' in s.CORS_ALLOWED_ORIGINS; "
             "assert 'https://dev.hakwonplus.com' in s.CSRF_TRUSTED_ORIGINS"
         )
