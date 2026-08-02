@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.12.19.md](v1.12.19.md) | **CURRENT** | 2026-08-02 KST | YMath diagram-preserving question crops, answer-tail separation, regular-order wrong-note ranges, production round-trip proof, and residue cleanup |
+| [v1.12.20.md](v1.12.20.md) | **CURRENT** | 2026-08-02 KST | Per-homework cutlines, regular/supplement student score scopes, protected frontend rollback closure, and production verification |
+| [v1.12.19.md](v1.12.19.md) | production-deployed / v1.12.20으로 승계 | 2026-08-02 KST | YMath diagram-preserving question crops, answer-tail separation, regular-order wrong-note ranges, production round-trip proof, and residue cleanup |
 | [v1.12.18.md](v1.12.18.md) | production-deployed / v1.12.19로 승계 | 2026-08-02 KST | Seven-day supplement and clinic arrival preparation, operational dashboard and notification surfaces, actionable empty states, and production verification |
 | [v1.12.17.md](v1.12.17.md) | production-deployed / v1.12.18로 승계 | 2026-08-02 KST | Regular/supplement lecture-session separation, compatible full-list view, editable supplement titles, interaction hardening, and production continuity verification |
 | [v1.12.16.md](v1.12.16.md) | production-deployed / v1.12.17로 승계 | 2026-08-01 KST | Tenant-wide attendance roster ordering, account-and-PC persisted sort preference, full-list server ordering, and production continuity verification |
