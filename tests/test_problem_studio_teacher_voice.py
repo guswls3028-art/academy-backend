@@ -561,6 +561,114 @@ class ProblemStudioTeacherVoiceTests(TestCase):
         )
         self.assertIn("[[수식:H^+]]", explanations[0]["answer_check"])
         self.assertIn("[[수식:OH^-]]", explanations[0]["answer_check"])
+        prompt = get_client.return_value.chat.completions.create.call_args.kwargs["messages"][1]["content"]
+        self.assertIn('"source_answer_choice": "② 물"', prompt)
+
+    @patch("academy.adapters.ai.problem.generator._get_client")
+    @patch("apps.domains.ai.services.quota.consume_ai_quota")
+    @patch("academy.adapters.ai.problem.generator.AIConfig.load")
+    def test_transcribed_explanations_send_question_visual_to_beta_model(
+        self,
+        config_load,
+        _quota,
+        get_client,
+    ):
+        config_load.return_value = SimpleNamespace(
+            OPENAI_API_KEY="test-key",
+            PROBLEM_GEN_MODEL="fallback-model",
+        )
+        get_client.return_value.responses.create.return_value = SimpleNamespace(
+            output_text=json.dumps({
+                "explanations": [{
+                    "index": 1,
+                    "answer": "②",
+                    "explanation": "그래프의 증가 구간이므로 ②입니다.",
+                    "answer_check": "그래프의 기울기가 양수입니다.",
+                    "confidence": "high",
+                }],
+            }, ensure_ascii=False),
+        )
+
+        generate_transcribed_explanations(
+            questions=[{
+                "prompt": "그래프의 증가 구간을 고르시오.",
+                "choices": ["① A", "② B"],
+                "answer": "",
+                "explanation": "",
+                "visual": {"mime": "image/png", "data": b"test-png"},
+            }],
+            subject="과학",
+            note_policy="그래프 근거를 설명합니다.",
+            model="gpt-5.6-luna",
+        )
+
+        request = get_client.return_value.responses.create.call_args.kwargs
+        self.assertEqual(request["model"], "gpt-5.6-luna")
+        user_content = request["input"][0]["content"]
+        self.assertIsInstance(user_content, list)
+        self.assertIn(
+            "[문항 1 도식]",
+            [item.get("text") for item in user_content if item.get("type") == "input_text"],
+        )
+        image_url = next(
+            item["image_url"]
+            for item in user_content
+            if item.get("type") == "input_image"
+        )
+        self.assertTrue(image_url.startswith("data:image/png;base64,"))
+
+    @patch("boto3.client")
+    @patch("apps.domains.ai.services.quota.consume_ai_quota")
+    @patch("academy.adapters.ai.problem.generator.AIConfig.load")
+    def test_transcribed_explanations_accept_bedrock_model_and_region_override(
+        self,
+        config_load,
+        _quota,
+        boto_client,
+    ):
+        config_load.return_value = SimpleNamespace(
+            OPENAI_API_KEY=None,
+            PROBLEM_GEN_BEDROCK_MODEL="global.amazon.nova-2-lite-v1:0",
+            PROBLEM_TRANSCRIPTION_BEDROCK_MODEL="global.amazon.nova-2-lite-v1:0",
+            BEDROCK_REGION="ap-northeast-2",
+        )
+        boto_client.return_value.converse.return_value = {
+            "output": {
+                "message": {
+                    "content": [{
+                        "text": json.dumps({
+                            "explanations": [{
+                                "index": 1,
+                                "answer": "②",
+                                "explanation": "정답 근거를 한국어로 충분히 설명합니다.",
+                                "answer_check": "선택지 조건을 확인했습니다.",
+                                "confidence": "high",
+                            }],
+                        }, ensure_ascii=False),
+                    }],
+                },
+            },
+        }
+
+        generate_transcribed_explanations(
+            questions=[{
+                "prompt": "옳은 답을 고르시오.",
+                "choices": ["① A", "② B"],
+                "answer": "",
+                "explanation": "",
+            }],
+            subject="과학",
+            note_policy="근거를 설명합니다.",
+            bedrock_model="us.amazon.nova-pro-v1:0",
+            bedrock_region="us-east-1",
+        )
+
+        boto_client.assert_called_once()
+        assert boto_client.call_args.kwargs["region_name"] == "us-east-1"
+        request = boto_client.return_value.converse.call_args.kwargs
+        self.assertEqual(request["modelId"], "us.amazon.nova-pro-v1:0")
+        self.assertNotIn("additionalModelRequestFields", request)
+        self.assertIn("반드시 한국어", request["messages"][0]["content"][0]["text"])
 
     @patch("boto3.client")
     @patch("apps.domains.ai.services.quota.consume_ai_quota")

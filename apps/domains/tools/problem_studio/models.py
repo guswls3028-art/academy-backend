@@ -302,3 +302,83 @@ class ProblemStudioGenerationReview(TimestampModel):
                 name="idx_ps_review_owner_created",
             ),
         ]
+
+
+class ProblemStudioBetaRun(TimestampModel):
+    """Tenant-scoped Beta trial reservation for one full workbook run."""
+
+    class Status(models.TextChoices):
+        RESERVED = "reserved", "진행 중"
+        COMPLETED = "completed", "사용 완료"
+        RELEASED = "released", "차감 취소"
+
+    class Stage(models.TextChoices):
+        EXTRACT = "extract", "문항 분석"
+        SOLVE = "solve", "정답·해설 생성"
+        VERIFY = "verify", "독립 검산"
+        BUILD = "build", "PDF 생성"
+        DONE = "done", "완료"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="problem_studio_beta_runs",
+        db_index=True,
+    )
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="problem_studio_beta_runs",
+    )
+    job_id = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.RESERVED,
+        db_index=True,
+    )
+    release_reason = models.CharField(max_length=240, blank=True, default="")
+    stage = models.CharField(
+        max_length=16,
+        choices=Stage.choices,
+        default=Stage.EXTRACT,
+        db_index=True,
+    )
+    source_name = models.CharField(max_length=255, blank=True, default="")
+    source_archive_key = models.CharField(max_length=512, blank=True, default="")
+    checkpoint_key = models.CharField(max_length=512, blank=True, default="")
+    solutions_key = models.CharField(max_length=512, blank=True, default="")
+    result_key = models.CharField(max_length=512, blank=True, default="")
+    result_filename = models.CharField(max_length=255, blank=True, default="")
+    request_payload = models.JSONField(default=dict, blank=True)
+    result_payload = models.JSONField(default=dict, blank=True)
+    question_count = models.PositiveIntegerField(default=0)
+    completed_question_count = models.PositiveIntegerField(default=0)
+    verified_question_count = models.PositiveIntegerField(default=0)
+    review_required_count = models.PositiveIntegerField(default=0)
+    last_error = models.TextField(blank=True, default="")
+
+    objects = TenantQuerySet.as_manager()
+
+    class Meta:
+        db_table = "problem_studio_beta_run"
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["job_id"],
+                condition=~models.Q(job_id=""),
+                name="uq_ps_beta_run_job",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["tenant", "status", "created_at"],
+                name="idx_ps_beta_tenant_status",
+            ),
+            models.Index(
+                fields=["tenant", "requested_by", "created_at"],
+                name="idx_ps_beta_owner_created",
+            ),
+        ]

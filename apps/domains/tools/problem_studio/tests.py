@@ -26,11 +26,13 @@ from apps.domains.tools.problem_studio.worker import handle_problem_studio_packa
 from apps.domains.tools.problem_studio.transfer_documents import (
     TRANSFER_MAX_ZIP_MEMBERS,
     _detect_page_columns,
+    _question_visual_map_by_source,
     _visual_fragments_from_pdf_blocks,
     build_transfer_package,
     package_to_response,
     _normalize_hwp_image_data,
     QuestionVisual,
+    TransferDocument,
     TransferOcrContext,
 )
 from apps.domains.tools.problem_studio.extractors import extract_hwpx_text
@@ -69,6 +71,31 @@ _TINY_PNG = base64.b64decode(
 
 
 class ProblemStudioServiceTests(SimpleTestCase):
+    def test_question_visual_mapping_scopes_repeated_numbers_by_source(self):
+        documents = [
+            TransferDocument(
+                filename=f"{name}.doc",
+                html="",
+                source_name=name,
+                kind="PDF",
+                question_visuals=[QuestionVisual(
+                    source_name=name,
+                    page_number=1,
+                    question_number=1,
+                    mime="image/png",
+                    data=data,
+                    semantic_flags=("visual_context",),
+                    role="visual_fragment",
+                )],
+            )
+            for name, data in (("first.pdf", b"first"), ("second.pdf", b"second"))
+        ]
+
+        mapped = _question_visual_map_by_source(documents)
+
+        self.assertEqual(mapped[("first.pdf", 1)]["data"], b"first")
+        self.assertEqual(mapped[("second.pdf", 1)]["data"], b"second")
+
     def test_structure_ignores_pdf_page_markers_and_source_headers(self):
         items = structure_text(
             source_name="scan.pdf",
@@ -309,8 +336,9 @@ class ProblemStudioServiceTests(SimpleTestCase):
             },
         }
 
-        def explain(structure):
+        def explain(structure, question_visuals):
             self.assertEqual(structure.items[0].prompt, "H₂O의 생성 반응을 고르시오.")
+            self.assertEqual(question_visuals, {})
             return [{
                 "index": 1,
                 "answer": "②",
@@ -790,7 +818,7 @@ class ProblemStudioServiceTests(SimpleTestCase):
     def test_transfer_package_reports_structure_limit_in_review_document(self):
         paragraphs = "".join(
             f"<w:p><w:r><w:t>1. 반응 {index}을 고르시오.</w:t></w:r></w:p>"
-            for index in range(1, 82)
+            for index in range(1, 1002)
         )
         uploaded = _zip_file(
             "many-questions.docx",
@@ -805,10 +833,10 @@ class ProblemStudioServiceTests(SimpleTestCase):
         package = build_transfer_package(payload={"title": "구조화 한도"}, source_files=[uploaded])
 
         self.assertTrue(package.structure_limit_reached)
-        self.assertEqual(package.structured_item_count, 80)
+        self.assertEqual(package.structured_item_count, 1000)
         with zipfile.ZipFile(BytesIO(package.data)) as zf:
             checklist = zf.read("00_먼저열기_검수체크리스트.doc").decode("utf-8-sig")
-        self.assertIn("최대 80개", checklist)
+        self.assertIn("최대 1000개", checklist)
 
     def test_parse_payload_rejects_broken_json(self):
         with self.assertRaises(ValueError):

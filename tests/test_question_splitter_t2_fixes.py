@@ -1218,7 +1218,8 @@ def test_marginal_anchor_extracts_standalone_number():
     assert _extract_marginal_question_number("3. 다음") is None
     assert _extract_marginal_question_number("3.0") is None
     assert _extract_marginal_question_number("1)") is None
-    assert _extract_marginal_question_number("501.") is None  # > 500 (max legit)
+    assert _extract_marginal_question_number("873.") == 873
+    assert _extract_marginal_question_number("1001.") is None  # > 1000 (max legit)
 
 
 def test_question_anchor_accepts_ocr_slash_separator():

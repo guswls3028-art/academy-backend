@@ -38,6 +38,7 @@ QuotaKind = Literal[
     "matchup", "ocr", "embedding_openai",
     "problem_generation", "schema_infer",
     "problem_studio_transcription",
+    "problem_studio_explanation",
     "matchup_vlm",  # Gemini VLM 호출 (B-2 paper_type + 운영 자동분리, 2026-05-04)
 ]
 
@@ -51,8 +52,11 @@ DEFAULT_LIMITS: dict[str, dict[str, int]] = {
     "matchup":            {"daily": 30,   "monthly": 600},
     "ocr":                {"daily": 500,  "monthly": 8000},
     "embedding_openai":   {"daily": 300,  "monthly": 5000},
+    # Problem Studio Beta allows three tenant-wide workbook runs. A 1,000-item
+    # workbook uses up to 100 explanation batches and 250 image-only pages.
     "problem_generation": {"daily": 100,  "monthly": 2000},
-    "problem_studio_transcription": {"daily": 120, "monthly": 2500},
+    "problem_studio_explanation": {"daily": 300, "monthly": 2000},
+    "problem_studio_transcription": {"daily": 750, "monthly": 2500},
     "schema_infer":       {"daily": 50,   "monthly": 500},
     # B-2 (2026-05-04): VLM 호출 — Gemini Flash $0.005/call → daily 500=$2.5, monthly 10000=$50.
     # in-memory _check_tenant_quota(MATCHUP_VLM_PER_TENANT_DAILY_LIMIT) fast-fail과 별도로

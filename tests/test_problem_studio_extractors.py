@@ -1,4 +1,5 @@
 from io import BytesIO
+from types import SimpleNamespace
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from apps.domains.tools.problem_studio.extractors import (
@@ -10,8 +11,16 @@ from apps.domains.tools.problem_studio.extractors import (
     extract_hwpx_text,
 )
 from apps.domains.tools.problem_studio.hwpx_writer import build_hwpx_exam_document
-from apps.domains.tools.problem_studio.structure import structure_text
-from apps.domains.tools.problem_studio.transfer_documents import build_transfer_package
+from apps.domains.tools.problem_studio.structure import (
+    analyze_transfer_documents,
+    structure_text,
+)
+from apps.domains.tools.problem_studio.transfer_documents import (
+    _pdf_workbook_page_kind,
+    _pdf_workbook_question_text,
+    _pdf_workbook_reference_answers,
+    build_transfer_package,
+)
 from apps.domains.tools.problem_studio.voice_profiles import (
     augment_voice_profile_with_source_items,
 )
@@ -364,6 +373,137 @@ def test_transfer_package_preserves_uploaded_original_bytes():
         )
 
 
+def test_pdf_workbook_pairs_source_indexes_with_visible_question_numbers():
+    page_text = """4 · 러닝 헤더
+개포고 기출
+[2025년]
+1-1-1
+1)
+1. 첫 번째 문제이다.
+① 보기 A
+② 보기 B
+세화고 기출
+[2025년]
+1-1-1
+2)
+2. 두 번째 문제이다.
+1. 이 줄은 두 번째 문제 안의 소문항이다.
+① 보기 A
+② 보기 B
+"""
+
+    assert _pdf_workbook_page_kind(page_text) == "questions"
+    normalized = _pdf_workbook_question_text(page_text)
+
+    assert "\n1)" not in normalized
+    assert normalized.count("1. 첫 번째 문제") == 1
+    assert normalized.count("2. 두 번째 문제") == 1
+    assert "1． 이 줄은 두 번째 문제 안의 소문항" in normalized
+    assert "세화고 기출" not in normalized
+
+
+def test_pdf_workbook_repairs_split_circled_choice_and_keeps_word_puli_in_stem():
+    page_text = """1)
+1. 풀이 말라 죽는 비율을 고사율이라고 한다.
+① 첫 보기
+② 둘째 보기
+③ 셋째 보기
+④ 넷째 보기
+◯
+5 다섯째 보기
+"""
+
+    normalized = _pdf_workbook_question_text(page_text)
+    item = structure_text(source_name="science.pdf", text=normalized)[0]
+
+    assert item.explanation == ""
+    assert "풀이 말라 죽는 비율" in item.prompt
+    assert item.choices == [
+        "① 첫 보기",
+        "② 둘째 보기",
+        "③ 셋째 보기",
+        "④ 넷째 보기",
+        "⑤ 다섯째 보기",
+    ]
+
+
+def test_structure_keeps_numbered_written_subquestions_in_prompt_order():
+    items = structure_text(
+        source_name="science.pdf",
+        text=(
+            "1. 다음 자료를 보고 답하시오.\n"
+            "(1) 첫 번째 값을 구하시오.\n"
+            "(2) 그 까닭을 서술하시오."
+        ),
+    )
+
+    assert len(items) == 1
+    assert items[0].choices == []
+    assert items[0].prompt.endswith(
+        "(1) 첫 번째 값을 구하시오.\n(2) 그 까닭을 서술하시오."
+    )
+
+
+def test_structure_recognizes_explicit_explanation_label():
+    item = structure_text(
+        source_name="science.pdf",
+        text="1. 첫 문제\n① A\n② B\n해설: 명시적인 해설입니다.",
+    )[0]
+
+    assert item.explanation == "명시적인 해설입니다."
+    assert "해설 확인" not in item.review_flags
+
+
+def test_pdf_workbook_separates_answer_appendix_and_page_continuation():
+    page_text = """212 · 대성마이맥과 두각학원
+(2) 앞 페이지 122번 답의 계속
+123) ②
+124)
+125) 서술형 정답입니다.
+126) ④
+127) ①
+"""
+
+    assert _pdf_workbook_page_kind(page_text) == "answers"
+    leading, answers = _pdf_workbook_reference_answers(page_text)
+
+    assert leading == "(2) 앞 페이지 122번 답의 계속"
+    assert answers == {
+        123: "②",
+        124: "",
+        125: "서술형 정답입니다.",
+        126: "④",
+        127: "①",
+    }
+
+
+def test_structure_attaches_only_non_empty_reference_answers():
+    document = SimpleNamespace(
+        source_name="science.pdf",
+        filename="science.pdf",
+        kind="PDF",
+        plain_text=(
+            "1. 첫 문제\n① A\n② B\n\n"
+            "2. 둘째 문제\n① A\n② B"
+        ),
+        reference_answers={1: "②", 2: ""},
+        text_chars=35,
+        image_count=2,
+        page_count=1,
+        ocr_completed_units=0,
+        ocr_pending_units=0,
+    )
+
+    structure = analyze_transfer_documents([document], [])
+
+    assert [item.number for item in structure.items] == [1, 2]
+    assert structure.items[0].answer == "②"
+    assert structure.items[0].answer_check == "업로드 원본의 모범답안에서 추출"
+    assert "정답 확인" not in structure.items[0].review_flags
+    assert structure.items[1].answer == ""
+    assert "정답 확인" in structure.items[1].review_flags
+
+
 def test_transfer_uses_uploaded_teacher_explanations_as_ephemeral_voice_only():
     source = _hwpx_with_text(
         preview="",
@@ -389,7 +529,7 @@ def test_transfer_uses_uploaded_teacher_explanations_as_ephemeral_voice_only():
     }
     captured: dict[str, object] = {}
 
-    def explanation_builder(_structure):
+    def explanation_builder(_structure, _question_visuals):
         captured["profile"] = payload.get("_resolved_voice_profile")
         return []
 

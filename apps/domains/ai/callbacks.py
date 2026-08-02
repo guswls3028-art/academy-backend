@@ -46,6 +46,43 @@ def dispatch_ai_result_to_domain(
     AI Job 완료 후 도메인별 후속 처리 디스패처.
     source_domain에 따라 적절한 도메인 핸들러로 라우팅한다.
     """
+    if source_domain == "tools_problem_studio":
+        try:
+            from apps.domains.tools.problem_studio.beta_access import (
+                beta_run_id_from_job_payload,
+                settle_beta_run,
+            )
+            from apps.domains.ai.models import AIJobModel
+
+            job_payload = (
+                AIJobModel.objects.filter(job_id=job_id)
+                .values_list("payload", flat=True)
+                .first()
+            )
+            from apps.domains.tools.problem_studio.explanation_workflow import (
+                settle_explanation_step_failure,
+            )
+
+            settle_explanation_step_failure(
+                job_id=job_id,
+                status=status,
+                payload=job_payload,
+                error=error or "",
+            )
+            settle_beta_run(
+                run_id=beta_run_id_from_job_payload(job_payload),
+                job_id=job_id,
+                terminal_status=status,
+                error=error or "",
+            )
+        except Exception:
+            logger.exception(
+                "AI_CALLBACK_PROBLEM_STUDIO_BETA_FAILED | job_id=%s",
+                job_id,
+            )
+            return False
+        return True
+
     if source_domain == "results_wrong_note_pdf":
         try:
             _handle_wrong_note_pdf_result(

@@ -17,9 +17,9 @@ if TYPE_CHECKING:
 
 
 # 시험지/워크북 문항 번호 현실 상한.
-# tenant2 과거 수동 GT에는 clean PDF workbook 문항 번호가 399까지 존재한다.
-# 500 초과는 연도/페이지/잡음 숫자일 가능성이 커 anchor로 쓰지 않는다.
-_MAX_LEGIT_QUESTION_NUMBER = 500
+# 대형 문제집 Beta는 한 권에서 1,000번 문항까지 구조화한다.
+# 1,000 초과는 연도/페이지/잡음 숫자일 가능성이 커 anchor로 쓰지 않는다.
+_MAX_LEGIT_QUESTION_NUMBER = 1000
 _IGNORABLE_PDF_CONTROL_RE = re.compile(
     r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]"
 )

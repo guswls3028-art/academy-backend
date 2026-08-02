@@ -1,6 +1,6 @@
 # Problem Studio Domain Note
 
-Last verified: 2026-07-28
+Last verified: 2026-08-02
 
 ## Product Philosophy
 
@@ -28,6 +28,11 @@ Do not describe the current product as "rewriting other textbooks" or "automatic
   - beta rewrite candidates for teacher review
   - text correction and question editor
   - PDF/print preview
+- Full-workbook answer and explanation generation is visibly marked `Beta`.
+  Each tenant receives three shared free completed runs. Running reservations
+  also occupy the allowance so concurrent requests cannot exceed three; a
+  system-failed job releases its reservation, while a completed ZIP consumes
+  one run. There is no paid continuation in this Beta contract yet.
 - `내 문서 스타일` keeps each teacher's title/body font, point size, line spacing, and question spacing. Teachers can upload private TTF/OTF files after confirming their usage rights.
 
 Keep this hierarchy. If the page starts feeling like a full authoring studio again, it is probably regressing for the current use case.
@@ -64,6 +69,9 @@ Backend:
   - `POST /api/v1/tools/problem-studio/transfer-document/`
   - `POST /api/v1/tools/problem-studio/transfer-jobs/`
   - `GET /api/v1/tools/problem-studio/transfer-jobs/<job_id>/`
+  - `POST /api/v1/tools/problem-studio/explanation-runs/`
+  - `GET /api/v1/tools/problem-studio/explanation-runs/<run_id>/`
+  - `POST /api/v1/tools/problem-studio/explanation-runs/<run_id>/resume/`
   - `POST /api/v1/tools/problem-studio/transfer-jobs/<job_id>/hangul-handoff/`
   - `GET /api/v1/tools/problem-studio/hangul-handoffs/<token>/`
   - `GET /api/v1/tools/problem-studio/hangul-companion/`
@@ -87,7 +95,7 @@ Backend:
 - Font assets and saved styles are scoped to the exact tenant and uploading teacher. The API resolves a private internal snapshot, and the worker revalidates tenant, user, asset status, SHA-256, and R2 key before creating a package. Public/status responses never expose font R2 keys.
 - Font bytes are intentionally not embedded in HWPX or the result ZIP. A five-minute one-time Hangul handoff issues fresh font URLs only to the teacher who owns the selected assets. The companion verifies size/SHA-256/file magic and asks before current-user installation.
 - Beta rewrite uses the async job path only. If the AI adapter or quota fails, the service returns a rule-based teacher-review candidate and warning instead of blocking the base transfer feature.
-- The primary large source path uploads a tenant-prefixed temporary archive and dispatches `problem_studio_transcription` to the AI CPU worker. When `OPENAI_API_KEY` is configured the worker uses `PROBLEM_TRANSCRIPTION_MODEL`; otherwise it uses AWS Bedrock `PROBLEM_TRANSCRIPTION_BEDROCK_MODEL` (default `global.amazon.nova-2-lite-v1:0`) through the instance role, so production does not depend on a static provider secret. Up to `PROBLEM_STUDIO_AI_MAX_UNITS` image-only units are processed (default 24, hard bounded to 40). Provider failure falls back per unit to local OCR and reports the fallback count. The synchronous transfer endpoint remains a non-AI fallback. Both produce a ZIP containing Hangul/Word-compatible `.doc` HTML drafts plus:
+- The primary large source path uploads a tenant-prefixed temporary archive and dispatches `problem_studio_transcription` to the AI CPU worker. When `OPENAI_API_KEY` is configured the worker uses `PROBLEM_TRANSCRIPTION_MODEL`; otherwise it uses AWS Bedrock `PROBLEM_TRANSCRIPTION_BEDROCK_MODEL` (default `global.amazon.nova-2-lite-v1:0`) through the instance role, so production does not depend on a static provider secret. Up to `PROBLEM_STUDIO_AI_MAX_UNITS` image-only units are processed (default 240, hard bounded to 250). Provider failure falls back per unit to local OCR and reports the fallback count. The synchronous transfer endpoint remains a non-AI fallback. Both produce a ZIP containing Hangul/Word-compatible `.doc` HTML drafts plus:
   - `00_먼저열기_검수체크리스트.doc`
   - `00_변환리포트.html`
   - `00_manifest.json`
@@ -111,6 +119,13 @@ Backend:
 Source extraction and structure support:
 
 - PDF: server attempts text extraction with PyMuPDF and records per-part text-layer results for structure analysis.
+- Large commercial workbooks that print a source index as `N)` immediately
+  before the visible `N.` question stem are normalized as one question. Pages
+  with five or more `N)` answer entries but without matching `N.` stems are
+  treated as answer appendices, not as another copy of the workbook. Non-empty
+  appendix answers are attached to the same numbered question; blank appendix
+  entries remain unsolved review items. Page-leading continuation text is
+  appended to the preceding written answer.
 - Transfer package PDF: server renders every source page to embedded page images, split into 60-page `.doc` parts. If the PDF has no text layer, the part is marked as an OCR candidate rather than treated as editable text.
 - Bounded OCR: scanned image/PDF pages without a text layer are attempted through local Tesseract OCR up to `PROBLEM_STUDIO_OCR_MAX_UNITS` per transfer package (default 8). Successful OCR text feeds the same structure analyzer; failed, skipped, or over-limit units remain in `02_OCR_연결후보.csv`.
 - Primary AI transcription: image-only units are sent without a persisted external URL and are instructed to transcribe visible text only, never solve/correct/infer. It preserves visible Unicode sub/superscripts and uses `[[수식:LaTeX]]` for structured formulas that cannot be faithfully represented as linear Unicode. Page text feeds the same structure analyzer. Formulas, tables, figures, and `[판독불가]` remain mandatory teacher-review points.
@@ -122,7 +137,52 @@ Source extraction and structure support:
 - DOC binary: metadata/warning only.
 - ZIP: transfer package expands supported nested sources (`.pdf`, `.hwp`, `.hwpx`, `.docx`, `.doc`, image files) within safety limits and writes one or more `.doc` drafts per nested file. Beta rewrite also reads supported nested text documents within the same safety posture.
 - Image files: embedded as visual pages in the transfer package, then passed through bounded local OCR. Remaining unreadable/over-limit images are marked as OCR candidates for later text editability.
-- Structure analyzer: extracted PDF/HWP/HWPX/DOCX/AI-transcribed text is split into teacher-review problem/concept candidates. A workbook is capped at 80 structured items; `structure_limit_reached` and the review action explicitly direct the teacher to continue in the visual source documents when the cap is reached.
+- Structure analyzer: extracted PDF/HWP/HWPX/DOCX/AI-transcribed text is split into teacher-review problem/concept candidates. Beta recognizes question numbers through 1,000 and caps one workbook at 1,000 structured items; `structure_limit_reached` and the review action explicitly direct the teacher to continue in the visual source documents when the cap is reached.
+- Automatic explanations are generated in batches of ten. Direct OpenAI routing uses the economy `PROBLEM_STUDIO_EXPLANATION_MODEL` (default `gpt-5.6-luna`); the Bedrock path keeps Nova 2 Lite and enables its low extended-thinking mode only for transcribed explanation calls. A detected visual fragment for the same question number is sent with the transcribed text so tables, graphs, circuits, and diagrams are not silently discarded. For multiple-choice source answers, the prompt also includes the exact choice text selected by the source answer symbol and requires the explanation's truth-value claims to stay consistent with it. Existing source answers remain authoritative inputs, while generated answers and every explanation retain the teacher-review contract.
+- Technical-prototype runner:
+  `backend/scripts/problem_studio_pdf_prototype.py`. It extracts one large PDF
+  into a SHA-256-bound manifest, requires continuous unique question numbers
+  and one crop per question, fingerprints each question input so parser fixes
+  invalidate only stale explanations, stores each explanation batch atomically
+  for resume, can record independent verification results, and appends a Korean
+  answer/explanation section to the untouched source pages. The runner is a
+  local benchmark tool: it does not write tenant data or consume a tenant Beta
+  run. When the source appendix has no answer, the benchmark defaults to the
+  mid-tier Nova Pro model while source-answer explanations keep Nova 2 Lite;
+  non-Korean output and objective answers whose true-statement combination does
+  not match the selected choice are retried instead of being silently accepted.
+  After retry exhaustion, that question is isolated as a low-confidence
+  `검수 필요` entry so one ambiguous diagram does not discard the whole book.
+  Independent verification can be limited to AI-generated answers so the
+  benchmark spends the second pass on blank source entries rather than
+  re-litigating authoritative appendix answers.
+- The tenant worker now uses the same manifest/solution contract through
+  `ProblemStudioBetaRun`. One uploaded PDF advances through `extract`, `solve`,
+  `verify`, and `build`. Extraction writes an immutable checkpoint ZIP; solve
+  and verification run as separate ten-question AI jobs and replace only the
+  tenant-prefixed `tmp/explanation-runs/` solution JSON. Each child job stays below the common
+  60-minute worker boundary. The final stage appends a Korean explanation
+  section to the untouched source PDF and stores one tenant-scoped result.
+- The production Beta keeps the economy route for both passes: OpenAI uses
+  `PROBLEM_STUDIO_EXPLANATION_MODEL`, while Bedrock uses Nova 2 Lite even for
+  source entries without an answer. Only AI-generated answers receive the
+  second independent pass. A disagreement, Korean/choice validation failure,
+  or provider verification failure remains an explicit red `검수 필요` item;
+  it does not silently become an authoritative answer.
+- The browser can close while a run continues. It stores only `run_id`, and
+  reopening the page re-reads DB progress. A worker terminal failure releases
+  the Beta reservation but preserves the tenant checkpoint and failed stage;
+  `POST .../resume/` creates a forced idempotent rerun from that stage. A
+  completed run deletes the temporary source/checkpoint/solution objects after
+  the final PDF is durable. Failed-run artifacts remain only for explicit
+  resume and require the existing Problem Studio temporary-object operational
+  cleanup boundary.
+- Beta allowance state is exposed by `GET /api/v1/tools/problem-studio/beta-access/`.
+  `ProblemStudioBetaRun` reservations are tenant scoped. `DONE` consumes a
+  run; system terminal failures release it, and a resume occupies an available
+  tenant slot again without creating a second completed charge. The legacy
+  terminal callback still settles transfer jobs dispatched before this split.
+  The UI must not imply that the three runs belong to an individual teacher.
 - Fixture verification script: `backend/scripts/problem_studio_transfer_fixtures.py` converts a local source folder into the same transfer ZIP and JSON summary for regression checks.
 - UAT runbook: `backend/docs/operations/runbooks/problem-studio-source-transfer-uat.md`
 
@@ -138,6 +198,13 @@ Source extraction and structure support:
 ## Known Limitations
 
 - AI transcription is bounded and best-effort. Large scanned PDFs can still leave pages in `02_OCR_연결후보.csv` after `PROBLEM_STUDIO_AI_MAX_UNITS`, when Bedrock/OpenAI and local OCR are unavailable, or when no text is returned. The EC2 worker role is limited to `bedrock:InvokeModel` on the sealed Nova 2 Lite inference profile and foundation model. The current Nova 2 Lite profile is global rather than Korea- or APAC-resident; do not use this path for material that cannot lawfully leave Korea, and mask unnecessary personal data before submission.
+- One Beta worker execution still has the AI worker's 60-minute terminal boundary. Very dense scanned books can fail before completion; that system failure returns the tenant trial reservation, but the teacher must retry after reducing the source or improving its text layer.
+- Economy multimodal models can agree with each other and still misread a
+  dense Korean science diagram. Source answer symbols stay authoritative; an
+  AI answer for a blank source entry is never promoted merely because two
+  models agree. The prototype PDF distinguishes source answers, independent
+  matches, mismatches, and written-answer references so a teacher can target
+  review instead of receiving a false all-clear.
 - No binary native `.hwp` writer yet. The current `.doc` is intentionally a compatibility draft, and `03_자체양식_문제검수본.hwpx` is a text-focused companion workbook rather than exact source layout reconstruction.
 - HWP transfer preserves extracted text and embedded images, not exact object ordering or native HWP layout. It is a teacher review draft, not a final typeset workbook.
 - Problem/concept structure is heuristic. The system now produces a `01_자체양식_문제검수본.doc`, but teachers must still verify split boundaries, choices, answers, and explanations.

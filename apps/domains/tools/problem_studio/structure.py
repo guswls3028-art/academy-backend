@@ -5,10 +5,10 @@ from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Iterable
 
 
-MAX_STRUCTURED_ITEMS = 80
+MAX_STRUCTURED_ITEMS = 1000
 MAX_ITEM_TEXT = 4500
 
-_QUESTION_NUMBER_TOKEN = r"(?:[1-9]|[1-7]\d|80)"
+_QUESTION_NUMBER_TOKEN = r"(?:[1-9]\d{0,2}|1000)"
 _QUESTION_SPLIT_RE = re.compile(
     rf"\n(?=\s*(?:{_QUESTION_NUMBER_TOKEN}\s*[.)]|문제\s*{_QUESTION_NUMBER_TOKEN}|Q\s*{_QUESTION_NUMBER_TOKEN})\s*)",
     re.IGNORECASE,
@@ -19,10 +19,14 @@ _LEADING_NUMBER_RE = re.compile(
 )
 _NUMBER_RE = re.compile(rf"^\s*(?P<number>{_QUESTION_NUMBER_TOKEN})\s*[.)]")
 _CHOICE_RE = re.compile(r"^\s*(?:[①②③④⑤⑥⑦⑧⑨]|\([1-9]\)|[1-9]\)|[A-Ea-e][.)])\s*")
+_PARENTHESIZED_CHOICE_RE = re.compile(r"^\s*\([1-9]\)\s*")
 _INLINE_CIRCLED_CHOICE_RE = re.compile(r"(?=[①②③④⑤⑥⑦⑧⑨])")
 _ANSWER_RE = re.compile(r"(?:정답|답)\s*[:：]?\s*(?P<answer>[①②③④⑤⑥⑦⑧⑨1-9A-Ea-e]+)")
 _ANSWER_LABEL_RE = re.compile(r"^\s*(?:정답|답)\s*[:：]?\s*$", re.MULTILINE)
-_EXPLANATION_RE = re.compile(r"(?:해설|풀이)\s*[:：]?\s*(?P<explanation>.+)", re.DOTALL)
+_EXPLANATION_RE = re.compile(
+    r"^\s*(?:해설|풀이)(?:\s*[:：]\s*|\s*\n\s*)(?P<explanation>.+)",
+    re.DOTALL | re.MULTILINE,
+)
 _PAGE_SCAFFOLD_RE = re.compile(r"^\[\s*\d+\s*(?:쪽|페이지)(?:\s+OCR)?\s*\]$")
 _SOURCE_HEADER_ONLY_RE = re.compile(r"^\[[^\]\n]{2,120}\]$")
 _EXPLICIT_QUESTION_LINE_RE = re.compile(
@@ -134,10 +138,19 @@ def extract_problem_fields(block: str) -> dict[str, Any]:
         else clean
     )
     lines = [line.strip() for line in question_text.splitlines() if line.strip()]
+    parenthesized_numbers = {
+        int(match.group(1))
+        for line in lines
+        if (match := re.match(r"^\s*\(([1-9])\)\s*", line))
+    }
+    has_numbered_subquestions = {1, 2}.issubset(parenthesized_numbers)
     choices: list[str] = []
     body_lines: list[str] = []
     for line in lines:
-        if _CHOICE_RE.match(line):
+        is_numbered_subquestion = (
+            has_numbered_subquestions and _PARENTHESIZED_CHOICE_RE.match(line)
+        )
+        if _CHOICE_RE.match(line) and not is_numbered_subquestion:
             inline_choices = [
                 value.strip()
                 for value in _INLINE_CIRCLED_CHOICE_RE.split(line)
@@ -274,6 +287,34 @@ def analyze_transfer_documents(documents: Iterable[Any], warnings: Iterable[str]
                 "reason": reason,
                 "recommended_action": recommended_action,
             })
+
+    reference_answers: dict[int, str] = {}
+    for doc in docs:
+        raw_answers = getattr(doc, "reference_answers", None)
+        if not isinstance(raw_answers, dict):
+            continue
+        for raw_number, raw_answer in raw_answers.items():
+            try:
+                number = int(raw_number)
+            except (TypeError, ValueError):
+                continue
+            answer = str(raw_answer or "").strip()
+            if number > 0 and answer and number not in reference_answers:
+                reference_answers[number] = answer
+    if reference_answers:
+        items = [
+            replace(
+                item,
+                answer=reference_answers[item.number],
+                answer_check="업로드 원본의 모범답안에서 추출",
+                review_flags=[flag for flag in item.review_flags if flag != "정답 확인"],
+            )
+            if item.item_type == "problem"
+            and not item.answer
+            and item.number in reference_answers
+            else item
+            for item in items
+        ]
 
     structured_problem_count = sum(1 for item in items if item.item_type == "problem")
     concept_block_count = sum(1 for item in items if item.item_type == "concept")
