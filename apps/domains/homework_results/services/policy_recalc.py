@@ -15,7 +15,60 @@ from __future__ import annotations
 from django.utils import timezone
 
 from apps.domains.homework_results.models import HomeworkScore
-from apps.support.homework_results.score_dependencies import sync_homework_clinic_link
+from apps.support.homework_results.score_dependencies import (
+    calc_homework_passed_and_clinic,
+    sync_homework_clinic_link,
+)
+
+
+def _recalc_scores(*, queryset) -> int:
+    now = timezone.now()
+    changed: list[HomeworkScore] = []
+
+    for score_snapshot in queryset.iterator(chunk_size=500):
+        max_score = (
+            score_snapshot.homework.default_max_score
+            if score_snapshot.score is not None
+            else None
+        )
+        passed, clinic_required, _ = calc_homework_passed_and_clinic(
+            session=score_snapshot.session,
+            homework=score_snapshot.homework,
+            score=score_snapshot.score,
+            max_score=max_score,
+        )
+        if (
+            score_snapshot.max_score != max_score
+            or score_snapshot.passed != bool(passed)
+            or score_snapshot.clinic_required != bool(clinic_required)
+        ):
+            score_snapshot.max_score = max_score
+            score_snapshot.passed = bool(passed)
+            score_snapshot.clinic_required = bool(clinic_required)
+            score_snapshot.updated_at = now
+            changed.append(score_snapshot)
+
+    if changed:
+        HomeworkScore.objects.bulk_update(
+            changed,
+            fields=["max_score", "passed", "clinic_required", "updated_at"],
+            batch_size=500,
+        )
+
+    for score_snapshot in changed:
+        if score_snapshot.score is None:
+            continue
+        sync_homework_clinic_link(
+            enrollment_id=int(score_snapshot.enrollment_id),
+            session=score_snapshot.session,
+            homework_id=int(score_snapshot.homework_id),
+            passed=bool(score_snapshot.passed),
+            score=score_snapshot.score,
+            max_score=score_snapshot.max_score,
+        )
+
+    return len(changed)
+
 
 def recalc_scores_for_policy_change(*, policy) -> int:
     """
@@ -27,102 +80,33 @@ def recalc_scores_for_policy_change(*, policy) -> int:
     - meta.status="NOT_SUBMITTED" 등 Progress 연동은 다른 파이프라인(SSOT)이 담당한다.
     - 변경된 판정의 ClinicLink는 이 서비스가 같은 정책 변경 흐름에서 동기화한다.
     """
-    session = policy.session
-    tenant = policy.tenant
-
-    qs = HomeworkScore.objects.select_related("homework").filter(
-        session=session,
-        session__lecture__tenant=tenant,
+    queryset = HomeworkScore.objects.select_for_update().select_related(
+        "homework",
+        "session",
+        "session__lecture",
+        "session__lecture__tenant",
+        "session__homework_policy",
+    ).filter(
+        session=policy.session,
+        session__lecture__tenant=policy.tenant,
         attempt_index=1,
-    ).only(
-        "id",
-        "homework_id",
-        "homework__meta",
-        "score",
-        "max_score",
-        "passed",
-        "clinic_required",
-        "updated_at",
     )
+    return _recalc_scores(queryset=queryset)
 
-    mode = str(getattr(policy, "cutline_mode", "PERCENT") or "PERCENT")
-    cutline_value = int(getattr(policy, "cutline_value", 0) or 0)
-    round_unit = int(getattr(policy, "round_unit_percent", 5) or 5)
-    clinic_enabled = bool(getattr(policy, "clinic_enabled", True))
-    clinic_on_fail = bool(getattr(policy, "clinic_on_fail", True))
 
-    if round_unit <= 0:
-        round_unit = 1
-
-    now = timezone.now()
-    changed: list[HomeworkScore] = []
-
-    for hs in qs.iterator(chunk_size=500):
-        score = hs.score
-        max_score = hs.homework.default_max_score if score is not None else None
-
-        passed = False
-        clinic_required = False
-
-        if mode == "COUNT":
-            if score is not None:
-                try:
-                    passed = bool(float(score) >= float(cutline_value))
-                except Exception:
-                    passed = False
-            clinic_required = bool(clinic_enabled and clinic_on_fail and (not passed))
-        else:
-            percent: float | None
-            if score is None:
-                percent = None
-            elif max_score is None:
-                percent = float(score)
-            else:
-                if float(max_score) == 0.0:
-                    percent = None
-                else:
-                    percent = (float(score) / float(max_score)) * 100.0
-
-            if percent is None:
-                passed = False
-                clinic_required = False
-            else:
-                rounded = int(round(float(percent) / float(round_unit)) * float(round_unit))
-                threshold = int(cutline_value or 0)
-                # 학원장이 의도적으로 0 설정한 케이스 = "커트라인 없음(전원 합격)"으로 존중.
-                # 과거 'threshold<=0이면 80으로 덮어쓰기' 로직은 학원장 입력 무시 버그였음.
-                passed = bool(rounded >= threshold)
-                clinic_required = bool(clinic_enabled and clinic_on_fail and (not passed))
-
-        if (
-            hs.max_score != max_score
-            or hs.passed != bool(passed)
-            or hs.clinic_required != bool(clinic_required)
-        ):
-            hs.max_score = max_score
-            hs.passed = bool(passed)
-            hs.clinic_required = bool(clinic_required)
-            hs.updated_at = now
-            changed.append(hs)
-
-    if changed:
-        HomeworkScore.objects.bulk_update(
-            changed,
-            fields=["max_score", "passed", "clinic_required", "updated_at"],
-            batch_size=500,
-        )
-
-    # 정책 상향/하향 모두 현재 합불과 ClinicLink를 같은 상태로 맞춘다.
-    for hs in changed:
-        if hs.score is None:
-            continue
-        sync_homework_clinic_link(
-            enrollment_id=int(hs.enrollment_id),
-            session=policy.session,
-            homework_id=int(hs.homework_id),
-            passed=bool(hs.passed),
-            score=hs.score,
-            max_score=hs.max_score,
-        )
-
-    return len(changed)
+def recalc_scores_for_homework_change(*, homework) -> int:
+    if homework.session_id is None:
+        return 0
+    queryset = HomeworkScore.objects.select_for_update().select_related(
+        "homework",
+        "session",
+        "session__lecture",
+        "session__lecture__tenant",
+        "session__homework_policy",
+    ).filter(
+        homework=homework,
+        session=homework.session,
+        session__lecture__tenant=homework.tenant,
+        attempt_index=1,
+    )
+    return _recalc_scores(queryset=queryset)

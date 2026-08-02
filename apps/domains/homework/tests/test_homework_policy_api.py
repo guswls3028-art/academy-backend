@@ -334,6 +334,236 @@ class HomeworkPolicyApiTests(APITestCase):
         self.assertEqual(homework.meta["default_max_score"], 43)
         self.assertEqual(homework.meta["due_date"], "2026-08-05")
 
+    def test_homeworks_in_same_session_can_use_different_cutlines(self):
+        inherited = Homework.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title="기본 기준 과제",
+        )
+        easier = Homework.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title="개별 기준 과제",
+        )
+        inherited_score = HomeworkScore.objects.create(
+            enrollment=self.enrollment,
+            session=self.session,
+            homework=inherited,
+            score=75,
+            max_score=100,
+            passed=False,
+            clinic_required=True,
+        )
+        easier_score = HomeworkScore.objects.create(
+            enrollment=self.enrollment,
+            session=self.session,
+            homework=easier,
+            score=75,
+            max_score=100,
+            passed=False,
+            clinic_required=True,
+        )
+
+        response = self.client.patch(
+            f"/api/v1/homeworks/{easier.id}/",
+            {
+                "cutline_mode": "PERCENT",
+                "cutline_value": 70,
+                "round_unit_percent": 5,
+            },
+            format="json",
+            **self.req_headers,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["effective_cutline_value"], 70)
+        self.assertFalse(response.data["uses_session_cutline_default"])
+        easier_score.refresh_from_db()
+        inherited_score.refresh_from_db()
+        self.assertTrue(easier_score.passed)
+        self.assertFalse(inherited_score.passed)
+
+        inherited_response = self.client.get(
+            f"/api/v1/homeworks/{inherited.id}/",
+            **self.req_headers,
+        )
+        self.assertEqual(inherited_response.status_code, 200, inherited_response.data)
+        self.assertEqual(inherited_response.data["effective_cutline_value"], 80)
+        self.assertTrue(inherited_response.data["uses_session_cutline_default"])
+
+    def test_bulk_creation_contract_persists_each_homework_cutline(self):
+        first = self.client.post(
+            "/api/v1/homeworks/",
+            {
+                "session_id": self.session.id,
+                "title": "연산 복습",
+                "max_score": 20,
+                "cutline_mode": "COUNT",
+                "cutline_value": 15,
+                "round_unit_percent": 5,
+            },
+            format="json",
+            **self.req_headers,
+        )
+        second = self.client.post(
+            "/api/v1/homeworks/",
+            {
+                "session_id": self.session.id,
+                "title": "심화 서술형",
+                "max_score": 30,
+                "cutline_mode": "COUNT",
+                "cutline_value": 24,
+                "round_unit_percent": 5,
+            },
+            format="json",
+            **self.req_headers,
+        )
+
+        self.assertEqual(first.status_code, 201, first.data)
+        self.assertEqual(second.status_code, 201, second.data)
+        self.assertEqual(first.data["effective_cutline_value"], 15)
+        self.assertEqual(second.data["effective_cutline_value"], 24)
+        self.assertFalse(first.data["uses_session_cutline_default"])
+        self.assertFalse(second.data["uses_session_cutline_default"])
+
+    def test_percent_override_is_not_limited_by_session_count_cutline(self):
+        policy_res = self.client.get(
+            f"/api/v1/homework/policies/?session={self.session.id}",
+            **self.req_headers,
+        )
+        policy_id = policy_res.data["results"][0]["id"]
+        policy_patch = self.client.patch(
+            f"/api/v1/homework/policies/{policy_id}/",
+            {"cutline_mode": "COUNT", "cutline_value": 90},
+            format="json",
+            **self.req_headers,
+        )
+        self.assertEqual(policy_patch.status_code, 200, policy_patch.data)
+
+        response = self.client.post(
+            "/api/v1/homeworks/",
+            {
+                "session_id": self.session.id,
+                "title": "50점 퍼센트 과제",
+                "max_score": 50,
+                "cutline_mode": "PERCENT",
+                "cutline_value": 80,
+                "round_unit_percent": 5,
+            },
+            format="json",
+            **self.req_headers,
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["max_score"], 50.0)
+        self.assertEqual(response.data["effective_cutline_mode"], "PERCENT")
+
+    def test_switching_to_percent_can_lower_max_score_in_same_patch(self):
+        homework = Homework.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title="기준 전환 과제",
+            meta={"default_max_score": 100},
+            cutline_mode=Homework.CutlineMode.COUNT,
+            cutline_value=90,
+            round_unit_percent=5,
+        )
+
+        response = self.client.patch(
+            f"/api/v1/homeworks/{homework.id}/",
+            {
+                "max_score": 50,
+                "cutline_mode": "PERCENT",
+                "cutline_value": 80,
+                "round_unit_percent": 5,
+            },
+            format="json",
+            **self.req_headers,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        homework.refresh_from_db()
+        self.assertEqual(homework.default_max_score, 50.0)
+        self.assertEqual(homework.cutline_mode, Homework.CutlineMode.PERCENT)
+
+    def test_session_policy_change_does_not_overwrite_homework_cutline(self):
+        policy_res = self.client.get(
+            f"/api/v1/homework/policies/?session={self.session.id}",
+            **self.req_headers,
+        )
+        policy_id = policy_res.data["results"][0]["id"]
+        overridden = Homework.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title="70점 기준",
+            cutline_mode=Homework.CutlineMode.PERCENT,
+            cutline_value=70,
+            round_unit_percent=5,
+        )
+        inherited = Homework.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title="회차 기본 기준",
+        )
+        overridden_score = HomeworkScore.objects.create(
+            enrollment=self.enrollment,
+            session=self.session,
+            homework=overridden,
+            score=75,
+            max_score=100,
+            passed=False,
+            clinic_required=True,
+        )
+        inherited_score = HomeworkScore.objects.create(
+            enrollment=self.enrollment,
+            session=self.session,
+            homework=inherited,
+            score=75,
+            max_score=100,
+            passed=True,
+            clinic_required=False,
+        )
+
+        response = self.client.patch(
+            f"/api/v1/homework/policies/{policy_id}/",
+            {"cutline_mode": "PERCENT", "cutline_value": 90},
+            format="json",
+            **self.req_headers,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        overridden_score.refresh_from_db()
+        inherited_score.refresh_from_db()
+        overridden.refresh_from_db()
+        self.assertTrue(overridden_score.passed)
+        self.assertFalse(inherited_score.passed)
+        self.assertEqual(overridden.cutline_value, 70)
+
+    def test_homework_count_cutline_cannot_exceed_its_max_score(self):
+        homework = Homework.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title="20점 과제",
+            meta={"default_max_score": 20},
+        )
+
+        response = self.client.patch(
+            f"/api/v1/homeworks/{homework.id}/",
+            {
+                "cutline_mode": "COUNT",
+                "cutline_value": 21,
+                "round_unit_percent": 5,
+            },
+            format="json",
+            **self.req_headers,
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("cutline_value", response.data)
+        homework.refresh_from_db()
+        self.assertIsNone(homework.cutline_mode)
+        self.assertIsNone(homework.cutline_value)
+
     def test_assignment_removal_resolves_homework_clinic_link(self):
         SessionEnrollment.objects.create(
             tenant=self.tenant,

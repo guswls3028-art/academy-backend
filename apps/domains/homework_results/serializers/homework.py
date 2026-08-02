@@ -5,6 +5,9 @@ from math import isfinite
 from rest_framework import serializers
 
 from apps.domains.homework_results.models import Homework
+from apps.support.homework_results.homework_view_dependencies import (
+    resolve_homework_cutline_settings,
+)
 
 
 class HomeworkSerializer(serializers.ModelSerializer):
@@ -13,6 +16,10 @@ class HomeworkSerializer(serializers.ModelSerializer):
         min_value=1,
         required=False,
     )
+    effective_cutline_mode = serializers.SerializerMethodField()
+    effective_cutline_value = serializers.SerializerMethodField()
+    effective_round_unit_percent = serializers.SerializerMethodField()
+    uses_session_cutline_default = serializers.SerializerMethodField()
 
     class Meta:
         model = Homework
@@ -23,6 +30,13 @@ class HomeworkSerializer(serializers.ModelSerializer):
             "session",
             "title",
             "max_score",
+            "cutline_mode",
+            "cutline_value",
+            "round_unit_percent",
+            "effective_cutline_mode",
+            "effective_cutline_value",
+            "effective_round_unit_percent",
+            "uses_session_cutline_default",
             "meta",
             "display_order",
             "updated_at",
@@ -30,6 +44,10 @@ class HomeworkSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             "id",
+            "effective_cutline_mode",
+            "effective_cutline_value",
+            "effective_round_unit_percent",
+            "uses_session_cutline_default",
             "updated_at",
             "created_at",
         ]
@@ -70,4 +88,59 @@ class HomeworkSerializer(serializers.ModelSerializer):
                     "default_max_score": parsed,
                 }
 
+        mode = attrs.get("cutline_mode", getattr(self.instance, "cutline_mode", None))
+        value = attrs.get("cutline_value", getattr(self.instance, "cutline_value", None))
+        round_unit = attrs.get(
+            "round_unit_percent",
+            getattr(self.instance, "round_unit_percent", None),
+        )
+        if (mode is None) != (value is None):
+            raise serializers.ValidationError(
+                {"cutline_value": "커트라인 기준과 값을 함께 설정해 주세요."}
+            )
+        if mode == Homework.CutlineMode.PERCENT and value is not None and value > 100:
+            raise serializers.ValidationError(
+                {"cutline_value": "퍼센트 커트라인은 100 이하이어야 합니다."}
+            )
+        if round_unit is not None and not 1 <= round_unit <= 50:
+            raise serializers.ValidationError(
+                {"round_unit_percent": "반올림 단위는 1부터 50까지 설정할 수 있습니다."}
+            )
+        candidate_max_score = Homework.max_score_from_meta(
+            attrs.get("meta", getattr(self.instance, "meta", None))
+        )
+        if (
+            mode == Homework.CutlineMode.COUNT
+            and value is not None
+            and float(value) > candidate_max_score
+        ):
+            raise serializers.ValidationError(
+                {
+                    "cutline_value": (
+                        f"점수 커트라인({float(value):g}점)은 이 과제의 "
+                        f"만점({candidate_max_score:g}점)을 넘을 수 없습니다."
+                    )
+                }
+            )
+
         return attrs
+
+    @staticmethod
+    def _settings(obj: Homework):
+        cached = getattr(obj, "_serialized_cutline_settings", None)
+        if cached is None:
+            cached = resolve_homework_cutline_settings(homework=obj)
+            obj._serialized_cutline_settings = cached
+        return cached
+
+    def get_effective_cutline_mode(self, obj: Homework) -> str:
+        return self._settings(obj).mode
+
+    def get_effective_cutline_value(self, obj: Homework) -> int:
+        return self._settings(obj).value
+
+    def get_effective_round_unit_percent(self, obj: Homework) -> int:
+        return self._settings(obj).round_unit_percent
+
+    def get_uses_session_cutline_default(self, obj: Homework) -> bool:
+        return self._settings(obj).uses_session_default

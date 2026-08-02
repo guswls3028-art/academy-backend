@@ -30,6 +30,9 @@ class HomeworkSaveAsTemplateView(APIView):
             template_homework=None,
             title=hw.title,
             meta=hw.meta,
+            cutline_mode=hw.cutline_mode,
+            cutline_value=hw.cutline_value,
+            round_unit_percent=hw.round_unit_percent,
         )
         hw.template_homework = template
         hw.save(update_fields=["template_homework_id"])

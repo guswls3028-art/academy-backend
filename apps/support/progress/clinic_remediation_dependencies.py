@@ -18,9 +18,20 @@ def get_homework_retake_models():
     return HomeworkScore, Homework
 
 
-def calc_homework_passed_and_clinic(*, session: Any, score: float, max_score: float):
+def calc_homework_passed_and_clinic(
+    *,
+    session: Any,
+    homework: Any | None = None,
+    score: float,
+    max_score: float,
+):
     from apps.domains.homework.utils.homework_policy import (
         calc_homework_passed_and_clinic as calculate,
     )
 
-    return calculate(session=session, score=score, max_score=max_score)
+    return calculate(
+        session=session,
+        homework=homework,
+        score=score,
+        max_score=max_score,
+    )

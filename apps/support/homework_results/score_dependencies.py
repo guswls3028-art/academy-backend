@@ -13,12 +13,23 @@ def validate_enrollment_belongs_to_tenant(enrollment_id: int, tenant: Any) -> No
     validate(enrollment_id, tenant)
 
 
-def calc_homework_passed_and_clinic(*, session: Any, score: float | None, max_score: float | None):
+def calc_homework_passed_and_clinic(
+    *,
+    session: Any,
+    homework: Any | None = None,
+    score: float | None,
+    max_score: float | None,
+):
     from apps.domains.homework.utils.homework_policy import (
         calc_homework_passed_and_clinic as calculate,
     )
 
-    return calculate(session=session, score=score, max_score=max_score)
+    return calculate(
+        session=session,
+        homework=homework,
+        score=score,
+        max_score=max_score,
+    )
 
 
 def latest_homework_submission(*, enrollment_id: int, homework_id: int):
