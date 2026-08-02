@@ -34,7 +34,7 @@ uritemplate
 inflection
 ffmpeg-python
 gunicorn
-gevent>=23.0.0
+gevent>=26.7.0
 reportlab
 openpyxl
 solapi>=5.0.0

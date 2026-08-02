@@ -33,7 +33,7 @@ olefile==0.47
 
 # Server
 gunicorn==25.1.0
-gevent==25.9.1
+gevent==26.7.0
 
 # Redis
 redis==8.1.0
