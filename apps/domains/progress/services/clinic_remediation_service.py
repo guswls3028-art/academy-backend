@@ -250,6 +250,7 @@ class ClinicRemediationService:
         # 3. 합격 판정
         passed, _, _ = calc_homework_passed_and_clinic(
             session=session,
+            homework=homework,
             score=score,
             max_score=max_score,
         )
@@ -472,6 +473,7 @@ class ClinicRemediationService:
 
         passed, _, _ = calc_homework_passed_and_clinic(
             session=session,
+            homework=homework,
             score=score,
             max_score=max_score,
         )

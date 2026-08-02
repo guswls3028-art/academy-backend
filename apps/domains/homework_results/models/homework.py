@@ -33,6 +33,10 @@ class Homework(TimestampModel):
         TEMPLATE = "template", "템플릿"
         REGULAR = "regular", "일반"
 
+    class CutlineMode(models.TextChoices):
+        PERCENT = "PERCENT", "퍼센트 (%)"
+        COUNT = "COUNT", "점수"
+
     class Status(models.TextChoices):
         DRAFT = "DRAFT", "초안"       # Legacy — 신규 생성 시 사용하지 않음
         OPEN = "OPEN", "진행중"
@@ -83,6 +87,23 @@ class Homework(TimestampModel):
     )
 
     meta = models.JSONField(null=True, blank=True)
+    cutline_mode = models.CharField(
+        max_length=10,
+        choices=CutlineMode.choices,
+        null=True,
+        blank=True,
+        help_text="비어 있으면 차시 공통 과제 정책을 사용한다.",
+    )
+    cutline_value = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        help_text="PERCENT: 0~100, COUNT: 이 과제의 원점수 커트라인.",
+    )
+    round_unit_percent = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        help_text="과제별 퍼센트 반올림 단위. 비어 있으면 차시 정책을 사용한다.",
+    )
     display_order = models.PositiveIntegerField(
         default=0,
         help_text="성적탭 내 표시 순서 (작을수록 앞)",

@@ -107,6 +107,7 @@ def _apply_score_and_policy(
 
     passed, clinic_required, _ = calc_homework_passed_and_clinic(
         session=obj.session,
+        homework=obj.homework,
         score=score,
         max_score=obj.max_score,
     )
@@ -418,6 +419,7 @@ class HomeworkScoreViewSet(ModelViewSet):
                     obj.updated_by_user_id = _safe_user_id(request)
                     passed, clinic_required, _ = calc_homework_passed_and_clinic(
                         session=obj.session,
+                        homework=obj.homework,
                         score=None,
                         max_score=None,
                     )

@@ -8,15 +8,27 @@ from apps.domains.homework_results.models import HomeworkScore
 from apps.support.homework_results.homework_view_dependencies import (
     get_homework_raw_score_cutline,
 )
-from apps.support.homework_results.score_dependencies import (
-    calc_homework_passed_and_clinic,
-    sync_homework_clinic_link,
+from apps.domains.homework_results.services.policy_recalc import (
+    recalc_scores_for_homework_change,
 )
 
 
-def validate_homework_max_score(*, homework, max_score: float) -> None:
+_USE_EFFECTIVE_CUTLINE = object()
+
+
+def validate_homework_max_score(
+    *,
+    homework,
+    max_score: float,
+    raw_score_cutline=_USE_EFFECTIVE_CUTLINE,
+) -> None:
     if homework.session_id is not None:
-        cutline = get_homework_raw_score_cutline(session=homework.session)
+        cutline = raw_score_cutline
+        if cutline is _USE_EFFECTIVE_CUTLINE:
+            cutline = get_homework_raw_score_cutline(
+                session=homework.session,
+                homework=homework,
+            )
         if cutline is not None and float(cutline) > float(max_score):
             raise ValueError(
                 f"점수 커트라인({cutline:g}점)보다 만점({max_score:g}점)을 낮게 설정할 수 없습니다."
@@ -37,41 +49,4 @@ def validate_homework_max_score(*, homework, max_score: float) -> None:
 def sync_homework_primary_score_max(*, homework, max_score: float) -> int:
     if homework.session_id is None:
         return 0
-
-    scores = list(
-        HomeworkScore.objects
-        .select_for_update()
-        .select_related("session", "session__lecture")
-        .filter(
-            homework=homework,
-            session=homework.session,
-            attempt_index=1,
-            score__isnull=False,
-        )
-    )
-    for score in scores:
-        passed, clinic_required, _ = calc_homework_passed_and_clinic(
-            session=score.session,
-            score=score.score,
-            max_score=max_score,
-        )
-        score.max_score = max_score
-        score.passed = bool(passed)
-        score.clinic_required = bool(clinic_required)
-        score.save(
-            update_fields=[
-                "max_score",
-                "passed",
-                "clinic_required",
-                "updated_at",
-            ]
-        )
-        sync_homework_clinic_link(
-            enrollment_id=score.enrollment_id,
-            session=score.session,
-            homework_id=score.homework_id,
-            passed=score.passed,
-            score=score.score,
-            max_score=score.max_score,
-        )
-    return len(scores)
+    return recalc_scores_for_homework_change(homework=homework)

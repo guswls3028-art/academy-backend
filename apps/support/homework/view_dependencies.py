@@ -47,12 +47,24 @@ def recalc_scores_for_policy_change(*, policy: Any) -> None:
     _recalc(policy=policy)
 
 
+def recalc_scores_for_homework_change(*, homework: Any) -> None:
+    from apps.domains.homework_results.services.policy_recalc import (
+        recalc_scores_for_homework_change as _recalc,
+    )
+
+    _recalc(homework=homework)
+
+
 def minimum_live_homework_max_score(*, session: Any) -> tuple[float, str] | None:
     from apps.domains.homework_results.models import Homework
 
     homeworks = (
         Homework.objects
-        .filter(session=session)
+        .filter(
+            session=session,
+            cutline_mode__isnull=True,
+            cutline_value__isnull=True,
+        )
         .exclude(meta__removed_from_session_at__isnull=False)
         .order_by("id")
     )

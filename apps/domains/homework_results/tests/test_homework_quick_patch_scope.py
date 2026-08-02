@@ -191,6 +191,37 @@ class HomeworkQuickPatchScopeTests(TestCase):
         self.assertEqual(response.data["max_score"], 43.0)
         self.assertEqual(score.max_score, 43.0)
 
+    def test_quick_patch_uses_homework_specific_cutline(self):
+        self.homework.cutline_mode = Homework.CutlineMode.PERCENT
+        self.homework.cutline_value = 70
+        self.homework.round_unit_percent = 5
+        self.homework.save(
+            update_fields=[
+                "cutline_mode",
+                "cutline_value",
+                "round_unit_percent",
+                "updated_at",
+            ]
+        )
+
+        self._quick_patch(
+            {
+                "session_id": self.session.id,
+                "homework_id": self.homework.id,
+                "enrollment_id": self.assigned_enrollment.id,
+                "score": 75,
+            }
+        )
+
+        score = HomeworkScore.objects.get(
+            homework=self.homework,
+            session=self.session,
+            enrollment=self.assigned_enrollment,
+            attempt_index=1,
+        )
+        self.assertTrue(score.passed)
+        self.assertFalse(score.clinic_required)
+
     def test_rejects_score_above_configured_homework_max_score(self):
         self.homework.meta = {"default_max_score": 43}
         self.homework.save(update_fields=["meta", "updated_at"])

@@ -15,9 +15,82 @@ Homework policy calculation utilities
 """
 
 from __future__ import annotations
+from dataclasses import dataclass
 from typing import Any, Optional, Tuple
 
+from django.core.exceptions import ObjectDoesNotExist
+
 from apps.domains.homework.models import HomeworkPolicy
+
+
+@dataclass(frozen=True)
+class HomeworkCutlineSettings:
+    mode: str
+    value: int
+    round_unit_percent: int
+    clinic_enabled: bool
+    clinic_on_fail: bool
+    uses_session_default: bool
+
+
+def resolve_homework_cutline_settings(
+    *,
+    session: Any,
+    homework: Any | None = None,
+    create_policy: bool = True,
+) -> HomeworkCutlineSettings:
+    """과제별 커트라인을 우선하고, 없으면 기존 차시 정책을 사용한다."""
+    tenant = getattr(getattr(session, "lecture", None), "tenant", None)
+    if session is not None and tenant is None:
+        raise ValueError(
+            f"resolve_homework_cutline_settings: session(id={getattr(session, 'id', '?')})에 "
+            "tenant 정보가 없습니다. session.lecture.tenant가 로드되었는지 확인하세요."
+        )
+
+    defaults = {
+        "cutline_percent": 80,
+        "cutline_mode": HomeworkPolicy.CutlineMode.PERCENT,
+        "cutline_value": 80,
+        "round_unit_percent": 5,
+        "clinic_enabled": True,
+        "clinic_on_fail": True,
+    }
+    policy = None
+    if session is not None:
+        try:
+            policy = session.homework_policy
+        except ObjectDoesNotExist:
+            policy = None
+        if policy is None and create_policy:
+            policy, _ = HomeworkPolicy.objects.get_or_create(
+                tenant=tenant,
+                session=session,
+                defaults=defaults,
+            )
+            session.homework_policy = policy
+
+    policy_mode = str(getattr(policy, "cutline_mode", None) or HomeworkPolicy.CutlineMode.PERCENT)
+    policy_value_raw = getattr(policy, "cutline_value", None)
+    if policy_value_raw is None:
+        policy_value = int(getattr(policy, "cutline_percent", 80) or 80)
+    else:
+        policy_value = int(policy_value_raw)
+    policy_round_unit = int(getattr(policy, "round_unit_percent", 5) or 5)
+
+    homework_mode = getattr(homework, "cutline_mode", None)
+    homework_value = getattr(homework, "cutline_value", None)
+    uses_session_default = homework_mode is None or homework_value is None
+
+    return HomeworkCutlineSettings(
+        mode=policy_mode if uses_session_default else str(homework_mode),
+        value=policy_value if uses_session_default else int(homework_value),
+        round_unit_percent=int(
+            getattr(homework, "round_unit_percent", None) or policy_round_unit or 5
+        ),
+        clinic_enabled=bool(getattr(policy, "clinic_enabled", True)),
+        clinic_on_fail=bool(getattr(policy, "clinic_on_fail", True)),
+        uses_session_default=uses_session_default,
+    )
 
 
 def _round_percent(percent: float, unit: int) -> int:
@@ -66,6 +139,7 @@ def calc_homework_percent(
 def calc_homework_passed_and_clinic(
     *,
     session: Any,
+    homework: Any | None = None,
     score: Optional[float],
     max_score: Optional[float],
 ) -> Tuple[bool, bool, Optional[int]]:
@@ -77,39 +151,12 @@ def calc_homework_passed_and_clinic(
     - clinic_required: bool
     - percent: Optional[int] (rounded percent, COUNT 모드일 때는 None)
     """
-    # HomeworkPolicy는 tenant+session 단위 단일 진실 (tenant 필수)
-    # P1-6: tenant fallback 제거 — tenant 불명확 시 fail-closed
-    tenant = getattr(getattr(session, "lecture", None), "tenant", None)
-    if tenant is None:
-        raise ValueError(
-            f"calc_homework_passed_and_clinic: session(id={getattr(session, 'id', '?')})에 "
-            f"tenant 정보가 없습니다. session.lecture.tenant가 로드되었는지 확인하세요. "
-            f"(select_related 누락 가능성)"
-        )
-    else:
-        policy, _ = HomeworkPolicy.objects.get_or_create(
-            tenant=tenant,
-            session=session,
-            defaults={
-                "cutline_percent": 80,
-                "cutline_mode": "PERCENT",
-                "cutline_value": 80,
-                "round_unit_percent": 5,
-                "clinic_enabled": True,
-                "clinic_on_fail": True,
-            },
-        )
-        mode = getattr(policy, "cutline_mode", None) or "PERCENT"
-        # 0은 학원장이 의도적으로 "커트라인 없음"으로 설정한 값 — 80 fallback 금지.
-        # cutline_value 컬럼이 None인 legacy 케이스에만 cutline_percent로 fallback.
-        _cv_raw = getattr(policy, "cutline_value", None)
-        if _cv_raw is None:
-            cutline_value = int(getattr(policy, "cutline_percent", 80) or 80)
-        else:
-            cutline_value = int(_cv_raw)
-        round_unit = int(getattr(policy, "round_unit_percent", 5) or 5)
-        clinic_enabled = bool(getattr(policy, "clinic_enabled", True))
-        clinic_on_fail = bool(getattr(policy, "clinic_on_fail", True))
+    settings = resolve_homework_cutline_settings(session=session, homework=homework)
+    mode = settings.mode
+    cutline_value = settings.value
+    round_unit = settings.round_unit_percent
+    clinic_enabled = settings.clinic_enabled
+    clinic_on_fail = settings.clinic_on_fail
 
     if mode == "COUNT":
         # 문항 수 기준: score >= cutline_value 이면 합격 (score는 정답 수/점수로 해석)

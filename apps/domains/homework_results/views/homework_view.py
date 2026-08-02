@@ -33,6 +33,9 @@ from apps.domains.homework_results.services.max_score_sync import (
     sync_homework_primary_score_max,
     validate_homework_max_score,
 )
+from apps.domains.homework_results.services.policy_recalc import (
+    recalc_scores_for_homework_change,
+)
 from apps.support.homework_results.homework_view_dependencies import (
     delete_homework_assignments,
     get_homework_raw_score_cutline,
@@ -85,7 +88,13 @@ class HomeworkViewSet(ModelViewSet):
             return Homework.objects.none()
         qs = Homework.objects.filter(
             tenant=tenant
-        ).select_related("session", "session__lecture", "template_homework")
+        ).select_related(
+            "session",
+            "session__lecture",
+            "session__lecture__tenant",
+            "session__homework_policy",
+            "template_homework",
+        )
 
         session_id = self.request.query_params.get("session_id")
         if session_id:
@@ -172,6 +181,16 @@ class HomeworkViewSet(ModelViewSet):
                     if not isfinite(candidate_max_score) or candidate_max_score < 1:
                         raise ValidationError({"max_score": "만점은 1 이상이어야 합니다."})
                 raw_cutline = get_homework_raw_score_cutline(session=session)
+                if (
+                    template.cutline_mode == Homework.CutlineMode.COUNT
+                    and template.cutline_value is not None
+                ):
+                    raw_cutline = float(template.cutline_value)
+                elif (
+                    template.cutline_mode == Homework.CutlineMode.PERCENT
+                    and template.cutline_value is not None
+                ):
+                    raw_cutline = None
                 if raw_cutline is not None and raw_cutline > candidate_max_score:
                     raise ValidationError(
                         {
@@ -189,6 +208,9 @@ class HomeworkViewSet(ModelViewSet):
                     template_homework=template,
                     title=title,
                     meta={"default_max_score": candidate_max_score},
+                    cutline_mode=template.cutline_mode,
+                    cutline_value=template.cutline_value,
+                    round_unit_percent=template.round_unit_percent,
                     display_order=self._next_display_order(
                         tenant=tenant,
                         session_id=int(session.id),
@@ -220,7 +242,14 @@ class HomeworkViewSet(ModelViewSet):
                 raise ValidationError({"detail": "해당 차시를 찾을 수 없습니다."})
             candidate_meta = serializer.validated_data.get("meta")
             candidate_max_score = Homework.max_score_from_meta(candidate_meta)
-            raw_cutline = get_homework_raw_score_cutline(session=session)
+            candidate_cutline_mode = serializer.validated_data.get("cutline_mode")
+            candidate_cutline_value = serializer.validated_data.get("cutline_value")
+            if candidate_cutline_mode == Homework.CutlineMode.COUNT:
+                raw_cutline = float(candidate_cutline_value)
+            elif candidate_cutline_mode == Homework.CutlineMode.PERCENT:
+                raw_cutline = None
+            else:
+                raw_cutline = get_homework_raw_score_cutline(session=session)
             if raw_cutline is not None and raw_cutline > candidate_max_score:
                 raise ValidationError(
                     {
@@ -249,6 +278,11 @@ class HomeworkViewSet(ModelViewSet):
         )
         self.check_object_permissions(request, instance)
         old_max_score = instance.default_max_score
+        old_cutline = (
+            instance.cutline_mode,
+            instance.cutline_value,
+            instance.round_unit_percent,
+        )
         serializer = self.get_serializer(instance, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         candidate_meta = serializer.validated_data.get("meta", instance.meta)
@@ -261,10 +295,27 @@ class HomeworkViewSet(ModelViewSet):
         should_sync_scores = candidate_max_score != old_max_score or explicit_max_score
 
         if should_sync_scores:
+            candidate_cutline_mode = serializer.validated_data.get(
+                "cutline_mode",
+                instance.cutline_mode,
+            )
+            candidate_cutline_value = serializer.validated_data.get(
+                "cutline_value",
+                instance.cutline_value,
+            )
+            if candidate_cutline_mode == Homework.CutlineMode.COUNT:
+                candidate_raw_cutline = float(candidate_cutline_value)
+            elif candidate_cutline_mode == Homework.CutlineMode.PERCENT:
+                candidate_raw_cutline = None
+            else:
+                candidate_raw_cutline = get_homework_raw_score_cutline(
+                    session=instance.session,
+                )
             try:
                 validate_homework_max_score(
                     homework=instance,
                     max_score=candidate_max_score,
+                    raw_score_cutline=candidate_raw_cutline,
                 )
             except ValueError as exc:
                 raise ValidationError({"max_score": str(exc)}) from exc
@@ -275,6 +326,18 @@ class HomeworkViewSet(ModelViewSet):
                 homework=serializer.instance,
                 max_score=candidate_max_score,
             )
+        else:
+            new_cutline = (
+                serializer.instance.cutline_mode,
+                serializer.instance.cutline_value,
+                serializer.instance.round_unit_percent,
+            )
+            explicit_cutline = any(
+                field in request.data
+                for field in ("cutline_mode", "cutline_value", "round_unit_percent")
+            )
+            if explicit_cutline or new_cutline != old_cutline:
+                recalc_scores_for_homework_change(homework=serializer.instance)
 
         return Response(self.get_serializer(serializer.instance).data)
 
