@@ -117,7 +117,7 @@ class Command(BaseCommand):
                     program.feature_flags = feature_flags
                     program.save(update_fields=["feature_flags"])
                     self.stdout.write(self.style.WARNING("  Program feature_flags: ymath mode updated"))
-                ui_config = dict(program.ui_config or {})
+                ui_config = dict(program.ui_config) if isinstance(program.ui_config, dict) else {}
                 if STUDENT_GRADE_REPORT_LAYOUT_KEY not in ui_config:
                     ui_config[STUDENT_GRADE_REPORT_LAYOUT_KEY] = ymath_student_grade_report_layout()
                     program.ui_config = ui_config

@@ -81,6 +81,21 @@ class StudentGradeReportLayoutViewTests(APITestCase):
             payload,
         )
 
+    def test_admin_repairs_non_object_ui_config_when_saving_layout(self):
+        self._authenticate("admin")
+        self.program.ui_config = ["broken"]
+        self.program.save(update_fields=["ui_config"])
+        payload = self._layout(hidden={"improvement_priority"})
+
+        response = self.client.patch(self.url, payload, format="json", **self.headers)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.program.refresh_from_db()
+        self.assertEqual(
+            self.program.ui_config,
+            {STUDENT_GRADE_REPORT_LAYOUT_KEY: payload},
+        )
+
     def test_teacher_cannot_change_tenant_wide_layout(self):
         self._authenticate("teacher")
 

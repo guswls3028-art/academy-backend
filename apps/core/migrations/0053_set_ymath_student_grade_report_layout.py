@@ -22,7 +22,7 @@ YMATH_LAYOUT = {
 def apply_ymath_layout(apps, schema_editor):
     Program = apps.get_model("core", "Program")
     for program in Program.objects.filter(tenant__code="ymath"):
-        ui_config = dict(program.ui_config or {})
+        ui_config = dict(program.ui_config) if isinstance(program.ui_config, dict) else {}
         ui_config.setdefault(LAYOUT_KEY, YMATH_LAYOUT)
         program.ui_config = ui_config
         program.save(update_fields=["ui_config"])
@@ -31,7 +31,7 @@ def apply_ymath_layout(apps, schema_editor):
 def remove_seeded_ymath_layout(apps, schema_editor):
     Program = apps.get_model("core", "Program")
     for program in Program.objects.filter(tenant__code="ymath"):
-        ui_config = dict(program.ui_config or {})
+        ui_config = dict(program.ui_config) if isinstance(program.ui_config, dict) else {}
         if ui_config.get(LAYOUT_KEY) == YMATH_LAYOUT:
             ui_config.pop(LAYOUT_KEY, None)
             program.ui_config = ui_config
