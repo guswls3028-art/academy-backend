@@ -398,6 +398,7 @@ jobs:
         run: |
           ./scripts/v1/test-verification-contract.ps1
           ./scripts/v1/test-candidate-env-contract.ps1
+          ./scripts/v1/test-aws-json-utf8-contract.ps1
           ./scripts/v1/test-production-source-freshness.ps1
           ./scripts/v1/test-workflow-governance-contract.ps1
 
