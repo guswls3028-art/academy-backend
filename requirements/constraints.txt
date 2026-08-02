@@ -36,4 +36,4 @@ gunicorn==25.1.0
 gevent==25.9.1
 
 # Redis
-redis==7.2.1
+redis==8.1.0
