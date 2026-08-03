@@ -10,6 +10,7 @@ class Migration(migrations.Migration):
             name="output_format",
             field=models.CharField(
                 choices=[("pdf", "PDF"), ("hwpx", "한글(HWPX)")],
+                db_default="pdf",
                 default="pdf",
                 max_length=8,
             ),

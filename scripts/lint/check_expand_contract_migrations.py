@@ -142,6 +142,19 @@ def _operation_names(tree: ast.Module) -> list[str]:
             and isinstance(func.value, ast.Name)
             and func.value.id == "migrations"
         ):
+            if func.attr == "SeparateDatabaseAndState":
+                database_operations = next(
+                    (
+                        keyword.value
+                        for keyword in entry.keywords
+                        if keyword.arg == "database_operations"
+                    ),
+                    None,
+                )
+                if isinstance(database_operations, (ast.List, ast.Tuple)) and not (
+                    database_operations.elts
+                ):
+                    continue
             names.append(func.attr)
     return names
 

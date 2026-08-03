@@ -53,6 +53,38 @@ class Migration(migrations.Migration):
     ]
 """
 
+STATE_ONLY_ALTER = """
+from django.db import migrations, models
+class Migration(migrations.Migration):
+    dependencies = []
+    operations = [
+        migrations.SeparateDatabaseAndState(
+            database_operations=[],
+            state_operations=[
+                migrations.AlterField(
+                    model_name="exam",
+                    name="status",
+                    field=models.CharField(max_length=20),
+                ),
+            ],
+        ),
+    ]
+"""
+
+SEPARATE_WITH_DATABASE_OPERATION = """
+from django.db import migrations
+class Migration(migrations.Migration):
+    dependencies = []
+    operations = [
+        migrations.SeparateDatabaseAndState(
+            database_operations=[
+                migrations.RunSQL("DROP TABLE legacy_table"),
+            ],
+            state_operations=[],
+        ),
+    ]
+"""
+
 
 class ExpandContractMigrationGuardTests(unittest.TestCase):
     def test_nullable_add_is_expand_safe(self) -> None:
@@ -82,6 +114,25 @@ class ExpandContractMigrationGuardTests(unittest.TestCase):
         )
         self.assertEqual(len(findings), 1)
         self.assertIn("AddIndex", findings[0].message)
+
+    def test_state_only_alter_is_expand_safe(self) -> None:
+        self.assertEqual(
+            inspect_new_migration(
+                "apps/demo/migrations/0002.py",
+                STATE_ONLY_ALTER,
+                allow_contract=False,
+            ),
+            [],
+        )
+
+    def test_separate_database_operation_still_needs_contract_review(self) -> None:
+        findings = inspect_new_migration(
+            "apps/demo/migrations/0002.py",
+            SEPARATE_WITH_DATABASE_OPERATION,
+            allow_contract=False,
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertIn("SeparateDatabaseAndState", findings[0].message)
 
     def test_contract_is_blocked_without_explicit_dispatch(self) -> None:
         findings = inspect_new_migration(

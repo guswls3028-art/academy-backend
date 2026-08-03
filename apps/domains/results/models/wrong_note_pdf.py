@@ -53,6 +53,7 @@ class WrongNotePDF(BaseModel):
         max_length=8,
         choices=OutputFormat.choices,
         default=OutputFormat.PDF,
+        db_default=OutputFormat.PDF,
     )
 
     file_path = models.CharField(max_length=255, blank=True)

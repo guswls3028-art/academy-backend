@@ -8,34 +8,39 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AlterField(
-            model_name="exam",
-            name="segmentation_status",
-            field=models.CharField(
-                choices=[
-                    ("none", "원본 없음"),
-                    ("processing", "문항 분리 중"),
-                    ("review_required", "문항·해설 검수 필요"),
-                    ("ready", "문항 분리 완료"),
-                    ("failed", "문항 분리 실패"),
-                    ("conversion_required", "PDF 변환 필요"),
-                ],
-                default="none",
-                max_length=24,
-            ),
-        ),
-        migrations.AlterField(
-            model_name="questionexplanation",
-            name="source",
-            field=models.CharField(
-                choices=[
-                    ("ai_extracted", "AI 추출"),
-                    ("source_file", "업로드 원본"),
-                    ("manual", "수동 입력"),
-                ],
-                default="manual",
-                max_length=20,
-            ),
+        migrations.SeparateDatabaseAndState(
+            database_operations=[],
+            state_operations=[
+                migrations.AlterField(
+                    model_name="exam",
+                    name="segmentation_status",
+                    field=models.CharField(
+                        choices=[
+                            ("none", "원본 없음"),
+                            ("processing", "문항 분리 중"),
+                            ("review_required", "문항·해설 검수 필요"),
+                            ("ready", "문항 분리 완료"),
+                            ("failed", "문항 분리 실패"),
+                            ("conversion_required", "PDF 변환 필요"),
+                        ],
+                        default="none",
+                        max_length=24,
+                    ),
+                ),
+                migrations.AlterField(
+                    model_name="questionexplanation",
+                    name="source",
+                    field=models.CharField(
+                        choices=[
+                            ("ai_extracted", "AI 추출"),
+                            ("source_file", "업로드 원본"),
+                            ("manual", "수동 입력"),
+                        ],
+                        default="manual",
+                        max_length=20,
+                    ),
+                ),
+            ],
         ),
         migrations.CreateModel(
             name="ExamQuestionProposal",
@@ -61,10 +66,12 @@ class Migration(migrations.Migration):
             options={
                 "db_table": "exams_question_proposal",
                 "ordering": ["position", "id"],
+                "constraints": [
+                    models.UniqueConstraint(
+                        fields=("exam", "position"),
+                        name="exams_question_proposal_exam_position_uniq",
+                    ),
+                ],
             },
-        ),
-        migrations.AddConstraint(
-            model_name="examquestionproposal",
-            constraint=models.UniqueConstraint(fields=("exam", "position"), name="exams_question_proposal_exam_position_uniq"),
         ),
     ]
