@@ -19,9 +19,9 @@ from apps.support.results.admin_exam_dependencies import (
 
 class WrongNotePDFStatusView(APIView):
     """
-    STEP 3-2: 오답노트 PDF Job 상태 조회 (polling)
+    오답노트 PDF/HWPX Job 상태 조회 (polling).
 
-    GET /results/wrong-notes/pdf/<job_id>/
+    GET /results/wrong-notes/documents/<job_id>/
 
     🔐 보안:
     - 교사/관리자: 현재 테넌트의 job만 조회 가능
@@ -31,7 +31,7 @@ class WrongNotePDFStatusView(APIView):
 
     def _assert_enrollment_access(self, request, enrollment_id: int) -> None:
         if not enrollment_exists_for_tenant(enrollment_id=int(enrollment_id), tenant=request.tenant):
-            raise PermissionDenied("You cannot access this PDF job.")
+            raise PermissionDenied("You cannot access this wrong-note document job.")
 
     def get(self, request, job_id: int):
         job = WrongNotePDF.objects.filter(id=int(job_id)).first()
@@ -45,11 +45,17 @@ class WrongNotePDFStatusView(APIView):
         file_url = ""
         if job.status == WrongNotePDF.Status.DONE and job.file_path:
             try:
+                extension = job.output_format or WrongNotePDF.OutputFormat.PDF
+                content_type = (
+                    "application/vnd.hancom.hwpx"
+                    if extension == WrongNotePDF.OutputFormat.HWPX
+                    else "application/pdf"
+                )
                 file_url = generate_presigned_get_url_storage(
                     key=job.file_path,
                     expires_in=3600,
-                    filename=f"wrong-note-{job.id}.pdf",
-                    content_type="application/pdf",
+                    filename=f"wrong-note-{job.id}.{extension}",
+                    content_type=content_type,
                 )
             except Exception:
                 file_url = ""
@@ -60,6 +66,8 @@ class WrongNotePDFStatusView(APIView):
             "file_path": str(job.file_path or ""),
             "file_url": str(file_url or ""),
             "error_message": str(job.error_message or ""),
+            "output_format": str(job.output_format or "pdf"),
+            "filename": f"wrong-note-{job.id}.{job.output_format or 'pdf'}",
             "created_at": job.created_at,
             "updated_at": job.updated_at,
         }

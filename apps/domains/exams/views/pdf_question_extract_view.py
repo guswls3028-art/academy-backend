@@ -110,7 +110,7 @@ class PdfQuestionExtractView(APIView):
                 )
                 exam.source_filename = str(pdf_file.name or "")[:255]
 
-            if name_lower.endswith((".hwp", ".hwpx")):
+            if name_lower.endswith(".hwpx"):
                 if exam is not None:
                     exam.segmentation_status = (
                         Exam.SegmentationStatus.CONVERSION_REQUIRED
@@ -134,6 +134,8 @@ class PdfQuestionExtractView(APIView):
                     status=status.HTTP_202_ACCEPTED,
                 )
 
+            # HWP 5.x 미주 해설 이미지는 원본 그대로 분리한다. HWPX는 렌더링
+            # 보존 경계가 달라 현재 PDF 변환을 요청한다.
             # Generate presigned download URL for worker
             download_url = generate_presigned_download_url(key=r2_key)
 
@@ -165,7 +167,7 @@ class PdfQuestionExtractView(APIView):
             return Response({
                 "job_id": result.get("job_id"),
                 "status": "submitted",
-                "message": "PDF 문항 분할이 시작되었습니다.",
+                "message": "문항과 선생님 원본 해설 분리가 시작되었습니다.",
             }, status=status.HTTP_202_ACCEPTED)
 
         except Exception as e:

@@ -48,6 +48,7 @@ class Exam(BaseModel):
     class SegmentationStatus(models.TextChoices):
         NONE = "none", "원본 없음"
         PROCESSING = "processing", "문항 분리 중"
+        REVIEW_REQUIRED = "review_required", "문항·해설 검수 필요"
         READY = "ready", "문항 분리 완료"
         FAILED = "failed", "문항 분리 실패"
         CONVERSION_REQUIRED = "conversion_required", "PDF 변환 필요"

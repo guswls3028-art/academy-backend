@@ -164,6 +164,12 @@ urlpatterns = [
     path("wrong-notes", WrongNoteView.as_view(), name="wrong-note"),
     path("wrong-notes/pdf/", WrongNotePDFCreateView.as_view(), name="wrong-note-pdf-create"),
     path("wrong-notes/pdf/<int:job_id>/", WrongNotePDFStatusView.as_view(), name="wrong-note-pdf-status"),
+    path("wrong-notes/documents/", WrongNotePDFCreateView.as_view(), name="wrong-note-document-create"),
+    path(
+        "wrong-notes/documents/<int:job_id>/",
+        WrongNotePDFStatusView.as_view(),
+        name="wrong-note-document-status",
+    ),
 ]
 
 router = DefaultRouter()

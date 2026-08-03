@@ -253,6 +253,53 @@ class TestC4WrongNotePkCollisionGuard(_Mixin, TestCase):
         self.assertEqual(ai_job.payload, {"wrong_note_pdf_job_id": job.id})
         publish.assert_called_once_with(ai_job)
 
+    @patch(
+        "apps.domains.results.views.wrong_note_pdf_view.publish_wrong_note_pdf_ai_job",
+        return_value=True,
+    )
+    @patch(
+        "apps.domains.results.views.wrong_note_pdf_status_view.generate_presigned_get_url_storage",
+        return_value="https://storage.test/wrong-note.hwpx",
+    )
+    def test_hwpx_create_and_status_preserve_format(self, presign, _publish):
+        request = self.factory.post(
+            "/api/v1/results/wrong-notes/documents/",
+            data={
+                "enrollment_id": self.enroll_a.id,
+                "output_format": "hwpx",
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.staff_user)
+        request.tenant = self.tenant
+
+        created = WrongNotePDFCreateView.as_view()(request)
+
+        self.assertEqual(created.status_code, 202, created.data)
+        self.assertEqual(created.data["output_format"], "hwpx")
+        job = WrongNotePDF.objects.get(id=created.data["job_id"])
+        self.assertEqual(job.output_format, WrongNotePDF.OutputFormat.HWPX)
+        job.status = WrongNotePDF.Status.DONE
+        job.file_path = f"tenants/{self.tenant.id}/results/wrong-notes/{job.id}.hwpx"
+        job.save(update_fields=["status", "file_path", "updated_at"])
+
+        status_request = self.factory.get(
+            f"/api/v1/results/wrong-notes/documents/{job.id}/"
+        )
+        force_authenticate(status_request, user=self.staff_user)
+        status_request.tenant = self.tenant
+        status_response = WrongNotePDFStatusView.as_view()(status_request, job_id=job.id)
+
+        self.assertEqual(status_response.status_code, 200, status_response.data)
+        self.assertEqual(status_response.data["output_format"], "hwpx")
+        self.assertEqual(status_response.data["filename"], f"wrong-note-{job.id}.hwpx")
+        presign.assert_called_once_with(
+            key=job.file_path,
+            expires_in=3600,
+            filename=f"wrong-note-{job.id}.hwpx",
+            content_type="application/vnd.hancom.hwpx",
+        )
+
     def test_pdf_create_rejects_reversed_session_range(self):
         view = WrongNotePDFCreateView.as_view()
         req = self.factory.post(

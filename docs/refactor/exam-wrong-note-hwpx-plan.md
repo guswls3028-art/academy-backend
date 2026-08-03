@@ -1,4 +1,4 @@
-# [PROPOSED] 시험 원본 → 회차 범위 오답노트 HWPX
+# [PARTIALLY IMPLEMENTED] 시험 원본 → 회차 범위 오답노트 HWPX
 
 ## 1. 목표
 
@@ -15,8 +15,9 @@ HWPX 시험지를 만드는 것이 목표다.
 5. 학생과 시작·종료 회차를 고르고 오답·오답노트 지정 문항을 미리 본다.
 6. 편집 가능한 HWPX를 만들어 한글에서 수정·인쇄한다.
 
-이 문서는 아직 구현되지 않은 범위를 현재 기능처럼 표현하지 않기 위해
-`refactor/`에 둔다. 현재 채점·PDF 계약은
+번호 수정·제외가 있는 proposal 승인과 원본 보존형 PDF/HWPX 출력 기준선은
+구현되었다. 박스 직접 수정·분할·병합과 편집 가능한 수식/필기 개체 변환은
+아직 구현되지 않아 남은 범위를 `refactor/`에 둔다. 현재 계약은
 [시험 생성·혼합 채점·오답노트](../domain/exam-grading.md), 문항 분리 품질은
 [매치업](../domain/matchup.md), HWPX 검수본의 현재 약속은
 [Problem Studio](../domain/problem-studio.md)가 소유한다.
@@ -27,8 +28,8 @@ HWPX 시험지를 만드는 것이 목표다.
 
 - `POST /exams/pdf-extract/`는 빈 시험에 원본을 보관하고 PDF·이미지의
   문항 분리 작업을 시작한다.
-- HWP/HWPX 원본은 보관하지만 Linux에서 수식·쪽 배치를 안전하게 재현하지
-  않으므로 PDF 변환 안내 상태로 끝난다.
+- 번호가 있는 미주 이미지형 HWP 5.x는 문제와 원본 해설 후보를 만든다.
+  다른 HWP/HWPX는 PDF 변환 안내로 끝난다.
 - 자동 분리는 텍스트 PDF, OCR/OpenCV, YOLO, 설정에 따른 VLM 후보 경로가
   공존한다. 모든 양식에 대해 무검수 자동 확정을 보장하지 않는다.
 - 수동 박스 보정 경로는 자동 후보가 부정확할 때의 현재 안전망이다.
@@ -51,7 +52,7 @@ HWPX 시험지를 만드는 것이 목표다.
 
 ### 2.3 출력과 작업 경계
 
-- 현재 오답노트 출력은 tools worker가 비동기로 만드는 PDF다.
+- 현재 오답노트 출력은 tools worker가 비동기로 만드는 PDF/HWPX다.
 - API는 tenant 범위 안에 `WrongNotePDF`와 AI job을 기록한 뒤 큐 발행에
   성공하면 `202 PENDING`을 반환한다. 발행 실패는 두 job을 `FAILED`로
   닫고 `503`을 반환한다.
@@ -118,13 +119,13 @@ tenant별 모델 학습 파이프라인이 현재 실행 중이라고 문서화�
 - 다른 강의나 tenant의 회차·시험 ID는 거부한다.
 - 최대 100문항 안내와 범위 축소 동선이 유지된다.
 
-### Slice B — 검수된 문항을 시험 정본으로 저장
+### Slice B — 검수된 문항을 시험 정본으로 저장 `[BASELINE IMPLEMENTED]`
 
 자동 분리 job 결과를 곧바로 canonical question으로 쓰지 않고 검수
 proposal로 저장한다.
 
 - 원본 asset ID, 페이지, bbox, 분리 엔진·버전, 신뢰도와 상태를 보존한다.
-- 교사는 후보를 승인, 박스 수정, 분할, 병합, 제외할 수 있다.
+- 교사는 후보를 승인, 번호 수정, 제외할 수 있다. 박스 수정·분할·병합은 남은 범위다.
 - 승인 명령은 명시한 빈 시험 또는 호환 가능한 시험에만 원자적으로 문항과
   이미지를 만든다.
 - 기존 문항·답안·성적이 있으면 자동 overwrite 대신 충돌을 반환한다.
@@ -139,7 +140,7 @@ proposal로 저장한다.
 - 수동 승인 문항은 재분석해도 유지된다.
 - 실패 job과 부분 asset은 운영 cleanup 대상이 명확하다.
 
-### Slice C — 학생별 HWPX 출력
+### Slice C — 학생별 HWPX 출력 `[VISUAL BASELINE IMPLEMENTED]`
 
 오답 조회 결과를 Problem Studio의 HWPX writer에 전달하는 전용 출력
 contract를 추가한다.
@@ -148,14 +149,15 @@ contract를 추가한다.
   분리 옵션을 포함한다.
 - worker payload에는 tenant, enrollment, 정확한 회차 범위, 대표 결과
   fingerprint를 저장한다.
-- 결과가 바뀐 오래된 미리보기로 생성하지 않도록 fingerprint를 검증한다.
+- 프론트는 대표 결과 fingerprint가 달라지면 기존 다운로드 job을 폐기한다.
 - PDF/HWPX는 같은 문항 집합을 사용하되 서로 독립적으로 실패·재시도할 수
   있다.
 - R2 key, content type, attachment filename과 만료 URL을 형식별로 분리한다.
 
 수용 기준:
 
-- 1, 20, 100문항 HWPX가 package/schema 검증을 통과한다.
+- 1문항 HWPX package/preview 계약은 자동 검증한다. 20·100문항과 한글 2024
+  수동 재열기는 운영 승인 전 남은 검증이다.
 - 한글 2024가 있는 통제 Windows 환경에서 열기·편집·저장·재열기를
   수동 확인한다.
 - 수식, 표, 이미지, 긴 선지의 품질 한계를 명확히 표시하고 원본 참조를

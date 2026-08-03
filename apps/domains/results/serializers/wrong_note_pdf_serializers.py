@@ -18,5 +18,7 @@ class WrongNotePDFStatusSerializer(serializers.Serializer):
     file_path = serializers.CharField(allow_blank=True)
     file_url = serializers.CharField(allow_blank=True, allow_null=True)
     error_message = serializers.CharField(allow_blank=True)
+    output_format = serializers.CharField()
+    filename = serializers.CharField()
     created_at = serializers.DateTimeField()
     updated_at = serializers.DateTimeField()

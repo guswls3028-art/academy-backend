@@ -24,7 +24,7 @@
 | `manual_grading_method` | `correctness` | 답변형을 정오로 입력한다. |
 |  | `score` | 답변형을 문항별 부분점수로 입력한다. |
 | `choice_question_count` | 0 이상의 정수 | 원본 자동 분리 시 앞에서부터 선택형으로 만들 문항 수. 혼합형은 1 이상이어야 한다. |
-| `segmentation_status` | `none`, `processing`, `ready`, `failed`, `conversion_required` | 원본 문항 분리 상태다. |
+| `segmentation_status` | `none`, `processing`, `review_required`, `ready`, `failed`, `conversion_required` | 원본 문항 분리와 교직원 검수 상태다. |
 | `student_results_published` | `true`, `false` | 학생·학부모 성적 공개 여부다. 기본값 `true`는 기존 시험 노출을 유지한다. |
 
 문항이 생성된 뒤에도 `grading_mode`와 `manual_grading_method`는 시험
@@ -68,10 +68,15 @@
 2. 같은 tenant의 빈 시험 ID와 원본 파일을
    `POST /exams/pdf-extract/`에 보낸다.
 3. 원본은 tenant 전용 R2 경로에 `problem_source` 자산으로 저장한다.
-4. PDF 또는 이미지는 `question_segmentation` 작업으로 전달하고
+4. PDF, 이미지 또는 HWP 5.x는 `question_segmentation` 작업으로 전달하고
    `segmentation_status=processing`으로 바꾼다.
-5. 성공 콜백은 문항 구조와 이미지를 연결하고 시험 만점을 문항 배점으로
-   분배한다. 실패 시 `failed`로 남겨 사용자가 다시 시도할 수 있게 한다.
+5. 성공 콜백은 정본 문항을 바로 쓰지 않고 `ExamQuestionProposal`에 문제,
+   원본 번호, 해설 이미지·텍스트와 출처를 저장한 뒤 `review_required`로 바꾼다.
+6. 교직원은 **문항·해설 맞춤 확인**에서 문제와 선생님 원본 해설을 나란히
+   보고 번호 수정, 수록/제외를 검수한다. 승인 전에는 채점 문항이 생기지 않는다.
+7. 승인은 빈 운영 시험을 다시 잠그고 선택 번호가 양수·고유한지 확인한 뒤
+   문항, 배점과 `source_file` 해설을 한 transaction에서 만든다. 그때만
+   `ready`와 유사문항 인덱싱으로 진행한다.
 
 문항 작업은 공통 dispatcher가 확정한 페이지별 박스와 원본 문항 번호를
 그대로 사용한다. worker pipeline이 같은 PDF를 별도 `question_splitter`로
@@ -86,13 +91,17 @@
 PDF는 앞선 페이지에서 문항이 확인된 경우 그 표제 페이지부터 문서 끝까지를
 문항 후보에서 제외한다. 이 구간은 버리지 않고 표제가 반복되지 않는 다음
 페이지까지 번호별 해설로 읽는다. 분리된 실제 문항 번호와 일치하는 해설만
-콜백 결과에 포함하며, legacy `boxes`에도 제외된 해설 박스를 섞지 않는다.
+콜백 결과에 포함하며 번호가 있는 해설 영역은 이미지로도 보존한다. legacy
+`boxes`에는 제외된 해설 박스를 섞지 않는다. 추출 텍스트는 교사가 쓴 내용을
+읽은 것이며 새 해설을 생성하지 않는다.
 
 허용 확장자는 PDF, PNG, JPG/JPEG, HWP/HWPX이고 최대 크기는 50MB다.
-HWP/HWPX 원본은 보관하지만 운영 Linux에서 수식과 쪽 배치를 안전하게
-재현하지 않는다. 이 경우 `202 Accepted`와
-`status=conversion_required`를 반환하고, 같은 문서를 PDF로 저장해 다시
-올리도록 안내한다. HWP/HWPX를 성공적으로 자동 분리했다고 가장하지 않는다.
+HWP 5.x에서 번호가 붙은 미주에 문제·필기 해설 그림을 넣은 Ymath 양식은 OLE
+레코드와 BinData를 직접 읽는다. 압축 BMP/JPEG/PNG/GIF를 제한 크기로 해제하고,
+위쪽 문제 영역과 전체 원본 해설 이미지를 각각 저장한다. 여러 그림인 미주는
+원래 순서대로 세로 결합한다. 미주 그림이 없거나 지원할 수 없는 HWP, HWPX는
+`202 Accepted`와 `status=conversion_required`로 닫고 PDF 변환본을 요청한다.
+원본 HWP의 문장·수식·필기 내용을 AI가 다시 쓰거나 생성하지 않는다.
 
 tenant가 없거나 다른 tenant의 시험이면 거부한다. 이미 분리 중이면
 `409`, 문항 또는 성적이 있어 잠긴 운영 시험이면 `409`, 지원하지 않는
@@ -228,7 +237,7 @@ cross-tenant fallback을 사용하지 않는다.
 만들지 않는다.
 
 현재 교직원 화면은 단일 시험 또는 수강 강의의 시작~종료 회차를 선택하고
-최대 100문항의 PDF를 만든다. 시작과 종료 회차는 모두 포함하며 종료 회차를
+최대 100문항의 PDF 또는 HWPX를 만든다. 시작과 종료 회차는 모두 포함하며 종료 회차를
 비우면 시작 회차부터 현재까지 누적한다. 조회와 PDF 생성은 동일한
 `from_session_order`/`to_session_order` 규칙을 사용하고 `1 <= from <= to`를
 검증한다. 같은 시험이 여러 회차에 연결되어도 문항은 한 번만 싣고, 선택
@@ -240,16 +249,13 @@ cross-tenant fallback을 사용하지 않는다.
 재배치해도 `2~3회차`는 정규 2차시와 3차시만 뜻하며, 조회 결과의
 `session_order`도 같은 정규 수업 번호를 반환한다.
 
-API는 `WrongNotePDF`와 tools worker job을 tenant 범위에서 기록해 비동기로
-생성하고, 완료 뒤 R2 attachment URL을 반환한다. 출력 job에도 선택한 시작·
-종료 회차를 저장하므로 미리보기와 worker 조회 범위가 달라지지 않는다.
-HWPX 출력은 아직 없다.
-
-Problem Studio의 HWPX 검수본 생성은 별도 교사 보조 흐름이다. 그 결과가
-시험 문항에 자동 저장되거나 오답노트 HWPX로 직접 이어진다고 안내하지
-않는다. 검수된 원본 문항 저장과 편집 가능한 HWPX 출력의 제안 계약은
-[시험 원본 → 회차 범위 오답노트 HWPX](../refactor/exam-wrong-note-hwpx-plan.md)에
-둔다.
+API는 호환 이름을 유지한 `WrongNotePDF`와 tools worker job을 tenant 범위에서
+기록해 비동기로 생성하고, 완료 뒤 형식별 R2 attachment URL을 반환한다. 출력
+job에는 선택한 시작·종료 회차와 `pdf|hwpx` 형식을 저장한다. 두 형식 모두
+앞쪽은 답이 없는 문제와 풀이 공간, 뒤쪽은 분리 표지 뒤의 정답 및 선생님 원본
+해설이다. HWPX는 A4 원본 보존 페이지 이미지로 구성되어 한글에서 열고 인쇄할
+수 있지만 본문 수식·필기를 편집 가능한 한글 개체로 재구성한다고 약속하지 않는다.
+기존 PDF API는 호환 별칭으로 유지한다.
 
 ## API 요약
 
@@ -265,14 +271,17 @@ Problem Studio의 HWPX 검수본 생성은 별도 교사 보조 흐름이다. �
 |--------|------|------|
 | POST | `/exams/` | 시험과 채점 계약 생성 |
 | PATCH | `/exams/{id}/` | 채점 방식·학생 성적 공개 전환. 문항·정답·기존 결과는 보존 |
-| POST | `/exams/pdf-extract/` | 원본 보관과 PDF/이미지 문항 분리 요청 |
+| POST | `/exams/pdf-extract/` | 원본 보관과 PDF/이미지/HWP 문항·원본 해설 분리 요청 |
+| GET | `/exams/{id}/segmentation-review/` | 문항·해설 검수 후보와 만료형 이미지 URL 조회 |
+| POST | `/exams/{id}/segmentation-review/approve/` | 번호·제외를 반영해 빈 시험 문항과 원본 해설 확정 |
 | GET | `/results/admin/exams/{id}/manual-grading/` | 직접 채점 표와 버전 조회 |
 | POST | `/results/admin/exams/{id}/manual-grading/` | 직접 채점 미리보기 또는 원자적 확정 |
 | GET | `/results/admin/exams/{id}/result-import/template/` | 시험 전용 엑셀 양식 다운로드 |
 | POST | `/results/admin/exams/{id}/result-import/` | 엑셀 미리보기 또는 원자적 확정 |
 | GET | `/results/wrong-notes` | 학생의 현재 대표 오답·복습 문항 조회. `from_session_order`~선택적 `to_session_order` 포함 |
-| POST | `/results/wrong-notes/pdf/` | 같은 회차 범위의 비동기 PDF job 생성·tools worker 발행 |
-| GET | `/results/wrong-notes/pdf/{job_id}/` | job 상태와 완료된 attachment URL 조회 |
+| POST | `/results/wrong-notes/documents/` | `output_format=pdf|hwpx`와 회차 범위의 비동기 문서 job 생성 |
+| GET | `/results/wrong-notes/documents/{job_id}/` | 형식·파일명·상태와 attachment URL 조회 |
+| POST/GET | `/results/wrong-notes/pdf/...` | 기존 PDF 클라이언트 호환 별칭 |
 
 ## 집중 검증
 
@@ -283,7 +292,7 @@ python manage.py test `
   apps.support.results.tests.test_manual_exam_grading `
   --settings apps.api.config.settings.test
 
-python -m pytest tests/test_pdf_question_pipeline_regression.py -q
+python -m pytest tests/test_pdf_question_pipeline_regression.py tests/test_hwp_endnote_images.py -q
 
 python -m pytest tests/results/test_exam_result_excel_import.py -q
 
@@ -293,7 +302,8 @@ python manage.py test `
   --settings apps.api.config.settings.test
 ```
 
-검증은 PDF 처리 상태, HWP 변환 안내, 잠긴 시험 보호, 정오·부분점수,
+검증은 PDF/HWP 처리 상태, 검수 전 proposal, 승인·번호 변경·제외·tenant 차단,
+압축 HWP 이미지와 Ymath 실자료, 잠긴 시험 보호, 정오·부분점수,
 공통 dispatcher 크롭 재사용, 짧은 복습지 표지 제외,
 후행 정답·해설의 문항 제외와 연속 해설 추출,
 오답노트와 기존 `0` 호환 의미, 선택형 자동채점 정오 조회·직접 수정 차단과 OMR 보정 경계,
@@ -301,4 +311,4 @@ python manage.py test `
 합계·stale 배점 거부, 과거 혼합형 경계 복구, 시험 설정 stale version 거부와
 전체 PATCH 응답, 혼합형 OMR 보존, stale result version 거부,
 다중 시트 선택, tenant 차단, 양끝을 포함하는 회차 범위, 다중 회차 시험의
-중복 제거, 오답노트 포함과 PDF worker/R2 상태를 포함한다.
+중복 제거, 오답노트 포함과 PDF/HWPX 문제·해설 분리, worker/R2 상태를 포함한다.

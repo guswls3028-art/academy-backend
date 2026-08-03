@@ -13,6 +13,8 @@ from apps.domains.exams.models import (
     Exam,
     ExamAsset,
     ExamQuestion,
+    ExamQuestionProposal,
+    QuestionExplanation,
     Sheet,
 )
 from apps.domains.exams.serializers.exam_update import ExamUpdateSerializer
@@ -109,16 +111,23 @@ class GuidedExamSourceWorkflowTests(TestCase):
         dispatch_job.assert_called_once()
 
     @patch(
-        "apps.domains.exams.views.pdf_question_extract_view.dispatch_ai_job"
+        "apps.domains.exams.views.pdf_question_extract_view."
+        "generate_presigned_download_url",
+        return_value="https://files.test/source.hwp",
+    )
+    @patch(
+        "apps.domains.exams.views.pdf_question_extract_view.dispatch_ai_job",
+        return_value={"job_id": "hwp-job"},
     )
     @patch(
         "apps.domains.exams.views.pdf_question_extract_view."
         "upload_fileobj_to_r2_storage"
     )
-    def test_hwp_is_preserved_and_requests_faithful_pdf_conversion(
+    def test_hwp_is_preserved_and_dispatched_for_endnote_extraction(
         self,
         upload_file,
         dispatch_job,
+        presign,
     ):
         exam = Exam.objects.create(
             tenant=self.tenant,
@@ -137,14 +146,15 @@ class GuidedExamSourceWorkflowTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 202, response.data)
-        self.assertEqual(response.data["status"], "conversion_required")
+        self.assertEqual(response.data["status"], "submitted")
         exam.refresh_from_db()
         self.assertEqual(
             exam.segmentation_status,
-            Exam.SegmentationStatus.CONVERSION_REQUIRED,
+            Exam.SegmentationStatus.PROCESSING,
         )
         upload_file.assert_called_once()
-        dispatch_job.assert_not_called()
+        presign.assert_called_once()
+        dispatch_job.assert_called_once()
 
     @patch(
         "apps.domains.exams.views.pdf_question_extract_view."
@@ -179,7 +189,7 @@ class GuidedExamSourceWorkflowTests(TestCase):
         )
 
     @patch("apps.domains.ai.gateway.dispatch_job")
-    def test_callback_builds_mixed_structure_and_distributes_total_score(
+    def test_callback_creates_review_proposals_without_canonical_structure(
         self,
         dispatch_matchup,
     ):
@@ -224,38 +234,40 @@ class GuidedExamSourceWorkflowTests(TestCase):
                     "1": f"tenants/{self.tenant.id}/exams/{exam.id}/1.png",
                     "2": f"tenants/{self.tenant.id}/exams/{exam.id}/2.png",
                 },
+                "explanations": [
+                    {
+                        "question_number": 2,
+                        "text": "선생님이 작성한 풀이",
+                        "image_key": f"tenants/{self.tenant.id}/exams/explanations/{exam.id}/2.png",
+                        "match_confidence": 1.0,
+                    }
+                ],
+                "segmentation_method": "hwp_endnote",
             },
             error=None,
             source_id=str(exam.id),
         )
 
         exam.refresh_from_db()
-        sheet = Sheet.objects.get(exam=exam)
-        questions = list(sheet.questions.order_by("number"))
         self.assertEqual(
             exam.segmentation_status,
-            Exam.SegmentationStatus.READY,
+            Exam.SegmentationStatus.REVIEW_REQUIRED,
         )
-        self.assertEqual((sheet.choice_count, sheet.essay_count), (1, 1))
+        self.assertFalse(Sheet.objects.filter(exam=exam).exists())
+        proposals = list(ExamQuestionProposal.objects.filter(exam=exam))
         self.assertEqual(
-            [question.question_kind for question in questions],
-            [
-                ExamQuestion.QuestionKind.CHOICE,
-                ExamQuestion.QuestionKind.ESSAY,
-            ],
+            [proposal.number for proposal in proposals],
+            [1, 2],
         )
         self.assertEqual(
-            [float(question.score) for question in questions],
-            [50.0, 50.0],
+            proposals[1].explanation_text,
+            "선생님이 작성한 풀이",
         )
         self.assertEqual(
-            [question.image_key for question in questions],
-            [
-                f"tenants/{self.tenant.id}/exams/{exam.id}/1.png",
-                f"tenants/{self.tenant.id}/exams/{exam.id}/2.png",
-            ],
+            proposals[1].explanation_image_key,
+            f"tenants/{self.tenant.id}/exams/explanations/{exam.id}/2.png",
         )
-        dispatch_matchup.assert_called_once()
+        dispatch_matchup.assert_not_called()
 
     def test_grading_workflow_can_change_after_questions_exist(self):
         exam = Exam.objects.create(

@@ -34,16 +34,17 @@ logger = logging.getLogger(__name__)
 
 class WrongNotePDFCreateView(APIView):
     """
-    오답노트 PDF 생성 요청.
+    오답노트 PDF/HWPX 생성 요청.
 
     API 요청에서는 job을 내구성 있게 기록하고 tools worker 큐에 발행한다.
-    실제 PDF 생성과 R2 저장은 ALB 요청 제한 밖에서 비동기로 처리한다.
+    실제 문서 생성과 R2 저장은 ALB 요청 제한 밖에서 비동기로 처리한다.
 
     응답:
     {
       "job_id": 1,
       "status": "PENDING",
-      "status_url": "https://.../results/wrong-notes/pdf/1/"
+      "status_url": "https://.../results/wrong-notes/documents/1/",
+      "output_format": "pdf"
     }
     """
 
@@ -89,6 +90,11 @@ class WrongNotePDFCreateView(APIView):
         enrollment_id = request.data.get("enrollment_id")
         if not enrollment_id:
             return Response({"detail": "enrollment_id required"}, status=400)
+        output_format = str(request.data.get("output_format") or "pdf").lower()
+        if output_format not in WrongNotePDF.OutputFormat.values:
+            raise ValidationError(
+                {"output_format": "PDF 또는 HWPX만 선택할 수 있습니다."}
+            )
 
         try:
             enrollment_id_i = int(enrollment_id)
@@ -154,13 +160,14 @@ class WrongNotePDFCreateView(APIView):
                 from_session_order=from_order,
                 to_session_order=to_order,
                 status=WrongNotePDF.Status.PENDING,
+                output_format=output_format,
             )
             ai_job = create_wrong_note_pdf_ai_job(
                 pdf_job_id=int(job.id),
                 tenant_id=int(request.tenant.id),
             )
 
-        status_path = reverse("wrong-note-pdf-status", kwargs={"job_id": job.id})
+        status_path = reverse("wrong-note-document-status", kwargs={"job_id": job.id})
         status_url = request.build_absolute_uri(status_path)
 
         try:
@@ -177,7 +184,7 @@ class WrongNotePDFCreateView(APIView):
             enqueued = False
 
         if not enqueued:
-            error_message = "PDF 생성 작업을 등록하지 못했습니다. 잠시 후 다시 시도해 주세요."
+            error_message = "오답노트 생성 작업을 등록하지 못했습니다. 잠시 후 다시 시도해 주세요."
             with transaction.atomic():
                 WrongNotePDF.objects.filter(id=job.id).update(
                     status=WrongNotePDF.Status.FAILED,
@@ -193,6 +200,7 @@ class WrongNotePDFCreateView(APIView):
                     "job_id": int(job.id),
                     "status": WrongNotePDF.Status.FAILED,
                     "status_url": status_url,
+                    "output_format": output_format,
                     "detail": error_message,
                 },
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -203,6 +211,7 @@ class WrongNotePDFCreateView(APIView):
                 "job_id": int(job.id),
                 "status": WrongNotePDF.Status.PENDING,
                 "status_url": status_url,
+                "output_format": output_format,
             },
             status=status.HTTP_202_ACCEPTED,
         )

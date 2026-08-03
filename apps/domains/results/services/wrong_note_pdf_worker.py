@@ -18,7 +18,7 @@ from apps.shared.contracts.ai_result import AIResult
 logger = logging.getLogger(__name__)
 
 _SOURCE_DOMAIN = "results_wrong_note_pdf"
-_GENERIC_ERROR = "PDF를 만들지 못했습니다. 잠시 후 다시 시도해 주세요."
+_GENERIC_ERROR = "오답노트를 만들지 못했습니다. 잠시 후 다시 시도해 주세요."
 
 
 def _failed_result(
@@ -40,7 +40,7 @@ def _failed_result(
 
 
 def handle_wrong_note_pdf_generation_job(ai_job: AIJob) -> AIResult:
-    """Generate a wrong-note PDF on the tools worker and return a callback envelope."""
+    """Generate a wrong-note PDF/HWPX on the tools worker and return its envelope."""
     source_id = str(ai_job.source_id or "")
     payload_id = str((ai_job.payload or {}).get("wrong_note_pdf_job_id") or "")
     if ai_job.source_domain != _SOURCE_DOMAIN or not source_id or payload_id != source_id:

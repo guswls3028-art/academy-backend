@@ -18,6 +18,7 @@ class QuestionExplanation(BaseModel):
 
     class Source(models.TextChoices):
         AI_EXTRACTED = "ai_extracted", "AI 추출"
+        SOURCE_FILE = "source_file", "업로드 원본"
         MANUAL = "manual", "수동 입력"
 
     question = models.OneToOneField(

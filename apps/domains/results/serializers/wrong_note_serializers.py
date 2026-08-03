@@ -25,6 +25,8 @@ class WrongNoteItemSerializer(serializers.Serializer):
     answer_type = serializers.CharField(required=False, allow_blank=True)
     question_image_url = serializers.CharField(required=False, allow_blank=True)
     has_question_image = serializers.BooleanField(required=False)
+    explanation_image_url = serializers.CharField(required=False, allow_blank=True)
+    has_teacher_explanation = serializers.BooleanField(required=False)
 
     # 학생 답 / 정답 / 점수
     student_answer = serializers.CharField(required=False, allow_blank=True)

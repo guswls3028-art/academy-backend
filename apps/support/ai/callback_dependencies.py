@@ -20,6 +20,12 @@ def get_exam_segmentation_models():
     return Exam, Sheet, ExamQuestion, QuestionExplanation
 
 
+def get_exam_question_proposal_model():
+    from apps.domains.exams.models import ExamQuestionProposal
+
+    return ExamQuestionProposal
+
+
 def get_matchup_document_models():
     from apps.domains.matchup.models import MatchupDocument, MatchupProblem
 

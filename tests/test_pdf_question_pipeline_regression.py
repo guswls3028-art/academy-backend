@@ -93,6 +93,11 @@ def test_explanations_continue_across_tail_pages_without_repeated_heading():
 
 @patch(
     "academy.application.use_cases.ai.pipelines.pdf_question_pipeline."
+    "_crop_and_upload_explanation_images",
+    return_value={1: "explanations/q001.png"},
+)
+@patch(
+    "academy.application.use_cases.ai.pipelines.pdf_question_pipeline."
     "_crop_and_upload_question_images",
     return_value={1: "questions/q001.png"},
 )
@@ -113,6 +118,7 @@ def test_pipeline_reuses_dispatcher_crops_and_drops_solution_questions(
     register_tmp,
     extract_pdf_text,
     crop_images,
+    crop_explanations,
 ):
     problem_bbox = (10, 20, 100, 260)
     solution_bbox = (10, 20, 100, 500)
@@ -158,6 +164,8 @@ def test_pipeline_reuses_dispatcher_crops_and_drops_solution_questions(
         }
     ]
     assert [item["question_number"] for item in result.result["explanations"]] == [1]
+    assert result.result["explanations"][0]["image_key"] == "explanations/q001.png"
+    crop_explanations.assert_called_once()
     passed_questions = crop_images.call_args.kwargs["questions"]
     assert [item["bbox"] for item in passed_questions] == [problem_bbox]
     register_tmp.assert_called_once_with(["pdf-seg-test"])
