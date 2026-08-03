@@ -145,6 +145,7 @@ class Exam(BaseModel):
     )
     student_results_published = models.BooleanField(
         default=True,
+        db_default=True,
         help_text=(
             "학생·학부모 성적 공개 여부. 비공개여도 교직원 채점·통계 기록은 유지한다."
         ),
