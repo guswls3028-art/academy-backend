@@ -7,20 +7,25 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AlterField(
-            model_name="examasset",
-            name="asset_type",
-            field=models.CharField(
-                choices=[
-                    ("problem_pdf", "Problem PDF"),
-                    ("problem_source", "Original problem source"),
-                    (
-                        "teacher_explanation_source",
-                        "Teacher explanation source",
+        migrations.SeparateDatabaseAndState(
+            database_operations=[],
+            state_operations=[
+                migrations.AlterField(
+                    model_name="examasset",
+                    name="asset_type",
+                    field=models.CharField(
+                        choices=[
+                            ("problem_pdf", "Problem PDF"),
+                            ("problem_source", "Original problem source"),
+                            (
+                                "teacher_explanation_source",
+                                "Teacher explanation source",
+                            ),
+                            ("omr_sheet", "OMR Sheet"),
+                        ],
+                        max_length=30,
                     ),
-                    ("omr_sheet", "OMR Sheet"),
-                ],
-                max_length=30,
-            ),
+                ),
+            ],
         ),
     ]
