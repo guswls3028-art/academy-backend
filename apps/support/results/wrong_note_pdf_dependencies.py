@@ -46,7 +46,12 @@ def exam_is_attached_to_lecture(*, exam_id: int, lecture_id: int) -> bool:
     return exam.sessions.filter(lecture_id=lecture_id).exists()
 
 
-def create_wrong_note_pdf_ai_job(*, pdf_job_id: int, tenant_id: int) -> Any:
+def create_wrong_note_pdf_ai_job(
+    *,
+    pdf_job_id: int,
+    tenant_id: int,
+    source_fingerprint: str,
+) -> Any:
     from apps.domains.ai.models import AIJobModel
 
     return AIJobModel.objects.create(
@@ -56,7 +61,10 @@ def create_wrong_note_pdf_ai_job(*, pdf_job_id: int, tenant_id: int) -> Any:
         tenant_id=str(tenant_id),
         source_domain="results_wrong_note_pdf",
         source_id=str(pdf_job_id),
-        payload={"wrong_note_pdf_job_id": int(pdf_job_id)},
+        payload={
+            "wrong_note_pdf_job_id": int(pdf_job_id),
+            "source_fingerprint": str(source_fingerprint or ""),
+        },
         tier="basic",
     )
 

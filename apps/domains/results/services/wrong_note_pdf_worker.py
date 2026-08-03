@@ -8,6 +8,7 @@ from apps.domains.results.models import WrongNotePDF
 from apps.domains.results.services.wrong_note_pdf_service import (
     WrongNotePDFEmptyError,
     WrongNotePDFLimitError,
+    WrongNotePDFStaleError,
     delete_wrong_note_pdf_object,
     generate_and_store_wrong_note_pdf,
     wrong_note_pdf_storage_key,
@@ -79,6 +80,18 @@ def handle_wrong_note_pdf_generation_job(ai_job: AIJob) -> AIResult:
                     message=str(pdf_job.error_message or _GENERIC_ERROR),
                     file_path=str(pdf_job.file_path or ""),
                 )
+            payload_fingerprint = str(
+                (ai_job.payload or {}).get("source_fingerprint") or ""
+            )
+            if (
+                pdf_job.source_fingerprint
+                and payload_fingerprint != pdf_job.source_fingerprint
+            ):
+                return _failed_result(
+                    ai_job=ai_job,
+                    pdf_job=pdf_job,
+                    message="오답노트 생성 작업 정보가 일치하지 않습니다. 다시 요청해 주세요.",
+                )
             pdf_job.status = WrongNotePDF.Status.RUNNING
             pdf_job.error_message = ""
             pdf_job.save(update_fields=["status", "error_message", "updated_at"])
@@ -100,7 +113,11 @@ def handle_wrong_note_pdf_generation_job(ai_job: AIJob) -> AIResult:
                 "file_path": stored_key,
             },
         )
-    except (WrongNotePDFEmptyError, WrongNotePDFLimitError) as exc:
+    except (
+        WrongNotePDFEmptyError,
+        WrongNotePDFLimitError,
+        WrongNotePDFStaleError,
+    ) as exc:
         cleanup_succeeded = delete_wrong_note_pdf_object(file_key)
         return _failed_result(
             ai_job=ai_job,

@@ -49,6 +49,7 @@ class WrongNoteListResponseSerializer(serializers.Serializer):
     페이지네이션 포함 응답
     """
     count = serializers.IntegerField()
+    source_fingerprint = serializers.CharField(min_length=64, max_length=64)
     next = serializers.IntegerField(allow_null=True)   # 다음 offset
     prev = serializers.IntegerField(allow_null=True)   # 이전 offset
     results = WrongNoteItemSerializer(many=True)

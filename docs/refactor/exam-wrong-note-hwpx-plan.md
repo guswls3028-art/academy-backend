@@ -62,6 +62,9 @@ HWPX 시험지를 만드는 것이 목표다.
   닫고 `503`을 반환한다.
 - worker는 문항 이미지와 답안 정보를 읽어 PDF를 R2에 저장하고,
   상태 API는 완료 뒤 만료형 attachment URL을 반환한다.
+- 조회는 만료형 URL을 제외한 문서 입력의 `source_fingerprint`를 반환한다.
+  job과 queue payload가 이를 보존하고 worker가 렌더 직전에 재검증하므로 요청 뒤
+  재채점·문항·해설 변경이 생기면 과거 미리보기와 다른 문서를 만들지 않고 실패한다.
 - Problem Studio는 업로드 원본을 편집 가능한 HWPX 검수본으로 옮기는 별도
   교사 보조 도구다. 현재 Problem Studio 결과가 `ExamQuestion` 정본에
   자동 저장되거나 오답노트 HWPX로 바로 이어지지는 않는다.
@@ -151,9 +154,10 @@ contract를 추가한다.
 
 - 입력은 확정된 question ID, 시험·차시 제목, 문항 이미지, 필요 시 정답·해설
   분리 옵션을 포함한다.
-- worker payload에는 tenant, enrollment, 정확한 회차 범위, 대표 결과
-  fingerprint를 저장한다.
-- 프론트는 대표 결과 fingerprint가 달라지면 기존 다운로드 job을 폐기한다.
+- tenant 범위 enrollment와 정확한 회차는 `WrongNotePDF`에, job ID와 대표 결과
+  fingerprint는 worker payload에 저장한다. `[IMPLEMENTED]`
+- 프론트는 서버 fingerprint가 달라지면 기존 다운로드 job을 폐기한다. 만료형
+  문제·해설 URL만 갱신된 경우에는 같은 문서를 유지한다. `[IMPLEMENTED]`
 - PDF/HWPX는 같은 문항 집합을 사용하되 서로 독립적으로 실패·재시도할 수
   있다.
 - R2 key, content type, attachment filename과 만료 URL을 형식별로 분리한다.

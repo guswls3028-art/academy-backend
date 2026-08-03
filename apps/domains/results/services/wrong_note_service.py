@@ -1,6 +1,8 @@
 # apps/domains/results/services/wrong_note_service.py
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -91,6 +93,66 @@ def _get_explanation_text(question: Any) -> str:
         return str(question.explanation.text or "")
     except Exception:
         return ""
+
+
+def build_wrong_note_source_fingerprint(
+    *,
+    total: int,
+    items: List[Dict[str, Any]],
+) -> str:
+    """Hash only document-affecting source data, excluding expiring URLs."""
+    fingerprint_items = []
+    for item in items:
+        attempt_created_at = item.get("attempt_created_at")
+        fingerprint_items.append(
+            {
+                "exam_id": item.get("exam_id"),
+                "exam_title": item.get("exam_title"),
+                "session_order": item.get("session_order"),
+                "session_title": item.get("session_title"),
+                "attempt_id": item.get("attempt_id"),
+                "attempt_created_at": (
+                    attempt_created_at.isoformat()
+                    if hasattr(attempt_created_at, "isoformat")
+                    else str(attempt_created_at or "")
+                ),
+                "question_id": item.get("question_id"),
+                "question_number": item.get("question_number"),
+                "answer_type": item.get("answer_type"),
+                "student_answer": item.get("student_answer"),
+                "correct_answer": item.get("correct_answer"),
+                "is_correct": item.get("is_correct"),
+                "include_in_wrong_note": item.get("include_in_wrong_note"),
+                "score": item.get("score"),
+                "max_score": item.get("max_score"),
+                "question_image_key": item.get("_question_image_key"),
+                "question_image_name": item.get("_question_image_name"),
+                "explanation_image_key": item.get("_explanation_image_key"),
+                "explanation_text": str(
+                    (item.get("extra") or {}).get("explanation_text") or ""
+                ),
+            }
+        )
+    fingerprint_items.sort(
+        key=lambda item: (
+            item["session_order"]
+            if item["session_order"] is not None
+            else 2**31,
+            str(item["exam_title"] or ""),
+            item["question_number"]
+            if item["question_number"] is not None
+            else 2**31,
+            int(item["question_id"] or 0),
+            int(item["exam_id"] or 0),
+        )
+    )
+    encoded = json.dumps(
+        {"total": int(total), "items": fingerprint_items},
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 # ======================================================

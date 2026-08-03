@@ -13,6 +13,7 @@ from apps.domains.results.serializers.wrong_note_serializers import (
 )
 from apps.domains.results.services.wrong_note_service import (
     WrongNoteQuery,
+    build_wrong_note_source_fingerprint,
     list_wrong_notes_for_enrollment,
 )
 from apps.support.results.admin_exam_dependencies import (
@@ -121,11 +122,29 @@ class WrongNoteView(APIView):
             q=q,
         )
 
+        fingerprint_items = items
+        if offset != 0 or total > len(items):
+            _, fingerprint_items = list_wrong_notes_for_enrollment(
+                enrollment_id=enrollment_id_i,
+                q=WrongNoteQuery(
+                    exam_id=exam_id_i,
+                    lecture_id=lecture_id_i,
+                    from_session_order=from_order,
+                    to_session_order=to_order,
+                    offset=0,
+                    limit=200,
+                ),
+            )
+
         next_offset = (offset + limit) if (offset + limit) < total else None
         prev_offset = (offset - limit) if (offset - limit) >= 0 else None
 
         payload = {
             "count": int(total),
+            "source_fingerprint": build_wrong_note_source_fingerprint(
+                total=total,
+                items=fingerprint_items,
+            ),
             "next": next_offset,
             "prev": prev_offset,
             "results": items,

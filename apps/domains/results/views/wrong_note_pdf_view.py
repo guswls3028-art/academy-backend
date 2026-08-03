@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import timedelta
 from typing import Any
 
@@ -18,6 +19,11 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from apps.core.models import Tenant
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.results.models.wrong_note_pdf import WrongNotePDF
+from apps.domains.results.services.wrong_note_service import (
+    WrongNoteQuery,
+    build_wrong_note_source_fingerprint,
+    list_wrong_notes_for_enrollment,
+)
 from apps.domains.results.throttles import WrongNotePDFCreateThrottle
 from apps.support.results.wrong_note_pdf_dependencies import (
     exam_exists_for_tenant,
@@ -95,6 +101,15 @@ class WrongNotePDFCreateView(APIView):
             raise ValidationError(
                 {"output_format": "PDF 또는 HWPX만 선택할 수 있습니다."}
             )
+        requested_fingerprint = str(
+            request.data.get("source_fingerprint") or ""
+        ).strip().lower()
+        if requested_fingerprint and not re.fullmatch(
+            r"[0-9a-f]{64}", requested_fingerprint
+        ):
+            raise ValidationError(
+                {"source_fingerprint": "오답 목록을 새로 불러온 뒤 다시 시도해 주세요."}
+            )
 
         try:
             enrollment_id_i = int(enrollment_id)
@@ -153,6 +168,32 @@ class WrongNotePDFCreateView(APIView):
                     {"detail": "학원에서 다른 오답노트를 만들고 있습니다. 잠시 후 다시 시도해 주세요."},
                     status=status.HTTP_409_CONFLICT,
                 )
+            total, items = list_wrong_notes_for_enrollment(
+                enrollment_id=enrollment_id_i,
+                q=WrongNoteQuery(
+                    exam_id=exam_id_i,
+                    lecture_id=lecture_id_i or int(enrollment.lecture_id),
+                    from_session_order=from_order,
+                    to_session_order=to_order,
+                    offset=0,
+                    limit=200,
+                ),
+            )
+            source_fingerprint = build_wrong_note_source_fingerprint(
+                total=total,
+                items=items,
+            )
+            if (
+                requested_fingerprint
+                and requested_fingerprint != source_fingerprint
+            ):
+                return Response(
+                    {
+                        "detail": "채점 또는 문항이 변경되었습니다. 최신 오답을 다시 불러와 주세요.",
+                        "source_fingerprint": source_fingerprint,
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
             job = WrongNotePDF.objects.create(
                 enrollment_id=enrollment_id_i,
                 lecture_id=lecture_id_i or int(enrollment.lecture_id),
@@ -161,10 +202,12 @@ class WrongNotePDFCreateView(APIView):
                 to_session_order=to_order,
                 status=WrongNotePDF.Status.PENDING,
                 output_format=output_format,
+                source_fingerprint=source_fingerprint,
             )
             ai_job = create_wrong_note_pdf_ai_job(
                 pdf_job_id=int(job.id),
                 tenant_id=int(request.tenant.id),
+                source_fingerprint=source_fingerprint,
             )
 
         status_path = reverse("wrong-note-document-status", kwargs={"job_id": job.id})
@@ -212,6 +255,7 @@ class WrongNotePDFCreateView(APIView):
                 "status": WrongNotePDF.Status.PENDING,
                 "status_url": status_url,
                 "output_format": output_format,
+                "source_fingerprint": source_fingerprint,
             },
             status=status.HTTP_202_ACCEPTED,
         )

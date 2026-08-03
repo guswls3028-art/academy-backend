@@ -250,7 +250,14 @@ class TestC4WrongNotePkCollisionGuard(_Mixin, TestCase):
         ai_job = AIJobModel.objects.get(source_domain="results_wrong_note_pdf")
         self.assertEqual(ai_job.job_type, "wrong_note_pdf_generation")
         self.assertEqual(ai_job.source_id, str(job.id))
-        self.assertEqual(ai_job.payload, {"wrong_note_pdf_job_id": job.id})
+        self.assertRegex(job.source_fingerprint, r"^[0-9a-f]{64}$")
+        self.assertEqual(
+            ai_job.payload,
+            {
+                "wrong_note_pdf_job_id": job.id,
+                "source_fingerprint": job.source_fingerprint,
+            },
+        )
         publish.assert_called_once_with(ai_job)
 
     @patch(
@@ -351,7 +358,10 @@ class TestC4WrongNotePkCollisionGuard(_Mixin, TestCase):
             tenant_id=str(self.tenant.id),
             source_domain="results_wrong_note_pdf",
             source_id=str(pdf_job.id),
-            payload={"wrong_note_pdf_job_id": pdf_job.id},
+            payload={
+                "wrong_note_pdf_job_id": pdf_job.id,
+                "source_fingerprint": pdf_job.source_fingerprint,
+            },
             tier="basic",
         )
         return AIJob(
@@ -418,6 +428,28 @@ class TestC4WrongNotePkCollisionGuard(_Mixin, TestCase):
         result = handle_wrong_note_pdf_generation_job(contract)
 
         self.assertEqual(result.status, "FAILED")
+        pdf_job.refresh_from_db()
+        self.assertEqual(pdf_job.status, WrongNotePDF.Status.PENDING)
+        generate.assert_not_called()
+
+    @patch(
+        "apps.domains.results.services.wrong_note_pdf_worker.generate_and_store_wrong_note_pdf"
+    )
+    def test_tools_worker_rejects_mismatched_source_fingerprint(self, generate):
+        pdf_job = WrongNotePDF.objects.create(
+            enrollment=self.enroll_a,
+            lecture=self.lecture,
+            status=WrongNotePDF.Status.PENDING,
+            source_fingerprint="a" * 64,
+        )
+        contract = self._wrong_note_ai_contract(pdf_job)
+        contract.payload["source_fingerprint"] = "b" * 64
+
+        result = handle_wrong_note_pdf_generation_job(contract)
+
+        self.assertEqual(result.status, "DONE")
+        self.assertEqual(result.result["outcome"], WrongNotePDF.Status.FAILED)
+        self.assertIn("일치하지 않습니다", result.result["error_message"])
         pdf_job.refresh_from_db()
         self.assertEqual(pdf_job.status, WrongNotePDF.Status.PENDING)
         generate.assert_not_called()
@@ -643,6 +675,30 @@ class TestC4WrongNotePkCollisionGuard(_Mixin, TestCase):
 
         self.assertEqual(resp.status_code, 400)
         self.assertFalse(WrongNotePDF.objects.exists())
+
+    @patch(
+        "apps.domains.results.views.wrong_note_pdf_view.publish_wrong_note_pdf_ai_job"
+    )
+    def test_pdf_create_rejects_stale_preview_fingerprint(self, publish):
+        view = WrongNotePDFCreateView.as_view()
+        req = self.factory.post(
+            "/api/v1/results/wrong-notes/documents/",
+            data={
+                "enrollment_id": self.enroll_a.id,
+                "source_fingerprint": "f" * 64,
+            },
+            format="json",
+        )
+        force_authenticate(req, user=self.staff_user)
+        req.tenant = self.tenant
+
+        resp = view(req)
+
+        self.assertEqual(resp.status_code, 409, resp.data)
+        self.assertIn("최신 오답", resp.data["detail"])
+        self.assertRegex(resp.data["source_fingerprint"], r"^[0-9a-f]{64}$")
+        self.assertFalse(WrongNotePDF.objects.exists())
+        publish.assert_not_called()
 
     @patch(
         "apps.domains.results.views.wrong_note_pdf_view.publish_wrong_note_pdf_ai_job"
