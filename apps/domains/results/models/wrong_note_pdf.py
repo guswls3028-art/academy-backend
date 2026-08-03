@@ -55,6 +55,12 @@ class WrongNotePDF(BaseModel):
         default=OutputFormat.PDF,
         db_default=OutputFormat.PDF,
     )
+    source_fingerprint = models.CharField(
+        max_length=64,
+        blank=True,
+        db_default="",
+        help_text="생성 요청 시점의 오답·문항·해설 내용 SHA-256",
+    )
 
     file_path = models.CharField(max_length=255, blank=True)
     error_message = models.TextField(blank=True)

@@ -267,7 +267,14 @@ cross-tenant fallback을 사용하지 않는다.
 
 API는 호환 이름을 유지한 `WrongNotePDF`와 tools worker job을 tenant 범위에서
 기록해 비동기로 생성하고, 완료 뒤 형식별 R2 attachment URL을 반환한다. 출력
-job에는 선택한 시작·종료 회차와 `pdf|hwpx` 형식을 저장한다. 두 형식 모두
+job에는 선택한 시작·종료 회차, `pdf|hwpx` 형식과 요청 시점의
+`source_fingerprint`를 저장한다. fingerprint는 대표 오답, 답안·점수, 문항·해설
+내용과 저장 객체 식별자를 SHA-256으로 묶으며 만료형 조회 URL은 제외한다.
+조회 응답의 fingerprint를 생성 요청에 보내면 서버가 최신 목록과 비교하고,
+이미 재채점되었거나 문항·해설이 바뀌었으면 job을 만들지 않고 `409`로 최신
+조회부터 다시 하도록 안내한다. queue payload도 같은 fingerprint를 담고 worker는
+렌더 직전에 다시 계산해 불일치하면 파일을 만들지 않는다. 배포 전 생성된 빈
+fingerprint job은 기존 동작으로 처리한다. 두 형식 모두
 앞쪽은 답이 없는 문제와 풀이 공간, 뒤쪽은 분리 표지 뒤의 정답 및 선생님 원본
 해설이다. HWPX는 문제·선생님 필기 해설 원본을 이미지로 보존하면서 제목, 정답,
 `내 풀이 메모`, `추가 메모`를 한글 문단으로 제공한다. 이 문단은 한글에서 직접
@@ -304,8 +311,8 @@ HWPX는 세로 A4를 한 문제/해설 조각당 한 구역·한 쪽으로 만�
 | POST | `/results/admin/exams/{id}/manual-grading/` | 직접 채점 미리보기 또는 원자적 확정 |
 | GET | `/results/admin/exams/{id}/result-import/template/` | 시험 전용 엑셀 양식 다운로드 |
 | POST | `/results/admin/exams/{id}/result-import/` | 엑셀 미리보기 또는 원자적 확정 |
-| GET | `/results/wrong-notes` | 학생의 현재 대표 오답·복습 문항 조회. `from_session_order`~선택적 `to_session_order` 포함 |
-| POST | `/results/wrong-notes/documents/` | `output_format=pdf|hwpx`와 회차 범위의 비동기 문서 job 생성 |
+| GET | `/results/wrong-notes` | 학생의 현재 대표 오답·복습 문항과 안정적인 `source_fingerprint` 조회. `from_session_order`~선택적 `to_session_order` 포함 |
+| POST | `/results/wrong-notes/documents/` | `output_format=pdf|hwpx`, 회차 범위와 선택적 `source_fingerprint` 검증 뒤 비동기 문서 job 생성 |
 | GET | `/results/wrong-notes/documents/{job_id}/` | 형식·파일명·상태와 attachment URL 조회 |
 | POST/GET | `/results/wrong-notes/pdf/...` | 기존 PDF 클라이언트 호환 별칭 |
 

@@ -14,6 +14,7 @@ from apps.core.models.tenant_membership import TenantMembership
 from apps.domains.results.models import Result, ResultFact, ResultItem
 from apps.domains.results.services.wrong_note_pdf_service import (
     WrongNotePDFLimitError,
+    WrongNotePDFStaleError,
     _split_tall_image,
     build_wrong_note_pdf,
     build_wrong_note_hwpx,
@@ -21,6 +22,7 @@ from apps.domains.results.services.wrong_note_pdf_service import (
 )
 from apps.domains.results.services.wrong_note_service import (
     WrongNoteQuery,
+    build_wrong_note_source_fingerprint,
     list_wrong_notes_for_enrollment,
 )
 from apps.domains.results.views.wrong_note_view import WrongNoteView
@@ -353,6 +355,7 @@ class WrongNoteServiceSessionExamTests(TestCase):
 
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["count"], 1)
+        self.assertRegex(response.data["source_fingerprint"], r"^[0-9a-f]{64}$")
         row = response.data["results"][0]
         self.assertEqual(row["exam_title"], "3차시 실전 시험")
         self.assertEqual(row["session_order"], 3)
@@ -361,6 +364,75 @@ class WrongNoteServiceSessionExamTests(TestCase):
         self.assertIn("has_question_image", row)
         self.assertNotIn("_question_image_key", row)
         self.assertNotIn("_question_image_name", row)
+
+    def test_source_fingerprint_ignores_presigned_urls_but_tracks_content(self):
+        regular, _ = self._create_wrong_result(
+            title="fingerprint 시험",
+            session=self.session2,
+        )
+        total, items = list_wrong_notes_for_enrollment(
+            enrollment_id=self.enrollment.id,
+            q=WrongNoteQuery(exam_id=regular.id, lecture_id=self.lecture.id),
+        )
+        original = build_wrong_note_source_fingerprint(total=total, items=items)
+
+        items[0]["question_image_url"] = "https://storage.test/refreshed-question"
+        items[0]["explanation_image_url"] = "https://storage.test/refreshed-solution"
+        self.assertEqual(
+            build_wrong_note_source_fingerprint(total=total, items=items),
+            original,
+        )
+
+        items[0]["student_answer"] = "C"
+        self.assertNotEqual(
+            build_wrong_note_source_fingerprint(total=total, items=items),
+            original,
+        )
+
+    def test_api_source_fingerprint_is_independent_of_page_size(self):
+        self._create_wrong_result(
+            title="첫 fingerprint 시험",
+            session=self.session1,
+        )
+        self._create_wrong_result(
+            title="둘째 fingerprint 시험",
+            session=self.session2,
+        )
+        request = APIRequestFactory().get(
+            "/api/v1/results/wrong-notes/",
+            {
+                "enrollment_id": self.enrollment.id,
+                "lecture_id": self.lecture.id,
+                "from_session_order": 1,
+                "limit": 1,
+            },
+        )
+        force_authenticate(request, user=self.user)
+        request.tenant = self.tenant
+        membership = TenantMembership.objects.get(
+            tenant=self.tenant,
+            user=self.user,
+        )
+        membership.role = "teacher"
+        membership.save(update_fields=["role"])
+
+        response = WrongNoteView.as_view()(request)
+        total, all_items = list_wrong_notes_for_enrollment(
+            enrollment_id=self.enrollment.id,
+            q=WrongNoteQuery(
+                lecture_id=self.lecture.id,
+                from_session_order=1,
+                limit=200,
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["count"], 2)
+        self.assertEqual(len(response.data["results"]), 1)
+        self.assertEqual(
+            response.data["source_fingerprint"],
+            build_wrong_note_source_fingerprint(total=total, items=all_items),
+        )
 
     @patch(
         "apps.domains.results.services.wrong_note_pdf_service._load_question_image"
@@ -545,5 +617,42 @@ class WrongNoteServiceSessionExamTests(TestCase):
             list_wrong_notes.call_args.kwargs["q"].to_session_order,
             3,
         )
+        build_pdf.assert_not_called()
+        upload_pdf.assert_not_called()
+
+    @patch(
+        "apps.domains.results.services.wrong_note_pdf_service.upload_fileobj_to_r2_storage"
+    )
+    @patch("apps.domains.results.services.wrong_note_pdf_service.build_wrong_note_pdf")
+    @patch(
+        "apps.domains.results.services.wrong_note_pdf_service.list_wrong_notes_for_enrollment"
+    )
+    def test_pdf_generation_rejects_changed_source_snapshot(
+        self,
+        list_wrong_notes,
+        build_pdf,
+        upload_pdf,
+    ):
+        list_wrong_notes.return_value = (
+            1,
+            [{"question_id": 7, "student_answer": "B", "extra": {}}],
+        )
+        job = SimpleNamespace(
+            id=92,
+            exam_id=None,
+            lecture_id=self.lecture.id,
+            from_session_order=1,
+            to_session_order=3,
+            output_format="pdf",
+            source_fingerprint="0" * 64,
+        )
+
+        with self.assertRaisesRegex(WrongNotePDFStaleError, "변경되었습니다"):
+            generate_and_store_wrong_note_pdf(
+                job=job,
+                enrollment=self.enrollment,
+                tenant=self.tenant,
+            )
+
         build_pdf.assert_not_called()
         upload_pdf.assert_not_called()

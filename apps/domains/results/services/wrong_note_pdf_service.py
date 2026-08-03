@@ -12,6 +12,7 @@ from django.utils import timezone
 
 from apps.domains.results.services.wrong_note_service import (
     WrongNoteQuery,
+    build_wrong_note_source_fingerprint,
     list_wrong_notes_for_enrollment,
 )
 from apps.infrastructure.storage.r2 import (
@@ -41,6 +42,10 @@ class WrongNotePDFEmptyError(ValueError):
 
 
 class WrongNotePDFLimitError(ValueError):
+    pass
+
+
+class WrongNotePDFStaleError(ValueError):
     pass
 
 
@@ -774,6 +779,15 @@ def generate_and_store_wrong_note_pdf(
         raise WrongNotePDFLimitError(
             f"오답이 {total}문항입니다. 시험 범위를 좁혀 "
             f"{MAX_WRONG_NOTE_PDF_ITEMS}문항 이하로 만들어 주세요."
+        )
+    expected_fingerprint = str(getattr(job, "source_fingerprint", "") or "")
+    current_fingerprint = build_wrong_note_source_fingerprint(
+        total=total,
+        items=items,
+    )
+    if expected_fingerprint and current_fingerprint != expected_fingerprint:
+        raise WrongNotePDFStaleError(
+            "채점 또는 문항이 변경되었습니다. 최신 오답으로 다시 만들어 주세요."
         )
 
     if str(getattr(job, "output_format", "") or "pdf") == "hwpx":
