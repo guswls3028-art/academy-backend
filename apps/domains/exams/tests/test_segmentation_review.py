@@ -1,4 +1,7 @@
+from io import BytesIO
 from unittest.mock import patch
+
+from PIL import Image
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -73,6 +76,8 @@ class ExamSegmentationReviewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.data["items"]), 2)
         self.assertTrue(response.data["items"][0]["has_teacher_explanation"])
+        self.assertTrue(response.data["items"][0]["crop_adjustable"])
+        self.assertEqual(response.data["items"][0]["problem_crop_ratio"], 1.0)
         self.assertIn("q001.png", response.data["items"][0]["explanation_image_url"])
 
     @patch("apps.domains.ai.gateway.dispatch_job")
@@ -102,6 +107,62 @@ class ExamSegmentationReviewTests(TestCase):
         self.assertTrue(explanation.image_key.endswith("q001.png"))
         self.assertFalse(ExamQuestionProposal.objects.filter(exam=self.exam).exists())
         dispatch.assert_called_once()
+
+    @patch("apps.domains.ai.gateway.dispatch_job")
+    @patch(
+        "apps.domains.exams.views.segmentation_review_view."
+        "delete_object_r2_storage"
+    )
+    @patch(
+        "apps.domains.exams.views.segmentation_review_view."
+        "upload_fileobj_to_r2_storage"
+    )
+    @patch(
+        "apps.domains.exams.views.segmentation_review_view."
+        "get_object_bytes_r2_storage"
+    )
+    def test_approve_recrops_single_hwp_problem_before_canonical_save(
+        self,
+        get_source,
+        upload_crop,
+        delete_object,
+        _dispatch,
+    ):
+        source = BytesIO()
+        Image.new("RGB", (100, 1000), "white").save(source, format="PNG")
+        get_source.return_value = source.getvalue()
+        self.p1.problem_crop_ratio = 0.3
+        self.p1.save(update_fields=["problem_crop_ratio", "updated_at"])
+
+        response = ExamSegmentationApproveView.as_view()(
+            self._request(
+                "post",
+                "/approve",
+                {
+                    "items": [
+                        {
+                            "id": self.p1.id,
+                            "number": 1,
+                            "included": True,
+                            "problem_crop_ratio": 0.62,
+                        },
+                        {"id": self.p2.id, "number": 2, "included": False},
+                    ]
+                },
+            ),
+            exam_id=self.exam.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        question = ExamQuestion.objects.get(sheet__exam=self.exam)
+        self.assertEqual(question.region_meta["problem_crop_ratio"], 0.62)
+        self.assertIn("-r6200-", question.image_key)
+        self.assertTrue(question.image_key.endswith(".png"))
+        upload_crop.assert_called_once()
+        uploaded = upload_crop.call_args.kwargs["fileobj"].getvalue()
+        with Image.open(BytesIO(uploaded)) as crop:
+            self.assertEqual(crop.size, (100, 620))
+        delete_object.assert_called_once_with(key=self.p1.problem_image_key)
 
     def test_other_tenant_exam_fails_closed(self):
         other_exam = Exam.objects.create(

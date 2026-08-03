@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import re
 from dataclasses import dataclass
 from typing import Any, Iterable
@@ -172,19 +173,41 @@ def _split_paragraphs(title: str, paragraphs: list[str]) -> list[str]:
 
 
 def _ensure_version_manifest_reference(document: HwpxDocument) -> None:
-    manifest_tree = document.package.manifest_tree()
-    manifest = manifest_tree.find(f"{{{_OPF_NAMESPACE}}}manifest")
-    if manifest is None:
+    package_manifest_tree = document.package.manifest_tree()
+    package_manifest = package_manifest_tree.find(f"{{{_OPF_NAMESPACE}}}manifest")
+    root_document = getattr(document, "_root", None)
+    root_manifest_tree = getattr(root_document, "_manifest", None)
+    root_manifest = (
+        root_manifest_tree.find(f"{{{_OPF_NAMESPACE}}}manifest")
+        if root_manifest_tree is not None
+        else None
+    )
+    if package_manifest is None or root_manifest is None:
         raise RuntimeError("HWPX content manifest is missing.")
 
     item_tag = f"{{{_OPF_NAMESPACE}}}item"
-    if not any(item.get("href", "").endswith("version.xml") for item in manifest.findall(item_tag)):
+    if not any(
+        item.get("href", "").endswith("version.xml")
+        for item in package_manifest.findall(item_tag)
+    ):
         etree.SubElement(
-            manifest,
+            package_manifest,
             item_tag,
             {"id": "version", "href": _VERSION_HREF, "media-type": "application/xml"},
         )
-        document.package.set_xml(document.package.MANIFEST_PATH, manifest_tree)
+
+    # HwpxDocument keeps its own manifest tree while package.add_image() writes
+    # BinData entries to the package tree. Adding a section separates those two
+    # trees, so a later document serialization could otherwise discard every
+    # image entry except the first. Merge package-owned parts back into the
+    # document tree before serialization.
+    existing_ids = {item.get("id") for item in root_manifest.findall(item_tag)}
+    for item in package_manifest.findall(item_tag):
+        item_id = item.get("id")
+        if item_id and item_id not in existing_ids:
+            root_manifest.append(deepcopy(item))
+            existing_ids.add(item_id)
+    root_document._manifest_dirty = True
 
 
 def _ensure_font_face(document: HwpxDocument, family_name: str) -> None:
@@ -554,7 +577,12 @@ def _apply_page_layout_to_paragraph(paragraph: Any, layout: PageLayout) -> None:
     page_pr = paragraph.element.find(f".//{{{_HP_NAMESPACE}}}pagePr")
     if page_pr is None:
         return
-    page_pr.set("landscape", "LANDSCAPE" if layout.page_width_mm > layout.page_height_mm else "PORTRAIT")
+    # HWPX uses WIDELY/NARROWLY here, not PORTRAIT/LANDSCAPE. Hancom Hangul
+    # falls back to a landscape page when it receives the unsupported values.
+    page_pr.set(
+        "landscape",
+        "NARROWLY" if layout.page_width_mm > layout.page_height_mm else "WIDELY",
+    )
     page_pr.set("width", str(_mm_to_hwpunit(layout.page_width_mm)))
     page_pr.set("height", str(_mm_to_hwpunit(layout.page_height_mm)))
     margin = page_pr.find(f"{{{_HP_NAMESPACE}}}margin")

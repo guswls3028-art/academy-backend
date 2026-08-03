@@ -8,6 +8,9 @@ from academy.adapters.tools.hwp_endnote_images import (
     _collect_endnote_picture_ids,
     _load_picture,
 )
+from academy.application.use_cases.ai.pipelines.hwp_question_pipeline import (
+    merge_paired_teacher_explanations,
+)
 
 
 def test_collects_picture_ids_inside_numbered_endnotes():
@@ -42,3 +45,25 @@ def test_loads_raw_deflate_compressed_hwp_bitmap():
     assert image is not None
     assert image.size == (32, 24)
     image.close()
+
+
+def test_paired_teacher_hwp_matches_clean_problem_source_numbers_only():
+    result = merge_paired_teacher_explanations(
+        primary_result={
+            "questions": [
+                {"number": 1, "original_number": 1},
+                {"number": 8, "original_number": 3},
+            ],
+            "explanations": [{"question_number": 99, "text": "PDF 해설"}],
+        },
+        teacher_explanations=[
+            {"question_number": 1, "image_key": "q1.png"},
+            {"question_number": 3, "image_key": "q3.png"},
+            {"question_number": 7, "image_key": "q7.png"},
+        ],
+    )
+
+    assert [item["question_number"] for item in result["explanations"]] == [1, 3]
+    assert result["teacher_explanation_count"] == 2
+    assert result["unmatched_teacher_explanation_numbers"] == [7]
+    assert result["explanation_source_mode"] == "paired_teacher_hwp"

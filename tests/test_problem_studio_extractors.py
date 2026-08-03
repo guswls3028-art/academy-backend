@@ -279,6 +279,30 @@ def test_generated_hwpx_persists_hancom_width_spacing_and_dashed_center_line():
     assert profile["line_spacing_percent"] == 150
     assert profile["column_count"] == 2
     assert profile["center_line_style"] == "DASH"
+    with ZipFile(BytesIO(generated)) as archive:
+        section = archive.read("Contents/section0.xml").decode("utf-8")
+    assert 'landscape="WIDELY"' in section
+    assert 'landscape="PORTRAIT"' not in section
+
+
+def test_generated_landscape_hwpx_uses_hancom_narrowly_orientation():
+    generated = build_hwpx_exam_document(
+        title="가로 시험지",
+        meta_lines=[],
+        items=[],
+        document_style={
+            "page_layout": {
+                "page_width_mm": 297,
+                "page_height_mm": 210,
+            },
+        },
+    )
+
+    with ZipFile(BytesIO(generated)) as archive:
+        section = archive.read("Contents/section0.xml").decode("utf-8")
+
+    assert 'landscape="NARROWLY"' in section
+    assert 'landscape="LANDSCAPE"' not in section
 
 
 def test_legacy_hwp_endnote_anchor_reorders_teacher_solution_after_choices():
