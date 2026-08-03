@@ -7,7 +7,7 @@ from typing import Any
 
 from django.db.models import F, Max
 
-from apps.domains.enrollment.selectors import active_enrollment_ids_for_student
+from apps.domains.enrollment.selectors import active_enrollments_for_student
 from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.homework_results.models import HomeworkScore
 from apps.core.services.student_grade_report_layout import (
@@ -111,16 +111,29 @@ def _safe_homework_number(value: Any, *, positive: bool = False) -> float | None
 
 def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]:
     report_layout = get_student_grade_report_layout(tenant=tenant)
-    enrollment_ids = active_enrollment_ids_for_student(
-        tenant=tenant,
-        student=student,
+    active_enrollments = list(
+        active_enrollments_for_student(
+            tenant=tenant,
+            student=student,
+        ).order_by("lecture_id")
     )
+    enrollment_ids = [int(enrollment.id) for enrollment in active_enrollments]
+    lecture_options = [
+        {
+            "id": int(enrollment.lecture_id),
+            "title": enrollment.lecture.title,
+            "color": enrollment.lecture.color,
+            "chip_label": enrollment.lecture.chip_label,
+        }
+        for enrollment in active_enrollments
+    ]
     if not enrollment_ids:
         return {
             "exams": [],
             "homeworks": [],
             "exam_trend": [],
             "exam_summary": empty_exam_summary(),
+            "lecture_options": [],
             "report_layout": report_layout,
         }
 
@@ -362,6 +375,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
         "homeworks": homework_list,
         "exam_trend": exam_trend,
         "exam_summary": exam_summary,
+        "lecture_options": lecture_options,
         "labels": {
             "pass": (getattr(tenant, "pass_label", None) or "").strip(),
             "fail": (getattr(tenant, "fail_label", None) or "").strip(),

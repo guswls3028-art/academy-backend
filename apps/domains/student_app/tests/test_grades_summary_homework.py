@@ -166,6 +166,46 @@ class MyGradesSummaryHomeworkTests(TestCase):
         })
         self.assertTrue(all("recorded_at" in row for row in response.data["exam_trend"]))
 
+    def test_student_summary_lists_active_lectures_before_they_have_scores(self):
+        self.lecture.color = "#2563eb"
+        self.lecture.chip_label = "수"
+        self.lecture.save(update_fields=["color", "chip_label", "updated_at"])
+        second_lecture = Lecture.objects.create(
+            tenant=self.tenant,
+            title="심화 수학",
+            name="심화 수학",
+            subject="MATH",
+            color="#7c3aed",
+            chip_label="심",
+        )
+        Enrollment.objects.create(
+            tenant=self.tenant,
+            student=self.student,
+            lecture=second_lecture,
+            status="ACTIVE",
+        )
+        inactive_lecture = Lecture.objects.create(
+            tenant=self.tenant,
+            title="지난 강좌",
+            name="지난 강좌",
+            subject="MATH",
+        )
+        Enrollment.objects.create(
+            tenant=self.tenant,
+            student=self.student,
+            lecture=inactive_lecture,
+            status="INACTIVE",
+        )
+
+        response = self._call()
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["exam_trend"], [])
+        self.assertEqual(response.data["lecture_options"], [
+            {"id": self.lecture.id, "title": "수학", "color": "#2563eb", "chip_label": "수"},
+            {"id": second_lecture.id, "title": "심화 수학", "color": "#7c3aed", "chip_label": "심"},
+        ])
+
     def test_student_summary_returns_tenant_layout_and_current_teacher_correction_status(self):
         program = self.tenant.program
         program.ui_config = {
@@ -242,6 +282,12 @@ class MyGradesSummaryHomeworkTests(TestCase):
         self.assertEqual(response.data["exams"], [])
         self.assertEqual(response.data["exam_trend"], [])
         self.assertEqual(response.data["exam_summary"]["scored_count"], 0)
+        self.assertEqual(response.data["lecture_options"], [{
+            "id": self.lecture.id,
+            "title": "수학",
+            "color": "#3b82f6",
+            "chip_label": "",
+        }])
 
     def test_not_submitted_exam_stays_in_list_but_not_in_trend(self):
         exam = self.Exam.objects.create(
@@ -768,3 +814,4 @@ class MyGradesSummaryHomeworkTests(TestCase):
         self.assertEqual(response.data["homeworks"], [])
         self.assertEqual(response.data["exam_trend"], [])
         self.assertEqual(response.data["exam_summary"]["scored_count"], 0)
+        self.assertEqual(response.data["lecture_options"], [])
