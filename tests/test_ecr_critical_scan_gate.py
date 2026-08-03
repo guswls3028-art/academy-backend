@@ -26,7 +26,16 @@ def _finding(cve: str, package: str, version: str, severity: str = "CRITICAL") -
 
 
 def _scan(*findings: dict) -> dict:
-    return {"imageScanFindings": {"findings": list(findings)}}
+    counts: dict[str, int] = {}
+    for finding in findings:
+        severity = str(finding.get("severity") or "")
+        counts[severity] = counts.get(severity, 0) + 1
+    return {
+        "imageScanFindings": {
+            "findings": list(findings),
+            "findingSeverityCounts": counts,
+        }
+    }
 
 
 def test_current_acceptance_is_exact_and_time_bounded() -> None:
@@ -102,6 +111,43 @@ def test_high_finding_does_not_consume_critical_acceptance() -> None:
     assert accepted == []
 
 
+def test_high_baseline_is_exact_and_allows_non_increase() -> None:
+    baselines = gate.load_high_baselines(
+        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json"
+    )
+    findings = _scan(
+        *[
+            _finding(f"CVE-2099-{index:04d}", "demo", "1", "HIGH")
+            for index in range(baselines["academy-base"])
+        ]
+    )
+
+    assert gate.evaluate_high_budget("academy-base", findings, baselines) == 8
+
+
+def test_high_finding_regression_fails_closed() -> None:
+    with pytest.raises(gate.GateError, match="High findings regressed"):
+        gate.evaluate_high_budget(
+            "academy-api",
+            _scan(
+                _finding("CVE-2099-0001", "demo", "1", "HIGH"),
+                _finding("CVE-2099-0002", "demo", "1", "HIGH"),
+            ),
+            {"academy-api": 1},
+        )
+
+
+def test_high_baseline_requires_all_governed_repositories(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(
+        '{"schemaVersion": 1, "maximumHighFindings": {"academy-api": 1}}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(gate.GateError, match="exactly the six"):
+        gate.load_high_baselines(baseline)
+
+
 def test_runtime_base_is_digest_pinned_without_unused_postgres_client() -> None:
     dockerfile = (Path(__file__).parents[1] / "docker" / "Dockerfile.base").read_text(
         encoding="utf-8"
@@ -116,6 +162,24 @@ def test_runtime_base_is_digest_pinned_without_unused_postgres_client() -> None:
         for line in from_lines
     )
     assert "postgresql-client" not in dockerfile
+
+
+def test_ffmpeg_is_isolated_to_video_worker() -> None:
+    repository = Path(__file__).parents[1]
+    api = (repository / "docker" / "api" / "Dockerfile").read_text(encoding="utf-8")
+    ai = (repository / "docker" / "ai-worker-cpu" / "Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    video = (repository / "docker" / "video-worker" / "Dockerfile").read_text(
+        encoding="utf-8"
+    )
+
+    assert "    ffmpeg \\" not in api
+    assert "ffprobe -version" not in api
+    assert "    ffmpeg \\" not in ai
+    assert "cv2.getBuildInformation" in ai
+    assert "'YES' in line.split()" in ai
+    assert "    ffmpeg \\" in video
 
 
 def test_missing_scan_result_is_started_then_polled(monkeypatch: pytest.MonkeyPatch) -> None:

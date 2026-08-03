@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed ECR critical finding gate with exact, expiring acceptances."""
+"""Fail closed on unaccepted Critical or regressed High ECR findings."""
 
 from __future__ import annotations
 
@@ -86,6 +86,21 @@ def load_acceptances(path: Path, today: date) -> dict[tuple[str, str, str, str],
                 raise GateError(f"duplicate critical risk acceptance: {key}")
             accepted[key] = {**entry, "expiresOn": expires_on.isoformat()}
     return accepted
+
+
+def load_high_baselines(path: Path) -> dict[str, int]:
+    document = _read_json(path)
+    if document.get("schemaVersion") != 1:
+        raise GateError("high risk baseline schemaVersion must be 1")
+    baselines = document.get("maximumHighFindings")
+    if not isinstance(baselines, dict) or set(baselines) != REPOSITORIES:
+        raise GateError(
+            "maximumHighFindings must contain exactly the six governed repositories"
+        )
+    for repository, count in baselines.items():
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise GateError(f"invalid High finding baseline for {repository}")
+    return baselines
 
 
 def _run_aws_json(arguments: list[str], *, scan_may_be_absent: bool = False) -> dict[str, Any]:
@@ -219,10 +234,33 @@ def evaluate_findings(
     return accepted_live
 
 
+def evaluate_high_budget(
+    repository: str,
+    findings: dict[str, Any],
+    baselines: dict[str, int],
+) -> int:
+    findings_block = findings.get("imageScanFindings") or {}
+    counts = findings_block.get("findingSeverityCounts") or {}
+    if not isinstance(counts, dict):
+        raise GateError(f"ECR severity counts are malformed for {repository}")
+    high = counts.get("HIGH", 0)
+    if isinstance(high, bool) or not isinstance(high, int) or high < 0:
+        raise GateError(f"ECR High finding count is malformed for {repository}")
+    maximum = baselines.get(repository)
+    if maximum is None:
+        raise GateError(f"High finding baseline is missing for {repository}")
+    if high > maximum:
+        raise GateError(
+            f"ECR High findings regressed repo={repository}: high={high} maximum={maximum}"
+        )
+    return high
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--acceptances", type=Path, required=True)
+    parser.add_argument("--high-baseline", type=Path, required=True)
     parser.add_argument("--region", required=True)
     parser.add_argument("--attempts", type=int, default=40)
     parser.add_argument("--interval-seconds", type=float, default=15)
@@ -236,6 +274,7 @@ def main() -> int:
         raise GateError("release candidate must contain exactly the six governed repositories")
     today = datetime.now(timezone.utc).date()
     acceptances = load_acceptances(args.acceptances, today)
+    high_baselines = load_high_baselines(args.high_baseline)
 
     for repository in sorted(REPOSITORIES):
         image = images[repository]
@@ -263,11 +302,11 @@ def main() -> int:
         findings_block = findings.get("imageScanFindings") or {}
         counts = findings_block.get("findingSeverityCounts", {})
         critical = counts.get("CRITICAL", 0)
-        high = counts.get("HIGH", 0)
+        high = evaluate_high_budget(repository, findings, high_baselines)
         if high:
             print(
-                f"::warning::ECR high findings require remediation review for "
-                f"{repository}@{digest} (high={high})"
+                f"::notice::ECR High findings are within the non-increase baseline for "
+                f"{repository}@{digest} (high={high}, maximum={high_baselines[repository]})"
             )
         print(
             f"ECR_SCAN_PASS repo={repository} digest={digest} "
