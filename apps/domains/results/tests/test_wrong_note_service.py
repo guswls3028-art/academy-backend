@@ -14,6 +14,7 @@ from apps.core.models.tenant_membership import TenantMembership
 from apps.domains.results.models import Result, ResultFact, ResultItem
 from apps.domains.results.services.wrong_note_pdf_service import (
     WrongNotePDFLimitError,
+    _split_tall_image,
     build_wrong_note_pdf,
     build_wrong_note_hwpx,
     generate_and_store_wrong_note_pdf,
@@ -425,7 +426,7 @@ class WrongNoteServiceSessionExamTests(TestCase):
             enrollment_id=self.enrollment.id,
             q=WrongNoteQuery(exam_id=regular.id, lecture_id=self.lecture.id),
         )
-        load_question.return_value = Image.new("RGB", (640, 480), "white")
+        load_question.return_value = Image.new("RGB", (200, 100), "blue")
         load_explanation.return_value = Image.new("RGB", (640, 900), "white")
 
         hwpx_bytes = build_wrong_note_hwpx(
@@ -473,6 +474,32 @@ class WrongNoteServiceSessionExamTests(TestCase):
             )
         self.assertIn("등록된 문제 이미지가 없습니다.", no_image_xml)
         self.assertIn("등록된 선생님 해설 이미지가 없습니다.", no_image_xml)
+
+    def test_tall_explanation_split_discards_blank_sections(self):
+        from PIL import Image, ImageChops, ImageDraw
+
+        source = Image.new("RGB", (500, 2500), "white")
+        draw = ImageDraw.Draw(source)
+        draw.rectangle((40, 100, 460, 480), fill="black")
+        draw.rectangle((40, 1950, 460, 2180), fill="black")
+
+        parts = _split_tall_image(source, max_aspect_ratio=1.2)
+
+        self.assertGreaterEqual(len(parts), 1)
+        self.assertLess(sum(part.height for part in parts), source.height // 2)
+        for part in parts:
+            white = Image.new("RGB", part.size, "white")
+            self.assertIsNotNone(ImageChops.difference(part, white).getbbox())
+            white.close()
+            part.close()
+        source.close()
+
+        blank = Image.new("RGB", (500, 2500), "white")
+        self.assertEqual(
+            _split_tall_image(blank, max_aspect_ratio=1.2),
+            [],
+        )
+        blank.close()
 
     @patch(
         "apps.domains.results.services.wrong_note_pdf_service.upload_fileobj_to_r2_storage"

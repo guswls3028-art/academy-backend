@@ -50,6 +50,30 @@ class PdfQuestionExtractView(APIView):
         if pdf_file.size > 50 * 1024 * 1024:
             return Response({"detail": "파일 크기는 50MB 이하여야 합니다."}, status=status.HTTP_400_BAD_REQUEST)
 
+        explanation_file = request.FILES.get("explanation_file")
+        if explanation_file is not None:
+            explanation_name = str(explanation_file.name or "").lower()
+            if not name_lower.endswith((".pdf", ".png", ".jpg", ".jpeg")):
+                return Response(
+                    {
+                        "detail": (
+                            "선생님 해설 HWP를 함께 올릴 때 문제지는 "
+                            "답 표시가 없는 PDF나 이미지여야 합니다."
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not explanation_name.endswith(".hwp"):
+                return Response(
+                    {"detail": "선생님 해설은 HWP 5.x 파일만 함께 올릴 수 있습니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if explanation_file.size > 50 * 1024 * 1024:
+                return Response(
+                    {"detail": "선생님 해설 파일은 50MB 이하여야 합니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         exam_id = request.data.get("exam_id")
 
         exam = None
@@ -98,6 +122,27 @@ class PdfQuestionExtractView(APIView):
                 content_type=pdf_file.content_type or "application/pdf",
             )
 
+            explanation_key = ""
+            explanation_download_url = ""
+            if explanation_file is not None:
+                explanation_name_hash = hashlib.md5(
+                    explanation_file.name.encode()
+                ).hexdigest()[:8]
+                explanation_key = (
+                    f"tenants/{tenant.id}/exams/pdf-extract/{uuid.uuid4()}/"
+                    f"{explanation_name_hash}_{explanation_file.name}"
+                )
+                upload_fileobj_to_r2_storage(
+                    fileobj=explanation_file,
+                    key=explanation_key,
+                    content_type=(
+                        explanation_file.content_type or "application/x-hwp"
+                    ),
+                )
+                explanation_download_url = generate_presigned_download_url(
+                    key=explanation_key
+                )
+
             if exam is not None:
                 ExamAsset.objects.update_or_create(
                     exam=exam,
@@ -108,6 +153,18 @@ class PdfQuestionExtractView(APIView):
                         "file_size": int(pdf_file.size or 0),
                     },
                 )
+                if explanation_file is not None:
+                    ExamAsset.objects.update_or_create(
+                        exam=exam,
+                        asset_type=(
+                            ExamAsset.AssetType.TEACHER_EXPLANATION_SOURCE
+                        ),
+                        defaults={
+                            "file_key": explanation_key,
+                            "file_type": explanation_file.content_type or "",
+                            "file_size": int(explanation_file.size or 0),
+                        },
+                    )
                 exam.source_filename = str(pdf_file.name or "")[:255]
 
             if name_lower.endswith(".hwpx"):
@@ -157,6 +214,10 @@ class PdfQuestionExtractView(APIView):
                     "tenant_id": str(tenant.id),
                     "exam_id": str(exam_id) if exam_id else None,
                     "filename": pdf_file.name,
+                    "explanation_download_url": explanation_download_url,
+                    "explanation_filename": (
+                        explanation_file.name if explanation_file is not None else ""
+                    ),
                 },
                 tenant_id=str(tenant.id),
                 source_domain="exams",

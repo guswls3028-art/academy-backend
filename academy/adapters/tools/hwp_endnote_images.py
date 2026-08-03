@@ -224,7 +224,7 @@ def extract_hwp_endnote_visuals(path: str) -> list[HwpEndnoteVisual]:
 
 def crop_problem_from_endnote(png_bytes: bytes, ratio: float = 0.3) -> bytes:
     """Crop the problem area from the top; the full visual remains the solution."""
-    safe_ratio = min(max(float(ratio), 0.1), 0.8)
+    safe_ratio = min(max(float(ratio), 0.08), 0.98)
     with Image.open(BytesIO(png_bytes)) as source:
         image = source.convert("RGB")
         bottom = max(1, round(image.height * safe_ratio))

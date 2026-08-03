@@ -149,6 +149,7 @@ def handle_ai_job(job: AIJob) -> AIResult:
     # 만든 pdf-seg-* 디렉터리들을 finally에서 일괄 제거.
     # 정리 누락 시 워커 인스턴스 디스크가 점진적으로 가득 차 연쇄 실패 발생.
     local_path: str | None = None
+    explanation_local_path: str | None = None
     begin_pdf_seg_scope()
 
     # 워커 tenant context binding — 다운스트림 OCR/임베딩의 ai_usage 누적 + CloudWatch
@@ -291,13 +292,60 @@ def handle_ai_job(job: AIJob) -> AIResult:
             from academy.application.use_cases.ai.pipelines.pdf_question_pipeline import (
                 run_pdf_question_pipeline,
             )
-            return run_pdf_question_pipeline(
+            primary_result = run_pdf_question_pipeline(
                 job=job,
                 local_path=local_path,
                 payload=payload,
                 tenant_id=tenant_id,
                 record_progress=_record_progress,
             )
+            explanation_download_url = str(
+                payload.get("explanation_download_url") or ""
+            ).strip()
+            if not explanation_download_url or primary_result.status != "DONE":
+                return primary_result
+
+            explanation_filename = str(
+                payload.get("explanation_filename") or ""
+            ).lower()
+            if not explanation_filename.endswith(".hwp"):
+                return AIResult.failed(
+                    job.id,
+                    "선생님 해설은 HWP 5.x 파일만 함께 올릴 수 있습니다.",
+                )
+            if not tenant_id or not payload.get("exam_id"):
+                return AIResult.failed(job.id, "tenant_id/exam_id missing")
+
+            explanation_local_path = download_to_tmp(
+                download_url=explanation_download_url,
+                job_id=f"{job.id}-teacher-explanation",
+            )
+            from academy.application.use_cases.ai.pipelines.hwp_question_pipeline import (
+                extract_and_upload_hwp_explanations,
+                merge_paired_teacher_explanations,
+            )
+
+            _, teacher_explanations = extract_and_upload_hwp_explanations(
+                local_path=explanation_local_path,
+                tenant_id=str(tenant_id),
+                exam_id=payload["exam_id"],
+            )
+            result_payload = merge_paired_teacher_explanations(
+                primary_result=primary_result.result or {},
+                teacher_explanations=teacher_explanations,
+            )
+            if (
+                (
+                    result_payload.get("total_questions", 0)
+                    or len(result_payload.get("questions") or [])
+                )
+                and not result_payload.get("teacher_explanation_count", 0)
+            ):
+                return AIResult.failed(
+                    job.id,
+                    "문제지와 선생님 해설 HWP의 문항 번호가 일치하지 않습니다.",
+                )
+            return AIResult.done(job.id, result_payload)
 
         # --------------------------------------------------
         # Handwriting analysis
@@ -530,6 +578,7 @@ def handle_ai_job(job: AIJob) -> AIResult:
         return AIResult.failed(job.id, str(e))
     finally:
         cleanup_tmp_for_path(local_path)
+        cleanup_tmp_for_path(explanation_local_path)
         cleanup_registered_pdf_seg_tmp_dirs()
         if _bound_tenant_for_ctx is not None:
             try:

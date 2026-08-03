@@ -119,6 +119,7 @@ def _load_item_image(
     key_field: str,
     storage_name_field: str = "",
     deadline_monotonic: float | None = None,
+    max_dimensions: tuple[int, int] = (1800, 1800),
 ):
     from PIL import Image, ImageOps
 
@@ -147,8 +148,11 @@ def _load_item_image(
                 raise ValueError("question image exceeds pixel limit")
             image = ImageOps.exif_transpose(source).convert("RGB")
         _remaining_seconds(deadline_monotonic)
-        if max(image.size) > 1800:
-            image.thumbnail((1800, 1800), Image.Resampling.LANCZOS)
+        if (
+            image.width > max_dimensions[0]
+            or image.height > max_dimensions[1]
+        ):
+            image.thumbnail(max_dimensions, Image.Resampling.LANCZOS)
         return image
     except WrongNotePDFDeadlineError:
         raise
@@ -175,7 +179,113 @@ def _load_explanation_image(item: dict[str, Any], *, deadline_monotonic=None):
         item,
         key_field="_explanation_image_key",
         deadline_monotonic=deadline_monotonic,
+        max_dimensions=(2200, 8800),
     )
+
+
+def _split_tall_image(image, *, max_aspect_ratio: float) -> list:
+    """Split a tall source at low-ink rows so handwriting remains legible."""
+    from PIL import Image, ImageChops, ImageOps
+
+    def trim(source):
+        rgb = source.convert("RGB")
+        background = Image.new("RGB", rgb.size, "white")
+        difference = ImageOps.grayscale(ImageChops.difference(rgb, background))
+        mask = difference.point(lambda value: 255 if value > 10 else 0)
+        bbox = mask.getbbox()
+        background.close()
+        difference.close()
+        mask.close()
+        if bbox is None:
+            rgb.close()
+            return None
+        padding = max(8, round(min(rgb.size) * 0.015))
+        left = max(0, bbox[0] - padding)
+        top = max(0, bbox[1] - padding)
+        right = min(rgb.width, bbox[2] + padding)
+        bottom = min(rgb.height, bbox[3] + padding)
+        cropped = rgb.crop((left, top, right, bottom))
+        rgb.close()
+        return cropped
+
+    working = trim(image)
+    if working is None:
+        return []
+
+    max_height = max(1, int(working.width * max_aspect_ratio))
+    if working.height <= max_height:
+        return [working]
+
+    slices = []
+    top = 0
+    while top < working.height:
+        target = min(top + max_height, working.height)
+        if target >= working.height:
+            bottom = working.height
+        else:
+            window_start = max(top + max_height // 2, target - max_height // 8)
+            window_end = min(working.height - 1, target + max_height // 12)
+            strip = working.crop((0, window_start, working.width, window_end + 1))
+            scan_width = min(320, strip.width)
+            scan_height = max(1, round(strip.height * scan_width / strip.width))
+            scan = strip.resize((scan_width, scan_height), Image.Resampling.BILINEAR).convert("L")
+            pixels = scan.load()
+            row_ink = [
+                sum(1 for x in range(scan.width) if pixels[x, y] < 242)
+                for y in range(scan.height)
+            ]
+            if row_ink:
+                target_row = round(
+                    (target - window_start)
+                    * scan.height
+                    / max(strip.height, 1)
+                )
+                best_row = min(
+                    range(len(row_ink)),
+                    key=lambda row: (row_ink[row], abs(row - target_row)),
+                )
+                bottom = window_start + round(
+                    best_row * strip.height / max(scan.height, 1)
+                )
+            else:
+                bottom = target
+            scan.close()
+            strip.close()
+            if bottom <= top + max_height // 3:
+                bottom = target
+        bottom = min(max(bottom, top + 1), working.height)
+        part = working.crop((0, top, working.width, bottom))
+        trimmed_part = trim(part)
+        part.close()
+        if trimmed_part is not None:
+            slices.append(trimmed_part)
+        top = bottom
+    working.close()
+    if not slices:
+        return [image.copy()]
+
+    merged = []
+    gap = max(12, round(image.width * 0.025))
+    for part in slices:
+        if merged and merged[-1].height + gap + part.height <= round(max_height * 1.25):
+            previous = merged.pop()
+            width = max(previous.width, part.width)
+            combined = Image.new(
+                "RGB",
+                (width, previous.height + gap + part.height),
+                "white",
+            )
+            combined.paste(previous, ((width - previous.width) // 2, 0))
+            combined.paste(
+                part,
+                ((width - part.width) // 2, previous.height + gap),
+            )
+            previous.close()
+            part.close()
+            merged.append(combined)
+        else:
+            merged.append(part)
+    return merged
 
 
 def _ellipsize(canvas, text: str, *, font_name: str, font_size: float, max_width: float) -> str:
@@ -353,18 +463,19 @@ def build_wrong_note_pdf(
         pdf.setFillColor(HexColor(_MUTED))
         pdf.drawRightString(page_w - margin, page_h - 36 * mm, f"{index} / {len(rows)}")
 
-        image_x = margin
-        image_y = 68 * mm
-        image_h = page_h - 112 * mm
-        pdf.setStrokeColor(HexColor(_LINE))
-        pdf.setLineWidth(0.8)
-        pdf.roundRect(image_x, image_y, content_w, image_h, 3 * mm, fill=0, stroke=1)
-
         image: Image.Image | None = _load_question_image(
             item,
             deadline_monotonic=deadline_monotonic,
         )
+        image_top = page_h - 47 * mm
+        image_x = margin
+        max_draw_h = image_top - 76 * mm
         if image is None:
+            image_h = 92 * mm
+            image_y = image_top - image_h
+            pdf.setStrokeColor(HexColor(_LINE))
+            pdf.setLineWidth(0.8)
+            pdf.roundRect(image_x, image_y, content_w, image_h, 3 * mm, fill=0, stroke=1)
             pdf.setDash(4, 3)
             pdf.setStrokeColor(HexColor(_LINE))
             pdf.roundRect(
@@ -389,18 +500,30 @@ def build_wrong_note_pdf(
         else:
             try:
                 image_buffer = io.BytesIO()
-                image.save(image_buffer, format="JPEG", quality=82, optimize=True)
+                image.save(image_buffer, format="JPEG", quality=90, optimize=True)
                 image_buffer.seek(0)
                 image_w, raw_h = image.size
-                available_w = content_w - 12 * mm
-                available_h = image_h - 12 * mm
-                scale = min(available_w / image_w, available_h / raw_h)
+                available_w = content_w - 10 * mm
+                scale = min(available_w / image_w, max_draw_h / raw_h)
                 draw_w = image_w * scale
                 draw_h = raw_h * scale
+                image_h = draw_h + 10 * mm
+                image_y = image_top - image_h
+                pdf.setStrokeColor(HexColor(_LINE))
+                pdf.setLineWidth(0.8)
+                pdf.roundRect(
+                    image_x,
+                    image_y,
+                    content_w,
+                    image_h,
+                    3 * mm,
+                    fill=0,
+                    stroke=1,
+                )
                 pdf.drawImage(
                     ImageReader(image_buffer),
                     image_x + (content_w - draw_w) / 2,
-                    image_y + (image_h - draw_h) / 2,
+                    image_y + 5 * mm,
                     draw_w,
                     draw_h,
                     preserveAspectRatio=True,
@@ -409,11 +532,19 @@ def build_wrong_note_pdf(
             finally:
                 image.close()
 
+        work_y = 29 * mm
+        work_h = max(image_y - work_y - 8 * mm, 27 * mm)
         pdf.setFillColor(HexColor(_PAPER))
-        pdf.roundRect(margin, 29 * mm, content_w, 27 * mm, 3 * mm, fill=1, stroke=0)
+        pdf.roundRect(margin, work_y, content_w, work_h, 3 * mm, fill=1, stroke=0)
         pdf.setFillColor(HexColor(_MUTED))
         pdf.setFont(regular_font, 9)
-        pdf.drawString(margin + 5 * mm, 46 * mm, "풀이 공간")
+        pdf.drawString(margin + 5 * mm, work_y + work_h - 8 * mm, "풀이 공간")
+        pdf.setStrokeColor(HexColor(_LINE))
+        pdf.setLineWidth(0.45)
+        line_y = work_y + work_h - 18 * mm
+        while line_y > work_y + 7 * mm:
+            pdf.line(margin + 5 * mm, line_y, page_w - margin - 5 * mm, line_y)
+            line_y -= 10 * mm
 
         pdf.setFillColor(HexColor(_MUTED))
         pdf.setFont(regular_font, 8)
@@ -433,43 +564,61 @@ def build_wrong_note_pdf(
 
     for index, item in enumerate(rows, start=1):
         _remaining_seconds(deadline_monotonic)
-        margin = 16 * mm
-        content_w = page_w - 2 * margin
-        pdf.setFillColor(HexColor(_INK))
-        pdf.rect(0, page_h - 23 * mm, page_w, 23 * mm, fill=1, stroke=0)
-        pdf.setFillColor(white)
-        pdf.setFont(bold_font, 11)
-        pdf.drawString(margin, page_h - 14 * mm, "정답 및 해설")
-        pdf.setFont(regular_font, 9)
-        pdf.drawRightString(page_w - margin, page_h - 14 * mm, f"{index} / {len(rows)}")
-
-        q_number = item.get("question_number")
-        pdf.setFillColor(HexColor(_INK))
-        pdf.setFont(bold_font, 21)
-        pdf.drawString(margin, page_h - 38 * mm, f"{q_number}번" if q_number else "문항")
-        pdf.setFont(bold_font, 11)
-        pdf.setFillColor(HexColor(_CORRECT))
-        pdf.drawRightString(
-            page_w - margin,
-            page_h - 38 * mm,
-            f"정답  {str(item.get('correct_answer') or '미등록')}",
-        )
-
-        image_x = margin
-        image_y = 35 * mm
-        image_h = page_h - 84 * mm
-        pdf.setStrokeColor(HexColor(_LINE))
-        pdf.roundRect(image_x, image_y, content_w, image_h, 3 * mm, fill=0, stroke=1)
         explanation_image: Image.Image | None = _load_explanation_image(
             item,
             deadline_monotonic=deadline_monotonic,
         )
-        if explanation_image is not None:
-            try:
+        if explanation_image is None:
+            explanation_parts = [None]
+        else:
+            explanation_parts = _split_tall_image(
+                explanation_image,
+                max_aspect_ratio=1.30,
+            ) or [None]
+            explanation_image.close()
+
+        for part_index, explanation_part in enumerate(explanation_parts, start=1):
+            _remaining_seconds(deadline_monotonic)
+            margin = 16 * mm
+            content_w = page_w - 2 * margin
+            pdf.setFillColor(HexColor(_INK))
+            pdf.rect(0, page_h - 23 * mm, page_w, 23 * mm, fill=1, stroke=0)
+            pdf.setFillColor(white)
+            pdf.setFont(bold_font, 11)
+            section_label = "정답 및 해설"
+            if len(explanation_parts) > 1:
+                section_label += f" · {part_index}/{len(explanation_parts)}"
+            pdf.drawString(margin, page_h - 14 * mm, section_label)
+            pdf.setFont(regular_font, 9)
+            pdf.drawRightString(page_w - margin, page_h - 14 * mm, f"{index} / {len(rows)}")
+
+            q_number = item.get("question_number")
+            pdf.setFillColor(HexColor(_INK))
+            pdf.setFont(bold_font, 21)
+            pdf.drawString(margin, page_h - 38 * mm, f"{q_number}번" if q_number else "문항")
+            pdf.setFont(bold_font, 11)
+            pdf.setFillColor(HexColor(_CORRECT))
+            pdf.drawRightString(
+                page_w - margin,
+                page_h - 38 * mm,
+                f"정답  {str(item.get('correct_answer') or '미등록')}",
+            )
+
+            image_x = margin
+            image_y = 35 * mm
+            image_h = page_h - 84 * mm
+            pdf.setStrokeColor(HexColor(_LINE))
+            pdf.roundRect(image_x, image_y, content_w, image_h, 3 * mm, fill=0, stroke=1)
+            if explanation_part is not None:
                 image_buffer = io.BytesIO()
-                explanation_image.save(image_buffer, format="JPEG", quality=86, optimize=True)
+                explanation_part.save(
+                    image_buffer,
+                    format="JPEG",
+                    quality=92,
+                    optimize=True,
+                )
                 image_buffer.seek(0)
-                image_w, raw_h = explanation_image.size
+                image_w, raw_h = explanation_part.size
                 scale = min((content_w - 12 * mm) / image_w, (image_h - 12 * mm) / raw_h)
                 draw_w = image_w * scale
                 draw_h = raw_h * scale
@@ -482,29 +631,28 @@ def build_wrong_note_pdf(
                     preserveAspectRatio=True,
                     mask="auto",
                 )
-            finally:
-                explanation_image.close()
-        else:
-            explanation_text = str((item.get("extra") or {}).get("explanation_text") or "")
-            pdf.setFillColor(HexColor(_MUTED))
-            pdf.setFont(regular_font, 11)
-            message = explanation_text or "등록된 선생님 해설이 없습니다."
-            pdf.drawString(
-                image_x + 8 * mm,
-                image_y + image_h - 15 * mm,
-                _ellipsize(
-                    pdf,
-                    message,
-                    font_name=regular_font,
-                    font_size=11,
-                    max_width=content_w - 16 * mm,
-                ),
-            )
+                explanation_part.close()
+            else:
+                explanation_text = str((item.get("extra") or {}).get("explanation_text") or "")
+                pdf.setFillColor(HexColor(_MUTED))
+                pdf.setFont(regular_font, 11)
+                message = explanation_text or "등록된 선생님 해설이 없습니다."
+                pdf.drawString(
+                    image_x + 8 * mm,
+                    image_y + image_h - 15 * mm,
+                    _ellipsize(
+                        pdf,
+                        message,
+                        font_name=regular_font,
+                        font_size=11,
+                        max_width=content_w - 16 * mm,
+                    ),
+                )
 
-        pdf.setFillColor(HexColor(_MUTED))
-        pdf.setFont(regular_font, 8)
-        pdf.drawCentredString(page_w / 2, 12 * mm, f"{tenant_name} · {student_name} 오답노트")
-        pdf.showPage()
+            pdf.setFillColor(HexColor(_MUTED))
+            pdf.setFont(regular_font, 8)
+            pdf.drawCentredString(page_w / 2, 12 * mm, f"{tenant_name} · {student_name} 오답노트")
+            pdf.showPage()
 
     pdf.save()
     return output.getvalue()
@@ -564,19 +712,26 @@ def build_wrong_note_hwpx(
     solution_pages: list[dict[str, Any]] = []
     for index, item in enumerate(rows, start=1):
         image = _load_explanation_image(item, deadline_monotonic=deadline_monotonic)
-        try:
+        if image is None:
+            parts = [None]
+        else:
+            parts = _split_tall_image(image, max_aspect_ratio=1.75) or [None]
+            image.close()
+        for part_index, part in enumerate(parts, start=1):
+            _remaining_seconds(deadline_monotonic)
+            suffix = f" · {part_index}/{len(parts)}" if len(parts) > 1 else ""
             solution_pages.append(
                 {
                     "heading": (
                         f"{item.get('question_number') or index}번 정답 및 해설"
+                        f"{suffix}"
                     ),
                     "answer": str(item.get("correct_answer") or "미등록"),
-                    "visual": _hwpx_visual(image) if image is not None else None,
+                    "visual": _hwpx_visual(part) if part is not None else None,
                 }
             )
-        finally:
-            if image is not None:
-                image.close()
+            if part is not None:
+                part.close()
     return build_hwpx_editable_wrong_note_document(
         title=f"{student_name} 오답노트",
         meta_lines=[

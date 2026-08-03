@@ -15,6 +15,75 @@ from academy.adapters.tools.hwp_endnote_images import (
 logger = logging.getLogger(__name__)
 
 
+def extract_and_upload_hwp_explanations(
+    *,
+    local_path: str,
+    tenant_id: str,
+    exam_id: str | int,
+) -> tuple[list, list[dict[str, Any]]]:
+    """Persist numbered teacher-authored HWP endnotes as explanation images.
+
+    This helper is shared by the single-file HWP fallback and the preferred
+    Ymath flow where a clean problem PDF is paired with a separate teacher HWP.
+    The caller remains responsible for matching only numbers that exist in the
+    clean problem source.
+    """
+    visuals = extract_hwp_endnote_visuals(local_path)
+    if not visuals:
+        raise ValueError("번호가 있는 미주 해설 이미지가 없습니다.")
+
+    explanations: list[dict[str, Any]] = []
+    for visual in visuals:
+        explanation_key = (
+            f"tenants/{tenant_id}/exams/explanations/"
+            f"{exam_id}/q{visual.number:03d}.png"
+        )
+        upload_fileobj_to_r2_storage(
+            fileobj=BytesIO(visual.png_bytes),
+            key=explanation_key,
+            content_type="image/png",
+        )
+        explanations.append(
+            {
+                "question_number": visual.number,
+                "text": "",
+                "page_index": max(visual.number - 1, 0),
+                "image_key": explanation_key,
+                "source": "source_file",
+                "match_confidence": 1.0,
+            }
+        )
+    return visuals, explanations
+
+
+def merge_paired_teacher_explanations(
+    *,
+    primary_result: dict[str, Any],
+    teacher_explanations: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Match a clean problem source to teacher HWP endnotes by source number."""
+    result = dict(primary_result or {})
+    detected_numbers = {
+        int(question.get("original_number") or question.get("number"))
+        for question in (result.get("questions") or [])
+        if question.get("original_number") or question.get("number")
+    }
+    matched = [
+        explanation
+        for explanation in teacher_explanations
+        if int(explanation.get("question_number") or 0) in detected_numbers
+    ]
+    result["explanations"] = matched
+    result["explanation_source_mode"] = "paired_teacher_hwp"
+    result["teacher_explanation_count"] = len(matched)
+    result["unmatched_teacher_explanation_numbers"] = [
+        int(explanation.get("question_number") or 0)
+        for explanation in teacher_explanations
+        if int(explanation.get("question_number") or 0) not in detected_numbers
+    ]
+    return result
+
+
 def run_hwp_question_pipeline(
     *,
     job: AIJob,
@@ -33,7 +102,11 @@ def run_hwp_question_pipeline(
         tenant_id=tenant_id,
     )
     try:
-        visuals = extract_hwp_endnote_visuals(local_path)
+        visuals, explanations = extract_and_upload_hwp_explanations(
+            local_path=local_path,
+            tenant_id=str(tenant_id),
+            exam_id=exam_id,
+        )
     except Exception:
         logger.exception(
             "HWP_ENDNOTE_EXTRACTION_FAILED | job_id=%s | exam_id=%s",
@@ -48,35 +121,18 @@ def run_hwp_question_pipeline(
                 "message": "미주 해설 이미지를 읽지 못해 PDF 변환본이 필요합니다.",
             },
         )
-    if not visuals:
-        return AIResult.done(
-            job.id,
-            {
-                "exam_id": exam_id,
-                "conversion_required": True,
-                "message": "번호가 있는 미주 해설 이미지가 없어 PDF 변환본이 필요합니다.",
-            },
-        )
-
     record_progress(
         job.id, "cropping", 60, step_index=2, step_total=3,
         step_name_display="문항·원본 해설 저장", step_percent=0,
         tenant_id=tenant_id,
     )
     questions = []
-    explanations = []
     question_image_keys: dict[int, str] = {}
     for visual in visuals:
         problem_key = f"tenants/{tenant_id}/exams/questions/{exam_id}/q{visual.number:03d}.png"
-        explanation_key = f"tenants/{tenant_id}/exams/explanations/{exam_id}/q{visual.number:03d}.png"
         upload_fileobj_to_r2_storage(
             fileobj=BytesIO(crop_problem_from_endnote(visual.png_bytes)),
             key=problem_key,
-            content_type="image/png",
-        )
-        upload_fileobj_to_r2_storage(
-            fileobj=BytesIO(visual.png_bytes),
-            key=explanation_key,
             content_type="image/png",
         )
         question_image_keys[visual.number] = problem_key
@@ -87,16 +143,6 @@ def run_hwp_question_pipeline(
                 "bbox": [0, 0, visual.width, round(visual.height * 0.3)],
                 "page_index": max(visual.number - 1, 0),
                 "problem_crop_ratio": 0.3,
-            }
-        )
-        explanations.append(
-            {
-                "question_number": visual.number,
-                "text": "",
-                "page_index": max(visual.number - 1, 0),
-                "image_key": explanation_key,
-                "source": "source_file",
-                "match_confidence": 1.0,
             }
         )
 

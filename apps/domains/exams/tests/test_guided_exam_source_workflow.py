@@ -48,10 +48,18 @@ class GuidedExamSourceWorkflowTests(TestCase):
             role="admin",
         )
 
-    def _request(self, exam: Exam, upload: SimpleUploadedFile):
+    def _request(
+        self,
+        exam: Exam,
+        upload: SimpleUploadedFile,
+        explanation_upload: SimpleUploadedFile | None = None,
+    ):
+        data = {"exam_id": exam.id, "file": upload}
+        if explanation_upload is not None:
+            data["explanation_file"] = explanation_upload
         request = self.factory.post(
             "/api/v1/exams/pdf-extract/",
-            {"exam_id": exam.id, "file": upload},
+            data,
             format="multipart",
         )
         request.tenant = self.tenant
@@ -109,6 +117,67 @@ class GuidedExamSourceWorkflowTests(TestCase):
         upload_file.assert_called_once()
         presign.assert_called_once()
         dispatch_job.assert_called_once()
+
+    @patch(
+        "apps.domains.exams.views.pdf_question_extract_view."
+        "generate_presigned_download_url",
+        side_effect=[
+            "https://files.test/teacher.hwp",
+            "https://files.test/problems.pdf",
+        ],
+    )
+    @patch(
+        "apps.domains.exams.views.pdf_question_extract_view.dispatch_ai_job",
+        return_value={"job_id": "paired-job"},
+    )
+    @patch(
+        "apps.domains.exams.views.pdf_question_extract_view."
+        "upload_fileobj_to_r2_storage"
+    )
+    def test_clean_problem_pdf_can_pair_teacher_hwp_by_number(
+        self,
+        upload_file,
+        dispatch_job,
+        _presign,
+    ):
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="Ymath 짝 자료 시험",
+            exam_type=Exam.ExamType.REGULAR,
+            grading_mode=Exam.GradingMode.WRITTEN,
+        )
+        problem_upload = SimpleUploadedFile(
+            "문제지.pdf",
+            b"%PDF-1.4",
+            content_type="application/pdf",
+        )
+        explanation_upload = SimpleUploadedFile(
+            "선생님 해설.hwp",
+            b"HWP Document File",
+            content_type="application/x-hwp",
+        )
+
+        response = PdfQuestionExtractView.as_view()(
+            self._request(exam, problem_upload, explanation_upload)
+        )
+
+        self.assertEqual(response.status_code, 202, response.data)
+        self.assertEqual(upload_file.call_count, 2)
+        self.assertTrue(
+            ExamAsset.objects.filter(
+                exam=exam,
+                asset_type=(
+                    ExamAsset.AssetType.TEACHER_EXPLANATION_SOURCE
+                ),
+            ).exists()
+        )
+        payload = dispatch_job.call_args.kwargs["payload"]
+        self.assertEqual(payload["filename"], "문제지.pdf")
+        self.assertEqual(payload["explanation_filename"], "선생님 해설.hwp")
+        self.assertEqual(
+            payload["explanation_download_url"],
+            "https://files.test/teacher.hwp",
+        )
 
     @patch(
         "apps.domains.exams.views.pdf_question_extract_view."
