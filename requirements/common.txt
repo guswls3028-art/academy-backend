@@ -37,5 +37,5 @@ asgiref
 psycopg2-binary
 
 # Redis (멱등성 레이어)
-redis>=5.0.0
+redis>=8.1.0
 sentry-sdk[django]

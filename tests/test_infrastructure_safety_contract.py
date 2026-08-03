@@ -67,7 +67,7 @@ CLOUDFLARE_MUTATION_SCRIPTS = (
 )
 
 PINNED_CHECKOUT_ACTION = re.compile(
-    r"uses: actions/checkout@[0-9a-f]{40} # v6"
+    r"uses: actions/checkout@[0-9a-f]{40} # v7\.0\.1"
 )
 PINNED_AWS_CREDENTIALS_ACTION = re.compile(
     r"uses: aws-actions/configure-aws-credentials@[0-9a-f]{40} # v6"

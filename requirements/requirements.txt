@@ -22,7 +22,7 @@ django-extensions
 sqlparse
 asgiref
 psycopg2-binary
-redis>=5.0.0
+redis>=8.1.0
 djangorestframework
 django-filter
 django-cors-headers>=4.0.0
@@ -34,7 +34,7 @@ uritemplate
 inflection
 ffmpeg-python
 gunicorn
-gevent>=23.0.0
+gevent>=26.7.0
 reportlab
 openpyxl
 solapi>=5.0.0
