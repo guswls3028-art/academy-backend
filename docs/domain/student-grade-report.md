@@ -9,7 +9,8 @@
 - 학생·학부모: `GET /api/v1/student/grades/`를 통해 공개된 시험 카드의 오답 확인
   상태와 성장 그래프 구성을 읽는다. 응답의 `lecture_options`는 선택한 학생의 활성
   비시스템 수강 강좌만 포함하며, 아직 공개 점수가 없는 강좌도 학생이 강좌별 빈 상태를
-  확인할 수 있도록 유지한다. 시험별 `student_results_published=false` 결과는
+  확인할 수 있도록 유지한다. 프론트엔드는 한 강좌면 현재 강좌 티켓을, 둘 이상이면 선택
+  상자를 표시한다. 시험별 `student_results_published=false` 결과는
   목록·추이·분석에서 제외한다.
 - 학원 관리자: 관리자 또는 교사 모바일 앱의 **설정 → 학원 정보 → 학생 성적표**에서
   `GET/PATCH /api/v1/core/student-grade-report-layout/`을 사용한다.
