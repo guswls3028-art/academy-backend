@@ -59,6 +59,7 @@ Frontend:
   - `transfer_only: false`
 - The primary result is not auto-downloaded. A completed job exposes an explicit ZIP download button and a Windows Hangul-companion handoff. The page also exposes the sealed companion installer ZIP before a job is created. The ZIP includes `.doc` visual/reference documents and a text-focused editable `.hwpx` review workbook. Binary native `.hwp` writing is still not promised.
 - Browser preview, PDF, Office-compatible `.doc`, and HWPX use the same resolved document-style request. Unicode sub/superscript text is emitted as semantic HTML in browser/`.doc` output.
+- HWPX page orientation uses the Hancom `WIDELY`/`NARROWLY` contract for portrait/landscape layouts. Multi-section documents reconcile every embedded BinData item into `Contents/content.hpf` before serialization, so Hancom does not fall back to the wrong orientation or drop the second and later images.
 - Answers and explanations are placed in an endnote-like section using Office/Hangul-compatible HTML markers.
 
 Backend:

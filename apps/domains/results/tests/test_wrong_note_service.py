@@ -415,7 +415,7 @@ class WrongNoteServiceSessionExamTests(TestCase):
     ):
         from io import BytesIO
         from zipfile import ZipFile
-        from PIL import Image
+        from PIL import Image, ImageDraw
 
         regular, _ = self._create_wrong_result(
             title="한글 오답 시험",
@@ -427,7 +427,9 @@ class WrongNoteServiceSessionExamTests(TestCase):
             q=WrongNoteQuery(exam_id=regular.id, lecture_id=self.lecture.id),
         )
         load_question.return_value = Image.new("RGB", (200, 100), "blue")
-        load_explanation.return_value = Image.new("RGB", (640, 900), "white")
+        explanation = Image.new("RGB", (640, 900), "white")
+        ImageDraw.Draw(explanation).rectangle((40, 60, 600, 840), outline="black", width=8)
+        load_explanation.return_value = explanation
 
         hwpx_bytes = build_wrong_note_hwpx(
             enrollment=self.enrollment,
@@ -437,6 +439,7 @@ class WrongNoteServiceSessionExamTests(TestCase):
 
         with ZipFile(BytesIO(hwpx_bytes)) as package:
             self.assertIn("Contents/content.hpf", package.namelist())
+            manifest = package.read("Contents/content.hpf").decode("utf-8")
             preview = package.read("Preview/PrvText.txt").decode("utf-8")
             section_xml = "\n".join(
                 package.read(name).decode("utf-8")
@@ -455,6 +458,9 @@ class WrongNoteServiceSessionExamTests(TestCase):
         self.assertIn("추가 메모", section_xml)
         self.assertIn("<hp:pic", section_xml)
         self.assertEqual(len(source_images), 2)
+        self.assertIn('id="BIN0001"', manifest)
+        self.assertIn('id="BIN0002"', manifest)
+        self.assertIn('href="BinData/BIN0002.png"', manifest)
 
         load_question.return_value = None
         load_explanation.return_value = None

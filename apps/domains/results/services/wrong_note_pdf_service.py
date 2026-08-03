@@ -715,7 +715,7 @@ def build_wrong_note_hwpx(
         if image is None:
             parts = [None]
         else:
-            parts = _split_tall_image(image, max_aspect_ratio=1.75) or [None]
+            parts = _split_tall_image(image, max_aspect_ratio=1.30) or [None]
             image.close()
         for part_index, part in enumerate(parts, start=1):
             _remaining_seconds(deadline_monotonic)
