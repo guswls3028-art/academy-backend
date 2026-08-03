@@ -89,6 +89,18 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
     ).count()
     can_retake = bool(allow_retake and attempt_count < max_attempts)
 
+    # 시험 응시 기록과 교직원 성적 운영은 유지하되, 학생·학부모에게는
+    # 공개 전 점수·문항·석차를 전혀 직렬화하지 않는다. 재응시 가능 여부는
+    # 결과 비공개 상태에서도 서버가 계속 소유해야 중복 응시를 막을 수 있다.
+    if not bool(getattr(exam, "student_results_published", True)):
+        return {
+            "exam_id": exam_id,
+            "student_results_published": False,
+            "allow_retake": allow_retake,
+            "max_attempts": max_attempts,
+            "can_retake": can_retake,
+        }
+
     clinic_required = False
     session = get_primary_session_for_exam(exam_id)
     if session:
@@ -99,6 +111,7 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
         )
 
     data = StudentExamResultSerializer(result).data
+    data["student_results_published"] = True
     data["allow_retake"] = allow_retake
     data["max_attempts"] = max_attempts
     data["can_retake"] = can_retake

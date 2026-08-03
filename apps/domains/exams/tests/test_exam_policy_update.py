@@ -70,6 +70,19 @@ class ExamPolicyUpdateTests(TestCase):
         self.assertEqual(response.data["pass_score"], 75)
         self.assertTrue(response.data["updated_at"])
 
+    def test_student_result_publication_defaults_on_and_can_be_disabled(self):
+        expected_updated_at = ExamSerializer(self.exam).data["updated_at"]
+
+        response = self.patch(
+            {"student_results_published": False},
+            expected_updated_at=expected_updated_at,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertFalse(response.data["student_results_published"])
+        self.exam.refresh_from_db()
+        self.assertFalse(self.exam.student_results_published)
+
     def test_patch_rejects_stale_version_without_overwriting_newer_value(self):
         stale_updated_at = ExamSerializer(self.exam).data["updated_at"]
         newer_updated_at = timezone.now() + timedelta(seconds=1)

@@ -170,6 +170,26 @@ class ParentExamChildSelectionTests(TestCase):
         self.assertEqual(response_a.data["total_score"], 10)
         self.assertEqual(response_b.status_code, 404)
 
+    def test_unpublished_result_keeps_retake_policy_without_exposing_score(self):
+        self.exam_a.student_results_published = False
+        self.exam_a.save(update_fields=["student_results_published", "updated_at"])
+
+        response = MyExamResultView.as_view()(
+            self._request(
+                f"/student/results/me/exams/{self.exam_a.id}/",
+                student=self.student_a,
+            ),
+            exam_id=self.exam_a.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["exam_id"], self.exam_a.id)
+        self.assertFalse(response.data["student_results_published"])
+        self.assertFalse(response.data["can_retake"])
+        self.assertNotIn("total_score", response.data)
+        self.assertNotIn("items", response.data)
+        self.assertNotIn("rank", response.data)
+
     @patch("apps.domains.submissions.services.dispatcher.dispatch_submission")
     def test_numeric_short_answer_contract_rejects_invalid_and_normalizes_leading_zeroes(
         self,

@@ -263,6 +263,61 @@ class EnterpriseAnalyticsTests(TestCase):
             invalid_response = MyGradesAnalyticsView.as_view()(invalid_request)
             self.assertEqual(invalid_response.status_code, 403)
 
+    def test_unpublished_exam_is_hidden_from_student_summary_but_not_admin(self):
+        student = self._student(self.tenant, "publication")
+        self._exam_result_for_student(
+            tenant=self.tenant,
+            student=student,
+            title="Published Exam",
+            score=88,
+        )
+        hidden_exam, _, _ = self._exam_result_for_student(
+            tenant=self.tenant,
+            student=student,
+            title="Staff Only Exam",
+            score=41,
+        )
+        hidden_exam.student_results_published = False
+        hidden_exam.save(update_fields=["student_results_published", "updated_at"])
+
+        summary_request = self.factory.get("/api/v1/student/grades/")
+        force_authenticate(summary_request, user=student.user)
+        summary_request.tenant = self.tenant
+        summary_response = MyGradesSummaryView.as_view()(summary_request)
+
+        analytics_request = self.factory.get("/api/v1/student/grades/analytics/")
+        force_authenticate(analytics_request, user=student.user)
+        analytics_request.tenant = self.tenant
+        analytics_response = MyGradesAnalyticsView.as_view()(analytics_request)
+
+        admin_request = self.factory.get(
+            "/api/v1/results/admin/student-grades/",
+            {"student_id": student.id},
+        )
+        force_authenticate(admin_request, user=self.admin)
+        admin_request.tenant = self.tenant
+        admin_response = AdminStudentGradesView.as_view()(admin_request)
+
+        self.assertEqual(summary_response.status_code, 200, summary_response.data)
+        self.assertEqual(
+            [row["title"] for row in summary_response.data["exams"]],
+            ["Published Exam"],
+        )
+        self.assertEqual(
+            [row["title"] for row in summary_response.data["exam_trend"]],
+            ["Published Exam"],
+        )
+        self.assertEqual(analytics_response.status_code, 200, analytics_response.data)
+        self.assertEqual(
+            [row["title"] for row in analytics_response.data["trends"]],
+            ["Published Exam"],
+        )
+        self.assertEqual(admin_response.status_code, 200, admin_response.data)
+        self.assertEqual(
+            {row["title"] for row in admin_response.data["exams"]},
+            {"Published Exam", "Staff Only Exam"},
+        )
+
     def test_student_analytics_applies_date_window_to_all_metrics(self):
         now = timezone.now()
         recent = (now - timedelta(days=5)).isoformat()
