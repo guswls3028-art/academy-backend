@@ -16,8 +16,12 @@
 - 런타임에는 앱이 실제 사용하는 패키지만 둔다. DB migration과 점검은 Django와
   AWS/RDS readback을 사용하므로 `postgresql-client` CLI는 제거했고, Python
   PostgreSQL 연결에 필요한 `libpq5`는 유지한다.
+- 시스템 FFmpeg는 실제 변환을 수행하는 격리된 AWS Batch Video 이미지에만 둔다.
+  API의 upload-complete probe는 실패 허용 보조 검사이고 Video worker가 최종 검증과
+  변환을 소유한다. AI frame extraction은 OpenCV wheel에 포함된 FFmpeg 지원을 쓰며,
+  wheel이 그 기능을 잃으면 AI 이미지 빌드가 즉시 실패한다.
 
-## Critical 판정
+## Critical 및 High 판정
 
 1. 후보 manifest에 `source=built`인 각 digest의 scan 결과가 없으면 CI가
    repository-scoped `ecr:StartImageScan` 권한으로 scan을 호출한다. 재사용
@@ -26,15 +30,19 @@
 2. scan이 `COMPLETE`가 아니거나 finding identity(CVE, package, version)가
    불완전하면 실패 폐쇄한다.
 3. 승인되지 않은 Critical은 하나라도 있으면 development/preprod/production으로
-   진행하지 않는다. High는 경고와 후속 remediation 대상으로 남긴다.
+   진행하지 않는다.
 4. 예외는 `docs/ssot/ecr-critical-risk-acceptance.json`에 repository, CVE,
    package, version, 만료일, Debian tracker와 도달 가능성 근거를 모두 정확히
    적은 항목만 허용한다. wildcard는 없으며 package version이나 CVE가 달라지면
    즉시 실패한다.
 5. 만료일 다음 날부터는 scan 전에 전체 게이트가 실패한다. 만료 연장은 새
    vendor 상태와 실제 사용 경로를 다시 검토한 PR로만 가능하다.
+6. High는 `docs/ssot/ecr-high-risk-baseline.json`의 repository별 상한과 비교한다.
+   후보의 수가 상한을 하나라도 넘으면 실패 폐쇄한다. 패키지 제거 또는 vendor
+   수정으로 실제 수가 줄면 운영 scan readback에 맞춰 상한도 낮춘다. 아직 수정본이
+   없는 Debian finding은 상한 이하에서만 추적되며 새 High가 조용히 유입될 수 없다.
 
-현재 한시 항목은 Debian stable에 수정본이 아직 없거나 Debian이
+현재 Critical 한시 항목은 Debian stable에 수정본이 아직 없거나 Debian이
 `no-dsa`/minor로 분류한 glibc·Mbed TLS·Perl finding이다. glibc 취약 native
 `scanf` 경로와 Mbed TLS FFDH/TLS-session 경로는 Academy Python 앱의 실행
 경로가 아니며, 공개 TLS는 ALB가 종단한다. Mbed TLS는 API/Video/AI 이미지의

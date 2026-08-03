@@ -816,6 +816,7 @@ jobs:
           python scripts/v1/ecr-critical-scan-gate.py \
             --candidate docs/reports/release-manifest.candidate.json \
             --acceptances docs/ssot/ecr-critical-risk-acceptance.json \
+            --high-baseline docs/ssot/ecr-high-risk-baseline.json \
             --region "${{ env.AWS_REGION }}"
 
       - name: Workflow summary

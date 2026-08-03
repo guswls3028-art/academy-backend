@@ -20,12 +20,11 @@ FROM ${BASE_IMAGE} AS base
 
 ENV WORKER_TYPE=CPU
 
-# AI Worker CPU 전용 시스템 의존성 (OCR, 비디오) — 코드 변경과 무관
+# AI Worker CPU 전용 시스템 의존성 (OCR, OpenCV 런타임) — 코드 변경과 무관
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     tesseract-ocr-kor \
-    ffmpeg \
     libgl1 \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
@@ -38,6 +37,10 @@ RUN pip install --user --no-cache-dir \
     -r requirements/worker-ai-cpu.txt \
     -r requirements/worker-ai-excel.txt \
     -r requirements/worker-ai-tools.txt
+
+# Frame extraction uses the OpenCV wheel's embedded FFmpeg support. Fail the image
+# build if a future wheel loses that capability; no system FFmpeg package is needed.
+RUN python -c "import cv2; lines=[line.strip() for line in cv2.getBuildInformation().splitlines()]; assert any(line.startswith('FFMPEG:') and 'YES' in line.split() for line in lines), 'OpenCV wheel lacks FFmpeg video support'; print('OpenCV wheel video support OK')"
 
 # CLIP-ViT-B-32 + paraphrase-multilingual-MiniLM-L12-v2 가중치 사전 캐시.
 # 사고(2026-04-29 1차): 워커 부팅 후 첫 잡 처리 시 huggingface에서 600MB 다운로드 →

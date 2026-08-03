@@ -510,60 +510,23 @@ def build_wrong_note_pdf(
     return output.getvalue()
 
 
-def _pil_font(*, size: int, bold: bool = False):
-    from PIL import ImageFont
-
-    filename = "NotoSansKR-Bold.ttf" if bold else "NotoSansKR-Regular.ttf"
-    path = os.path.abspath(
-        os.path.join(
-            os.path.dirname(__file__),
-            "..", "..", "assets", "omr", "renderer", "fonts", filename,
-        )
-    )
-    return ImageFont.truetype(path, size=size)
-
-
-def _fit_pil_image(canvas, source, *, box: tuple[int, int, int, int]) -> None:
-    from PIL import Image
-
-    left, top, right, bottom = box
-    available = (max(right - left, 1), max(bottom - top, 1))
-    image = source.copy()
-    image.thumbnail(available, Image.Resampling.LANCZOS)
-    x = left + (available[0] - image.width) // 2
-    y = top + (available[1] - image.height) // 2
-    canvas.paste(image, (x, y))
-    image.close()
-
-
-def _hwpx_page_bytes(
-    *,
-    heading: str,
-    subheading: str,
-    source_image=None,
-    empty_message: str | None = "등록된 이미지가 없습니다.",
-) -> bytes:
-    from PIL import Image, ImageDraw
-
-    page = Image.new("RGB", (1440, 2037), "white")
-    draw = ImageDraw.Draw(page)
-    draw.rectangle((0, 0, 1440, 150), fill=_INK)
-    draw.text((105, 42), heading, font=_pil_font(size=48, bold=True), fill="white")
-    draw.text((105, 183), subheading, font=_pil_font(size=31), fill=_MUTED)
-    draw.rounded_rectangle((95, 255, 1345, 1880), radius=24, outline=_LINE, width=4)
-    if source_image is not None:
-        _fit_pil_image(page, source_image, box=(125, 290, 1315, 1845))
-    elif empty_message:
-        draw.text(
-            (130, 320),
-            empty_message,
-            font=_pil_font(size=34),
-            fill=_MUTED,
-        )
-    output = io.BytesIO()
-    page.save(output, format="PNG", compress_level=2)
-    page.close()
-    return output.getvalue()
+def _hwpx_visual(source_image) -> dict[str, Any]:
+    image = source_image.copy()
+    try:
+        if image.mode not in {"RGB", "RGBA", "L", "LA", "P"}:
+            converted = image.convert("RGB")
+            image.close()
+            image = converted
+        output = io.BytesIO()
+        image.save(output, format="PNG", compress_level=2)
+        return {
+            "data": output.getvalue(),
+            "mime": "image/png",
+            "width_px": image.width,
+            "height_px": image.height,
+        }
+    finally:
+        image.close()
 
 
 def build_wrong_note_hwpx(
@@ -574,65 +537,54 @@ def build_wrong_note_hwpx(
     deadline_monotonic: float | None = None,
 ) -> bytes:
     from apps.domains.tools.problem_studio.hwpx_writer import (
-        build_hwpx_source_fidelity_document,
+        build_hwpx_editable_wrong_note_document,
     )
 
     if not items:
         raise WrongNotePDFEmptyError("모을 오답이 없습니다.")
     rows = _sorted_items(items)
     student_name = str(getattr(getattr(enrollment, "student", None), "name", "") or "학생")
-    source_pages: list[dict[str, Any]] = []
-    cover = _hwpx_page_bytes(
-        heading=f"{student_name} 오답노트",
-        subheading=f"{tenant_name} · 문제 {len(rows)}문항 · 뒤쪽에 정답 및 해설 수록",
-        empty_message="틀린 문제를 다시 풀고, 뒤쪽에서 선생님 해설을 확인하세요.",
-    )
-    source_pages.append(
-        {"data": cover, "mime": "image/png", "width_px": 1440, "height_px": 2037,
-         "page_width_pt": 595.28, "page_height_pt": 841.89, "source_name": "표지", "page_number": 1}
-    )
+    problem_pages: list[dict[str, Any]] = []
     for index, item in enumerate(rows, start=1):
         image = _load_question_image(item, deadline_monotonic=deadline_monotonic)
         try:
-            data = _hwpx_page_bytes(
-                heading=f"{item.get('question_number') or index}번",
-                subheading=f"{_session_label(item)} · {str(item.get('exam_title') or '시험')}",
-                source_image=image,
+            problem_pages.append(
+                {
+                    "heading": f"{item.get('question_number') or index}번",
+                    "subheading": (
+                        f"{_session_label(item)} · "
+                        f"{str(item.get('exam_title') or '시험')}"
+                    ),
+                    "visual": _hwpx_visual(image) if image is not None else None,
+                }
             )
         finally:
             if image is not None:
                 image.close()
-        source_pages.append(
-            {"data": data, "mime": "image/png", "width_px": 1440, "height_px": 2037,
-             "page_width_pt": 595.28, "page_height_pt": 841.89, "source_name": "문제", "page_number": index}
-        )
-    divider = _hwpx_page_bytes(
-        heading="정답 및 해설",
-        subheading="선생님이 시험 원본에 작성한 해설을 그대로 수록했습니다.",
-        empty_message="문제 풀이를 마친 뒤 다음 쪽부터 확인하세요.",
-    )
-    source_pages.append(
-        {"data": divider, "mime": "image/png", "width_px": 1440, "height_px": 2037,
-         "page_width_pt": 595.28, "page_height_pt": 841.89, "source_name": "해설 표지", "page_number": 1}
-    )
+    solution_pages: list[dict[str, Any]] = []
     for index, item in enumerate(rows, start=1):
         image = _load_explanation_image(item, deadline_monotonic=deadline_monotonic)
         try:
-            data = _hwpx_page_bytes(
-                heading=f"{item.get('question_number') or index}번 정답 및 해설",
-                subheading=f"정답 {str(item.get('correct_answer') or '미등록')}",
-                source_image=image,
+            solution_pages.append(
+                {
+                    "heading": (
+                        f"{item.get('question_number') or index}번 정답 및 해설"
+                    ),
+                    "answer": str(item.get("correct_answer") or "미등록"),
+                    "visual": _hwpx_visual(image) if image is not None else None,
+                }
             )
         finally:
             if image is not None:
                 image.close()
-        source_pages.append(
-            {"data": data, "mime": "image/png", "width_px": 1440, "height_px": 2037,
-             "page_width_pt": 595.28, "page_height_pt": 841.89, "source_name": "해설", "page_number": index}
-        )
-    return build_hwpx_source_fidelity_document(
+    return build_hwpx_editable_wrong_note_document(
         title=f"{student_name} 오답노트",
-        source_pages=source_pages,
+        meta_lines=[
+            f"{tenant_name} · 문제 {len(rows)}문항",
+            "틀린 문제를 다시 풀고, 뒤쪽에서 선생님 해설을 확인하세요.",
+        ],
+        problem_pages=problem_pages,
+        solution_pages=solution_pages,
     )
 
 
