@@ -123,6 +123,16 @@ class Command(BaseCommand):
                     program.ui_config = ui_config
                     program.save(update_fields=["ui_config"])
                     self.stdout.write(self.style.WARNING("  Program student grade report layout: ymath preference applied"))
+                elif isinstance(ui_config[STUDENT_GRADE_REPORT_LAYOUT_KEY], dict):
+                    layout = dict(ui_config[STUDENT_GRADE_REPORT_LAYOUT_KEY])
+                    if "score_comparison_metrics" not in layout:
+                        ymath_layout = ymath_student_grade_report_layout()
+                        layout["version"] = ymath_layout["version"]
+                        layout["score_comparison_metrics"] = ymath_layout["score_comparison_metrics"]
+                        ui_config[STUDENT_GRADE_REPORT_LAYOUT_KEY] = layout
+                        program.ui_config = ui_config
+                        program.save(update_fields=["ui_config"])
+                        self.stdout.write(self.style.WARNING("  Program student grade comparison metrics: ymath preference applied"))
 
             # Signal이 host=code 로 이미 primary 도메인을 만들었을 수 있음 → primary 해제 후 우리 도메인만 primary 사용
             existing_domains = core_repo.tenant_domain_filter_by_tenant(tenant)

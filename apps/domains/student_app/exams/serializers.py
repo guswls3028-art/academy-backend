@@ -14,3 +14,4 @@ class StudentExamSerializer(serializers.Serializer):
     session_id = serializers.IntegerField(allow_null=True, required=False)
     has_result = serializers.BooleanField(default=False, required=False)
     attempt_count = serializers.IntegerField(default=0, required=False)
+    student_results_published = serializers.BooleanField(default=True, required=False)

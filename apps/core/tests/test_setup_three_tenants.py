@@ -32,6 +32,10 @@ class SetupThreeTenantsTests(TestCase):
         self.assertTrue(visible["lecture_average"])
         self.assertFalse(visible["improvement_priority"])
         self.assertFalse(visible["exam_summary"])
+        metrics = ymath_program.ui_config[STUDENT_GRADE_REPORT_LAYOUT_KEY]["score_comparison_metrics"]
+        self.assertTrue(metrics["average_score"])
+        self.assertFalse(metrics["pass_rate"])
+        self.assertFalse(metrics["status"])
 
         tchul_program = Program.objects.get(tenant__code="tchul")
         self.assertNotIn("score_output_mode", tchul_program.feature_flags)
@@ -69,5 +73,5 @@ class SetupThreeTenantsTests(TestCase):
         program.refresh_from_db()
         self.assertEqual(
             program.ui_config[STUDENT_GRADE_REPORT_LAYOUT_KEY]["version"],
-            1,
+            2,
         )

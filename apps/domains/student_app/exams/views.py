@@ -66,6 +66,9 @@ def _serialize_exam(exam, *, submission_status_map=None):
         "session_id": session_id,
         "has_result": sub_info.get("has_result", False),
         "attempt_count": sub_info.get("attempt_count", 0),
+        "student_results_published": bool(
+            getattr(exam, "student_results_published", True)
+        ),
     }).data
 
 

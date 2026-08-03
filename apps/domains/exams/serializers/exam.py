@@ -50,6 +50,7 @@ class ExamSerializer(serializers.ModelSerializer):
             "open_at",
             "close_at",
             "answer_visibility",
+            "student_results_published",
             "session_ids",
             "template_exam_id",
             "structure_owner_id",

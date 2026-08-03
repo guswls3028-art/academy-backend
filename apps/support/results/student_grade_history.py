@@ -120,6 +120,7 @@ def build_student_exam_history(
     *,
     tenant: Any,
     enrollment_ids: list[int],
+    published_results_only: bool = False,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     """Build deduplicated exam rows and progression inside an authorized scope.
 
@@ -188,6 +189,8 @@ def build_student_exam_history(
             continue
         info = exams_map.get(exam_id)
         if not info:
+            continue
+        if published_results_only and not info["student_results_published"]:
             continue
         enrollment_info = enrollment_lecture_map.get(result["enrollment_id"])
         if not enrollment_info or enrollment_info.get("lecture_is_system"):

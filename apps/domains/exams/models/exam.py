@@ -143,6 +143,12 @@ class Exam(BaseModel):
         default=AnswerVisibility.HIDDEN,
         help_text="정답 공개 정책: hidden=비공개, after_closed=마감 후 공개, always=항상 공개",
     )
+    student_results_published = models.BooleanField(
+        default=True,
+        help_text=(
+            "학생·학부모 성적 공개 여부. 비공개여도 교직원 채점·통계 기록은 유지한다."
+        ),
+    )
 
     class Meta:
         db_table = "exams_exam"

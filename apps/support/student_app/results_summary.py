@@ -127,6 +127,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
     exam_list, exam_trend, exam_summary = build_student_exam_history(
         tenant=tenant,
         enrollment_ids=enrollment_ids,
+        published_results_only=True,
     )
     exam_ids = [int(exam["exam_id"]) for exam in exam_list]
     result_ids = [int(exam["_result_id"]) for exam in exam_list]

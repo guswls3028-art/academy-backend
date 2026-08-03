@@ -5,6 +5,7 @@ from rest_framework.test import APITestCase
 from apps.core.models import Program, Tenant, TenantMembership
 from apps.core.services.student_grade_report_layout import (
     STUDENT_GRADE_REPORT_LAYOUT_KEY,
+    STUDENT_GRADE_REPORT_SCORE_COMPARISON_METRIC_IDS,
     STUDENT_GRADE_REPORT_SECTION_IDS,
 )
 
@@ -47,11 +48,15 @@ class StudentGradeReportLayoutViewTests(APITestCase):
             ids.reverse()
         hidden = hidden or set()
         return {
-            "version": 1,
+            "version": 2,
             "sections": [
                 {"id": section_id, "visible": section_id not in hidden}
                 for section_id in ids
             ],
+            "score_comparison_metrics": {
+                metric_id: True
+                for metric_id in STUDENT_GRADE_REPORT_SCORE_COMPARISON_METRIC_IDS
+            },
         }
 
     def test_owner_reads_complete_default_layout(self):
@@ -65,6 +70,7 @@ class StudentGradeReportLayoutViewTests(APITestCase):
             list(STUDENT_GRADE_REPORT_SECTION_IDS),
         )
         self.assertTrue(all(section["visible"] for section in response.data["sections"]))
+        self.assertTrue(all(response.data["score_comparison_metrics"].values()))
 
     def test_admin_reorders_and_hides_sections_without_dropping_other_ui_config(self):
         self._authenticate("admin")
@@ -154,3 +160,26 @@ class StudentGradeReportLayoutViewTests(APITestCase):
         })
         self.assertEqual(len(response.data["sections"]), len(STUDENT_GRADE_REPORT_SECTION_IDS))
         self.assertNotIn("removed_section", [row["id"] for row in response.data["sections"]])
+        self.assertTrue(all(response.data["score_comparison_metrics"].values()))
+
+    def test_legacy_patch_preserves_stored_score_comparison_metrics(self):
+        self._authenticate("admin")
+        stored = self._layout()
+        stored["score_comparison_metrics"]["pass_rate"] = False
+        stored["score_comparison_metrics"]["status"] = False
+        self.program.ui_config = {STUDENT_GRADE_REPORT_LAYOUT_KEY: stored}
+        self.program.save(update_fields=["ui_config"])
+        legacy_payload = self._layout(hidden={"improvement_priority"})
+        legacy_payload.pop("score_comparison_metrics")
+
+        response = self.client.patch(
+            self.url,
+            legacy_payload,
+            format="json",
+            **self.headers,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data["score_comparison_metrics"]["average_score"])
+        self.assertFalse(response.data["score_comparison_metrics"]["pass_rate"])
+        self.assertFalse(response.data["score_comparison_metrics"]["status"])
