@@ -14,6 +14,10 @@ class WrongNotePDF(BaseModel):
         DONE = "DONE"
         FAILED = "FAILED"
 
+    class OutputFormat(models.TextChoices):
+        PDF = "pdf", "PDF"
+        HWPX = "hwpx", "한글(HWPX)"
+
     enrollment = models.ForeignKey(
         "enrollment.Enrollment",
         on_delete=models.CASCADE,
@@ -44,6 +48,11 @@ class WrongNotePDF(BaseModel):
         max_length=20,
         choices=Status.choices,
         default=Status.PENDING,
+    )
+    output_format = models.CharField(
+        max_length=8,
+        choices=OutputFormat.choices,
+        default=OutputFormat.PDF,
     )
 
     file_path = models.CharField(max_length=255, blank=True)

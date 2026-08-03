@@ -15,6 +15,7 @@ from apps.domains.results.models import Result, ResultFact, ResultItem
 from apps.domains.results.services.wrong_note_pdf_service import (
     WrongNotePDFLimitError,
     build_wrong_note_pdf,
+    build_wrong_note_hwpx,
     generate_and_store_wrong_note_pdf,
 )
 from apps.domains.results.services.wrong_note_service import (
@@ -28,6 +29,7 @@ Enrollment = apps.get_model("enrollment", "Enrollment")
 AnswerKey = apps.get_model("exams", "AnswerKey")
 Exam = apps.get_model("exams", "Exam")
 ExamQuestion = apps.get_model("exams", "ExamQuestion")
+QuestionExplanation = apps.get_model("exams", "QuestionExplanation")
 Sheet = apps.get_model("exams", "Sheet")
 Lecture = apps.get_model("lectures", "Lecture")
 Session = apps.get_model("lectures", "Session")
@@ -153,6 +155,32 @@ class WrongNoteServiceSessionExamTests(TestCase):
 
         self.assertEqual(total, 1)
         self.assertEqual([item["exam_id"] for item in items], [regular.id])
+
+    def test_wrong_note_image_keys_fail_closed_to_current_tenant(self):
+        regular, question = self._create_wrong_result(
+            title="다른 테넌트 키 차단",
+            session=self.session2,
+        )
+        question.image_key = "tenants/999999/exams/questions/q001.png"
+        question.save(update_fields=["image_key", "updated_at"])
+        QuestionExplanation.objects.create(
+            question=question,
+            image_key="tenants/999999/exams/explanations/q001.png",
+            source="source_file",
+        )
+
+        total, items = list_wrong_notes_for_enrollment(
+            enrollment_id=self.enrollment.id,
+            q=WrongNoteQuery(exam_id=regular.id, lecture_id=self.lecture.id),
+        )
+
+        self.assertEqual(total, 1)
+        self.assertEqual(items[0]["question_image_url"], "")
+        self.assertEqual(items[0]["explanation_image_url"], "")
+        self.assertFalse(items[0]["has_question_image"])
+        self.assertFalse(items[0]["has_teacher_explanation"])
+        self.assertEqual(items[0]["_question_image_key"], "")
+        self.assertEqual(items[0]["_explanation_image_key"], "")
 
     def test_lecture_order_filter_applies_inclusive_end(self):
         self._create_wrong_result(title="1차시 시험", session=self.session1)
@@ -336,7 +364,11 @@ class WrongNoteServiceSessionExamTests(TestCase):
     @patch(
         "apps.domains.results.services.wrong_note_pdf_service._load_question_image"
     )
-    def test_pdf_contains_cover_and_one_page_per_wrong_question(self, load_image):
+    @patch(
+        "apps.domains.results.services.wrong_note_pdf_service._load_explanation_image",
+        return_value=None,
+    )
+    def test_pdf_separates_questions_from_solution_section(self, _load_explanation, load_image):
         from PIL import Image
 
         regular, question = self._create_wrong_result(
@@ -366,8 +398,48 @@ class WrongNoteServiceSessionExamTests(TestCase):
         self.assertGreater(len(pdf_bytes), 5_000)
         self.assertEqual(
             len(re.findall(rb"/Type\s*/Page(?!s)", pdf_bytes)),
-            2,
+            4,
         )
+
+    @patch(
+        "apps.domains.results.services.wrong_note_pdf_service._load_explanation_image"
+    )
+    @patch(
+        "apps.domains.results.services.wrong_note_pdf_service._load_question_image"
+    )
+    def test_hwpx_contains_problem_then_teacher_solution_pages(
+        self,
+        load_question,
+        load_explanation,
+    ):
+        from io import BytesIO
+        from zipfile import ZipFile
+        from PIL import Image
+
+        regular, _ = self._create_wrong_result(
+            title="한글 오답 시험",
+            session=self.session2,
+            answer="C",
+        )
+        _, items = list_wrong_notes_for_enrollment(
+            enrollment_id=self.enrollment.id,
+            q=WrongNoteQuery(exam_id=regular.id, lecture_id=self.lecture.id),
+        )
+        load_question.return_value = Image.new("RGB", (640, 480), "white")
+        load_explanation.return_value = Image.new("RGB", (640, 900), "white")
+
+        hwpx_bytes = build_wrong_note_hwpx(
+            enrollment=self.enrollment,
+            tenant_name=self.tenant.name,
+            items=items,
+        )
+
+        with ZipFile(BytesIO(hwpx_bytes)) as package:
+            self.assertIn("Contents/content.hpf", package.namelist())
+            preview = package.read("Preview/PrvText.txt").decode("utf-8")
+        self.assertIn("오답노트", preview)
+        self.assertIn("문제 1쪽", preview)
+        self.assertIn("해설 1쪽", preview)
 
     @patch(
         "apps.domains.results.services.wrong_note_pdf_service.upload_fileobj_to_r2_storage"

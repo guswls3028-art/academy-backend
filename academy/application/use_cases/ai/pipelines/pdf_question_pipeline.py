@@ -228,6 +228,18 @@ def run_pdf_question_pipeline(
         exam_id=exam_id,
         job_id=job.id,
     )
+    explanation_image_keys = _crop_and_upload_explanation_images(
+        explanations=explanations,
+        pages=pages,
+        tenant_id=tenant_id,
+        exam_id=exam_id,
+        job_id=job.id,
+    )
+    for explanation in explanations:
+        number = explanation.get("question_number")
+        if number in explanation_image_keys:
+            explanation["image_key"] = explanation_image_keys[number]
+            explanation["match_confidence"] = 1.0
 
     record_progress(
         job.id, "done", 100,
@@ -703,6 +715,72 @@ def _crop_and_upload_question_images(
         job_id, len(result_keys), len(questions),
     )
     return result_keys
+
+
+def _crop_and_upload_explanation_images(
+    *,
+    explanations: List[Dict],
+    pages: List[Dict],
+    tenant_id: Optional[str],
+    exam_id: Optional[str],
+    job_id: str,
+) -> Dict[int, str]:
+    """Preserve numbered teacher solution regions as images when available."""
+    if not tenant_id or not exam_id or not explanations:
+        return {}
+
+    import io
+    import cv2
+
+    try:
+        from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_storage
+    except Exception:
+        return {}
+
+    pages_by_index = {int(page.get("page_index", 0)): page for page in pages}
+    result: Dict[int, str] = {}
+    for explanation in explanations:
+        number = explanation.get("question_number")
+        page = pages_by_index.get(int(explanation.get("page_index") or 0))
+        if not number or not page:
+            continue
+        numbers = list(page.get("numbers") or [])
+        boxes = list(page.get("boxes") or [])
+        try:
+            box_index = numbers.index(int(number))
+        except ValueError:
+            continue
+        if box_index >= len(boxes):
+            continue
+        image = cv2.imread(str(page.get("image_path") or ""))
+        if image is None:
+            continue
+        x, y, width, height = (int(value) for value in boxes[box_index])
+        image_height, image_width = image.shape[:2]
+        x, y = max(x, 0), max(y, 0)
+        right = min(x + width, image_width)
+        bottom = min(y + height, image_height)
+        if right <= x or bottom <= y:
+            continue
+        success, buffer = cv2.imencode(".png", image[y:bottom, x:right])
+        if not success:
+            continue
+        key = f"tenants/{tenant_id}/exams/explanations/{exam_id}/q{int(number):03d}.png"
+        try:
+            upload_fileobj_to_r2_storage(
+                fileobj=io.BytesIO(buffer.tobytes()),
+                key=key,
+                content_type="image/png",
+            )
+            result[int(number)] = key
+        except Exception:
+            logger.warning(
+                "EXPLANATION_CROP_UPLOAD_FAILED | job_id=%s | q=%s",
+                job_id,
+                number,
+                exc_info=True,
+            )
+    return result
 
 
 def _extract_explanations(

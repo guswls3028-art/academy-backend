@@ -84,25 +84,26 @@ Scoring Flow
 학생/관리자 화면에 노출되는 대표 결과는 `sync_result_from_exam_submission`
 단계에서 `Result` / `ResultItem`으로 동기화된다.
 
-Wrong-note PDF
---------------
+Wrong-note PDF / HWPX
+---------------------
 
 - 오답노트의 조회 기준은 append-only `ResultFact`가 아니라 현재 대표 결과의
   `ResultItem(is_correct=False)`이다. 재채점·대표 시도 변경 뒤 이미 맞힌 문항을
   과거 오답 이벤트 때문에 다시 노출하지 않는다.
 - 교직원은 성적 상세의 **오답노트 만들기**에서 현재 시험 또는 수강 강의 전체를
-  선택한다. 누적 범위는 차시 순서로 묶이며, 문제 이미지·학생 답·정답을 PDF에 싣는다.
+  선택한다. 누적 범위는 정규 회차 순서로 묶고 PDF 또는 HWPX를 고른다. 앞쪽
+  문제지는 정답을 노출하지 않고 뒤쪽 `정답 및 해설`에 교사 원본 해설을 싣는다.
 - 문제 이미지는 시험 설정의 답안 등록 → 이미지 등록에서 `ExamQuestion.image_key`로
   저장한다. 해설 이미지는 `QuestionExplanation.image_key`로 분리해 유지한다.
-- `POST /results/wrong-notes/pdf/`는 tenant 범위의 `WrongNotePDF`와 AI job을
+- `POST /results/wrong-notes/documents/`는 tenant 범위의 `WrongNotePDF`와 AI job을
   transaction에서 기록한 뒤 tools worker 큐에 발행한다. 발행 성공은
   `202 PENDING`, 발행 실패는 두 job을 `FAILED`로 닫고 `503`을 반환한다.
-  worker가 PDF를 R2에 저장하고 callback이 `DONE` 또는 `FAILED`를 확정한다.
-  상태 API는 local media URL이 아니라 `application/pdf` attachment presigned URL을
-  반환한다.
-- 조회·생성·다운로드는 교직원 전용이다. 한 학원에서 한 번에 한 PDF만 만들고,
+  worker가 선택한 PDF/HWPX를 R2에 저장하고 callback이 `DONE` 또는 `FAILED`를 확정한다.
+  상태 API는 형식·파일명에 맞는 attachment presigned URL을 반환하고 기존 PDF
+  경로는 호환 별칭으로 유지한다.
+- 조회·생성·다운로드는 교직원 전용이다. 한 학원에서 한 번에 한 문서만 만들고,
   생성은 최대 100문항·90초로 제한한다. 현재 범위는 단일 시험 또는
-  `lecture_id + from_session_order`부터 현재까지이며 종료 회차 지정은 없다.
+  `lecture_id + from_session_order + 선택적 to_session_order`이며 양끝을 포함한다.
   범위를 넘으면 현재 시험으로 좁혀 다시 만든다.
 - R2 이미지는 10MB·2천만 픽셀 상한과 제한 읽기/타임아웃을 적용하고 한 장씩
   처리한다. 학생 영구 삭제는 진행 중인 PDF가 있으면 중단하며, 저장된 PDF 객체를

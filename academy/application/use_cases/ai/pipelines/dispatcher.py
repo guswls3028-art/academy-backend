@@ -276,6 +276,18 @@ def handle_ai_job(job: AIJob) -> AIResult:
         # Question segmentation (PDF 시험지 문항 분할 + 해설 인식)
         # --------------------------------------------------
         if job.type == "question_segmentation":
+            filename = str(payload.get("filename") or "").lower()
+            if filename.endswith(".hwp"):
+                from academy.application.use_cases.ai.pipelines.hwp_question_pipeline import (
+                    run_hwp_question_pipeline,
+                )
+                return run_hwp_question_pipeline(
+                    job=job,
+                    local_path=local_path,
+                    payload=payload,
+                    tenant_id=tenant_id,
+                    record_progress=_record_progress,
+                )
             from academy.application.use_cases.ai.pipelines.pdf_question_pipeline import (
                 run_pdf_question_pipeline,
             )

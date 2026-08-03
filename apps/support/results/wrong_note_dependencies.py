@@ -117,13 +117,19 @@ def exams_with_wrong_note_sessions_by_id(
     }
 
 
-def question_image_url(*, question: Any) -> str:
-    if getattr(question, "image_key", ""):
+def question_image_key(*, question: Any, tenant_id: int) -> str:
+    key = str(getattr(question, "image_key", "") or "")
+    return key if key.startswith(f"tenants/{int(tenant_id)}/") else ""
+
+
+def question_image_url(*, question: Any, tenant_id: int) -> str:
+    key = question_image_key(question=question, tenant_id=tenant_id)
+    if key:
         from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
 
         try:
             return generate_presigned_get_url_storage(
-                key=question.image_key,
+                key=key,
                 expires_in=3600,
             )
         except Exception:
@@ -134,5 +140,25 @@ def question_image_url(*, question: Any) -> str:
         return ""
     try:
         return str(image.url or "")
+    except Exception:
+        return ""
+
+
+def explanation_image_key(*, question: Any, tenant_id: int) -> str:
+    try:
+        key = str(question.explanation.image_key or "")
+    except Exception:
+        return ""
+    return key if key.startswith(f"tenants/{int(tenant_id)}/") else ""
+
+
+def explanation_image_url(*, question: Any, tenant_id: int) -> str:
+    key = explanation_image_key(question=question, tenant_id=tenant_id)
+    if not key:
+        return ""
+    from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
+
+    try:
+        return generate_presigned_get_url_storage(key=key, expires_in=3600)
     except Exception:
         return ""

@@ -113,16 +113,18 @@ def _remaining_seconds(deadline_monotonic: float | None) -> int | None:
     return max(1, min(10, int(remaining)))
 
 
-def _load_question_image(
+def _load_item_image(
     item: dict[str, Any],
     *,
+    key_field: str,
+    storage_name_field: str = "",
     deadline_monotonic: float | None = None,
 ):
     from PIL import Image, ImageOps
 
     data: bytes | None = None
-    key = str(item.get("_question_image_key") or "")
-    storage_name = str(item.get("_question_image_name") or "")
+    key = str(item.get(key_field) or "")
+    storage_name = str(item.get(storage_name_field) or "") if storage_name_field else ""
     try:
         if key:
             data = get_object_bytes_r2_storage(
@@ -157,6 +159,23 @@ def _load_question_image(
             exc_info=True,
         )
         return None
+
+
+def _load_question_image(item: dict[str, Any], *, deadline_monotonic=None):
+    return _load_item_image(
+        item,
+        key_field="_question_image_key",
+        storage_name_field="_question_image_name",
+        deadline_monotonic=deadline_monotonic,
+    )
+
+
+def _load_explanation_image(item: dict[str, Any], *, deadline_monotonic=None):
+    return _load_item_image(
+        item,
+        key_field="_explanation_image_key",
+        deadline_monotonic=deadline_monotonic,
+    )
 
 
 def _ellipsize(canvas, text: str, *, font_name: str, font_size: float, max_width: float) -> str:
@@ -390,30 +409,95 @@ def build_wrong_note_pdf(
             finally:
                 image.close()
 
-        answer_y = 29 * mm
-        answer_w = (content_w - 5 * mm) / 2
-        answers = [
-            ("내 답", str(item.get("student_answer") or "미입력"), _WRONG),
-            ("정답", str(item.get("correct_answer") or "정답 미등록"), _CORRECT),
-        ]
-        for answer_index, (label, value, color) in enumerate(answers):
-            x = margin + answer_index * (answer_w + 5 * mm)
-            pdf.setFillColor(HexColor(_PAPER))
-            pdf.roundRect(x, answer_y, answer_w, 27 * mm, 3 * mm, fill=1, stroke=0)
+        pdf.setFillColor(HexColor(_PAPER))
+        pdf.roundRect(margin, 29 * mm, content_w, 27 * mm, 3 * mm, fill=1, stroke=0)
+        pdf.setFillColor(HexColor(_MUTED))
+        pdf.setFont(regular_font, 9)
+        pdf.drawString(margin + 5 * mm, 46 * mm, "풀이 공간")
+
+        pdf.setFillColor(HexColor(_MUTED))
+        pdf.setFont(regular_font, 8)
+        pdf.drawCentredString(page_w / 2, 12 * mm, f"{tenant_name} · {student_name} 오답노트")
+        pdf.showPage()
+
+    # Answers never leak into the worksheet section. Teacher-authored source
+    # explanations are collected after a clear divider.
+    pdf.setFillColor(HexColor(_INK))
+    pdf.rect(0, 0, page_w, page_h, fill=1, stroke=0)
+    pdf.setFillColor(white)
+    pdf.setFont(bold_font, 28)
+    pdf.drawString(20 * mm, page_h - 52 * mm, "정답 및 해설")
+    pdf.setFont(regular_font, 12)
+    pdf.drawString(20 * mm, page_h - 68 * mm, "선생님이 시험 원본에 작성한 해설을 그대로 수록했습니다.")
+    pdf.showPage()
+
+    for index, item in enumerate(rows, start=1):
+        _remaining_seconds(deadline_monotonic)
+        margin = 16 * mm
+        content_w = page_w - 2 * margin
+        pdf.setFillColor(HexColor(_INK))
+        pdf.rect(0, page_h - 23 * mm, page_w, 23 * mm, fill=1, stroke=0)
+        pdf.setFillColor(white)
+        pdf.setFont(bold_font, 11)
+        pdf.drawString(margin, page_h - 14 * mm, "정답 및 해설")
+        pdf.setFont(regular_font, 9)
+        pdf.drawRightString(page_w - margin, page_h - 14 * mm, f"{index} / {len(rows)}")
+
+        q_number = item.get("question_number")
+        pdf.setFillColor(HexColor(_INK))
+        pdf.setFont(bold_font, 21)
+        pdf.drawString(margin, page_h - 38 * mm, f"{q_number}번" if q_number else "문항")
+        pdf.setFont(bold_font, 11)
+        pdf.setFillColor(HexColor(_CORRECT))
+        pdf.drawRightString(
+            page_w - margin,
+            page_h - 38 * mm,
+            f"정답  {str(item.get('correct_answer') or '미등록')}",
+        )
+
+        image_x = margin
+        image_y = 35 * mm
+        image_h = page_h - 84 * mm
+        pdf.setStrokeColor(HexColor(_LINE))
+        pdf.roundRect(image_x, image_y, content_w, image_h, 3 * mm, fill=0, stroke=1)
+        explanation_image: Image.Image | None = _load_explanation_image(
+            item,
+            deadline_monotonic=deadline_monotonic,
+        )
+        if explanation_image is not None:
+            try:
+                image_buffer = io.BytesIO()
+                explanation_image.save(image_buffer, format="JPEG", quality=86, optimize=True)
+                image_buffer.seek(0)
+                image_w, raw_h = explanation_image.size
+                scale = min((content_w - 12 * mm) / image_w, (image_h - 12 * mm) / raw_h)
+                draw_w = image_w * scale
+                draw_h = raw_h * scale
+                pdf.drawImage(
+                    ImageReader(image_buffer),
+                    image_x + (content_w - draw_w) / 2,
+                    image_y + (image_h - draw_h) / 2,
+                    draw_w,
+                    draw_h,
+                    preserveAspectRatio=True,
+                    mask="auto",
+                )
+            finally:
+                explanation_image.close()
+        else:
+            explanation_text = str((item.get("extra") or {}).get("explanation_text") or "")
             pdf.setFillColor(HexColor(_MUTED))
-            pdf.setFont(regular_font, 9)
-            pdf.drawString(x + 5 * mm, answer_y + 17 * mm, label)
-            pdf.setFillColor(HexColor(color))
-            pdf.setFont(bold_font, 13)
+            pdf.setFont(regular_font, 11)
+            message = explanation_text or "등록된 선생님 해설이 없습니다."
             pdf.drawString(
-                x + 5 * mm,
-                answer_y + 8 * mm,
+                image_x + 8 * mm,
+                image_y + image_h - 15 * mm,
                 _ellipsize(
                     pdf,
-                    value,
-                    font_name=bold_font,
-                    font_size=13,
-                    max_width=answer_w - 10 * mm,
+                    message,
+                    font_name=regular_font,
+                    font_size=11,
+                    max_width=content_w - 16 * mm,
                 ),
             )
 
@@ -426,8 +510,135 @@ def build_wrong_note_pdf(
     return output.getvalue()
 
 
+def _pil_font(*, size: int, bold: bool = False):
+    from PIL import ImageFont
+
+    filename = "NotoSansKR-Bold.ttf" if bold else "NotoSansKR-Regular.ttf"
+    path = os.path.abspath(
+        os.path.join(
+            os.path.dirname(__file__),
+            "..", "..", "assets", "omr", "renderer", "fonts", filename,
+        )
+    )
+    return ImageFont.truetype(path, size=size)
+
+
+def _fit_pil_image(canvas, source, *, box: tuple[int, int, int, int]) -> None:
+    from PIL import Image
+
+    left, top, right, bottom = box
+    available = (max(right - left, 1), max(bottom - top, 1))
+    image = source.copy()
+    image.thumbnail(available, Image.Resampling.LANCZOS)
+    x = left + (available[0] - image.width) // 2
+    y = top + (available[1] - image.height) // 2
+    canvas.paste(image, (x, y))
+    image.close()
+
+
+def _hwpx_page_bytes(
+    *,
+    heading: str,
+    subheading: str,
+    source_image=None,
+    empty_message: str | None = "등록된 이미지가 없습니다.",
+) -> bytes:
+    from PIL import Image, ImageDraw
+
+    page = Image.new("RGB", (1440, 2037), "white")
+    draw = ImageDraw.Draw(page)
+    draw.rectangle((0, 0, 1440, 150), fill=_INK)
+    draw.text((105, 42), heading, font=_pil_font(size=48, bold=True), fill="white")
+    draw.text((105, 183), subheading, font=_pil_font(size=31), fill=_MUTED)
+    draw.rounded_rectangle((95, 255, 1345, 1880), radius=24, outline=_LINE, width=4)
+    if source_image is not None:
+        _fit_pil_image(page, source_image, box=(125, 290, 1315, 1845))
+    elif empty_message:
+        draw.text(
+            (130, 320),
+            empty_message,
+            font=_pil_font(size=34),
+            fill=_MUTED,
+        )
+    output = io.BytesIO()
+    page.save(output, format="PNG", compress_level=2)
+    page.close()
+    return output.getvalue()
+
+
+def build_wrong_note_hwpx(
+    *,
+    enrollment: Any,
+    tenant_name: str,
+    items: list[dict[str, Any]],
+    deadline_monotonic: float | None = None,
+) -> bytes:
+    from apps.domains.tools.problem_studio.hwpx_writer import (
+        build_hwpx_source_fidelity_document,
+    )
+
+    if not items:
+        raise WrongNotePDFEmptyError("모을 오답이 없습니다.")
+    rows = _sorted_items(items)
+    student_name = str(getattr(getattr(enrollment, "student", None), "name", "") or "학생")
+    source_pages: list[dict[str, Any]] = []
+    cover = _hwpx_page_bytes(
+        heading=f"{student_name} 오답노트",
+        subheading=f"{tenant_name} · 문제 {len(rows)}문항 · 뒤쪽에 정답 및 해설 수록",
+        empty_message="틀린 문제를 다시 풀고, 뒤쪽에서 선생님 해설을 확인하세요.",
+    )
+    source_pages.append(
+        {"data": cover, "mime": "image/png", "width_px": 1440, "height_px": 2037,
+         "page_width_pt": 595.28, "page_height_pt": 841.89, "source_name": "표지", "page_number": 1}
+    )
+    for index, item in enumerate(rows, start=1):
+        image = _load_question_image(item, deadline_monotonic=deadline_monotonic)
+        try:
+            data = _hwpx_page_bytes(
+                heading=f"{item.get('question_number') or index}번",
+                subheading=f"{_session_label(item)} · {str(item.get('exam_title') or '시험')}",
+                source_image=image,
+            )
+        finally:
+            if image is not None:
+                image.close()
+        source_pages.append(
+            {"data": data, "mime": "image/png", "width_px": 1440, "height_px": 2037,
+             "page_width_pt": 595.28, "page_height_pt": 841.89, "source_name": "문제", "page_number": index}
+        )
+    divider = _hwpx_page_bytes(
+        heading="정답 및 해설",
+        subheading="선생님이 시험 원본에 작성한 해설을 그대로 수록했습니다.",
+        empty_message="문제 풀이를 마친 뒤 다음 쪽부터 확인하세요.",
+    )
+    source_pages.append(
+        {"data": divider, "mime": "image/png", "width_px": 1440, "height_px": 2037,
+         "page_width_pt": 595.28, "page_height_pt": 841.89, "source_name": "해설 표지", "page_number": 1}
+    )
+    for index, item in enumerate(rows, start=1):
+        image = _load_explanation_image(item, deadline_monotonic=deadline_monotonic)
+        try:
+            data = _hwpx_page_bytes(
+                heading=f"{item.get('question_number') or index}번 정답 및 해설",
+                subheading=f"정답 {str(item.get('correct_answer') or '미등록')}",
+                source_image=image,
+            )
+        finally:
+            if image is not None:
+                image.close()
+        source_pages.append(
+            {"data": data, "mime": "image/png", "width_px": 1440, "height_px": 2037,
+             "page_width_pt": 595.28, "page_height_pt": 841.89, "source_name": "해설", "page_number": index}
+        )
+    return build_hwpx_source_fidelity_document(
+        title=f"{student_name} 오답노트",
+        source_pages=source_pages,
+    )
+
+
 def wrong_note_pdf_storage_key(*, job: Any, tenant: Any) -> str:
-    return f"tenants/{tenant.id}/results/wrong-notes/{job.id}.pdf"
+    extension = str(getattr(job, "output_format", "") or "pdf")
+    return f"tenants/{tenant.id}/results/wrong-notes/{job.id}.{extension}"
 
 
 def generate_and_store_wrong_note_pdf(
@@ -458,25 +669,35 @@ def generate_and_store_wrong_note_pdf(
             f"{MAX_WRONG_NOTE_PDF_ITEMS}문항 이하로 만들어 주세요."
         )
 
-    pdf_bytes = build_wrong_note_pdf(
-        enrollment=enrollment,
-        tenant_name=str(getattr(tenant, "name", "") or "학원"),
-        items=items,
-        from_session_order=int(job.from_session_order or 1),
-        to_session_order=(
-            int(job.to_session_order)
-            if job.to_session_order is not None
-            else None
-        ),
-        exam_id=int(job.exam_id) if job.exam_id else None,
-        deadline_monotonic=deadline_monotonic,
-    )
+    if str(getattr(job, "output_format", "") or "pdf") == "hwpx":
+        pdf_bytes = build_wrong_note_hwpx(
+            enrollment=enrollment,
+            tenant_name=str(getattr(tenant, "name", "") or "학원"),
+            items=items,
+            deadline_monotonic=deadline_monotonic,
+        )
+        content_type = "application/vnd.hancom.hwpx"
+    else:
+        pdf_bytes = build_wrong_note_pdf(
+            enrollment=enrollment,
+            tenant_name=str(getattr(tenant, "name", "") or "학원"),
+            items=items,
+            from_session_order=int(job.from_session_order or 1),
+            to_session_order=(
+                int(job.to_session_order)
+                if job.to_session_order is not None
+                else None
+            ),
+            exam_id=int(job.exam_id) if job.exam_id else None,
+            deadline_monotonic=deadline_monotonic,
+        )
+        content_type = "application/pdf"
     upload_timeout = _remaining_seconds(deadline_monotonic)
     key = wrong_note_pdf_storage_key(job=job, tenant=tenant)
     upload_fileobj_to_r2_storage(
         fileobj=io.BytesIO(pdf_bytes),
         key=key,
-        content_type="application/pdf",
+        content_type=content_type,
         timeout_seconds=upload_timeout,
     )
     return key

@@ -12,6 +12,9 @@ from apps.support.results.wrong_note_dependencies import (
     answer_key_map_for_effective_exam,
     exams_with_wrong_note_sessions_by_id,
     exam_questions_by_id,
+    explanation_image_key,
+    explanation_image_url,
+    question_image_key,
     question_image_url,
     regular_exam_ids_by_lecture_and_order,
 )
@@ -195,6 +198,13 @@ def list_wrong_notes_for_enrollment(
             correct_answer = format_answer_for_display(
                 answer_key_cache.get(exid, {}).get(str(qobj.id)) or ""
             )
+        problem_key = (
+            question_image_key(question=qobj, tenant_id=tenant_id) if qobj else ""
+        )
+        solution_key = (
+            explanation_image_key(question=qobj, tenant_id=tenant_id) if qobj else ""
+        )
+        explanation_text = _get_explanation_text(qobj)
 
         out.append({
             "exam_id": exid,
@@ -210,9 +220,19 @@ def list_wrong_notes_for_enrollment(
             "question_id": int(item.question_id),
             "question_number": _safe_int(question_number),
             "answer_type": str(answer_type),
-            "question_image_url": question_image_url(question=qobj) if qobj else "",
+            "question_image_url": (
+                question_image_url(question=qobj, tenant_id=tenant_id) if qobj else ""
+            ),
             "has_question_image": bool(
-                qobj and (getattr(qobj, "image_key", "") or getattr(qobj, "image", None))
+                qobj and (problem_key or getattr(qobj, "image", None))
+            ),
+            "explanation_image_url": (
+                explanation_image_url(question=qobj, tenant_id=tenant_id)
+                if qobj
+                else ""
+            ),
+            "has_teacher_explanation": bool(
+                qobj and (explanation_text or solution_key)
             ),
 
             "student_answer": str(item.answer or ""),
@@ -225,13 +245,14 @@ def list_wrong_notes_for_enrollment(
 
             "meta": {},
             "extra": {
-                "explanation_text": _get_explanation_text(qobj),
+                "explanation_text": explanation_text,
             },
             # PDF 생성 서비스에서만 사용하고 API serializer에서는 노출하지 않는다.
-            "_question_image_key": str(getattr(qobj, "image_key", "") or ""),
+            "_question_image_key": problem_key,
             "_question_image_name": str(
                 getattr(getattr(qobj, "image", None), "name", "") or ""
             ),
+            "_explanation_image_key": solution_key,
         })
 
     return total, out

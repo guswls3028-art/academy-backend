@@ -32,6 +32,10 @@ from apps.domains.exams.views.exam_enrollment_view import ExamEnrollmentManageVi
 from apps.domains.exams.views.student_exam_view import StudentAvailableExamListView
 from apps.domains.exams.views.bulk_template_create_view import BulkTemplateCreateView
 from apps.domains.exams.views.pdf_question_extract_view import PdfQuestionExtractView
+from apps.domains.exams.views.segmentation_review_view import (
+    ExamSegmentationApproveView,
+    ExamSegmentationReviewView,
+)
 from apps.domains.exams.views.question_explanation_view import (
     ExamExplanationListView,
     ExamExplanationBulkView,
@@ -63,6 +67,16 @@ urlpatterns = [
     # PDF 문항 분할 (AI) — router 빈 prefix("") detail 패턴이 "pdf-extract"를 pk로 먹으므로 반드시 router 앞에 배치
     # =========================
     path("pdf-extract/", PdfQuestionExtractView.as_view()),
+    path(
+        "<int:exam_id>/segmentation-review/",
+        ExamSegmentationReviewView.as_view(),
+        name="exam-segmentation-review",
+    ),
+    path(
+        "<int:exam_id>/segmentation-review/approve/",
+        ExamSegmentationApproveView.as_view(),
+        name="exam-segmentation-approve",
+    ),
 
     # =========================
     # Template Bundles (묶음)

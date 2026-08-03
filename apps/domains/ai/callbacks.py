@@ -18,6 +18,7 @@ from django.db import close_old_connections
 
 from apps.support.ai.callback_dependencies import (
     get_auto_segmentation_snapshot_model,
+    get_exam_question_proposal_model,
     get_exam_segmentation_models,
     get_matchup_document_models,
     get_matchup_page_state_model,
@@ -449,6 +450,27 @@ def _handle_exam_ai_result(
     explanations_data = result_payload.get("explanations", [])
     question_image_keys = result_payload.get("question_image_keys") or {}
 
+    if result_payload.get("conversion_required"):
+        try:
+            from apps.domains.ai.models import AIJobModel
+
+            Exam, _, _, _ = get_exam_segmentation_models()
+            ai_job = AIJobModel.objects.filter(job_id=job_id).first()
+            if ai_job and ai_job.tenant_id:
+                Exam.objects.filter(
+                    id=int(exam_id),
+                    tenant_id=int(ai_job.tenant_id),
+                    segmentation_status=Exam.SegmentationStatus.PROCESSING,
+                ).update(
+                    segmentation_status=Exam.SegmentationStatus.CONVERSION_REQUIRED,
+                )
+        except Exception:
+            logger.exception(
+                "AI_CALLBACK_EXAM_CONVERSION_STATUS_ERROR | job_id=%s",
+                job_id,
+            )
+        return
+
     if not boxes and not questions_data:
         try:
             from apps.domains.ai.models import AIJobModel
@@ -518,6 +540,67 @@ def _handle_exam_ai_result(
                     "job_id=%s | exam_id=%s",
                     job_id,
                     exam_id,
+                )
+                return
+
+            if is_guided_regular:
+                ExamQuestionProposal = get_exam_question_proposal_model()
+
+                explanation_by_number = {
+                    int(item.get("question_number")): item
+                    for item in explanations_data
+                    if item.get("question_number")
+                }
+                ExamQuestionProposal.objects.filter(exam=exam).delete()
+                proposals = []
+                for position, q_data in enumerate(questions_data or [], start=1):
+                    detected_number = int(
+                        q_data.get("original_number")
+                        or q_data.get("number")
+                        or position
+                    )
+                    proposed_number = int(q_data.get("number") or position)
+                    bbox = list(q_data.get("bbox") or [0, 0, 0, 0])
+                    explanation = explanation_by_number.get(detected_number, {})
+                    image_key = (
+                        question_image_keys.get(proposed_number)
+                        or question_image_keys.get(str(proposed_number))
+                        or ""
+                    )
+                    proposals.append(
+                        ExamQuestionProposal(
+                            exam=exam,
+                            position=position,
+                            number=proposed_number,
+                            detected_number=detected_number,
+                            page_index=max(int(q_data.get("page_index") or 0), 0),
+                            region_meta={
+                                "x": int(bbox[0]) if len(bbox) > 0 else 0,
+                                "y": int(bbox[1]) if len(bbox) > 1 else 0,
+                                "w": int(bbox[2]) if len(bbox) > 2 else 0,
+                                "h": int(bbox[3]) if len(bbox) > 3 else 0,
+                            },
+                            problem_image_key=str(image_key),
+                            explanation_text=str(explanation.get("text") or "")[:2000],
+                            explanation_image_key=str(explanation.get("image_key") or ""),
+                            match_confidence=explanation.get("match_confidence"),
+                            problem_crop_ratio=float(q_data.get("problem_crop_ratio") or 1.0),
+                            source_job_id=str(job_id or "")[:64],
+                            engine=str(result_payload.get("segmentation_method") or "")[:32],
+                        )
+                    )
+                if not proposals:
+                    exam.segmentation_status = Exam.SegmentationStatus.FAILED
+                    exam.save(update_fields=["segmentation_status", "updated_at"])
+                    return
+                ExamQuestionProposal.objects.bulk_create(proposals)
+                exam.segmentation_status = Exam.SegmentationStatus.REVIEW_REQUIRED
+                exam.save(update_fields=["segmentation_status", "updated_at"])
+                logger.info(
+                    "AI_CALLBACK_EXAM_REVIEW_REQUIRED | job_id=%s | exam_id=%s | proposals=%d",
+                    job_id,
+                    exam_id,
+                    len(proposals),
                 )
                 return
 
