@@ -437,9 +437,42 @@ class WrongNoteServiceSessionExamTests(TestCase):
         with ZipFile(BytesIO(hwpx_bytes)) as package:
             self.assertIn("Contents/content.hpf", package.namelist())
             preview = package.read("Preview/PrvText.txt").decode("utf-8")
+            section_xml = "\n".join(
+                package.read(name).decode("utf-8")
+                for name in package.namelist()
+                if name.startswith("Contents/section") and name.endswith(".xml")
+            )
+            source_images = [
+                name for name in package.namelist() if name.startswith("BinData/")
+            ]
         self.assertIn("오답노트", preview)
         self.assertIn("문제 1쪽", preview)
         self.assertIn("해설 1쪽", preview)
+        self.assertLess(preview.index("문제 1쪽"), preview.index("해설 1쪽"))
+        self.assertIn("내 풀이 메모", section_xml)
+        self.assertIn("정답:", section_xml)
+        self.assertIn("추가 메모", section_xml)
+        self.assertIn("<hp:pic", section_xml)
+        self.assertEqual(len(source_images), 2)
+
+        load_question.return_value = None
+        load_explanation.return_value = None
+        no_image_hwpx = build_wrong_note_hwpx(
+            enrollment=self.enrollment,
+            tenant_name=self.tenant.name,
+            items=items,
+        )
+        with ZipFile(BytesIO(no_image_hwpx)) as package:
+            no_image_xml = "\n".join(
+                package.read(name).decode("utf-8")
+                for name in package.namelist()
+                if name.startswith("Contents/section") and name.endswith(".xml")
+            )
+            self.assertFalse(
+                any(name.startswith("BinData/") for name in package.namelist())
+            )
+        self.assertIn("등록된 문제 이미지가 없습니다.", no_image_xml)
+        self.assertIn("등록된 선생님 해설 이미지가 없습니다.", no_image_xml)
 
     @patch(
         "apps.domains.results.services.wrong_note_pdf_service.upload_fileobj_to_r2_storage"

@@ -575,6 +575,9 @@ def _append_question_visual(
     *,
     visual: dict[str, Any],
     page_layout: PageLayout,
+    section: Any | None = None,
+    max_height_mm: float = 88.0,
+    height_fraction: float = 0.32,
 ) -> None:
     data = visual.get("data")
     if not isinstance(data, bytes) or not data:
@@ -588,14 +591,17 @@ def _append_question_visual(
         - (page_layout.column_gap_mm if page_layout.column_count == 2 else 0)
     )
     available_width_mm = content_width_mm / page_layout.column_count
-    available_height_mm = min(88.0, page_layout.page_height_mm * 0.32)
+    available_height_mm = min(
+        max_height_mm,
+        page_layout.page_height_mm * height_fraction,
+    )
     width_mm = max(20.0, available_width_mm)
     height_mm = width_mm * height_px / width_px
     if height_mm > available_height_mm:
         height_mm = available_height_mm
         width_mm = height_mm * width_px / height_px
     item_id = document.add_image(data, _image_format(str(visual.get("mime") or "")))
-    paragraph = document.add_paragraph("")
+    paragraph = document.add_paragraph("", section=section)
     paragraph.add_picture(
         item_id,
         width=_mm_to_hwpunit(width_mm),
@@ -611,8 +617,9 @@ def _append_document_paragraph(
     char_pr_id: str,
     base_unit: int,
     native_equations: bool,
+    section: Any | None = None,
 ) -> tuple[Any, str]:
-    paragraph = document.add_paragraph("")
+    paragraph = document.add_paragraph("", section=section)
     preview = _replace_paragraph_content(
         paragraph,
         text=text,
@@ -864,6 +871,162 @@ def build_hwpx_exam_document(
         _ensure_version_manifest_reference(document)
         preview_text = normalize_space("\n".join(preview_paragraphs)) + "\n"
         document.package.set_part("Preview/PrvText.txt", preview_text.encode("utf-8"))
+        return document.to_bytes()
+
+
+def build_hwpx_editable_wrong_note_document(
+    *,
+    title: str,
+    meta_lines: list[str],
+    problem_pages: list[dict[str, Any]],
+    solution_pages: list[dict[str, Any]],
+) -> bytes:
+    """Build a source-faithful wrong-note HWPX with editable annotation fields."""
+
+    if not problem_pages:
+        return build_hwpx_text_document(
+            title=title,
+            paragraphs=["모을 오답이 없습니다."],
+        )
+
+    style = DocumentStyle()
+    page_layout = PageLayout(
+        page_width_mm=210.0,
+        page_height_mm=297.0,
+        margin_top_mm=14.0,
+        margin_bottom_mm=14.0,
+        margin_left_mm=14.0,
+        margin_right_mm=14.0,
+    )
+    preview_lines: list[str] = []
+
+    with HwpxDocument.new() as document:
+        _ensure_font_face(document, style.title_font_family)
+        _ensure_font_face(document, style.body_font_family)
+        title_style_id = document.ensure_run_style(
+            bold=True,
+            font=style.title_font_family,
+            size=20,
+        )
+        heading_style_id = document.ensure_run_style(
+            bold=True,
+            font=style.body_font_family,
+            size=15,
+        )
+        body_style_id = document.ensure_run_style(
+            font=style.body_font_family,
+            size=10,
+        )
+
+        def append_text(section: Any, text: str) -> None:
+            _paragraph, preview = _append_document_paragraph(
+                document,
+                text=text,
+                char_pr_id=body_style_id,
+                base_unit=1000,
+                native_equations=False,
+                section=section,
+            )
+            preview_lines.append(preview)
+
+        cover_section = document.sections[0]
+        cover_paragraph = cover_section.paragraphs[0]
+        _apply_page_layout_to_paragraph(cover_paragraph, page_layout)
+        preview_lines.append(
+            _replace_paragraph_content(
+                cover_paragraph,
+                text=title.strip() or "오답노트",
+                char_pr_id=title_style_id,
+                base_unit=2000,
+                native_equations=False,
+            )
+        )
+        for line in meta_lines:
+            append_text(cover_section, str(line or ""))
+        append_text(
+            cover_section,
+            "문제와 선생님 해설 원본은 이미지로 보존되고, 제목·정답·메모 문단은 한글에서 편집할 수 있습니다.",
+        )
+
+        for index, page in enumerate(problem_pages, start=1):
+            section = document.add_section()
+            _apply_page_layout_to_paragraph(section.paragraphs[0], page_layout)
+            preview_lines.append(f"문제 {index}쪽")
+            preview_lines.append(
+                _replace_paragraph_content(
+                    section.paragraphs[0],
+                    text=str(page.get("heading") or f"{index}번"),
+                    char_pr_id=heading_style_id,
+                    base_unit=1500,
+                    native_equations=False,
+                )
+            )
+            append_text(section, str(page.get("subheading") or ""))
+            visual = page.get("visual")
+            if isinstance(visual, dict) and visual.get("data"):
+                _append_question_visual(
+                    document,
+                    visual=visual,
+                    page_layout=page_layout,
+                    section=section,
+                    max_height_mm=205.0,
+                    height_fraction=0.78,
+                )
+                preview_lines.append(f"[{index}번 문제 원본 이미지]")
+            else:
+                append_text(section, "등록된 문제 이미지가 없습니다.")
+            append_text(section, "내 풀이 메모: ")
+
+        divider_section = document.add_section()
+        _apply_page_layout_to_paragraph(divider_section.paragraphs[0], page_layout)
+        preview_lines.append(
+            _replace_paragraph_content(
+                divider_section.paragraphs[0],
+                text="정답 및 해설",
+                char_pr_id=title_style_id,
+                base_unit=2000,
+                native_equations=False,
+            )
+        )
+        append_text(
+            divider_section,
+            "문제 풀이를 마친 뒤 확인하세요. 정답과 추가 메모 문단은 편집할 수 있습니다.",
+        )
+
+        for index, page in enumerate(solution_pages, start=1):
+            section = document.add_section()
+            _apply_page_layout_to_paragraph(section.paragraphs[0], page_layout)
+            preview_lines.append(f"해설 {index}쪽")
+            preview_lines.append(
+                _replace_paragraph_content(
+                    section.paragraphs[0],
+                    text=str(page.get("heading") or f"{index}번 정답 및 해설"),
+                    char_pr_id=heading_style_id,
+                    base_unit=1500,
+                    native_equations=False,
+                )
+            )
+            append_text(section, f"정답: {str(page.get('answer') or '미등록')}")
+            visual = page.get("visual")
+            if isinstance(visual, dict) and visual.get("data"):
+                _append_question_visual(
+                    document,
+                    visual=visual,
+                    page_layout=page_layout,
+                    section=section,
+                    max_height_mm=205.0,
+                    height_fraction=0.78,
+                )
+                preview_lines.append(f"[{index}번 선생님 해설 원본 이미지]")
+            else:
+                append_text(section, "등록된 선생님 해설 이미지가 없습니다.")
+            append_text(section, "추가 메모: ")
+
+        _ensure_version_manifest_reference(document)
+        document.package.set_part(
+            "Preview/PrvText.txt",
+            (normalize_space("\n".join(preview_lines)) + "\n").encode("utf-8"),
+        )
         return document.to_bytes()
 
 
