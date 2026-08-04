@@ -276,8 +276,9 @@ pnpm refactor:inventory
   labels until a dedicated migration plan proves otherwise.
 - URL compatibility matters for deployed frontend and external users.
 - Worker entrypoints must remain stable through the first phases.
-- Generated API types require backend schema generation first; this is a Phase 0
-  dependency, not an optional polish task.
+- Generated API types use the committed backend OpenAPI contract and frontend
+  drift gate introduced on 2026-08-05. New and touched endpoints must improve
+  schema coverage without raising the reviewed generator-error ceiling.
 - Captured verification status: these counts include the session-enrollment,
   notification, community, video, attendance, and storage/students/inventory
   shared-contract slices plus the AI segmentation contract extraction that moved
@@ -291,5 +292,6 @@ pnpm refactor:inventory
   assessment homework shared-contract slice. Re-run the snapshot commands before each phase
   because active
   refactors can change these counts quickly. The latest backend snapshot
-  (2026-06-23) reports `cross_domain_import=117`,
-  `cross_domain_internal_import=590`, and `domain_infra_import=81`.
+  (2026-08-05) reports `cross_domain_import=41`,
+  `cross_domain_internal_import=232`, `runtime_findings_count=0`, and
+  `test_findings_count=273`.

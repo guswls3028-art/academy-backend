@@ -39,11 +39,11 @@ Local baseline captured on 2026-07-27 KST:
 |---|---|---|
 | Workspace audit | 8 PASS, 3 WARN, 0 FAIL | old dirty worktrees and optional Docker absence |
 | Backend framework | Django check PASS; migration drift none | preserve on every model/settings batch |
-| Backend static gates | Ruff PASS; lifecycle and refactor boundary gates PASS | 31 cross-domain imports, 230 test-only internal imports |
+| Backend static gates | Ruff PASS; lifecycle and refactor boundary gates PASS | 41 public/test-support imports, 232 test-only internal imports, 0 runtime findings (2026-08-05) |
 | Backend smoke | 23 tests PASS, 5 subtests PASS | broaden only by touched journey |
 | ID/domain safety | 20 allowed integer-FK warnings, 0 errors | no unordered `.first()` remains |
 | Frontend compile | typecheck, lint, legacy API guard, build PASS | repeat after every frontend batch |
-| Frontend refactor budget | PASS after first hardening slice | 147 same-app imports; 34 large files |
+| Frontend refactor budget | PASS with CI enforcement (2026-08-05) | 153 same-app imports; 41 large files after splitting three global CSS entrypoints; generated API types present |
 | E2E inventory | safety guard: 217 active specs; 977 `test(` lines; 118 `test.skip(` lines | skip is not user-journey proof |
 | Promo visual check | 1366px and 390px PASS; no horizontal overflow; 0 console errors | repeat when the page is touched |
 
@@ -181,11 +181,11 @@ feature.
 
 ### D. Contract, state, and architecture consolidation
 
-1. Prove a backend OpenAPI generation path and generated frontend type path.
+1. Keep the backend OpenAPI generation path and generated frontend type path drift-free (initial contract completed 2026-08-05).
 2. Replace hand-written touched response wrappers with canonical contracts.
 3. Consolidate query keys, storage access, formatting, status maps, and CDN
    loaders behind existing shared boundaries.
-4. Reduce same-app domain reach-through by exposing narrow public contracts.
+4. Reduce same-app domain reach-through by exposing narrow public contracts (backend runtime findings reduced to zero on 2026-08-05).
 5. Split large modules only at stable responsibility seams, with no incidental
    redesign.
 6. Keep React Query/server state authoritative; local/session storage is only a

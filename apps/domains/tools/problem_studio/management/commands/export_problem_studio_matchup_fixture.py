@@ -8,7 +8,7 @@ from typing import Any
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
-from apps.domains.matchup.selectors import (
+from apps.domains.matchup.contracts import (
     iter_problem_studio_reference_texts,
     iter_problem_studio_teacher_comments,
 )

@@ -66,6 +66,30 @@ def test_strict_touched_allows_public_cross_domain_selector_import(tmp_path, mon
     assert strict_findings == []
 
 
+def test_public_cross_domain_contract_import_is_not_a_finding(tmp_path, monkeypatch):
+    snapshot = load_snapshot_module()
+    _, apps_domains = configure_snapshot_roots(snapshot, tmp_path, monkeypatch)
+
+    changed = apps_domains / "exams" / "service.py"
+    changed.parent.mkdir()
+    changed.write_text("from apps.domains.ai.contracts import dispatch_job\n", encoding="utf-8")
+
+    assert snapshot.scan_file(changed) == []
+
+
+def test_cross_domain_internal_import_remains_a_finding(tmp_path, monkeypatch):
+    snapshot = load_snapshot_module()
+    _, apps_domains = configure_snapshot_roots(snapshot, tmp_path, monkeypatch)
+
+    changed = apps_domains / "exams" / "service.py"
+    changed.parent.mkdir()
+    changed.write_text("from apps.domains.ai.services.queue import dispatch_job\n", encoding="utf-8")
+
+    findings = snapshot.scan_file(changed)
+
+    assert snapshot.summarize(findings) == {"cross_domain_internal_import": 1}
+
+
 def test_split_runtime_test_findings(tmp_path, monkeypatch):
     snapshot = load_snapshot_module()
     _, apps_domains = configure_snapshot_roots(snapshot, tmp_path, monkeypatch)

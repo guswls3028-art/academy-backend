@@ -79,6 +79,8 @@ jobs:
         run: |
           python manage.py check --settings apps.api.config.settings.test
           python manage.py makemigrations --check --dry-run --settings apps.api.config.settings.test
+      - name: OpenAPI generated contract drift
+        run: python scripts/generate_openapi_schema.py --check
       - name: Smoke tests
         env:
           DJANGO_SETTINGS_MODULE: apps.api.config.settings.test

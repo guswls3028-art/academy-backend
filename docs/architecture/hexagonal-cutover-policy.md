@@ -1,8 +1,8 @@
 # Hexagonal Cutover Policy (`backend/academy/` ↔ `backend/apps/`)
 
-**Status:** Active · V1.1.1
+**Status:** Active · V1.1.2
 **Owners:** Backend
-**Last reviewed:** 2026-04-28
+**Last reviewed:** 2026-08-05
 
 `backend/academy/`(헥사고날) 와 `backend/apps/`(Django apps) 가 공존한다. 이 문서는 **신규 코드의 배치 규칙**과 **기존 코드의 이관 정책**을 정의한다.
 
@@ -41,6 +41,10 @@
 - `academy/domain/` 은 Django 포함 외부 의존을 **import 하지 않는다**. 어기면 헥사고날 의미가 사라진다.
 - `academy/adapters/db/django/` 는 예외적으로 `apps.domains.<x>.models` 를 import 한다 (Django ORM이 어댑터 구현이므로).
 - `apps/domains/<x>/` 는 다른 도메인의 model을 직접 import 하지 않는다 — 필요하면 `academy.adapters.db.django.repositories_<x>` 또는 `apps/support/`로 우회.
+- 도메인 간 동기 호출이 불가피하면 소유 도메인의
+  `apps/domains/<x>/contracts.py`만 공개 진입점으로 사용한다. 계약 모듈은 내부
+  `models/services/guards` 경로를 외부에 누출하지 않고, 무거운 통합은 지연
+  로딩하여 앱 초기화 순서와 worker 경계를 보존한다.
 - `apps/worker/<x>_worker/` 는 비즈니스 로직을 담지 않는다. SQS 메시지 → use case 호출이 끝.
 
 ---
@@ -112,6 +116,7 @@
 - [ ] `apps/domains/<x>/` 안에 `boto3` / `redis.Redis` / `r2_client` / `requests` 직접 호출 없음 (어댑터 경유)
 - [ ] 신규 SQS/배치 진입점은 `apps/worker/<x>_worker/` 에만 있고, 본문은 `academy/application/use_cases/` 호출
 - [ ] 신규 도메인 도입 시 `apps/domains/<new>/` + (필요 시) `academy/adapters/db/django/repositories_<new>.py` 동시 추가
+- [ ] 다른 Django 도메인을 호출할 때 상대 도메인의 `contracts.py` 외 내부 경로를 직접 import 하지 않음
 
 ---
 
@@ -226,3 +231,4 @@
 - **2026-05-11**: §5 video 행 갱신 — `academy/application/video/handler.py` (ProcessVideoJobHandler) 폐기. CancelledError 만 `cancellation.py` 로 분리. 인코딩 본 경로는 worker entry → adapter 직호출 (use-case 객체 없음).
 - **2026-05-12**: §10 매치업 segmentation 12 모듈 (총 7,340줄) academy/ 일괄 이전 완료. 5/7 표상 9 모듈 + 5/7~5/10 추가 3 모듈 (`fingerprint_collector`, `shadow_proposal_pipeline`, `vlm_schema_normalizer`). git mv 12회로 history 보존. caller 25 파일 import 109곳 갱신. CI build success, ASG instance refresh Successful, production runtime import 검증 통과. 마감 5/31 19일 전 해소. `apps/domains/matchup/segmentation/` 디렉토리 제거. 운영 callback wiring 1건 (`fingerprint_collector.collect_and_save` instrumentation) 명문화. §6 worker_instance_control 도 동일 audit cycle에서 `academy/adapters/compute/ec2_control.py` 이전.
 - **2026-05-22**: §10 매치업/AI segmentation 순수 DTO·proposal validator 를 `academy/domain/ai/` 로 승격. adapter -> application use-case import 4건 제거, `python scripts\lint\refactor_boundary_snapshot.py` 기준 `adapter_application_import=0`. 관련 unit 150개, Django check, migration dry-run, worker boot 검증 통과.
+- **2026-08-05**: AI, Results, Tools, Video, Matchup 공개 `contracts.py` 경계를 도입해 운영 코드의 도메인 내부 직접 import 8건을 제거. snapshot 기준 runtime finding 0, 잔여 273건은 test-only fixture/model 결합으로 분리 집계한다.
