@@ -38,7 +38,7 @@
 main에 push하면 자동으로 서버 반영까지 완료된다:
 
 1. GitHub Actions `v1-build-and-push-latest.yml` 트리거
-2. lint, expand/contract migration guard와 smoke가 통과한 뒤 변경 감지 결과에 따라 필요한 이미지(base, api, video-worker, messaging-worker, ai-worker-cpu, tools-worker)만 linux/arm64 빌드해 ECR run-unique `:sha-*` 후보로 푸시한다. 각 worker Dockerfile은 실제 entrypoint import를 build-time에 검증한다. 모든 ECR repo는 scan-on-push이며 재사용 digest도 scan 결과가 없으면 명시적으로 scan을 시작한다. 완료되지 않은 scan과 승인되지 않은 critical은 실패 폐쇄한다. 예외는 [container-image-security.md](container-image-security.md)의 exact·expiring 계약만 허용하며 high은 경고와 remediation 대상으로 남긴다. `:latest`는 이 시점에 움직이지 않는다.
+2. lint, expand/contract migration guard와 smoke가 통과한 뒤 base digest를 먼저 빌드/해결한다. 변경 감지 결과에 따라 필요한 API, Video, Messaging, AI, Tools linux/arm64 이미지는 격리 matrix runner에서 병렬 빌드해 ECR run-unique `:sha-*` 후보로 푸시하고, 단일 fan-in job이 여섯 digest를 정확히 조립한다. 각 worker Dockerfile은 실제 entrypoint import를 build-time에 검증한다. 모든 ECR repo는 scan-on-push이며 재사용 digest도 scan 결과가 없으면 명시적으로 scan을 시작한다. 완료되지 않은 scan과 승인되지 않은 critical은 실패 폐쇄한다. 예외는 [container-image-security.md](container-image-security.md)의 exact·expiring 계약만 허용하며 high은 경고와 remediation 대상으로 남긴다. `:latest`는 이 시점에 움직이지 않는다.
 3. `verify-api-development` job → API/Tools 변경 여부와 무관하게 모든 release candidate에서 같은 manifest의 API/Tools digest를 상시 격리 development에 blue/green 방식으로 배포한다. 전용 DB migration, 운영 DB·R2 접근 거부, 개발 큐/R2/Redis, `/healthz`, `/health`, 이미지 identity와 합성 XLSX/PPT/R2 실사용 smoke가 모두 통과해야 candidate를 active로 승격한다.
 4. `verify-api-preprod` job → development를 통과한 API digest로 릴리스 고정 env 버전을 만들고 임시 격리 EC2 1대를 기동해 별도 DB에 migration을 적용한다. prod settings, DB 이름·전용 역할, 운영 DB CONNECT 거부, env version·release ID, `/healthz`, DB 포함 `/health`, 실제 CDN chain을 모두 확인한 뒤 종료한다.
 5. preprod 성공 후에만 `run-migrations`가 운영 DB migration을 실행한다.

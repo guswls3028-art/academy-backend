@@ -168,7 +168,6 @@ jobs:
           changed_matches "^docker/Dockerfile\.base$" && FORCE_ALL=true
           changed_matches "^requirements/constraints\.txt$" && FORCE_ALL=true
           changed_matches "^requirements/common\.txt$" && FORCE_ALL=true
-          changed_matches "^requirements/requirements\.txt$" && FORCE_ALL=true
           changed_matches "^libs/" && FORCE_ALL=true
           changed_matches "^academy/" && FORCE_ALL=true
           changed_matches "^apps/shared/" && FORCE_ALL=true
@@ -210,6 +209,8 @@ jobs:
           changed_matches "^scripts/" && API=true
           changed_matches "^docker/api/" && API=true
           changed_matches "^requirements/api\.txt$" && API=true
+          # Legacy aggregate is consumed only by the API and Video Dockerfiles.
+          changed_matches "^requirements/requirements\.txt$" && API=true
           echo "build_api=$API" >> $GITHUB_OUTPUT
 
           # Video worker
@@ -229,6 +230,7 @@ jobs:
           changed_matches "^apps/api/config/settings/worker\.py$" && VIDEO=true
           changed_matches "^docker/video-worker/" && VIDEO=true
           changed_matches "^requirements/worker-video\.txt$" && VIDEO=true
+          changed_matches "^requirements/requirements\.txt$" && VIDEO=true
           echo "build_video=$VIDEO" >> $GITHUB_OUTPUT
 
           # Messaging worker
@@ -512,10 +514,13 @@ jobs:
               raise SystemExit("runtime worker-scale IAM readback mismatch")
           PY
 
-  build-and-push:
+  prepare-build:
+    name: Prepare immutable base image
     runs-on: ubuntu-latest
+    outputs:
+      base_image_uri: ${{ steps.base-image.outputs.uri }}
     permissions:
-      contents: write
+      contents: read
       id-token: write
     needs: [detect-changes, run-lint, run-tests, acquire-production-lock, verify-release-freshness, verify-runtime-iam]
     if: |
@@ -538,12 +543,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          ssh-key: ${{ secrets.ACADEMY_RELEASE_DEPLOY_KEY }}
 
       - name: Set up QEMU
+        if: needs.detect-changes.outputs.build_base == 'true' || needs.detect-changes.outputs.force_full == 'true'
         uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
 
       - name: Set up Docker Buildx
+        if: needs.detect-changes.outputs.build_base == 'true' || needs.detect-changes.outputs.force_full == 'true'
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
       - name: Configure AWS credentials (OIDC only)
@@ -637,90 +643,147 @@ jobs:
           echo "uri=$BASE_URI" >> "$GITHUB_OUTPUT"
           echo "Using immutable base image: $BASE_URI"
 
-      # ── API ──
-      - name: Build and push academy-api (arm64)
-        if: needs.detect-changes.outputs.build_api == 'true' || needs.detect-changes.outputs.force_full == 'true'
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
-        with:
-          context: .
-          file: docker/api/Dockerfile
-          build-args: BASE_IMAGE=${{ steps.base-image.outputs.uri }}
-          platforms: linux/arm64
-          push: true
-          provenance: false
-          sbom: false
-          tags: |
-            ${{ env.ECR_REGISTRY }}/academy-api:${{ env.RELEASE_IMAGE_TAG }}
-          cache-from: type=gha,scope=api
-          cache-to: type=gha,mode=max,scope=api
+  build-runtime-images:
+    name: Build ${{ matrix.repository }} (arm64)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    needs: [detect-changes, prepare-build]
+    if: |
+      needs.detect-changes.outputs.build_api == 'true' ||
+      needs.detect-changes.outputs.build_video == 'true' ||
+      needs.detect-changes.outputs.build_messaging == 'true' ||
+      needs.detect-changes.outputs.build_ai == 'true' ||
+      needs.detect-changes.outputs.build_tools == 'true' ||
+      needs.detect-changes.outputs.force_full == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        include:
+          - service: api
+            repository: academy-api
+            dockerfile: docker/api/Dockerfile
+            cache_scope: api
+          - service: video
+            repository: academy-video-worker
+            dockerfile: docker/video-worker/Dockerfile
+            cache_scope: video
+          - service: messaging
+            repository: academy-messaging-worker
+            dockerfile: docker/messaging-worker/Dockerfile
+            cache_scope: messaging
+          - service: ai
+            repository: academy-ai-worker-cpu
+            dockerfile: docker/ai-worker-cpu/Dockerfile
+            cache_scope: ai-cpu
+          - service: tools
+            repository: academy-tools-worker
+            dockerfile: docker/tools-worker/Dockerfile
+            cache_scope: tools
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: false
+      DOCKER_BUILD_SUMMARY: false
+      BUILD_API: ${{ needs.detect-changes.outputs.build_api }}
+      BUILD_VIDEO: ${{ needs.detect-changes.outputs.build_video }}
+      BUILD_MESSAGING: ${{ needs.detect-changes.outputs.build_messaging }}
+      BUILD_AI: ${{ needs.detect-changes.outputs.build_ai }}
+      BUILD_TOOLS: ${{ needs.detect-changes.outputs.build_tools }}
+      FORCE_FULL: ${{ needs.detect-changes.outputs.force_full }}
+    steps:
+      - name: Select changed runtime image
+        id: selection
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ matrix.service }}" in
+            api) SHOULD_BUILD="$BUILD_API" ;;
+            video) SHOULD_BUILD="$BUILD_VIDEO" ;;
+            messaging) SHOULD_BUILD="$BUILD_MESSAGING" ;;
+            ai) SHOULD_BUILD="$BUILD_AI" ;;
+            tools) SHOULD_BUILD="$BUILD_TOOLS" ;;
+            *) echo "::error::Unknown runtime service: ${{ matrix.service }}"; exit 1 ;;
+          esac
+          if [ "$FORCE_FULL" = "true" ]; then SHOULD_BUILD=true; fi
+          echo "should_build=$SHOULD_BUILD" >> "$GITHUB_OUTPUT"
+          echo "${{ matrix.repository }} build selected: $SHOULD_BUILD"
 
-      # ── Video worker ──
-      - name: Build and push academy-video-worker (arm64)
-        if: needs.detect-changes.outputs.build_video == 'true' || needs.detect-changes.outputs.force_full == 'true'
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
-        with:
-          context: .
-          file: docker/video-worker/Dockerfile
-          build-args: BASE_IMAGE=${{ steps.base-image.outputs.uri }}
-          platforms: linux/arm64
-          push: true
-          provenance: false
-          sbom: false
-          tags: |
-            ${{ env.ECR_REGISTRY }}/academy-video-worker:${{ env.RELEASE_IMAGE_TAG }}
-          cache-from: type=gha,scope=video
-          cache-to: type=gha,mode=max,scope=video
+      - name: Checkout
+        if: steps.selection.outputs.should_build == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # ── Messaging worker ──
-      - name: Build and push academy-messaging-worker (arm64)
-        if: needs.detect-changes.outputs.build_messaging == 'true' || needs.detect-changes.outputs.force_full == 'true'
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
-        with:
-          context: .
-          file: docker/messaging-worker/Dockerfile
-          build-args: BASE_IMAGE=${{ steps.base-image.outputs.uri }}
-          platforms: linux/arm64
-          push: true
-          provenance: false
-          sbom: false
-          tags: |
-            ${{ env.ECR_REGISTRY }}/academy-messaging-worker:${{ env.RELEASE_IMAGE_TAG }}
-          cache-from: type=gha,scope=messaging
-          cache-to: type=gha,mode=max,scope=messaging
+      - name: Set up QEMU
+        if: steps.selection.outputs.should_build == 'true'
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
 
-      # ── AI worker ──
-      - name: Build and push academy-ai-worker-cpu (arm64)
-        if: needs.detect-changes.outputs.build_ai == 'true' || needs.detect-changes.outputs.force_full == 'true'
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
-        with:
-          context: .
-          file: docker/ai-worker-cpu/Dockerfile
-          build-args: BASE_IMAGE=${{ steps.base-image.outputs.uri }}
-          platforms: linux/arm64
-          push: true
-          provenance: false
-          sbom: false
-          tags: |
-            ${{ env.ECR_REGISTRY }}/academy-ai-worker-cpu:${{ env.RELEASE_IMAGE_TAG }}
-          cache-from: type=gha,scope=ai-cpu
-          cache-to: type=gha,mode=max,scope=ai-cpu
+      - name: Set up Docker Buildx
+        if: steps.selection.outputs.should_build == 'true'
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
-      # ── Tools worker ──
-      - name: Build and push academy-tools-worker (arm64)
-        if: needs.detect-changes.outputs.build_tools == 'true' || needs.detect-changes.outputs.force_full == 'true'
+      - name: Configure AWS credentials (OIDC only)
+        if: steps.selection.outputs.should_build == 'true'
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
+          aws-region: ${{ env.AWS_REGION }}
+          action-timeout-s: 180
+
+      - name: Renew shared mutation lock before image write
+        if: steps.selection.outputs.should_build == 'true'
+        run: python3 scripts/v1/deployment_lock.py renew --owner "$ACADEMY_DEPLOY_LOCK_OWNER" --ttl-seconds 10800
+
+      - name: Login to Amazon ECR
+        if: steps.selection.outputs.should_build == 'true'
+        uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2
+
+      - name: Build and push ${{ matrix.repository }} (arm64)
+        if: steps.selection.outputs.should_build == 'true'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
-          file: docker/tools-worker/Dockerfile
-          build-args: BASE_IMAGE=${{ steps.base-image.outputs.uri }}
+          file: ${{ matrix.dockerfile }}
+          build-args: BASE_IMAGE=${{ needs.prepare-build.outputs.base_image_uri }}
           platforms: linux/arm64
           push: true
           provenance: false
           sbom: false
           tags: |
-            ${{ env.ECR_REGISTRY }}/academy-tools-worker:${{ env.RELEASE_IMAGE_TAG }}
-          cache-from: type=gha,scope=tools
-          cache-to: type=gha,mode=max,scope=tools
+            ${{ env.ECR_REGISTRY }}/${{ matrix.repository }}:${{ env.RELEASE_IMAGE_TAG }}
+          cache-from: type=gha,scope=${{ matrix.cache_scope }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.cache_scope }}
+
+  build-and-push:
+    name: Assemble and scan release candidate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    needs: [detect-changes, prepare-build, build-runtime-images]
+    if: |
+      needs.detect-changes.outputs.build_base == 'true' ||
+      needs.detect-changes.outputs.build_api == 'true' ||
+      needs.detect-changes.outputs.build_video == 'true' ||
+      needs.detect-changes.outputs.build_messaging == 'true' ||
+      needs.detect-changes.outputs.build_ai == 'true' ||
+      needs.detect-changes.outputs.build_tools == 'true' ||
+      needs.detect-changes.outputs.force_full == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ssh-key: ${{ secrets.ACADEMY_RELEASE_DEPLOY_KEY }}
+
+      - name: Configure AWS credentials (OIDC only)
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
+          aws-region: ${{ env.AWS_REGION }}
+          action-timeout-s: 180
+
+      - name: Renew shared mutation lock before candidate assembly
+        run: python3 scripts/v1/deployment_lock.py renew --owner "$ACADEMY_DEPLOY_LOCK_OWNER" --ttl-seconds 10800
 
       # ── Build report + complete release candidate ──
       - name: Collect exact release digests and write candidate manifest
@@ -2438,7 +2501,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    needs: [detect-changes, run-lint, run-tests, acquire-production-lock, verify-release-freshness, verify-runtime-iam, build-and-push, verify-api-development, verify-api-preprod, run-migrations, deploy-api, deploy-messaging, deploy-ai, deploy-tools, deploy-video, verify-deployment, release-production-lock]
+    needs: [detect-changes, run-lint, run-tests, acquire-production-lock, verify-release-freshness, verify-runtime-iam, prepare-build, build-runtime-images, build-and-push, verify-api-development, verify-api-preprod, run-migrations, deploy-api, deploy-messaging, deploy-ai, deploy-tools, deploy-video, verify-deployment, release-production-lock]
     if: always() && contains(needs.*.result, 'failure')
     steps:
       - name: Configure AWS credentials (OIDC)
@@ -2451,7 +2514,7 @@ jobs:
       - name: Publish SNS alert
         run: |
           FAILED_JOBS=""
-          for j in run-lint run-tests acquire-production-lock verify-release-freshness verify-runtime-iam build-and-push verify-api-development verify-api-preprod run-migrations deploy-api deploy-messaging deploy-ai deploy-tools deploy-video verify-deployment release-production-lock; do
+          for j in run-lint run-tests acquire-production-lock verify-release-freshness verify-runtime-iam prepare-build build-runtime-images build-and-push verify-api-development verify-api-preprod run-migrations deploy-api deploy-messaging deploy-ai deploy-tools deploy-video verify-deployment release-production-lock; do
             R=$(echo '${{ toJson(needs) }}' | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('$j', {}).get('result',''))")
             if [ "$R" = "failure" ]; then
               FAILED_JOBS="${FAILED_JOBS}${j} "

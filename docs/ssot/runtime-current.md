@@ -1,6 +1,6 @@
 # Current Production Runtime SSOT
 
-**Verified:** 2026-07-25T22:13:25+09:00
+**Verified:** 2026-08-05T04:25:00+09:00
 **Scope:** Academy V1 production, AWS account `809466760795`, region `ap-northeast-2`.
 **Truth sources:** AWS `describe-*` reads with profile `default`, `docs/ssot/params.yaml`, `docs/reports/drift.latest.md`, `docs/reports/resource-cleanup.latest.md`, `docs/reports/cost-waste-audit.latest.md`.
 
@@ -64,6 +64,15 @@ Steady-state running EC2 in the academy VPC is only API 1 + Messaging 1. Batch-m
 ## Verification
 
 Latest local verification after the cost pass:
+
+- 2026-08-05 read-only optimization audit: API/Messaging ASGs remained healthy
+  at desired 1; AI/Tools remained desired 0. Over the latest 24 hours API CPU
+  averaged 9.36% (5-minute maximum 61.15%), RDS CPU averaged 4.13%, and RDS
+  connections averaged 2.02 with a maximum of 6. ALB response time averaged
+  43ms at p50, 159ms at p95, and 453ms at p99 across populated five-minute
+  windows. These measurements do not justify a runtime size, DB connection, or
+  cache topology change; release-build parallelism is the lower-risk current
+  optimization boundary.
 
 - `pwsh scripts/v1/apply-messaging-rightsize.ps1 -AwsProfile default` -> Launch Template v28, instance refresh `Successful`, immutable image preserved.
 - `pwsh scripts/v1/run-production-canary.ps1 -Mode PostDeploy -AwsProfile default -WriteReport` -> PASS=30 WARN=0 FAIL=0.
