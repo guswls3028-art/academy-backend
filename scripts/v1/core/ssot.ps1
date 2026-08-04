@@ -162,6 +162,7 @@ function Load-SSOT {
     if ($p["api"]["asgMaxSize"]) { $script:ApiASGMaxSize = [int]$p["api"]["asgMaxSize"] }
     if ($p["api"]["asgDesiredCapacity"]) { $script:ApiASGDesiredCapacity = [int]$p["api"]["asgDesiredCapacity"] }
     $script:ApiInstanceRefreshMinHealthyPercentage = Coerce-Int $p["api"]["instanceRefreshMinHealthyPercentage"] 100
+    $script:ApiInstanceRefreshMaxHealthyPercentage = Coerce-Int $p["api"]["instanceRefreshMaxHealthyPercentage"] 200
     $script:ApiInstanceRefreshInstanceWarmup = Coerce-Int $p["api"]["instanceRefreshInstanceWarmup"] 300
     $script:ApiHealthCheckGracePeriodSeconds = Coerce-Int $p["api"]["healthCheckGracePeriodSeconds"] 300
     $script:ApiScalingTargetCpuPercent = Coerce-Int $p["api"]["scalingPolicyTargetCpuPercent"] 55

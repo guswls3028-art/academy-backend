@@ -43,7 +43,10 @@ main에 push하면 자동으로 서버 반영까지 완료된다:
 4. `verify-api-preprod` job → development를 통과한 API digest로 릴리스 고정 env 버전을 만들고 임시 격리 EC2 1대를 기동해 별도 DB에 migration을 적용한다. prod settings, DB 이름·전용 역할, 운영 DB CONNECT 거부, env version·release ID, `/healthz`, DB 포함 `/health`, 실제 CDN chain을 모두 확인한 뒤 종료한다.
 5. preprod 성공 후에만 `run-migrations`가 운영 DB migration을 실행한다.
 6. 모든 `deploy-api`, `deploy-messaging`, `deploy-ai`, `deploy-tools`, `deploy-video` job은 같은 development·preprod 성공 결과를 공통 선행조건으로 사용한다.
-7. API Launch Template pin과 ASG rolling refresh를 실행한다. worker가 큐 입력으로
+7. API Launch Template pin과 ASG rolling refresh를 실행한다. API refresh는
+   `MinHealthyPercentage=100`, `MaxHealthyPercentage=200`으로 후보를 먼저
+   기동하며 `min`/`desired`를 선증설하지 않는다. `desired == max`일 때만 max
+   ceiling을 한 슬롯 임시 확장하고 종료 경로에서 원복·readback한다. worker가 큐 입력으로
    `desired=0`에서 기동하거나 idle scale-in 중이면 pin 전에
    `Healthy/InService == desired`가 될 때까지 기다린다. 수렴하지 않은 0→N
    과도 상태를 기존 runtime digest로 오판하지 않는다. development, preprod

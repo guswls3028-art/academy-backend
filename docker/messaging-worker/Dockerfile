@@ -7,17 +7,17 @@
 ARG BASE_IMAGE=academy-base:latest
 FROM ${BASE_IMAGE} AS base
 
-USER root
-COPY academy ./academy
-COPY apps ./apps
-COPY libs ./libs
-COPY manage.py ./
-RUN chown -R appuser:appuser /app
 USER appuser
 
 # Messaging Worker 전용 Python 의존성 (-r ./common.txt만, api.txt 미사용)
-COPY requirements/constraints.txt requirements/common.txt requirements/worker-messaging.txt ./requirements/
+COPY --chown=appuser:appuser requirements/constraints.txt requirements/common.txt requirements/worker-messaging.txt ./requirements/
 RUN pip install --user --no-cache-dir -r requirements/worker-messaging.txt
+
+# 코드 변경은 entrypoint 검증만 다시 실행하고 Python 의존성 캐시는 유지한다.
+COPY --chown=appuser:appuser academy ./academy
+COPY --chown=appuser:appuser apps ./apps
+COPY --chown=appuser:appuser libs ./libs
+COPY --chown=appuser:appuser manage.py ./
 
 # Candidate contract: the exact worker entrypoint and its queue/config imports
 # must load before an immutable image can be published.

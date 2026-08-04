@@ -49,12 +49,11 @@ RUN groupadd --gid 1000 appuser \
 
 WORKDIR /app
 
-# Builder에서 설치한 Python 패키지를 appuser 홈으로 복사
-COPY --from=builder /root/.local /home/appuser/.local
+# Builder에서 설치한 Python 패키지를 최종 소유권으로 바로 복사한다.
+# COPY 후 chown을 별도 RUN으로 수행하면 같은 패키지 바이트가 새 레이어에
+# 한 번 더 기록되어 모든 서비스 이미지와 cold pull이 불필요하게 커진다.
+COPY --from=builder --chown=appuser:appuser /root/.local /home/appuser/.local
 ENV PATH=/home/appuser/.local/bin:$PATH
-
-# appuser가 .local 읽기 가능 (앱 코드는 각 서비스 Dockerfile에서 COPY)
-RUN chown -R appuser:appuser /home/appuser
 
 # Base = 런타임·공통 의존성만. 비즈니스 로직(src, academy, apps)은 서비스별 Dockerfile에서 복사.
 # → 코드 변경 시 base 재빌드 불필요, 워커별 필요 코드만 포함 가능.

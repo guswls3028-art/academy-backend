@@ -102,6 +102,12 @@ git push main
 Change predicates use the `changed_matches` here-string helper instead of `echo | grep -q`; this avoids a `pipefail`/SIGPIPE false negative on large multi-commit push ranges.
 Push change detection derives each service's diff base from that image's source commit in the last complete verified release manifest, not from `github.event.before`. Therefore a failed workflow followed by a small hotfix still includes earlier unshipped API/worker changes. Missing, non-ancestor, or malformed image source evidence fails safe to a full build.
 
+서비스 Dockerfile은 OS/Python 의존성을 앱 소스보다 먼저 설치하고, 앱 소스와
+builder 산출물은 최종 소유권을 지정한 `COPY --chown`으로 복사한다. 따라서 일반
+코드 변경은 의존성 레이어를 무효화하지 않으며, 별도 `RUN chown -R`이 같은 파일을
+새 레이어에 다시 기록하지 않는다. 이 순서는
+`tests/test_release_performance_contract.py`가 회귀를 차단한다.
+
 런타임 EC2 역할의 worker-scale inline policy가 바뀌는 릴리스는 main push
 전에 운영 권한으로 `pwsh scripts/v1/deploy.ps1 -AwsProfile default`를
 실행해 정책과 GitHub Actions readback 권한을 먼저 수렴한다. CI에는
@@ -144,15 +150,20 @@ Dependencies:
 ### ASG Instance Refresh
 
 - **MinHealthyPercentage: 100%** (API) — 새 인스턴스가 healthy가 될 때까지 기존 인스턴스 유지. 502 gap 0건 보장.
+- **MaxHealthyPercentage: 200%** (API) — ASG Instance Refresh가 교체 인스턴스를 먼저 기동할 수 있는 범위.
 - **MinHealthyPercentage: 0%** (workers) — workers tolerate brief downtime during replacement (no HTTP traffic)
 - **SkipMatching: false** (API) — launch template 변경 없어도 실제 인스턴스 교체 수행
 - **InstanceWarmup: 300s** (API), **120s** (workers) — API는 ECR pull/컨테이너 기동 편차를 흡수
 - **HealthCheckType: ELB** (API) — 앱 크래시 시 ALB가 감지 → ASG 자동 교체. **EC2** (workers) — ALB 없음.
 - **HealthCheckGracePeriod: 300s** (API) / **60s** (workers) — 새 인스턴스 부팅 중 조기 종료 방지
 - **ALB deregistration delay: 30s** — in-flight 연결 drain 후 즉시 정리
-- Scale-up 후 **ALB target health 실측 확인** (고정 대기 아닌 실제 healthy 2개 확인, max 5min)
-- Old instances are drained and terminated only after new ones pass ALB health checks
-- 평상시 API capacity는 SSOT `min=1 desired=1 max=3`이다. CI deploy는 refresh 직전에 일시적으로 `desired>=2` headroom을 만들고, refresh 성공 후 기존 desired baseline으로 되돌린다.
+- Instance Refresh가 새 인스턴스를 먼저 기동하고 ALB health와 300초 warmup을
+  통과한 뒤 기존 인스턴스를 drain/종료한다. CI가 구버전 인스턴스를 미리 한 대
+  더 늘린 뒤 그 인스턴스까지 다시 교체하는 이중 scale-up은 수행하지 않는다.
+- 평상시 API capacity는 SSOT `min=1 desired=1 max=3`이다. CI는 `min`과
+  `desired`를 바꾸지 않는다. burst로 `desired == max`인 경우에만 교체 슬롯 한
+  개를 위해 `max`를 `desired + 1`로 잠시 높이고, 성공·실패/보상 경로 뒤 정확히
+  원래 값으로 복구·readback한다.
 - API runtime scale-out/scale-in은 ASG target tracking(`ASGAverageCPUUtilization`, target 55%)이 담당한다.
 - API Launch Template의 `DEPLOYMENT_ID`는 wall-clock 시간이 아니라 고정된 이미지 digest(또는 immutable SHA tag)에서 파생한다. 같은 이미지와 설정을 다시 배포하면 새 Launch Template version이나 불필요한 instance refresh를 만들지 않는다.
 - API readiness 대기는 HTTP ALB DNS의 HTTPS redirect를 실패로 오인하지 않도록 공개 `https://api.hakwonplus.com/health`를 사용한다. ALB target health는 별도 AWS readback으로 확인한다.
@@ -160,7 +171,10 @@ Dependencies:
 ### Deployment Sequence
 
 1. The deploy job resolves its `sha-*` tag to an ECR digest and creates a new Launch Template version containing that digest. On the one-time legacy cutover, it first snapshots the actual running container digest into an immutable baseline version.
-2. The ASG tracks `$Latest` after that guarded cutover and launches a new EC2 instance from the candidate version.
+2. The ASG tracks `$Latest` after that guarded cutover. Instance Refresh uses
+   `MinHealthyPercentage=100` and `MaxHealthyPercentage=200` to launch a new
+   candidate instance before terminating an old one without changing desired
+   capacity.
 3. UserData installs Docker, logs in to ECR, pulls `repo@sha256:...`, fetches SSM env, and starts the container. `/academy/api/env` 동기화는 `DJANGO_SETTINGS_MODULE=apps.api.config.settings.prod`를 강제하고 atomic file replacement 후 재시작한다. worker 런타임만 `apps.api.config.settings.worker`를 사용하며, SSM command 또는 `docker run` 실패는 배포 실패로 전파한다.
 4. ALB health check passes on the new instance.
 5. The old instance is drained and terminated.

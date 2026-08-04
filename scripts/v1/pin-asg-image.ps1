@@ -291,12 +291,48 @@ if ($RestoreStatePath) {
     $restoreVerify.TargetDigest = [string]$state.PreviousDigest
     if ($RefreshAndVerify) {
         $asgResult = Invoke-AwsJson @("autoscaling", "describe-auto-scaling-groups", "--auto-scaling-group-names", $deployment.ASG, "--region", $script:Region, "--output", "json")
-        if ([int]@($asgResult.AutoScalingGroups)[0].DesiredCapacity -gt 0) {
-            $preferences = Convert-JsonArgToFileRef (@{MinHealthyPercentage=100;MaxHealthyPercentage=200;InstanceWarmup=120} | ConvertTo-Json -Compress)
+        $refreshAsg = @($asgResult.AutoScalingGroups)[0]
+        $desiredCapacity = [int]$refreshAsg.DesiredCapacity
+        if ($desiredCapacity -gt 0) {
+            $minHealthy = if ($Service -eq "api") { $script:ApiInstanceRefreshMinHealthyPercentage } else { 100 }
+            $maxHealthy = if ($Service -eq "api") { $script:ApiInstanceRefreshMaxHealthyPercentage } else { 200 }
+            $warmup = if ($Service -eq "api") { $script:ApiInstanceRefreshInstanceWarmup } else { 120 }
+            $originalMaxSize = [int]$refreshAsg.MaxSize
+            $requiredMaxSize = $desiredCapacity + 1
+            $ceilingChanged = $originalMaxSize -lt $requiredMaxSize
+            if ($ceilingChanged) {
+                Invoke-Aws @(
+                    "autoscaling", "update-auto-scaling-group",
+                    "--auto-scaling-group-name", $deployment.ASG,
+                    "--max-size", [string]$requiredMaxSize,
+                    "--region", $script:Region
+                ) -ErrorMessage "raise $Service compensation refresh ceiling" | Out-Null
+            }
+            $preferences = Convert-JsonArgToFileRef (@{MinHealthyPercentage=$minHealthy;MaxHealthyPercentage=$maxHealthy;InstanceWarmup=$warmup} | ConvertTo-Json -Compress)
             $preferencesFile = $preferences -replace '^file://', ''
-            try { $started = Invoke-AwsJson @("autoscaling", "start-instance-refresh", "--auto-scaling-group-name", $deployment.ASG, "--preferences", $preferences, "--region", $script:Region, "--output", "json") }
-            finally { Remove-TempFiles @($preferencesFile) }
-            Wait-PinRefresh -Asg $deployment.ASG -RefreshId ([string]$started.InstanceRefreshId)
+            try {
+                $started = Invoke-AwsJson @("autoscaling", "start-instance-refresh", "--auto-scaling-group-name", $deployment.ASG, "--preferences", $preferences, "--region", $script:Region, "--output", "json")
+                Wait-PinRefresh -Asg $deployment.ASG -RefreshId ([string]$started.InstanceRefreshId)
+            } finally {
+                Remove-TempFiles @($preferencesFile)
+                if ($ceilingChanged) {
+                    Invoke-Aws @(
+                        "autoscaling", "update-auto-scaling-group",
+                        "--auto-scaling-group-name", $deployment.ASG,
+                        "--max-size", [string]$originalMaxSize,
+                        "--region", $script:Region
+                    ) -ErrorMessage "restore $Service compensation refresh ceiling" | Out-Null
+                    $ceilingReadback = Invoke-AwsJson @(
+                        "autoscaling", "describe-auto-scaling-groups",
+                        "--auto-scaling-group-names", $deployment.ASG,
+                        "--region", $script:Region,
+                        "--output", "json"
+                    )
+                    if ([int]@($ceilingReadback.AutoScalingGroups)[0].MaxSize -ne $originalMaxSize) {
+                        throw "$Service compensation refresh ceiling readback mismatch."
+                    }
+                }
+            }
         }
     }
     Assert-PinState -State $restoreVerify

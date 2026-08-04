@@ -7,7 +7,8 @@
 ARG BASE_IMAGE=academy-base:latest
 FROM ${BASE_IMAGE} AS base
 
-# 앱 코드 (Base에 두지 않음 → 코드 변경 시 base 재빌드 불필요)
+# 시스템·Python 의존성을 앱 소스보다 먼저 확정한다. 앱 코드 변경이
+# apt/pip 레이어를 무효화하지 않아야 일반 릴리스가 캐시를 재사용한다.
 USER root
 # Problem Studio transfer packages use bounded local OCR for scanned pages.
 # upload_complete source probing is fail-open; authoritative validation/transcoding
@@ -17,22 +18,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr-kor \
     && rm -rf /var/lib/apt/lists/* \
     && (tesseract --version > /dev/null 2>&1 || (echo "tesseract not in PATH" && exit 1))
-COPY academy ./academy
-COPY apps ./apps
-COPY libs ./libs
-COPY manage.py ./
-COPY scripts ./scripts
-RUN chown -R appuser:appuser /app
 USER appuser
 
-# Shared requirements (API + Worker same file)
-COPY requirements/constraints.txt requirements/requirements.txt ./requirements/
-RUN pip install --user --no-cache-dir -r requirements/requirements.txt
-
-# API-only deps (PyMuPDF for matchup 수동 크롭 동기 PDF 렌더링 등)
-# api.txt → -r ./common.txt 참조 → -c constraints.txt 참조. 셋 다 COPY 필요.
-COPY requirements/api.txt requirements/common.txt ./requirements/
-RUN pip install --user --no-cache-dir -r requirements/api.txt
+# Shared requirements와 API-only deps를 한 번에 해석한다. api.txt는
+# common.txt를, 두 파일은 constraints.txt를 참조하므로 모두 먼저 복사한다.
+COPY --chown=appuser:appuser requirements/constraints.txt requirements/requirements.txt requirements/api.txt requirements/common.txt ./requirements/
+RUN pip install --user --no-cache-dir \
+    -r requirements/requirements.txt \
+    -r requirements/api.txt
 
 # Note: Phase 2 cross-encoder ML deps (torch + sentence-transformers + 모델)는
 # 직접 평가에서 한국어 시험 문제에 부적합 확인 → 컨테이너에서 제거.
@@ -41,6 +34,14 @@ RUN pip install --user --no-cache-dir -r requirements/api.txt
 #   COPY requirements/api-extras.txt ./requirements/
 #   RUN pip install --user --no-cache-dir -r requirements/api-extras.txt
 #   RUN python -c "from sentence_transformers import CrossEncoder; CrossEncoder('<모델명>', max_length=512)"
+
+# 앱 코드는 가장 자주 바뀌는 마지막 캐시 경계다. --chown으로 별도
+# metadata-only chown 레이어가 전체 소스를 다시 기록하지 않게 한다.
+COPY --chown=appuser:appuser academy ./academy
+COPY --chown=appuser:appuser apps ./apps
+COPY --chown=appuser:appuser libs ./libs
+COPY --chown=appuser:appuser manage.py ./
+COPY --chown=appuser:appuser scripts ./scripts
 
 # 헬스체크: 컨테이너/ALB 생존성은 DB readiness와 분리한다.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \

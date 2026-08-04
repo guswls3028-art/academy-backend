@@ -384,14 +384,48 @@ if (-not $allPass) {
 Write-Host "=== STAGE 1: API ASG Instance Refresh ===" -ForegroundColor Cyan
 
 $refreshId = ""
+$refreshOriginalMax = 0
+$refreshCeilingChanged = $false
 if (-not $SkipRefresh) {
     $minHealthy = if ($script:ApiInstanceRefreshMinHealthyPercentage -gt 0) { $script:ApiInstanceRefreshMinHealthyPercentage } else { 100 }
+    $maxHealthy = if ($script:ApiInstanceRefreshMaxHealthyPercentage -ge 100) { $script:ApiInstanceRefreshMaxHealthyPercentage } else { 200 }
     $warmup = if ($script:ApiInstanceRefreshInstanceWarmup -gt 0) { $script:ApiInstanceRefreshInstanceWarmup } else { 300 }
-    $prefs = Convert-JsonArgToFileRef (@{MinHealthyPercentage=$minHealthy;MaxHealthyPercentage=200;InstanceWarmup=$warmup} | ConvertTo-Json -Compress)
+    $prefs = Convert-JsonArgToFileRef (@{MinHealthyPercentage=$minHealthy;MaxHealthyPercentage=$maxHealthy;InstanceWarmup=$warmup} | ConvertTo-Json -Compress)
     $prefsFile = $prefs -replace '^file://', ''
 
-    Write-Host "  Starting instance refresh: $($script:ApiASGName) (MinHealthy=$minHealthy%, Warmup=${warmup}s)" -ForegroundColor White
+    Write-Host "  Starting instance refresh: $($script:ApiASGName) (MinHealthy=$minHealthy%, MaxHealthy=$maxHealthy%, Warmup=${warmup}s)" -ForegroundColor White
     try {
+        $refreshCapacity = Invoke-AwsJson @(
+            "autoscaling", "describe-auto-scaling-groups",
+            "--auto-scaling-group-names", $script:ApiASGName,
+            "--region", $Region,
+            "--output", "json"
+        )
+        $refreshAsg = @($refreshCapacity.AutoScalingGroups)[0]
+        $refreshDesired = [int]$refreshAsg.DesiredCapacity
+        $refreshOriginalMax = [int]$refreshAsg.MaxSize
+        $refreshRequiredMax = $refreshDesired + 1
+        $refreshCeilingChanged = $refreshOriginalMax -lt $refreshRequiredMax
+        if ($refreshCeilingChanged) {
+            Invoke-Aws @(
+                "autoscaling", "update-auto-scaling-group",
+                "--auto-scaling-group-name", $script:ApiASGName,
+                "--max-size", [string]$refreshRequiredMax,
+                "--region", $Region
+            ) -ErrorMessage "raise API refresh ceiling" | Out-Null
+            $raisedCapacity = Invoke-AwsJson @(
+                "autoscaling", "describe-auto-scaling-groups",
+                "--auto-scaling-group-names", $script:ApiASGName,
+                "--region", $Region,
+                "--output", "json"
+            )
+            if ([int]@($raisedCapacity.AutoScalingGroups)[0].MaxSize -ne $refreshRequiredMax) {
+                throw "API refresh ceiling readback mismatch after raise."
+            }
+            Add-Result "1-REFRESH" "refresh-ceiling" "PASS" "Temporary max=$refreshRequiredMax (original=$refreshOriginalMax)"
+        } else {
+            Add-Result "1-REFRESH" "refresh-ceiling" "PASS" "Existing max=$refreshOriginalMax supports desired=$refreshDesired replacement"
+        }
         $refreshResult = Invoke-Aws @("autoscaling", "start-instance-refresh",
             "--auto-scaling-group-name", $script:ApiASGName,
             "--preferences", $prefs,
@@ -426,7 +460,32 @@ if ($refreshId) {
         Add-Result "1-REFRESH" "refresh-status" "FAIL" "$_"
     }
 } else {
-    Add-Result "1-REFRESH" "refresh-status" "PASS" "No active refresh (-SkipRefresh)"
+    $status = if ($SkipRefresh) { "PASS" } else { "FAIL" }
+    $message = if ($SkipRefresh) { "No active refresh (-SkipRefresh)" } else { "No refresh was started" }
+    Add-Result "1-REFRESH" "refresh-status" $status $message
+}
+
+if ($refreshCeilingChanged) {
+    try {
+        Invoke-Aws @(
+            "autoscaling", "update-auto-scaling-group",
+            "--auto-scaling-group-name", $script:ApiASGName,
+            "--max-size", [string]$refreshOriginalMax,
+            "--region", $Region
+        ) -ErrorMessage "restore API refresh ceiling" | Out-Null
+        $restoredCapacity = Invoke-AwsJson @(
+            "autoscaling", "describe-auto-scaling-groups",
+            "--auto-scaling-group-names", $script:ApiASGName,
+            "--region", $Region,
+            "--output", "json"
+        )
+        if ([int]@($restoredCapacity.AutoScalingGroups)[0].MaxSize -ne $refreshOriginalMax) {
+            throw "API refresh ceiling readback mismatch after restore."
+        }
+        Add-Result "1-REFRESH" "refresh-ceiling-restore" "PASS" "Restored max=$refreshOriginalMax"
+    } catch {
+        Add-Result "1-REFRESH" "refresh-ceiling-restore" "FAIL" "$_"
+    }
 }
 
 # ==============================================================================

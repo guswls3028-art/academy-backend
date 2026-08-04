@@ -57,7 +57,11 @@ pwsh scripts/v1/disable-legacy-deploy-crons.ps1 -Action Off -AwsProfile default
 
 - **위치**: `docs/ssot/params.yaml`
 - **수정**: 환경별 값(리전, 계정, VPC 등)만 변경. 스크립트는 이 파일만 참조.
-- **API ASG 용량**: 평시 min/desired=1, max=3. 배포 시 CI가 일시적으로 desired>=2를 만들고, CPU target tracking이 평상시 자동 증감/복귀를 담당한다.
+- **API ASG 용량**: 평시 min/desired=1, max=3. 배포는
+  MinHealthy=100/MaxHealthy=200의 launch-before-terminate refresh가
+  min/desired를 유지한 채 후보를 먼저 기동한다. `desired == max`일 때만 max
+  ceiling을 한 슬롯 임시 확장·복구하며, CPU target tracking이 평상시 desired를
+  소유한다.
 - **상시 development gate**: 최초 1회
   `initialize-api-development.ps1 -AwsProfile <least-privilege-profile>`로
   전용 IAM/DB/SQS/SG와 개발 전용 R2 SecureString을 수렴하고 마지막 검증 release로 active 서버를

@@ -30,10 +30,13 @@ passes every gate below:
    DB name/role, production DB CONNECT denial, release identity, health, image
    identity and CDN playback must pass, and the instance must terminate.
 6. Only then may production migration run on the digest-pinned candidate.
-7. API deployment pins a new Launch Template version to the digest, creates
-   replacement headroom, and performs an ALB-health-gated ASG refresh with
-   `SkipMatching=false`. The known-good instance remains until replacements
-   are healthy.
+7. API deployment pins a new Launch Template version to the digest and performs
+   an ALB-health-gated launch-before-terminate ASG refresh with
+   `MinHealthyPercentage=100`, `MaxHealthyPercentage=200`, and
+   `SkipMatching=false`. It preserves `min`/`desired`; only when current
+   `desired == max` does it temporarily raise `max` by one replacement slot and
+   restore/read back the original ceiling after success or compensation. The
+   known-good instance remains until its replacement is healthy and warm.
 8. `verify-deployment` compares expected digests with Launch Templates, actual
    InService container `RepoDigests`, worker/queue state and Video Batch
    definitions, then runs public health and affected real-use smoke.

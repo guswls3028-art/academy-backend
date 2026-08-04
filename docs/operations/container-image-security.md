@@ -16,6 +16,13 @@
 - 런타임에는 앱이 실제 사용하는 패키지만 둔다. DB migration과 점검은 Django와
   AWS/RDS readback을 사용하므로 `postgresql-client` CLI는 제거했고, Python
   PostgreSQL 연결에 필요한 `libpq5`는 유지한다.
+- builder의 Python 패키지는 최종 `appuser` 소유권을 지정한
+  `COPY --chown`으로 runtime에 한 번만 기록한다. 앱 소스도 같은 방식으로
+  복사하며 별도 `RUN chown -R`을 두지 않는다. 별도 chown 레이어는 같은 파일
+  바이트를 이미지에 다시 저장해 ECR 크기와 cold pull을 늘리기 때문이다.
+- 서비스 Dockerfile은 apt/Python requirements를 `academy/`, `apps/`, `libs/`
+  소스보다 먼저 설치한다. 코드 변경은 entrypoint 검증과 소스 레이어만
+  무효화하며, requirements가 그대로면 의존성 설치 캐시를 재사용한다.
 - 시스템 FFmpeg는 실제 변환을 수행하는 격리된 AWS Batch Video 이미지에만 둔다.
   API의 upload-complete probe는 실패 허용 보조 검사이고 Video worker가 최종 검증과
   변환을 소유한다. AI frame extraction은 OpenCV wheel에 포함된 FFmpeg 지원을 쓰며,
@@ -60,5 +67,6 @@ interpreter, `pack_ip`, Storable 실행 경로가 없다. 이 판단은 위험�
 
 ```powershell
 python -m pytest tests/test_ecr_critical_scan_gate.py -q
+python -m pytest tests/test_release_performance_contract.py -q
 pwsh scripts/v1/test-workflow-governance-contract.ps1
 ```
