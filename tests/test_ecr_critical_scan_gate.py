@@ -100,7 +100,7 @@ def test_expired_acceptance_blocks_before_scanning() -> None:
             / "docs"
             / "ssot"
             / "ecr-critical-risk-acceptance.json",
-            date(2026, 8, 15),
+            date(2026, 8, 20),
         )
 
 
