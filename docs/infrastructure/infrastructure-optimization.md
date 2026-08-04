@@ -767,7 +767,10 @@ build-base:
 
 This skips base image rebuild on normal pushes. Base image only rebuilds on:
 - Manual workflow dispatch
-- Changes to `Dockerfile.base`, `requirements.txt`, or similar dependency files
+- Changes to `docker/Dockerfile.base`, `requirements/common.txt`, shared
+  constraints, or cross-runtime source boundaries. The legacy
+  `requirements/requirements.txt` is consumed only by API and Video and does
+  not invalidate the Base, AI, Messaging, or Tools images.
 
 ---
 

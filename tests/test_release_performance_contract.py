@@ -37,6 +37,29 @@ def test_runtime_dependencies_precede_frequently_changed_source() -> None:
         assert dockerfile.index("RUN pip install") < dockerfile.index(source_copy), service
 
 
+def test_runtime_images_build_in_parallel_before_candidate_assembly() -> None:
+    workflow = _read(WORKFLOW)
+    prepare = workflow.split("\n  prepare-build:\n", maxsplit=1)[1].split(
+        "\n  build-runtime-images:\n", maxsplit=1
+    )[0]
+    runtime_build = workflow.split("\n  build-runtime-images:\n", maxsplit=1)[1].split(
+        "\n  build-and-push:\n", maxsplit=1
+    )[0]
+    assembly = workflow.split("\n  build-and-push:\n", maxsplit=1)[1].split(
+        "\n  verify-api-development:\n", maxsplit=1
+    )[0]
+
+    assert "base_image_uri: ${{ steps.base-image.outputs.uri }}" in prepare
+    assert "strategy:" in runtime_build
+    assert "fail-fast: false" in runtime_build
+    assert "max-parallel: 5" in runtime_build
+    assert runtime_build.count("repository: academy-") == 5
+    assert runtime_build.count("uses: docker/build-push-action@") == 1
+    assert "build-args: BASE_IMAGE=${{ needs.prepare-build.outputs.base_image_uri }}" in runtime_build
+    assert "needs: [detect-changes, prepare-build, build-runtime-images]" in assembly
+    assert "Gate newly built images on completed ECR critical scan" in assembly
+
+
 def test_production_source_copies_have_final_ownership() -> None:
     for service, path in PRODUCTION_DOCKERFILES.items():
         for line in _read(path).splitlines():

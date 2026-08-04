@@ -34,6 +34,10 @@ $developmentOidc = Get-Content -LiteralPath (
 
 $requiredProductionMarkers = @(
     "environment: production",
+    "prepare-build:",
+    "build-runtime-images:",
+    "needs: [detect-changes, prepare-build, build-runtime-images]",
+    "fail-fast: false",
     "Gate newly built images on completed ECR critical scan",
     "scripts/v1/ecr-critical-scan-gate.py",
     "docs/ssot/ecr-critical-risk-acceptance.json",

@@ -186,6 +186,8 @@ def test_every_lock_renewing_deploy_job_checks_out_scripts_first() -> None:
     workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
 
     for job_name in (
+        "prepare-build",
+        "build-runtime-images",
         "build-and-push",
         "run-migrations",
         "deploy-api",
@@ -317,12 +319,16 @@ def test_worker_deploy_jobs_require_migration_gate() -> None:
 
 def test_workflow_pins_build_inputs_migration_and_asg_runtime_images() -> None:
     workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
-    build = _job_block(workflow, "build-and-push")
+    prepare = _job_block(workflow, "prepare-build")
+    runtime_build = _job_block(workflow, "build-runtime-images")
     migrations = _job_block(workflow, "run-migrations")
 
-    assert "Resolve immutable academy-base build input" in build
-    assert 'BASE_URI="${{ env.ECR_REGISTRY }}/academy-base@${BASE_DIGEST}"' in build
-    assert build.count("build-args: BASE_IMAGE=${{ steps.base-image.outputs.uri }}") == 5
+    assert "Resolve immutable academy-base build input" in prepare
+    assert 'BASE_URI="${{ env.ECR_REGISTRY }}/academy-base@${BASE_DIGEST}"' in prepare
+    assert "base_image_uri: ${{ steps.base-image.outputs.uri }}" in prepare
+    assert "fail-fast: false" in runtime_build
+    assert runtime_build.count("repository: academy-") == 5
+    assert "build-args: BASE_IMAGE=${{ needs.prepare-build.outputs.base_image_uri }}" in runtime_build
     assert 'IMAGE_TAG="${{ env.RELEASE_IMAGE_TAG }}"' in migrations
     assert 'ECR_IMAGE="${ECR_HOST}/academy-api@${IMAGE_DIGEST}"' in migrations
     assert "academy-api:latest" not in migrations
@@ -428,10 +434,19 @@ def test_selective_build_graph_covers_shared_runtime_and_copied_inputs() -> None
     api_section = detect.split("# API:", maxsplit=1)[1].split(
         "# Video worker", maxsplit=1
     )[0]
+    video_section = detect.split("# Video worker", maxsplit=1)[1].split(
+        "# Messaging worker", maxsplit=1
+    )[0]
     ai_section = detect.split("# AI worker", maxsplit=1)[1].split(
         "# Tools worker", maxsplit=1
     )[0]
     assert 'changed_matches "^scripts/" && API=true' in api_section
+    assert 'changed_matches "^requirements/requirements\\.txt$" && API=true' in api_section
+    assert 'changed_matches "^requirements/requirements\\.txt$" && VIDEO=true' in video_section
+    assert not any(
+        re.search(pattern, "requirements/requirements.txt")
+        for pattern in force_patterns
+    )
     assert 'changed_matches "^scripts/" && AI=true' in ai_section
     assert 'changed_matches "^models/" && AI=true' in ai_section
 
@@ -861,10 +876,10 @@ def test_selective_build_covers_cross_domain_worker_import_edges() -> None:
 
 def test_ecr_repositories_are_latest_only_mutable_and_verified() -> None:
     workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
-    build = _job_block(workflow, "build-and-push")
+    prepare = _job_block(workflow, "prepare-build")
     ecr = ECR_RESOURCE.read_text(encoding="utf-8-sig")
 
-    for source in (build, ecr):
+    for source in (prepare, ecr):
         assert "IMMUTABLE_WITH_EXCLUSION" in source
         assert "filterType=WILDCARD,filter=latest" in source
         assert "put-image-tag-mutability" in source
@@ -1266,7 +1281,7 @@ def test_workflow_checks_release_freshness_under_lock_and_always_releases() -> N
     acquire_block = _job_block(workflow, "acquire-production-lock")
     freshness_block = _job_block(workflow, "verify-release-freshness")
     iam_block = _job_block(workflow, "verify-runtime-iam")
-    build_block = _job_block(workflow, "build-and-push")
+    prepare_block = _job_block(workflow, "prepare-build")
     release_block = _job_block(workflow, "release-production-lock")
 
     assert "deployment_lock.py seal-legacy" in acquire_block
@@ -1283,7 +1298,7 @@ def test_workflow_checks_release_freshness_under_lock_and_always_releases() -> N
     assert "iam get-role-policy" in iam_block
     assert "iam put-role-policy" not in iam_block
     assert "runtime worker-scale IAM readback mismatch" in iam_block
-    assert "verify-runtime-iam" in build_block
+    assert "verify-runtime-iam" in prepare_block
     assert "verify-runtime-iam" in release_block
     assert "verify-release-freshness" in release_block
     assert "if: always() && needs.acquire-production-lock.result == 'success'" in release_block

@@ -18,8 +18,11 @@ passes every gate below:
    smoke run remains the early fail-fast check. Product-code line coverage
    excludes tests and migrations and may not fall below the measured 60.5%
    baseline.
-3. Changed ARM64 images are pushed with a run-unique `sha-...-run-...` tag and
-   resolved to immutable `sha256` digests.
+3. The base image is built or resolved first. Changed API, Video, Messaging,
+   AI, and Tools ARM64 images then build on isolated matrix runners in
+   parallel with a run-unique `sha-...-run-...` tag. A single fan-in job
+   resolves all six immutable `sha256` digests and passes the existing ECR
+   Critical/High scan gate before deployment can start.
 4. `verify-api-development` deploys the API/Tools digests to the persistent,
    isolated development runtime. Dedicated DB, queues, R2, Redis, production
    resource denial, migrations, `/healthz`, database `/health`, image identity,
