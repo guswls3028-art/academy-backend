@@ -55,8 +55,12 @@
 경로가 아니며, 공개 TLS는 ALB가 종단한다. Mbed TLS는 API/Video/AI 이미지의
 미디어 도구 전이 의존성이다. Perl은 고정한 upstream slim base에서 상속되지만
 저장소의 runtime 코드·Docker entrypoint·운영 스크립트에는 Perl script,
-interpreter, `pack_ip`, Storable 실행 경로가 없다. 이 판단은 위험을 삭제하지
-않으므로 정확한 버전에서만 2026-08-14까지 유효하다.
+interpreter, `pack_ip`, Storable 실행 경로가 없다. 2026-08-05 재검토에서도
+고정된 `python:3.11-slim` OCI digest가 upstream 최신 digest와 일치했고 Debian
+trixie는 해당 glibc·Perl·Mbed TLS 패키지를 계속 vulnerable 또는 `no-dsa`로
+표시했다. 따라서 unstable 패키지를 운영 이미지에 혼합하지 않고 정확한 현재
+버전에 대한 한시 승인만 2026-08-19까지 갱신한다. 이 판단은 위험을 삭제하지
+않으며 다음 연장은 다시 vendor 상태와 실제 실행 경로를 검토한 PR이 필요하다.
 
 사용하지 않는 `postgresql-client` CLI는 런타임 공격 표면과 이미지 크기를 줄이기
 위해 제거했지만 ECR 재검증 결과 Perl source finding의 원인은 아니었다. vendor
