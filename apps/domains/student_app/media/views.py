@@ -24,8 +24,7 @@ from apps.support.student_app.video_media import (
     issue_proctored_playback_session,
     pick_video_urls,
 )
-from apps.domains.video.sorting import sort_videos_for_playlist
-from apps.domains.video.youtube import youtube_embed_url
+from apps.domains.video.contracts import sort_videos_for_playlist, youtube_embed_url
 from academy.application.use_cases.student_video_access_context import (
     StudentVideoAccessError,
     ensure_student_video_watch_allowed,

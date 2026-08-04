@@ -689,7 +689,7 @@ def build_wrong_note_hwpx(
     items: list[dict[str, Any]],
     deadline_monotonic: float | None = None,
 ) -> bytes:
-    from apps.domains.tools.problem_studio.hwpx_writer import (
+    from apps.domains.tools.contracts import (
         build_hwpx_editable_wrong_note_document,
     )
 

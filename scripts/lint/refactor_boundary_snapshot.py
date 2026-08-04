@@ -44,6 +44,7 @@ INFRA_IMPORTS = {
     "libs.redis",
 }
 DOMAIN_INTERNAL_SEGMENTS = {"models", "services", "views", "api", "serializers"}
+PUBLIC_CONTRACT_SEGMENTS = {"contracts"}
 STRICT_FINDING_KINDS = {
     "adapter_application_import",
     "cross_domain_internal_import",
@@ -190,6 +191,8 @@ def scan_source(path: Path, source: str) -> list[Finding]:
             target_domain = parts[2] if len(parts) > 2 else ""
             target_segment = parts[3] if len(parts) > 3 else ""
             if target_domain and target_domain != source_domain:
+                if target_segment in PUBLIC_CONTRACT_SEGMENTS:
+                    continue
                 kind = "cross_domain_import"
                 if target_segment in DOMAIN_INTERNAL_SEGMENTS:
                     kind = "cross_domain_internal_import"

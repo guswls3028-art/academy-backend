@@ -326,7 +326,7 @@ class ExamSegmentationApproveView(APIView):
                 )
 
         try:
-            from apps.domains.ai.gateway import dispatch_job
+            from apps.domains.ai.contracts import dispatch_job
 
             dispatch_job(
                 job_type="matchup_index_exam",

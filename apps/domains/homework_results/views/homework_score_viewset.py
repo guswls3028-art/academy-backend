@@ -49,7 +49,7 @@ from apps.domains.homework_results.serializers import (
 from apps.domains.homework_results.filters import HomeworkScoreFilter
 
 from apps.core.permissions import TenantResolvedAndStaff
-from apps.domains.results.guards.score_edit_lease_guard import (
+from apps.domains.results.contracts import (
     require_score_edit_lease,
 )
 from apps.support.homework_results.score_dependencies import (

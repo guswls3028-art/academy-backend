@@ -49,7 +49,7 @@ def dispatch_ai_result_to_domain(
     """
     if source_domain == "tools_problem_studio":
         try:
-            from apps.domains.tools.problem_studio.beta_access import (
+            from apps.domains.tools.contracts import (
                 beta_run_id_from_job_payload,
                 settle_beta_run,
             )
@@ -60,7 +60,7 @@ def dispatch_ai_result_to_domain(
                 .values_list("payload", flat=True)
                 .first()
             )
-            from apps.domains.tools.problem_studio.explanation_workflow import (
+            from apps.domains.tools.contracts import (
                 settle_explanation_step_failure,
             )
 
