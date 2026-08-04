@@ -35,7 +35,10 @@
 3. **Tenant isolation is absolute.** No change in this document weakens tenant boundaries.
 4. **Correctness over speed.** Fast execution is valued, but never at the cost of data integrity or tenant safety.
 5. **Non-wasteful, not cheap.** Eliminate unjustified waste; do not cut where UX or reliability suffers.
-6. **Zero-downtime deployment must never break.** API uses scale-up + MinHealthyPercentage=100%; workers use MinHealthyPercentage=0% (SQS buffers during refresh).
+6. **Zero-downtime deployment must never break.** API uses ASG-native
+   launch-before-terminate with MinHealthyPercentage=100% and
+   MaxHealthyPercentage=200%; workers use MinHealthyPercentage=0% (SQS buffers
+   during refresh).
 
 ---
 
@@ -405,7 +408,7 @@ done
 | **Messaging** | t4g.small min/desired=1/1 max=3 | ~$15.18/mo projected compute reduction vs t4g.medium | 90-day CPU avg 0.50%, peak 57.41%; live container ~80 MiB and host available memory 84.3%. Account recovery and Alimtalk delivery stay warm. |
 | **AI** | t4g.medium min/desired=0/0 max=5 | Idle baseline removed | SQS CloudWatch alarms and API wake-up start work; worker-owned live SQS depth check scales back to 0. |
 | **Tools** | t4g.small min/desired=0/0 max=2 | Idle baseline removed | Deterministic conversion jobs can wait for queue-woken cold start; scale-in uses visible+in-flight+delayed backlog. |
-| **API** | t4g.medium min/desired=1/1 max=3 | One always-on instance retained | Target tracking adds capacity during bursts; CI creates temporary deploy headroom before rolling refresh. |
+| **API** | t4g.medium min/desired=1/1 max=3 | One always-on instance retained | Target tracking adds capacity during bursts; CI preserves desired capacity and Instance Refresh launches the replacement first. |
 
 **Worker Capacity Policy (SSOT):**
 
@@ -429,7 +432,7 @@ Messaging idle capacity is min/desired=1/1 because account recovery and Alimtalk
 | RDS db.t4g.medium | Current SSOT target after downsize; keep until connection, memory, and slow-query data proves another move safe |
 | Redis cache.t4g.small | Video progress + session cache; t4g.micro has only 0.5GB |
 | API/Messaging baseline | API stays warm for request latency; Messaging stays warm for account-recovery/Alimtalk latency; AI/Tools are intentionally queue-woken from min/desired=0/0. |
-| MinHealthyPercentage: API=100%, Workers=0% | Zero-downtime via scale-up strategy (API) and SQS buffering (workers) |
+| MinHealthyPercentage: API=100%, Workers=0% | Zero-downtime via ASG-native launch-before-terminate (API) and SQS buffering (workers) |
 
 **Measured right-size (2026-07-25):** Messaging moved from `t4g.medium` to `t4g.small`. API stayed `t4g.medium` after a 99.87% CPU burst; RDS/Redis stayed at current classes because their 30-day memory/credit lows did not prove another safe reduction. Evidence: `docs/reports/cost-waste-audit.latest.md`.
 
@@ -457,17 +460,24 @@ Messaging idle capacity is min/desired=1/1 because account recovery and Alimtalk
 
 ### 6.1 Zero-Downtime Deployment (Updated 2026-03-16)
 
-**API 무중단 배포 — Scale-Up 방식:**
-1. API ASG를 refresh 직전에 min=1 max=3, desired>=2로 일시 보정
-2. 2대 Healthy 확인
-3. Instance refresh 실행 (`MinHealthyPercentage=100%`, `InstanceWarmup=300s`, `SkipMatching=false`)
-4. Refresh 완료 후 SSOT 기준 min=1 desired=1 max=3 baseline으로 복귀. 이후 target tracking이 부하에 맞춰 증감
+**API 무중단 배포 — ASG-native launch-before-terminate:**
+1. API Launch Template를 검증된 candidate digest로 pin하되 ASG `min`과
+   `desired`는 바꾸지 않는다.
+2. 현재 burst로 `desired == max`인 경우에만 후보 한 대를 먼저 띄울 수 있도록
+   max ceiling을 `desired + 1`로 잠시 확장한다.
+3. Instance refresh를 `MinHealthyPercentage=100%`,
+   `MaxHealthyPercentage=200%`, `InstanceWarmup=300s`,
+   `SkipMatching=false`로 실행한다. 후보가 ALB healthy와 warmup을 통과한 뒤
+   기존 인스턴스를 drain한다.
+4. 임시 max ceiling을 성공·실패/보상 뒤 원래 값으로 복구하고 readback한다.
+   target tracking은 계속 실제 부하에 맞춰 desired를 소유한다.
 
 **워커 배포:**
 - `MinHealthyPercentage=0%`, `InstanceWarmup=120s`
 - Scale-up 불필요 (SQS 큐가 버퍼 역할, 일시적 워커 부재 허용)
 
-**IAM 요구사항:** `autoscaling:UpdateAutoScalingGroup` (scale-up/down에 필수)
+**IAM 요구사항:** `autoscaling:UpdateAutoScalingGroup` (포화 상태의 임시 max
+ceiling 확장/복구에만 필요)
 
 **CRITICAL — 배포 후 워커 검증 필수:**
 워커 장애는 사일런트 장애. API 200 반환하면서 SQS에 잡만 쌓이고, 사용자는 "영상이 안 나와요" "알림이 안 와요"만 보고한다. 배포 후 반드시:

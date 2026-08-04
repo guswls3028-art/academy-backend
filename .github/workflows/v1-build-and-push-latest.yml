@@ -1186,7 +1186,7 @@ jobs:
             "${{ env.API_PUBLIC_URL }}/healthz" || echo "000")
           echo "Pre-deploy healthz final status: $STATUS"
           if [ "$STATUS" != "200" ]; then
-            echo "::error::API is not healthy before deploy (healthz=$STATUS). Aborting refresh."
+            echo "::error::API is not healthy before deploy (healthz=$STATUS). Refusing production refresh."
             exit 1
           fi
 
@@ -1200,8 +1200,8 @@ jobs:
             -StatePath /tmp/api-pin-state.json \
             -Ci
 
-      - name: Ensure API ASG deploy headroom
-        id: scaleup
+      - name: Ensure API ASG launch-before-terminate ceiling
+        id: refresh_capacity
         run: |
           CURRENT=$(aws autoscaling describe-auto-scaling-groups \
             --auto-scaling-group-names ${{ env.API_ASG_NAME }} \
@@ -1211,80 +1211,31 @@ jobs:
           CURRENT_MIN=$(echo "$CURRENT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["Min"])')
           CURRENT_DESIRED=$(echo "$CURRENT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["Desired"])')
           CURRENT_MAX=$(echo "$CURRENT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["Max"])')
-          echo "current_desired=$CURRENT_DESIRED" >> $GITHUB_OUTPUT
-          TARGET_DESIRED=$CURRENT_DESIRED
-          if [ "$TARGET_DESIRED" -lt 2 ]; then
-            TARGET_DESIRED=2
-          fi
-          # Keep min=2 only during refresh so target-tracking scale-in cannot
-          # remove the spare ALB target while the replacement is still warming.
-          if [ "$CURRENT_MIN" -ne 2 ] || [ "$CURRENT_DESIRED" -lt 2 ] || [ "$CURRENT_MAX" -ne 3 ]; then
-            echo "Reconciling API ASG for deploy headroom min=2 desired=$TARGET_DESIRED max=3 (was min=$CURRENT_MIN desired=$CURRENT_DESIRED max=$CURRENT_MAX)..."
+          echo "original_max=$CURRENT_MAX" >> "$GITHUB_OUTPUT"
+          echo "changed=false" >> "$GITHUB_OUTPUT"
+
+          # MinHealthy=100/MaxHealthy=200 makes Instance Refresh launch a new
+          # target before terminating an old one. Preserve min/desired and only
+          # raise the ceiling when a burst already has desired capacity at max.
+          REQUIRED_MAX=$((CURRENT_DESIRED + 1))
+          if [ "$CURRENT_MAX" -lt "$REQUIRED_MAX" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Temporarily raising API ASG max for one launch-before-terminate slot: min=$CURRENT_MIN desired=$CURRENT_DESIRED max=$CURRENT_MAX->$REQUIRED_MAX"
             aws autoscaling update-auto-scaling-group \
               --auto-scaling-group-name ${{ env.API_ASG_NAME }} \
               --region ${{ env.AWS_REGION }} \
-              --min-size 2 \
-              --max-size 3 \
-              --desired-capacity "$TARGET_DESIRED"
-
-            # Get ALB target group ARN for real health check. Do not hide IAM/query
-            # failures: a hidden ELB describe denial previously appeared as
-            # "0 healthy targets" even when production was healthy.
-            TG_ARN=$(aws elbv2 describe-target-groups \
-              --names academy-v1-api-tg \
+              --max-size "$REQUIRED_MAX"
+            READBACK_MAX=$(aws autoscaling describe-auto-scaling-groups \
+              --auto-scaling-group-names ${{ env.API_ASG_NAME }} \
               --region ${{ env.AWS_REGION }} \
-              --query 'TargetGroups[0].TargetGroupArn' \
-              --output text 2>&1) || {
-                echo "::warning::Unable to resolve API target group ARN: $TG_ARN"
-                TG_ARN=""
-              }
-            if [ "$TG_ARN" = "None" ]; then
-              echo "::warning::API target group academy-v1-api-tg was not found"
-              TG_ARN=""
-            fi
-            if [ -n "$TG_ARN" ]; then
-              echo "Target group ARN: $TG_ARN"
-            fi
-
-            echo "Waiting for 2 ALB-healthy targets (max 5 min)..."
-            for WAIT in $(seq 1 20); do
-              if [ -n "$TG_ARN" ]; then
-                ALB_HEALTHY=""
-                HEALTH_OUTPUT=$(aws elbv2 describe-target-health \
-                  --target-group-arn "$TG_ARN" \
-                  --region ${{ env.AWS_REGION }} \
-                  --query 'TargetHealthDescriptions[?TargetHealth.State==`healthy`] | length(@)' \
-                  --output text 2>&1) || {
-                    echo "::warning::Unable to read target health: $HEALTH_OUTPUT"
-                    ALB_HEALTHY=0
-                  }
-                if [ -z "${ALB_HEALTHY:-}" ]; then
-                  ALB_HEALTHY="$HEALTH_OUTPUT"
-                fi
-              else
-                ALB_HEALTHY=0
-              fi
-              echo "  Attempt $WAIT/20: ALB healthy targets=$ALB_HEALTHY"
-              if [ "$ALB_HEALTHY" -ge 2 ]; then
-                echo "2+ ALB-healthy targets confirmed"
-                break
-              fi
-              sleep 15
-            done
-
-            if [ "$ALB_HEALTHY" -lt 2 ]; then
-              echo "::error::Only $ALB_HEALTHY ALB-healthy target(s) after 5 min. Refusing production refresh."
-              echo "Restoring pre-deploy API ASG capacity before failing..."
-              aws autoscaling update-auto-scaling-group \
-                --auto-scaling-group-name ${{ env.API_ASG_NAME }} \
-                --region ${{ env.AWS_REGION }} \
-                --min-size "$CURRENT_MIN" \
-                --max-size "$CURRENT_MAX" \
-                --desired-capacity "$CURRENT_DESIRED"
+              --query 'AutoScalingGroups[0].MaxSize' \
+              --output text)
+            if [ "$READBACK_MAX" -ne "$REQUIRED_MAX" ]; then
+              echo "::error::API ASG max-size readback mismatch: expected=$REQUIRED_MAX actual=$READBACK_MAX"
               exit 1
             fi
           else
-            echo "API ASG already has deploy headroom min=2 desired=$CURRENT_DESIRED max=3"
+            echo "API ASG already has a replacement slot: min=$CURRENT_MIN desired=$CURRENT_DESIRED max=$CURRENT_MAX"
           fi
 
       - name: Start API ASG instance refresh
@@ -1325,40 +1276,28 @@ jobs:
           echo "::error::API ASG refresh timed out after 15 minutes"
           exit 1
 
-      - name: Restore API ASG cost baseline after deploy (SSOT min/desired=1 max=3)
-        if: always() && steps.wait_refresh.outcome == 'success'
-        continue-on-error: true  # IAM 권한 없으면 경고만 남김. 운영 SSOT는 min/desired=1, max=3.
+      - name: Restore API ASG max-size ceiling
+        if: always() && steps.refresh_capacity.outputs.changed == 'true'
         run: |
-          CURRENT=$(aws autoscaling describe-auto-scaling-groups \
+          ORIGINAL_MAX="${{ steps.refresh_capacity.outputs.original_max }}"
+          if ! [[ "$ORIGINAL_MAX" =~ ^[0-9]+$ ]]; then
+            echo "::error::Invalid original API ASG max-size: $ORIGINAL_MAX"
+            exit 1
+          fi
+          aws autoscaling update-auto-scaling-group \
+            --auto-scaling-group-name ${{ env.API_ASG_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --max-size "$ORIGINAL_MAX"
+          READBACK_MAX=$(aws autoscaling describe-auto-scaling-groups \
             --auto-scaling-group-names ${{ env.API_ASG_NAME }} \
             --region ${{ env.AWS_REGION }} \
-            --query 'AutoScalingGroups[0].{Min:MinSize,Desired:DesiredCapacity,Max:MaxSize}' \
-            --output json)
-          CURRENT_MIN=$(echo "$CURRENT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["Min"])')
-          CURRENT_DESIRED=$(echo "$CURRENT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["Desired"])')
-          CURRENT_MAX=$(echo "$CURRENT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["Max"])')
-          ORIGINAL_DESIRED="${{ steps.scaleup.outputs.current_desired }}"
-          if ! [[ "$ORIGINAL_DESIRED" =~ ^[0-9]+$ ]]; then
-            ORIGINAL_DESIRED=1
+            --query 'AutoScalingGroups[0].MaxSize' \
+            --output text)
+          if [ "$READBACK_MAX" -ne "$ORIGINAL_MAX" ]; then
+            echo "::error::API ASG max-size restore failed: expected=$ORIGINAL_MAX actual=$READBACK_MAX"
+            exit 1
           fi
-          TARGET_DESIRED=$ORIGINAL_DESIRED
-          if [ "$TARGET_DESIRED" -lt 1 ]; then
-            TARGET_DESIRED=1
-          fi
-          if [ "$TARGET_DESIRED" -gt 3 ]; then
-            TARGET_DESIRED=3
-          fi
-          if [ "$CURRENT_MIN" -ne 1 ] || [ "$CURRENT_DESIRED" -ne "$TARGET_DESIRED" ] || [ "$CURRENT_MAX" -ne 3 ]; then
-            echo "Restoring API ASG capacity to cost baseline min=1 desired=$TARGET_DESIRED max=3 (was min=$CURRENT_MIN desired=$CURRENT_DESIRED max=$CURRENT_MAX)..."
-            aws autoscaling update-auto-scaling-group \
-              --auto-scaling-group-name ${{ env.API_ASG_NAME }} \
-              --region ${{ env.AWS_REGION }} \
-              --min-size 1 \
-              --max-size 3 \
-              --desired-capacity "$TARGET_DESIRED"
-          else
-            echo "API ASG capacity already matches cost baseline min=1 desired=$TARGET_DESIRED max=3"
-          fi
+          echo "API ASG max-size restored to $ORIGINAL_MAX"
 
       - name: Verify API runtime digest
         run: pwsh ./scripts/v1/pin-asg-image.ps1 -Service api -VerifyStatePath /tmp/api-pin-state.json -Ci

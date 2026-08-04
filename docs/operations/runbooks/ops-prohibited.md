@@ -1,6 +1,6 @@
 # 운영 금지 규칙
 
-**Version:** V1.1.0 | **최종 수정:** 2026-03-15
+**상태:** Current | **최종 검증:** 2026-08-04
 
 > 아래 항목은 **정상모드·비상모드 모두에서 절대 금지**다. 위반 시 서비스 장애, 데이터 유실, 보안 사고가 발생한다.
 > 비상모드 정의: `RUNBOOK-EMERGENCY-MODE.md` 참조.
@@ -27,7 +27,7 @@ CI는 **이미지 빌드 → 푸시 → ASG refresh**만 한다. 인프라 변�
 
 ## 3. API 비용 기준선 및 워커 큐 기반 축소 위반 금지
 
-API ASG는 비용 기준선으로 `MinSize=1`, `DesiredCapacity=1`, `MaxSize=3`을 유지한다. 배포 중에는 일시적으로 `desired>=2` headroom을 만들 수 있지만, 배포 후에는 1대 기준선으로 복귀해야 한다. Messaging worker는 계정복구/알림톡 즉시성을 위해 `MinSize=1`, `DesiredCapacity>=1`, `MaxSize=3` warm baseline을 유지한다. AI/Tools 워커는 SQS alarm 기반 scale-to-zero가 SSOT이므로 임의로 상시 1대 기준으로 되돌리지 않는다.
+API ASG는 비용 기준선으로 `MinSize=1`, `DesiredCapacity=1`, `MaxSize=3`을 유지한다. 배포는 `MinHealthyPercentage=100`, `MaxHealthyPercentage=200`의 ASG Instance Refresh가 후보를 먼저 기동하게 하며 CI가 `min`/`desired`를 선증설하지 않는다. 이미 부하로 `desired == max`인 경우에만 `max`를 교체 슬롯 한 개만큼 잠시 높이고 성공·실패/보상 뒤 원래 ceiling을 readback한다. Messaging worker는 계정복구/알림톡 즉시성을 위해 `MinSize=1`, `DesiredCapacity>=1`, `MaxSize=3` warm baseline을 유지한다. AI/Tools 워커는 SQS alarm 기반 scale-to-zero가 SSOT이므로 임의로 상시 1대 기준으로 되돌리지 않는다.
 
 ```
 academy-v1-api-asg              → min=1 desired=1 max=3
@@ -36,7 +36,7 @@ academy-v1-ai-worker-asg        → min = 0, queue/API wake-up scale-out
 academy-v1-tools-worker-asg     → min = 0, queue alarm scale-out
 ```
 
-API min=0은 사용자 요청 중단을 만들 수 있다. API를 상시 2대 기준으로 되돌리는 것도 비용 기준선을 깨므로 배포 headroom이 끝나면 1대로 되돌린다. Messaging은 사용자-facing 발송 지연을 줄이기 위해 1대 baseline을 유지한다. AI/Tools 워커는 SQS가 버퍼 역할을 하므로 scale-to-zero 정책을 깨지 않는 것이 비용·운영 SSOT다.
+API min=0은 사용자 요청 중단을 만들 수 있다. API를 배포 편의를 위해 `desired=2`로 선증설하거나 상시 2대 기준으로 되돌리는 것도 금지한다. Messaging은 사용자-facing 발송 지연을 줄이기 위해 1대 baseline을 유지한다. AI/Tools 워커는 SQS가 버퍼 역할을 하므로 scale-to-zero 정책을 깨지 않는 것이 비용·운영 SSOT다.
 
 ---
 

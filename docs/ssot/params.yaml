@@ -1,8 +1,9 @@
 # Academy SSOT v1 — 풀셋팅 단일소스. scripts/v1 전용.
 # 1인 개발·운영(장애 대응 10~60분), 1k~1.5k 사용자·동시 50~300 버스트.
 # API ASG: 비용 최적화 기준 평시 min/desired=1, max=3.
-# 배포 시에는 무중단 refresh를 위해 CI가 일시적으로 desired>=2를 만들 수 있고,
-# 평상시에는 ASG target tracking이 1~3대 사이에서 자동 증감한다.
+# 배포 시 Instance Refresh가 MinHealthy=100/MaxHealthy=200으로 후보를 먼저
+# 기동하며 min/desired는 바꾸지 않는다. 평상시 desired는 target tracking이
+# 1~3대 사이에서 자동 증감한다.
 
 global:
   env: prod
@@ -80,6 +81,7 @@ api:
   asgMaxSize: 3
   asgDesiredCapacity: 1
   instanceRefreshMinHealthyPercentage: 100
+  instanceRefreshMaxHealthyPercentage: 200
   instanceRefreshInstanceWarmup: 300
   healthCheckGracePeriodSeconds: 300
   scalingPolicyTargetCpuPercent: 55

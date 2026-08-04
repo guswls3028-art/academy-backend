@@ -17,7 +17,7 @@
 | DB_CONN_MAX_AGE | 0 |
 | 평시 커넥션 (1대) | ~2-6 |
 | 비용 baseline | API 1대 |
-| 배포 headroom | API 2대 이상(일시), refresh 후 1대로 복귀 |
+| 배포 교체 용량 | Instance Refresh가 기존 1 + 후보 1을 일시 운영; `desired` 불변 |
 | ASG min/max | 1/3 |
 
 ## Workers
@@ -32,13 +32,15 @@
 | 시나리오 | 예상 커넥션 | 여유 |
 |---|---|---|
 | 평시 (API 1대, Messaging 1대, AI/Tools idle) | ~10-25 | 93%+ |
-| 배포 headroom (API 2대 일시) | ~15-30 | 92%+ |
-| Rolling refresh (API 3대 순간) | ~25-45 | 88%+ |
+| 평시 배포 (기존 API 1 + 후보 1 일시) | ~15-30 | 92%+ |
+| 부하 중 배포 (`desired + 1`, 최대 4대 순간) | ~25-60 | 84%+ |
 | 장애 시 재시도 폭주 | 400 포화 가능 | 0% |
 
 ## 규칙
 - 평시 사용률 30% 이하 유지
-- Rolling refresh 중 동시 인스턴스 수 주의 (MinHealthyPercentage 설정)
+- Rolling refresh는 `MinHealthyPercentage=100`, `MaxHealthyPercentage=200`을
+  유지하고 `min`/`desired`를 직접 늘리지 않는다. `desired == max`이면 max
+  ceiling만 한 슬롯 잠시 확장하고 원래 값으로 복구한다.
 - 비밀번호 변경 시 구 인스턴스 빠른 종료로 좀비 커넥션 방지
 - Production API connections close at request completion
   (`DB_CONN_MAX_AGE=0`). The direct-RDS, gevent runtime must not enable

@@ -8,13 +8,6 @@ ARG BASE_IMAGE=academy-base:latest
 FROM ${BASE_IMAGE} AS base
 
 USER root
-# 앱 코드 (Base에 두지 않음)
-COPY academy ./academy
-COPY apps ./apps
-COPY libs ./libs
-COPY manage.py ./
-RUN chown -R appuser:appuser /app
-
 # Video Worker 전용 시스템 의존성 (비디오 처리)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
@@ -27,8 +20,14 @@ RUN mkdir -p /tmp/video-worker /tmp/video-worker-locks && chown -R appuser:appus
 
 USER appuser
 # Shared requirements (API + Worker same file)
-COPY requirements/constraints.txt requirements/requirements.txt ./requirements/
+COPY --chown=appuser:appuser requirements/constraints.txt requirements/requirements.txt ./requirements/
 RUN pip install --user --no-cache-dir -r requirements/requirements.txt
+
+# 자주 바뀌는 앱 소스는 apt/pip 뒤에 둬 의존성 캐시를 보존한다.
+COPY --chown=appuser:appuser academy ./academy
+COPY --chown=appuser:appuser apps ./apps
+COPY --chown=appuser:appuser libs ./libs
+COPY --chown=appuser:appuser manage.py ./
 # Batch must remain the only video entry boundary; validate the SSM bootstrap
 # module without starting a job or touching production resources.
 RUN python -c "from apps.worker.video_worker.batch_entrypoint import REQUIRED_KEYS, load_env_from_ssm_json; assert 'DJANGO_SETTINGS_MODULE' in REQUIRED_KEYS; print('video Batch entrypoint import OK')"
