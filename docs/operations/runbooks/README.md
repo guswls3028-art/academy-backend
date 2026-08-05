@@ -12,6 +12,7 @@
 | [ops-prohibited.md](ops-prohibited.md) | 운영 금지 사항 |
 | [problem-studio-source-transfer-uat.md](problem-studio-source-transfer-uat.md) | 문제 제작 원본 이관 실사용 검수 |
 | [video-batch.md](video-batch.md) | 영상 Batch 운영 |
+| [ymath-real-source-qa.md](ymath-real-source-qa.md) | Ymath 시험·워크북 실자료 전수 문항분리·채점·오답노트 검증 |
 
 ## 작성 규칙
 

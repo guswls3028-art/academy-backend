@@ -374,3 +374,8 @@ python manage.py test `
 전체 PATCH 응답, 혼합형 OMR 보존, stale result version 거부,
 다중 시트 선택, tenant 차단, 양끝을 포함하는 회차 범위, 다중 회차 시험의
 중복 제거, 오답노트 포함과 PDF/HWPX 문제·해설 분리, worker/R2 상태를 포함한다.
+Ymath 전체 원본을 운영 데이터 없이 persistent development에서 재현하는 절차와
+합격 기준은 [Ymath 실자료 원본 전수 검증](../operations/runbooks/ymath-real-source-qa.md)을
+따른다. `scripts/exam_source_bundle.py`, `scripts/exam_source_hwp_qa.py`,
+`scripts/ymath_realuse_scenario.py`가 각각 원본 인벤토리, 미주 구조/미리보기,
+실제 HTTP 시나리오와 재시작 상태를 소유한다.
