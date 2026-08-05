@@ -122,6 +122,9 @@ X를 나중에 다시 맞힌 뒤에도 남기려면 O·복습으로 바꾼다. �
 - 성적표 조회: `apps/domains/results/views/session_scores_view.py`
 - 워크북 원본·채점표: `views/homework_view.py`,
   `tests/test_workbook_source_and_grading.py`
+- Ymath 시험·워크북 통합 실자료 UAT:
+  `../operations/runbooks/ymath-real-source-qa.md`,
+  `scripts/ymath_realuse_scenario.py`
 
 집중 회귀 검증:
 
