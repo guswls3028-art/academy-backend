@@ -140,6 +140,10 @@ def run_pdf_question_pipeline(
             text_blocks_by_page,
             excluded_page_indexes=excluded_pages,
         )
+        _recover_missing_first_question_from_native_anchors(
+            questions,
+            text_blocks_by_page,
+        )
         logger.info(
             "PDF_SEGMENTATION_RESULT_USED | job_id=%s | questions=%d | "
             "solution_tail_start=%s",
@@ -249,11 +253,7 @@ def run_pdf_question_pipeline(
     )
 
     # 하위 호환: boxes 필드 유지 (flat list)
-    flat_boxes = []
-    for page in pages:
-        if page["page_index"] in excluded_pages:
-            continue
-        flat_boxes.extend(page["boxes"])
+    flat_boxes = [question["bbox"] for question in questions]
 
     # 실제 분리된 문항과 번호가 일치하는 해설만 결과에 포함한다. 번호가
     # 있어도 해당 문항이 없으면 callback의 FK/조회 경계로 넘기지 않는다.
@@ -583,6 +583,94 @@ def _build_question_list(
     _resolve_number_conflicts(questions, source="SEGMENTATION_RESULT")
 
     return questions
+
+
+def _recover_missing_first_question_from_native_anchors(
+    questions: List[Dict],
+    text_blocks_by_page: Dict[int, List[Dict]],
+) -> None:
+    """Recover a leading Q1 only when the native PDF evidence is unambiguous.
+
+    A two-column Ymath page can contain both a section title beginning with
+    ``1.`` and the real first question.  The dispatcher therefore stays
+    conservative and may return Q2-Q4 while omitting Q1.  Native PDF anchors
+    let us recover that one box safely when exact ``1.`` and ``2.`` text blocks
+    are vertically aligned in the same column and Q2 already has a trusted
+    dispatcher crop.  Other gaps remain teacher-review failures rather than
+    guessed crops.
+    """
+    if not questions or any(int(question.get("number") or 0) == 1 for question in questions):
+        return
+
+    q2_candidates = [
+        question
+        for question in questions
+        if int(question.get("number") or 0) == 2
+    ]
+    if len(q2_candidates) != 1:
+        return
+    q2 = q2_candidates[0]
+    page_index = int(q2.get("page_index") or 0)
+    same_page_questions = [
+        question
+        for question in questions
+        if int(question.get("page_index") or 0) == page_index
+    ]
+    if len(same_page_questions) < 2:
+        return
+
+    anchors: dict[int, Dict] = {}
+    for block in text_blocks_by_page.get(page_index, []):
+        match = re.fullmatch(r"\s*([12])\s*\.\s*", str(block.get("text") or ""))
+        if not match:
+            continue
+        number = int(match.group(1))
+        if number in anchors:
+            return
+        anchors[number] = block
+    if set(anchors) != {1, 2}:
+        return
+
+    first_anchor = anchors[1]
+    second_anchor = anchors[2]
+    first_x = float(first_anchor.get("x0") or 0.0)
+    second_x = float(second_anchor.get("x0") or 0.0)
+    first_y = float(first_anchor.get("y0") or 0.0)
+    second_y = float(second_anchor.get("y0") or 0.0)
+    same_column_tolerance = max(3.0, abs(second_x) * 0.15)
+    if (
+        second_y <= 0
+        or first_y <= 0
+        or first_y >= second_y * 0.85
+        or abs(first_x - second_x) > same_column_tolerance
+    ):
+        return
+
+    q2_bbox = tuple(q2.get("bbox") or ())
+    if len(q2_bbox) != 4 or int(q2_bbox[1]) <= 0:
+        return
+    q2_x, q2_y, q2_width, _q2_height = (int(value) for value in q2_bbox)
+    recovered_y = max(0, round(q2_y * first_y / second_y))
+    recovered_height = q2_y - recovered_y
+    if recovered_height <= 0:
+        return
+
+    recovered = {
+        "number": 1,
+        "bbox": (q2_x, recovered_y, q2_width, recovered_height),
+        "page_index": page_index,
+        "text": None,
+        "meta": {
+            "original_number": 1,
+            "recovered_from_native_pdf_anchor": True,
+        },
+    }
+    questions.insert(questions.index(q2), recovered)
+    logger.info(
+        "PDF_NATIVE_FIRST_QUESTION_RECOVERED | page=%d | bbox=%s",
+        page_index,
+        recovered["bbox"],
+    )
 
 
 def _match_text_to_bbox(
