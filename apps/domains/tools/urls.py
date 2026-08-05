@@ -33,6 +33,7 @@ from .problem_review.views import (
     ProblemReviewExportStatusView,
     ProblemReviewReportCollectionView,
     ProblemReviewReportDetailView,
+    ProblemReviewPublishView,
 )
 from .timer_download_view import TimerDownloadView
 from apps.support.omr.route_dependencies import (
@@ -44,6 +45,7 @@ urlpatterns = [
     path("ppt/generate/", PptGenerateView.as_view(), name="tools-ppt-generate"),
     path("problem-review/reports/", ProblemReviewReportCollectionView.as_view(), name="tools-problem-review-report-collection"),
     path("problem-review/reports/<uuid:report_id>/", ProblemReviewReportDetailView.as_view(), name="tools-problem-review-report-detail"),
+    path("problem-review/reports/<uuid:report_id>/publication/", ProblemReviewPublishView.as_view(), name="tools-problem-review-publish"),
     path("problem-review/reports/<uuid:report_id>/exports/", ProblemReviewExportCreateView.as_view(), name="tools-problem-review-export-create"),
     path("problem-review/reports/<uuid:report_id>/exports/<str:job_id>/", ProblemReviewExportStatusView.as_view(), name="tools-problem-review-export-status"),
     path("problem-studio/transfer-document/", ProblemStudioTransferDocumentView.as_view(), name="tools-problem-studio-transfer-document"),

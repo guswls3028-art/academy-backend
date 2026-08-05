@@ -4860,6 +4860,37 @@
         ],
         "type": "object"
       },
+      "PaginatedPublicProblemReviewShowcaseList": {
+        "properties": {
+          "count": {
+            "example": 123,
+            "type": "integer"
+          },
+          "next": {
+            "example": "http://api.example.org/accounts/?page=4",
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "previous": {
+            "example": "http://api.example.org/accounts/?page=2",
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/PublicProblemReviewShowcase"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "count",
+          "results"
+        ],
+        "type": "object"
+      },
       "PaginatedPublicReviewListList": {
         "properties": {
           "count": {
@@ -8278,6 +8309,56 @@
         ],
         "type": "object"
       },
+      "ProblemReviewPublishRequestRequest": {
+        "properties": {
+          "version": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "type": "object"
+      },
+      "ProblemReviewPublishResponse": {
+        "properties": {
+          "id": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "pdf_url": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "public_url": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "published_at": {
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
+          },
+          "status": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "title": {
+            "readOnly": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "pdf_url",
+          "public_url",
+          "published_at",
+          "status",
+          "title"
+        ],
+        "type": "object"
+      },
       "ProblemReviewReport": {
         "properties": {
           "created_at": {
@@ -8900,6 +8981,74 @@
         "required": [
           "content",
           "title"
+        ],
+        "type": "object"
+      },
+      "PublicProblemReviewShowcase": {
+        "properties": {
+          "description": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "difficulty": {
+            "readOnly": true
+          },
+          "id": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "metadata": {
+            "readOnly": true
+          },
+          "pdf_url": {
+            "nullable": true,
+            "readOnly": true,
+            "type": "string"
+          },
+          "published_at": {
+            "format": "date-time",
+            "nullable": true,
+            "readOnly": true,
+            "type": "string"
+          },
+          "snapshot": {
+            "readOnly": true
+          },
+          "snapshot_at": {
+            "format": "date-time",
+            "nullable": true,
+            "readOnly": true,
+            "type": "string"
+          },
+          "status": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "summary": {
+            "readOnly": true
+          },
+          "title": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "view_count": {
+            "readOnly": true,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "description",
+          "difficulty",
+          "id",
+          "metadata",
+          "pdf_url",
+          "published_at",
+          "snapshot",
+          "snapshot_at",
+          "status",
+          "summary",
+          "title",
+          "view_count"
         ],
         "type": "object"
       },
@@ -27136,6 +27285,129 @@
         ]
       }
     },
+    "/api/v1/landing-public/problem-review-showcase/": {
+      "get": {
+        "description": "Public, tenant-scoped snapshots of teacher-reviewed exam analyses.",
+        "operationId": "landing_public_problem_review_showcase_list",
+        "parameters": [
+          {
+            "description": "페이지네이션된 결과 집합 내의 페이지 번호.",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedPublicProblemReviewShowcaseList"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          },
+          {}
+        ],
+        "tags": [
+          "landing-public"
+        ]
+      }
+    },
+    "/api/v1/landing-public/problem-review-showcase/{id}/": {
+      "get": {
+        "description": "Public, tenant-scoped snapshots of teacher-reviewed exam analyses.",
+        "operationId": "landing_public_problem_review_showcase_retrieve",
+        "parameters": [
+          {
+            "description": "public problem review showcase을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicProblemReviewShowcase"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          },
+          {}
+        ],
+        "tags": [
+          "landing-public"
+        ]
+      }
+    },
+    "/api/v1/landing-public/problem-review-showcase/{id}/pdf/": {
+      "get": {
+        "description": "Public, tenant-scoped snapshots of teacher-reviewed exam analyses.",
+        "operationId": "landing_public_problem_review_showcase_pdf_retrieve",
+        "parameters": [
+          {
+            "description": "public problem review showcase을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicProblemReviewShowcase"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          },
+          {}
+        ],
+        "tags": [
+          "landing-public"
+        ]
+      }
+    },
     "/api/v1/landing-public/replies/": {
       "get": {
         "description": "공용 댓글.\n\nlist: 비로그인 OK. target 파라미터 필수 (target_kind:target_id).\ncreate: family only.\nupdate/destroy: 작성자 또는 staff.\nhide (staff): hidden toggle.",
@@ -43659,6 +43931,85 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemReviewExportStatus"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "tools"
+        ]
+      }
+    },
+    "/api/v1/tools/problem-review/reports/{report_id}/publication/": {
+      "delete": {
+        "operationId": "tools_problem_review_unpublish",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "tools"
+        ]
+      },
+      "post": {
+        "operationId": "tools_problem_review_publish",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProblemReviewPublishRequestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemReviewPublishResponse"
                 }
               }
             },

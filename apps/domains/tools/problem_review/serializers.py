@@ -52,3 +52,16 @@ class ProblemReviewExportStatusSerializer(serializers.Serializer):
     progress = serializers.JSONField(read_only=True, allow_null=True)
     result = serializers.JSONField(read_only=True, allow_null=True)
     error_message = serializers.CharField(read_only=True, allow_null=True)
+
+
+class ProblemReviewPublishRequestSerializer(serializers.Serializer):
+    version = serializers.IntegerField(min_value=1)
+
+
+class ProblemReviewPublishResponseSerializer(serializers.Serializer):
+    id = serializers.IntegerField(read_only=True)
+    title = serializers.CharField(read_only=True)
+    status = serializers.CharField(read_only=True)
+    published_at = serializers.DateTimeField(read_only=True)
+    public_url = serializers.CharField(read_only=True)
+    pdf_url = serializers.CharField(read_only=True)

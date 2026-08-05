@@ -5,6 +5,7 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import SimpleTestCase, TestCase
+from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
@@ -19,10 +20,13 @@ from apps.domains.tools.problem_review.schema import (
 )
 from apps.domains.tools.problem_review.worker import handle_problem_review_export_job
 from apps.domains.tools.problem_review.views import (
+    ProblemReviewPublishView,
     ProblemReviewReportCollectionView,
     ProblemReviewReportDetailView,
 )
 from apps.domains.tools.problem_studio.models import ProblemReviewReport
+from apps.domains.landing_public.api.views import PublicProblemReviewShowcaseViewSet
+from apps.domains.landing_public.models import PublicProblemReviewShowcase
 from apps.shared.contracts.ai_job import AIJob
 
 
@@ -149,6 +153,22 @@ class ProblemReviewSchemaAndRendererTests(SimpleTestCase):
         self.assertEqual(first_only["questions"][0]["number"], 7)
         self.assertEqual(first_only["questions"][0]["source_number"], 1)
         self.assertEqual(first_only["questions"][0]["source_excerpt"], "교사 원문 1")
+        self.assertEqual(first_only["summary"]["total_questions"], 1)
+        self.assertEqual(first_only["difficulty"]["distribution"][0]["question_numbers"], ["7"])
+
+        reordered_with_new = normalize_report_payload(
+            {
+                "questions": [
+                    {**draft["questions"][1], "number": 1},
+                    {"number": 2, "source_number": 0, "unit": "교사 추가 문항"},
+                ],
+            },
+            fallback=draft,
+            preserve_question_set=False,
+        )
+        self.assertEqual(len(reordered_with_new["questions"]), 2)
+        self.assertEqual(reordered_with_new["questions"][1]["source_number"], 0)
+        self.assertEqual(reordered_with_new["questions"][1]["unit"], "교사 추가 문항")
 
     def test_pdf_and_pptx_exports_are_parseable(self):
         from pptx import Presentation
@@ -384,3 +404,129 @@ class ProblemReviewReportViewTests(TestCase):
         self.assertEqual(len(save_response.data["draft"]["questions"]), 1)
         self.assertEqual(save_response.data["draft"]["questions"][0]["number"], 7)
         self.assertEqual(save_response.data["draft"]["questions"][0]["source_number"], 1)
+
+    @patch("apps.infrastructure.storage.r2.delete_object_r2_storage")
+    @patch("apps.infrastructure.storage.r2.upload_fileobj_to_r2_storage")
+    def test_publish_creates_public_snapshot_without_internal_review_fields(self, upload_file, delete_object):
+        report = ProblemReviewReport.objects.create(
+            tenant=self.tenant,
+            requested_by=self.user,
+            status=ProblemReviewReport.Status.DRAFT,
+            title="검수 완료 제목",
+            draft=_sample_report(),
+        )
+        request = self.factory.post(
+            f"/api/v1/tools/problem-review/reports/{report.id}/publication/",
+            {"version": report.version},
+            format="json",
+        )
+
+        response = ProblemReviewPublishView.as_view()(
+            self._authenticate(request),
+            report_id=report.id,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        showcase = PublicProblemReviewShowcase.objects.get(
+            tenant=self.tenant,
+            report_id_ref=report.id,
+        )
+        self.assertEqual(showcase.status, PublicProblemReviewShowcase.Status.PUBLISHED)
+        public_question = showcase.snapshot["questions"][0]
+        self.assertNotIn("review_note", public_question)
+        self.assertNotIn("source_excerpt", public_question)
+        self.assertNotIn("confidence", public_question)
+        self.assertNotIn("warnings", showcase.snapshot)
+        uploaded = upload_file.call_args.kwargs
+        self.assertTrue(uploaded["key"].startswith(
+            f"problem-review-showcase-snapshots/tenant_{self.tenant.id}/{report.id}/"
+        ))
+        self.assertTrue(uploaded["fileobj"].getvalue().startswith(b"%PDF"))
+        delete_object.assert_not_called()
+
+        first_key = showcase.snapshot_pdf_key
+        republish_request = self.factory.post(
+            f"/api/v1/tools/problem-review/reports/{report.id}/publication/",
+            {"version": report.version},
+            format="json",
+        )
+        republish_response = ProblemReviewPublishView.as_view()(
+            self._authenticate(republish_request),
+            report_id=report.id,
+        )
+        self.assertEqual(republish_response.status_code, 200)
+        self.assertEqual(PublicProblemReviewShowcase.objects.count(), 1)
+        delete_object.assert_called_once_with(key=first_key, timeout_seconds=10)
+
+    @patch("apps.infrastructure.storage.r2.upload_fileobj_to_r2_storage")
+    def test_publish_is_exact_teacher_owned_and_version_checked(self, upload_file):
+        report = ProblemReviewReport.objects.create(
+            tenant=self.tenant,
+            requested_by=self.user,
+            status=ProblemReviewReport.Status.DRAFT,
+            draft=_sample_report(),
+        )
+        other = get_user_model().objects.create_user(
+            username="other_publisher",
+            password="test1234",
+            tenant=self.tenant,
+            is_staff=True,
+        )
+        TenantMembership.ensure_active(tenant=self.tenant, user=other, role="teacher")
+
+        denied = self.factory.post("/publication/", {"version": report.version}, format="json")
+        denied_response = ProblemReviewPublishView.as_view()(
+            self._authenticate(denied, user=other),
+            report_id=report.id,
+        )
+        stale = self.factory.post("/publication/", {"version": report.version + 1}, format="json")
+        stale_response = ProblemReviewPublishView.as_view()(
+            self._authenticate(stale),
+            report_id=report.id,
+        )
+
+        self.assertEqual(denied_response.status_code, 404)
+        self.assertEqual(stale_response.status_code, 409)
+        self.assertFalse(PublicProblemReviewShowcase.objects.exists())
+        upload_file.assert_not_called()
+
+    def test_public_showcase_is_tenant_scoped_and_hidden_fails_closed(self):
+        report = ProblemReviewReport.objects.create(
+            tenant=self.tenant,
+            requested_by=self.user,
+            status=ProblemReviewReport.Status.DRAFT,
+            draft=_sample_report(),
+        )
+        showcase = PublicProblemReviewShowcase.objects.create(
+            tenant=self.tenant,
+            report_id_ref=report.id,
+            title="공개 분석",
+            status=PublicProblemReviewShowcase.Status.PUBLISHED,
+            published_at=timezone.now(),
+            snapshot=_sample_report(),
+            snapshot_pdf_key="public/report.pdf",
+            snapshot_pdf_bytes=123,
+            snapshot_at=timezone.now(),
+        )
+        list_request = self.factory.get("/api/v1/landing-public/problem-review-showcase/")
+        list_request.tenant = self.tenant
+        list_response = PublicProblemReviewShowcaseViewSet.as_view({"get": "list"})(list_request)
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(list_response.data["count"], 1)
+        self.assertNotIn("snapshot", list_response.data["results"][0])
+
+        showcase.status = PublicProblemReviewShowcase.Status.HIDDEN
+        showcase.save(update_fields=["status", "updated_at"])
+        detail_request = self.factory.get(f"/api/v1/landing-public/problem-review-showcase/{showcase.id}/")
+        detail_request.tenant = self.tenant
+        detail_response = PublicProblemReviewShowcaseViewSet.as_view({"get": "retrieve"})(
+            detail_request,
+            pk=showcase.id,
+        )
+        self.assertEqual(detail_response.status_code, 404)
+
+        other_tenant = Tenant.objects.create(name="Other Academy", code="other_academy")
+        other_request = self.factory.get("/api/v1/landing-public/problem-review-showcase/")
+        other_request.tenant = other_tenant
+        other_response = PublicProblemReviewShowcaseViewSet.as_view({"get": "list"})(other_request)
+        self.assertEqual(other_response.data["count"], 0)

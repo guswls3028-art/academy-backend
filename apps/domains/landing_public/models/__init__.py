@@ -5,6 +5,7 @@ from .like import PublicPostLike
 from .report import PublicReport, PublicUserBlock
 from .exam_showcase import PublicExamShowcase
 from .matchup_showcase import PublicMatchupShowcase
+from .problem_review_showcase import PublicProblemReviewShowcase
 
 __all__ = [
     "PublicBoardPost",
@@ -15,4 +16,5 @@ __all__ = [
     "PublicUserBlock",
     "PublicExamShowcase",
     "PublicMatchupShowcase",
+    "PublicProblemReviewShowcase",
 ]

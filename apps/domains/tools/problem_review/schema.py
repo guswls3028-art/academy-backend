@@ -4,7 +4,7 @@ from typing import Any
 
 
 SCHEMA_VERSION = "problem-review-report/v1"
-DIFFICULTIES = {"하", "중", "중상", "상", "최상", "검수 필요"}
+DIFFICULTIES = ("검수 필요", "하", "중", "중상", "상", "최상")
 MAX_QUESTIONS = 80
 
 
@@ -76,20 +76,29 @@ def _questions(
         for index, item in enumerate(base_items)
     }
     raw_items = _dict_list(value, limit=MAX_QUESTIONS)
-    raw_by_source = {
-        _source_key(item, index + 1): item
-        for index, item in enumerate(raw_items)
-    }
-    source_numbers = list(base_by_source) if preserve_question_set else []
-    source_numbers.extend(
-        source_number
-        for source_number in raw_by_source
-        if source_number not in source_numbers
-    )
+    if preserve_question_set:
+        raw_by_source = {
+            _source_key(item, index + 1): item
+            for index, item in enumerate(raw_items)
+        }
+        source_numbers = list(base_by_source)
+        source_numbers.extend(
+            source_number
+            for source_number in raw_by_source
+            if source_number not in source_numbers
+        )
+        entries = [
+            (source_number, base_by_source.get(source_number, {}), raw_by_source.get(source_number, {}))
+            for source_number in source_numbers[:MAX_QUESTIONS]
+        ]
+    else:
+        entries = []
+        for index, raw in enumerate(raw_items):
+            explicit_source = _int(raw.get("source_number"), default=0, minimum=0, maximum=999)
+            source_number = explicit_source or _question_number(raw.get("number"), index + 1)
+            entries.append((source_number, base_by_source.get(explicit_source, {}) if explicit_source else {}, raw))
     output: list[dict[str, Any]] = []
-    for source_number in source_numbers[:MAX_QUESTIONS]:
-        base = base_by_source.get(source_number, {})
-        raw = raw_by_source.get(source_number, {})
+    for source_number, base, raw in entries:
         number = _question_number(raw.get("number") or base.get("number"), source_number)
         difficulty = _text(raw.get("difficulty") or base.get("difficulty") or "검수 필요", limit=10)
         if difficulty not in DIFFICULTIES:
@@ -194,18 +203,28 @@ def normalize_report_payload(
         base,
         preserve_question_set=preserve_question_set,
     )
-    total_questions = _int(
-        summary_raw.get("total_questions") or summary_base.get("total_questions"),
-        default=len(questions),
-        maximum=MAX_QUESTIONS,
-    )
+    distribution_details = {item["label"]: item for item in distributions}
+    grouped_questions: dict[str, list[str]] = {}
+    for question in questions:
+        label = question.get("difficulty") or "검수 필요"
+        grouped_questions.setdefault(label, []).append(str(question["number"]))
+    distributions = [
+        {
+            "label": label,
+            "question_numbers": grouped_questions[label],
+            "points": distribution_details.get(label, {}).get("points", ""),
+            "note": distribution_details.get(label, {}).get("note", ""),
+        }
+        for label in DIFFICULTIES
+        if grouped_questions.get(label)
+    ]
     return {
         "schema_version": SCHEMA_VERSION,
         "metadata": _metadata(raw.get("metadata"), base),
         "summary": {
             "one_line": _text(summary_raw.get("one_line") or summary_base.get("one_line"), limit=500),
             "character": _text(summary_raw.get("character") or summary_base.get("character"), limit=1000),
-            "total_questions": total_questions or len(questions),
+            "total_questions": len(questions),
             "total_points": _text(summary_raw.get("total_points") or summary_base.get("total_points"), limit=40),
             "student_burden": _text(summary_raw.get("student_burden") or summary_base.get("student_burden"), limit=700),
         },

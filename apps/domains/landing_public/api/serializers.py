@@ -6,6 +6,21 @@ from ..models import PublicBoardPost, PublicPostLike, PublicPostReply, PublicRev
 _STAFF_ROLES = {"owner", "admin", "staff", "teacher", "assistant"}
 
 
+class PublicProblemReviewShowcaseSerializer(serializers.Serializer):
+    id = serializers.IntegerField(read_only=True)
+    title = serializers.CharField(read_only=True)
+    description = serializers.CharField(read_only=True, allow_blank=True)
+    status = serializers.CharField(read_only=True)
+    published_at = serializers.DateTimeField(read_only=True, allow_null=True)
+    snapshot_at = serializers.DateTimeField(read_only=True, allow_null=True)
+    view_count = serializers.IntegerField(read_only=True)
+    pdf_url = serializers.CharField(read_only=True, allow_null=True)
+    metadata = serializers.JSONField(read_only=True)
+    summary = serializers.JSONField(read_only=True)
+    difficulty = serializers.JSONField(read_only=True)
+    snapshot = serializers.JSONField(read_only=True, required=False)
+
+
 def _resolve_display_name(user, fallback: str = "") -> str:
     """User → 화면 노출용 이름. is_anonymous 처리는 호출측 책임."""
     if not user:
