@@ -119,13 +119,15 @@ if ($DryRun) { Write-Host "MODE: DryRun (no changes)" -ForegroundColor Yellow }
 function Invoke-ManualApiDevelopmentGate {
     param(
         [Parameter(Mandatory = $true)][string]$ApiImageUri,
-        [Parameter(Mandatory = $true)][string]$ToolsImageUri
+        [Parameter(Mandatory = $true)][string]$ToolsImageUri,
+        [Parameter(Mandatory = $true)][string]$AiImageUri
     )
     if ($ApiImageUri -notmatch '@sha256:(?<digest>[0-9a-f]{64})$') {
         throw "API development candidate image is not digest-pinned."
     }
     $apiDigest = $matches["digest"]
     Assert-ImmutableEcrImageUri -ImageUri $ToolsImageUri
+    Assert-ImmutableEcrImageUri -ImageUri $AiImageUri
     $releaseId = "manual-sha256-$apiDigest"
     $outputPath = [IO.Path]::GetTempFileName()
     try {
@@ -153,6 +155,7 @@ function Invoke-ManualApiDevelopmentGate {
         & (Join-Path $ScriptRoot "deploy-api-development.ps1") `
             -ApiImageUri $ApiImageUri `
             -ToolsImageUri $ToolsImageUri `
+            -AiImageUri $AiImageUri `
             -ExpectedEnvVersion ([int]$outputs["parameter_version"]) `
             -ExpectedWorkersEnvVersion ([int]$outputs["workers_parameter_version"]) `
             -ExpectedReleaseId $outputs["release_id"] `
@@ -298,9 +301,14 @@ try {
         if (-not $toolsCanaryImage) {
             throw "Tools development candidate could not resolve an immutable image."
         }
+        $aiCanaryImage = Get-LatestWorkerImageUri -RepoName $script:EcrAiRepo
+        if (-not $aiCanaryImage) {
+            throw "AI development candidate could not resolve an immutable image."
+        }
         Invoke-ManualApiDevelopmentGate `
             -ApiImageUri $apiCanaryImage `
-            -ToolsImageUri $toolsCanaryImage
+            -ToolsImageUri $toolsCanaryImage `
+            -AiImageUri $aiCanaryImage
         $apiCanaryEnv = Publish-ApiPreprodEnvCandidate -ReleaseId $apiCanaryReleaseId
         & (Join-Path $ScriptRoot "run-api-preprod-canary.ps1") `
             -ImageUri $apiCanaryImage `

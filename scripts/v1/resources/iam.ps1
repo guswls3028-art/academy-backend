@@ -191,6 +191,7 @@ function Ensure-ApiDevelopmentIAM {
                 Action = @("ecr:BatchCheckLayerAvailability","ecr:BatchGetImage","ecr:GetDownloadUrlForLayer")
                 Resource = @(
                     "arn:aws:ecr:$($script:Region):$($script:AccountId):repository/$($script:EcrApiRepo)",
+                    "arn:aws:ecr:$($script:Region):$($script:AccountId):repository/$($script:EcrAiRepo)",
                     "arn:aws:ecr:$($script:Region):$($script:AccountId):repository/$($script:EcrToolsRepo)"
                 )
             },

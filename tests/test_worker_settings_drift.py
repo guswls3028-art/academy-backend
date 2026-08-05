@@ -102,6 +102,19 @@ def test_worker_installed_apps_no_missing_domain():
     )
 
 
+def test_worker_storage_settings_honor_runtime_bucket_overrides(monkeypatch):
+    """Worker writes must use the same tenant storage bucket as the API env."""
+    monkeypatch.setenv("R2_REGION", "test-region")
+    monkeypatch.setenv("R2_STORAGE_BUCKET", "test-storage-worker")
+    monkeypatch.setenv("R2_ADMIN_BUCKET", "test-admin-worker")
+
+    worker_mod = _load_worker_settings_module()
+
+    assert worker_mod.R2_REGION == "test-region"
+    assert worker_mod.R2_STORAGE_BUCKET == "test-storage-worker"
+    assert worker_mod.R2_ADMIN_BUCKET == "test-admin-worker"
+
+
 def test_worker_models_fk_targets_resolvable():
     """worker INSTALLED_APPS 모든 모델의 FK target도 worker INSTALLED_APPS에 있는지.
 

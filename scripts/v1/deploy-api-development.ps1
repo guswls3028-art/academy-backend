@@ -11,6 +11,9 @@ param(
     [ValidatePattern('^[0-9]+\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/academy-tools-worker@sha256:[0-9a-fA-F]{64}$')]
     [string]$ToolsImageUri,
     [Parameter(Mandatory = $true)]
+    [ValidatePattern('^[0-9]+\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/academy-ai-worker-cpu@sha256:[0-9a-fA-F]{64}$')]
+    [string]$AiImageUri,
+    [Parameter(Mandatory = $true)]
     [ValidateRange(1, 100000)]
     [int]$ExpectedEnvVersion,
     [Parameter(Mandatory = $true)]
@@ -59,6 +62,7 @@ if (-not $script:ApiDevelopmentMatchProductionCompute) {
 }
 Assert-ImmutableEcrImageUri -ImageUri $ApiImageUri
 Assert-ImmutableEcrImageUri -ImageUri $ToolsImageUri
+Assert-ImmutableEcrImageUri -ImageUri $AiImageUri
 
 $profile = Invoke-AwsJson @(
     "iam", "get-instance-profile",
@@ -185,7 +189,7 @@ WORKERS_ENV_B64="$(aws ssm get-parameter \
   --output text \
   --region "__REGION__" 2>>"$LOG")"
 printf '%s' "$WORKERS_ENV_B64" | base64 -d | python3 -c \
-  "import sys,json; d=json.load(sys.stdin); assert d.get('DJANGO_SETTINGS_MODULE') == 'apps.api.config.settings.worker'; assert d.get('ACADEMY_RUNTIME_ENV') == 'development'; assert d.get('ACADEMY_DEVELOPMENT_RELEASE_ID') == '__RELEASE_ID__'; assert d.get('DB_NAME') == '__DATABASE__'; assert d.get('TOOLS_SQS_QUEUE_NAME') == '__TOOLS_QUEUE__'; [print(k+'='+str(v)) for k,v in d.items()]" \
+  "import sys,json; d=json.load(sys.stdin); assert d.get('DJANGO_SETTINGS_MODULE') == 'apps.api.config.settings.worker'; assert d.get('ACADEMY_RUNTIME_ENV') == 'development'; assert d.get('ACADEMY_DEVELOPMENT_RELEASE_ID') == '__RELEASE_ID__'; assert d.get('DB_NAME') == '__DATABASE__'; assert d.get('TOOLS_SQS_QUEUE_NAME') == '__TOOLS_QUEUE__'; assert d.get('AI_SQS_QUEUE_NAME_LITE') == '__AI_QUEUE__'; assert d.get('AI_SQS_QUEUE_NAME_BASIC') == '__AI_QUEUE__'; assert d.get('AI_SQS_QUEUE_NAME_PREMIUM') == '__AI_QUEUE__'; [print(k+'='+str(v)) for k,v in d.items()]" \
   > /opt/workers-development.env
 test -s /opt/workers-development.env
 docker stop academy-tools-development 2>/dev/null || true
@@ -202,9 +206,34 @@ $toolsBootstrap = $toolsBootstrap.Replace("__REGION__", $script:Region)
 $toolsBootstrap = $toolsBootstrap.Replace("__RELEASE_ID__", $ExpectedReleaseId)
 $toolsBootstrap = $toolsBootstrap.Replace("__DATABASE__", $script:ApiDevelopmentDatabaseName)
 $toolsBootstrap = $toolsBootstrap.Replace("__TOOLS_QUEUE__", $script:ApiDevelopmentToolsQueueName)
+$toolsBootstrap = $toolsBootstrap.Replace("__AI_QUEUE__", $script:ApiDevelopmentAiQueueName)
 $userData = "$userData`n$toolsBootstrap"
+
+$aiBootstrap = @'
+
+# Development AI worker stays a separate container/process and consumes only
+# the dedicated development AI queue. Disable production ASG scale-in logic.
+AI_IMAGE="__AI_IMAGE__"
+if ! docker pull "$AI_IMAGE" 2>>"$LOG"; then
+  log "Development AI image pull failed: $AI_IMAGE"
+  exit 1
+fi
+docker stop academy-ai-development 2>/dev/null || true
+docker rm academy-ai-development 2>/dev/null || true
+docker run -d --restart unless-stopped --network host \
+  --name academy-ai-development \
+  --env-file /opt/workers-development.env \
+  -e DJANGO_SETTINGS_MODULE=apps.api.config.settings.worker \
+  -e ACADEMY_RUNTIME_ENV=development \
+  -e AI_WORKER_IDLE_SCALE_IN_ENABLED=0 \
+  -e EC2_IDLE_STOP_THRESHOLD=0 \
+  "$AI_IMAGE"
+'@
+$aiBootstrap = $aiBootstrap.Replace("__AI_IMAGE__", $AiImageUri)
+$userData = "$userData`n$aiBootstrap"
 if (
     $userData -notmatch 'apps\.api\.config\.settings\.development' -or
+    $userData -notmatch [regex]::Escape($script:ApiDevelopmentAiQueueName) -or
     $userData -notmatch [regex]::Escape($script:ApiDevelopmentToolsQueueName) -or
     $userData -match '/academy/api/env'
 ) {
@@ -286,7 +315,7 @@ try {
 
 $remote = @'
 set -euo pipefail
-for container in academy-api academy-tools-development; do
+for container in academy-api academy-tools-development academy-ai-development; do
   for i in $(seq 1 90); do
     state=$(docker inspect -f '{{.State.Status}}' "$container" 2>/dev/null || true)
     [ "$state" = "running" ] && break
@@ -361,8 +390,12 @@ curl -fsS --max-time 10 http://127.0.0.1:8000/healthz >/dev/null
 curl -fsS --max-time 10 http://127.0.0.1:8000/health >/dev/null
 api_image=$(docker inspect -f '{{.Config.Image}}' academy-api)
 tools_image=$(docker inspect -f '{{.Config.Image}}' academy-tools-development)
+ai_image=$(docker inspect -f '{{.Config.Image}}' academy-ai-development)
 [ "$api_image" = "__API_IMAGE__" ]
 [ "$tools_image" = "__TOOLS_IMAGE__" ]
+[ "$ai_image" = "__AI_IMAGE__" ]
+(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' academy-ai-development | grep -qx 'ACADEMY_RUNTIME_ENV=development')
+(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' academy-ai-development | grep -qx 'AI_WORKER_IDLE_SCALE_IN_ENABLED=0')
 (redis6-cli ping 2>/dev/null || valkey-cli ping 2>/dev/null || redis-cli ping) | grep -q PONG
 echo DEVELOPMENT_RUNTIME_PASS
 '@
@@ -376,6 +409,7 @@ echo DEVELOPMENT_RUNTIME_PASS
     $remote = $remote.Replace("__REGION__", $script:Region)
     $remote = $remote.Replace("__API_IMAGE__", $ApiImageUri)
     $remote = $remote.Replace("__TOOLS_IMAGE__", $ToolsImageUri)
+    $remote = $remote.Replace("__AI_IMAGE__", $AiImageUri)
     $remote = $remote.Replace("`r", "")
     $remoteB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($remote))
     $command = "echo '$remoteB64' | base64 -d | bash"
@@ -474,11 +508,12 @@ echo DEVELOPMENT_RUNTIME_PASS
         ) -ErrorMessage "wait for prior API development termination" | Out-Null
     }
     Write-Host (
-        "API_DEVELOPMENT_DEPLOY_PASS instance={0} release={1} api={2} tools={3}" -f
+        "API_DEVELOPMENT_DEPLOY_PASS instance={0} release={1} api={2} tools={3} ai={4}" -f
         $instanceId,
         $ExpectedReleaseId,
         $ApiImageUri,
-        $ToolsImageUri
+        $ToolsImageUri,
+        $AiImageUri
     ) -ForegroundColor Green
 } finally {
     Remove-TempFiles @($networkFile)
