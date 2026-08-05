@@ -1,7 +1,21 @@
 from django.db.models import F
 from django.http import HttpResponse
-from drf_spectacular.types import OpenApiTypes
-from drf_spectacular.utils import extend_schema
+
+try:
+    from drf_spectacular.types import OpenApiTypes
+    from drf_spectacular.utils import extend_schema
+except ModuleNotFoundError as exc:
+    if exc.name != "drf_spectacular":
+        raise
+
+    class OpenApiTypes:  # type: ignore[no-redef]
+        BINARY = bytes
+
+    def extend_schema(*args, **kwargs):  # type: ignore[no-redef]
+        def decorator(view):
+            return view
+
+        return decorator
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
