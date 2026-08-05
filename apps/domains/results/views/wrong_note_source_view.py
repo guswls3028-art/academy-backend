@@ -1,6 +1,24 @@
 from __future__ import annotations
 
-from drf_spectacular.utils import OpenApiParameter, extend_schema
+try:
+    from drf_spectacular.utils import OpenApiParameter, extend_schema
+except ModuleNotFoundError as exc:
+    if exc.name != "drf_spectacular":
+        raise
+
+    class OpenApiParameter:  # type: ignore[no-redef]
+        QUERY = "query"
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+    def extend_schema(*args, **kwargs):  # type: ignore[no-redef]
+        """Keep runtime views importable when schema-only tooling is absent."""
+
+        def decorator(view):
+            return view
+
+        return decorator
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
