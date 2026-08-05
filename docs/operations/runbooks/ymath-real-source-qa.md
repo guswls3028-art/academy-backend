@@ -87,6 +87,9 @@ python scripts/ymath_realuse_scenario.py `
 ## 합격 기준
 
 - manifest의 모든 고유 원본이 결과에 한 번씩 나타난다.
+- 깨끗한 문제지가 없어 자동 확정할 수 없는 원본도 실제 API/worker를 통과시킨다.
+  이 항목은 `source_remediation_required`로 기록되고 제품은
+  `conversion_required`로 실패 폐쇄해야 한다. 실행에서 생략하거나 성공으로 세지 않는다.
 - PDF/이미지, 통합 HWP/HWPX, 문제 PDF+해설 HWP/HWPX 세 경로가 모두 실제
   API를 통과한다.
 - job 성공과 별개로 시험 상태가 `review_required`이고 예상 문항 수와 proposal

@@ -145,6 +145,8 @@ def build_source_plan(
                     item.update(
                         route="blocked",
                         reason="clean_problem_pdf_required",
+                        upload_path=str(source_path),
+                        expected_execution_status="conversion_required",
                         missing_visual_numbers=list(qa.get("missing_visual_numbers") or []),
                     )
         else:
@@ -336,10 +338,13 @@ def execute_item(
     )
     expected = int(item.get("detected_question_count") or 0)
     quality_status = "review_required"
+    expects_conversion = item.get("expected_execution_status") == "conversion_required"
     if str(job.get("status") or "").upper() not in {"DONE", "REVIEW_REQUIRED"}:
         quality_status = "job_failed"
     elif result.get("conversion_required"):
-        quality_status = "conversion_required"
+        quality_status = "source_remediation_required" if expects_conversion else "conversion_required"
+    elif expects_conversion:
+        quality_status = "unsafe_partial_acceptance"
     elif str(review.get("status") or "") != "review_required":
         quality_status = f"unexpected_review_status:{review.get('status')}"
     elif expected and proposal_count != expected:
@@ -431,8 +436,10 @@ def main() -> int:
     executable = [
         item
         for item in plan
-        if item["route"] not in {"blocked", "consumed_by_pair"}
-        and output["items"][item["source_id"]].get("execution_status") != "review_required"
+        if item["route"] != "consumed_by_pair"
+        and item.get("upload_path")
+        and output["items"][item["source_id"]].get("execution_status")
+        not in {"review_required", "source_remediation_required"}
     ]
     lock = threading.Lock()
     local = threading.local()

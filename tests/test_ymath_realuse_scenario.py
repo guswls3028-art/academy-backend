@@ -60,6 +60,8 @@ def test_build_source_plan_keeps_all_routes_explicit(tmp_path: Path):
         "blocked",
     ]
     assert blocked[2]["reason"] == "clean_problem_pdf_required"
+    assert blocked[2]["upload_path"].endswith("teacher.hwpx")
+    assert blocked[2]["expected_execution_status"] == "conversion_required"
     assert paired[2]["route"] == "paired_problem_and_explanation"
     assert paired[2]["extracted_explanation_count"] == 8
 
@@ -166,3 +168,36 @@ def test_execute_item_fails_closed_on_partial_teacher_explanations(monkeypatch):
     assert result["proposal_count"] == 2
     assert result["teacher_explanation_count"] == 1
     assert result["execution_status"] == "teacher_explanation_coverage_incomplete"
+
+
+def test_execute_item_records_expected_conversion_as_remediation(monkeypatch):
+    class Client:
+        @staticmethod
+        def get_json(path):
+            assert path == "/api/v1/exams/32/segmentation-review/"
+            return {"status": "conversion_required", "items": []}
+
+    monkeypatch.setattr(
+        ymath_realuse_scenario,
+        "_wait_for_job",
+        lambda *_args, **_kwargs: {
+            "status": "DONE",
+            "result": {"conversion_required": True},
+        },
+    )
+
+    result = execute_item(
+        client=Client(),
+        item={
+            "source_id": "annotated-workbook",
+            "route": "blocked",
+            "expected_execution_status": "conversion_required",
+        },
+        session_id=1,
+        job_timeout=1,
+        prior={"product_type": "homework", "exam_id": 32, "job_id": "job-32"},
+        checkpoint=lambda _state: None,
+    )
+
+    assert result["proposal_count"] == 0
+    assert result["execution_status"] == "source_remediation_required"
