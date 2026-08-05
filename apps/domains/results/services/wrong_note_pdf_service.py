@@ -450,117 +450,137 @@ def build_wrong_note_pdf(
     )
     pdf.showPage()
 
-    # One cropped question per page keeps tables and handwritten notation legible.
-    for index, item in enumerate(rows, start=1):
+    # Ymath's teacher-authored workbook uses two equal newspaper-style columns:
+    # one complete source question in each column, left first and then right.
+    # Keep the original crop intact and use the remaining column height as work space.
+    margin = 16 * mm
+    column_gap = 8 * mm
+    column_w = (page_w - 2 * margin - column_gap) / 2
+    problem_page_count = (len(rows) + 1) // 2
+    for problem_page_index, pair_start in enumerate(range(0, len(rows), 2), start=1):
         _remaining_seconds(deadline_monotonic)
-        margin = 16 * mm
-        content_w = page_w - 2 * margin
         pdf.setFillColor(HexColor(_INK))
-        pdf.rect(0, page_h - 23 * mm, page_w, 23 * mm, fill=1, stroke=0)
+        pdf.rect(0, page_h - 20 * mm, page_w, 20 * mm, fill=1, stroke=0)
         pdf.setFillColor(white)
         pdf.setFont(bold_font, 11)
-        pdf.drawString(margin, page_h - 14 * mm, _session_label(item))
+        pdf.drawString(margin, page_h - 12.5 * mm, "문제 다시 풀기")
         pdf.setFont(regular_font, 9)
-        exam_title = _ellipsize(
-            pdf,
-            str(item.get("exam_title") or "시험"),
-            font_name=regular_font,
-            font_size=9,
-            max_width=90 * mm,
+        pdf.drawRightString(
+            page_w - margin,
+            page_h - 12.5 * mm,
+            f"{problem_page_index} / {problem_page_count}",
         )
-        pdf.drawRightString(page_w - margin, page_h - 14 * mm, exam_title)
 
-        q_number = item.get("question_number")
-        question_label = f"{q_number}번" if q_number is not None else "문항 번호 미확인"
-        pdf.setFillColor(HexColor(_INK))
-        pdf.setFont(bold_font, 22)
-        pdf.drawString(margin, page_h - 38 * mm, question_label)
-        pdf.setFont(regular_font, 9)
-        pdf.setFillColor(HexColor(_MUTED))
-        pdf.drawRightString(page_w - margin, page_h - 36 * mm, f"{index} / {len(rows)}")
-
-        image: Image.Image | None = _load_question_image(
-            item,
-            deadline_monotonic=deadline_monotonic,
-        )
-        image_top = page_h - 47 * mm
-        image_x = margin
-        max_draw_h = image_top - 76 * mm
-        if image is None:
-            image_h = 92 * mm
-            image_y = image_top - image_h
-            pdf.setStrokeColor(HexColor(_LINE))
-            pdf.setLineWidth(0.8)
-            pdf.roundRect(image_x, image_y, content_w, image_h, 3 * mm, fill=0, stroke=1)
-            pdf.setDash(4, 3)
-            pdf.setStrokeColor(HexColor(_LINE))
-            pdf.roundRect(
-                image_x + 9 * mm,
-                image_y + 9 * mm,
-                content_w - 18 * mm,
-                image_h - 18 * mm,
-                2 * mm,
-                fill=0,
-                stroke=1,
+        for column_index, item in enumerate(rows[pair_start : pair_start + 2]):
+            _remaining_seconds(deadline_monotonic)
+            item_index = pair_start + column_index + 1
+            column_x = margin + column_index * (column_w + column_gap)
+            q_number = item.get("question_number")
+            question_label = (
+                f"{q_number}번" if q_number is not None else "문항 번호 미확인"
             )
-            pdf.setDash()
+            pdf.setFillColor(HexColor(_INK))
+            pdf.setFont(bold_font, 15)
+            pdf.drawString(column_x, page_h - 31 * mm, question_label)
             pdf.setFillColor(HexColor(_MUTED))
-            pdf.setFont(bold_font, 12)
-            pdf.drawCentredString(page_w / 2, image_y + image_h / 2 + 4 * mm, "문제 이미지 미등록")
-            pdf.setFont(regular_font, 9)
-            pdf.drawCentredString(
-                page_w / 2,
-                image_y + image_h / 2 - 4 * mm,
-                "시험 설정의 이미지 등록에서 문항 사진을 추가할 수 있습니다.",
+            pdf.setFont(regular_font, 7.5)
+            pdf.drawRightString(
+                column_x + column_w,
+                page_h - 30.5 * mm,
+                f"{item_index} / {len(rows)}",
             )
-        else:
-            try:
-                image_buffer = io.BytesIO()
-                image.save(image_buffer, format="JPEG", quality=90, optimize=True)
-                image_buffer.seek(0)
-                image_w, raw_h = image.size
-                available_w = content_w - 10 * mm
-                scale = min(available_w / image_w, max_draw_h / raw_h)
-                draw_w = image_w * scale
-                draw_h = raw_h * scale
-                image_h = draw_h + 10 * mm
+            source_label = f"{_session_label(item)} · {str(item.get('exam_title') or '시험')}"
+            pdf.drawString(
+                column_x,
+                page_h - 38 * mm,
+                _ellipsize(
+                    pdf,
+                    source_label,
+                    font_name=regular_font,
+                    font_size=7.5,
+                    max_width=column_w,
+                ),
+            )
+            pdf.setStrokeColor(HexColor(_LINE))
+            pdf.setLineWidth(0.45)
+            pdf.line(
+                column_x,
+                page_h - 41 * mm,
+                column_x + column_w,
+                page_h - 41 * mm,
+            )
+
+            image: Image.Image | None = _load_question_image(
+                item,
+                deadline_monotonic=deadline_monotonic,
+            )
+            image_top = page_h - 46 * mm
+            work_y = 24 * mm
+            reserved_work_h = 48 * mm
+            image_floor = work_y + reserved_work_h + 7 * mm
+            max_draw_h = image_top - image_floor
+            if image is None:
+                image_h = min(78 * mm, max_draw_h)
                 image_y = image_top - image_h
+                pdf.setDash(4, 3)
                 pdf.setStrokeColor(HexColor(_LINE))
-                pdf.setLineWidth(0.8)
                 pdf.roundRect(
-                    image_x,
+                    column_x,
                     image_y,
-                    content_w,
+                    column_w,
                     image_h,
-                    3 * mm,
+                    2 * mm,
                     fill=0,
                     stroke=1,
                 )
-                pdf.drawImage(
-                    ImageReader(image_buffer),
-                    image_x + (content_w - draw_w) / 2,
-                    image_y + 5 * mm,
-                    draw_w,
-                    draw_h,
-                    preserveAspectRatio=True,
-                    mask="auto",
+                pdf.setDash()
+                pdf.setFillColor(HexColor(_MUTED))
+                pdf.setFont(bold_font, 9)
+                pdf.drawCentredString(
+                    column_x + column_w / 2,
+                    image_y + image_h / 2 + 3 * mm,
+                    "문제 이미지 미등록",
                 )
-            finally:
-                image.close()
+                pdf.setFont(regular_font, 7)
+                pdf.drawCentredString(
+                    column_x + column_w / 2,
+                    image_y + image_h / 2 - 3 * mm,
+                    "시험 설정에서 문항 이미지를 추가해 주세요.",
+                )
+            else:
+                try:
+                    image_buffer = io.BytesIO()
+                    image.save(image_buffer, format="JPEG", quality=92, optimize=True)
+                    image_buffer.seek(0)
+                    image_w, raw_h = image.size
+                    scale = min(column_w / image_w, max_draw_h / raw_h)
+                    draw_w = image_w * scale
+                    draw_h = raw_h * scale
+                    image_y = image_top - draw_h
+                    pdf.drawImage(
+                        ImageReader(image_buffer),
+                        column_x + (column_w - draw_w) / 2,
+                        image_y,
+                        draw_w,
+                        draw_h,
+                        preserveAspectRatio=True,
+                        mask="auto",
+                    )
+                finally:
+                    image.close()
 
-        work_y = 29 * mm
-        work_h = max(image_y - work_y - 8 * mm, 27 * mm)
-        pdf.setFillColor(HexColor(_PAPER))
-        pdf.roundRect(margin, work_y, content_w, work_h, 3 * mm, fill=1, stroke=0)
-        pdf.setFillColor(HexColor(_MUTED))
-        pdf.setFont(regular_font, 9)
-        pdf.drawString(margin + 5 * mm, work_y + work_h - 8 * mm, "풀이 공간")
-        pdf.setStrokeColor(HexColor(_LINE))
-        pdf.setLineWidth(0.45)
-        line_y = work_y + work_h - 18 * mm
-        while line_y > work_y + 7 * mm:
-            pdf.line(margin + 5 * mm, line_y, page_w - margin - 5 * mm, line_y)
-            line_y -= 10 * mm
+            work_h = max(image_y - work_y - 6 * mm, reserved_work_h)
+            pdf.setFillColor(HexColor(_PAPER))
+            pdf.roundRect(column_x, work_y, column_w, work_h, 2 * mm, fill=1, stroke=0)
+            pdf.setFillColor(HexColor(_MUTED))
+            pdf.setFont(regular_font, 7.5)
+            pdf.drawString(column_x + 4 * mm, work_y + work_h - 6 * mm, "풀이 공간")
+            pdf.setStrokeColor(HexColor(_LINE))
+            pdf.setLineWidth(0.35)
+            line_y = work_y + work_h - 13 * mm
+            while line_y > work_y + 5 * mm:
+                pdf.line(column_x + 4 * mm, line_y, column_x + column_w - 4 * mm, line_y)
+                line_y -= 8 * mm
 
         pdf.setFillColor(HexColor(_MUTED))
         pdf.setFont(regular_font, 8)

@@ -501,6 +501,53 @@ class WrongNoteServiceSessionExamTests(TestCase):
         )
 
     @patch(
+        "apps.domains.results.services.wrong_note_pdf_service._load_explanation_image",
+        return_value=None,
+    )
+    @patch(
+        "apps.domains.results.services.wrong_note_pdf_service._load_question_image"
+    )
+    def test_pdf_packs_two_source_questions_per_problem_page(
+        self,
+        load_image,
+        _load_explanation,
+    ):
+        from PIL import Image
+
+        for index, session in enumerate(
+            (self.session1, self.session2, self.session3),
+            start=1,
+        ):
+            self._create_wrong_result(
+                title=f"{index}차시 실전 시험",
+                session=session,
+                answer="C",
+            )
+        _, items = list_wrong_notes_for_enrollment(
+            enrollment_id=self.enrollment.id,
+            q=WrongNoteQuery(lecture_id=self.lecture.id, from_session_order=1),
+        )
+        load_image.side_effect = lambda *_args, **_kwargs: Image.new(
+            "RGB", (640, 480), "white"
+        )
+
+        pdf_bytes = build_wrong_note_pdf(
+            enrollment=self.enrollment,
+            tenant_name=self.tenant.name,
+            items=items,
+            from_session_order=1,
+            exam_id=None,
+        )
+
+        self.assertEqual(len(items), 3)
+        # cover + ceil(3 / 2) problem pages + divider + 3 solution pages
+        self.assertEqual(
+            len(re.findall(rb"/Type\s*/Page(?!s)", pdf_bytes)),
+            7,
+        )
+        self.assertEqual(load_image.call_count, 3)
+
+    @patch(
         "apps.domains.results.services.wrong_note_pdf_service._load_explanation_image"
     )
     @patch(
@@ -548,13 +595,14 @@ class WrongNoteServiceSessionExamTests(TestCase):
                 name for name in package.namelist() if name.startswith("BinData/")
             ]
         self.assertIn("오답노트", preview)
-        self.assertIn("문제 1쪽", preview)
+        self.assertIn("문제 1칸", preview)
         self.assertIn("해설 1쪽", preview)
-        self.assertLess(preview.index("문제 1쪽"), preview.index("해설 1쪽"))
+        self.assertLess(preview.index("문제 1칸"), preview.index("해설 1쪽"))
         self.assertIn("내 풀이 메모", section_xml)
         self.assertIn("정답:", section_xml)
         self.assertIn("추가 메모", section_xml)
         self.assertIn("<hp:pic", section_xml)
+        self.assertIn('colCount="2"', section_xml)
         self.assertEqual(len(source_images), 2)
         self.assertIn('id="BIN0001"', manifest)
         self.assertIn('id="BIN0002"', manifest)
@@ -578,6 +626,27 @@ class WrongNoteServiceSessionExamTests(TestCase):
             )
         self.assertIn("등록된 문제 이미지가 없습니다.", no_image_xml)
         self.assertIn("등록된 선생님 해설 이미지가 없습니다.", no_image_xml)
+
+        load_question.return_value = None
+        load_explanation.return_value = None
+        load_question.side_effect = lambda *_args, **_kwargs: Image.new(
+            "RGB", (200, 100), "blue"
+        )
+        load_explanation.side_effect = lambda *_args, **_kwargs: Image.new(
+            "RGB", (640, 900), "white"
+        )
+        three_item_hwpx = build_wrong_note_hwpx(
+            enrollment=self.enrollment,
+            tenant_name=self.tenant.name,
+            items=items * 3,
+        )
+        with ZipFile(BytesIO(three_item_hwpx)) as package:
+            three_item_xml = "\n".join(
+                package.read(name).decode("utf-8")
+                for name in package.namelist()
+                if name.startswith("Contents/section") and name.endswith(".xml")
+            )
+        self.assertEqual(three_item_xml.count('columnBreak="1"'), 2)
 
     def test_tall_explanation_split_discards_blank_sections(self):
         from PIL import Image, ImageChops, ImageDraw

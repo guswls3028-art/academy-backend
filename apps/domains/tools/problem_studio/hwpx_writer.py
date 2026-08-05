@@ -926,6 +926,16 @@ def build_hwpx_editable_wrong_note_document(
         margin_left_mm=14.0,
         margin_right_mm=14.0,
     )
+    problem_layout = PageLayout(
+        page_width_mm=210.0,
+        page_height_mm=297.0,
+        margin_top_mm=16.0,
+        margin_bottom_mm=16.0,
+        margin_left_mm=16.0,
+        margin_right_mm=16.0,
+        column_count=2,
+        column_gap_mm=8.0,
+    )
     preview_lines: list[str] = []
 
     with HwpxDocument.new() as document:
@@ -976,34 +986,54 @@ def build_hwpx_editable_wrong_note_document(
             "문제와 선생님 해설 원본은 이미지로 보존되고, 제목·정답·메모 문단은 한글에서 편집할 수 있습니다.",
         )
 
+        # Match the teacher's A4 newspaper layout: one intact source problem per
+        # column, left then right, with an explicit column break between items.
+        problem_section = document.add_section()
+        first_problem_paragraph = problem_section.paragraphs[0]
+        _apply_page_layout_to_paragraph(first_problem_paragraph, problem_layout)
+        first_problem_paragraph.add_column_definition(
+            col_count=2,
+            same_size=True,
+            same_gap=_mm_to_hwpunit(problem_layout.column_gap_mm),
+        )
         for index, page in enumerate(problem_pages, start=1):
-            section = document.add_section()
-            _apply_page_layout_to_paragraph(section.paragraphs[0], page_layout)
-            preview_lines.append(f"문제 {index}쪽")
-            preview_lines.append(
-                _replace_paragraph_content(
-                    section.paragraphs[0],
+            if index == 1:
+                heading_paragraph = first_problem_paragraph
+                preview = _replace_paragraph_content(
+                    heading_paragraph,
                     text=str(page.get("heading") or f"{index}번"),
                     char_pr_id=heading_style_id,
                     base_unit=1500,
                     native_equations=False,
                 )
-            )
-            append_text(section, str(page.get("subheading") or ""))
+            else:
+                heading_paragraph, preview = _append_document_paragraph(
+                    document,
+                    text=str(page.get("heading") or f"{index}번"),
+                    char_pr_id=heading_style_id,
+                    base_unit=1500,
+                    native_equations=False,
+                    section=problem_section,
+                )
+                heading_paragraph.element.set("columnBreak", "1")
+                problem_section.mark_dirty()
+            preview_lines.append(f"문제 {index}칸")
+            preview_lines.append(preview)
+            append_text(problem_section, str(page.get("subheading") or ""))
             visual = page.get("visual")
             if isinstance(visual, dict) and visual.get("data"):
                 _append_question_visual(
                     document,
                     visual=visual,
-                    page_layout=page_layout,
-                    section=section,
+                    page_layout=problem_layout,
+                    section=problem_section,
                     max_height_mm=205.0,
-                    height_fraction=0.78,
+                    height_fraction=0.72,
                 )
                 preview_lines.append(f"[{index}번 문제 원본 이미지]")
             else:
-                append_text(section, "등록된 문제 이미지가 없습니다.")
-            append_text(section, "내 풀이 메모: ")
+                append_text(problem_section, "등록된 문제 이미지가 없습니다.")
+            append_text(problem_section, "내 풀이 메모: ")
 
         divider_section = document.add_section()
         _apply_page_layout_to_paragraph(divider_section.paragraphs[0], page_layout)
