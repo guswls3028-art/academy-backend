@@ -1,18 +1,22 @@
+from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.enrollment.models import Enrollment
-from apps.domains.exams.models import Exam, ExamQuestion, Sheet
-from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.homework_results.models import Homework, HomeworkScore
 from apps.domains.homework_results.views.homework_view import HomeworkViewSet
-from apps.domains.lectures.models import Lecture, Session
-from apps.domains.students.models import Student
 
 
 User = get_user_model()
+Enrollment = apps.get_model("enrollment", "Enrollment")
+Exam = apps.get_model("exams", "Exam")
+ExamQuestion = apps.get_model("exams", "ExamQuestion")
+Sheet = apps.get_model("exams", "Sheet")
+HomeworkAssignment = apps.get_model("homework", "HomeworkAssignment")
+Lecture = apps.get_model("lectures", "Lecture")
+Session = apps.get_model("lectures", "Session")
+Student = apps.get_model("students", "Student")
 
 
 class WorkbookSourceAndGradingTests(TestCase):

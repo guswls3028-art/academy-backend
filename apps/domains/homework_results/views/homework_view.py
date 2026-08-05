@@ -29,8 +29,6 @@ from django.utils import timezone
 from apps.core.permissions import TenantResolvedAndMember
 from apps.core.optimistic_concurrency import assert_expected_updated_at
 
-from apps.domains.exams.models import Exam
-from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.homework_results.models import Homework, HomeworkScore
 from apps.domains.homework_results.serializers.homework import HomeworkSerializer
 from apps.domains.homework_results.services.max_score_sync import (
@@ -41,10 +39,15 @@ from apps.domains.homework_results.services.policy_recalc import (
     recalc_scores_for_homework_change,
 )
 from apps.support.homework_results.homework_view_dependencies import (
+    create_workbook_source_exam,
     delete_homework_assignments,
     get_homework_raw_score_cutline,
     get_session_for_homework,
     get_teacher_or_admin_permission,
+    homework_assignment_enrollment_ids,
+    homework_assignments_for_question_grading,
+    workbook_source_is_ready,
+    workbook_source_none_status,
 )
 
 
@@ -141,14 +144,8 @@ class HomeworkViewSet(ModelViewSet):
             except Exception:
                 questions = []
 
-        assignments = list(
-            HomeworkAssignment.objects.filter(
-                tenant_id=homework.tenant_id,
-                homework=homework,
-                session_id=homework.session_id,
-            )
-            .select_related("enrollment__student")
-            .order_by("enrollment__student__name", "enrollment_id")
+        assignments = homework_assignments_for_question_grading(
+            homework=homework,
         )
         enrollment_ids = [int(item.enrollment_id) for item in assignments]
         scores = {
@@ -180,7 +177,7 @@ class HomeworkViewSet(ModelViewSet):
             "source_status": (
                 str(source_exam.segmentation_status)
                 if source_exam
-                else Exam.SegmentationStatus.NONE
+                else workbook_source_none_status()
             ),
             "questions": questions,
             "rows": rows,
@@ -198,17 +195,9 @@ class HomeworkViewSet(ModelViewSet):
                     {"detail": "운영 과제에만 워크북 원본을 등록할 수 있습니다."}
                 )
             if homework.source_exam_id is None:
-                source_exam = Exam.objects.create(
+                source_exam = create_workbook_source_exam(
                     tenant=request.tenant,
-                    title=f"{homework.title} · 워크북 원본",
-                    description="과제 워크북의 문항·선생님 해설 원본",
-                    exam_type=Exam.ExamType.REGULAR,
-                    is_active=False,
-                    grading_mode=Exam.GradingMode.WRITTEN,
-                    manual_grading_method=Exam.ManualGradingMethod.CORRECTNESS,
-                    max_score=homework.default_max_score,
-                    student_results_published=False,
-                    answer_visibility=Exam.AnswerVisibility.HIDDEN,
+                    homework=homework,
                 )
                 homework.source_exam = source_exam
                 homework.save(update_fields=["source_exam", "updated_at"])
@@ -222,7 +211,7 @@ class HomeworkViewSet(ModelViewSet):
     def question_grading(self, request, pk=None):
         homework = get_object_or_404(self.get_queryset(), pk=pk)
         source_exam = homework.source_exam
-        if source_exam is None or source_exam.segmentation_status != Exam.SegmentationStatus.READY:
+        if not workbook_source_is_ready(source_exam):
             return Response(
                 {"detail": "워크북 문항을 먼저 분리하고 검수를 확정해 주세요."},
                 status=status.HTTP_409_CONFLICT,
@@ -239,12 +228,8 @@ class HomeworkViewSet(ModelViewSet):
         valid_numbers = set(
             source_exam.sheet.questions.values_list("number", flat=True)
         )
-        assignment_enrollment_ids = set(
-            HomeworkAssignment.objects.filter(
-                tenant=request.tenant,
-                homework=homework,
-                session_id=homework.session_id,
-            ).values_list("enrollment_id", flat=True)
+        assignment_enrollment_ids = homework_assignment_enrollment_ids(
+            homework=homework,
         )
         parsed = []
         seen = set()

@@ -1,24 +1,31 @@
+from unittest.mock import patch
+
+from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.test import TestCase
-from unittest.mock import patch
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.enrollment.models import Enrollment
-from apps.domains.exams.models import Exam, ExamQuestion, QuestionExplanation, Sheet
-from apps.domains.homework.models import HomeworkAssignment
-from apps.domains.homework_results.models import Homework, HomeworkScore
-from apps.domains.lectures.models import Lecture, Session
 from apps.domains.results.models import Result, ResultItem, WrongNotePDF
 from apps.domains.results.services.selected_wrong_note_service import (
     WrongNoteSourceSelectionError,
     list_wrong_notes_for_selection,
 )
-from apps.domains.students.models import Student
 from apps.domains.results.views.wrong_note_pdf_view import WrongNotePDFCreateView
 
 
 User = get_user_model()
+Enrollment = apps.get_model("enrollment", "Enrollment")
+Exam = apps.get_model("exams", "Exam")
+ExamQuestion = apps.get_model("exams", "ExamQuestion")
+QuestionExplanation = apps.get_model("exams", "QuestionExplanation")
+Sheet = apps.get_model("exams", "Sheet")
+HomeworkAssignment = apps.get_model("homework", "HomeworkAssignment")
+Homework = apps.get_model("homework_results", "Homework")
+HomeworkScore = apps.get_model("homework_results", "HomeworkScore")
+Lecture = apps.get_model("lectures", "Lecture")
+Session = apps.get_model("lectures", "Session")
+Student = apps.get_model("students", "Student")
 
 
 class SelectedWrongNoteSourceTests(TestCase):

@@ -2,10 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from apps.domains.enrollment.models import Enrollment
-from apps.domains.exams.models import Exam
-from apps.domains.homework.models import HomeworkAssignment
-from apps.domains.homework_results.models import Homework, HomeworkScore
 from apps.domains.results.services.answer_matching import format_answer_for_display
 from apps.domains.results.services.wrong_note_service import (
     WrongNoteQuery,
@@ -15,8 +11,16 @@ from apps.support.results.wrong_note_dependencies import (
     answer_key_map_for_effective_exam,
     explanation_image_key,
     explanation_image_url,
+    get_selected_workbook,
+    get_selected_workbook_score,
     question_image_key,
     question_image_url,
+    selected_regular_exam_exists,
+    selected_regular_exams_for_lecture,
+    selected_source_enrollments,
+    selected_workbook_assignment_exists,
+    selected_workbook_assignments_for_enrollment,
+    selected_workbook_source_is_ready,
 )
 
 
@@ -25,10 +29,10 @@ class WrongNoteSourceSelectionError(ValueError):
 
 
 def _enrollments_for_student(*, tenant_id: int, student_id: int):
-    return Enrollment.objects.filter(
-        tenant_id=int(tenant_id),
-        student_id=int(student_id),
-    ).select_related("student", "lecture")
+    return selected_source_enrollments(
+        tenant_id=tenant_id,
+        student_id=student_id,
+    )
 
 
 def normalize_wrong_note_source_selection(
@@ -72,21 +76,18 @@ def normalize_wrong_note_source_selection(
         seen.add(dedupe_key)
 
         if source_type == "exam":
-            allowed = Exam.objects.filter(
-                id=source_id,
+            allowed = selected_regular_exam_exists(
+                exam_id=source_id,
                 tenant_id=tenant_id,
-                exam_type=Exam.ExamType.REGULAR,
-                is_active=True,
-                sessions__lecture_id=enrollment.lecture_id,
-            ).exists()
+                lecture_id=int(enrollment.lecture_id),
+            )
         else:
-            allowed = HomeworkAssignment.objects.filter(
+            allowed = selected_workbook_assignment_exists(
                 tenant_id=tenant_id,
                 enrollment_id=enrollment_id,
                 homework_id=source_id,
-                homework__session__lecture_id=enrollment.lecture_id,
-                homework__source_exam__segmentation_status=Exam.SegmentationStatus.READY,
-            ).exists()
+                lecture_id=int(enrollment.lecture_id),
+            )
         if not allowed:
             raise WrongNoteSourceSelectionError("현재 학생에게 배정된 자료만 선택할 수 있습니다.")
         normalized.append(
@@ -105,23 +106,16 @@ def _homework_wrong_note_items(
     enrollment_id: int,
     homework_id: int,
 ) -> list[dict[str, Any]]:
-    homework = (
-        Homework.objects.filter(
-            id=int(homework_id),
-            tenant_id=int(tenant_id),
-            source_exam__segmentation_status=Exam.SegmentationStatus.READY,
-        )
-        .select_related("session", "source_exam__sheet")
-        .first()
+    homework = get_selected_workbook(
+        tenant_id=tenant_id,
+        homework_id=homework_id,
     )
     if homework is None or homework.source_exam is None:
         return []
-    score = HomeworkScore.objects.filter(
-        enrollment_id=int(enrollment_id),
+    score = get_selected_workbook_score(
+        enrollment_id=enrollment_id,
         homework=homework,
-        session_id=homework.session_id,
-        attempt_index=1,
-    ).first()
+    )
     raw_marks = (getattr(score, "meta", None) or {}).get("question_marks")
     marks = dict(raw_marks) if isinstance(raw_marks, dict) else {}
     if not marks:
@@ -258,12 +252,10 @@ def list_wrong_note_sources_for_student(*, tenant_id: int, student_id: int) -> l
         .order_by("lecture__title", "id")
     )
     for enrollment in enrollments:
-        exams = Exam.objects.filter(
+        exams = selected_regular_exams_for_lecture(
             tenant_id=tenant_id,
-            exam_type=Exam.ExamType.REGULAR,
-            is_active=True,
-            sessions__lecture_id=enrollment.lecture_id,
-        ).distinct().order_by("title", "id")
+            lecture_id=int(enrollment.lecture_id),
+        )
         for exam in exams:
             total, _ = list_wrong_notes_for_enrollment(
                 enrollment_id=int(enrollment.id),
@@ -283,14 +275,9 @@ def list_wrong_note_sources_for_student(*, tenant_id: int, student_id: int) -> l
                 }
             )
 
-        assignments = (
-            HomeworkAssignment.objects.filter(
-                tenant_id=tenant_id,
-                enrollment=enrollment,
-                homework__source_exam__isnull=False,
-            )
-            .select_related("homework__session", "homework__source_exam")
-            .order_by("homework__session__regular_order", "homework__title", "homework_id")
+        assignments = selected_workbook_assignments_for_enrollment(
+            tenant_id=tenant_id,
+            enrollment=enrollment,
         )
         for assignment in assignments:
             homework = assignment.homework
@@ -309,9 +296,8 @@ def list_wrong_note_sources_for_student(*, tenant_id: int, student_id: int) -> l
                     "title": str(homework.title or "워크북"),
                     "session_order": getattr(homework.session, "regular_order", None),
                     "wrong_note_count": len(items),
-                    "ready": (
-                        homework.source_exam.segmentation_status
-                        == Exam.SegmentationStatus.READY
+                    "ready": selected_workbook_source_is_ready(
+                        homework.source_exam
                     ),
                 }
             )
