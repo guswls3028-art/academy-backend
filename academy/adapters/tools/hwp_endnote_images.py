@@ -9,8 +9,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from io import BytesIO
 import logging
+from pathlib import PurePosixPath
 import struct
+from xml.etree import ElementTree
 import zlib
+from zipfile import ZipFile
 
 from PIL import Image, ImageOps
 
@@ -23,6 +26,8 @@ _MAX_NOTES = 200
 _MAX_PICTURES = 500
 _MAX_IMAGE_PIXELS = 40_000_000
 _MAX_DECOMPRESSED_IMAGE_BYTES = 160 * 1024 * 1024
+_MAX_HWPX_ENTRIES = 5_000
+_MAX_HWPX_UNCOMPRESSED_BYTES = 200 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -32,6 +37,19 @@ class HwpEndnoteVisual:
     width: int
     height: int
     picture_count: int
+
+
+@dataclass(frozen=True)
+class HwpEndnoteExtraction:
+    control_numbers: tuple[int, ...]
+    visuals: tuple[HwpEndnoteVisual, ...]
+
+    @property
+    def missing_visual_numbers(self) -> tuple[int, ...]:
+        visual_numbers = {visual.number for visual in self.visuals}
+        return tuple(
+            number for number in self.control_numbers if number not in visual_numbers
+        )
 
 
 def _iter_records(data: bytes):
@@ -94,6 +112,17 @@ def _collect_endnote_picture_ids(records) -> list[tuple[int, list[int]]]:
                 current_picture_ids.append(int(bindata_id))
     finish()
     return notes
+
+
+def _collect_endnote_numbers(records) -> list[int]:
+    numbers: list[int] = []
+    for tag, _level, payload in records:
+        if tag != _CTRL_HEADER_TAG or len(payload) < 8 or payload[:4] != _ENDNOTE_CHID:
+            continue
+        number = struct.unpack_from("<I", payload, 4)[0]
+        if 0 < number <= 999 and number not in numbers:
+            numbers.append(int(number))
+    return numbers
 
 
 def _read_body_sections(ole) -> list[bytes]:
@@ -176,8 +205,8 @@ def _stack_as_png(images: list[Image.Image]) -> tuple[bytes, int, int]:
     return data, width, height
 
 
-def extract_hwp_endnote_visuals(path: str) -> list[HwpEndnoteVisual]:
-    """Return teacher-authored endnote visuals ordered by note number."""
+def extract_hwp_endnotes(path: str) -> HwpEndnoteExtraction:
+    """Return legacy HWP endnote coverage and source visuals."""
     import olefile
 
     if not olefile.isOleFile(path):
@@ -185,8 +214,13 @@ def extract_hwp_endnote_visuals(path: str) -> list[HwpEndnoteVisual]:
 
     with olefile.OleFileIO(path) as ole:
         notes: list[tuple[int, list[int]]] = []
+        control_numbers: list[int] = []
         for section in _read_body_sections(ole):
-            notes.extend(_collect_endnote_picture_ids(_iter_records(section)))
+            records = list(_iter_records(section))
+            notes.extend(_collect_endnote_picture_ids(iter(records)))
+            for number in _collect_endnote_numbers(iter(records)):
+                if number not in control_numbers:
+                    control_numbers.append(number)
         streams = _bindata_streams_by_id(ole)
         visuals: list[HwpEndnoteVisual] = []
         seen_numbers: set[int] = set()
@@ -219,7 +253,126 @@ def extract_hwp_endnote_visuals(path: str) -> list[HwpEndnoteVisual]:
                 )
             )
             seen_numbers.add(number)
-    return sorted(visuals, key=lambda item: item.number)
+    return HwpEndnoteExtraction(
+        control_numbers=tuple(control_numbers),
+        visuals=tuple(sorted(visuals, key=lambda item: item.number)),
+    )
+
+
+def extract_hwp_endnote_visuals(path: str) -> list[HwpEndnoteVisual]:
+    """Return teacher-authored legacy HWP endnote visuals by note number."""
+    return list(extract_hwp_endnotes(path).visuals)
+
+
+def _safe_hwpx_entries(archive: ZipFile):
+    entries = archive.infolist()
+    if len(entries) > _MAX_HWPX_ENTRIES:
+        raise ValueError("HWPX 항목 수가 안전 처리 한도를 초과했습니다.")
+    if sum(max(0, entry.file_size) for entry in entries) > _MAX_HWPX_UNCOMPRESSED_BYTES:
+        raise ValueError("HWPX 압축 해제 크기가 안전 처리 한도를 초과했습니다.")
+    for entry in entries:
+        path = PurePosixPath(entry.filename)
+        if path.is_absolute() or ".." in path.parts:
+            raise ValueError("안전하지 않은 HWPX 경로가 포함되어 있습니다.")
+    return entries
+
+
+def extract_hwpx_endnotes(path: str) -> HwpEndnoteExtraction:
+    """Return HWPX endnote visuals without rewriting the source document."""
+    with ZipFile(path) as archive:
+        entries = _safe_hwpx_entries(archive)
+        names = {entry.filename for entry in entries}
+        image_members = {
+            PurePosixPath(name).stem.lower(): name
+            for name in names
+            if PurePosixPath(name).parts[:1] == ("BinData",)
+        }
+        section_names = sorted(
+            (
+                name
+                for name in names
+                if PurePosixPath(name).parts[:1] == ("Contents",)
+                and PurePosixPath(name).name.lower().startswith("section")
+                and PurePosixPath(name).suffix.lower() == ".xml"
+            ),
+            key=lambda name: int(
+                "".join(character for character in PurePosixPath(name).stem if character.isdigit())
+                or "0"
+            ),
+        )
+        control_numbers: list[int] = []
+        visuals: list[HwpEndnoteVisual] = []
+        seen_numbers: set[int] = set()
+        total_picture_count = 0
+
+        for section_name in section_names:
+            try:
+                root = ElementTree.fromstring(archive.read(section_name))
+            except ElementTree.ParseError:
+                continue
+            for endnote in root.iter():
+                if endnote.tag.rsplit("}", 1)[-1] != "endNote":
+                    continue
+                raw_number = str(endnote.attrib.get("number") or "")
+                if not raw_number.isdigit():
+                    continue
+                number = int(raw_number)
+                if not 0 < number <= 999:
+                    continue
+                if number not in control_numbers:
+                    control_numbers.append(number)
+                if number in seen_numbers or len(visuals) >= _MAX_NOTES:
+                    continue
+
+                image_refs = []
+                for element in endnote.iter():
+                    if element.tag.rsplit("}", 1)[-1] != "img":
+                        continue
+                    image_ref = str(element.attrib.get("binaryItemIDRef") or "").strip()
+                    if image_ref and image_ref.lower() not in image_refs:
+                        image_refs.append(image_ref.lower())
+
+                remaining = max(_MAX_PICTURES - total_picture_count, 0)
+                images = []
+                for image_ref in image_refs[:remaining]:
+                    member_name = image_members.get(image_ref)
+                    if not member_name:
+                        continue
+                    image = _load_picture(archive.read(member_name))
+                    if image is not None:
+                        images.append(image)
+                if not images:
+                    continue
+                try:
+                    png_bytes, width, height = _stack_as_png(images)
+                finally:
+                    for image in images:
+                        image.close()
+                visuals.append(
+                    HwpEndnoteVisual(
+                        number=number,
+                        png_bytes=png_bytes,
+                        width=width,
+                        height=height,
+                        picture_count=len(images),
+                    )
+                )
+                total_picture_count += len(images)
+                seen_numbers.add(number)
+
+    return HwpEndnoteExtraction(
+        control_numbers=tuple(control_numbers),
+        visuals=tuple(sorted(visuals, key=lambda item: item.number)),
+    )
+
+
+def extract_document_endnotes(path: str, filename: str) -> HwpEndnoteExtraction:
+    suffix = PurePosixPath(str(filename or "").lower()).suffix
+    if suffix == ".hwp":
+        return extract_hwp_endnotes(path)
+    if suffix == ".hwpx":
+        return extract_hwpx_endnotes(path)
+    raise ValueError("HWP 또는 HWPX 파일이 필요합니다.")
 
 
 def crop_problem_from_endnote(png_bytes: bytes, ratio: float = 0.3) -> bytes:

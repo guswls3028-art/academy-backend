@@ -67,8 +67,10 @@
    문항 수를 확정한다.
 2. 같은 tenant의 빈 시험 ID와 원본 파일을
    `POST /exams/pdf-extract/`에 보낸다.
-3. 원본은 tenant 전용 R2 경로에 `problem_source` 자산으로 저장한다.
-4. PDF, 이미지 또는 HWP 5.x는 `question_segmentation` 작업으로 전달하고
+3. 원본은 tenant 전용 R2 경로에 `problem_source` 자산으로 저장한다. PDF는 같은
+   객체를 기존 배포용 `problem_pdf` 메타데이터에도 연결해 브라우저가 큰 파일을
+   두 번 전송하지 않는다.
+4. PDF, 이미지, HWP 5.x 또는 HWPX는 `question_segmentation` 작업으로 전달하고
    `segmentation_status=processing`으로 바꾼다.
 5. 성공 콜백은 정본 문항을 바로 쓰지 않고 `ExamQuestionProposal`에 문제,
    원본 번호, 해설 이미지·텍스트와 출처를 저장한 뒤 `review_required`로 바꾼다.
@@ -95,16 +97,27 @@ PDF는 앞선 페이지에서 문항이 확인된 경우 그 표제 페이지부
 `boxes`에는 제외된 해설 박스를 섞지 않는다. 추출 텍스트는 교사가 쓴 내용을
 읽은 것이며 새 해설을 생성하지 않는다.
 
-허용 확장자는 PDF, PNG, JPG/JPEG, HWP/HWPX이고 최대 크기는 50MB다.
-HWP 5.x에서 번호가 붙은 미주에 문제·필기 해설 그림을 넣은 Ymath 양식은 OLE
-레코드와 BinData를 직접 읽는다. 압축 BMP/JPEG/PNG/GIF를 제한 크기로 해제하고,
-위쪽 문제 영역과 전체 원본 해설 이미지를 각각 저장한다. 여러 그림인 미주는
-원래 순서대로 세로 결합한다. 미주 그림이 없거나 지원할 수 없는 HWP, HWPX는
-`202 Accepted`와 `status=conversion_required`로 닫고 PDF 변환본을 요청한다.
-원본 HWP의 문장·수식·필기 내용을 AI가 다시 쓰거나 생성하지 않는다.
+허용 확장자는 PDF, PNG, JPG/JPEG, HWP/HWPX이고 최대 크기는 50MB다. 업로드
+화면은 한 진입점에서 다음 세 자료 형태를 받는다.
 
-Ymath 운영의 우선 경로는 **답 표시가 없는 학생용 문제지 PDF/이미지**를 주
-파일로, 같은 시험의 **선생님 해설 HWP 5.x**를 선택 파일로 함께 올리는 것이다.
+- **문제+해설 한 파일**: 뒤쪽 번호별 해설 구간이 있는 PDF, 또는 번호별 미주에
+  문제와 필기 해설 원본 그림이 모두 있는 HWP/HWPX 한 개
+- **문제 파일만**: 답 표시가 없는 PDF/PNG/JPG/JPEG 한 개
+- **문제·해설 두 파일**: 답 표시가 없는 PDF/이미지와 같은 번호의 선생님 해설
+  HWP/HWPX
+
+HWP 5.x는 OLE 레코드와 BinData를, HWPX는 ZIP 패키지의 미주와 원본 BinData
+참조를 직접 읽는다. 압축 BMP/JPEG/PNG/GIF를 제한 크기로 해제하고, 위쪽 문제
+영역과 전체 원본 해설 이미지를 각각 저장한다. 여러 그림인 미주는 원래 순서대로
+세로 결합한다. 단일 HWP/HWPX는 번호가 있는 **모든 미주**에서 원본 그림을 읽은
+경우에만 문제+해설 통합 자료로 처리한다. 일부 미주에 그림이 없으면 도형 같은
+부분 그림을 전체 해설로 오인하지 않고 작업 결과를 `conversion_required`로 닫아,
+같은 문제지를 PDF로 저장해 다시 올리도록 안내한다. 원본은 이미 tenant 전용
+자산으로 보존하며 문장·수식·필기 내용을 AI가 다시 쓰거나 생성하지 않는다.
+
+문제지와 해설지가 분리된 Ymath 자료는 **답 표시가 없는 학생용 문제지
+PDF/이미지**를 주 파일로, 같은 시험의 **선생님 해설 HWP/HWPX**를 선택 파일로
+함께 올린다.
 두 원본은 각각 `problem_source`, `teacher_explanation_source` 자산으로 보존하고,
 worker는 학생용 원본에서 자른 문제와 HWP 미주 해설을 원본 문항 번호로만
 연결한다. 한 문항도 번호가 맞지 않으면 성공으로 가장하지 않고 작업을
@@ -112,8 +125,9 @@ worker는 학생용 원본에서 자른 문제와 HWP 미주 해설을 원본 �
 해설 유무를 확인한다. 문제 파일에 필기 정답이 직접 그려진 경우에는 크롭으로
 깨끗한 문제를 복원할 수 없으므로 이 짝 파일 경로를 사용해야 한다.
 
-단일 HWP 업로드는 과거 Ymath 자료를 위한 보조 경로다. 이때 각 미주의 위쪽
-30%를 초기 문제 영역으로 제안하지만, 교직원은 검수 화면에서 원본 높이의
+단일 HWP/HWPX 업로드는 문제와 필기 해설이 각 미주 원본 그림에 함께 있는 자료를
+위한 경로다. 이때 각 미주의 위쪽 30%를 초기 문제 영역으로 제안하지만, 교직원은
+검수 화면에서 원본 높이의
 8~98% 범위로 문항별 경계를 조절할 수 있다. 조절한 파생 이미지는 tenant 전용
 키로 새로 저장하고 승인 transaction이 실패하면 제거한다. 원본 해설 이미지는
 바꾸지 않으며, 짝 파일에서 온 깨끗한 PDF 문제에는 이 크롭 조절을 적용하지
@@ -304,7 +318,7 @@ HWPX는 세로 A4를 한 문제/해설 조각당 한 구역·한 쪽으로 만�
 |--------|------|------|
 | POST | `/exams/` | 시험과 채점 계약 생성 |
 | PATCH | `/exams/{id}/` | 채점 방식·학생 성적 공개 전환. 문항·정답·기존 결과는 보존 |
-| POST | `/exams/pdf-extract/` | 주 원본과 선택 `explanation_file` HWP 보관, 문항·원본 해설 분리 요청 |
+| POST | `/exams/pdf-extract/` | 주 원본 PDF/이미지/HWP/HWPX와 선택 `explanation_file` HWP/HWPX 보관, 문항·원본 해설 분리 요청 |
 | GET | `/exams/{id}/segmentation-review/` | 문항·해설 검수 후보와 만료형 이미지 URL 조회 |
 | POST | `/exams/{id}/segmentation-review/approve/` | 번호·제외를 반영해 빈 시험 문항과 원본 해설 확정 |
 | GET | `/results/admin/exams/{id}/manual-grading/` | 직접 채점 표와 버전 조회 |
@@ -335,8 +349,9 @@ python manage.py test `
   --settings apps.api.config.settings.test
 ```
 
-검증은 PDF/HWP 처리 상태, 검수 전 proposal, 승인·번호 변경·제외·tenant 차단,
-압축 HWP 이미지와 Ymath 실자료, 잠긴 시험 보호, 정오·부분점수,
+검증은 PDF/HWP/HWPX 처리 상태, 검수 전 proposal, 승인·번호 변경·제외·tenant 차단,
+압축 HWP 이미지, HWPX 미주 원본과 일부 미주 그림 누락의 실패 폐쇄, Ymath
+실자료, 잠긴 시험 보호, 정오·부분점수,
 공통 dispatcher 크롭 재사용, 짧은 복습지 표지 제외,
 후행 정답·해설의 문항 제외와 연속 해설 추출,
 오답노트와 기존 `0` 호환 의미, 선택형 자동채점 정오 조회·직접 수정 차단과 OMR 보정 경계,
