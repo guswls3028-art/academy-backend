@@ -30,6 +30,64 @@ def delete_homework_assignments(*, tenant: Any, homework: Any) -> int:
     return int(deleted_count)
 
 
+def create_workbook_source_exam(*, tenant: Any, homework: Any) -> Any:
+    from apps.domains.exams.models import Exam
+
+    return Exam.objects.create(
+        tenant=tenant,
+        title=f"{homework.title} · 워크북 원본",
+        description="과제 워크북의 문항·선생님 해설 원본",
+        exam_type=Exam.ExamType.REGULAR,
+        is_active=False,
+        grading_mode=Exam.GradingMode.WRITTEN,
+        manual_grading_method=Exam.ManualGradingMethod.CORRECTNESS,
+        max_score=homework.default_max_score,
+        student_results_published=False,
+        answer_visibility=Exam.AnswerVisibility.HIDDEN,
+    )
+
+
+def workbook_source_none_status() -> str:
+    from apps.domains.exams.models import Exam
+
+    return str(Exam.SegmentationStatus.NONE)
+
+
+def workbook_source_is_ready(source_exam: Any) -> bool:
+    from apps.domains.exams.models import Exam
+
+    return (
+        source_exam is not None
+        and source_exam.segmentation_status == Exam.SegmentationStatus.READY
+    )
+
+
+def homework_assignments_for_question_grading(*, homework: Any) -> list[Any]:
+    from apps.domains.homework.models import HomeworkAssignment
+
+    return list(
+        HomeworkAssignment.objects.filter(
+            tenant_id=homework.tenant_id,
+            homework=homework,
+            session_id=homework.session_id,
+        )
+        .select_related("enrollment__student")
+        .order_by("enrollment__student__name", "enrollment_id")
+    )
+
+
+def homework_assignment_enrollment_ids(*, homework: Any) -> set[int]:
+    from apps.domains.homework.models import HomeworkAssignment
+
+    return set(
+        HomeworkAssignment.objects.filter(
+            tenant_id=homework.tenant_id,
+            homework=homework,
+            session_id=homework.session_id,
+        ).values_list("enrollment_id", flat=True)
+    )
+
+
 def get_homework_raw_score_cutline(
     *,
     session: Any,

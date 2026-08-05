@@ -20,6 +20,10 @@ class HomeworkSerializer(serializers.ModelSerializer):
     effective_cutline_value = serializers.SerializerMethodField()
     effective_round_unit_percent = serializers.SerializerMethodField()
     uses_session_cutline_default = serializers.SerializerMethodField()
+    source_exam_id = serializers.IntegerField(read_only=True)
+    source_status = serializers.SerializerMethodField()
+    source_filename = serializers.SerializerMethodField()
+    source_question_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Homework
@@ -27,6 +31,10 @@ class HomeworkSerializer(serializers.ModelSerializer):
             "id",
             "homework_type",
             "template_homework",
+            "source_exam_id",
+            "source_status",
+            "source_filename",
+            "source_question_count",
             "session",
             "title",
             "max_score",
@@ -144,3 +152,21 @@ class HomeworkSerializer(serializers.ModelSerializer):
 
     def get_uses_session_cutline_default(self, obj: Homework) -> bool:
         return self._settings(obj).uses_session_default
+
+    @staticmethod
+    def get_source_status(obj: Homework) -> str:
+        return str(getattr(getattr(obj, "source_exam", None), "segmentation_status", "none") or "none")
+
+    @staticmethod
+    def get_source_filename(obj: Homework) -> str:
+        return str(getattr(getattr(obj, "source_exam", None), "source_filename", "") or "")
+
+    @staticmethod
+    def get_source_question_count(obj: Homework) -> int:
+        source_exam = getattr(obj, "source_exam", None)
+        if not source_exam:
+            return 0
+        try:
+            return int(source_exam.sheet.total_questions or 0)
+        except Exception:
+            return 0

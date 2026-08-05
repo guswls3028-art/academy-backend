@@ -389,6 +389,32 @@ class WrongNoteServiceSessionExamTests(TestCase):
             original,
         )
 
+    def test_legacy_source_fingerprint_stays_rolling_deploy_compatible(self):
+        legacy_item = {"exam_id": 5, "question_id": 9}
+        legacy_fingerprint = build_wrong_note_source_fingerprint(
+            total=1,
+            items=[legacy_item],
+        )
+
+        self.assertEqual(
+            legacy_fingerprint,
+            "fc38cd89726bcd06aaf3f31bd83b8e14800697caf6fab9246da51a05de5940b6",
+        )
+        self.assertNotEqual(
+            build_wrong_note_source_fingerprint(
+                total=1,
+                items=[
+                    {
+                        **legacy_item,
+                        "source_type": "exam",
+                        "source_id": 5,
+                        "enrollment_id": 42,
+                    }
+                ],
+            ),
+            legacy_fingerprint,
+        )
+
     def test_api_source_fingerprint_is_independent_of_page_size(self):
         self._create_wrong_result(
             title="첫 fingerprint 시험",

@@ -162,3 +162,120 @@ def explanation_image_url(*, question: Any, tenant_id: int) -> str:
         return generate_presigned_get_url_storage(key=key, expires_in=3600)
     except Exception:
         return ""
+
+
+def selected_source_enrollments(*, tenant_id: int, student_id: int):
+    from apps.domains.enrollment.models import Enrollment
+
+    return Enrollment.objects.filter(
+        tenant_id=int(tenant_id),
+        student_id=int(student_id),
+    ).select_related("student", "lecture")
+
+
+def selected_regular_exam_exists(
+    *,
+    exam_id: int,
+    tenant_id: int,
+    lecture_id: int,
+) -> bool:
+    from apps.domains.exams.models import Exam
+
+    return Exam.objects.filter(
+        id=int(exam_id),
+        tenant_id=int(tenant_id),
+        exam_type=Exam.ExamType.REGULAR,
+        is_active=True,
+        sessions__lecture_id=int(lecture_id),
+    ).exists()
+
+
+def selected_workbook_assignment_exists(
+    *,
+    tenant_id: int,
+    enrollment_id: int,
+    homework_id: int,
+    lecture_id: int,
+) -> bool:
+    from apps.domains.exams.models import Exam
+    from apps.domains.homework.models import HomeworkAssignment
+
+    return HomeworkAssignment.objects.filter(
+        tenant_id=int(tenant_id),
+        enrollment_id=int(enrollment_id),
+        homework_id=int(homework_id),
+        homework__session__lecture_id=int(lecture_id),
+        homework__source_exam__segmentation_status=Exam.SegmentationStatus.READY,
+    ).exists()
+
+
+def get_selected_workbook(*, tenant_id: int, homework_id: int) -> Any | None:
+    from apps.domains.exams.models import Exam
+    from apps.domains.homework_results.models import Homework
+
+    return (
+        Homework.objects.filter(
+            id=int(homework_id),
+            tenant_id=int(tenant_id),
+            source_exam__segmentation_status=Exam.SegmentationStatus.READY,
+        )
+        .select_related("session", "source_exam__sheet")
+        .first()
+    )
+
+
+def get_selected_workbook_score(*, enrollment_id: int, homework: Any) -> Any | None:
+    from apps.domains.homework_results.models import HomeworkScore
+
+    return HomeworkScore.objects.filter(
+        enrollment_id=int(enrollment_id),
+        homework=homework,
+        session_id=homework.session_id,
+        attempt_index=1,
+    ).first()
+
+
+def selected_regular_exams_for_lecture(*, tenant_id: int, lecture_id: int):
+    from apps.domains.exams.models import Exam
+
+    return (
+        Exam.objects.filter(
+            tenant_id=int(tenant_id),
+            exam_type=Exam.ExamType.REGULAR,
+            is_active=True,
+            sessions__lecture_id=int(lecture_id),
+        )
+        .distinct()
+        .order_by("title", "id")
+    )
+
+
+def selected_workbook_assignments_for_enrollment(
+    *,
+    tenant_id: int,
+    enrollment: Any,
+):
+    from apps.domains.homework.models import HomeworkAssignment
+
+    return (
+        HomeworkAssignment.objects.filter(
+            tenant_id=int(tenant_id),
+            enrollment=enrollment,
+            homework__source_exam__isnull=False,
+        )
+        .select_related("homework__session", "homework__source_exam")
+        .order_by(
+            "homework__session__regular_order",
+            "homework__title",
+            "homework_id",
+        )
+    )
+
+
+def selected_workbook_source_is_ready(source_exam: Any) -> bool:
+    from apps.domains.exams.models import Exam
+
+    return (
+        source_exam is not None
+        and source_exam.segmentation_status == Exam.SegmentationStatus.READY
+    )

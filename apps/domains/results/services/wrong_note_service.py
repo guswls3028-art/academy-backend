@@ -104,8 +104,7 @@ def build_wrong_note_source_fingerprint(
     fingerprint_items = []
     for item in items:
         attempt_created_at = item.get("attempt_created_at")
-        fingerprint_items.append(
-            {
+        fingerprint_item = {
                 "exam_id": item.get("exam_id"),
                 "exam_title": item.get("exam_title"),
                 "session_order": item.get("session_order"),
@@ -132,7 +131,21 @@ def build_wrong_note_source_fingerprint(
                     (item.get("extra") or {}).get("explanation_text") or ""
                 ),
             }
-        )
+        # Keep the legacy single-enrollment fingerprint byte-for-byte stable
+        # across rolling deploys. Selected-source rows opt into the new scope
+        # fields explicitly, so queued jobs made by old instances stay valid.
+        if any(
+            key in item
+            for key in ("source_type", "source_id", "enrollment_id")
+        ):
+            fingerprint_item.update(
+                {
+                    "source_type": item.get("source_type") or "exam",
+                    "source_id": item.get("source_id") or item.get("exam_id"),
+                    "enrollment_id": item.get("enrollment_id"),
+                }
+            )
+        fingerprint_items.append(fingerprint_item)
     fingerprint_items.sort(
         key=lambda item: (
             item["session_order"]

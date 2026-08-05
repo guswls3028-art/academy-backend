@@ -53,3 +53,32 @@ class WrongNoteListResponseSerializer(serializers.Serializer):
     next = serializers.IntegerField(allow_null=True)   # 다음 offset
     prev = serializers.IntegerField(allow_null=True)   # 이전 offset
     results = WrongNoteItemSerializer(many=True)
+
+
+class WrongNoteSourceSelectionSerializer(serializers.Serializer):
+    type = serializers.ChoiceField(choices=["exam", "homework"])
+    id = serializers.IntegerField(min_value=1)
+    enrollment_id = serializers.IntegerField(min_value=1)
+
+
+class WrongNoteSourceSerializer(WrongNoteSourceSelectionSerializer):
+    lecture_id = serializers.IntegerField(min_value=1)
+    lecture_title = serializers.CharField(allow_blank=True)
+    title = serializers.CharField(allow_blank=True)
+    session_order = serializers.IntegerField(allow_null=True)
+    wrong_note_count = serializers.IntegerField(min_value=0)
+    ready = serializers.BooleanField()
+
+
+class WrongNoteSourceCatalogResponseSerializer(serializers.Serializer):
+    student_id = serializers.IntegerField(min_value=1)
+    sources = WrongNoteSourceSerializer(many=True)
+
+
+class WrongNoteSelectedPreviewRequestSerializer(serializers.Serializer):
+    student_id = serializers.IntegerField(min_value=1)
+    source_selection = WrongNoteSourceSelectionSerializer(many=True)
+
+
+class WrongNoteSelectedPreviewResponseSerializer(WrongNoteListResponseSerializer):
+    source_selection = WrongNoteSourceSelectionSerializer(many=True)

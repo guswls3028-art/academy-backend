@@ -77,6 +77,18 @@ class Homework(TimestampModel):
         help_text="일반 과제가 참조하는 템플릿",
     )
 
+    source_exam = models.OneToOneField(
+        "exams.Exam",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="source_homework",
+        help_text=(
+            "워크북 문항·해설 원본을 보관하는 비노출 regular Exam. "
+            "시험 분리·검수 엔진을 과제에서도 동일하게 사용한다."
+        ),
+    )
+
     title = models.CharField(max_length=255)
 
     status = models.CharField(

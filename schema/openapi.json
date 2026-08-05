@@ -2731,6 +2731,22 @@
             "nullable": true,
             "type": "integer"
           },
+          "source_exam_id": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "source_filename": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "source_question_count": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "source_status": {
+            "readOnly": true,
+            "type": "string"
+          },
           "template_homework": {
             "description": "일반 과제가 참조하는 템플릿",
             "nullable": true,
@@ -2756,6 +2772,10 @@
           "effective_cutline_value",
           "effective_round_unit_percent",
           "id",
+          "source_exam_id",
+          "source_filename",
+          "source_question_count",
+          "source_status",
           "title",
           "updated_at",
           "uses_session_cutline_default"
@@ -13848,6 +13868,14 @@
         ],
         "type": "object"
       },
+      "TypeEnum": {
+        "description": "* `exam` - exam\n* `homework` - homework",
+        "enum": [
+          "exam",
+          "homework"
+        ],
+        "type": "string"
+      },
       "VisibilityEnum": {
         "description": "* `ENROLLED` - 수강생 전용\n* `PUBLIC` - 전체 공개",
         "enum": [
@@ -13936,6 +13964,256 @@
           "month",
           "staff",
           "year"
+        ],
+        "type": "object"
+      },
+      "WrongNoteItem": {
+        "description": "오답노트 단일 문항 아이템\n\n✅ 의도:\n- ResultFact/ResultItem 구조가 프로젝트마다 조금 달라도\n  View에서 dict로 만들어 serialize 가능하게 \"단순 Serializer\"로 고정",
+        "properties": {
+          "answer_type": {
+            "type": "string"
+          },
+          "attempt_created_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "attempt_id": {
+            "type": "integer"
+          },
+          "correct_answer": {
+            "type": "string"
+          },
+          "exam_id": {
+            "type": "integer"
+          },
+          "exam_title": {
+            "type": "string"
+          },
+          "explanation_image_url": {
+            "type": "string"
+          },
+          "extra": {},
+          "has_question_image": {
+            "type": "boolean"
+          },
+          "has_teacher_explanation": {
+            "type": "boolean"
+          },
+          "include_in_wrong_note": {
+            "type": "boolean"
+          },
+          "is_correct": {
+            "type": "boolean"
+          },
+          "max_score": {
+            "format": "double",
+            "type": "number"
+          },
+          "meta": {},
+          "question_id": {
+            "type": "integer"
+          },
+          "question_image_url": {
+            "type": "string"
+          },
+          "question_number": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "score": {
+            "format": "double",
+            "type": "number"
+          },
+          "session_order": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "session_title": {
+            "type": "string"
+          },
+          "student_answer": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "attempt_created_at",
+          "attempt_id",
+          "exam_id",
+          "is_correct",
+          "max_score",
+          "question_id",
+          "score"
+        ],
+        "type": "object"
+      },
+      "WrongNoteSelectedPreviewRequestRequest": {
+        "properties": {
+          "source_selection": {
+            "items": {
+              "$ref": "#/components/schemas/WrongNoteSourceSelectionRequest"
+            },
+            "type": "array"
+          },
+          "student_id": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "source_selection",
+          "student_id"
+        ],
+        "type": "object"
+      },
+      "WrongNoteSelectedPreviewResponse": {
+        "description": "페이지네이션 포함 응답",
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "next": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "prev": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/WrongNoteItem"
+            },
+            "type": "array"
+          },
+          "source_fingerprint": {
+            "maxLength": 64,
+            "minLength": 64,
+            "type": "string"
+          },
+          "source_selection": {
+            "items": {
+              "$ref": "#/components/schemas/WrongNoteSourceSelection"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "count",
+          "next",
+          "prev",
+          "results",
+          "source_fingerprint",
+          "source_selection"
+        ],
+        "type": "object"
+      },
+      "WrongNoteSource": {
+        "properties": {
+          "enrollment_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "lecture_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "lecture_title": {
+            "type": "string"
+          },
+          "ready": {
+            "type": "boolean"
+          },
+          "session_order": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "$ref": "#/components/schemas/TypeEnum"
+          },
+          "wrong_note_count": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "id",
+          "lecture_id",
+          "lecture_title",
+          "ready",
+          "session_order",
+          "title",
+          "type",
+          "wrong_note_count"
+        ],
+        "type": "object"
+      },
+      "WrongNoteSourceCatalogResponse": {
+        "properties": {
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/WrongNoteSource"
+            },
+            "type": "array"
+          },
+          "student_id": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sources",
+          "student_id"
+        ],
+        "type": "object"
+      },
+      "WrongNoteSourceSelection": {
+        "properties": {
+          "enrollment_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "type": {
+            "$ref": "#/components/schemas/TypeEnum"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "id",
+          "type"
+        ],
+        "type": "object"
+      },
+      "WrongNoteSourceSelectionRequest": {
+        "properties": {
+          "enrollment_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "type": {
+            "$ref": "#/components/schemas/TypeEnum"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "id",
+          "type"
         ],
         "type": "object"
       }
@@ -25651,6 +25929,160 @@
         ]
       }
     },
+    "/api/v1/homeworks/{id}/question-grading/": {
+      "get": {
+        "operationId": "homeworks_question_grading_retrieve",
+        "parameters": [
+          {
+            "description": "homework을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Homework"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "homeworks"
+        ]
+      },
+      "patch": {
+        "operationId": "homeworks_question_grading_partial_update",
+        "parameters": [
+          {
+            "description": "homework을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedHomeworkRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedHomeworkRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedHomeworkRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Homework"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "homeworks"
+        ]
+      }
+    },
+    "/api/v1/homeworks/{id}/source-exam/": {
+      "post": {
+        "operationId": "homeworks_source_exam_create",
+        "parameters": [
+          {
+            "description": "homework을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HomeworkRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/HomeworkRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/HomeworkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Homework"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "homeworks"
+        ]
+      }
+    },
     "/api/v1/internal/video/asg-interrupt-status/": {
       "get": {
         "description": "queue_depth_lambda: interrupt 시 BacklogCount 퍼블리시 스킵 (scale-out runaway 방지).\nGET /api/v1/internal/video/asg-interrupt-status/\nReturns: {\"interrupt\": bool}",
@@ -36068,6 +36500,92 @@
         "responses": {
           "200": {
             "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/api/v1/results/wrong-notes/preview/": {
+      "post": {
+        "operationId": "results_wrong_notes_preview_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WrongNoteSelectedPreviewRequestRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/WrongNoteSelectedPreviewRequestRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/WrongNoteSelectedPreviewRequestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WrongNoteSelectedPreviewResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/api/v1/results/wrong-notes/sources/": {
+      "get": {
+        "operationId": "results_wrong_notes_sources_retrieve",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WrongNoteSourceCatalogResponse"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [

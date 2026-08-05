@@ -51,6 +51,10 @@ from apps.domains.results.views.question_stats_views import (
 from apps.domains.results.views.wrong_note_view import WrongNoteView
 from apps.domains.results.views.wrong_note_pdf_view import WrongNotePDFCreateView
 from apps.domains.results.views.wrong_note_pdf_status_view import WrongNotePDFStatusView
+from apps.domains.results.views.wrong_note_source_view import (
+    WrongNoteSelectedPreviewView,
+    WrongNoteSourceCatalogView,
+)
 
 from apps.domains.results.views.exam_attempt_view import ExamAttemptViewSet
 from apps.domains.results.views.admin_clinic_targets_view import AdminClinicTargetsView
@@ -162,6 +166,16 @@ urlpatterns = [
     path("admin/attempt-history/", AdminAttemptHistoryView.as_view(), name="admin-attempt-history"),
     path("admin/clinic-targets/", AdminClinicTargetsView.as_view(), name="admin-clinic-targets"),
     path("wrong-notes", WrongNoteView.as_view(), name="wrong-note"),
+    path(
+        "wrong-notes/sources/",
+        WrongNoteSourceCatalogView.as_view(),
+        name="wrong-note-source-catalog",
+    ),
+    path(
+        "wrong-notes/preview/",
+        WrongNoteSelectedPreviewView.as_view(),
+        name="wrong-note-selected-preview",
+    ),
     path("wrong-notes/pdf/", WrongNotePDFCreateView.as_view(), name="wrong-note-pdf-create"),
     path("wrong-notes/pdf/<int:job_id>/", WrongNotePDFStatusView.as_view(), name="wrong-note-pdf-status"),
     path("wrong-notes/documents/", WrongNotePDFCreateView.as_view(), name="wrong-note-document-create"),

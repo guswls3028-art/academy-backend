@@ -273,6 +273,14 @@ cross-tenant fallback을 사용하지 않는다.
 검증한다. 같은 시험이 여러 회차에 연결되어도 문항은 한 번만 싣고, 선택
 범위 안의 가장 이른 회차를 표시한다.
 
+학생 상세의 **통합 오답노트**는 같은 학생의 여러 수강 강의에서 시험과
+워크북을 각각 선택해 한 문서로 묶는다. 선택 원본은
+`{type: exam|homework, id, enrollment_id}`로 고정하며, 서버가 모든 enrollment의
+student·tenant와 각 시험의 강의 연결 또는 과제 배정을 다시 검증한다. 워크북은
+`HomeworkScore.meta.question_marks`에서 X 또는 O·복습 문항을 읽고 연결된 비노출
+원본 시험의 문제·선생님 해설 이미지를 사용한다. 기존 단일 시험·회차 API는
+`source_selection=[]`일 때 그대로 동작한다.
+
 여기서 회차는 화면 배치 순서인 `Session.order`가 아니라 정규 수업 번호인
 `Session.regular_order`다. 보강(`session_type=SUPPLEMENT`)은 정규 회차 범위에
 포함하지 않는다. 따라서 정규 수업 사이에 보강을 삽입하거나 카드를
@@ -282,8 +290,11 @@ cross-tenant fallback을 사용하지 않는다.
 API는 호환 이름을 유지한 `WrongNotePDF`와 tools worker job을 tenant 범위에서
 기록해 비동기로 생성하고, 완료 뒤 형식별 R2 attachment URL을 반환한다. 출력
 job에는 선택한 시작·종료 회차, `pdf|hwpx` 형식과 요청 시점의
-`source_fingerprint`를 저장한다. fingerprint는 대표 오답, 답안·점수, 문항·해설
+`source_fingerprint`를 저장한다. 선택형 job은 정확한 `source_selection`도 저장한다.
+fingerprint는 원본 유형·ID·수강 등록, 대표 오답, 답안·점수, 문항·해설
 내용과 저장 객체 식별자를 SHA-256으로 묶으며 만료형 조회 URL은 제외한다.
+기존 단일 수강 job에는 선택형 출처 필드를 추가하지 않아 롤링 배포 전후의
+fingerprint가 동일하며, 새 통합 선택 job만 원본 유형·ID·수강 등록을 포함한다.
 조회 응답의 fingerprint를 생성 요청에 보내면 서버가 최신 목록과 비교하고,
 이미 재채점되었거나 문항·해설이 바뀌었으면 job을 만들지 않고 `409`로 최신
 조회부터 다시 하도록 안내한다. queue payload도 같은 fingerprint를 담고 worker는
@@ -323,6 +334,9 @@ HWPX는 세로 A4를 한 문제/해설 조각당 한 구역·한 쪽으로 만�
 | POST | `/exams/{id}/segmentation-review/approve/` | 번호·제외를 반영해 빈 시험 문항과 원본 해설 확정 |
 | GET | `/results/admin/exams/{id}/manual-grading/` | 직접 채점 표와 버전 조회 |
 | POST | `/results/admin/exams/{id}/manual-grading/` | 직접 채점 미리보기 또는 원자적 확정 |
+| GET | `/results/wrong-notes/sources/?student_id=` | 학생의 모든 강의에서 선택 가능한 시험·워크북과 수록 문항 수 조회 |
+| POST | `/results/wrong-notes/preview/` | 선택 원본의 통합 문항과 fingerprint 미리보기 |
+| POST | `/results/wrong-notes/documents/` | 기존 enrollment 범위 또는 학생 `source_selection` 통합 문서 job 생성 |
 | GET | `/results/admin/exams/{id}/result-import/template/` | 시험 전용 엑셀 양식 다운로드 |
 | POST | `/results/admin/exams/{id}/result-import/` | 엑셀 미리보기 또는 원자적 확정 |
 | GET | `/results/wrong-notes` | 학생의 현재 대표 오답·복습 문항과 안정적인 `source_fingerprint` 조회. `from_session_order`~선택적 `to_session_order` 포함 |
