@@ -192,6 +192,11 @@ def handle_ai_job(job: AIJob) -> AIResult:
                 handle_problem_studio_transfer_job,
             )
             return handle_problem_studio_transfer_job(job)
+        if job_type_lower == "problem_review_analysis":
+            from apps.domains.tools.problem_review.worker import (
+                handle_problem_review_analysis_job,
+            )
+            return handle_problem_review_analysis_job(job)
         if job_type_lower == "teacher_problem_explanation":
             from academy.application.use_cases.ai.pipelines.teacher_problem_explanation import (
                 handle_teacher_problem_explanation_job,

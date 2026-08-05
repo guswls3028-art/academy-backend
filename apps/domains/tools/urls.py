@@ -28,6 +28,12 @@ from .problem_solver.views import (
     TeacherProblemExplanationJobCreateView,
     TeacherProblemExplanationJobStatusView,
 )
+from .problem_review.views import (
+    ProblemReviewExportCreateView,
+    ProblemReviewExportStatusView,
+    ProblemReviewReportCollectionView,
+    ProblemReviewReportDetailView,
+)
 from .timer_download_view import TimerDownloadView
 from apps.support.omr.route_dependencies import (
     ToolsOMRPreviewView,
@@ -36,6 +42,10 @@ from apps.support.omr.route_dependencies import (
 
 urlpatterns = [
     path("ppt/generate/", PptGenerateView.as_view(), name="tools-ppt-generate"),
+    path("problem-review/reports/", ProblemReviewReportCollectionView.as_view(), name="tools-problem-review-report-collection"),
+    path("problem-review/reports/<uuid:report_id>/", ProblemReviewReportDetailView.as_view(), name="tools-problem-review-report-detail"),
+    path("problem-review/reports/<uuid:report_id>/exports/", ProblemReviewExportCreateView.as_view(), name="tools-problem-review-export-create"),
+    path("problem-review/reports/<uuid:report_id>/exports/<str:job_id>/", ProblemReviewExportStatusView.as_view(), name="tools-problem-review-export-status"),
     path("problem-studio/transfer-document/", ProblemStudioTransferDocumentView.as_view(), name="tools-problem-studio-transfer-document"),
     path("problem-studio/beta-access/", ProblemStudioBetaAccessView.as_view(), name="tools-problem-studio-beta-access"),
     path("problem-studio/explanation-runs/", ProblemStudioExplanationRunCreateView.as_view(), name="tools-problem-studio-explanation-run-create"),

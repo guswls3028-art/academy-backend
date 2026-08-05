@@ -49,6 +49,7 @@ class ToolWorkerRoutingTests(TestCase):
             "attendance_excel_export",
             "staff_excel_export",
             "problem_studio_transfer",
+            "problem_review_export",
             "wrong_note_pdf_generation",
         ):
             with self.subTest(job_type=job_type):
@@ -60,7 +61,7 @@ class ToolWorkerRoutingTests(TestCase):
 
                 client.send_message.assert_called_once()
                 assert client.send_message.call_args.kwargs["queue_name"] == "test-tools-queue"
-        assert wake_tools_worker.call_count == 6
+        assert wake_tools_worker.call_count == 7
 
     @override_settings(TOOLS_SQS_QUEUE_NAME="test-tools-queue")
     @patch("apps.support.ai.services.sqs_queue.get_queue_client")
@@ -99,6 +100,17 @@ class ToolWorkerRoutingTests(TestCase):
         get_queue_client.return_value = client
 
         assert publish_ai_job_sqs(self._job("problem_studio_transcription"))
+
+        client.send_message.assert_called_once()
+        assert client.send_message.call_args.kwargs["queue_name"] == "test-ai-queue"
+
+    @patch("apps.support.ai.services.sqs_queue.get_queue_client")
+    def test_problem_review_analysis_stays_on_ai_queue(self, get_queue_client):
+        client = Mock()
+        client.send_message.return_value = True
+        get_queue_client.return_value = client
+
+        assert publish_ai_job_sqs(self._job("problem_review_analysis"))
 
         client.send_message.assert_called_once()
         assert client.send_message.call_args.kwargs["queue_name"] == "test-ai-queue"
@@ -224,6 +236,7 @@ class ToolWorkerRoutingTests(TestCase):
             "attendance_excel_export",
             "staff_excel_export",
             "problem_studio_transfer",
+            "problem_review_export",
             "wrong_note_pdf_generation",
         ):
             with self.subTest(job_type=job_type):
@@ -233,5 +246,9 @@ class ToolWorkerRoutingTests(TestCase):
                 assert error is None
 
         allowed, error = enforce_tier_limits(tier="basic", job_type="problem_studio_transcription")
+        assert allowed
+        assert error is None
+
+        allowed, error = enforce_tier_limits(tier="basic", job_type="problem_review_analysis")
         assert allowed
         assert error is None

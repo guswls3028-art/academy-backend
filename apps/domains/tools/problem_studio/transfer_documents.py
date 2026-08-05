@@ -173,6 +173,72 @@ class TransferOcrContext:
         return result
 
 
+@dataclass
+class TransferSourceCollection:
+    documents: list[TransferDocument]
+    warnings: list[str]
+    input_files: list[dict[str, Any]]
+    original_files: list[tuple[str, bytes]] = field(repr=False)
+
+
+def collect_transfer_documents(
+    *,
+    source_files: Iterable[Any],
+    ocr_context: TransferOcrContext | None = None,
+) -> TransferSourceCollection:
+    """Read supported sources once and return reviewable document evidence."""
+
+    documents: list[TransferDocument] = []
+    warnings: list[str] = []
+    input_files: list[dict[str, Any]] = []
+    original_files: list[tuple[str, bytes]] = []
+    ocr_context = ocr_context or TransferOcrContext()
+
+    for uploaded in source_files:
+        name, data = _read_upload(uploaded)
+        original_files.append((name, data))
+        input_files.append({
+            "name": name,
+            "kind": _source_kind(name),
+            "size": len(data),
+            "sizeLabel": _source_size_label(len(data)),
+        })
+        if Path(name).suffix.lower() == ".zip":
+            try:
+                members, zip_warnings = _expand_zip(name, data)
+                warnings.extend(zip_warnings)
+            except Exception as exc:
+                warning = f"{name}: ZIP 해제 중 오류가 발생했습니다. ({exc})"
+                documents.append(_simple_text_transfer_doc(name, "", "ZIP 오류 리포트", warning))
+                warnings.append(warning)
+                continue
+            for member_name, member_data in members:
+                docs, doc_warnings = _docs_from_named_bytes(
+                    member_name,
+                    member_data,
+                    ocr_context=ocr_context,
+                )
+                documents.extend(docs)
+                warnings.extend(doc_warnings)
+            continue
+
+        docs, doc_warnings = _docs_from_named_bytes(name, data, ocr_context=ocr_context)
+        documents.extend(docs)
+        warnings.extend(doc_warnings)
+
+    if not documents:
+        warning = "이관할 원본 파일이 없습니다."
+        documents.append(_simple_text_transfer_doc("empty.txt", "", "빈 요청", warning))
+        warnings.append(warning)
+
+    return TransferSourceCollection(
+        documents=documents,
+        warnings=warnings,
+        input_files=input_files,
+        original_files=original_files,
+    )
+
+
 def _escape(value: Any) -> str:
     return html.escape(str(value or ""), quote=True)
 
@@ -2258,44 +2324,14 @@ def build_transfer_package(
 ) -> TransferPackage:
     meta = _payload_meta(payload)
     title = meta["title"]
-    documents: list[TransferDocument] = []
-    warnings: list[str] = []
-    input_files: list[dict[str, Any]] = []
-    original_files: list[tuple[str, bytes]] = []
-    ocr_context = ocr_context or TransferOcrContext()
-
-    for uploaded in source_files:
-        name, data = _read_upload(uploaded)
-        original_files.append((name, data))
-        input_files.append({
-            "name": name,
-            "kind": _source_kind(name),
-            "size": len(data),
-            "sizeLabel": _source_size_label(len(data)),
-        })
-        if Path(name).suffix.lower() == ".zip":
-            try:
-                members, zip_warnings = _expand_zip(name, data)
-                warnings.extend(zip_warnings)
-            except Exception as exc:
-                warning = f"{name}: ZIP 해제 중 오류가 발생했습니다. ({exc})"
-                documents.append(_simple_text_transfer_doc(name, "", "ZIP 오류 리포트", warning))
-                warnings.append(warning)
-                continue
-            for member_name, member_data in members:
-                docs, doc_warnings = _docs_from_named_bytes(member_name, member_data, ocr_context=ocr_context)
-                documents.extend(docs)
-                warnings.extend(doc_warnings)
-            continue
-
-        docs, doc_warnings = _docs_from_named_bytes(name, data, ocr_context=ocr_context)
-        documents.extend(docs)
-        warnings.extend(doc_warnings)
-
-    if not documents:
-        warning = "이관할 원본 파일이 없습니다."
-        documents.append(_simple_text_transfer_doc("empty.txt", "", "빈 요청", warning))
-        warnings.append(warning)
+    source_collection = collect_transfer_documents(
+        source_files=source_files,
+        ocr_context=ocr_context,
+    )
+    documents = source_collection.documents
+    warnings = source_collection.warnings
+    input_files = source_collection.input_files
+    original_files = source_collection.original_files
 
     structure = analyze_transfer_documents(documents, warnings)
     source_tone_requested = payload.get("learn_source_explanation_style") is True

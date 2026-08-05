@@ -271,6 +271,7 @@ def _cleanup_terminal_artifacts(prepared: PreparedJob) -> None:
     if job_type not in {
         "problem_studio_transfer",
         "problem_studio_transcription",
+        "problem_review_analysis",
         "teacher_problem_explanation",
     }:
         return
@@ -278,6 +279,10 @@ def _cleanup_terminal_artifacts(prepared: PreparedJob) -> None:
     if job_type == "teacher_problem_explanation":
         source_key = str(payload.get("source_image_key") or "").strip()
         expected_prefix = f"tenants/{prepared.tenant_id}/tools/problem-solver/tmp/"
+    elif job_type == "problem_review_analysis":
+        source_key = str(payload.get("source_archive_key") or "").strip()
+        report_id = str(payload.get("report_id") or "").strip()
+        expected_prefix = f"tenants/{prepared.tenant_id}/tools/problem-review/tmp/{report_id}/"
     else:
         source_key = str(payload.get("source_archive_key") or "").strip()
         expected_prefix = f"tenants/{prepared.tenant_id}/tools/problem-studio/tmp/"

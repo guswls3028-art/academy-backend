@@ -382,3 +382,62 @@ class ProblemStudioBetaRun(TimestampModel):
                 name="idx_ps_beta_owner_created",
             ),
         ]
+
+
+class ProblemReviewReport(TimestampModel):
+    """Teacher-owned, tenant-scoped draft created from an uploaded exam."""
+
+    class Status(models.TextChoices):
+        ANALYZING = "analyzing", "분석 중"
+        DRAFT = "draft", "검수 초안"
+        FAILED = "failed", "분석 실패"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="problem_review_reports",
+        db_index=True,
+    )
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="problem_review_reports",
+    )
+    analysis_job_id = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.ANALYZING,
+        db_index=True,
+    )
+    title = models.CharField(max_length=200, blank=True, default="")
+    source_name = models.CharField(max_length=255, blank=True, default="")
+    source_summary = models.JSONField(default=dict, blank=True)
+    draft = models.JSONField(default=dict, blank=True)
+    version = models.PositiveIntegerField(default=1)
+    last_error = models.TextField(blank=True, default="")
+
+    objects = TenantQuerySet.as_manager()
+
+    class Meta:
+        db_table = "problem_review_report"
+        ordering = ["-updated_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["analysis_job_id"],
+                condition=~models.Q(analysis_job_id=""),
+                name="uq_problem_review_analysis_job",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["tenant", "requested_by", "updated_at"],
+                name="idx_problem_review_owner",
+            ),
+            models.Index(
+                fields=["tenant", "status", "updated_at"],
+                name="idx_problem_review_status",
+            ),
+        ]

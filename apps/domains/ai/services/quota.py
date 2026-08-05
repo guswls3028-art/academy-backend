@@ -39,6 +39,7 @@ QuotaKind = Literal[
     "problem_generation", "schema_infer",
     "problem_studio_transcription",
     "problem_studio_explanation",
+    "problem_review_analysis",
     "matchup_vlm",  # Gemini VLM 호출 (B-2 paper_type + 운영 자동분리, 2026-05-04)
 ]
 
@@ -57,6 +58,7 @@ DEFAULT_LIMITS: dict[str, dict[str, int]] = {
     "problem_generation": {"daily": 100,  "monthly": 2000},
     "problem_studio_explanation": {"daily": 300, "monthly": 2000},
     "problem_studio_transcription": {"daily": 750, "monthly": 2500},
+    "problem_review_analysis": {"daily": 80, "monthly": 1000},
     "schema_infer":       {"daily": 50,   "monthly": 500},
     # B-2 (2026-05-04): VLM 호출 — Gemini Flash $0.005/call → daily 500=$2.5, monthly 10000=$50.
     # in-memory _check_tenant_quota(MATCHUP_VLM_PER_TENANT_DAILY_LIMIT) fast-fail과 별도로
