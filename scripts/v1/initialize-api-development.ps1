@@ -27,11 +27,13 @@ Load-SSOT -Env prod | Out-Null
 
 $apiRelease = Get-ReleaseManifestImage -RepoName $script:EcrApiRepo
 $toolsRelease = Get-ReleaseManifestImage -RepoName $script:EcrToolsRepo
+$aiRelease = Get-ReleaseManifestImage -RepoName $script:EcrAiRepo
 if (
     [string]$apiRelease.GitSha -notmatch '^[0-9a-fA-F]{40}$' -or
-    [string]$toolsRelease.GitSha -ne [string]$apiRelease.GitSha
+    [string]$toolsRelease.GitSha -ne [string]$apiRelease.GitSha -or
+    [string]$aiRelease.GitSha -ne [string]$apiRelease.GitSha
 ) {
-    throw "Verified API and Tools release images must share one full Git SHA."
+    throw "Verified API, Tools, and AI release images must share one full Git SHA."
 }
 $releaseId = "sha-$([string]$apiRelease.GitSha)-run-0-0"
 $apiImageUri = (
@@ -41,6 +43,10 @@ $apiImageUri = (
 $toolsImageUri = (
     "$($script:AccountId).dkr.ecr.$($script:Region).amazonaws.com/" +
     "$($script:EcrToolsRepo)@$([string]$toolsRelease.Digest)"
+)
+$aiImageUri = (
+    "$($script:AccountId).dkr.ecr.$($script:Region).amazonaws.com/" +
+    "$($script:EcrAiRepo)@$([string]$aiRelease.Digest)"
 )
 
 $outputPath = [System.IO.Path]::GetTempFileName()
@@ -67,6 +73,7 @@ try {
     & (Join-Path $ScriptRoot "deploy-api-development.ps1") `
         -ApiImageUri $apiImageUri `
         -ToolsImageUri $toolsImageUri `
+        -AiImageUri $aiImageUri `
         -ExpectedEnvVersion ([int]$outputs["parameter_version"]) `
         -ExpectedWorkersEnvVersion ([int]$outputs["workers_parameter_version"]) `
         -ExpectedReleaseId $releaseId `

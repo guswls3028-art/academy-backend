@@ -18,6 +18,7 @@ PUBLISH = REPO_ROOT / "scripts" / "v1" / "publish-api-development-env.ps1"
 INITIALIZE = REPO_ROOT / "scripts" / "v1" / "initialize-api-development.ps1"
 REAL_USE_SMOKE = REPO_ROOT / "scripts" / "v1" / "run-api-development-smoke.ps1"
 SETTINGS = REPO_ROOT / "apps" / "api" / "config" / "settings" / "development.py"
+WORKER_SETTINGS = REPO_ROOT / "apps" / "api" / "config" / "settings" / "worker.py"
 IAM = REPO_ROOT / "scripts" / "v1" / "resources" / "iam.ps1"
 OIDC_POLICY = (
     REPO_ROOT
@@ -40,7 +41,7 @@ def _job_block(source: str, name: str) -> str:
     return block if next_job is None else block[: next_job.start()]
 
 
-def test_development_host_keeps_tools_worker_warm_without_production_capacity_change() -> None:
+def test_development_host_keeps_tools_and_ai_workers_warm_without_production_capacity_change() -> None:
     params = yaml.safe_load(PARAMS.read_text(encoding="utf-8"))
     tools = params["toolsWorker"]
     deploy = DEPLOY.read_text(encoding="utf-8-sig")
@@ -50,7 +51,10 @@ def test_development_host_keeps_tools_worker_warm_without_production_capacity_ch
     assert tools["desiredCapacity"] == 0
     assert tools["maxSize"] == 2
     assert "academy-tools-development" in deploy
+    assert "academy-ai-development" in deploy
     assert "Development Tools worker stays a separate container/process" in deploy
+    assert "Development AI worker stays a separate container/process" in deploy
+    assert "AI_WORKER_IDLE_SCALE_IN_ENABLED=0" in deploy
 
 
 def test_development_gate_runs_synthetic_excel_ppt_and_r2_review() -> None:
@@ -64,9 +68,12 @@ def test_development_gate_runs_synthetic_excel_ppt_and_r2_review() -> None:
     )
     assert "parse_student_excel_file" in smoke
     assert "PptComposer" in smoke
+    assert "academy-ai-development" in smoke
     assert "R2_STORAGE_BUCKET.startswith(\"academy-development-\")" in smoke
     assert "put_object" in smoke
+    assert "get_object" in smoke
     assert "delete_object" in smoke
+    assert "worker_r2_output" in smoke
     assert "academy-api-asg" not in smoke
     assert "/academy/api/env" not in smoke
 
@@ -163,6 +170,14 @@ def test_development_settings_fail_closed_on_external_write_targets() -> None:
     assert "s3api" not in PREREQUISITES.read_text(encoding="utf-8-sig")
 
 
+def test_worker_settings_use_development_storage_bucket_from_env() -> None:
+    worker = WORKER_SETTINGS.read_text(encoding="utf-8-sig")
+
+    assert 'R2_REGION = os.getenv("R2_REGION", "auto")' in worker
+    assert 'R2_STORAGE_BUCKET = os.getenv("R2_STORAGE_BUCKET", "academy-storage")' in worker
+    assert 'R2_ADMIN_BUCKET = os.getenv("R2_ADMIN_BUCKET", "academy-admin")' in worker
+
+
 def test_development_role_cannot_read_production_env_or_touch_prod_queues() -> None:
     source = IAM.read_text(encoding="utf-8-sig")
     block = source.split("function Ensure-ApiDevelopmentIAM {", maxsplit=1)[1].split(
@@ -170,6 +185,7 @@ def test_development_role_cannot_read_production_env_or_touch_prod_queues() -> N
     )[0]
 
     assert "$script:EcrToolsRepo" in block
+    assert "$script:EcrAiRepo" in block
     assert "EcrToolsWorkerRepo" not in block
     assert "EcrToolsWorkerRepo" not in INITIALIZE.read_text(encoding="utf-8-sig")
     assert "/academy/api/development/env" in block
@@ -240,6 +256,8 @@ def test_blue_green_development_deploy_preserves_old_instance_on_failure() -> No
     )
     assert "DEVELOPMENT_BOUNDARY_PASS" in source
     assert "DEVELOPMENT_RUNTIME_PASS" in source
+    assert "__AI_IMAGE__" in source
+    assert "academy-ai-development" in source
     assert "start-instance-refresh" not in source
     assert "register-targets" not in source
     assert "academy-v1-api-asg" not in source

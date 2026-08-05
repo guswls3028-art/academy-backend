@@ -1,5 +1,5 @@
 # Synthetic real-use smoke tests for the active, isolated development runtime.
-# Creates no database rows and removes its development-only R2 object.
+# Creates no database rows and removes its development-only R2 objects.
 [CmdletBinding()]
 param(
     [ValidatePattern('^$|^i-[0-9a-f]+$')]
@@ -160,9 +160,12 @@ set -euo pipefail
 tools_output=`$(printf '%s' '$toolsB64' | base64 -d | docker exec -i academy-tools-development python -)
 printf '%s\n' "`$tools_output"
 printf '%s' "`$tools_output" | python3 -c 'import json,sys; assert json.load(sys.stdin)["status"] == "TOOLS_SMOKE_PASS"'
-r2_output=`$(printf '%s' '$r2B64' | base64 -d | docker exec -i academy-api python -)
-printf '%s\n' "`$r2_output"
-printf '%s' "`$r2_output" | python3 -c 'import json,sys; assert json.load(sys.stdin)["status"] == "R2_SMOKE_PASS"'
+api_r2_output=`$(printf '%s' '$r2B64' | base64 -d | docker exec -i academy-api python -)
+printf '%s\n' "`$api_r2_output"
+printf '%s' "`$api_r2_output" | python3 -c 'import json,sys; assert json.load(sys.stdin)["status"] == "R2_SMOKE_PASS"'
+worker_r2_output=`$(printf '%s' '$r2B64' | base64 -d | docker exec -i academy-ai-development python -)
+printf '%s\n' "`$worker_r2_output"
+printf '%s' "`$worker_r2_output" | python3 -c 'import json,sys; assert json.load(sys.stdin)["status"] == "R2_SMOKE_PASS"'
 echo DEVELOPMENT_REAL_USE_SMOKE_PASS
 "@
 $remote = $remote.Replace("`r", "")
@@ -181,7 +184,7 @@ try {
         "--parameters", $paramsRef,
         "--timeout-seconds", [string]$TimeoutSec,
         "--region", $script:Region,
-        "--comment", "Synthetic Excel, PPT, and development-only R2 smoke",
+        "--comment", "Synthetic Excel, PPT, and API/AI-worker development-only R2 smoke",
         "--output", "json"
     )
 } finally {

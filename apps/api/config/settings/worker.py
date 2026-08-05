@@ -134,10 +134,14 @@ MESSAGING_SQS_QUEUE_NAME = os.getenv("MESSAGING_SQS_QUEUE_NAME", "academy-v1-mes
 R2_ACCESS_KEY = os.getenv("R2_ACCESS_KEY")
 R2_SECRET_KEY = os.getenv("R2_SECRET_KEY")
 R2_ENDPOINT = os.getenv("R2_ENDPOINT")
+R2_REGION = os.getenv("R2_REGION", "auto")
 R2_PUBLIC_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL")
 R2_AI_BUCKET = os.getenv("R2_AI_BUCKET", "academy-ai")
 R2_VIDEO_BUCKET = os.getenv("R2_VIDEO_BUCKET", "academy-video")
 R2_EXCEL_BUCKET = os.getenv("R2_EXCEL_BUCKET", os.getenv("EXCEL_BUCKET_NAME", "academy-excel"))
+R2_STORAGE_BUCKET = os.getenv("R2_STORAGE_BUCKET", "academy-storage")
+R2_ADMIN_BUCKET = os.getenv("R2_ADMIN_BUCKET", "academy-admin")
+R2_ADMIN_PUBLIC_BASE_URL = os.getenv("R2_ADMIN_PUBLIC_BASE_URL", "")
 
 # ==================================================
 # Video Batch (인코딩 제출용 — enqueue_uploaded 등 ops job이 사용)
