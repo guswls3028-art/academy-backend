@@ -15,6 +15,7 @@ class Migration(migrations.Migration):
             name="source_selection",
             field=models.JSONField(
                 blank=True,
+                db_default=models.Value([], output_field=models.JSONField()),
                 default=list,
                 help_text="학생의 여러 강의에서 선택한 시험·워크북 원본 목록. 비어 있으면 기존 단일 수강·회차 범위 규칙을 사용한다.",
             ),

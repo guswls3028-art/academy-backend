@@ -63,6 +63,7 @@ class WrongNotePDF(BaseModel):
     )
     source_selection = models.JSONField(
         default=list,
+        db_default=models.Value([], output_field=models.JSONField()),
         blank=True,
         help_text=(
             "학생의 여러 강의에서 선택한 시험·워크북 원본 목록. "

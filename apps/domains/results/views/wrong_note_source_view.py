@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -8,6 +9,9 @@ from rest_framework.views import APIView
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.results.serializers.wrong_note_serializers import (
     WrongNoteListResponseSerializer,
+    WrongNoteSelectedPreviewRequestSerializer,
+    WrongNoteSelectedPreviewResponseSerializer,
+    WrongNoteSourceCatalogResponseSerializer,
 )
 from apps.domains.results.services.selected_wrong_note_service import (
     WrongNoteSourceSelectionError,
@@ -32,6 +36,17 @@ def _student_id(raw_value) -> int:
 class WrongNoteSourceCatalogView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name="student_id",
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=True,
+            )
+        ],
+        responses=WrongNoteSourceCatalogResponseSerializer,
+    )
     def get(self, request):
         student_id = _student_id(request.query_params.get("student_id"))
         sources = list_wrong_note_sources_for_student(
@@ -44,6 +59,10 @@ class WrongNoteSourceCatalogView(APIView):
 class WrongNoteSelectedPreviewView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
+    @extend_schema(
+        request=WrongNoteSelectedPreviewRequestSerializer,
+        responses=WrongNoteSelectedPreviewResponseSerializer,
+    )
     def post(self, request):
         student_id = _student_id(request.data.get("student_id"))
         try:
