@@ -9,7 +9,7 @@ from apps.shared.contracts.ai_job import AIJob
 from apps.shared.contracts.ai_result import AIResult
 from academy.adapters.tools.hwp_endnote_images import (
     crop_problem_from_endnote,
-    extract_hwp_endnote_visuals,
+    extract_document_endnotes,
 )
 
 logger = logging.getLogger(__name__)
@@ -18,9 +18,10 @@ logger = logging.getLogger(__name__)
 def extract_and_upload_hwp_explanations(
     *,
     local_path: str,
+    filename: str,
     tenant_id: str,
     exam_id: str | int,
-) -> tuple[list, list[dict[str, Any]]]:
+) -> tuple[Any, list[dict[str, Any]]]:
     """Persist numbered teacher-authored HWP endnotes as explanation images.
 
     This helper is shared by the single-file HWP fallback and the preferred
@@ -28,12 +29,12 @@ def extract_and_upload_hwp_explanations(
     The caller remains responsible for matching only numbers that exist in the
     clean problem source.
     """
-    visuals = extract_hwp_endnote_visuals(local_path)
-    if not visuals:
+    extraction = extract_document_endnotes(local_path, filename)
+    if not extraction.visuals:
         raise ValueError("번호가 있는 미주 해설 이미지가 없습니다.")
 
     explanations: list[dict[str, Any]] = []
-    for visual in visuals:
+    for visual in extraction.visuals:
         explanation_key = (
             f"tenants/{tenant_id}/exams/explanations/"
             f"{exam_id}/q{visual.number:03d}.png"
@@ -53,7 +54,7 @@ def extract_and_upload_hwp_explanations(
                 "match_confidence": 1.0,
             }
         )
-    return visuals, explanations
+    return extraction, explanations
 
 
 def merge_paired_teacher_explanations(
@@ -93,6 +94,7 @@ def run_hwp_question_pipeline(
     record_progress: Callable,
 ) -> AIResult:
     exam_id = payload.get("exam_id")
+    filename = str(payload.get("filename") or "")
     if not tenant_id or not exam_id:
         return AIResult.failed(job.id, "tenant_id/exam_id missing")
 
@@ -102,11 +104,9 @@ def run_hwp_question_pipeline(
         tenant_id=tenant_id,
     )
     try:
-        visuals, explanations = extract_and_upload_hwp_explanations(
-            local_path=local_path,
-            tenant_id=str(tenant_id),
-            exam_id=exam_id,
-        )
+        extraction = extract_document_endnotes(local_path, filename)
+        if not extraction.visuals:
+            raise ValueError("번호가 있는 미주 해설 이미지가 없습니다.")
     except Exception:
         logger.exception(
             "HWP_ENDNOTE_EXTRACTION_FAILED | job_id=%s | exam_id=%s",
@@ -120,6 +120,44 @@ def run_hwp_question_pipeline(
                 "conversion_required": True,
                 "message": "미주 해설 이미지를 읽지 못해 PDF 변환본이 필요합니다.",
             },
+        )
+    if extraction.missing_visual_numbers:
+        return AIResult.done(
+            job.id,
+            {
+                "exam_id": exam_id,
+                "conversion_required": True,
+                "source_mode": "problem_document_requires_pdf",
+                "detected_question_count": len(extraction.control_numbers),
+                "extracted_visual_count": len(extraction.visuals),
+                "missing_visual_numbers": list(extraction.missing_visual_numbers),
+                "message": (
+                    "이 한글 파일은 일부 문항만 미주 원본 이미지가 있어 문제와 해설을 "
+                    "완전하게 나눌 수 없습니다. 같은 문제지를 PDF로 저장해 함께 올려 주세요."
+                ),
+            },
+        )
+    visuals = list(extraction.visuals)
+    explanations: list[dict[str, Any]] = []
+    for visual in visuals:
+        explanation_key = (
+            f"tenants/{tenant_id}/exams/explanations/"
+            f"{exam_id}/q{visual.number:03d}.png"
+        )
+        upload_fileobj_to_r2_storage(
+            fileobj=BytesIO(visual.png_bytes),
+            key=explanation_key,
+            content_type="image/png",
+        )
+        explanations.append(
+            {
+                "question_number": visual.number,
+                "text": "",
+                "page_index": max(visual.number - 1, 0),
+                "image_key": explanation_key,
+                "source": "source_file",
+                "match_confidence": 1.0,
+            }
         )
     record_progress(
         job.id, "cropping", 60, step_index=2, step_total=3,
@@ -161,6 +199,9 @@ def run_hwp_question_pipeline(
             "total_questions": len(questions),
             "page_count": len(questions),
             "is_pdf": False,
-            "segmentation_method": "hwp_endnote",
+            "source_mode": "combined_document",
+            "segmentation_method": (
+                "hwpx_endnote" if filename.lower().endswith(".hwpx") else "hwp_endnote"
+            ),
         },
     )

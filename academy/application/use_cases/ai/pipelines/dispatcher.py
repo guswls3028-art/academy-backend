@@ -278,7 +278,7 @@ def handle_ai_job(job: AIJob) -> AIResult:
         # --------------------------------------------------
         if job.type == "question_segmentation":
             filename = str(payload.get("filename") or "").lower()
-            if filename.endswith(".hwp"):
+            if filename.endswith((".hwp", ".hwpx")):
                 from academy.application.use_cases.ai.pipelines.hwp_question_pipeline import (
                     run_hwp_question_pipeline,
                 )
@@ -308,10 +308,10 @@ def handle_ai_job(job: AIJob) -> AIResult:
             explanation_filename = str(
                 payload.get("explanation_filename") or ""
             ).lower()
-            if not explanation_filename.endswith(".hwp"):
+            if not explanation_filename.endswith((".hwp", ".hwpx")):
                 return AIResult.failed(
                     job.id,
-                    "선생님 해설은 HWP 5.x 파일만 함께 올릴 수 있습니다.",
+                    "선생님 해설은 HWP 또는 HWPX 파일만 함께 올릴 수 있습니다.",
                 )
             if not tenant_id or not payload.get("exam_id"):
                 return AIResult.failed(job.id, "tenant_id/exam_id missing")
@@ -327,6 +327,7 @@ def handle_ai_job(job: AIJob) -> AIResult:
 
             _, teacher_explanations = extract_and_upload_hwp_explanations(
                 local_path=explanation_local_path,
+                filename=explanation_filename,
                 tenant_id=str(tenant_id),
                 exam_id=payload["exam_id"],
             )

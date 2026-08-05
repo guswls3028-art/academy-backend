@@ -114,6 +114,12 @@ class GuidedExamSourceWorkflowTests(TestCase):
                 asset_type=ExamAsset.AssetType.PROBLEM_SOURCE,
             ).exists()
         )
+        self.assertTrue(
+            ExamAsset.objects.filter(
+                exam=exam,
+                asset_type=ExamAsset.AssetType.PROBLEM_PDF,
+            ).exists()
+        )
         upload_file.assert_called_once()
         presign.assert_called_once()
         dispatch_job.assert_called_once()
@@ -224,6 +230,51 @@ class GuidedExamSourceWorkflowTests(TestCase):
         upload_file.assert_called_once()
         presign.assert_called_once()
         dispatch_job.assert_called_once()
+
+    @patch(
+        "apps.domains.exams.views.pdf_question_extract_view."
+        "generate_presigned_download_url",
+        return_value="https://files.test/source.hwpx",
+    )
+    @patch(
+        "apps.domains.exams.views.pdf_question_extract_view.dispatch_ai_job",
+        return_value={"job_id": "hwpx-job"},
+    )
+    @patch(
+        "apps.domains.exams.views.pdf_question_extract_view."
+        "upload_fileobj_to_r2_storage"
+    )
+    def test_hwpx_is_dispatched_instead_of_forcing_manual_conversion(
+        self,
+        upload_file,
+        dispatch_job,
+        presign,
+    ):
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="HWPX 시험",
+            exam_type=Exam.ExamType.REGULAR,
+            grading_mode=Exam.GradingMode.WRITTEN,
+        )
+        upload = SimpleUploadedFile(
+            "미주해설.hwpx",
+            b"PK HWPX fixture",
+            content_type="application/hwp+zip",
+        )
+
+        response = PdfQuestionExtractView.as_view()(self._request(exam, upload))
+
+        self.assertEqual(response.status_code, 202, response.data)
+        self.assertEqual(response.data["status"], "submitted")
+        exam.refresh_from_db()
+        self.assertEqual(
+            exam.segmentation_status,
+            Exam.SegmentationStatus.PROCESSING,
+        )
+        upload_file.assert_called_once()
+        presign.assert_called_once()
+        payload = dispatch_job.call_args.kwargs["payload"]
+        self.assertEqual(payload["filename"], "미주해설.hwpx")
 
     @patch(
         "apps.domains.exams.views.pdf_question_extract_view."

@@ -63,9 +63,9 @@ class PdfQuestionExtractView(APIView):
                     },
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            if not explanation_name.endswith(".hwp"):
+            if not explanation_name.endswith((".hwp", ".hwpx")):
                 return Response(
-                    {"detail": "선생님 해설은 HWP 5.x 파일만 함께 올릴 수 있습니다."},
+                    {"detail": "선생님 해설은 HWP 또는 HWPX 파일만 함께 올릴 수 있습니다."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             if explanation_file.size > 50 * 1024 * 1024:
@@ -144,15 +144,24 @@ class PdfQuestionExtractView(APIView):
                 )
 
             if exam is not None:
+                source_defaults = {
+                    "file_key": r2_key,
+                    "file_type": pdf_file.content_type or "",
+                    "file_size": int(pdf_file.size or 0),
+                }
                 ExamAsset.objects.update_or_create(
                     exam=exam,
                     asset_type=ExamAsset.AssetType.PROBLEM_SOURCE,
-                    defaults={
-                        "file_key": r2_key,
-                        "file_type": pdf_file.content_type or "",
-                        "file_size": int(pdf_file.size or 0),
-                    },
+                    defaults=source_defaults,
                 )
+                if name_lower.endswith(".pdf"):
+                    # Keep the established distribution asset contract without
+                    # requiring the browser to upload the same PDF twice.
+                    ExamAsset.objects.update_or_create(
+                        exam=exam,
+                        asset_type=ExamAsset.AssetType.PROBLEM_PDF,
+                        defaults=source_defaults,
+                    )
                 if explanation_file is not None:
                     ExamAsset.objects.update_or_create(
                         exam=exam,
@@ -167,32 +176,8 @@ class PdfQuestionExtractView(APIView):
                     )
                 exam.source_filename = str(pdf_file.name or "")[:255]
 
-            if name_lower.endswith(".hwpx"):
-                if exam is not None:
-                    exam.segmentation_status = (
-                        Exam.SegmentationStatus.CONVERSION_REQUIRED
-                    )
-                    exam.save(
-                        update_fields=[
-                            "source_filename",
-                            "segmentation_status",
-                            "updated_at",
-                        ]
-                    )
-                return Response(
-                    {
-                        "status": "conversion_required",
-                        "message": (
-                            "원본은 안전하게 보관했습니다. HWP/HWPX는 수식과 "
-                            "쪽 배치를 보존하기 위해 PDF로 저장한 파일을 한 번 더 "
-                            "올려 주세요."
-                        ),
-                    },
-                    status=status.HTTP_202_ACCEPTED,
-                )
-
-            # HWP 5.x 미주 해설 이미지는 원본 그대로 분리한다. HWPX는 렌더링
-            # 보존 경계가 달라 현재 PDF 변환을 요청한다.
+            # HWP/HWPX 미주 원본 이미지는 그대로 분리한다. 모든 문항에 완전한
+            # 미주 이미지가 없으면 worker가 성공으로 오인하지 않고 PDF를 요청한다.
             # Generate presigned download URL for worker
             download_url = generate_presigned_download_url(key=r2_key)
 
@@ -228,7 +213,7 @@ class PdfQuestionExtractView(APIView):
             return Response({
                 "job_id": result.get("job_id"),
                 "status": "submitted",
-                "message": "문항과 선생님 원본 해설 분리가 시작되었습니다.",
+                "message": "자료 유형을 확인한 뒤 문항과 원본 해설 분리를 시작합니다.",
             }, status=status.HTTP_202_ACCEPTED)
 
         except Exception as e:

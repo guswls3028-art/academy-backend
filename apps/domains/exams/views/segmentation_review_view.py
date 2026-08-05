@@ -68,7 +68,7 @@ class ExamSegmentationReviewView(APIView):
                         "engine": item.engine,
                         "problem_crop_ratio": item.problem_crop_ratio,
                         "crop_adjustable": bool(
-                            item.engine == "hwp_endnote"
+                            item.engine in {"hwp_endnote", "hwpx_endnote"}
                             and item.explanation_image_key
                         ),
                         "problem_image_url": _proposal_url(
@@ -156,7 +156,7 @@ class ExamSegmentationApproveView(APIView):
                 if abs(requested_ratio - float(proposal.problem_crop_ratio)) < 0.0001:
                     continue
                 if (
-                    proposal.engine != "hwp_endnote"
+                    proposal.engine not in {"hwp_endnote", "hwpx_endnote"}
                     or not proposal.explanation_image_key.startswith(expected_prefix)
                     or not proposal.problem_image_key.startswith(expected_prefix)
                 ):
