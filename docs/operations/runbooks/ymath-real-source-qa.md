@@ -26,12 +26,11 @@ $artifact = "C:\academy\_artifacts\ymath-real-scenario-20260805"
 
 python "$backend\scripts\exam_source_bundle.py" `
   --source-root $source `
-  --output-root $artifact
+  --output-dir $artifact
 
 python "$backend\scripts\exam_source_hwp_qa.py" `
   --manifest "$artifact\manifest.json" `
-  --output "$artifact\qa\hwp-qa.json" `
-  --preview-root "$artifact\qa\hwp-previews"
+  --output-dir "$artifact\qa"
 ```
 
 묶음 도구는 ZIP의 AppleDouble/metadata를 제외하고 SHA-256 중복을 합치되 모든
