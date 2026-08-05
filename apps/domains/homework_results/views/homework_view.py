@@ -187,7 +187,7 @@ class HomeworkViewSet(ModelViewSet):
     def ensure_source_exam(self, request, pk=None):
         with transaction.atomic():
             homework = get_object_or_404(
-                self.get_queryset().select_for_update(),
+                self.get_queryset().select_for_update(of=("self",)),
                 pk=pk,
             )
             if homework.homework_type != Homework.HomeworkType.REGULAR:

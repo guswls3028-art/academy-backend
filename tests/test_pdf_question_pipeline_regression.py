@@ -8,6 +8,7 @@ from academy.application.use_cases.ai.pipelines.pdf_question_pipeline import (
     _extract_explanations,
     _find_academy_review_cover_pages,
     _find_solution_tail_start,
+    _recover_missing_first_question_from_native_anchors,
     run_pdf_question_pipeline,
 )
 
@@ -76,6 +77,70 @@ def test_question_list_uses_dispatcher_bbox_and_skips_solution_tail():
         (10, 20, 100, 420),
     ]
     assert [question["meta"]["original_number"] for question in questions] == [1, 2]
+
+
+def test_missing_first_question_is_recovered_from_aligned_native_pdf_anchors():
+    q2_bbox = (108, 1066, 711, 470)
+    questions = [
+        {
+            "number": 2,
+            "bbox": q2_bbox,
+            "page_index": 2,
+            "text": None,
+            "meta": {"original_number": 2},
+        },
+        {
+            "number": 3,
+            "bbox": (828, 287, 715, 387),
+            "page_index": 2,
+            "text": None,
+            "meta": {"original_number": 3},
+        },
+    ]
+    text_blocks = {
+        2: [
+            {"text": "1.", "x0": 46.2, "y0": 105.46, "x1": 54.3, "y1": 114.7},
+            {"text": "2.", "x0": 46.2, "y0": 386.02, "x1": 54.3, "y1": 395.3},
+        ]
+    }
+
+    _recover_missing_first_question_from_native_anchors(questions, text_blocks)
+
+    assert [question["number"] for question in questions] == [1, 2, 3]
+    assert questions[0]["bbox"] == (108, 291, 711, 775)
+    assert questions[0]["meta"] == {
+        "original_number": 1,
+        "recovered_from_native_pdf_anchor": True,
+    }
+
+
+def test_missing_first_question_is_not_guessed_across_columns():
+    questions = [
+        {
+            "number": 2,
+            "bbox": (108, 1066, 711, 470),
+            "page_index": 2,
+            "text": None,
+            "meta": {"original_number": 2},
+        },
+        {
+            "number": 3,
+            "bbox": (828, 287, 715, 387),
+            "page_index": 2,
+            "text": None,
+            "meta": {"original_number": 3},
+        },
+    ]
+    text_blocks = {
+        2: [
+            {"text": "1.", "x0": 305.3, "y0": 105.46, "x1": 313.4, "y1": 114.7},
+            {"text": "2.", "x0": 46.2, "y0": 386.02, "x1": 54.3, "y1": 395.3},
+        ]
+    }
+
+    _recover_missing_first_question_from_native_anchors(questions, text_blocks)
+
+    assert [question["number"] for question in questions] == [2, 3]
 
 
 def test_explanations_continue_across_tail_pages_without_repeated_heading():

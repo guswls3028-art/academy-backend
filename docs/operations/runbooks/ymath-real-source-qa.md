@@ -46,6 +46,10 @@ python "$backend\scripts\exam_source_hwp_qa.py" `
 HWP 114, HWPX 19, PDF 23이다. HWP/HWPX 133개는 구조 읽기 오류 0건이며,
 107개는 단일 문제+해설 파일 후보를 만들 수 있고 26개는 일부 미주에 원본 그림이
 없어 깨끗한 문제 PDF가 추가로 필요하다. 이 26개를 성공으로 세면 안 된다.
+짝지은 문제 PDF에서 1번만 빠지고 2번 이후가 연속이면 원본 PDF의 같은 열
+`1.`·`2.` 앵커로 복구되는지 확인한다. 2026-08-05 기준
+`b70fd8b2883ffcc1`은 23개(2~24)에서 24개(1~24)로 복구되어야 하며, 다른 열의
+`1.` 표시는 복구 근거로 사용하지 않는다.
 
 ## 격리 시나리오 생성
 
@@ -87,6 +91,15 @@ python scripts/ymath_realuse_scenario.py `
 `/exams/pdf-extract/`, `/jobs/{id}/`, `/exams/{id}/segmentation-review/` 계약을
 사용한다. 시험·워크북 생성과 job 제출 직후 상태를 원자적으로 저장하므로 중단 후
 같은 결과 파일로 재실행할 수 있다. `review_required`인 항목은 재실행하지 않는다.
+각 상품 제목에는 `source_id`를 넣어 유일하게 만들며, POST 응답이 끊겼더라도 같은
+회차의 정확한 제목을 한 건만 찾아 이어받는다. 업로드 응답 유실 뒤에는 시험의
+`segmentation_status`를 폴링해 이미 접수된 job을 재제출하지 않는다. 같은 제목이
+여러 건이면 자동 선택하지 않고 실패 폐쇄한다. 재실행에서 완료 항목을 제외해도
+각 원본의 회차는 전체 plan의 원래 순번으로 계산해 바뀌지 않으며, 생성 응답 단절
+뒤에는 최대 30초 동안 commit 가시성을 기다린다.
+워크북 `source-exam` 생성이 PostgreSQL의 nullable outer join `FOR UPDATE` 오류를
+내면 제품 실패다. `Homework` 본행만 잠그는 계약을 배포한 뒤 같은 체크포인트를
+재실행해 기존 워크북을 중복 생성하지 않고 이어져야 한다.
 
 ## 합격 기준
 
@@ -96,6 +109,11 @@ python scripts/ymath_realuse_scenario.py `
   `conversion_required`로 실패 폐쇄해야 한다. 실행에서 생략하거나 성공으로 세지 않는다.
 - PDF/이미지, 통합 HWP/HWPX, 문제 PDF+해설 HWP/HWPX 세 경로가 모두 실제
   API를 통과한다.
+- 문제 PDF+해설 HWP 경로는 그림이 없는 미주도 ParaText·EqEdit 수식·BinData
+  삽화를 번호별 검수 이미지로 재현해야 한다. 2026-08-05 짝 자료 6개는 각각
+  24개 미주가 있어 총 144개 해설 후보가 생겨야 하며, 그림 수만 센 8/3/8/4/9/17
+  건을 성공으로 보면 안 된다. 첫·중간·마지막 조판 이미지를 직접 열어 한글 문장,
+  분수·근호·극한, 원본 삽화가 읽히는지 확인한다.
 - job 성공과 별개로 시험 상태가 `review_required`이고 예상 문항 수와 proposal
   수가 일치해야 한다. `conversion_required`, 빈 proposal, 일부 해설 누락,
   timeout은 별도 실패다.

@@ -9,12 +9,16 @@ from academy.adapters.tools.hwp_endnote_images import (
     HwpEndnoteExtraction,
     HwpEndnoteVisual,
     _collect_endnote_picture_ids,
+    _collect_endnote_contents,
     _collect_endnote_numbers,
+    _hwp_equation_to_mathtext,
+    _humanize_hwp_equation,
     _load_picture,
     extract_hwpx_endnotes,
 )
 from apps.shared.contracts.ai_job import AIJob
 from academy.application.use_cases.ai.pipelines.hwp_question_pipeline import (
+    extract_and_upload_hwp_explanations,
     merge_paired_teacher_explanations,
     run_hwp_question_pipeline,
 )
@@ -48,6 +52,97 @@ def test_collects_all_endnote_numbers_even_without_pictures():
     ]
 
     assert _collect_endnote_numbers(records) == [1, 2]
+
+
+def test_collects_legacy_hwp_endnote_text_and_native_equations_in_order():
+    equation_control = (
+        struct.pack("<H", 0x0B)
+        + b"deqe"
+        + (b"\x00\x00" * 4)
+        + struct.pack("<H", 0x0B)
+    )
+    paragraph = "따라서 ".encode("utf-16le") + equation_control + "이다.".encode("utf-16le")
+    script = "{x+1} over {2}"
+    equation = b"\x00\x00\x00\x00" + struct.pack("<H", len(script)) + script.encode("utf-16le")
+    records = [
+        (71, 1, b"  ne" + struct.pack("<I", 7)),
+        (67, 3, paragraph),
+        (88, 4, equation),
+        (71, 1, b"xxxx" + struct.pack("<I", 1)),
+    ]
+
+    contents = _collect_endnote_contents(records)
+
+    assert len(contents) == 1
+    assert contents[0].number == 7
+    assert contents[0].equation_count == 1
+    assert contents[0].paragraphs[0].startswith("따라서 ")
+    assert "{x+1} over {2}" in contents[0].paragraphs[0]
+    assert contents[0].paragraphs[0].endswith("이다.")
+
+
+def test_humanizes_common_hwp_equation_tokens_without_changing_meaning():
+    assert _humanize_hwp_equation(
+        "lim _{x`` rarrow ``INF} {sqrt {{x+1} over {2}}}"
+    ) == "lim _(x → ∞) (√((x+1)/(2)))"
+    assert _humanize_hwp_equation("2fprime(1), rm3, xge1, root3") == (
+        "2f′(1), 3, x≥1, √3"
+    )
+    assert _humanize_hwp_equation(
+        "x GEQ 0, 5sqrt2, 2pile{ IT#IT }, C CUP A"
+    ) == (
+        "x ≥ 0, 5√2, 2, C ∪ A"
+    )
+
+
+def test_parent_paragraph_receives_equations_after_nested_table_paragraphs():
+    equation_control = (
+        struct.pack("<H", 0x0B)
+        + b"deqe"
+        + (b"\x00\x00" * 4)
+        + struct.pack("<H", 0x0B)
+    )
+
+    def equation(script: str) -> bytes:
+        return (
+            b"\x00\x00\x00\x00"
+            + struct.pack("<H", len(script))
+            + script.encode("utf-16le")
+        )
+
+    records = [
+        (71, 1, b"  ne" + struct.pack("<I", 1)),
+        (67, 3, "함수 ".encode("utf-16le") + equation_control),
+        (67, 5, equation_control),
+        (88, 6, equation("x")),
+        (88, 4, equation("f(x)")),
+        (71, 1, b"xxxx" + struct.pack("<I", 1)),
+    ]
+
+    contents = _collect_endnote_contents(records)
+
+    assert len(contents) == 1
+    assert "f(x)" in contents[0].paragraphs[0]
+    assert "x" in contents[0].paragraphs[1]
+    assert all("[수식 확인 필요]" not in value for value in contents[0].paragraphs)
+
+
+def test_hwp_equation_mathtext_handles_fractions_piecewise_and_braces():
+    latex = _hwp_equation_to_mathtext(
+        "f LEFT (x RIGHT )={cases{{1} over {x}&LEFT (x GEQ 1 RIGHT )#0&(x<1)}}"
+    )
+
+    assert r"\frac{1}{x}" in latex
+    assert r"\left\{" in latex
+    assert r"\geq" in latex
+
+    compact = _hwp_equation_to_mathtext(
+        "x GEQ 0, 5sqrt2, 2pile{ IT#IT }, C CUP A"
+    )
+    assert r"x \geq 0" in compact
+    assert r"5\sqrt{2}" in compact
+    assert "pile" not in compact
+    assert r"C \cup A" in compact
 
 
 def test_loads_raw_deflate_compressed_hwp_bitmap():
@@ -102,7 +197,7 @@ def test_single_hwp_with_partial_visual_coverage_requires_problem_pdf(monkeypatc
     monkeypatch.setattr(
         "academy.application.use_cases.ai.pipelines.hwp_question_pipeline."
         "extract_document_endnotes",
-        lambda _path, _filename: HwpEndnoteExtraction(
+        lambda _path, _filename, **_kwargs: HwpEndnoteExtraction(
             control_numbers=(1, 2),
             visuals=(visual,),
         ),
@@ -147,3 +242,54 @@ def test_paired_teacher_hwp_matches_clean_problem_source_numbers_only():
     assert result["teacher_explanation_count"] == 2
     assert result["unmatched_teacher_explanation_numbers"] == [7]
     assert result["explanation_source_mode"] == "paired_teacher_hwp"
+
+
+def test_paired_teacher_hwp_uses_complete_reconstructed_endnote_visuals(monkeypatch):
+    exact_visual = HwpEndnoteVisual(
+        number=1,
+        png_bytes=b"exact",
+        width=100,
+        height=100,
+        picture_count=1,
+    )
+    reconstructed = tuple(
+        HwpEndnoteVisual(
+            number=number,
+            png_bytes=f"reconstructed-{number}".encode(),
+            width=1600,
+            height=900,
+            picture_count=1 if number == 1 else 0,
+            render_mode="source_content_reconstruction",
+        )
+        for number in (1, 2)
+    )
+    monkeypatch.setattr(
+        "academy.application.use_cases.ai.pipelines.hwp_question_pipeline."
+        "extract_document_endnotes",
+        lambda _path, _filename, **_kwargs: HwpEndnoteExtraction(
+            control_numbers=(1, 2),
+            visuals=(exact_visual,),
+            paired_visuals=reconstructed,
+        ),
+    )
+    uploads = []
+    monkeypatch.setattr(
+        "academy.application.use_cases.ai.pipelines.hwp_question_pipeline."
+        "upload_fileobj_to_r2_storage",
+        lambda **kwargs: uploads.append(kwargs),
+    )
+
+    extraction, explanations = extract_and_upload_hwp_explanations(
+        local_path="teacher.hwp",
+        filename="teacher.hwp",
+        tenant_id="3",
+        exam_id=8,
+    )
+
+    assert extraction.missing_visual_numbers == (2,)
+    assert extraction.missing_paired_visual_numbers == ()
+    assert [item["question_number"] for item in explanations] == [1, 2]
+    assert {item["source_render_mode"] for item in explanations} == {
+        "source_content_reconstruction"
+    }
+    assert len(uploads) == 2

@@ -4,10 +4,107 @@ import pytest
 
 from scripts import ymath_realuse_scenario
 from scripts.ymath_realuse_scenario import (
+    _create_product,
+    _executable_plan_items,
     assert_safe_target,
     build_source_plan,
     execute_item,
 )
+
+
+def test_resume_keeps_original_plan_index_for_session_assignment():
+    plan = [
+        {"source_id": "done", "route": "problem_only", "upload_path": "done.pdf"},
+        {"source_id": "retry", "route": "problem_only", "upload_path": "retry.pdf"},
+        {"source_id": "consumed", "route": "consumed_by_pair"},
+    ]
+    output_items = {
+        "done": {"execution_status": "review_required"},
+        "retry": {"execution_status": "runner_error"},
+        "consumed": {},
+    }
+
+    executable = _executable_plan_items(plan, output_items)
+
+    assert executable == [(1, plan[1])]
+
+
+def test_create_product_recovers_exact_exam_after_response_disconnect():
+    class Client:
+        def __init__(self):
+            self.lookups = 0
+
+        def get_json(self, path):
+            assert path == "/api/v1/exams/?exam_type=regular&session_id=7&page_size=100"
+            self.lookups += 1
+            if self.lookups == 1:
+                return {"results": []}
+            return {
+                "results": [
+                    {
+                        "id": 91,
+                        "title": "[Ymath 실자료 QA:source-a] 실제 시험.pdf",
+                    }
+                ]
+            }
+
+        @staticmethod
+        def post_json(path, payload):
+            assert path == "/api/v1/exams/"
+            assert payload["title"] == "[Ymath 실자료 QA:source-a] 실제 시험.pdf"
+            raise ymath_realuse_scenario.requests.ConnectionError("response lost")
+
+    assert _create_product(
+        Client(),
+        {
+            "source_id": "source-a",
+            "display_name": "실제 시험.pdf",
+            "category": "exam",
+        },
+        7,
+    ) == ("exam", 91)
+
+
+def test_execute_item_recovers_submitted_upload_from_review(monkeypatch):
+    class Client:
+        def __init__(self):
+            self.review_calls = 0
+
+        def get_json(self, path):
+            assert path == "/api/v1/exams/44/segmentation-review/"
+            self.review_calls += 1
+            if self.review_calls == 1:
+                return {"status": "processing", "items": []}
+            return {
+                "status": "review_required",
+                "items": [{"has_teacher_explanation": False}],
+            }
+
+        @staticmethod
+        def upload_source(**_kwargs):
+            raise AssertionError("accepted upload must not be submitted twice")
+
+    monkeypatch.setattr(ymath_realuse_scenario.time, "sleep", lambda _seconds: None)
+    checkpoints = []
+    result = execute_item(
+        client=Client(),
+        item={
+            "source_id": "source-b",
+            "display_name": "실제 시험.pdf",
+            "category": "exam",
+            "route": "problem_only",
+            "upload_path": "unused.pdf",
+        },
+        session_id=1,
+        job_timeout=1,
+        prior={"product_type": "exam", "exam_id": 44},
+        checkpoint=lambda state: checkpoints.append(dict(state)),
+    )
+
+    assert result["execution_status"] == "review_required"
+    assert result["upload_recovered"] is True
+    assert result["proposal_count"] == 1
+    assert checkpoints[-1]["execution_status"] == "job_recovered_from_review"
 
 
 def test_build_source_plan_keeps_all_routes_explicit(tmp_path: Path):
