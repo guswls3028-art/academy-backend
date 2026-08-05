@@ -13,6 +13,10 @@ Ymath 선생님이 실제 사용하는 시험지·워크북 원본을 운영 데
 - 실제 Ymath의 학생, 학부모, 성적, 연락처, 결제 데이터는 복제하지 않는다.
   프로그램의 안전한 feature flag와 UI 설정만 읽고, 교사·학생·강의·회차는
   합성 식별자로 새로 만든다.
+- 시나리오 프로그램은 생성일로부터 365일 동안만 활성 구독 상태를 갖는다.
+  만료일이 없는 `all` plan은 실제 API가 `subscription_expired`로 차단하므로
+  유효한 기간과 `cancel_at_period_end=false`를 함께 설정하고 출력 JSON에
+  만료일을 기록한다.
 - 원본 HWP/HWPX/PDF는 읽기 전용 입력이다. tenant 전용 R2 자산과 검수 후보만
   생성하며 자동으로 문항 정본을 승인하지 않는다.
 - API 실행은 SSM-only development API에 연결한 loopback URL만 허용한다.

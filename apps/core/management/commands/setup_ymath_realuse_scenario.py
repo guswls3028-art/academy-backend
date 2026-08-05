@@ -9,6 +9,7 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
+from django.utils import timezone
 
 from apps.core.models import Program, Tenant, TenantMembership
 from apps.core.models.user import user_internal_username
@@ -132,6 +133,11 @@ class Command(BaseCommand):
             program.brand_key = "ymath"
             program.login_variant = Program.LoginVariant.HAKWONPLUS
             program.plan = Program.Plan.ALL
+            scenario_started_at = timezone.localdate()
+            program.subscription_status = Program.SubscriptionStatus.ACTIVE
+            program.subscription_started_at = scenario_started_at
+            program.subscription_expires_at = scenario_started_at + timedelta(days=365)
+            program.cancel_at_period_end = False
             program.feature_flags = feature_flags
             program.ui_config = ui_config
             program.is_active = True
@@ -238,6 +244,7 @@ class Command(BaseCommand):
             "tenant_id": tenant.id,
             "teacher_username": str(options["teacher_username"]),
             "teacher_user_id": teacher.id,
+            "subscription_expires_at": program.subscription_expires_at.isoformat(),
             "student_ids": [student.id for student in students],
             "lecture_ids": [lecture.id for lecture in lectures],
             "session_ids": [session.id for session in sessions],

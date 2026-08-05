@@ -1,4 +1,5 @@
 import os
+from datetime import timedelta
 from io import StringIO
 from unittest.mock import patch
 
@@ -6,6 +7,7 @@ from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import TestCase, override_settings
+from django.utils import timezone
 
 from apps.core.models import Program, Tenant, TenantMembership
 
@@ -38,6 +40,18 @@ class SetupYmathRealuseScenarioTests(TestCase):
         self.assertFalse(program.feature_flags["section_mode"])
         self.assertEqual(program.feature_flags["clinic_mode"], "remediation")
         self.assertEqual(program.feature_flags["score_output_mode"], "anonymous_billboard")
+        self.assertEqual(program.subscription_status, Program.SubscriptionStatus.ACTIVE)
+        self.assertEqual(program.subscription_started_at, timezone.localdate())
+        self.assertEqual(
+            program.subscription_expires_at,
+            timezone.localdate() + timedelta(days=365),
+        )
+        self.assertFalse(program.cancel_at_period_end)
+        self.assertTrue(program.is_subscription_active)
+        self.assertIn(
+            f'"subscription_expires_at": "{program.subscription_expires_at.isoformat()}"',
+            second,
+        )
         self.assertEqual(tenant.students.count(), 2)
         self.assertEqual(tenant.lectures.count(), 2)
         self.assertEqual(sum(lecture.sessions.count() for lecture in tenant.lectures.all()), 6)
