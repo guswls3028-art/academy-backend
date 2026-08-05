@@ -301,6 +301,24 @@ def _find_existing_product(
     return "exam", int(matches[0]["id"])
 
 
+def _recover_product_after_disconnect(
+    client: AcademyClient,
+    item: dict[str, Any],
+    session_id: int,
+    title: str,
+) -> tuple[str, int] | None:
+    for attempt in range(30):
+        try:
+            recovered = _find_existing_product(client, item, session_id, title)
+        except requests.ConnectionError:
+            recovered = None
+        if recovered is not None:
+            return recovered
+        if attempt < 29:
+            time.sleep(1)
+    return None
+
+
 def _create_product(client: AcademyClient, item: dict[str, Any], session_id: int) -> tuple[str, int]:
     title = _product_title(item)
     existing = _find_existing_product(client, item, session_id, title)
@@ -313,7 +331,7 @@ def _create_product(client: AcademyClient, item: dict[str, Any], session_id: int
                 {"session": session_id, "title": title, "homework_type": "regular"},
             )
         except requests.ConnectionError:
-            recovered = _find_existing_product(client, item, session_id, title)
+            recovered = _recover_product_after_disconnect(client, item, session_id, title)
             if recovered is not None:
                 return recovered
             raise
@@ -333,7 +351,7 @@ def _create_product(client: AcademyClient, item: dict[str, Any], session_id: int
             },
         )
     except requests.ConnectionError:
-        recovered = _find_existing_product(client, item, session_id, title)
+        recovered = _recover_product_after_disconnect(client, item, session_id, title)
         if recovered is not None:
             return recovered
         raise
@@ -480,6 +498,20 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _executable_plan_items(
+    plan: list[dict[str, Any]],
+    output_items: dict[str, dict[str, Any]],
+) -> list[tuple[int, dict[str, Any]]]:
+    return [
+        (index, item)
+        for index, item in enumerate(plan)
+        if item["route"] != "consumed_by_pair"
+        and item.get("upload_path")
+        and output_items[item["source_id"]].get("execution_status")
+        not in {"review_required", "source_remediation_required"}
+    ]
+
+
 def main() -> int:
     args = parse_args()
     manifest = load_json(args.manifest)
@@ -527,14 +559,7 @@ def main() -> int:
     session_ids = [int(value) for value in scenario.get("session_ids", [])]
     if not session_ids:
         raise ValueError("scenario JSON has no session_ids")
-    executable = [
-        item
-        for item in plan
-        if item["route"] != "consumed_by_pair"
-        and item.get("upload_path")
-        and output["items"][item["source_id"]].get("execution_status")
-        not in {"review_required", "source_remediation_required"}
-    ]
+    executable = _executable_plan_items(plan, output["items"])
     lock = threading.Lock()
     local = threading.local()
 
@@ -574,7 +599,10 @@ def main() -> int:
             }
 
     with ThreadPoolExecutor(max_workers=max(1, min(args.workers, 6))) as pool:
-        futures = {pool.submit(run, index, item): item for index, item in enumerate(executable)}
+        futures = {
+            pool.submit(run, plan_index, item): item
+            for plan_index, item in executable
+        }
         for future in as_completed(futures):
             result = future.result()
             with lock:

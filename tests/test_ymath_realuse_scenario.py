@@ -5,10 +5,28 @@ import pytest
 from scripts import ymath_realuse_scenario
 from scripts.ymath_realuse_scenario import (
     _create_product,
+    _executable_plan_items,
     assert_safe_target,
     build_source_plan,
     execute_item,
 )
+
+
+def test_resume_keeps_original_plan_index_for_session_assignment():
+    plan = [
+        {"source_id": "done", "route": "problem_only", "upload_path": "done.pdf"},
+        {"source_id": "retry", "route": "problem_only", "upload_path": "retry.pdf"},
+        {"source_id": "consumed", "route": "consumed_by_pair"},
+    ]
+    output_items = {
+        "done": {"execution_status": "review_required"},
+        "retry": {"execution_status": "runner_error"},
+        "consumed": {},
+    }
+
+    executable = _executable_plan_items(plan, output_items)
+
+    assert executable == [(1, plan[1])]
 
 
 def test_create_product_recovers_exact_exam_after_response_disconnect():
