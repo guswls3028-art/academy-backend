@@ -24,6 +24,11 @@ from apps.domains.results.services.wrong_note_service import (
     build_wrong_note_source_fingerprint,
     list_wrong_notes_for_enrollment,
 )
+from apps.domains.results.services.selected_wrong_note_service import (
+    WrongNoteSourceSelectionError,
+    list_wrong_notes_for_selection,
+    normalize_wrong_note_source_selection,
+)
 from apps.domains.results.throttles import WrongNotePDFCreateThrottle
 from apps.support.results.wrong_note_pdf_dependencies import (
     exam_exists_for_tenant,
@@ -94,7 +99,9 @@ class WrongNotePDFCreateView(APIView):
 
     def post(self, request):
         enrollment_id = request.data.get("enrollment_id")
-        if not enrollment_id:
+        raw_source_selection = request.data.get("source_selection")
+        selected_mode = raw_source_selection is not None
+        if not selected_mode and not enrollment_id:
             return Response({"detail": "enrollment_id required"}, status=400)
         output_format = str(request.data.get("output_format") or "pdf").lower()
         if output_format not in WrongNotePDF.OutputFormat.values:
@@ -111,27 +118,49 @@ class WrongNotePDFCreateView(APIView):
                 {"source_fingerprint": "오답 목록을 새로 불러온 뒤 다시 시도해 주세요."}
             )
 
-        try:
-            enrollment_id_i = int(enrollment_id)
-            from_order = int(request.data.get("from_session_order", 2) or 2)
-            requested_to_order = request.data.get("to_session_order")
-            to_order = (
-                int(requested_to_order)
-                if requested_to_order not in (None, "")
-                else None
-            )
-            if from_order < 1 or (to_order is not None and to_order < from_order):
-                raise ValueError
-        except (TypeError, ValueError):
-            raise ValidationError(
-                {"detail": "시작 회차와 종료 회차를 다시 확인해 주세요."}
-            )
+        normalized_selection: list[dict[str, int | str]] = []
+        selected_student_id: int | None = None
+        if selected_mode:
+            try:
+                selected_student_id = int(request.data.get("student_id"))
+                if selected_student_id < 1:
+                    raise ValueError
+                normalized_selection = normalize_wrong_note_source_selection(
+                    tenant_id=int(request.tenant.id),
+                    student_id=selected_student_id,
+                    raw_sources=raw_source_selection,
+                )
+            except (TypeError, ValueError, WrongNoteSourceSelectionError) as exc:
+                detail = str(exc) if isinstance(exc, WrongNoteSourceSelectionError) else "학생과 자료를 다시 선택해 주세요."
+                raise ValidationError({"source_selection": detail}) from exc
+            enrollment_id_i = int(normalized_selection[0]["enrollment_id"])
+            from_order = 1
+            to_order = None
+            lecture_id_i = None
+            exam_id_i = None
+            enrollment = self._get_allowed_enrollment(request, enrollment_id_i)
+        else:
+            try:
+                enrollment_id_i = int(enrollment_id)
+                from_order = int(request.data.get("from_session_order", 2) or 2)
+                requested_to_order = request.data.get("to_session_order")
+                to_order = (
+                    int(requested_to_order)
+                    if requested_to_order not in (None, "")
+                    else None
+                )
+                if from_order < 1 or (to_order is not None and to_order < from_order):
+                    raise ValueError
+            except (TypeError, ValueError):
+                raise ValidationError(
+                    {"detail": "시작 회차와 종료 회차를 다시 확인해 주세요."}
+                )
 
-        enrollment = self._get_allowed_enrollment(request, enrollment_id_i)
-        try:
-            lecture_id_i, exam_id_i = self._validate_scope_ids(request, enrollment)
-        except ValueError:
-            raise ValidationError({"detail": "lecture_id/exam_id must be valid integers."})
+            enrollment = self._get_allowed_enrollment(request, enrollment_id_i)
+            try:
+                lecture_id_i, exam_id_i = self._validate_scope_ids(request, enrollment)
+            except ValueError:
+                raise ValidationError({"detail": "lecture_id/exam_id must be valid integers."})
 
         with transaction.atomic():
             Tenant.objects.select_for_update().get(pk=request.tenant.pk)
@@ -168,17 +197,27 @@ class WrongNotePDFCreateView(APIView):
                     {"detail": "학원에서 다른 오답노트를 만들고 있습니다. 잠시 후 다시 시도해 주세요."},
                     status=status.HTTP_409_CONFLICT,
                 )
-            total, items = list_wrong_notes_for_enrollment(
-                enrollment_id=enrollment_id_i,
-                q=WrongNoteQuery(
-                    exam_id=exam_id_i,
-                    lecture_id=lecture_id_i or int(enrollment.lecture_id),
-                    from_session_order=from_order,
-                    to_session_order=to_order,
-                    offset=0,
-                    limit=200,
-                ),
-            )
+            if selected_mode:
+                try:
+                    total, items, normalized_selection = list_wrong_notes_for_selection(
+                        tenant_id=int(request.tenant.id),
+                        student_id=int(selected_student_id),
+                        source_selection=normalized_selection,
+                    )
+                except WrongNoteSourceSelectionError as exc:
+                    raise ValidationError({"source_selection": str(exc)}) from exc
+            else:
+                total, items = list_wrong_notes_for_enrollment(
+                    enrollment_id=enrollment_id_i,
+                    q=WrongNoteQuery(
+                        exam_id=exam_id_i,
+                        lecture_id=lecture_id_i or int(enrollment.lecture_id),
+                        from_session_order=from_order,
+                        to_session_order=to_order,
+                        offset=0,
+                        limit=200,
+                    ),
+                )
             source_fingerprint = build_wrong_note_source_fingerprint(
                 total=total,
                 items=items,
@@ -203,6 +242,7 @@ class WrongNotePDFCreateView(APIView):
                 status=WrongNotePDF.Status.PENDING,
                 output_format=output_format,
                 source_fingerprint=source_fingerprint,
+                source_selection=normalized_selection,
             )
             ai_job = create_wrong_note_pdf_ai_job(
                 pdf_job_id=int(job.id),

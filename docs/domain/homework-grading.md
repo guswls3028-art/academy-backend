@@ -11,6 +11,9 @@
 3. **차시 → 성적**에서 학생별 점수를 입력한다. 성적표 분모와 합격률 계산은
    해당 과제의 만점을 사용한다.
 4. 만점이나 정책이 바뀌면 기존 1차 점수의 합격·클리닉 판정을 다시 계산한다.
+5. 워크북형 과제는 **자산**에서 문제+해설 통합 파일, 문제 파일, 또는 문제·해설
+   두 파일을 등록하고 문항·원본 해설을 검수한 뒤 **결과**에서 학생별 O/X/복습을
+   기록한다.
 
 프런트 화면 계약은
 [frontend/docs/HOMEWORK-SCORING.md](https://github.com/guswls3028-art/academy-frontend/blob/main/docs/HOMEWORK-SCORING.md)가
@@ -59,12 +62,36 @@
 - tenant와 차시 범위는 모든 조회·쓰기에서 필수이며 기본 tenant나
   cross-tenant fallback을 사용하지 않는다.
 
+## 워크북 원본과 문항별 채점
+
+과제는 별도 분리 엔진을 만들지 않고 `Homework.source_exam`이 가리키는 비노출
+regular `Exam`을 원본 구조 소유자로 사용한다. 이 시험은 활성 시험 목록이나 학생
+성적에 노출하지 않고 세션에도 연결하지 않는다. HWP/HWPX 미주 번호와 원본 그림,
+PDF 분리, 교직원 검수·승인 계약은 시험 원본과 동일하다. 특히 미주 전체 이미지를
+선생님 해설 정본으로 보존하고, 문제 영역 크롭은 승인 전 문항별로 조정한다.
+
+학생별 문항 표시는 1차 `HomeworkScore.meta.question_marks`에 문항 번호별로 저장한다.
+기존 점수, 미제출 상태와 임의 확장 메타는 덮어쓰지 않는다.
+
+| 화면 | `is_correct` | `include_in_wrong_note` | 통합 오답노트 |
+|------|--------------|-------------------------|---------------|
+| O | true | false | 제외 |
+| X | false | true | 포함 |
+| O·복습 | true | true | 포함 |
+| 미입력 | 키 없음 | 키 없음 | 제외 |
+
+X를 나중에 다시 맞힌 뒤에도 남기려면 O·복습으로 바꾼다. 대상 학생 배정,
+워크북 문항 번호와 tenant가 모두 일치해야 전체 변경을 저장하며, 다른 학생·과제
+또는 현재 원본에 없는 번호는 `400`으로 거부한다.
+
 ## API와 호환 경계
 
 | Method | Path | 역할 |
 |--------|------|------|
 | GET/POST | `/homeworks/` | 차시 과제 목록·생성, `max_score` 반환·입력 |
 | GET/PATCH | `/homeworks/{id}/` | 과제별 만점·합격 기준 조회/변경과 1차 점수 동기화 |
+| POST | `/homeworks/{id}/source-exam/` | 워크북 분리용 비노출 원본 시험을 멱등 생성 |
+| GET/PATCH | `/homeworks/{id}/question-grading/` | 배정 학생×워크북 문항 채점표 조회와 O/X/복습 저장 |
 | GET/PATCH | `/homework/policies/` | 개별 기준 없는 기존 과제의 차시 기본 정책 |
 | PATCH | `/homework/scores/quick/` | 성적표 셀 점수 저장. 서버 만점을 정본으로 사용 |
 | GET | `/results/session-scores/` | 성적표 과제 메타와 각 셀에 과제별 만점 반환 |
@@ -93,6 +120,8 @@
   `apps/domains/homework/serializers/core.py`,
   `services/policy_recalc.py`
 - 성적표 조회: `apps/domains/results/views/session_scores_view.py`
+- 워크북 원본·채점표: `views/homework_view.py`,
+  `tests/test_workbook_source_and_grading.py`
 
 집중 회귀 검증:
 

@@ -15,6 +15,10 @@ from apps.domains.results.services.wrong_note_service import (
     build_wrong_note_source_fingerprint,
     list_wrong_notes_for_enrollment,
 )
+from apps.domains.results.services.selected_wrong_note_service import (
+    WrongNoteSourceSelectionError,
+    list_wrong_notes_for_selection,
+)
 from apps.infrastructure.storage.r2 import (
     delete_object_r2_storage,
     get_object_bytes_r2_storage,
@@ -334,6 +338,7 @@ def build_wrong_note_pdf(
     from_session_order: int,
     to_session_order: int | None = None,
     exam_id: int | None,
+    source_selection_count: int = 0,
     deadline_monotonic: float | None = None,
 ) -> bytes:
     from PIL import Image
@@ -350,7 +355,11 @@ def build_wrong_note_pdf(
     regular_font, bold_font = _ensure_korean_font()
     generated_at = timezone.localtime()
     student_name = str(getattr(getattr(enrollment, "student", None), "name", "") or "학생")
-    lecture_title = str(getattr(getattr(enrollment, "lecture", None), "title", "") or "")
+    lecture_title = (
+        "여러 강의에서 선택"
+        if source_selection_count
+        else str(getattr(getattr(enrollment, "lecture", None), "title", "") or "")
+    )
 
     output = io.BytesIO()
     page_w, page_h = A4
@@ -380,7 +389,9 @@ def build_wrong_note_pdf(
     pdf.setFillColor(HexColor(_MUTED))
     pdf.drawString(20 * mm, page_h - 112 * mm, lecture_title)
 
-    if exam_id is not None:
+    if source_selection_count:
+        scope_text = f"선택한 시험·워크북 {source_selection_count}개"
+    elif exam_id is not None:
         scope_text = str(rows[0].get("exam_title") or "선택 시험")
     elif to_session_order is not None:
         scope_text = f"{from_session_order}~{to_session_order}회차"
@@ -760,21 +771,35 @@ def generate_and_store_wrong_note_pdf(
     tenant: Any,
 ) -> str:
     deadline_monotonic = time.monotonic() + PDF_GENERATION_DEADLINE_SECONDS
-    total, items = list_wrong_notes_for_enrollment(
-        enrollment_id=int(enrollment.id),
-        q=WrongNoteQuery(
-            exam_id=int(job.exam_id) if job.exam_id else None,
-            lecture_id=int(job.lecture_id) if job.lecture_id else int(enrollment.lecture_id),
-            from_session_order=int(job.from_session_order or 1),
-            to_session_order=(
-                int(job.to_session_order)
-                if job.to_session_order is not None
-                else None
+    source_selection = list(getattr(job, "source_selection", None) or [])
+    if source_selection:
+        try:
+            total, items, _ = list_wrong_notes_for_selection(
+                tenant_id=int(tenant.id),
+                student_id=int(enrollment.student_id),
+                source_selection=source_selection,
+                limit=MAX_WRONG_NOTE_PDF_ITEMS,
+            )
+        except WrongNoteSourceSelectionError as exc:
+            raise WrongNotePDFStaleError(
+                "선택한 시험 또는 워크북이 변경되었습니다. 다시 선택해 주세요."
+            ) from exc
+    else:
+        total, items = list_wrong_notes_for_enrollment(
+            enrollment_id=int(enrollment.id),
+            q=WrongNoteQuery(
+                exam_id=int(job.exam_id) if job.exam_id else None,
+                lecture_id=int(job.lecture_id) if job.lecture_id else int(enrollment.lecture_id),
+                from_session_order=int(job.from_session_order or 1),
+                to_session_order=(
+                    int(job.to_session_order)
+                    if job.to_session_order is not None
+                    else None
+                ),
+                offset=0,
+                limit=MAX_WRONG_NOTE_PDF_ITEMS,
             ),
-            offset=0,
-            limit=MAX_WRONG_NOTE_PDF_ITEMS,
-        ),
-    )
+        )
     if total > MAX_WRONG_NOTE_PDF_ITEMS:
         raise WrongNotePDFLimitError(
             f"오답이 {total}문항입니다. 시험 범위를 좁혀 "
@@ -810,6 +835,7 @@ def generate_and_store_wrong_note_pdf(
                 else None
             ),
             exam_id=int(job.exam_id) if job.exam_id else None,
+            source_selection_count=len(source_selection),
             deadline_monotonic=deadline_monotonic,
         )
         content_type = "application/pdf"

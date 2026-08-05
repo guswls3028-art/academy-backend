@@ -61,6 +61,14 @@ class WrongNotePDF(BaseModel):
         db_default="",
         help_text="생성 요청 시점의 오답·문항·해설 내용 SHA-256",
     )
+    source_selection = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=(
+            "학생의 여러 강의에서 선택한 시험·워크북 원본 목록. "
+            "비어 있으면 기존 단일 수강·회차 범위 규칙을 사용한다."
+        ),
+    )
 
     file_path = models.CharField(max_length=255, blank=True)
     error_message = models.TextField(blank=True)

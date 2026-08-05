@@ -19,6 +19,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.filters import OrderingFilter
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
+from rest_framework.decorators import action
 
 from django.db import transaction
 from django.db.models import Max, QuerySet
@@ -28,7 +29,9 @@ from django.utils import timezone
 from apps.core.permissions import TenantResolvedAndMember
 from apps.core.optimistic_concurrency import assert_expected_updated_at
 
-from apps.domains.homework_results.models import Homework
+from apps.domains.exams.models import Exam
+from apps.domains.homework.models import HomeworkAssignment
+from apps.domains.homework_results.models import Homework, HomeworkScore
 from apps.domains.homework_results.serializers.homework import HomeworkSerializer
 from apps.domains.homework_results.services.max_score_sync import (
     sync_homework_primary_score_max,
@@ -95,6 +98,8 @@ class HomeworkViewSet(ModelViewSet):
             "session__lecture__tenant",
             "session__homework_policy",
             "template_homework",
+            "source_exam",
+            "source_exam__sheet",
         )
 
         session_id = self.request.query_params.get("session_id")
@@ -121,6 +126,179 @@ class HomeworkViewSet(ModelViewSet):
             qs = qs.exclude(meta__removed_from_session_at__isnull=False)
 
         return qs
+
+    @staticmethod
+    def _question_grading_payload(*, homework: Homework) -> dict:
+        source_exam = homework.source_exam
+        questions = []
+        if source_exam is not None:
+            try:
+                questions = list(
+                    source_exam.sheet.questions.order_by("number", "id").values(
+                        "id", "number", "image_key"
+                    )
+                )
+            except Exception:
+                questions = []
+
+        assignments = list(
+            HomeworkAssignment.objects.filter(
+                tenant_id=homework.tenant_id,
+                homework=homework,
+                session_id=homework.session_id,
+            )
+            .select_related("enrollment__student")
+            .order_by("enrollment__student__name", "enrollment_id")
+        )
+        enrollment_ids = [int(item.enrollment_id) for item in assignments]
+        scores = {
+            int(item.enrollment_id): item
+            for item in HomeworkScore.objects.filter(
+                homework=homework,
+                session_id=homework.session_id,
+                enrollment_id__in=enrollment_ids,
+                attempt_index=1,
+            )
+        }
+        rows = []
+        for assignment in assignments:
+            score = scores.get(int(assignment.enrollment_id))
+            meta = dict(getattr(score, "meta", None) or {})
+            marks = meta.get("question_marks")
+            rows.append(
+                {
+                    "enrollment_id": int(assignment.enrollment_id),
+                    "student_id": int(assignment.enrollment.student_id),
+                    "student_name": str(assignment.enrollment.student.name or ""),
+                    "score_id": int(score.id) if score else None,
+                    "marks": marks if isinstance(marks, dict) else {},
+                }
+            )
+        return {
+            "homework_id": int(homework.id),
+            "source_exam_id": int(source_exam.id) if source_exam else None,
+            "source_status": (
+                str(source_exam.segmentation_status)
+                if source_exam
+                else Exam.SegmentationStatus.NONE
+            ),
+            "questions": questions,
+            "rows": rows,
+        }
+
+    @action(detail=True, methods=["post"], url_path="source-exam")
+    def ensure_source_exam(self, request, pk=None):
+        with transaction.atomic():
+            homework = get_object_or_404(
+                self.get_queryset().select_for_update(),
+                pk=pk,
+            )
+            if homework.homework_type != Homework.HomeworkType.REGULAR:
+                raise ValidationError(
+                    {"detail": "운영 과제에만 워크북 원본을 등록할 수 있습니다."}
+                )
+            if homework.source_exam_id is None:
+                source_exam = Exam.objects.create(
+                    tenant=request.tenant,
+                    title=f"{homework.title} · 워크북 원본",
+                    description="과제 워크북의 문항·선생님 해설 원본",
+                    exam_type=Exam.ExamType.REGULAR,
+                    is_active=False,
+                    grading_mode=Exam.GradingMode.WRITTEN,
+                    manual_grading_method=Exam.ManualGradingMethod.CORRECTNESS,
+                    max_score=homework.default_max_score,
+                    student_results_published=False,
+                    answer_visibility=Exam.AnswerVisibility.HIDDEN,
+                )
+                homework.source_exam = source_exam
+                homework.save(update_fields=["source_exam", "updated_at"])
+            return Response(HomeworkSerializer(homework).data)
+
+    @action(
+        detail=True,
+        methods=["get", "patch"],
+        url_path="question-grading",
+    )
+    def question_grading(self, request, pk=None):
+        homework = get_object_or_404(self.get_queryset(), pk=pk)
+        source_exam = homework.source_exam
+        if source_exam is None or source_exam.segmentation_status != Exam.SegmentationStatus.READY:
+            return Response(
+                {"detail": "워크북 문항을 먼저 분리하고 검수를 확정해 주세요."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        if request.method == "GET":
+            return Response(self._question_grading_payload(homework=homework))
+
+        updates = request.data.get("updates")
+        if not isinstance(updates, list) or not updates:
+            raise ValidationError({"updates": "변경할 학생 문항 목록이 필요합니다."})
+        if len(updates) > 500:
+            raise ValidationError({"updates": "한 번에 500개 문항까지만 저장할 수 있습니다."})
+
+        valid_numbers = set(
+            source_exam.sheet.questions.values_list("number", flat=True)
+        )
+        assignment_enrollment_ids = set(
+            HomeworkAssignment.objects.filter(
+                tenant=request.tenant,
+                homework=homework,
+                session_id=homework.session_id,
+            ).values_list("enrollment_id", flat=True)
+        )
+        parsed = []
+        seen = set()
+        for raw in updates:
+            try:
+                enrollment_id = int(raw.get("enrollment_id"))
+                question_number = int(raw.get("question_number"))
+            except (AttributeError, TypeError, ValueError):
+                raise ValidationError({"updates": "학생과 문항 번호를 다시 확인해 주세요."})
+            is_correct = raw.get("is_correct")
+            include = raw.get("include_in_wrong_note", False)
+            if is_correct not in (True, False, None) or not isinstance(include, bool):
+                raise ValidationError({"updates": "정오 및 복습 표시 값을 다시 확인해 주세요."})
+            if is_correct is None and include:
+                raise ValidationError({"updates": "복습 문항은 O 또는 X를 먼저 선택해 주세요."})
+            key = (enrollment_id, question_number)
+            if key in seen:
+                raise ValidationError({"updates": "같은 학생 문항이 중복되었습니다."})
+            seen.add(key)
+            if enrollment_id not in assignment_enrollment_ids:
+                raise ValidationError({"updates": "이 과제의 대상 학생만 채점할 수 있습니다."})
+            if question_number not in valid_numbers:
+                raise ValidationError({"updates": "현재 워크북에 없는 문항입니다."})
+            parsed.append((enrollment_id, question_number, is_correct, include))
+
+        with transaction.atomic():
+            for enrollment_id, question_number, is_correct, include in parsed:
+                score, _ = HomeworkScore.objects.select_for_update().get_or_create(
+                    enrollment_id=enrollment_id,
+                    session_id=homework.session_id,
+                    homework=homework,
+                    attempt_index=1,
+                    defaults={"max_score": homework.default_max_score},
+                )
+                meta = dict(score.meta or {})
+                raw_marks = meta.get("question_marks")
+                marks = dict(raw_marks) if isinstance(raw_marks, dict) else {}
+                mark_key = str(question_number)
+                if is_correct is None and not include:
+                    marks.pop(mark_key, None)
+                else:
+                    marks[mark_key] = {
+                        "is_correct": is_correct,
+                        "include_in_wrong_note": include,
+                        "updated_by_user_id": int(request.user.id),
+                        "updated_at": timezone.now().isoformat(),
+                    }
+                meta["question_marks"] = marks
+                score.meta = meta
+                score.updated_by_user = request.user
+                score.save(update_fields=["meta", "updated_by_user", "updated_at"])
+
+        homework = self.get_queryset().get(pk=homework.pk)
+        return Response(self._question_grading_payload(homework=homework))
 
     def create(self, request, *args, **kwargs):
         """템플릿 불러오기 시 serializer 검증 없이 생성."""
