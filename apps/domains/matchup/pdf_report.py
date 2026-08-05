@@ -222,6 +222,81 @@ def _compute_display_sim(source, candidate) -> Optional[float]:
         return None
 
 
+def _calculate_hit_statistics(exam_problems, entries_by_eid, selected_meta) -> dict:
+    """Return the exact hit statistics shown on the curated PDF cover.
+
+    A selected candidate is a hit only when its display similarity reaches the
+    type-hit threshold.  Keeping this calculation separate lets public
+    showcase metadata use the same rule instead of treating every selection as
+    a hit.
+    """
+    hit_problem_count = 0
+    curated_problem_count = 0
+    for exam_problem in exam_problems:
+        entry = entries_by_eid.get(exam_problem.id)
+        selected_ids = (entry.selected_problem_ids if entry else []) or []
+        if not selected_ids:
+            continue
+        curated_problem_count += 1
+        for problem_id in selected_ids:
+            try:
+                candidate = selected_meta.get(int(problem_id))
+            except (TypeError, ValueError):
+                candidate = None
+            if candidate is None:
+                continue
+            similarity = _compute_display_sim(exam_problem, candidate)
+            if similarity is not None and similarity >= _TYPE_HIT:
+                hit_problem_count += 1
+                break
+
+    total_questions = len(exam_problems)
+    return {
+        "total_questions": total_questions,
+        "hit_count": hit_problem_count,
+        "hit_rate": (hit_problem_count / total_questions) if total_questions else 0.0,
+        "curated_count": curated_problem_count,
+        "curated_rate": (curated_problem_count / total_questions) if total_questions else 0.0,
+    }
+
+
+def calculate_matchup_hit_statistics(report) -> dict:
+    """Calculate public/report hit statistics from the canonical PDF contract."""
+    from apps.domains.matchup.models import MatchupProblem
+
+    exam_problems = list(
+        report.document.problems.exclude(image_key="").order_by("number")
+    )
+    entries_by_eid = {entry.exam_problem_id: entry for entry in report.entries.all()}
+    excluded_problem_ids = {
+        entry.exam_problem_id
+        for entry in entries_by_eid.values()
+        if getattr(entry, "excluded", False)
+    }
+    if excluded_problem_ids:
+        exam_problems = [
+            problem for problem in exam_problems if problem.id not in excluded_problem_ids
+        ]
+
+    selected_ids = set()
+    for entry in entries_by_eid.values():
+        for problem_id in (entry.selected_problem_ids or []):
+            try:
+                selected_ids.add(int(problem_id))
+            except (TypeError, ValueError):
+                continue
+
+    selected_meta = {}
+    if selected_ids:
+        for problem in MatchupProblem.objects.filter(
+            tenant=report.tenant,
+            id__in=selected_ids,
+        ):
+            selected_meta[problem.id] = problem
+
+    return _calculate_hit_statistics(exam_problems, entries_by_eid, selected_meta)
+
+
 def _pane_color_for_class(cls: str) -> str:
     return {
         "direct": _HIT_COLOR,
@@ -846,27 +921,13 @@ def generate_curated_hit_report_pdf(report) -> bytes:
     # 분모 = 전체 시험지 문항 수 (total_q). 학부모가 본 시험에서 우리 학원이 미리
     # 다룬 비율 = 마케팅 핵심. curated 분모(부분 작업 보호)는 보조 라인으로 격하.
     # 분자: 큐레이션 자료 1건 이상이 시험지 문항과 sim ≥ 0.75 (직접+유형 적중).
-    hit_problem_count = 0
-    curated_problem_count = 0  # 큐레이션 자료가 1건 이상 선택된 문항 수 (보조)
-    for ep in exam_problems:
-        e = entries_by_eid.get(ep.id)
-        sel_ids = (e.selected_problem_ids if e else []) or []
-        if not sel_ids:
-            continue
-        curated_problem_count += 1
-        for pid in sel_ids:
-            p = selected_meta.get(int(pid))
-            if not p:
-                continue
-            sim = _compute_display_sim(ep, p)
-            if sim is not None and sim >= _TYPE_HIT:  # 0.75
-                hit_problem_count += 1
-                break  # 문항당 1번만 카운트
-    total_q = len(exam_problems)
-    # 분모 = 전체 시험지 문항 (강사 요청). 시험지 분리 0건 시 0%.
-    hit_rate = (hit_problem_count / total_q * 100) if total_q else 0.0
-    # 큐레이션 진행률 (보조) = 사용자가 작업한 비율
-    curated_progress = (curated_problem_count / total_q * 100) if total_q else 0.0
+    statistics = _calculate_hit_statistics(exam_problems, entries_by_eid, selected_meta)
+    hit_problem_count = statistics["hit_count"]
+    curated_problem_count = statistics["curated_count"]
+    total_q = statistics["total_questions"]
+    # PDF 표지는 백분율 단위로 표시한다. public metadata는 같은 값의 0~1 비율을 저장.
+    hit_rate = statistics["hit_rate"] * 100
+    curated_progress = statistics["curated_rate"] * 100
 
     buf = io.BytesIO()
     page_size = landscape(A4)

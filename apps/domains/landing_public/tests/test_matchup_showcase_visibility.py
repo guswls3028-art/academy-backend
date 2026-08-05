@@ -1,5 +1,6 @@
 from datetime import timedelta
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -15,10 +16,36 @@ from apps.domains.landing_public.api.views.matchup_showcase_views import (
 )
 from apps.domains.landing_public.models import PublicExamShowcase, PublicMatchupShowcase
 from apps.support.landing_public.matchup_showcase_dependencies import (
+    _snapshot_meta_from_report,
     matchup_generated_snapshot_key,
 )
 
 User = get_user_model()
+
+
+def test_showcase_snapshot_uses_canonical_report_statistics():
+    entries = MagicMock()
+    entries.count.return_value = 4
+    report = SimpleNamespace(
+        entries=SimpleNamespace(all=lambda: entries),
+        document=SimpleNamespace(title="시험 문서"),
+        document_id=10,
+        author=None,
+        submitted_by_name="박철",
+        title="공개 보고서",
+        status="submitted",
+    )
+
+    with patch(
+        "apps.domains.matchup.pdf_report.calculate_matchup_hit_statistics",
+        return_value={"total_questions": 19, "hit_count": 17, "hit_rate": 17 / 19},
+    ):
+        snapshot = _snapshot_meta_from_report(report, snapshot_at=timezone.now())
+
+    assert snapshot["total_entries"] == 4
+    assert snapshot["counted_entries"] == 19
+    assert snapshot["hit_count"] == 17
+    assert snapshot["hit_rate"] == 0.895
 
 
 class PublicMatchupShowcaseVisibilityTests(TestCase):

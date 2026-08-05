@@ -147,14 +147,24 @@ Gemini VLM을 먼저 운영 실험할 때는 전체 문서를 VLM primary로 바
   PDF를 운영 정리나 E2E cleanup 명목으로 물리 삭제하지 않는다.
 
 공개 응답에는 제목, 설명, 상태, 공개 기간, 조회수, 표시용 snapshot metadata,
-PDF URL과 정적 preview URL을 제공한다. 프론트엔드는 목록에서 PDF 렌더러를
-미리 로드하지 않고, 상세의 정적 대표 이미지와 전체 PDF 링크를 사용한다.
+PDF URL과 정적 preview URL을 제공한다. 목록은 정적 대표 이미지를 쓰고 공개
+상세는 PDF의 모든 쪽을 홈페이지 본문으로 이어 렌더한다. 브라우저 내장 PDF
+뷰어와 새 창 열기는 읽기 위한 필수 동선으로 사용하지 않는다.
+
+자동 보고서 기반 snapshot metadata의 적중률은 PDF 표지와 같은 계산 계약을
+사용한다. 분모는 빈 이미지 문제와 명시적으로 제외한 문제를 뺀 실제 시험 문항,
+분자는 선택 자료 중 하나라도 표시 유사도 0.75 이상인 문항이다. 자료가 선택됐다는
+이유만으로 적중 처리하지 않는다. 직접 업로드가 기존 보고서를 참조하면 이 계산값을
+게시 시점 metadata에 복사하며, 과거 잘못 집계된 공개 metadata를 복구할 때는 제목,
+PDF snapshot key, 공개 상태, 조회수는 보존하고 적중 통계 필드만 갱신한다.
 
 ### 검증 경계
 
 소유 회귀는
 `apps/domains/landing_public/tests/test_matchup_showcase_visibility.py`에서 권한,
-테넌트 격리, 공개 기간, 직접 업로드와 스냅샷 보존을 확인한다. 운영 canary로
+테넌트 격리, 공개 기간, 직접 업로드와 스냅샷 보존을 확인한다.
+`apps/domains/matchup/tests/test_hit_statistics.py`는 공개 metadata와 PDF가 동일한 유사도 임계값,
+제외 문항, 분모를 사용하는지 확인한다. 운영 canary로
 합성 게시물을 만들 때는 제목에 실행 식별자를 넣고, 생성 응답의 정확한 ID와
 snapshot key를 같은 실행이 소유해야 한다. 검증이 끝나면 먼저 tenant, 제목,
 설명, 정확한 ID와 key가 모두 해당 실행의 합성 자료인지 대조하고, 그 스냅샷과

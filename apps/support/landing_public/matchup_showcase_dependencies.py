@@ -18,18 +18,13 @@ def matchup_generated_snapshot_key(*, tenant_id: int, report_id: int) -> str:
 
 
 def _snapshot_meta_from_report(report: Any, *, snapshot_at) -> dict[str, Any]:
+    from apps.domains.matchup.pdf_report import calculate_matchup_hit_statistics
+
     entries_qs = report.entries.all()
     total_entries = entries_qs.count()
-    excluded = entries_qs.filter(excluded=True).count()
-    counted = total_entries - excluded
-    hit = 0
-    for entry in entries_qs:
-        if (
-            not entry.excluded
-            and isinstance(entry.selected_problem_ids, list)
-            and len(entry.selected_problem_ids) > 0
-        ):
-            hit += 1
+    statistics = calculate_matchup_hit_statistics(report)
+    counted = statistics["total_questions"]
+    hit = statistics["hit_count"]
     return {
         "document_title": (report.document.title or "") if report.document_id else "",
         "document_id": report.document_id,
@@ -43,7 +38,7 @@ def _snapshot_meta_from_report(report: Any, *, snapshot_at) -> dict[str, Any]:
         "total_entries": total_entries,
         "counted_entries": counted,
         "hit_count": hit,
-        "hit_rate": round(hit / counted, 3) if counted else 0.0,
+        "hit_rate": round(statistics["hit_rate"], 3),
         "snapshot_at_iso": snapshot_at.isoformat(),
     }
 
