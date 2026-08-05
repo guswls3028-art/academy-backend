@@ -2,40 +2,40 @@
   "schemaVersion": 1,
   "status": "successful",
   "complete": true,
-  "generatedAt": "2026-08-05T15:31:43+00:00",
-  "gitSha": "859fd4948bed9201d125b65c87b7bd8eda620154",
-  "releaseImageTag": "sha-859fd4948bed9201d125b65c87b7bd8eda620154-run-31018253947-1",
+  "generatedAt": "2026-08-05T18:08:53+00:00",
+  "gitSha": "c5378d1c07e06906465f3b788cefed705d04ee13",
+  "releaseImageTag": "sha-c5378d1c07e06906465f3b788cefed705d04ee13-run-31032588738-1",
   "images": {
     "academy-base": {
       "digest": "sha256:a09267ec15557bcfa5c2c6ae54d94ba9dc21ddc5a5d6ee134f5a3c6dfd443533",
       "tag": "sha-859fd4948bed9201d125b65c87b7bd8eda620154-run-31018253947-1",
-      "source": "built"
+      "source": "prior-success"
     },
     "academy-api": {
-      "digest": "sha256:10c214bb020a0d79d6492e8d68b7a5284095fb1b286c6bbb8c21d8a5c61a48e6",
-      "tag": "sha-859fd4948bed9201d125b65c87b7bd8eda620154-run-31018253947-1",
+      "digest": "sha256:c969abeec0232b64bec739ea10982641fcddba074c08fd24fba03224465b007b",
+      "tag": "sha-c5378d1c07e06906465f3b788cefed705d04ee13-run-31032588738-1",
       "source": "built"
     },
     "academy-video-worker": {
       "digest": "sha256:2d0aa8803fad00fbec5453a250e4155bf36dea70b3a1450e6602880e39f29a7d",
       "tag": "sha-859fd4948bed9201d125b65c87b7bd8eda620154-run-31018253947-1",
-      "source": "built"
+      "source": "prior-success"
     },
     "academy-messaging-worker": {
       "digest": "sha256:43830bd3e5590dc8efbef0445bc47270147fe031d7b02718cfd0600d305644ab",
       "tag": "sha-859fd4948bed9201d125b65c87b7bd8eda620154-run-31018253947-1",
-      "source": "built"
+      "source": "prior-success"
     },
     "academy-ai-worker-cpu": {
-      "digest": "sha256:2b7b30015018f90e989073a0913eb1d90b48c6ccbda41cff19b93c033ed42203",
-      "tag": "sha-859fd4948bed9201d125b65c87b7bd8eda620154-run-31018253947-1",
+      "digest": "sha256:79bae4e0b777d545a343c71a01d8c2c7e0ce14bdc6ce35f2ccada2d228d33c8a",
+      "tag": "sha-c5378d1c07e06906465f3b788cefed705d04ee13-run-31032588738-1",
       "source": "built"
     },
     "academy-tools-worker": {
       "digest": "sha256:d2fc171f484fed15aac65c4dcadc23955326b0c12261b04a6052617af51a814a",
       "tag": "sha-859fd4948bed9201d125b65c87b7bd8eda620154-run-31018253947-1",
-      "source": "built"
+      "source": "prior-success"
     }
   },
-  "verifiedAt": "2026-08-05T15:56:21+00:00"
+  "verifiedAt": "2026-08-05T18:29:09+00:00"
 }
