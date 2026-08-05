@@ -1,5 +1,7 @@
 from django.db.models import F
 from django.http import HttpResponse
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
@@ -81,6 +83,7 @@ class PublicProblemReviewShowcaseViewSet(viewsets.GenericViewSet):
         return Response(self._serialize(obj, include_snapshot=True))
 
     @action(detail=True, methods=["get"], url_path="pdf")
+    @extend_schema(responses={(200, "application/pdf"): OpenApiTypes.BINARY})
     def pdf_stream(self, request, pk=None):
         obj = self.get_object()
         if not obj.snapshot_pdf_key:

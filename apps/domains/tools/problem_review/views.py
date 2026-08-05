@@ -601,6 +601,11 @@ class ProblemReviewPublishView(APIView):
         response["Cache-Control"] = "no-store"
         return response
 
+    @extend_schema(
+        operation_id="tools_problem_review_unpublish",
+        request=None,
+        responses={204: None},
+    )
     def delete(self, request, report_id):
         report = _get_owned_report(request, report_id)
         if report is None:
