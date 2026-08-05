@@ -97,6 +97,9 @@ python scripts/ymath_realuse_scenario.py `
 여러 건이면 자동 선택하지 않고 실패 폐쇄한다. 재실행에서 완료 항목을 제외해도
 각 원본의 회차는 전체 plan의 원래 순번으로 계산해 바뀌지 않으며, 생성 응답 단절
 뒤에는 최대 30초 동안 commit 가시성을 기다린다.
+워크북 `source-exam` 생성이 PostgreSQL의 nullable outer join `FOR UPDATE` 오류를
+내면 제품 실패다. `Homework` 본행만 잠그는 계약을 배포한 뒤 같은 체크포인트를
+재실행해 기존 워크북을 중복 생성하지 않고 이어져야 한다.
 
 ## 합격 기준
 

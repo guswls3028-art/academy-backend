@@ -2,6 +2,7 @@ from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
+from unittest.mock import patch
 
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.homework_results.models import Homework, HomeworkScore
@@ -91,6 +92,19 @@ class WorkbookSourceAndGradingTests(TestCase):
         self.assertEqual(source_exam.exam_type, Exam.ExamType.REGULAR)
         self.assertEqual(source_exam.sessions.count(), 0)
         self.assertFalse(source_exam.student_results_published)
+
+    @patch("apps.domains.homework_results.views.homework_view.get_object_or_404")
+    def test_source_exam_creation_locks_only_the_homework_row(self, get_object):
+        get_object.return_value = self.homework
+
+        response = HomeworkViewSet.as_view({"post": "ensure_source_exam"})(
+            self._request("post", f"/homeworks/{self.homework.id}/source-exam/"),
+            pk=self.homework.id,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        locked_queryset = get_object.call_args.args[0]
+        self.assertEqual(locked_queryset.query.select_for_update_of, ("self",))
 
     def test_question_marks_preserve_score_meta_and_correct_review_item(self):
         source_exam = Exam.objects.create(
