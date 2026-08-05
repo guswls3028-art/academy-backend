@@ -107,6 +107,60 @@ def test_execute_item_recovers_submitted_upload_from_review(monkeypatch):
     assert checkpoints[-1]["execution_status"] == "job_recovered_from_review"
 
 
+def test_execute_item_reuploads_same_product_after_quality_failure(monkeypatch):
+    class Client:
+        @staticmethod
+        def get_json(path):
+            assert path == "/api/v1/exams/45/segmentation-review/"
+            return {
+                "status": "review_required",
+                "items": [
+                    {"has_teacher_explanation": True},
+                    {"has_teacher_explanation": True},
+                ],
+            }
+
+        @staticmethod
+        def upload_source(**kwargs):
+            assert kwargs["exam_id"] == 45
+            assert kwargs["upload_path"] == Path("problems.pdf")
+            assert kwargs["explanation_path"] == Path("teacher.hwp")
+            return {"job_id": "new-job"}
+
+    monkeypatch.setattr(
+        ymath_realuse_scenario,
+        "_wait_for_job",
+        lambda *_args, **_kwargs: {"status": "DONE", "result": {}},
+    )
+
+    result = execute_item(
+        client=Client(),
+        item={
+            "source_id": "paired-retry",
+            "route": "paired_problem_and_explanation",
+            "upload_path": "problems.pdf",
+            "explanation_path": "teacher.hwp",
+            "detected_question_count": 2,
+        },
+        session_id=1,
+        job_timeout=1,
+        prior={
+            "product_type": "exam",
+            "exam_id": 45,
+            "job_id": "old-job",
+            "execution_status": "teacher_explanation_coverage_incomplete",
+            "error": "stale transport error",
+        },
+        checkpoint=lambda _state: None,
+    )
+
+    assert result["exam_id"] == 45
+    assert result["job_id"] == "new-job"
+    assert result["source_reanalysis"] is True
+    assert result["execution_status"] == "review_required"
+    assert "error" not in result
+
+
 def test_build_source_plan_keeps_all_routes_explicit(tmp_path: Path):
     manifest = {
         "documents": [

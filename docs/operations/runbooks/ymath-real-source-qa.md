@@ -117,6 +117,10 @@ python scripts/ymath_realuse_scenario.py `
 - job 성공과 별개로 시험 상태가 `review_required`이고 예상 문항 수와 proposal
   수가 일치해야 한다. `conversion_required`, 빈 proposal, 일부 해설 누락,
   timeout은 별도 실패다.
+- 체크포인트 재개 시 성공 제품은 건너뛰고 동일 제목 제품을 재사용한다. 다만
+  `question_count_mismatch`, `teacher_explanation_coverage_incomplete`처럼 소스 분석
+  품질이 실패한 항목은 기존 시험을 중복 생성하지 않고 같은 시험에 소스를 다시
+  제출해 현재 worker로 재분석한다. 과거 job/review만 다시 읽어 성공으로 세면 안 된다.
 - HWP/HWPX 기본 30% 문제 크롭은 자동 합격이 아니다. 첫·중간·마지막 및
   도형·선택지·장문 필기 표본을 원본과 나란히 보고, 필요하면 8~98% 범위에서
   문항별 크롭을 조정한다.
