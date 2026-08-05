@@ -78,7 +78,7 @@ staff 역할만 사용할 수 있다.
 | 전사·구조·분석 worker | `apps/domains/tools/problem_review/worker.py` |
 | AI 분석 adapter | `academy/adapters/ai/problem/reviewer.py` |
 | PDF/PPTX 조판 | `apps/domains/tools/problem_review/renderers.py` |
-| 공개 스냅샷과 익명 API | `apps/domains/landing_public/models/problem_review_showcase.py`, `apps/domains/landing_public/api/views/problem_review_showcase_views.py` |
+| 공개 스냅샷과 익명 API | `apps/domains/landing_public/contracts/problem_review_showcase.py`, `apps/domains/landing_public/models/problem_review_showcase.py`, `apps/domains/landing_public/api/views/problem_review_showcase_views.py` |
 | queue routing | `academy/application/use_cases/ai/pipelines/dispatcher.py`, `academy/application/use_cases/tools/worker_dispatcher.py` |
 | 프런트 계약 | `frontend/docs/PROBLEM-REVIEW-REPORT.md` |
 

@@ -30,6 +30,10 @@ from rest_framework.views import APIView
 
 from academy.adapters.db.django import repositories_ai as ai_repo
 from apps.core.permissions import TenantResolvedAndStaff
+from apps.domains.landing_public.contracts import (
+    hide_problem_review_showcase,
+    publish_problem_review_showcase,
+)
 from apps.domains.tools.problem_review.schema import normalize_report_payload
 from apps.domains.tools.problem_review.serializers import (
     ProblemReviewExportCreateSerializer,
@@ -528,8 +532,6 @@ class ProblemReviewPublishView(APIView):
         now = timezone.now()
         old_key = ""
         try:
-            from apps.domains.landing_public.models import PublicProblemReviewShowcase
-
             with transaction.atomic():
                 current_report = ProblemReviewReport.objects.select_for_update().filter(
                     pk=report.id,
@@ -540,37 +542,18 @@ class ProblemReviewPublishView(APIView):
                 ).first()
                 if current_report is None:
                     raise _ProblemReviewPublishConflict
-                existing = PublicProblemReviewShowcase.objects.select_for_update().filter(
+                showcase = publish_problem_review_showcase(
                     tenant=request.tenant,
-                    report_id_ref=report.id,
-                ).first()
-                if existing:
-                    old_key = existing.snapshot_pdf_key
-                    showcase = existing
-                    showcase.title = title
-                    showcase.description = description
-                    showcase.status = PublicProblemReviewShowcase.Status.PUBLISHED
-                    showcase.published_at = now
-                    showcase.snapshot = snapshot
-                    showcase.snapshot_pdf_key = snapshot_key
-                    showcase.snapshot_pdf_bytes = len(pdf_bytes)
-                    showcase.snapshot_at = now
-                    showcase.created_by = request.user
-                    showcase.save()
-                else:
-                    showcase = PublicProblemReviewShowcase.objects.create(
-                        tenant=request.tenant,
-                        report_id_ref=report.id,
-                        title=title,
-                        description=description,
-                        status=PublicProblemReviewShowcase.Status.PUBLISHED,
-                        published_at=now,
-                        snapshot=snapshot,
-                        snapshot_pdf_key=snapshot_key,
-                        snapshot_pdf_bytes=len(pdf_bytes),
-                        snapshot_at=now,
-                        created_by=request.user,
-                    )
+                    report_id=report.id,
+                    title=title,
+                    description=description,
+                    published_at=now,
+                    snapshot=snapshot,
+                    snapshot_pdf_key=snapshot_key,
+                    snapshot_pdf_bytes=len(pdf_bytes),
+                    created_by=request.user,
+                )
+                old_key = showcase.previous_snapshot_pdf_key
         except _ProblemReviewPublishConflict:
             try:
                 from apps.infrastructure.storage.r2 import delete_object_r2_storage
@@ -619,15 +602,13 @@ class ProblemReviewPublishView(APIView):
         return response
 
     def delete(self, request, report_id):
-        from apps.domains.landing_public.models import PublicProblemReviewShowcase
-
         report = _get_owned_report(request, report_id)
         if report is None:
             return Response({"detail": "리포트를 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
-        updated = PublicProblemReviewShowcase.objects.filter(
+        updated = hide_problem_review_showcase(
             tenant=request.tenant,
-            report_id_ref=report.id,
-        ).update(status=PublicProblemReviewShowcase.Status.HIDDEN)
+            report_id=report.id,
+        )
         if not updated:
             return Response({"detail": "공개본을 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
         return Response(status=status.HTTP_204_NO_CONTENT)
