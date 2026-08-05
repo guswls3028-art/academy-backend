@@ -44,7 +44,7 @@ def _record_progress(job: AIJob, step: str, percent: int, label: str) -> None:
 def _analysis_ocr_context(job: AIJob) -> tuple[TransferOcrContext, dict[str, int | str]]:
     from academy.adapters.ai.config import AIConfig
     from academy.adapters.ai.problem.transcriber import transcribe_problem_image
-    from apps.domains.ai.services.quota import consume_ai_quota
+    from apps.domains.ai.contracts import consume_ai_quota
 
     cfg = AIConfig.load()
     try:
