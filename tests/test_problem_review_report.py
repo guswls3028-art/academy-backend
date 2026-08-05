@@ -307,6 +307,31 @@ class ProblemReviewReportViewTests(TestCase):
         self.assertEqual(response.status_code, 400)
         upload_file.assert_not_called()
 
+    @patch(
+        "apps.infrastructure.storage.r2.upload_fileobj_to_r2_storage",
+        side_effect=RuntimeError("fixture upload unavailable"),
+    )
+    def test_create_marks_report_failed_when_source_upload_cannot_start(self, _upload_file):
+        request = self.factory.post(
+            "/api/v1/tools/problem-review/reports/",
+            {
+                "source_files": SimpleUploadedFile(
+                    "exam.pdf",
+                    b"%PDF",
+                    content_type="application/pdf",
+                ),
+                "external_ai_confirmed": "true",
+            },
+            format="multipart",
+        )
+
+        response = ProblemReviewReportCollectionView.as_view()(self._authenticate(request))
+
+        self.assertEqual(response.status_code, 503)
+        report = ProblemReviewReport.objects.get()
+        self.assertEqual(report.status, ProblemReviewReport.Status.FAILED)
+        self.assertIn("fixture upload unavailable", report.last_error)
+
     def test_detail_is_teacher_owned_and_save_uses_optimistic_version(self):
         report = ProblemReviewReport.objects.create(
             tenant=self.tenant,

@@ -1,6 +1,22 @@
 from __future__ import annotations
 
 import json
+
+try:
+    from drf_spectacular.utils import extend_schema
+except ModuleNotFoundError as exc:
+    if exc.name != "drf_spectacular":
+        raise
+
+    def extend_schema(*args, **kwargs):  # type: ignore[no-redef]
+        """Keep runtime views importable when schema tooling is absent."""
+
+        def decorator(view):
+            return view
+
+        return decorator
+
+
 from django.db import transaction
 from rest_framework import status
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
@@ -11,6 +27,15 @@ from rest_framework.views import APIView
 from academy.adapters.db.django import repositories_ai as ai_repo
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.tools.problem_review.schema import normalize_report_payload
+from apps.domains.tools.problem_review.serializers import (
+    ProblemReviewExportCreateSerializer,
+    ProblemReviewExportRequestSerializer,
+    ProblemReviewExportStatusSerializer,
+    ProblemReviewReportCreateSerializer,
+    ProblemReviewReportListSerializer,
+    ProblemReviewReportPatchSerializer,
+    ProblemReviewReportSerializer,
+)
 from apps.domains.tools.problem_studio.async_transfer import build_source_archive
 from apps.domains.tools.problem_studio.models import ProblemReviewReport
 from apps.support.tools.ai_dependencies import dispatch_tools_ai_job
@@ -29,7 +54,6 @@ def _metadata(value: object) -> dict:
     if isinstance(value, dict):
         return value
     if isinstance(value, str) and value.strip():
-        uploaded = False
         try:
             parsed = json.loads(value)
         except json.JSONDecodeError as exc:
@@ -103,6 +127,10 @@ class ProblemReviewReportCollectionView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
+    @extend_schema(
+        operation_id="tools_problem_review_report_list",
+        responses=ProblemReviewReportListSerializer,
+    )
     def get(self, request):
         reports = list(
             ProblemReviewReport.objects.filter(
@@ -118,6 +146,11 @@ class ProblemReviewReportCollectionView(APIView):
         response["Cache-Control"] = "no-store"
         return response
 
+    @extend_schema(
+        operation_id="tools_problem_review_report_create",
+        request=ProblemReviewReportCreateSerializer,
+        responses={202: ProblemReviewReportSerializer},
+    )
     def post(self, request):
         if not _truthy(request.data.get("external_ai_confirmed")):
             return Response(
@@ -158,6 +191,7 @@ class ProblemReviewReportCollectionView(APIView):
             },
         )
         archive_key = f"tenants/{request.tenant.id}/tools/problem-review/tmp/{report.id}/sources.zip"
+        uploaded = False
         try:
             from apps.infrastructure.storage.r2 import (
                 delete_object_r2_storage,
@@ -224,6 +258,10 @@ class ProblemReviewReportDetailView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
     parser_classes = [JSONParser]
 
+    @extend_schema(
+        operation_id="tools_problem_review_report_retrieve",
+        responses=ProblemReviewReportSerializer,
+    )
     def get(self, request, report_id):
         report = _get_owned_report(request, report_id)
         if report is None:
@@ -233,6 +271,11 @@ class ProblemReviewReportDetailView(APIView):
         response["Cache-Control"] = "no-store"
         return response
 
+    @extend_schema(
+        operation_id="tools_problem_review_report_update",
+        request=ProblemReviewReportPatchSerializer,
+        responses=ProblemReviewReportSerializer,
+    )
     def patch(self, request, report_id):
         if not isinstance(request.data, dict):
             return Response({"detail": "저장할 초안이 올바르지 않습니다."}, status=status.HTTP_400_BAD_REQUEST)
@@ -273,6 +316,11 @@ class ProblemReviewExportCreateView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
     parser_classes = [JSONParser]
 
+    @extend_schema(
+        operation_id="tools_problem_review_export_create",
+        request=ProblemReviewExportRequestSerializer,
+        responses={202: ProblemReviewExportCreateSerializer},
+    )
     def post(self, request, report_id):
         report = _get_owned_report(request, report_id)
         if report is None:
@@ -315,6 +363,10 @@ class ProblemReviewExportCreateView(APIView):
 class ProblemReviewExportStatusView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
+    @extend_schema(
+        operation_id="tools_problem_review_export_status",
+        responses=ProblemReviewExportStatusSerializer,
+    )
     def get(self, request, report_id, job_id: str):
         report = _get_owned_report(request, report_id)
         if report is None:

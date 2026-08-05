@@ -4046,6 +4046,14 @@
           null
         ]
       },
+      "OutputFormatEnum": {
+        "description": "* `pdf` - pdf\n* `pptx` - pptx",
+        "enum": [
+          "pdf",
+          "pptx"
+        ],
+        "type": "string"
+      },
       "PaginatedAnswerKeyList": {
         "properties": {
           "count": {
@@ -6549,6 +6557,20 @@
         },
         "type": "object"
       },
+      "PatchedProblemReviewReportPatchRequest": {
+        "properties": {
+          "draft": {},
+          "title": {
+            "maxLength": 200,
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
       "PatchedProgressPolicyRequest": {
         "properties": {
           "exam_aggregate_strategy": {
@@ -8185,6 +8207,171 @@
           "counsel"
         ],
         "type": "string"
+      },
+      "ProblemReviewExportCreate": {
+        "properties": {
+          "job_id": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "output_format": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OutputFormatEnum"
+              }
+            ],
+            "readOnly": true
+          },
+          "status": {
+            "readOnly": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "output_format",
+          "status"
+        ],
+        "type": "object"
+      },
+      "ProblemReviewExportRequestRequest": {
+        "properties": {
+          "output_format": {
+            "$ref": "#/components/schemas/OutputFormatEnum"
+          }
+        },
+        "required": [
+          "output_format"
+        ],
+        "type": "object"
+      },
+      "ProblemReviewExportStatus": {
+        "properties": {
+          "error_message": {
+            "nullable": true,
+            "readOnly": true,
+            "type": "string"
+          },
+          "job_id": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "progress": {
+            "nullable": true,
+            "readOnly": true
+          },
+          "result": {
+            "nullable": true,
+            "readOnly": true
+          },
+          "status": {
+            "readOnly": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "error_message",
+          "job_id",
+          "progress",
+          "result",
+          "status"
+        ],
+        "type": "object"
+      },
+      "ProblemReviewReport": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
+          },
+          "draft": {
+            "readOnly": true
+          },
+          "id": {
+            "format": "uuid",
+            "readOnly": true,
+            "type": "string"
+          },
+          "last_error": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "source_name": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "source_summary": {
+            "readOnly": true
+          },
+          "status": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "title": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
+          },
+          "version": {
+            "readOnly": true,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "created_at",
+          "draft",
+          "id",
+          "last_error",
+          "source_name",
+          "source_summary",
+          "status",
+          "title",
+          "updated_at",
+          "version"
+        ],
+        "type": "object"
+      },
+      "ProblemReviewReportCreateRequest": {
+        "properties": {
+          "external_ai_confirmed": {
+            "type": "boolean"
+          },
+          "metadata": {},
+          "source_files": {
+            "items": {
+              "format": "binary",
+              "type": "string"
+            },
+            "maxItems": 6,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "external_ai_confirmed",
+          "source_files"
+        ],
+        "type": "object"
+      },
+      "ProblemReviewReportList": {
+        "properties": {
+          "reports": {
+            "items": {
+              "$ref": "#/components/schemas/ProblemReviewReport"
+            },
+            "readOnly": true,
+            "type": "array"
+          }
+        },
+        "required": [
+          "reports"
+        ],
+        "type": "object"
       },
       "ProgressPolicy": {
         "properties": {
@@ -43221,6 +43408,261 @@
         "responses": {
           "200": {
             "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "tools"
+        ]
+      }
+    },
+    "/api/v1/tools/problem-review/reports/": {
+      "get": {
+        "operationId": "tools_problem_review_report_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemReviewReportList"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "tools"
+        ]
+      },
+      "post": {
+        "operationId": "tools_problem_review_report_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProblemReviewReportCreateRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/ProblemReviewReportCreateRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/ProblemReviewReportCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemReviewReport"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "tools"
+        ]
+      }
+    },
+    "/api/v1/tools/problem-review/reports/{report_id}/": {
+      "get": {
+        "operationId": "tools_problem_review_report_retrieve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemReviewReport"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "tools"
+        ]
+      },
+      "patch": {
+        "operationId": "tools_problem_review_report_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedProblemReviewReportPatchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemReviewReport"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "tools"
+        ]
+      }
+    },
+    "/api/v1/tools/problem-review/reports/{report_id}/exports/": {
+      "post": {
+        "operationId": "tools_problem_review_export_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProblemReviewExportRequestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemReviewExportCreate"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "tools"
+        ]
+      }
+    },
+    "/api/v1/tools/problem-review/reports/{report_id}/exports/{job_id}/": {
+      "get": {
+        "operationId": "tools_problem_review_export_status",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemReviewExportStatus"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [
