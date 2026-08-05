@@ -29,6 +29,13 @@ TERMINAL_JOB_STATUSES = {
     "REVIEW_REQUIRED",
 }
 SUPPORTED_COMBINED_STATUSES = {"combined_document_ready"}
+SOURCE_REANALYSIS_STATUSES = {
+    "question_count_mismatch",
+    "teacher_explanation_coverage_incomplete",
+    "job_failed",
+    "conversion_required",
+    "unsafe_partial_acceptance",
+}
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -406,6 +413,7 @@ def execute_item(
 ) -> dict[str, Any]:
     started = time.time()
     state = {**prior, **item}
+    state.pop("error", None)
     product_type = str(state.get("product_type") or "")
     exam_id = int(state.get("exam_id") or 0)
     if not exam_id:
@@ -416,12 +424,17 @@ def execute_item(
             exam_id=exam_id,
         )
         checkpoint(state)
-    job_id = str(state.get("job_id") or "")
+    previous_execution_status = str(prior.get("execution_status") or "")
+    reanalyze_source = (
+        previous_execution_status in SOURCE_REANALYSIS_STATUSES
+        or previous_execution_status.startswith("unexpected_review_status:")
+    )
+    job_id = "" if reanalyze_source else str(state.get("job_id") or "")
     job: dict[str, Any] | None = None
     review: dict[str, Any] | None = None
     if not job_id:
         existing_review = client.get_json(f"/api/v1/exams/{exam_id}/segmentation-review/")
-        if str(existing_review.get("status") or "") != "none":
+        if not reanalyze_source and str(existing_review.get("status") or "") != "none":
             review = _wait_for_review(client, exam_id, job_timeout)
             job = _recovered_job_from_review(review)
             state.update(execution_status="job_recovered_from_review", upload_recovered=True)
@@ -437,7 +450,11 @@ def execute_item(
             job_id = str(upload.get("job_id") or "")
             if not job_id:
                 raise RuntimeError("upload response did not include a job id")
-            state.update(execution_status="job_submitted", job_id=job_id)
+            state.update(
+                execution_status="job_submitted",
+                job_id=job_id,
+                source_reanalysis=reanalyze_source,
+            )
             checkpoint(state)
     if job is None:
         job = _wait_for_job(client, job_id, job_timeout)
