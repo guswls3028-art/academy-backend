@@ -83,21 +83,37 @@ function Get-AsgActualRuntimeDigest {
     $expectedPrefix = "$($script:AccountId).dkr.ecr.$($script:Region).amazonaws.com/$Repo@"
     $digests = [Collections.Generic.HashSet[string]]::new()
     foreach ($instance in $instances) {
-        $remote = "set -e; ID=`$(docker inspect --format '{{.Image}}' '$Container'); docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' `"`$ID`""
-        $params = Convert-JsonArgToFileRef (@{commands=@($remote);executionTimeout=@("120")} | ConvertTo-Json -Compress)
-        $paramsFile = $params -replace '^file://', ''
-        try { $sent = Invoke-AwsJson @("ssm", "send-command", "--instance-ids", $instance.InstanceId, "--document-name", "AWS-RunShellScript", "--parameters", $params, "--timeout-seconds", "180", "--region", $script:Region, "--output", "json") }
-        finally { Remove-TempFiles @($paramsFile) }
-        $result = $null
-        for ($elapsed = 0; $elapsed -lt 120; $elapsed += 3) {
-            Start-Sleep -Seconds 3
-            $result = Invoke-AwsJson @("ssm", "get-command-invocation", "--command-id", $sent.Command.CommandId, "--instance-id", $instance.InstanceId, "--region", $script:Region, "--output", "json")
-            if ([string]$result.Status -eq "Success") { break }
-            if ([string]$result.Status -in @("Failed", "Cancelled", "TimedOut", "Cancelling")) { throw "Pre-pin runtime inventory failed on $($instance.InstanceId): $($result.Status)" }
+        $maxAttempts = 4
+        $retryDelaySec = 15
+        $lastFailure = "not attempted"
+        for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            try {
+                $remote = "set -e; ID=`$(docker inspect --format '{{.Image}}' '$Container'); docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' `"`$ID`""
+                $params = Convert-JsonArgToFileRef (@{commands=@($remote);executionTimeout=@("120")} | ConvertTo-Json -Compress)
+                $paramsFile = $params -replace '^file://', ''
+                try { $sent = Invoke-AwsJson @("ssm", "send-command", "--instance-ids", $instance.InstanceId, "--document-name", "AWS-RunShellScript", "--parameters", $params, "--timeout-seconds", "180", "--region", $script:Region, "--output", "json") }
+                finally { Remove-TempFiles @($paramsFile) }
+                $result = $null
+                for ($elapsed = 0; $elapsed -lt 120; $elapsed += 3) {
+                    Start-Sleep -Seconds 3
+                    $result = Invoke-AwsJson @("ssm", "get-command-invocation", "--command-id", $sent.Command.CommandId, "--instance-id", $instance.InstanceId, "--region", $script:Region, "--output", "json")
+                    if ([string]$result.Status -eq "Success") { break }
+                    if ([string]$result.Status -in @("Failed", "Cancelled", "TimedOut", "Cancelling")) { throw "SSM command ended as $($result.Status)" }
+                }
+                if ([string]$result.Status -ne "Success") { throw "SSM command did not finish within 120 seconds" }
+                $uris = @(([string]$result.StandardOutputContent -split "`r?`n") | Where-Object { $_.StartsWith($expectedPrefix) } | Sort-Object -Unique)
+                if ($uris.Count -ne 1 -or $uris[0] -notmatch '@(?<digest>sha256:[0-9a-f]{64})$') { throw "runtime did not report exactly one $Repo digest" }
+                [void]$digests.Add($matches['digest'].ToLowerInvariant())
+                break
+            } catch {
+                $lastFailure = $_.Exception.Message
+                if ($attempt -eq $maxAttempts) {
+                    throw "Pre-pin runtime inventory failed on $($instance.InstanceId) after $maxAttempts attempts: $lastFailure"
+                }
+                Write-Host "Retrying pre-pin runtime inventory on $($instance.InstanceId) after attempt $attempt/$maxAttempts failed: $lastFailure" -ForegroundColor DarkGray
+                Start-Sleep -Seconds $retryDelaySec
+            }
         }
-        $uris = @(([string]$result.StandardOutputContent -split "`r?`n") | Where-Object { $_.StartsWith($expectedPrefix) } | Sort-Object -Unique)
-        if ($uris.Count -ne 1 -or $uris[0] -notmatch '@(?<digest>sha256:[0-9a-f]{64})$') { throw "Pre-pin runtime must report exactly one $Repo digest on $($instance.InstanceId)." }
-        [void]$digests.Add($matches['digest'].ToLowerInvariant())
     }
     if ($digests.Count -ne 1) { throw "Pre-pin instances disagree on the runtime digest: $(@($digests) -join ',')." }
     return @($digests)[0]
