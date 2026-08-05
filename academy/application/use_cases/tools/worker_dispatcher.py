@@ -43,4 +43,11 @@ def handle_tools_job(job: AIJob) -> AIResult:
 
         return handle_wrong_note_pdf_generation_job(job)
 
+    if job_type == "problem_review_export":
+        from apps.domains.tools.problem_review.worker import (
+            handle_problem_review_export_job,
+        )
+
+        return handle_problem_review_export_job(job)
+
     return AIResult.failed(job.id, f"Unsupported tools job type: {job.type}")

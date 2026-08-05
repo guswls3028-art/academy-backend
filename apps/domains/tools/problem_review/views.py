@@ -1,0 +1,363 @@
+from __future__ import annotations
+
+import json
+from django.db import transaction
+from rest_framework import status
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from academy.adapters.db.django import repositories_ai as ai_repo
+from apps.core.permissions import TenantResolvedAndStaff
+from apps.domains.tools.problem_review.schema import normalize_report_payload
+from apps.domains.tools.problem_studio.async_transfer import build_source_archive
+from apps.domains.tools.problem_studio.models import ProblemReviewReport
+from apps.support.tools.ai_dependencies import dispatch_tools_ai_job
+
+
+ANALYSIS_JOB_TYPE = "problem_review_analysis"
+EXPORT_JOB_TYPE = "problem_review_export"
+MAX_SOURCE_FILES = 6
+
+
+def _truthy(value: object) -> bool:
+    return value is True or str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _metadata(value: object) -> dict:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value.strip():
+        uploaded = False
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError("시험 정보 형식이 올바르지 않습니다.") from exc
+        if isinstance(parsed, dict):
+            return parsed
+    return {}
+
+
+def _job_owned_by_report(job, report: ProblemReviewReport) -> bool:
+    payload = job.payload if isinstance(getattr(job, "payload", None), dict) else {}
+    return (
+        str(payload.get("request_user_id") or "") == str(report.requested_by_id or "")
+        and str(getattr(job, "source_id", "") or "") == str(report.id)
+        and str(getattr(job, "source_domain", "") or "") == "tools_problem_review"
+    )
+
+
+def _refresh_analysis(report: ProblemReviewReport) -> ProblemReviewReport:
+    if report.status != ProblemReviewReport.Status.ANALYZING or not report.analysis_job_id:
+        return report
+    job = ai_repo.get_job_model_for_status(
+        report.analysis_job_id,
+        str(report.tenant_id),
+        job_type=ANALYSIS_JOB_TYPE,
+    )
+    if not job or not _job_owned_by_report(job, report):
+        return report
+    if job.status == "DONE":
+        result = ai_repo.DjangoAIJobRepository().get_result_payload_for_job(job) or {}
+        draft = normalize_report_payload(result.get("report"))
+        if draft.get("questions"):
+            report.draft = draft
+            report.source_summary = result.get("source") if isinstance(result.get("source"), dict) else {}
+            report.status = ProblemReviewReport.Status.DRAFT
+            report.last_error = ""
+            report.save(update_fields=["draft", "source_summary", "status", "last_error", "updated_at"])
+    elif job.status in {"FAILED", "DEAD", "CANCELLED"}:
+        report.status = ProblemReviewReport.Status.FAILED
+        report.last_error = str(job.error_message or job.last_error or "분석 작업에 실패했습니다.")[:2000]
+        report.save(update_fields=["status", "last_error", "updated_at"])
+    return report
+
+
+def _serialize_report(report: ProblemReviewReport, *, include_draft: bool = True) -> dict:
+    payload = {
+        "id": str(report.id),
+        "status": report.status,
+        "title": report.title,
+        "source_name": report.source_name,
+        "source_summary": report.source_summary,
+        "version": report.version,
+        "last_error": report.last_error,
+        "created_at": report.created_at.isoformat(),
+        "updated_at": report.updated_at.isoformat(),
+    }
+    if include_draft:
+        payload["draft"] = report.draft
+    return payload
+
+
+def _get_owned_report(request, report_id) -> ProblemReviewReport | None:
+    return ProblemReviewReport.objects.filter(
+        pk=report_id,
+        tenant=request.tenant,
+        requested_by=request.user,
+    ).first()
+
+
+class ProblemReviewReportCollectionView(APIView):
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get(self, request):
+        reports = list(
+            ProblemReviewReport.objects.filter(
+                tenant=request.tenant,
+                requested_by=request.user,
+            )[:20]
+        )
+        for report in reports:
+            _refresh_analysis(report)
+        response = Response({
+            "reports": [_serialize_report(report, include_draft=False) for report in reports],
+        })
+        response["Cache-Control"] = "no-store"
+        return response
+
+    def post(self, request):
+        if not _truthy(request.data.get("external_ai_confirmed")):
+            return Response(
+                {"detail": "시험지 판독과 분석을 위해 외부 AI 처리 안내를 확인해 주세요."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        source_files = request.FILES.getlist("source_files")
+        if not source_files:
+            return Response(
+                {"detail": "리뷰할 시험지나 문제지 파일을 올려 주세요."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if len(source_files) > MAX_SOURCE_FILES:
+            return Response(
+                {"detail": f"한 번에 파일은 {MAX_SOURCE_FILES}개까지 올릴 수 있습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            metadata = _metadata(request.data.get("metadata"))
+            archive_file, source_manifest = build_source_archive(source_files)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        title = str(metadata.get("title") or "").strip()[:200]
+        source_name = str(source_manifest[0]["name"] if source_manifest else "")[:255]
+        report = ProblemReviewReport.objects.create(
+            tenant=request.tenant,
+            requested_by=request.user,
+            status=ProblemReviewReport.Status.ANALYZING,
+            title=title,
+            source_name=source_name,
+            source_summary={
+                "file_count": len(source_manifest),
+                "files": [
+                    {"name": item["name"], "size_bytes": item["size"]}
+                    for item in source_manifest
+                ],
+            },
+        )
+        archive_key = f"tenants/{request.tenant.id}/tools/problem-review/tmp/{report.id}/sources.zip"
+        try:
+            from apps.infrastructure.storage.r2 import (
+                delete_object_r2_storage,
+                upload_fileobj_to_r2_storage,
+            )
+
+            upload_fileobj_to_r2_storage(
+                fileobj=archive_file,
+                key=archive_key,
+                content_type="application/zip",
+            )
+            uploaded = True
+            result = dispatch_tools_ai_job(
+                job_type=ANALYSIS_JOB_TYPE,
+                payload={
+                    "report_id": str(report.id),
+                    "tenant_id": str(request.tenant.id),
+                    "request_user_id": str(request.user.id),
+                    "source_archive_key": archive_key,
+                    "source_files": source_manifest,
+                    "metadata": metadata,
+                },
+                tenant_id=str(request.tenant.id),
+                source_domain="tools_problem_review",
+                source_id=str(report.id),
+                tier="basic",
+            )
+            if not result.get("ok"):
+                try:
+                    delete_object_r2_storage(key=archive_key)
+                except Exception:
+                    pass
+                report.status = ProblemReviewReport.Status.FAILED
+                report.last_error = str(result.get("error") or "분석 작업을 시작할 수 없습니다.")[:2000]
+                report.save(update_fields=["status", "last_error", "updated_at"])
+                return Response(
+                    {"detail": report.last_error, "report": _serialize_report(report)},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+            report.analysis_job_id = str(result["job_id"])
+            report.save(update_fields=["analysis_job_id", "updated_at"])
+        except Exception as exc:
+            if uploaded:
+                try:
+                    delete_object_r2_storage(key=archive_key)
+                except Exception:
+                    pass
+            report.status = ProblemReviewReport.Status.FAILED
+            report.last_error = str(exc)[:2000]
+            report.save(update_fields=["status", "last_error", "updated_at"])
+            return Response(
+                {"detail": "분석 작업을 시작하지 못했습니다.", "report": _serialize_report(report)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        finally:
+            archive_file.close()
+
+        response = Response(_serialize_report(report), status=status.HTTP_202_ACCEPTED)
+        response["Cache-Control"] = "no-store"
+        return response
+
+
+class ProblemReviewReportDetailView(APIView):
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+    parser_classes = [JSONParser]
+
+    def get(self, request, report_id):
+        report = _get_owned_report(request, report_id)
+        if report is None:
+            return Response({"detail": "리포트를 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+        report = _refresh_analysis(report)
+        response = Response(_serialize_report(report))
+        response["Cache-Control"] = "no-store"
+        return response
+
+    def patch(self, request, report_id):
+        if not isinstance(request.data, dict):
+            return Response({"detail": "저장할 초안이 올바르지 않습니다."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            expected_version = int(request.data.get("version"))
+        except (TypeError, ValueError):
+            return Response({"detail": "현재 리포트 버전을 확인해 주세요."}, status=status.HTTP_400_BAD_REQUEST)
+        with transaction.atomic():
+            report = ProblemReviewReport.objects.select_for_update().filter(
+                pk=report_id,
+                tenant=request.tenant,
+                requested_by=request.user,
+            ).first()
+            if report is None:
+                return Response({"detail": "리포트를 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+            report = _refresh_analysis(report)
+            if report.status != ProblemReviewReport.Status.DRAFT:
+                return Response({"detail": "분석이 끝난 뒤 초안을 저장할 수 있습니다."}, status=status.HTTP_409_CONFLICT)
+            if report.version != expected_version:
+                return Response(
+                    {"detail": "다른 화면에서 리포트가 수정되었습니다.", "report": _serialize_report(report)},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            report.draft = normalize_report_payload(
+                request.data.get("draft"),
+                fallback=report.draft,
+                preserve_question_set=False,
+            )
+            report.title = str(request.data.get("title") or report.draft.get("metadata", {}).get("title") or report.title)[:200]
+            report.version += 1
+            report.save(update_fields=["draft", "title", "version", "updated_at"])
+        response = Response(_serialize_report(report))
+        response["Cache-Control"] = "no-store"
+        return response
+
+
+class ProblemReviewExportCreateView(APIView):
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+    parser_classes = [JSONParser]
+
+    def post(self, request, report_id):
+        report = _get_owned_report(request, report_id)
+        if report is None:
+            return Response({"detail": "리포트를 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+        report = _refresh_analysis(report)
+        if report.status != ProblemReviewReport.Status.DRAFT or not report.draft:
+            return Response({"detail": "검수 초안이 준비된 뒤 다운로드할 수 있습니다."}, status=status.HTTP_409_CONFLICT)
+        output_format = str(request.data.get("output_format") or "").lower()
+        if output_format not in {"pdf", "pptx"}:
+            return Response({"detail": "PDF 또는 PPTX만 선택할 수 있습니다."}, status=status.HTTP_400_BAD_REQUEST)
+        result = dispatch_tools_ai_job(
+            job_type=EXPORT_JOB_TYPE,
+            payload={
+                "report_id": str(report.id),
+                "report_version": report.version,
+                "report": report.draft,
+                "output_format": output_format,
+                "tenant_id": str(request.tenant.id),
+                "request_user_id": str(request.user.id),
+            },
+            tenant_id=str(request.tenant.id),
+            source_domain="tools_problem_review",
+            source_id=str(report.id),
+            tier="basic",
+            idempotency_key=f"problem-review-export:{report.id}:{report.version}:{output_format}",
+        )
+        if not result.get("ok"):
+            return Response(
+                {"detail": result.get("error") or "다운로드 파일을 만들 수 없습니다."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        response = Response(
+            {"job_id": result["job_id"], "status": "PENDING", "output_format": output_format},
+            status=status.HTTP_202_ACCEPTED,
+        )
+        response["Cache-Control"] = "no-store"
+        return response
+
+
+class ProblemReviewExportStatusView(APIView):
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+
+    def get(self, request, report_id, job_id: str):
+        report = _get_owned_report(request, report_id)
+        if report is None:
+            return Response({"detail": "리포트를 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+        job = ai_repo.get_job_model_for_status(
+            str(job_id),
+            str(request.tenant.id),
+            job_type=EXPORT_JOB_TYPE,
+        )
+        if not job or not _job_owned_by_report(job, report):
+            return Response({"detail": "다운로드 작업을 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+        progress = None
+        try:
+            from academy.adapters.cache.redis_progress_adapter import RedisProgressAdapter
+
+            progress = RedisProgressAdapter().get_progress(str(job.job_id), tenant_id=str(request.tenant.id))
+        except Exception:
+            pass
+        result_payload = None
+        if job.status == "DONE":
+            raw = ai_repo.DjangoAIJobRepository().get_result_payload_for_job(job) or {}
+            result_key = str(raw.get("r2_key") or "")
+            expected_prefix = f"tenants/{request.tenant.id}/tools/problem-review/{report.id}/"
+            if result_key.startswith(expected_prefix):
+                from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
+
+                result_payload = {
+                    key: value
+                    for key, value in raw.items()
+                    if key not in {"r2_key", "download_url"} and not key.startswith("_")
+                }
+                result_payload["download_url"] = generate_presigned_get_url_storage(
+                    key=result_key,
+                    expires_in=900,
+                    filename=str(raw.get("filename") or "problem-review-report"),
+                    content_type=str(raw.get("content_type") or "application/octet-stream"),
+                )
+        response = Response({
+            "job_id": str(job.job_id),
+            "status": job.status,
+            "progress": progress,
+            "result": result_payload,
+            "error_message": job.error_message or job.last_error or None,
+        })
+        response["Cache-Control"] = "no-store"
+        return response

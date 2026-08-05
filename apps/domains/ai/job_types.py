@@ -21,6 +21,8 @@ AI_JOB_TYPES = frozenset({
     "problem_studio_package",
     "problem_studio_transfer",
     "problem_studio_transcription",
+    "problem_review_analysis",
+    "problem_review_export",
     "teacher_problem_explanation",
     "matchup_analysis",
     "matchup_index_exam",
@@ -36,6 +38,7 @@ TOOL_WORKER_JOB_TYPES = frozenset({
     "attendance_excel_export",
     "staff_excel_export",
     "wrong_note_pdf_generation",
+    "problem_review_export",
 })
 
 LITE_ALLOWED_JOB_TYPES = frozenset({
@@ -54,6 +57,8 @@ BASIC_ALLOWED_JOB_TYPES = frozenset({
     "problem_studio_package",
     "problem_studio_transfer",
     "problem_studio_transcription",
+    "problem_review_analysis",
+    "problem_review_export",
     "teacher_problem_explanation",
     "question_segmentation",
     "matchup_analysis",
