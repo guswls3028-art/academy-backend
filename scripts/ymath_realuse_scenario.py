@@ -260,27 +260,83 @@ def _atomic_write(path: Path, payload: dict[str, Any]) -> None:
     temporary.replace(path)
 
 
-def _create_product(client: AcademyClient, item: dict[str, Any], session_id: int) -> tuple[str, int]:
-    title = f"[Ymath 실자료 QA] {item['display_name']}"[:200]
+def _product_title(item: dict[str, Any]) -> str:
+    return f"[Ymath 실자료 QA:{item['source_id']}] {item['display_name']}"[:200]
+
+
+def _page_results(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if not isinstance(payload, dict):
+        return []
+    results = payload.get("results")
+    if isinstance(results, list):
+        return [item for item in results if isinstance(item, dict)]
+    return []
+
+
+def _find_existing_product(
+    client: AcademyClient,
+    item: dict[str, Any],
+    session_id: int,
+    title: str,
+) -> tuple[str, int] | None:
     if item["category"] == "workbook":
-        homework = client.post_json(
-            "/api/v1/homeworks/",
-            {"session": session_id, "title": title, "homework_type": "regular"},
-        )
+        payload = client.get_json(f"/api/v1/homeworks/?session_id={session_id}&page_size=100")
+        matches = [row for row in _page_results(payload) if str(row.get("title") or "") == title]
+        if len(matches) > 1:
+            raise RuntimeError(f"multiple workbook products match deterministic title: {title}")
+        if not matches:
+            return None
+        ensured = client.post_json(f"/api/v1/homeworks/{int(matches[0]['id'])}/source-exam/", {})
+        return "homework", int(ensured["source_exam_id"])
+    payload = client.get_json(
+        f"/api/v1/exams/?exam_type=regular&session_id={session_id}&page_size=100"
+    )
+    matches = [row for row in _page_results(payload) if str(row.get("title") or "") == title]
+    if len(matches) > 1:
+        raise RuntimeError(f"multiple exam products match deterministic title: {title}")
+    if not matches:
+        return None
+    return "exam", int(matches[0]["id"])
+
+
+def _create_product(client: AcademyClient, item: dict[str, Any], session_id: int) -> tuple[str, int]:
+    title = _product_title(item)
+    existing = _find_existing_product(client, item, session_id, title)
+    if existing is not None:
+        return existing
+    if item["category"] == "workbook":
+        try:
+            homework = client.post_json(
+                "/api/v1/homeworks/",
+                {"session": session_id, "title": title, "homework_type": "regular"},
+            )
+        except requests.ConnectionError:
+            recovered = _find_existing_product(client, item, session_id, title)
+            if recovered is not None:
+                return recovered
+            raise
         ensured = client.post_json(f"/api/v1/homeworks/{int(homework['id'])}/source-exam/", {})
         return "homework", int(ensured["source_exam_id"])
-    exam = client.post_json(
-        "/api/v1/exams/",
-        {
-            "title": title,
-            "exam_type": "regular",
-            "session_id": session_id,
-            "grading_mode": "written",
-            "manual_grading_method": "correctness",
-            "max_score": 100,
-            "pass_score": 0,
-        },
-    )
+    try:
+        exam = client.post_json(
+            "/api/v1/exams/",
+            {
+                "title": title,
+                "exam_type": "regular",
+                "session_id": session_id,
+                "grading_mode": "written",
+                "manual_grading_method": "correctness",
+                "max_score": 100,
+                "pass_score": 0,
+            },
+        )
+    except requests.ConnectionError:
+        recovered = _find_existing_product(client, item, session_id, title)
+        if recovered is not None:
+            return recovered
+        raise
     return "exam", int(exam["id"])
 
 
@@ -294,6 +350,31 @@ def _wait_for_job(client: AcademyClient, job_id: str, timeout_seconds: int) -> d
         time.sleep(delay)
         delay = min(delay * 1.3, 10.0)
     raise TimeoutError(f"job did not finish within {timeout_seconds}s: {job_id}")
+
+
+def _wait_for_review(client: AcademyClient, exam_id: int, timeout_seconds: int) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout_seconds
+    delay = 2.0
+    while time.monotonic() < deadline:
+        review = client.get_json(f"/api/v1/exams/{exam_id}/segmentation-review/")
+        if str(review.get("status") or "") in {
+            "review_required",
+            "conversion_required",
+            "failed",
+            "ready",
+        }:
+            return review
+        time.sleep(delay)
+        delay = min(delay * 1.3, 10.0)
+    raise TimeoutError(f"segmentation review did not finish within {timeout_seconds}s: {exam_id}")
+
+
+def _recovered_job_from_review(review: dict[str, Any]) -> dict[str, Any]:
+    status = str(review.get("status") or "")
+    return {
+        "status": "FAILED" if status == "failed" else "DONE",
+        "result": {"conversion_required": True} if status == "conversion_required" else {},
+    }
 
 
 def execute_item(
@@ -318,19 +399,32 @@ def execute_item(
         )
         checkpoint(state)
     job_id = str(state.get("job_id") or "")
+    job: dict[str, Any] | None = None
+    review: dict[str, Any] | None = None
     if not job_id:
-        upload = client.upload_source(
-            exam_id=exam_id,
-            upload_path=Path(item["upload_path"]),
-            explanation_path=(Path(item["explanation_path"]) if item.get("explanation_path") else None),
-        )
-        job_id = str(upload.get("job_id") or "")
-        if not job_id:
-            raise RuntimeError("upload response did not include a job id")
-        state.update(execution_status="job_submitted", job_id=job_id)
-        checkpoint(state)
-    job = _wait_for_job(client, job_id, job_timeout)
-    review = client.get_json(f"/api/v1/exams/{exam_id}/segmentation-review/")
+        existing_review = client.get_json(f"/api/v1/exams/{exam_id}/segmentation-review/")
+        if str(existing_review.get("status") or "") != "none":
+            review = _wait_for_review(client, exam_id, job_timeout)
+            job = _recovered_job_from_review(review)
+            state.update(execution_status="job_recovered_from_review", upload_recovered=True)
+            checkpoint(state)
+        else:
+            upload = client.upload_source(
+                exam_id=exam_id,
+                upload_path=Path(item["upload_path"]),
+                explanation_path=(
+                    Path(item["explanation_path"]) if item.get("explanation_path") else None
+                ),
+            )
+            job_id = str(upload.get("job_id") or "")
+            if not job_id:
+                raise RuntimeError("upload response did not include a job id")
+            state.update(execution_status="job_submitted", job_id=job_id)
+            checkpoint(state)
+    if job is None:
+        job = _wait_for_job(client, job_id, job_timeout)
+    if review is None:
+        review = client.get_json(f"/api/v1/exams/{exam_id}/segmentation-review/")
     result = job.get("result") if isinstance(job.get("result"), dict) else {}
     proposal_count = len(review.get("items") or [])
     explanation_count = sum(

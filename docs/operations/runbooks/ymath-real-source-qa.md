@@ -87,6 +87,10 @@ python scripts/ymath_realuse_scenario.py `
 `/exams/pdf-extract/`, `/jobs/{id}/`, `/exams/{id}/segmentation-review/` 계약을
 사용한다. 시험·워크북 생성과 job 제출 직후 상태를 원자적으로 저장하므로 중단 후
 같은 결과 파일로 재실행할 수 있다. `review_required`인 항목은 재실행하지 않는다.
+각 상품 제목에는 `source_id`를 넣어 유일하게 만들며, POST 응답이 끊겼더라도 같은
+회차의 정확한 제목을 한 건만 찾아 이어받는다. 업로드 응답 유실 뒤에는 시험의
+`segmentation_status`를 폴링해 이미 접수된 job을 재제출하지 않는다. 같은 제목이
+여러 건이면 자동 선택하지 않고 실패 폐쇄한다.
 
 ## 합격 기준
 
