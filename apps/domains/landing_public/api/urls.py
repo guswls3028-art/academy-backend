@@ -6,6 +6,7 @@ from .views import (
     PublicCommunityStatsView,
     PublicExamShowcaseViewSet,
     PublicMatchupShowcaseViewSet,
+    PublicProblemReviewShowcaseViewSet,
     PublicPostReplyViewSet,
     PublicReportViewSet,
     PublicReviewViewSet,
@@ -21,6 +22,11 @@ router.register("replies", PublicPostReplyViewSet, basename="landing-public-repl
 router.register("reports", PublicReportViewSet, basename="landing-public-report")
 router.register("showcase", PublicExamShowcaseViewSet, basename="landing-public-showcase")
 router.register("matchup-showcase", PublicMatchupShowcaseViewSet, basename="landing-public-matchup-showcase")
+router.register(
+    "problem-review-showcase",
+    PublicProblemReviewShowcaseViewSet,
+    basename="landing-public-problem-review-showcase",
+)
 
 urlpatterns = [
     path("", include(router.urls)),

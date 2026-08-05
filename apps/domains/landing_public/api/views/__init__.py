@@ -6,6 +6,7 @@ from .report_views import PublicReportViewSet, PublicUserBlockView
 from .upload_views import ReviewPhotoUploadView
 from .exam_showcase_views import PublicExamShowcaseViewSet
 from .matchup_showcase_views import PublicMatchupShowcaseViewSet
+from .problem_review_showcase_views import PublicProblemReviewShowcaseViewSet
 
 __all__ = [
     "PublicBoardPostViewSet",
@@ -17,4 +18,5 @@ __all__ = [
     "ReviewPhotoUploadView",
     "PublicExamShowcaseViewSet",
     "PublicMatchupShowcaseViewSet",
+    "PublicProblemReviewShowcaseViewSet",
 ]

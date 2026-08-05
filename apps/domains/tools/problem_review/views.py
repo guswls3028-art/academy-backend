@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import io
 import json
+import logging
+import uuid
 
 try:
     from drf_spectacular.utils import extend_schema
@@ -18,6 +21,7 @@ except ModuleNotFoundError as exc:
 
 
 from django.db import transaction
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
@@ -34,16 +38,24 @@ from apps.domains.tools.problem_review.serializers import (
     ProblemReviewReportCreateSerializer,
     ProblemReviewReportListSerializer,
     ProblemReviewReportPatchSerializer,
+    ProblemReviewPublishRequestSerializer,
+    ProblemReviewPublishResponseSerializer,
     ProblemReviewReportSerializer,
 )
 from apps.domains.tools.problem_studio.async_transfer import build_source_archive
 from apps.domains.tools.problem_studio.models import ProblemReviewReport
+from apps.domains.tools.problem_review.renderers import render_problem_review_report
 from apps.support.tools.ai_dependencies import dispatch_tools_ai_job
 
 
 ANALYSIS_JOB_TYPE = "problem_review_analysis"
 EXPORT_JOB_TYPE = "problem_review_export"
 MAX_SOURCE_FILES = 6
+logger = logging.getLogger(__name__)
+
+
+class _ProblemReviewPublishConflict(Exception):
+    pass
 
 
 def _truthy(value: object) -> bool:
@@ -121,6 +133,37 @@ def _get_owned_report(request, report_id) -> ProblemReviewReport | None:
         tenant=request.tenant,
         requested_by=request.user,
     ).first()
+
+
+def _public_snapshot(draft: dict) -> dict:
+    """Whitelist fields suitable for a public article and PDF."""
+    normalized = normalize_report_payload(draft)
+    public_questions = [
+        {
+            "number": item.get("number"),
+            "source_number": item.get("source_number"),
+            "unit": item.get("unit"),
+            "answer": item.get("answer"),
+            "points": item.get("points"),
+            "difficulty": item.get("difficulty"),
+            "key_point": item.get("key_point"),
+            "trap": item.get("trap"),
+        }
+        for item in normalized.get("questions", [])
+    ]
+    return {
+        "schema_version": normalized.get("schema_version"),
+        "metadata": normalized.get("metadata") or {},
+        "summary": normalized.get("summary") or {},
+        "assessment_axes": normalized.get("assessment_axes") or [],
+        "domains": normalized.get("domains") or [],
+        "difficulty": normalized.get("difficulty") or {},
+        "questions": public_questions,
+        "key_items": normalized.get("key_items") or [],
+        "failure_patterns": normalized.get("failure_patterns") or [],
+        "parent_guidance": normalized.get("parent_guidance") or {},
+        "conclusion": normalized.get("conclusion") or {},
+    }
 
 
 class ProblemReviewReportCollectionView(APIView):
@@ -413,3 +456,178 @@ class ProblemReviewExportStatusView(APIView):
         })
         response["Cache-Control"] = "no-store"
         return response
+
+
+class ProblemReviewPublishView(APIView):
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+    parser_classes = [JSONParser]
+
+    @extend_schema(
+        operation_id="tools_problem_review_publish",
+        request=ProblemReviewPublishRequestSerializer,
+        responses=ProblemReviewPublishResponseSerializer,
+    )
+    def post(self, request, report_id):
+        try:
+            expected_version = int(request.data.get("version"))
+        except (AttributeError, TypeError, ValueError):
+            return Response(
+                {"detail": "현재 리포트 버전을 확인해 주세요."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            report = ProblemReviewReport.objects.select_for_update().filter(
+                pk=report_id,
+                tenant=request.tenant,
+                requested_by=request.user,
+            ).first()
+            if report is None:
+                return Response({"detail": "리포트를 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+            report = _refresh_analysis(report)
+            if report.status != ProblemReviewReport.Status.DRAFT:
+                return Response(
+                    {"detail": "분석과 선생님 검수가 끝난 리포트만 공개할 수 있습니다."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            if report.version != expected_version:
+                return Response(
+                    {"detail": "다른 화면에서 수정되었습니다. 최신 리포트를 다시 열어 주세요."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            snapshot = _public_snapshot(report.draft)
+            if not snapshot.get("questions"):
+                return Response(
+                    {"detail": "공개할 문항 분석이 없습니다."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            title = str(snapshot.get("metadata", {}).get("title") or report.title or "문제 분석 리포트")[:200]
+            description = str(snapshot.get("summary", {}).get("one_line") or "")[:1200]
+
+        pdf_bytes, _, _ = render_problem_review_report(snapshot, output_format="pdf")
+        snapshot_key = (
+            f"problem-review-showcase-snapshots/tenant_{request.tenant.id}/"
+            f"{report.id}/{uuid.uuid4().hex}.pdf"
+        )
+        try:
+            from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_storage
+
+            upload_fileobj_to_r2_storage(
+                fileobj=io.BytesIO(pdf_bytes),
+                key=snapshot_key,
+                content_type="application/pdf",
+                timeout_seconds=30,
+            )
+        except Exception:
+            logger.exception("problem_review_public_snapshot_upload_failed report=%s", report.id)
+            return Response(
+                {"detail": "공개용 PDF를 저장하지 못했습니다."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        now = timezone.now()
+        old_key = ""
+        try:
+            from apps.domains.landing_public.models import PublicProblemReviewShowcase
+
+            with transaction.atomic():
+                current_report = ProblemReviewReport.objects.select_for_update().filter(
+                    pk=report.id,
+                    tenant=request.tenant,
+                    requested_by=request.user,
+                    status=ProblemReviewReport.Status.DRAFT,
+                    version=expected_version,
+                ).first()
+                if current_report is None:
+                    raise _ProblemReviewPublishConflict
+                existing = PublicProblemReviewShowcase.objects.select_for_update().filter(
+                    tenant=request.tenant,
+                    report_id_ref=report.id,
+                ).first()
+                if existing:
+                    old_key = existing.snapshot_pdf_key
+                    showcase = existing
+                    showcase.title = title
+                    showcase.description = description
+                    showcase.status = PublicProblemReviewShowcase.Status.PUBLISHED
+                    showcase.published_at = now
+                    showcase.snapshot = snapshot
+                    showcase.snapshot_pdf_key = snapshot_key
+                    showcase.snapshot_pdf_bytes = len(pdf_bytes)
+                    showcase.snapshot_at = now
+                    showcase.created_by = request.user
+                    showcase.save()
+                else:
+                    showcase = PublicProblemReviewShowcase.objects.create(
+                        tenant=request.tenant,
+                        report_id_ref=report.id,
+                        title=title,
+                        description=description,
+                        status=PublicProblemReviewShowcase.Status.PUBLISHED,
+                        published_at=now,
+                        snapshot=snapshot,
+                        snapshot_pdf_key=snapshot_key,
+                        snapshot_pdf_bytes=len(pdf_bytes),
+                        snapshot_at=now,
+                        created_by=request.user,
+                    )
+        except _ProblemReviewPublishConflict:
+            try:
+                from apps.infrastructure.storage.r2 import delete_object_r2_storage
+
+                delete_object_r2_storage(key=snapshot_key, timeout_seconds=10)
+            except Exception:
+                logger.warning("problem_review_public_snapshot_cleanup_failed key=%s", snapshot_key)
+            return Response(
+                {"detail": "다른 화면에서 수정되었습니다. 최신 리포트를 다시 열어 주세요."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        except Exception:
+            logger.exception("problem_review_public_snapshot_publish_failed report=%s", report.id)
+            try:
+                from apps.infrastructure.storage.r2 import delete_object_r2_storage
+
+                delete_object_r2_storage(key=snapshot_key, timeout_seconds=10)
+            except Exception:
+                logger.warning("problem_review_public_snapshot_cleanup_failed key=%s", snapshot_key)
+            return Response(
+                {"detail": "홈페이지 공개본을 저장하지 못했습니다."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        if old_key and old_key != snapshot_key:
+            try:
+                from apps.infrastructure.storage.r2 import delete_object_r2_storage
+
+                delete_object_r2_storage(key=old_key, timeout_seconds=10)
+            except Exception:
+                logger.warning("problem_review_old_public_snapshot_cleanup_failed key=%s", old_key)
+
+        tenant_code = request.tenant.code
+        response = Response({
+            "id": showcase.id,
+            "title": showcase.title,
+            "status": showcase.status,
+            "published_at": showcase.published_at.isoformat(),
+            "public_url": f"/landing/analysis/{showcase.id}",
+            "pdf_url": (
+                f"/api/v1/landing-public/problem-review-showcase/{showcase.id}/pdf/"
+                f"?tenant={tenant_code}"
+            ),
+        })
+        response["Cache-Control"] = "no-store"
+        return response
+
+    def delete(self, request, report_id):
+        from apps.domains.landing_public.models import PublicProblemReviewShowcase
+
+        report = _get_owned_report(request, report_id)
+        if report is None:
+            return Response({"detail": "리포트를 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+        updated = PublicProblemReviewShowcase.objects.filter(
+            tenant=request.tenant,
+            report_id_ref=report.id,
+        ).update(status=PublicProblemReviewShowcase.Status.HIDDEN)
+        if not updated:
+            return Response({"detail": "공개본을 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(status=status.HTTP_204_NO_CONTENT)
