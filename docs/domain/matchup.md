@@ -122,3 +122,39 @@ Gemini VLM을 먼저 운영 실험할 때는 전체 문서를 VLM primary로 바
 [PROPOSED] 실사용 기준까지 올리려면 golden set 평가 runner가 필요하다. 최소 세트는 `academy_workbook`, `commercial_workbook`, `school_exam_pdf`, `student_exam_photo`, `scan_dual`, `clean_pdf_dual`, `concept/explanation`, `answer_key`, `cover/index`를 각각 포함해야 한다. 평가는 모델 mAP가 아니라 문서별 검수 부담을 줄이는 지표로 본다: 문제 페이지 누락, 비문항 페이지 오인식, 문항 수 차이, bbox IoU, low-quality 비율, 수동 수정 필요 페이지 목록.
 
 [PROPOSED] 수동 보정 이력은 학습 데이터로 연결해야 한다. 자동 후보 bbox와 강사 최종 bbox를 같이 저장해야 같은 양식의 다음 업로드에서 fingerprint/profile 기반 재사용이나 모델 재학습이 가능하다.
+
+## 9. 홈페이지 공개 매치업 자료실
+
+[CURRENT 2026-08-05] 매치업의 홍보 결과물은 `PublicMatchupShowcase`가 소유한다.
+박철T를 포함한 테넌트 원장/관리자는 자동 보고서에만 의존하지 않고, 컴퓨터에
+저장해 직접 교정한 PDF를 홈페이지 게시글처럼 올릴 수 있다. 이 흐름은 부가
+기능이 아니라 강사가 문자·카카오톡 홍보에 사용하는 공식 자료 발행 경로다.
+
+### 발행 계약
+
+- `POST /api/v1/landing-public/matchup-showcase/publish-upload/`는 20MB 이하 PDF,
+  선택 제목·설명·공개 기간, 선택 `source_hit_report_id`를 받는다.
+- `POST /api/v1/landing-public/matchup-showcase/publish/`는 기존
+  `MatchupHitReport`에서 PDF를 생성하는 호환 경로다.
+- 두 경로 모두 게시 시점 PDF 스냅샷과 대표 정적 미리보기를 저장한다. 이후
+  원본 보고서나 로컬 파일이 바뀌어도 게시물 내용은 자동 변경하지 않는다.
+- 공개 목록·상세·PDF·미리보기는 로그인 없이 조회할 수 있지만, 현재 요청의
+  정확한 테넌트에 속하고 `published`이며 공개 기간 안인 자료만 반환한다.
+  테넌트를 추론하거나 다른 테넌트 자료로 fallback하지 않는다.
+- 원장/관리자는 자기 테넌트의 초안·비공개·기간 만료 자료를 관리 화면에서 볼
+  수 있다. 게시·수정·비공개·삭제는 해당 역할만 허용한다.
+- 삭제는 목록과 공개 URL에서 즉시 제외하는 soft-delete다. 이미 게시된 사용자
+  PDF를 운영 정리나 E2E cleanup 명목으로 물리 삭제하지 않는다.
+
+공개 응답에는 제목, 설명, 상태, 공개 기간, 조회수, 표시용 snapshot metadata,
+PDF URL과 정적 preview URL을 제공한다. 프론트엔드는 목록에서 PDF 렌더러를
+미리 로드하지 않고, 상세의 정적 대표 이미지와 전체 PDF 링크를 사용한다.
+
+### 검증 경계
+
+소유 회귀는
+`apps/domains/landing_public/tests/test_matchup_showcase_visibility.py`에서 권한,
+테넌트 격리, 공개 기간, 직접 업로드와 스냅샷 보존을 확인한다. 운영 canary로
+합성 게시물을 만들 때는 제목에 실행 식별자를 넣고, 생성 응답의 정확한 ID만
+같은 실행에서 비공개/삭제한 뒤 공개 목록에서 사라졌는지 확인한다. 기존 사용자
+자료나 ID 범위를 추정해 일괄 정리하지 않는다.
