@@ -29,12 +29,23 @@ def extract_and_upload_hwp_explanations(
     The caller remains responsible for matching only numbers that exist in the
     clean problem source.
     """
-    extraction = extract_document_endnotes(local_path, filename)
-    if not extraction.visuals:
-        raise ValueError("번호가 있는 미주 해설 이미지가 없습니다.")
+    extraction = extract_document_endnotes(
+        local_path,
+        filename,
+        include_paired_reconstruction=True,
+    )
+    paired_visuals = extraction.paired_visuals or extraction.visuals
+    paired_numbers = {visual.number for visual in paired_visuals}
+    missing_numbers = [
+        number for number in extraction.control_numbers if number not in paired_numbers
+    ]
+    if not paired_visuals or missing_numbers:
+        raise ValueError(
+            "번호가 있는 모든 미주에서 선생님 해설 원문을 재현하지 못했습니다."
+        )
 
     explanations: list[dict[str, Any]] = []
-    for visual in extraction.visuals:
+    for visual in paired_visuals:
         explanation_key = (
             f"tenants/{tenant_id}/exams/explanations/"
             f"{exam_id}/q{visual.number:03d}.png"
@@ -52,6 +63,7 @@ def extract_and_upload_hwp_explanations(
                 "image_key": explanation_key,
                 "source": "source_file",
                 "match_confidence": 1.0,
+                "source_render_mode": visual.render_mode,
             }
         )
     return extraction, explanations

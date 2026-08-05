@@ -109,6 +109,11 @@ python scripts/ymath_realuse_scenario.py `
   `conversion_required`로 실패 폐쇄해야 한다. 실행에서 생략하거나 성공으로 세지 않는다.
 - PDF/이미지, 통합 HWP/HWPX, 문제 PDF+해설 HWP/HWPX 세 경로가 모두 실제
   API를 통과한다.
+- 문제 PDF+해설 HWP 경로는 그림이 없는 미주도 ParaText·EqEdit 수식·BinData
+  삽화를 번호별 검수 이미지로 재현해야 한다. 2026-08-05 짝 자료 6개는 각각
+  24개 미주가 있어 총 144개 해설 후보가 생겨야 하며, 그림 수만 센 8/3/8/4/9/17
+  건을 성공으로 보면 안 된다. 첫·중간·마지막 조판 이미지를 직접 열어 한글 문장,
+  분수·근호·극한, 원본 삽화가 읽히는지 확인한다.
 - job 성공과 별개로 시험 상태가 `review_required`이고 예상 문항 수와 proposal
   수가 일치해야 한다. `conversion_required`, 빈 proposal, 일부 해설 누락,
   timeout은 별도 실패다.
