@@ -70,28 +70,23 @@ class Migration(migrations.Migration):
             options={
                 "db_table": "problem_review_report",
                 "ordering": ["-updated_at"],
+                "constraints": [
+                    models.UniqueConstraint(
+                        condition=~models.Q(analysis_job_id=""),
+                        fields=("analysis_job_id",),
+                        name="uq_problem_review_analysis_job",
+                    ),
+                ],
+                "indexes": [
+                    models.Index(
+                        fields=["tenant", "requested_by", "updated_at"],
+                        name="idx_problem_review_owner",
+                    ),
+                    models.Index(
+                        fields=["tenant", "status", "updated_at"],
+                        name="idx_problem_review_status",
+                    ),
+                ],
             },
-        ),
-        migrations.AddConstraint(
-            model_name="problemreviewreport",
-            constraint=models.UniqueConstraint(
-                condition=~models.Q(analysis_job_id=""),
-                fields=("analysis_job_id",),
-                name="uq_problem_review_analysis_job",
-            ),
-        ),
-        migrations.AddIndex(
-            model_name="problemreviewreport",
-            index=models.Index(
-                fields=["tenant", "requested_by", "updated_at"],
-                name="idx_problem_review_owner",
-            ),
-        ),
-        migrations.AddIndex(
-            model_name="problemreviewreport",
-            index=models.Index(
-                fields=["tenant", "status", "updated_at"],
-                name="idx_problem_review_status",
-            ),
         ),
     ]
