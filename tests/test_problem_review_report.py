@@ -191,11 +191,16 @@ class ProblemReviewSchemaAndRendererTests(SimpleTestCase):
         self.assertEqual(reordered_with_new["questions"][1]["unit"], "교사 추가 문항")
 
     def test_pdf_and_pptx_exports_are_parseable(self):
+        import pdfplumber
         from pptx import Presentation
+        from pptx.enum.shapes import MSO_SHAPE_TYPE
+        from pptx.util import Inches
 
         import io
 
         report = _sample_report()
+        report["questions"][0]["key_point"] = "DNA양 변화를 자료에서 확인합니다."
+        report["questions"][0]["trap"] = "DNA양을 세포 수와 혼동합니다."
         report["failure_patterns"] = [
             {
                 "title": f"근거 기반 실패 패턴 {index}",
@@ -211,6 +216,10 @@ class ProblemReviewSchemaAndRendererTests(SimpleTestCase):
         self.assertTrue(pdf_bytes.startswith(b"%PDF"))
         self.assertTrue(pdf_bytes.rstrip().endswith(b"%%EOF"))
         self.assertGreaterEqual(pdf_bytes.count(b"/Type /Page"), 4)
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            pdf_text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+        self.assertNotIn("DNA양", pdf_text)
+        self.assertIn("DNA 양", pdf_text)
         deck = Presentation(io.BytesIO(pptx_bytes))
         self.assertGreaterEqual(len(deck.slides), 8)
         overview_text = "\n".join(
@@ -227,8 +236,29 @@ class ProblemReviewSchemaAndRendererTests(SimpleTestCase):
         )
         for index in range(1, 5):
             self.assertIn(f"근거 기반 실패 패턴 {index}", deck_text)
+        self.assertNotIn("DNA양", deck_text)
+        self.assertIn("DNA 양", deck_text)
         notes = [slide.notes_slide.notes_text_frame.text for slide in deck.slides]
         self.assertEqual(sum("[Sources]" in value for value in notes), len(deck.slides))
+        for slide in deck.slides:
+            learning_signals = [
+                shape
+                for shape in slide.shapes
+                if getattr(shape, "has_text_frame", False)
+                and shape.text.startswith("LEARNING SIGNAL")
+            ]
+            for signal in learning_signals:
+                for connector in slide.shapes:
+                    if connector.shape_type != MSO_SHAPE_TYPE.LINE:
+                        continue
+                    if connector.width > Inches(0.02):
+                        continue
+                    if signal.left < connector.left < signal.left + signal.width:
+                        self.assertLessEqual(
+                            connector.top + connector.height,
+                            signal.top,
+                            "X-ray divider must stop above the learning signal",
+                        )
 
     def test_public_and_export_snapshots_keep_manually_added_question_collisions(self):
         from pptx import Presentation
