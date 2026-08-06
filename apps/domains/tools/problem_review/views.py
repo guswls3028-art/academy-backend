@@ -727,6 +727,8 @@ class ProblemReviewPublishView(APIView):
                 verified_at=report.review_completed_at,
                 fingerprint=report.review_fingerprint,
             )
+            source_fingerprint = report.review_fingerprint
+            review_completed_at = report.review_completed_at.isoformat()
             if not snapshot.get("questions"):
                 return Response(
                     {"detail": "공개할 문항 분석이 없습니다."},
@@ -735,7 +737,17 @@ class ProblemReviewPublishView(APIView):
             title = str(snapshot.get("metadata", {}).get("title") or report.title or "문제 분석 리포트")[:200]
             description = str(snapshot.get("summary", {}).get("one_line") or "")[:1200]
 
-        pdf_bytes, _, _ = render_problem_review_report(snapshot, output_format="pdf")
+        pdf_bytes, _, _ = render_problem_review_report(
+            {
+                **snapshot,
+                "_export_meta": {
+                    "report_version": report.version,
+                    "source_fingerprint": source_fingerprint,
+                    "review_completed_at": review_completed_at,
+                },
+            },
+            output_format="pdf",
+        )
         snapshot_key = (
             f"problem-review-showcase-snapshots/tenant_{request.tenant.id}/"
             f"{report.id}/{uuid.uuid4().hex}.pdf"
