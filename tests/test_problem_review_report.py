@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from unittest.mock import Mock, patch
 
 from django.contrib.auth import get_user_model
@@ -18,9 +19,11 @@ from apps.domains.tools.problem_review.schema import (
     build_source_draft,
     normalize_report_payload,
 )
+from apps.domains.tools.problem_review.readiness import build_review_readiness
 from apps.domains.tools.problem_review.worker import handle_problem_review_export_job
 from apps.domains.tools.problem_review.views import (
     _public_snapshot,
+    ProblemReviewFinalizeView,
     ProblemReviewPublishView,
     ProblemReviewExportCreateView,
     ProblemReviewExportStatusView,
@@ -84,6 +87,7 @@ def _sample_report() -> dict:
                 "trap": "생성 시기를 뒤바꾸기 쉽습니다.",
                 "validity": "조건과 정답이 일치합니다.",
                 "review_note": "표현을 한 번 더 다듬어 주세요.",
+                "review_status": "verified",
             },
             {
                 "number": 2,
@@ -97,6 +101,7 @@ def _sample_report() -> dict:
                 "trap": "원자 번호와 족을 혼동하기 쉽습니다.",
                 "validity": "선지 간 중복이 없습니다.",
                 "review_note": "변별 문항으로 적절합니다.",
+                "review_status": "verified",
             },
         ],
         "key_items": [
@@ -139,7 +144,21 @@ def _sample_report() -> dict:
             "headline": "조건을 구조화하는 연습이 다음 성적을 만듭니다.",
             "actions": ["복합 조건 표시하기", "오답 선지의 이유 쓰기"],
         },
-    })
+    }, preserve_review_status=True)
+
+
+def _finalize_report_model(report: ProblemReviewReport, user) -> None:
+    readiness = build_review_readiness(report.draft)
+    assert readiness["ready_for_finalize"]
+    report.review_completed_at = timezone.now()
+    report.review_completed_by = user
+    report.review_fingerprint = readiness["fingerprint"]
+    report.save(update_fields=[
+        "review_completed_at",
+        "review_completed_by",
+        "review_fingerprint",
+        "updated_at",
+    ])
 
 
 class ProblemReviewSchemaAndRendererTests(SimpleTestCase):
@@ -153,6 +172,7 @@ class ProblemReviewSchemaAndRendererTests(SimpleTestCase):
 
         self.assertEqual(len(draft["questions"]), MAX_QUESTIONS)
         self.assertEqual(draft["questions"][0]["source_excerpt"], "교사 원문 1")
+        self.assertEqual(draft["questions"][0]["review_status"], "unverified")
         edited = normalize_report_payload(
             {"questions": [{"number": 1, "source_excerpt": "덮어쓰기 시도"}]},
             fallback=draft,
@@ -259,6 +279,22 @@ class ProblemReviewSchemaAndRendererTests(SimpleTestCase):
                             signal.top,
                             "X-ray divider must stop above the learning signal",
                         )
+
+    def test_pdf_25_question_layout_avoids_sparse_forced_pages(self):
+        report = _sample_report()
+        templates = deepcopy(report["questions"])
+        report["questions"] = []
+        for number in range(1, 26):
+            question = deepcopy(templates[(number - 1) % len(templates)])
+            question["number"] = str(number)
+            question["source_excerpt"] = f"{number}번 원문 대조 발췌"
+            report["questions"].append(question)
+
+        pdf_bytes = render_problem_review_pdf(report)
+
+        # Five rendered pages plus the PDF page-tree object. This protects the
+        # evidence ledger and parent memo from regaining forced blank pages.
+        self.assertLessEqual(pdf_bytes.count(b"/Type /Page"), 6)
 
     def test_public_and_export_snapshots_keep_manually_added_question_collisions(self):
         from pptx import Presentation
@@ -534,6 +570,69 @@ class ProblemReviewReportViewTests(TestCase):
         self.assertEqual(len(save_response.data["draft"]["questions"]), 1)
         self.assertEqual(save_response.data["draft"]["questions"][0]["number"], 7)
         self.assertEqual(save_response.data["draft"]["questions"][0]["source_number"], 1)
+        self.assertFalse(save_response.data["review_readiness"]["is_finalized"])
+
+    def test_finalize_requires_every_question_and_patch_invalidates_fingerprint(self):
+        draft = _sample_report()
+        draft["questions"][0]["review_status"] = "unverified"
+        report = ProblemReviewReport.objects.create(
+            tenant=self.tenant,
+            requested_by=self.user,
+            status=ProblemReviewReport.Status.DRAFT,
+            draft=draft,
+        )
+        finalize_request = self.factory.post(
+            "/verification/",
+            {"version": report.version},
+            format="json",
+        )
+        blocked = ProblemReviewFinalizeView.as_view()(
+            self._authenticate(finalize_request),
+            report_id=report.id,
+        )
+        self.assertEqual(blocked.status_code, 409)
+        self.assertEqual(blocked.data["review_readiness"]["unresolved_questions"], 1)
+        export_request = self.factory.post(
+            "/exports/",
+            {"output_format": "pdf"},
+            format="json",
+        )
+        blocked_export = ProblemReviewExportCreateView.as_view()(
+            self._authenticate(export_request),
+            report_id=report.id,
+        )
+        self.assertEqual(blocked_export.status_code, 409)
+        self.assertIn("최종 검수 확정", blocked_export.data["detail"])
+
+        report.draft = _sample_report()
+        report.save(update_fields=["draft", "updated_at"])
+        finalize_request = self.factory.post(
+            "/verification/",
+            {"version": report.version},
+            format="json",
+        )
+        finalized = ProblemReviewFinalizeView.as_view()(
+            self._authenticate(finalize_request),
+            report_id=report.id,
+        )
+        self.assertEqual(finalized.status_code, 200)
+        self.assertTrue(finalized.data["review_readiness"]["is_finalized"])
+
+        edited = _sample_report()
+        edited["questions"][0]["key_point"] = "수정된 핵심 포인트"
+        patch_request = self.factory.patch(
+            f"/api/v1/tools/problem-review/reports/{report.id}/",
+            {"version": report.version, "draft": edited},
+            format="json",
+        )
+        saved = ProblemReviewReportDetailView.as_view()(
+            self._authenticate(patch_request),
+            report_id=report.id,
+        )
+        self.assertEqual(saved.status_code, 200)
+        self.assertFalse(saved.data["review_readiness"]["is_finalized"])
+        report.refresh_from_db()
+        self.assertEqual(report.review_fingerprint, "")
 
     @patch(
         "apps.domains.tools.problem_review.views.dispatch_tools_ai_job",
@@ -550,6 +649,7 @@ class ProblemReviewReportViewTests(TestCase):
             title="검수 완료 제목",
             draft=_sample_report(),
         )
+        _finalize_report_model(report, self.user)
 
         def request_export():
             request = self.factory.post(
@@ -575,7 +675,14 @@ class ProblemReviewReportViewTests(TestCase):
         payload = dispatch_job.call_args.kwargs["payload"]
         self.assertEqual(payload["artifact_id"], str(artifact.id))
         self.assertEqual(payload["source_fingerprint"], artifact.source_fingerprint)
-        self.assertEqual(payload["report"], normalize_report_payload(report.draft, preserve_question_set=False))
+        self.assertEqual(
+            payload["report"],
+            normalize_report_payload(
+                report.draft,
+                preserve_question_set=False,
+                preserve_review_status=True,
+            ),
+        )
 
         artifact.status = ProblemReviewArtifact.Status.FAILED
         artifact.error_message = "fixture render failed"
@@ -606,6 +713,7 @@ class ProblemReviewReportViewTests(TestCase):
             title="검수 완료 제목",
             draft=_sample_report(),
         )
+        _finalize_report_model(report, self.user)
         artifact = ProblemReviewArtifact.objects.create(
             tenant=self.tenant,
             report=report,
@@ -619,6 +727,7 @@ class ProblemReviewReportViewTests(TestCase):
             size_bytes=42,
             sha256="b" * 64,
             r2_key=f"tenants/{self.tenant.id}/tools/problem-review/{report.id}/report.pdf",
+            review_completed_at=timezone.now(),
         )
         request = self.factory.get(
             f"/api/v1/tools/problem-review/reports/{report.id}/exports/{artifact.id}/"
@@ -657,6 +766,7 @@ class ProblemReviewReportViewTests(TestCase):
             title="검수 완료 제목",
             draft=_sample_report(),
         )
+        _finalize_report_model(report, self.user)
         request = self.factory.post(
             f"/api/v1/tools/problem-review/reports/{report.id}/publication/",
             {"version": report.version},
@@ -679,6 +789,7 @@ class ProblemReviewReportViewTests(TestCase):
         self.assertNotIn("source_excerpt", public_question)
         self.assertNotIn("confidence", public_question)
         self.assertNotIn("warnings", showcase.snapshot)
+        self.assertEqual(showcase.snapshot["verification"]["status"], "verified")
         uploaded = upload_file.call_args.kwargs
         self.assertTrue(uploaded["key"].startswith(
             f"problem-review-showcase-snapshots/tenant_{self.tenant.id}/{report.id}/"
@@ -708,6 +819,7 @@ class ProblemReviewReportViewTests(TestCase):
             status=ProblemReviewReport.Status.DRAFT,
             draft=_sample_report(),
         )
+        _finalize_report_model(report, self.user)
         other = get_user_model().objects.create_user(
             username="other_publisher",
             password="test1234",
@@ -739,13 +851,19 @@ class ProblemReviewReportViewTests(TestCase):
             status=ProblemReviewReport.Status.DRAFT,
             draft=_sample_report(),
         )
+        verified_snapshot = _sample_report()
+        verified_snapshot["verification"] = {
+            "status": "verified",
+            "verified_at": timezone.now().isoformat(),
+            "report_fingerprint": "a" * 64,
+        }
         showcase = PublicProblemReviewShowcase.objects.create(
             tenant=self.tenant,
             report_id_ref=report.id,
             title="공개 분석",
             status=PublicProblemReviewShowcase.Status.PUBLISHED,
             published_at=timezone.now(),
-            snapshot=_sample_report(),
+            snapshot=verified_snapshot,
             snapshot_pdf_key="public/report.pdf",
             snapshot_pdf_bytes=123,
             snapshot_at=timezone.now(),
@@ -756,6 +874,11 @@ class ProblemReviewReportViewTests(TestCase):
         self.assertEqual(list_response.status_code, 200)
         self.assertEqual(list_response.data["count"], 1)
         self.assertNotIn("snapshot", list_response.data["results"][0])
+
+        showcase.snapshot = _sample_report()
+        showcase.save(update_fields=["snapshot", "updated_at"])
+        legacy_response = PublicProblemReviewShowcaseViewSet.as_view({"get": "list"})(list_request)
+        self.assertEqual(legacy_response.data["count"], 0)
 
         showcase.status = PublicProblemReviewShowcase.Status.HIDDEN
         showcase.save(update_fields=["status", "updated_at"])

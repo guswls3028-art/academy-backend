@@ -15,6 +15,7 @@ class ProblemReviewReportSerializer(serializers.Serializer):
     updated_at = serializers.DateTimeField(read_only=True)
     draft = serializers.JSONField(read_only=True, required=False)
     artifacts = serializers.JSONField(read_only=True, required=False)
+    review_readiness = serializers.JSONField(read_only=True, required=False)
 
 
 class ProblemReviewReportListSerializer(serializers.Serializer):
@@ -61,6 +62,10 @@ class ProblemReviewExportStatusSerializer(serializers.Serializer):
 
 
 class ProblemReviewPublishRequestSerializer(serializers.Serializer):
+    version = serializers.IntegerField(min_value=1)
+
+
+class ProblemReviewFinalizeRequestSerializer(serializers.Serializer):
     version = serializers.IntegerField(min_value=1)
 
 

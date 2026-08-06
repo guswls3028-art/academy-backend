@@ -418,6 +418,15 @@ class ProblemReviewReport(TimestampModel):
     draft = models.JSONField(default=dict, blank=True)
     version = models.PositiveIntegerField(default=1)
     last_error = models.TextField(blank=True, default="")
+    review_completed_at = models.DateTimeField(null=True, blank=True)
+    review_completed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="completed_problem_review_reports",
+    )
+    review_fingerprint = models.CharField(max_length=64, blank=True, default="")
 
     objects = TenantQuerySet.as_manager()
 
@@ -489,6 +498,7 @@ class ProblemReviewArtifact(TimestampModel):
     sha256 = models.CharField(max_length=64, blank=True, default="")
     r2_key = models.CharField(max_length=700, blank=True, default="")
     error_message = models.TextField(blank=True, default="")
+    review_completed_at = models.DateTimeField(null=True, blank=True)
 
     objects = TenantQuerySet.as_manager()
 

@@ -7,6 +7,7 @@ SCHEMA_VERSION = "problem-review-report/v2"
 DIFFICULTIES = ("검수 필요", "하", "중", "중상", "상", "최상")
 REPORT_PURPOSES = ("teacher_review", "exam_analysis")
 THINKING_ACTIONS = ("확인", "해석", "계산", "서술", "복합", "검수 필요")
+REVIEW_STATUSES = ("unverified", "verified")
 MAX_QUESTIONS = 80
 
 
@@ -75,6 +76,7 @@ def _questions(
     fallback: dict[str, Any],
     *,
     preserve_question_set: bool,
+    preserve_review_status: bool,
 ) -> list[dict[str, Any]]:
     base_items = _dict_list(fallback.get("questions"), limit=MAX_QUESTIONS)
     base_by_source = {
@@ -115,6 +117,9 @@ def _questions(
         )
         if thinking_action not in THINKING_ACTIONS:
             thinking_action = "검수 필요"
+        review_status = _text(raw.get("review_status") or base.get("review_status"), limit=12)
+        if not preserve_review_status or review_status not in REVIEW_STATUSES:
+            review_status = "unverified"
         output.append({
             "number": number,
             "source_number": _int(
@@ -141,6 +146,7 @@ def _questions(
                 if _text(raw.get("confidence") or base.get("confidence") or "low", limit=10) in {"high", "medium", "low"}
                 else "low"
             ),
+            "review_status": review_status,
         })
     return output
 
@@ -150,6 +156,7 @@ def normalize_report_payload(
     *,
     fallback: dict[str, Any] | None = None,
     preserve_question_set: bool = True,
+    preserve_review_status: bool = False,
 ) -> dict[str, Any]:
     raw = value if isinstance(value, dict) else {}
     base = fallback if isinstance(fallback, dict) else {}
@@ -227,6 +234,7 @@ def normalize_report_payload(
         raw.get("questions"),
         base,
         preserve_question_set=preserve_question_set,
+        preserve_review_status=preserve_review_status,
     )
     distribution_details = {item["label"]: item for item in distributions}
     grouped_questions: dict[str, list[str]] = {}
@@ -327,6 +335,7 @@ def build_source_draft(
             "review_note": "",
             "source_excerpt": _text(item.get("prompt"), limit=260),
             "confidence": _text(item.get("confidence") or "low", limit=10),
+            "review_status": "unverified",
         })
     return normalize_report_payload({
         "metadata": metadata,
