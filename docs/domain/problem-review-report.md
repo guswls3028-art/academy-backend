@@ -105,7 +105,9 @@ staff 역할만 사용할 수 있다.
   고친다. 명령은 exact tenant와 showcase ID를 요구하고 기존 immutable snapshot을
   현재 renderer로만 다시 그린다. 분석 내용·verification·snapshot 시각은 바꾸지
   않으며, fingerprint나 최종 검수 시각도 만들지 않아 표지에 `최종 검수 증표 없음`이
-  남는다. 새 R2 객체 업로드 뒤 해당 key를 다시 내려받아 bytes·page count·SHA-256이
+  남는다. footer는 placeholder 대신 정규화된 immutable snapshot의 SHA-256 앞
+  12자를 `LEGACY PUBLICATION` identity로 표시한다. 새 R2 객체 업로드 뒤 해당 key를
+  다시 내려받아 bytes·page count·SHA-256이
   로컬 렌더와 모두 같은지 확인하고, 트랜잭션 안에서 기존 key와 exact compatibility
   marker를 다시 확인한 경우에만 key를 교체한다. 업로드·readback·재확인 실패 시
   기존 key는 그대로 유지하고 새 객체만 정리한다. 성공 출력에는 교체 전후

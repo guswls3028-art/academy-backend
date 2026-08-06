@@ -617,7 +617,14 @@ def render_problem_review_pdf(payload: dict[str, Any]) -> bytes:
     version = int(export_meta.get("report_version") or 0)
     fingerprint = _plain(export_meta.get("source_fingerprint"))
     verified_at = _plain(export_meta.get("review_completed_at"))
+    identity_kind = _plain(export_meta.get("identity_kind"))
+    identity_label = _plain(export_meta.get("identity_label"))
     verified_label = f"최종 검수 완료 · {verified_at[:10]}" if verified_at else "최종 검수 증표 없음"
+    footer_identity = (
+        f"LEGACY PUBLICATION · {identity_label}"
+        if identity_kind == "legacy_publication" and identity_label
+        else f"v{version or '-'} · {fingerprint[:10] or 'snapshot'}"
+    )
     regular, bold, mono = _register_pdf_fonts()
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -644,6 +651,8 @@ def render_problem_review_pdf(payload: dict[str, Any]) -> bytes:
         textColor=colors.white,
     )
     code = ParagraphStyle("SpectrumCode", parent=small, fontName=mono, fontSize=7, leading=9, textColor=colors.HexColor(f"#{SIGNAL_CORAL}"))
+    xray_compact = ParagraphStyle("SpectrumXrayCompact", parent=body, fontSize=8.2, leading=11.2)
+    xray_signal = ParagraphStyle("SpectrumXraySignal", parent=h3, fontSize=9.6, leading=12.5)
 
     def p(value: Any, style=body):
         return Paragraph(html.escape(_plain(value)).replace("\n", "<br/>") or "-", style)
@@ -652,7 +661,7 @@ def render_problem_review_pdf(payload: dict[str, Any]) -> bytes:
         canvas.saveState()
         canvas.setStrokeColor(colors.HexColor(f"#{MIST}")); canvas.line(15 * mm, 11 * mm, A4[0] - 15 * mm, 11 * mm)
         canvas.setFont(mono, 6.5); canvas.setFillColor(colors.HexColor(f"#{MUTED}"))
-        canvas.drawString(15 * mm, 7 * mm, f"EXAM SPECTRUM · v{version or '-'} · {fingerprint[:10] or 'snapshot'}")
+        canvas.drawString(15 * mm, 7 * mm, f"EXAM SPECTRUM · {footer_identity}")
         canvas.drawRightString(A4[0] - 15 * mm, 7 * mm, str(current_doc.page))
         canvas.restoreState()
 
@@ -762,25 +771,28 @@ def render_problem_review_pdf(payload: dict[str, Any]) -> bytes:
         story.append(ledger_table)
 
     for index, item in enumerate(_xray_items(report), start=1):
+        detail_style = xray_compact if index == 1 else body
+        learning_style = xray_signal if index == 1 else h3
+        cell_padding = 1.8 * mm if index == 1 else 3 * mm
         xray_heading = [
             p(f"QUESTION X-RAY {index}", code),
             p(item.get("title") or "핵심 변별 문항", section),
             p(f"문항 {', '.join(item.get('question_numbers') or []) or '검수 필요'}", h3),
         ]
         xray = Table([
-            [p("EVIDENCE", code), p(item.get("evidence") or item.get("reason"))],
-            [p("BREAK BRANCHES", code), p("\n".join(f"{i + 1}. {value}" for i, value in enumerate(item.get("collapse_branches") or [item.get("collapse_point")])) )],
-            [p("RECOVERY STEPS", code), p("\n".join(f"{i + 1}. {value}" for i, value in enumerate(item.get("recovery_steps") or [item.get("prescription")])) )],
-            [p("LEARNING SIGNAL", code), p(item.get("learning_point") or item.get("prescription"), h3)],
+            [p("EVIDENCE", code), p(item.get("evidence") or item.get("reason"), detail_style)],
+            [p("BREAK BRANCHES", code), p("\n".join(f"{i + 1}. {value}" for i, value in enumerate(item.get("collapse_branches") or [item.get("collapse_point")])), detail_style)],
+            [p("RECOVERY STEPS", code), p("\n".join(f"{i + 1}. {value}" for i, value in enumerate(item.get("recovery_steps") or [item.get("prescription")])), detail_style)],
+            [p("LEARNING SIGNAL", code), p(item.get("learning_point") or item.get("prescription"), learning_style)],
         ], colWidths=[38 * mm, 142 * mm])
         xray.setStyle(TableStyle([
             ("LINEBEFORE", (0, 0), (0, -1), 3, colors.HexColor(f"#{PLASMA_BLUE}")),
             ("LINEBELOW", (0, 0), (-1, -1), 0.45, colors.HexColor(f"#{MIST}")),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 3 * mm), ("RIGHTPADDING", (0, 0), (-1, -1), 3 * mm),
-            ("TOPPADDING", (0, 0), (-1, -1), 3 * mm), ("BOTTOMPADDING", (0, 0), (-1, -1), 3 * mm),
+            ("LEFTPADDING", (0, 0), (-1, -1), cell_padding), ("RIGHTPADDING", (0, 0), (-1, -1), cell_padding),
+            ("TOPPADDING", (0, 0), (-1, -1), cell_padding), ("BOTTOMPADDING", (0, 0), (-1, -1), cell_padding),
         ]))
-        story.extend([CondPageBreak(88 * mm), KeepTogether([*xray_heading, xray])])
+        story.append(KeepTogether([*xray_heading, xray]))
 
     story.extend([CondPageBreak(118 * mm), p("ERROR GENOME / RECOVERY PROTOCOL", code), p("오류의 원인에서 다음 행동까지", section)])
     for index, item in enumerate((report.get("failure_patterns") or [])[:4], start=1):
@@ -810,7 +822,6 @@ def render_problem_review_pdf(payload: dict[str, Any]) -> bytes:
     story.append(protocol_table)
     bands = report.get("achievement_bands") or []
     if bands:
-        story.extend([Spacer(1, 6 * mm), p("ACHIEVEMENT SIGNALS", code)])
         band_rows = [[p("관측 구간", h3), p("확인 신호", h3), p("다음 처방", h3)]]
         for item in bands[:3]:
             band_rows.append([p(item.get("label"), h3), p(item.get("signal"), small), p(item.get("prescription"), small)])
@@ -821,7 +832,13 @@ def render_problem_review_pdf(payload: dict[str, Any]) -> bytes:
             ("LEFTPADDING", (0, 0), (-1, -1), 2.5 * mm), ("RIGHTPADDING", (0, 0), (-1, -1), 2.5 * mm),
             ("TOPPADDING", (0, 0), (-1, -1), 2 * mm), ("BOTTOMPADDING", (0, 0), (-1, -1), 2 * mm),
         ]))
-        story.append(band_table)
+        story.append(
+            KeepTogether([
+                Spacer(1, 6 * mm),
+                p("ACHIEVEMENT SIGNALS", code),
+                band_table,
+            ])
+        )
 
     story.extend([CondPageBreak(80 * mm), p("PARENT MEMO / NEXT SIGNAL", code), p("점수보다 먼저 확인할 질문", section)])
     guidance = report.get("parent_guidance") or {}
@@ -836,8 +853,25 @@ def render_problem_review_pdf(payload: dict[str, Any]) -> bytes:
         ("TOPPADDING", (0, 0), (-1, -1), 3 * mm), ("BOTTOMPADDING", (0, 0), (-1, -1), 3 * mm),
     ]))
     story.extend([parent_table, Spacer(1, 10 * mm), p("NEXT SIGNAL", code), p(report["conclusion"].get("headline") or summary.get("one_line"), ParagraphStyle("NextSignal", parent=section, fontSize=18, leading=25))])
-    for index, action in enumerate(report["conclusion"].get("actions") or [], start=1):
-        story.extend([p(f"{index:02d}  {action}", ParagraphStyle(f"Action{index}", parent=body, fontName=mono, fontSize=9.5, leading=14)), Spacer(1, 1.5 * mm)])
+    actions = report["conclusion"].get("actions") or []
+    if actions:
+        action_spacer = max(3, min(22, 66 / len(actions))) * mm
+        action_rows = []
+        for index, action in enumerate(actions, start=1):
+            action_rows.append([
+                [p("NEXT ACTION", code), p(f"{index:02d}", code)],
+                [p(action, xray_signal), Spacer(1, action_spacer)],
+            ])
+        action_table = Table(action_rows, colWidths=[34 * mm, 146 * mm])
+        action_table.setStyle(TableStyle([
+            ("ROWBACKGROUNDS", (0, 0), (-1, -1), [colors.HexColor(f"#{LAB_PAPER}"), colors.white]),
+            ("LINEBEFORE", (0, 0), (0, -1), 3, colors.HexColor(f"#{ION_AMBER}")),
+            ("LINEBELOW", (0, 0), (-1, -1), 0.45, colors.HexColor(f"#{MIST}")),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3 * mm), ("RIGHTPADDING", (0, 0), (-1, -1), 3 * mm),
+            ("TOPPADDING", (0, 0), (-1, -1), 3 * mm), ("BOTTOMPADDING", (0, 0), (-1, -1), 2 * mm),
+        ]))
+        story.append(action_table)
 
     doc.build(story, onFirstPage=footer, onLaterPages=footer)
     return buffer.getvalue()
