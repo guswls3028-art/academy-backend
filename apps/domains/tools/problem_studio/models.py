@@ -426,7 +426,7 @@ class ProblemReviewReport(TimestampModel):
         blank=True,
         related_name="completed_problem_review_reports",
     )
-    review_fingerprint = models.CharField(max_length=64, blank=True, default="")
+    review_fingerprint = models.CharField(max_length=64, blank=True, default="", db_default="")
 
     objects = TenantQuerySet.as_manager()
 

@@ -35,6 +35,6 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="problemreviewreport",
             name="review_fingerprint",
-            field=models.CharField(blank=True, default="", max_length=64),
+            field=models.CharField(blank=True, db_default="", default="", max_length=64),
         ),
     ]
