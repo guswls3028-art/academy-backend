@@ -8241,6 +8241,19 @@
       },
       "ProblemReviewExportCreate": {
         "properties": {
+          "download_url": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "filename": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "readOnly": true,
+            "type": "string"
+          },
           "job_id": {
             "readOnly": true,
             "type": "string"
@@ -8253,14 +8266,27 @@
             ],
             "readOnly": true
           },
+          "report_version": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "source_fingerprint": {
+            "readOnly": true,
+            "type": "string"
+          },
           "status": {
             "readOnly": true,
             "type": "string"
           }
         },
         "required": [
+          "download_url",
+          "filename",
+          "id",
           "job_id",
           "output_format",
+          "report_version",
+          "source_fingerprint",
           "status"
         ],
         "type": "object"
@@ -8361,6 +8387,9 @@
       },
       "ProblemReviewReport": {
         "properties": {
+          "artifacts": {
+            "readOnly": true
+          },
           "created_at": {
             "format": "date-time",
             "readOnly": true,
@@ -8404,6 +8433,7 @@
           }
         },
         "required": [
+          "artifacts",
           "created_at",
           "draft",
           "id",
