@@ -85,7 +85,15 @@ def generate_problem_review_report(
             "explanation": mask_inline_phones(str(item.get("explanation") or ""))[:900],
         })
 
+    purpose = str((source_draft.get("metadata") or {}).get("report_purpose") or "teacher_review")
+    purpose_instruction = (
+        "학교 시험을 학생·학부모에게 설명하고 홍보 게시물로 검수할 분석"
+        if purpose == "exam_analysis"
+        else "선생님이 직접 만든 문제의 타당성·표현·변별 구조를 검수할 분석"
+    )
     user_prompt = f"""다음 시험지 전사 결과를 바탕으로 강사용 '문제 리뷰 리포트' 검수 초안을 작성하세요.
+
+리포트 목적: {purpose_instruction}
 
 자료 메타데이터:
 {json.dumps(source_draft.get("metadata") or {}, ensure_ascii=False)}
@@ -105,10 +113,12 @@ def generate_problem_review_report(
 9. 모든 분석은 '관찰한 문항 근거 → 학생이 멈추는 지점 → 다음 수업 처방' 순서가 드러나야 합니다. 추상적인 학습 조언으로 끝내지 마세요.
 10. assessment_axes는 시험 전체를 설명하는 서로 다른 축 3~5개로 작성하고, 각 설명에는 그 축이 확인되는 문항 구조나 번호를 포함하세요.
 11. domains와 difficulty의 배점·비중은 원문 배점이 있을 때만 합산하세요. 배점 근거가 없으면 숫자를 만들지 말고 빈 값으로 두세요.
-12. key_items는 단일 어려운 문항 나열이 아니라 같은 풀이 병목을 공유하는 2~4개 문항 군으로 작성하세요. 정확한 문항 번호, 어려운 이유, 처음 무너지는 단계, 재훈련 방법을 서로 이어 쓰세요.
+12. key_items는 핵심 변별 문항 또는 같은 풀이 병목을 공유하는 문항 군으로 작성하세요. 정확한 문항 번호, 원문 근거, 어려운 이유, 처음 무너지는 분기 3개, 복구 4단계와 학습 포인트를 서로 이어 쓰세요.
 13. failure_patterns는 문항 정보 누락이나 시험지 품질이 아니라 학생의 실제 풀이 행동을 3~4개로 분류하세요. symptom에는 답안에서 보일 현상, cause에는 학습 구조의 원인, prescription에는 수업에서 실행할 훈련을 쓰세요. 근거가 부족하면 억지로 채우지 말고 빈 배열로 두세요.
 14. student_burden은 실제 학생 반응처럼 단정하지 말고, 문항 배열·조건 수·서답형 표현·시간 압박을 근거로 '체감할 가능성'을 설명하세요.
 15. parent_guidance는 결과 비난 표현과, 같은 상황을 근거와 다음 행동으로 바꾼 설명을 짝지어 작성하세요.
+16. 각 문항의 핵심 사고행동을 확인/해석/계산/서술/복합 중 하나로 분류하세요.
+17. 72시간/2주/다음 시험의 행동 계획과 성취 구간별 신호·처방을 작성하되, 실제 점수 분포가 없으면 등급컷이나 비율을 만들지 마세요.
 
 다음 JSON 구조만 반환하세요.
 {{
@@ -120,20 +130,23 @@ def generate_problem_review_report(
     "grade_estimate_note":""
   }},
   "questions": [{{
-    "number":1, "unit":"", "answer":"", "points":"", "difficulty":"검수 필요",
+    "number":1, "unit":"", "answer":"", "points":"", "difficulty":"검수 필요", "thinking_action":"검수 필요",
     "key_point":"", "trap":"", "validity":"", "review_note":"", "confidence":"low"
   }}],
   "key_items": [{{
     "rank":1, "title":"", "question_numbers":["1"], "reason":"",
-    "collapse_point":"", "prescription":""
+    "collapse_point":"", "prescription":"", "evidence":"",
+    "collapse_branches":["","",""], "recovery_steps":["","","",""], "learning_point":""
   }}],
   "failure_patterns": [{{"title":"", "symptom":"", "cause":"", "prescription":""}}],
+  "recovery_protocol": {{"within_72_hours":[""], "within_two_weeks":[""], "next_exam":[""]}},
+  "achievement_bands": [{{"label":"", "signal":"", "prescription":""}}],
   "parent_guidance": {{"avoid":[""], "recommended":[""]}},
   "conclusion": {{"headline":"", "actions":[""]}},
   "warnings": [""]
 }}"""
     system_prompt = (
-        "당신은 한국 학원 선생님이 자신이 만든 시험 문제를 검수하도록 돕는 분석가입니다. "
+        "당신은 한국 학원 선생님이 문제의 품질을 검수하고 학교 시험을 증거 중심으로 설명하도록 돕는 분석가입니다. "
         "모든 출력은 확정본이 아니라 선생님 검수 초안이며, 자료에 없는 통계나 정답을 만들지 않습니다."
     )
     content = (

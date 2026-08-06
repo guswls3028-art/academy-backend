@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -22,10 +22,12 @@ from apps.domains.tools.problem_review.worker import handle_problem_review_expor
 from apps.domains.tools.problem_review.views import (
     _public_snapshot,
     ProblemReviewPublishView,
+    ProblemReviewExportCreateView,
+    ProblemReviewExportStatusView,
     ProblemReviewReportCollectionView,
     ProblemReviewReportDetailView,
 )
-from apps.domains.tools.problem_studio.models import ProblemReviewReport
+from apps.domains.tools.problem_studio.models import ProblemReviewArtifact, ProblemReviewReport
 from apps.domains.landing_public.api.views import PublicProblemReviewShowcaseViewSet
 from apps.domains.landing_public.models import PublicProblemReviewShowcase
 from apps.shared.contracts.ai_job import AIJob
@@ -40,6 +42,7 @@ def _sample_report() -> dict:
             "grade": "1학년",
             "exam_name": "1학기 중간고사",
             "exam_date": "2026-04-24",
+            "report_purpose": "exam_analysis",
         },
         "summary": {
             "one_line": "개념 연결과 자료 해석을 함께 확인한 시험입니다.",
@@ -76,6 +79,7 @@ def _sample_report() -> dict:
                 "answer": "3",
                 "points": "40점",
                 "difficulty": "중",
+                "thinking_action": "확인",
                 "key_point": "별의 진화 순서를 구분합니다.",
                 "trap": "생성 시기를 뒤바꾸기 쉽습니다.",
                 "validity": "조건과 정답이 일치합니다.",
@@ -88,6 +92,7 @@ def _sample_report() -> dict:
                 "answer": "5",
                 "points": "60점",
                 "difficulty": "상",
+                "thinking_action": "복합",
                 "key_point": "주기적 성질을 자료에 적용합니다.",
                 "trap": "원자 번호와 족을 혼동하기 쉽습니다.",
                 "validity": "선지 간 중복이 없습니다.",
@@ -102,6 +107,10 @@ def _sample_report() -> dict:
                 "reason": "두 조건을 동시에 적용해야 합니다.",
                 "collapse_point": "첫 조건만 보고 답을 고르기 쉽습니다.",
                 "prescription": "조건을 표에 표시하는 연습이 필요합니다.",
+                "evidence": "자료의 두 조건을 함께 적용해야 합니다.",
+                "collapse_branches": ["첫 조건만 적용", "후보 조기 확정", "검산 누락"],
+                "recovery_steps": ["조건 분리", "표 작성", "교집합 확인", "역대입 검산"],
+                "learning_point": "조건을 표로 구조화합니다.",
             },
         ],
         "failure_patterns": [
@@ -116,6 +125,16 @@ def _sample_report() -> dict:
             "avoid": ["공부를 안 했다"],
             "recommended": ["복합 조건을 정리하는 연습이 더 필요합니다."],
         },
+        "recovery_protocol": {
+            "within_72_hours": ["오답 근거 표시"],
+            "within_two_weeks": ["조건표 반복"],
+            "next_exam": ["역대입 검산"],
+        },
+        "achievement_bands": [{
+            "label": "개념 확인",
+            "signal": "기본 조건을 찾습니다.",
+            "prescription": "조건을 한 문장으로 정리합니다.",
+        }],
         "conclusion": {
             "headline": "조건을 구조화하는 연습이 다음 성적을 만듭니다.",
             "actions": ["복합 조건 표시하기", "오답 선지의 이유 쓰기"],
@@ -208,6 +227,8 @@ class ProblemReviewSchemaAndRendererTests(SimpleTestCase):
         )
         for index in range(1, 5):
             self.assertIn(f"근거 기반 실패 패턴 {index}", deck_text)
+        notes = [slide.notes_slide.notes_text_frame.text for slide in deck.slides]
+        self.assertEqual(sum("[Sources]" in value for value in notes), len(deck.slides))
 
     def test_public_and_export_snapshots_keep_manually_added_question_collisions(self):
         from pptx import Presentation
@@ -228,16 +249,21 @@ class ProblemReviewSchemaAndRendererTests(SimpleTestCase):
         self.assertEqual(snapshot["summary"]["total_questions"], 3)
 
         deck = Presentation(__import__("io").BytesIO(render_problem_review_pptx(report)))
-        metric_values = [
+        visible_text = "\n".join(
             shape.text.strip()
-            for shape in deck.slides[1].shapes
+            for slide in deck.slides
+            for shape in slide.shapes
             if hasattr(shape, "text_frame") and shape.has_text_frame
-        ]
-        self.assertIn("3", metric_values)
+        )
+        self.assertIn("3문항", visible_text)
 
     @patch("apps.domains.tools.problem_review.worker._record_progress")
     @patch("apps.infrastructure.storage.r2.upload_fileobj_to_r2_storage")
-    def test_export_worker_writes_only_report_scoped_result(self, upload_file, _progress):
+    @patch("apps.domains.tools.problem_review.worker.ProblemReviewArtifact.objects.filter")
+    def test_export_worker_writes_only_report_scoped_result(self, artifact_filter, upload_file, _progress):
+        artifact = Mock()
+        artifact.id = "artifact-1"
+        artifact_filter.return_value.first.return_value = artifact
         job = AIJob.new(
             type="problem_review_export",
             tenant_id="tenant-1",
@@ -250,6 +276,8 @@ class ProblemReviewSchemaAndRendererTests(SimpleTestCase):
                 "report_version": 3,
                 "output_format": "pptx",
                 "report": _sample_report(),
+                "artifact_id": "00000000-0000-4000-8000-000000000001",
+                "source_fingerprint": "a" * 64,
             },
         )
 
@@ -260,6 +288,8 @@ class ProblemReviewSchemaAndRendererTests(SimpleTestCase):
         self.assertTrue(key.startswith("tenants/tenant-1/tools/problem-review/report-1/"))
         self.assertTrue(upload_file.call_args.kwargs["fileobj"].getvalue().startswith(b"PK"))
         self.assertEqual(result.result["report_version"], 3)
+        self.assertEqual(result.result["source_fingerprint"], "a" * 64)
+        artifact.save.assert_called_once()
 
         rejected = handle_problem_review_export_job(AIJob.new(
             type="problem_review_export",
@@ -380,6 +410,23 @@ class ProblemReviewReportViewTests(TestCase):
         self.assertEqual(response.status_code, 400)
         upload_file.assert_not_called()
 
+    @patch("apps.infrastructure.storage.r2.upload_fileobj_to_r2_storage")
+    def test_create_rejects_unsupported_source_before_upload(self, upload_file):
+        request = self.factory.post(
+            "/api/v1/tools/problem-review/reports/",
+            {
+                "source_files": SimpleUploadedFile("answer-key.exe", b"not-a-document"),
+                "external_ai_confirmed": "true",
+            },
+            format="multipart",
+        )
+
+        response = ProblemReviewReportCollectionView.as_view()(self._authenticate(request))
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("지원하지 않는 파일", response.data["detail"])
+        upload_file.assert_not_called()
+
     @patch(
         "apps.infrastructure.storage.r2.upload_fileobj_to_r2_storage",
         side_effect=RuntimeError("fixture upload unavailable"),
@@ -457,6 +504,118 @@ class ProblemReviewReportViewTests(TestCase):
         self.assertEqual(len(save_response.data["draft"]["questions"]), 1)
         self.assertEqual(save_response.data["draft"]["questions"][0]["number"], 7)
         self.assertEqual(save_response.data["draft"]["questions"][0]["source_number"], 1)
+
+    @patch(
+        "apps.domains.tools.problem_review.views.dispatch_tools_ai_job",
+        side_effect=[
+            {"ok": True, "job_id": "review-export-1"},
+            {"ok": True, "job_id": "review-export-2"},
+        ],
+    )
+    def test_export_reuses_snapshot_and_retries_only_failed_artifact(self, dispatch_job):
+        report = ProblemReviewReport.objects.create(
+            tenant=self.tenant,
+            requested_by=self.user,
+            status=ProblemReviewReport.Status.DRAFT,
+            title="검수 완료 제목",
+            draft=_sample_report(),
+        )
+
+        def request_export():
+            request = self.factory.post(
+                f"/api/v1/tools/problem-review/reports/{report.id}/exports/",
+                {"output_format": "pdf"},
+                format="json",
+            )
+            return ProblemReviewExportCreateView.as_view()(
+                self._authenticate(request),
+                report_id=report.id,
+            )
+
+        created = request_export()
+        reused = request_export()
+
+        self.assertEqual(created.status_code, 202)
+        self.assertEqual(reused.status_code, 202)
+        self.assertEqual(created.data["id"], reused.data["id"])
+        self.assertEqual(dispatch_job.call_count, 1)
+        artifact = ProblemReviewArtifact.objects.get(report=report)
+        self.assertEqual(artifact.report_version, report.version)
+        self.assertEqual(len(artifact.source_fingerprint), 64)
+        payload = dispatch_job.call_args.kwargs["payload"]
+        self.assertEqual(payload["artifact_id"], str(artifact.id))
+        self.assertEqual(payload["source_fingerprint"], artifact.source_fingerprint)
+        self.assertEqual(payload["report"], normalize_report_payload(report.draft, preserve_question_set=False))
+
+        artifact.status = ProblemReviewArtifact.Status.FAILED
+        artifact.error_message = "fixture render failed"
+        artifact.save(update_fields=["status", "error_message", "updated_at"])
+        retried = request_export()
+
+        self.assertEqual(retried.status_code, 202)
+        self.assertEqual(retried.data["id"], str(artifact.id))
+        self.assertEqual(dispatch_job.call_count, 2)
+        self.assertTrue(dispatch_job.call_args.kwargs["force_rerun"])
+        self.assertEqual(
+            dispatch_job.call_args.kwargs["rerun_reason"],
+            "retry_failed_problem_review_artifact",
+        )
+        artifact.refresh_from_db()
+        self.assertEqual(artifact.job_id, "review-export-2")
+        self.assertEqual(ProblemReviewArtifact.objects.count(), 1)
+
+    @patch(
+        "apps.infrastructure.storage.r2.generate_presigned_get_url_storage",
+        return_value="https://download.example/report.pdf",
+    )
+    def test_export_status_is_owner_scoped_and_ready_artifact_is_downloadable(self, _presign):
+        report = ProblemReviewReport.objects.create(
+            tenant=self.tenant,
+            requested_by=self.user,
+            status=ProblemReviewReport.Status.DRAFT,
+            title="검수 완료 제목",
+            draft=_sample_report(),
+        )
+        artifact = ProblemReviewArtifact.objects.create(
+            tenant=self.tenant,
+            report=report,
+            created_by=self.user,
+            output_format=ProblemReviewArtifact.OutputFormat.PDF,
+            report_version=report.version,
+            source_fingerprint="a" * 64,
+            status=ProblemReviewArtifact.Status.READY,
+            filename="아카데미고_문제리뷰_v1_aaaaaaaa.pdf",
+            content_type="application/pdf",
+            size_bytes=42,
+            sha256="b" * 64,
+            r2_key=f"tenants/{self.tenant.id}/tools/problem-review/{report.id}/report.pdf",
+        )
+        request = self.factory.get(
+            f"/api/v1/tools/problem-review/reports/{report.id}/exports/{artifact.id}/"
+        )
+
+        response = ProblemReviewExportStatusView.as_view()(
+            self._authenticate(request),
+            report_id=report.id,
+            job_id=str(artifact.id),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["status"], ProblemReviewArtifact.Status.READY)
+        self.assertEqual(response.data["result"]["download_url"], "https://download.example/report.pdf")
+        other = get_user_model().objects.create_user(
+            username="other_export_teacher",
+            password="test1234",
+            tenant=self.tenant,
+            is_staff=True,
+        )
+        TenantMembership.ensure_active(tenant=self.tenant, user=other, role="teacher")
+        denied = ProblemReviewExportStatusView.as_view()(
+            self._authenticate(request, user=other),
+            report_id=report.id,
+            job_id=str(artifact.id),
+        )
+        self.assertEqual(denied.status_code, 404)
 
     @patch("apps.infrastructure.storage.r2.delete_object_r2_storage")
     @patch("apps.infrastructure.storage.r2.upload_fileobj_to_r2_storage")

@@ -15,6 +15,7 @@ from apps.domains.tools.problem_studio.transfer_documents import (
     TransferOcrContext,
     collect_transfer_documents,
 )
+from apps.domains.tools.problem_studio.models import ProblemReviewArtifact
 from apps.shared.contracts.ai_job import AIJob
 from apps.shared.contracts.ai_result import AIResult
 
@@ -228,6 +229,8 @@ def handle_problem_review_export_job(job: AIJob) -> AIResult:
     tenant_id = str(job.tenant_id or "")
     report_id = str(payload.get("report_id") or "")
     output_format = str(payload.get("output_format") or "").lower()
+    artifact_id = str(payload.get("artifact_id") or "")
+    source_fingerprint = str(payload.get("source_fingerprint") or "")
     if not tenant_id or str(payload.get("tenant_id") or "") != tenant_id:
         return AIResult.failed(job.id, "tenant_id mismatch")
     if not report_id or not str(payload.get("request_user_id") or ""):
@@ -235,12 +238,34 @@ def handle_problem_review_export_job(job: AIJob) -> AIResult:
     if output_format not in {"pdf", "pptx"}:
         return AIResult.failed(job.id, "unsupported output format")
 
+    artifact = ProblemReviewArtifact.objects.filter(
+        pk=artifact_id,
+        tenant_id=tenant_id,
+        report_id=report_id,
+        created_by_id=str(payload.get("request_user_id") or ""),
+        output_format=output_format,
+        report_version=int(payload.get("report_version") or 0),
+        source_fingerprint=source_fingerprint,
+    ).first()
+    if artifact is None or not source_fingerprint:
+        return AIResult.failed(job.id, "export artifact scope mismatch")
+
     try:
         _record_progress(job, "render", 35, "리포트 조판 중")
-        data, filename, content_type = render_problem_review_report(
-            payload.get("report") if isinstance(payload.get("report"), dict) else {},
+        report_payload = payload.get("report") if isinstance(payload.get("report"), dict) else {}
+        data, base_filename, content_type = render_problem_review_report(
+            {
+                **report_payload,
+                "_export_meta": {
+                    "report_version": int(payload.get("report_version") or 1),
+                    "source_fingerprint": source_fingerprint,
+                },
+            },
             output_format=output_format,
         )
+        report_version = int(payload.get("report_version") or 1)
+        stem, extension = os.path.splitext(base_filename)
+        filename = f"{stem}_v{report_version}_{source_fingerprint[:8]}{extension}"
         key = f"tenants/{tenant_id}/tools/problem-review/{report_id}/{job.id}/{filename}"
         from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_storage
 
@@ -251,15 +276,34 @@ def handle_problem_review_export_job(job: AIJob) -> AIResult:
             content_type=content_type,
         )
         _record_progress(job, "done", 100, "다운로드 준비 완료")
+        digest = hashlib.sha256(data).hexdigest()
+        artifact.job_id = str(job.id)
+        artifact.status = ProblemReviewArtifact.Status.READY
+        artifact.filename = filename
+        artifact.content_type = content_type
+        artifact.size_bytes = len(data)
+        artifact.sha256 = digest
+        artifact.r2_key = key
+        artifact.error_message = ""
+        artifact.save(update_fields=[
+            "job_id", "status", "filename", "content_type", "size_bytes", "sha256", "r2_key",
+            "error_message", "updated_at",
+        ])
         return AIResult.done(job.id, {
             "r2_key": key,
             "filename": filename,
             "content_type": content_type,
             "output_format": output_format,
             "size_bytes": len(data),
-            "sha256": hashlib.sha256(data).hexdigest(),
-            "report_version": int(payload.get("report_version") or 1),
+            "sha256": digest,
+            "report_version": report_version,
+            "source_fingerprint": source_fingerprint,
+            "artifact_id": str(artifact.id),
         })
     except Exception as exc:
         logger.exception("PROBLEM_REVIEW_EXPORT_FAILED job_id=%s", job.id)
+        artifact.job_id = str(job.id)
+        artifact.status = ProblemReviewArtifact.Status.FAILED
+        artifact.error_message = str(exc)[:2000]
+        artifact.save(update_fields=["job_id", "status", "error_message", "updated_at"])
         return AIResult.failed(job.id, str(exc)[:2000])

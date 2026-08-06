@@ -27,15 +27,19 @@ staff 역할만 사용할 수 있다.
    않는다.
 5. 상태는 `analyzing -> draft` 또는 `analyzing -> failed`다. 브라우저를 닫아도
    DB의 `ProblemReviewReport`와 job 상태로 다시 이어서 열 수 있다.
-6. 선생님은 기본 정보, 총평, 출제 기조, 모든 문항의 난이도·핵심·함정·메모,
-   정답 예시·문항 타당성, 핵심 변별 문항 군의 번호·막히는 지점, 학생 실패
-   패턴의 증상·학습 원인·수업 처방과 결론을 수정한다. 저장은 정수 `version`을
+6. 선생님은 기본 정보, 리포트 목적(자체 문항 검토/학교 시험 분석), 총평,
+   출제 기조, 모든 문항의 사고행동·난이도·핵심·함정·메모, 핵심 변별 문항의
+   정답 예시·타당성, 증거·붕괴 분기·4단계 복구, 학생 실패 패턴의 증상·학습
+   원인·수업 처방과 결론을 수정한다. 저장은 정수 `version`을
    사용한 낙관적 잠금이며, 오래된 화면은 `409`로 실패하고 최신 리포트를 함께
    받는다. 문항 추가·삭제·번호 수정 뒤에는 실제 검수본 문항 수와 난도별 문항
    번호를 서버가 다시 계산한다.
-7. PDF 또는 PPTX 다운로드는 저장된 정확한 리포트 버전을 snapshot으로 보내
-   `problem_review_export` deterministic tools 작업이 조판한다. 완료 상태를
-   다시 읽을 때마다 15분짜리 새 presigned URL을 발급한다.
+7. PDF 또는 PPTX 다운로드는 저장된 정확한 리포트 버전을 정규화하고 SHA-256
+   fingerprint를 고정해 `problem_review_export` 작업이 조판한다. 각 요청은
+   `ProblemReviewArtifact`에 pending/ready/failed 상태, 실제 파일명·MIME·크기·
+   SHA-256과 R2 key를 남긴다. 같은 version+format+fingerprint는 재사용하고
+   실패 건만 같은 artifact로 재시도한다. 완료 상태를 다시 읽을 때마다 15분짜리
+   새 presigned URL을 발급한다.
 8. 선생님이 `홈페이지 공개`를 확인하면 저장된 정확한 버전만 공개 스냅샷으로
    복제한다. 같은 리포트를 다시 공개하면 기존 게시물 ID는 유지하고 내용과 PDF를
    최신 검수본으로 교체한다. 새 스냅샷 저장이 끝난 뒤에만 이전 PDF를 지운다.
@@ -81,6 +85,35 @@ staff 역할만 사용할 수 있다.
   검사한다. 익명 목록·상세·PDF는 요청에서 해석된 단일 tenant의 `published`
   자료만 반환하고, hidden/다른 tenant 자료로 폴백하지 않는다.
 
+## 산출물 내용·디자인 계약
+
+PDF와 PPTX는 같은 normalized snapshot, report version, source fingerprint를
+사용하며 문항 번호·배점·단원·난도·사고행동이 일치해야 한다. 레이아웃은 매체에
+맞게 다르다.
+
+- PPTX는 `관측 표지 → 3분 브리핑 → 평가 DNA → 출제 지형 → EXAM SPECTRUM →
+  전 문항 EVIDENCE LEDGER → 조건 누적 지도 → 핵심 문항 X-RAY → ERROR GENOME →
+  RECOVERY PROTOCOL → 보호자 대화 메모 → NEXT SIGNAL` 흐름이다. 전 문항 원장은
+  입력 문항 수에 따라 8~10행 단위로 동적 분할한다. 25문항·핵심 3문항이면
+  대표적으로 16장이지만 16장을 하드코딩하지 않는다.
+- PDF는 슬라이드 이미지를 붙이지 않고 A4 세로 편집물로 따로 조판한다. 같은
+  수치와 문항을 요약, DNA/지형, 전 문항 원장, X-ray, 회복 행동과 보호자 메모로
+  나눈다.
+- 시각 서명은 `EXAM SPECTRUM`이다. Deep Ink `#09162F`, Plasma Blue
+  `#37B7FF`, Signal Coral `#FF526F`, Ion Amber `#F4B746`, Lab Paper
+  `#F5F7FB`, Carbon `#172033`을 사용하고, 관측 rail·스펙트럼 바·조건 연결선·
+  표 기준선으로 정보를 조직한다.
+- 참고 완성본의 학교/강사 identity, 남색/빨강 보고서 문법, 도넛+4칸 표와
+  섹션 순서는 복제하지 않는다. 자료의 분석 깊이와 전 문항 커버리지만 비교한다.
+- 일부 배점을 모르면 합계·비중을 숨기고 한계를 적는다. 실제 점수 분포가 없으면
+  등급컷을 만들지 않는다. 누락된 X-ray 근거는 `선생님 검수 필요`로 명시한다.
+- PPTX 모든 슬라이드는 report version/fingerprint와 `[Sources]` 발표자 노트를
+  갖는다. 렌더 QA는 전 페이지/슬라이드 재오픈, visible ellipsis·겹침·overflow
+  0, 문항 누락 0, 배점 합계 교차검산을 하드 게이트로 삼는다.
+
+교사 제공 원본과 보안·품질 경계는
+[교사 제공 자료 인벤토리](teacher-provided-source-materials.md)를 따른다.
+
 ## 소유 경계
 
 | 책임 | 구현 |
@@ -91,6 +124,8 @@ staff 역할만 사용할 수 있다.
 | 전사·구조·분석 worker | `apps/domains/tools/problem_review/worker.py` |
 | AI 분석 adapter | `academy/adapters/ai/problem/reviewer.py` |
 | PDF/PPTX 조판 | `apps/domains/tools/problem_review/renderers.py` |
+| EXAM SPECTRUM PPTX/A4 PDF 조판 | `apps/domains/tools/problem_review/spectrum_renderers.py` |
+| 산출물 이력·스냅샷 identity | `apps/domains/tools/problem_studio/models.py`의 `ProblemReviewArtifact` |
 | 공개 스냅샷과 익명 API | `apps/domains/landing_public/contracts/problem_review_showcase.py`, `apps/domains/landing_public/models/problem_review_showcase.py`, `apps/domains/landing_public/api/views/problem_review_showcase_views.py` |
 | queue routing | `academy/application/use_cases/ai/pipelines/dispatcher.py`, `academy/application/use_cases/tools/worker_dispatcher.py` |
 | 프런트 계약 | `frontend/docs/PROBLEM-REVIEW-REPORT.md` |
@@ -114,8 +149,10 @@ API:
   실패했지만 문항 전사가 있으면 source draft fallback을 `draft`로 연다.
 - dispatch 실패와 upload 뒤 예외는 임시 R2 원본을 즉시 지우고 report를
   `failed`로 표시한다.
-- export는 `report_id + version + format` idempotency key를 써서 같은 검수본의
-  중복 생성 요청을 합친다. PDF/PPTX 외 형식은 거절한다.
+- export는 `report + version + format + normalized snapshot fingerprint`의
+  unique artifact를 써서 같은 검수본의 중복 생성 요청을 합친다. PDF/PPTX 외
+  형식은 거절한다. 진행 중 artifact는 재전송하지 않고, 실패 artifact만 오류를
+  지우고 재시도한다.
 - PDF와 PPTX는 동일한 normalized snapshot을 사용하므로 화면 저장 전 변경은
   다운로드에 포함되지 않는다. 프런트는 다운로드 직전 변경을 먼저 저장한다.
 - 공개 PDF 생성·업로드가 실패하면 공개 DB 상태를 바꾸지 않는다. DB 저장이
