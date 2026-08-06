@@ -3,8 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 
-SCHEMA_VERSION = "problem-review-report/v1"
+SCHEMA_VERSION = "problem-review-report/v2"
 DIFFICULTIES = ("검수 필요", "하", "중", "중상", "상", "최상")
+REPORT_PURPOSES = ("teacher_review", "exam_analysis")
+THINKING_ACTIONS = ("확인", "해석", "계산", "서술", "복합", "검수 필요")
 MAX_QUESTIONS = 80
 
 
@@ -46,11 +48,15 @@ def _metadata(value: Any, fallback: dict[str, Any]) -> dict[str, str]:
         "total_score": 40,
         "instructor_name": 80,
         "audience": 80,
+        "report_purpose": 24,
     }
-    return {
+    output = {
         key: _text(raw.get(key) if raw.get(key) not in (None, "") else base.get(key), limit=limit)
         for key, limit in fields.items()
     }
+    if output["report_purpose"] not in REPORT_PURPOSES:
+        output["report_purpose"] = "teacher_review"
+    return output
 
 
 def _question_number(value: Any, fallback: int) -> int:
@@ -103,6 +109,12 @@ def _questions(
         difficulty = _text(raw.get("difficulty") or base.get("difficulty") or "검수 필요", limit=10)
         if difficulty not in DIFFICULTIES:
             difficulty = "검수 필요"
+        thinking_action = _text(
+            raw.get("thinking_action") or base.get("thinking_action") or "검수 필요",
+            limit=10,
+        )
+        if thinking_action not in THINKING_ACTIONS:
+            thinking_action = "검수 필요"
         output.append({
             "number": number,
             "source_number": _int(
@@ -115,6 +127,7 @@ def _questions(
             "answer": _text(raw.get("answer") or base.get("answer"), limit=160),
             "points": _text(raw.get("points") or base.get("points"), limit=30),
             "difficulty": difficulty,
+            "thinking_action": thinking_action,
             "key_point": _text(raw.get("key_point") or base.get("key_point"), limit=900),
             "trap": _text(raw.get("trap") or base.get("trap"), limit=700),
             "validity": _text(raw.get("validity") or base.get("validity"), limit=500),
@@ -185,6 +198,18 @@ def normalize_report_payload(
             "reason": _text(item.get("reason"), limit=900),
             "collapse_point": _text(item.get("collapse_point"), limit=800),
             "prescription": _text(item.get("prescription"), limit=800),
+            "evidence": _text(item.get("evidence") or item.get("reason"), limit=900),
+            "collapse_branches": _string_list(
+                item.get("collapse_branches") or [item.get("collapse_point")],
+                limit=3,
+                item_limit=360,
+            ),
+            "recovery_steps": _string_list(
+                item.get("recovery_steps") or [item.get("prescription")],
+                limit=4,
+                item_limit=360,
+            ),
+            "learning_point": _text(item.get("learning_point") or item.get("prescription"), limit=600),
         }
         for index, item in enumerate(_dict_list(raw.get("key_items") or base.get("key_items"), limit=8))
     ]
@@ -218,6 +243,16 @@ def normalize_report_payload(
         for label in DIFFICULTIES
         if grouped_questions.get(label)
     ]
+    protocol_raw = raw.get("recovery_protocol") if isinstance(raw.get("recovery_protocol"), dict) else {}
+    protocol_base = base.get("recovery_protocol") if isinstance(base.get("recovery_protocol"), dict) else {}
+    achievement_bands = [
+        {
+            "label": _text(item.get("label"), limit=60),
+            "signal": _text(item.get("signal"), limit=500),
+            "prescription": _text(item.get("prescription"), limit=700),
+        }
+        for item in _dict_list(raw.get("achievement_bands") or base.get("achievement_bands"), limit=4)
+    ]
     return {
         "schema_version": SCHEMA_VERSION,
         "metadata": _metadata(raw.get("metadata"), base),
@@ -247,6 +282,21 @@ def normalize_report_payload(
                 limit=8,
             ),
         },
+        "recovery_protocol": {
+            "within_72_hours": _string_list(
+                protocol_raw.get("within_72_hours") or protocol_base.get("within_72_hours"),
+                limit=6,
+            ),
+            "within_two_weeks": _string_list(
+                protocol_raw.get("within_two_weeks") or protocol_base.get("within_two_weeks"),
+                limit=6,
+            ),
+            "next_exam": _string_list(
+                protocol_raw.get("next_exam") or protocol_base.get("next_exam"),
+                limit=6,
+            ),
+        },
+        "achievement_bands": achievement_bands,
         "conclusion": {
             "headline": _text(conclusion_raw.get("headline") or conclusion_base.get("headline"), limit=240),
             "actions": _string_list(conclusion_raw.get("actions") or conclusion_base.get("actions"), limit=8),
@@ -270,6 +320,7 @@ def build_source_draft(
             "answer": _text(item.get("answer"), limit=160),
             "points": _text(item.get("points"), limit=30),
             "difficulty": "검수 필요",
+            "thinking_action": "검수 필요",
             "key_point": "",
             "trap": "",
             "validity": "",

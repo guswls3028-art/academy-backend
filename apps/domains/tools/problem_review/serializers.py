@@ -14,6 +14,7 @@ class ProblemReviewReportSerializer(serializers.Serializer):
     created_at = serializers.DateTimeField(read_only=True)
     updated_at = serializers.DateTimeField(read_only=True)
     draft = serializers.JSONField(read_only=True, required=False)
+    artifacts = serializers.JSONField(read_only=True, required=False)
 
 
 class ProblemReviewReportListSerializer(serializers.Serializer):
@@ -41,9 +42,14 @@ class ProblemReviewExportRequestSerializer(serializers.Serializer):
 
 
 class ProblemReviewExportCreateSerializer(serializers.Serializer):
+    id = serializers.UUIDField(read_only=True)
     job_id = serializers.CharField(read_only=True)
     status = serializers.CharField(read_only=True)
     output_format = serializers.ChoiceField(choices=("pdf", "pptx"), read_only=True)
+    report_version = serializers.IntegerField(read_only=True)
+    source_fingerprint = serializers.CharField(read_only=True)
+    filename = serializers.CharField(read_only=True, allow_blank=True)
+    download_url = serializers.CharField(read_only=True, required=False)
 
 
 class ProblemReviewExportStatusSerializer(serializers.Serializer):

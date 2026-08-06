@@ -441,3 +441,78 @@ class ProblemReviewReport(TimestampModel):
                 name="idx_problem_review_status",
             ),
         ]
+
+
+class ProblemReviewArtifact(TimestampModel):
+    """Immutable export identity for one exact reviewed report snapshot."""
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "생성 중"
+        READY = "ready", "다운로드 가능"
+        FAILED = "failed", "생성 실패"
+
+    class OutputFormat(models.TextChoices):
+        PDF = "pdf", "PDF"
+        PPTX = "pptx", "PPTX"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="problem_review_artifacts",
+        db_index=True,
+    )
+    report = models.ForeignKey(
+        ProblemReviewReport,
+        on_delete=models.CASCADE,
+        related_name="artifacts",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="problem_review_artifacts",
+    )
+    job_id = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    output_format = models.CharField(max_length=8, choices=OutputFormat.choices)
+    report_version = models.PositiveIntegerField()
+    source_fingerprint = models.CharField(max_length=64)
+    status = models.CharField(
+        max_length=12,
+        choices=Status.choices,
+        default=Status.PENDING,
+        db_index=True,
+    )
+    filename = models.CharField(max_length=255, blank=True, default="")
+    content_type = models.CharField(max_length=160, blank=True, default="")
+    size_bytes = models.PositiveBigIntegerField(default=0)
+    sha256 = models.CharField(max_length=64, blank=True, default="")
+    r2_key = models.CharField(max_length=700, blank=True, default="")
+    error_message = models.TextField(blank=True, default="")
+
+    objects = TenantQuerySet.as_manager()
+
+    class Meta:
+        db_table = "problem_review_artifact"
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["report", "report_version", "output_format", "source_fingerprint"],
+                name="uq_problem_review_artifact_snapshot",
+            ),
+            models.UniqueConstraint(
+                fields=["job_id"],
+                condition=~models.Q(job_id=""),
+                name="uq_problem_review_artifact_job",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["tenant", "created_by", "created_at"],
+                name="idx_problem_review_art_owner",
+            ),
+            models.Index(
+                fields=["report", "status", "created_at"],
+                name="idx_problem_review_art_status",
+            ),
+        ]

@@ -769,17 +769,33 @@ def render_problem_review_pptx(payload: dict[str, Any]) -> bytes:
 
 def render_problem_review_report(payload: dict[str, Any], *, output_format: str) -> tuple[bytes, str, str]:
     report = normalize_report_payload(payload, preserve_question_set=False)
+    render_payload = {
+        **report,
+        "_export_meta": payload.get("_export_meta", {}) if isinstance(payload, dict) else {},
+    }
     title = report.get("metadata", {}).get("title") or "문제 리뷰 리포트"
     if output_format == "pdf":
         return (
-            render_problem_review_pdf(report),
+            render_problem_review_pdf(render_payload),
             safe_report_filename(title, suffix="pdf"),
             "application/pdf",
         )
     if output_format == "pptx":
         return (
-            render_problem_review_pptx(report),
+            render_problem_review_pptx(render_payload),
             safe_report_filename(title, suffix="pptx"),
             "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         )
     raise ValueError("PDF 또는 PPTX만 선택할 수 있습니다.")
+
+
+# EXAM SPECTRUM is the current product renderer.  The legacy functions above are
+# intentionally kept in this module for historical output compatibility while
+# all new exports resolve these names to the evidence-led design system.
+from apps.domains.tools.problem_review.spectrum_renderers import (  # noqa: E402
+    render_problem_review_pdf as _render_problem_review_pdf_spectrum,
+    render_problem_review_pptx as _render_problem_review_pptx_spectrum,
+)
+
+render_problem_review_pdf = _render_problem_review_pdf_spectrum
+render_problem_review_pptx = _render_problem_review_pptx_spectrum

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import io
+import hashlib
 import json
 import logging
 import uuid
+from pathlib import Path
 
 try:
     from drf_spectacular.utils import extend_schema
@@ -20,7 +22,7 @@ except ModuleNotFoundError as exc:
         return decorator
 
 
-from django.db import transaction
+from django.db import models, transaction
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
@@ -46,8 +48,12 @@ from apps.domains.tools.problem_review.serializers import (
     ProblemReviewPublishResponseSerializer,
     ProblemReviewReportSerializer,
 )
-from apps.domains.tools.problem_studio.async_transfer import build_source_archive
-from apps.domains.tools.problem_studio.models import ProblemReviewReport
+from apps.domains.tools.problem_studio.async_transfer import (
+    SOURCE_ARCHIVE_MAX_TOTAL_BYTES,
+    build_source_archive,
+)
+from apps.domains.tools.problem_studio.transfer_documents import TRANSFER_MAX_UPLOAD_BYTES
+from apps.domains.tools.problem_studio.models import ProblemReviewArtifact, ProblemReviewReport
 from apps.domains.tools.problem_review.renderers import render_problem_review_report
 from apps.support.tools.ai_dependencies import dispatch_tools_ai_job
 
@@ -55,6 +61,7 @@ from apps.support.tools.ai_dependencies import dispatch_tools_ai_job
 ANALYSIS_JOB_TYPE = "problem_review_analysis"
 EXPORT_JOB_TYPE = "problem_review_export"
 MAX_SOURCE_FILES = 6
+SUPPORTED_SOURCE_SUFFIXES = {".pdf", ".hwp", ".hwpx", ".doc", ".docx", ".zip", ".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 logger = logging.getLogger(__name__)
 
 
@@ -125,9 +132,47 @@ def _serialize_report(report: ProblemReviewReport, *, include_draft: bool = True
         "last_error": report.last_error,
         "created_at": report.created_at.isoformat(),
         "updated_at": report.updated_at.isoformat(),
+        "artifacts": [
+            _serialize_artifact(artifact)
+            for artifact in report.artifacts.all()[:12]
+        ],
     }
     if include_draft:
         payload["draft"] = report.draft
+    return payload
+
+
+def _snapshot_fingerprint(draft: dict) -> tuple[dict, str]:
+    snapshot = normalize_report_payload(draft, preserve_question_set=False)
+    canonical = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return snapshot, hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _serialize_artifact(artifact: ProblemReviewArtifact, *, include_download: bool = False) -> dict:
+    payload = {
+        "id": str(artifact.id),
+        "job_id": artifact.job_id,
+        "status": artifact.status,
+        "output_format": artifact.output_format,
+        "report_version": artifact.report_version,
+        "source_fingerprint": artifact.source_fingerprint,
+        "filename": artifact.filename,
+        "content_type": artifact.content_type,
+        "size_bytes": artifact.size_bytes,
+        "sha256": artifact.sha256,
+        "error_message": artifact.error_message,
+        "created_at": artifact.created_at.isoformat(),
+        "updated_at": artifact.updated_at.isoformat(),
+    }
+    if include_download and artifact.status == ProblemReviewArtifact.Status.READY and artifact.r2_key:
+        from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
+
+        payload["download_url"] = generate_presigned_get_url_storage(
+            key=artifact.r2_key,
+            expires_in=900,
+            filename=artifact.filename or "problem-review-report",
+            content_type=artifact.content_type or "application/octet-stream",
+        )
     return payload
 
 
@@ -150,6 +195,7 @@ def _public_snapshot(draft: dict) -> dict:
             "answer": item.get("answer"),
             "points": item.get("points"),
             "difficulty": item.get("difficulty"),
+            "thinking_action": item.get("thinking_action"),
             "key_point": item.get("key_point"),
             "trap": item.get("trap"),
         }
@@ -165,6 +211,8 @@ def _public_snapshot(draft: dict) -> dict:
         "questions": public_questions,
         "key_items": normalized.get("key_items") or [],
         "failure_patterns": normalized.get("failure_patterns") or [],
+        "recovery_protocol": normalized.get("recovery_protocol") or {},
+        "achievement_bands": normalized.get("achievement_bands") or [],
         "parent_guidance": normalized.get("parent_guidance") or {},
         "conclusion": normalized.get("conclusion") or {},
     }
@@ -183,7 +231,7 @@ class ProblemReviewReportCollectionView(APIView):
             ProblemReviewReport.objects.filter(
                 tenant=request.tenant,
                 requested_by=request.user,
-            )[:20]
+            ).prefetch_related("artifacts")[:20]
         )
         for report in reports:
             _refresh_analysis(report)
@@ -213,6 +261,28 @@ class ProblemReviewReportCollectionView(APIView):
         if len(source_files) > MAX_SOURCE_FILES:
             return Response(
                 {"detail": f"한 번에 파일은 {MAX_SOURCE_FILES}개까지 올릴 수 있습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        invalid_names = [
+            str(file.name)
+            for file in source_files
+            if Path(str(file.name)).suffix.lower() not in SUPPORTED_SOURCE_SUFFIXES
+        ]
+        if invalid_names:
+            return Response(
+                {"detail": f"지원하지 않는 파일 형식입니다: {', '.join(invalid_names[:3])}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        oversized = [str(file.name) for file in source_files if int(getattr(file, "size", 0) or 0) > TRANSFER_MAX_UPLOAD_BYTES]
+        if oversized:
+            return Response(
+                {"detail": f"파일 하나는 120MB까지 올릴 수 있습니다: {', '.join(oversized[:3])}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        total_bytes = sum(int(getattr(file, "size", 0) or 0) for file in source_files)
+        if total_bytes > SOURCE_ARCHIVE_MAX_TOTAL_BYTES:
+            return Response(
+                {"detail": "전체 파일 용량은 512MB까지 올릴 수 있습니다."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
@@ -378,29 +448,59 @@ class ProblemReviewExportCreateView(APIView):
         output_format = str(request.data.get("output_format") or "").lower()
         if output_format not in {"pdf", "pptx"}:
             return Response({"detail": "PDF 또는 PPTX만 선택할 수 있습니다."}, status=status.HTTP_400_BAD_REQUEST)
+        snapshot, fingerprint = _snapshot_fingerprint(report.draft)
+        artifact, created = ProblemReviewArtifact.objects.get_or_create(
+            tenant=request.tenant,
+            report=report,
+            created_by=request.user,
+            output_format=output_format,
+            report_version=report.version,
+            source_fingerprint=fingerprint,
+        )
+        if not created and artifact.status == ProblemReviewArtifact.Status.READY:
+            response = Response(_serialize_artifact(artifact, include_download=True), status=status.HTTP_200_OK)
+            response["Cache-Control"] = "no-store"
+            return response
+        if not created and artifact.status == ProblemReviewArtifact.Status.PENDING and artifact.job_id:
+            response = Response(_serialize_artifact(artifact), status=status.HTTP_202_ACCEPTED)
+            response["Cache-Control"] = "no-store"
+            return response
+        artifact.status = ProblemReviewArtifact.Status.PENDING
+        artifact.error_message = ""
+        artifact.job_id = ""
+        artifact.save(update_fields=["status", "error_message", "job_id", "updated_at"])
         result = dispatch_tools_ai_job(
             job_type=EXPORT_JOB_TYPE,
             payload={
                 "report_id": str(report.id),
                 "report_version": report.version,
-                "report": report.draft,
+                "report": snapshot,
                 "output_format": output_format,
                 "tenant_id": str(request.tenant.id),
                 "request_user_id": str(request.user.id),
+                "artifact_id": str(artifact.id),
+                "source_fingerprint": fingerprint,
             },
             tenant_id=str(request.tenant.id),
             source_domain="tools_problem_review",
             source_id=str(report.id),
             tier="basic",
-            idempotency_key=f"problem-review-export:{report.id}:{report.version}:{output_format}",
+            idempotency_key=f"problem-review-export:{artifact.id}",
+            force_rerun=not created,
+            rerun_reason="retry_failed_problem_review_artifact" if not created else None,
         )
         if not result.get("ok"):
+            artifact.status = ProblemReviewArtifact.Status.FAILED
+            artifact.error_message = str(result.get("error") or "다운로드 파일을 만들 수 없습니다.")[:2000]
+            artifact.save(update_fields=["status", "error_message", "updated_at"])
             return Response(
-                {"detail": result.get("error") or "다운로드 파일을 만들 수 없습니다."},
+                {"detail": artifact.error_message},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
+        artifact.job_id = str(result["job_id"])
+        artifact.save(update_fields=["job_id", "updated_at"])
         response = Response(
-            {"job_id": result["job_id"], "status": "PENDING", "output_format": output_format},
+            _serialize_artifact(artifact),
             status=status.HTTP_202_ACCEPTED,
         )
         response["Cache-Control"] = "no-store"
@@ -418,45 +518,43 @@ class ProblemReviewExportStatusView(APIView):
         report = _get_owned_report(request, report_id)
         if report is None:
             return Response({"detail": "리포트를 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
-        job = ai_repo.get_job_model_for_status(
-            str(job_id),
-            str(request.tenant.id),
-            job_type=EXPORT_JOB_TYPE,
-        )
-        if not job or not _job_owned_by_report(job, report):
+        artifact_lookup = models.Q(job_id=str(job_id))
+        try:
+            artifact_lookup |= models.Q(pk=uuid.UUID(str(job_id)))
+        except (TypeError, ValueError):
+            pass
+        artifact = ProblemReviewArtifact.objects.filter(
+            report=report,
+            tenant=request.tenant,
+            created_by=request.user,
+        ).filter(artifact_lookup).first()
+        if artifact is None:
             return Response({"detail": "다운로드 작업을 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+        job = None
+        if artifact.job_id:
+            job = ai_repo.get_job_model_for_status(
+                artifact.job_id,
+                str(request.tenant.id),
+                job_type=EXPORT_JOB_TYPE,
+            )
+            if job and not _job_owned_by_report(job, report):
+                job = None
         progress = None
         try:
             from academy.adapters.cache.redis_progress_adapter import RedisProgressAdapter
 
-            progress = RedisProgressAdapter().get_progress(str(job.job_id), tenant_id=str(request.tenant.id))
+            if artifact.job_id:
+                progress = RedisProgressAdapter().get_progress(artifact.job_id, tenant_id=str(request.tenant.id))
         except Exception:
             pass
-        result_payload = None
-        if job.status == "DONE":
-            raw = ai_repo.DjangoAIJobRepository().get_result_payload_for_job(job) or {}
-            result_key = str(raw.get("r2_key") or "")
-            expected_prefix = f"tenants/{request.tenant.id}/tools/problem-review/{report.id}/"
-            if result_key.startswith(expected_prefix):
-                from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
-
-                result_payload = {
-                    key: value
-                    for key, value in raw.items()
-                    if key not in {"r2_key", "download_url"} and not key.startswith("_")
-                }
-                result_payload["download_url"] = generate_presigned_get_url_storage(
-                    key=result_key,
-                    expires_in=900,
-                    filename=str(raw.get("filename") or "problem-review-report"),
-                    content_type=str(raw.get("content_type") or "application/octet-stream"),
-                )
+        artifact_payload = _serialize_artifact(artifact, include_download=True)
         response = Response({
-            "job_id": str(job.job_id),
-            "status": job.status,
+            **artifact_payload,
+            "job_id": artifact.job_id,
+            "status": artifact.status,
             "progress": progress,
-            "result": result_payload,
-            "error_message": job.error_message or job.last_error or None,
+            "result": artifact_payload if artifact.status == ProblemReviewArtifact.Status.READY else None,
+            "error_message": artifact.error_message or (job.error_message if job else None) or (job.last_error if job else None),
         })
         response["Cache-Control"] = "no-store"
         return response
