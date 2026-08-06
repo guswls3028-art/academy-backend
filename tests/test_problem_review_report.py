@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from importlib import import_module
 from unittest.mock import Mock, patch
 
+from django.apps import apps as django_apps
 from django.contrib.auth import get_user_model
+from django.core.management.base import CommandError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
@@ -238,6 +241,32 @@ class ProblemReviewSchemaAndRendererTests(SimpleTestCase):
         self.assertGreaterEqual(pdf_bytes.count(b"/Type /Page"), 4)
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
             pdf_text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+            header_contract = {
+                "EVALUATION DNA": {"평가", "관측", "단원", "문항", "배점/비중", "해석"},
+                "TEST TERRAIN / EXAM SPECTRUM": {"번호", "단원", "사고행동", "난도", "배점"},
+                "EVIDENCE LEDGER": {"번호", "배점", "단원", "행동", "난도", "핵심", "증거", "무너지는", "함정"},
+            }
+            for page in pdf.pages:
+                page_text = page.extract_text() or ""
+                words = page.extract_words(extra_attrs=["non_stroking_color"])
+                for marker, labels in header_contract.items():
+                    if marker not in page_text:
+                        continue
+                    for label in labels:
+                        colors_for_label = [
+                            word.get("non_stroking_color")
+                            for word in words
+                            if word.get("text") == label
+                        ]
+                        self.assertTrue(
+                            any(
+                                isinstance(color, tuple)
+                                and len(color) == 3
+                                and min(color) >= 0.95
+                                for color in colors_for_label
+                            ),
+                            f"dark table header label must render white: {marker} / {label}",
+                        )
         self.assertNotIn("DNA양", pdf_text)
         self.assertIn("DNA 양", pdf_text)
         deck = Presentation(io.BytesIO(pptx_bytes))
@@ -292,9 +321,22 @@ class ProblemReviewSchemaAndRendererTests(SimpleTestCase):
 
         pdf_bytes = render_problem_review_pdf(report)
 
-        # Five rendered pages plus the PDF page-tree object. This protects the
-        # evidence ledger and parent memo from regaining forced blank pages.
-        self.assertLessEqual(pdf_bytes.count(b"/Type /Page"), 6)
+        import io
+
+        import pdfplumber
+
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            self.assertEqual(len(pdf.pages), 5)
+            for page in pdf.pages:
+                main_chars = [
+                    char for char in page.chars
+                    if char.get("bottom", page.height) < page.height - 35
+                ]
+                self.assertGreaterEqual(
+                    max((char["bottom"] for char in main_chars), default=0),
+                    page.height * 0.60,
+                    "continuous A4 layout must not leave a sparse forced page",
+                )
 
     def test_public_and_export_snapshots_keep_manually_added_question_collisions(self):
         from pptx import Presentation
@@ -794,7 +836,17 @@ class ProblemReviewReportViewTests(TestCase):
         self.assertTrue(uploaded["key"].startswith(
             f"problem-review-showcase-snapshots/tenant_{self.tenant.id}/{report.id}/"
         ))
-        self.assertTrue(uploaded["fileobj"].getvalue().startswith(b"%PDF"))
+        uploaded_pdf = uploaded["fileobj"].getvalue()
+        self.assertTrue(uploaded_pdf.startswith(b"%PDF"))
+        import io
+        import pdfplumber
+
+        with pdfplumber.open(io.BytesIO(uploaded_pdf)) as public_pdf:
+            footer_text = "\n".join(page.extract_text() or "" for page in public_pdf.pages)
+        self.assertIn(f"v{report.version}", footer_text)
+        self.assertIn(report.review_fingerprint[:10], footer_text)
+        self.assertIn("최종 검수 완료", footer_text)
+        self.assertIn(report.review_completed_at.date().isoformat(), footer_text)
         delete_object.assert_not_called()
 
         first_key = showcase.snapshot_pdf_key
@@ -844,6 +896,26 @@ class ProblemReviewReportViewTests(TestCase):
         self.assertFalse(PublicProblemReviewShowcase.objects.exists())
         upload_file.assert_not_called()
 
+    @patch("apps.infrastructure.storage.r2.upload_fileobj_to_r2_storage")
+    def test_publish_requires_finalized_verified_report(self, upload_file):
+        report = ProblemReviewReport.objects.create(
+            tenant=self.tenant,
+            requested_by=self.user,
+            status=ProblemReviewReport.Status.DRAFT,
+            draft=_sample_report(),
+        )
+        request = self.factory.post("/publication/", {"version": report.version}, format="json")
+
+        response = ProblemReviewPublishView.as_view()(
+            self._authenticate(request),
+            report_id=report.id,
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertFalse(response.data["review_readiness"]["is_finalized"])
+        self.assertFalse(PublicProblemReviewShowcase.objects.exists())
+        upload_file.assert_not_called()
+
     def test_public_showcase_is_tenant_scoped_and_hidden_fails_closed(self):
         report = ProblemReviewReport.objects.create(
             tenant=self.tenant,
@@ -877,8 +949,29 @@ class ProblemReviewReportViewTests(TestCase):
 
         showcase.snapshot = _sample_report()
         showcase.save(update_fields=["snapshot", "updated_at"])
+        markerless_response = PublicProblemReviewShowcaseViewSet.as_view({"get": "list"})(list_request)
+        self.assertEqual(markerless_response.data["count"], 0)
+
+        unmarked_legacy_snapshot = _sample_report()
+        unmarked_legacy_snapshot["verification"] = {"status": "legacy_published"}
+        showcase.snapshot = unmarked_legacy_snapshot
+        showcase.save(update_fields=["snapshot", "updated_at"])
+        unmarked_legacy_response = PublicProblemReviewShowcaseViewSet.as_view({"get": "list"})(
+            list_request
+        )
+        self.assertEqual(unmarked_legacy_response.data["count"], 0)
+
+        legacy_snapshot = _sample_report()
+        legacy_snapshot["verification"] = {
+            "status": "legacy_published",
+            "compatibility": "pre-verification-publication",
+            "published_at": showcase.published_at.isoformat(),
+            "migrated_at": timezone.now().isoformat(),
+        }
+        showcase.snapshot = legacy_snapshot
+        showcase.save(update_fields=["snapshot", "updated_at"])
         legacy_response = PublicProblemReviewShowcaseViewSet.as_view({"get": "list"})(list_request)
-        self.assertEqual(legacy_response.data["count"], 0)
+        self.assertEqual(legacy_response.data["count"], 1)
 
         showcase.status = PublicProblemReviewShowcase.Status.HIDDEN
         showcase.save(update_fields=["status", "updated_at"])
@@ -895,3 +988,171 @@ class ProblemReviewReportViewTests(TestCase):
         other_request.tenant = other_tenant
         other_response = PublicProblemReviewShowcaseViewSet.as_view({"get": "list"})(other_request)
         self.assertEqual(other_response.data["count"], 0)
+
+    def test_legacy_publication_migration_marks_only_existing_public_rows(self):
+        published_at = timezone.now()
+        public = PublicProblemReviewShowcase.objects.create(
+            tenant=self.tenant,
+            report_id_ref="11111111-1111-1111-1111-111111111111",
+            title="기존 공개본",
+            status=PublicProblemReviewShowcase.Status.PUBLISHED,
+            published_at=published_at,
+            snapshot=_sample_report(),
+            snapshot_at=published_at,
+        )
+        hidden = PublicProblemReviewShowcase.objects.create(
+            tenant=self.tenant,
+            report_id_ref="22222222-2222-2222-2222-222222222222",
+            title="기존 비공개본",
+            status=PublicProblemReviewShowcase.Status.HIDDEN,
+            snapshot=_sample_report(),
+            snapshot_at=published_at,
+        )
+        migration = import_module(
+            "apps.domains.landing_public.migrations.0008_problem_review_legacy_publication_compat"
+        )
+
+        migration.mark_legacy_publications(django_apps, None)
+
+        public.refresh_from_db()
+        hidden.refresh_from_db()
+        self.assertEqual(public.snapshot["verification"]["status"], "legacy_published")
+        self.assertEqual(
+            public.snapshot["verification"]["compatibility"],
+            "pre-verification-publication",
+        )
+        self.assertEqual(public.snapshot["verification"]["published_at"], published_at.isoformat())
+        self.assertNotIn("verification", hidden.snapshot)
+
+        migration.unmark_legacy_publications(django_apps, None)
+        public.refresh_from_db()
+        self.assertNotIn("verification", public.snapshot)
+
+    @patch(
+        "apps.domains.landing_public.management.commands.repair_legacy_problem_review_pdfs.upload_fileobj_to_r2_storage"
+    )
+    @patch(
+        "apps.domains.landing_public.management.commands.repair_legacy_problem_review_pdfs.get_object_bytes_r2_storage"
+    )
+    def test_legacy_pdf_repair_atomically_replaces_only_exact_compatibility_row(
+        self,
+        get_object,
+        upload_object,
+    ):
+        import io
+
+        from reportlab.pdfgen import canvas
+
+        from apps.domains.landing_public.management.commands.repair_legacy_problem_review_pdfs import (
+            repair_showcase_pdf,
+        )
+
+        old_pdf = io.BytesIO()
+        old_canvas = canvas.Canvas(old_pdf, pagesize=(100, 100))
+        old_canvas.drawString(10, 50, "legacy")
+        old_canvas.save()
+        uploaded_objects = {}
+
+        def upload_side_effect(*, fileobj, key, **kwargs):
+            uploaded_objects[key] = fileobj.getvalue()
+
+        def get_side_effect(*, key, **kwargs):
+            if key == "public/old.pdf":
+                return old_pdf.getvalue()
+            return uploaded_objects.get(key)
+
+        upload_object.side_effect = upload_side_effect
+        get_object.side_effect = get_side_effect
+        snapshot = _sample_report()
+        snapshot["verification"] = {
+            "status": "legacy_published",
+            "compatibility": "pre-verification-publication",
+            "published_at": timezone.now().isoformat(),
+            "migrated_at": timezone.now().isoformat(),
+        }
+        showcase = PublicProblemReviewShowcase.objects.create(
+            tenant=self.tenant,
+            report_id_ref="33333333-3333-3333-3333-333333333333",
+            title="레이아웃 복구본",
+            status=PublicProblemReviewShowcase.Status.PUBLISHED,
+            published_at=timezone.now(),
+            snapshot=snapshot,
+            snapshot_pdf_key="public/old.pdf",
+            snapshot_pdf_bytes=len(old_pdf.getvalue()),
+            snapshot_at=timezone.now(),
+        )
+
+        result = repair_showcase_pdf(showcase, apply=True)
+
+        showcase.refresh_from_db()
+        self.assertTrue(result["applied"])
+        self.assertEqual(result["old_key"], "public/old.pdf")
+        self.assertTrue(showcase.snapshot_pdf_key.endswith(".pdf"))
+        self.assertNotEqual(showcase.snapshot_pdf_key, "public/old.pdf")
+        self.assertEqual(showcase.snapshot["verification"]["status"], "legacy_published")
+        self.assertNotIn("review_completed_at", showcase.snapshot)
+        self.assertNotIn("report_fingerprint", showcase.snapshot["verification"])
+        upload_object.assert_called_once()
+
+        showcase.snapshot = {
+            **snapshot,
+            "verification": {"status": "legacy_published"},
+        }
+        showcase.save(update_fields=["snapshot", "updated_at"])
+        with self.assertRaises(CommandError):
+            repair_showcase_pdf(showcase, apply=False)
+
+    @patch(
+        "apps.domains.landing_public.management.commands.repair_legacy_problem_review_pdfs.delete_object_r2_storage"
+    )
+    @patch(
+        "apps.domains.landing_public.management.commands.repair_legacy_problem_review_pdfs.upload_fileobj_to_r2_storage"
+    )
+    @patch(
+        "apps.domains.landing_public.management.commands.repair_legacy_problem_review_pdfs.get_object_bytes_r2_storage"
+    )
+    def test_legacy_pdf_repair_preserves_old_key_when_r2_readback_mismatches(
+        self,
+        get_object,
+        upload_object,
+        delete_object,
+    ):
+        import io
+
+        from reportlab.pdfgen import canvas
+
+        from apps.domains.landing_public.management.commands.repair_legacy_problem_review_pdfs import (
+            repair_showcase_pdf,
+        )
+
+        old_pdf = io.BytesIO()
+        old_canvas = canvas.Canvas(old_pdf, pagesize=(100, 100))
+        old_canvas.drawString(10, 50, "legacy")
+        old_canvas.save()
+        get_object.side_effect = [old_pdf.getvalue(), old_pdf.getvalue()]
+        snapshot = _sample_report()
+        snapshot["verification"] = {
+            "status": "legacy_published",
+            "compatibility": "pre-verification-publication",
+            "published_at": timezone.now().isoformat(),
+            "migrated_at": timezone.now().isoformat(),
+        }
+        showcase = PublicProblemReviewShowcase.objects.create(
+            tenant=self.tenant,
+            report_id_ref="44444444-4444-4444-4444-444444444444",
+            title="readback 실패 복구본",
+            status=PublicProblemReviewShowcase.Status.PUBLISHED,
+            published_at=timezone.now(),
+            snapshot=snapshot,
+            snapshot_pdf_key="public/old-readback.pdf",
+            snapshot_pdf_bytes=len(old_pdf.getvalue()),
+            snapshot_at=timezone.now(),
+        )
+
+        with self.assertRaises(CommandError):
+            repair_showcase_pdf(showcase, apply=True)
+
+        showcase.refresh_from_db()
+        self.assertEqual(showcase.snapshot_pdf_key, "public/old-readback.pdf")
+        upload_object.assert_called_once()
+        delete_object.assert_called_once()

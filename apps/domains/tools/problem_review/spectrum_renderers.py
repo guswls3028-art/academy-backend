@@ -635,6 +635,14 @@ def render_problem_review_pdf(payload: dict[str, Any]) -> bytes:
     title = ParagraphStyle("SpectrumTitle", parent=body, fontName=bold, fontSize=23, leading=31, textColor=colors.white)
     section = ParagraphStyle("SpectrumSection", parent=body, fontName=bold, fontSize=15, leading=20, textColor=colors.HexColor(f"#{DEEP_INK}"), spaceBefore=5, spaceAfter=7)
     h3 = ParagraphStyle("SpectrumH3", parent=body, fontName=bold, fontSize=10.5, leading=14, textColor=colors.HexColor(f"#{DEEP_INK}"))
+    table_header = ParagraphStyle(
+        "SpectrumTableHeader",
+        parent=body,
+        fontName=bold,
+        fontSize=8.2,
+        leading=10.5,
+        textColor=colors.white,
+    )
     code = ParagraphStyle("SpectrumCode", parent=small, fontName=mono, fontSize=7, leading=9, textColor=colors.HexColor(f"#{SIGNAL_CORAL}"))
 
     def p(value: Any, style=body):
@@ -691,7 +699,7 @@ def render_problem_review_pdf(payload: dict[str, Any]) -> bytes:
         story.extend([Spacer(1, 4 * mm), p("DATA LIMIT", code), p("\n".join(f"- {item}" for item in metrics["limitations"]), small)])
 
     story.extend([CondPageBreak(82 * mm), p("EVALUATION DNA", code), p("출제 기조와 단원 지도", section)])
-    axis_rows = [[p("평가 축", h3), p("관측 내용", h3)]]
+    axis_rows = [[p("평가 축", table_header), p("관측 내용", table_header)]]
     for axis in report.get("assessment_axes") or []:
         axis_rows.append([p(axis.get("title"), h3), p(axis.get("description"), small)])
     axis_table = Table(axis_rows, colWidths=[42 * mm, 138 * mm], repeatRows=1)
@@ -703,7 +711,7 @@ def render_problem_review_pdf(payload: dict[str, Any]) -> bytes:
         ("TOPPADDING", (0, 0), (-1, -1), 2 * mm), ("BOTTOMPADDING", (0, 0), (-1, -1), 2 * mm),
     ]))
     story.extend([axis_table, Spacer(1, 6 * mm), p("TEST TERRAIN", code), p("단원별 문항 · 배점 · 비중", section)])
-    domain_rows = [[p("단원", h3), p("문항", h3), p("배점/비중", h3), p("해석", h3)]]
+    domain_rows = [[p("단원", table_header), p("문항", table_header), p("배점/비중", table_header), p("해석", table_header)]]
     for domain in report.get("domains") or []:
         name = domain.get("name") or "미분류"
         items = [item for item in report["questions"] if _domain_for_question(report, item) == name]
@@ -719,7 +727,7 @@ def render_problem_review_pdf(payload: dict[str, Any]) -> bytes:
         ("TOPPADDING", (0, 0), (-1, -1), 2 * mm), ("BOTTOMPADDING", (0, 0), (-1, -1), 2 * mm),
     ]))
     story.extend([domain_table, CondPageBreak(86 * mm), p("TEST TERRAIN / EXAM SPECTRUM", code), p("전 문항을 순서·사고행동·난도·배점으로 대조합니다", section)])
-    spectrum_rows = [[p("번호", h3), p("단원", h3), p("사고행동", h3), p("난도", h3), p("배점", h3)]]
+    spectrum_rows = [[p("번호", table_header), p("단원", table_header), p("사고행동", table_header), p("난도", table_header), p("배점", table_header)]]
     for item in report["questions"]:
         spectrum_rows.append([p(item.get("number"), code), p(_domain_for_question(report, item), small), p(item.get("thinking_action"), small), p(item.get("difficulty"), small), p(item.get("points"), small)])
     spectrum_table = Table(spectrum_rows, colWidths=[18 * mm, 70 * mm, 32 * mm, 28 * mm, 32 * mm], repeatRows=1)
@@ -739,7 +747,7 @@ def render_problem_review_pdf(payload: dict[str, Any]) -> bytes:
             p("EVIDENCE LEDGER", code),
             p(f"전 문항 증거 원장 · {page_index}/{len(ledger_groups)}", section),
         ])
-        ledger = [[p("번호", h3), p("배점", h3), p("단원", h3), p("행동", h3), p("난도", h3), p("핵심 증거", h3), p("무너지는 함정", h3)]]
+        ledger = [[p("번호", table_header), p("배점", table_header), p("단원", table_header), p("행동", table_header), p("난도", table_header), p("핵심 증거", table_header), p("무너지는 함정", table_header)]]
         for row in group:
             ledger.append([p(row["number"], code), p(row["points"], small), p(row["domain"], small), p(row["action"], small), p(row["difficulty"], small), p(row["key"], small), p(row["trap"], small)])
         ledger_table = Table(ledger, colWidths=[11 * mm, 13 * mm, 27 * mm, 15 * mm, 15 * mm, 51 * mm, 48 * mm], repeatRows=1)

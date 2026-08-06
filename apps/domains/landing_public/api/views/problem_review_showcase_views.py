@@ -1,4 +1,4 @@
-from django.db.models import F
+from django.db.models import F, Q
 from django.http import HttpResponse
 
 try:
@@ -27,6 +27,9 @@ from apps.infrastructure.storage.r2 import get_object_bytes_r2_storage
 
 from ...models import PublicProblemReviewShowcase
 from ..serializers import PublicProblemReviewShowcaseSerializer
+
+
+LEGACY_COMPATIBILITY_MARKER = "pre-verification-publication"
 
 
 class PublicProblemReviewShowcaseViewSet(viewsets.GenericViewSet):
@@ -58,7 +61,12 @@ class PublicProblemReviewShowcaseViewSet(viewsets.GenericViewSet):
                 status=PublicProblemReviewShowcase.Status.PUBLISHED,
                 published_at__isnull=False,
                 snapshot_at__isnull=False,
-                snapshot__verification__status="verified",
+            ).filter(
+                Q(snapshot__verification__status="verified")
+                | Q(
+                    snapshot__verification__status="legacy_published",
+                    snapshot__verification__compatibility=LEGACY_COMPATIBILITY_MARKER,
+                )
             )
         return queryset.order_by("-published_at", "-created_at")
 

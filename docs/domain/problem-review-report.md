@@ -93,8 +93,24 @@ staff 역할만 사용할 수 있다.
   다시 조판하므로 내부 메모가 빈 핵심 포인트를 대신해 노출되지 않는다.
 - 공개 게시 권한도 정확한 `tenant + requested_by + report UUID + version`으로
   검사한다. 익명 목록·상세·PDF는 요청에서 해석된 단일 tenant의 `published`
-  자료 중 `snapshot.verification.status=verified`인 것만 반환하고,
-  hidden·검수 증표 없는 기존 스냅샷·다른 tenant 자료로 폴백하지 않는다.
+  자료 중 `snapshot.verification.status=verified`인 것만 원칙적으로 반환한다.
+  검수 계약 도입 전에 이미 staff가 공개한 자료는 배포 연속성을 위해 데이터
+  migration이 `legacy_published + pre-verification-publication` 호환 표식을 남긴
+  경우에만 익명 조회를 허용한다. 이 표식은 과거 공개 사실만 나타내며 검수 완료나
+  fingerprint를 위조하지 않는다. 무표식 자료·hidden 자료·다른 tenant 자료는
+  계속 숨긴다. 신규 게시와 재게시는 항상 전 문항 검수·finalization·fingerprint가
+  일치하는 `verified` 스냅샷만 만들 수 있다. 과거 자료를 다시 게시하면 verified
+  스냅샷으로 교체되어 호환 표식의 수명이 끝난다.
+- 호환 표식 공개본의 조판 결함은 `repair_legacy_problem_review_pdfs` 관리 명령으로
+  고친다. 명령은 exact tenant와 showcase ID를 요구하고 기존 immutable snapshot을
+  현재 renderer로만 다시 그린다. 분석 내용·verification·snapshot 시각은 바꾸지
+  않으며, fingerprint나 최종 검수 시각도 만들지 않아 표지에 `최종 검수 증표 없음`이
+  남는다. 새 R2 객체 업로드 뒤 해당 key를 다시 내려받아 bytes·page count·SHA-256이
+  로컬 렌더와 모두 같은지 확인하고, 트랜잭션 안에서 기존 key와 exact compatibility
+  marker를 다시 확인한 경우에만 key를 교체한다. 업로드·readback·재확인 실패 시
+  기존 key는 그대로 유지하고 새 객체만 정리한다. 성공 출력에는 교체 전후
+  key·bytes·page count·SHA-256을 남긴다. 기존 key는 새 공개 다운로드 시각검수까지
+  보존하고, 검수 성공 후 기록한 exact key만 별도 삭제한다.
 
 ## 산출물 내용·디자인 계약
 
@@ -111,7 +127,9 @@ PDF와 PPTX는 같은 normalized snapshot, report version, source fingerprint를
   수치와 문항을 요약, DNA/지형, 전 문항 원장, X-ray, 회복 행동과 보호자 메모로
   나눈다. 표지에는 최종 검수 일자와 fingerprint가 함께 남는다. 섹션마다 강제
   새 페이지를 만들지 않고 남은 지면을 기준으로 흐르게 하며, 25문항·핵심
-  3문항 회귀 fixture는 불필요한 빈 장 없이 5페이지 안에 조판한다.
+  3문항 회귀 fixture는 불필요한 빈 장 없이 5페이지 안에 조판한다. 진한 표
+  헤더는 `TableStyle`에만 의존하지 않고 셀 내부 문단에도 흰색 전용 스타일을
+  적용해 raster 출력에서 실제 대비를 보장한다.
 - 시각 서명은 `EXAM SPECTRUM`이다. Deep Ink `#09162F`, Plasma Blue
   `#37B7FF`, Signal Coral `#FF526F`, Ion Amber `#F4B746`, Lab Paper
   `#F5F7FB`, Carbon `#172033`을 사용하고, 관측 rail·스펙트럼 바·조건 연결선·
@@ -125,6 +143,10 @@ PDF와 PPTX는 같은 normalized snapshot, report version, source fingerprint를
   0, 문항 누락 0, 배점 합계 교차검산을 하드 게이트로 삼는다. 핵심 문항 X-ray의
   세로 구분선은 하단 `LEARNING SIGNAL` 영역 위에서 끝나야 하며 문구를 가로지르지
   않는다. 출력에서 생명과학 용어 `DNA 양`은 공백을 포함한 표기로 통일한다.
+- 홈페이지 공개용 PDF에도 최종 검수된 report version, review fingerprint,
+  review completed time을 함께 전달한다. 공개 snapshot JSON에는 내부 검수 필드를
+  넣지 않되 동일 검수본에서 생성한 PDF, PPTX, 공개 PDF의 identity를 교차 확인할
+  수 있어야 한다.
 
 교사 제공 원본과 보안·품질 경계는
 [교사 제공 자료 인벤토리](teacher-provided-source-materials.md)를 따른다.
