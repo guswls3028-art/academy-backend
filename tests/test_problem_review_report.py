@@ -20,6 +20,7 @@ from apps.domains.tools.problem_review.schema import (
 )
 from apps.domains.tools.problem_review.worker import handle_problem_review_export_job
 from apps.domains.tools.problem_review.views import (
+    _public_snapshot,
     ProblemReviewPublishView,
     ProblemReviewReportCollectionView,
     ProblemReviewReportDetailView,
@@ -181,6 +182,32 @@ class ProblemReviewSchemaAndRendererTests(SimpleTestCase):
         self.assertGreaterEqual(pdf_bytes.count(b"/Type /Page"), 4)
         deck = Presentation(__import__("io").BytesIO(pptx_bytes))
         self.assertGreaterEqual(len(deck.slides), 8)
+
+    def test_public_and_export_snapshots_keep_manually_added_question_collisions(self):
+        from pptx import Presentation
+
+        report = _sample_report()
+        report["questions"][0]["source_number"] = 3
+        report["questions"].append({
+            "number": 3,
+            "source_number": 0,
+            "unit": "교사 추가 문항",
+            "difficulty": "상",
+            "key_point": "교사가 직접 추가한 검수 문항입니다.",
+        })
+        report["summary"]["total_questions"] = 3
+
+        snapshot = _public_snapshot(report)
+        self.assertEqual(len(snapshot["questions"]), 3)
+        self.assertEqual(snapshot["summary"]["total_questions"], 3)
+
+        deck = Presentation(__import__("io").BytesIO(render_problem_review_pptx(report)))
+        metric_values = [
+            shape.text.strip()
+            for shape in deck.slides[1].shapes
+            if hasattr(shape, "text_frame") and shape.has_text_frame
+        ]
+        self.assertIn("3", metric_values)
 
     @patch("apps.domains.tools.problem_review.worker._record_progress")
     @patch("apps.infrastructure.storage.r2.upload_fileobj_to_r2_storage")

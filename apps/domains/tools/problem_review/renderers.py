@@ -93,7 +93,7 @@ def render_problem_review_pdf(payload: dict[str, Any]) -> bytes:
         TableStyle,
     )
 
-    report = normalize_report_payload(payload)
+    report = normalize_report_payload(payload, preserve_question_set=False)
     regular, bold = _register_pdf_fonts()
     buffer = io.BytesIO()
     document = SimpleDocTemplate(
@@ -417,7 +417,7 @@ def render_problem_review_pptx(payload: dict[str, Any]) -> bytes:
     from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
     from pptx.util import Inches, Pt
 
-    report = normalize_report_payload(payload)
+    report = normalize_report_payload(payload, preserve_question_set=False)
     prs = Presentation()
     prs.slide_width = Inches(13.333333)
     prs.slide_height = Inches(7.5)
@@ -708,7 +708,7 @@ def render_problem_review_pptx(payload: dict[str, Any]) -> bytes:
 
 
 def render_problem_review_report(payload: dict[str, Any], *, output_format: str) -> tuple[bytes, str, str]:
-    report = normalize_report_payload(payload)
+    report = normalize_report_payload(payload, preserve_question_set=False)
     title = report.get("metadata", {}).get("title") or "문제 리뷰 리포트"
     if output_format == "pdf":
         return (

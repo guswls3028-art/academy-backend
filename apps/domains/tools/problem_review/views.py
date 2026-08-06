@@ -141,7 +141,7 @@ def _get_owned_report(request, report_id) -> ProblemReviewReport | None:
 
 def _public_snapshot(draft: dict) -> dict:
     """Whitelist fields suitable for a public article and PDF."""
-    normalized = normalize_report_payload(draft)
+    normalized = normalize_report_payload(draft, preserve_question_set=False)
     public_questions = [
         {
             "number": item.get("number"),
