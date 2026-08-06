@@ -1046,6 +1046,7 @@ class ProblemReviewReportViewTests(TestCase):
         from apps.domains.landing_public.management.commands.repair_legacy_problem_review_pdfs import (
             repair_showcase_pdf,
         )
+        from apps.domains.tools.problem_review.readiness import report_fingerprint
 
         old_pdf = io.BytesIO()
         old_canvas = canvas.Canvas(old_pdf, pagesize=(100, 100))
@@ -1092,6 +1093,20 @@ class ProblemReviewReportViewTests(TestCase):
         self.assertEqual(showcase.snapshot["verification"]["status"], "legacy_published")
         self.assertNotIn("review_completed_at", showcase.snapshot)
         self.assertNotIn("report_fingerprint", showcase.snapshot["verification"])
+        _, expected_snapshot_sha = report_fingerprint(snapshot)
+        self.assertEqual(result["snapshot_sha256"], expected_snapshot_sha)
+        uploaded_pdf = next(iter(uploaded_objects.values()))
+        import pdfplumber
+
+        with pdfplumber.open(io.BytesIO(uploaded_pdf)) as document:
+            rendered_text = "\n".join(page.extract_text() or "" for page in document.pages)
+        self.assertIn(
+            f"LEGACY PUBLICATION · {expected_snapshot_sha[:12]}",
+            rendered_text,
+        )
+        self.assertIn("최종 검수 증표 없음", rendered_text)
+        self.assertNotIn("v- · snapshot", rendered_text)
+        self.assertNotIn("<br/>", rendered_text)
         upload_object.assert_called_once()
 
         showcase.snapshot = {
