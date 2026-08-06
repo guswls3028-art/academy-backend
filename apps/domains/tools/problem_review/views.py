@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-import hashlib
 import json
 import logging
 import uuid
@@ -36,11 +35,13 @@ from apps.domains.landing_public.contracts import (
     hide_problem_review_showcase,
     publish_problem_review_showcase,
 )
+from apps.domains.tools.problem_review.readiness import build_review_readiness, report_fingerprint
 from apps.domains.tools.problem_review.schema import normalize_report_payload
 from apps.domains.tools.problem_review.serializers import (
     ProblemReviewExportCreateSerializer,
     ProblemReviewExportRequestSerializer,
     ProblemReviewExportStatusSerializer,
+    ProblemReviewFinalizeRequestSerializer,
     ProblemReviewReportCreateSerializer,
     ProblemReviewReportListSerializer,
     ProblemReviewReportPatchSerializer,
@@ -136,6 +137,11 @@ def _serialize_report(report: ProblemReviewReport, *, include_draft: bool = True
             _serialize_artifact(artifact)
             for artifact in report.artifacts.all()[:12]
         ],
+        "review_readiness": build_review_readiness(
+            report.draft,
+            finalized_fingerprint=report.review_fingerprint,
+            finalized_at=report.review_completed_at,
+        ) if report.draft else None,
     }
     if include_draft:
         payload["draft"] = report.draft
@@ -143,9 +149,7 @@ def _serialize_report(report: ProblemReviewReport, *, include_draft: bool = True
 
 
 def _snapshot_fingerprint(draft: dict) -> tuple[dict, str]:
-    snapshot = normalize_report_payload(draft, preserve_question_set=False)
-    canonical = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return snapshot, hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return report_fingerprint(draft)
 
 
 def _serialize_artifact(artifact: ProblemReviewArtifact, *, include_download: bool = False) -> dict:
@@ -161,10 +165,16 @@ def _serialize_artifact(artifact: ProblemReviewArtifact, *, include_download: bo
         "size_bytes": artifact.size_bytes,
         "sha256": artifact.sha256,
         "error_message": artifact.error_message,
+        "verified": bool(artifact.review_completed_at),
         "created_at": artifact.created_at.isoformat(),
         "updated_at": artifact.updated_at.isoformat(),
     }
-    if include_download and artifact.status == ProblemReviewArtifact.Status.READY and artifact.r2_key:
+    if (
+        include_download
+        and artifact.status == ProblemReviewArtifact.Status.READY
+        and artifact.r2_key
+        and artifact.review_completed_at
+    ):
         from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
 
         payload["download_url"] = generate_presigned_get_url_storage(
@@ -184,9 +194,13 @@ def _get_owned_report(request, report_id) -> ProblemReviewReport | None:
     ).first()
 
 
-def _public_snapshot(draft: dict) -> dict:
+def _public_snapshot(draft: dict, *, verified_at=None, fingerprint: str = "") -> dict:
     """Whitelist fields suitable for a public article and PDF."""
-    normalized = normalize_report_payload(draft, preserve_question_set=False)
+    normalized = normalize_report_payload(
+        draft,
+        preserve_question_set=False,
+        preserve_review_status=True,
+    )
     public_questions = [
         {
             "number": item.get("number"),
@@ -215,6 +229,11 @@ def _public_snapshot(draft: dict) -> dict:
         "achievement_bands": normalized.get("achievement_bands") or [],
         "parent_guidance": normalized.get("parent_guidance") or {},
         "conclusion": normalized.get("conclusion") or {},
+        "verification": {
+            "status": "verified",
+            "verified_at": verified_at.isoformat() if hasattr(verified_at, "isoformat") else verified_at,
+            "report_fingerprint": fingerprint,
+        } if verified_at and fingerprint else {},
     }
 
 
@@ -420,10 +439,81 @@ class ProblemReviewReportDetailView(APIView):
                 request.data.get("draft"),
                 fallback=report.draft,
                 preserve_question_set=False,
+                preserve_review_status=True,
             )
             report.title = str(request.data.get("title") or report.draft.get("metadata", {}).get("title") or report.title)[:200]
             report.version += 1
-            report.save(update_fields=["draft", "title", "version", "updated_at"])
+            report.review_completed_at = None
+            report.review_completed_by = None
+            report.review_fingerprint = ""
+            report.save(update_fields=[
+                "draft",
+                "title",
+                "version",
+                "review_completed_at",
+                "review_completed_by",
+                "review_fingerprint",
+                "updated_at",
+            ])
+        response = Response(_serialize_report(report))
+        response["Cache-Control"] = "no-store"
+        return response
+
+
+class ProblemReviewFinalizeView(APIView):
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+    parser_classes = [JSONParser]
+
+    @extend_schema(
+        operation_id="tools_problem_review_finalize",
+        request=ProblemReviewFinalizeRequestSerializer,
+        responses=ProblemReviewReportSerializer,
+    )
+    def post(self, request, report_id):
+        try:
+            expected_version = int(request.data.get("version"))
+        except (AttributeError, TypeError, ValueError):
+            return Response(
+                {"detail": "현재 리포트 버전을 확인해 주세요."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        with transaction.atomic():
+            report = ProblemReviewReport.objects.select_for_update().filter(
+                pk=report_id,
+                tenant=request.tenant,
+                requested_by=request.user,
+            ).first()
+            if report is None:
+                return Response({"detail": "리포트를 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+            report = _refresh_analysis(report)
+            if report.status != ProblemReviewReport.Status.DRAFT or not report.draft:
+                return Response(
+                    {"detail": "검수 초안이 준비된 뒤 최종 확정할 수 있습니다."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            if report.version != expected_version:
+                return Response(
+                    {"detail": "다른 화면에서 수정되었습니다. 최신 리포트를 다시 열어 주세요."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            readiness = build_review_readiness(report.draft)
+            if not readiness["ready_for_finalize"]:
+                return Response(
+                    {
+                        "detail": "남은 검수 항목을 확인한 뒤 최종 확정해 주세요.",
+                        "review_readiness": readiness,
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+            report.review_completed_at = timezone.now()
+            report.review_completed_by = request.user
+            report.review_fingerprint = readiness["fingerprint"]
+            report.save(update_fields=[
+                "review_completed_at",
+                "review_completed_by",
+                "review_fingerprint",
+                "updated_at",
+            ])
         response = Response(_serialize_report(report))
         response["Cache-Control"] = "no-store"
         return response
@@ -445,6 +535,19 @@ class ProblemReviewExportCreateView(APIView):
         report = _refresh_analysis(report)
         if report.status != ProblemReviewReport.Status.DRAFT or not report.draft:
             return Response({"detail": "검수 초안이 준비된 뒤 다운로드할 수 있습니다."}, status=status.HTTP_409_CONFLICT)
+        readiness = build_review_readiness(
+            report.draft,
+            finalized_fingerprint=report.review_fingerprint,
+            finalized_at=report.review_completed_at,
+        )
+        if not readiness["is_finalized"]:
+            return Response(
+                {
+                    "detail": "전 문항 원문·정답 대조와 최종 검수 확정 뒤 다운로드할 수 있습니다.",
+                    "review_readiness": readiness,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
         output_format = str(request.data.get("output_format") or "").lower()
         if output_format not in {"pdf", "pptx"}:
             return Response({"detail": "PDF 또는 PPTX만 선택할 수 있습니다."}, status=status.HTTP_400_BAD_REQUEST)
@@ -456,6 +559,7 @@ class ProblemReviewExportCreateView(APIView):
             output_format=output_format,
             report_version=report.version,
             source_fingerprint=fingerprint,
+            defaults={"review_completed_at": report.review_completed_at},
         )
         if not created and artifact.status == ProblemReviewArtifact.Status.READY:
             response = Response(_serialize_artifact(artifact, include_download=True), status=status.HTTP_200_OK)
@@ -466,9 +570,16 @@ class ProblemReviewExportCreateView(APIView):
             response["Cache-Control"] = "no-store"
             return response
         artifact.status = ProblemReviewArtifact.Status.PENDING
+        artifact.review_completed_at = report.review_completed_at
         artifact.error_message = ""
         artifact.job_id = ""
-        artifact.save(update_fields=["status", "error_message", "job_id", "updated_at"])
+        artifact.save(update_fields=[
+            "status",
+            "error_message",
+            "job_id",
+            "review_completed_at",
+            "updated_at",
+        ])
         result = dispatch_tools_ai_job(
             job_type=EXPORT_JOB_TYPE,
             payload={
@@ -480,6 +591,7 @@ class ProblemReviewExportCreateView(APIView):
                 "request_user_id": str(request.user.id),
                 "artifact_id": str(artifact.id),
                 "source_fingerprint": fingerprint,
+                "review_completed_at": report.review_completed_at.isoformat(),
             },
             tenant_id=str(request.tenant.id),
             source_domain="tools_problem_review",
@@ -597,7 +709,24 @@ class ProblemReviewPublishView(APIView):
                     {"detail": "다른 화면에서 수정되었습니다. 최신 리포트를 다시 열어 주세요."},
                     status=status.HTTP_409_CONFLICT,
                 )
-            snapshot = _public_snapshot(report.draft)
+            readiness = build_review_readiness(
+                report.draft,
+                finalized_fingerprint=report.review_fingerprint,
+                finalized_at=report.review_completed_at,
+            )
+            if not readiness["is_finalized"]:
+                return Response(
+                    {
+                        "detail": "전 문항 원문·정답 대조와 최종 검수 확정 뒤 공개할 수 있습니다.",
+                        "review_readiness": readiness,
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+            snapshot = _public_snapshot(
+                report.draft,
+                verified_at=report.review_completed_at,
+                fingerprint=report.review_fingerprint,
+            )
             if not snapshot.get("questions"):
                 return Response(
                     {"detail": "공개할 문항 분석이 없습니다."},

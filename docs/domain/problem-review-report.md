@@ -30,17 +30,25 @@ staff 역할만 사용할 수 있다.
 6. 선생님은 기본 정보, 리포트 목적(자체 문항 검토/학교 시험 분석), 총평,
    출제 기조, 모든 문항의 사고행동·난이도·핵심·함정·메모, 핵심 변별 문항의
    정답 예시·타당성, 증거·붕괴 분기·4단계 복구, 학생 실패 패턴의 증상·학습
-   원인·수업 처방과 결론을 수정한다. 저장은 정수 `version`을
+   원인·수업 처방과 결론을 수정한다. 각 문항은 원문과 정답을 대조한 뒤에만
+   `review_status=verified`가 된다. 문항 내용을 다시 고치면 해당 문항은 즉시
+   `unverified`로 돌아간다. 저장은 정수 `version`을
    사용한 낙관적 잠금이며, 오래된 화면은 `409`로 실패하고 최신 리포트를 함께
    받는다. 문항 추가·삭제·번호 수정 뒤에는 실제 검수본 문항 수와 난도별 문항
    번호를 서버가 다시 계산한다.
-7. PDF 또는 PPTX 다운로드는 저장된 정확한 리포트 버전을 정규화하고 SHA-256
+7. 서버는 시험 기본 정보·총평·2개 이상의 출제 축·모든 문항의 필수 분석과
+   원문 대조·핵심 변별·실패 패턴·72시간/2주/다음 시험 처방·결론을 다시
+   검사한다. 모두 충족된 정확한 version에만 검수 완료 시각, 검수자와 SHA-256
+   fingerprint를 기록한다. 이후 어떤 저장이든 이 완료 증표를 지우므로 다시
+   최종 검수해야 한다.
+8. PDF 또는 PPTX 다운로드는 최종 검수가 확정된 저장 버전만 정규화하고 SHA-256
    fingerprint를 고정해 `problem_review_export` 작업이 조판한다. 각 요청은
    `ProblemReviewArtifact`에 pending/ready/failed 상태, 실제 파일명·MIME·크기·
    SHA-256과 R2 key를 남긴다. 같은 version+format+fingerprint는 재사용하고
    실패 건만 같은 artifact로 재시도한다. 완료 상태를 다시 읽을 때마다 15분짜리
-   새 presigned URL을 발급한다.
-8. 선생님이 `홈페이지 공개`를 확인하면 저장된 정확한 버전만 공개 스냅샷으로
+   새 presigned URL을 발급한다. 산출물에도 해당 검수 완료 시각을 복사하며,
+   완료 증표 없는 기존 산출물은 다운로드 URL을 발급하지 않는다.
+9. 선생님이 `홈페이지 공개`를 확인하면 최종 검수가 확정된 정확한 버전만 공개 스냅샷으로
    복제한다. 같은 리포트를 다시 공개하면 기존 게시물 ID는 유지하고 내용과 PDF를
    최신 검수본으로 교체한다. 새 스냅샷 저장이 끝난 뒤에만 이전 PDF를 지운다.
 
@@ -63,6 +71,8 @@ staff 역할만 사용할 수 있다.
   누락하거나 오래된 문항 수를 표시하지 않는다.
 - AI 출력은 검수 초안이다. 자료에 없는 공식 정답, 실제 정답률, 등급 컷,
   출제 의도나 배점을 추측해 확정하지 않는다. 불확실하면 `검수 필요`로 둔다.
+- AI 정규화와 source fallback은 모든 문항을 `unverified`로 만든다. AI가 생성한
+  JSON이나 이전 draft의 문구만으로 검수 완료 상태를 승격할 수 없다.
 - 정답·배점·난이도와 표현은 선생님 검수 전 canonical 결과가 아니다.
 - 자동 분석은 `문항 근거 -> 학생이 멈추는 지점 -> 다음 수업 처방`의 연결을
   우선한다. 출제 기조는 문항 구조를 인용한 서로 다른 축으로, 핵심 변별은 같은
@@ -83,7 +93,8 @@ staff 역할만 사용할 수 있다.
   다시 조판하므로 내부 메모가 빈 핵심 포인트를 대신해 노출되지 않는다.
 - 공개 게시 권한도 정확한 `tenant + requested_by + report UUID + version`으로
   검사한다. 익명 목록·상세·PDF는 요청에서 해석된 단일 tenant의 `published`
-  자료만 반환하고, hidden/다른 tenant 자료로 폴백하지 않는다.
+  자료 중 `snapshot.verification.status=verified`인 것만 반환하고,
+  hidden·검수 증표 없는 기존 스냅샷·다른 tenant 자료로 폴백하지 않는다.
 
 ## 산출물 내용·디자인 계약
 
@@ -98,7 +109,9 @@ PDF와 PPTX는 같은 normalized snapshot, report version, source fingerprint를
   대표적으로 16장이지만 16장을 하드코딩하지 않는다.
 - PDF는 슬라이드 이미지를 붙이지 않고 A4 세로 편집물로 따로 조판한다. 같은
   수치와 문항을 요약, DNA/지형, 전 문항 원장, X-ray, 회복 행동과 보호자 메모로
-  나눈다.
+  나눈다. 표지에는 최종 검수 일자와 fingerprint가 함께 남는다. 섹션마다 강제
+  새 페이지를 만들지 않고 남은 지면을 기준으로 흐르게 하며, 25문항·핵심
+  3문항 회귀 fixture는 불필요한 빈 장 없이 5페이지 안에 조판한다.
 - 시각 서명은 `EXAM SPECTRUM`이다. Deep Ink `#09162F`, Plasma Blue
   `#37B7FF`, Signal Coral `#FF526F`, Ion Amber `#F4B746`, Lab Paper
   `#F5F7FB`, Carbon `#172033`을 사용하고, 관측 rail·스펙트럼 바·조건 연결선·
@@ -122,6 +135,7 @@ PDF와 PPTX는 같은 normalized snapshot, report version, source fingerprint를
 |------|------|
 | DB 상태와 버전 | `apps/domains/tools/problem_studio/models.py`의 `ProblemReviewReport` |
 | API와 소유권 검사 | `apps/domains/tools/problem_review/views.py` |
+| 최종 검수 readiness와 fingerprint | `apps/domains/tools/problem_review/readiness.py` |
 | 초안 schema와 원문 근거 보존 | `apps/domains/tools/problem_review/schema.py` |
 | 전사·구조·분석 worker | `apps/domains/tools/problem_review/worker.py` |
 | AI 분석 adapter | `academy/adapters/ai/problem/reviewer.py` |
@@ -136,6 +150,7 @@ API:
 
 - `GET|POST /api/v1/tools/problem-review/reports/`
 - `GET|PATCH /api/v1/tools/problem-review/reports/<report_id>/`
+- `POST /api/v1/tools/problem-review/reports/<report_id>/verification/`
 - `POST /api/v1/tools/problem-review/reports/<report_id>/exports/`
 - `GET /api/v1/tools/problem-review/reports/<report_id>/exports/<job_id>/`
 - `POST|DELETE /api/v1/tools/problem-review/reports/<report_id>/publication/`
@@ -155,6 +170,9 @@ API:
   unique artifact를 써서 같은 검수본의 중복 생성 요청을 합친다. PDF/PPTX 외
   형식은 거절한다. 진행 중 artifact는 재전송하지 않고, 실패 artifact만 오류를
   지우고 재시도한다.
+- finalization readiness가 부족하거나 현재 draft fingerprint와 저장된 검수
+  fingerprint가 다르면 export와 publication 모두 `409`로 막고 최신 readiness를
+  돌려준다.
 - PDF와 PPTX는 동일한 normalized snapshot을 사용하므로 화면 저장 전 변경은
   다운로드에 포함되지 않는다. 프런트는 다운로드 직전 변경을 먼저 저장한다.
 - 공개 PDF 생성·업로드가 실패하면 공개 DB 상태를 바꾸지 않는다. DB 저장이

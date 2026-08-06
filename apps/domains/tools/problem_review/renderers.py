@@ -769,9 +769,14 @@ def render_problem_review_pptx(payload: dict[str, Any]) -> bytes:
 
 def render_problem_review_report(payload: dict[str, Any], *, output_format: str) -> tuple[bytes, str, str]:
     report = normalize_report_payload(payload, preserve_question_set=False)
+    export_meta = dict(payload.get("_export_meta", {})) if isinstance(payload, dict) and isinstance(payload.get("_export_meta"), dict) else {}
+    verification = payload.get("verification") if isinstance(payload, dict) else None
+    if isinstance(verification, dict) and verification.get("status") == "verified":
+        export_meta.setdefault("review_completed_at", verification.get("verified_at"))
+        export_meta.setdefault("source_fingerprint", verification.get("report_fingerprint"))
     render_payload = {
         **report,
-        "_export_meta": payload.get("_export_meta", {}) if isinstance(payload, dict) else {},
+        "_export_meta": export_meta,
     }
     title = report.get("metadata", {}).get("title") or "문제 리뷰 리포트"
     if output_format == "pdf":

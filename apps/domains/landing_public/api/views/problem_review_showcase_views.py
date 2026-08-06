@@ -58,6 +58,7 @@ class PublicProblemReviewShowcaseViewSet(viewsets.GenericViewSet):
                 status=PublicProblemReviewShowcase.Status.PUBLISHED,
                 published_at__isnull=False,
                 snapshot_at__isnull=False,
+                snapshot__verification__status="verified",
             )
         return queryset.order_by("-published_at", "-created_at")
 

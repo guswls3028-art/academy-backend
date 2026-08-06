@@ -610,12 +610,14 @@ def render_problem_review_pdf(payload: dict[str, Any]) -> bytes:
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import mm
-    from reportlab.platypus import KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    from reportlab.platypus import CondPageBreak, KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     report, metrics = _data_contract(payload)
     export_meta = _export_meta(payload)
     version = int(export_meta.get("report_version") or 0)
     fingerprint = _plain(export_meta.get("source_fingerprint"))
+    verified_at = _plain(export_meta.get("review_completed_at"))
+    verified_label = f"최종 검수 완료 · {verified_at[:10]}" if verified_at else "최종 검수 증표 없음"
     regular, bold, mono = _register_pdf_fonts()
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -653,7 +655,12 @@ def render_problem_review_pdf(payload: dict[str, Any]) -> bytes:
         [p(meta.get("school") or "학교 정보 확인 필요", title)],
         [p(" · ".join(filter(None, [meta.get("subject"), meta.get("grade"), meta.get("exam_name")])), ParagraphStyle("CoverMeta", parent=body, fontSize=11, textColor=colors.HexColor("#C8D4E6")))],
         [p(summary.get("one_line") or "시험의 한 문장 신호를 검수해 주세요.", ParagraphStyle("CoverSignal", parent=title, fontSize=16, leading=23))],
-        [p(f"{metrics['question_count']}문항" + (f" · {_fmt_number(metrics['total_points'])}점" if metrics["total_points"] is not None else " · 배점 검수 필요"), ParagraphStyle("CoverMetric", parent=body, fontName=mono, fontSize=13, textColor=colors.HexColor(f"#{ION_AMBER}")))],
+        [p(
+            f"{metrics['question_count']}문항"
+            + (f" · {_fmt_number(metrics['total_points'])}점" if metrics["total_points"] is not None else " · 배점 검수 필요")
+            + f"\n{verified_label}",
+            ParagraphStyle("CoverMetric", parent=body, fontName=mono, fontSize=11.5, leading=17, textColor=colors.HexColor(f"#{ION_AMBER}")),
+        )],
     ], colWidths=[180 * mm], rowHeights=[14 * mm, 35 * mm, 15 * mm, 55 * mm, 24 * mm])
     cover.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(f"#{DEEP_INK}")),
@@ -662,7 +669,7 @@ def render_problem_review_pdf(payload: dict[str, Any]) -> bytes:
         ("TOPPADDING", (0, 0), (-1, -1), 5 * mm), ("BOTTOMPADDING", (0, 0), (-1, -1), 4 * mm),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
     ]))
-    story.extend([cover, PageBreak()])
+    story.extend([cover, Spacer(1, 7 * mm)])
 
     story.extend([p("3-MINUTE BRIEF", code), p("시험을 세 문장으로 읽습니다", section)])
     briefing = [
@@ -683,7 +690,7 @@ def render_problem_review_pdf(payload: dict[str, Any]) -> bytes:
     if metrics["limitations"]:
         story.extend([Spacer(1, 4 * mm), p("DATA LIMIT", code), p("\n".join(f"- {item}" for item in metrics["limitations"]), small)])
 
-    story.extend([PageBreak(), p("EVALUATION DNA", code), p("출제 기조와 단원 지도", section)])
+    story.extend([CondPageBreak(82 * mm), p("EVALUATION DNA", code), p("출제 기조와 단원 지도", section)])
     axis_rows = [[p("평가 축", h3), p("관측 내용", h3)]]
     for axis in report.get("assessment_axes") or []:
         axis_rows.append([p(axis.get("title"), h3), p(axis.get("description"), small)])
@@ -711,7 +718,7 @@ def render_problem_review_pdf(payload: dict[str, Any]) -> bytes:
         ("LEFTPADDING", (0, 0), (-1, -1), 2 * mm), ("RIGHTPADDING", (0, 0), (-1, -1), 2 * mm),
         ("TOPPADDING", (0, 0), (-1, -1), 2 * mm), ("BOTTOMPADDING", (0, 0), (-1, -1), 2 * mm),
     ]))
-    story.extend([domain_table, PageBreak(), p("TEST TERRAIN / EXAM SPECTRUM", code), p("전 문항을 순서·사고행동·난도·배점으로 대조합니다", section)])
+    story.extend([domain_table, CondPageBreak(86 * mm), p("TEST TERRAIN / EXAM SPECTRUM", code), p("전 문항을 순서·사고행동·난도·배점으로 대조합니다", section)])
     spectrum_rows = [[p("번호", h3), p("단원", h3), p("사고행동", h3), p("난도", h3), p("배점", h3)]]
     for item in report["questions"]:
         spectrum_rows.append([p(item.get("number"), code), p(_domain_for_question(report, item), small), p(item.get("thinking_action"), small), p(item.get("difficulty"), small), p(item.get("points"), small)])
@@ -728,7 +735,7 @@ def render_problem_review_pdf(payload: dict[str, Any]) -> bytes:
     ledger_groups = _balanced_chunks(_ledger_rows(report), 16)
     for page_index, group in enumerate(ledger_groups, start=1):
         story.extend([
-            PageBreak(),
+            CondPageBreak(58 * mm),
             p("EVIDENCE LEDGER", code),
             p(f"전 문항 증거 원장 · {page_index}/{len(ledger_groups)}", section),
         ])
@@ -747,8 +754,11 @@ def render_problem_review_pdf(payload: dict[str, Any]) -> bytes:
         story.append(ledger_table)
 
     for index, item in enumerate(_xray_items(report), start=1):
-        story.extend([PageBreak(), p(f"QUESTION X-RAY {index}", code), p(item.get("title") or "핵심 변별 문항", section)])
-        story.append(p(f"문항 {', '.join(item.get('question_numbers') or []) or '검수 필요'}", h3))
+        xray_heading = [
+            p(f"QUESTION X-RAY {index}", code),
+            p(item.get("title") or "핵심 변별 문항", section),
+            p(f"문항 {', '.join(item.get('question_numbers') or []) or '검수 필요'}", h3),
+        ]
         xray = Table([
             [p("EVIDENCE", code), p(item.get("evidence") or item.get("reason"))],
             [p("BREAK BRANCHES", code), p("\n".join(f"{i + 1}. {value}" for i, value in enumerate(item.get("collapse_branches") or [item.get("collapse_point")])) )],
@@ -762,9 +772,9 @@ def render_problem_review_pdf(payload: dict[str, Any]) -> bytes:
             ("LEFTPADDING", (0, 0), (-1, -1), 3 * mm), ("RIGHTPADDING", (0, 0), (-1, -1), 3 * mm),
             ("TOPPADDING", (0, 0), (-1, -1), 3 * mm), ("BOTTOMPADDING", (0, 0), (-1, -1), 3 * mm),
         ]))
-        story.append(xray)
+        story.extend([CondPageBreak(88 * mm), KeepTogether([*xray_heading, xray])])
 
-    story.extend([PageBreak(), p("ERROR GENOME / RECOVERY PROTOCOL", code), p("오류의 원인에서 다음 행동까지", section)])
+    story.extend([CondPageBreak(118 * mm), p("ERROR GENOME / RECOVERY PROTOCOL", code), p("오류의 원인에서 다음 행동까지", section)])
     for index, item in enumerate((report.get("failure_patterns") or [])[:4], start=1):
         genome = Table([[p(f"G{index:02d}", code), p(item.get("title"), h3), p(item.get("symptom"), small), p(item.get("cause"), small), p(item.get("prescription"), small)]], colWidths=[13 * mm, 31 * mm, 42 * mm, 42 * mm, 52 * mm])
         genome.setStyle(TableStyle([
@@ -805,7 +815,7 @@ def render_problem_review_pdf(payload: dict[str, Any]) -> bytes:
         ]))
         story.append(band_table)
 
-    story.extend([PageBreak(), p("PARENT MEMO / NEXT SIGNAL", code), p("점수보다 먼저 확인할 질문", section)])
+    story.extend([CondPageBreak(80 * mm), p("PARENT MEMO / NEXT SIGNAL", code), p("점수보다 먼저 확인할 질문", section)])
     guidance = report.get("parent_guidance") or {}
     parent_table = Table([
         [p("피할 말", h3), p("함께 확인할 질문", h3)],

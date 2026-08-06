@@ -259,6 +259,7 @@ def handle_problem_review_export_job(job: AIJob) -> AIResult:
                 "_export_meta": {
                     "report_version": int(payload.get("report_version") or 1),
                     "source_fingerprint": source_fingerprint,
+                    "review_completed_at": payload.get("review_completed_at"),
                 },
             },
             output_format=output_format,

@@ -8335,6 +8335,18 @@
         ],
         "type": "object"
       },
+      "ProblemReviewFinalizeRequestRequest": {
+        "properties": {
+          "version": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "type": "object"
+      },
       "ProblemReviewPublishRequestRequest": {
         "properties": {
           "version": {
@@ -8407,6 +8419,9 @@
             "readOnly": true,
             "type": "string"
           },
+          "review_readiness": {
+            "readOnly": true
+          },
           "source_name": {
             "readOnly": true,
             "type": "string"
@@ -8438,6 +8453,7 @@
           "draft",
           "id",
           "last_error",
+          "review_readiness",
           "source_name",
           "source_summary",
           "status",
@@ -44040,6 +44056,55 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemReviewPublishResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "tools"
+        ]
+      }
+    },
+    "/api/v1/tools/problem-review/reports/{report_id}/verification/": {
+      "post": {
+        "operationId": "tools_problem_review_finalize",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProblemReviewFinalizeRequestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemReviewReport"
                 }
               }
             },
