@@ -704,28 +704,38 @@ def render_problem_review_pptx(payload: dict[str, Any]) -> bytes:
             text_box(slide, value, 3.18, y + 0.53, 9.1, 0.64, size=13, color=INK)
 
     guidance = report["parent_guidance"]
-    if report["failure_patterns"] or guidance.get("avoid") or guidance.get("recommended"):
+    if guidance.get("avoid") or guidance.get("recommended"):
         slide = prs.slides.add_slide(blank)
         chrome(slide, "TEACHER COMMUNICATION", "학생·학부모 설명 가이드", len(prs.slides))
-        rect(slide, 0.45, 1.5, 5.95, 2.08, fill=PALE_RED, line="F6C4CE")
+        rect(slide, 0.45, 1.5, 5.95, 4.85, fill=PALE_RED, line="F6C4CE")
         text_box(slide, "피할 표현", 0.72, 1.74, 2.0, 0.25, size=11, color=RED, bold=True)
         avoid_text = "\n".join(f"• {item}" for item in guidance.get("avoid") or []) or "선생님 확인 필요"
-        text_box(slide, avoid_text, 0.72, 2.16, 5.3, 1.12, size=12, color=INK)
-        rect(slide, 6.72, 1.5, 6.05, 2.08, fill=PAPER, line=LINE)
+        text_box(slide, avoid_text, 0.72, 2.16, 5.3, 3.72, size=15, color=INK)
+        rect(slide, 6.72, 1.5, 6.05, 4.85, fill=PAPER, line=LINE)
         text_box(slide, "권장 설명", 6.99, 1.74, 2.0, 0.25, size=11, color=NAVY, bold=True)
         recommended_text = "\n".join(f"• {item}" for item in guidance.get("recommended") or []) or "선생님 확인 필요"
-        text_box(slide, recommended_text, 6.99, 2.16, 5.42, 1.12, size=12, color=INK)
-        for index, item in enumerate(report["failure_patterns"][:3]):
-            x = 0.45 + index * 4.2
-            rect(slide, x, 4.02, 3.88, 1.78, fill="FFFFFF", line=LINE)
-            text_box(slide, f"PATTERN {index + 1}", x + 0.18, 4.2, 1.15, 0.2, size=8.5, color=RED, bold=True)
-            text_box(slide, item.get("title"), x + 1.25, 4.15, 2.35, 0.32, size=13, color=NAVY, bold=True)
+        text_box(slide, recommended_text, 6.99, 2.16, 5.42, 3.72, size=15, color=INK)
+
+    failure_patterns = report["failure_patterns"]
+    for page_start in range(0, len(failure_patterns), 4):
+        slide = prs.slides.add_slide(blank)
+        page_patterns = failure_patterns[page_start:page_start + 4]
+        chrome(slide, "LEARNING DIAGNOSIS", "학생이 무너지는 패턴", len(prs.slides))
+        for offset, item in enumerate(page_patterns):
+            index = page_start + offset
+            col = offset % 2
+            row = offset // 2
+            x = 0.45 + col * 6.25
+            y = 1.5 + row * 2.62
+            rect(slide, x, y, 6.05, 2.3, fill="FFFFFF", line=LINE)
+            text_box(slide, f"PATTERN {index + 1}", x + 0.22, y + 0.24, 1.05, 0.22, size=8.5, color=RED, bold=True)
+            text_box(slide, item.get("title"), x + 1.28, y + 0.18, 4.45, 0.48, size=13, color=NAVY, bold=True)
             pattern_body = (
                 f"증상 · {_plain(item.get('symptom'))}\n"
                 f"원인 · {_plain(item.get('cause'))}\n"
                 f"처방 · {_plain(item.get('prescription'))}"
             )
-            text_box(slide, pattern_body, x + 0.18, 4.65, 3.5, 1.0, size=9.2, color=SLATE)
+            text_box(slide, pattern_body, x + 0.22, y + 0.78, 5.58, 1.28, size=9.8, color=SLATE)
 
     slide = prs.slides.add_slide(blank)
     chrome(slide, "FINAL TAKEAWAY", "다음 시험까지 무엇을 다질 것인가", len(prs.slides))

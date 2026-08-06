@@ -176,8 +176,18 @@ class ProblemReviewSchemaAndRendererTests(SimpleTestCase):
 
         import io
 
-        pdf_bytes = render_problem_review_pdf(_sample_report())
-        pptx_bytes = render_problem_review_pptx(_sample_report())
+        report = _sample_report()
+        report["failure_patterns"] = [
+            {
+                "title": f"근거 기반 실패 패턴 {index}",
+                "symptom": "조건을 일부만 사용합니다.",
+                "cause": "자료의 기준을 분리하지 않았습니다.",
+                "prescription": "조건표를 작성하고 모든 근거를 역대입합니다.",
+            }
+            for index in range(1, 5)
+        ]
+        pdf_bytes = render_problem_review_pdf(report)
+        pptx_bytes = render_problem_review_pptx(report)
 
         self.assertTrue(pdf_bytes.startswith(b"%PDF"))
         self.assertTrue(pdf_bytes.rstrip().endswith(b"%%EOF"))
@@ -190,6 +200,14 @@ class ProblemReviewSchemaAndRendererTests(SimpleTestCase):
             if getattr(shape, "has_text_frame", False)
         )
         self.assertIn("실제 정답률·학교 성적 분포는 포함하지 않음", overview_text)
+        deck_text = "\n".join(
+            shape.text
+            for slide in deck.slides
+            for shape in slide.shapes
+            if getattr(shape, "has_text_frame", False)
+        )
+        for index in range(1, 5):
+            self.assertIn(f"근거 기반 실패 패턴 {index}", deck_text)
 
     def test_public_and_export_snapshots_keep_manually_added_question_collisions(self):
         from pptx import Presentation
