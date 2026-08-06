@@ -174,14 +174,22 @@ class ProblemReviewSchemaAndRendererTests(SimpleTestCase):
     def test_pdf_and_pptx_exports_are_parseable(self):
         from pptx import Presentation
 
+        import io
+
         pdf_bytes = render_problem_review_pdf(_sample_report())
         pptx_bytes = render_problem_review_pptx(_sample_report())
 
         self.assertTrue(pdf_bytes.startswith(b"%PDF"))
         self.assertTrue(pdf_bytes.rstrip().endswith(b"%%EOF"))
         self.assertGreaterEqual(pdf_bytes.count(b"/Type /Page"), 4)
-        deck = Presentation(__import__("io").BytesIO(pptx_bytes))
+        deck = Presentation(io.BytesIO(pptx_bytes))
         self.assertGreaterEqual(len(deck.slides), 8)
+        overview_text = "\n".join(
+            shape.text
+            for shape in deck.slides[1].shapes
+            if getattr(shape, "has_text_frame", False)
+        )
+        self.assertIn("실제 정답률·학교 성적 분포는 포함하지 않음", overview_text)
 
     def test_public_and_export_snapshots_keep_manually_added_question_collisions(self):
         from pptx import Presentation

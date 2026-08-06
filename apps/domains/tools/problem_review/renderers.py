@@ -29,6 +29,26 @@ def _plain(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _points_number(value: Any) -> float:
+    match = re.search(r"\d+(?:\.\d+)?", _plain(value).replace(",", ""))
+    return float(match.group(0)) if match else 0.0
+
+
+def _exam_structure(report: dict[str, Any]) -> dict[str, Any]:
+    questions = report.get("questions") or []
+    subjective = [
+        item for item in questions
+        if re.search(r"서답|서술|주관", _plain(item.get("unit")))
+    ]
+    objective = [item for item in questions if item not in subjective]
+    return {
+        "objective_count": len(objective),
+        "objective_points": sum(_points_number(item.get("points")) for item in objective),
+        "subjective_count": len(subjective),
+        "subjective_points": sum(_points_number(item.get("points")) for item in subjective),
+    }
+
+
 def _register_pdf_fonts() -> tuple[str, str]:
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
@@ -159,7 +179,7 @@ def render_problem_review_pdf(payload: dict[str, Any]) -> bytes:
         canvas.line(16 * mm, 11 * mm, A4[0] - 16 * mm, 11 * mm)
         canvas.setFont(regular, 7)
         canvas.setFillColor(colors.HexColor(f"#{SLATE}"))
-        canvas.drawString(16 * mm, 7 * mm, "선생님 검수 전 AI 분석 초안")
+        canvas.drawString(16 * mm, 7 * mm, "업로드 자료 기반 · 선생님 검수형 분석 리포트")
         canvas.drawRightString(A4[0] - 16 * mm, 7 * mm, str(doc.page))
         canvas.restoreState()
 
@@ -192,14 +212,16 @@ def render_problem_review_pdf(payload: dict[str, Any]) -> bytes:
     ]))
     story.extend([cover, Spacer(1, 12 * mm)])
     summary = report["summary"]
+    structure = _exam_structure(report)
     metric_values = [
         ("문항", str(summary.get("total_questions") or len(report["questions"]))),
+        ("선택형", f"{structure['objective_count']}문항"),
+        ("서답형", f"{structure['subjective_count']}문항" if structure["subjective_count"] else "확인 필요"),
         ("총점", summary.get("total_points") or "검수 필요"),
-        ("과목", meta.get("subject") or "미입력"),
     ]
     metric = Table(
         [[paragraph(label, small) for label, _ in metric_values], [paragraph(value, card_title) for _, value in metric_values]],
-        colWidths=[59.3 * mm] * 3,
+        colWidths=[44.5 * mm] * 4,
     )
     metric.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(f"#{PAPER}")),
@@ -211,6 +233,25 @@ def render_problem_review_pdf(payload: dict[str, Any]) -> bytes:
     ]))
     story.extend([
         metric,
+        Spacer(1, 3 * mm),
+        Table(
+            [[paragraph("분석 근거", card_title), paragraph(
+                "업로드된 시험지의 문항·배점·자료 구조를 기준으로 분석했습니다. "
+                "실제 정답률과 학교 성적 분포가 없는 항목은 추정값으로 확정하지 않습니다.",
+                small,
+            )]],
+            colWidths=[25 * mm, 153 * mm],
+            style=TableStyle([
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(f"#{PAPER}")),
+                ("LINEBEFORE", (0, 0), (0, -1), 2.4, colors.HexColor(f"#{RED}")),
+                ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor(f"#{LINE}")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 3 * mm),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 3 * mm),
+                ("TOPPADDING", (0, 0), (-1, -1), 2.5 * mm),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5 * mm),
+            ]),
+        ),
         Spacer(1, 7 * mm),
         paragraph("시험 한 줄 평", section_style),
         paragraph(summary.get("one_line"), ParagraphStyle("Lead", parent=body, fontName=bold, fontSize=13, leading=20)),
@@ -484,15 +525,17 @@ def render_problem_review_pptx(payload: dict[str, Any]) -> bytes:
     text_box(slide, "PROBLEM REVIEW REPORT", 0.6, 0.72, 5.0, 0.3, size=11, color=RED, bold=True)
     text_box(slide, meta.get("title") or f"{meta.get('school')} {meta.get('exam_name')}", 0.6, 1.42, 11.5, 1.5, size=34, color="FFFFFF", bold=True)
     text_box(slide, " · ".join(filter(None, [meta.get("school"), meta.get("grade"), meta.get("subject"), meta.get("exam_date")])), 0.62, 3.15, 10.6, 0.45, size=15, color="D8DEEB")
-    text_box(slide, "선생님 검수 전 AI 분석 초안", 0.62, 6.72, 4.0, 0.25, size=10, color="AAB5CB")
+    text_box(slide, "업로드 자료 기반 · 선생님 검수형 분석 리포트", 0.62, 6.72, 4.8, 0.25, size=10, color="AAB5CB")
 
     slide = prs.slides.add_slide(blank)
     chrome(slide, "EXAM OVERVIEW", "시험 개요와 한 줄 평", 2)
     summary = report["summary"]
+    structure = _exam_structure(report)
     metrics = [
         ("문항", str(summary.get("total_questions") or len(report["questions"]))),
+        ("선택형", f"{structure['objective_count']}문항"),
+        ("서답형", f"{structure['subjective_count']}문항" if structure["subjective_count"] else "확인 필요"),
         ("총점", summary.get("total_points") or "검수 필요"),
-        ("과목", meta.get("subject") or "미입력"),
     ]
     for index, (label, value) in enumerate(metrics):
         x = 0.35 + index * 2.05
@@ -501,9 +544,11 @@ def render_problem_review_pptx(payload: dict[str, Any]) -> bytes:
         text_box(slide, value, x + 0.12, 2.02, 1.6, 0.32, size=19, color=NAVY, bold=True)
     rect(slide, 0.35, 2.95, 12.45, 1.12, fill=NAVY)
     text_box(slide, summary.get("one_line") or "한 줄 평을 입력해 주세요.", 0.7, 3.2, 11.7, 0.62, size=20, color="FFFFFF", bold=True, valign=MSO_ANCHOR.MIDDLE)
-    text_box(slide, summary.get("character"), 0.48, 4.42, 12.0, 0.9, size=15, color=INK)
-    rect(slide, 0.48, 5.65, 12.0, 0.8, fill=PALE_RED, line="F6C4CE")
-    text_box(slide, summary.get("student_burden") or "학생 부담 요인을 검수해 주세요.", 0.72, 5.86, 11.5, 0.38, size=13, color=INK)
+    text_box(slide, summary.get("character"), 0.48, 4.35, 12.0, 0.78, size=14, color=INK)
+    rect(slide, 0.48, 5.36, 12.0, 0.68, fill=PALE_RED, line="F6C4CE")
+    text_box(slide, summary.get("student_burden") or "학생 부담 요인을 검수해 주세요.", 0.72, 5.51, 11.5, 0.34, size=12, color=INK)
+    rect(slide, 0.48, 6.18, 12.0, 0.48, fill=PAPER, line=LINE)
+    text_box(slide, "분석 근거 · 업로드 시험지의 문항·배점·자료 구조 기준 / 실제 정답률·학교 성적 분포는 포함하지 않음", 0.72, 6.31, 11.5, 0.22, size=9, color=SLATE)
 
     slide = prs.slides.add_slide(blank)
     chrome(slide, "ASSESSMENT AXES", "이 시험이 확인하는 역량", 3)
@@ -675,7 +720,12 @@ def render_problem_review_pptx(payload: dict[str, Any]) -> bytes:
             rect(slide, x, 4.02, 3.88, 1.78, fill="FFFFFF", line=LINE)
             text_box(slide, f"PATTERN {index + 1}", x + 0.18, 4.2, 1.15, 0.2, size=8.5, color=RED, bold=True)
             text_box(slide, item.get("title"), x + 1.25, 4.15, 2.35, 0.32, size=13, color=NAVY, bold=True)
-            text_box(slide, item.get("prescription"), x + 0.18, 4.72, 3.5, 0.76, size=10.5, color=SLATE)
+            pattern_body = (
+                f"증상 · {_plain(item.get('symptom'))}\n"
+                f"원인 · {_plain(item.get('cause'))}\n"
+                f"처방 · {_plain(item.get('prescription'))}"
+            )
+            text_box(slide, pattern_body, x + 0.18, 4.65, 3.5, 1.0, size=9.2, color=SLATE)
 
     slide = prs.slides.add_slide(blank)
     chrome(slide, "FINAL TAKEAWAY", "다음 시험까지 무엇을 다질 것인가", len(prs.slides))
