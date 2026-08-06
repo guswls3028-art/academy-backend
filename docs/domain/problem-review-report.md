@@ -109,7 +109,9 @@ PDF와 PPTX는 같은 normalized snapshot, report version, source fingerprint를
   등급컷을 만들지 않는다. 누락된 X-ray 근거는 `선생님 검수 필요`로 명시한다.
 - PPTX 모든 슬라이드는 report version/fingerprint와 `[Sources]` 발표자 노트를
   갖는다. 렌더 QA는 전 페이지/슬라이드 재오픈, visible ellipsis·겹침·overflow
-  0, 문항 누락 0, 배점 합계 교차검산을 하드 게이트로 삼는다.
+  0, 문항 누락 0, 배점 합계 교차검산을 하드 게이트로 삼는다. 핵심 문항 X-ray의
+  세로 구분선은 하단 `LEARNING SIGNAL` 영역 위에서 끝나야 하며 문구를 가로지르지
+  않는다. 출력에서 생명과학 용어 `DNA 양`은 공백을 포함한 표기로 통일한다.
 
 교사 제공 원본과 보안·품질 경계는
 [교사 제공 자료 인벤토리](teacher-provided-source-materials.md)를 따른다.

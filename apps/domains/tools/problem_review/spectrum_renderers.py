@@ -33,7 +33,8 @@ DIFFICULTY_LEVEL = {"검수 필요": 0, "하": 1, "중": 2, "중상": 3, "상": 
 
 
 def _plain(value: Any) -> str:
-    return str(value or "").strip()
+    text = str(value or "").strip()
+    return re.sub(r"DNA\s*양", "DNA 양", text)
 
 
 def _number(value: Any) -> float | None:
@@ -489,14 +490,14 @@ def render_problem_review_pptx(payload: dict[str, Any]) -> bytes:
         slide = base_slide(rail=f"QUESTION X-RAY {xray_index}", title=item.get("title") or "핵심 변별 문항", subtitle=f"문항 {', '.join(item.get('question_numbers') or []) or '번호 검수 필요'} · 증거 → 붕괴 분기 → 복구 순서")
         text(slide, "EVIDENCE", 0.68, 1.88, 1.4, 0.22, size=9, color=PLASMA_BLUE, bold=True, font="Aptos Mono")
         text(slide, item.get("evidence") or item.get("reason"), 0.68, 2.26, 3.35, 2.85, size=14, color=DEEP_INK, bold=True)
-        line(slide, 4.18, 1.9, 4.18, 6.45, color=PLASMA_BLUE, width=2)
+        line(slide, 4.18, 1.9, 4.18, 5.92, color=PLASMA_BLUE, width=2)
         text(slide, "BREAK BRANCHES", 4.52, 1.88, 2.0, 0.22, size=9, color=SIGNAL_CORAL, bold=True, font="Aptos Mono")
         branches = item.get("collapse_branches") or [item.get("collapse_point")]
         for index, branch in enumerate(branches[:3]):
             y = 2.32 + index * 1.15
             shape(slide, 4.53, y + 0.03, 0.08, 0.76, fill=SIGNAL_CORAL)
             text(slide, branch, 4.82, y, 3.1, 0.88, size=11, color=CARBON)
-        line(slide, 8.15, 1.9, 8.15, 6.45, color=ION_AMBER, width=2)
+        line(slide, 8.15, 1.9, 8.15, 5.92, color=ION_AMBER, width=2)
         text(slide, "RECOVERY STEPS", 8.48, 1.88, 2.1, 0.22, size=9, color=ION_AMBER, bold=True, font="Aptos Mono")
         steps = item.get("recovery_steps") or [item.get("prescription")]
         for index, step_value in enumerate(steps[:4]):
