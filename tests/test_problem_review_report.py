@@ -365,6 +365,18 @@ class ProblemReviewSchemaAndRendererTests(SimpleTestCase):
         )
         self.assertIn("3문항", visible_text)
 
+    def test_public_snapshot_scrubs_unresolved_difficulty_helper_fields(self):
+        report = _sample_report()
+        report["difficulty"]["distribution"][0]["points"] = "검수 필요"
+        report["difficulty"]["distribution"][0]["note"] = "확인 필요"
+
+        snapshot = _public_snapshot(report)
+
+        self.assertEqual(snapshot["difficulty"]["distribution"][0]["points"], "")
+        self.assertEqual(snapshot["difficulty"]["distribution"][0]["note"], "")
+        self.assertEqual(report["difficulty"]["distribution"][0]["points"], "검수 필요")
+        self.assertEqual(snapshot["difficulty"]["distribution"][1]["points"], "60점")
+
     @patch("apps.domains.tools.problem_review.worker._record_progress")
     @patch("apps.infrastructure.storage.r2.upload_fileobj_to_r2_storage")
     @patch("apps.domains.tools.problem_review.worker.ProblemReviewArtifact.objects.filter")

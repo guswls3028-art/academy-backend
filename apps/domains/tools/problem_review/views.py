@@ -35,7 +35,11 @@ from apps.domains.landing_public.contracts import (
     hide_problem_review_showcase,
     publish_problem_review_showcase,
 )
-from apps.domains.tools.problem_review.readiness import build_review_readiness, report_fingerprint
+from apps.domains.tools.problem_review.readiness import (
+    PLACEHOLDER_VALUES,
+    build_review_readiness,
+    report_fingerprint,
+)
 from apps.domains.tools.problem_review.schema import normalize_report_payload
 from apps.domains.tools.problem_review.serializers import (
     ProblemReviewExportCreateSerializer,
@@ -194,6 +198,24 @@ def _get_owned_report(request, report_id) -> ProblemReviewReport | None:
     ).first()
 
 
+def _public_difficulty(difficulty: object) -> dict:
+    """Remove unresolved AI placeholders from public-only helper fields."""
+    if not isinstance(difficulty, dict):
+        return {}
+    public = dict(difficulty)
+    distribution = []
+    for raw_item in difficulty.get("distribution") or []:
+        if not isinstance(raw_item, dict):
+            continue
+        item = dict(raw_item)
+        for key in ("points", "note"):
+            if str(item.get(key) or "").strip() in PLACEHOLDER_VALUES:
+                item[key] = ""
+        distribution.append(item)
+    public["distribution"] = distribution
+    return public
+
+
 def _public_snapshot(draft: dict, *, verified_at=None, fingerprint: str = "") -> dict:
     """Whitelist fields suitable for a public article and PDF."""
     normalized = normalize_report_payload(
@@ -221,7 +243,7 @@ def _public_snapshot(draft: dict, *, verified_at=None, fingerprint: str = "") ->
         "summary": normalized.get("summary") or {},
         "assessment_axes": normalized.get("assessment_axes") or [],
         "domains": normalized.get("domains") or [],
-        "difficulty": normalized.get("difficulty") or {},
+        "difficulty": _public_difficulty(normalized.get("difficulty")),
         "questions": public_questions,
         "key_items": normalized.get("key_items") or [],
         "failure_patterns": normalized.get("failure_patterns") or [],

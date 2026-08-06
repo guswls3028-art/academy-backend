@@ -90,7 +90,10 @@ staff 역할만 사용할 수 있다.
   삭제한다. PDF/PPTX 산출물은 tenant/report/job별 immutable key에 둔다.
 - 공개 스냅샷은 `source_excerpt`, `review_note`, `validity`, `confidence`,
   `warnings`를 제외한 허용 목록만 저장한다. 공개 PDF도 이 정제된 스냅샷으로
-  다시 조판하므로 내부 메모가 빈 핵심 포인트를 대신해 노출되지 않는다.
+  다시 조판하므로 내부 메모가 빈 핵심 포인트를 대신해 노출되지 않는다. 난도
+  분포의 보조 `points`·`note` 값에 AI 미확정 표식(`검수 필요`, `확인 필요`,
+  `미확인`, `-`)이 남아 있어도 공개 스냅샷에서는 빈 값으로 정제한다. 검수된
+  문항의 난도·배점·번호 자체는 그대로 보존한다.
 - 공개 게시 권한도 정확한 `tenant + requested_by + report UUID + version`으로
   검사한다. 익명 목록·상세·PDF는 요청에서 해석된 단일 tenant의 `published`
   자료 중 `snapshot.verification.status=verified`인 것만 원칙적으로 반환한다.
