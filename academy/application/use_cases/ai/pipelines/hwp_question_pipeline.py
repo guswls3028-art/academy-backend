@@ -8,7 +8,6 @@ from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_storage
 from apps.shared.contracts.ai_job import AIJob
 from apps.shared.contracts.ai_result import AIResult
 from academy.adapters.tools.hwp_endnote_images import (
-    crop_problem_from_endnote,
     extract_document_endnotes,
 )
 
@@ -116,7 +115,11 @@ def run_hwp_question_pipeline(
         tenant_id=tenant_id,
     )
     try:
-        extraction = extract_document_endnotes(local_path, filename)
+        extraction = extract_document_endnotes(
+            local_path,
+            filename,
+            include_problem_reconstruction=True,
+        )
         if not extraction.visuals:
             raise ValueError("번호가 있는 미주 해설 이미지가 없습니다.")
     except Exception:
@@ -149,6 +152,24 @@ def run_hwp_question_pipeline(
                 ),
             },
         )
+    if extraction.missing_problem_visual_numbers:
+        return AIResult.done(
+            job.id,
+            {
+                "exam_id": exam_id,
+                "conversion_required": True,
+                "source_mode": "problem_document_requires_pdf",
+                "detected_question_count": len(extraction.control_numbers),
+                "extracted_problem_count": len(extraction.problem_visuals),
+                "missing_problem_numbers": list(
+                    extraction.missing_problem_visual_numbers
+                ),
+                "message": (
+                    "한글 본문의 일부 문항을 미주 번호와 완전하게 연결하지 못했습니다. "
+                    "정답 표시 없는 문제지를 PDF로 저장해 함께 올려 주세요."
+                ),
+            },
+        )
     visuals = list(extraction.visuals)
     explanations: list[dict[str, Any]] = []
     for visual in visuals:
@@ -178,10 +199,10 @@ def run_hwp_question_pipeline(
     )
     questions = []
     question_image_keys: dict[int, str] = {}
-    for visual in visuals:
+    for visual in extraction.problem_visuals:
         problem_key = f"tenants/{tenant_id}/exams/questions/{exam_id}/q{visual.number:03d}.png"
         upload_fileobj_to_r2_storage(
-            fileobj=BytesIO(crop_problem_from_endnote(visual.png_bytes)),
+            fileobj=BytesIO(visual.png_bytes),
             key=problem_key,
             content_type="image/png",
         )
@@ -190,9 +211,10 @@ def run_hwp_question_pipeline(
             {
                 "number": visual.number,
                 "original_number": visual.number,
-                "bbox": [0, 0, visual.width, round(visual.height * 0.3)],
+                "bbox": [0, 0, visual.width, visual.height],
                 "page_index": max(visual.number - 1, 0),
-                "problem_crop_ratio": 0.3,
+                "problem_crop_ratio": 1.0,
+                "source_render_mode": visual.render_mode,
             }
         )
 
@@ -213,7 +235,9 @@ def run_hwp_question_pipeline(
             "is_pdf": False,
             "source_mode": "combined_document",
             "segmentation_method": (
-                "hwpx_endnote" if filename.lower().endswith(".hwpx") else "hwp_endnote"
+                "hwpx_body_endnote"
+                if filename.lower().endswith(".hwpx")
+                else "hwp_body_endnote"
             ),
         },
     )
