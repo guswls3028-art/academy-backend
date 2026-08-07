@@ -101,6 +101,8 @@ def test_humanizes_common_hwp_equation_tokens_without_changing_meaning():
     assert _humanize_hwp_equation("0LEQx LEQ2pi, ita, it-3a") == (
         "0≤x≤2π, a, -3a"
     )
+    assert _humanize_hwp_equation("0letheta<2pi") == "0≤θ<2π"
+    assert _humanize_hwp_equation("molecule") == "molecule"
 
 
 def test_strips_hangul_eqedit_internal_text_object_sentinel():
@@ -208,6 +210,10 @@ def test_hwp_equation_mathtext_handles_fractions_piecewise_and_braces():
     compact_source = _hwp_equation_to_mathtext("rm{PQ")
     assert compact_source == r"\mathrm{PQ}"
     assert _hwp_equation_to_mathtext("5 over 3") == r"\frac{5}{3}"
+    assert _hwp_equation_to_mathtext("0letheta<2pi") == (
+        r"0\leq \theta<2\pi"
+    )
+    assert _hwp_equation_to_mathtext("molecule") == "molecule"
 
 
 def test_equation_render_falls_back_when_mathtext_is_unavailable(monkeypatch):

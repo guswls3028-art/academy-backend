@@ -228,6 +228,14 @@ def _humanize_hwp_equation(script: str) -> str:
         flags=re.I,
     )
     value = re.sub(
+        r"((?<![A-Za-z])[A-Za-z0-9]|[)\]])\s*le(?!q)\s*"
+        r"(?=(?:alpha|beta|gamma|delta|theta|lambda|mu|pi|sigma|phi|omega|"
+        r"[A-Za-z](?![A-Za-z])))",
+        r"\1≤",
+        value,
+        flags=re.I,
+    )
+    value = re.sub(
         r"(?<=[A-Za-z0-9)\]])\s*leq\s*(?=[A-Za-z0-9(-])",
         "≤",
         value,
@@ -707,6 +715,14 @@ def _hwp_equation_to_mathtext(script: str) -> str:
     value = re.sub(
         r"(?<=[A-Za-z0-9)\]])\s*ne(?!q)\s*(?=[A-Za-z0-9(])",
         lambda _match: r"\neq ",
+        value,
+        flags=re.I,
+    )
+    value = re.sub(
+        r"((?<![A-Za-z])[A-Za-z0-9]|[)\]])\s*le(?!q)\s*"
+        r"(?=(?:alpha|beta|gamma|delta|theta|lambda|mu|pi|sigma|phi|omega|"
+        r"[A-Za-z](?![A-Za-z])))",
+        lambda match: f"{match.group(1)}\\leq ",
         value,
         flags=re.I,
     )
