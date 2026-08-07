@@ -18,6 +18,7 @@ from academy.adapters.tools.hwp_endnote_images import (
     _hwpx_body_content,
     _humanize_hwp_equation,
     _load_picture,
+    _render_equation_image,
     extract_hwpx_endnotes,
 )
 from apps.shared.contracts.ai_job import AIJob
@@ -207,6 +208,24 @@ def test_hwp_equation_mathtext_handles_fractions_piecewise_and_braces():
     compact_source = _hwp_equation_to_mathtext("rm{PQ")
     assert compact_source == r"\mathrm{PQ}"
     assert _hwp_equation_to_mathtext("5 over 3") == r"\frac{5}{3}"
+
+
+def test_equation_render_falls_back_when_mathtext_is_unavailable(monkeypatch):
+    original_import = __import__
+
+    def import_without_matplotlib(name, *args, **kwargs):
+        if name.startswith("matplotlib"):
+            raise ModuleNotFoundError("matplotlib is unavailable")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.__import__", import_without_matplotlib)
+
+    image = _render_equation_image("x over 2")
+    try:
+        assert image.width > 0
+        assert image.height > 0
+    finally:
+        image.close()
 
 
 def test_loads_raw_deflate_compressed_hwp_bitmap():

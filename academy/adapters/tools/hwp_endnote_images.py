@@ -859,12 +859,12 @@ def _hwp_equation_to_mathtext(script: str) -> str:
 
 
 def _render_equation_image(script: str, *, font_size: int = 26) -> Image.Image:
-    from matplotlib.font_manager import FontProperties
-    from matplotlib.mathtext import math_to_image
-
-    latex = _hwp_equation_to_mathtext(script)
     output = BytesIO()
     try:
+        from matplotlib.font_manager import FontProperties
+        from matplotlib.mathtext import math_to_image
+
+        latex = _hwp_equation_to_mathtext(script)
         math_to_image(
             f"${latex}$",
             output,
