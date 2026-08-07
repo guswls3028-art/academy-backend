@@ -1,8 +1,8 @@
-"""Legacy HWP endnote visual extraction without converting user documents.
+"""HWP/HWPX body-question and endnote visual extraction.
 
-Ymath's teacher-authored source keeps each numbered problem and handwritten
-solution in a Hangul endnote picture.  The extractor deliberately reads only
-that stable OLE/record boundary and never attempts to rewrite HWP content.
+Ymath's teacher-authored source links clean body problems to handwritten
+solutions with numbered Hangul endnotes. The extractor uses that stable
+document structure and never asks AI to infer the problem/solution boundary.
 """
 from __future__ import annotations
 
@@ -52,6 +52,7 @@ class HwpEndnoteExtraction:
     control_numbers: tuple[int, ...]
     visuals: tuple[HwpEndnoteVisual, ...]
     paired_visuals: tuple[HwpEndnoteVisual, ...] = ()
+    problem_visuals: tuple[HwpEndnoteVisual, ...] = ()
 
     @property
     def missing_visual_numbers(self) -> tuple[int, ...]:
@@ -67,12 +68,20 @@ class HwpEndnoteExtraction:
             number for number in self.control_numbers if number not in visual_numbers
         )
 
+    @property
+    def missing_problem_visual_numbers(self) -> tuple[int, ...]:
+        visual_numbers = {visual.number for visual in self.problem_visuals}
+        return tuple(
+            number for number in self.control_numbers if number not in visual_numbers
+        )
+
 
 @dataclass(frozen=True)
 class _HwpEndnoteContent:
     number: int
     paragraphs: tuple[str, ...]
     equation_count: int
+    picture_refs: tuple[int | str, ...] = ()
 
 
 def _iter_records(data: bytes):
@@ -154,7 +163,10 @@ def _decode_hwp_equation(payload: bytes) -> str:
         return ""
     character_count = struct.unpack_from("<H", payload, 4)[0]
     byte_count = min(character_count * 2, max(len(payload) - 6, 0))
-    return payload[6 : 6 + byte_count].decode("utf-16le", "ignore").strip()
+    value = payload[6 : 6 + byte_count].decode("utf-16le", "ignore").strip()
+    # Some Hangul builds append an internal text-object sentinel to EqEdit's
+    # stored script. It is not authored math and must never reach the preview.
+    return re.sub(r"\n+To\n+\d+\s*$", "", value).strip()
 
 
 def _decode_hwp_paragraph_template(payload: bytes) -> tuple[str, int]:
@@ -215,6 +227,20 @@ def _humanize_hwp_equation(script: str) -> str:
         value,
         flags=re.I,
     )
+    value = re.sub(
+        r"(?<=[A-Za-z0-9)\]])\s*leq\s*(?=[A-Za-z0-9(-])",
+        "≤",
+        value,
+        flags=re.I,
+    )
+    value = re.sub(r"(?<![A-Za-z])it(?=[A-Za-z-])", "", value, flags=re.I)
+    value = re.sub(r"(?<=[0-9])pi(?![A-Za-z])", "π", value, flags=re.I)
+    value = re.sub(
+        r"(?<![A-Za-z])(sin|cos|tan|log|ln)(?=[A-Za-z])",
+        r"\1 ",
+        value,
+        flags=re.I,
+    )
 
     value = re.sub(
         r"\broot\s*\{([^{}]+)\}\s*of\s*\{([^{}]+)\}",
@@ -231,6 +257,13 @@ def _humanize_hwp_equation(script: str) -> str:
         if updated == value:
             break
         value = updated
+    value = re.sub(
+        r"(?<![A-Za-z0-9])([A-Za-z0-9]+)\s+over\s+([A-Za-z0-9]+)(?![A-Za-z0-9])",
+        r"(\1)/(\2)",
+        value,
+        flags=re.I,
+    )
+    value = re.sub(r"\brm\s*\{([A-Za-z0-9]+)(?:\}|$)", r"\1", value)
 
     replacements = {
         "THEREFORE": "∴",
@@ -313,6 +346,67 @@ def _fill_equation_slots(template: str, equations: list[str], slot_count: int) -
     return value.strip()
 
 
+_ANSWER_SECTION_RE = re.compile(r"^\s*정답\s*(?:및|과)?\s*(?:해설|풀이)\s*$")
+
+
+def _content_from_hwp_records(
+    number: int,
+    records: list[tuple[int, int, bytes]],
+    *,
+    stop_at_answer_section: bool = False,
+) -> _HwpEndnoteContent:
+    holders: list[dict[str, object]] = []
+    stack: list[dict[str, object]] = []
+    picture_refs: list[int] = []
+    for tag, level, payload in records:
+        if tag == _PARA_TEXT_TAG:
+            while stack and int(stack[-1]["level"]) >= level:
+                stack.pop()
+            template, slot_count = _decode_hwp_paragraph_template(payload)
+            holder: dict[str, object] = {
+                "level": level,
+                "template": template,
+                "slot_count": slot_count,
+                "equations": [],
+            }
+            holders.append(holder)
+            stack.append(holder)
+        elif tag == _EQEDIT_TAG:
+            while stack and int(stack[-1]["level"]) >= level:
+                stack.pop()
+            script = _decode_hwp_equation(payload)
+            if script and stack:
+                equations = stack[-1]["equations"]
+                assert isinstance(equations, list)
+                equations.append(script)
+        elif tag == _SHAPE_PICTURE_TAG and len(payload) >= 73:
+            picture_id = int(struct.unpack_from("<H", payload, 71)[0])
+            if picture_id and picture_id not in picture_refs:
+                picture_refs.append(picture_id)
+
+    paragraphs: list[str] = []
+    equation_count = 0
+    for holder in holders:
+        equations = holder["equations"]
+        assert isinstance(equations, list)
+        value = _fill_equation_slots(
+            str(holder["template"]),
+            equations,
+            int(holder["slot_count"]),
+        )
+        if stop_at_answer_section and _ANSWER_SECTION_RE.match(value):
+            break
+        equation_count += len(equations)
+        if value:
+            paragraphs.append(value)
+    return _HwpEndnoteContent(
+        number=number,
+        paragraphs=tuple(paragraphs),
+        equation_count=equation_count,
+        picture_refs=tuple(picture_refs),
+    )
+
+
 def _collect_endnote_contents(records) -> list[_HwpEndnoteContent]:
     """Collect numbered legacy-HWP endnote text and EqEdit scripts in order."""
     notes: list[_HwpEndnoteContent] = []
@@ -324,50 +418,7 @@ def _collect_endnote_contents(records) -> list[_HwpEndnoteContent]:
         nonlocal current_number, current_level, note_records
         if current_number is None:
             return
-        holders: list[dict[str, object]] = []
-        stack: list[dict[str, object]] = []
-        for tag, level, payload in note_records:
-            if tag == _PARA_TEXT_TAG:
-                while stack and int(stack[-1]["level"]) >= level:
-                    stack.pop()
-                template, slot_count = _decode_hwp_paragraph_template(payload)
-                holder: dict[str, object] = {
-                    "level": level,
-                    "template": template,
-                    "slot_count": slot_count,
-                    "equations": [],
-                }
-                holders.append(holder)
-                stack.append(holder)
-            elif tag == _EQEDIT_TAG:
-                while stack and int(stack[-1]["level"]) >= level:
-                    stack.pop()
-                script = _decode_hwp_equation(payload)
-                if script and stack:
-                    equations = stack[-1]["equations"]
-                    assert isinstance(equations, list)
-                    equations.append(script)
-
-        paragraphs: list[str] = []
-        equation_count = 0
-        for holder in holders:
-            equations = holder["equations"]
-            assert isinstance(equations, list)
-            equation_count += len(equations)
-            value = _fill_equation_slots(
-                str(holder["template"]),
-                equations,
-                int(holder["slot_count"]),
-            )
-            if value:
-                paragraphs.append(value)
-        notes.append(
-            _HwpEndnoteContent(
-                number=current_number,
-                paragraphs=tuple(paragraphs),
-                equation_count=equation_count,
-            )
-        )
+        notes.append(_content_from_hwp_records(current_number, note_records))
         current_number = None
         current_level = None
         note_records = []
@@ -386,6 +437,48 @@ def _collect_endnote_contents(records) -> list[_HwpEndnoteContent]:
             note_records.append((tag, level, payload))
     finish_note()
     return notes
+
+
+def _collect_hwp_question_contents(records) -> list[_HwpEndnoteContent]:
+    """Collect clean body content keyed by the numbered endnote anchor."""
+    questions: list[_HwpEndnoteContent] = []
+    current_number: int | None = None
+    current_level: int | None = None
+    body_started = False
+    body_records: list[tuple[int, int, bytes]] = []
+
+    def finish_question() -> None:
+        nonlocal current_number, current_level, body_started, body_records
+        if current_number is not None:
+            content = _content_from_hwp_records(
+                current_number,
+                body_records,
+                stop_at_answer_section=True,
+            )
+            if content.paragraphs or content.picture_refs:
+                questions.append(content)
+        current_number = None
+        current_level = None
+        body_started = False
+        body_records = []
+
+    for tag, level, payload in records:
+        if tag == _CTRL_HEADER_TAG and len(payload) >= 8 and payload[:4] == _ENDNOTE_CHID:
+            finish_question()
+            number = struct.unpack_from("<I", payload, 4)[0]
+            if 0 < number <= 999 and len(questions) < _MAX_NOTES:
+                current_number = int(number)
+                current_level = int(level)
+            continue
+        if current_number is None or current_level is None:
+            continue
+        if not body_started:
+            if level > current_level:
+                continue
+            body_started = True
+        body_records.append((tag, level, payload))
+    finish_question()
+    return questions
 
 
 def _read_body_sections(ole) -> list[bytes]:
@@ -617,12 +710,42 @@ def _hwp_equation_to_mathtext(script: str) -> str:
         value,
         flags=re.I,
     )
+    value = re.sub(
+        r"(?<=[A-Za-z0-9)\]])\s*leq\s*(?=[A-Za-z0-9(-])",
+        lambda _match: r"\leq ",
+        value,
+        flags=re.I,
+    )
+    value = re.sub(r"(?<![A-Za-z])it(?=[A-Za-z-])", "", value, flags=re.I)
+    value = re.sub(
+        r"(?<=[0-9])pi(?![A-Za-z])",
+        lambda _match: r"\pi",
+        value,
+        flags=re.I,
+    )
+    value = re.sub(
+        r"(?<![A-Za-z])(sin|cos|tan|log|ln)(?=[A-Za-z])",
+        r"\1 ",
+        value,
+        flags=re.I,
+    )
+    value = re.sub(
+        r"(?<![A-Za-z0-9])([A-Za-z0-9]+)\s+over\s+([A-Za-z0-9]+)(?![A-Za-z0-9])",
+        lambda match: rf"\frac{{{match.group(1)}}}{{{match.group(2)}}}",
+        value,
+        flags=re.I,
+    )
     value = _replace_hwp_fractions(value)
     value = re.sub(
         r"\broot\s*\{([^{}]+)\}\s*of\s*\{([^{}]+)\}",
         r"\\sqrt[\1]{\2}",
         value,
         flags=re.I,
+    )
+    value = re.sub(
+        r"\brm\s*\{([A-Za-z0-9]+)(?:\}|$)",
+        r"\\mathrm{\1}",
+        value,
     )
     value = re.sub(r"\brm\s*\{([^{}]+)\}", r"\\mathrm{\1}", value)
     value = re.sub(r"\brm\s*([A-Za-z]+)", r"\\mathrm{\1}", value)
@@ -736,12 +859,12 @@ def _hwp_equation_to_mathtext(script: str) -> str:
 
 
 def _render_equation_image(script: str, *, font_size: int = 26) -> Image.Image:
-    from matplotlib.font_manager import FontProperties
-    from matplotlib.mathtext import math_to_image
-
-    latex = _hwp_equation_to_mathtext(script)
     output = BytesIO()
     try:
+        from matplotlib.font_manager import FontProperties
+        from matplotlib.mathtext import math_to_image
+
+        latex = _hwp_equation_to_mathtext(script)
         math_to_image(
             f"${latex}$",
             output,
@@ -870,10 +993,11 @@ def _render_paragraph_flow(paragraph: str, *, font, max_width: int) -> Image.Ima
     return canvas
 
 
-def _render_endnote_content(
+def _render_source_content(
     *,
     content: _HwpEndnoteContent,
     images: list[Image.Image],
+    label: str,
 ) -> tuple[bytes, int, int]:
     """Render source text, native equations, and source images for review."""
     width = 1600
@@ -908,7 +1032,7 @@ def _render_endnote_content(
         height += sum(item[2] + 28 for item in scaled_images)
     height += margin
     if width * height > _MAX_IMAGE_PIXELS:
-        raise ValueError("HWP 해설 재현 이미지가 안전 처리 한도를 초과했습니다.")
+        raise ValueError("HWP 원문 재현 이미지가 안전 처리 한도를 초과했습니다.")
 
     canvas = Image.new("RGB", (width, height), "white")
     draw = ImageDraw.Draw(canvas)
@@ -920,7 +1044,7 @@ def _render_endnote_content(
     )
     draw.text(
         (margin + 20, y + 4),
-        f"미주 {content.number}번 · 선생님 원문(문자·수식·삽화 재현)",
+        label,
         font=label_font,
         fill="#394150",
     )
@@ -949,10 +1073,35 @@ def _render_endnote_content(
     return data, width, height
 
 
+def _render_endnote_content(
+    *,
+    content: _HwpEndnoteContent,
+    images: list[Image.Image],
+) -> tuple[bytes, int, int]:
+    return _render_source_content(
+        content=content,
+        images=images,
+        label=f"미주 {content.number}번 · 선생님 원문(문자·수식·삽화 재현)",
+    )
+
+
+def _render_problem_content(
+    *,
+    content: _HwpEndnoteContent,
+    images: list[Image.Image],
+) -> tuple[bytes, int, int]:
+    return _render_source_content(
+        content=content,
+        images=images,
+        label=f"{content.number}번 · 한글 본문 원문(문자·수식·삽화 재현)",
+    )
+
+
 def extract_hwp_endnotes(
     path: str,
     *,
     include_paired_reconstruction: bool = False,
+    include_problem_reconstruction: bool = False,
 ) -> HwpEndnoteExtraction:
     """Return legacy HWP endnote coverage and source visuals."""
     import olefile
@@ -963,18 +1112,22 @@ def extract_hwp_endnotes(
     with olefile.OleFileIO(path) as ole:
         notes: list[tuple[int, list[int]]] = []
         contents: list[_HwpEndnoteContent] = []
+        problem_contents: list[_HwpEndnoteContent] = []
         control_numbers: list[int] = []
         for section in _read_body_sections(ole):
             records = list(_iter_records(section))
             notes.extend(_collect_endnote_picture_ids(iter(records)))
             if include_paired_reconstruction:
                 contents.extend(_collect_endnote_contents(iter(records)))
+            if include_problem_reconstruction:
+                problem_contents.extend(_collect_hwp_question_contents(iter(records)))
             for number in _collect_endnote_numbers(iter(records)):
                 if number not in control_numbers:
                     control_numbers.append(number)
         streams = _bindata_streams_by_id(ole)
         visuals: list[HwpEndnoteVisual] = []
         paired_visuals: list[HwpEndnoteVisual] = []
+        problem_visuals: list[HwpEndnoteVisual] = []
         seen_numbers: set[int] = set()
         picture_ids_by_number = {number: picture_ids for number, picture_ids in notes}
         content_by_number = {content.number: content for content in contents}
@@ -1025,10 +1178,47 @@ def extract_hwp_endnotes(
                 for image in images:
                     image.close()
             seen_numbers.add(number)
+        if include_problem_reconstruction:
+            problem_content_by_number = {
+                content.number: content for content in problem_contents
+            }
+            for number in control_numbers:
+                content = problem_content_by_number.get(number)
+                if content is None:
+                    continue
+                images = []
+                for picture_ref in content.picture_refs:
+                    if not isinstance(picture_ref, int):
+                        continue
+                    stream_name = streams.get(picture_ref)
+                    if not stream_name:
+                        continue
+                    image = _load_picture(ole.openstream(stream_name).read())
+                    if image is not None:
+                        images.append(image)
+                try:
+                    png_bytes, width, height = _render_problem_content(
+                        content=content,
+                        images=images,
+                    )
+                    problem_visuals.append(
+                        HwpEndnoteVisual(
+                            number=number,
+                            png_bytes=png_bytes,
+                            width=width,
+                            height=height,
+                            picture_count=len(images),
+                            render_mode="source_body_reconstruction",
+                        )
+                    )
+                finally:
+                    for image in images:
+                        image.close()
     return HwpEndnoteExtraction(
         control_numbers=tuple(control_numbers),
         visuals=tuple(sorted(visuals, key=lambda item: item.number)),
         paired_visuals=tuple(sorted(paired_visuals, key=lambda item: item.number)),
+        problem_visuals=tuple(sorted(problem_visuals, key=lambda item: item.number)),
     )
 
 
@@ -1050,7 +1240,117 @@ def _safe_hwpx_entries(archive: ZipFile):
     return entries
 
 
-def extract_hwpx_endnotes(path: str) -> HwpEndnoteExtraction:
+def _hwpx_body_content(element: ElementTree.Element) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    parts: list[str] = []
+    image_refs: list[str] = []
+
+    def walk(node: ElementTree.Element) -> None:
+        name = node.tag.rsplit("}", 1)[-1]
+        if name == "endNote":
+            return
+        if name == "t":
+            parts.append(str(node.text or ""))
+            for child in node:
+                walk(child)
+                parts.append(str(child.tail or ""))
+            return
+        if name == "equation":
+            script = next(
+                (
+                    str(item.text or "").strip()
+                    for item in node.iter()
+                    if item.tag.rsplit("}", 1)[-1] == "script" and item.text
+                ),
+                "",
+            )
+            if script:
+                parts.append(f"{_EQUATION_MARKER_START}{script}{_EQUATION_MARKER_END}")
+            return
+        if name == "img":
+            image_ref = str(node.attrib.get("binaryItemIDRef") or "").strip().lower()
+            if image_ref and image_ref not in image_refs:
+                image_refs.append(image_ref)
+            return
+        if name == "tab":
+            parts.append("\u2003\u2003")
+            return
+        if name == "lineBreak":
+            parts.append("\n")
+            return
+        for child in node:
+            walk(child)
+            parts.append(str(child.tail or ""))
+        if name in {"p", "tr"}:
+            parts.append("\n")
+
+    walk(element)
+    value = "".join(parts)
+    value = re.sub(r"[ \u00a0]+", " ", value)
+    value = re.sub(r" *\n *", "\n", value)
+    paragraphs = tuple(line.strip() for line in value.splitlines() if line.strip())
+    return paragraphs, tuple(image_refs)
+
+
+def _collect_hwpx_question_contents(
+    roots: list[ElementTree.Element],
+) -> list[_HwpEndnoteContent]:
+    questions: list[_HwpEndnoteContent] = []
+    current_number: int | None = None
+    current_paragraphs: list[str] = []
+    current_image_refs: list[str] = []
+
+    def finish_question() -> None:
+        nonlocal current_number, current_paragraphs, current_image_refs
+        if current_number is not None and (current_paragraphs or current_image_refs):
+            questions.append(
+                _HwpEndnoteContent(
+                    number=current_number,
+                    paragraphs=tuple(current_paragraphs),
+                    equation_count=sum(
+                        paragraph.count(_EQUATION_MARKER_START)
+                        for paragraph in current_paragraphs
+                    ),
+                    picture_refs=tuple(current_image_refs),
+                )
+            )
+        current_number = None
+        current_paragraphs = []
+        current_image_refs = []
+
+    for root in roots:
+        paragraphs = [
+            child for child in root if child.tag.rsplit("}", 1)[-1] == "p"
+        ]
+        for paragraph in paragraphs:
+            endnotes = [
+                item
+                for item in paragraph.iter()
+                if item.tag.rsplit("}", 1)[-1] == "endNote"
+            ]
+            body, image_refs = _hwpx_body_content(paragraph)
+            if endnotes:
+                finish_question()
+                raw_number = str(endnotes[0].attrib.get("number") or "")
+                if raw_number.isdigit() and 0 < int(raw_number) <= 999:
+                    current_number = int(raw_number)
+            if current_number is None:
+                continue
+            if any(_ANSWER_SECTION_RE.match(value) for value in body):
+                finish_question()
+                return questions
+            current_paragraphs.extend(body)
+            for image_ref in image_refs:
+                if image_ref not in current_image_refs:
+                    current_image_refs.append(image_ref)
+    finish_question()
+    return questions
+
+
+def extract_hwpx_endnotes(
+    path: str,
+    *,
+    include_problem_reconstruction: bool = False,
+) -> HwpEndnoteExtraction:
     """Return HWPX endnote visuals without rewriting the source document."""
     with ZipFile(path) as archive:
         entries = _safe_hwpx_entries(archive)
@@ -1077,12 +1377,14 @@ def extract_hwpx_endnotes(path: str) -> HwpEndnoteExtraction:
         visuals: list[HwpEndnoteVisual] = []
         seen_numbers: set[int] = set()
         total_picture_count = 0
+        roots: list[ElementTree.Element] = []
 
         for section_name in section_names:
             try:
                 root = ElementTree.fromstring(archive.read(section_name))
             except ElementTree.ParseError:
                 continue
+            roots.append(root)
             for endnote in root.iter():
                 if endnote.tag.rsplit("}", 1)[-1] != "endNote":
                     continue
@@ -1133,10 +1435,43 @@ def extract_hwpx_endnotes(path: str) -> HwpEndnoteExtraction:
                 total_picture_count += len(images)
                 seen_numbers.add(number)
 
+        problem_visuals: list[HwpEndnoteVisual] = []
+        if include_problem_reconstruction:
+            for content in _collect_hwpx_question_contents(roots):
+                images = []
+                for picture_ref in content.picture_refs:
+                    if not isinstance(picture_ref, str):
+                        continue
+                    member_name = image_members.get(picture_ref)
+                    if not member_name:
+                        continue
+                    image = _load_picture(archive.read(member_name))
+                    if image is not None:
+                        images.append(image)
+                try:
+                    png_bytes, width, height = _render_problem_content(
+                        content=content,
+                        images=images,
+                    )
+                    problem_visuals.append(
+                        HwpEndnoteVisual(
+                            number=content.number,
+                            png_bytes=png_bytes,
+                            width=width,
+                            height=height,
+                            picture_count=len(images),
+                            render_mode="source_body_reconstruction",
+                        )
+                    )
+                finally:
+                    for image in images:
+                        image.close()
+
     return HwpEndnoteExtraction(
         control_numbers=tuple(control_numbers),
         visuals=tuple(sorted(visuals, key=lambda item: item.number)),
         paired_visuals=tuple(sorted(visuals, key=lambda item: item.number)),
+        problem_visuals=tuple(sorted(problem_visuals, key=lambda item: item.number)),
     )
 
 
@@ -1145,15 +1480,20 @@ def extract_document_endnotes(
     filename: str,
     *,
     include_paired_reconstruction: bool = False,
+    include_problem_reconstruction: bool = False,
 ) -> HwpEndnoteExtraction:
     suffix = PurePosixPath(str(filename or "").lower()).suffix
     if suffix == ".hwp":
         return extract_hwp_endnotes(
             path,
             include_paired_reconstruction=include_paired_reconstruction,
+            include_problem_reconstruction=include_problem_reconstruction,
         )
     if suffix == ".hwpx":
-        return extract_hwpx_endnotes(path)
+        return extract_hwpx_endnotes(
+            path,
+            include_problem_reconstruction=include_problem_reconstruction,
+        )
     raise ValueError("HWP 또는 HWPX 파일이 필요합니다.")
 
 

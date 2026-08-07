@@ -15,7 +15,6 @@ if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
 from academy.adapters.tools.hwp_endnote_images import (  # noqa: E402
-    crop_problem_from_endnote,
     extract_document_endnotes,
 )
 
@@ -50,7 +49,9 @@ def analyze_manifest(*, manifest_path: Path, output_dir: Path) -> dict:
             "status": "error",
             "control_count": 0,
             "visual_count": 0,
+            "problem_visual_count": 0,
             "missing_visual_numbers": [],
+            "missing_problem_numbers": [],
             "preview_numbers": [],
             "visual_dimensions": [],
         }
@@ -58,11 +59,16 @@ def analyze_manifest(*, manifest_path: Path, output_dir: Path) -> dict:
             extraction = extract_document_endnotes(
                 str(source_path),
                 str(document["display_name"]),
+                include_problem_reconstruction=True,
             )
             preview_numbers = _preview_numbers(extraction.visuals)
             report["control_count"] = len(extraction.control_numbers)
             report["visual_count"] = len(extraction.visuals)
+            report["problem_visual_count"] = len(extraction.problem_visuals)
             report["missing_visual_numbers"] = list(extraction.missing_visual_numbers)
+            report["missing_problem_numbers"] = list(
+                extraction.missing_problem_visual_numbers
+            )
             report["preview_numbers"] = sorted(preview_numbers)
             report["visual_dimensions"] = [
                 {
@@ -75,19 +81,27 @@ def analyze_manifest(*, manifest_path: Path, output_dir: Path) -> dict:
             ]
             if not extraction.visuals:
                 report["status"] = "no_numbered_visuals"
-            elif extraction.missing_visual_numbers:
+            elif (
+                extraction.missing_visual_numbers
+                or extraction.missing_problem_visual_numbers
+            ):
                 report["status"] = "paired_problem_file_required"
             else:
                 report["status"] = "combined_document_ready"
 
+            problems_by_number = {
+                int(visual.number): visual for visual in extraction.problem_visuals
+            }
             for visual in extraction.visuals:
                 if int(visual.number) not in preview_numbers:
                     continue
                 stem = f"{source_id}-q{int(visual.number):03d}"
                 (preview_dir / f"{stem}-full.png").write_bytes(visual.png_bytes)
-                cropped = crop_problem_from_endnote(visual.png_bytes)
-                (preview_dir / f"{stem}-problem.png").write_bytes(cropped)
-                with Image.open(BytesIO(cropped)) as image:
+                problem = problems_by_number.get(int(visual.number))
+                if problem is None:
+                    continue
+                (preview_dir / f"{stem}-problem.png").write_bytes(problem.png_bytes)
+                with Image.open(BytesIO(problem.png_bytes)) as image:
                     report.setdefault("problem_preview_dimensions", []).append(
                         {
                             "number": int(visual.number),
@@ -113,6 +127,9 @@ def analyze_manifest(*, manifest_path: Path, output_dir: Path) -> dict:
         "status_counts": status_counts,
         "total_controls": sum(int(item["control_count"]) for item in items),
         "total_visuals": sum(int(item["visual_count"]) for item in items),
+        "total_problem_visuals": sum(
+            int(item["problem_visual_count"]) for item in items
+        ),
         "elapsed_seconds": round(time.perf_counter() - started, 3),
     }
     payload = {"summary": summary, "items": items}
