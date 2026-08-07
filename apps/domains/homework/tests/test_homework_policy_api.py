@@ -487,6 +487,54 @@ class HomeworkPolicyApiTests(APITestCase):
         self.assertFalse(first.data["uses_session_cutline_default"])
         self.assertFalse(second.data["uses_session_cutline_default"])
 
+    def test_completion_homework_creation_normalizes_binary_contract(self):
+        response = self.client.post(
+            "/api/v1/homeworks/",
+            {
+                "session_id": self.session.id,
+                "title": "교재 지참 확인",
+                "grading_mode": "COMPLETION",
+                "max_score": 30,
+                "cutline_mode": "PERCENT",
+                "cutline_value": 80,
+                "round_unit_percent": 5,
+            },
+            format="json",
+            **self.req_headers,
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["grading_mode"], "COMPLETION")
+        self.assertEqual(response.data["max_score"], 1.0)
+        self.assertEqual(response.data["cutline_mode"], "COUNT")
+        self.assertEqual(response.data["cutline_value"], 1)
+
+    def test_grading_mode_change_rejects_existing_results(self):
+        homework = Homework.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title="기존 점수 보호 과제",
+        )
+        HomeworkScore.objects.create(
+            homework=homework,
+            session=self.session,
+            enrollment=self.enrollment,
+            score=25,
+            max_score=30,
+        )
+
+        response = self.client.patch(
+            f"/api/v1/homeworks/{homework.id}/",
+            {"grading_mode": "COMPLETION"},
+            format="json",
+            **self.req_headers,
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("기존 결과", str(response.data["grading_mode"]))
+        homework.refresh_from_db()
+        self.assertEqual(homework.grading_mode, Homework.GradingMode.SCORE)
+
     def test_percent_override_is_not_limited_by_session_count_cutline(self):
         policy_res = self.client.get(
             f"/api/v1/homework/policies/?session={self.session.id}",

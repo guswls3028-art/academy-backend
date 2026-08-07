@@ -29,6 +29,7 @@ class HomeworkSaveAsTemplateView(APIView):
             session=None,
             template_homework=None,
             title=hw.title,
+            grading_mode=hw.grading_mode,
             meta=hw.meta,
             cutline_mode=hw.cutline_mode,
             cutline_value=hw.cutline_value,

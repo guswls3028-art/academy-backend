@@ -92,6 +92,14 @@ def _apply_score_and_policy(
     HomeworkScore에 점수 반영 + HomeworkPolicy 계산
     """
     configured_max_score = obj.homework.default_max_score
+    if (
+        obj.homework.grading_mode == Homework.GradingMode.COMPLETION
+        and score is not None
+        and float(score) not in (0.0, configured_max_score)
+    ):
+        raise ValidationError(
+            {"score": "완료형 과제는 미완료(0) 또는 완료(1)만 저장할 수 있습니다."}
+        )
     if score is not None and float(score) > configured_max_score:
         raise ValidationError(
             {

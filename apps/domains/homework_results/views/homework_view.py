@@ -371,6 +371,7 @@ class HomeworkViewSet(ModelViewSet):
                     session=session,
                     template_homework=template,
                     title=title,
+                    grading_mode=template.grading_mode,
                     meta={"default_max_score": candidate_max_score},
                     cutline_mode=template.cutline_mode,
                     cutline_value=template.cutline_value,
@@ -450,6 +451,20 @@ class HomeworkViewSet(ModelViewSet):
         )
         serializer = self.get_serializer(instance, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
+        next_grading_mode = serializer.validated_data.get(
+            "grading_mode",
+            instance.grading_mode,
+        )
+        grading_mode_changed = next_grading_mode != instance.grading_mode
+        if grading_mode_changed and instance.scores.exists():
+            raise ValidationError(
+                {
+                    "grading_mode": (
+                        "이미 결과가 입력된 과제는 채점 방식을 바꿀 수 없습니다. "
+                        "기존 결과를 보존하려면 새 과제를 만들어 주세요."
+                    )
+                }
+            )
         candidate_meta = serializer.validated_data.get("meta", instance.meta)
         candidate_max_score = Homework.max_score_from_meta(candidate_meta)
 
@@ -457,7 +472,11 @@ class HomeworkViewSet(ModelViewSet):
             isinstance(request.data.get("meta"), dict)
             and "default_max_score" in request.data["meta"]
         )
-        should_sync_scores = candidate_max_score != old_max_score or explicit_max_score
+        should_sync_scores = (
+            candidate_max_score != old_max_score
+            or explicit_max_score
+            or grading_mode_changed
+        )
 
         if should_sync_scores:
             candidate_cutline_mode = serializer.validated_data.get(

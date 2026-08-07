@@ -444,6 +444,7 @@ class SessionScoresView(APIView):
                     "homework_id": int(hw.id),
                     "title": str(hw.title),
                     "unit": None,  # 서버 단일 진실
+                    "grading_mode": str(hw.grading_mode),
                     "max_score": hw.default_max_score,
                     "display_order": int(getattr(hw, "display_order", 0) or 0),
                 }

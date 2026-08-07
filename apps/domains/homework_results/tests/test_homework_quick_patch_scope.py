@@ -243,6 +243,48 @@ class HomeworkQuickPatchScopeTests(TestCase):
             ).exists()
         )
 
+    def test_completion_homework_accepts_only_incomplete_or_complete(self):
+        self.homework.grading_mode = Homework.GradingMode.COMPLETION
+        self.homework.save(update_fields=["grading_mode", "updated_at"])
+
+        incomplete = self._quick_patch(
+            {
+                "session_id": self.session.id,
+                "homework_id": self.homework.id,
+                "enrollment_id": self.assigned_enrollment.id,
+                "score": 0,
+            }
+        )
+        self.assertEqual(incomplete.data["max_score"], 1.0)
+        self.assertFalse(incomplete.data["passed"])
+
+        complete = self._quick_patch(
+            {
+                "session_id": self.session.id,
+                "homework_id": self.homework.id,
+                "enrollment_id": self.assigned_enrollment.id,
+                "score": 1,
+            }
+        )
+        self.assertEqual(complete.data["score"], 1.0)
+        self.assertTrue(complete.data["passed"])
+
+        self._quick_patch(
+            {
+                "session_id": self.session.id,
+                "homework_id": self.homework.id,
+                "enrollment_id": self.assigned_enrollment.id,
+                "score": 0.5,
+            },
+            expected_status=400,
+        )
+        score = HomeworkScore.objects.get(
+            homework=self.homework,
+            enrollment=self.assigned_enrollment,
+            attempt_index=1,
+        )
+        self.assertEqual(score.score, 1.0)
+
     def test_partial_update_does_not_move_score_relationships(self):
         score = HomeworkScore.objects.create(
             homework=self.homework,
