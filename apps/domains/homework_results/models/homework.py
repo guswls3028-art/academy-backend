@@ -99,6 +99,7 @@ class Homework(TimestampModel):
         max_length=20,
         choices=GradingMode.choices,
         default=GradingMode.SCORE,
+        db_default=GradingMode.SCORE,
         help_text="SCORE는 수치 점수, COMPLETION은 완료/미완료(1/0)로 기록한다.",
     )
 
