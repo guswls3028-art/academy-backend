@@ -19,6 +19,10 @@ SPECTACULAR_SETTINGS = {
     "SERVE_INCLUDE_SCHEMA": False,
     "COMPONENT_SPLIT_REQUEST": True,
     "DISABLE_ERRORS_AND_WARNINGS": True,
+    "ENUM_NAME_OVERRIDES": {
+        "ExamGradingMode": "apps.domains.exams.models.Exam.GradingMode",
+        "HomeworkGradingMode": "apps.domains.homework_results.models.Homework.GradingMode",
+    },
 }
 
 # Register custom authentication extensions after the schema settings exist.

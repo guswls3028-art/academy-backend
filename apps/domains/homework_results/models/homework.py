@@ -37,6 +37,10 @@ class Homework(TimestampModel):
         PERCENT = "PERCENT", "퍼센트 (%)"
         COUNT = "COUNT", "점수"
 
+    class GradingMode(models.TextChoices):
+        SCORE = "SCORE", "점수형"
+        COMPLETION = "COMPLETION", "완료형"
+
     class Status(models.TextChoices):
         DRAFT = "DRAFT", "초안"       # Legacy — 신규 생성 시 사용하지 않음
         OPEN = "OPEN", "진행중"
@@ -91,6 +95,14 @@ class Homework(TimestampModel):
 
     title = models.CharField(max_length=255)
 
+    grading_mode = models.CharField(
+        max_length=20,
+        choices=GradingMode.choices,
+        default=GradingMode.SCORE,
+        db_default=GradingMode.SCORE,
+        help_text="SCORE는 수치 점수, COMPLETION은 완료/미완료(1/0)로 기록한다.",
+    )
+
     status = models.CharField(
         max_length=20,
         choices=Status.choices,
@@ -143,6 +155,8 @@ class Homework(TimestampModel):
     @property
     def default_max_score(self) -> float:
         """과제 점수·표시·정책 계산이 함께 사용하는 과제별 만점."""
+        if self.grading_mode == self.GradingMode.COMPLETION:
+            return 1.0
         return self.max_score_from_meta(self.meta)
 
     # =========================================================

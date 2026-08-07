@@ -613,7 +613,11 @@ class AdminStudentGradesScopeTest(TestCase, ClinicTestMixin):
             [row["title"] for row in response.data["homeworks"]],
             ["로컬 정상 과제"],
         )
-        self.assertEqual(response.data["homeworks"][0]["retake_count"], 1)
+        homework_row = response.data["homeworks"][0]
+        self.assertEqual(homework_row["retake_count"], 1)
+        self.assertEqual(homework_row["grading_mode"], "SCORE")
+        self.assertFalse(homework_row["is_locked"])
+        self.assertIsNotNone(homework_row["score_updated_at"])
 
     def test_non_finite_homework_is_excluded_and_response_json_still_renders(self):
         score_model = self.data["enrollments"][0].homework_scores.model

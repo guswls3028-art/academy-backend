@@ -37,6 +37,7 @@ class HomeworkSerializer(serializers.ModelSerializer):
             "source_question_count",
             "session",
             "title",
+            "grading_mode",
             "max_score",
             "cutline_mode",
             "cutline_value",
@@ -95,6 +96,19 @@ class HomeworkSerializer(serializers.ModelSerializer):
                     **attrs["meta"],
                     "default_max_score": parsed,
                 }
+
+        grading_mode = attrs.get(
+            "grading_mode",
+            getattr(self.instance, "grading_mode", Homework.GradingMode.SCORE),
+        )
+        if grading_mode == Homework.GradingMode.COMPLETION:
+            attrs["meta"] = {
+                **dict(attrs.get("meta", getattr(self.instance, "meta", None)) or {}),
+                "default_max_score": 1.0,
+            }
+            attrs["cutline_mode"] = Homework.CutlineMode.COUNT
+            attrs["cutline_value"] = 1
+            attrs["round_unit_percent"] = 1
 
         mode = attrs.get("cutline_mode", getattr(self.instance, "cutline_mode", None))
         value = attrs.get("cutline_value", getattr(self.instance, "cutline_value", None))
