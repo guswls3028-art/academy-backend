@@ -183,10 +183,28 @@ def test_patched_ffmpeg_is_source_pinned_and_isolated_to_video_worker() -> None:
     assert "FFMPEG_COMMIT=db05df9d135fb56a4babb836d5e9f5c1d984e087" in video
     assert "https://github.com/FFmpeg/FFmpeg.git" in video
     assert 'test "$(git -C /tmp/ffmpeg rev-parse HEAD)" = "${FFMPEG_COMMIT}"' in video
+    assert "/opt/academy-ffmpeg/academy-source-commit" in video
+    assert (
+        'test "$(cat /opt/academy-ffmpeg/academy-source-commit)" '
+        '= "${FFMPEG_COMMIT}"' in video
+    )
     assert "CVE-2026-70628/70632" in video
     assert 'ffmpeg -hide_banner -encoders | grep -q "libx264"' in video
     assert "/tmp/ffmpeg-smoke/stream.m3u8" in video
     assert "    libx264-164 \\" in video
+
+
+def test_video_source_build_uses_native_arm64_runner() -> None:
+    workflow = (
+        Path(__file__).parents[1] / ".github" / "workflows" / "v1-build-and-push-latest.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "runs-on: ${{ matrix.runner }}" in workflow
+    assert "runner: ubuntu-24.04-arm" in workflow
+    assert (
+        "if: steps.selection.outputs.should_build == 'true' "
+        "&& matrix.service != 'video'" in workflow
+    )
 
 
 def test_missing_scan_result_is_started_then_polled(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -645,7 +645,7 @@ jobs:
 
   build-runtime-images:
     name: Build ${{ matrix.repository }} (arm64)
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       id-token: write
@@ -666,22 +666,27 @@ jobs:
             repository: academy-api
             dockerfile: docker/api/Dockerfile
             cache_scope: api
+            runner: ubuntu-latest
           - service: video
             repository: academy-video-worker
             dockerfile: docker/video-worker/Dockerfile
             cache_scope: video
+            runner: ubuntu-24.04-arm
           - service: messaging
             repository: academy-messaging-worker
             dockerfile: docker/messaging-worker/Dockerfile
             cache_scope: messaging
+            runner: ubuntu-latest
           - service: ai
             repository: academy-ai-worker-cpu
             dockerfile: docker/ai-worker-cpu/Dockerfile
             cache_scope: ai-cpu
+            runner: ubuntu-latest
           - service: tools
             repository: academy-tools-worker
             dockerfile: docker/tools-worker/Dockerfile
             cache_scope: tools
+            runner: ubuntu-latest
     env:
       DOCKER_BUILD_RECORD_UPLOAD: false
       DOCKER_BUILD_SUMMARY: false
@@ -714,7 +719,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up QEMU
-        if: steps.selection.outputs.should_build == 'true'
+        if: steps.selection.outputs.should_build == 'true' && matrix.service != 'video'
         uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
 
       - name: Set up Docker Buildx

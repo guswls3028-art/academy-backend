@@ -35,7 +35,8 @@ RUN cd /tmp/ffmpeg \
         --enable-pthreads \
         --enable-shared \
     && make -j"$(nproc)" \
-    && make install
+    && make install \
+    && printf '%s\n' "${FFMPEG_COMMIT}" > /opt/academy-ffmpeg/academy-source-commit
 
 FROM ${BASE_IMAGE} AS base
 
@@ -55,7 +56,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=ffmpeg-builder /opt/academy-ffmpeg /opt/academy-ffmpeg
 RUN set -eux; \
-    ffmpeg -hide_banner -version | grep -F "db05df9d13"; \
+    test "$(cat /opt/academy-ffmpeg/academy-source-commit)" = "${FFMPEG_COMMIT}"; \
+    ffmpeg -hide_banner -version >/dev/null; \
     ffmpeg -hide_banner -encoders | grep -q "libx264"; \
     mkdir -p /tmp/ffmpeg-smoke; \
     ffmpeg -hide_banner -loglevel error \
