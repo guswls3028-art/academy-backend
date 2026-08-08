@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.12.20.md](v1.12.20.md) | **CURRENT** | 2026-08-02 KST | Per-homework cutlines, regular/supplement student score scopes, protected frontend rollback closure, and production verification |
+| [v1.12.21.md](v1.12.21.md) | **CURRENT** | 2026-08-08 KST | Seven-day assessment, source-preserving document, public-report, UX, security, and production-identity consolidation |
+| [v1.12.20.md](v1.12.20.md) | production-deployed / v1.12.21로 승계 | 2026-08-02 KST | Per-homework cutlines, regular/supplement student score scopes, protected frontend rollback closure, and production verification |
 | [v1.12.19.md](v1.12.19.md) | production-deployed / v1.12.20으로 승계 | 2026-08-02 KST | YMath diagram-preserving question crops, answer-tail separation, regular-order wrong-note ranges, production round-trip proof, and residue cleanup |
 | [v1.12.18.md](v1.12.18.md) | production-deployed / v1.12.19로 승계 | 2026-08-02 KST | Seven-day supplement and clinic arrival preparation, operational dashboard and notification surfaces, actionable empty states, and production verification |
 | [v1.12.17.md](v1.12.17.md) | production-deployed / v1.12.18로 승계 | 2026-08-02 KST | Regular/supplement lecture-session separation, compatible full-list view, editable supplement titles, interaction hardening, and production continuity verification |
