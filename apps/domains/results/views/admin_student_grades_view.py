@@ -24,6 +24,7 @@ from apps.support.results.admin_student_grades_dependencies import (
     homework_scores_for_grades,
     primary_session_metadata_by_exam_and_lecture,
     resolved_homework_link_types,
+    submitted_homework_keys_for_grades,
 )
 from apps.support.results.student_grade_history import (
     build_exam_progression as _build_exam_progression,
@@ -290,6 +291,13 @@ class AdminStudentGradesView(APIView):
             ))
 
         hw_ids = list({homework.id for homework, _session, _enrollment_id, _hs in homework_sources})
+        submitted_hw_keys = set()
+        if hw_ids and enrollment_ids:
+            submitted_hw_keys = submitted_homework_keys_for_grades(
+                tenant=tenant,
+                enrollment_ids=enrollment_ids,
+                homework_ids=hw_ids,
+            )
         resolved_hw_links = {}
         if hw_ids and enrollment_ids:
             resolved_hw_links = resolved_homework_link_types(
@@ -329,6 +337,12 @@ class AdminStudentGradesView(APIView):
 
             meta = hs.meta if hs is not None and isinstance(hs.meta, dict) else {}
             meta_status = meta.get("status")
+            if (
+                meta_status is None
+                and score is None
+                and (enrollment_id, homework.id) not in submitted_hw_keys
+            ):
+                meta_status = "NOT_SUBMITTED"
             is_pass_1st = bool(hs.passed) if hs is not None else None
             resolution = resolved_hw_links.get((enrollment_id, homework.id))
             max_attempt = hw_retake_counts.get((enrollment_id, homework.id), 0)
