@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from django.db.models import Max, Prefetch
+from django.db.models import F, Max, Prefetch
 
 
 def active_student_for_grades(*, tenant: Any, student_id: int) -> Any | None:
@@ -196,10 +196,32 @@ def homework_scores_for_grades(*, tenant: Any, enrollment_ids: list[int]):
             session__lecture__tenant=tenant,
             attempt_index=1,
         )
-        .exclude(score__isnull=True)
         .exclude(session__lecture__is_system=True)
+        .exclude(homework__meta__removed_from_session_at__isnull=False)
         .select_related("homework", "session", "session__lecture")
         .order_by("-updated_at")
+    )
+
+
+def homework_assignments_for_grades(*, tenant: Any, enrollment_ids: list[int]):
+    """Return live tenant-safe assignments, including rows with no score yet."""
+    from apps.domains.homework.models import HomeworkAssignment
+    from apps.domains.homework_results.models import Homework
+
+    return (
+        HomeworkAssignment.objects.filter(
+            tenant=tenant,
+            enrollment_id__in=enrollment_ids,
+            enrollment__tenant=tenant,
+            homework__tenant=tenant,
+            homework__homework_type=Homework.HomeworkType.REGULAR,
+            homework__session_id=F("session_id"),
+            session__lecture__tenant=tenant,
+        )
+        .exclude(session__lecture__is_system=True)
+        .exclude(homework__meta__removed_from_session_at__isnull=False)
+        .select_related("homework", "session", "session__lecture")
+        .order_by("-created_at", "-id")
     )
 
 

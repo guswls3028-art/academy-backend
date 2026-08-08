@@ -80,6 +80,23 @@ class ExamSegmentationReviewView(APIView):
                             tenant_id=int(request.tenant.id),
                             key=item.explanation_image_key,
                         ),
+                        "source_render_mode": str(
+                            (item.region_meta or {}).get("source_render_mode") or ""
+                        ),
+                        "source_attachment_image_url": _proposal_url(
+                            tenant_id=int(request.tenant.id),
+                            key=str(
+                                (item.region_meta or {}).get(
+                                    "source_attachment_image_key"
+                                )
+                                or ""
+                            ),
+                        ),
+                        "source_attachment_requires_review": bool(
+                            (item.region_meta or {}).get(
+                                "source_attachment_requires_review"
+                            )
+                        ),
                         "has_teacher_explanation": bool(
                             item.explanation_text or item.explanation_image_key
                         ),
@@ -98,7 +115,7 @@ class ExamSegmentationApproveView(APIView):
         if not isinstance(raw_items, list):
             raise ValidationError({"items": "검수한 문항 목록이 필요합니다."})
 
-        requested: dict[int, tuple[int, bool, float | None]] = {}
+        requested: dict[int, tuple[int, bool, float | None, str]] = {}
         for raw in raw_items:
             try:
                 proposal_id = int(raw.get("id"))
@@ -106,6 +123,9 @@ class ExamSegmentationApproveView(APIView):
                 included = raw.get("included", True)
                 raw_ratio = raw.get("problem_crop_ratio")
                 crop_ratio = float(raw_ratio) if raw_ratio is not None else None
+                explanation_variant = str(
+                    raw.get("explanation_variant") or "reconstructed"
+                )
             except (AttributeError, TypeError, ValueError):
                 raise ValidationError({"items": "문항 번호를 다시 확인해 주세요."})
             if not isinstance(included, bool):
@@ -118,9 +138,18 @@ class ExamSegmentationApproveView(APIView):
                 raise ValidationError(
                     {"items": "문제 영역은 원본 높이의 8~98% 사이여야 합니다."}
                 )
+            if explanation_variant not in {"reconstructed", "source_attachment"}:
+                raise ValidationError(
+                    {"items": "해설 원본 선택을 다시 확인해 주세요."}
+                )
             if proposal_id in requested:
                 raise ValidationError({"items": "같은 후보가 중복되었습니다."})
-            requested[proposal_id] = (number, included, crop_ratio)
+            requested[proposal_id] = (
+                number,
+                included,
+                crop_ratio,
+                explanation_variant,
+            )
 
         exam_snapshot = Exam.objects.filter(
             id=int(exam_id),
@@ -150,7 +179,7 @@ class ExamSegmentationApproveView(APIView):
 
         try:
             for proposal in proposal_snapshot:
-                _, included, requested_ratio = requested[int(proposal.id)]
+                _, included, requested_ratio, _ = requested[int(proposal.id)]
                 if not included or requested_ratio is None:
                     continue
                 if abs(requested_ratio - float(proposal.problem_crop_ratio)) < 0.0001:
@@ -213,11 +242,15 @@ class ExamSegmentationApproveView(APIView):
                         {"items": "검수 후보가 변경되었습니다. 새로고침해 주세요."}
                     )
                 selected = [
-                    (item, requested[int(item.id)][0])
+                    (
+                        item,
+                        requested[int(item.id)][0],
+                        requested[int(item.id)][3],
+                    )
                     for item in proposals
                     if requested[int(item.id)][1]
                 ]
-                numbers = [number for _, number in selected]
+                numbers = [number for _, number, _ in selected]
                 if not selected:
                     raise ValidationError({"items": "한 문항 이상 포함해 주세요."})
                 if len(numbers) != len(set(numbers)):
@@ -254,7 +287,22 @@ class ExamSegmentationApproveView(APIView):
                 )
 
                 base_score = round(float(exam.max_score or 0.0) / total, 2)
-                for index, (proposal, number) in enumerate(selected, start=1):
+                for index, (proposal, number, explanation_variant) in enumerate(
+                    selected,
+                    start=1,
+                ):
+                    source_attachment_key = str(
+                        (proposal.region_meta or {}).get(
+                            "source_attachment_image_key"
+                        )
+                        or ""
+                    )
+                    if explanation_variant == "source_attachment" and not (
+                        source_attachment_key.startswith(expected_prefix)
+                    ):
+                        raise ValidationError(
+                            {"items": "선택한 삽입 그림 원본을 확인할 수 없습니다."}
+                        )
                     question = ExamQuestion.objects.create(
                         sheet=sheet,
                         number=number,
@@ -268,6 +316,7 @@ class ExamSegmentationApproveView(APIView):
                             "problem_crop_ratio": staged_ratios.get(
                                 int(proposal.id), proposal.problem_crop_ratio
                             ),
+                            "explanation_variant": explanation_variant,
                         },
                         question_kind=(
                             ExamQuestion.QuestionKind.CHOICE
@@ -288,7 +337,11 @@ class ExamSegmentationApproveView(APIView):
                         QuestionExplanation.objects.create(
                             question=question,
                             text=proposal.explanation_text,
-                            image_key=proposal.explanation_image_key,
+                            image_key=(
+                                source_attachment_key
+                                if explanation_variant == "source_attachment"
+                                else proposal.explanation_image_key
+                            ),
                             source=QuestionExplanation.Source.SOURCE_FILE,
                             match_confidence=proposal.match_confidence,
                         )

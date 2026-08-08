@@ -19,6 +19,7 @@ from apps.support.results.admin_student_grades_dependencies import (
     enrollment_ids_for_student,
     enrollment_lecture_metadata_by_id,
     exam_metadata_by_id,
+    homework_assignments_for_grades,
     homework_retake_counts_by_key,
     homework_scores_for_grades,
     primary_session_metadata_by_exam_and_lecture,
@@ -252,11 +253,43 @@ class AdminStudentGradesView(APIView):
         exam_trend, exam_summary = _build_exam_progression(exam_list)
 
         # ── 과제 성적 ──
-        hw_scores = homework_scores_for_grades(
+        hw_scores = list(homework_scores_for_grades(
             tenant=tenant,
             enrollment_ids=enrollment_ids,
-        )
-        hw_ids = list({hs.homework_id for hs in hw_scores})
+        ))
+        hw_assignments = list(homework_assignments_for_grades(
+            tenant=tenant,
+            enrollment_ids=enrollment_ids,
+        ))
+
+        # 점수 행을 우선 유지하고, 아직 채점 행이 없는 배정 과제를 뒤에 합친다.
+        # 배정 테이블 도입 이전의 점수 데이터도 사라지지 않도록 score-only 행은
+        # 호환 노출한다.
+        homework_sources = []
+        seen_hw_key = set()
+        for hs in hw_scores:
+            key = (hs.homework_id, hs.session_id, hs.enrollment_id)
+            if key in seen_hw_key:
+                continue
+            seen_hw_key.add(key)
+            homework_sources.append((hs.homework, hs.session, hs.enrollment_id, hs))
+        for assignment in hw_assignments:
+            key = (
+                assignment.homework_id,
+                assignment.session_id,
+                assignment.enrollment_id,
+            )
+            if key in seen_hw_key:
+                continue
+            seen_hw_key.add(key)
+            homework_sources.append((
+                assignment.homework,
+                assignment.session,
+                assignment.enrollment_id,
+                None,
+            ))
+
+        hw_ids = list({homework.id for homework, _session, _enrollment_id, _hs in homework_sources})
         resolved_hw_links = {}
         if hw_ids and enrollment_ids:
             resolved_hw_links = resolved_homework_link_types(
@@ -274,15 +307,11 @@ class AdminStudentGradesView(APIView):
             )
 
         homework_list = []
-        seen_hw_key = set()
-        for hs in hw_scores:
-            key = (hs.homework_id, hs.session_id, hs.enrollment_id)
-            if key in seen_hw_key:
+        for homework, session, enrollment_id, hs in homework_sources:
+            score = hs.score if hs is not None else None
+            max_score = homework.default_max_score
+            if not _is_json_safe_number(score) or not _is_json_safe_number(max_score):
                 continue
-            seen_hw_key.add(key)
-            if not _is_json_safe_number(hs.score) or not _is_json_safe_number(hs.max_score):
-                continue
-            session = hs.session
             session_id_hw = None
             session_title = None
             lecture_id_hw = None
@@ -298,11 +327,17 @@ class AdminStudentGradesView(APIView):
                     lecture_color = getattr(session.lecture, "color", None)
                     lecture_chip_label = getattr(session.lecture, "chip_label", None)
 
-            is_pass_1st = bool(hs.passed)
-            resolution = resolved_hw_links.get((hs.enrollment_id, hs.homework_id))
-            max_attempt = hw_retake_counts.get((hs.enrollment_id, hs.homework_id), 1)
+            meta = hs.meta if hs is not None and isinstance(hs.meta, dict) else {}
+            meta_status = meta.get("status")
+            is_pass_1st = bool(hs.passed) if hs is not None else None
+            resolution = resolved_hw_links.get((enrollment_id, homework.id))
+            max_attempt = hw_retake_counts.get((enrollment_id, homework.id), 0)
 
-            if is_pass_1st:
+            if meta_status == "NOT_SUBMITTED":
+                achievement = "NOT_SUBMITTED"
+            elif hs is None or score is None:
+                achievement = None
+            elif is_pass_1st:
                 achievement = "PASS"
             elif resolution in ("EXAM_PASS", "HOMEWORK_PASS", "MANUAL_OVERRIDE"):
                 achievement = "REMEDIATED"
@@ -310,16 +345,17 @@ class AdminStudentGradesView(APIView):
                 achievement = "FAIL"
 
             homework_list.append({
-                "homework_id": hs.homework_id,
-                "enrollment_id": hs.enrollment_id,
-                "title": hs.homework.title if hs.homework else f"과제 #{hs.homework_id}",
-                "grading_mode": hs.homework.grading_mode,
-                "score": hs.score,
-                "max_score": hs.max_score,
+                "homework_id": homework.id,
+                "enrollment_id": enrollment_id,
+                "title": homework.title or f"과제 #{homework.id}",
+                "grading_mode": homework.grading_mode,
+                "score": score,
+                "max_score": max_score,
                 "passed": is_pass_1st,
-                "is_locked": bool(hs.is_locked),
-                "lock_reason": hs.lock_reason,
-                "score_updated_at": hs.updated_at.isoformat(),
+                "is_locked": bool(hs.is_locked) if hs is not None else False,
+                "lock_reason": hs.lock_reason if hs is not None else None,
+                "score_updated_at": hs.updated_at.isoformat() if hs is not None else None,
+                "meta_status": meta_status,
                 "achievement": achievement,
                 "retake_count": max_attempt,
                 "session_id": session_id_hw,

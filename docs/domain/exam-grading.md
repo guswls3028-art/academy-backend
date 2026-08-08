@@ -67,9 +67,11 @@
    문항 수를 확정한다.
 2. 같은 tenant의 빈 시험 ID와 원본 파일을
    `POST /exams/pdf-extract/`에 보낸다.
-3. 원본은 tenant 전용 R2 경로에 `problem_source` 자산으로 저장한다. PDF는 같은
-   객체를 기존 배포용 `problem_pdf` 메타데이터에도 연결해 브라우저가 큰 파일을
-   두 번 전송하지 않는다.
+3. 원본은 tenant 전용 storage R2의 `tenants/{tenant}/exams/pdf-extract/` 경로에
+   `problem_source` 자산으로 저장한다. 이 경로의 다운로드 URL도 storage
+   버킷에서 서명하며 AI 버킷으로 잘못 라우팅하지 않는다. PDF는 같은 객체를
+   기존 배포용 `problem_pdf` 메타데이터에도 연결해 브라우저가 큰 파일을 두 번
+   전송하지 않는다.
 4. PDF, 이미지, HWP 5.x 또는 HWPX는 `question_segmentation` 작업으로 전달하고
    `segmentation_status=processing`으로 바꾼다.
 5. 성공 콜백은 정본 문항을 바로 쓰지 않고 `ExamQuestionProposal`에 문제,
@@ -109,15 +111,19 @@ PDF는 앞선 페이지에서 문항이 확인된 경우 그 표제 페이지부
 HWP 5.x는 OLE 본문 레코드와 번호별 미주, EqEdit 수식, BinData를 직접 읽고,
 HWPX는 ZIP 패키지의 본문 문단과 미주·수식·원본 BinData 참조를 읽는다. 단일
 HWP/HWPX에서는 **미주 번호를 경계와 연결 키로 사용**해 본문의 문자·수식·삽화로
-답 표시 없는 문제 이미지를 재현하고, 같은 번호 미주의 전체 원본 그림을 선생님
-해설로 별도 저장한다. 미주 해설 그림이 여러 개면 원래 순서대로 세로 결합한다.
-미주 해설 이미지를 상단 비율로 잘라 문제로 재사용하지 않는다.
+답 표시 없는 문제 이미지를 재현한다. legacy HWP의 picture control은 한 미주에
+표지나 이웃 문항 그림이 함께 들어갈 수 있어 번호별 범위의 정본으로 신뢰하지
+않는다. 번호별 ParaText와 EqEdit로 재현한 `본문·수식`을 기본 해설로 쓰고,
+picture control 결과가 다르면 삭제하지 않은 채 `삽입 그림 직접 확인` 후보로
+별도 보존한다. 교직원이 검수 화면에서 직접 대조해 선택한 경우에만 그 삽입
+그림을 정본 해설로 확정한다. 미주 해설 이미지를 상단 비율로 잘라 문제로
+재사용하지 않는다.
 수식 조판 모듈을 사용할 수 없는 제한 환경에서는 문항을 버리지 않고 EqEdit 원문을
 읽기 쉬운 텍스트로 재현하며, 원본 파일과 교사 검수 경계는 그대로 유지한다.
 EqEdit가 공백 없이 저장한 비교식(`0letheta`)도 공식 토큰 경계만 해석해
 `0≤θ`로 재현하며, 일반 영문 문자열 안의 `le`는 비교 연산자로 바꾸지 않는다.
 
-번호가 있는 모든 미주의 해설 그림과 모든 본문 문제를 함께 재현한 경우에만
+번호가 있는 모든 미주의 안전한 해설 재현과 모든 본문 문제를 함께 재현한 경우에만
 문제+해설 통합 자료로 처리한다. 일부 미주 그림 또는 본문 문항이 빠지면 부분
 그림을 성공으로 오인하지 않고 작업 결과를 `conversion_required`로 닫아, 정답
 표시 없는 문제 PDF를 함께 올리도록 안내한다. 원본은 tenant 전용 자산으로
@@ -141,6 +147,16 @@ AI가 해설을 생성하거나 문장을 바꾸지 않으며 원 HWP 자산도 
 번호가 있는 모든 미주를 재현하지 못하면 부분 이미지만 성공으로 올리지 않고
 실패한다. 단일 HWP/HWPX도 같은 실패 폐쇄 원칙을 따르며, 본문 문제와 미주
 해설을 각각 완성하지 못하면 PDF 문제 원본을 요구한다.
+
+이미 확정된 legacy HWP 시험에서 picture control 범위 오류가 확인된 경우에는
+일반 재분석으로 교사 결과를 덮어쓰지 않는다. 운영자는
+`repair_hwp_source_explanations --tenant-id <id> --exam-id <id>`의 dry-run으로
+원본 해시, 정규 시험·ready 상태, source-file 출처, 승인 문항 번호와 안전 재현
+번호의 완전 일치를 먼저 확인하고 `--apply`한다. 적용은 새 객체 업로드와 byte
+readback 뒤 transaction에서만 정본 키를 바꾸며, 이전 키·원본 SHA-256·교체 키를
+문항 `region_meta.explanation_repair`와 검수 attachment에 남긴다. 이전 객체는
+삭제하지 않아 롤백과 교사 대조가 가능하다. 수동 편집 해설, 일부 문항 불일치,
+다른 tenant 경로, 부분 복구 상태는 모두 실패 폐쇄한다.
 
 과거 `hwp_endnote`/`hwpx_endnote` 검수 후보는 배포 중이던 작업을 잃지 않도록
 8~98% 문제 영역 조절을 계속 지원한다. 새 단일 HWP/HWPX 후보는
@@ -353,8 +369,8 @@ API는 호환 별칭으로 유지한다.
 | POST | `/exams/` | 시험과 채점 계약 생성 |
 | PATCH | `/exams/{id}/` | 채점 방식·학생 성적 공개 전환. 문항·정답·기존 결과는 보존 |
 | POST | `/exams/pdf-extract/` | 주 원본 PDF/이미지/HWP/HWPX와 선택 `explanation_file` HWP/HWPX 보관, 문항·원본 해설 분리 요청 |
-| GET | `/exams/{id}/segmentation-review/` | 문항·해설 검수 후보와 만료형 이미지 URL 조회 |
-| POST | `/exams/{id}/segmentation-review/approve/` | 번호·제외를 반영해 빈 시험 문항과 원본 해설 확정 |
+| GET | `/exams/{id}/segmentation-review/` | 문항·본문·수식 기본 해설, 직접 확인할 삽입 그림과 만료형 URL 조회 |
+| POST | `/exams/{id}/segmentation-review/approve/` | 번호·제외·해설 variant 선택을 반영해 빈 시험 문항과 원본 해설 확정 |
 | GET | `/results/admin/exams/{id}/manual-grading/` | 직접 채점 표와 버전 조회 |
 | POST | `/results/admin/exams/{id}/manual-grading/` | 직접 채점 미리보기 또는 원자적 확정 |
 | GET | `/results/wrong-notes/sources/?student_id=` | 학생의 모든 강의에서 선택 가능한 시험·워크북과 수록 문항 수 조회 |

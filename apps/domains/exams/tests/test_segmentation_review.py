@@ -45,6 +45,14 @@ class ExamSegmentationReviewTests(TestCase):
             detected_number=1,
             problem_image_key=f"tenants/{self.tenant.id}/exams/questions/{self.exam.id}/q001.png",
             explanation_image_key=f"tenants/{self.tenant.id}/exams/explanations/{self.exam.id}/q001.png",
+            region_meta={
+                "source_render_mode": "source_content_reconstruction",
+                "source_attachment_image_key": (
+                    f"tenants/{self.tenant.id}/exams/explanations-review/"
+                    f"{self.exam.id}/q001-source-attachment.png"
+                ),
+                "source_attachment_requires_review": True,
+            },
             engine="hwp_endnote",
         )
         self.p2 = ExamQuestionProposal.objects.create(
@@ -79,6 +87,13 @@ class ExamSegmentationReviewTests(TestCase):
         self.assertTrue(response.data["items"][0]["crop_adjustable"])
         self.assertEqual(response.data["items"][0]["problem_crop_ratio"], 1.0)
         self.assertIn("q001.png", response.data["items"][0]["explanation_image_url"])
+        self.assertIn(
+            "q001-source-attachment.png",
+            response.data["items"][0]["source_attachment_image_url"],
+        )
+        self.assertTrue(
+            response.data["items"][0]["source_attachment_requires_review"]
+        )
 
     @patch("apps.domains.ai.gateway.dispatch_job")
     def test_approve_can_renumber_exclude_and_preserves_source_explanation(self, dispatch):
@@ -107,6 +122,36 @@ class ExamSegmentationReviewTests(TestCase):
         self.assertTrue(explanation.image_key.endswith("q001.png"))
         self.assertFalse(ExamQuestionProposal.objects.filter(exam=self.exam).exists())
         dispatch.assert_called_once()
+
+    @patch("apps.domains.ai.gateway.dispatch_job")
+    def test_approve_can_explicitly_choose_reviewed_source_attachment(self, _dispatch):
+        response = ExamSegmentationApproveView.as_view()(
+            self._request(
+                "post",
+                "/approve",
+                {
+                    "items": [
+                        {
+                            "id": self.p1.id,
+                            "number": 1,
+                            "included": True,
+                            "explanation_variant": "source_attachment",
+                        },
+                        {"id": self.p2.id, "number": 2, "included": False},
+                    ]
+                },
+            ),
+            exam_id=self.exam.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        question = ExamQuestion.objects.get(sheet__exam=self.exam)
+        explanation = QuestionExplanation.objects.get(question=question)
+        self.assertEqual(
+            question.region_meta["explanation_variant"],
+            "source_attachment",
+        )
+        self.assertTrue(explanation.image_key.endswith("q001-source-attachment.png"))
 
     @patch("apps.domains.ai.gateway.dispatch_job")
     @patch(

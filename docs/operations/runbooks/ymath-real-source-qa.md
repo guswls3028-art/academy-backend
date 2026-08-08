@@ -34,14 +34,18 @@ python "$backend\scripts\exam_source_bundle.py" `
 
 python "$backend\scripts\exam_source_hwp_qa.py" `
   --manifest "$artifact\manifest.json" `
-  --output-dir "$artifact\qa"
+  --output-dir "$artifact\qa" `
+  --preview-all
 ```
 
 묶음 도구는 ZIP의 AppleDouble/metadata를 제외하고 SHA-256 중복을 합치되 모든
 원래 위치를 `origins`에 남긴다. 각 고유 원본의 확장자, 용량, 시험/워크북 분류와
 50MB 업로드 계약을 기록한다. HWP/HWPX 감사는 모든 번호 미주와 원본 그림뿐
-아니라 같은 번호의 본문 문자·EqEdit 수식·삽화도 읽고 첫·중간·마지막의 깨끗한
-본문 문제와 미주 해설 미리보기를 각각 만든다. 미주 해설 상단 크롭을 문제
+아니라 같은 번호의 본문 문자·EqEdit 수식·삽화도 읽고 각 번호의 깨끗한 본문
+문제, 안전한 본문·수식 해설, raw picture-control attachment 미리보기를 각각
+만든다. `safe_explanation_count`가 번호 수와 같아야 하며 첫·중간·마지막을 직접
+열어 번호가 일치하는지 확인한다. raw attachment는 표지나 이웃 문항을 포함할 수
+있으므로 기본 해설 합격 근거로 쓰지 않는다. 미주 해설 상단 크롭을 문제
 미리보기로 쓰면 실패다.
 
 2026-08-05 제공 묶음의 재현 기준선은 고유 원본 156개(시험 137, 워크북 19),
@@ -126,11 +130,13 @@ python scripts/ymath_realuse_scenario.py `
   `question_count_mismatch`, `teacher_explanation_coverage_incomplete`처럼 소스 분석
   품질이 실패한 항목은 기존 시험을 중복 생성하지 않고 같은 시험에 소스를 다시
   제출해 현재 worker로 재분석한다. 과거 job/review만 다시 읽어 성공으로 세면 안 된다.
-- 단일 HWP/HWPX는 `problem_visual_count`와 미주 `visual_count`가 번호별로 모두
-  일치해야 한다. 첫·중간·마지막 및 도형·선택지 표본에서 문제 이미지는 본문
-  원문만, 해설 이미지는 미주 원본만 보여야 한다. 문제 쪽에 정답 색칠·손필기
-  풀이가 보이면 자동 합격시키지 않는다. 과거 `hwp_endnote` 검수 후보에만 남은
-  크롭 슬라이더는 호환용이며 신규 성공 기준이 아니다.
+- 단일 HWP/HWPX는 `problem_visual_count`와 `safe_explanation_count`가 번호별로
+  모두 일치해야 한다. 첫·중간·마지막 및 도형·선택지 표본에서 문제 이미지는
+  본문 원문만, 기본 해설은 같은 번호의 ParaText·EqEdit만 보여야 한다. raw
+  picture-control attachment에 표지·이웃 문항이 섞여 있어도 자동 선택하지 않고
+  검수 화면에서만 비교한다. 문제 쪽에 정답 색칠·손필기 풀이가 보이면 자동
+  합격시키지 않는다. 과거 `hwp_endnote` 검수 후보에만 남은 크롭 슬라이더는
+  호환용이며 신규 성공 기준이 아니다.
 - 교사 검수 결정 없이 승인 API를 호출하지 않는다. 승인 뒤에는 문항 번호,
   포함/제외, 원본 해설 연결 수를 다시 읽는다.
 - 시험과 워크북에서 각각 2명 이상에게 O/X/복습을 저장하고 새로고침 후

@@ -249,6 +249,13 @@ def _humanize_hwp_equation(script: str) -> str:
         value,
         flags=re.I,
     )
+    value = re.sub(
+        r"(alpha|beta|gamma|delta|theta|lambda|mu|pi|sigma|phi|omega|[0-9}\)])"
+        r"over(?=[0-9{(])",
+        r"\1 over ",
+        value,
+        flags=re.I,
+    )
 
     value = re.sub(
         r"\broot\s*\{([^{}]+)\}\s*of\s*\{([^{}]+)\}",
@@ -646,16 +653,35 @@ def _replace_hwp_fractions(value: str) -> str:
         if left_end < 0 or right_start >= len(value):
             search_from = over_end
             continue
-        if value[left_end] != "}" or value[right_start] != "{":
+        if value[left_end] == "}":
+            left_start = _find_matching_brace(value, left_end, reverse=True)
+            numerator = (
+                _replace_hwp_fractions(value[left_start + 1 : left_end])
+                if left_start >= 0
+                else ""
+            )
+        else:
+            left_match = re.search(r"[A-Za-z0-9]+$", value[: left_end + 1])
+            left_start = left_match.start() if left_match else -1
+            numerator = left_match.group(0) if left_match else ""
+
+        if value[right_start] == "{":
+            right_end = _find_matching_brace(value, right_start)
+            denominator = (
+                _replace_hwp_fractions(value[right_start + 1 : right_end])
+                if right_end >= 0
+                else ""
+            )
+        else:
+            right_match = re.match(r"[A-Za-z0-9]+", value[right_start:])
+            right_end = (
+                right_start + right_match.end() - 1 if right_match else -1
+            )
+            denominator = right_match.group(0) if right_match else ""
+
+        if left_start < 0 or right_end < 0 or not numerator or not denominator:
             search_from = over_end
             continue
-        left_start = _find_matching_brace(value, left_end, reverse=True)
-        right_end = _find_matching_brace(value, right_start)
-        if left_start < 0 or right_end < 0:
-            search_from = over_end
-            continue
-        numerator = _replace_hwp_fractions(value[left_start + 1 : left_end])
-        denominator = _replace_hwp_fractions(value[right_start + 1 : right_end])
         replacement = rf"\frac{{{numerator}}}{{{denominator}}}"
         value = value[:left_start] + replacement + value[right_end + 1 :]
         search_from = max(left_start - 1, 0)
@@ -1094,10 +1120,14 @@ def _render_endnote_content(
     content: _HwpEndnoteContent,
     images: list[Image.Image],
 ) -> tuple[bytes, int, int]:
+    # Legacy HWP picture controls are not reliably scoped to their numbered
+    # endnote. Some teacher files attach a cover or neighboring questions to a
+    # perfectly numbered text/equation note. The exact note body is therefore
+    # the safe default; raw pictures are retained separately as review evidence.
     return _render_source_content(
         content=content,
-        images=images,
-        label=f"미주 {content.number}번 · 선생님 원문(문자·수식·삽화 재현)",
+        images=[],
+        label=f"미주 {content.number}번 · 선생님 원문(문자·수식 재현)",
     )
 
 
@@ -1173,7 +1203,7 @@ def extract_hwp_endnotes(
                         )
                     )
                 content = content_by_number.get(number)
-                if include_paired_reconstruction and content and (content.paragraphs or images):
+                if include_paired_reconstruction and content and content.paragraphs:
                     png_bytes, width, height = _render_endnote_content(
                         content=content,
                         images=images,
@@ -1184,7 +1214,7 @@ def extract_hwp_endnotes(
                             png_bytes=png_bytes,
                             width=width,
                             height=height,
-                            picture_count=len(images),
+                            picture_count=0,
                             render_mode="source_content_reconstruction",
                         )
                     )
