@@ -622,6 +622,7 @@ class AdminStudentGradesScopeTest(TestCase, ClinicTestMixin):
 
     def test_assigned_homeworks_include_not_submitted_and_ungraded_rows(self):
         homework_assignment_model = apps.get_model("homework", "HomeworkAssignment")
+        submission_model = apps.get_model("submissions", "Submission")
         score_model = self.data["enrollments"][0].homework_scores.model
         homework_model = score_model._meta.get_field("homework").remote_field.model
         enrollment = self.data["enrollments"][0]
@@ -649,6 +650,21 @@ class AdminStudentGradesScopeTest(TestCase, ClinicTestMixin):
             meta={"status": score_model.MetaStatus.NOT_SUBMITTED},
         )
 
+        missing = homework_model.objects.create(
+            tenant=self.tenant,
+            homework_type=homework_model.HomeworkType.REGULAR,
+            session=self.data["lec_session"],
+            title="점수형 미제출 과제",
+            grading_mode=homework_model.GradingMode.SCORE,
+            meta={"default_max_score": 30},
+        )
+        homework_assignment_model.objects.create(
+            tenant=self.tenant,
+            homework=missing,
+            session=self.data["lec_session"],
+            enrollment=enrollment,
+        )
+
         ungraded = homework_model.objects.create(
             tenant=self.tenant,
             homework_type=homework_model.HomeworkType.REGULAR,
@@ -663,12 +679,24 @@ class AdminStudentGradesScopeTest(TestCase, ClinicTestMixin):
             session=self.data["lec_session"],
             enrollment=enrollment,
         )
+        submission_model.objects.create(
+            tenant=self.tenant,
+            user=self.admin_user,
+            enrollment=enrollment,
+            target_type=submission_model.TargetType.HOMEWORK,
+            target_id=ungraded.id,
+            source=submission_model.Source.ONLINE,
+            status=submission_model.Status.SUBMITTED,
+        )
 
         response = self._get(self.student.id)
 
         self.assertEqual(response.status_code, 200, response.data)
         rows = {row["title"]: row for row in response.data["homeworks"]}
-        self.assertEqual(set(rows), {"완료형 미제출 과제", "점수형 검사 전 과제"})
+        self.assertEqual(
+            set(rows),
+            {"완료형 미제출 과제", "점수형 미제출 과제", "점수형 검사 전 과제"},
+        )
 
         not_submitted_row = rows["완료형 미제출 과제"]
         self.assertEqual(not_submitted_row["grading_mode"], "COMPLETION")
@@ -678,6 +706,15 @@ class AdminStudentGradesScopeTest(TestCase, ClinicTestMixin):
         self.assertEqual(not_submitted_row["achievement"], "NOT_SUBMITTED")
         self.assertEqual(not_submitted_row["retake_count"], 1)
         self.assertIsNotNone(not_submitted_row["score_updated_at"])
+
+        missing_row = rows["점수형 미제출 과제"]
+        self.assertEqual(missing_row["grading_mode"], "SCORE")
+        self.assertIsNone(missing_row["score"])
+        self.assertEqual(missing_row["max_score"], 30)
+        self.assertEqual(missing_row["meta_status"], "NOT_SUBMITTED")
+        self.assertEqual(missing_row["achievement"], "NOT_SUBMITTED")
+        self.assertEqual(missing_row["retake_count"], 0)
+        self.assertIsNone(missing_row["score_updated_at"])
 
         ungraded_row = rows["점수형 검사 전 과제"]
         self.assertEqual(ungraded_row["grading_mode"], "SCORE")

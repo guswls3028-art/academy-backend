@@ -225,6 +225,26 @@ def homework_assignments_for_grades(*, tenant: Any, enrollment_ids: list[int]):
     )
 
 
+def submitted_homework_keys_for_grades(
+    *,
+    tenant: Any,
+    enrollment_ids: list[int],
+    homework_ids: list[int],
+) -> set[tuple[int, int]]:
+    """Return tenant-safe (enrollment, homework) keys with a submission record."""
+    from apps.domains.submissions.models import Submission
+
+    return set(
+        Submission.objects.filter(
+            tenant=tenant,
+            enrollment_id__in=enrollment_ids,
+            enrollment__tenant=tenant,
+            target_type=Submission.TargetType.HOMEWORK,
+            target_id__in=homework_ids,
+        ).values_list("enrollment_id", "target_id")
+    )
+
+
 def resolved_homework_link_types(
     *,
     tenant: Any,
