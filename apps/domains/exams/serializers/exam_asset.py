@@ -4,7 +4,10 @@ from __future__ import annotations
 from rest_framework import serializers
 
 from apps.domains.exams.models import ExamAsset
-from apps.infrastructure.storage.r2 import generate_presigned_get_url
+from apps.infrastructure.storage.r2 import (
+    generate_presigned_get_url,
+    generate_presigned_get_url_storage,
+)
 
 
 class ExamAssetSerializer(serializers.ModelSerializer):
@@ -35,4 +38,10 @@ class ExamAssetSerializer(serializers.ModelSerializer):
         read_only_fields = ["file_key", "file_type", "file_size", "download_url"]
 
     def get_download_url(self, obj: ExamAsset) -> str:
+        storage_prefix = f"tenants/{int(obj.exam.tenant_id)}/exams/pdf-extract/"
+        if str(obj.file_key).startswith(storage_prefix):
+            return generate_presigned_get_url_storage(
+                key=obj.file_key,
+                expires_in=60 * 60,
+            )
         return generate_presigned_get_url(key=obj.file_key, expires_in=60 * 60)

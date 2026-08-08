@@ -579,6 +579,15 @@ def _handle_exam_ai_result(
                                 "y": int(bbox[1]) if len(bbox) > 1 else 0,
                                 "w": int(bbox[2]) if len(bbox) > 2 else 0,
                                 "h": int(bbox[3]) if len(bbox) > 3 else 0,
+                                "source_render_mode": str(
+                                    explanation.get("source_render_mode") or ""
+                                ),
+                                "source_attachment_image_key": str(
+                                    explanation.get("source_attachment_image_key") or ""
+                                ),
+                                "source_attachment_requires_review": bool(
+                                    explanation.get("source_attachment_requires_review")
+                                ),
                             },
                             problem_image_key=str(image_key),
                             explanation_text=str(explanation.get("text") or "")[:2000],

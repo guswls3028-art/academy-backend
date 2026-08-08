@@ -103,6 +103,14 @@ def test_humanizes_common_hwp_equation_tokens_without_changing_meaning():
     )
     assert _humanize_hwp_equation("0letheta<2pi") == "0≤θ<2π"
     assert _humanize_hwp_equation("molecule") == "molecule"
+    compact_fraction = _humanize_hwp_equation("h(alpha+betaover2)")
+    assert "over" not in compact_fraction
+    assert "β" in compact_fraction
+    nested_fraction = _hwp_equation_to_mathtext(
+        "{h(alpha)+h(beta)}over{2h left( {alpha+beta} over 2 right) }"
+    )
+    assert "over" not in nested_fraction
+    assert r"\frac{\alpha+\beta}{2}" in nested_fraction
 
 
 def test_strips_hangul_eqedit_internal_text_object_sentinel():
@@ -450,6 +458,81 @@ def test_single_hwp_uploads_clean_body_problem_instead_of_cropping_solution(monk
     assert result.result["segmentation_method"] == "hwp_body_endnote"
 
 
+def test_single_hwp_prefers_numbered_text_reconstruction_and_keeps_raw_attachment(
+    monkeypatch,
+):
+    raw_attachment = HwpEndnoteVisual(
+        number=1,
+        png_bytes=b"untrusted-embedded-picture",
+        width=800,
+        height=1200,
+        picture_count=1,
+    )
+    safe_explanation = HwpEndnoteVisual(
+        number=1,
+        png_bytes=b"numbered-text-and-equations",
+        width=1600,
+        height=900,
+        picture_count=0,
+        render_mode="source_content_reconstruction",
+    )
+    problem = HwpEndnoteVisual(
+        number=1,
+        png_bytes=b"clean-problem",
+        width=1600,
+        height=900,
+        picture_count=0,
+        render_mode="source_body_reconstruction",
+    )
+    monkeypatch.setattr(
+        "academy.application.use_cases.ai.pipelines.hwp_question_pipeline."
+        "extract_document_endnotes",
+        lambda _path, _filename, **_kwargs: HwpEndnoteExtraction(
+            control_numbers=(1,),
+            visuals=(raw_attachment,),
+            paired_visuals=(safe_explanation,),
+            problem_visuals=(problem,),
+        ),
+    )
+    uploads = []
+    monkeypatch.setattr(
+        "academy.application.use_cases.ai.pipelines.hwp_question_pipeline."
+        "upload_fileobj_to_r2_storage",
+        lambda **kwargs: uploads.append(
+            {**kwargs, "bytes": kwargs["fileobj"].getvalue()}
+        ),
+    )
+    job = AIJob.new(
+        type="question_segmentation",
+        payload={"exam_id": "7", "filename": "combined.hwp"},
+        tenant_id="3",
+    )
+
+    result = run_hwp_question_pipeline(
+        job=job,
+        local_path="unused.hwp",
+        payload=job.payload,
+        tenant_id=job.tenant_id,
+        record_progress=lambda *_args, **_kwargs: None,
+    )
+
+    explanation_upload = next(
+        item
+        for item in uploads
+        if item["key"].endswith("/q001.png")
+        and "/explanations/" in item["key"]
+    )
+    attachment_upload = next(
+        item for item in uploads if item["key"].endswith("q001-source-attachment.png")
+    )
+    explanation = result.result["explanations"][0]
+    assert explanation_upload["bytes"] == b"numbered-text-and-equations"
+    assert attachment_upload["bytes"] == b"untrusted-embedded-picture"
+    assert explanation["source_render_mode"] == "source_content_reconstruction"
+    assert explanation["source_attachment_image_key"] == attachment_upload["key"]
+    assert explanation["source_attachment_requires_review"] is True
+
+
 def test_paired_teacher_hwp_matches_clean_problem_source_numbers_only():
     result = merge_paired_teacher_explanations(
         primary_result={
@@ -520,4 +603,8 @@ def test_paired_teacher_hwp_uses_complete_reconstructed_endnote_visuals(monkeypa
     assert {item["source_render_mode"] for item in explanations} == {
         "source_content_reconstruction"
     }
-    assert len(uploads) == 2
+    assert len(uploads) == 3
+    assert explanations[0]["source_attachment_requires_review"] is True
+    assert explanations[0]["source_attachment_image_key"].endswith(
+        "q001-source-attachment.png"
+    )

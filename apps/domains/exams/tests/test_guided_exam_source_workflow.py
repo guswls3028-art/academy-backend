@@ -360,6 +360,12 @@ class GuidedExamSourceWorkflowTests(TestCase):
                         "text": "선생님이 작성한 풀이",
                         "image_key": f"tenants/{self.tenant.id}/exams/explanations/{exam.id}/2.png",
                         "match_confidence": 1.0,
+                        "source_render_mode": "source_content_reconstruction",
+                        "source_attachment_image_key": (
+                            f"tenants/{self.tenant.id}/exams/explanations-review/"
+                            f"{exam.id}/q002-source-attachment.png"
+                        ),
+                        "source_attachment_requires_review": True,
                     }
                 ],
                 "segmentation_method": "hwp_endnote",
@@ -386,6 +392,15 @@ class GuidedExamSourceWorkflowTests(TestCase):
         self.assertEqual(
             proposals[1].explanation_image_key,
             f"tenants/{self.tenant.id}/exams/explanations/{exam.id}/2.png",
+        )
+        self.assertEqual(
+            proposals[1].region_meta["source_render_mode"],
+            "source_content_reconstruction",
+        )
+        self.assertTrue(
+            proposals[1].region_meta["source_attachment_image_key"].endswith(
+                "q002-source-attachment.png"
+            )
         )
         dispatch_matchup.assert_not_called()
 

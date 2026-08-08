@@ -50,6 +50,12 @@
 - 완료형도 별도 상태 테이블을 만들지 않는다. 기존 `HomeworkScore.passed`,
   `clinic_required`와 `ClinicLink` 동기화를 그대로 사용해 학생 상세, 성적표,
   클리닉 대상이 같은 판정을 읽는다.
+- 학생 상세의 과제 목록은 **배정 행을 기준**으로 만들고 기존 점수 행을 합친다.
+  따라서 아직 `HomeworkScore`가 없는 검사 전 과제도 빠지지 않는다. 배정 뒤
+  명시적으로 `meta.status=NOT_SUBMITTED`가 기록된 결과는 `미제출`, 점수와
+  미제출 상태가 모두 없는 결과는 `검사 전`으로 구분한다. 삭제·시스템 과제와
+  다른 tenant·다른 학생 배정은 포함하지 않는다. 과거 배정 행 없이 점수만 남은
+  정상 legacy 결과는 호환을 위해 계속 표시한다.
 - 결과 행이 하나라도 생긴 과제는 채점 방식을 바꿀 수 없다. 기존 숫자 점수나
   교사 기록을 새 의미로 재해석하지 않으며, 다른 방식이 필요하면 새 과제를 만든다.
 - 템플릿 저장·템플릿 불러오기·다른 차시 복사는 `grading_mode`를 보존한다.
@@ -126,6 +132,9 @@ X를 나중에 다시 맞힌 뒤에도 남기려면 O·복습으로 바꾼다. �
 반환한다. 학생 상세의 단건 수정도 `/homework/scores/quick/`을 사용하며 먼저
 기존 점수 편집 lease를 짧게 획득한다. 다른 화면이 같은 차시를 수정 중이면
 `409 SCORE_EDIT_LOCKED`로 실패하고 값을 덮어쓰지 않는다.
+학생 상세 응답은 배정된 각 과제의 `grading_mode`, `meta_status`, 정본
+`max_score`를 반환한다. 완료형은 완료 여부, 점수형은 `점수/만점`을 표시하며
+`NOT_SUBMITTED`와 미검사 `null`은 모두 숫자 0으로 바꾸지 않는다.
 
 현재 운영 설정 화면은 조회 응답의 `updated_at`을
 `X-Expected-Updated-At` 헤더로 보낸다. 서버는 과제 행을 잠근 뒤 같은
@@ -144,6 +153,8 @@ X를 나중에 다시 맞힌 뒤에도 남기려면 O·복습으로 바꾼다. �
   `apps/domains/homework/serializers/core.py`,
   `services/policy_recalc.py`
 - 성적표 조회: `apps/domains/results/views/session_scores_view.py`
+- 학생 상세 과제 합성: `apps/domains/results/views/admin_student_grades_view.py`,
+  `apps/support/results/admin_student_grades_dependencies.py`
 - 워크북 원본·채점표: `views/homework_view.py`,
   `tests/test_workbook_source_and_grading.py`
 - Ymath 시험·워크북 통합 실자료 UAT:

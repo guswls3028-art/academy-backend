@@ -19,14 +19,21 @@ from academy.adapters.tools.hwp_endnote_images import (  # noqa: E402
 )
 
 
-def _preview_numbers(visuals) -> set[int]:
+def _preview_numbers(visuals, *, preview_all: bool = False) -> set[int]:
     if not visuals:
         return set()
+    if preview_all:
+        return {int(visual.number) for visual in visuals}
     indexes = {0, len(visuals) // 2, len(visuals) - 1}
     return {int(visuals[index].number) for index in indexes}
 
 
-def analyze_manifest(*, manifest_path: Path, output_dir: Path) -> dict:
+def analyze_manifest(
+    *,
+    manifest_path: Path,
+    output_dir: Path,
+    preview_all: bool = False,
+) -> dict:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     output_dir.mkdir(parents=True, exist_ok=True)
     preview_dir = output_dir / "hwp-previews"
@@ -49,8 +56,10 @@ def analyze_manifest(*, manifest_path: Path, output_dir: Path) -> dict:
             "status": "error",
             "control_count": 0,
             "visual_count": 0,
+            "safe_explanation_count": 0,
             "problem_visual_count": 0,
             "missing_visual_numbers": [],
+            "missing_safe_explanation_numbers": [],
             "missing_problem_numbers": [],
             "preview_numbers": [],
             "visual_dimensions": [],
@@ -59,13 +68,22 @@ def analyze_manifest(*, manifest_path: Path, output_dir: Path) -> dict:
             extraction = extract_document_endnotes(
                 str(source_path),
                 str(document["display_name"]),
+                include_paired_reconstruction=True,
                 include_problem_reconstruction=True,
             )
-            preview_numbers = _preview_numbers(extraction.visuals)
+            safe_explanations = extraction.paired_visuals or extraction.visuals
+            preview_numbers = _preview_numbers(
+                safe_explanations,
+                preview_all=preview_all,
+            )
             report["control_count"] = len(extraction.control_numbers)
             report["visual_count"] = len(extraction.visuals)
+            report["safe_explanation_count"] = len(safe_explanations)
             report["problem_visual_count"] = len(extraction.problem_visuals)
             report["missing_visual_numbers"] = list(extraction.missing_visual_numbers)
+            report["missing_safe_explanation_numbers"] = list(
+                extraction.missing_paired_visual_numbers
+            )
             report["missing_problem_numbers"] = list(
                 extraction.missing_problem_visual_numbers
             )
@@ -77,12 +95,12 @@ def analyze_manifest(*, manifest_path: Path, output_dir: Path) -> dict:
                     "height": int(visual.height),
                     "pictures": int(visual.picture_count),
                 }
-                for visual in extraction.visuals
+                for visual in safe_explanations
             ]
-            if not extraction.visuals:
+            if not safe_explanations:
                 report["status"] = "no_numbered_visuals"
             elif (
-                extraction.missing_visual_numbers
+                extraction.missing_paired_visual_numbers
                 or extraction.missing_problem_visual_numbers
             ):
                 report["status"] = "paired_problem_file_required"
@@ -92,7 +110,7 @@ def analyze_manifest(*, manifest_path: Path, output_dir: Path) -> dict:
             problems_by_number = {
                 int(visual.number): visual for visual in extraction.problem_visuals
             }
-            for visual in extraction.visuals:
+            for visual in safe_explanations:
                 if int(visual.number) not in preview_numbers:
                     continue
                 stem = f"{source_id}-q{int(visual.number):03d}"
@@ -127,6 +145,9 @@ def analyze_manifest(*, manifest_path: Path, output_dir: Path) -> dict:
         "status_counts": status_counts,
         "total_controls": sum(int(item["control_count"]) for item in items),
         "total_visuals": sum(int(item["visual_count"]) for item in items),
+        "total_safe_explanations": sum(
+            int(item["safe_explanation_count"]) for item in items
+        ),
         "total_problem_visuals": sum(
             int(item["problem_visual_count"]) for item in items
         ),
@@ -144,10 +165,16 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Analyze HWP/HWPX endnote coverage from a source manifest.")
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--preview-all",
+        action="store_true",
+        help="Render every matched pair for a focused document audit.",
+    )
     args = parser.parse_args()
     payload = analyze_manifest(
         manifest_path=args.manifest,
         output_dir=args.output_dir,
+        preview_all=args.preview_all,
     )
     print(json.dumps(payload["summary"], ensure_ascii=False, sort_keys=True))
     return 0 if "error" not in payload["summary"]["status_counts"] else 1

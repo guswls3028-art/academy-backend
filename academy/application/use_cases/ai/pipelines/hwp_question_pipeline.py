@@ -44,6 +44,9 @@ def extract_and_upload_hwp_explanations(
         )
 
     explanations: list[dict[str, Any]] = []
+    raw_visuals_by_number = {
+        int(visual.number): visual for visual in extraction.visuals
+    }
     for visual in paired_visuals:
         explanation_key = (
             f"tenants/{tenant_id}/exams/explanations/"
@@ -54,6 +57,18 @@ def extract_and_upload_hwp_explanations(
             key=explanation_key,
             content_type="image/png",
         )
+        raw_visual = raw_visuals_by_number.get(int(visual.number))
+        source_attachment_key = ""
+        if raw_visual is not None and raw_visual.png_bytes != visual.png_bytes:
+            source_attachment_key = (
+                f"tenants/{tenant_id}/exams/explanations-review/"
+                f"{exam_id}/q{visual.number:03d}-source-attachment.png"
+            )
+            upload_fileobj_to_r2_storage(
+                fileobj=BytesIO(raw_visual.png_bytes),
+                key=source_attachment_key,
+                content_type="image/png",
+            )
         explanations.append(
             {
                 "question_number": visual.number,
@@ -63,6 +78,8 @@ def extract_and_upload_hwp_explanations(
                 "source": "source_file",
                 "match_confidence": 1.0,
                 "source_render_mode": visual.render_mode,
+                "source_attachment_image_key": source_attachment_key,
+                "source_attachment_requires_review": bool(source_attachment_key),
             }
         )
     return extraction, explanations
@@ -118,6 +135,7 @@ def run_hwp_question_pipeline(
         extraction = extract_document_endnotes(
             local_path,
             filename,
+            include_paired_reconstruction=True,
             include_problem_reconstruction=True,
         )
         if not extraction.visuals:
@@ -170,7 +188,10 @@ def run_hwp_question_pipeline(
                 ),
             },
         )
-    visuals = list(extraction.visuals)
+    visuals = list(extraction.paired_visuals or extraction.visuals)
+    raw_visuals_by_number = {
+        int(visual.number): visual for visual in extraction.visuals
+    }
     explanations: list[dict[str, Any]] = []
     for visual in visuals:
         explanation_key = (
@@ -182,6 +203,18 @@ def run_hwp_question_pipeline(
             key=explanation_key,
             content_type="image/png",
         )
+        raw_visual = raw_visuals_by_number.get(int(visual.number))
+        source_attachment_key = ""
+        if raw_visual is not None and raw_visual.png_bytes != visual.png_bytes:
+            source_attachment_key = (
+                f"tenants/{tenant_id}/exams/explanations-review/"
+                f"{exam_id}/q{visual.number:03d}-source-attachment.png"
+            )
+            upload_fileobj_to_r2_storage(
+                fileobj=BytesIO(raw_visual.png_bytes),
+                key=source_attachment_key,
+                content_type="image/png",
+            )
         explanations.append(
             {
                 "question_number": visual.number,
@@ -190,6 +223,9 @@ def run_hwp_question_pipeline(
                 "image_key": explanation_key,
                 "source": "source_file",
                 "match_confidence": 1.0,
+                "source_render_mode": visual.render_mode,
+                "source_attachment_image_key": source_attachment_key,
+                "source_attachment_requires_review": bool(source_attachment_key),
             }
         )
     record_progress(

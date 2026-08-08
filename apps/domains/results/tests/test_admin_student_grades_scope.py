@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 from unittest.mock import patch
 
+from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.db import connection
 from django.test import TestCase
@@ -618,6 +619,74 @@ class AdminStudentGradesScopeTest(TestCase, ClinicTestMixin):
         self.assertEqual(homework_row["grading_mode"], "SCORE")
         self.assertFalse(homework_row["is_locked"])
         self.assertIsNotNone(homework_row["score_updated_at"])
+
+    def test_assigned_homeworks_include_not_submitted_and_ungraded_rows(self):
+        homework_assignment_model = apps.get_model("homework", "HomeworkAssignment")
+        score_model = self.data["enrollments"][0].homework_scores.model
+        homework_model = score_model._meta.get_field("homework").remote_field.model
+        enrollment = self.data["enrollments"][0]
+
+        not_submitted = homework_model.objects.create(
+            tenant=self.tenant,
+            homework_type=homework_model.HomeworkType.REGULAR,
+            session=self.data["lec_session"],
+            title="완료형 미제출 과제",
+            grading_mode=homework_model.GradingMode.COMPLETION,
+        )
+        homework_assignment_model.objects.create(
+            tenant=self.tenant,
+            homework=not_submitted,
+            session=self.data["lec_session"],
+            enrollment=enrollment,
+        )
+        score_model.objects.create(
+            enrollment=enrollment,
+            session=self.data["lec_session"],
+            homework=not_submitted,
+            score=None,
+            max_score=1,
+            passed=False,
+            meta={"status": score_model.MetaStatus.NOT_SUBMITTED},
+        )
+
+        ungraded = homework_model.objects.create(
+            tenant=self.tenant,
+            homework_type=homework_model.HomeworkType.REGULAR,
+            session=self.data["lec_session"],
+            title="점수형 검사 전 과제",
+            grading_mode=homework_model.GradingMode.SCORE,
+            meta={"default_max_score": 30},
+        )
+        homework_assignment_model.objects.create(
+            tenant=self.tenant,
+            homework=ungraded,
+            session=self.data["lec_session"],
+            enrollment=enrollment,
+        )
+
+        response = self._get(self.student.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        rows = {row["title"]: row for row in response.data["homeworks"]}
+        self.assertEqual(set(rows), {"완료형 미제출 과제", "점수형 검사 전 과제"})
+
+        not_submitted_row = rows["완료형 미제출 과제"]
+        self.assertEqual(not_submitted_row["grading_mode"], "COMPLETION")
+        self.assertIsNone(not_submitted_row["score"])
+        self.assertEqual(not_submitted_row["max_score"], 1)
+        self.assertEqual(not_submitted_row["meta_status"], "NOT_SUBMITTED")
+        self.assertEqual(not_submitted_row["achievement"], "NOT_SUBMITTED")
+        self.assertEqual(not_submitted_row["retake_count"], 1)
+        self.assertIsNotNone(not_submitted_row["score_updated_at"])
+
+        ungraded_row = rows["점수형 검사 전 과제"]
+        self.assertEqual(ungraded_row["grading_mode"], "SCORE")
+        self.assertIsNone(ungraded_row["score"])
+        self.assertEqual(ungraded_row["max_score"], 30)
+        self.assertIsNone(ungraded_row["meta_status"])
+        self.assertIsNone(ungraded_row["achievement"])
+        self.assertEqual(ungraded_row["retake_count"], 0)
+        self.assertIsNone(ungraded_row["score_updated_at"])
 
     def test_non_finite_homework_is_excluded_and_response_json_still_renders(self):
         score_model = self.data["enrollments"][0].homework_scores.model
