@@ -24,6 +24,17 @@
   소스보다 먼저 설치한다. 코드 변경은 entrypoint 검증과 소스 레이어만
   무효화하며, requirements가 그대로면 의존성 설치 캐시를 재사용한다.
 - 시스템 FFmpeg는 실제 변환을 수행하는 격리된 AWS Batch Video 이미지에만 둔다.
+  Debian stable FFmpeg에 수정 패키지가 없는 보안 결함은 High 상한을 올려
+  넘기지 않는다. Video 이미지는 공식 FFmpeg GitHub mirror의 전체 commit SHA를
+  고정하고 checkout SHA를 빌드 중 재검증한 뒤 source build를 사용한다. 현재
+  `db05df9d135fb56a4babb836d5e9f5c1d984e087`은
+  CVE-2026-70628과 CVE-2026-70632 수정을 모두 포함한다. 최종 이미지에는
+  Debian `ffmpeg`/`libav*` 패키지를 넣지 않고, 고정 빌드의 `ffmpeg`와
+  `ffprobe`, H.264 `libx264`, AAC, HLS 실제 변환 smoke를 이미지 빌드에서
+  통과시킨다. commit을 바꿀 때는 두 수정의 ancestry, 전체 SHA, HLS smoke,
+  ECR 완료 스캔과 기존 High 상한 비증가를 함께 확인한다. Debian FFmpeg와
+  전이 패키지를 제거한 뒤 Video 이미지의 High 상한은 공통 base와 같은 8로
+  즉시 낮추며, 이 수치를 넘는 후보는 다시 실패 폐쇄한다.
   API의 upload-complete probe는 실패 허용 보조 검사이고 Video worker가 최종 검증과
   변환을 소유한다. AI frame extraction은 OpenCV wheel에 포함된 FFmpeg 지원을 쓰며,
   wheel이 그 기능을 잃으면 AI 이미지 빌드가 즉시 실패한다.

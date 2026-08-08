@@ -3,7 +3,7 @@
   "maximumHighFindings": {
     "academy-base": 8,
     "academy-api": 12,
-    "academy-video-worker": 34,
+    "academy-video-worker": 8,
     "academy-messaging-worker": 8,
     "academy-ai-worker-cpu": 12,
     "academy-tools-worker": 12

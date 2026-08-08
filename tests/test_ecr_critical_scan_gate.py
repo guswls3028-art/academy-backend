@@ -164,7 +164,7 @@ def test_runtime_base_is_digest_pinned_without_unused_postgres_client() -> None:
     assert "postgresql-client" not in dockerfile
 
 
-def test_ffmpeg_is_isolated_to_video_worker() -> None:
+def test_patched_ffmpeg_is_source_pinned_and_isolated_to_video_worker() -> None:
     repository = Path(__file__).parents[1]
     api = (repository / "docker" / "api" / "Dockerfile").read_text(encoding="utf-8")
     ai = (repository / "docker" / "ai-worker-cpu" / "Dockerfile").read_text(
@@ -179,7 +179,14 @@ def test_ffmpeg_is_isolated_to_video_worker() -> None:
     assert "    ffmpeg \\" not in ai
     assert "cv2.getBuildInformation" in ai
     assert "'YES' in line.split()" in ai
-    assert "    ffmpeg \\" in video
+    assert "    ffmpeg \\" not in video
+    assert "FFMPEG_COMMIT=db05df9d135fb56a4babb836d5e9f5c1d984e087" in video
+    assert "https://github.com/FFmpeg/FFmpeg.git" in video
+    assert 'test "$(git -C /tmp/ffmpeg rev-parse HEAD)" = "${FFMPEG_COMMIT}"' in video
+    assert "CVE-2026-70628/70632" in video
+    assert 'ffmpeg -hide_banner -encoders | grep -q "libx264"' in video
+    assert "/tmp/ffmpeg-smoke/stream.m3u8" in video
+    assert "    libx264-164 \\" in video
 
 
 def test_missing_scan_result_is_started_then_polled(monkeypatch: pytest.MonkeyPatch) -> None:
