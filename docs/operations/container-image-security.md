@@ -31,7 +31,13 @@
   CVE-2026-70628과 CVE-2026-70632 수정을 모두 포함한다. 최종 이미지에는
   Debian `ffmpeg`/`libav*` 패키지를 넣지 않고, 고정 빌드의 `ffmpeg`와
   `ffprobe`, H.264 `libx264`, AAC, HLS 실제 변환 smoke를 이미지 빌드에서
-  통과시킨다. commit을 바꿀 때는 두 수정의 ancestry, 전체 SHA, HLS smoke,
+  통과시킨다. checkout한 전체 SHA는 설치 디렉터리의
+  `academy-source-commit` 마커에 기록하고 최종 stage에서 다시 대조한다.
+  FFmpeg가 shallow checkout SHA를 자체 version 문자열에 노출하는지에는
+  의존하지 않는다. Video source build만 공개 저장소용 GitHub
+  `ubuntu-24.04-arm`에서 네이티브로 수행하며, 다른 runtime 이미지는 기존
+  x64 runner와 QEMU 경계를 유지한다. commit을 바꿀 때는 두 수정의 ancestry,
+  전체 SHA, 설치 마커, HLS smoke,
   ECR 완료 스캔과 기존 High 상한 비증가를 함께 확인한다. Debian FFmpeg와
   전이 패키지를 제거한 뒤 Video 이미지의 High 상한은 공통 base와 같은 8로
   즉시 낮추며, 이 수치를 넘는 후보는 다시 실패 폐쇄한다.
