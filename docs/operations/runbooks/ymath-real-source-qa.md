@@ -25,7 +25,7 @@ Ymath 선생님이 실제 사용하는 시험지·워크북 원본을 운영 데
 
 ```powershell
 $backend = "C:\academy\backend"
-$source = "C:\academy\테넌트별자료양식\ymath"
+$source = "C:\academy\materials\tenants\ymath"
 $artifact = "C:\academy\_artifacts\ymath-real-scenario-20260805"
 
 python "$backend\scripts\exam_source_bundle.py" `
