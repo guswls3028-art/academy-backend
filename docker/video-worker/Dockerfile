@@ -51,7 +51,6 @@ USER root
 # 모두 포함하며, ECR의 패키지 버전 휴리스틱과 실제 런타임을 일치시킨다.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
-    libglib2.0-0 \
     libx264-164 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=ffmpeg-builder /opt/academy-ffmpeg /opt/academy-ffmpeg
