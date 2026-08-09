@@ -109,11 +109,13 @@
       "packageName": "glib2.0",
       "packageVersion": "2.84.4-3~deb13u3",
       "repositories": [
-        "academy-ai-worker-cpu"
+        "academy-api",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
       ],
       "expiresOn": "2026-08-19",
       "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-58016",
-      "rationale": "Debian classifies this malformed GDBus introspection-XML out-of-bounds read as a no-DSA minor issue and has no stable fix. GLib is retained only as a mandatory tesseract-ocr dependency; Academy invokes neither g_dbus_node_info_new_for_xml nor D-Bus introspection XML in the isolated AI worker. Keep exact AI image and package-version matching until Debian publishes a stable fix."
+      "rationale": "Debian classifies this malformed GDBus introspection-XML out-of-bounds read as a no-DSA minor issue and has no stable fix. GLib is retained only as a mandatory tesseract-ocr dependency in the API, AI, and Tools OCR runtimes; Academy invokes neither g_dbus_node_info_new_for_xml nor D-Bus introspection XML. Keep exact repository and package-version matching until Debian publishes a stable fix."
     }
   ]
 }

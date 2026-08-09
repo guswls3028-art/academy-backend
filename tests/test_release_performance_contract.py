@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 
@@ -48,6 +49,20 @@ def test_headless_opencv_images_do_not_explicitly_install_system_glib() -> None:
     assert "opencv-python-headless" in ai_requirements
     assert "opencv-python-headless" in video_requirements
     assert "OpenCV wheel video support OK" in _read(PRODUCTION_DOCKERFILES["ai"])
+
+
+def test_reviewed_tesseract_images_own_the_glib_high_budget() -> None:
+    baseline = json.loads(
+        _read(REPO_ROOT / "docs" / "ssot" / "ecr-high-risk-baseline.json")
+    )["maximumHighFindings"]
+
+    assert {
+        repository for repository, maximum in baseline.items() if maximum == 18
+    } == {
+        "academy-api",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker",
+    }
 
 
 def test_runtime_images_build_in_parallel_before_candidate_assembly() -> None:
