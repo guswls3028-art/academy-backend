@@ -44,9 +44,10 @@
   API의 upload-complete probe는 실패 허용 보조 검사이고 Video worker가 최종 검증과
   변환을 소유한다. AI frame extraction은 OpenCV wheel에 포함된 FFmpeg 지원을 쓰며,
   wheel이 그 기능을 잃으면 AI 이미지 빌드가 즉시 실패한다. AI와 Video 런타임은
-  GUI가 없는 `opencv-python-headless`를 사용하므로 system `libglib2.0-0`을 별도
-  설치하지 않는다. OpenCV upstream의 headless 계약, 이미지 import/FFmpeg smoke,
-  완료된 ECR scan이 이 제거의 호환성과 보안 경계를 함께 봉인한다.
+  GUI가 없는 `opencv-python-headless`를 사용하므로 system `libglib2.0-0`을 OpenCV
+  호환용으로 직접 설치하지 않는다. Video 후보에는 GLib가 남지 않으며, AI 후보는
+  OCR CLI인 Debian `tesseract-ocr`의 필수 전이 의존성으로만 정확한 GLib 패키지를
+  포함한다. OpenCV import/FFmpeg smoke와 완료된 ECR scan이 이 경계를 봉인한다.
 
 ## Critical 및 High 판정
 
@@ -70,7 +71,10 @@
    없는 Debian finding은 상한 이하에서만 추적되며 새 High가 조용히 유입될 수 없다.
 
 현재 Critical 한시 항목은 Debian stable에 수정본이 아직 없거나 Debian이
-`no-dsa`/minor로 분류한 glibc·Mbed TLS·Perl finding이다. glibc 취약 native
+`no-dsa`/minor로 분류한 glibc·GLib·Mbed TLS·Perl finding이다. GLib의
+`g_dbus_node_info_new_for_xml` malformed introspection-XML 경로는 OCR CLI와
+Academy Python 워커가 호출하지 않으며, 워커는 D-Bus introspection XML을 입력으로
+받지 않는다. glibc 취약 native
 `scanf` 경로와 Mbed TLS FFDH/TLS-session 경로는 Academy Python 앱의 실행
 경로가 아니며, 공개 TLS는 ALB가 종단한다. Mbed TLS는 API/Video/AI 이미지의
 미디어 도구 전이 의존성이다. Perl은 고정한 upstream slim base에서 상속되지만
