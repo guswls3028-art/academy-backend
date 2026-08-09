@@ -1,6 +1,13 @@
 from django.db import migrations, models
 
 
+ACADEMY_MIGRATION_PHASE = "contract"
+ACADEMY_MIGRATION_REASON = (
+    "Production preflight found no non-positive maximum scores, negative pass scores, "
+    "or enabled retakes below two attempts before adding these validation constraints."
+)
+
+
 class Migration(migrations.Migration):
     dependencies = [
         ("exams", "0022_examasset_teacher_explanation_source"),
