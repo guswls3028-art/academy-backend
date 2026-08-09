@@ -171,18 +171,6 @@ class Exam(BaseModel):
                 name="exams_exam_pass_lte_max",
                 condition=Q(pass_score__lte=models.F("max_score")),
             ),
-            models.CheckConstraint(
-                name="exams_exam_max_score_gt_0",
-                condition=Q(max_score__gt=0),
-            ),
-            models.CheckConstraint(
-                name="exams_exam_pass_score_gte_0",
-                condition=Q(pass_score__gte=0),
-            ),
-            models.CheckConstraint(
-                name="exams_exam_retake_attempts_gte_2",
-                condition=Q(allow_retake=False) | Q(max_attempts__gte=2),
-            ),
         ]
 
     def clean(self):
