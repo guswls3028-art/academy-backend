@@ -2,13 +2,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import zipfile
 from pathlib import Path
 
+import django
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "apps.api.config.settings.test")
+django.setup()
 
 from apps.domains.tools.problem_studio.transfer_documents import build_transfer_package
 
@@ -32,7 +38,7 @@ class LocalUpload:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Convert Problem Studio fixture sources into Hangul-compatible transfer docs.")
-    parser.add_argument("--input-dir", default=r"C:\academy\문제생성기자료")
+    parser.add_argument("--input-dir", default=r"C:\academy\materials\shared\문제생성기자료")
     parser.add_argument("--output-dir", default=r"C:\academy\_artifacts\problem-generator-output")
     parser.add_argument("--title", default="화학2 테스트자료")
     args = parser.parse_args()

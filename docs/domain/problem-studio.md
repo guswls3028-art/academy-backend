@@ -184,7 +184,11 @@ Source extraction and structure support:
   tenant slot again without creating a second completed charge. The legacy
   terminal callback still settles transfer jobs dispatched before this split.
   The UI must not imply that the three runs belong to an individual teacher.
-- Fixture verification script: `backend/scripts/problem_studio_transfer_fixtures.py` converts a local source folder into the same transfer ZIP and JSON summary for regression checks.
+- Fixture verification script: `backend/scripts/problem_studio_transfer_fixtures.py`
+  initializes the isolated Django test settings and converts
+  `C:\academy\materials\shared\문제생성기자료` by default into the same transfer ZIP
+  and JSON summary for regression checks. Pass `--input-dir` for another
+  explicitly approved local source and `--output-dir` below `_artifacts/`.
 - UAT runbook: `backend/docs/operations/runbooks/problem-studio-source-transfer-uat.md`
 
 ## Product Review
