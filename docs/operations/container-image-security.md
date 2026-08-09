@@ -43,7 +43,10 @@
   즉시 낮추며, 이 수치를 넘는 후보는 다시 실패 폐쇄한다.
   API의 upload-complete probe는 실패 허용 보조 검사이고 Video worker가 최종 검증과
   변환을 소유한다. AI frame extraction은 OpenCV wheel에 포함된 FFmpeg 지원을 쓰며,
-  wheel이 그 기능을 잃으면 AI 이미지 빌드가 즉시 실패한다.
+  wheel이 그 기능을 잃으면 AI 이미지 빌드가 즉시 실패한다. AI와 Video 런타임은
+  GUI가 없는 `opencv-python-headless`를 사용하므로 system `libglib2.0-0`을 별도
+  설치하지 않는다. OpenCV upstream의 headless 계약, 이미지 import/FFmpeg smoke,
+  완료된 ECR scan이 이 제거의 호환성과 보안 경계를 함께 봉인한다.
 
 ## Critical 및 High 판정
 

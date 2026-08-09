@@ -37,6 +37,19 @@ def test_runtime_dependencies_precede_frequently_changed_source() -> None:
         assert dockerfile.index("RUN pip install") < dockerfile.index(source_copy), service
 
 
+def test_headless_opencv_images_do_not_install_system_glib() -> None:
+    for service in ("ai", "video"):
+        dockerfile = _read(PRODUCTION_DOCKERFILES[service])
+
+        assert "libglib2.0-0" not in dockerfile, service
+
+    ai_requirements = _read(REPO_ROOT / "requirements" / "worker-ai-cpu.txt")
+    video_requirements = _read(REPO_ROOT / "requirements" / "worker-video.txt")
+    assert "opencv-python-headless" in ai_requirements
+    assert "opencv-python-headless" in video_requirements
+    assert "OpenCV wheel video support OK" in _read(PRODUCTION_DOCKERFILES["ai"])
+
+
 def test_runtime_images_build_in_parallel_before_candidate_assembly() -> None:
     workflow = _read(WORKFLOW)
     prepare = workflow.split("\n  prepare-build:\n", maxsplit=1)[1].split(
