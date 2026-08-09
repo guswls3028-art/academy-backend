@@ -37,7 +37,7 @@ def test_runtime_dependencies_precede_frequently_changed_source() -> None:
         assert dockerfile.index("RUN pip install") < dockerfile.index(source_copy), service
 
 
-def test_headless_opencv_images_do_not_install_system_glib() -> None:
+def test_headless_opencv_images_do_not_explicitly_install_system_glib() -> None:
     for service in ("ai", "video"):
         dockerfile = _read(PRODUCTION_DOCKERFILES[service])
 
