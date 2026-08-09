@@ -27,6 +27,15 @@
 | `segmentation_status` | `none`, `processing`, `review_required`, `ready`, `failed`, `conversion_required` | 원본 문항 분리와 교직원 검수 상태다. |
 | `student_results_published` | `true`, `false` | 학생·학부모 성적 공개 여부다. 기본값 `true`는 기존 시험 노출을 유지한다. |
 
+운영 설정은 `PATCH /exams/{id}/`에서 한 transaction으로 저장한다. 조회와 잠금은
+반드시 `Exam.tenant` 소유권으로 범위를 제한한 단일 시험 행에 적용한다. 차시 연결은
+소유권 fallback이 아니며 다른 tenant의 시험을 노출하지 않는다. 이 경계는 PostgreSQL의
+행 잠금과 호환되어야 하므로 `DISTINCT` 결과 자체를 `SELECT FOR UPDATE`로 잠그지 않는다.
+
+합격 점수 `0`은 클리닉 합격 기준을 사용하지 않는 유효한 값이다. 만점은 0보다 커야
+하고 합격 점수는 0 이상이면서 만점을 넘을 수 없다. 재응시를 켜면 최대 응시 횟수는
+2회 이상이어야 한다. API 검증과 DB 제약이 같은 범위를 강제한다.
+
 문항이 생성된 뒤에도 `grading_mode`와 `manual_grading_method`는 시험
 설정에서 바꿀 수 있다. 이 전환은 문항, 정답, 기존 OMR·직접 입력 결과를
 삭제하거나 다시 계산하지 않고 이후 사용할 채점 화면과 수정 가능 범위만

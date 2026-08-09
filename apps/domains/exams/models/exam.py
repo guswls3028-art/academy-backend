@@ -171,6 +171,18 @@ class Exam(BaseModel):
                 name="exams_exam_pass_lte_max",
                 condition=Q(pass_score__lte=models.F("max_score")),
             ),
+            models.CheckConstraint(
+                name="exams_exam_max_score_gt_0",
+                condition=Q(max_score__gt=0),
+            ),
+            models.CheckConstraint(
+                name="exams_exam_pass_score_gte_0",
+                condition=Q(pass_score__gte=0),
+            ),
+            models.CheckConstraint(
+                name="exams_exam_retake_attempts_gte_2",
+                condition=Q(allow_retake=False) | Q(max_attempts__gte=2),
+            ),
         ]
 
     def clean(self):
@@ -179,6 +191,12 @@ class Exam(BaseModel):
         errors = {}
         if self.max_attempts is not None and self.max_attempts < 1:
             errors["max_attempts"] = "max_attempts는 1 이상이어야 합니다."
+        elif self.allow_retake and self.max_attempts is not None and self.max_attempts < 2:
+            errors["max_attempts"] = "재응시를 허용하면 max_attempts는 2 이상이어야 합니다."
+        if self.max_score is not None and self.max_score <= 0:
+            errors["max_score"] = "max_score는 0보다 커야 합니다."
+        if self.pass_score is not None and self.pass_score < 0:
+            errors["pass_score"] = "pass_score는 0 이상이어야 합니다."
         if self.pass_score is not None and self.max_score is not None:
             if self.pass_score > self.max_score:
                 errors["pass_score"] = (

@@ -5,6 +5,7 @@ from datetime import timedelta
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.utils import timezone
+from rest_framework.request import Request
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
@@ -69,6 +70,44 @@ class ExamPolicyUpdateTests(TestCase):
         self.assertEqual(response.data["title"], "중간 점검")
         self.assertEqual(response.data["pass_score"], 75)
         self.assertTrue(response.data["updated_at"])
+
+    def test_patch_accepts_zero_pass_score_with_postgresql_compatible_lock_query(self):
+        raw_request = self.factory.get(f"/api/v1/exams/{self.exam.id}/")
+        request = Request(raw_request)
+        request.tenant = self.tenant
+        view = ExamViewSet()
+        view.request = request
+
+        self.assertFalse(view.get_queryset().query.distinct)
+
+        expected_updated_at = ExamSerializer(self.exam).data["updated_at"]
+        response = self.patch(
+            {"max_score": 15, "pass_score": 0},
+            expected_updated_at=expected_updated_at,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["max_score"], 15)
+        self.assertEqual(response.data["pass_score"], 0)
+
+    def test_patch_rejects_invalid_score_and_retake_bounds(self):
+        cases = (
+            ({"max_score": 0, "pass_score": 0}, "max_score"),
+            ({"pass_score": -1}, "pass_score"),
+            ({"allow_retake": True, "max_attempts": 1}, "max_attempts"),
+        )
+
+        for payload, error_field in cases:
+            with self.subTest(payload=payload):
+                self.exam.refresh_from_db()
+                expected_updated_at = ExamSerializer(self.exam).data["updated_at"]
+                response = self.patch(
+                    payload,
+                    expected_updated_at=expected_updated_at,
+                )
+
+                self.assertEqual(response.status_code, 400, response.data)
+                self.assertIn(error_field, response.data)
 
     def test_student_result_publication_defaults_on_and_can_be_disabled(self):
         expected_updated_at = ExamSerializer(self.exam).data["updated_at"]

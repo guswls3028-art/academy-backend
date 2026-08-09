@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from django.db import transaction
-from django.db.models import Max, Q
+from django.db.models import Max
 from django.shortcuts import get_object_or_404
 
 from rest_framework.viewsets import ModelViewSet
@@ -413,9 +413,10 @@ class ExamViewSet(ModelViewSet):
         tenant = getattr(self.request, "tenant", None)
         if not tenant:
             return Exam.objects.none()
-        qs = Exam.objects.filter(
-            Q(sessions__lecture__tenant=tenant) | Q(tenant=tenant)
-        ).distinct()
+        # Exam.tenant is the ownership SSOT. Joining through sessions here both
+        # admitted a cross-tenant fallback and forced DISTINCT, which PostgreSQL
+        # cannot combine with the SELECT FOR UPDATE used by policy saves.
+        qs = Exam.objects.filter(tenant=tenant)
 
         exam_type = self.request.query_params.get("exam_type")
         if exam_type:

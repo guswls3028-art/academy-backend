@@ -39,6 +39,7 @@ class ExamUpdateSerializer(serializers.ModelSerializer):
 
         # P1-5: 시험 유효성 검증
         max_attempts = attrs.get("max_attempts", exam.max_attempts)
+        allow_retake = attrs.get("allow_retake", exam.allow_retake)
         pass_score = attrs.get("pass_score", exam.pass_score)
         max_score = attrs.get("max_score", exam.max_score)
         open_at = attrs.get("open_at", exam.open_at)
@@ -47,6 +48,12 @@ class ExamUpdateSerializer(serializers.ModelSerializer):
         errors = {}
         if max_attempts is not None and max_attempts < 1:
             errors["max_attempts"] = "1 이상이어야 합니다."
+        elif allow_retake and max_attempts is not None and max_attempts < 2:
+            errors["max_attempts"] = "재응시를 허용하면 2 이상이어야 합니다."
+        if max_score is not None and max_score <= 0:
+            errors["max_score"] = "만점은 0보다 커야 합니다."
+        if pass_score is not None and pass_score < 0:
+            errors["pass_score"] = "합격 점수는 0 이상이어야 합니다."
         if pass_score is not None and max_score is not None and pass_score > max_score:
             errors["pass_score"] = f"합격 점수({pass_score})가 만점({max_score})을 초과할 수 없습니다."
         if open_at and close_at and open_at >= close_at:
