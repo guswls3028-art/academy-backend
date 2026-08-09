@@ -45,9 +45,10 @@
   변환을 소유한다. AI frame extraction은 OpenCV wheel에 포함된 FFmpeg 지원을 쓰며,
   wheel이 그 기능을 잃으면 AI 이미지 빌드가 즉시 실패한다. AI와 Video 런타임은
   GUI가 없는 `opencv-python-headless`를 사용하므로 system `libglib2.0-0`을 OpenCV
-  호환용으로 직접 설치하지 않는다. Video 후보에는 GLib가 남지 않으며, AI 후보는
-  OCR CLI인 Debian `tesseract-ocr`의 필수 전이 의존성으로만 정확한 GLib 패키지를
-  포함한다. OpenCV import/FFmpeg smoke와 완료된 ECR scan이 이 경계를 봉인한다.
+  호환용으로 직접 설치하지 않는다. Video 후보에는 GLib가 남지 않으며, API·AI·Tools
+  OCR 런타임은 Debian `tesseract-ocr`의 필수 전이 의존성으로만 정확한 GLib
+  패키지를 포함한다. OpenCV import/FFmpeg smoke와 완료된 ECR scan이 이 경계를
+  봉인한다.
 
 ## Critical 및 High 판정
 
@@ -69,6 +70,17 @@
    후보의 수가 상한을 하나라도 넘으면 실패 폐쇄한다. 패키지 제거 또는 vendor
    수정으로 실제 수가 줄면 운영 scan readback에 맞춰 상한도 낮춘다. 아직 수정본이
    없는 Debian finding은 상한 이하에서만 추적되며 새 High가 조용히 유입될 수 없다.
+
+2026-08-09 ECR 데이터베이스 갱신으로 동일한 GLib `2.84.4-3~deb13u3`에
+`CVE-2026-58010`부터 `CVE-2026-58015`까지 여섯 High가 새로 나타났다. 후보와 직전
+운영 digest의 finding identity를 대조해 패키지 변경이 아니라 신규 공개분임을
+확인했다. Debian은 여섯 건 모두 trixie `no-dsa`/minor로 분류하며, 각각 GVariant
+비정상 역직렬화, 잘못 생성된 GDateTime, `G_REGEX_RAW` case escape, 다중 문자
+GIOChannel terminator, 빈 locale key-file 값, 악성 D-Bus 서버가 전제인 제한된
+over-read/DoS 경로다. Academy OCR 경로는 이 API와 D-Bus를 사용하지 않는다.
+따라서 Tesseract를 포함하는 API·AI·Tools만 검증된 현재 수치 18로 올렸고,
+Base·Video·Messaging 상한 8은 유지했다. vendor 수정 패키지가 나오면 세 상한을
+실제 scan readback에 맞춰 즉시 다시 낮춘다.
 
 현재 Critical 한시 항목은 Debian stable에 수정본이 아직 없거나 Debian이
 `no-dsa`/minor로 분류한 glibc·GLib·Mbed TLS·Perl finding이다. GLib의
