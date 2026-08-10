@@ -22656,7 +22656,7 @@
     },
     "/api/v1/exams/pdf-extract/": {
       "post": {
-        "description": "POST /exams/pdf-extract/\n- PDF 파일 업로드 → R2 저장 → question_segmentation AI job 제출\n- Returns: { job_id, status: \"submitted\" }",
+        "description": "POST /exams/pdf-extract/\n- 안전한 원본은 형식 그대로 R2와 시험 자산에 보존\n- 지원 형식은 question_segmentation job 제출, 나머지는 직접 검수 상태로 저장",
         "operationId": "exams_pdf_extract_create",
         "responses": {
           "200": {
