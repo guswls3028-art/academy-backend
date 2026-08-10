@@ -696,6 +696,10 @@ if ($aiRendered -notmatch 'if \[ -n "/academy/ai-worker" \]') {{ exit 30 }}
 if ($aiRendered -notmatch "--log-driver awslogs") {{ exit 27 }}
 if ($aiRendered -notmatch "awslogs-group=/academy/ai-worker") {{ exit 28 }}
 if ($aiRendered -notmatch "awslogs-stream=academy-ai-worker-cpu/") {{ exit 29 }}
+if ($aiRendered -notmatch "X-aws-ec2-metadata-token-ttl-seconds: 21600") {{ exit 31 }}
+if ($aiRendered -notmatch 'X-aws-ec2-metadata-token: \$IMDS_TOKEN') {{ exit 32 }}
+if ($aiRendered -notmatch 'IMDSv2 instance id unavailable') {{ exit 33 }}
+if ([regex]::Matches($aiRendered, "latest/meta-data/instance-id").Count -ne 1) {{ exit 34 }}
 
 try {{
     Get-ImmutableEcrImageUri -RepoName "academy-messaging-worker" -ImageTag "latest"

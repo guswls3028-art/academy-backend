@@ -99,8 +99,14 @@ LOG=/var/log/academy-worker-userdata.log
 touch "`$LOG"
 log() { echo "`$(date -Iseconds) `$*" >> "`$LOG"; }
 # 0) 네트워크/IMDS 준비 대기
+IMDS_TOKEN=""
+INSTANCE_ID=""
 for i in 1 2 3 4 5 6 7 8 9 10; do
-  if curl -sf --connect-timeout 2 http://169.254.169.254/latest/meta-data/instance-id >/dev/null 2>&1; then break; fi
+  IMDS_TOKEN="`$(curl -sf --connect-timeout 2 -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" http://169.254.169.254/latest/api/token || true)"
+  if [ -n "`$IMDS_TOKEN" ]; then
+    INSTANCE_ID="`$(curl -sf --connect-timeout 2 -H "X-aws-ec2-metadata-token: `$IMDS_TOKEN" http://169.254.169.254/latest/meta-data/instance-id || true)"
+    if [ -n "`$INSTANCE_ID" ]; then break; fi
+  fi
   sleep 3
 done
 # 1) Docker 설치 및 기동
@@ -139,9 +145,8 @@ docker stop $ContainerName 2>/dev/null || true
 docker rm $ContainerName 2>/dev/null || true
 LOG_DRIVER_ARGS=()
 if [ -n "$LogGroup" ]; then
-  INSTANCE_ID="`$(curl -sf --connect-timeout 2 http://169.254.169.254/latest/meta-data/instance-id)"
   if [ -z "`$INSTANCE_ID" ]; then
-    log "instance id unavailable; refusing untraceable CloudWatch worker logging"
+    log "IMDSv2 instance id unavailable; refusing untraceable CloudWatch worker logging"
     exit 1
   fi
   LOG_DRIVER_ARGS=(--log-driver awslogs --log-opt awslogs-region=$Region --log-opt awslogs-group=$LogGroup --log-opt awslogs-stream=$ContainerName/`$INSTANCE_ID)
