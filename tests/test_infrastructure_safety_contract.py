@@ -32,6 +32,10 @@ WORKER_BEDROCK_POLICY = (
     REPO_ROOT / "scripts" / "v1" / "templates" / "iam"
     / "policy_workers_bedrock_problem_transcription.json"
 )
+EC2_CLOUDWATCH_LOGS_POLICY = (
+    REPO_ROOT / "scripts" / "v1" / "templates" / "iam"
+    / "policy_ec2_cloudwatch_logs.json"
+)
 ECR_RESOURCE = REPO_ROOT / "scripts" / "v1" / "resources" / "ecr.ps1"
 DYNAMODB_RESOURCE = REPO_ROOT / "scripts" / "v1" / "resources" / "dynamodb.ps1"
 ECR_CLEANUP = REPO_ROOT / "scripts" / "v1" / "ecr-cleanup.py"
@@ -686,6 +690,12 @@ $uri = Get-ImmutableEcrImageUri -RepoName "academy-messaging-worker" -ImageTag "
 if ($uri -ne "123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/academy-messaging-worker@sha256:$('a' * 64)") {{ exit 21 }}
 $rendered = Get-WorkerLaunchTemplateUserData -ImageUri $uri -Region $script:Region -SsmParam "/academy/workers/env" -ContainerName "academy-messaging-worker"
 if ($rendered -notmatch [regex]::Escape($uri)) {{ exit 22 }}
+if ($rendered -notmatch 'if \[ -n "" \]') {{ exit 26 }}
+$aiRendered = Get-WorkerLaunchTemplateUserData -ImageUri $uri -Region $script:Region -SsmParam "/academy/workers/env" -ContainerName "academy-ai-worker-cpu" -LogGroup "/academy/ai-worker"
+if ($aiRendered -notmatch 'if \[ -n "/academy/ai-worker" \]') {{ exit 30 }}
+if ($aiRendered -notmatch "--log-driver awslogs") {{ exit 27 }}
+if ($aiRendered -notmatch "awslogs-group=/academy/ai-worker") {{ exit 28 }}
+if ($aiRendered -notmatch "awslogs-stream=academy-ai-worker-cpu/") {{ exit 29 }}
 
 try {{
     Get-ImmutableEcrImageUri -RepoName "academy-messaging-worker" -ImageTag "latest"
@@ -705,6 +715,29 @@ exit 0
     )
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+def test_ai_worker_cloudwatch_policy_is_exact_and_write_only() -> None:
+    policy = json.loads(EC2_CLOUDWATCH_LOGS_POLICY.read_text(encoding="utf-8"))
+    statement = policy["Statement"][0]
+
+    assert set(statement["Action"]) == {
+        "logs:CreateLogStream",
+        "logs:PutLogEvents",
+        "logs:DescribeLogStreams",
+    }
+    assert statement["Resource"] == [
+        "arn:aws:logs:ap-northeast-2:809466760795:log-group:/academy/ai-worker",
+        "arn:aws:logs:ap-northeast-2:809466760795:log-group:/academy/ai-worker:log-stream:*",
+    ]
+
+
+def test_ai_worker_log_group_is_ensured_before_launch_template_rollout() -> None:
+    deploy = DEPLOY.read_text(encoding="utf-8-sig")
+    cloudwatch = CLOUDWATCH_RESOURCE.read_text(encoding="utf-8-sig")
+
+    assert "$script:AiWorkerLogGroup" in cloudwatch
+    assert deploy.index("Ensure-RuntimeLogRetention") < deploy.index("Ensure-ASGAi")
 
 
 def test_drift_contract_compares_the_resolved_api_digest() -> None:

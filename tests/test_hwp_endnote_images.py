@@ -14,6 +14,7 @@ from academy.adapters.tools.hwp_endnote_images import (
     _collect_endnote_numbers,
     _collect_hwp_question_contents,
     _decode_hwp_equation,
+    _equation_requires_text_render,
     _hwp_equation_to_mathtext,
     _hwpx_body_content,
     _humanize_hwp_equation,
@@ -103,6 +104,7 @@ def test_humanizes_common_hwp_equation_tokens_without_changing_meaning():
     )
     assert _humanize_hwp_equation("0letheta<2pi") == "0≤θ<2π"
     assert _humanize_hwp_equation("molecule") == "molecule"
+    assert _humanize_hwp_equation("ㄱ｜ㄴ") == "ㄱ|ㄴ"
     compact_fraction = _humanize_hwp_equation("h(alpha+betaover2)")
     assert "over" not in compact_fraction
     assert "β" in compact_fraction
@@ -111,6 +113,12 @@ def test_humanizes_common_hwp_equation_tokens_without_changing_meaning():
     )
     assert "over" not in nested_fraction
     assert r"\frac{\alpha+\beta}{2}" in nested_fraction
+
+
+def test_routes_hangul_equation_labels_to_the_review_font_renderer():
+    assert _equation_requires_text_render("ㄱ, ㄴ, ㄷ") is True
+    assert _equation_requires_text_render("한글 x=1") is True
+    assert _equation_requires_text_render("x over 2") is False
 
 
 def test_strips_hangul_eqedit_internal_text_object_sentinel():

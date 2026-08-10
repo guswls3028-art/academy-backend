@@ -79,8 +79,17 @@ function Get-LatestWorkerImageUri {
 }
 
 function Get-WorkerLaunchTemplateUserData {
-    param([string]$ImageUri, [string]$Region, [string]$SsmParam, [string]$ContainerName)
+    param(
+        [string]$ImageUri,
+        [string]$Region,
+        [string]$SsmParam,
+        [string]$ContainerName,
+        [string]$LogGroup = ""
+    )
     if (-not $ImageUri -or -not $Region -or -not $ContainerName) { return "" }
+    if ($LogGroup -and $LogGroup -notmatch '^/academy/[a-z0-9/-]+$') {
+        throw "Worker CloudWatch log group is outside the approved /academy/* namespace: $LogGroup"
+    }
     $ecrHost = $ImageUri.Split("/")[0]
     $script = @"
 #!/bin/bash
@@ -128,7 +137,16 @@ fi
 # 4) 기존 컨테이너 정리 후 실행
 docker stop $ContainerName 2>/dev/null || true
 docker rm $ContainerName 2>/dev/null || true
-if ! docker run -d --restart unless-stopped --name $ContainerName -e DJANGO_SETTINGS_MODULE=apps.api.config.settings.worker `$WORKER_ENV_FILE ${ImageUri} 2>>"`$LOG"; then
+LOG_DRIVER_ARGS=()
+if [ -n "$LogGroup" ]; then
+  INSTANCE_ID="`$(curl -sf --connect-timeout 2 http://169.254.169.254/latest/meta-data/instance-id)"
+  if [ -z "`$INSTANCE_ID" ]; then
+    log "instance id unavailable; refusing untraceable CloudWatch worker logging"
+    exit 1
+  fi
+  LOG_DRIVER_ARGS=(--log-driver awslogs --log-opt awslogs-region=$Region --log-opt awslogs-group=$LogGroup --log-opt awslogs-stream=$ContainerName/`$INSTANCE_ID)
+fi
+if ! docker run -d --restart unless-stopped --name $ContainerName -e DJANGO_SETTINGS_MODULE=apps.api.config.settings.worker `$WORKER_ENV_FILE `${LOG_DRIVER_ARGS[@]} ${ImageUri} 2>>"`$LOG"; then
   log "docker run failed. Image: ${ImageUri}"
   exit 1
 fi

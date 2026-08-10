@@ -711,7 +711,7 @@ if ($videoE2EEvidence) {
 [void]$sb.AppendLine("| 항목 | 결과 | 근거 |")
 [void]$sb.AppendLine("|------|------|------|")
 [void]$sb.AppendLine("| 최소 알람 세트(API 5XX, SQS depth/DLQ, Batch failed/stuck/backlog, RDS, Redis) | $alarmSummary | CloudWatch > Alarms (academy/v1 필터) |")
-[void]$sb.AppendLine("| 로그 retention 30d | params observability.logRetentionDays | Ensure-VideoBatchLogRetention, Batch 로그 그룹 |")
+[void]$sb.AppendLine("| 로그 retention 30d | params observability.logRetentionDays | Ensure-RuntimeLogRetention, Batch + AI worker 로그 그룹 |")
 [void]$sb.AppendLine("| **섹션 6 종합** | **$s6Obs** | |")
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("## 7) 리스크 및 GO/NO-GO 권고")

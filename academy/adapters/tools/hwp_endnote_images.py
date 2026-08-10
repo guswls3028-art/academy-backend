@@ -214,7 +214,7 @@ def _humanize_hwp_equation(script: str) -> str:
     conservative presentation substitutions rather than trying to reinterpret
     the mathematics with an AI model.
     """
-    value = str(script or "").replace("`", " ")
+    value = str(script or "").replace("`", " ").replace("｜", "|")
     value = re.sub(
         r"(?<=[A-Za-z0-9)\]])\s*ge(?!q)\s*(?=[A-Za-z0-9(])",
         "≥",
@@ -731,7 +731,7 @@ def _replace_hwp_cases(value: str) -> str:
 
 
 def _hwp_equation_to_mathtext(script: str) -> str:
-    value = str(script or "").replace("`", " ")
+    value = str(script or "").replace("`", " ").replace("｜", "|")
     value = re.sub(
         r"(?<=[A-Za-z0-9)\]])\s*ge(?!q)\s*(?=[A-Za-z0-9(])",
         lambda _match: r"\geq ",
@@ -900,7 +900,28 @@ def _hwp_equation_to_mathtext(script: str) -> str:
     return value
 
 
+def _equation_requires_text_render(script: str) -> bool:
+    return any(
+        "\u3130" <= character <= "\u318f" or "\uac00" <= character <= "\ud7a3"
+        for character in str(script or "")
+    )
+
+
+def _render_equation_text(script: str, *, font_size: int) -> Image.Image:
+    fallback = _humanize_hwp_equation(script)
+    font = _load_review_font(font_size)
+    scratch = Image.new("RGB", (10, 10), "white")
+    draw = ImageDraw.Draw(scratch)
+    box = draw.textbbox((0, 0), fallback, font=font)
+    scratch.close()
+    canvas = Image.new("RGB", (max(box[2] + 8, 16), max(box[3] - box[1] + 8, 16)), "white")
+    ImageDraw.Draw(canvas).text((4, 4 - box[1]), fallback, font=font, fill="#111827")
+    return canvas
+
+
 def _render_equation_image(script: str, *, font_size: int = 26) -> Image.Image:
+    if _equation_requires_text_render(script):
+        return _render_equation_text(script, font_size=font_size)
     output = BytesIO()
     try:
         from matplotlib.font_manager import FontProperties
@@ -927,15 +948,7 @@ def _render_equation_image(script: str, *, font_size: int = 26) -> Image.Image:
             "HWP_EQUATION_MATHTEXT_FALLBACK | script=%r",
             str(script or "")[:160],
         )
-        fallback = _humanize_hwp_equation(script)
-        font = _load_review_font(font_size)
-        scratch = Image.new("RGB", (10, 10), "white")
-        draw = ImageDraw.Draw(scratch)
-        box = draw.textbbox((0, 0), fallback, font=font)
-        scratch.close()
-        canvas = Image.new("RGB", (max(box[2] + 8, 16), max(box[3] - box[1] + 8, 16)), "white")
-        ImageDraw.Draw(canvas).text((4, 4 - box[1]), fallback, font=font, fill="#111827")
-        return canvas
+        return _render_equation_text(script, font_size=font_size)
 
 
 def _render_text_fragment(value: str, *, font) -> Image.Image | None:
