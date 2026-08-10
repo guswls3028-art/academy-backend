@@ -204,7 +204,7 @@ Workers use the same ASG instance refresh mechanism as API but with:
 
 Runtime scaling is split by worker:
 
-- **AI** uses AWS/SQS CloudWatch scale-out alarms (`ai-worker-queue-high`, `ai-worker-queue-age-high`) plus API wake-up. Idle scale-in is worker-owned after live SQS depth is empty; `ai-worker-queue-low` is observability-only. SSOT min/desired is 0/0. The container uses Docker's `awslogs` driver with an instance-specific stream under `/academy/ai-worker`, so segmentation logs survive scale-to-zero termination for the configured 30-day retention. The shared EC2 role can write only that exact log group.
+- **AI** uses AWS/SQS CloudWatch scale-out alarms (`ai-worker-queue-high`, `ai-worker-queue-age-high`) plus API wake-up. Idle scale-in is worker-owned after live SQS depth is empty; `ai-worker-queue-low` is observability-only. SSOT min/desired is 0/0. The container uses Docker's `awslogs` driver with an instance-specific stream under `/academy/ai-worker`, so segmentation logs survive scale-to-zero termination for the configured 30-day retention. The shared EC2 role can write only that exact log group. The stream identity is read through an IMDSv2 token; a missing token or instance ID fails the boot before an untraceable container can start.
 - Problem Studio image transcription defaults to the `global.amazon.nova-2-lite-v1:0` Bedrock inference profile when no OpenAI key is configured. Nova 2 Lite exposes no Seoul in-region or APAC/JP geo inference option from `ap-northeast-2`, so this profile may route encrypted inference traffic to any AWS commercial destination listed for the global profile. The shared EC2 instance role receives only `bedrock:InvokeModel` on that profile and its exact foundation model through `policy_workers_bedrock_problem_transcription.json`; `Ensure-EC2InstanceProfileSSM` converges the inline policy. Unit count, tenant quota, output tokens, request time, tenant-prefixed temporary storage, terminal archive deletion, UI confirmation, and privacy disclosure remain bounded or explicit in the application layer. CloudTrail `additionalEventData.inferenceRegion` is the operational source for the actual destination of a request.
 - **Messaging** runs with ASG min/desired=1 warm baseline and AWS/SQS CloudWatch alarms for StepScaling up to SSOT max capacity. Account recovery and Alimtalk delivery are user-facing wait paths, so the worker is not allowed to cold-start from zero during normal operation. Scale-in requires visible+in-flight+delayed backlog to stay 0 and then returns only to the warm baseline.
 - **Tools** runs with ASG min/desired=0 baseline and AWS/SQS CloudWatch alarms for deterministic conversion queues. Any visible queue message wakes the worker; scale-in uses the same visible+in-flight+delayed backlog guard.
@@ -216,7 +216,7 @@ The worker launch templates contain UserData that executes on each new instance 
 
 ```bash
 #!/bin/bash
-# 1. Wait for network/IMDS
+# 1. Wait for network and read the instance identity with an IMDSv2 token
 # 2. Install Docker (dnf/yum)
 # 3. ECR login + pull digest-pinned image (5 retries, 15s apart)
 # 4. Fetch SSM /academy/workers/env (base64 JSON -> KEY=VALUE env file)

@@ -157,7 +157,9 @@ python scripts/ymath_realuse_scenario.py `
 - 운영 AI worker 문항 분리 로그는 `/academy/ai-worker`의
   `academy-ai-worker-cpu/<instance-id>` 스트림에서 30일 동안 확인한다. 해당
   기간에 스트림이 없으면 scale-to-zero 이전 Docker 로컬 로그만으로 성공을
-  추정하지 말고 로그 수집 경계를 먼저 복구한다.
+  추정하지 말고 로그 수집 경계를 먼저 복구한다. 새 Launch Template 검증은
+  IMDSv2로 인스턴스 ID를 읽고, 실제 컨테이너의 `awslogs` 설정과 최신 이벤트를
+  확인한 뒤 평상시 desired capacity 0으로 복구하는 부팅 canary를 포함한다.
 
 관련 제품 계약은 [시험 생성·채점·오답노트](../../domain/exam-grading.md)와
 [과제·워크북 채점](../../domain/homework-grading.md)을 따른다.
