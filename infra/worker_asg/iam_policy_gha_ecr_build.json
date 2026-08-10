@@ -12,6 +12,7 @@
     {"Sid":"LaunchTemplateInstanceTag","Effect":"Allow","Action":"ec2:CreateTags","Resource":"arn:aws:ec2:ap-northeast-2:809466760795:instance/*","Condition":{"StringEquals":{"ec2:CreateAction":"RunInstances"}}},
     {"Sid":"LaunchTemplatePassRole","Effect":"Allow","Action":"iam:PassRole","Resource":["arn:aws:iam::809466760795:role/academy-api-preprod-canary-role","arn:aws:iam::809466760795:role/academy-ec2-role"],"Condition":{"StringEquals":{"iam:PassedToService":"ec2.amazonaws.com"}}},
     {"Sid":"RuntimeScalePolicyReadback","Effect":"Allow","Action":"iam:GetRolePolicy","Resource":"arn:aws:iam::809466760795:role/academy-ec2-role"},
+    {"Sid":"RuntimeLogSinkReadback","Effect":"Allow","Action":"logs:DescribeLogGroups","Resource":"*"},
     {"Sid":"ApiCanaryInstanceRead","Effect":"Allow","Action":["ec2:DescribeInstances","ec2:DescribeInstanceStatus"],"Resource":"*"},
     {"Sid":"ApiCanaryInstanceCleanup","Effect":"Allow","Action":"ec2:TerminateInstances","Resource":"arn:aws:ec2:ap-northeast-2:809466760795:instance/*","Condition":{"StringEquals":{"ec2:ResourceTag/Name":"academy-v1-api-preprod-canary","ec2:ResourceTag/Project":"academy","ec2:ResourceTag/ManagedBy":"academy-deploy-canary"}}},
     {"Sid":"ApiCanaryProfileRead","Effect":"Allow","Action":"iam:GetInstanceProfile","Resource":"arn:aws:iam::809466760795:instance-profile/academy-api-preprod-canary"},

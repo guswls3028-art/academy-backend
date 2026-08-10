@@ -1087,6 +1087,7 @@ def test_exact_workflow_iam_covers_full_contract_without_broad_ssm() -> None:
         "AsgDescribe", "LaunchTemplateImagePinRead", "LaunchTemplateImagePinWrite",
         "LaunchTemplateInstanceUse", "LaunchTemplateInstanceTag",
         "LaunchTemplatePassRole", "RuntimeScalePolicyReadback",
+        "RuntimeLogSinkReadback",
         "ApiCanaryInstanceRead", "ApiCanaryInstanceCleanup",
         "ApiCanaryProfileRead", "ApiCanarySsmRead",
         "SsmSendDocument", "SsmSendInstances", "SsmSendApiCanary",
@@ -1108,6 +1109,7 @@ def test_exact_workflow_iam_covers_full_contract_without_broad_ssm() -> None:
         "batch:RegisterJobDefinition",
         "batch:DeregisterJobDefinition", "batch:TagResource", "iam:PassRole",
         "iam:GetRolePolicy",
+        "logs:DescribeLogGroups",
         "elasticloadbalancing:DescribeTargetHealth", "sns:Publish",
         "dynamodb:UpdateItem",
     ):
@@ -1139,6 +1141,12 @@ def test_exact_workflow_iam_covers_full_contract_without_broad_ssm() -> None:
     assert by_sid["RuntimeScalePolicyReadback"]["Resource"] == (
         "arn:aws:iam::809466760795:role/academy-ec2-role"
     )
+    assert by_sid["RuntimeLogSinkReadback"] == {
+        "Sid": "RuntimeLogSinkReadback",
+        "Effect": "Allow",
+        "Action": "logs:DescribeLogGroups",
+        "Resource": "*",
+    }
     assert by_sid["ApiCanaryInstanceCleanup"]["Condition"]["StringEquals"] == {
         "ec2:ResourceTag/Name": "academy-v1-api-preprod-canary",
         "ec2:ResourceTag/Project": "academy",
@@ -1374,6 +1382,13 @@ def test_workflow_checks_release_freshness_under_lock_and_always_releases() -> N
     assert "iam get-role-policy" in iam_block
     assert "iam put-role-policy" not in iam_block
     assert "runtime worker-scale IAM readback mismatch" in iam_block
+    assert "policy_ec2_cloudwatch_logs.json" in iam_block
+    assert "academy-ec2-cloudwatch-logs" in iam_block
+    assert "runtime logging IAM readback mismatch" in iam_block
+    assert "logs describe-log-groups" in iam_block
+    assert "/academy/api /academy/ai-worker /academy/tools-worker" in iam_block
+    assert "runtime log group readback mismatch" in iam_block
+    assert '[ "$RETENTION" != "30" ]' in iam_block
     assert "verify-runtime-iam" in prepare_block
     assert "verify-runtime-iam" in release_block
     assert "verify-release-freshness" in release_block

@@ -486,7 +486,9 @@ jobs:
       - name: Checkout exact runtime policy
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          sparse-checkout: scripts/v1/templates/iam/policy_api_ai_worker_scale.json
+          sparse-checkout: |
+            scripts/v1/templates/iam/policy_api_ai_worker_scale.json
+            scripts/v1/templates/iam/policy_ec2_cloudwatch_logs.json
           sparse-checkout-cone-mode: false
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
@@ -494,7 +496,7 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
           action-timeout-s: 180
-      - name: Read back and verify exact runtime scale policy
+      - name: Read back and verify exact runtime policies and log sinks
         run: |
           set -euo pipefail
           aws iam get-role-policy \
@@ -502,17 +504,47 @@ jobs:
             --policy-name academy-api-ai-worker-scale \
             --query PolicyDocument \
             --output json > /tmp/runtime-policy.actual.json
+          aws iam get-role-policy \
+            --role-name academy-ec2-role \
+            --policy-name academy-ec2-cloudwatch-logs \
+            --query PolicyDocument \
+            --output json > /tmp/runtime-logging-policy.actual.json
           python3 - <<'PY'
           import json
           from pathlib import Path
 
-          expected = json.loads(
-              Path("scripts/v1/templates/iam/policy_api_ai_worker_scale.json").read_text()
+          policies = (
+              (
+                  "scripts/v1/templates/iam/policy_api_ai_worker_scale.json",
+                  "/tmp/runtime-policy.actual.json",
+                  "runtime worker-scale IAM readback mismatch",
+              ),
+              (
+                  "scripts/v1/templates/iam/policy_ec2_cloudwatch_logs.json",
+                  "/tmp/runtime-logging-policy.actual.json",
+                  "runtime logging IAM readback mismatch",
+              ),
           )
-          actual = json.loads(Path("/tmp/runtime-policy.actual.json").read_text())
-          if actual != expected:
-              raise SystemExit("runtime worker-scale IAM readback mismatch")
+          for expected_path, actual_path, error in policies:
+              expected = json.loads(Path(expected_path).read_text())
+              actual = json.loads(Path(actual_path).read_text())
+              if actual != expected:
+                  raise SystemExit(error)
           PY
+          for LOG_GROUP in /academy/api /academy/ai-worker /academy/tools-worker; do
+            LOG_GROUPS=$(aws logs describe-log-groups \
+              --log-group-name-prefix "$LOG_GROUP" \
+              --region "${{ env.AWS_REGION }}" \
+              --output json)
+            RETENTION=$(jq -r --arg name "$LOG_GROUP" \
+              '.logGroups[] | select(.logGroupName == $name) | .retentionInDays // empty' \
+              <<< "$LOG_GROUPS")
+            if [ "$RETENTION" != "30" ]; then
+              echo "::error::runtime log group readback mismatch: group=$LOG_GROUP retention=${RETENTION:-missing} expected=30"
+              exit 1
+            fi
+            echo "Runtime log sink PASS: group=$LOG_GROUP retention=${RETENTION}d"
+          done
 
   prepare-build:
     name: Prepare immutable base image

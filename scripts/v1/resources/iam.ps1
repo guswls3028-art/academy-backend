@@ -708,6 +708,7 @@ function Ensure-GitHubActionsDeployIAM {
         $(if ($templatesRequireInstanceTags) { [ordered]@{Sid="LaunchTemplateInstanceTag";Effect="Allow";Action="ec2:CreateTags";Resource="arn:aws:ec2:$($script:Region):$($script:AccountId):instance/*";Condition=[ordered]@{StringEquals=[ordered]@{"ec2:CreateAction"="RunInstances"}}} }),
         [ordered]@{Sid="LaunchTemplatePassRole";Effect="Allow";Action="iam:PassRole";Resource=$runtimeInstanceRoleArns;Condition=[ordered]@{StringEquals=[ordered]@{"iam:PassedToService"="ec2.amazonaws.com"}}},
         [ordered]@{Sid="RuntimeScalePolicyReadback";Effect="Allow";Action="iam:GetRolePolicy";Resource="arn:aws:iam::$($script:AccountId):role/academy-ec2-role"},
+        [ordered]@{Sid="RuntimeLogSinkReadback";Effect="Allow";Action="logs:DescribeLogGroups";Resource="*"},
         [ordered]@{Sid="ApiCanaryInstanceRead";Effect="Allow";Action=@("ec2:DescribeInstances","ec2:DescribeInstanceStatus");Resource="*"},
         [ordered]@{Sid="ApiCanaryInstanceCleanup";Effect="Allow";Action="ec2:TerminateInstances";Resource="arn:aws:ec2:$($script:Region):$($script:AccountId):instance/*";Condition=[ordered]@{StringEquals=$apiCanaryTagConditions}},
         [ordered]@{Sid="ApiCanaryProfileRead";Effect="Allow";Action="iam:GetInstanceProfile";Resource="arn:aws:iam::$($script:AccountId):instance-profile/$ApiPreprodCanaryProfileName"},
