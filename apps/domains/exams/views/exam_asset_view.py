@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import mimetypes
 import uuid
 
 from django.db.models import Q
@@ -13,6 +12,11 @@ from rest_framework.exceptions import ValidationError
 
 from apps.domains.exams.models import Exam, ExamAsset
 from apps.domains.exams.serializers.exam_asset import ExamAssetSerializer
+from apps.domains.exams.services.source_upload_policy import (
+    source_suffix,
+    storage_content_type,
+    validate_source_upload,
+)
 from apps.domains.exams.services.template_resolver import resolve_structure_exam, assert_template_editable
 from apps.domains.exams.services.structure_copy_service import ensure_regular_exam_owns_structure
 from apps.core.r2_paths import ai_exam_asset_key
@@ -73,11 +77,14 @@ class ExamAssetView(APIView):
         if asset_type not in valid:
             raise ValidationError({"asset_type": f"must be one of {sorted(valid)}"})
 
+        filename, suffix, validation_error = validate_source_upload(upload_file)
+        if validation_error:
+            return Response({"detail": validation_error}, status=status.HTTP_400_BAD_REQUEST)
+
         tenant_id = getattr(request, "tenant", None) and request.tenant.id
         if not tenant_id:
             return Response({"detail": "tenant required for upload"}, status=status.HTTP_400_BAD_REQUEST)
-        name = upload_file.name or ""
-        ext = name.split(".")[-1] if "." in name else "bin"
+        ext = source_suffix(filename).lstrip(".") or "bin"
         key = ai_exam_asset_key(
             tenant_id=tenant_id,
             exam_id=exam.id,
@@ -86,10 +93,11 @@ class ExamAssetView(APIView):
             ext=ext,
         )
 
+        effective_content_type = storage_content_type(upload_file, suffix)
         upload_fileobj_to_r2(
             fileobj=upload_file,
             key=key,
-            content_type=upload_file.content_type,
+            content_type=effective_content_type,
         )
 
         obj, _ = ExamAsset.objects.update_or_create(
@@ -97,7 +105,7 @@ class ExamAssetView(APIView):
             asset_type=asset_type,
             defaults={
                 "file_key": key,
-                "file_type": upload_file.content_type or mimetypes.guess_type(upload_file.name)[0],
+                "file_type": effective_content_type,
                 "file_size": upload_file.size,
             },
         )

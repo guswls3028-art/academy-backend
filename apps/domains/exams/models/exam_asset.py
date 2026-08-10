@@ -10,7 +10,7 @@ class ExamAsset(BaseModel):
     시험 배포용 파일 자산 (R2 기반)
 
     ✅ 책임:
-    - 문제 PDF / OMR 답안지 등 "다운로드 가능한 파일"만 관리
+    - 문제·해설·OMR 답안지의 안전한 원본 파일을 형식 그대로 관리
     - 업로드/다운로드 URL은 serializer에서 presigned GET으로 제공
 
     ⚠️ 운영 규칙:
