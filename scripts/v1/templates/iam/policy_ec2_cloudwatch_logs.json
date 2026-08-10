@@ -2,7 +2,7 @@
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "AiWorkerContainerLogs",
+      "Sid": "RuntimeContainerLogs",
       "Effect": "Allow",
       "Action": [
         "logs:CreateLogStream",
@@ -10,8 +10,12 @@
         "logs:DescribeLogStreams"
       ],
       "Resource": [
+        "arn:aws:logs:ap-northeast-2:809466760795:log-group:/academy/api",
+        "arn:aws:logs:ap-northeast-2:809466760795:log-group:/academy/api:log-stream:*",
         "arn:aws:logs:ap-northeast-2:809466760795:log-group:/academy/ai-worker",
-        "arn:aws:logs:ap-northeast-2:809466760795:log-group:/academy/ai-worker:log-stream:*"
+        "arn:aws:logs:ap-northeast-2:809466760795:log-group:/academy/ai-worker:log-stream:*",
+        "arn:aws:logs:ap-northeast-2:809466760795:log-group:/academy/tools-worker",
+        "arn:aws:logs:ap-northeast-2:809466760795:log-group:/academy/tools-worker:log-stream:*"
       ]
     }
   ]

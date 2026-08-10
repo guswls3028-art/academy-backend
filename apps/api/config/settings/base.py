@@ -300,7 +300,7 @@ REST_FRAMEWORK = {
         "apps.core.authentication.TokenVersionJWTAuthentication",
         "apps.core.authentication.TenantAwareSessionAuthentication",
     ],
-    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "DEFAULT_PAGINATION_CLASS": "apps.api.common.pagination.AcademyPageNumberPagination",
     "PAGE_SIZE": 20,
     "DEFAULT_THROTTLE_CLASSES": [
         "rest_framework.throttling.AnonRateThrottle",

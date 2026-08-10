@@ -408,7 +408,9 @@ function Load-SSOT {
 
     $script:VideoLogGroup = "/aws/batch/academy-video-worker"
     $script:OpsLogGroup = "/aws/batch/academy-video-ops"
+    $script:ApiLogGroup = "/academy/api"
     $script:AiWorkerLogGroup = "/academy/ai-worker"
+    $script:ToolsWorkerLogGroup = "/academy/tools-worker"
 
     # long path 폐기 (2026-05-10): SSOT_* 인벤토리에서 long CE/queue/jobdef 제외.
     # 2026-05-11 보강: detect-stuck / recover-dead / purge-raw / cleanup-orphan jobdef 추가.

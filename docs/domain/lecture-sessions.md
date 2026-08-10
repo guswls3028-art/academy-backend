@@ -29,6 +29,9 @@
 
 ## API와 권한
 
+- `GET /lectures/lectures/`는 요청 tenant의 시스템 강의를 제외한 전체 강의를
+  최신 생성 순서로 안정되게 반환한다. 전역 20건 페이지 제한을 적용하지 않아
+  강의가 많은 학원에서도 시험·채점·오답노트 선택기가 같은 전체 목록을 사용한다.
 - `GET /lectures/sessions/?lecture={lecture_id}`는 강의의 전체 수업을 반환한다.
   클라이언트는 `session_type`으로 두 진입 범위를 구성한다.
 - `POST /lectures/sessions/`에서 정규는 `regular_order`, 보강은
@@ -61,5 +64,6 @@ python -m pytest apps/domains/lectures/tests/test_lecture_stabilization.py -q
 python manage.py makemigrations --check --dry-run --settings apps.api.config.settings.test
 ```
 
-핵심 회귀는 보강 사용자 이름의 생성·응답 보존, 정규 번호 유일성, 보강 삽입 시
-화면 순서 이동, tenant·반 경계다.
+핵심 회귀는 20개를 넘는 강의·차시의 전체 목록과 안정된 순서, 보강 사용자
+이름의 생성·응답 보존, 정규 번호 유일성, 보강 삽입 시 화면 순서 이동,
+tenant·반 경계다.

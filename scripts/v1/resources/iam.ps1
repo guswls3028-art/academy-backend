@@ -914,12 +914,12 @@ function Ensure-EC2InstanceProfileSSM {
         Invoke-Aws @("iam", "put-role-policy", "--role-name", $roleName, "--policy-name", $inlineName, "--policy-document", "file://$($policyWorkersSqs -replace '\\','/')") -ErrorMessage "put workers SQS policy" | Out-Null
         Write-Ok "Ensured inline policy $inlineName on $roleName (Messaging/AI SQS consume)"
     }
-    # AI 문항 분리 로그는 scale-to-zero 인스턴스 종료 뒤에도 CloudWatch에 남긴다.
+    # API와 AI/Tools 작업 로그는 인스턴스 교체·scale-to-zero 뒤에도 남긴다.
     $policyEc2CloudWatchLogs = Join-Path $TemplatesPath "policy_ec2_cloudwatch_logs.json"
     if (Test-Path $policyEc2CloudWatchLogs) {
         $inlineName = "academy-ec2-cloudwatch-logs"
-        Invoke-Aws @("iam", "put-role-policy", "--role-name", $roleName, "--policy-name", $inlineName, "--policy-document", "file://$($policyEc2CloudWatchLogs -replace '\\','/')") -ErrorMessage "put AI worker CloudWatch logs policy" | Out-Null
-        Write-Ok "Ensured inline policy $inlineName on $roleName (AI worker container logs)"
+        Invoke-Aws @("iam", "put-role-policy", "--role-name", $roleName, "--policy-name", $inlineName, "--policy-document", "file://$($policyEc2CloudWatchLogs -replace '\\','/')") -ErrorMessage "put API/worker CloudWatch logs policy" | Out-Null
+        Write-Ok "Ensured inline policy $inlineName on $roleName (API/AI/Tools container logs)"
     }
     # Problem Studio AI transcription: no static provider secret is required.
     # The shared EC2 role may invoke only the sealed Nova 2 Lite inference profile/model.

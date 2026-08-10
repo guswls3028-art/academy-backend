@@ -458,4 +458,4 @@ class ExamViewSet(ModelViewSet):
         if session_id:
             return qs.order_by("display_order", "created_at", "id")
 
-        return qs.order_by("-created_at")
+        return qs.order_by("-created_at", "-id")

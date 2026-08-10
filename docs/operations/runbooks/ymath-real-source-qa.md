@@ -160,6 +160,13 @@ python scripts/ymath_realuse_scenario.py `
   추정하지 말고 로그 수집 경계를 먼저 복구한다. 새 Launch Template 검증은
   IMDSv2로 인스턴스 ID를 읽고, 실제 컨테이너의 `awslogs` 설정과 최신 이벤트를
   확인한 뒤 평상시 desired capacity 0으로 복구하는 부팅 canary를 포함한다.
+- 오답노트 PDF/HWPX와 문서 변환은 Tools worker의 `/academy/tools-worker`
+  `academy-tools-worker/<instance-id>` 스트림을 같은 방식으로 확인한다. API의
+  `202 PENDING`만으로 성공 처리하지 않고 해당 job의 시작·완료/실패 로그,
+  `WrongNotePDF` 최종 상태, R2 다운로드 준비를 함께 대조한다.
+- 업로드 요청, 분리 상태 조회, 승인, 채점·오답노트 API 오류는 `/academy/api`의
+  `academy-api/<instance-id>` 스트림에서 correlation ID와 함께 확인한다. 현재
+  인스턴스의 Docker 로컬 로그만 보거나 ALB 5xx 합계만으로 원인을 추정하지 않는다.
 
 관련 제품 계약은 [시험 생성·채점·오답노트](../../domain/exam-grading.md)와
 [과제·워크북 채점](../../domain/homework-grading.md)을 따른다.

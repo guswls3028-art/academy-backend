@@ -192,8 +192,15 @@ Dependencies:
    candidate instance before terminating an old one without changing desired
    capacity.
 3. UserData installs Docker, logs in to ECR, pulls `repo@sha256:...`, fetches SSM env, and starts the container. `/academy/api/env` 동기화는 `DJANGO_SETTINGS_MODULE=apps.api.config.settings.prod`를 강제하고 atomic file replacement 후 재시작한다. worker 런타임만 `apps.api.config.settings.worker`를 사용하며, SSM command 또는 `docker run` 실패는 배포 실패로 전파한다.
+   The API container disables Gunicorn's unused control socket; runtime operations use the guarded ASG/SSM deployment path, and the non-root app directory is not treated as a writable control-socket location.
 4. ALB health check passes on the new instance.
 5. The old instance is drained and terminated.
+
+The API Docker container writes `academy-api/<instance-id>` streams to
+`/academy/api` with 30-day retention. UserData obtains that identity through
+IMDSv2 and fails before container start when production logging would be
+untraceable. The shared instance role can write only the exact API/AI/Tools
+log groups; it cannot create arbitrary groups.
 
 ## 6. Worker Deployment Strategy
 
@@ -207,7 +214,7 @@ Runtime scaling is split by worker:
 - **AI** uses AWS/SQS CloudWatch scale-out alarms (`ai-worker-queue-high`, `ai-worker-queue-age-high`) plus API wake-up. Idle scale-in is worker-owned after live SQS depth is empty; `ai-worker-queue-low` is observability-only. SSOT min/desired is 0/0. The container uses Docker's `awslogs` driver with an instance-specific stream under `/academy/ai-worker`, so segmentation logs survive scale-to-zero termination for the configured 30-day retention. The shared EC2 role can write only that exact log group. The stream identity is read through an IMDSv2 token; a missing token or instance ID fails the boot before an untraceable container can start.
 - Problem Studio image transcription defaults to the `global.amazon.nova-2-lite-v1:0` Bedrock inference profile when no OpenAI key is configured. Nova 2 Lite exposes no Seoul in-region or APAC/JP geo inference option from `ap-northeast-2`, so this profile may route encrypted inference traffic to any AWS commercial destination listed for the global profile. The shared EC2 instance role receives only `bedrock:InvokeModel` on that profile and its exact foundation model through `policy_workers_bedrock_problem_transcription.json`; `Ensure-EC2InstanceProfileSSM` converges the inline policy. Unit count, tenant quota, output tokens, request time, tenant-prefixed temporary storage, terminal archive deletion, UI confirmation, and privacy disclosure remain bounded or explicit in the application layer. CloudTrail `additionalEventData.inferenceRegion` is the operational source for the actual destination of a request.
 - **Messaging** runs with ASG min/desired=1 warm baseline and AWS/SQS CloudWatch alarms for StepScaling up to SSOT max capacity. Account recovery and Alimtalk delivery are user-facing wait paths, so the worker is not allowed to cold-start from zero during normal operation. Scale-in requires visible+in-flight+delayed backlog to stay 0 and then returns only to the warm baseline.
-- **Tools** runs with ASG min/desired=0 baseline and AWS/SQS CloudWatch alarms for deterministic conversion queues. Any visible queue message wakes the worker; scale-in uses the same visible+in-flight+delayed backlog guard.
+- **Tools** runs with ASG min/desired=0 baseline and AWS/SQS CloudWatch alarms for deterministic conversion queues. Any visible queue message wakes the worker; scale-in uses the same visible+in-flight+delayed backlog guard. Its Docker container writes instance-scoped streams to `/academy/tools-worker` with the same 30-day retention and fail-closed IMDSv2 identity rule as AI, so wrong-note and document-conversion failures remain inspectable after scale-to-zero.
 - **Video** is not an ASG worker. It is AWS Batch only.
 
 ### Worker UserData Flow
@@ -220,11 +227,11 @@ The worker launch templates contain UserData that executes on each new instance 
 # 2. Install Docker (dnf/yum)
 # 3. ECR login + pull digest-pinned image (5 retries, 15s apart)
 # 4. Fetch SSM /academy/workers/env (base64 JSON -> KEY=VALUE env file)
-# 5. For AI, attach the /academy/ai-worker awslogs driver and instance stream
+# 5. For AI/Tools, attach the owning /academy/* awslogs driver and instance stream
 # 6. docker run -d --restart unless-stopped --name <worker> -e DJANGO_SETTINGS_MODULE=... --env-file /opt/workers.env <image>
 ```
 
-This UserData is already correctly implemented in `scripts/v1/resources/worker_userdata.ps1` and is embedded in the launch templates by `asg_ai.ps1` and `asg_messaging.ps1`.
+This UserData is implemented in `scripts/v1/resources/worker_userdata.ps1`; AI and Tools pass their exact log groups through `asg_ai.ps1` and `asg_tools.ps1`, while Messaging keeps its warm-instance local logging boundary.
 
 ## 7. Migration Strategy
 

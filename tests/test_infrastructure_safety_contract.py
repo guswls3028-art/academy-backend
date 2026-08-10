@@ -27,6 +27,7 @@ API_RESOURCE = REPO_ROOT / "scripts" / "v1" / "resources" / "api.ps1"
 REFRESH_API_ENV = REPO_ROOT / "scripts" / "v1" / "inline" / "refresh-api-env.sh"
 REFRESH_API_ENV_PS1 = REPO_ROOT / "scripts" / "v1" / "refresh-api-env.ps1"
 CLOUDWATCH_RESOURCE = REPO_ROOT / "scripts" / "v1" / "resources" / "cloudwatch.ps1"
+ASG_TOOLS_RESOURCE = REPO_ROOT / "scripts" / "v1" / "resources" / "asg_tools.ps1"
 IAM_RESOURCE = REPO_ROOT / "scripts" / "v1" / "resources" / "iam.ps1"
 WORKER_BEDROCK_POLICY = (
     REPO_ROOT / "scripts" / "v1" / "templates" / "iam"
@@ -700,6 +701,9 @@ if ($aiRendered -notmatch "X-aws-ec2-metadata-token-ttl-seconds: 21600") {{ exit
 if ($aiRendered -notmatch 'X-aws-ec2-metadata-token: \$IMDS_TOKEN') {{ exit 32 }}
 if ($aiRendered -notmatch 'IMDSv2 instance id unavailable') {{ exit 33 }}
 if ([regex]::Matches($aiRendered, "latest/meta-data/instance-id").Count -ne 1) {{ exit 34 }}
+$toolsRendered = Get-WorkerLaunchTemplateUserData -ImageUri $uri -Region $script:Region -SsmParam "/academy/workers/env" -ContainerName "academy-tools-worker" -LogGroup "/academy/tools-worker"
+if ($toolsRendered -notmatch "awslogs-group=/academy/tools-worker") {{ exit 35 }}
+if ($toolsRendered -notmatch "awslogs-stream=academy-tools-worker/") {{ exit 36 }}
 
 try {{
     Get-ImmutableEcrImageUri -RepoName "academy-messaging-worker" -ImageTag "latest"
@@ -721,7 +725,30 @@ exit 0
     assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
-def test_ai_worker_cloudwatch_policy_is_exact_and_write_only() -> None:
+def test_api_userdata_uses_imdsv2_scoped_cloudwatch_logging() -> None:
+    api_path = str(API_RESOURCE).replace("'", "''")
+    script = rf"""
+. '{api_path}'
+$rendered = Get-ApiLaunchTemplateUserData -ApiImageUri "123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api@sha256:$('a' * 64)" -Region "ap-northeast-2" -SsmApiEnvParam "/academy/api/env" -LogGroup "/academy/api"
+if ($rendered -notmatch "X-aws-ec2-metadata-token-ttl-seconds: 21600") {{ exit 41 }}
+if ($rendered -notmatch 'X-aws-ec2-metadata-token: \$IMDS_TOKEN') {{ exit 42 }}
+if ($rendered -notmatch "awslogs-group=/academy/api") {{ exit 43 }}
+if ($rendered -notmatch "awslogs-stream=academy-api/") {{ exit 44 }}
+if ($rendered -notmatch "refusing untraceable CloudWatch API logging") {{ exit 45 }}
+exit 0
+"""
+    completed = subprocess.run(
+        ["pwsh", "-NoProfile", "-NonInteractive", "-Command", "-"],
+        input=script,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+def test_runtime_container_cloudwatch_policy_is_exact_and_write_only() -> None:
     policy = json.loads(EC2_CLOUDWATCH_LOGS_POLICY.read_text(encoding="utf-8"))
     statement = policy["Statement"][0]
 
@@ -731,16 +758,28 @@ def test_ai_worker_cloudwatch_policy_is_exact_and_write_only() -> None:
         "logs:DescribeLogStreams",
     }
     assert statement["Resource"] == [
+        "arn:aws:logs:ap-northeast-2:809466760795:log-group:/academy/api",
+        "arn:aws:logs:ap-northeast-2:809466760795:log-group:/academy/api:log-stream:*",
         "arn:aws:logs:ap-northeast-2:809466760795:log-group:/academy/ai-worker",
         "arn:aws:logs:ap-northeast-2:809466760795:log-group:/academy/ai-worker:log-stream:*",
+        "arn:aws:logs:ap-northeast-2:809466760795:log-group:/academy/tools-worker",
+        "arn:aws:logs:ap-northeast-2:809466760795:log-group:/academy/tools-worker:log-stream:*",
     ]
 
 
-def test_ai_worker_log_group_is_ensured_before_launch_template_rollout() -> None:
+def test_runtime_container_log_groups_are_ensured_and_wired() -> None:
     deploy = DEPLOY.read_text(encoding="utf-8-sig")
     cloudwatch = CLOUDWATCH_RESOURCE.read_text(encoding="utf-8-sig")
+    asg_tools = ASG_TOOLS_RESOURCE.read_text(encoding="utf-8-sig")
+    pin_asg_image = PIN_ASG_IMAGE.read_text(encoding="utf-8-sig")
 
+    assert "$script:ApiLogGroup" in cloudwatch
     assert "$script:AiWorkerLogGroup" in cloudwatch
+    assert "$script:ToolsWorkerLogGroup" in cloudwatch
+    assert "-LogGroup $script:ToolsWorkerLogGroup" in asg_tools
+    assert "-LogGroup $script:ApiLogGroup" in pin_asg_image
+    assert "-LogGroup $script:ToolsWorkerLogGroup" in pin_asg_image
+    assert deploy.index("Ensure-RuntimeLogRetention") < deploy.index("Ensure-API")
     assert deploy.index("Ensure-RuntimeLogRetention") < deploy.index("Ensure-ASGAi")
 
 

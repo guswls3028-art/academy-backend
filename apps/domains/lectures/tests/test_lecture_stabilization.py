@@ -329,6 +329,44 @@ class TestSessionCreateAutoAssign(LectureTestBase):
         self.assertEqual(response.data["section"], section.id)
 
 
+class TestLectureListNoPagination(LectureTestBase):
+    """강의 선택기는 tenant의 전체 강의를 안정된 순서로 받아야 한다."""
+
+    def test_lecture_list_returns_all_non_system_rows_in_stable_order(self):
+        created_ids = [self.lecture.id]
+        for i in range(25):
+            created_ids.append(
+                Lecture.objects.create(
+                    tenant=self.tenant,
+                    name=f"Lecture {i:02d}",
+                    title=f"Lecture {i:02d}",
+                    subject="math",
+                ).id
+            )
+        Lecture.objects.create(
+            tenant=self.tenant,
+            name="System Lecture",
+            title="System Lecture",
+            subject="system",
+            is_system=True,
+        )
+
+        request = self.factory.get("/api/v1/lectures/lectures/?page_size=100")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+
+        response = LectureViewSet.as_view({"get": "list"})(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsInstance(response.data, list)
+        self.assertEqual(len(response.data), 26)
+        self.assertEqual(
+            [row["id"] for row in response.data],
+            list(reversed(created_ids)),
+        )
+        self.assertNotIn("System Lecture", [row["title"] for row in response.data])
+
+
 class TestSessionListNoPagination(LectureTestBase):
     """차시 목록은 성적/시험/영상 트리 진입점에서 전체가 필요하다."""
 
