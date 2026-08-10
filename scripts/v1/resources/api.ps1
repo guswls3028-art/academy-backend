@@ -13,9 +13,13 @@ function Get-ApiLaunchTemplateUserData {
             "apps.api.config.settings.prod",
             "apps.api.config.settings.development"
         )]
-        [string]$ExpectedSettingsModule = "apps.api.config.settings.prod"
+        [string]$ExpectedSettingsModule = "apps.api.config.settings.prod",
+        [string]$LogGroup = ""
     )
     if (-not $ApiImageUri -or -not $Region) { return "" }
+    if ($LogGroup -and $LogGroup -notmatch '^/academy/[a-z0-9/-]+$') {
+        throw "API CloudWatch log group is outside the approved /academy/* namespace: $LogGroup"
+    }
     $ecrHost = $ApiImageUri.Split("/")[0]
     $deployComment = if ($DeploymentId) { "# DEPLOYMENT_ID=$DeploymentId" } else { "# DEPLOYMENT_ID=" }
     $script = @"
@@ -26,9 +30,15 @@ export AWS_REGION="$Region"
 LOG=/var/log/academy-api-userdata.log
 touch "`$LOG"
 log() { echo "`$(date -Iseconds) `$*" >> "`$LOG"; }
-# 0) 네트워크/IMDS 준비 대기 (ECR 연결 타임아웃 방지)
+# 0) 네트워크/IMDSv2 준비 대기 (ECR 연결 타임아웃·로그 추적성 보장)
+IMDS_TOKEN=""
+INSTANCE_ID=""
 for i in 1 2 3 4 5 6 7 8 9 10; do
-  if curl -sf --connect-timeout 2 http://169.254.169.254/latest/meta-data/instance-id >/dev/null 2>&1; then break; fi
+  IMDS_TOKEN="`$(curl -sf --connect-timeout 2 -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" http://169.254.169.254/latest/api/token || true)"
+  if [ -n "`$IMDS_TOKEN" ]; then
+    INSTANCE_ID="`$(curl -sf --connect-timeout 2 -H "X-aws-ec2-metadata-token: `$IMDS_TOKEN" http://169.254.169.254/latest/meta-data/instance-id || true)"
+    if [ -n "`$INSTANCE_ID" ]; then break; fi
+  fi
   sleep 3
 done
 # 1) Docker 설치 및 기동 (Amazon Linux 2 / AL2023)
@@ -82,7 +92,15 @@ API_ENV_FILE="--env-file /opt/api.env"
 # 4) 기존 academy-api 컨테이너 정리 후 고정 digest 이미지로 실행
 docker stop academy-api 2>/dev/null || true
 docker rm academy-api 2>/dev/null || true
-if ! docker run -d --restart unless-stopped --name academy-api -p 8000:8000 `$API_ENV_FILE $ApiImageUri 2>>"`$LOG"; then
+LOG_DRIVER_ARGS=()
+if [ -n "$LogGroup" ]; then
+  if [ -z "`$INSTANCE_ID" ]; then
+    log "IMDSv2 instance id unavailable; refusing untraceable CloudWatch API logging"
+    exit 1
+  fi
+  LOG_DRIVER_ARGS=(--log-driver awslogs --log-opt awslogs-region=$Region --log-opt awslogs-group=$LogGroup --log-opt awslogs-stream=academy-api/`$INSTANCE_ID)
+fi
+if ! docker run -d --restart unless-stopped --name academy-api -p 8000:8000 `$API_ENV_FILE `${LOG_DRIVER_ARGS[@]} $ApiImageUri 2>>"`$LOG"; then
   log "docker run failed. Image: $ApiImageUri"
   exit 1
 fi
@@ -492,7 +510,7 @@ function Ensure-API-LaunchTemplate {
             if ($script:ApiEnvVersion -and [int]$script:ApiEnvVersion -gt 0) {
                 $deploymentId = "$deploymentId-env-v$([int]$script:ApiEnvVersion)"
             }
-            $userDataRaw = Get-ApiLaunchTemplateUserData -ApiImageUri $apiUri -Region $script:Region -SsmApiEnvParam $script:SsmApiEnv -DeploymentId $deploymentId
+            $userDataRaw = Get-ApiLaunchTemplateUserData -ApiImageUri $apiUri -Region $script:Region -SsmApiEnvParam $script:SsmApiEnv -DeploymentId $deploymentId -LogGroup $script:ApiLogGroup
         } else {
             Write-Warn "No API image in ECR ($($script:EcrApiRepo)); Launch Template UserData left empty. Push academy-api image and re-run deploy."
         }

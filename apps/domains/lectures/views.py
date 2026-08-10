@@ -102,6 +102,9 @@ def _regular_order_exists(scope, regular_order: int) -> bool:
 class LectureViewSet(ModelViewSet):
     serializer_class = LectureSerializer
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+    # 강의는 시험·채점·오답노트 선택기의 루트 목록이다. 전역 PAGE_SIZE=20으로
+    # 잘리면 뒤쪽 강의가 모든 하위 흐름에서 사라지므로 tenant 범위 전체를 반환한다.
+    pagination_class = None
 
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ["is_active", "subject"]
@@ -122,7 +125,7 @@ class LectureViewSet(ModelViewSet):
         qs = enroll_repo.lecture_filter_tenant(tenant)
         if self.action == "list":
             qs = qs.exclude(is_system=True)
-        return qs
+        return qs.order_by("-created_at", "-id")
 
     def _handle_title_integrity_error(self, e):
         """UniqueConstraint(tenant, title) 위반 시 사용자 친화적 에러 메시지 반환"""

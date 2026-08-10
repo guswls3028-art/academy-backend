@@ -8,7 +8,9 @@ function Ensure-RuntimeLogRetention {
     $logGroups = @(
         $script:VideoLogGroup,
         $script:OpsLogGroup,
-        $script:AiWorkerLogGroup
+        $script:ApiLogGroup,
+        $script:AiWorkerLogGroup,
+        $script:ToolsWorkerLogGroup
     )
     if ($script:RdsProxyName -and $script:RdsProxyName.Trim() -ne "") {
         $logGroups += "/aws/rds/proxy/$($script:RdsProxyName.Trim())"

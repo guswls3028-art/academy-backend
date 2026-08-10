@@ -62,6 +62,7 @@ CMD ["sh", "-c", \
     --worker-class gevent \
     --worker-connections ${GUNICORN_WORKER_CONNECTIONS:-1000} \
     --timeout 120 \
+    --no-control-socket \
     --access-logfile - \
     --error-logfile - \
     apps.api.config.wsgi:application"]

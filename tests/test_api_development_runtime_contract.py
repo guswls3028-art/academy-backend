@@ -32,6 +32,7 @@ OIDC_CONVERGE = (
 DATABASE_CONVERGE = (
     REPO_ROOT / "scripts" / "v1" / "converge-api-preprod-database.ps1"
 )
+API_DOCKERFILE = REPO_ROOT / "docker" / "api" / "Dockerfile"
 
 
 def _job_block(source: str, name: str) -> str:
@@ -55,6 +56,12 @@ def test_development_host_keeps_tools_and_ai_workers_warm_without_production_cap
     assert "Development Tools worker stays a separate container/process" in deploy
     assert "Development AI worker stays a separate container/process" in deploy
     assert "AI_WORKER_IDLE_SCALE_IN_ENABLED=0" in deploy
+
+
+def test_api_disables_unused_gunicorn_control_socket() -> None:
+    dockerfile = API_DOCKERFILE.read_text(encoding="utf-8")
+
+    assert "--no-control-socket" in dockerfile
 
 
 def test_development_gate_runs_synthetic_excel_ppt_and_r2_review() -> None:

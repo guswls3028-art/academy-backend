@@ -216,7 +216,7 @@ $deployment = switch ($Service) {
             ASG = $script:ApiASGName
             UserData = {
                 param($ImageUri)
-                Get-ApiLaunchTemplateUserData -ApiImageUri $ImageUri -Region $script:Region -SsmApiEnvParam $script:SsmApiEnv -DeploymentId $ImageTag
+                Get-ApiLaunchTemplateUserData -ApiImageUri $ImageUri -Region $script:Region -SsmApiEnvParam $script:SsmApiEnv -DeploymentId $ImageTag -LogGroup $script:ApiLogGroup
             }
         }
     }
@@ -249,7 +249,7 @@ $deployment = switch ($Service) {
             ASG = $script:ToolsASGName
             UserData = {
                 param($ImageUri)
-                Get-WorkerLaunchTemplateUserData -ImageUri $ImageUri -Region $script:Region -SsmParam $script:SsmWorkersEnv -ContainerName "academy-tools-worker"
+                Get-WorkerLaunchTemplateUserData -ImageUri $ImageUri -Region $script:Region -SsmParam $script:SsmWorkersEnv -ContainerName "academy-tools-worker" -LogGroup $script:ToolsWorkerLogGroup
             }
         }
     }

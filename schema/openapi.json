@@ -4636,37 +4636,6 @@
         ],
         "type": "object"
       },
-      "PaginatedLectureList": {
-        "properties": {
-          "count": {
-            "example": 123,
-            "type": "integer"
-          },
-          "next": {
-            "example": "http://api.example.org/accounts/?page=4",
-            "format": "uri",
-            "nullable": true,
-            "type": "string"
-          },
-          "previous": {
-            "example": "http://api.example.org/accounts/?page=2",
-            "format": "uri",
-            "nullable": true,
-            "type": "string"
-          },
-          "results": {
-            "items": {
-              "$ref": "#/components/schemas/Lecture"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "count",
-          "results"
-        ],
-        "type": "object"
-      },
       "PaginatedLectureProgressList": {
         "properties": {
           "count": {
@@ -14757,6 +14726,15 @@
             "schema": {
               "type": "integer"
             }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
           }
         ],
         "responses": {
@@ -14879,6 +14857,15 @@
             "description": "페이지네이션된 결과 집합 내의 페이지 번호.",
             "in": "query",
             "name": "page",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
             "required": false,
             "schema": {
               "type": "integer"
@@ -15330,6 +15317,15 @@
             "schema": {
               "type": "integer"
             }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
           }
         ],
         "responses": {
@@ -15495,6 +15491,15 @@
             "description": "페이지네이션된 결과 집합 내의 페이지 번호.",
             "in": "query",
             "name": "page",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
             "required": false,
             "schema": {
               "type": "integer"
@@ -16051,6 +16056,15 @@
             }
           },
           {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
             "description": "검색어.",
             "in": "query",
             "name": "search",
@@ -16545,6 +16559,15 @@
             }
           },
           {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
             "description": "검색어.",
             "in": "query",
             "name": "search",
@@ -16826,6 +16849,15 @@
             }
           },
           {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
             "description": "검색어.",
             "in": "query",
             "name": "search",
@@ -17093,6 +17125,15 @@
             "description": "페이지네이션된 결과 집합 내의 페이지 번호.",
             "in": "query",
             "name": "page",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
             "required": false,
             "schema": {
               "type": "integer"
@@ -17712,6 +17753,15 @@
             "schema": {
               "type": "integer"
             }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
           }
         ],
         "responses": {
@@ -17981,6 +18031,15 @@
             "description": "페이지네이션된 결과 집합 내의 페이지 번호.",
             "in": "query",
             "name": "page",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
             "required": false,
             "schema": {
               "type": "integer"
@@ -20148,6 +20207,15 @@
             "schema": {
               "type": "integer"
             }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
           }
         ],
         "responses": {
@@ -20464,6 +20532,15 @@
             "description": "페이지네이션된 결과 집합 내의 페이지 번호.",
             "in": "query",
             "name": "page",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
             "required": false,
             "schema": {
               "type": "integer"
@@ -21273,6 +21350,15 @@
             }
           },
           {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
             "description": "검색어.",
             "in": "query",
             "name": "search",
@@ -21994,6 +22080,15 @@
             "schema": {
               "type": "integer"
             }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
           }
         ],
         "responses": {
@@ -22076,6 +22171,15 @@
             "description": "페이지네이션된 결과 집합 내의 페이지 번호.",
             "in": "query",
             "name": "page",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
             "required": false,
             "schema": {
               "type": "integer"
@@ -22366,6 +22470,15 @@
             "description": "페이지네이션된 결과 집합 내의 페이지 번호.",
             "in": "query",
             "name": "page",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
             "required": false,
             "schema": {
               "type": "integer"
@@ -22684,6 +22797,15 @@
             "description": "페이지네이션된 결과 집합 내의 페이지 번호.",
             "in": "query",
             "name": "page",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
             "required": false,
             "schema": {
               "type": "integer"
@@ -23013,6 +23135,15 @@
             "description": "페이지네이션된 결과 집합 내의 페이지 번호.",
             "in": "query",
             "name": "page",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
             "required": false,
             "schema": {
               "type": "integer"
@@ -25426,6 +25557,15 @@
             "schema": {
               "type": "integer"
             }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
           }
         ],
         "responses": {
@@ -25697,6 +25837,15 @@
             "description": "페이지네이션된 결과 집합 내의 페이지 번호.",
             "in": "query",
             "name": "page",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
             "required": false,
             "schema": {
               "type": "integer"
@@ -26029,6 +26178,15 @@
             "description": "페이지네이션된 결과 집합 내의 페이지 번호.",
             "in": "query",
             "name": "page",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
             "required": false,
             "schema": {
               "type": "integer"
@@ -27372,6 +27530,15 @@
             "description": "페이지네이션된 결과 집합 내의 페이지 번호.",
             "in": "query",
             "name": "page",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
             "required": false,
             "schema": {
               "type": "integer"
@@ -28884,15 +29051,6 @@
         "operationId": "lectures_lectures_list",
         "parameters": [
           {
-            "description": "페이지네이션된 결과 집합 내의 페이지 번호.",
-            "in": "query",
-            "name": "page",
-            "required": false,
-            "schema": {
-              "type": "integer"
-            }
-          },
-          {
             "description": "검색어.",
             "in": "query",
             "name": "search",
@@ -28907,7 +29065,10 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PaginatedLectureList"
+                  "items": {
+                    "$ref": "#/components/schemas/Lecture"
+                  },
+                  "type": "array"
                 }
               }
             },
@@ -29232,6 +29393,15 @@
             "schema": {
               "type": "integer"
             }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
           }
         ],
         "responses": {
@@ -29546,6 +29716,15 @@
             "description": "페이지네이션된 결과 집합 내의 페이지 번호.",
             "in": "query",
             "name": "page",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
             "required": false,
             "schema": {
               "type": "integer"
@@ -30405,6 +30584,15 @@
             "schema": {
               "type": "integer"
             }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
           }
         ],
         "responses": {
@@ -30736,6 +30924,15 @@
             }
           },
           {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
             "description": "검색어.",
             "in": "query",
             "name": "search",
@@ -30897,6 +31094,15 @@
             "description": "페이지네이션된 결과 집합 내의 페이지 번호.",
             "in": "query",
             "name": "page",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
             "required": false,
             "schema": {
               "type": "integer"
@@ -31179,6 +31385,15 @@
             "description": "페이지네이션된 결과 집합 내의 페이지 번호.",
             "in": "query",
             "name": "page",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
             "required": false,
             "schema": {
               "type": "integer"
@@ -33109,6 +33324,15 @@
             }
           },
           {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
             "in": "query",
             "name": "reason",
             "schema": {
@@ -33789,6 +34013,15 @@
             }
           },
           {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
             "in": "query",
             "name": "risk_level",
             "schema": {
@@ -34088,6 +34321,15 @@
             }
           },
           {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
             "description": "검색어.",
             "in": "query",
             "name": "search",
@@ -34374,6 +34616,15 @@
             "description": "페이지네이션된 결과 집합 내의 페이지 번호.",
             "in": "query",
             "name": "page",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
             "required": false,
             "schema": {
               "type": "integer"
@@ -34701,6 +34952,15 @@
             "description": "페이지네이션된 결과 집합 내의 페이지 번호.",
             "in": "query",
             "name": "page",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
             "required": false,
             "schema": {
               "type": "integer"
@@ -35038,6 +35298,15 @@
             "description": "페이지네이션된 결과 집합 내의 페이지 번호.",
             "in": "query",
             "name": "page",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
             "required": false,
             "schema": {
               "type": "integer"
@@ -36599,6 +36868,15 @@
             "description": "페이지네이션된 결과 집합 내의 페이지 번호.",
             "in": "query",
             "name": "page",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
             "required": false,
             "schema": {
               "type": "integer"
@@ -41694,6 +41972,15 @@
             "schema": {
               "type": "integer"
             }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
           }
         ],
         "responses": {
@@ -42354,6 +42641,15 @@
             "description": "페이지네이션된 결과 집합 내의 페이지 번호.",
             "in": "query",
             "name": "page",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
             "required": false,
             "schema": {
               "type": "integer"
@@ -43399,6 +43695,15 @@
             "description": "페이지네이션된 결과 집합 내의 페이지 번호.",
             "in": "query",
             "name": "page",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
             "required": false,
             "schema": {
               "type": "integer"

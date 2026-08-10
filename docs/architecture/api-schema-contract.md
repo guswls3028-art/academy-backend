@@ -2,7 +2,7 @@
 
 **Status:** Active
 **Owners:** Backend API and frontend API consumers
-**Last reviewed:** 2026-08-05
+**Last reviewed:** 2026-08-11
 
 ## Purpose and ownership
 
@@ -43,6 +43,19 @@ after regenerating; never raise the baseline merely to make CI pass.
 Academy JWT and tenant-aware session authentication are represented through
 `apps.api.schema_extensions`. Schema generation contains no credentials and
 does not connect to tenant or production data.
+
+## List pagination contract
+
+Endpoints using the default DRF paginator accept `page` and `page_size`; the
+default is 20 and `page_size` is capped at 500. Domain-specific paginators may
+set a smaller or larger documented cap, and endpoints that require a complete
+bounded collection may explicitly disable pagination. Clients still consume
+the standard `count/next/previous/results` shape unless the endpoint documents
+a flat-list response.
+
+This contract is required by the teacher/admin exam, homework, result, and
+selection APIs. Silently ignoring `page_size` can hide records beyond the
+first 20 and is treated as a transport regression.
 
 ## Compatibility and verification
 

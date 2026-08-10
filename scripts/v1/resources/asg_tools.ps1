@@ -23,7 +23,7 @@ function Ensure-ToolsLaunchTemplate {
     if (-not $script:PlanMode) {
         $imgUri = Get-LatestWorkerImageUri -RepoName $script:EcrToolsRepo
         if ($imgUri) {
-            $userDataRaw = Get-WorkerLaunchTemplateUserData -ImageUri $imgUri -Region $script:Region -SsmParam $script:SsmWorkersEnv -ContainerName "academy-tools-worker"
+            $userDataRaw = Get-WorkerLaunchTemplateUserData -ImageUri $imgUri -Region $script:Region -SsmParam $script:SsmWorkersEnv -ContainerName "academy-tools-worker" -LogGroup $script:ToolsWorkerLogGroup
             if ($userDataRaw) { $userDataB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($userDataRaw)) }
         }
     }
