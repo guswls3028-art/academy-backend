@@ -151,7 +151,11 @@ def run_hwp_question_pipeline(
             {
                 "exam_id": exam_id,
                 "conversion_required": True,
-                "message": "미주 해설 이미지를 읽지 못해 PDF 변환본이 필요합니다.",
+                "message": (
+                    "원본은 보관했습니다. 자동 분리가 완전하지 않아 시험 상세에서 "
+                    "문항과 해설을 직접 등록해 검수해 주세요. PDF 재업로드는 "
+                    "필수가 아닙니다."
+                ),
             },
         )
     if extraction.missing_visual_numbers:
@@ -166,7 +170,8 @@ def run_hwp_question_pipeline(
                 "missing_visual_numbers": list(extraction.missing_visual_numbers),
                 "message": (
                     "이 한글 파일은 일부 문항만 미주 원본 이미지가 있어 문제와 해설을 "
-                    "완전하게 나눌 수 없습니다. 같은 문제지를 PDF로 저장해 함께 올려 주세요."
+                    "완전하게 나눌 수 없습니다. 원본은 보관했으며 시험 상세에서 직접 "
+                    "등록해 검수할 수 있습니다. PDF 재업로드는 필수가 아닙니다."
                 ),
             },
         )
@@ -184,7 +189,8 @@ def run_hwp_question_pipeline(
                 ),
                 "message": (
                     "한글 본문의 일부 문항을 미주 번호와 완전하게 연결하지 못했습니다. "
-                    "정답 표시 없는 문제지를 PDF로 저장해 함께 올려 주세요."
+                    "원본은 보관했으며 시험 상세에서 직접 등록해 검수할 수 있습니다. "
+                    "PDF 재업로드는 필수가 아닙니다."
                 ),
             },
         )

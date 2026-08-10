@@ -278,6 +278,180 @@ class GuidedExamSourceWorkflowTests(TestCase):
 
     @patch(
         "apps.domains.exams.views.pdf_question_extract_view."
+        "generate_presigned_download_url"
+    )
+    @patch(
+        "apps.domains.exams.views.pdf_question_extract_view.dispatch_ai_job"
+    )
+    @patch(
+        "apps.domains.exams.views.pdf_question_extract_view."
+        "upload_fileobj_to_r2_storage"
+    )
+    def test_office_source_is_preserved_without_forcing_pdf(
+        self,
+        upload_file,
+        dispatch_job,
+        presign,
+    ):
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="DOCX 원본 시험",
+            exam_type=Exam.ExamType.REGULAR,
+            grading_mode=Exam.GradingMode.WRITTEN,
+        )
+        upload = SimpleUploadedFile(
+            "수학문제.docx",
+            b"PK Office fixture",
+            content_type=(
+                "application/vnd.openxmlformats-officedocument."
+                "wordprocessingml.document"
+            ),
+        )
+
+        response = PdfQuestionExtractView.as_view()(
+            self._request(exam, upload)
+        )
+
+        self.assertEqual(response.status_code, 202, response.data)
+        self.assertEqual(response.data["status"], "source_saved")
+        self.assertFalse(response.data["processing_started"])
+        self.assertIn(
+            "PDF 재업로드는 필수가 아닙니다",
+            response.data["message"],
+        )
+        exam.refresh_from_db()
+        self.assertEqual(
+            exam.segmentation_status,
+            Exam.SegmentationStatus.CONVERSION_REQUIRED,
+        )
+        self.assertEqual(exam.source_filename, "수학문제.docx")
+        source_asset = ExamAsset.objects.get(
+            exam=exam,
+            asset_type=ExamAsset.AssetType.PROBLEM_SOURCE,
+        )
+        self.assertEqual(source_asset.file_type, upload.content_type)
+        upload_file.assert_called_once()
+        self.assertEqual(
+            upload_file.call_args.kwargs["content_type"],
+            "application/octet-stream",
+        )
+        presign.assert_not_called()
+        dispatch_job.assert_not_called()
+
+    @patch(
+        "apps.domains.exams.views.pdf_question_extract_view."
+        "generate_presigned_download_url",
+        return_value="https://files.test/problems.pdf",
+    )
+    @patch(
+        "apps.domains.exams.views.pdf_question_extract_view.dispatch_ai_job",
+        return_value={"job_id": "problem-only-job"},
+    )
+    @patch(
+        "apps.domains.exams.views.pdf_question_extract_view."
+        "upload_fileobj_to_r2_storage"
+    )
+    def test_any_safe_explanation_format_is_preserved_while_problem_runs(
+        self,
+        upload_file,
+        dispatch_job,
+        presign,
+    ):
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="PPTX 해설 시험",
+            exam_type=Exam.ExamType.REGULAR,
+            grading_mode=Exam.GradingMode.WRITTEN,
+        )
+        problem_upload = SimpleUploadedFile(
+            "문제지.pdf",
+            b"%PDF-1.4",
+            content_type="application/pdf",
+        )
+        explanation_upload = SimpleUploadedFile(
+            "선생님해설.pptx",
+            b"PK Office explanation fixture",
+            content_type=(
+                "application/vnd.openxmlformats-officedocument."
+                "presentationml.presentation"
+            ),
+        )
+
+        response = PdfQuestionExtractView.as_view()(
+            self._request(exam, problem_upload, explanation_upload)
+        )
+
+        self.assertEqual(response.status_code, 202, response.data)
+        self.assertEqual(response.data["status"], "submitted")
+        self.assertTrue(response.data["processing_started"])
+        self.assertEqual(upload_file.call_count, 2)
+        self.assertEqual(presign.call_count, 1)
+        payload = dispatch_job.call_args.kwargs["payload"]
+        self.assertEqual(payload["filename"], "문제지.pdf")
+        self.assertEqual(payload["explanation_filename"], "")
+        self.assertEqual(payload["explanation_download_url"], "")
+        self.assertTrue(
+            ExamAsset.objects.filter(
+                exam=exam,
+                asset_type=(
+                    ExamAsset.AssetType.TEACHER_EXPLANATION_SOURCE
+                ),
+            ).exists()
+        )
+
+    @patch(
+        "apps.domains.exams.views.pdf_question_extract_view."
+        "upload_fileobj_to_r2_storage"
+    )
+    def test_executable_source_is_rejected(self, upload_file):
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="위험 파일 거부 시험",
+            exam_type=Exam.ExamType.REGULAR,
+        )
+        upload = SimpleUploadedFile(
+            "문제지.exe",
+            b"MZ fixture",
+            content_type="application/x-msdownload",
+        )
+
+        response = PdfQuestionExtractView.as_view()(
+            self._request(exam, upload)
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("실행 파일", response.data["detail"])
+        upload_file.assert_not_called()
+
+    @patch(
+        "apps.domains.exams.views.pdf_question_extract_view."
+        "upload_fileobj_to_r2_storage"
+    )
+    def test_long_executable_filename_keeps_its_blocked_suffix(
+        self,
+        upload_file,
+    ):
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="긴 위험 파일명 거부 시험",
+            exam_type=Exam.ExamType.REGULAR,
+        )
+        upload = SimpleUploadedFile(
+            f"{'문제자료' * 80}.exe",
+            b"MZ fixture",
+            content_type="application/octet-stream",
+        )
+
+        response = PdfQuestionExtractView.as_view()(
+            self._request(exam, upload)
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("실행 파일", response.data["detail"])
+        upload_file.assert_not_called()
+
+    @patch(
+        "apps.domains.exams.views.pdf_question_extract_view."
         "upload_fileobj_to_r2_storage"
     )
     def test_regular_exam_with_questions_is_not_overwritten(
