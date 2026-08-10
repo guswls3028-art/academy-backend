@@ -1,5 +1,5 @@
 # PATH: apps/domains/exams/views/pdf_question_extract_view.py
-# PDF 시험지 업로드 → AI 문항 분할 job 제출 API
+# 시험 자료 원본 업로드 → 지원 형식 AI 문항 분할 job 제출 API
 
 import hashlib
 import logging
@@ -13,8 +13,18 @@ from rest_framework.parsers import MultiPartParser
 
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.exams.models import Exam, ExamAsset
+from apps.domains.exams.services.source_upload_policy import (
+    AUTO_PAIR_EXPLANATION_SUFFIXES,
+    AUTO_PAIR_PRIMARY_SUFFIXES,
+    AUTO_SEGMENT_SUFFIXES,
+    storage_content_type,
+    validate_source_upload,
+)
 from apps.support.exams.view_dependencies import dispatch_ai_job, pdf_extract_exam_validation_error
-from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_storage, generate_presigned_get_url_storage as generate_presigned_download_url
+from apps.infrastructure.storage.r2 import (
+    upload_fileobj_to_r2_storage,
+    generate_presigned_get_url_storage as generate_presigned_download_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +32,10 @@ logger = logging.getLogger(__name__)
 class PdfQuestionExtractView(APIView):
     """
     POST /exams/pdf-extract/
-    - PDF 파일 업로드 → R2 저장 → question_segmentation AI job 제출
-    - Returns: { job_id, status: "submitted" }
+    - 안전한 원본은 형식 그대로 R2와 시험 자산에 보존
+    - 지원 형식은 question_segmentation job 제출, 나머지는 직접 검수 상태로 저장
     """
+
     permission_classes = [TenantResolvedAndStaff]
     parser_classes = [MultiPartParser]
 
@@ -33,44 +44,29 @@ class PdfQuestionExtractView(APIView):
         if not tenant:
             return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
 
-        pdf_file = request.FILES.get("file")
-        if not pdf_file:
+        source_file = request.FILES.get("file")
+        if not source_file:
             return Response({"detail": "file is required"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Validate file type
-        name_lower = (pdf_file.name or "").lower()
-        supported_suffixes = (".pdf", ".png", ".jpg", ".jpeg", ".hwp", ".hwpx")
-        if not name_lower.endswith(supported_suffixes):
+        source_filename, source_suffix, source_error = validate_source_upload(source_file)
+        if source_error:
             return Response(
-                {"detail": "PDF, 이미지, HWP/HWPX 파일만 업로드 가능합니다."},
+                {"detail": source_error},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Max 50MB
-        if pdf_file.size > 50 * 1024 * 1024:
-            return Response({"detail": "파일 크기는 50MB 이하여야 합니다."}, status=status.HTTP_400_BAD_REQUEST)
-
         explanation_file = request.FILES.get("explanation_file")
+        explanation_filename = ""
+        explanation_suffix = ""
         if explanation_file is not None:
-            explanation_name = str(explanation_file.name or "").lower()
-            if not name_lower.endswith((".pdf", ".png", ".jpg", ".jpeg")):
+            (
+                explanation_filename,
+                explanation_suffix,
+                explanation_error,
+            ) = validate_source_upload(explanation_file)
+            if explanation_error:
                 return Response(
-                    {
-                        "detail": (
-                            "선생님 해설 HWP를 함께 올릴 때 문제지는 "
-                            "답 표시가 없는 PDF나 이미지여야 합니다."
-                        )
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            if not explanation_name.endswith((".hwp", ".hwpx")):
-                return Response(
-                    {"detail": "선생님 해설은 HWP 또는 HWPX 파일만 함께 올릴 수 있습니다."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            if explanation_file.size > 50 * 1024 * 1024:
-                return Response(
-                    {"detail": "선생님 해설 파일은 50MB 이하여야 합니다."},
+                    {"detail": explanation_error},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
@@ -112,49 +108,59 @@ class PdfQuestionExtractView(APIView):
                 )
             exam = Exam.objects.get(id=exam_id, tenant=tenant)
 
+        can_auto_segment = source_suffix in AUTO_SEGMENT_SUFFIXES
+        if not can_auto_segment and exam is None:
+            return Response(
+                {"detail": ("이 형식의 원본을 보관하려면 먼저 시험을 선택해 주세요.")},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        can_auto_pair = bool(
+            explanation_file is not None
+            and source_suffix in AUTO_PAIR_PRIMARY_SUFFIXES
+            and explanation_suffix in AUTO_PAIR_EXPLANATION_SUFFIXES
+        )
+
         try:
             # Upload to R2
-            name_hash = hashlib.md5(pdf_file.name.encode()).hexdigest()[:8]
-            r2_key = f"tenants/{tenant.id}/exams/pdf-extract/{uuid.uuid4()}/{name_hash}_{pdf_file.name}"
+            name_hash = hashlib.md5(source_filename.encode()).hexdigest()[:8]
+            r2_key = f"tenants/{tenant.id}/exams/pdf-extract/{uuid.uuid4()}/{name_hash}_{source_filename}"
             upload_fileobj_to_r2_storage(
-                fileobj=pdf_file,
+                fileobj=source_file,
                 key=r2_key,
-                content_type=pdf_file.content_type or "application/pdf",
+                content_type=storage_content_type(source_file, source_suffix),
             )
 
             explanation_key = ""
             explanation_download_url = ""
             if explanation_file is not None:
-                explanation_name_hash = hashlib.md5(
-                    explanation_file.name.encode()
-                ).hexdigest()[:8]
+                explanation_name_hash = hashlib.md5(explanation_filename.encode()).hexdigest()[:8]
                 explanation_key = (
                     f"tenants/{tenant.id}/exams/pdf-extract/{uuid.uuid4()}/"
-                    f"{explanation_name_hash}_{explanation_file.name}"
+                    f"{explanation_name_hash}_{explanation_filename}"
                 )
                 upload_fileobj_to_r2_storage(
                     fileobj=explanation_file,
                     key=explanation_key,
-                    content_type=(
-                        explanation_file.content_type or "application/x-hwp"
+                    content_type=storage_content_type(
+                        explanation_file,
+                        explanation_suffix,
                     ),
                 )
-                explanation_download_url = generate_presigned_download_url(
-                    key=explanation_key
-                )
+                if can_auto_pair:
+                    explanation_download_url = generate_presigned_download_url(key=explanation_key)
 
             if exam is not None:
                 source_defaults = {
                     "file_key": r2_key,
-                    "file_type": pdf_file.content_type or "",
-                    "file_size": int(pdf_file.size or 0),
+                    "file_type": source_file.content_type or "",
+                    "file_size": int(source_file.size or 0),
                 }
                 ExamAsset.objects.update_or_create(
                     exam=exam,
                     asset_type=ExamAsset.AssetType.PROBLEM_SOURCE,
                     defaults=source_defaults,
                 )
-                if name_lower.endswith(".pdf"):
+                if source_suffix == ".pdf":
                     # Keep the established distribution asset contract without
                     # requiring the browser to upload the same PDF twice.
                     ExamAsset.objects.update_or_create(
@@ -165,19 +171,38 @@ class PdfQuestionExtractView(APIView):
                 if explanation_file is not None:
                     ExamAsset.objects.update_or_create(
                         exam=exam,
-                        asset_type=(
-                            ExamAsset.AssetType.TEACHER_EXPLANATION_SOURCE
-                        ),
+                        asset_type=(ExamAsset.AssetType.TEACHER_EXPLANATION_SOURCE),
                         defaults={
                             "file_key": explanation_key,
                             "file_type": explanation_file.content_type or "",
                             "file_size": int(explanation_file.size or 0),
                         },
                     )
-                exam.source_filename = str(pdf_file.name or "")[:255]
+                exam.source_filename = source_filename[:255]
 
-            # HWP/HWPX 미주 원본 이미지는 그대로 분리한다. 모든 문항에 완전한
-            # 미주 이미지가 없으면 worker가 성공으로 오인하지 않고 PDF를 요청한다.
+            if not can_auto_segment:
+                exam.segmentation_status = Exam.SegmentationStatus.CONVERSION_REQUIRED
+                exam.save(
+                    update_fields=[
+                        "source_filename",
+                        "segmentation_status",
+                        "updated_at",
+                    ]
+                )
+                return Response(
+                    {
+                        "job_id": None,
+                        "status": "source_saved",
+                        "processing_started": False,
+                        "message": (
+                            "원본 형식 그대로 저장했습니다. 이 형식은 자동 문항 "
+                            "분리 대신 시험 상세에서 문항과 해설을 직접 등록해 "
+                            "검수할 수 있습니다. PDF 재업로드는 필수가 아닙니다."
+                        ),
+                    },
+                    status=status.HTTP_202_ACCEPTED,
+                )
+
             # Generate presigned download URL for worker
             download_url = generate_presigned_download_url(key=r2_key)
 
@@ -198,11 +223,9 @@ class PdfQuestionExtractView(APIView):
                     "download_url": download_url,
                     "tenant_id": str(tenant.id),
                     "exam_id": str(exam_id) if exam_id else None,
-                    "filename": pdf_file.name,
+                    "filename": source_filename,
                     "explanation_download_url": explanation_download_url,
-                    "explanation_filename": (
-                        explanation_file.name if explanation_file is not None else ""
-                    ),
+                    "explanation_filename": (explanation_filename if can_auto_pair else ""),
                 },
                 tenant_id=str(tenant.id),
                 source_domain="exams",
@@ -210,21 +233,30 @@ class PdfQuestionExtractView(APIView):
                 tier="basic",
             )
 
-            return Response({
-                "job_id": result.get("job_id"),
-                "status": "submitted",
-                "message": "자료 유형을 확인한 뒤 문항과 원본 해설 분리를 시작합니다.",
-            }, status=status.HTTP_202_ACCEPTED)
+            message = "자료 유형을 확인한 뒤 문항과 원본 해설 분리를 시작합니다."
+            if explanation_file is not None and not can_auto_pair:
+                message = (
+                    "두 원본을 형식 그대로 저장했습니다. 문제 자료의 자동 문항 "
+                    "분리를 시작하며, 해설 원본은 시험 상세에서 직접 연결해 "
+                    "검수할 수 있습니다."
+                )
+            return Response(
+                {
+                    "job_id": result.get("job_id"),
+                    "status": "submitted",
+                    "processing_started": True,
+                    "message": message,
+                },
+                status=status.HTTP_202_ACCEPTED,
+            )
 
         except Exception as e:
-            logger.exception("PDF question extract failed: %s", e)
+            logger.exception("Exam source processing failed: %s", e)
             if exam is not None:
                 Exam.objects.filter(id=exam.id, tenant=tenant).update(
                     segmentation_status=Exam.SegmentationStatus.FAILED,
                 )
-            detail = (
-                f"PDF 처리 중 오류: {str(e)}" if settings.DEBUG else "PDF 처리 중 오류가 발생했습니다."
-            )
+            detail = f"자료 처리 중 오류: {str(e)}" if settings.DEBUG else "자료 처리 중 오류가 발생했습니다."
             return Response(
                 {"detail": detail},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
