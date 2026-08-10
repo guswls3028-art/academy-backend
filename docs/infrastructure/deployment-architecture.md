@@ -202,6 +202,15 @@ IMDSv2 and fails before container start when production logging would be
 untraceable. The shared instance role can write only the exact API/AI/Tools
 log groups; it cannot create arbitrary groups.
 
+Before a release builds or refreshes any runtime, `verify-runtime-iam` compares
+the live `academy-ec2-role` worker-scale and container-log inline policies with
+the checked-in exact JSON policies. It also requires `/academy/api`,
+`/academy/ai-worker`, and `/academy/tools-worker` to exist with 30-day
+retention. The deploy OIDC role remains read-only for runtime IAM; an operator
+must run the owning infrastructure convergence path when this preflight finds
+drift. This keeps a stale log policy or missing log group from being discovered
+only after a replacement instance has already started.
+
 ## 6. Worker Deployment Strategy
 
 Workers use the same ASG instance refresh mechanism as API but with:
