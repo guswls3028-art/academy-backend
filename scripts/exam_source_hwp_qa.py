@@ -19,6 +19,26 @@ from academy.adapters.tools.hwp_endnote_images import (  # noqa: E402
 )
 
 
+READY_STATUS = "combined_document_ready"
+
+
+def _acceptance_summary(status_counts: dict[str, int]) -> tuple[str, dict[str, int]]:
+    blocking = {
+        status: int(count)
+        for status, count in status_counts.items()
+        if status != READY_STATUS and int(count) > 0
+    }
+    if "error" in blocking:
+        return "error", blocking
+    if blocking:
+        return "remediation_required", blocking
+    return "pass", {}
+
+
+def _qa_exit_code(summary: dict) -> int:
+    return 0 if summary.get("acceptance_status") == "pass" else 1
+
+
 def _preview_numbers(visuals, *, preview_all: bool = False) -> set[int]:
     if not visuals:
         return set()
@@ -139,10 +159,13 @@ def analyze_manifest(
         status: sum(1 for item in items if item["status"] == status)
         for status in sorted({str(item["status"]) for item in items})
     }
+    acceptance_status, blocking_status_counts = _acceptance_summary(status_counts)
     summary = {
         "manifest": str(manifest_path.resolve()),
         "total": len(items),
         "status_counts": status_counts,
+        "acceptance_status": acceptance_status,
+        "blocking_status_counts": blocking_status_counts,
         "total_controls": sum(int(item["control_count"]) for item in items),
         "total_visuals": sum(int(item["visual_count"]) for item in items),
         "total_safe_explanations": sum(
@@ -177,7 +200,7 @@ def main() -> int:
         preview_all=args.preview_all,
     )
     print(json.dumps(payload["summary"], ensure_ascii=False, sort_keys=True))
-    return 0 if "error" not in payload["summary"]["status_counts"] else 1
+    return _qa_exit_code(payload["summary"])
 
 
 if __name__ == "__main__":

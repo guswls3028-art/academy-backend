@@ -326,6 +326,7 @@ try {
 
     # Only promoted, canary-verified values may open any production runtime
     # mutation path. This includes API, workers, Batch, EventBridge, and ALB.
+    Ensure-RuntimeLogRetention
     Ensure-ASGAi
     Ensure-ASGMessaging
     Ensure-ASGTools
@@ -347,7 +348,6 @@ try {
         Ensure-OpsJobDefPurgeRaw
         Ensure-EventBridgeRules
     }
-    Ensure-VideoBatchLogRetention
     Ensure-VideoCloudWatchAlarms
     Ensure-RdsCloudWatchAlarms
     Ensure-ALBStack

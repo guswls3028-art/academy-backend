@@ -238,7 +238,7 @@ $deployment = switch ($Service) {
             ASG = $script:AiASGName
             UserData = {
                 param($ImageUri)
-                Get-WorkerLaunchTemplateUserData -ImageUri $ImageUri -Region $script:Region -SsmParam $script:SsmWorkersEnv -ContainerName "academy-ai-worker-cpu"
+                Get-WorkerLaunchTemplateUserData -ImageUri $ImageUri -Region $script:Region -SsmParam $script:SsmWorkersEnv -ContainerName "academy-ai-worker-cpu" -LogGroup $script:AiWorkerLogGroup
             }
         }
     }

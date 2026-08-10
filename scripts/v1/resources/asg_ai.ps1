@@ -25,7 +25,7 @@ function Ensure-AiLaunchTemplate {
     if (-not $script:PlanMode) {
         $imgUri = Get-LatestWorkerImageUri -RepoName $script:EcrAiRepo
         if ($imgUri) {
-            $userDataRaw = Get-WorkerLaunchTemplateUserData -ImageUri $imgUri -Region $script:Region -SsmParam $script:SsmWorkersEnv -ContainerName "academy-ai-worker-cpu"
+            $userDataRaw = Get-WorkerLaunchTemplateUserData -ImageUri $imgUri -Region $script:Region -SsmParam $script:SsmWorkersEnv -ContainerName "academy-ai-worker-cpu" -LogGroup $script:AiWorkerLogGroup
             if ($userDataRaw) { $userDataB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($userDataRaw)) }
         }
     }

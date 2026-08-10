@@ -2,12 +2,13 @@
 # AWS/Cloudflare credentials are supplied by the caller through the intended profile or process environment; this script does not load backend/.env.
 $ErrorActionPreference = "Stop"
 
-function Ensure-VideoBatchLogRetention {
+function Ensure-RuntimeLogRetention {
     $R = $script:Region
     $retentionDays = if ($script:ObservabilityLogRetentionDays -gt 0) { $script:ObservabilityLogRetentionDays } elseif ($script:VideoBatchLogRetentionDays -gt 0) { $script:VideoBatchLogRetentionDays } else { 30 }
     $logGroups = @(
         $script:VideoLogGroup,
-        $script:OpsLogGroup
+        $script:OpsLogGroup,
+        $script:AiWorkerLogGroup
     )
     if ($script:RdsProxyName -and $script:RdsProxyName.Trim() -ne "") {
         $logGroups += "/aws/rds/proxy/$($script:RdsProxyName.Trim())"
