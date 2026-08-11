@@ -82,6 +82,21 @@ over-read/DoS 경로다. Academy OCR 경로는 이 API와 D-Bus를 사용하지 
 Base·Video·Messaging 상한 8은 유지했다. vendor 수정 패키지가 나오면 세 상한을
 실제 scan readback에 맞춰 즉시 다시 낮춘다.
 
+2026-08-11 ECR 데이터베이스 갱신은 같은 API·AI·Tools 이미지의 Debian
+`libssh2` `1.11.1-1+deb13u1`에 `CVE-2026-58050`과 `CVE-2026-58051`을
+추가했다. 직전 운영 AI digest와 새 후보의 finding identity를 비교했을 때
+추가분은 이 두 건뿐이었고, 새 후보 여섯 개의 완료된 scan은 Base·Video·Messaging
+High 8, API·AI·Tools High 20을 각각 반환했다. Debian tracker에는 아직 stable
+수정 버전이 없다. 58050은 악성 SSH publickey 응답을 처리하는 32-bit allocation
+overflow이고 Academy 운영 이미지는 ARM64다. 58051도 악성 SSH 서버의 publickey
+subsystem 응답과 오류 cleanup이 전제다. 저장소의 앱·워커 entrypoint에는 SSH,
+SFTP, SCP, Paramiko 또는 libssh2 실행 경로가 없고 운영 원격 명령은 컨테이너 밖의
+AWS SSM이 소유한다. 따라서 불안정 Debian 패키지를 혼합하지 않고 완료된 scan의
+현재 수치 20으로 세 상한만 갱신한다. vendor 추적은
+`https://security-tracker.debian.org/tracker/CVE-2026-58050`과
+`https://security-tracker.debian.org/tracker/CVE-2026-58051`이며, 수정 패키지가
+나오면 새 이미지를 빌드·스캔하고 상한을 즉시 낮춘다.
+
 현재 Critical 한시 항목은 Debian stable에 수정본이 아직 없거나 Debian이
 `no-dsa`/minor로 분류한 glibc·GLib·Mbed TLS·Perl finding이다. GLib의
 `g_dbus_node_info_new_for_xml` malformed introspection-XML 경로는 OCR CLI와
