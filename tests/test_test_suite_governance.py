@@ -15,6 +15,15 @@ APP_COVERAGE_SHARDS = {
     "shared",
     "support",
 }
+POSTGRESQL_CONTRACT_TESTS = (
+    "apps/domains/fees/tests/test_payment_concurrency_pg.py",
+    "apps/domains/staffs/tests/test_work_record_concurrency_pg.py",
+    "apps/domains/messaging/tests/test_scheduled_dispatch_concurrency_pg.py",
+    "apps/domains/results/tests/test_p0_concurrency_pg.py",
+    "apps/domains/results/tests/test_score_edit_lock_concurrency_pg.py",
+    "tests/test_matchup_isolation_policy_fix.py",
+    "apps/domains/exams/tests/test_exam_policy_update.py",
+)
 
 
 def test_quality_gate_runs_the_default_collected_suite_under_coverage() -> None:
@@ -37,6 +46,27 @@ def test_quality_gate_runs_the_default_collected_suite_under_coverage() -> None:
         "python -m coverage report --fail-under=60.5 --skip-covered --show-missing"
         in workflow
     )
+
+
+def test_quality_gate_runs_production_shape_postgresql_contracts() -> None:
+    workflow = QUALITY_GATE.read_text(encoding="utf-8")
+    normalized_workflow = " ".join(workflow.replace("\\", "").split())
+
+    for required in (
+        "postgresql-contract:",
+        "image: pgvector/pgvector:0.8.2-pg16-bookworm",
+        "DJANGO_SETTINGS_MODULE: apps.api.config.settings.test_pg",
+        "TEST_DB_NAME: postgres",
+        "DB_HOST: 127.0.0.1",
+        'assert connection.vendor == "postgresql"',
+        'assert database_name == "postgres"',
+    ):
+        assert required in workflow
+
+    expected_command = "python -m pytest -q --tb=short " + " ".join(
+        POSTGRESQL_CONTRACT_TESTS
+    )
+    assert expected_command in normalized_workflow
 
 
 def test_test_manifest_covers_runner_api_and_pdf_fixture_imports() -> None:

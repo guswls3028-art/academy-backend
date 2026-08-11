@@ -19,7 +19,12 @@ passes every gate below:
    extra Django/test-database startups. The gate combines both coverage files
    and publishes the missing-line summary in the job log. Product-code line
    coverage excludes tests and migrations and may not fall below the measured
-   60.5% baseline.
+   60.5% baseline. In parallel, a production-shape contract job creates an
+   ephemeral pgvector/PostgreSQL 16 service and runs the critical transaction,
+   concurrency, JSONB, tenant-isolation, and exam-policy regressions sequentially
+   under `settings.test_pg`. Its host, database, and credentials are fixed to
+   the job-local service; the quality gate never connects to a persistent or
+   production database.
 3. The base image is built or resolved first. Changed API, Video, Messaging,
    AI, and Tools ARM64 images then build on isolated matrix runners in
    parallel with a run-unique `sha-...-run-...` tag. A single fan-in job
