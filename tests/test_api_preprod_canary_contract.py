@@ -99,6 +99,14 @@ def test_canary_is_isolated_and_checks_migrations_and_health() -> None:
     assert "academy-api-userdata.log 2>&1" in canary
     assert "http://127.0.0.1:8000/healthz" in canary
     assert "http://127.0.0.1:8000/health" in canary
+    assert "REQUEST_COUNT = 120" in canary
+    assert "CONCURRENCY = 4" in canary
+    assert "MAX_ERROR_RATE_PERCENT = 0.0" in canary
+    assert "MAX_P95_MILLISECONDS = 750.0" in canary
+    assert "MAX_P99_MILLISECONDS = 1500.0" in canary
+    assert "ThreadPoolExecutor" in canary
+    assert "API_PREPROD_LOAD_BASELINE_PASS" in canary
+    assert 'if ($proof -notmatch "API_PREPROD_LOAD_BASELINE_PASS")' in canary
     assert "API_PREPROD_CANARY_PASS" in canary
     assert '[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($remote))' in canary
     assert '"echo $remoteB64 | base64 -d | bash"' in canary

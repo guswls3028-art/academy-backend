@@ -63,7 +63,8 @@ git push main
 [verify-api-preprod] ─── dedicated IAM + exact versioned SSM + dedicated DB/R2 read roles
     |                     └── migrate + DB/role/prod-CONNECT denial
     |                         + production provider/R2 key denial
-    |                         + release identity + /healthz + /health + CDN, then terminate
+    |                         + release identity + /healthz + /health + CDN
+    |                         + isolated /health p50/p95/p99 load baseline, then terminate
     |                              |
     |                              v
     |── (if API changed) ──> [run-migrations] ─── production DB migrate
