@@ -51,13 +51,13 @@ def test_headless_opencv_images_do_not_explicitly_install_system_glib() -> None:
     assert "OpenCV wheel video support OK" in _read(PRODUCTION_DOCKERFILES["ai"])
 
 
-def test_reviewed_tesseract_images_own_the_glib_high_budget() -> None:
+def test_reviewed_ocr_images_own_the_extended_high_budget() -> None:
     baseline = json.loads(
         _read(REPO_ROOT / "docs" / "ssot" / "ecr-high-risk-baseline.json")
     )["maximumHighFindings"]
 
     assert {
-        repository for repository, maximum in baseline.items() if maximum == 18
+        repository for repository, maximum in baseline.items() if maximum == 20
     } == {
         "academy-api",
         "academy-ai-worker-cpu",

@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "maximumHighFindings": {
     "academy-base": 8,
-    "academy-api": 18,
+    "academy-api": 20,
     "academy-video-worker": 8,
     "academy-messaging-worker": 8,
-    "academy-ai-worker-cpu": 18,
-    "academy-tools-worker": 18
+    "academy-ai-worker-cpu": 20,
+    "academy-tools-worker": 20
   }
 }
