@@ -81,18 +81,19 @@ jobs:
           python manage.py makemigrations --check --dry-run --settings apps.api.config.settings.test
       - name: OpenAPI generated contract drift
         run: python scripts/generate_openapi_schema.py --check
-      - name: Smoke tests
-        env:
-          DJANGO_SETTINGS_MODULE: apps.api.config.settings.test
-        run: python -m pytest tests/test_smoke.py -v --tb=short -x
-      - name: Full backend tests and coverage
+      - name: Smoke tests and coverage seed
         env:
           DJANGO_SETTINGS_MODULE: apps.api.config.settings.test
         run: |
           python -m coverage erase
-          python -m coverage run --parallel-mode --source=apps,academy -m pytest -q --tb=short apps/api apps/billing apps/core apps/shared apps/support
-          python -m coverage run --parallel-mode --source=apps,academy -m pytest -q --tb=short apps/domains
-          python -m coverage run --parallel-mode --source=apps,academy -m pytest -q --tb=short tests
+          python -m coverage run --parallel-mode --source=apps,academy -m pytest tests/test_smoke.py -v --tb=short -x
+      - name: Full backend tests and coverage
+        env:
+          DJANGO_SETTINGS_MODULE: apps.api.config.settings.test
+        run: |
+          python -m coverage run --parallel-mode --source=apps,academy -m pytest -q --tb=short \
+            apps/api apps/billing apps/core apps/shared apps/support apps/domains tests \
+            --ignore=tests/test_smoke.py
           python -m coverage combine
           python -m coverage report --fail-under=60.5 --skip-covered --show-missing
       - name: Deployment contract tests

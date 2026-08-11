@@ -13,11 +13,13 @@ passes every gate below:
    credential, but its value is never printed and no continuity gate changes.
 2. Lint, migration safety, smoke tests, and the complete backend pytest suite
    pass before image build. The quality gate installs `requirements/test.txt`,
-   runs every default-collected test in three isolated coverage shards, combines
-   the data, and publishes the missing-line summary in the job log; a focused
-   smoke run remains the early fail-fast check. Product-code line coverage
-   excludes tests and migrations and may not fall below the measured 60.5%
-   baseline.
+   seeds coverage with the focused fail-fast smoke run, then runs every remaining
+   default-collected test in one sequential pytest process. This preserves the
+   shared-database ordering boundary while avoiding a second smoke run and two
+   extra Django/test-database startups. The gate combines both coverage files
+   and publishes the missing-line summary in the job log. Product-code line
+   coverage excludes tests and migrations and may not fall below the measured
+   60.5% baseline.
 3. The base image is built or resolved first. Changed API, Video, Messaging,
    AI, and Tools ARM64 images then build on isolated matrix runners in
    parallel with a run-unique `sha-...-run-...` tag. A single fan-in job
@@ -92,7 +94,8 @@ reports, or command output.
 4. Backend test-only packages belong in `requirements/test.txt`; this manifest
    includes the API import surface plus PDF fixture dependencies so default
    `pytest` collection and the CI coverage run use the same reproducible
-   environment.
+   environment. `pytest.ini` is the single pytest configuration owner; do not
+   add a second `[tool.pytest.ini_options]` table that pytest will ignore.
 
 ## Security and data boundaries
 
