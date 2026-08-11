@@ -7,7 +7,7 @@ scipy
 
 # Image / OCR (torch 의존 없음)
 pillow
-matplotlib==3.10.9
+matplotlib==3.11.1
 pytesseract
 scikit-image
 

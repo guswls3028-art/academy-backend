@@ -214,7 +214,7 @@ def _ensure_font_face(document: HwpxDocument, family_name: str) -> None:
     family = family_name.strip()
     if not family:
         return
-    header = document.headers[0]
+    header = document.parts.headers[0]
     font_tag = f"{{{_HH_NAMESPACE}}}font"
     type_info_tag = f"{{{_HH_NAMESPACE}}}typeInfo"
     for fontface in header.element.findall(f".//{{{_HH_NAMESPACE}}}fontface"):
@@ -263,7 +263,7 @@ def _apply_run_metrics(
     width_ratio_percent: int,
     letter_spacing_percent: int,
 ) -> None:
-    header = document.headers[0]
+    header = document.parts.headers[0]
     char_pr = next(
         (
             element
@@ -628,7 +628,9 @@ def _append_question_visual(
     if height_mm > available_height_mm:
         height_mm = available_height_mm
         width_mm = height_mm * width_px / height_px
-    item_id = document.add_image(data, _image_format(str(visual.get("mime") or "")))
+    item_id = document.media.add_image(
+        data, _image_format(str(visual.get("mime") or ""))
+    ).item_id
     paragraph = document.add_paragraph("", section=section)
     paragraph.add_picture(
         item_id,
@@ -673,12 +675,12 @@ def build_hwpx_text_document(
     with HwpxDocument.new() as document:
         _ensure_font_face(document, style.title_font_family)
         _ensure_font_face(document, style.body_font_family)
-        title_style_id = document.ensure_run_style(
+        title_style_id = document.styles.ensure_run(
             bold=True,
             font=style.title_font_family,
             size=style.title_size_pt,
         )
-        body_style_id = document.ensure_run_style(
+        body_style_id = document.styles.ensure_run(
             font=style.body_font_family,
             size=style.body_size_pt,
         )
@@ -710,17 +712,17 @@ def build_hwpx_text_document(
                 )
             )
 
-        document.set_paragraph_format(
+        document.styles.apply_paragraph_format(
             line_spacing_percent=style.line_spacing_percent,
         )
-        document.set_paragraph_format(
+        document.styles.apply_paragraph_format(
             paragraph_index=0,
             spacing_after_pt=8,
             keep_with_next=True,
         )
         question_indexes = _iter_custom_question_paragraphs(paragraph_list)
         if question_indexes:
-            document.set_paragraph_format(
+            document.styles.apply_paragraph_format(
                 paragraph_indexes=question_indexes,
                 spacing_before_pt=style.question_spacing_pt,
                 keep_with_next=True,
@@ -758,16 +760,16 @@ def build_hwpx_exam_document(
     with HwpxDocument.new() as document:
         _ensure_font_face(document, style.title_font_family)
         _ensure_font_face(document, style.body_font_family)
-        title_style_id = document.ensure_run_style(
+        title_style_id = document.styles.ensure_run(
             bold=True,
             font=style.title_font_family,
             size=title_size_pt,
         )
-        body_style_id = document.ensure_run_style(
+        body_style_id = document.styles.ensure_run(
             font=style.body_font_family,
             size=style.body_size_pt,
         )
-        heading_style_id = document.ensure_run_style(
+        heading_style_id = document.styles.ensure_run(
             bold=True,
             font=style.body_font_family,
             size=style.body_size_pt,
@@ -880,16 +882,16 @@ def build_hwpx_exam_document(
                     preview_paragraphs.append(f"[{number}번 원본 그림·표]")
 
         _apply_page_layout(document, page_layout)
-        document.set_paragraph_format(
+        document.styles.apply_paragraph_format(
             line_spacing_percent=style.line_spacing_percent,
         )
-        document.set_paragraph_format(
+        document.styles.apply_paragraph_format(
             paragraph_index=0,
             spacing_after_pt=6,
             keep_with_next=True,
         )
         if question_paragraph_indexes:
-            document.set_paragraph_format(
+            document.styles.apply_paragraph_format(
                 paragraph_indexes=question_paragraph_indexes,
                 spacing_before_pt=style.question_spacing_pt,
                 spacing_after_pt=2,
@@ -941,17 +943,17 @@ def build_hwpx_editable_wrong_note_document(
     with HwpxDocument.new() as document:
         _ensure_font_face(document, style.title_font_family)
         _ensure_font_face(document, style.body_font_family)
-        title_style_id = document.ensure_run_style(
+        title_style_id = document.styles.ensure_run(
             bold=True,
             font=style.title_font_family,
             size=20,
         )
-        heading_style_id = document.ensure_run_style(
+        heading_style_id = document.styles.ensure_run(
             bold=True,
             font=style.body_font_family,
             size=15,
         )
-        body_style_id = document.ensure_run_style(
+        body_style_id = document.styles.ensure_run(
             font=style.body_font_family,
             size=10,
         )
@@ -1130,10 +1132,10 @@ def build_hwpx_source_fidelity_document(
             data = source_page.get("data")
             if not isinstance(data, bytes) or not data:
                 continue
-            item_id = document.add_image(
+            item_id = document.media.add_image(
                 data,
                 _image_format(str(source_page.get("mime") or "")),
-            )
+            ).item_id
             paragraph.add_picture(
                 item_id,
                 width=_mm_to_hwpunit(width_mm),
