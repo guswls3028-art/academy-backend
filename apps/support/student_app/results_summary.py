@@ -25,6 +25,9 @@ from apps.support.results.student_grade_history import (
     build_student_exam_history,
     empty_exam_summary,
 )
+from apps.support.results.admin_student_grades_dependencies import (
+    submitted_homework_keys_for_grades,
+)
 
 
 def get_student_exam_result_data(request: Any, exam_id: int, *, tenant: Any):
@@ -82,6 +85,44 @@ def _session_titles(session: Any) -> tuple[str | None, str | None]:
     lecture = getattr(session, "lecture", None)
     lecture_title = getattr(lecture, "title", None) if lecture else None
     return session_title, lecture_title
+
+
+def _homework_session_metadata(session: Any) -> dict[str, Any]:
+    if not session:
+        return {
+            "session_id": None,
+            "session_order": None,
+            "session_regular_order": None,
+            "session_type": None,
+            "lecture_id": None,
+            "lecture_color": None,
+            "lecture_chip_label": None,
+        }
+    lecture = getattr(session, "lecture", None)
+    return {
+        "session_id": int(session.id),
+        "session_order": int(session.order),
+        "session_regular_order": (
+            int(session.regular_order)
+            if getattr(session, "regular_order", None) is not None
+            else None
+        ),
+        "session_type": getattr(session, "session_type", None),
+        "lecture_id": int(session.lecture_id),
+        "lecture_color": getattr(lecture, "color", None) if lecture else None,
+        "lecture_chip_label": getattr(lecture, "chip_label", None) if lecture else None,
+    }
+
+
+def _homework_history_sort_key(row: dict[str, Any]) -> tuple[Any, ...]:
+    session_order = row.get("session_order")
+    return (
+        (row.get("lecture_title") or "").casefold(),
+        session_order is None,
+        -(int(session_order) if session_order is not None else 0),
+        int(row.get("display_order") or 0),
+        -int(row["homework_id"]),
+    )
 
 
 def _default_homework_max_score(homework: Any) -> float | None:
@@ -314,6 +355,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
         effective_max = _safe_homework_number(score.max_score, positive=True)
         if effective_max is None and score.homework:
             effective_max = _default_homework_max_score(score.homework)
+        session_metadata = _homework_session_metadata(score.session)
 
         homework_list.append({
             "homework_id": score.homework_id,
@@ -324,12 +366,15 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             "passed": is_pass_1st,
             "achievement": achievement,
             "retake_count": max_attempt,
+            "grading_mode": score.homework.grading_mode,
+            "display_order": score.homework.display_order,
             "session_title": session_title,
             "lecture_title": lecture_title,
             "recorded_at": score.updated_at.isoformat(),
+            **session_metadata,
         })
 
-    assigned_homeworks = (
+    assigned_homeworks = list(
         HomeworkAssignment.objects
         .filter(
             tenant=tenant,
@@ -345,6 +390,14 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
         .select_related("homework", "session", "session__lecture")
         .order_by("-homework__updated_at", "-homework_id")
     )
+    assigned_homework_ids = {assignment.homework_id for assignment in assigned_homeworks}
+    submitted_homework_keys = set()
+    if assigned_homework_ids:
+        submitted_homework_keys = submitted_homework_keys_for_grades(
+            tenant=tenant,
+            enrollment_ids=enrollment_ids,
+            homework_ids=list(assigned_homework_ids),
+        )
     for assignment in assigned_homeworks:
         homework = assignment.homework
         session = assignment.session
@@ -355,6 +408,11 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
 
         effective_max = _default_homework_max_score(homework)
         assignment_session_title, assignment_lecture_title = _session_titles(session)
+        was_submitted = (
+            assignment.enrollment_id,
+            assignment.homework_id,
+        ) in submitted_homework_keys
+        session_metadata = _homework_session_metadata(session)
 
         homework_list.append({
             "homework_id": assignment.homework_id,
@@ -362,13 +420,18 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             "title": homework.title if homework else f"과제 #{assignment.homework_id}",
             "score": None,
             "max_score": effective_max,
-            "passed": False,
-            "achievement": "NOT_SUBMITTED",
+            "passed": None if was_submitted else False,
+            "achievement": None if was_submitted else "NOT_SUBMITTED",
             "retake_count": 0,
+            "grading_mode": homework.grading_mode,
+            "display_order": homework.display_order,
             "session_title": assignment_session_title,
             "lecture_title": assignment_lecture_title,
             "recorded_at": assignment.created_at.isoformat(),
+            **session_metadata,
         })
+
+    homework_list.sort(key=_homework_history_sort_key)
 
     return {
         "exams": exam_list,

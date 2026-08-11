@@ -59,6 +59,13 @@
   삭제·시스템 과제와
   다른 tenant·다른 학생 배정은 포함하지 않는다. 과거 배정 행 없이 점수만 남은
   정상 legacy 결과는 호환을 위해 계속 표시한다.
+- 학생·학부모 성적 요약과 관리자 학생 상세는 과제 행에 `session_order`,
+  `session_regular_order`, `session_type`, `display_order`를 함께 반환한다. 같은
+  강의에서는 최근 차시가 먼저 오고, 같은 차시의 여러 과제는 과제 표시 순서를
+  따른다. 이 정렬은 점수 수정 시각과 무관하므로 1차시가 목록 아래에 안정적으로
+  유지된다. 학생·학부모 요약도 tenant 범위의 `Submission`을 확인해 제출했지만
+  아직 채점하지 않은 과제를 `검사 전`으로, 제출 자체가 없는 과제를 `미제출`로
+  구분한다.
 - 결과 행이 하나라도 생긴 과제는 채점 방식을 바꿀 수 없다. 기존 숫자 점수나
   교사 기록을 새 의미로 재해석하지 않으며, 다른 방식이 필요하면 새 과제를 만든다.
 - 템플릿 저장·템플릿 불러오기·다른 차시 복사는 `grading_mode`를 보존한다.
@@ -137,9 +144,10 @@ X를 나중에 다시 맞힌 뒤에도 남기려면 O·복습으로 바꾼다. �
 반환한다. 학생 상세의 단건 수정도 `/homework/scores/quick/`을 사용하며 먼저
 기존 점수 편집 lease를 짧게 획득한다. 다른 화면이 같은 차시를 수정 중이면
 `409 SCORE_EDIT_LOCKED`로 실패하고 값을 덮어쓰지 않는다.
-학생 상세 응답은 배정된 각 과제의 `grading_mode`, `meta_status`, 정본
-`max_score`를 반환한다. 완료형은 완료 여부, 점수형은 `점수/만점`을 표시하며
-`NOT_SUBMITTED`와 미검사 `null`은 모두 숫자 0으로 바꾸지 않는다.
+학생 상세와 학생·학부모 성적 요약 응답은 배정된 각 과제의 `grading_mode`,
+`meta_status`, 정본 `max_score`, 차시 유형·순서 메타데이터를 반환한다. 완료형은
+완료 여부, 점수형은 `점수/만점`을 표시하며 `NOT_SUBMITTED`와 미검사 `null`은
+모두 숫자 0으로 바꾸지 않는다.
 
 현재 운영 설정 화면은 조회 응답의 `updated_at`을
 `X-Expected-Updated-At` 헤더로 보낸다. 서버는 과제 행을 잠근 뒤 같은
@@ -160,6 +168,7 @@ X를 나중에 다시 맞힌 뒤에도 남기려면 O·복습으로 바꾼다. �
 - 성적표 조회: `apps/domains/results/views/session_scores_view.py`
 - 학생 상세 과제 합성: `apps/domains/results/views/admin_student_grades_view.py`,
   `apps/support/results/admin_student_grades_dependencies.py`
+- 학생·학부모 성적 요약: `apps/support/student_app/results_summary.py`
 - 워크북 원본·채점표: `views/homework_view.py`,
   `tests/test_workbook_source_and_grading.py`
 - Ymath 시험·워크북 통합 실자료 UAT:

@@ -492,6 +492,85 @@ class MyGradesSummaryHomeworkTests(TestCase):
         self.assertEqual(row["lecture_title"], "수학")
         self.assertEqual(row["recorded_at"], assignment.created_at.isoformat())
 
+    def test_submitted_ungraded_homework_is_visible_as_waiting_for_review(self):
+        homework = Homework.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title="제출 후 검사 대기 과제",
+            meta={"default_max_score": 20},
+        )
+        HomeworkAssignment.objects.create(
+            tenant=self.tenant,
+            homework=homework,
+            session=self.session,
+            enrollment=self.enrollment,
+        )
+        Submission = django_apps.get_model("submissions", "Submission")
+        Submission.objects.create(
+            tenant=self.tenant,
+            user=self.user,
+            enrollment=self.enrollment,
+            target_type=Submission.TargetType.HOMEWORK,
+            target_id=homework.id,
+            source=Submission.Source.ONLINE,
+            status=Submission.Status.SUBMITTED,
+        )
+
+        response = self._call()
+
+        self.assertEqual(response.status_code, 200)
+        row = response.data["homeworks"][0]
+        self.assertIsNone(row["score"])
+        self.assertIsNone(row["passed"])
+        self.assertIsNone(row["achievement"])
+
+    def test_homeworks_are_session_ordered_and_expose_regular_supplement_scope(self):
+        supplement_session = Session.objects.create(
+            lecture=self.lecture,
+            order=2,
+            session_type=Session.SessionType.SUPPLEMENT,
+            title="주말 보강",
+        )
+        latest_regular_session = Session.objects.create(
+            lecture=self.lecture,
+            order=3,
+            regular_order=2,
+            session_type=Session.SessionType.REGULAR,
+            title="2차시",
+        )
+        for session, title in (
+            (self.session, "첫 과제"),
+            (supplement_session, "보강 과제"),
+            (latest_regular_session, "최근 과제"),
+        ):
+            homework = Homework.objects.create(
+                tenant=self.tenant,
+                session=session,
+                title=title,
+                meta={"default_max_score": 10},
+            )
+            HomeworkAssignment.objects.create(
+                tenant=self.tenant,
+                homework=homework,
+                session=session,
+                enrollment=self.enrollment,
+            )
+
+        response = self._call()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [row["title"] for row in response.data["homeworks"]],
+            ["최근 과제", "보강 과제", "첫 과제"],
+        )
+        rows = {row["title"]: row for row in response.data["homeworks"]}
+        self.assertEqual(rows["최근 과제"]["session_order"], 3)
+        self.assertEqual(rows["최근 과제"]["session_regular_order"], 2)
+        self.assertEqual(rows["최근 과제"]["session_type"], "REGULAR")
+        self.assertEqual(rows["보강 과제"]["session_order"], 2)
+        self.assertIsNone(rows["보강 과제"]["session_regular_order"])
+        self.assertEqual(rows["보강 과제"]["session_type"], "SUPPLEMENT")
+
     def test_legacy_template_exam_items_are_included_in_summary_analysis(self):
         template_exam = self.Exam.objects.create(
             tenant=self.tenant,
