@@ -322,6 +322,9 @@ class AdminStudentGradesView(APIView):
                 continue
             session_id_hw = None
             session_title = None
+            session_order_hw = None
+            session_regular_order_hw = None
+            session_type_hw = None
             lecture_id_hw = None
             lecture_title = None
             lecture_color = None
@@ -329,6 +332,13 @@ class AdminStudentGradesView(APIView):
             if session:
                 session_id_hw = session.id
                 session_title = getattr(session, "title", None) or f"{getattr(session, 'order', '')}차시"
+                session_order_hw = int(session.order)
+                session_regular_order_hw = (
+                    int(session.regular_order)
+                    if getattr(session, "regular_order", None) is not None
+                    else None
+                )
+                session_type_hw = getattr(session, "session_type", None)
                 if hasattr(session, "lecture") and session.lecture:
                     lecture_id_hw = session.lecture_id
                     lecture_title = getattr(session.lecture, "title", None)
@@ -372,13 +382,25 @@ class AdminStudentGradesView(APIView):
                 "meta_status": meta_status,
                 "achievement": achievement,
                 "retake_count": max_attempt,
+                "display_order": homework.display_order,
                 "session_id": session_id_hw,
                 "session_title": session_title,
+                "session_order": session_order_hw,
+                "session_regular_order": session_regular_order_hw,
+                "session_type": session_type_hw,
                 "lecture_id": lecture_id_hw,
                 "lecture_title": lecture_title,
                 "lecture_color": lecture_color,
                 "lecture_chip_label": lecture_chip_label,
             })
+
+        homework_list.sort(key=lambda row: (
+            (row.get("lecture_title") or "").casefold(),
+            row.get("session_order") is None,
+            -(int(row["session_order"]) if row.get("session_order") is not None else 0),
+            int(row.get("display_order") or 0),
+            -int(row["homework_id"]),
+        ))
 
         return Response({
             "exams": exam_list,

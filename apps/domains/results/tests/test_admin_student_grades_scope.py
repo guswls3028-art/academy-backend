@@ -619,6 +619,57 @@ class AdminStudentGradesScopeTest(TestCase, ClinicTestMixin):
         self.assertEqual(homework_row["grading_mode"], "SCORE")
         self.assertFalse(homework_row["is_locked"])
         self.assertIsNotNone(homework_row["score_updated_at"])
+        self.assertEqual(homework_row["session_order"], self.data["lec_session"].order)
+        self.assertEqual(homework_row["session_type"], "REGULAR")
+
+    def test_homework_history_defaults_to_latest_session_and_exposes_scope(self):
+        score_model = self.data["enrollments"][0].homework_scores.model
+        homework_model = score_model._meta.get_field("homework").remote_field.model
+        session_model = self.data["lec_session"].__class__
+        supplement = session_model.objects.create(
+            lecture=self.data["lecture"],
+            order=2,
+            session_type="SUPPLEMENT",
+            title="주말 보강",
+        )
+        latest_regular = session_model.objects.create(
+            lecture=self.data["lecture"],
+            order=3,
+            regular_order=2,
+            session_type="REGULAR",
+            title="2차시",
+        )
+        for session, title in (
+            (self.data["lec_session"], "첫 과제"),
+            (supplement, "보강 과제"),
+            (latest_regular, "최근 과제"),
+        ):
+            homework = homework_model.objects.create(
+                tenant=self.tenant,
+                homework_type=homework_model.HomeworkType.REGULAR,
+                session=session,
+                title=title,
+            )
+            score_model.objects.create(
+                enrollment=self.data["enrollments"][0],
+                session=session,
+                homework=homework,
+                score=10,
+                max_score=100,
+                passed=False,
+            )
+
+        response = self._get(self.student.id)
+
+        self.assertEqual(
+            [row["title"] for row in response.data["homeworks"]],
+            ["최근 과제", "보강 과제", "첫 과제"],
+        )
+        rows = {row["title"]: row for row in response.data["homeworks"]}
+        self.assertEqual(rows["최근 과제"]["session_regular_order"], 2)
+        self.assertEqual(rows["최근 과제"]["session_type"], "REGULAR")
+        self.assertIsNone(rows["보강 과제"]["session_regular_order"])
+        self.assertEqual(rows["보강 과제"]["session_type"], "SUPPLEMENT")
 
     def test_assigned_homeworks_include_not_submitted_and_ungraded_rows(self):
         homework_assignment_model = apps.get_model("homework", "HomeworkAssignment")
