@@ -5,6 +5,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 QUALITY_GATE = REPO_ROOT / ".github" / "workflows" / "quality-gate.yml"
 TEST_REQUIREMENTS = REPO_ROOT / "requirements" / "test.txt"
 COVERAGE_CONFIG = REPO_ROOT / ".coveragerc"
+PYPROJECT = REPO_ROOT / "pyproject.toml"
+PYTEST_CONFIG = REPO_ROOT / "pytest.ini"
 APP_COVERAGE_SHARDS = {
     "api",
     "billing",
@@ -17,12 +19,19 @@ APP_COVERAGE_SHARDS = {
 
 def test_quality_gate_runs_the_default_collected_suite_under_coverage() -> None:
     workflow = QUALITY_GATE.read_text(encoding="utf-8")
+    normalized_workflow = " ".join(workflow.replace("\\", "").split())
 
     assert "python -m pip install -r requirements/test.txt" in workflow
-    assert workflow.count("python -m coverage run --parallel-mode") == 3
-    assert "apps/api apps/billing apps/core apps/shared apps/support" in workflow
-    assert "--tb=short apps/domains" in workflow
-    assert "--tb=short tests" in workflow
+    assert workflow.count("python -m coverage run --parallel-mode") == 2
+    assert (
+        "python -m coverage run --parallel-mode --source=apps,academy -m pytest "
+        "tests/test_smoke.py -v --tb=short -x"
+    ) in normalized_workflow
+    assert (
+        "python -m coverage run --parallel-mode --source=apps,academy -m pytest "
+        "-q --tb=short apps/api apps/billing apps/core apps/shared apps/support "
+        "apps/domains tests --ignore=tests/test_smoke.py"
+    ) in normalized_workflow
     assert "python -m coverage combine" in workflow
     assert (
         "python -m coverage report --fail-under=60.5 --skip-covered --show-missing"
@@ -50,6 +59,11 @@ def test_coverage_report_excludes_tests_and_migrations() -> None:
 
     for omitted in ("*/migrations/*", "*/tests/*", "*/tests.py", "*/test_*.py"):
         assert omitted in coverage_config
+
+
+def test_pytest_has_one_authoritative_configuration() -> None:
+    assert PYTEST_CONFIG.read_text(encoding="utf-8").startswith("[pytest]")
+    assert "[tool.pytest.ini_options]" not in PYPROJECT.read_text(encoding="utf-8")
 
 
 def test_every_app_test_directory_belongs_to_a_coverage_shard() -> None:
