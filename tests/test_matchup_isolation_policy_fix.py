@@ -306,9 +306,9 @@ def test_author_isolation_preserved(tenant):
     assert ref_b.id not in found_ids, "다른 강사 자료는 후보 풀에서 제외 (강사 1인 격리 SSOT)"
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_hit_report_draft_returns_candidates_from_split_exam_problem(tenant, author):
-    """분리된 시험지 문항이 hit-report draft에서 추천 후보로 이어지는 통합 경로."""
+    """분리 문항이 threaded hit-report 후보 조회에서 보이는 통합 경로."""
     author.is_staff = True
     author.save(update_fields=["is_staff"])
 
