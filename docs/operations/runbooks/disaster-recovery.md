@@ -5,7 +5,7 @@
 
 ---
 
-## 1. 현재 상태 (2026-06-29 기준)
+## 1. 현재 상태 (2026-08-11 readback)
 
 ```
 RDS instance: academy-db
@@ -14,7 +14,9 @@ Class:        db.t4g.medium
 AZ:           ap-northeast-2b (Single-AZ)
 Storage:      20 GB
 Backup:       자동 7일 retention, 16:18-16:48 UTC (= 01:18-01:48 KST)
-Snapshots:    9 automated + 4 manual
+Boundary:     encrypted=true, public=false, deletionProtection=true
+Network:      default-vpc-0831a2484f9b114c2 / sg-06cfb1f23372e2597
+PITR:         LatestRestorableTime을 AWS에서 실행 직전에 조회
 ```
 
 **확인 명령:**
@@ -32,10 +34,13 @@ aws rds describe-db-instances \
 |----------|------------------------|---------------------|
 | **인스턴스 장애 (HW/네트워크 일시)** | 0 ~ 5분 (PITR) | 30분 (point-in-time restore) |
 | **데이터 손상/실수 DELETE** | 1분 (PITR 가능 한도) | 2시간 (RDS PITR + 검증) |
-| **AZ 장애 (Single-AZ는 영향 받음)** | 24시간 (마지막 자동 스냅샷) | 4시간 (스냅샷 → 새 인스턴스) |
+| **AZ 장애 (Single-AZ는 영향 받음)** | 0 ~ 5분 (같은 리전 PITR 로그 사용 가능 시) | 2시간 (PITR/스냅샷 → 새 인스턴스 + 검증) |
 | **Region 장애** | 사용 불가 (cross-region replica 없음) | 결정 필요 — 현재 미대응 |
 
-**현재 risk:** Single-AZ + 7일 retention. 가장 큰 갭: AZ 장애 시 RPO 24시간. 학원 결제·메시지 데이터는 RPO 1시간 이내가 적정.
+**현재 risk:** Single-AZ + 7일 retention이다. AZ 장애는 Multi-AZ 자동
+failover가 없어 새 인스턴스 복구와 앱 endpoint 변경이 필요하며, 리전 장애는
+cross-region 사본이 없어 현재 복구할 수 없다. 자동 백업과 PITR 로그의 실제
+복구 가능 여부는 사고/훈련 시작 시 `LatestRestorableTime`으로 다시 확인한다.
 
 **개선 백로그 (사용자 결정 필요):**
 - Multi-AZ 전환 (비용 ~2배 증가, but RTO 5분).
@@ -144,47 +149,24 @@ aws rds deregister-db-proxy-targets \
 
 복구된 DB에 대해 각 항목 확인. 하나라도 실패하면 endpoint 스왑 보류 + 재복구.
 
-```bash
-# A. 행 수 sanity (운영 시점과 큰 차이 없어야 함)
-psql -h <RESTORED_ENDPOINT> -U academy -c "
-SELECT 'tenants' AS tbl, count(*) FROM tenant
-UNION ALL SELECT 'users',         count(*) FROM auth_user
-UNION ALL SELECT 'fee_payments',  count(*) FROM fee_payment
-UNION ALL SELECT 'exam_results',  count(*) FROM exam_result
-UNION ALL SELECT 'matchup_docs',  count(*) FROM matchup_document;
-"
+격리 복구 리허설은 `run-rds-restore-drill.ps1`이 다음 검증을 실행한다.
 
-# B. 최근 1시간 INSERT 검증 (PITR 시점 직전 데이터까지 반영)
-psql -h <RESTORED_ENDPOINT> -U academy -c "
-SELECT count(*) AS recent_attendance
-FROM attendance
-WHERE created_at > now() - interval '1 hour';
-"
+1. 복구 대상이 private, encrypted, Single-AZ이고 원본과 subnet group/보안
+   그룹이 정확히 같은지 확인한다.
+2. 운영 API 컨테이너의 private network 경로에서 **복구본에만** 현재
+   migration을 적용한다.
+3. `django_migrations`, `core_tenant`, `accounts_user`, `students_student`,
+   `exams_exam`, `results_exam_result`, `fee_payment`,
+   `messaging_schedulednotification`의 존재와 행 수만 수집한다. 사용자 행,
+   tenant별 분포, 메시지 내용 등은 보고서에 기록하지 않는다.
+4. 복구본의 pending migration이 0이고 운영 DB와 migration hash가 같으며
+   `vector` extension이 존재하는지 확인한다.
+5. 스냅샷과 현재 운영 DB 사이의 행 수 차이는 RPO 증거로 기록하되, 정상적인
+   생성·삭제가 있을 수 있으므로 고정 ±비율로 성공/실패를 판정하지 않는다.
+   대신 `django_migrations`, `core_tenant`, `accounts_user`가 비어 있으면 실패한다.
 
-# C. tenant 격리 — 임의 tenant_id에 해당 row만 조회되는지 확인.
-psql -h <RESTORED_ENDPOINT> -U academy -c "
-SELECT tenant_id, count(*) FROM exam_result
-GROUP BY tenant_id
-ORDER BY tenant_id LIMIT 10;
-"
-
-# D. 마이그레이션 상태 — 운영과 동일해야 함.
-python manage.py showmigrations --plan | tail -20
-
-# E. 알림톡/SMS 발송 큐 정합 — 미전송 row가 비정상적으로 늘어나 있지 않은지.
-psql -h <RESTORED_ENDPOINT> -U academy -c "
-SELECT status, count(*) FROM message_send_log
-WHERE created_at > now() - interval '6 hours'
-GROUP BY status;
-"
-```
-
-검증 OK 기준:
-- A: 운영 row 수와 ±5% 이내.
-- B: 1시간 윈도우에 신규 attendance > 0 (정상 운영 중이었을 경우).
-- C: 모든 tenant_id 분포가 운영과 동일.
-- D: 마이그레이션 적용 상태 동일.
-- E: 비정상 'failed' 누적 없음.
+실제 사고의 endpoint 전환 전에는 위 자동 검증에 더해 영향 tenant의 최신
+업무 데이터와 queue/provider 정합을 별도의 승인된 읽기 쿼리로 확인한다.
 
 ---
 
@@ -199,17 +181,31 @@ GROUP BY status;
 
 ---
 
-## 7. 분기별 복구 리허설 (권장)
+## 7. 분기별 복구 리허설
 
 목표: 운영 무영향 + 절차 검증.
 
+GitHub Actions에서 RDS 인프라를 생성·삭제하는 것은
+[`ops-prohibited.md`](ops-prohibited.md)에 따라 금지한다. 분기마다 승인된 운영자
+AWS profile로 아래 수동 명령을 실행한다.
+
+```powershell
+# 읽기 계획: 원본 보호상태, 최신 자동 snapshot, class 지원 여부, 잔여 clone 확인
+pwsh scripts/v1/run-rds-restore-drill.ps1 -AwsProfile <approved-operator> -Plan
+
+# 실제 격리 restore → migrate/probe → exact-tag cleanup
+pwsh scripts/v1/run-rds-restore-drill.ps1 -AwsProfile <approved-operator>
 ```
-Q1 / Q2 / Q3 / Q4 의 중간 토요일 03:00 KST (peak 회피).
-1. 가장 최근 자동 snapshot으로 academy-db-drill 인스턴스 restore.
-2. 위 §5 검증 체크리스트 실행.
-3. 결과를 `docs/reports/history/dr-drill-{date}.md` 에 기록.
-4. 인스턴스 즉시 삭제.
-```
+
+스크립트의 fail-closed 경계:
+
+- 대상 이름은 `academy-db-drill-{UTC timestamp}-{run suffix}`로 생성하며 운영
+  `academy-db`를 restore/delete 대상으로 사용할 수 없다.
+- 시작 전에 같은 prefix의 잔여 DB가 하나라도 있으면 새 restore를 거부한다.
+- cleanup 직전에 `Project=academy`, `Purpose=rds-restore-drill`, `SourceDb`,
+  `RunId` 태그를 모두 다시 읽고 정확히 일치할 때만 삭제한다.
+- 성공과 실패 모두 `C:\academy\_artifacts\rds-restore-drill\`에 PII 없는
+  보고서를 남기며, cleanup 후 exact target 부재를 재확인한다.
 
 리허설 시점에 본 runbook 자체도 검토 — 명령이 outdated되거나 절차가 바뀌었으면 갱신.
 

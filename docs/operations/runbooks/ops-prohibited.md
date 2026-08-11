@@ -13,6 +13,10 @@
 
 CI는 **이미지 빌드 → 푸시 → ASG refresh**만 한다. 인프라 변경은 수동.
 
+분기별 RDS 복구훈련도 예약 GitHub Actions로 실행하지 않는다. 승인된 운영자
+환경에서 `scripts/v1/run-rds-restore-drill.ps1`을 수동 실행하고, exact RunId
+태그가 확인된 격리 복구본만 스크립트가 자동 정리한다.
+
 ---
 
 ## 2. 멀티테넌트 혼합 금지

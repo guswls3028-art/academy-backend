@@ -40,6 +40,22 @@ pwsh scripts/v1/verify.ps1 -AwsProfile default
 실패 시 즉시 중단되고, 실패 지점·명령·로그 경로를 출력. 로그는 `logs/v1/YYYYMMDD-HHMMSS-verify.log`.
 production backend deploy/worker 변경 후에는 `run-production-canary.ps1 -Mode PostDeploy -AwsProfile default -WriteReport`와 `run-deploy-verification.ps1 -AwsProfile default`를 이어서 실행한다.
 
+### 분기별 RDS 복구훈련
+
+RDS 생성·삭제는 GitHub Actions에서 금지한다. 승인된 운영자 환경에서 최신 자동
+snapshot을 격리된 소형 인스턴스로 복구하고, 현재 migration·핵심 count·pgvector를
+검증한 뒤 exact RunId 태그 대상만 자동 삭제한다.
+
+```powershell
+pwsh scripts/v1/run-rds-restore-drill.ps1 -AwsProfile default -Plan
+pwsh scripts/v1/run-rds-restore-drill.ps1 -AwsProfile default
+```
+
+기본 evidence는 workspace의 `_artifacts/rds-restore-drill/`에 저장된다. 성공
+조건은 검증 PASS뿐 아니라 임시 DB의 삭제 완료와 사후 부재 확인까지 포함한다.
+세부 RTO/RPO와 사고 시 전환 절차는
+[`disaster-recovery.md`](../../docs/operations/runbooks/disaster-recovery.md)를 따른다.
+
 ---
 
 ## legacy deploy cron 정리
