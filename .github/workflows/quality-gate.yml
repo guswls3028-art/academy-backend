@@ -103,6 +103,7 @@ jobs:
           ./scripts/v1/test-candidate-env-contract.ps1
           ./scripts/v1/test-aws-json-utf8-contract.ps1
           ./scripts/v1/test-production-source-freshness.ps1
+          ./scripts/v1/test-rds-restore-drill-contract.ps1
           ./scripts/v1/test-workflow-governance-contract.ps1
       - name: Parse every deployment PowerShell script
         shell: pwsh
