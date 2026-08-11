@@ -274,6 +274,88 @@ if [ "$image" != "__EXPECTED_IMAGE__" ]; then
   exit 44
 fi
 
+# Establish a release-over-release latency baseline on the isolated instance.
+# The database-backed readiness endpoint exercises Django and PostgreSQL without
+# touching product rows or sending traffic to the production ALB.
+if ! load_proof=$(docker exec -i "$container" python <<'PY'
+import math
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.request import Request, urlopen
+
+URL = "http://127.0.0.1:8000/health"
+REQUEST_COUNT = 120
+CONCURRENCY = 4
+TIMEOUT_SECONDS = 3
+MAX_ERROR_RATE_PERCENT = 0.0
+MAX_P95_MILLISECONDS = 750.0
+MAX_P99_MILLISECONDS = 1500.0
+
+
+def request_once():
+    started = time.perf_counter()
+    try:
+        request = Request(URL, headers={"User-Agent": "Academy-Preprod-Load-Probe/1.0"})
+        with urlopen(request, timeout=TIMEOUT_SECONDS) as response:
+            response.read()
+            status = response.status
+        return status == 200, (time.perf_counter() - started) * 1000
+    except Exception:
+        return False, (time.perf_counter() - started) * 1000
+
+
+def percentile(values, quantile):
+    position = (len(values) - 1) * quantile
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return values[lower]
+    return values[lower] + (values[upper] - values[lower]) * (position - lower)
+
+
+for _ in range(CONCURRENCY * 2):
+    ok, _ = request_once()
+    if not ok:
+        raise SystemExit("preprod load warmup failed")
+
+results = []
+with ThreadPoolExecutor(max_workers=CONCURRENCY) as executor:
+    futures = [executor.submit(request_once) for _ in range(REQUEST_COUNT)]
+    for future in as_completed(futures):
+        results.append(future.result())
+
+latencies = sorted(duration for _, duration in results)
+errors = sum(1 for ok, _ in results if not ok)
+error_rate = errors * 100.0 / REQUEST_COUNT
+p50 = percentile(latencies, 0.50)
+p95 = percentile(latencies, 0.95)
+p99 = percentile(latencies, 0.99)
+
+if (
+    error_rate > MAX_ERROR_RATE_PERCENT
+    or p95 > MAX_P95_MILLISECONDS
+    or p99 > MAX_P99_MILLISECONDS
+):
+    raise SystemExit(
+        "preprod load threshold exceeded "
+        f"errors={errors} error_rate_percent={error_rate:.2f} "
+        f"p95_ms={p95:.1f} p99_ms={p99:.1f}"
+    )
+
+print(
+    "API_PREPROD_LOAD_BASELINE_PASS "
+    f"requests={REQUEST_COUNT} concurrency={CONCURRENCY} errors={errors} "
+    f"error_rate_percent={error_rate:.2f} p50_ms={p50:.1f} "
+    f"p95_ms={p95:.1f} p99_ms={p99:.1f} "
+    f"max_p95_ms={MAX_P95_MILLISECONDS:.0f} max_p99_ms={MAX_P99_MILLISECONDS:.0f}"
+)
+PY
+); then
+  echo "CANARY_FAIL load_baseline" >&2
+  exit 49
+fi
+echo "$load_proof"
+
 # Prove the candidate's R2 and CDN signing configuration against a real,
 # read-only HLS object before any production env or ASG mutation.
 if ! video_chain_proof=$(docker exec -i "$container" python <<'PY'
@@ -458,6 +540,9 @@ echo "API_PREPROD_CANARY_PASS settings=prod database=preprod env_version=__EXPEC
     }
     if ($proof -notmatch "DB_ROLE_BOUNDARY_PASS") {
         throw "API pre-production canary returned no database role boundary PASS marker."
+    }
+    if ($proof -notmatch "API_PREPROD_LOAD_BASELINE_PASS") {
+        throw "API pre-production canary returned no load baseline PASS marker."
     }
     Write-Host $proof -ForegroundColor Green
 } finally {

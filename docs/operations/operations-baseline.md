@@ -38,7 +38,11 @@ passes every gate below:
    the API digest on a temporary isolated EC2 with the dedicated preproduction
    instance role and `academy_api_preprod_app` DB role. Migration, settings,
    DB name/role, production DB CONNECT denial, release identity, health, image
-   identity and CDN playback must pass, and the instance must terminate.
+   identity and CDN playback must pass. Before termination, the local
+   database-backed `/health` endpoint receives 120 read-only requests at
+   concurrency 4; the release records p50/p95/p99 and fails closed on any
+   error, p95 above 750 ms, or p99 above 1500 ms. The temporary instance must
+   then terminate.
 6. Only then may production migration run on the digest-pinned candidate.
 7. API deployment pins a new Launch Template version to the digest and performs
    an ALB-health-gated launch-before-terminate ASG refresh with
