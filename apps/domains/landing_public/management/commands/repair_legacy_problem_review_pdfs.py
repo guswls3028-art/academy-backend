@@ -10,8 +10,10 @@ from django.db import transaction
 import pdfplumber
 
 from apps.domains.landing_public.models import PublicProblemReviewShowcase
-from apps.domains.tools.problem_review.readiness import report_fingerprint
-from apps.domains.tools.problem_review.renderers import render_problem_review_report
+from apps.domains.tools.contracts import (
+    problem_review_report_fingerprint,
+    render_problem_review_report,
+)
 from apps.infrastructure.storage.r2 import (
     delete_object_r2_storage,
     get_object_bytes_r2_storage,
@@ -64,7 +66,7 @@ def repair_showcase_pdf(showcase: PublicProblemReviewShowcase, *, apply: bool) -
     # The legacy verification marker is intentionally passed without export meta.
     # The renderer therefore prints "최종 검수 증표 없음" instead of inventing a
     # completed_at timestamp or report fingerprint.
-    _, snapshot_sha256 = report_fingerprint(showcase.snapshot)
+    _, snapshot_sha256 = problem_review_report_fingerprint(showcase.snapshot)
     new_bytes, _, _ = render_problem_review_report(
         {
             **showcase.snapshot,

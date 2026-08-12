@@ -31,3 +31,15 @@ def build_hwpx_editable_wrong_note_document(*args: Any, **kwargs: Any):
     from .problem_studio.hwpx_writer import build_hwpx_editable_wrong_note_document as _impl
 
     return _impl(*args, **kwargs)
+
+
+def problem_review_report_fingerprint(*args: Any, **kwargs: Any):
+    from .problem_review.readiness import report_fingerprint as _impl
+
+    return _impl(*args, **kwargs)
+
+
+def render_problem_review_report(*args: Any, **kwargs: Any):
+    from .problem_review.renderers import render_problem_review_report as _impl
+
+    return _impl(*args, **kwargs)
