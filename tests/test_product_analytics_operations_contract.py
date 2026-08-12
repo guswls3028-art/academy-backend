@@ -41,6 +41,11 @@ def test_daily_maintenance_is_oidc_only_fail_closed_and_scope_limited() -> None:
     assert "product-usage-pilot-report-${{ github.run_id }}" in workflow
     assert "retention-days: 90" in workflow
     assert "route_or_job_family like /product-analytics/" in workflow
+    assert 'filter extra.event = "tenant_db_usage"' in workflow
+    assert "toDouble(extra.db_duration_ms)" in workflow
+    assert "toDouble(extra.write_query_count)" in workflow
+    assert "extra.route_or_job_family as route_or_job_family" in workflow
+    assert "toDouble(db_duration_ms)" not in workflow
 
 
 def test_pilot_controls_require_production_approval_oidc_and_exact_readback() -> None:

@@ -153,6 +153,10 @@ transaction과 운영 감사 로그로 자동 해제한다. 예상 밖의 두 �
   실패한다. 같은 실행에서 24시간 sampled tenant DB 로그를 가중 집계하고
   파일럿 hard gate를 실행하며 90일 보존 JSON artifact를 남긴다. 수동
   dispatch 기본값은 purge dry-run이지만 hard gate는 항상 적용된다.
+  CloudWatch JSON formatter가 측정 필드를 `extra.*` 아래에 직렬화하므로
+  Logs Insights 집계도 `extra.event`, `extra.db_duration_ms`,
+  `extra.write_query_count`, `extra.sample_weight`,
+  `extra.route_or_job_family`을 읽는다.
 
 `.github/workflows/product-usage-pilot-controls.yml`은 production 승인,
 GitHub OIDC와 정확한 확인 문구 뒤 `/academy/api/env`의 DB telemetry 세

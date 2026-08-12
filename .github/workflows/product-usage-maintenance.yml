@@ -65,7 +65,7 @@ jobs:
           set -euo pipefail
           START_TIME=$(date -u -d '24 hours ago' +%s)
           END_TIME=$(date -u +%s)
-          QUERY='fields toDouble(db_duration_ms) * toDouble(sample_weight) as weighted_db_ms, toDouble(write_query_count) * toDouble(sample_weight) as weighted_writes, route_or_job_family | filter event = "tenant_db_usage" | stats sum(weighted_db_ms) as total_db_ms, sum(if(route_or_job_family like /product-analytics/, weighted_db_ms, 0)) as analytics_db_ms, sum(weighted_writes) as total_writes, sum(if(route_or_job_family like /product-analytics/, weighted_writes, 0)) as analytics_writes'
+          QUERY='fields toDouble(extra.db_duration_ms) * toDouble(extra.sample_weight) as weighted_db_ms, toDouble(extra.write_query_count) * toDouble(extra.sample_weight) as weighted_writes, extra.route_or_job_family as route_or_job_family | filter extra.event = "tenant_db_usage" | stats sum(weighted_db_ms) as total_db_ms, sum(if(route_or_job_family like /product-analytics/, weighted_db_ms, 0)) as analytics_db_ms, sum(weighted_writes) as total_writes, sum(if(route_or_job_family like /product-analytics/, weighted_writes, 0)) as analytics_writes'
           if ! QUERY_ID=$(aws logs start-query \
             --log-group-name /academy/api \
             --start-time "$START_TIME" \
