@@ -68,13 +68,22 @@ jobs:
           ENABLED: ${{ inputs.enabled }}
           SAMPLE_RATE: ${{ inputs.sample_rate }}
         run: |
-          $params = @(
-            "-Ci",
-            "-SampleRate", $env:SAMPLE_RATE,
-            "-SlowRequestMs", "1000"
+          $sampleRate = [double]::Parse(
+            $env:SAMPLE_RATE,
+            [Globalization.CultureInfo]::InvariantCulture
           )
-          if ($env:ENABLED -ne "true") { $params += "-Disable" }
-          & ./scripts/v1/set-tenant-db-usage-telemetry.ps1 @params
+          if ($env:ENABLED -eq "true") {
+            & ./scripts/v1/set-tenant-db-usage-telemetry.ps1 `
+              -Ci `
+              -SampleRate $sampleRate `
+              -SlowRequestMs 1000
+          } else {
+            & ./scripts/v1/set-tenant-db-usage-telemetry.ps1 `
+              -Ci `
+              -Disable `
+              -SampleRate $sampleRate `
+              -SlowRequestMs 1000
+          }
 
       - name: Remind release owner to refresh through the guarded release
         run: |
