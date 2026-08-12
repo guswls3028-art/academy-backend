@@ -43,9 +43,14 @@ DB 구조 판단은 최소 28일의 동일 기간 증거를 사용한다.
 
 `report_tenant_db_capacity --input <jsonl>`은 외부로 export한 구조화
 로그를 읽어 테넌트별 추정 비중을 JSON으로 계산하며 DB에 쓰지 않는다.
-현재 middleware는 환경변수 기본값이 OFF이고 worker context는 아직
-연결되지 않았다. 따라서 활성화 전 overhead 검증과 worker 계측 보완이
-필요하다.
+환경변수 기본값은 OFF다. 내부 파일럿은
+`.github/workflows/product-usage-pilot-controls.yml`의 production 승인과
+exact confirmation으로만 5% 또는 10% 표본을 설정하고, guarded backend
+release로 runtime을 교체한다. daily maintenance는 CloudWatch Logs
+Insights에서 `sample_weight`를 적용해 제품 분석 route의 DB 시간·write
+비중을 계산한다. telemetry가 없으면 수치를 0으로 가정하지 않고
+`db_usage_share_unavailable` 경고를 남긴다. worker context는 아직
+연결되지 않았다.
 
 ## 3. Multi-AZ 게이트
 
@@ -147,7 +152,7 @@ dedicated data plane
 
 ## 8. 현재 남은 증거
 
-- 운영 환경의 tenant DB telemetry 활성화·overhead 실측
+- 운영 sampled tenant DB telemetry의 28일 overhead 실측
 - 일반 worker context 계측
 - Academy 태그 비용선과 28일 tenant 비중 보고서
 - snapshot/PITR 격리 복원 리허설

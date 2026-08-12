@@ -27,6 +27,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
+      - name: Initialize pilot report artifact path
+        run: echo "PILOT_REPORT_PATH=$RUNNER_TEMP/product-usage-pilot-report.json" >> "$GITHUB_ENV"
+
       - name: Require production main ref
         run: |
           if [ "$GITHUB_REF" != "refs/heads/main" ]; then
@@ -56,12 +59,81 @@ jobs:
           fi
           echo "id=$INSTANCE_ID" >> "$GITHUB_OUTPUT"
 
+      - name: Measure 24h product analytics DB share
+        id: db-share
+        run: |
+          set -euo pipefail
+          START_TIME=$(date -u -d '24 hours ago' +%s)
+          END_TIME=$(date -u +%s)
+          QUERY='fields toDouble(db_duration_ms) * toDouble(sample_weight) as weighted_db_ms, toDouble(write_query_count) * toDouble(sample_weight) as weighted_writes, route_or_job_family | filter event = "tenant_db_usage" | stats sum(weighted_db_ms) as total_db_ms, sum(if(route_or_job_family like /product-analytics/, weighted_db_ms, 0)) as analytics_db_ms, sum(weighted_writes) as total_writes, sum(if(route_or_job_family like /product-analytics/, weighted_writes, 0)) as analytics_writes'
+          if ! QUERY_ID=$(aws logs start-query \
+            --log-group-name /academy/api \
+            --start-time "$START_TIME" \
+            --end-time "$END_TIME" \
+            --query-string "$QUERY" \
+            --region "$AWS_REGION" \
+            --query queryId \
+            --output text); then
+            echo "::warning::Tenant DB telemetry query could not be started"
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          for attempt in $(seq 1 30); do
+            RESULT=$(aws logs get-query-results \
+              --query-id "$QUERY_ID" \
+              --region "$AWS_REGION" \
+              --output json)
+            STATUS=$(jq -r '.status' <<< "$RESULT")
+            if [ "$STATUS" = "Complete" ]; then
+              ROW=$(jq -c '[.results[0][]? | {(.field): .value}] | add // {}' <<< "$RESULT")
+              TOTAL_DB=$(jq -r '.total_db_ms // "0"' <<< "$ROW")
+              ANALYTICS_DB=$(jq -r '.analytics_db_ms // "0"' <<< "$ROW")
+              TOTAL_WRITES=$(jq -r '.total_writes // "0"' <<< "$ROW")
+              ANALYTICS_WRITES=$(jq -r '.analytics_writes // "0"' <<< "$ROW")
+              if jq -e -n --arg total "$TOTAL_DB" '$total | tonumber > 0' >/dev/null; then
+                DB_SHARE=$(jq -n \
+                  --arg analytics "$ANALYTICS_DB" --arg total "$TOTAL_DB" \
+                  '($analytics | tonumber) / ($total | tonumber)')
+                echo "db_time_share=$DB_SHARE" >> "$GITHUB_OUTPUT"
+              fi
+              if jq -e -n --arg total "$TOTAL_WRITES" '$total | tonumber > 0' >/dev/null; then
+                WRITE_SHARE=$(jq -n \
+                  --arg analytics "$ANALYTICS_WRITES" --arg total "$TOTAL_WRITES" \
+                  '($analytics | tonumber) / ($total | tonumber)')
+                echo "write_share=$WRITE_SHARE" >> "$GITHUB_OUTPUT"
+              fi
+              echo "available=true" >> "$GITHUB_OUTPUT"
+              echo "PRODUCT_ANALYTICS_DB_SHARE_READBACK_PASS db_time_share=${DB_SHARE:-unavailable} write_share=${WRITE_SHARE:-unavailable}"
+              exit 0
+            fi
+            if [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ] || [ "$STATUS" = "Timeout" ]; then
+              echo "::warning::Tenant DB telemetry query ended with status=$STATUS"
+              echo "available=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::warning::Tenant DB telemetry query timed out"
+          echo "available=false" >> "$GITHUB_OUTPUT"
+
       - name: Roll up and enforce analytics retention
         env:
           DRY_RUN_INPUT: ${{ github.event.inputs.dry_run }}
           EVENT_NAME: ${{ github.event_name }}
+          DB_TIME_SHARE: ${{ steps.db-share.outputs.db_time_share }}
+          WRITE_SHARE: ${{ steps.db-share.outputs.write_share }}
         run: |
           set -euo pipefail
+          REPORT_PATH="$PILOT_REPORT_PATH"
+          capture_report() {
+            local output="$1"
+            local report
+            report=$(printf '%s\n' "$output" | sed -n 's/^PRODUCT_ANALYTICS_PILOT_REPORT //p' | tail -n 1)
+            if [ -n "$report" ]; then
+              printf '%s\n' "$report" > "$REPORT_PATH"
+              jq -e . "$REPORT_PATH" >/dev/null
+            fi
+          }
           read -r TARGET_DATE RAW_BEFORE DAILY_BEFORE < <(
             python3 - <<'PY'
           from datetime import datetime, timedelta
@@ -75,7 +147,14 @@ jobs:
           if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "${DRY_RUN_INPUT:-true}" = "true" ]; then
             EXECUTE=""
           fi
-          CMD="set -eu; docker inspect academy-api >/dev/null; docker exec academy-api python manage.py rollup_product_usage --date '$TARGET_DATE'; docker exec academy-api python manage.py purge_product_usage --before '$RAW_BEFORE' --daily-before '$DAILY_BEFORE' $EXECUTE"
+          REPORT_ARGS=""
+          if [ -n "${DB_TIME_SHARE:-}" ]; then
+            REPORT_ARGS="$REPORT_ARGS --db-time-share '$DB_TIME_SHARE'"
+          fi
+          if [ -n "${WRITE_SHARE:-}" ]; then
+            REPORT_ARGS="$REPORT_ARGS --write-share '$WRITE_SHARE'"
+          fi
+          CMD="set -eu; docker inspect academy-api >/dev/null; docker exec academy-api python manage.py rollup_product_usage --date '$TARGET_DATE'; docker exec academy-api python manage.py purge_product_usage --before '$RAW_BEFORE' --daily-before '$DAILY_BEFORE' $EXECUTE; docker exec academy-api python manage.py report_product_usage_pilot --tenant-code hakwonplus --window-days 28 --projection-days 90 --max-db-time-share 0.10 --max-write-share 0.10 --max-projected-database-share 0.20 --disable-on-hard-breach --confirm 'DISABLE hakwonplus ON HARD BREACH' $REPORT_ARGS"
           PARAMS=$(jq -n --arg cmd "$CMD" '{commands: [$cmd]}')
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "${{ steps.instance.outputs.id }}" \
@@ -94,17 +173,31 @@ jobs:
               --output text 2>/dev/null || echo Pending)
             case "$STATUS" in
               Success)
-                aws ssm get-command-invocation \
+                OUTPUT=$(aws ssm get-command-invocation \
                   --command-id "$COMMAND_ID" \
                   --instance-id "${{ steps.instance.outputs.id }}" \
                   --region "$AWS_REGION" \
                   --query StandardOutputContent \
-                  --output text
+                  --output text)
+                printf '%s\n' "$OUTPUT"
+                capture_report "$OUTPUT"
+                if [ ! -s "$REPORT_PATH" ]; then
+                  echo "::error::Product analytics pilot report was not captured"
+                  exit 1
+                fi
                 echo "PRODUCT_ANALYTICS_MAINTENANCE_PASS target=$TARGET_DATE raw_before=$RAW_BEFORE daily_before=$DAILY_BEFORE execute=$([ -n "$EXECUTE" ] && echo true || echo false)"
                 exit 0
                 ;;
               Failed|Cancelled|TimedOut)
                 echo "::error::Product analytics maintenance failed with SSM status=$STATUS"
+                OUTPUT=$(aws ssm get-command-invocation \
+                  --command-id "$COMMAND_ID" \
+                  --instance-id "${{ steps.instance.outputs.id }}" \
+                  --region "$AWS_REGION" \
+                  --query StandardOutputContent \
+                  --output text 2>/dev/null || true)
+                printf '%s\n' "$OUTPUT"
+                capture_report "$OUTPUT"
                 aws ssm get-command-invocation \
                   --command-id "$COMMAND_ID" \
                   --instance-id "${{ steps.instance.outputs.id }}" \
@@ -118,3 +211,12 @@ jobs:
           done
           echo "::error::Product analytics maintenance timed out"
           exit 1
+
+      - name: Upload daily pilot gate report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: product-usage-pilot-report-${{ github.run_id }}
+          path: ${{ env.PILOT_REPORT_PATH }}
+          if-no-files-found: warn
+          retention-days: 90

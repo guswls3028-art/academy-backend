@@ -11,6 +11,9 @@ scripts, video playback requires:
 | `CDN_HLS_BASE_URL` | Exactly `https://cdn.hakwonplus.com` |
 | `CDN_HLS_SIGNING_SECRET` | Non-empty secret with at least 32 characters |
 | `CDN_HLS_SIGNING_KEY_ID` | Active signing key identifier, currently `v1` |
+| `TENANT_DB_USAGE_ENABLED` | `true` only during an approved sampled DB telemetry window; otherwise `false` |
+| `TENANT_DB_USAGE_SAMPLE_RATE` | Decimal string from `0.01` to `1.0`; pilot workflow allows `0.05` or `0.10` |
+| `TENANT_DB_USAGE_SLOW_REQUEST_MS` | Integer threshold; pilot control fixes this to `1000` |
 
 Production settings fail closed when the canonical CDN URL or signing secret is
 missing. `Sync-ApiEnvFromSSOT` validates the same contract before writing the
