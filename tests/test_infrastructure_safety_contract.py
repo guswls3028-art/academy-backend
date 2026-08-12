@@ -1092,6 +1092,7 @@ def test_exact_workflow_iam_covers_full_contract_without_broad_ssm() -> None:
         "ApiCanaryProfileRead", "ApiCanarySsmRead",
         "SsmSendDocument", "SsmSendInstances", "SsmSendApiCanary",
         "SsmCommandRead", "ApiPreprodEnvSourceRead", "ApiPreprodEnvPublish",
+        "ProductUsagePilotEnvPublish",
         "DevAlertsAlarmRead", "DevAlertsParameterRead",
         "DevAlertsTransitionWrite", "BatchRead",
         "BatchJobDefinitionRegister", "BatchJobDefinitionRevisionWrite",
@@ -1170,6 +1171,12 @@ def test_exact_workflow_iam_covers_full_contract_without_broad_ssm() -> None:
     assert by_sid["ApiPreprodEnvPublish"]["Resource"].endswith(
         ":parameter/academy/api/preprod/env"
     )
+    assert by_sid["ProductUsagePilotEnvPublish"] == {
+        "Sid": "ProductUsagePilotEnvPublish",
+        "Effect": "Allow",
+        "Action": "ssm:PutParameter",
+        "Resource": "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/api/env",
+    }
     assert "iam:PutRolePolicy" not in static
     assert set(by_sid["BatchPassRoles"]["Condition"]["StringEquals"]["iam:PassedToService"]) == {
         "batch.amazonaws.com", "ecs-tasks.amazonaws.com",

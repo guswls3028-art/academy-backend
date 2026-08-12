@@ -23,6 +23,7 @@
     {"Sid":"SsmCommandRead","Effect":"Allow","Action":"ssm:GetCommandInvocation","Resource":"*"},
     {"Sid":"ApiPreprodEnvSourceRead","Effect":"Allow","Action":"ssm:GetParameter","Resource":["arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/api/env","arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/api/preprod/db-credentials","arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/api/preprod/env"]},
     {"Sid":"ApiPreprodEnvPublish","Effect":"Allow","Action":"ssm:PutParameter","Resource":"arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/api/preprod/env"},
+    {"Sid":"ProductUsagePilotEnvPublish","Effect":"Allow","Action":"ssm:PutParameter","Resource":"arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/api/env"},
     {"Sid":"DevAlertsAlarmRead","Effect":"Allow","Action":"cloudwatch:DescribeAlarms","Resource":"*"},
     {"Sid":"DevAlertsParameterRead","Effect":"Allow","Action":"ssm:GetParameter","Resource":"arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/ops/dev-alerts-api-user-impact-state"},
     {"Sid":"DevAlertsTransitionWrite","Effect":"Allow","Action":"ssm:PutParameter","Resource":"arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/ops/dev-alerts-api-user-impact-state"},

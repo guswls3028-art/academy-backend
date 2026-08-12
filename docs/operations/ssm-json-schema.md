@@ -20,6 +20,11 @@ missing. `Sync-ApiEnvFromSSOT` validates the same contract before writing the
 parameter or refreshing API instances, so a deployment cannot silently fall
 back to an unsigned R2 URL.
 
+The production-approved product-usage pilot control may update only the three
+`TENANT_DB_USAGE_*` keys with a preserve-and-readback script. Its GitHub OIDC
+role has `ssm:PutParameter` only on the exact `/academy/api/env` ARN; it does not
+grant a wildcard SSM write.
+
 ## Preprod API parameter: `/academy/api/preprod/env`
 
 This is a release-bound Advanced SecureString version, never a mutable alias for
