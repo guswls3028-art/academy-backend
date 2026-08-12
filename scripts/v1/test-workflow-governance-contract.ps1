@@ -68,7 +68,10 @@ foreach ($marker in @(
     "GitHub Actions OIDC trust readback mismatch",
     "ecr:StartImageScan",
     'Sid="ProductUsagePilotEnvPublish"',
-    'Action="ssm:PutParameter"'
+    'Action="ssm:PutParameter"',
+    'Sid="ProductUsagePilotLogQuery"',
+    '"logs:StartQuery","logs:GetQueryResults"',
+    'log-group:/academy/api'
 )) {
     if (-not $deployIam.Contains($marker)) {
         $failures += "Deploy IAM is missing OIDC trust marker: $marker"

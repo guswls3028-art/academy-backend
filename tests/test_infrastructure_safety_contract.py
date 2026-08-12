@@ -1087,7 +1087,7 @@ def test_exact_workflow_iam_covers_full_contract_without_broad_ssm() -> None:
         "AsgDescribe", "LaunchTemplateImagePinRead", "LaunchTemplateImagePinWrite",
         "LaunchTemplateInstanceUse", "LaunchTemplateInstanceTag",
         "LaunchTemplatePassRole", "RuntimeScalePolicyReadback",
-        "RuntimeLogSinkReadback",
+        "RuntimeLogSinkReadback", "ProductUsagePilotLogQuery",
         "ApiCanaryInstanceRead", "ApiCanaryInstanceCleanup",
         "ApiCanaryProfileRead", "ApiCanarySsmRead",
         "SsmSendDocument", "SsmSendInstances", "SsmSendApiCanary",
@@ -1147,6 +1147,12 @@ def test_exact_workflow_iam_covers_full_contract_without_broad_ssm() -> None:
         "Effect": "Allow",
         "Action": "logs:DescribeLogGroups",
         "Resource": "*",
+    }
+    assert by_sid["ProductUsagePilotLogQuery"] == {
+        "Sid": "ProductUsagePilotLogQuery",
+        "Effect": "Allow",
+        "Action": ["logs:StartQuery", "logs:GetQueryResults"],
+        "Resource": "arn:aws:logs:ap-northeast-2:809466760795:log-group:/academy/api",
     }
     assert by_sid["ApiCanaryInstanceCleanup"]["Condition"]["StringEquals"] == {
         "ec2:ResourceTag/Name": "academy-v1-api-preprod-canary",
