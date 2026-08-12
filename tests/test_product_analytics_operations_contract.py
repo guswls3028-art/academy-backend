@@ -54,6 +54,9 @@ def test_pilot_controls_require_production_approval_oidc_and_exact_readback() ->
     assert "DISABLE TENANT DB TELEMETRY" in workflow
     assert "set-tenant-db-usage-telemetry.ps1" in workflow
     assert "TENANT_DB_TELEMETRY_CONTROL_PASS" in workflow
+    assert '"-Ci"' not in workflow
+    assert '-SampleRate $sampleRate' in workflow
+    assert '-Disable' in workflow
 
     assert "Assert-AwsMutationIdentity" in script
     assert "TENANT_DB_USAGE_ENABLED" in script
