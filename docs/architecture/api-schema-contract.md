@@ -26,7 +26,9 @@ python scripts/generate_openapi_schema.py --check
 ```
 
 Generation performs OpenAPI-spec validation and writes deterministic,
-key-sorted JSON. Check mode fails when:
+key-sorted JSON. The command always selects `apps.api.config.settings.schema`
+even when the operator shell already defines `DJANGO_SETTINGS_MODULE`; it does
+not inherit test, development, worker, or production settings. Check mode fails when:
 
 - the committed schema differs from current routes and serializers;
 - generator errors or warnings exceed `schema/generation-baseline.json`;

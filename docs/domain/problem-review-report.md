@@ -105,7 +105,9 @@ staff 역할만 사용할 수 있다.
   일치하는 `verified` 스냅샷만 만들 수 있다. 과거 자료를 다시 게시하면 verified
   스냅샷으로 교체되어 호환 표식의 수명이 끝난다.
 - 호환 표식 공개본의 조판 결함은 `repair_legacy_problem_review_pdfs` 관리 명령으로
-  고친다. 명령은 exact tenant와 showcase ID를 요구하고 기존 immutable snapshot을
+  고친다. 명령은 `apps.domains.tools.contracts` 공개 경계로 fingerprint와
+  renderer를 호출하며 `tools.problem_review` 내부 모듈을 직접 참조하지 않는다.
+  exact tenant와 showcase ID를 요구하고 기존 immutable snapshot을
   현재 renderer로만 다시 그린다. 분석 내용·verification·snapshot 시각은 바꾸지
   않으며, fingerprint나 최종 검수 시각도 만들지 않아 표지에 `최종 검수 증표 없음`이
   남는다. footer는 placeholder 대신 정규화된 immutable snapshot의 SHA-256 앞

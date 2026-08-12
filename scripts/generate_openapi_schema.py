@@ -13,12 +13,19 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 SCHEMA_DIR = BACKEND_DIR / "schema"
 SCHEMA_PATH = SCHEMA_DIR / "openapi.json"
 BASELINE_PATH = SCHEMA_DIR / "generation-baseline.json"
+SCHEMA_SETTINGS_MODULE = "apps.api.config.settings.schema"
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 
+def _configure_schema_settings() -> None:
+    # Deterministic generation must not inherit an operator shell's test/dev
+    # settings. The schema module is isolated and never connects to production.
+    os.environ["DJANGO_SETTINGS_MODULE"] = SCHEMA_SETTINGS_MODULE
+
+
 def _generate() -> tuple[bytes, dict[str, int]]:
-    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "apps.api.config.settings.schema")
+    _configure_schema_settings()
 
     import django
 
