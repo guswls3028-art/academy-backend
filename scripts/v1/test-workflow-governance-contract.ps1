@@ -71,7 +71,7 @@ foreach ($marker in @(
     'Action="ssm:PutParameter"',
     'Sid="ProductUsagePilotLogQuery"',
     '"logs:StartQuery","logs:GetQueryResults"',
-    'log-group:/academy/api'
+    'log-group:/academy/api:*'
 )) {
     if (-not $deployIam.Contains($marker)) {
         $failures += "Deploy IAM is missing OIDC trust marker: $marker"

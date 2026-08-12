@@ -1152,7 +1152,7 @@ def test_exact_workflow_iam_covers_full_contract_without_broad_ssm() -> None:
         "Sid": "ProductUsagePilotLogQuery",
         "Effect": "Allow",
         "Action": ["logs:StartQuery", "logs:GetQueryResults"],
-        "Resource": "arn:aws:logs:ap-northeast-2:809466760795:log-group:/academy/api",
+        "Resource": "arn:aws:logs:ap-northeast-2:809466760795:log-group:/academy/api:*",
     }
     assert by_sid["ApiCanaryInstanceCleanup"]["Condition"]["StringEquals"] == {
         "ec2:ResourceTag/Name": "academy-v1-api-preprod-canary",

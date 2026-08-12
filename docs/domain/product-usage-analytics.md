@@ -158,7 +158,10 @@ transaction과 운영 감사 로그로 자동 해제한다. 예상 밖의 두 �
   `extra.write_query_count`, `extra.sample_weight`,
   `extra.route_or_job_family`을 읽는다.
   GitHub OIDC role의 Logs Insights 권한은 `logs:StartQuery`와
-  `logs:GetQueryResults`를 `/academy/api` log-group ARN 하나에만 허용한다.
+  `logs:GetQueryResults`를 AWS `DescribeLogGroups.arn`이 반환하는 정확한
+  `/academy/api:*` log-group ARN 하나에만 허용한다. `logGroupArn`의
+  suffix 없는 값은 IAM simulator상 허용이어도 실제 `StartQuery`가 거부하므로
+  사용하지 않는다.
 
 `.github/workflows/product-usage-pilot-controls.yml`은 production 승인,
 GitHub OIDC와 정확한 확인 문구 뒤 `/academy/api/env`의 DB telemetry 세
