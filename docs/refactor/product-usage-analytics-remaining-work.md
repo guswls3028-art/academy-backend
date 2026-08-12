@@ -38,6 +38,8 @@
    DB 시간·write 비중과 90일 저장 전망을 관측한다.
 3. hard gate가 넘으면 daily maintenance가 exact pilot만 즉시 해제하고
    운영 감사 로그와 실패 artifact를 남긴다.
+   hard gate에는 DB 시간·write·저장 전망뿐 아니라 활성 tenant 범위 불일치와
+   최근 24시간 외부 tenant 이벤트 발생도 포함한다.
 4. 2026-08-26에 첫 28일 적격 기준선을 판정한다.
 5. 대표 외부 tenant 2~3곳 확대는 첫 판정과 별도 대상 검증 후 진행한다.
 

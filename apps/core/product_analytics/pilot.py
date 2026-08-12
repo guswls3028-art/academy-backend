@@ -148,8 +148,10 @@ def build_pilot_report(
     auto_disable_reasons: list[str] = []
     if enabled_codes != [tenant_code]:
         breaches.append("enabled_tenant_scope_mismatch")
+        auto_disable_reasons.append("enabled_tenant_scope_mismatch")
     if recent_nonpilot_events:
         breaches.append("recent_nonpilot_events")
+        auto_disable_reasons.append("recent_nonpilot_events")
     if tenant_code in enabled_codes and not getattr(
         settings, "PRODUCT_ANALYTICS_HASH_KEY", ""
     ):
