@@ -153,6 +153,10 @@ transaction과 운영 감사 로그로 자동 해제한다. 예상 밖의 두 �
   실패한다. 같은 실행에서 24시간 sampled tenant DB 로그를 가중 집계하고
   파일럿 hard gate를 실행하며 90일 보존 JSON artifact를 남긴다. 수동
   dispatch 기본값은 purge dry-run이지만 hard gate는 항상 적용된다.
+  활성 tenant 목록이 exact pilot 하나와 다르거나 최근 24시간 외부 tenant
+  이벤트가 발견되면 성능 임계치 초과와 동일한 hard breach로 취급한다.
+  maintenance는 다른 tenant의 플래그를 추측해 변경하지 않고 exact pilot만
+  즉시 비활성화한 뒤 감사 로그와 실패 artifact를 남긴다.
   CloudWatch JSON formatter가 측정 필드를 `extra.*` 아래에 직렬화하므로
   Logs Insights 집계도 `extra.event`, `extra.db_duration_ms`,
   `extra.write_query_count`, `extra.sample_weight`,

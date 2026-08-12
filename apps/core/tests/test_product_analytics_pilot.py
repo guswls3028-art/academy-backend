@@ -87,6 +87,57 @@ class ProductUsagePilotTests(TestCase):
         self.assertTrue(self.program.feature_flags["product_usage_analytics_enabled"])
         self.assertTrue(other_program.feature_flags["product_usage_analytics_enabled"])
 
+    def test_enabled_tenant_scope_breach_disables_exact_pilot(self):
+        other = Tenant.objects.create(code="other", name="Other", is_active=True)
+        other_program = Program.objects.get(tenant=other)
+        other_program.feature_flags = {"product_usage_analytics_enabled": True}
+        other_program.save(update_fields=["feature_flags"])
+
+        with self.assertRaisesMessage(CommandError, "enabled_tenant_scope_mismatch"):
+            call_command(
+                "report_product_usage_pilot",
+                tenant_code="hakwonplus",
+                db_time_share=0.01,
+                write_share=0.01,
+                disable_on_hard_breach=True,
+                confirm="DISABLE hakwonplus ON HARD BREACH",
+                stdout=StringIO(),
+            )
+
+        self.program.refresh_from_db()
+        other_program.refresh_from_db()
+        self.assertFalse(self.program.feature_flags["product_usage_analytics_enabled"])
+        self.assertTrue(other_program.feature_flags["product_usage_analytics_enabled"])
+        audit = OpsAuditLog.objects.get(
+            action="product_analytics.failsafe_disable"
+        )
+        self.assertEqual(
+            audit.payload["reasons"],
+            ["enabled_tenant_scope_mismatch"],
+        )
+
+    def test_recent_nonpilot_event_disables_exact_pilot(self):
+        other = Tenant.objects.create(code="other", name="Other", is_active=True)
+        self.event(tenant=other)
+
+        with self.assertRaisesMessage(CommandError, "recent_nonpilot_events"):
+            call_command(
+                "report_product_usage_pilot",
+                tenant_code="hakwonplus",
+                db_time_share=0.01,
+                write_share=0.01,
+                disable_on_hard_breach=True,
+                confirm="DISABLE hakwonplus ON HARD BREACH",
+                stdout=StringIO(),
+            )
+
+        self.program.refresh_from_db()
+        self.assertFalse(self.program.feature_flags["product_usage_analytics_enabled"])
+        audit = OpsAuditLog.objects.get(
+            action="product_analytics.failsafe_disable"
+        )
+        self.assertEqual(audit.payload["reasons"], ["recent_nonpilot_events"])
+
     def test_hard_performance_breach_disables_exact_pilot_and_audits(self):
         with self.assertRaisesMessage(CommandError, "db_time_share_exceeded"):
             call_command(
