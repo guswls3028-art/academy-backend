@@ -1,0 +1,82 @@
+name: Product Usage Pilot Controls
+
+on:
+  workflow_dispatch:
+    inputs:
+      enabled:
+        description: "Enable sampled tenant DB telemetry"
+        required: true
+        type: boolean
+        default: false
+      sample_rate:
+        description: "Request sampling rate"
+        required: true
+        type: choice
+        default: "0.10"
+        options:
+          - "0.05"
+          - "0.10"
+      confirm:
+        description: "Type ENABLE TENANT DB TELEMETRY or DISABLE TENANT DB TELEMETRY"
+        required: true
+        type: string
+
+concurrency:
+  group: product-usage-pilot-controls
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  update-production-telemetry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    environment: production
+    steps:
+      - name: Require production main ref and exact confirmation
+        env:
+          ENABLED: ${{ inputs.enabled }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Pilot controls can only run from refs/heads/main"
+            exit 1
+          fi
+          EXPECTED="DISABLE TENANT DB TELEMETRY"
+          if [ "$ENABLED" = "true" ]; then EXPECTED="ENABLE TENANT DB TELEMETRY"; fi
+          if [ "$CONFIRM" != "$EXPECTED" ]; then
+            echo "::error::Confirmation mismatch"
+            exit 1
+          fi
+
+      - name: Checkout exact main
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
+          aws-region: ap-northeast-2
+          action-timeout-s: 180
+
+      - name: Update exact production telemetry settings
+        shell: pwsh
+        env:
+          ENABLED: ${{ inputs.enabled }}
+          SAMPLE_RATE: ${{ inputs.sample_rate }}
+        run: |
+          $params = @(
+            "-Ci",
+            "-SampleRate", $env:SAMPLE_RATE,
+            "-SlowRequestMs", "1000"
+          )
+          if ($env:ENABLED -ne "true") { $params += "-Disable" }
+          & ./scripts/v1/set-tenant-db-usage-telemetry.ps1 @params
+
+      - name: Remind release owner to refresh through the guarded release
+        run: |
+          echo "TENANT_DB_TELEMETRY_CONTROL_PASS enabled=${{ inputs.enabled }} sample_rate=${{ inputs.sample_rate }}"
+          echo "The API runtime must pick up this version through the guarded backend release path."

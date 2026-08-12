@@ -1,6 +1,6 @@
 # 제품 사용 분석
 
-**상태:** 운영 코드·마이그레이션 배포 완료, 전체 테넌트 수집 OFF
+**상태:** 내부 `hakwonplus` 단일 테넌트 28일 파일럿 진행 중
 
 **제품 범위:** 선생님·직원, 학부모, 학생의 인증 후 화면 방문·CTA·대표 업무 완료 신호
 
@@ -54,12 +54,13 @@
 7. 플랫폼 운영자는 `/dev/product-analytics`에서 7·28·90일, 역할,
    surface와 테넌트를 필터링해 본다.
 
-현재 코드에는 22개 안정 기능 ID와 69개 인증 라우트 템플릿이 등록되어
+현재 코드에는 22개 안정 기능 ID와 68개 인증 라우트 템플릿이 등록되어
 있다. 기능 ID는 과거 데이터 의미를 보존하기 위해 재사용하지 않는다.
 
-대표 task 계측은 선생님 출석, 학생 시험 제출, 학생·학부모 클리닉
-작업에 연결되어 있다. 나머지 등록 라우트는 화면 방문·참여와 내부
-진입 CTA 신호를 제공한다. 전체 업무 퍼널 확장은 잔여 작업이다.
+대표 task 계측은 선생님 출석·성적 저장·시험/과제 대상 저장·알림톡
+발송 요청, 학생 시험/과제 제출, 학생·학부모 클리닉 작업에 연결되어
+있다. 나머지 등록 라우트는 화면 방문·참여와 내부 진입 CTA 신호를
+제공한다. 조회 화면에 task 이벤트를 중복 생성하지 않는다.
 
 ## 3. 이벤트와 프라이버시 계약
 
@@ -124,6 +125,15 @@
 analytics_hash_key_missing`으로 거부된다. 일반 테넌트 관리자는 이
 토글을 변경할 수 없다.
 
+파일럿의 비용·범위 hard gate는
+`report_product_usage_pilot --tenant-code hakwonplus`가 판정한다.
+활성 테넌트 범위, 최근 다른 테넌트 이벤트, HMAC key, 24시간 writer DB
+시간·write 비중과 90일 저장 전망을 한 JSON으로 출력한다. writer DB
+시간 또는 write가 10% 이상이거나 90일 분석 저장 전망이 현재 DB의
+20% 이상이면 정확한 확인 문구가 있는 실행만 `hakwonplus` 플래그를
+transaction과 운영 감사 로그로 자동 해제한다. 예상 밖의 두 번째 활성
+테넌트는 원인을 보존하기 위해 어느 플래그도 임의 변경하지 않고 실패한다.
+
 ## 5. 저장, 집계와 보존
 
 - `core.0051_product_usage_analytics`는 새 원본·일별 집계 테이블과
@@ -140,7 +150,15 @@ analytics_hash_key_missing`으로 거부된다. 일반 테넌트 관리자는 �
   전날을 idempotent rollup하고 원본 30일·일별 집계 400일 보존을
   적용한다. GitHub OIDC로 healthy InService API 한 대에만 SSM command를
   보내며 rollup 누락, 인스턴스 부재 또는 command 실패 시 삭제 없이
-  실패한다. 수동 dispatch 기본값은 purge dry-run이다.
+  실패한다. 같은 실행에서 24시간 sampled tenant DB 로그를 가중 집계하고
+  파일럿 hard gate를 실행하며 90일 보존 JSON artifact를 남긴다. 수동
+  dispatch 기본값은 purge dry-run이지만 hard gate는 항상 적용된다.
+
+`.github/workflows/product-usage-pilot-controls.yml`은 production 승인,
+GitHub OIDC와 정확한 확인 문구 뒤 `/academy/api/env`의 DB telemetry 세
+키만 보존형으로 변경한다. 이 설정은 guarded backend release가 API를
+교체한 뒤에만 runtime에 반영된다. 로그에는 SQL, parameter, 사용자 ID와
+입력값을 넣지 않는다.
 
 `scripts/v1/ensure-product-analytics-hash-key.ps1`은 기존 production
 SecureString JSON을 보존한 채 전용 384-bit 난수 HMAC key가 없을 때만
@@ -149,21 +167,19 @@ SecureString JSON을 보존한 채 전용 384-bit 난수 HMAC key가 없을 때�
 
 ## 6. 현재 운영 상태
 
-2026-07-30 KST 재검증 결과:
+2026-08-12 KST 운영 재검증 결과:
 
-- 백엔드 분석 merge `8f7b8c511d2912883c0bec5b5b8d09d20c10ad6d`는
-  현재 `origin/main`의 조상이다.
-- 운영 API 후보 `5c58e9a9334b9f89b7a24de13550b2c48073d208`는
-  상시 격리 개발환경, 임시 preprod, 운영 migration, ASG/ALB 교체와
-  최종 digest 검증을 모두 통과했다.
-- 운영 API digest는
-  `sha256:1a984901c407b73e7326cd900659476452a92163bf427ff9c75c81814101cdff`다.
-- 프런트 분석 merge `ab32657e7e6846ae3aaf272e57b12dbd0dd9b672`는
-  운영 프런트 `a04a01c1c5ee1ff017ec7d692442482bd8deb369`의 조상이다.
-- `/healthz`는 200, `/health`는 `healthy`와 `database=connected`다.
-- 공개 Program readback 대상 7개 테넌트 모두 분석 플래그가 없어서
-  `false`로 평가된다. 실제 행동 수집은 시작되지 않았다.
-- 메뉴·CTA 위치·문구 변경과 멀티 DB 변경은 없다.
+- `hakwonplus`는 정식 tenant API workflow `30504193527`로 2026-07-30에
+  활성화되어 28일 파일럿의 14번째 달력일을 진행 중이다.
+- `dnb`, `tchul`, `sswe`, `limglish`, `ymath` 등 확인된 외부 테넌트는
+  비활성이고 최근 24시간 다른 테넌트 이벤트가 없어야 daily gate가
+  통과한다.
+- 일별 maintenance는 계속 성공 중이다. 2026-08-11 원본 4,605건을
+  일별 actor 1,604행으로 rollup했고 검증용 dry-run은 삭제 0건이었다.
+- 플래그 활성화 뒤에도 합성·대리 로그인 이벤트는 품질 수치로만 남고
+  적격 actor와 funnel 지표에서는 제외된다.
+- 28일 적격 기준선 종료 전에는 메뉴·CTA 위치·문구를 자동 변경하지
+  않으며 멀티 DB 도입도 승인된 것으로 보지 않는다.
 
 ## 7. 운영·검증 경로
 
@@ -173,6 +189,7 @@ Backend focused:
 python manage.py check --settings apps.api.config.settings.test
 python manage.py makemigrations --check --dry-run --settings apps.api.config.settings.test
 python -m pytest apps/core/tests/test_product_analytics_ingestion.py apps/core/tests/test_product_analytics_queries.py apps/core/tests/test_product_analytics_retention.py apps/core/tests/test_product_analytics_rollout.py apps/core/tests/test_tenant_db_usage.py -q
+python -m pytest apps/core/tests/test_product_analytics_pilot.py tests/test_product_analytics_operations_contract.py -q
 ```
 
 Frontend focused 검증과 사용자 흐름은 프런트 정본을 따른다.

@@ -4,6 +4,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 KEY_SCRIPT = ROOT / "scripts" / "v1" / "ensure-product-analytics-hash-key.ps1"
 WORKFLOW = ROOT / ".github" / "workflows" / "product-usage-maintenance.yml"
+CONTROL_WORKFLOW = (
+    ROOT / ".github" / "workflows" / "product-usage-pilot-controls.yml"
+)
+TELEMETRY_SCRIPT = ROOT / "scripts" / "v1" / "set-tenant-db-usage-telemetry.ps1"
 
 
 def test_hash_key_script_preserves_secure_parameter_and_never_prints_key() -> None:
@@ -31,3 +35,31 @@ def test_daily_maintenance_is_oidc_only_fail_closed_and_scope_limited() -> None:
     assert "--execute" in workflow
     assert "Product analytics maintenance failed" in workflow
     assert "PRODUCT_ANALYTICS_MAINTENANCE_PASS" in workflow
+    assert "report_product_usage_pilot --tenant-code hakwonplus" in workflow
+    assert "--disable-on-hard-breach" in workflow
+    assert "DISABLE hakwonplus ON HARD BREACH" in workflow
+    assert "product-usage-pilot-report-${{ github.run_id }}" in workflow
+    assert "retention-days: 90" in workflow
+    assert "route_or_job_family like /product-analytics/" in workflow
+
+
+def test_pilot_controls_require_production_approval_oidc_and_exact_readback() -> None:
+    workflow = CONTROL_WORKFLOW.read_text(encoding="utf-8-sig")
+    script = TELEMETRY_SCRIPT.read_text(encoding="utf-8-sig")
+
+    assert "environment: production" in workflow
+    assert "id-token: write" in workflow
+    assert "AWS_ROLE_ARN_FOR_ECR_BUILD" in workflow
+    assert "ENABLE TENANT DB TELEMETRY" in workflow
+    assert "DISABLE TENANT DB TELEMETRY" in workflow
+    assert "set-tenant-db-usage-telemetry.ps1" in workflow
+    assert "TENANT_DB_TELEMETRY_CONTROL_PASS" in workflow
+
+    assert "Assert-AwsMutationIdentity" in script
+    assert "TENANT_DB_USAGE_ENABLED" in script
+    assert "TENANT_DB_USAGE_SAMPLE_RATE" in script
+    assert "TENANT_DB_USAGE_SLOW_REQUEST_MS" in script
+    assert '"${ParameterName}:$version"' in script
+    assert "TENANT_DB_TELEMETRY_READBACK_PASS" in script
+    assert "Write-Host $raw" not in script
+    assert "Write-Output $raw" not in script
