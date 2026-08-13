@@ -61,8 +61,8 @@ class SessionViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = SessionFilter
     search_fields = ["location"]
-    ordering_fields = ["date", "start_time", "created_at"]
-    ordering = ["-date", "-start_time"]
+    ordering_fields = ["date", "start_time", "created_at", "id"]
+    ordering = ["-date", "-start_time", "-id"]
 
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)
@@ -333,7 +333,7 @@ class SessionViewSet(viewsets.ModelViewSet):
                     Session.target_lectures.through.objects.filter(session_id=OuterRef("pk"))
                 ),
             )
-            .order_by("date", "start_time")
+            .order_by("date", "start_time", "id")
         )
 
         if section_id:

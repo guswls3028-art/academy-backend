@@ -20,8 +20,8 @@ class TestViewSet(viewsets.ModelViewSet):
     serializer_class = ClinicTestSerializer
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     search_fields = ["title"]
-    ordering_fields = ["date", "created_at"]
-    ordering = ["-date", "-created_at"]
+    ordering_fields = ["date", "created_at", "id"]
+    ordering = ["-date", "-created_at", "-id"]
 
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)

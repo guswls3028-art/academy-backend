@@ -304,9 +304,9 @@ class StudentInvoiceViewSet(ModelViewSet):
                     default=Value(4),
                     output_field=IntegerField(),
                 ),
-            ).order_by("status_order", "student__name")
+            ).order_by("status_order", "student__name", "id")
         else:
-            qs = qs.order_by("-billing_year", "-billing_month", "student__name")
+            qs = qs.order_by("-billing_year", "-billing_month", "student__name", "id")
 
         return qs
 
@@ -455,7 +455,7 @@ class FeeOverdueView(APIView):
             StudentInvoice.objects
             .filter(tenant=tenant, status="OVERDUE")
             .select_related("student")
-            .order_by("due_date")
+            .order_by("due_date", "id")
         )
         data = StudentInvoiceListSerializer(overdue, many=True).data
         return Response(data)
@@ -492,7 +492,7 @@ class StudentFeeInvoiceListView(APIView):
             .filter(tenant=tenant, student__in=students)
             .exclude(status="CANCELLED")
             .select_related("student")
-            .order_by("-billing_year", "-billing_month")
+            .order_by("-billing_year", "-billing_month", "-id")
         )
 
         data = StudentInvoiceListSerializer(invoices, many=True).data

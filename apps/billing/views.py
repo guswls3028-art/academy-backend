@@ -151,7 +151,7 @@ class AdminInvoiceListView(generics.ListAPIView):
     serializer_class = InvoiceListSerializer
 
     def get_queryset(self):
-        qs = Invoice.objects.select_related("tenant").order_by("-created_at")
+        qs = Invoice.objects.select_related("tenant").order_by("-created_at", "-id")
         # 필터링
         status_filter = self.request.query_params.get("status")
         if status_filter:
@@ -236,7 +236,7 @@ class AdminBankTransferNoticeListView(generics.ListAPIView):
             "invoice__tenant",
             "invoice__tax_invoice_issue",
             "reviewed_by",
-        ).order_by("-submitted_at")
+        ).order_by("-submitted_at", "-id")
         if self.request.query_params.get("actionable", "").lower() in (
             "1",
             "true",
@@ -495,7 +495,7 @@ class MyInvoiceListView(generics.ListAPIView):
 
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)
-        return Invoice.objects.filter(tenant=tenant).order_by("-created_at")
+        return Invoice.objects.filter(tenant=tenant).order_by("-created_at", "-id")
 
 
 class MyInvoiceDetailView(generics.RetrieveAPIView):

@@ -133,6 +133,31 @@ class SessionScoresRosterScopeTests(TestCase):
         self.assertEqual(len(rows[0]["exams"]), 1)
         self.assertEqual(len(rows[0]["homeworks"]), 1)
 
+    def test_session_scores_rows_use_stable_student_name_order(self):
+        self.active_enrollment.student.name = "Zulu student"
+        self.active_enrollment.student.save(update_fields=["name", "updated_at"])
+        self.stale_enrollment.student.name = "Alpha student"
+        self.stale_enrollment.student.save(update_fields=["name", "updated_at"])
+        Attendance.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            enrollment=self.stale_enrollment,
+            status="PRESENT",
+        )
+        request = self.factory.get(
+            f"/api/v1/results/admin/sessions/{self.session.id}/scores/"
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+
+        response = SessionScoresView.as_view()(request, session_id=self.session.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(
+            [row["student_name"] for row in response.data["rows"]],
+            ["Alpha student", "Zulu student"],
+        )
+
     def test_session_scores_uses_configured_homework_max_score(self):
         self.homework.meta = {"default_max_score": 43}
         self.homework.save(update_fields=["meta", "updated_at"])

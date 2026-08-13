@@ -1,14 +1,33 @@
 from django.apps import apps as django_apps
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.results.models import Result
-from apps.domains.results.views.admin_exam_results_view import AdminExamResultsView
+from apps.domains.results.models import ExamAttempt, Result
+from apps.domains.results.views.admin_exam_results_view import (
+    AdminExamResultsView,
+    _result_display_status,
+)
 
 
 User = get_user_model()
+
+
+class ResultDisplayStatusTests(SimpleTestCase):
+    def test_status_precedence_and_score_zero(self):
+        cases = [
+            ({"meta_status": "NOT_SUBMITTED", "submission_status": "done", "visible_total_score": 100, "is_provisional": False}, "NOT_SUBMITTED"),
+            ({"meta_status": None, "submission_status": "failed", "visible_total_score": None, "is_provisional": False}, "FAILED"),
+            ({"meta_status": None, "submission_status": "grading", "visible_total_score": 10, "is_provisional": False}, "PROCESSING"),
+            ({"meta_status": None, "submission_status": "done", "visible_total_score": None, "is_provisional": False}, "DONE"),
+            ({"meta_status": None, "submission_status": None, "visible_total_score": 0, "is_provisional": False}, "DONE"),
+            ({"meta_status": None, "submission_status": None, "visible_total_score": 10, "is_provisional": True}, "PARTIAL"),
+            ({"meta_status": None, "submission_status": None, "visible_total_score": None, "is_provisional": False}, "NOT_SUBMITTED"),
+        ]
+        for kwargs, expected in cases:
+            with self.subTest(expected=expected, kwargs=kwargs):
+                self.assertEqual(_result_display_status(**kwargs), expected)
 
 
 class AdminExamResultsScopeTest(TestCase):
@@ -99,7 +118,10 @@ class AdminExamResultsScopeTest(TestCase):
 
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["count"], 1)
-        self.assertEqual(response.data["results"][0]["enrollment_id"], self.enrollment.id)
+        row = response.data["results"][0]
+        self.assertEqual(row["enrollment_id"], self.enrollment.id)
+        self.assertEqual(row["ranking_score"], 80.0)
+        self.assertEqual(row["result_status"], "DONE")
 
     def test_cross_tenant_enrollment_result_is_ignored(self):
         exam = self._make_exam()
@@ -135,3 +157,71 @@ class AdminExamResultsScopeTest(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["count"], 1)
         self.assertEqual(response.data["results"][0]["enrollment_id"], self.enrollment.id)
+
+    def test_results_expose_ranking_score_and_backend_status_in_rank_order(self):
+        exam = self._make_exam()
+        peer = self._make_enrollment(
+            self.tenant,
+            self.lecture,
+            "SCOPE002",
+            "두번째 학생",
+        )
+        first_attempt = ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=self.enrollment,
+            submission_id=0,
+            attempt_index=1,
+            is_representative=False,
+            status="done",
+            meta={"initial_snapshot": {"total_score": 20}},
+        )
+        representative_attempt = ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=self.enrollment,
+            submission_id=0,
+            attempt_index=2,
+            is_retake=True,
+            is_representative=True,
+            status="done",
+            meta={"total_score": 19},
+        )
+        peer_attempt = ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=peer,
+            submission_id=0,
+            attempt_index=1,
+            is_representative=True,
+            status="done",
+            meta={"initial_snapshot": {"total_score": 19}},
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.enrollment,
+            attempt=representative_attempt,
+            total_score=19,
+            max_score=100,
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=peer,
+            attempt=peer_attempt,
+            total_score=20,
+            max_score=100,
+        )
+
+        response = self._get(exam.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        rows = response.data["results"]
+        self.assertEqual(
+            [row["enrollment_id"] for row in rows],
+            [self.enrollment.id, peer.id],
+        )
+        self.assertEqual(
+            [(row["rank"], row["ranking_score"], row["final_score"]) for row in rows],
+            [(1, 20.0, 19.0), (2, 19.0, 20.0)],
+        )
+        self.assertEqual([row["result_status"] for row in rows], ["DONE", "DONE"])
+        self.assertEqual(first_attempt.attempt_index, 1)
