@@ -124,6 +124,7 @@ def _dense_rank(
         percentile = 100.0 if cohort_size <= 1 else round((current_rank / cohort_size) * 100, 1)
         result_map[eid] = {
             "rank": current_rank,
+            "ranking_score": score,
             "percentile": percentile,
             "cohort_size": cohort_size,
             "cohort_avg": cohort_avg,

@@ -29,6 +29,47 @@ from apps.domains.results.utils.exam_achievement import compute_exam_achievement
 from apps.domains.results.utils.exam_absence import current_exam_absence_counts
 
 
+_FAILED_SUBMISSION_STATUSES = {"failed", "error"}
+_DONE_SUBMISSION_STATUSES = {"done", "completed", "success"}
+_PROCESSING_SUBMISSION_STATUSES = {
+    "pending",
+    "submitted",
+    "dispatched",
+    "extracting",
+    "answers_ready",
+    "grading",
+    "running",
+    "processing",
+}
+
+
+def _result_display_status(
+    *,
+    meta_status: str | None,
+    submission_status: str | None,
+    visible_total_score: float | None,
+    is_provisional: bool,
+) -> str:
+    """Return the backend-owned status shown in the admin result list."""
+    if meta_status == "NOT_SUBMITTED":
+        return "NOT_SUBMITTED"
+
+    raw_submission_status = str(submission_status or "").strip().lower()
+    if raw_submission_status in _FAILED_SUBMISSION_STATUSES:
+        return "FAILED"
+    if raw_submission_status in _PROCESSING_SUBMISSION_STATUSES:
+        return "PROCESSING"
+    if is_provisional:
+        return "PARTIAL"
+    if raw_submission_status in _DONE_SUBMISSION_STATUSES:
+        return "DONE"
+    if visible_total_score is not None:
+        return "DONE"
+    if raw_submission_status:
+        return "PROCESSING"
+    return "NOT_SUBMITTED"
+
+
 class AdminExamResultsView(ListAPIView):
     """
     GET /results/admin/exams/<exam_id>/results/
@@ -246,6 +287,12 @@ class AdminExamResultsView(ListAPIView):
                 if achievement_data["meta_status"] == "NOT_SUBMITTED"
                 else rank_map.get(enrollment_id, {})
             )
+            result_status = _result_display_status(
+                meta_status=achievement_data["meta_status"],
+                submission_status=submission_status,
+                visible_total_score=visible_total_score,
+                is_provisional=bool(achievement_data["is_provisional"]),
+            )
 
             rows.append({
                 "enrollment_id": enrollment_id,
@@ -275,17 +322,29 @@ class AdminExamResultsView(ListAPIView):
 
                 "submission_id": submission_id,
                 "submission_status": submission_status,
+                "result_status": result_status,
                 "name_highlight_clinic_target": highlight_map.get(enrollment_id, False),
                 "exam_not_submitted_count": exam_absence_count_map.get(enrollment_id, 0),
 
                 # 석차 정보
                 "rank": rank_info.get("rank"),
+                "ranking_score": rank_info.get("ranking_score"),
                 "percentile": rank_info.get("percentile"),
                 "cohort_size": rank_info.get("cohort_size"),
                 "cohort_avg": rank_info.get("cohort_avg"),
 
                 **display,
             })
+
+        rows.sort(
+            key=lambda row: (
+                row["rank"] is None,
+                row["rank"] if row["rank"] is not None else 0,
+                -float(row["ranking_score"] or 0.0),
+                str(row["student_name"] or ""),
+                int(row["enrollment_id"]),
+            )
+        )
 
         serializer = AdminExamResultRowSerializer(rows, many=True)
         return Response({

@@ -194,6 +194,18 @@ tenant가 없거나 다른 tenant의 시험이면 거부한다. 이미 분리 �
 
 ## 직접 채점 표
 
+### 학생별 결과 목록
+
+**시험 → 채점·결과 → 학생별 결과**는 1차 점수 석차와 현재 최종점수를
+구분한다. `GET /results/admin/exams/{exam_id}/results/`의 `ranking_score`가
+`rank`의 기준이고 `final_score`는 대표 결과의 현재 점수다. 재시험·정정으로 두
+값이 다르면 화면은 1차 점수를 주값, 최종점수를 보조값으로 함께 표시한다.
+
+수동 채점이나 엑셀 반영은 Submission이 없어도 확정 점수가 있으므로 `완료`다.
+결시는 `NOT_SUBMITTED`이며 두 점수와 석차를 표시하지 않는다. 응답은 기본
+등수순이고 동률은 학생명과 enrollment ID로 안정화한다. 전체 목록 계약은
+[data-list-ordering.md](data-list-ordering.md)를 따른다.
+
 ### 정오 입력
 
 | 화면 표시 | 저장 의미 | 점수 | 오답노트 |

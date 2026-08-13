@@ -81,8 +81,8 @@ class ParticipantViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = ParticipantFilter
     search_fields = ["student__name", "session__location"]
-    ordering_fields = ["created_at", "updated_at", "session__date"]
-    ordering = ["-created_at"]
+    ordering_fields = ["created_at", "updated_at", "session__date", "id"]
+    ordering = ["-created_at", "-id"]
 
     def get_permissions(self):
         if self.action in ("update", "partial_update", "destroy", "complete", "uncomplete"):

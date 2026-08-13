@@ -55,6 +55,7 @@ backend/docs/
 | 레이어/코드 배치 | [architecture/hexagonal-cutover-policy.md](architecture/hexagonal-cutover-policy.md) |
 | OpenAPI·프런트 생성 타입 계약 | [architecture/api-schema-contract.md](architecture/api-schema-contract.md) |
 | 시험 생성·혼합 채점·오답노트 | [domain/exam-grading.md](domain/exam-grading.md) |
+| 데이터 목록 정렬·필터·페이지네이션 | [domain/data-list-ordering.md](domain/data-list-ordering.md) |
 | 출결 명단 정렬·페이지네이션 | [domain/attendance.md](domain/attendance.md) |
 | 강의 정규 수업·보강 유형과 이름 | [domain/lecture-sessions.md](domain/lecture-sessions.md) |
 | 과제 만점·합격 정책·성적 저장 | [domain/homework-grading.md](domain/homework-grading.md) |

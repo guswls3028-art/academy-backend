@@ -45,6 +45,7 @@ class AdminExamResultRowSerializer(serializers.Serializer):
     # 석차 정보
     # ===============================
     rank = serializers.IntegerField(allow_null=True, required=False, default=None)
+    ranking_score = serializers.FloatField(allow_null=True, required=False, default=None)
     percentile = serializers.FloatField(allow_null=True, required=False, default=None)
     cohort_size = serializers.IntegerField(allow_null=True, required=False, default=None)
     cohort_avg = serializers.FloatField(allow_null=True, required=False, default=None)
@@ -54,3 +55,6 @@ class AdminExamResultRowSerializer(serializers.Serializer):
     # ===============================
     submission_id = serializers.IntegerField(allow_null=True)
     submission_status = serializers.CharField(allow_null=True)
+    result_status = serializers.ChoiceField(
+        choices=["NOT_SUBMITTED", "PROCESSING", "PARTIAL", "DONE", "FAILED"],
+    )

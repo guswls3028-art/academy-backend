@@ -22,8 +22,8 @@ class SubmissionViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = SubmissionFilter
     search_fields = ["student__name", "test__title"]
-    ordering_fields = ["created_at"]
-    ordering = ["-created_at"]
+    ordering_fields = ["created_at", "id"]
+    ordering = ["-created_at", "-id"]
 
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)

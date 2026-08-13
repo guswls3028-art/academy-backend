@@ -312,6 +312,7 @@ class SessionScoresView(APIView):
             .filter(status="ACTIVE")
             .filter(student__deleted_at__isnull=True)
             .distinct()
+            .order_by("student__name", "id")
         )
 
         enrollment_ids = list(enrollment_qs.values_list("id", flat=True))
