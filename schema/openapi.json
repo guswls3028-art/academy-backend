@@ -99,9 +99,17 @@
             "nullable": true,
             "type": "integer"
           },
+          "ranking_score": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
           "remediated": {
             "default": false,
             "type": "boolean"
+          },
+          "result_status": {
+            "$ref": "#/components/schemas/ResultStatusEnum"
           },
           "student_name": {
             "type": "string"
@@ -127,6 +135,7 @@
           "exam_score",
           "final_score",
           "passed",
+          "result_status",
           "student_name",
           "submission_id",
           "submission_status",
@@ -10058,6 +10067,17 @@
           "CARRIED_OVER",
           "SOURCE_REMOVED",
           "BOOKING_LEGACY"
+        ],
+        "type": "string"
+      },
+      "ResultStatusEnum": {
+        "description": "* `NOT_SUBMITTED` - NOT_SUBMITTED\n* `PROCESSING` - PROCESSING\n* `PARTIAL` - PARTIAL\n* `DONE` - DONE\n* `FAILED` - FAILED",
+        "enum": [
+          "NOT_SUBMITTED",
+          "PROCESSING",
+          "PARTIAL",
+          "DONE",
+          "FAILED"
         ],
         "type": "string"
       },
