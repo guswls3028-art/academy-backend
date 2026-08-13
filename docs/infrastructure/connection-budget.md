@@ -46,6 +46,9 @@
   (`DB_CONN_MAX_AGE=0`). The direct-RDS, gevent runtime must not enable
   persistent Django connections without a fresh concurrency soak, RDS
   connection-budget review, and an isolated pre-production proof.
+- AI domain callbacks release stale worker connections only outside an active
+  database transaction. A callback reused by an API reconciliation path must
+  never close the request transaction's connection mid-operation.
 - `academy-rds-DatabaseConnectionsHigh` remains calibrated at 320 connections
   (80% of the measured db.t4g.medium connection budget).
 
