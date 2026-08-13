@@ -2,20 +2,40 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework import serializers
 
 from apps.core.permissions import TenantResolvedAndStaff
+from apps.domains.assets.omr.dto.omr_document import MAX_ESSAY_QUESTIONS
 from apps.domains.assets.omr.services.meta_generator import MAX_MC_QUESTIONS, build_omr_meta
 from apps.support.omr.view_dependencies import omr_template_assets_for_tenant
+
+
+class ObjectiveOMRTemplateQuerySerializer(serializers.Serializer):
+    exam_id = serializers.IntegerField(min_value=1, required=False)
+
+
+class ObjectiveOMRMetaQuerySerializer(serializers.Serializer):
+    question_count = serializers.IntegerField(
+        min_value=1,
+        max_value=MAX_MC_QUESTIONS,
+    )
+    n_choices = serializers.ChoiceField(choices=[5], default=5)
+    essay_count = serializers.IntegerField(
+        min_value=0,
+        max_value=MAX_ESSAY_QUESTIONS,
+        default=0,
+    )
 
 
 class ObjectiveOMRTemplateListView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def get(self, request):
-        exam_id = request.query_params.get("exam_id")
+        query = ObjectiveOMRTemplateQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
         qs = omr_template_assets_for_tenant(
             tenant=request.tenant,
-            exam_id=int(exam_id) if exam_id else None,
+            exam_id=query.validated_data.get("exam_id"),
         )
 
         items = []
@@ -40,22 +60,12 @@ class ObjectiveOMRMetaView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        qc_raw = request.query_params.get("question_count")
-        if qc_raw is None:
-            return Response({"detail": "question_count required"}, status=400)
-        try:
-            question_count = int(str(qc_raw).strip())
-        except (TypeError, ValueError):
-            return Response({"detail": "question_count must be integer"}, status=400)
-        if question_count < 1 or question_count > MAX_MC_QUESTIONS:
-            return Response({"detail": f"question_count: 1~{MAX_MC_QUESTIONS}"}, status=400)
-
-        n_choices = int(request.query_params.get("n_choices", 5) or 5)
-        essay_count = int(request.query_params.get("essay_count", 0) or 0)
+        query = ObjectiveOMRMetaQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
 
         meta = build_omr_meta(
-            question_count=question_count,
-            n_choices=n_choices,
-            essay_count=essay_count,
+            question_count=query.validated_data["question_count"],
+            n_choices=query.validated_data["n_choices"],
+            essay_count=query.validated_data["essay_count"],
         )
         return Response(meta, status=200)

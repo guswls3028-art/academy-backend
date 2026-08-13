@@ -1,18 +1,21 @@
 from __future__ import annotations
 
-from datetime import timedelta
-
-from django.utils import timezone
 from rest_framework.exceptions import APIException, NotFound
 
-from apps.domains.results.models import ScoreEditDraft
+from apps.domains.results.guards.score_edit_lease_state import (
+    EDIT_LEASE_TTL as EDIT_LEASE_TTL,
+    active_score_edit_drafts,
+    invalidate_score_edit_leases_for_exam as invalidate_score_edit_leases_for_exam,
+    score_edit_lease_payload as score_edit_lease_payload,
+    score_edit_payload_is_invalidated,
+    score_edit_payload_parts,
+)
 from apps.support.results.progress_read_dependencies import (
     lock_score_edit_scope_for_exam,
     lock_score_edit_scope_for_session,
 )
 
 
-EDIT_LEASE_TTL = timedelta(minutes=2)
 EDIT_CLIENT_HEADER = "HTTP_X_SCORE_EDITOR_CLIENT"
 EDIT_SESSION_HEADER = "HTTP_X_SCORE_SESSION_ID"
 
@@ -40,44 +43,6 @@ def score_edit_client_id(request) -> str:
     return value[:128] or f"legacy-user-{request.user.id}"
 
 
-def score_edit_payload_parts(payload) -> tuple[str | None, list]:
-    if isinstance(payload, dict):
-        changes = payload.get("changes")
-        return (
-            str(payload.get("client_id") or "") or None,
-            changes if isinstance(changes, list) else [],
-        )
-    return None, payload if isinstance(payload, list) else []
-
-
-def score_edit_payload_is_invalidated(payload) -> bool:
-    return bool(isinstance(payload, dict) and payload.get("invalidated"))
-
-
-def score_edit_lease_payload(
-    *,
-    client_id: str | None,
-    changes: list,
-    invalidated: bool = False,
-    invalidated_reason: str | None = None,
-) -> dict:
-    payload = {"client_id": client_id, "changes": changes}
-    if invalidated:
-        payload["invalidated"] = True
-        payload["invalidated_reason"] = (
-            invalidated_reason or "SCORE_UPDATED_EXTERNALLY"
-        )
-    return payload
-
-
-def _active_drafts(*, scope_ids: list[int], tenant_id: int):
-    return ScoreEditDraft.objects.filter(
-        session_id__in=scope_ids,
-        tenant_id=int(tenant_id),
-        updated_at__gte=timezone.now() - EDIT_LEASE_TTL,
-    )
-
-
 def _same_editor(draft, *, user_id: int, client_id: str) -> bool:
     stored_client_id, _ = score_edit_payload_parts(draft.payload)
     return (
@@ -103,7 +68,7 @@ def require_score_edit_lease(request, *, session_id: int, exam_id: int | None = 
 
     client_id = score_edit_client_id(request)
     drafts = list(
-        _active_drafts(scope_ids=scope_ids, tenant_id=tenant.id)
+        active_score_edit_drafts(scope_ids=scope_ids, tenant_id=tenant.id)
         .select_for_update()
         .order_by("session_id", "id")
     )
@@ -154,42 +119,10 @@ def require_score_edit_scope_available_for_exam(*, exam, tenant) -> list[int]:
         tenant=tenant,
     )
     active = list(
-        _active_drafts(scope_ids=scope_ids, tenant_id=tenant.id)
+        active_score_edit_drafts(scope_ids=scope_ids, tenant_id=tenant.id)
         .select_for_update()
         .order_by("session_id", "id")
     )
     if any(not score_edit_payload_is_invalidated(draft.payload) for draft in active):
         raise ScoreEditLeaseConflict()
     return scope_ids
-
-
-def invalidate_score_edit_leases_for_exam(
-    *,
-    exam,
-    tenant,
-    reason: str = "SCORE_UPDATED_EXTERNALLY",
-) -> int:
-    """Let authoritative grading proceed while fencing stale manual writes."""
-    scope_ids = lock_score_edit_scope_for_exam(
-        exam_id=int(exam.id),
-        tenant=tenant,
-    )
-    drafts = list(
-        _active_drafts(scope_ids=scope_ids, tenant_id=tenant.id)
-        .select_for_update()
-        .order_by("session_id", "id")
-    )
-    invalidated_count = 0
-    for draft in drafts:
-        if score_edit_payload_is_invalidated(draft.payload):
-            continue
-        client_id, changes = score_edit_payload_parts(draft.payload)
-        draft.payload = score_edit_lease_payload(
-            client_id=client_id,
-            changes=changes,
-            invalidated=True,
-            invalidated_reason=reason,
-        )
-        draft.save(update_fields=["payload", "updated_at"])
-        invalidated_count += 1
-    return invalidated_count
