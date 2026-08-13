@@ -68,22 +68,9 @@ jobs:
           ENABLED: ${{ inputs.enabled }}
           SAMPLE_RATE: ${{ inputs.sample_rate }}
         run: |
-          $sampleRate = [double]::Parse(
-            $env:SAMPLE_RATE,
-            [Globalization.CultureInfo]::InvariantCulture
-          )
-          if ($env:ENABLED -eq "true") {
-            & ./scripts/v1/set-tenant-db-usage-telemetry.ps1 `
-              -Ci `
-              -SampleRate $sampleRate `
-              -SlowRequestMs 1000
-          } else {
-            & ./scripts/v1/set-tenant-db-usage-telemetry.ps1 `
-              -Ci `
-              -Disable `
-              -SampleRate $sampleRate `
-              -SlowRequestMs 1000
-          }
+          ./scripts/v1/invoke-product-usage-pilot-control.ps1 `
+            -Enabled $env:ENABLED `
+            -SampleRate $env:SAMPLE_RATE
 
       - name: Remind release owner to refresh through the guarded release
         run: |

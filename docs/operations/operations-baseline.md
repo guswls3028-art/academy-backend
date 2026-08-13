@@ -12,12 +12,15 @@ passes every gate below:
    Explicitly authorized manual work may use an already configured account-root
    credential, but its value is never printed and no continuity gate changes.
 2. Lint, migration safety, smoke tests, and the complete backend pytest suite
-   pass before image build. The quality gate installs `requirements/test.txt`,
+   pass before image build. The fast coverage job installs `requirements/test.txt`,
    seeds coverage with the focused fail-fast smoke run, then runs every remaining
-   default-collected test in one sequential pytest process. This preserves the
-   shared-database ordering boundary while avoiding a second smoke run and two
-   extra Django/test-database startups. The gate combines both coverage files
-   and publishes the missing-line summary in the job log. Product-code line
+   default-collected test against SQLite in one sequential pytest process. A
+   separate blocking job runs the same complete test roots sequentially against
+   PostgreSQL 16 with pgvector and Poppler installed. New ORM, transaction,
+   JSONB, tenant and policy tests therefore enter the production-shaped lane
+   automatically instead of relying on a hand-maintained file list. The coverage
+   job combines both SQLite coverage files and publishes the missing-line summary.
+   Product-code line
    coverage excludes tests and migrations and may not fall below the measured
    60.5% baseline. In parallel, a production-shape contract job creates an
    ephemeral pgvector/PostgreSQL 16 service and runs the critical transaction,
