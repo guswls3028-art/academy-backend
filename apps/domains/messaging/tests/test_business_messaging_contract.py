@@ -105,7 +105,7 @@ class BusinessMessagingContractTests(TestCase):
         source = MessageTemplate.objects.create(
             tenant=self.tenant,
             category="default",
-            name="복사 - 복사 - 학부모 안내" + "가" * 120,
+            name="복사 - 복사 - 학부모 안내",
             body="안내 본문",
         )
 
@@ -118,9 +118,26 @@ class BusinessMessagingContractTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 201)
-        self.assertTrue(response.data["name"].startswith("복사 - 학부모 안내"))
+        self.assertEqual(response.data["name"], "복사 - 학부모 안내")
         self.assertNotIn("복사 - 복사 -", response.data["name"])
-        self.assertEqual(len(response.data["name"]), 120)
+
+        long_source = MessageTemplate.objects.create(
+            tenant=self.tenant,
+            category="default",
+            name="가" * 120,
+            body="안내 본문",
+        )
+        long_response = MessageTemplateDuplicateView.as_view()(
+            self._request(
+                "post",
+                f"/api/v1/messaging/templates/{long_source.id}/duplicate/",
+            ),
+            pk=long_source.id,
+        )
+
+        self.assertEqual(long_response.status_code, 201)
+        self.assertTrue(long_response.data["name"].startswith("복사 - "))
+        self.assertEqual(len(long_response.data["name"]), 120)
 
     def test_duplicate_template_rejects_overlong_explicit_name(self):
         source = MessageTemplate.objects.create(
