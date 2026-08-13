@@ -154,6 +154,8 @@ def _check_subscription(tenant, request) -> JsonResponse | None:
     - 만료 시 402 Payment Required 반환
     """
     try:
+        if getattr(settings, "BILLING_TEST_BYPASS_SUBSCRIPTION", False):
+            return None
         if tenant.id in set(
             getattr(settings, "BILLING_EXEMPT_TENANT_IDS", set()) or set()
         ):

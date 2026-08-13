@@ -27,6 +27,9 @@ class ProductionCanaryTests(TestCase):
             name="Production Canary",
             is_active=True,
         )
+        self.owner_settings = override_settings(OWNER_TENANT_ID=self.tenant.id)
+        self.owner_settings.enable()
+        self.addCleanup(self.owner_settings.disable)
         self.program = Program.objects.get(tenant=self.tenant)
         self.program.subscription_expires_at = timezone.localdate() + timedelta(days=30)
         self.program.next_billing_at = timezone.localdate() + timedelta(days=30)
@@ -127,7 +130,7 @@ class ProductionCanaryTests(TestCase):
             user=user,
             name="[E2E-123456] Residue Student",
             ps_number="E2E-123456",
-            omr_code="E2E123456",
+            omr_code="E2123456",
             parent_phone="01012345678",
         )
 

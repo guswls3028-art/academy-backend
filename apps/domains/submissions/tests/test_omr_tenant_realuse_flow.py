@@ -61,7 +61,7 @@ class OMRTenantRealUseFlowTests(TestCase):
             code="e2e_omr_realuse_t1",
             is_active=True,
         )
-        self.assertEqual(tenant.id, 1)
+        self.assertGreater(tenant.id, 0)
 
         staff = User.objects.create_user(
             username="e2e_omr_staff",
@@ -230,7 +230,7 @@ class OMRTenantRealUseFlowTests(TestCase):
             code="e2e_omr_batch_t1",
             is_active=True,
         )
-        self.assertEqual(tenant.id, 1)
+        self.assertGreater(tenant.id, 0)
 
         staff = User.objects.create_user(
             username="e2e_omr_batch_staff",

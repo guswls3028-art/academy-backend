@@ -25,6 +25,9 @@ class StudentPasswordResetSafetyTests(TestCase):
         cache.clear()
         self.factory = APIRequestFactory()
         self.tenant = Tenant.objects.create(name="비번안전학원", code="pw-safe")
+        self.owner_settings = override_settings(OWNER_TENANT_ID=self.tenant.id)
+        self.owner_settings.enable()
+        self.addCleanup(self.owner_settings.disable)
         User = get_user_model()
         self.user = User.objects.create_user(
             username=user_internal_username(self.tenant, "S001"),

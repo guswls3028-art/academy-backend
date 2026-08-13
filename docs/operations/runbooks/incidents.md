@@ -45,6 +45,8 @@
 프로세스별 60초에 1건만 bounded 비동기 큐로 감사 로그에 저장한다. 사용자 응답은
 DB INSERT를 기다리지 않으며 PII 없는 동일 신호를 애플리케이션 로그에도 남긴다.
 문자 건수는 이 샘플 수이며 원시 요청 횟수는 CloudWatch/Sentry에서 확인한다.
+테스트 설정은 같은 감사 writer를 동기 실행해 각 테스트의 DB rollback 경계 안에
+기록을 가두지만, 운영 설정은 항상 위 비동기 응답 계약을 유지한다.
 
 DB 장애처럼 감사 로그 자체를 쓸 수 없는 상황은 `academy-api-Target5XX`와
 `HealthyHostCount < 1`인 `academy-api-UnHealthyHosts`를 묶은

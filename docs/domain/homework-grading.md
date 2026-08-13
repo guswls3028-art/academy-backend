@@ -39,6 +39,10 @@
 `passed`, `clinic_required`, `ClinicLink`를 함께 동기화한다. 학생이 입력한
 점수와 재시도 이력은 보존한다. 정책을 저장할 때도 각 과제의 현재 만점을
 스냅샷에 먼저 반영한 뒤 판정과 링크를 한 transaction에서 갱신한다.
+PostgreSQL에서는 `HomeworkScore` 본체 행만 잠그고, 선택적인 차시 정책 JOIN은
+판정 입력으로 읽기만 한다. 따라서 정책이 없는 차시도 outer join 잠금 오류 없이
+동일한 재계산·클리닉 동기화 계약을 따른다. 과제 부분 수정도 `Homework` 본체만
+잠가 nullable `source_exam`·`sheet` 조회 조인을 잠금 대상에서 제외한다.
 
 ## 점수형과 완료형
 

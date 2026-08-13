@@ -3,7 +3,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
@@ -26,6 +26,9 @@ class ProvisionDefaultTemplatesTests(TestCase):
             name="Msg Provision",
             is_active=True,
         )
+        self.owner_settings = override_settings(OWNER_TENANT_ID=self.tenant.id)
+        self.owner_settings.enable()
+        self.addCleanup(self.owner_settings.disable)
         self.user = User.objects.create_user(
             username="msg-provision-owner",
             password="test1234",

@@ -161,6 +161,12 @@ transaction과 운영 감사 로그로 자동 해제한다. 예상 밖의 두 �
   Logs Insights 집계도 `extra.event`, `extra.db_duration_ms`,
   `extra.write_query_count`, `extra.sample_weight`,
   `extra.route_or_job_family`을 읽는다.
+  이 집계는 `scripts/v1/read-product-analytics-db-share.ps1`이 실제
+  `StartQuery`/`GetQueryResults` 호출과 결과 파싱을 소유한다. workflow는
+  인라인 쿼리를 재구성하지 않는다. 권한 거부, query 실패·취소·timeout,
+  결과 파싱 실패는 성능 hard gate를 생략하지 않고 maintenance 전체를
+  실패시켜 purge와 자동 판단을 닫는다. 품질 게이트는 가짜 AWS 응답으로
+  같은 스크립트를 실행해 `extra.*` 필드, 인자, 비율과 실패 동작을 검증한다.
   GitHub OIDC role의 Logs Insights 권한은 `logs:StartQuery`와
   `logs:GetQueryResults`를 AWS `DescribeLogGroups.arn`이 반환하는 정확한
   `/academy/api:*` log-group ARN 하나에만 허용한다. `logGroupArn`의
@@ -172,6 +178,11 @@ GitHub OIDC와 정확한 확인 문구 뒤 `/academy/api/env`의 DB telemetry �
 키만 보존형으로 변경한다. 이 설정은 guarded backend release가 API를
 교체한 뒤에만 runtime에 반영된다. 로그에는 SQL, parameter, 사용자 ID와
 입력값을 넣지 않는다.
+workflow boolean/choice 입력은
+`scripts/v1/invoke-product-usage-pilot-control.ps1`이 invariant-culture
+숫자로 변환하고 enable/disable 분기를 실제 mutation script에 바인딩한다.
+동일 wrapper를 recorder script로 실행하는 계약 검사가 `-Ci`, `-Disable`,
+sample rate와 slow-request threshold를 검증한다.
 OIDC deploy role의 쓰기 범위는 `ssm:PutParameter`와 정확한
 `/academy/api/env` ARN 하나로 제한되고, workflow의 production environment와
 확인 문구가 변경 권한의 외부 게이트가 된다.
@@ -206,6 +217,7 @@ python manage.py check --settings apps.api.config.settings.test
 python manage.py makemigrations --check --dry-run --settings apps.api.config.settings.test
 python -m pytest apps/core/tests/test_product_analytics_ingestion.py apps/core/tests/test_product_analytics_queries.py apps/core/tests/test_product_analytics_retention.py apps/core/tests/test_product_analytics_rollout.py apps/core/tests/test_tenant_db_usage.py -q
 python -m pytest apps/core/tests/test_product_analytics_pilot.py tests/test_product_analytics_operations_contract.py -q
+pwsh scripts/v1/test-product-analytics-operations-contract.ps1
 ```
 
 Frontend focused 검증과 사용자 흐름은 프런트 정본을 따른다.

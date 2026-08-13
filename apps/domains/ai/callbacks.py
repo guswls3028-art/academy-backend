@@ -14,7 +14,7 @@ import logging
 import time
 from typing import Any, Dict, Optional
 
-from django.db import close_old_connections
+from django.db import close_old_connections, connection
 
 from apps.support.ai.callback_dependencies import (
     get_auto_segmentation_snapshot_model,
@@ -31,6 +31,12 @@ from apps.support.ai.callback_dependencies import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _close_old_connections_if_safe() -> None:
+    """Release worker connections without closing an active transaction."""
+    if not connection.in_atomic_block:
+        close_old_connections()
 
 
 def dispatch_ai_result_to_domain(
@@ -807,7 +813,7 @@ def _handle_matchup_ai_result(
     """
     MatchupDocument, MatchupProblem = get_matchup_document_models()
 
-    close_old_connections()
+    _close_old_connections_if_safe()
 
     if not source_id:
         logger.warning("AI_CALLBACK_MATCHUP_NO_SOURCE_ID | job_id=%s", job_id)
@@ -977,7 +983,7 @@ def _handle_matchup_ai_result(
             meta=p.get("meta", {}),
         ))
         if idx % 50 == 0:
-            close_old_connections()
+            _close_old_connections_if_safe()
 
     if problem_objs:
         MatchupProblem.objects.bulk_create(problem_objs, ignore_conflicts=True)
@@ -1179,7 +1185,7 @@ def _handle_matchup_ai_result(
         "AI_CALLBACK_MATCHUP_SUCCESS | job_id=%s | doc_id=%s | problems=%d | seg=%s",
         job_id, source_id, len(problem_objs), seg_method,
     )
-    close_old_connections()
+    _close_old_connections_if_safe()
 
 
 def _handle_qna_matchup_search_result(
@@ -1246,7 +1252,7 @@ def _handle_matchup_index_result(
     """
     MatchupProblem = get_matchup_problem_model()
 
-    close_old_connections()
+    _close_old_connections_if_safe()
 
     if status == "FAILED":
         logger.warning(
@@ -1301,7 +1307,7 @@ def _handle_matchup_index_result(
             source_exam_title=p.get("exam_title", ""),
         ))
         if idx % 50 == 0:
-            close_old_connections()
+            _close_old_connections_if_safe()
 
     if problem_objs:
         MatchupProblem.objects.bulk_create(problem_objs, ignore_conflicts=True)
@@ -1310,7 +1316,7 @@ def _handle_matchup_index_result(
         "AI_CALLBACK_MATCHUP_INDEX_SUCCESS | job_id=%s | exam_id=%s | indexed=%d",
         job_id, exam_id, len(problem_objs),
     )
-    close_old_connections()
+    _close_old_connections_if_safe()
 
 
 def _handle_matchup_manual_result(

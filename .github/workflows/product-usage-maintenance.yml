@@ -61,60 +61,11 @@ jobs:
 
       - name: Measure 24h product analytics DB share
         id: db-share
+        shell: pwsh
         run: |
-          set -euo pipefail
-          START_TIME=$(date -u -d '24 hours ago' +%s)
-          END_TIME=$(date -u +%s)
-          QUERY='fields toDouble(extra.db_duration_ms) * toDouble(extra.sample_weight) as weighted_db_ms, toDouble(extra.write_query_count) * toDouble(extra.sample_weight) as weighted_writes, extra.route_or_job_family as route_or_job_family | filter extra.event = "tenant_db_usage" | stats sum(weighted_db_ms) as total_db_ms, sum(if(route_or_job_family like /product-analytics/, weighted_db_ms, 0)) as analytics_db_ms, sum(weighted_writes) as total_writes, sum(if(route_or_job_family like /product-analytics/, weighted_writes, 0)) as analytics_writes'
-          if ! QUERY_ID=$(aws logs start-query \
-            --log-group-name /academy/api \
-            --start-time "$START_TIME" \
-            --end-time "$END_TIME" \
-            --query-string "$QUERY" \
-            --region "$AWS_REGION" \
-            --query queryId \
-            --output text); then
-            echo "::warning::Tenant DB telemetry query could not be started"
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          for attempt in $(seq 1 30); do
-            RESULT=$(aws logs get-query-results \
-              --query-id "$QUERY_ID" \
-              --region "$AWS_REGION" \
-              --output json)
-            STATUS=$(jq -r '.status' <<< "$RESULT")
-            if [ "$STATUS" = "Complete" ]; then
-              ROW=$(jq -c '[.results[0][]? | {(.field): .value}] | add // {}' <<< "$RESULT")
-              TOTAL_DB=$(jq -r '.total_db_ms // "0"' <<< "$ROW")
-              ANALYTICS_DB=$(jq -r '.analytics_db_ms // "0"' <<< "$ROW")
-              TOTAL_WRITES=$(jq -r '.total_writes // "0"' <<< "$ROW")
-              ANALYTICS_WRITES=$(jq -r '.analytics_writes // "0"' <<< "$ROW")
-              if jq -e -n --arg total "$TOTAL_DB" '$total | tonumber > 0' >/dev/null; then
-                DB_SHARE=$(jq -n \
-                  --arg analytics "$ANALYTICS_DB" --arg total "$TOTAL_DB" \
-                  '($analytics | tonumber) / ($total | tonumber)')
-                echo "db_time_share=$DB_SHARE" >> "$GITHUB_OUTPUT"
-              fi
-              if jq -e -n --arg total "$TOTAL_WRITES" '$total | tonumber > 0' >/dev/null; then
-                WRITE_SHARE=$(jq -n \
-                  --arg analytics "$ANALYTICS_WRITES" --arg total "$TOTAL_WRITES" \
-                  '($analytics | tonumber) / ($total | tonumber)')
-                echo "write_share=$WRITE_SHARE" >> "$GITHUB_OUTPUT"
-              fi
-              echo "available=true" >> "$GITHUB_OUTPUT"
-              echo "PRODUCT_ANALYTICS_DB_SHARE_READBACK_PASS db_time_share=${DB_SHARE:-unavailable} write_share=${WRITE_SHARE:-unavailable}"
-              exit 0
-            fi
-            if [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ] || [ "$STATUS" = "Timeout" ]; then
-              echo "::warning::Tenant DB telemetry query ended with status=$STATUS"
-              echo "available=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "::warning::Tenant DB telemetry query timed out"
-          echo "available=false" >> "$GITHUB_OUTPUT"
+          ./scripts/v1/read-product-analytics-db-share.ps1 `
+            -Region $env:AWS_REGION `
+            -GithubOutputPath $env:GITHUB_OUTPUT
 
       - name: Roll up and enforce analytics retention
         env:

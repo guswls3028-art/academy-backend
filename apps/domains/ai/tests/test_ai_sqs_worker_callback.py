@@ -32,6 +32,18 @@ class _OneMessageQueue:
 
 class AISQSWorkerCallbackTests(TestCase):
     def setUp(self):
+        self.close_old_connections_patcher = mock.patch.object(
+            ai_sqs_worker,
+            "close_old_connections",
+        )
+        self.close_old_connections = self.close_old_connections_patcher.start()
+        self.addCleanup(self.close_old_connections_patcher.stop)
+        self.release_connections_patcher = mock.patch.object(
+            ai_sqs_worker,
+            "_release_db_connections",
+        )
+        self.release_connections = self.release_connections_patcher.start()
+        self.addCleanup(self.release_connections_patcher.stop)
         self.tenant = Tenant.objects.create(name="AI Callback", code="ai-cb", is_active=True)
 
     def tearDown(self):

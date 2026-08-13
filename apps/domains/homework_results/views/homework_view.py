@@ -438,7 +438,9 @@ class HomeworkViewSet(ModelViewSet):
     @transaction.atomic
     def partial_update(self, request, *args, **kwargs):
         instance = get_object_or_404(
-            self.filter_queryset(self.get_queryset().select_for_update()),
+            self.filter_queryset(
+                self.get_queryset().select_for_update(of=("self",))
+            ),
             pk=kwargs["pk"],
         )
         self.check_object_permissions(request, instance)

@@ -15,17 +15,6 @@ APP_COVERAGE_SHARDS = {
     "shared",
     "support",
 }
-POSTGRESQL_CONTRACT_TESTS = (
-    "apps/domains/fees/tests/test_payment_concurrency_pg.py",
-    "apps/domains/staffs/tests/test_work_record_concurrency_pg.py",
-    "apps/domains/messaging/tests/test_scheduled_dispatch_concurrency_pg.py",
-    "apps/domains/results/tests/test_p0_concurrency_pg.py",
-    "apps/domains/results/tests/test_score_edit_lock_concurrency_pg.py",
-    "tests/test_matchup_isolation_policy_fix.py",
-    "apps/domains/exams/tests/test_exam_policy_update.py",
-)
-
-
 def test_quality_gate_runs_the_default_collected_suite_under_coverage() -> None:
     workflow = QUALITY_GATE.read_text(encoding="utf-8")
     normalized_workflow = " ".join(workflow.replace("\\", "").split())
@@ -51,6 +40,7 @@ def test_quality_gate_runs_the_default_collected_suite_under_coverage() -> None:
 def test_quality_gate_runs_production_shape_postgresql_contracts() -> None:
     workflow = QUALITY_GATE.read_text(encoding="utf-8")
     normalized_workflow = " ".join(workflow.replace("\\", "").split())
+    postgresql_job = workflow.split("  postgresql-contract:", maxsplit=1)[1]
 
     for required in (
         "postgresql-contract:",
@@ -63,10 +53,13 @@ def test_quality_gate_runs_production_shape_postgresql_contracts() -> None:
     ):
         assert required in workflow
 
-    expected_command = "python -m pytest -q --tb=short " + " ".join(
-        POSTGRESQL_CONTRACT_TESTS
+    expected_command = (
+        "python -m pytest -q --tb=short "
+        "apps/api apps/billing apps/core apps/shared apps/support apps/domains tests"
     )
     assert expected_command in normalized_workflow
+    assert "Full backend regression on PostgreSQL" in workflow
+    assert postgresql_job.count("sudo apt-get install --yes poppler-utils") == 1
 
 
 def test_test_manifest_covers_runner_api_and_pdf_fixture_imports() -> None:

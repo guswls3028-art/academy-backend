@@ -457,6 +457,8 @@ DEV_ALERTS_WEBHOOK_URL = os.getenv("DEV_ALERTS_WEBHOOK_URL", "")
 # 고객 메시지와 완전히 분리된 운영자 장애 SMS. 아래 고정 통제번호 외 발송은 코드에서 차단한다.
 DEV_ALERTS_SMS_ENABLED = os.getenv("DEV_ALERTS_SMS_ENABLED", "").lower() in ("1", "true", "yes")
 DEV_ALERTS_SMS_RECIPIENT = os.getenv("DEV_ALERTS_SMS_RECIPIENT", "")
+# Runtime 5xx responses must not wait for the incident audit insert.
+USER_INCIDENT_AUDIT_ASYNC = True
 # 로컬 기능 테스트용 tenant. 이 tenant에서는 알림톡 발송 없이 기능만 동작.
 TEST_TENANT_ID = int(os.getenv("TEST_TENANT_ID", "9999"))
 
@@ -531,6 +533,9 @@ MESSAGING_SQS_QUEUE_NAME = os.getenv("MESSAGING_SQS_QUEUE_NAME", "academy-v1-mes
 BILLING_EXEMPT_TENANT_IDS: set[int] = {
     int(x) for x in os.getenv("BILLING_EXEMPT_TENANT_IDS", "1,2,9999").split(",") if x.strip()
 }
+# Test settings may disable only the request middleware check so unrelated API
+# tests do not depend on database-generated tenant IDs. Production stays closed.
+BILLING_TEST_BYPASS_SUBSCRIPTION = False
 
 # Toss Payments (PG)
 TOSS_PAYMENTS_SECRET_KEY = os.getenv("TOSS_PAYMENTS_SECRET_KEY", "")
