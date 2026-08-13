@@ -18,6 +18,8 @@ The command fails on critical user-facing risks:
 - `Video.current_job` pointing at a different tenant or video row
 - old UPLOADED or PROCESSING videos without a same-tenant active transcode job
 - explicit E2E, AUDIT, or CHAOS residue in the production tenant
+- recursive message-template copy chains (at least 10 identical copies across
+  five or more `복사 -` depths) and strict timestamped staff audit fixtures
 - auto billing enabled without a matching live Toss client/server key pair
 - auto billing enabled without encrypted billing-key writes and a primary KEK
 
@@ -41,13 +43,20 @@ python manage.py cleanup_e2e_residue --tenant-id 1 --execute --confirm-token <dr
 
 The execute path fails closed when the token is stale, a matched student is
 still active, a message template is a default or is referenced by an
-auto-send configuration, a Matchup document contains a manual/owner-pinned
-problem, or a Matchup report contains authored state. Timestamp-marked E2E
+auto-send configuration, a matched staff row has an account, profile photo,
+payroll history, or linked teacher row, a Matchup document contains a
+manual/owner-pinned problem, or a Matchup report contains authored state.
+Recursive template cleanup requires at least ten byte-for-byte equivalent
+copies spanning five copy-prefix depths; it preserves every unprefixed root
+and smaller user-created copy sets. Timestamp-marked E2E
 lectures are eligible only when every child session has the same strict
 automation marker. This includes the legacy OMR real-use fingerprint
 `[E2E-OMR[-PURPOSE]-YYYYMMDDhhmmss]`; the 14-digit timestamp and uppercase
 automation label are both required, so `[E2E-OMR]` or date-only names never
-match. A marked lecture or isolated marked session is deleted
+match. Lowercase automation labels are accepted only with a 10-digit-or-longer
+execution timestamp, such as `[E2E-cut-fix-1778777196]`. Three legacy fixed
+community titles are exact-match allowlisted; similar natural-language titles
+remain protected. A marked lecture or isolated marked session is deleted
 only after the ordinary product deletion guard proves that no enrollment,
 attendance, progress, clinic, video, or other user history remains. If a child
 exam exists, the exam itself must be in the same strict residue target set;

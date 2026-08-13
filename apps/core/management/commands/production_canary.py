@@ -10,7 +10,10 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db.models import F, Q
 from django.utils import timezone
 
-from apps.core.management.commands.cleanup_e2e_residue import matches_residue
+from apps.core.management.commands.cleanup_e2e_residue import (
+    find_template_copy_chain_residue,
+    matches_residue,
+)
 from apps.core.models import Tenant
 from apps.core.models.program import Program
 from apps.domains.messaging.services.preflight import build_messaging_operations_status
@@ -426,7 +429,13 @@ class Command(BaseCommand):
         from apps.domains.lectures.models import Lecture, Session
         from apps.domains.matchup.models import MatchupDocument
         from apps.domains.messaging.models import MessageTemplate
+        from apps.domains.staffs.models import Staff
         from apps.domains.students.models import Student
+
+        user_templates = list(
+            MessageTemplate.objects.filter(tenant=tenant, is_system=False)
+        )
+        recursive_templates = find_template_copy_chain_residue(user_templates)
 
         return {
             "students": self._count_residue(
@@ -445,7 +454,19 @@ class Command(BaseCommand):
                 sample_limit=sample_limit,
             ),
             "message_templates": self._count_residue(
-                MessageTemplate.objects.filter(tenant=tenant, is_system=False),
+                user_templates,
+                fields=("name",),
+                sample_limit=sample_limit,
+            ),
+            "message_template_copy_chains": {
+                "count": len(recursive_templates),
+                "samples": [
+                    {"id": template.id, "name": template.name}
+                    for template in recursive_templates[:sample_limit]
+                ],
+            },
+            "staffs": self._count_residue(
+                Staff.objects.filter(tenant=tenant),
                 fields=("name",),
                 sample_limit=sample_limit,
             ),
@@ -486,7 +507,12 @@ class Command(BaseCommand):
         count = 0
         samples: list[dict[str, Any]] = []
         field_list = tuple(fields)
-        for obj in queryset.only("id", *field_list).iterator(chunk_size=500):
+        objects = (
+            queryset.only("id", *field_list).iterator(chunk_size=500)
+            if hasattr(queryset, "only")
+            else queryset
+        )
+        for obj in objects:
             values = {field: getattr(obj, field, "") for field in field_list}
             if not any(matches_residue(str(value or "")) for value in values.values()):
                 continue

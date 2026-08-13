@@ -18,6 +18,7 @@ from apps.domains.lectures.models import Lecture, Session
 from apps.domains.matchup.models import MatchupDocument
 from apps.domains.messaging.models import MessageTemplate
 from apps.domains.results.models import Result, ScoreEditDraft
+from apps.domains.staffs.models import Staff
 from apps.domains.students.models import Student
 from apps.domains.submissions.models import Submission
 
@@ -263,6 +264,18 @@ class CleanupE2EResidueTests(TestCase):
         self.assertFalse(Result.objects.filter(id=result.id).exists())
         self.assertFalse(Submission.objects.filter(id=submission.id).exists())
 
+    def test_labeled_unix_timestamp_and_exact_legacy_titles_are_strict(self):
+        self.assertTrue(matches_residue("[E2E-cut-fix-1778777196] 자료"))
+        self.assertTrue(matches_residue("[E2E-selflike-test]"))
+        self.assertTrue(matches_residue("[E2E-test] board"))
+        self.assertTrue(matches_residue("[E2E-persist-test]"))
+        self.assertTrue(
+            matches_residue("[E2E-SCORE-AUDIT-20260517-02] 감사 관리자")
+        )
+        self.assertFalse(matches_residue("[E2E-cut-fix-verify] 자료"))
+        self.assertFalse(matches_residue("[E2E-OMR-20260524] 사용자 강의"))
+        self.assertFalse(matches_residue("[E2E-user-note] 사용자 메모"))
+
     def test_lecture_cleanup_removes_marker_session_and_score_draft(self):
         editor = User.objects.create_user(
             tenant=self.tenant,
@@ -374,6 +387,44 @@ class CleanupE2EResidueTests(TestCase):
         self.execute_cleanup()
 
         self.assertTrue(MessageTemplate.objects.filter(id=legitimate.id).exists())
+
+    def test_high_confidence_recursive_copy_chain_keeps_root_only(self):
+        root = MessageTemplate.objects.create(
+            tenant=self.tenant,
+            category="default",
+            name="정식 학부모 안내",
+            body="같은 본문",
+            is_system=False,
+        )
+        copies = [
+            MessageTemplate.objects.create(
+                tenant=self.tenant,
+                category="default",
+                name=f"{'복사 - ' * depth}정식 학부모 안내",
+                body="같은 본문",
+                is_system=False,
+            )
+            for depth in range(1, 11)
+        ]
+
+        self.execute_cleanup()
+
+        self.assertTrue(MessageTemplate.objects.filter(id=root.id).exists())
+        self.assertFalse(
+            MessageTemplate.objects.filter(id__in=[copy.id for copy in copies]).exists()
+        )
+
+    def test_strict_userless_staff_without_history_is_removed(self):
+        staff = Staff.objects.create(
+            tenant=self.tenant,
+            name="[E2E-SCORE-AUDIT-20260517-02] 감사 관리자",
+            phone="",
+            is_manager=True,
+        )
+
+        self.execute_cleanup()
+
+        self.assertFalse(Staff.objects.filter(id=staff.id).exists())
 
     def test_recursive_copy_prefix_never_deletes_non_template_business_data(self):
         user = User.objects.create_user(
