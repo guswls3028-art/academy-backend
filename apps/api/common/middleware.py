@@ -38,6 +38,12 @@ def _is_health_check_path(path: str) -> bool:
     return norm in ("/health", "/healthz", "/readyz") or path in HEALTH_CHECK_PATHS
 
 
+def _persist_user_incident_audit(item: dict) -> None:
+    from apps.core.models import OpsAuditLog
+
+    OpsAuditLog.objects.create(**item)
+
+
 def _persist_user_incident_audits() -> None:
     from django.db import close_old_connections
 
@@ -45,9 +51,7 @@ def _persist_user_incident_audits() -> None:
         item = _user_incident_audit_queue.get()
         try:
             close_old_connections()
-            from apps.core.models import OpsAuditLog
-
-            OpsAuditLog.objects.create(**item)
+            _persist_user_incident_audit(item)
         except Exception:
             logger.exception("Async user incident audit persistence failed")
         finally:
@@ -144,6 +148,9 @@ def _record_user_facing_server_error(request, response) -> None:
         "user_agent": str(request.META.get("HTTP_USER_AGENT") or "")[:255],
     }
     try:
+        if not getattr(settings, "USER_INCIDENT_AUDIT_ASYNC", True):
+            _persist_user_incident_audit(item)
+            return
         _ensure_user_incident_worker()
         _user_incident_audit_queue.put_nowait(item)
     except queue.Full:
@@ -151,6 +158,14 @@ def _record_user_facing_server_error(request, response) -> None:
             _user_incident_sampled_at.pop(sample_key, None)
         logger.error(
             "Async user incident audit queue full tenant_id=%s route=%s",
+            tenant_id,
+            route,
+        )
+    except Exception:
+        with _user_incident_sample_lock:
+            _user_incident_sampled_at.pop(sample_key, None)
+        logger.exception(
+            "Synchronous user incident audit persistence failed tenant_id=%s route=%s",
             tenant_id,
             route,
         )

@@ -80,7 +80,7 @@ def recalc_scores_for_policy_change(*, policy) -> int:
     - meta.status="NOT_SUBMITTED" 등 Progress 연동은 다른 파이프라인(SSOT)이 담당한다.
     - 변경된 판정의 ClinicLink는 이 서비스가 같은 정책 변경 흐름에서 동기화한다.
     """
-    queryset = HomeworkScore.objects.select_for_update().select_related(
+    queryset = HomeworkScore.objects.select_for_update(of=("self",)).select_related(
         "homework",
         "session",
         "session__lecture",
@@ -97,7 +97,7 @@ def recalc_scores_for_policy_change(*, policy) -> int:
 def recalc_scores_for_homework_change(*, homework) -> int:
     if homework.session_id is None:
         return 0
-    queryset = HomeworkScore.objects.select_for_update().select_related(
+    queryset = HomeworkScore.objects.select_for_update(of=("self",)).select_related(
         "homework",
         "session",
         "session__lecture",

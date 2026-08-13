@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from unittest import mock
 
-from django.test import TransactionTestCase
+from django.test import TestCase
 
 from academy.framework.workers import ai_sqs_worker
 from apps.core.models import Tenant
@@ -30,8 +30,14 @@ class _OneMessageQueue:
         return True
 
 
-class AISQSWorkerCallbackTests(TransactionTestCase):
+class AISQSWorkerCallbackTests(TestCase):
     def setUp(self):
+        self.release_connections_patcher = mock.patch.object(
+            ai_sqs_worker,
+            "_release_db_connections",
+        )
+        self.release_connections = self.release_connections_patcher.start()
+        self.addCleanup(self.release_connections_patcher.stop)
         self.tenant = Tenant.objects.create(name="AI Callback", code="ai-cb", is_active=True)
 
     def tearDown(self):
