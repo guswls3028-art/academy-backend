@@ -12,6 +12,18 @@ from apps.domains.messaging.models import MessageTemplate
 from apps.domains.messaging.serializers import MessageTemplateSerializer
 
 
+COPY_PREFIX = "복사 - "
+COPY_PREFIX_RE = re.compile(r"^(?:복사\s*-\s*)+")
+LEGACY_COPY_SUFFIX_RE = re.compile(r"(?:\s*\(복사본\))+$")
+MAX_TEMPLATE_NAME_LENGTH = 120
+
+
+def build_duplicate_template_name(source_name: str) -> str:
+    base = COPY_PREFIX_RE.sub("", (source_name or "").strip())
+    base = LEGACY_COPY_SUFFIX_RE.sub("", base).strip() or "새 문구"
+    return f"{COPY_PREFIX}{base[:MAX_TEMPLATE_NAME_LENGTH - len(COPY_PREFIX)]}"
+
+
 class MessageTemplateListCreateView(APIView):
     """GET: 문구 목록. POST: 사용자 문구 생성."""
 
@@ -120,17 +132,24 @@ class MessageTemplateDuplicateView(APIView):
         source = MessageTemplate.objects.filter(tenant=request.tenant, pk=pk).first()
         if not source:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-        name = (request.data.get("name") or "").strip() or f"{source.name} (복사본)"
-        duplicate = MessageTemplate.objects.create(
+        name = (request.data.get("name") or "").strip() or build_duplicate_template_name(
+            source.name
+        )
+        serializer = MessageTemplateSerializer(
+            data={
+                "category": source.category,
+                "name": name,
+                "subject": source.subject,
+                "body": source.body,
+            }
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save(
             tenant=request.tenant,
-            category=source.category,
-            name=name,
-            subject=source.subject,
-            body=source.body,
             is_system=False,
             is_user_default=False,
         )
-        return Response(MessageTemplateSerializer(duplicate).data, status=status.HTTP_201_CREATED)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
 class MessageTemplateSubmitReviewView(APIView):

@@ -16,6 +16,7 @@ from apps.domains.messaging.views.info_views import (
     TestCredentialsView as CredentialsDiagnosticView,
 )
 from apps.domains.messaging.views.template_views import (
+    MessageTemplateDuplicateView,
     MessageTemplateSubmitReviewView,
     SolapiSyncTemplatesView,
 )
@@ -99,6 +100,64 @@ class BusinessMessagingContractTests(TestCase):
         self.assertEqual(submit_response.data["code"], "new_kakao_template_disabled")
         self.assertEqual(sync_response.status_code, 410)
         self.assertEqual(sync_response.data["code"], "provider_template_sync_disabled")
+
+    def test_duplicate_template_collapses_recursive_copy_names(self):
+        source = MessageTemplate.objects.create(
+            tenant=self.tenant,
+            category="default",
+            name="복사 - 복사 - 학부모 안내",
+            body="안내 본문",
+        )
+
+        response = MessageTemplateDuplicateView.as_view()(
+            self._request(
+                "post",
+                f"/api/v1/messaging/templates/{source.id}/duplicate/",
+            ),
+            pk=source.id,
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["name"], "복사 - 학부모 안내")
+        self.assertNotIn("복사 - 복사 -", response.data["name"])
+
+        long_source = MessageTemplate.objects.create(
+            tenant=self.tenant,
+            category="default",
+            name="가" * 120,
+            body="안내 본문",
+        )
+        long_response = MessageTemplateDuplicateView.as_view()(
+            self._request(
+                "post",
+                f"/api/v1/messaging/templates/{long_source.id}/duplicate/",
+            ),
+            pk=long_source.id,
+        )
+
+        self.assertEqual(long_response.status_code, 201)
+        self.assertTrue(long_response.data["name"].startswith("복사 - "))
+        self.assertEqual(len(long_response.data["name"]), 120)
+
+    def test_duplicate_template_rejects_overlong_explicit_name(self):
+        source = MessageTemplate.objects.create(
+            tenant=self.tenant,
+            category="default",
+            name="학부모 안내",
+            body="안내 본문",
+        )
+
+        response = MessageTemplateDuplicateView.as_view()(
+            self._request(
+                "post",
+                f"/api/v1/messaging/templates/{source.id}/duplicate/",
+                {"name": "가" * 121},
+            ),
+            pk=source.id,
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("name", response.data)
 
     def test_unverified_self_credit_endpoint_is_not_routable(self):
         self.assertNotIn(

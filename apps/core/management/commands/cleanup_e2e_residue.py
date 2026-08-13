@@ -8,6 +8,8 @@ E2E 테스트 잔재 데이터 정리 커맨드.
 
 매칭 패턴 (자동화 스펙이 찍은 명백한 지문):
     - "[E2E-\\d+" / "[AUDIT-\\d+" / "[CHAOS-\\d+"
+    - "[E2E-<label>-<10자리 이상 실행시각>]"
+    - 과거 자동화가 고정값으로 만든 세 개의 커뮤니티 게시글 제목
     - "E2E-\\d{6,}" / "AUDIT-CRUD-\\d+"
     - "EDITED-\\d{6}" (내부 테스트 흔적)
     일반적인 "테스트학생" 같은 자연어는 의도적으로 배제 — 운영에서 이름이
@@ -48,16 +50,71 @@ RESIDUE_PATTERNS = [
     re.compile(r"^E2E시험"),
     re.compile(r"^두번째 시험임$"),           # 2026-05-02: 명시적 테스트 명칭
     re.compile(r"^CHAOS-\d{6,}"),
+    # 2026-05 Matchup 실측 자동화: [E2E-cut-fix-1778777196]
+    # label과 10자리 이상의 실행 시각을 모두 요구한다. 날짜만 있는 사용자 이름은
+    # 자동 정리 대상으로 넓히지 않는다.
+    re.compile(r"^\[E2E-[A-Za-z][A-Za-z0-9-]*-\d{10,}\]"),
+    # 2026-05 직원 성적 감사 자동화가 남긴 날짜+회차 지문.
+    re.compile(r"^\[E2E-SCORE-AUDIT-\d{8}-\d{2,}\]"),
 ]
+
+LEGACY_EXACT_RESIDUE_VALUES = frozenset({
+    "[E2E-selflike-test]",
+    "[E2E-test] board",
+    "[E2E-persist-test]",
+})
+
+COPY_PREFIX_RE = re.compile(r"^(?:(?:복사)\s*-\s*)+")
+COPY_CHAIN_MIN_ROWS = 10
+COPY_CHAIN_MIN_DISTINCT_DEPTHS = 5
 
 def matches_residue(text: str) -> bool:
     if not text:
         return False
-    return any(p.search(text) for p in RESIDUE_PATTERNS)
+    return text in LEGACY_EXACT_RESIDUE_VALUES or any(
+        pattern.search(text) for pattern in RESIDUE_PATTERNS
+    )
 
 
 def matches_template_residue(text: str) -> bool:
     return matches_residue(text)
+
+
+def template_copy_depth_and_base(name: str) -> tuple[int, str]:
+    match = COPY_PREFIX_RE.match(name or "")
+    if not match:
+        return 0, (name or "").strip()
+    depth = len(re.findall(r"복사\s*-\s*", match.group(0)))
+    return depth, (name[match.end():] or "").strip()
+
+
+def find_template_copy_chain_residue(templates) -> list:
+    """Return only redundant copies from a high-confidence recursive copy chain."""
+    groups: dict[tuple, list[tuple[object, int]]] = {}
+    for template in templates:
+        depth, base_name = template_copy_depth_and_base(template.name or "")
+        key = (
+            template.tenant_id,
+            template.category,
+            base_name,
+            template.subject,
+            template.body,
+            template.solapi_template_id,
+            template.solapi_status,
+        )
+        groups.setdefault(key, []).append((template, depth))
+
+    residue = []
+    for group in groups.values():
+        copy_rows = [(template, depth) for template, depth in group if depth > 0]
+        distinct_depths = {depth for _template, depth in copy_rows}
+        if (
+            len(copy_rows) < COPY_CHAIN_MIN_ROWS
+            or len(distinct_depths) < COPY_CHAIN_MIN_DISTINCT_DEPTHS
+        ):
+            continue
+        residue.extend(template for template, _depth in copy_rows)
+    return sorted(residue, key=lambda template: template.id)
 
 
 def build_confirmation_token(*, tenant_id: int, target_groups: dict[str, list]) -> str:
@@ -70,7 +127,7 @@ def build_confirmation_token(*, tenant_id: int, target_groups: dict[str, list]) 
 
 
 class Command(BaseCommand):
-    help = "Tenant별 E2E 자동화 잔재 데이터(학생·강의·차시·시험·게시글·메시지 템플릿·매치업 문서·수납 비목)를 식별/삭제한다."
+    help = "Tenant별 E2E 자동화 잔재 데이터(학생·직원·강의·차시·시험·게시글·메시지 템플릿·매치업 문서·수납 비목)를 식별/삭제한다."
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -113,6 +170,7 @@ class Command(BaseCommand):
         from apps.domains.community.models.post import PostEntity
         from apps.domains.matchup.models import MatchupDocument
         from apps.domains.messaging.models import MessageTemplate
+        from apps.domains.staffs.models import Staff
         from apps.domains.exams.models.exam import Exam
         from apps.domains.homework_results.models.homework import Homework
         from apps.domains.lectures.models import Lecture, Session
@@ -148,9 +206,25 @@ class Command(BaseCommand):
         ]
 
         # 4. 메시지 템플릿 — name (시스템 템플릿 제외)
+        all_user_templates = list(
+            MessageTemplate.objects.filter(tenant_id=tenant_id, is_system=False)
+        )
         templates = [
-            t for t in MessageTemplate.objects.filter(tenant_id=tenant_id, is_system=False)
+            t for t in all_user_templates
             if matches_template_residue(t.name or "")
+        ]
+        marked_template_ids = {template.id for template in templates}
+        recursive_templates = [
+            template
+            for template in find_template_copy_chain_residue(all_user_templates)
+            if template.id not in marked_template_ids
+        ]
+
+        # 4-a. 직원 — 날짜+회차가 포함된 strict automation marker만.
+        staffs = [
+            staff
+            for staff in Staff.objects.filter(tenant_id=tenant_id)
+            if matches_residue(staff.name or "")
         ]
 
         # 5. 시험 — title (template/regular 모두). 2026-05-02 운영 [E2E Test Exam ...] 도배 sweep.
@@ -197,6 +271,7 @@ class Command(BaseCommand):
 
         total = (
             len(students) + len(posts) + len(matchups) + len(templates)
+            + len(recursive_templates) + len(staffs)
             + len(exams) + len(homeworks) + len(lectures) + len(sessions)
             + len(fee_templates)
         )
@@ -227,6 +302,24 @@ class Command(BaseCommand):
             lambda t: (
                 f"id={t.id} name={t.name!r} default={t.is_user_default} "
                 f"autosend_refs={t.auto_send_configs.count()}"
+            ),
+        )
+        self._print_group(
+            "반복 복제 템플릿 (MessageTemplate copy chain)",
+            recursive_templates,
+            limit,
+            lambda t: (
+                f"id={t.id} name={t.name!r} default={t.is_user_default} "
+                f"autosend_refs={t.auto_send_configs.count()}"
+            ),
+        )
+        self._print_group(
+            "직원 (Staff)",
+            staffs,
+            limit,
+            lambda staff: (
+                f"id={staff.id} name={staff.name!r} user_id={staff.user_id} "
+                f"history={self._staff_history_count(staff)}"
             ),
         )
         self._print_group("시험 (Exam)", exams, limit, lambda e: f"id={e.id} type={e.exam_type} title={e.title!r}")
@@ -266,7 +359,9 @@ class Command(BaseCommand):
             "lectures": lectures,
             "matchups": matchups,
             "posts": posts,
+            "recursive_templates": recursive_templates,
             "sessions": sessions,
+            "staffs": staffs,
             "students": students,
             "templates": templates,
         }
@@ -301,7 +396,8 @@ class Command(BaseCommand):
             lectures=lectures,
             matchups=matchups,
             sessions=sessions,
-            templates=templates,
+            staffs=staffs,
+            templates=[*templates, *recursive_templates],
         )
         storage_deleted = self._delete_external_storage(
             tenant_id=tenant_id,
@@ -320,7 +416,8 @@ class Command(BaseCommand):
             s_del = student_result.deleted_count
             p_del = sum(p.delete()[0] for p in posts)
             m_del = sum(m.inventory_file.delete()[0] for m in matchups)
-            t_del = sum(t.delete()[0] for t in templates)
+            t_del = sum(t.delete()[0] for t in [*templates, *recursive_templates])
+            staff_del = sum(staff.delete()[0] for staff in staffs)
             exam_ids = [exam.id for exam in exams]
             result_del = (
                 Result.objects.filter(target_type="exam", target_id__in=exam_ids).delete()[0]
@@ -367,6 +464,7 @@ class Command(BaseCommand):
             f"  - 매치업/인벤토리 cascade rows: {m_del}\n"
             f"  - R2 objects verified deleted: {storage_deleted}\n"
             f"  - 템플릿 cascade rows: {t_del}\n"
+            f"  - 직원 cascade rows: {staff_del}\n"
             f"  - 시험 결과 cascade rows: {result_del}\n"
             f"  - 시험 제출 cascade rows: {submission_del}\n"
             f"  - 시험 클리닉 링크 cascade rows: {clinic_link_del}\n"
@@ -387,6 +485,7 @@ class Command(BaseCommand):
         lectures,
         matchups,
         sessions,
+        staffs,
         templates,
     ) -> None:
         active_student_ids = [student.id for student in students if student.deleted_at is None]
@@ -405,6 +504,38 @@ class Command(BaseCommand):
             raise CommandError(
                 "기본/자동발송 참조 템플릿은 자동 정리하지 않습니다: "
                 f"ids={referenced_template_ids}"
+            )
+
+        unsafe_staff_ids = [
+            staff.id
+            for staff in staffs
+            if (
+                staff.user_id is not None
+                or bool(staff.profile_photo)
+                or Command._staff_history_count(staff) > 0
+            )
+        ]
+        if unsafe_staff_ids:
+            raise CommandError(
+                "계정/프로필/급여 이력이 있는 직원은 자동 정리하지 않습니다: "
+                f"ids={unsafe_staff_ids}"
+            )
+
+        from academy.adapters.db.django import repositories_teachers as teacher_repo
+
+        linked_teacher_staff_ids = [
+            staff.id
+            for staff in staffs
+            if teacher_repo.teacher_count_tenant_name_phone(
+                staff.tenant,
+                staff.name,
+                staff.phone or "",
+            )
+        ]
+        if linked_teacher_staff_ids:
+            raise CommandError(
+                "강사 레코드가 연결된 직원은 자동 정리하지 않습니다: "
+                f"ids={linked_teacher_staff_ids}"
             )
 
         unsafe_lecture_ids = [
@@ -458,6 +589,15 @@ class Command(BaseCommand):
                 "수동 컷/핀 또는 작성된 보고서가 있는 매치업 문서는 자동 정리하지 않습니다: "
                 f"ids={protected_document_ids}"
             )
+
+    @staticmethod
+    def _staff_history_count(staff) -> int:
+        return (
+            staff.work_records.count()
+            + staff.expense_records.count()
+            + staff.work_month_locks.count()
+            + staff.payroll_snapshots.count()
+        )
 
     @staticmethod
     def _delete_lecture_residue(*, lectures, sessions) -> tuple[int, int, int]:

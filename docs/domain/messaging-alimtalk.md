@@ -685,6 +685,11 @@ DEFAULT, SIGNUP, ATTENDANCE, LECTURE, EXAM, ASSIGNMENT, GRADES, CLINIC, PAYMENT,
 | `is_system` | 시스템 기본 양식 여부 (True면 수정/삭제 불가) |
 | `is_user_default` | 사용자 지정 기본 양식 (tenant+category당 1개, UniqueConstraint) |
 
+사용자 문구 복제 API는 원본이 이미 복제본이어도 이름의 `복사 -` 접두어를
+한 번만 유지하고 120자 제한 안에서 잘라 저장한다. 과거 `(복사본)` 접미사가
+중첩된 이름도 새 복제 시 한 번의 `복사 -` 이름으로 정규화한다. 본문·카테고리·
+제목은 그대로 복제하며 시스템 문구 자체는 수정하지 않는다.
+
 ---
 
 ## 15. 코드 수정 시 주의사항
