@@ -19,7 +19,10 @@ from apps.core.models.program import Program
 from apps.core.models.tenant import Tenant
 
 
-@override_settings(BILLING_EXEMPT_TENANT_IDS=set())
+@override_settings(
+    BILLING_EXEMPT_TENANT_IDS=set(),
+    BILLING_TEST_BYPASS_SUBSCRIPTION=False,
+)
 class TestSubscriptionCheck(TestCase):
 
     def setUp(self):

@@ -10,6 +10,7 @@ from .base import *  # noqa: F401,F403
 
 DEBUG = False
 SECRET_KEY = "test-secret-key-not-for-production"
+BILLING_TEST_BYPASS_SUBSCRIPTION = True
 
 # ==================================================
 # DATABASE — SQLite in-memory (no PostgreSQL needed)

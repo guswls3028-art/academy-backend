@@ -531,6 +531,9 @@ MESSAGING_SQS_QUEUE_NAME = os.getenv("MESSAGING_SQS_QUEUE_NAME", "academy-v1-mes
 BILLING_EXEMPT_TENANT_IDS: set[int] = {
     int(x) for x in os.getenv("BILLING_EXEMPT_TENANT_IDS", "1,2,9999").split(",") if x.strip()
 }
+# Test settings may disable only the request middleware check so unrelated API
+# tests do not depend on database-generated tenant IDs. Production stays closed.
+BILLING_TEST_BYPASS_SUBSCRIPTION = False
 
 # Toss Payments (PG)
 TOSS_PAYMENTS_SECRET_KEY = os.getenv("TOSS_PAYMENTS_SECRET_KEY", "")

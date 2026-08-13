@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from unittest import mock
 
-from django.test import TestCase
+from django.test import TransactionTestCase
 
 from academy.framework.workers import ai_sqs_worker
 from apps.core.models import Tenant
@@ -30,7 +30,7 @@ class _OneMessageQueue:
         return True
 
 
-class AISQSWorkerCallbackTests(TestCase):
+class AISQSWorkerCallbackTests(TransactionTestCase):
     def setUp(self):
         self.tenant = Tenant.objects.create(name="AI Callback", code="ai-cb", is_active=True)
 

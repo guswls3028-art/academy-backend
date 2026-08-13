@@ -19,7 +19,7 @@ class InventoryFolder(TimestampModel):
     )
     # admin = 선생님 개인, student = 학생별 (student_ps 사용)
     scope = models.CharField(max_length=20, choices=[("admin", "선생님"), ("student", "학생")], db_index=True)
-    student_ps = models.CharField(max_length=20, blank=True, default="", db_index=True)
+    student_ps = models.CharField(max_length=50, blank=True, default="", db_index=True)
     parent = models.ForeignKey(
         "self",
         on_delete=models.CASCADE,
@@ -45,7 +45,7 @@ class InventoryFile(TimestampModel):
         db_index=True,
     )
     scope = models.CharField(max_length=20, choices=[("admin", "선생님"), ("student", "학생")], db_index=True)
-    student_ps = models.CharField(max_length=20, blank=True, default="", db_index=True)
+    student_ps = models.CharField(max_length=50, blank=True, default="", db_index=True)
     folder = models.ForeignKey(
         InventoryFolder,
         on_delete=models.CASCADE,

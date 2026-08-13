@@ -177,7 +177,7 @@ class StaffViewSet(viewsets.ModelViewSet):
         with transaction.atomic():
             staff_ref = self.get_object()
             staff = (
-                Staff.objects.select_for_update()
+                Staff.objects.select_for_update(of=("self",))
                 .select_related("user")
                 .get(tenant=request.tenant, id=staff_ref.id)
             )

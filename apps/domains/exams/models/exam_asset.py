@@ -40,7 +40,7 @@ class ExamAsset(BaseModel):
 
     # ✅ R2
     file_key = models.CharField(max_length=512)
-    file_type = models.CharField(max_length=50, null=True, blank=True)
+    file_type = models.CharField(max_length=255, null=True, blank=True)
     file_size = models.PositiveIntegerField(null=True, blank=True)
 
     class Meta:

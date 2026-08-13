@@ -58,6 +58,7 @@ class ProductUsagePilotTests(TestCase):
             tenant_code="hakwonplus",
             db_time_share=0.01,
             write_share=0.02,
+            max_projected_database_share=1.0,
         )
 
         self.assertEqual(report["status"], "pass")
@@ -79,6 +80,7 @@ class ProductUsagePilotTests(TestCase):
                 tenant_code="hakwonplus",
                 db_time_share=0.01,
                 write_share=0.01,
+                max_projected_database_share=1.0,
                 stdout=StringIO(),
             )
 
@@ -99,6 +101,7 @@ class ProductUsagePilotTests(TestCase):
                 tenant_code="hakwonplus",
                 db_time_share=0.01,
                 write_share=0.01,
+                max_projected_database_share=1.0,
                 disable_on_hard_breach=True,
                 confirm="DISABLE hakwonplus ON HARD BREACH",
                 stdout=StringIO(),
@@ -126,6 +129,7 @@ class ProductUsagePilotTests(TestCase):
                 tenant_code="hakwonplus",
                 db_time_share=0.01,
                 write_share=0.01,
+                max_projected_database_share=1.0,
                 disable_on_hard_breach=True,
                 confirm="DISABLE hakwonplus ON HARD BREACH",
                 stdout=StringIO(),
@@ -145,6 +149,7 @@ class ProductUsagePilotTests(TestCase):
                 tenant_code="hakwonplus",
                 db_time_share=0.11,
                 write_share=0.01,
+                max_projected_database_share=1.0,
                 disable_on_hard_breach=True,
                 confirm="DISABLE hakwonplus ON HARD BREACH",
                 stdout=StringIO(),
@@ -165,6 +170,7 @@ class ProductUsagePilotTests(TestCase):
                 tenant_code="hakwonplus",
                 db_time_share=0.11,
                 write_share=0.01,
+                max_projected_database_share=1.0,
                 disable_on_hard_breach=True,
                 confirm="yes",
             )

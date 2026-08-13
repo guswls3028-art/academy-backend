@@ -53,6 +53,11 @@
 결과, 제출 성적표의 테넌트 버전이 바뀌면 새 캐시 키를 사용한다. 시험-차시 연결을
 추가하거나 제거한 뒤에도 기존 유형 분류를 재사용하지 않는다.
 
+제출 성적표 승인·반려·무효화는 학생 행을 먼저 잠그고 해당
+`StudentReportedScore` 행만 잠근 뒤 처리한다. 선택적인 증빙 파일은 읽기 위해
+JOIN하지만 잠금 대상에는 넣지 않는다. 따라서 PostgreSQL의 nullable outer join
+잠금 제한을 피하면서도 같은 학생의 동시 검수 순서와 테넌트 격리를 유지한다.
+
 ## 검증
 
 - `apps/domains/results/tests/test_student_performance_console.py`

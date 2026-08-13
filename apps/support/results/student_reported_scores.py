@@ -560,7 +560,7 @@ def review_student_scores(
             else "검토 대기 중인 성적만 승인하거나 반려할 수 있습니다."
         )
     row_query = (
-        StudentReportedScore.objects.select_for_update()
+        StudentReportedScore.objects.select_for_update(of=("self",))
         .select_related("evidence_file")
         .filter(tenant=tenant, student_id=target["student_id"])
     )

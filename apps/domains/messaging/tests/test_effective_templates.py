@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.core.exceptions import ValidationError
 
 from apps.core.models import Tenant
@@ -19,6 +19,9 @@ class EffectiveTemplateStatusTests(TestCase):
             name="Effective Messaging",
             is_active=True,
         )
+        self.owner_settings = override_settings(OWNER_TENANT_ID=self.tenant.id)
+        self.owner_settings.enable()
+        self.addCleanup(self.owner_settings.disable)
 
     def test_unified_trigger_is_effectively_approved_even_if_linked_template_pending(self):
         template = MessageTemplate.objects.create(
