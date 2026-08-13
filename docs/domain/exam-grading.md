@@ -249,6 +249,13 @@ tenant가 없거나 다른 tenant의 시험이면 거부한다. 이미 분리 �
 - 학생을 `absent`로 확정하면 `NOT_SUBMITTED` attempt로 저장하고 점수,
   평균, 석차, 합불, 문항 통계에서 0점 응시자로 계산하지 않는다.
 
+AI OMR 성공 콜백은 인식 fact를 저장한 뒤 같은 worker 프로세스에서 채점과
+`Result` 동기화를 닫는다. CPU/GPU AI worker 이미지는 API 전용 DRF를 설치하지
+않으므로 이 경로의 점수 편집 임대 무효화는 Django ORM만 의존하는
+`score_edit_lease_state`를 사용한다. worker 이미지 빌드와
+`tests/test_worker_entrypoint_imports.py`는 DRF가 없는 환경에서
+`grading_service` import가 성공해야 통과한다.
+
 문항 순서는 유형별 블록으로 재정렬하지 않는다. 예를 들어
 `1 객관식 / 2 숫자 단답형 / 3 객관식`은 그대로 반환한다. 각 문항에는
 `kind`와 함께 다음 `answer_type`을 제공한다.

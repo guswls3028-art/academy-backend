@@ -11,7 +11,7 @@ from django.utils import timezone
 
 from apps.domains.results.models import ExamResult, Result, ResultItem
 from apps.domains.results.guards.grading_contract import GradingContractGuard
-from apps.domains.results.guards.score_edit_lease_guard import (
+from apps.domains.results.guards.score_edit_lease_state import (
     invalidate_score_edit_leases_for_exam,
 )
 from apps.domains.results.services.attempt_service import ExamAttemptService

@@ -47,6 +47,9 @@ COPY libs ./libs
 COPY scripts ./scripts
 COPY manage.py ./
 
+# OMR callbacks grade on the worker image; this import must stay DRF-free.
+RUN python -c "from apps.domains.results.services.grading_service import grade_submission; print('AI grading import OK')"
+
 HEALTHCHECK --interval=60s --timeout=10s --start-period=60s --retries=3 \
     CMD python -c "import sys; sys.exit(0)" || exit 1
 

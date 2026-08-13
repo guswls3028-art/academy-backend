@@ -10,9 +10,9 @@
 """
 from __future__ import annotations
 
-from django.db.models import Q
 from django.shortcuts import get_object_or_404
 
+from rest_framework import serializers
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -20,7 +20,22 @@ from rest_framework import status
 
 from apps.domains.exams.models import Exam
 from apps.core.permissions import TenantResolvedAndStaff
+from apps.domains.assets.omr.dto.omr_document import MAX_ESSAY_QUESTIONS
 from apps.support.exams.view_dependencies import MAX_MC_QUESTIONS, build_omr_meta
+
+
+class LegacyOMRParamsSerializer(serializers.Serializer):
+    mc_count = serializers.IntegerField(
+        min_value=0,
+        max_value=MAX_MC_QUESTIONS,
+        required=False,
+    )
+    essay_count = serializers.IntegerField(
+        min_value=0,
+        max_value=MAX_ESSAY_QUESTIONS,
+        required=False,
+    )
+    n_choices = serializers.ChoiceField(choices=[5], required=False)
 
 
 class GenerateOMRSheetAssetView(APIView):
@@ -36,10 +51,7 @@ class GenerateOMRSheetAssetView(APIView):
         tenant = request.tenant
 
         exam = get_object_or_404(
-            Exam.objects.filter(
-                Q(sessions__lecture__tenant=tenant)
-                | Q(derived_exams__sessions__lecture__tenant=tenant)
-            ).distinct(),
+            Exam.objects.filter(tenant=tenant),
             id=int(exam_id),
         )
 
@@ -50,24 +62,26 @@ class GenerateOMRSheetAssetView(APIView):
             from apps.support.omr.contract_builder import build_omr_sheet_contract
 
             contract = build_omr_sheet_contract(sheet=sheet, exam=exam)
-            default_mc = contract.choice_count or total_questions
+            default_mc = contract.choice_count
             default_essay = contract.essay_count
         else:
             default_mc = total_questions
             default_essay = 0
 
-        mc_count = int(request.data.get("mc_count", 0) or default_mc)
-        essay_count = int(request.data.get("essay_count", 0) or default_essay)
-        n_choices = int(request.data.get("n_choices", 5) or 5)
+        raw_params = {
+            key: value
+            for key, value in request.data.items()
+            if key in {"mc_count", "essay_count", "n_choices"}
+            and value not in (None, "")
+        }
+        params = LegacyOMRParamsSerializer(data=raw_params)
+        params.is_valid(raise_exception=True)
+        mc_count = params.validated_data.get("mc_count", default_mc)
+        essay_count = params.validated_data.get("essay_count", default_essay)
+        n_choices = params.validated_data.get("n_choices", 5)
 
         if mc_count <= 0 and essay_count <= 0:
             mc_count = total_questions or 20
-
-        if mc_count > MAX_MC_QUESTIONS:
-            return Response(
-                {"detail": f"객관식은 최대 {MAX_MC_QUESTIONS}문항입니다."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
 
         meta = build_omr_meta(
             question_count=mc_count,

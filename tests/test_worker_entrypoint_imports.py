@@ -15,6 +15,10 @@ WORKER_ENTRYPOINT_MODULES = (
     "apps.worker.video_worker.batch_main",
 )
 
+AI_WORKER_RUNTIME_MODULES = (
+    "apps.domains.results.services.grading_service",
+)
+
 
 def test_worker_entrypoints_import_under_worker_settings():
     backend_root = Path(__file__).resolve().parents[1]
@@ -31,8 +35,19 @@ def test_worker_entrypoints_import_under_worker_settings():
     script = "\n".join(
         [
             "import importlib",
+            "import importlib.abc",
+            "import sys",
             f"modules = {WORKER_ENTRYPOINT_MODULES!r}",
             "for module in modules:",
+            "    importlib.import_module(module)",
+            "class BlockRestFramework(importlib.abc.MetaPathFinder):",
+            "    def find_spec(self, fullname, path=None, target=None):",
+            "        if fullname == 'rest_framework' or fullname.startswith('rest_framework.'):",
+            "            raise ModuleNotFoundError(f\"No module named '{fullname}'\")",
+            "        return None",
+            "sys.meta_path.insert(0, BlockRestFramework())",
+            f"runtime_modules = {AI_WORKER_RUNTIME_MODULES!r}",
+            "for module in runtime_modules:",
             "    importlib.import_module(module)",
             "print('OK worker entrypoint imports')",
         ]
