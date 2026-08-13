@@ -47,8 +47,12 @@ COPY libs ./libs
 COPY scripts ./scripts
 COPY manage.py ./
 
-# OMR callbacks grade on the worker image; this import must stay DRF-free.
-RUN python -c "from apps.domains.results.services.grading_service import grade_submission; print('AI grading import OK')"
+# OMR callbacks grade after the worker entrypoint configures Django; this import
+# must succeed with worker settings and without API-only DRF dependencies.
+RUN DJANGO_SETTINGS_MODULE=apps.api.config.settings.worker \
+    SECRET_KEY=build-import-check \
+    DB_NAME=build DB_USER=build DB_PASSWORD=build DB_HOST=localhost DB_PORT=5432 \
+    python -c "import django; django.setup(); from apps.domains.results.services.grading_service import grade_submission; print('AI grading import OK')"
 
 HEALTHCHECK --interval=60s --timeout=10s --start-period=60s --retries=3 \
     CMD python -c "import sys; sys.exit(0)" || exit 1
