@@ -1,6 +1,7 @@
 from copy import deepcopy
 from unittest.mock import patch
 
+from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
@@ -10,6 +11,7 @@ from apps.core.landing.views_config import LandingAdminView, LandingPublishView
 from apps.core.landing.views_hit_report import (
     LandingHitReportError,
     toggle_hit_report_on_landing,
+    verify_prepared_hit_report_previews,
 )
 from apps.core.models import LandingPage, Tenant, TenantMembership
 
@@ -119,6 +121,56 @@ class LandingPublishBackfillTests(TestCase):
             prewarm.call_args.args[1],
             {42: "preview-key-42"},
         )
+
+    def test_preview_verification_locks_only_report_with_legacy_null_author(self):
+        InventoryFile = apps.get_model("inventory", "InventoryFile")
+        MatchupDocument = apps.get_model("matchup", "MatchupDocument")
+        MatchupHitReport = apps.get_model("matchup", "MatchupHitReport")
+        inventory = InventoryFile.objects.create(
+            tenant=self.tenant,
+            scope="admin",
+            student_ps="",
+            display_name="legacy-report.pdf",
+            r2_key="tests/landing/legacy-report.pdf",
+            original_name="legacy-report.pdf",
+            content_type="application/pdf",
+            size_bytes=1,
+        )
+        document = MatchupDocument.objects.create(
+            tenant=self.tenant,
+            author=None,
+            inventory_file=inventory,
+            title="Legacy report",
+            r2_key=inventory.r2_key,
+            original_name=inventory.original_name,
+            content_type=inventory.content_type,
+            size_bytes=inventory.size_bytes,
+            status="done",
+        )
+        report = MatchupHitReport.objects.create(
+            tenant=self.tenant,
+            document=document,
+            author=None,
+            title="Legacy report",
+            status="submitted",
+        )
+        config = _legacy_draft()
+        config["sections"].append({
+            "type": "hit_reports",
+            "enabled": True,
+            "order": 3,
+            "items": [{"report_id": report.id}],
+        })
+
+        with patch(
+            "apps.domains.matchup.views_hit_report._hit_report_public_preview_pdf_key",
+            return_value="preview-key",
+        ):
+            verify_prepared_hit_report_previews(
+                self.tenant,
+                config,
+                {report.id: "preview-key"},
+            )
 
     def test_publish_stays_private_when_hit_report_preview_fails(self):
         LandingPage.objects.create(

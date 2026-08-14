@@ -17,6 +17,7 @@ from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from apps.billing.models import BillingKey, BillingProfile, Invoice, PaymentTransaction
+from apps.billing.services.webhook_service import handle_payment_status
 from apps.core.models import OpsAuditLog, Tenant
 from apps.core.models.program import Program
 
@@ -343,6 +344,26 @@ class TestWebhookDone(TestWebhookEndpointBase):
 
 
 class TestWebhookUnmatched(TestWebhookEndpointBase):
+
+    def test_duplicate_recovery_locks_transaction_with_nullable_invoice(self):
+        self.tx.delete()
+        raced_tx = PaymentTransaction.objects.create(
+            tenant=self.tenant,
+            invoice=None,
+            provider="tosspayments",
+            provider_order_id="race-shadow-order",
+            idempotency_key=self.invoice.provider_order_id,
+            amount=self.invoice.total_amount,
+            status="PENDING",
+        )
+
+        result = handle_payment_status({
+            "orderId": self.invoice.provider_order_id,
+            "status": "READY",
+        })
+
+        self.assertEqual(result["result"], "noop_ready")
+        self.assertEqual(result["tx_id"], raced_tx.id)
 
     def test_unknown_order_id_recovers_via_invoice(self):
         """orderId로 tx는 없지만 invoice는 있는 케이스 — webhook이 tx를 생성"""

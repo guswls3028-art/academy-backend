@@ -203,10 +203,12 @@ SecureString JSON을 보존한 채 전용 384-bit 난수 HMAC key가 없을 때�
 - `dnb`, `tchul`, `sswe`, `limglish`, `ymath` 등 확인된 외부 테넌트는
   비활성이고 최근 24시간 다른 테넌트 이벤트가 없어야 daily gate가
   통과한다.
-- 2026-08-15 최신 main dry-run에서 저장소 checkout 누락 때문에 versioned
-  DB-share script를 찾지 못하는 회귀를 발견했다. workflow에 checkout을
-  명시하고 계약 검사로 실행 순서를 고정했으며, 수정 배포 뒤 동일 dry-run
-  성공을 운영 증거로 남긴다.
+- 2026-08-15 main dry-run `31831649075`에서 저장소 checkout 누락 때문에
+  versioned DB-share script를 찾지 못하는 회귀를 발견했다. workflow에
+  checkout을 명시하고 계약 검사로 실행 순서를 고정했다. 수정된 main SHA
+  `8e8dd6259ea1da4a022b62c21af92ef683d273d6`의 동일 dry-run
+  `31833095618`은 DB-share 측정, retention dry-run, pilot artifact 업로드까지
+  모두 통과했다.
 - 플래그 활성화 뒤에도 합성·대리 로그인 이벤트는 품질 수치로만 남고
   적격 actor와 funnel 지표에서는 제외된다.
 - 28일 적격 기준선 종료 전에는 메뉴·CTA 위치·문구를 자동 변경하지

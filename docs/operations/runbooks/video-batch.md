@@ -73,6 +73,7 @@ After a release touching video, verify:
 - Batch CE and queue are enabled.
 - A netprobe or small test job reaches `SUCCEEDED` when video runtime changed.
 - `reconcile_batch_video_jobs` and `scan_stuck_video_jobs` remain runnable with `apps.api.config.settings.worker`.
+- READY 영상의 R2 전수 검사는 `verify_video_storage_integrity --limit <N> --after-id <cursor>`로 나눠 실행한다. 각 배치의 `last_id`를 다음 `after-id`로 넘겨 `has_more=false`까지 확인한다. master/segment 누락뿐 아니라 R2 인증·전송·목록 실패도 nonzero로 실패 폐쇄하며, 단일 장시간 실행의 원격 제한시간 초과를 성공으로 해석하지 않는다.
 - YouTube link upload still bypasses Batch and is immediately playable in the student app through the embedded YouTube player.
 
 General post-deploy verification entrypoint:

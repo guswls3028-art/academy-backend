@@ -9,7 +9,7 @@ Batch → DB 정합성 복구 (reconcile). Production-grade: Single-flight, cons
 Run via EventBridge → academy-v1-video-ops-queue (rate 1 hour).
 
 옵션:
-  --dry-run: DB 변경 없이 로그만
+  --dry-run: DB/Redis/AWS 상태 변경 없이 로그만
   --older-than-minutes: 이 시간보다 오래된 job만 대상 (기본 5)
   --resubmit: Batch FAILED 또는 not_found(fail 처리된 경우)에만 submit_batch_job 호출
 """
@@ -24,6 +24,7 @@ from django.conf import settings
 
 from academy.adapters.cache.redis_video_status_cache import (
     redis_delete_key,
+    redis_get_int,
     redis_incr_with_ttl,
     redis_setnx_with_ttl,
 )
@@ -87,6 +88,19 @@ def _incr_not_found_count(job_id: str) -> int:
         return 0
 
 
+def _get_not_found_count(job_id: str) -> int:
+    """Read the current count for an exact dry-run without changing its TTL."""
+    try:
+        key = f"{NOT_FOUND_COUNT_KEY_PREFIX}{job_id}"
+        count = redis_get_int(key)
+        if count is None:
+            return 0
+        return count
+    except Exception as e:
+        logger.debug("reconcile: not_found count read failed: %s", e)
+        return 0
+
+
 def _reset_not_found_count(job_id: str) -> None:
     try:
         redis_delete_key(f"{NOT_FOUND_COUNT_KEY_PREFIX}{job_id}")
@@ -116,7 +130,7 @@ class Command(BaseCommand):
         parser.add_argument(
             "--dry-run",
             action="store_true",
-            help="Do not update DB, only log",
+            help="Do not change DB, Redis, or AWS state; only log",
         )
         parser.add_argument(
             "--older-than-minutes",
@@ -143,7 +157,8 @@ class Command(BaseCommand):
         skip_lock = options["skip_lock"]
         cutoff = timezone.now() - timedelta(minutes=older_than_minutes)
 
-        if not skip_lock and not _acquire_reconcile_lock():
+        lock_required = not skip_lock and not dry_run
+        if lock_required and not _acquire_reconcile_lock():
             logger.info(
                 "reconcile skipped - lock held",
                 extra={"event": "reconcile_skipped", "reason": "lock_held"},
@@ -158,7 +173,7 @@ class Command(BaseCommand):
             )
             self._run_reconcile(dry_run, resubmit, cutoff)
         finally:
-            if not skip_lock:
+            if lock_required:
                 _release_reconcile_lock()
 
     def _run_reconcile(self, dry_run: bool, resubmit: bool, cutoff):
@@ -241,11 +256,13 @@ class Command(BaseCommand):
             )
             try:
                 from apps.domains.video.services.ops_events import emit_ops_event
-                emit_ops_event(
-                    "RECONCILE_DESCRIBE_JOBS_FAILED",
-                    severity="WARNING",
-                    payload={"error": str(e)[:500]},
-                )
+
+                if not dry_run:
+                    emit_ops_event(
+                        "RECONCILE_DESCRIBE_JOBS_FAILED",
+                        severity="WARNING",
+                        payload={"error": str(e)[:500]},
+                    )
             except Exception:
                 pass
             self.stdout.write(self.style.WARNING(f"Reconcile aborted: DescribeJobs failed. No DB changes. {e}"))
@@ -262,7 +279,7 @@ class Command(BaseCommand):
             status = (bj or {}).get("status")
             status_reason = (bj or {}).get("statusReason") or ""
 
-            if bj is not None:
+            if bj is not None and not dry_run:
                 _reset_not_found_count(str(job.id))
 
             if status == "SUCCEEDED":
@@ -335,7 +352,11 @@ class Command(BaseCommand):
                     )
                     self.stdout.write(f"RECONCILE skip not_found job_id={job.id} (DB RUNNING - do not overwrite)")
                     continue
-                count = _incr_not_found_count(str(job.id))
+                count = (
+                    _get_not_found_count(str(job.id)) + 1
+                    if dry_run
+                    else _incr_not_found_count(str(job.id))
+                )
                 job_age_minutes = (timezone.now() - job.created_at).total_seconds() / 60
                 allow_fail = count >= NOT_FOUND_CONSECUTIVE_THRESHOLD or job_age_minutes >= NOT_FOUND_MIN_AGE_MINUTES
                 if not allow_fail:

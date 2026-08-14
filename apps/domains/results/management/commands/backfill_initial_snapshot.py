@@ -27,14 +27,14 @@ Legacy backfill: attempt_index=1 의 meta.initial_snapshot 을 채운다.
     --verbose       각 레코드의 복구 값을 모두 출력.
 
 복구 품질:
-    attempt_index>=2 가 없고 Result.total_score 가 아직 1차 값인 경우 → 정확 복구.
-    재응시가 이미 들어와 Result.total_score 가 2차 값으로 덮어써진 경우 →
-    이 command 는 "현재 Result 값"을 스냅샷에 기록하므로 2차 값이 고정된다.
-    이 경우 해당 attempt 의 initial_snapshot 은 근사값이며 원래 1차 점수는 복원
-    불가하다. 해당 레코드는 meta["initial_snapshot"]["source"]="legacy_backfill_cli"
-    + "_warning"="possibly_overwritten" 로 명시 표시한다.
+    1차 attempt.meta.total_score가 남아 있으면 현재 대표 Result보다 우선한다.
+    재응시 뒤에도 append-only attempt에 보존된 1차 점수를 정확히 복구할 수 있다.
+    attempt meta에도 점수가 없고 재응시가 이미 들어온 경우에만 현재 Result를
+    근사값으로 사용하고 ``_warning=possibly_overwritten_by_retake``를 표시한다.
 """
 from __future__ import annotations
+
+import math
 
 from django.core.management.base import BaseCommand
 from django.db import transaction
@@ -119,9 +119,14 @@ class Command(BaseCommand):
         updated = 0
         skipped_no_result = 0
         at_risk = 0
+        recovered_from_attempt_meta = 0
+        approximate_at_risk = 0
 
         with transaction.atomic():
-            for a in base_qs.select_for_update().order_by("id").iterator(chunk_size=500):
+            scan_qs = base_qs.order_by("id")
+            if not dry_run:
+                scan_qs = scan_qs.select_for_update()
+            for a in scan_qs.iterator(chunk_size=500):
                 processed += 1
                 if not _needs_backfill(a):
                     skipped_already_filled += 1
@@ -146,15 +151,52 @@ class Command(BaseCommand):
                         )
                     continue
 
+                attempt_meta = a.meta if isinstance(a.meta, dict) else {}
+                raw_attempt_total = attempt_meta.get("total_score")
+                try:
+                    attempt_total = float(raw_attempt_total)
+                except (TypeError, ValueError):
+                    attempt_total = None
+                if attempt_total is not None and (
+                    not math.isfinite(attempt_total) or attempt_total < 0
+                ):
+                    attempt_total = None
+
+                raw_attempt_max = attempt_meta.get("max_score")
+                try:
+                    attempt_max = float(raw_attempt_max)
+                except (TypeError, ValueError):
+                    attempt_max = None
+                if attempt_max is not None and (
+                    not math.isfinite(attempt_max) or attempt_max < 0
+                ):
+                    attempt_max = None
+
+                uses_attempt_meta = attempt_total is not None
                 snapshot = {
-                    "total_score": r.total_score,
-                    "max_score": r.max_score,
-                    "submitted_at": r.submitted_at.isoformat() if r.submitted_at else None,
-                    "source": "legacy_backfill_cli",
+                    "total_score": attempt_total if uses_attempt_meta else r.total_score,
+                    "max_score": attempt_max if attempt_max is not None else r.max_score,
+                    "submitted_at": (
+                        r.submitted_at.isoformat()
+                        if r.submitted_at and not uses_attempt_meta
+                        else a.created_at.isoformat()
+                    ),
+                    "source": (
+                        "legacy_attempt_meta_backfill"
+                        if uses_attempt_meta
+                        else "legacy_result_backfill"
+                    ),
                     "backfilled_at": timezone.now().isoformat(),
                 }
-                if is_at_risk:
+                if uses_attempt_meta:
+                    recovered_from_attempt_meta += 1
+                    legacy_source = attempt_meta.get("source")
+                    if legacy_source:
+                        snapshot["legacy_meta_source"] = str(legacy_source)
+                elif is_at_risk:
                     snapshot["_warning"] = "possibly_overwritten_by_retake"
+                    approximate_at_risk += 1
+                if is_at_risk:
                     at_risk += 1
 
                 if verbose:
@@ -180,16 +222,19 @@ class Command(BaseCommand):
 
         self.stdout.write("")
         self.stdout.write(f"[result] processed={processed} updated={updated} "
-                          f"skipped_no_result={skipped_no_result} at_risk_count={at_risk}")
+                          f"skipped_no_result={skipped_no_result} at_risk_count={at_risk} "
+                          f"attempt_meta_source={recovered_from_attempt_meta} "
+                          f"approximate_at_risk={approximate_at_risk}")
         self.stdout.write(f"[result] dry_run={dry_run} tenant={tenant_id} "
                           f"only_at_risk={only_at_risk} limit={limit or 'unlimited'}")
         if dry_run:
             self.stdout.write("\n[DRY RUN] No changes committed.")
 
         # 추가: 덮어쓰기 추정 건은 별도로 보고
-        if at_risk and not dry_run:
+        if approximate_at_risk and not dry_run:
             self.stdout.write(
-                f"\n[NOTICE] {at_risk} row(s) marked as 'possibly_overwritten_by_retake'. "
+                f"\n[NOTICE] {approximate_at_risk} row(s) marked as "
+                "'possibly_overwritten_by_retake'. "
                 "These are attempts whose Result may have been rewritten by a later retake "
                 "BEFORE this backfill ran; the recorded snapshot is a best-effort freeze of "
                 "current Result.total_score and may not be the true 1차 점수."

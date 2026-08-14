@@ -723,6 +723,48 @@ class MyGradesSummaryHomeworkTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["homeworks"], [])
 
+    def test_removed_and_recreated_same_title_homework_shows_only_replacement(self):
+        removed = Homework.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title="동일 제목 재생성 과제",
+            meta={
+                "default_max_score": 30,
+                "removed_from_session_at": "2026-08-08T22:52:04+09:00",
+            },
+        )
+        HomeworkScore.objects.create(
+            enrollment=self.enrollment,
+            session=self.session,
+            homework=removed,
+            score=27,
+            max_score=30,
+            passed=False,
+        )
+        replacement = Homework.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title=removed.title,
+            meta={"default_max_score": 30},
+        )
+        HomeworkScore.objects.create(
+            enrollment=self.enrollment,
+            session=self.session,
+            homework=replacement,
+            score=30,
+            max_score=30,
+            passed=True,
+        )
+
+        response = self._call()
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(len(response.data["homeworks"]), 1)
+        row = response.data["homeworks"][0]
+        self.assertEqual(row["homework_id"], replacement.id)
+        self.assertEqual(row["title"], removed.title)
+        self.assertEqual(row["score"], 30.0)
+
     def test_cross_lecture_homework_relations_are_fail_closed(self):
         other_lecture = Lecture.objects.create(
             tenant=self.tenant,

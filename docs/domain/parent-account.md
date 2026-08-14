@@ -87,6 +87,16 @@ Body: { "username": "{학부모전화번호}", "password": "{비밀번호}" }
 
 ## 6. 유지보수 명령
 
+누락된 legacy Parent/User 계정은 다음 명령으로 테넌트 하나씩 복구한다. 기본은
+dry-run이며 실제 실행은 같은 tenant code를 두 번 명시해야 한다. 유효한 010 11자리
+학부모 번호의 누락 계정만 `ensure_parent_account_for_student()`로 생성하고, 이미
+연결된 학부모 User의 비밀번호는 절대 바꾸지 않는다.
+
+```
+python manage.py ensure_parent_accounts_for_students --tenant <code>
+python manage.py ensure_parent_accounts_for_students --tenant <code> --execute --confirm <code>
+```
+
 `apps/domains/parents/management/commands/reset_all_parent_passwords.py`는 legacy 일괄 정비용 명령이다.
 
 ```

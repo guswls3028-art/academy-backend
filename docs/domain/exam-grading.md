@@ -204,6 +204,13 @@ tenant가 없거나 다른 tenant의 시험이면 거부한다. 이미 분리 �
 `rank`의 기준이고 `final_score`는 대표 결과의 현재 점수다. 재시험·정정으로 두
 값이 다르면 화면은 1차 점수를 주값, 최종점수를 보조값으로 함께 표시한다.
 
+1차 `ExamAttempt.meta.initial_snapshot`이 없는 과거 행은
+`backfill_initial_snapshot`으로 복구한다. 이 명령은 append-only 1차 attempt의
+`meta.total_score`를 현재 대표 `Result`보다 우선한다. 재응시가 이미 있어도 1차
+attempt 메타가 남아 있으면 정확한 원점수를 보존하며, 두 출처가 모두 없지는 않은지
+실행 전 dry-run 합계로 확인한다. 1차 메타가 없고 재응시 뒤 현재 Result만 남은
+경우에만 근사 복구로 표시한다. dry-run은 행 잠금을 잡거나 데이터를 쓰지 않는다.
+
 수동 채점이나 엑셀 반영은 Submission이 없어도 확정 점수가 있으므로 `완료`다.
 결시는 `NOT_SUBMITTED`이며 두 점수와 석차를 표시하지 않는다. 응답은 기본
 등수순이다. 동점자는 같은 등수이며 다음 등수는 동점 인원만큼 건너뛰는 표준 공동

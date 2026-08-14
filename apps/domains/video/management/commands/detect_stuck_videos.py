@@ -148,7 +148,7 @@ class Command(BaseCommand):
         try:
             from apps.domains.video.services.ops_events import emit_ops_event
 
-            if stuck_count > 0:
+            if stuck_count > 0 and not dry_run:
                 emit_ops_event(
                     "VIDEO_STUCK_DETECTED",
                     severity="WARNING",

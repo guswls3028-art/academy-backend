@@ -473,7 +473,7 @@ def handle_payment_status(data: dict[str, Any]) -> dict[str, Any]:
                 # 동시 웹훅으로 동일 idempotency_key가 먼저 생성된 경우 재조회
                 tx = (
                     PaymentTransaction.objects
-                    .select_for_update()
+                    .select_for_update(of=("self",))
                     .select_related("invoice")
                     .filter(idempotency_key=order_id)
                     .order_by("-created_at")

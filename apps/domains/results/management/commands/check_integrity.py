@@ -82,12 +82,15 @@ class Command(BaseCommand):
 
         # 9. ExamResult manual_overrides missing max_score key
         from apps.domains.results.models import ExamResult
-        results = ExamResult.objects.exclude(manual_overrides={}).exclude(manual_overrides__isnull=True)
+        results = (
+            ExamResult.objects.exclude(manual_overrides={})
+            .exclude(manual_overrides__isnull=True)
+            .values_list("manual_overrides", flat=True)
+        )
         suspicious = 0
-        for r in results[:200]:
-            overrides = r.manual_overrides
+        for overrides in results.iterator(chunk_size=500):
             if isinstance(overrides, dict):
-                for qid, info in overrides.items():
+                for info in overrides.values():
                     if isinstance(info, dict) and "max_score" not in info:
                         suspicious += 1
                         break

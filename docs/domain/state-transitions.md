@@ -313,6 +313,8 @@ CANCELLED  → {} (종단)
 1. **종단 상태 불변:** SUCCEEDED, FAILED, DEAD, CANCELLED에 도달한 job은 state 변경 불가
 2. **하트비트:** RUNNING 상태 job은 60초마다 하트비트 갱신 필수
 3. **정체 감지:** scan_stuck_video_jobs가 하트비트 만료 RUNNING job을 RETRY_WAIT로 전이
+4. **조회 전용 감지:** `detect_stuck_videos --dry-run`은 상태, 작업, `VideoOpsEvent`를 포함한 어떤 데이터도 기록하지 않는다. 옵션 없는 일반 감지는 정체가 있을 때 `VIDEO_STUCK_DETECTED` 운영 이벤트를 기록하며, 실제 복구는 `--repair`가 있고 `--dry-run`이 없을 때만 수행한다.
+5. **조회 전용 정합성 점검:** `reconcile_batch_video_jobs --dry-run`은 DB, Redis의 단일 실행 락·연속 not-found 카운터, AWS Batch 작업을 변경하지 않는다. 현재 Redis 카운터와 AWS 상태를 읽어 실제 실행의 판단만 미리 보여 주며, AWS 조회 실패 운영 이벤트도 실제 실행에서만 기록한다.
 
 ---
 
@@ -383,6 +385,9 @@ FINAL → {} (종단, 절대 불변)
 1. **FINAL 불변성:** status=FINAL인 ExamResult의 score, breakdown, manual_overrides는 수정 불가
 2. **finalized_at:** FINAL 전이 시 반드시 설정
 3. **학생 노출:** Student API는 status=FINAL인 결과만 반환해야 함
+4. **운영 정합성 검사:** `check_integrity`의 `manual_overrides` 누락 카운트는
+   임의 샘플이 아니라 비어 있지 않은 전체 JSON 행을 500행 단위로 스트리밍해
+   검사한다. 데이터가 200건을 넘어도 뒤쪽의 `max_score` 누락을 숨기지 않는다.
 
 ---
 
@@ -651,6 +656,10 @@ CONFIRMED → {} (종단)
 **현재 상태:** 자동결제와 Toss webhook이 `PENDING → SUCCESS/FAILED`,
 환불 webhook이 `SUCCESS/PARTIALLY_REFUNDED → PARTIALLY_REFUNDED/REFUNDED`를
 처리한다. 수동 입금은 처음부터 `SUCCESS`인 대조 레코드를 원자적으로 만든다.
+동시 웹훅이 같은 idempotency key를 먼저 만든 복구 경로는
+`PaymentTransaction` 자체 행만 잠근다. 선택 관계인 `invoice=NULL` 레거시·경합 행을
+`select_related`하더라도 PostgreSQL nullable outer join 전체에 `FOR UPDATE`를
+적용하지 않으므로 복구 요청이 500으로 실패하지 않는다.
 
 ---
 

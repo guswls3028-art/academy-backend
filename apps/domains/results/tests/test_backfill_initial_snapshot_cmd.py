@@ -48,7 +48,7 @@ class BackfillInitialSnapshotCmdTest(TestCase, ClinicTestMixin):
         snap = a1.meta["initial_snapshot"]
         self.assertEqual(snap["total_score"], 80)
         self.assertEqual(snap["max_score"], 100)
-        self.assertEqual(snap["source"], "legacy_backfill_cli")
+        self.assertEqual(snap["source"], "legacy_result_backfill")
 
     def test_dry_run_does_not_modify(self):
         a1 = ExamAttempt.objects.create(
@@ -89,6 +89,50 @@ class BackfillInitialSnapshotCmdTest(TestCase, ClinicTestMixin):
         a1.refresh_from_db()
         snap = a1.meta["initial_snapshot"]
         self.assertEqual(snap.get("_warning"), "possibly_overwritten_by_retake")
+
+    def test_at_risk_prefers_preserved_attempt_score_over_current_result(self):
+        a1 = ExamAttempt.objects.create(
+            exam=self.exam,
+            enrollment=self.enrollment,
+            attempt_index=1,
+            is_representative=False,
+            status="done",
+            submission_id=0,
+            meta={
+                "total_score": 37,
+                "synced_from_result": True,
+                "source": "manual_entry",
+            },
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.enrollment,
+            total_score=91,
+            max_score=100,
+            attempt=a1,
+        )
+        ExamAttempt.objects.create(
+            exam=self.exam,
+            enrollment=self.enrollment,
+            attempt_index=2,
+            is_representative=True,
+            status="done",
+            submission_id=None,
+            is_retake=True,
+        )
+
+        out = self._run()
+
+        a1.refresh_from_db()
+        snapshot = a1.meta["initial_snapshot"]
+        self.assertEqual(snapshot["total_score"], 37)
+        self.assertEqual(snapshot["max_score"], 100)
+        self.assertEqual(snapshot["source"], "legacy_attempt_meta_backfill")
+        self.assertEqual(snapshot["legacy_meta_source"], "manual_entry")
+        self.assertNotIn("_warning", snapshot)
+        self.assertIn("attempt_meta_source=1", out)
+        self.assertIn("approximate_at_risk=0", out)
 
     def test_only_at_risk_filter_skips_safe_rows(self):
         a1 = ExamAttempt.objects.create(
