@@ -253,6 +253,9 @@ Assert-True ($verificationSource.Contains('Save-RuntimeImagesUnknownReport -Reas
 Assert-True ($verificationSource.Contains('$sectionOutcomes = @(')) "section summaries must be mapped into the overall decision"
 Assert-True ($verificationSource.Contains('Add-Finding -Severity "WARNING" -Area $section.Area')) "section warnings must affect GO/NO-GO"
 Assert-True ($verificationSource.Contains('Add-Finding -Severity "FAIL" -Area $section.Area')) "section failures must affect GO/NO-GO"
+Assert-True ($verificationSource.Contains('$r2ProbeRequired = -not [string]::IsNullOrWhiteSpace([string]$script:FrontR2StaticBucket)')) "frontend R2 verification must be conditional on an exact configured bucket"
+Assert-True ($verificationSource.Contains('$r2Status = if ($r2ProbeRequired) { "not checked" } else { "not configured (optional)" }')) "an optional unconfigured frontend R2 bucket must remain explicit without warning"
+Assert-True ($verificationSource.Contains('if ($r2ProbeRequired -and $r2Status -ne "OK (wrangler list success)") { $s3Front = "WARNING" }')) "a configured frontend R2 bucket must still warn when its probe does not pass"
 $runtimeCollectorSource = Get-Content -Raw -LiteralPath (Join-Path $ScriptRoot "resources\api.ps1")
 Assert-True ($runtimeCollectorSource.Contains('ManifestHash = $manifestHash')) "runtime evidence must expose the release manifest hash"
 Assert-True ($verificationSource.Contains('$manifestEvidence = Get-CurrentReleaseManifestEvidence')) "UNKNOWN runtime evidence must validate the successful release manifest"

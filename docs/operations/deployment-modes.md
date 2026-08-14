@@ -101,7 +101,7 @@ preproduction을 통과해야 한다. account-root는 명시적으로 승인된 
 
 | 목적 | 방법 |
 |------|------|
-| 배포 후 API·인프라 상태 | `run-production-canary.ps1 -Mode PostDeploy -AwsProfile default -WriteReport` 후 `run-deploy-verification.ps1 -AwsProfile default`. |
+| 배포 후 API·인프라 상태 | `run-production-canary.ps1 -Mode PostDeploy -AwsProfile default -WriteReport` 후 `run-deploy-verification.ps1 -AwsProfile default`. 프런트 정적 R2 검사는 `front.r2StaticBucket`이 설정된 배포에서만 필수이며, 비어 있으면 Cloudflare Pages 전용 구성이므로 선택 항목 미설정으로 기록한다. 영상 R2는 API·워커 카나리에서 별도로 검증한다. |
 | 학생 영상 재생 경로 좁은 회귀 | `python scripts/post_deploy_smoke/video_playback_chain.py`. 명시적 `E2E_VIDEO_ID`가 없으면 등록 강의·회차를 순회해 영상이 실제로 있는 첫 회차를 사용하고, 모두 비어 있으면 테넌트 공용 영상 세션을 검증한다. 로그에는 학생 자격 증명 값 대신 구성 여부만 남긴다. |
 | 성공 릴리스 digest와 서버 이미지 일치 | `release-manifest.latest.json`의 digest와 Launch Template, 실제 InService 컨테이너, Video Batch job definition을 `deploy-api-and-verify-workers.ps1`로 비교. |
 | API health | API 공개 URL로 `/healthz`, `/health` 200 확인. |

@@ -367,9 +367,14 @@ if ($e2eJobId -and $e2eJobId.Trim() -ne "") {
 }
 
 # --- 6. R2 / CDN (선택: wrangler) ---
-$r2Status = "not checked"
+# The frontend is currently served by Cloudflare Pages. An R2 static bucket is
+# optional, so a local Wrangler probe is meaningful only when the SSOT names an
+# exact frontend bucket. Video R2 is verified through the API/worker canaries.
+$r2ProbeRequired = -not [string]::IsNullOrWhiteSpace([string]$script:FrontR2StaticBucket)
+$r2Status = if ($r2ProbeRequired) { "not checked" } else { "not configured (optional)" }
+$r2Evidence = if ($r2ProbeRequired) { "wrangler r2 bucket list" } else { "front.r2StaticBucket is empty" }
 $cdnStatus = "not checked"
-if (Get-Command npx -ErrorAction SilentlyContinue) {
+if ($r2ProbeRequired -and (Get-Command npx -ErrorAction SilentlyContinue)) {
     try {
         $r2Out = npx wrangler r2 bucket list 2>&1 | Out-String
         if ($LASTEXITCODE -eq 0) { $r2Status = "OK (wrangler list success)" } else { $r2Status = "wrangler failed" }
@@ -550,7 +555,7 @@ $frontConnSb = [System.Text.StringBuilder]::new()
 [void]$frontConnSb.AppendLine("| front.domains.app | $($script:FrontDomainApp) | $(if ($script:FrontDomainApp) { '설정됨' } else { '비어있음(경고)' }) |")
 [void]$frontConnSb.AppendLine("| front.domains.api | $($script:FrontDomainApi) | $(if ($script:FrontDomainApi) { '설정됨' } else { '비어있음(경고)' }) |")
 [void]$frontConnSb.AppendLine("| r2.publicBaseUrl | $($script:R2PublicBaseUrl) | $(if ($script:R2PublicBaseUrl) { '설정됨' } else { '미설정/선택' }) |")
-[void]$frontConnSb.AppendLine("| front.r2StaticBucket/prefix | $($script:FrontR2StaticBucket) / $($script:FrontR2StaticPrefix) | |")
+[void]$frontConnSb.AppendLine("| front.r2StaticBucket/prefix | $($script:FrontR2StaticBucket) / $($script:FrontR2StaticPrefix) | $(if ($r2ProbeRequired) { '설정됨' } else { '미설정/선택' }) |")
 [void]$frontConnSb.AppendLine("| CORS allowedOrigins | $(if ($script:FrontCorsAllowedOrigins -and $script:FrontCorsAllowedOrigins.Count -gt 0) { $script:FrontCorsAllowedOrigins -join ', ' } else { '(비어있음)' }) | $corsStaticStatus |")
 [void]$frontConnSb.AppendLine("")
 [void]$frontConnSb.AppendLine("## 연결 검증 결과")
@@ -561,7 +566,7 @@ $frontConnSb = [System.Text.StringBuilder]::new()
 [void]$frontConnSb.AppendLine("| index.html Cache-Control | $(if ($frontIndexCacheControl -match 'max-age\s*=\s*0|no-cache') { 'no-cache 계열' } else { $frontIndexCacheControl }) | |")
 [void]$frontConnSb.AppendLine("| 해시 자산 Cache-Control | $(if ($frontAssetCacheControl -match '31536000') { '1년' } else { $frontAssetCacheControl }) | $(if ($frontAssetSampleUrl) { "샘플: $frontAssetSampleUrl" } else { '-' }) |")
 [void]$frontConnSb.AppendLine("| CORS 정적 검사 | $corsStaticStatus | $corsStaticDetail |")
-[void]$frontConnSb.AppendLine("| R2 버킷 | $r2Status | wrangler r2 bucket list |")
+[void]$frontConnSb.AppendLine("| R2 버킷 | $r2Status | $r2Evidence |")
 [void]$frontConnSb.AppendLine("")
 [void]$frontConnSb.AppendLine("**배포 후 purge:** SSOT front.purgeOnDeploy 반영 여부는 배포 파이프라인에서 확인.")
 Save-FrontConnectionReport -MarkdownContent $frontConnSb.ToString()
@@ -582,7 +587,7 @@ elseif ($apiHealthResponseTime -and [int]($apiHealthResponseTime -replace 'ms','
 $s3Front = "PASS"
 if ($frontStatus -eq "not checked") { $s3Front = "WARNING" }
 elseif ($frontStatus -ne "OK") { $s3Front = "WARNING" }
-if ($r2Status -ne "OK (wrangler list success)" -and $r2Status -ne "not checked") { $s3Front = "WARNING" }
+if ($r2ProbeRequired -and $r2Status -ne "OK (wrangler list success)") { $s3Front = "WARNING" }
 
 $s4Sqs = "ADVISORY"
 if ([int]$msgDlqDepth -gt 0 -or [int]$aiDlqDepth -gt 0) { $s4Sqs = "WARNING" }
@@ -681,7 +686,7 @@ if ($frontAssetSampleUrl -ne "") {
 if ($corsStaticStatus -ne "not checked") {
     [void]$sb.AppendLine("| CORS allowedOrigins 정적 검사 | $corsStaticStatus | $corsStaticDetail |")
 }
-[void]$sb.AppendLine("| R2 버킷 접근 | $r2Status | wrangler r2 bucket list |")
+[void]$sb.AppendLine("| R2 버킷 접근 | $r2Status | $r2Evidence |")
 [void]$sb.AppendLine("| **섹션 3 종합** | **$s3Front** | |")
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("## 4) SQS 워커 테스트 (PASS/WARNING/FAIL/ADVISORY + 근거)")
