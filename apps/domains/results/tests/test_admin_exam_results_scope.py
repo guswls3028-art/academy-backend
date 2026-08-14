@@ -225,3 +225,31 @@ class AdminExamResultsScopeTest(TestCase):
         )
         self.assertEqual([row["result_status"] for row in rows], ["DONE", "DONE"])
         self.assertEqual(first_attempt.attempt_index, 1)
+
+    def test_ties_use_competition_rank_and_skip_occupied_positions(self):
+        exam = self._make_exam()
+        enrollments = [
+            self.enrollment,
+            self._make_enrollment(self.tenant, self.lecture, "SCOPE002", "두번째 학생"),
+            self._make_enrollment(self.tenant, self.lecture, "SCOPE003", "세번째 학생"),
+            self._make_enrollment(self.tenant, self.lecture, "SCOPE004", "네번째 학생"),
+        ]
+        for enrollment, score in zip(enrollments, [19, 14, 14, 12], strict=True):
+            Result.objects.create(
+                target_type="exam",
+                target_id=exam.id,
+                enrollment=enrollment,
+                total_score=score,
+                max_score=100,
+            )
+
+        response = self._get(exam.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        rows = response.data["results"]
+        self.assertEqual(
+            [(row["rank"], row["ranking_score"]) for row in rows],
+            [(1, 19.0), (2, 14.0), (2, 14.0), (4, 12.0)],
+        )
+        self.assertEqual([row["cohort_size"] for row in rows], [4, 4, 4, 4])
+        self.assertEqual([row["percentile"] for row in rows], [25.0, 50.0, 50.0, 100.0])
