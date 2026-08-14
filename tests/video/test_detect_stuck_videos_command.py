@@ -110,11 +110,19 @@ class ReconcileBatchVideoJobsDryRunTests(SimpleTestCase):
         release_lock: MagicMock,
         run_reconcile: MagicMock,
     ):
-        call_command("reconcile_batch_video_jobs", "--dry-run")
+        with self.assertLogs(
+            "apps.domains.video.management.commands.reconcile_batch_video_jobs",
+            level="INFO",
+        ) as logs:
+            call_command("reconcile_batch_video_jobs", "--dry-run")
 
         acquire_lock.assert_not_called()
         release_lock.assert_not_called()
         run_reconcile.assert_called_once()
+        self.assertTrue(
+            any("dry-run starting without coordination lock" in line for line in logs.output)
+        )
+        self.assertFalse(any("lock acquired" in line for line in logs.output))
 
     def test_dry_run_describe_failure_does_not_persist_ops_event(self):
         job = self._job()
