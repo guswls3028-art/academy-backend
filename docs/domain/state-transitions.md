@@ -313,6 +313,7 @@ CANCELLED  → {} (종단)
 1. **종단 상태 불변:** SUCCEEDED, FAILED, DEAD, CANCELLED에 도달한 job은 state 변경 불가
 2. **하트비트:** RUNNING 상태 job은 60초마다 하트비트 갱신 필수
 3. **정체 감지:** scan_stuck_video_jobs가 하트비트 만료 RUNNING job을 RETRY_WAIT로 전이
+4. **조회 전용 감지:** `detect_stuck_videos --dry-run`은 상태, 작업, `VideoOpsEvent`를 포함한 어떤 데이터도 기록하지 않는다. 옵션 없는 일반 감지는 정체가 있을 때 `VIDEO_STUCK_DETECTED` 운영 이벤트를 기록하며, 실제 복구는 `--repair`가 있고 `--dry-run`이 없을 때만 수행한다.
 
 ---
 
