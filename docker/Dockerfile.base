@@ -9,11 +9,14 @@
 # ==============================================================================
 FROM python:3.11-slim@sha256:90744cff8f32887f075c47d747a173ff333e9e98801667af93c357fa9f5e28ff AS builder
 
+ARG APT_REFRESH_TOKEN=manual
+
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
 # 빌드 도구 설치 (Gevent 등 C extension 컴파일용)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN test -n "${APT_REFRESH_TOKEN}" \
+    && apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     libc6-dev \
@@ -32,12 +35,15 @@ RUN pip install --upgrade pip && pip install --user --no-cache-dir -r requiremen
 # ==============================================================================
 FROM python:3.11-slim@sha256:90744cff8f32887f075c47d747a173ff333e9e98801667af93c357fa9f5e28ff
 
+ARG APT_REFRESH_TOKEN=manual
+
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONPATH=/app
 
 # 런타임 의존성만 설치 (빌드 도구 제외)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN test -n "${APT_REFRESH_TOKEN}" \
+    && apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     ca-certificates \
     fonts-nanum \
