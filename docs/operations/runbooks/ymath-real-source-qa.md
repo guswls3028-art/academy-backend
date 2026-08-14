@@ -88,6 +88,26 @@ python manage.py setup_ymath_realuse_scenario `
 출력 JSON의 `tenant_code`, 교사 ID, 학생·강의·회차 ID와 개수를 보존한다. reset은
 정확히 같은 `qa-ymath-realuse-*` tenant만 지우고 다시 만든다.
 
+화면 검수는 검수할 frontend exact checkout을 로컬 `5174`에서 실행하고
+`VITE_DEV_PROXY_TARGET=http://127.0.0.1:18000`으로 SSM tunnel에 연결한다. 교사
+로그인 후 desktop과 390px에서 대상 DOM·상호작용·새로고침·overflow·콘솔/API 오류를
+확인한다. 운영 hostname이나 운영 API로 바꾸어 같은 일회성 계정을 재사용하지 않는다.
+
+## 시나리오 정리
+
+검수 직후 같은 API 컨테이너에서 정확한 tenant code를 지정해 삭제한다. 삭제에는
+비밀번호가 필요하지 않으며 production DB/R2에서는 생성과 동일하게 실패 폐쇄한다.
+
+```powershell
+python manage.py setup_ymath_realuse_scenario `
+  --tenant-code qa-ymath-realuse-20260805 `
+  --destroy
+```
+
+출력은 `YMATH_REALUSE_SCENARIO_DESTROYED` 또는 이미 없는 경우
+`YMATH_REALUSE_SCENARIO_ABSENT`여야 한다. 두 경우 모두 `remaining.tenants=0`과
+`remaining.users=0`을 확인한다. 이 확인 전에는 검수 완료로 기록하지 않는다.
+
 ## API 전수 실행
 
 먼저 `scripts/v1/connect-api-development.ps1`로 loopback SSM tunnel을 연다.

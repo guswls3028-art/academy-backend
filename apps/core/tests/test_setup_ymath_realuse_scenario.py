@@ -68,6 +68,40 @@ class SetupYmathRealuseScenarioTests(TestCase):
         with self.assertRaisesMessage(CommandError, "tenant-code must start"):
             self._call_command(tenant_code="ymath")
 
+    def test_destroy_removes_exact_scenario_tenant_and_users_without_password(self):
+        self._call_command()
+        tenant = Tenant.objects.get(code="qa-ymath-realuse-20260805")
+        tenant_id = tenant.id
+        user_ids = list(tenant.users.values_list("id", flat=True))
+        out = StringIO()
+
+        with patch.dict(os.environ, {}, clear=True):
+            call_command(
+                "setup_ymath_realuse_scenario",
+                stdout=out,
+                tenant_code="qa-ymath-realuse-20260805",
+                destroy=True,
+            )
+
+        self.assertIn("YMATH_REALUSE_SCENARIO_DESTROYED", out.getvalue())
+        self.assertIn('"remaining": {"tenants": 0, "users": 0}', out.getvalue())
+        self.assertFalse(Tenant.objects.filter(id=tenant_id).exists())
+        self.assertFalse(get_user_model().objects.filter(id__in=user_ids).exists())
+
+    def test_destroy_is_idempotent_when_scenario_is_absent(self):
+        out = StringIO()
+
+        with patch.dict(os.environ, {}, clear=True):
+            call_command(
+                "setup_ymath_realuse_scenario",
+                stdout=out,
+                tenant_code="qa-ymath-realuse-20260805",
+                destroy=True,
+            )
+
+        self.assertIn("YMATH_REALUSE_SCENARIO_ABSENT", out.getvalue())
+        self.assertIn('"remaining": {"tenants": 0, "users": 0}', out.getvalue())
+
     @override_settings(
         DATABASES={"default": {"NAME": "academy_api", "ENGINE": "django.db.backends.postgresql"}},
         R2_AI_BUCKET="academy-ai",
