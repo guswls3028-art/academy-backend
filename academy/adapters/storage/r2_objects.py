@@ -89,6 +89,28 @@ def r2_head_exists(*, bucket: str, key: str, retry_max_attempts: int | None = No
         return False
 
 
+def r2_head_exists_or_raise(
+    *,
+    bucket: str,
+    key: str,
+    retry_max_attempts: int | None = None,
+) -> bool:
+    """Return False only for an absent object; propagate transport/auth failures."""
+    from botocore.exceptions import ClientError
+
+    try:
+        _r2_client(retry_max_attempts=retry_max_attempts).head_object(
+            Bucket=bucket,
+            Key=key,
+        )
+        return True
+    except ClientError as exc:
+        code = str((exc.response.get("Error") or {}).get("Code") or "")
+        if code in {"404", "NoSuchKey", "NotFound"}:
+            return False
+        raise
+
+
 def iter_r2_objects(
     *,
     bucket: str,
@@ -119,6 +141,25 @@ def count_r2_objects_with_suffix(
     except Exception:
         return count
     return count
+
+
+def count_r2_objects_with_suffix_or_raise(
+    *,
+    bucket: str,
+    prefix: str,
+    suffix: str,
+    max_keys: int | None = None,
+) -> int:
+    """Count matching objects while propagating incomplete-list failures."""
+    return sum(
+        1
+        for obj in iter_r2_objects(
+            bucket=bucket,
+            prefix=prefix,
+            max_keys=max_keys,
+        )
+        if str(obj.get("Key") or "").endswith(suffix)
+    )
 
 
 def delete_r2_objects(*, bucket: str, keys: Iterable[str]) -> int:
