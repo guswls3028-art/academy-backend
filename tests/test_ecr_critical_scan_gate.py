@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from datetime import date
 from pathlib import Path
 
@@ -112,17 +113,18 @@ def test_high_finding_does_not_consume_critical_acceptance() -> None:
 
 
 def test_high_baseline_is_exact_and_allows_non_increase() -> None:
-    baselines = gate.load_high_baselines(
+    baselines, known = gate.load_high_baselines(
         Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json"
     )
     findings = _scan(
-        *[
-            _finding(f"CVE-2099-{index:04d}", "demo", "1", "HIGH")
-            for index in range(baselines["academy-base"])
-        ]
+        *(
+            _finding(cve, package, version, "HIGH")
+            for repository, cve, package, version in sorted(known)
+            if repository == "academy-base"
+        )
     )
 
-    assert gate.evaluate_high_budget("academy-base", findings, baselines) == 8
+    assert gate.evaluate_high_budget("academy-base", findings, baselines, known) == 8
 
 
 def test_high_finding_regression_fails_closed() -> None:
@@ -134,17 +136,103 @@ def test_high_finding_regression_fails_closed() -> None:
                 _finding("CVE-2099-0002", "demo", "1", "HIGH"),
             ),
             {"academy-api": 1},
+            set(),
         )
 
 
 def test_high_baseline_requires_all_governed_repositories(tmp_path: Path) -> None:
     baseline = tmp_path / "baseline.json"
     baseline.write_text(
-        '{"schemaVersion": 1, "maximumHighFindings": {"academy-api": 1}}',
+        '{"schemaVersion": 2, "maximumHighFindings": {"academy-api": 1}, '
+        '"knownHighFindings": []}',
         encoding="utf-8",
     )
 
     with pytest.raises(gate.GateError, match="exactly the six"):
+        gate.load_high_baselines(baseline)
+
+
+@pytest.mark.parametrize(
+    ("replacement_cve", "replacement_version"),
+    [
+        ("CVE-2099-9999", "3.46.1-7+deb13u1"),
+        ("CVE-2026-11822", "3.46.1-7+deb13u2"),
+    ],
+)
+def test_same_count_high_identity_substitution_fails_closed(
+    replacement_cve: str,
+    replacement_version: str,
+) -> None:
+    baselines, known = gate.load_high_baselines(
+        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json"
+    )
+    expected = sorted(key for key in known if key[0] == "academy-base")
+    findings = [
+        _finding(cve, package, version, "HIGH")
+        for _, cve, package, version in expected
+    ]
+    findings[0] = _finding(
+        replacement_cve,
+        "sqlite3",
+        replacement_version,
+        "HIGH",
+    )
+
+    with pytest.raises(gate.GateError, match="unreviewed High"):
+        gate.evaluate_high_budget(
+            "academy-base",
+            _scan(*findings),
+            baselines,
+            known,
+        )
+
+
+def test_removed_high_requires_reviewed_baseline_reduction() -> None:
+    baselines, known = gate.load_high_baselines(
+        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json"
+    )
+    expected = sorted(key for key in known if key[0] == "academy-base")
+    findings = _scan(
+        *(
+            _finding(cve, package, version, "HIGH")
+            for _, cve, package, version in expected[1:]
+        )
+    )
+
+    with pytest.raises(gate.GateError, match="stale High"):
+        gate.evaluate_high_budget("academy-base", findings, baselines, known)
+
+
+def test_high_finding_without_exact_identity_fails_closed() -> None:
+    malformed = _finding("CVE-2099-9999", "demo", "1", "HIGH")
+    malformed["attributes"] = [{"key": "package_name", "value": "demo"}]
+
+    with pytest.raises(gate.GateError, match="lacks exact identity"):
+        gate.evaluate_high_budget(
+            "academy-api",
+            _scan(malformed),
+            {"academy-api": 1},
+            {("academy-api", "CVE-2099-9999", "demo", "1")},
+        )
+
+
+def test_high_baseline_identity_count_must_match_budget(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline.json"
+    document = {
+        "schemaVersion": 2,
+        "maximumHighFindings": {repository: 0 for repository in gate.REPOSITORIES},
+        "knownHighFindings": [
+            {
+                "cve": "CVE-2099-9999",
+                "packageName": "demo",
+                "packageVersion": "1",
+                "repositories": ["academy-api"],
+            }
+        ],
+    }
+    baseline.write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(gate.GateError, match="identity baseline count mismatch"):
         gate.load_high_baselines(baseline)
 
 

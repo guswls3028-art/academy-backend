@@ -64,10 +64,12 @@ def test_headless_opencv_images_do_not_explicitly_install_system_glib() -> None:
 
 
 def test_reviewed_ocr_images_own_the_extended_high_budget() -> None:
-    baseline = json.loads(
+    document = json.loads(
         _read(REPO_ROOT / "docs" / "ssot" / "ecr-high-risk-baseline.json")
-    )["maximumHighFindings"]
+    )
+    baseline = document["maximumHighFindings"]
 
+    assert document["schemaVersion"] == 2
     assert {
         repository for repository, maximum in baseline.items() if maximum == 20
     } == {
@@ -75,6 +77,11 @@ def test_reviewed_ocr_images_own_the_extended_high_budget() -> None:
         "academy-ai-worker-cpu",
         "academy-tools-worker",
     }
+    exact_counts = {repository: 0 for repository in baseline}
+    for finding in document["knownHighFindings"]:
+        for repository in finding["repositories"]:
+            exact_counts[repository] += 1
+    assert exact_counts == baseline
 
 
 def test_runtime_images_build_in_parallel_before_candidate_assembly() -> None:

@@ -88,10 +88,12 @@ def load_acceptances(path: Path, today: date) -> dict[tuple[str, str, str, str],
     return accepted
 
 
-def load_high_baselines(path: Path) -> dict[str, int]:
+def load_high_baselines(
+    path: Path,
+) -> tuple[dict[str, int], set[tuple[str, str, str, str]]]:
     document = _read_json(path)
-    if document.get("schemaVersion") != 1:
-        raise GateError("high risk baseline schemaVersion must be 1")
+    if document.get("schemaVersion") != 2:
+        raise GateError("high risk baseline schemaVersion must be 2")
     baselines = document.get("maximumHighFindings")
     if not isinstance(baselines, dict) or set(baselines) != REPOSITORIES:
         raise GateError(
@@ -100,7 +102,44 @@ def load_high_baselines(path: Path) -> dict[str, int]:
     for repository, count in baselines.items():
         if isinstance(count, bool) or not isinstance(count, int) or count < 0:
             raise GateError(f"invalid High finding baseline for {repository}")
-    return baselines
+
+    entries = document.get("knownHighFindings")
+    if not isinstance(entries, list):
+        raise GateError("knownHighFindings must be an array")
+    known: set[tuple[str, str, str, str]] = set()
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            raise GateError(f"knownHighFindings[{index}] must be an object")
+        cve = entry.get("cve")
+        package = entry.get("packageName")
+        version = entry.get("packageVersion")
+        repositories = entry.get("repositories")
+        if not isinstance(cve, str) or not re.fullmatch(r"CVE-\d{4}-\d{4,}", cve):
+            raise GateError(f"knownHighFindings[{index}] has an invalid CVE")
+        if not isinstance(package, str) or not package:
+            raise GateError(f"knownHighFindings[{index}] has an invalid packageName")
+        if not isinstance(version, str) or not version:
+            raise GateError(f"knownHighFindings[{index}] has an invalid packageVersion")
+        if not isinstance(repositories, list) or not repositories:
+            raise GateError(f"knownHighFindings[{index}] must name repositories")
+        for repository in repositories:
+            if not isinstance(repository, str) or repository not in REPOSITORIES:
+                raise GateError(
+                    f"knownHighFindings[{index}] names unknown repository {repository}"
+                )
+            key = (repository, cve, package, version)
+            if key in known:
+                raise GateError(f"duplicate High finding baseline: {key}")
+            known.add(key)
+
+    for repository, maximum in baselines.items():
+        exact_count = sum(key[0] == repository for key in known)
+        if exact_count != maximum:
+            raise GateError(
+                "High finding identity baseline count mismatch "
+                f"for {repository}: identities={exact_count} maximum={maximum}"
+            )
+    return baselines, known
 
 
 def _run_aws_json(arguments: list[str], *, scan_may_be_absent: bool = False) -> dict[str, Any]:
@@ -238,6 +277,7 @@ def evaluate_high_budget(
     repository: str,
     findings: dict[str, Any],
     baselines: dict[str, int],
+    known_findings: set[tuple[str, str, str, str]],
 ) -> int:
     findings_block = findings.get("imageScanFindings") or {}
     counts = findings_block.get("findingSeverityCounts") or {}
@@ -253,7 +293,58 @@ def evaluate_high_budget(
         raise GateError(
             f"ECR High findings regressed repo={repository}: high={high} maximum={maximum}"
         )
+
+    observed = set(high_finding_keys(repository, findings))
+    if len(observed) != high:
+        raise GateError(
+            "ECR High severity count does not match exact identities "
+            f"for {repository}: high={high} identities={len(observed)}"
+        )
+    expected = {key for key in known_findings if key[0] == repository}
+    unknown = sorted(observed - expected)
+    if unknown:
+        detail = ", ".join(
+            f"{cve}/{package}/{version}"
+            for _, cve, package, version in unknown
+        )
+        raise GateError(
+            f"unreviewed High ECR finding identities repo={repository}: {detail}"
+        )
+    missing = sorted(expected - observed)
+    if missing:
+        detail = ", ".join(
+            f"{cve}/{package}/{version}"
+            for _, cve, package, version in missing
+        )
+        raise GateError(
+            f"stale High ECR finding baseline repo={repository}: missing {detail}"
+        )
     return high
+
+
+def high_finding_keys(
+    repository: str, findings: dict[str, Any]
+) -> list[tuple[str, str, str, str]]:
+    keys: list[tuple[str, str, str, str]] = []
+    findings_block = findings.get("imageScanFindings") or {}
+    raw_findings = findings_block.get("findings", [])
+    if not isinstance(raw_findings, list):
+        raise GateError(f"ECR findings are malformed for {repository}")
+    for finding in raw_findings:
+        if not isinstance(finding, dict) or finding.get("severity") != "HIGH":
+            continue
+        attributes = {
+            item.get("key"): item.get("value")
+            for item in finding.get("attributes", [])
+            if isinstance(item, dict)
+        }
+        cve = finding.get("name")
+        package = attributes.get("package_name")
+        version = attributes.get("package_version")
+        if not all(isinstance(value, str) and value for value in (cve, package, version)):
+            raise GateError(f"High ECR finding lacks exact identity for {repository}")
+        keys.append((repository, cve, package, version))
+    return sorted(set(keys))
 
 
 def main() -> int:
@@ -274,7 +365,7 @@ def main() -> int:
         raise GateError("release candidate must contain exactly the six governed repositories")
     today = datetime.now(timezone.utc).date()
     acceptances = load_acceptances(args.acceptances, today)
-    high_baselines = load_high_baselines(args.high_baseline)
+    high_baselines, known_high_findings = load_high_baselines(args.high_baseline)
 
     for repository in sorted(REPOSITORIES):
         image = images[repository]
@@ -302,11 +393,16 @@ def main() -> int:
         findings_block = findings.get("imageScanFindings") or {}
         counts = findings_block.get("findingSeverityCounts", {})
         critical = counts.get("CRITICAL", 0)
-        high = evaluate_high_budget(repository, findings, high_baselines)
+        high = evaluate_high_budget(
+            repository,
+            findings,
+            high_baselines,
+            known_high_findings,
+        )
         if high:
             print(
-                f"::notice::ECR High findings are within the non-increase baseline for "
-                f"{repository}@{digest} (high={high}, maximum={high_baselines[repository]})"
+                f"::notice::ECR High findings match the exact reviewed baseline for "
+                f"{repository}@{digest} (high={high})"
             )
         print(
             f"ECR_SCAN_PASS repo={repository} digest={digest} "

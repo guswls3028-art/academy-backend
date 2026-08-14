@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "maximumHighFindings": {
     "academy-base": 8,
     "academy-api": 20,
@@ -7,5 +7,231 @@
     "academy-messaging-worker": 8,
     "academy-ai-worker-cpu": 20,
     "academy-tools-worker": 20
-  }
+  },
+  "knownHighFindings": [
+    {
+      "cve": "CVE-2026-11822",
+      "packageName": "sqlite3",
+      "packageVersion": "3.46.1-7+deb13u1",
+      "repositories": [
+        "academy-base",
+        "academy-api",
+        "academy-video-worker",
+        "academy-messaging-worker",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ]
+    },
+    {
+      "cve": "CVE-2026-11824",
+      "packageName": "sqlite3",
+      "packageVersion": "3.46.1-7+deb13u1",
+      "repositories": [
+        "academy-base",
+        "academy-api",
+        "academy-video-worker",
+        "academy-messaging-worker",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ]
+    },
+    {
+      "cve": "CVE-2026-48959",
+      "packageName": "perl",
+      "packageVersion": "5.40.1-6",
+      "repositories": [
+        "academy-base",
+        "academy-api",
+        "academy-video-worker",
+        "academy-messaging-worker",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ]
+    },
+    {
+      "cve": "CVE-2026-48961",
+      "packageName": "perl",
+      "packageVersion": "5.40.1-6",
+      "repositories": [
+        "academy-base",
+        "academy-api",
+        "academy-video-worker",
+        "academy-messaging-worker",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ]
+    },
+    {
+      "cve": "CVE-2026-48962",
+      "packageName": "perl",
+      "packageVersion": "5.40.1-6",
+      "repositories": [
+        "academy-base",
+        "academy-api",
+        "academy-video-worker",
+        "academy-messaging-worker",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ]
+    },
+    {
+      "cve": "CVE-2026-57432",
+      "packageName": "perl",
+      "packageVersion": "5.40.1-6",
+      "repositories": [
+        "academy-base",
+        "academy-api",
+        "academy-video-worker",
+        "academy-messaging-worker",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ]
+    },
+    {
+      "cve": "CVE-2026-7017",
+      "packageName": "perl",
+      "packageVersion": "5.40.1-6",
+      "repositories": [
+        "academy-base",
+        "academy-api",
+        "academy-video-worker",
+        "academy-messaging-worker",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ]
+    },
+    {
+      "cve": "CVE-2026-5928",
+      "packageName": "glibc",
+      "packageVersion": "2.41-12+deb13u3",
+      "repositories": [
+        "academy-base",
+        "academy-api",
+        "academy-video-worker",
+        "academy-messaging-worker",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ]
+    },
+    {
+      "cve": "CVE-2026-58010",
+      "packageName": "glib2.0",
+      "packageVersion": "2.84.4-3~deb13u3",
+      "repositories": [
+        "academy-api",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ]
+    },
+    {
+      "cve": "CVE-2026-58011",
+      "packageName": "glib2.0",
+      "packageVersion": "2.84.4-3~deb13u3",
+      "repositories": [
+        "academy-api",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ]
+    },
+    {
+      "cve": "CVE-2026-58012",
+      "packageName": "glib2.0",
+      "packageVersion": "2.84.4-3~deb13u3",
+      "repositories": [
+        "academy-api",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ]
+    },
+    {
+      "cve": "CVE-2026-58013",
+      "packageName": "glib2.0",
+      "packageVersion": "2.84.4-3~deb13u3",
+      "repositories": [
+        "academy-api",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ]
+    },
+    {
+      "cve": "CVE-2026-58014",
+      "packageName": "glib2.0",
+      "packageVersion": "2.84.4-3~deb13u3",
+      "repositories": [
+        "academy-api",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ]
+    },
+    {
+      "cve": "CVE-2026-58015",
+      "packageName": "glib2.0",
+      "packageVersion": "2.84.4-3~deb13u3",
+      "repositories": [
+        "academy-api",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ]
+    },
+    {
+      "cve": "CVE-2026-58050",
+      "packageName": "libssh2",
+      "packageVersion": "1.11.1-1+deb13u1",
+      "repositories": [
+        "academy-api",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ]
+    },
+    {
+      "cve": "CVE-2026-58051",
+      "packageName": "libssh2",
+      "packageVersion": "1.11.1-1+deb13u1",
+      "repositories": [
+        "academy-api",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ]
+    },
+    {
+      "cve": "CVE-2026-66032",
+      "packageName": "libssh2",
+      "packageVersion": "1.11.1-1+deb13u1",
+      "repositories": [
+        "academy-api",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ]
+    },
+    {
+      "cve": "CVE-2026-66033",
+      "packageName": "libssh2",
+      "packageVersion": "1.11.1-1+deb13u1",
+      "repositories": [
+        "academy-api",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ]
+    },
+    {
+      "cve": "CVE-2026-66034",
+      "packageName": "libssh2",
+      "packageVersion": "1.11.1-1+deb13u1",
+      "repositories": [
+        "academy-api",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ]
+    },
+    {
+      "cve": "CVE-2026-66035",
+      "packageName": "libssh2",
+      "packageVersion": "1.11.1-1+deb13u1",
+      "repositories": [
+        "academy-api",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ]
+    }
+  ]
 }
