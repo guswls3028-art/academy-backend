@@ -65,8 +65,9 @@
    repository-scoped `ecr:StartImageScan` 권한으로 scan을 호출한다. 재사용
    digest라는 이유로 scan을 건너뛰지 않는다. ECR이 동일 digest scan quota가
    이미 소비됐다고 응답해도 기존 scan의 `COMPLETE` readback은 끝까지 요구한다.
-2. scan이 `COMPLETE`가 아니거나 finding identity(CVE, package, version)가
-   불완전하면 실패 폐쇄한다.
+2. scan이 `COMPLETE`가 아니거나 Critical/High finding identity(CVE, package,
+   version)가 불완전하면 실패 폐쇄한다. ECR severity count와 중복 제거한 exact
+   identity 수가 다를 때도 결과를 신뢰하지 않는다.
 3. 승인되지 않은 Critical은 하나라도 있으면 development/preprod/production으로
    진행하지 않는다.
 4. 예외는 `docs/ssot/ecr-critical-risk-acceptance.json`에 repository, CVE,
@@ -75,10 +76,13 @@
    즉시 실패한다.
 5. 만료일 다음 날부터는 scan 전에 전체 게이트가 실패한다. 만료 연장은 새
    vendor 상태와 실제 사용 경로를 다시 검토한 PR로만 가능하다.
-6. High는 `docs/ssot/ecr-high-risk-baseline.json`의 repository별 상한과 비교한다.
-   후보의 수가 상한을 하나라도 넘으면 실패 폐쇄한다. 패키지 제거 또는 vendor
-   수정으로 실제 수가 줄면 운영 scan readback에 맞춰 상한도 낮춘다. 아직 수정본이
-   없는 Debian finding은 상한 이하에서만 추적되며 새 High가 조용히 유입될 수 없다.
+6. High는 `docs/ssot/ecr-high-risk-baseline.json` schema 2의 repository별 상한과
+   `knownHighFindings` exact identity 집합을 모두 비교한다. 수가 같아도 CVE, package,
+   version 중 하나가 바뀌거나 다른 High가 기존 항목을 대체하면 실패한다. 반대로
+   패키지 제거 또는 vendor 수정으로 기존 항목이 사라져도 기준선이 stale하다고
+   실패하므로, 운영 scan readback을 근거로 identity와 상한을 같은 PR에서 내려야
+   한다. 알 수 없는 항목, 누락된 기존 항목, identity/count 불일치 중 어느 것도
+   development/preprod로 진행할 수 없다.
 
 2026-08-09 ECR 데이터베이스 갱신으로 동일한 GLib `2.84.4-3~deb13u3`에
 `CVE-2026-58010`부터 `CVE-2026-58015`까지 여섯 High가 새로 나타났다. 후보와 직전
@@ -105,6 +109,15 @@ AWS SSM이 소유한다. 따라서 불안정 Debian 패키지를 혼합하지 �
 `https://security-tracker.debian.org/tracker/CVE-2026-58050`과
 `https://security-tracker.debian.org/tracker/CVE-2026-58051`이며, 수정 패키지가
 나오면 새 이미지를 빌드·스캔하고 상한을 즉시 낮춘다.
+
+2026-08-15 현재 같은 `libssh2` 패키지에 `CVE-2026-66032`부터
+`CVE-2026-66035`까지 네 High가 추가되어 API·AI·Tools의 exact 집합은 공통 8건,
+GLib 6건, libssh2 6건인 총 20건이다. Debian tracker는 trixie
+`1.11.1-1+deb13u1`을 네 건 모두 vulnerable로, forky/sid `1.11.1-5`를 fixed로
+표시한다. Academy 이미지에 다른 suite 패키지를 섞지 않으며, trixie 수정 패키지가
+나오면 새 digest의 완료 scan에서 제거를 확인한 뒤 identity와 상한을 함께 낮춘다.
+현재 앱·워커 entrypoint에는 SSH/SFTP client 호출 경로가 없다는 도달 가능성 경계는
+유지하지만, 그 사실이 다른 CVE나 버전으로의 조용한 교체를 허용하지는 않는다.
 
 현재 Critical 한시 항목은 Debian stable에 수정본이 아직 없거나 Debian이
 `no-dsa`/minor로 분류한 glibc·GLib·Mbed TLS·Perl finding이다. GLib의

@@ -167,10 +167,21 @@ class Command(BaseCommand):
             return
 
         try:
-            logger.info(
-                "reconcile lock acquired, starting run",
-                extra={"event": "reconcile_lock_acquired"},
-            )
+            if lock_required:
+                logger.info(
+                    "reconcile lock acquired, starting run",
+                    extra={"event": "reconcile_lock_acquired"},
+                )
+            elif dry_run:
+                logger.info(
+                    "reconcile dry-run starting without coordination lock",
+                    extra={"event": "reconcile_dry_run"},
+                )
+            else:
+                logger.warning(
+                    "reconcile starting with coordination lock explicitly skipped",
+                    extra={"event": "reconcile_lock_skipped"},
+                )
             self._run_reconcile(dry_run, resubmit, cutoff)
         finally:
             if lock_required:
