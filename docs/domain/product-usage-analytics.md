@@ -148,7 +148,9 @@ transaction과 운영 감사 로그로 자동 해제한다. 예상 밖의 두 �
 - 수동 실행의 실제 삭제는 정확한 범위를 검토한 뒤 `--execute`를 붙인다.
 - `.github/workflows/product-usage-maintenance.yml`은 매일 03:25 KST에
   전날을 idempotent rollup하고 원본 30일·일별 집계 400일 보존을
-  적용한다. GitHub OIDC로 healthy InService API 한 대에만 SSM command를
+  적용한다. workflow는 저장소를 먼저 checkout한 뒤 versioned
+  `scripts/v1/read-product-analytics-db-share.ps1`을 실행하고, GitHub OIDC로
+  healthy InService API 한 대에만 SSM command를
   보내며 rollup 누락, 인스턴스 부재 또는 command 실패 시 삭제 없이
   실패한다. 같은 실행에서 24시간 sampled tenant DB 로그를 가중 집계하고
   파일럿 hard gate를 실행하며 90일 보존 JSON artifact를 남긴다. 수동
@@ -194,15 +196,17 @@ SecureString JSON을 보존한 채 전용 384-bit 난수 HMAC key가 없을 때�
 
 ## 6. 현재 운영 상태
 
-2026-08-12 KST 운영 재검증 결과:
+2026-08-15 KST 운영 재검증 결과:
 
 - `hakwonplus`는 정식 tenant API workflow `30504193527`로 2026-07-30에
   활성화되어 28일 파일럿의 14번째 달력일을 진행 중이다.
 - `dnb`, `tchul`, `sswe`, `limglish`, `ymath` 등 확인된 외부 테넌트는
   비활성이고 최근 24시간 다른 테넌트 이벤트가 없어야 daily gate가
   통과한다.
-- 일별 maintenance는 계속 성공 중이다. 2026-08-11 원본 4,605건을
-  일별 actor 1,604행으로 rollup했고 검증용 dry-run은 삭제 0건이었다.
+- 2026-08-15 최신 main dry-run에서 저장소 checkout 누락 때문에 versioned
+  DB-share script를 찾지 못하는 회귀를 발견했다. workflow에 checkout을
+  명시하고 계약 검사로 실행 순서를 고정했으며, 수정 배포 뒤 동일 dry-run
+  성공을 운영 증거로 남긴다.
 - 플래그 활성화 뒤에도 합성·대리 로그인 이벤트는 품질 수치로만 남고
   적격 actor와 funnel 지표에서는 제외된다.
 - 28일 적격 기준선 종료 전에는 메뉴·CTA 위치·문구를 자동 변경하지
