@@ -11,6 +11,20 @@ function Assert-Contract {
 }
 
 try {
+    $repoRoot = Split-Path -Parent (Split-Path -Parent $scriptRoot)
+    $maintenanceWorkflowPath = Join-Path $repoRoot ".github/workflows/product-usage-maintenance.yml"
+    $maintenanceWorkflow = Get-Content -Raw -LiteralPath $maintenanceWorkflowPath
+    $checkoutMarker = "uses: actions/checkout@"
+    $dbShareScriptMarker = "./scripts/v1/read-product-analytics-db-share.ps1"
+    $checkoutIndex = $maintenanceWorkflow.IndexOf($checkoutMarker)
+    $dbShareScriptIndex = $maintenanceWorkflow.IndexOf($dbShareScriptMarker)
+    Assert-Contract ($checkoutIndex -ge 0) (
+        "Product analytics maintenance must check out the repository before invoking local scripts."
+    )
+    Assert-Contract ($dbShareScriptIndex -gt $checkoutIndex) (
+        "Repository checkout must precede the DB-share script invocation."
+    )
+
     $recorderPath = Join-Path $tempRoot "telemetry-recorder.ps1"
     $recordPath = Join-Path $tempRoot "telemetry-record.json"
     @'
