@@ -383,6 +383,9 @@ FINAL → {} (종단, 절대 불변)
 1. **FINAL 불변성:** status=FINAL인 ExamResult의 score, breakdown, manual_overrides는 수정 불가
 2. **finalized_at:** FINAL 전이 시 반드시 설정
 3. **학생 노출:** Student API는 status=FINAL인 결과만 반환해야 함
+4. **운영 정합성 검사:** `check_integrity`의 `manual_overrides` 누락 카운트는
+   임의 샘플이 아니라 비어 있지 않은 전체 JSON 행을 500행 단위로 스트리밍해
+   검사한다. 데이터가 200건을 넘어도 뒤쪽의 `max_score` 누락을 숨기지 않는다.
 
 ---
 
