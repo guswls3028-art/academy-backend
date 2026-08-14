@@ -622,6 +622,52 @@ class AdminStudentGradesScopeTest(TestCase, ClinicTestMixin):
         self.assertEqual(homework_row["session_order"], self.data["lec_session"].order)
         self.assertEqual(homework_row["session_type"], "REGULAR")
 
+    def test_removed_and_recreated_same_title_homework_returns_only_replacement(self):
+        score_model = self.data["enrollments"][0].homework_scores.model
+        homework_model = score_model._meta.get_field("homework").remote_field.model
+        removed = homework_model.objects.create(
+            tenant=self.tenant,
+            homework_type=homework_model.HomeworkType.REGULAR,
+            session=self.data["lec_session"],
+            title="동일 제목 재생성 과제",
+            meta={
+                "default_max_score": 30,
+                "removed_from_session_at": "2026-08-08T22:52:04+09:00",
+            },
+        )
+        score_model.objects.create(
+            enrollment=self.data["enrollments"][0],
+            session=self.data["lec_session"],
+            homework=removed,
+            score=27,
+            max_score=30,
+            passed=False,
+        )
+        replacement = homework_model.objects.create(
+            tenant=self.tenant,
+            homework_type=homework_model.HomeworkType.REGULAR,
+            session=self.data["lec_session"],
+            title=removed.title,
+            meta={"default_max_score": 30},
+        )
+        score_model.objects.create(
+            enrollment=self.data["enrollments"][0],
+            session=self.data["lec_session"],
+            homework=replacement,
+            score=30,
+            max_score=30,
+            passed=True,
+        )
+
+        response = self._get(self.student.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(len(response.data["homeworks"]), 1)
+        row = response.data["homeworks"][0]
+        self.assertEqual(row["homework_id"], replacement.id)
+        self.assertEqual(row["title"], removed.title)
+        self.assertEqual(row["score"], 30.0)
+
     def test_homework_history_defaults_to_latest_session_and_exposes_scope(self):
         score_model = self.data["enrollments"][0].homework_scores.model
         homework_model = score_model._meta.get_field("homework").remote_field.model

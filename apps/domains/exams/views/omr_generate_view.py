@@ -20,8 +20,11 @@ from rest_framework import status
 
 from apps.domains.exams.models import Exam
 from apps.core.permissions import TenantResolvedAndStaff
-from apps.domains.assets.omr.dto.omr_document import MAX_ESSAY_QUESTIONS
-from apps.support.exams.view_dependencies import MAX_MC_QUESTIONS, build_omr_meta
+from apps.support.exams.view_dependencies import (
+    MAX_ESSAY_QUESTIONS,
+    MAX_MC_QUESTIONS,
+    build_omr_meta,
+)
 
 
 class LegacyOMRParamsSerializer(serializers.Serializer):

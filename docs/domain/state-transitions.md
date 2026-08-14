@@ -651,6 +651,10 @@ CONFIRMED → {} (종단)
 **현재 상태:** 자동결제와 Toss webhook이 `PENDING → SUCCESS/FAILED`,
 환불 webhook이 `SUCCESS/PARTIALLY_REFUNDED → PARTIALLY_REFUNDED/REFUNDED`를
 처리한다. 수동 입금은 처음부터 `SUCCESS`인 대조 레코드를 원자적으로 만든다.
+동시 웹훅이 같은 idempotency key를 먼저 만든 복구 경로는
+`PaymentTransaction` 자체 행만 잠근다. 선택 관계인 `invoice=NULL` 레거시·경합 행을
+`select_related`하더라도 PostgreSQL nullable outer join 전체에 `FOR UPDATE`를
+적용하지 않으므로 복구 요청이 500으로 실패하지 않는다.
 
 ---
 

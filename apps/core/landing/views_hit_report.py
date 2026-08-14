@@ -114,7 +114,7 @@ def verify_prepared_hit_report_previews(
         return
 
     reports = list(
-        MatchupHitReport.objects.select_for_update().select_related(
+        MatchupHitReport.objects.select_for_update(of=("self",)).select_related(
             "document",
             "author",
         ).filter(tenant=tenant, id__in=report_ids).order_by("id"),

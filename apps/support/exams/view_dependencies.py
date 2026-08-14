@@ -6,6 +6,7 @@ from django.shortcuts import get_object_or_404
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
 
+from apps.domains.assets.omr.dto.omr_document import MAX_ESSAY_QUESTIONS
 from apps.domains.assets.omr.services.meta_generator import MAX_MC_QUESTIONS
 
 

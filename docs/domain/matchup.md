@@ -138,6 +138,10 @@ Gemini VLM을 먼저 운영 실험할 때는 전체 문서를 VLM primary로 바
   `MatchupHitReport`에서 PDF를 생성하는 호환 경로다.
 - 두 경로 모두 게시 시점 PDF 스냅샷과 대표 정적 미리보기를 저장한다. 이후
   원본 보고서나 로컬 파일이 바뀌어도 게시물 내용은 자동 변경하지 않는다.
+- 홈페이지 설정 게시 직전의 대표 미리보기 검증은 `MatchupHitReport` 행만 잠근다.
+  `author=NULL`인 레거시 보고서를 함께 읽더라도 PostgreSQL nullable outer join에
+  잠금을 확장하지 않아 게시가 500으로 실패하지 않으며, 준비한 preview key가
+  달라졌으면 기존처럼 `409 hit_report_changed`로 중단한다.
 - 공개 목록·상세·PDF·미리보기는 로그인 없이 조회할 수 있지만, 현재 요청의
   정확한 테넌트에 속하고 `published`이며 공개 기간 안인 자료만 반환한다.
   테넌트를 추론하거나 다른 테넌트 자료로 fallback하지 않는다.
