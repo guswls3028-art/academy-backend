@@ -335,6 +335,21 @@ def redis_incr_with_ttl(key: str, ttl_seconds: int) -> Optional[int]:
     return int(value)
 
 
+def redis_get_int(key: str) -> Optional[int]:
+    """Read an integer coordination value without changing its value or TTL."""
+    redis_client = get_redis_client()
+    if not redis_client:
+        return None
+    value = redis_client.get(key)
+    if value is None:
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        logger.warning("Redis integer value is malformed (key=%s)", key)
+        return None
+
+
 def redis_ping() -> Optional[bool]:
     redis_client = get_redis_client()
     if not redis_client:
