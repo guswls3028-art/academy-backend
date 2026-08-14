@@ -640,6 +640,7 @@ jobs:
         with:
           context: .
           file: docker/Dockerfile.base
+          build-args: APT_REFRESH_TOKEN=${{ github.run_id }}-${{ github.run_attempt }}
           platforms: linux/arm64
           push: true
           provenance: false

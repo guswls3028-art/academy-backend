@@ -28,6 +28,18 @@ def test_base_dependency_copy_does_not_duplicate_the_python_layer() -> None:
     assert "RUN chown -R appuser:appuser /home/appuser" not in dockerfile
 
 
+def test_selected_base_build_refreshes_apt_packages() -> None:
+    dockerfile = _read(REPO_ROOT / "docker" / "Dockerfile.base")
+    workflow = _read(WORKFLOW)
+
+    assert dockerfile.count("ARG APT_REFRESH_TOKEN=manual") == 2
+    assert dockerfile.count('RUN test -n "${APT_REFRESH_TOKEN}"') == 2
+    assert (
+        "build-args: APT_REFRESH_TOKEN="
+        "${{ github.run_id }}-${{ github.run_attempt }}"
+    ) in workflow
+
+
 def test_runtime_dependencies_precede_frequently_changed_source() -> None:
     for service, path in PRODUCTION_DOCKERFILES.items():
         dockerfile = _read(path)

@@ -13,6 +13,11 @@
 - Docker Dependabot이 `/docker`를 매주 확인하며, base digest 변경은 일반 PR과
   ECR scan을 다시 통과해야 한다. Python 3.11 minor line을 유지하고 3.12+
   전환은 별도 호환성 검증 없이는 자동 제안하지 않는다.
+- 변경 감지나 수동 전체 빌드가 공통 base 빌드를 선택하면 workflow run ID와
+  attempt를 `APT_REFRESH_TOKEN`으로 전달한다. 이 값은 builder/runtime의 APT
+  설치 레이어를 무효화하므로 오래된 `apt-get update` 결과를 BuildKit 캐시에서
+  재사용하지 않고, 당시 Debian 저장소의 최신 보안 패키지를 설치한다. base가
+  선택되지 않은 일반 앱 코드 빌드는 기존 digest를 재사용한다.
 - pip Dependabot은 같은 호환 버전이 필요한 `boto3`/`botocore`를 한 PR로
   갱신하고, 개발 의존성 및 GitHub Actions minor/patch는 각각 묶어 중복 CI를
   줄인다. 모든 묶음은 개별 업데이트와 같은 전체 품질·이미지 scan 게이트를
