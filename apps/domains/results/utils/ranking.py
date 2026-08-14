@@ -10,7 +10,8 @@
     불변으로 유지된다.
   · initial_snapshot이 없는 legacy 데이터는 Result.total_score로 fallback
     (attempt_index=1 도입 이전 데이터 호환).
-- dense_rank: 동점이면 같은 등수, 다음 등수는 건너뛰지 않음.
+- competition_rank: 동점이면 같은 등수, 다음 등수는 동점자 수만큼 건너뜀.
+  예: 19, 14, 14, 12점은 1, 2, 2, 4등.
 - query-time 계산: Result 모델에 필드 추가 없음.
 - tenant isolation: 모든 공개 계산 함수가 tenant를 필수로 받아 enrollment 관계까지 제한.
 - NOT_SUBMITTED(미응시) 학생은 석차 계산에서 제외.
@@ -89,10 +90,10 @@ def _first_attempt_state(
     return override, not_submitted_pairs
 
 
-def _dense_rank(
+def _competition_rank(
     rows: List[dict],
 ) -> Dict[int, dict]:
-    """JSON-safe nonnegative scores only, then deterministic dense rank."""
+    """JSON-safe nonnegative scores only, then deterministic competition rank."""
     normalized_rows = []
     for row in rows:
         score = _safe_nonnegative_score(row.get("total_score"))
@@ -113,13 +114,13 @@ def _dense_rank(
     cohort_avg = round(total / cohort_size, 2) if cohort_size else 0.0
 
     result_map: Dict[int, dict] = {}
-    current_rank = 0
     prev_score: Optional[float] = None
-    for r in normalized_rows:
+    current_rank = 0
+    for position, r in enumerate(normalized_rows, start=1):
         score = r["total_score"]
         eid = int(r["enrollment_id"])
         if prev_score is None or score != prev_score:
-            current_rank += 1
+            current_rank = position
             prev_score = score
         percentile = 100.0 if cohort_size <= 1 else round((current_rank / cohort_size) * 100, 1)
         result_map[eid] = {
@@ -140,7 +141,7 @@ def compute_exam_rankings(
     """
     시험별 enrollment_id → {rank, percentile, cohort_size, cohort_avg} 맵 반환.
 
-    - rank: dense_rank (동점 = 같은 등수)
+    - rank: competition rank (동점 = 같은 등수, 다음 등수는 동점 인원 반영)
     - percentile: 상위 % (1등/20명 = 5%, 낮을수록 좋음)
     - cohort_size: 총 응시자 수 (미응시 제외)
     - cohort_avg: 평균 점수 (1차 점수 기준)
@@ -193,7 +194,7 @@ def compute_exam_rankings(
             continue
         rows.append({"enrollment_id": eid, "total_score": score})
 
-    return _dense_rank(rows)
+    return _competition_rank(rows)
 
 
 def compute_exam_rankings_batch(
@@ -285,7 +286,7 @@ def compute_exam_rankings_batch(
     result: Dict[int, Dict[int, dict]] = {}
     for exam_id_key in exam_ids_int:
         exam_rows = by_exam.get(exam_id_key, [])
-        rank_map = _dense_rank(exam_rows)
+        rank_map = _competition_rank(exam_rows)
         if target_enrollment_set is None:
             result[exam_id_key] = rank_map
         else:

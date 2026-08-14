@@ -27,7 +27,7 @@
 
 | 목록 | 서버 기본 정렬 | 필터·페이지 경계 |
 |------|----------------|------------------|
-| 시험 학생별 결과 | 1차점수 dense rank, 학생명, enrollment ID | 전체 응시 결과를 반환하며 결시는 석차 모집단 밖 |
+| 시험 학생별 결과 | 1차점수 표준 공동 순위, 학생명, enrollment ID | 전체 응시 결과를 반환하며 결시는 석차 모집단 밖 |
 | 차시 성적·과제 결과 | 학생명, enrollment ID | 차시 roster·tenant 범위를 먼저 확정 |
 | 출결 명단 | 요청한 허용 키와 이름·ID 보조키 | 전체 queryset 정렬 후 50명 페이지 |
 | 학생 목록 | 허용 ordering, 기본 최신 ID | 검색·삭제 탭·tenant 필터 후 페이지 |
@@ -41,12 +41,16 @@
 
 - `ranking_score`: 석차 계산에 사용한 1차 점수
 - `final_score`: 대표 결과에 저장된 현재 최종점수
-- `rank`: `ranking_score`의 dense rank
+- `rank`: `ranking_score`의 표준 공동 순위(competition rank). 동점자는 같은
+  등수이고 다음 등수는 동점 인원만큼 건너뛴다. 예를 들어 점수가
+  `19, 14, 14, 12`이면 등수는 `1, 2, 2, 4`다.
 - `result_status`: `NOT_SUBMITTED`, `PROCESSING`, `PARTIAL`, `DONE`, `FAILED`
 
 수동 입력·엑셀 반영처럼 Submission 행이 없어도 확정 점수가 있으면 `DONE`이다.
 `NOT_SUBMITTED` attempt는 점수·석차·평균에서 제외한다. 재시험 때문에
 `ranking_score`와 `final_score`가 다르면 둘 다 내려 화면이 기준을 숨기지 않는다.
+`percentile`은 이 공동 순위를 실제 `cohort_size`로 나눠 계산하므로 동점 뒤 학생의
+전체 응시자 대비 위치도 건너뛴 등수를 반영한다.
 
 ## 검증
 
