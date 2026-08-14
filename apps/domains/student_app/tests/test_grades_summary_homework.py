@@ -699,6 +699,30 @@ class MyGradesSummaryHomeworkTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["homeworks"], [])
 
+    def test_removed_homework_score_is_hidden_from_student_summary(self):
+        homework = Homework.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title="제거된 채점 과제",
+            meta={
+                "default_max_score": 30,
+                "removed_from_session_at": "2026-05-24T00:00:00+09:00",
+            },
+        )
+        HomeworkScore.objects.create(
+            enrollment=self.enrollment,
+            session=self.session,
+            homework=homework,
+            score=27,
+            max_score=30,
+            passed=False,
+        )
+
+        response = self._call()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["homeworks"], [])
+
     def test_cross_lecture_homework_relations_are_fail_closed(self):
         other_lecture = Lecture.objects.create(
             tenant=self.tenant,

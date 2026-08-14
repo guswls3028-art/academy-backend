@@ -294,6 +294,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             attempt_index=1,
         )
         .exclude(score__isnull=True)
+        .exclude(homework__meta__removed_from_session_at__isnull=False)
         .exclude(session__lecture__is_system=True)
         .select_related("homework", "session", "session__lecture")
         .order_by("-updated_at")
