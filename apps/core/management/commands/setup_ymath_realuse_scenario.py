@@ -86,13 +86,60 @@ class Command(BaseCommand):
         parser.add_argument("--teacher-username", default="ymath-qa-teacher")
         parser.add_argument("--student-count", type=int, default=6)
         parser.add_argument("--session-count", type=int, default=24)
-        parser.add_argument("--reset", action="store_true")
+        lifecycle = parser.add_mutually_exclusive_group()
+        lifecycle.add_argument("--reset", action="store_true")
+        lifecycle.add_argument("--destroy", action="store_true")
 
     def handle(self, *args, **options):
         tenant_code = str(options["tenant_code"] or "").strip().lower()
         if not tenant_code.startswith(SCENARIO_CODE_PREFIX):
             raise CommandError(f"tenant-code must start with {SCENARIO_CODE_PREFIX!r}.")
         assert_isolated_runtime()
+        existing = Tenant.objects.filter(code=tenant_code).first()
+        if options["destroy"]:
+            if existing is None:
+                self.stdout.write(
+                    json.dumps(
+                        {
+                            "status": "YMATH_REALUSE_SCENARIO_ABSENT",
+                            "tenant_code": tenant_code,
+                            "remaining": {"tenants": 0, "users": 0},
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                )
+                return
+
+            tenant_id = existing.id
+            counts = self._tenant_counts(existing)
+            user_count = existing.users.count()
+            with transaction.atomic():
+                existing.delete()
+            remaining = {
+                "tenants": Tenant.objects.filter(id=tenant_id).count(),
+                "users": get_user_model().objects.filter(tenant_id=tenant_id).count(),
+            }
+            if any(remaining.values()):
+                raise CommandError(
+                    "Isolated scenario cleanup left database residue: "
+                    + json.dumps(remaining, ensure_ascii=False, sort_keys=True)
+                )
+            self.stdout.write(
+                json.dumps(
+                    {
+                        "status": "YMATH_REALUSE_SCENARIO_DESTROYED",
+                        "tenant_code": tenant_code,
+                        "tenant_id": tenant_id,
+                        "deleted": {**counts, "users": user_count},
+                        "remaining": remaining,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+            )
+            return
+
         student_count = int(options["student_count"])
         session_count = int(options["session_count"])
         if not 1 <= student_count <= 30:
@@ -104,7 +151,6 @@ class Command(BaseCommand):
         if not password:
             raise CommandError(f"{PASSWORD_ENV} must be set.")
 
-        existing = Tenant.objects.filter(code=tenant_code).first()
         if existing and options["reset"]:
             counts = self._tenant_counts(existing)
             existing.delete()

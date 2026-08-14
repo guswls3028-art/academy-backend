@@ -85,6 +85,18 @@ pwsh scripts/v1/connect-api-development.ps1 -AwsProfile <profile>
 스크립트가 선택한 active 인스턴스의 API를 로컬 포트로 전달한다. 요청에는 반드시
 `X-Tenant-Code`를 명시하며 기본 테넌트 추론은 없다.
 
+사용자 로그인이 필요한 시각 QA는 운영 테넌트에 테스트 계정을 남기지 않고 이
+런타임에서 수행한다. 검수 대상 frontend의 exact checkout을 로컬에서 빌드하거나
+실행하고 API proxy를 위 loopback tunnel로 지정한다. 검수용 tenant·교사·학생은
+`setup_ymath_realuse_scenario`처럼 production DB/R2에서 실행을 거부하는 명령으로만
+만든다. 실제 학생·학부모·성적·연락처와 운영 비밀값은 복제하지 않는다.
+
+검수는 desktop과 390px에서 로그인, 대상 화면 DOM, 상호작용, 새로고침 후 상태,
+가로 overflow와 콘솔/API 오류를 확인한다. 종료 시 같은 명령의 `--destroy`로 정확한
+`qa-*` tenant를 삭제하고 출력의 `remaining`이 모두 0인지 확인해야 한다. setup,
+검수, cleanup 중 하나라도 실패하면 완료로 기록하지 않는다. 상세 Ymath 절차는
+[Ymath 실자료 원본 전수 검증](runbooks/ymath-real-source-qa.md)을 따른다.
+
 정상 상태의 최소 증거는 다음과 같다.
 
 - active 개발 인스턴스가 정확히 1대이고 종료 방지가 켜져 있음
