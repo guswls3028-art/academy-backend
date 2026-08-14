@@ -218,6 +218,13 @@ attempt 메타가 남아 있으면 정확한 원점수를 보존하며, 두 출�
 안정화한다. 전체 목록 계약은
 [data-list-ordering.md](data-list-ordering.md)를 따른다.
 
+수동 점수 입력으로 만든 `ExamAttempt.submission_id=0`은 실제 제출 ID가 아니라
+offline placeholder다. DB의 `unique_submission_per_attempt` 제약과 운영
+`check_integrity` 감사 모두 이 sentinel을 중복 제출 판정에서 제외하며, 양수인 실제
+submission ID만 유일성을 검사한다. `NULL`은 클리닉 직접 입력 경계로 동일하게
+제외한다. 무결성 감사는 전체 `ExamResult.manual_overrides`를 순회하므로 뒤쪽 행의
+`max_score` 누락도 표본 제한 없이 보고한다.
+
 ### 정오 입력
 
 | 화면 표시 | 저장 의미 | 점수 | 오답노트 |

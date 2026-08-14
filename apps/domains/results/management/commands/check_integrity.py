@@ -48,7 +48,7 @@ class Command(BaseCommand):
         # 3. submission_id duplicates
         sub_dupes = list(
             ExamAttempt.objects
-            .filter(submission_id__isnull=False)
+            .filter(submission_id__gt=0)
             .values("submission_id")
             .annotate(cnt=Count("id"))
             .filter(cnt__gt=1)
