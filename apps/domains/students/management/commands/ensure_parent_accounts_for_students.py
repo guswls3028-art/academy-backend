@@ -1,106 +1,145 @@
-# PATH: apps/domains/students/management/commands/ensure_parent_accounts_for_students.py
-"""
-등록된 모든 학생에 대해 학부모 전화번호로 학부모 계정 생성 (일회성 마이그레이션).
+"""Create only missing legacy parent accounts without changing existing credentials.
 
-- deleted_at 이 없는(활성) 학생 중 parent_phone 이 있는 경우만 처리
-- 이미 해당 전화번호로 학부모 계정이 있으면 User만 없을 때 생성 후 비밀번호 동기화
-- 학부모 비밀번호: 해당 학생의 현재 비밀번호(해시 복사)로 맞춤 → 학부모는 전화번호 + 학생과 동일 비밀번호로 로그인 가능
-
-사용:
-  python manage.py ensure_parent_accounts_for_students              # 실행
-  python manage.py ensure_parent_accounts_for_students --dry-run    # 대상만 출력
+The command is dry-run by default and requires an exact tenant confirmation for
+execution. Existing Parent users and their passwords are never changed.
 """
-from django.core.management.base import BaseCommand
+
+from __future__ import annotations
+
+from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-from apps.domains.students.models import Student
 from academy.adapters.db.django import repositories_core as core_repo
-from apps.support.students.lifecycle_dependencies import ensure_parent_for_student
+from apps.domains.students.models import Student
+from apps.support.students.lifecycle_dependencies import (
+    ensure_parent_account_for_student,
+)
 
 
 def _normalize_phone(raw: str) -> str:
-    return (raw or "").strip().replace("-", "").replace(" ", "").replace(".", "")
+    return "".join(character for character in str(raw or "") if character.isdigit())
+
+
+def _is_recovery_phone(phone: str) -> bool:
+    return len(phone) == 11 and phone.startswith("010")
 
 
 class Command(BaseCommand):
-    help = "등록된 모든 학생에 대해 학부모 전화번호로 학부모 계정 생성 (마이그레이션)"
+    help = (
+        "Dry-run by default. Create missing parent accounts for one exact tenant "
+        "without changing existing parent passwords."
+    )
 
     def add_arguments(self, parser):
+        parser.add_argument("--tenant", required=True, help="Exact active Tenant.code")
+        parser.add_argument("--execute", action="store_true")
+        parser.add_argument(
+            "--confirm",
+            default="",
+            help="For --execute, repeat the exact tenant code",
+        )
         parser.add_argument(
             "--dry-run",
             action="store_true",
-            help="대상만 출력, 실제 생성/수정 없음",
+            help="Compatibility flag; dry-run is already the default",
         )
 
     def handle(self, *args, **options):
-        dry_run = options["dry_run"]
+        tenant_code = str(options["tenant"] or "").strip()
+        execute = bool(options["execute"])
+        if execute and options.get("dry_run"):
+            raise CommandError("choose_exactly_one:--execute_or_--dry-run")
+        if execute and str(options.get("confirm") or "").strip() != tenant_code:
+            raise CommandError("confirmation_required:--confirm must equal --tenant")
 
-        # 활성 학생 중 학부모 전화번호가 있는 것만
-        students = list(
-            Student.objects.filter(deleted_at__isnull=True)
+        tenant = core_repo.tenant_get_by_code(tenant_code)
+        if tenant is None:
+            raise CommandError(f"tenant_not_found_or_inactive:{tenant_code}")
+
+        students_qs = (
+            Student.objects.filter(
+                tenant=tenant,
+                deleted_at__isnull=True,
+            )
             .exclude(parent_phone__isnull=True)
             .exclude(parent_phone="")
-            .select_related("tenant", "user")
-            .order_by("tenant_id", "id")
+            .select_related("tenant")
+            .order_by("id")
         )
-
-        if not students:
-            self.stdout.write(self.style.SUCCESS("대상 학생 없음 (활성 학생 중 parent_phone 있는 경우만)."))
+        candidates, invalid_count, already_linked = self._candidate_rows(
+            tenant=tenant,
+            students=list(students_qs),
+        )
+        mode = "execute" if execute else "dry-run"
+        self.stdout.write(
+            f"parent_account_repair tenant={tenant.code} mode={mode} "
+            f"candidates={len(candidates)} invalid_phone={invalid_count} "
+            f"already_linked={already_linked}"
+        )
+        if not execute or not candidates:
             return
 
-        self.stdout.write(f"대상 학생 수: {len(students)}명 (tenant별·id순)")
-        for s in students[:10]:
-            phone = _normalize_phone(s.parent_phone)
-            self.stdout.write(f"  tenant={s.tenant_id} student_id={s.id} name={s.name!r} parent_phone={phone[:6]}***")
-        if len(students) > 10:
-            self.stdout.write(f"  ... 외 {len(students) - 10}명")
+        try:
+            with transaction.atomic():
+                locked_students = list(students_qs.select_for_update())
+                locked_candidates, locked_invalid, locked_linked = self._candidate_rows(
+                    tenant=tenant,
+                    students=locked_students,
+                )
+                if (
+                    [phone for phone, _student in locked_candidates]
+                    != [phone for phone, _student in candidates]
+                    or locked_invalid != invalid_count
+                    or locked_linked != already_linked
+                ):
+                    raise CommandError("repair_candidates_changed:rerun_dry_run")
 
-        if dry_run:
-            self.stdout.write(self.style.WARNING("--dry-run: 실제 생성/수정하지 않음."))
-            return
-
-        created_users = 0
-        synced_passwords = 0
-        errors = []
-
-        with transaction.atomic():
-            for student in students:
-                try:
-                    parent_phone = _normalize_phone(student.parent_phone)
-                    if not parent_phone or len(parent_phone) < 8:
-                        continue
-                    had_user_before = False
-                    existing_parent = core_repo.parent_get_by_tenant_phone(student.tenant, parent_phone)
-                    if existing_parent and existing_parent.user_id:
-                        had_user_before = True
-
-                    # 학부모 계정 생성(없으면) — 임시 비밀번호로 생성
-                    parent = ensure_parent_for_student(
-                        tenant=student.tenant,
+                created = 0
+                for parent_phone, student in locked_candidates:
+                    result = ensure_parent_account_for_student(
+                        tenant=tenant,
                         parent_phone=parent_phone,
                         student_name=student.name or "학생",
                     )
-                    if not parent.user_id:
-                        errors.append(f"student_id={student.id}: parent user 생성 실패")
-                        continue
-                    if not had_user_before:
-                        created_users += 1
+                    if not result.parent.user_id:
+                        raise CommandError(
+                            f"parent_user_missing_after_ensure:student_id={student.id}"
+                        )
+                    if result.user_created:
+                        created += 1
+                if created != len(locked_candidates):
+                    raise CommandError(
+                        "repair_result_changed:existing account appeared during execution"
+                    )
+        except CommandError:
+            raise
+        except Exception as exc:
+            raise CommandError(f"parent_account_repair_failed:{exc}") from exc
 
-                    # 학부모 비밀번호를 해당 학생 비밀번호(해시)와 동일하게 맞춤
-                    if student.user_id and parent.user_id and parent.user_id != student.user_id:
-                        parent.user.password = student.user.password
-                        parent.user.save(update_fields=["password"])
-                        synced_passwords += 1
-                except Exception as e:
-                    errors.append(f"student_id={student.id} ({getattr(student, 'name', '')}): {e}")
-
-        if errors:
-            for msg in errors[:20]:
-                self.stdout.write(self.style.ERROR(msg))
-            if len(errors) > 20:
-                self.stdout.write(self.style.ERROR(f"... 외 {len(errors) - 20}건 오류"))
         self.stdout.write(
             self.style.SUCCESS(
-                f"완료: 신규 학부모 User 생성={created_users}, 비밀번호 동기화={synced_passwords}, 오류={len(errors)}건"
+                f"parent_account_repair_complete tenant={tenant.code} created={created} "
+                "existing_passwords_changed=0"
             )
+        )
+
+    @staticmethod
+    def _candidate_rows(*, tenant, students: list[Student]):
+        candidates_by_phone: dict[str, Student] = {}
+        invalid_count = 0
+        already_linked = 0
+        for student in students:
+            phone = _normalize_phone(student.parent_phone)
+            if not _is_recovery_phone(phone):
+                invalid_count += 1
+                continue
+            existing_parent = core_repo.parent_get_by_tenant_phone(tenant, phone)
+            if existing_parent and existing_parent.user_id:
+                already_linked += 1
+                continue
+            candidates_by_phone.setdefault(phone, student)
+        return (
+            sorted(candidates_by_phone.items(), key=lambda item: item[0]),
+            invalid_count,
+            already_linked,
         )
