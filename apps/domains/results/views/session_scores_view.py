@@ -44,7 +44,10 @@ from rest_framework.permissions import IsAuthenticated
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.results.models import Result, ExamAttempt
 from apps.domains.results.utils.session_exam import get_exams_for_session
-from apps.domains.results.utils.result_queries import latest_results_per_enrollment
+from apps.domains.results.utils.result_queries import (
+    latest_results_for_targets_per_enrollment,
+    latest_results_per_enrollment,
+)
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement_bulk
 from apps.domains.results.utils.exam_absence import current_exam_absence_counts
 from apps.domains.results.services.assessment_correction_status import (
@@ -560,17 +563,20 @@ class SessionScoresView(APIView):
         # -------------------------------------------------
         # 6) Exam Result map (문항별 점수용 items prefetch)
         # -------------------------------------------------
-        result_map: Dict[int, Dict[int, Result]] = {}
-        for exid in exam_ids:
-            rs = (
-                latest_results_per_enrollment(
-                    target_type="exam",
-                    target_id=int(exid),
-                )
-                .filter(enrollment_id__in=enrollment_ids)
-                .prefetch_related("items")
+        result_map: Dict[int, Dict[int, Result]] = {
+            int(exid): {}
+            for exid in exam_ids
+        }
+        latest_results = (
+            latest_results_for_targets_per_enrollment(
+                target_type="exam",
+                target_ids=exam_ids,
             )
-            result_map[int(exid)] = {int(r.enrollment_id): r for r in rs}
+            .filter(enrollment_id__in=enrollment_ids)
+            .prefetch_related("items")
+        )
+        for result in latest_results:
+            result_map[int(result.target_id)][int(result.enrollment_id)] = result
 
         omr_review_map: Dict[tuple[int, int], Dict[str, Any]] = {}
         if exam_ids and enrollment_ids:

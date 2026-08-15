@@ -199,6 +199,35 @@ class SessionScoresRosterScopeTests(TestCase):
         self.assertEqual(rows[0]["exams"][0]["exam_id"], self.exam.id)
         self.assertIsNone(rows[0]["exams"][0]["block"]["score"])
 
+    def test_session_scores_uses_one_latest_result_lookup_for_many_exams(self):
+        for idx in range(3):
+            exam = Exam.objects.create(
+                tenant=self.tenant,
+                title=f"추가 시험 {idx}",
+                pass_score=60,
+                max_score=100,
+            )
+            exam.sessions.add(self.session)
+
+        request = self.factory.get(
+            f"/api/v1/results/admin/sessions/{self.session.id}/scores/"
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+
+        with CaptureQueriesContext(connection) as captured:
+            response = SessionScoresView.as_view()(request, session_id=self.session.id)
+
+        latest_result_queries = [
+            query["sql"]
+            for query in captured.captured_queries
+            if 'FROM "results_result"' in query["sql"]
+            and "MAX(" in query["sql"].upper()
+        ]
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(len(response.data["meta"]["exams"]), 4)
+        self.assertEqual(len(latest_result_queries), 1, latest_result_queries)
+
     def test_session_scores_excludes_cross_tenant_exam_m2m_contamination(self):
         other_tenant = Tenant.objects.create(name="Other Tenant", code="scorecope-other", is_active=True)
         foreign_exam = Exam.objects.create(

@@ -1,7 +1,6 @@
 # apps/domains/results/views/admin_session_exams_summary_view.py
 from __future__ import annotations
 
-from django.db.models import Avg, Max, Min, Q
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -12,7 +11,9 @@ from apps.domains.results.serializers.session_exams_summary import SessionExamsS
 # ✅ 단일 진실 유틸
 from apps.domains.results.utils.clinic import get_clinic_enrollment_ids_for_session
 from apps.domains.results.utils.session_exam import get_exams_for_session
-from apps.domains.results.utils.result_queries import latest_results_per_enrollment
+from apps.domains.results.utils.result_queries import (
+    latest_results_for_targets_per_enrollment,
+)
 from apps.support.results.progress_read_dependencies import (
     progress_policy_meta_for_lecture,
     session_for_tenant,
@@ -81,29 +82,40 @@ class AdminSessionExamsSummaryView(APIView):
         # -----------------------------
         # exam-level stats (Result 기반, enrollment 중복 방어)
         # -----------------------------
+        results_by_exam = {exam_id: [] for exam_id in exam_ids}
+        latest_results = (
+            latest_results_for_targets_per_enrollment(
+                target_type="exam",
+                target_ids=exam_ids,
+            )
+            .filter(enrollment__tenant=request.tenant)
+            .select_related("attempt")
+        )
+        for result in latest_results:
+            results_by_exam[int(result.target_id)].append(result)
+
         exam_rows = []
         for ex in exams:
-            rs = latest_results_per_enrollment(
-                target_type="exam",
-                target_id=int(ex.id),
-            )
-            scored_rs = rs.filter(
-                Q(attempt__meta__status__isnull=True)
-                | ~Q(attempt__meta__status="NOT_SUBMITTED")
-            )
-
-            agg = scored_rs.aggregate(
-                avg_score=Avg("total_score"),
-                min_score=Min("total_score"),
-                highest_score=Max("total_score"),
-            )
-
+            results = results_by_exam.get(int(ex.id), [])
+            scored_results = [
+                result
+                for result in results
+                if not (
+                    result.attempt_id
+                    and isinstance(result.attempt.meta, dict)
+                    and result.attempt.meta.get("status") == "NOT_SUBMITTED"
+                )
+            ]
+            scores = [float(result.total_score or 0.0) for result in scored_results]
             pass_score = float(getattr(ex, "pass_score", 0.0) or 0.0)
+            if pass_score > 0:
+                pcount = sum(score >= pass_score for score in scores)
+                fcount = sum(score < pass_score for score in scores)
+            else:
+                pcount = 0
+                fcount = 0
 
-            pcount = scored_rs.filter(total_score__gte=pass_score).count()
-            fcount = scored_rs.filter(total_score__lt=pass_score).count()
-
-            p_total = rs.count()
+            p_total = len(results)
             p_rate = (pcount / p_total) if p_total else 0.0
 
             exam_rows.append({
@@ -112,10 +124,10 @@ class AdminSessionExamsSummaryView(APIView):
                 "pass_score": float(pass_score),
 
                 "participant_count": p_total,
-                "avg_score": float(agg["avg_score"] or 0.0),
-                "min_score": float(agg["min_score"] or 0.0),
+                "avg_score": (sum(scores) / len(scores)) if scores else 0.0,
+                "min_score": min(scores) if scores else 0.0,
                 "max_score": float(getattr(ex, "max_score", 0.0) or 0.0),
-                "highest_score": float(agg["highest_score"] or 0.0),
+                "highest_score": max(scores) if scores else 0.0,
 
                 "pass_count": int(pcount),
                 "fail_count": int(fcount),

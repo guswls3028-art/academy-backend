@@ -4,7 +4,9 @@ from io import StringIO
 from django.contrib.auth import get_user_model
 from django.apps import apps
 from django.core.management import call_command
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
@@ -247,6 +249,172 @@ class AssessmentLifecycleSsotTests(TestCase):
         self.assertEqual(summary["attempt_stats"]["avg_attempts"], 1.0)
         self.assertEqual(summary["attempt_stats"]["retake_ratio"], 0.0)
 
+    def test_session_score_summary_uses_one_latest_result_lookup_for_many_exams(self):
+        SessionProgress = apps.get_model("progress", "SessionProgress")
+        Result = apps.get_model("results", "Result")
+
+        SessionProgress.objects.create(
+            session=self.session,
+            enrollment=self.enrollment,
+            completed=False,
+        )
+        for idx in range(3):
+            exam = self.Exam.objects.create(
+                tenant=self.tenant,
+                title=f"쿼리 시험 {idx}",
+                exam_type="regular",
+                is_active=True,
+                max_score=100,
+                pass_score=60,
+            )
+            exam.sessions.add(self.session)
+            Result.objects.create(
+                target_type="exam",
+                target_id=exam.id,
+                enrollment=self.enrollment,
+                total_score=70 + idx,
+                max_score=100,
+            )
+
+        with CaptureQueriesContext(connection) as captured:
+            summary = SessionScoreSummaryService.build(session_id=self.session.id)
+
+        latest_result_queries = [
+            query["sql"]
+            for query in captured.captured_queries
+            if 'FROM "results_result"' in query["sql"]
+            and "MAX(" in query["sql"].upper()
+        ]
+        self.assertEqual(summary["avg_score"], 71.0)
+        self.assertEqual(len(latest_result_queries), 1, latest_result_queries)
+
+        with CaptureQueriesContext(connection) as captured:
+            response = AdminSessionExamsSummaryView.as_view()(
+                self._request(
+                    f"/api/v1/results/admin/sessions/{self.session.id}/exams/summary/"
+                ),
+                session_id=self.session.id,
+            )
+        latest_result_queries = [
+            query["sql"]
+            for query in captured.captured_queries
+            if 'FROM "results_result"' in query["sql"]
+            and "MAX(" in query["sql"].upper()
+        ]
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(len(latest_result_queries), 1, latest_result_queries)
+
+    def test_session_score_summary_excludes_foreign_tenant_results_and_attempts(self):
+        Enrollment = apps.get_model("enrollment", "Enrollment")
+        ExamAttempt = apps.get_model("results", "ExamAttempt")
+        Lecture = apps.get_model("lectures", "Lecture")
+        Result = apps.get_model("results", "Result")
+        SessionProgress = apps.get_model("progress", "SessionProgress")
+        Student = apps.get_model("students", "Student")
+
+        SessionProgress.objects.create(
+            session=self.session,
+            enrollment=self.enrollment,
+            completed=False,
+        )
+        exam = self.Exam.objects.create(
+            tenant=self.tenant,
+            title="테넌트 경계 시험",
+            exam_type="regular",
+            is_active=True,
+            max_score=100,
+            pass_score=60,
+        )
+        exam.sessions.add(self.session)
+        local_attempt = ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=self.enrollment,
+            attempt_index=1,
+            is_representative=True,
+            status="done",
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.enrollment,
+            attempt=local_attempt,
+            total_score=80,
+            max_score=100,
+        )
+
+        foreign_tenant = Tenant.objects.create(
+            name="Foreign Tenant",
+            code="assessment-life-foreign",
+            is_active=True,
+        )
+        foreign_user = User.objects.create_user(
+            username="assessment-life-foreign-student",
+            password="test1234",
+            tenant=foreign_tenant,
+        )
+        foreign_student = Student.objects.create(
+            tenant=foreign_tenant,
+            user=foreign_user,
+            name="외부 학생",
+            ps_number="AL-F-001",
+            omr_code="ALF00001",
+            parent_phone="01000000000",
+        )
+        foreign_lecture = Lecture.objects.create(
+            tenant=foreign_tenant,
+            title="Foreign Lecture",
+            name="Foreign Lecture",
+            subject="MATH",
+        )
+        foreign_enrollment = Enrollment.objects.create(
+            tenant=foreign_tenant,
+            student=foreign_student,
+            lecture=foreign_lecture,
+            status="ACTIVE",
+        )
+        foreign_attempt = ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=foreign_enrollment,
+            attempt_index=1,
+            is_representative=True,
+            status="done",
+        )
+        ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=foreign_enrollment,
+            attempt_index=2,
+            is_representative=False,
+            status="done",
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=foreign_enrollment,
+            attempt=foreign_attempt,
+            total_score=0,
+            max_score=100,
+        )
+
+        summary = SessionScoreSummaryService.build(session_id=self.session.id)
+
+        self.assertEqual(summary["avg_score"], 80.0)
+        self.assertEqual(summary["min_score"], 80.0)
+        self.assertEqual(summary["max_score"], 80.0)
+        self.assertEqual(summary["attempt_stats"]["avg_attempts"], 1.0)
+        self.assertEqual(summary["attempt_stats"]["retake_ratio"], 0.0)
+
+        response = AdminSessionExamsSummaryView.as_view()(
+            self._request(
+                f"/api/v1/results/admin/sessions/{self.session.id}/exams/summary/"
+            ),
+            session_id=self.session.id,
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["exams"][0]["participant_count"], 1)
+        self.assertEqual(response.data["exams"][0]["avg_score"], 80.0)
+        self.assertEqual(response.data["exams"][0]["pass_count"], 1)
+        self.assertEqual(response.data["exams"][0]["fail_count"], 0)
+
     def test_session_exams_summary_excludes_not_submitted_from_fail_count(self):
         SessionProgress = apps.get_model("progress", "SessionProgress")
         ExamAttempt = apps.get_model("results", "ExamAttempt")
@@ -279,9 +447,15 @@ class AssessmentLifecycleSsotTests(TestCase):
             target_id=exam.id,
             enrollment=self.enrollment,
             attempt=attempt,
-            total_score=0,
+            total_score=40,
             max_score=100,
         )
+
+        summary = SessionScoreSummaryService.build(session_id=self.session.id)
+
+        self.assertEqual(summary["avg_score"], 0.0)
+        self.assertEqual(summary["min_score"], 0.0)
+        self.assertEqual(summary["max_score"], 0.0)
 
         response = AdminSessionExamsSummaryView.as_view()(
             self._request(
@@ -334,6 +508,39 @@ class AssessmentLifecycleSsotTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["exams"][0]["max_score"], 100.0)
         self.assertEqual(response.data["exams"][0]["highest_score"], 95.0)
+
+    def test_session_exams_summary_does_not_treat_unset_pass_score_as_pass(self):
+        Result = apps.get_model("results", "Result")
+
+        exam = self.Exam.objects.create(
+            tenant=self.tenant,
+            title="기준 미설정 시험",
+            exam_type="regular",
+            is_active=True,
+            max_score=100,
+            pass_score=0,
+        )
+        exam.sessions.add(self.session)
+        Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.enrollment,
+            total_score=80,
+            max_score=100,
+        )
+
+        response = AdminSessionExamsSummaryView.as_view()(
+            self._request(
+                f"/api/v1/results/admin/sessions/{self.session.id}/exams/summary/"
+            ),
+            session_id=self.session.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["exams"][0]["participant_count"], 1)
+        self.assertEqual(response.data["exams"][0]["pass_count"], 0)
+        self.assertEqual(response.data["exams"][0]["fail_count"], 0)
+        self.assertEqual(response.data["exams"][0]["pass_rate"], 0.0)
 
     def test_detect_assessment_state_drift_command_reports_non_live_sources(self):
         inactive_exam = self.Exam.objects.create(

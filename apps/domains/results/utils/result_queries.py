@@ -1,6 +1,8 @@
 # apps/domains/results/utils/result_queries.py
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from django.db.models import Max, QuerySet, Subquery
 
 from apps.domains.results.models import Result
@@ -26,16 +28,31 @@ def latest_results_per_enrollment(
     - enrollment_id별로 가장 큰 id(가장 최근 insert)를 선택
     - DB vendor 독립 (Postgres의 distinct on 같은 기능에 의존하지 않음)
     """
-    target_id = int(target_id)
+    return latest_results_for_targets_per_enrollment(
+        target_type=target_type,
+        target_ids=[target_id],
+    )
+
+
+def latest_results_for_targets_per_enrollment(
+    *,
+    target_type: str,
+    target_ids: Iterable[int],
+) -> QuerySet[Result]:
+    """Return one latest Result for every target/enrollment pair in one query."""
+    normalized_target_ids = sorted({int(target_id) for target_id in target_ids})
+    if not normalized_target_ids:
+        return Result.objects.none()
 
     base = Result.objects.filter(
         target_type=str(target_type),
-        target_id=target_id,
+        target_id__in=normalized_target_ids,
     )
 
-    # enrollment별 가장 최신 Result.id를 선택
+    # target/enrollment별 가장 최신 Result.id를 선택한다. target을 함께 묶어야
+    # 여러 시험을 한 번에 읽어도 다른 시험의 대표 결과가 서로 덮이지 않는다.
     latest_ids = (
-        base.values("enrollment_id")
+        base.values("target_id", "enrollment_id")
         .annotate(last_id=Max("id"))
         .values("last_id")
     )
