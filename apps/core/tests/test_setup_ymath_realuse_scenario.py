@@ -40,6 +40,7 @@ class SetupYmathRealuseScenarioTests(TestCase):
         self.assertFalse(program.feature_flags["section_mode"])
         self.assertEqual(program.feature_flags["clinic_mode"], "remediation")
         self.assertEqual(program.feature_flags["score_output_mode"], "anonymous_billboard")
+        self.assertEqual(program.feature_flags["score_summary_column_default"], "exam_wrong")
         self.assertEqual(program.subscription_status, Program.SubscriptionStatus.ACTIVE)
         self.assertEqual(program.subscription_started_at, timezone.localdate())
         self.assertEqual(

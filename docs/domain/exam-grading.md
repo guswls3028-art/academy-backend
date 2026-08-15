@@ -225,6 +225,24 @@ submission ID만 유일성을 검사한다. `NULL`은 클리닉 직접 입력 �
 제외한다. 무결성 감사는 전체 `ExamResult.manual_overrides`를 순회하므로 뒤쪽 행의
 `max_score` 누락도 표본 제한 없이 보고한다.
 
+### 성적 탭 오답 확인 요약
+
+`GET /results/admin/sessions/{session_id}/scores/`의 시험별
+`correction_status`는 점수 합불과 클리닉 대상 판정에서 독립된
+교사 오답 확인 상태다. 만점이 아닌 시험은 `PENDING` 또는
+`COMPLETED`, 만점은 `NOT_REQUIRED`, 미응시·미채점은 `null`을
+내려준다. 완료 후 점수나 답안 내용이 바뀌면 source fingerprint가
+달라져 다시 `PENDING`이 되며, timestamp만 바뀐 재저장은 완료를
+유지한다.
+
+프런트의 성적표 마지막 열은 이 상태를 집계하여 오답 확인
+완료 현황을 보여줄 수 있다. `Program.feature_flags`의
+`score_summary_column_default=exam_wrong`은 해당 테넌트의 기본 표시만
+바꾸며, `ClinicLink`나 `clinic_required` 상태를 생성·수정·해소하지
+않는다. Ymath에는 이 기본값을 적용하고 다른 학원은 기존
+종합 판정을 유지한다. 직원이 표시 옵션을 명시적으로 바꾸면
+테넌트·사용자별 브라우저 설정이 기본값보다 우선한다.
+
 ### 정오 입력
 
 | 화면 표시 | 저장 의미 | 점수 | 오답노트 |

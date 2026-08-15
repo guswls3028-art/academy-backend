@@ -28,6 +28,7 @@ YMATH_FEATURE_FLAGS = {
     "section_mode": False,
     "clinic_mode": "remediation",
     "score_output_mode": "anonymous_billboard",
+    "score_summary_column_default": "exam_wrong",
 }
 
 TENANTS_CONFIG = [
