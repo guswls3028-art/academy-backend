@@ -171,9 +171,21 @@ Session Assessment Inspection
   `PENDING`으로 돌려 교사가 변경된 결과를 재확인하게 한다. 지문 도입 전의 기존
   완료 기록은 교사 입력을 보존해 완료로 읽고, 다음 수동 저장부터 지문을 기록한다.
 - tenant 차시 roster 밖 학생, 다른 차시 평가, 만점 시험의 수동 변경은 실패 폐쇄한다.
+- 성적표와 세션 요약은 여러 시험의 대표 `Result`를
+  `(target_id, enrollment_id)` 단위로 한 번에 선택한다. 시험 열 수만큼 대표 결과
+  쿼리를 반복하지 않으며, 세션 요약과 시험별 요약은 현재 세션 테넌트의 수강생
+  결과·재시험만 집계한다. 손상된 교차 테넌트 FK가 있어도 평균·최저·최고·재시험
+  비율에 섞지 않는다.
+- 시험별 요약에서 `pass_score <= 0`은 합격 기준 미설정이다. 점수가 있어도 합격이나
+  불합격으로 세지 않으며 두 건수와 합격률을 0으로 유지한다.
+- 대표 시도가 `NOT_SUBMITTED`인 결과는 보관하되 점수 평균·최저·최고와 시험별
+  합격·불합격 건수에서 제외한다. 손상 데이터에 점수가 남아 있어도 결시를 0점이나
+  유효 점수로 되살리지 않는다.
 - 회귀 검증은
-  `apps/domains/results/tests/test_session_scores_roster_scope.py`의 correction 테스트가
-  저장·재열기·메모·roster와 잠금 SQL의 nullable outer join 부재를 함께 확인한다.
+  `apps/domains/results/tests/test_session_scores_roster_scope.py`와
+  `test_assessment_lifecycle_ssot.py`가 저장·재열기·메모·roster, 잠금 SQL의 nullable
+  outer join 부재, 다중 시험 단일 대표 결과 조회, 테넌트 집계 경계와 합격 기준 미설정
+  처리를 함께 확인한다.
 
 학생 카드의 상태 projection과 학원별 성장 그래프 구성은
 `docs/domain/student-grade-report.md`가 소유한다.

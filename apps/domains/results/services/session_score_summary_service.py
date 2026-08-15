@@ -8,7 +8,9 @@ from apps.domains.results.models import ExamAttempt
 # ✅ 단일 진실 유틸
 from apps.domains.results.utils.clinic import get_clinic_enrollment_ids_for_session
 from apps.domains.results.utils.session_exam import get_exam_ids_for_session
-from apps.domains.results.utils.result_queries import latest_results_per_enrollment
+from apps.domains.results.utils.result_queries import (
+    latest_results_for_targets_per_enrollment,
+)
 from apps.support.results.progress_read_dependencies import (
     session_by_id,
     session_progress_queryset_for_session,
@@ -97,17 +99,32 @@ class SessionScoreSummaryService:
         # -------------------------------------------------
         # 점수 통계:
         # - 세션에 연결된 모든 시험의 Result를 모아서 통계
-        # - enrollment 중복 방어: exam별 latest_results_per_enrollment 적용 후 합치기
+        # - enrollment 중복 방어: 여러 시험의 최신 대표 결과를 한 번에 선택
+        # - NOT_SUBMITTED 대표 시도는 점수 통계에서 제외
         # -------------------------------------------------
-        all_results = []
-        for exid in exam_ids:
-            rs = list(latest_results_per_enrollment(target_type="exam", target_id=int(exid)))
-            all_results.extend(rs)
+        tenant_id = int(session.lecture.tenant_id)
+        all_results = list(
+            latest_results_for_targets_per_enrollment(
+                target_type="exam",
+                target_ids=exam_ids,
+            )
+            .filter(enrollment__tenant_id=tenant_id)
+            .select_related("attempt")
+        )
+        scored_results = [
+            result
+            for result in all_results
+            if not (
+                result.attempt_id
+                and isinstance(result.attempt.meta, dict)
+                and result.attempt.meta.get("status") == "NOT_SUBMITTED"
+            )
+        ]
 
-        if not all_results:
+        if not scored_results:
             score_summary = {"avg_score": 0.0, "min_score": 0.0, "max_score": 0.0}
         else:
-            scores = [float(r.total_score or 0.0) for r in all_results]
+            scores = [float(result.total_score or 0.0) for result in scored_results]
             score_summary = {
                 "avg_score": (sum(scores) / len(scores)) if scores else 0.0,
                 "min_score": min(scores) if scores else 0.0,
@@ -118,7 +135,10 @@ class SessionScoreSummaryService:
         # Attempt 통계(재시험 비율):
         # - 세션에 연결된 모든 시험을 대상으로 attempt 통계
         # -------------------------------------------------
-        attempts = ExamAttempt.objects.filter(exam_id__in=[int(x) for x in exam_ids])
+        attempts = ExamAttempt.objects.filter(
+            exam_id__in=[int(x) for x in exam_ids],
+            enrollment__tenant_id=tenant_id,
+        )
 
         per_exam_enrollment = list(
             attempts.values("exam_id", "enrollment_id")
