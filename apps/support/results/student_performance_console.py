@@ -173,7 +173,7 @@ def _build_student_performance_console_uncached(
     )
     grade_options = sorted(
         int(value)
-        for value in base_student_query.exclude(grade__isnull=True)
+        for value in base_student_query.exclude(grade__isnull=True).order_by()
         .values_list("grade", flat=True)
         .distinct()
     )
@@ -668,7 +668,7 @@ def build_student_performance_console(
         review_page_size,
     )
     digest = hashlib.sha256(repr(key_parts).encode("utf-8")).hexdigest()
-    cache_key = f"student-performance-console:v3:{tenant.id}:{digest}"
+    cache_key = f"student-performance-console:v4:{tenant.id}:{digest}"
     cached = cache.get(cache_key)
     if isinstance(cached, dict):
         return cached
