@@ -61,7 +61,6 @@ from apps.domains.results.serializers.session_scores import (
 )
 from apps.support.results.session_scores_dependencies import (
     AssessmentCorrection,
-    Attendance,
     ClinicLink,
     Enrollment,
     ExamEnrollment,
@@ -70,12 +69,14 @@ from apps.support.results.session_scores_dependencies import (
     HomeworkAssignment,
     HomeworkScore,
     Session,
-    SessionEnrollment,
     SessionParticipant,
     SessionProgress,
     Sheet,
     Submission,
     resolve_template_exam,
+)
+from apps.support.results.progress_read_dependencies import (
+    session_score_enrollment_ids,
 )
 
 
@@ -245,35 +246,6 @@ def _build_exam_attempt_summary(
     return entry
 
 
-def _session_score_enrollment_ids(*, tenant, session) -> List[int]:
-    """성적표 GET과 오답 확인 PATCH가 공유하는 차시 roster."""
-    session_enrollment_ids = list(
-        SessionEnrollment.objects
-        .filter(
-            tenant=tenant,
-            session=session,
-            enrollment__lecture=session.lecture,
-            enrollment__status="ACTIVE",
-            enrollment__student__deleted_at__isnull=True,
-        )
-        .values_list("enrollment_id", flat=True)
-        .distinct()
-    )
-    attendance_enrollment_ids = list(
-        Attendance.objects
-        .filter(
-            tenant=tenant,
-            session=session,
-            enrollment__lecture=session.lecture,
-            enrollment__status="ACTIVE",
-            enrollment__student__deleted_at__isnull=True,
-        )
-        .values_list("enrollment_id", flat=True)
-        .distinct()
-    )
-    return attendance_enrollment_ids or session_enrollment_ids
-
-
 class SessionScoresView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
@@ -299,7 +271,7 @@ class SessionScoresView(APIView):
         # -------------------------------------------------
         # 1) Enrollment 모수
         # -------------------------------------------------
-        active_session_enrollment_ids = _session_score_enrollment_ids(
+        active_session_enrollment_ids = session_score_enrollment_ids(
             tenant=tenant,
             session=session,
         )
@@ -1047,7 +1019,7 @@ class SessionScoreCorrectionView(APIView):
         )
         enrollment_id = int(payload["enrollment_id"])
         if enrollment_id not in set(
-            _session_score_enrollment_ids(tenant=tenant, session=session)
+            session_score_enrollment_ids(tenant=tenant, session=session)
         ):
             raise ValidationError(
                 {"enrollment_id": "이 차시 성적표에 포함된 학생이 아닙니다."}

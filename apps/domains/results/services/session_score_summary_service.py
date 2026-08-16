@@ -14,6 +14,7 @@ from apps.domains.results.utils.result_queries import (
 from apps.support.results.progress_read_dependencies import (
     session_by_id,
     session_progress_queryset_for_session,
+    session_score_enrollment_ids,
 )
 
 
@@ -54,16 +55,26 @@ class SessionScoreSummaryService:
         if not session:
             return EMPTY_SUMMARY
 
+        tenant_id = int(session.lecture.tenant_id)
+        progresses = session_progress_queryset_for_session(session).filter(
+            enrollment__tenant_id=tenant_id,
+        )
+        participant_enrollment_ids = list(
+            progresses.values_list("enrollment_id", flat=True)
+        )
+        participant_enrollment_id_set = set(participant_enrollment_ids)
+        participant_count = len(participant_enrollment_ids)
+
         exam_ids = get_exam_ids_for_session(session)
         if not exam_ids:
             # 세션에 시험이 없으면 점수 통계는 0, pass/clinic은 progress로만 판단 가능
-            progresses = session_progress_queryset_for_session(session)
-            participant_count = progresses.count()
             pass_count = progresses.filter(completed=True).count()
             clinic_count = len(
-                get_clinic_enrollment_ids_for_session(
-                    session=session,
-                    include_manual=False,
+                participant_enrollment_id_set.intersection(
+                    get_clinic_enrollment_ids_for_session(
+                        session=session,
+                        include_manual=False,
+                    )
                 )
             )
             return {
@@ -73,11 +84,10 @@ class SessionScoreSummaryService:
                 "clinic_rate": round((clinic_count / participant_count), 4) if participant_count else 0.0,
             }
 
-        # -------------------------------------------------
-        # participant 모수: SessionProgress 기준(원본 존중)
-        # -------------------------------------------------
-        progresses = session_progress_queryset_for_session(session)
-        participant_count = progresses.count()
+        roster_enrollment_ids = session_score_enrollment_ids(
+            tenant=session.lecture.tenant,
+            session=session,
+        )
 
         # -------------------------------------------------
         # pass_rate: 원본은 SessionProgress.completed 기준
@@ -86,12 +96,14 @@ class SessionScoreSummaryService:
         pass_rate = (pass_count / participant_count) if participant_count else 0.0
 
         # -------------------------------------------------
-        # clinic_rate: ClinicLink 기준 단일화
+        # clinic_rate: ClinicLink 중 현재 참여자만 집계
         # -------------------------------------------------
         clinic_count = len(
-            get_clinic_enrollment_ids_for_session(
-                session=session,
-                include_manual=False,
+            participant_enrollment_id_set.intersection(
+                get_clinic_enrollment_ids_for_session(
+                    session=session,
+                    include_manual=False,
+                )
             )
         )
         clinic_rate = (clinic_count / participant_count) if participant_count else 0.0
@@ -102,13 +114,15 @@ class SessionScoreSummaryService:
         # - enrollment 중복 방어: 여러 시험의 최신 대표 결과를 한 번에 선택
         # - NOT_SUBMITTED 대표 시도는 점수 통계에서 제외
         # -------------------------------------------------
-        tenant_id = int(session.lecture.tenant_id)
         all_results = list(
             latest_results_for_targets_per_enrollment(
                 target_type="exam",
                 target_ids=exam_ids,
             )
-            .filter(enrollment__tenant_id=tenant_id)
+            .filter(
+                enrollment_id__in=roster_enrollment_ids,
+                enrollment__tenant_id=tenant_id,
+            )
             .select_related("attempt")
         )
         scored_results = [
@@ -137,6 +151,7 @@ class SessionScoreSummaryService:
         # -------------------------------------------------
         attempts = ExamAttempt.objects.filter(
             exam_id__in=[int(x) for x in exam_ids],
+            enrollment_id__in=roster_enrollment_ids,
             enrollment__tenant_id=tenant_id,
         )
 

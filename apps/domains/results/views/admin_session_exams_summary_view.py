@@ -16,6 +16,7 @@ from apps.domains.results.utils.result_queries import (
 )
 from apps.support.results.progress_read_dependencies import (
     progress_policy_meta_for_lecture,
+    session_score_enrollment_ids,
     session_for_tenant,
     session_progress_queryset_for_session,
 )
@@ -63,8 +64,18 @@ class AdminSessionExamsSummaryView(APIView):
         # -----------------------------
         # session-level participant/pass/clinic
         # -----------------------------
-        sp_qs = session_progress_queryset_for_session(session)
-        participant_count = sp_qs.count()
+        sp_qs = session_progress_queryset_for_session(session).filter(
+            enrollment__tenant=request.tenant,
+        )
+        participant_enrollment_ids = list(
+            sp_qs.values_list("enrollment_id", flat=True)
+        )
+        participant_enrollment_id_set = set(participant_enrollment_ids)
+        participant_count = len(participant_enrollment_ids)
+        roster_enrollment_ids = session_score_enrollment_ids(
+            tenant=request.tenant,
+            session=session,
+        )
 
         # 세션 단위 시험 통과율(집계 결과)
         pass_count = sp_qs.filter(exam_passed=True).count()
@@ -72,9 +83,11 @@ class AdminSessionExamsSummaryView(APIView):
 
         # clinic_rate(단일 규칙)
         clinic_count = len(
-            get_clinic_enrollment_ids_for_session(
-                session=session,
-                include_manual=False,
+            participant_enrollment_id_set.intersection(
+                get_clinic_enrollment_ids_for_session(
+                    session=session,
+                    include_manual=False,
+                )
             )
         )
         clinic_rate = (clinic_count / participant_count) if participant_count else 0.0
@@ -88,7 +101,10 @@ class AdminSessionExamsSummaryView(APIView):
                 target_type="exam",
                 target_ids=exam_ids,
             )
-            .filter(enrollment__tenant=request.tenant)
+            .filter(
+                enrollment_id__in=roster_enrollment_ids,
+                enrollment__tenant=request.tenant,
+            )
             .select_related("attempt")
         )
         for result in latest_results:

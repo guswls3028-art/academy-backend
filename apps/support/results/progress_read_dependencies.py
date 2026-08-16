@@ -251,6 +251,31 @@ def session_progress_queryset_for_session(session: Any):
     return SessionProgress.objects.filter(session=session)
 
 
+def session_score_enrollment_ids(*, tenant: Any, session: Any) -> list[int]:
+    """Return the attendance-first active roster shared by session score reads."""
+    from apps.domains.attendance.models import Attendance
+    from apps.domains.enrollment.models import SessionEnrollment
+
+    roster_filter = {
+        "tenant": tenant,
+        "session": session,
+        "enrollment__lecture": session.lecture,
+        "enrollment__status": "ACTIVE",
+        "enrollment__student__deleted_at__isnull": True,
+    }
+    session_enrollment_ids = list(
+        SessionEnrollment.objects.filter(**roster_filter)
+        .values_list("enrollment_id", flat=True)
+        .distinct()
+    )
+    attendance_enrollment_ids = list(
+        Attendance.objects.filter(**roster_filter)
+        .values_list("enrollment_id", flat=True)
+        .distinct()
+    )
+    return attendance_enrollment_ids or session_enrollment_ids
+
+
 def session_progress_count_for_session_ids(session_ids: Iterable[int]) -> int:
     from apps.domains.progress.models import SessionProgress
 

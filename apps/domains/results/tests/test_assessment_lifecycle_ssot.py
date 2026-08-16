@@ -304,7 +304,7 @@ class AssessmentLifecycleSsotTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(len(latest_result_queries), 1, latest_result_queries)
 
-    def test_session_score_summary_excludes_foreign_tenant_results_and_attempts(self):
+    def test_session_score_summary_excludes_non_participant_and_foreign_results(self):
         Enrollment = apps.get_model("enrollment", "Enrollment")
         ExamAttempt = apps.get_model("results", "ExamAttempt")
         Lecture = apps.get_model("lectures", "Lecture")
@@ -342,6 +342,57 @@ class AssessmentLifecycleSsotTests(TestCase):
             max_score=100,
         )
 
+        outside_user = User.objects.create_user(
+            username="assessment-life-outside-student",
+            password="test1234",
+            tenant=self.tenant,
+        )
+        outside_student = Student.objects.create(
+            tenant=self.tenant,
+            user=outside_user,
+            name="차시 외 학생",
+            ps_number="AL-O-001",
+            omr_code="ALO00001",
+            parent_phone="01000000000",
+        )
+        outside_enrollment = Enrollment.objects.create(
+            tenant=self.tenant,
+            student=outside_student,
+            lecture=self.lecture,
+            status="ACTIVE",
+        )
+        ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=outside_enrollment,
+            attempt_index=1,
+            is_representative=False,
+            status="done",
+        )
+        outside_attempt = ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=outside_enrollment,
+            attempt_index=2,
+            is_representative=True,
+            status="done",
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=outside_enrollment,
+            attempt=outside_attempt,
+            total_score=0,
+            max_score=100,
+        )
+        self.ClinicLink.objects.create(
+            tenant=self.tenant,
+            enrollment=outside_enrollment,
+            session=self.session,
+            reason=self.ClinicLink.Reason.AUTO_FAILED,
+            is_auto=True,
+            source_type="exam",
+            source_id=exam.id,
+        )
+
         foreign_tenant = Tenant.objects.create(
             name="Foreign Tenant",
             code="assessment-life-foreign",
@@ -372,6 +423,11 @@ class AssessmentLifecycleSsotTests(TestCase):
             lecture=foreign_lecture,
             status="ACTIVE",
         )
+        SessionProgress.objects.create(
+            session=self.session,
+            enrollment=foreign_enrollment,
+            completed=True,
+        )
         foreign_attempt = ExamAttempt.objects.create(
             exam=exam,
             enrollment=foreign_enrollment,
@@ -400,6 +456,9 @@ class AssessmentLifecycleSsotTests(TestCase):
         self.assertEqual(summary["avg_score"], 80.0)
         self.assertEqual(summary["min_score"], 80.0)
         self.assertEqual(summary["max_score"], 80.0)
+        self.assertEqual(summary["participant_count"], 1)
+        self.assertEqual(summary["pass_rate"], 0.0)
+        self.assertEqual(summary["clinic_rate"], 0.0)
         self.assertEqual(summary["attempt_stats"]["avg_attempts"], 1.0)
         self.assertEqual(summary["attempt_stats"]["retake_ratio"], 0.0)
 
@@ -410,6 +469,9 @@ class AssessmentLifecycleSsotTests(TestCase):
             session_id=self.session.id,
         )
         self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["participant_count"], 1)
+        self.assertEqual(response.data["pass_rate"], 0.0)
+        self.assertEqual(response.data["clinic_rate"], 0.0)
         self.assertEqual(response.data["exams"][0]["participant_count"], 1)
         self.assertEqual(response.data["exams"][0]["avg_score"], 80.0)
         self.assertEqual(response.data["exams"][0]["pass_count"], 1)
