@@ -230,6 +230,19 @@ class StudentPerformanceConsoleTest(TestCase, ClinicTestMixin):
             "session_type requires academy source",
         )
 
+    def test_grade_filter_options_are_unique(self):
+        self.student.grade = 1
+        self.student.save(update_fields=["grade"])
+        for suffix in ("grade_a", "grade_b"):
+            student = self.make_student(self.tenant, suffix)
+            student.grade = 1
+            student.save(update_fields=["grade"])
+
+        response = self._get({"days": "all"})
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["filter_options"]["grades"], [1])
+
     def test_query_count_does_not_scale_with_exam_history(self):
         self._score(title="쿼리 기준 시험", score=70, days_ago=10)
         with CaptureQueriesContext(connection) as initial_queries:

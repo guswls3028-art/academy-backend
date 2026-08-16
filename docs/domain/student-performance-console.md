@@ -42,6 +42,8 @@
   바꿔도 세 탭의 기준 건수는 유지된다.
 - 선택한 유형은 학원 시험 point를 거른 뒤 학생별 평균, 최근값, 변화, 득점 구간,
   정렬, 페이지와 전체 요약을 다시 계산한다.
+- `filter_options.grades`는 현재 테넌트의 관리 학생에게 실제 존재하는 학년을
+  오름차순 고유값으로 한 번씩만 반환한다.
 
 테넌트가 없으면 `403`, 다른 테넌트 강의는 `404`이며 다른 테넌트의 학생·시험·차시·
 결과는 어떤 집계에도 포함하지 않는다. `NOT_SUBMITTED`와 유효 득점률이 없는 결과는
@@ -63,7 +65,7 @@ JOIN하지만 잠금 대상에는 넣지 않는다. 따라서 PostgreSQL의 null
 - `apps/domains/results/tests/test_student_performance_console.py`
   - 정규·보강 선택 시 전체 콘솔 재계산
   - 혼합 연결의 `UNCLASSIFIED` 실패 폐쇄
-  - 잘못된 필터, 테넌트 격리, 캐시와 쿼리 수
+  - 잘못된 필터, 학년 옵션 고유성, 테넌트 격리, 캐시와 쿼리 수
 - `apps/domains/results/tests/test_admin_student_grades_scope.py`
   - 학생 상세의 정규·보강 메타데이터, 혼합 연결 `null`, 같은 유형의 여러 차시
     연결에서 특정 차시를 추정하지 않는 계약
