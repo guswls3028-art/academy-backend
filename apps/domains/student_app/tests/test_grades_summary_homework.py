@@ -226,6 +226,7 @@ class MyGradesSummaryHomeworkTests(TestCase):
         )
         exam = self.Exam.objects.get(id=result.target_id)
         session = exam.sessions.get()
+        self.ExamEnrollment.objects.create(exam=exam, enrollment=self.enrollment)
         self.AssessmentCorrection.objects.create(
             tenant=self.tenant,
             enrollment=self.enrollment,
@@ -237,9 +238,12 @@ class MyGradesSummaryHomeworkTests(TestCase):
         )
 
         completed = self._call()
+        completed_detail = self._call_exam_result(exam.id)
 
         self.assertEqual(completed.status_code, 200, completed.data)
         self.assertEqual(completed.data["exams"][0]["correction_status"], "COMPLETED")
+        self.assertEqual(completed_detail.status_code, 200, completed_detail.data)
+        self.assertEqual(completed_detail.data["correction_status"], "COMPLETED")
         self.assertEqual(completed.data["report_layout"]["sections"][0], {
             "id": "score_comparison",
             "visible": True,
@@ -248,8 +252,10 @@ class MyGradesSummaryHomeworkTests(TestCase):
         result.save(update_fields=["total_score", "updated_at"])
 
         stale = self._call()
+        stale_detail = self._call_exam_result(exam.id)
 
         self.assertEqual(stale.data["exams"][0]["correction_status"], "PENDING")
+        self.assertEqual(stale_detail.data["correction_status"], "PENDING")
 
     def test_foreign_and_template_exam_metadata_is_fail_closed(self):
         other_tenant = Tenant.objects.create(code="student-grades-foreign", name="Foreign", is_active=True)

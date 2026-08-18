@@ -58,3 +58,16 @@ class AdminExamResultRowSerializer(serializers.Serializer):
     result_status = serializers.ChoiceField(
         choices=["NOT_SUBMITTED", "PROCESSING", "PARTIAL", "DONE", "FAILED"],
     )
+
+    # 같은 수강 강의에서 차시를 하나로 확정할 수 있을 때만 오답 확인 상태를 노출한다.
+    correction_session_id = serializers.IntegerField(
+        allow_null=True,
+        required=False,
+        default=None,
+    )
+    correction_status = serializers.ChoiceField(
+        choices=["PENDING", "COMPLETED", "NOT_REQUIRED"],
+        allow_null=True,
+        required=False,
+        default=None,
+    )

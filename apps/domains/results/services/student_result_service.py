@@ -12,16 +12,21 @@ from django.http import Http404
 from academy.adapters.db.django import repositories_exams as exams_repo
 from apps.domains.results.models import Result, ExamAttempt
 from apps.domains.results.serializers.student_exam_result import StudentExamResultSerializer
-from apps.domains.results.utils.session_exam import get_primary_session_for_exam
+from apps.domains.results.utils.session_exam import get_sessions_for_exam
 from apps.domains.results.utils.clinic import is_clinic_required
 from apps.domains.results.utils.ranking import compute_exam_rankings
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement
+from apps.domains.results.services.assessment_correction_status import (
+    assessment_correction_payload,
+    exam_correction_fingerprint,
+)
 from apps.domains.results.services.answer_matching import format_answer_for_display
 from apps.domains.results.aggregations.exam_report import summarize_result_items
 from apps.support.results.student_result_dependencies import (
     active_enrollments_for_student,
     get_request_student,
 )
+from apps.support.results.assessment_correction_dependencies import AssessmentCorrection
 
 
 def active_exam_enrollment_ids_for_student(*, tenant, student, exam_id: int) -> list[int]:
@@ -70,6 +75,17 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
         raise Http404("enrollment not found")
 
     enrollment_id = int(enrollment.id)
+    session_candidates = list(
+        get_sessions_for_exam(exam_id)
+        .filter(
+            lecture_id=enrollment.lecture_id,
+            lecture__tenant=tenant,
+        )
+        .order_by("order", "id")[:2]
+    )
+    # 다른 강의/차시의 확인 기록을 빌려오지 않는다. 같은 수강 강의에서도
+    # 후보가 둘 이상이면 상세 화면의 상태는 실패 폐쇄한다.
+    session = session_candidates[0] if len(session_candidates) == 1 else None
 
     result = (
         Result.objects
@@ -102,7 +118,6 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
         }
 
     clinic_required = False
-    session = get_primary_session_for_exam(exam_id)
     if session:
         clinic_required = is_clinic_required(
             session=session,
@@ -142,6 +157,30 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
     is_provisional = achievement_data["is_provisional"]
     if is_not_submitted:
         data["total_score"] = None
+
+    correction = None
+    if session is not None:
+        correction = AssessmentCorrection.objects.filter(
+            tenant=tenant,
+            enrollment_id=enrollment_id,
+            session=session,
+            source_type=AssessmentCorrection.SourceType.EXAM,
+            source_id=exam_id,
+        ).first()
+    data["correction_status"] = (
+        assessment_correction_payload(
+            source_type=AssessmentCorrection.SourceType.EXAM,
+            score=data.get("total_score"),
+            max_score=data.get("max_score"),
+            source_fingerprint=exam_correction_fingerprint(
+                result=result,
+                items=result.items.all(),
+            ),
+            correction=correction,
+        )["correction_status"]
+        if session is not None
+        else None
+    )
 
     # 정답 공개 정책 적용
     # provisional/미응시/불합격 → 비공개, 합격/기준없음 → 정책 따름
