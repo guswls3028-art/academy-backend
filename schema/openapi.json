@@ -21240,7 +21240,7 @@
     },
     "/api/v1/core/tenants/{tenant_id}/owner/": {
       "post": {
-        "description": "POST /api/v1/core/tenants/<tenant_id>/owner/\ndev_app 전용 — owner role만. 테넌트에 owner 등록.\nUser가 없으면 생성 가능 (username, password 필수; name, phone 선택).",
+        "description": "POST /api/v1/core/tenants/<tenant_id>/owner/\ndev_app 전용 — owner role만. 테넌트에 owner 등록.\nUser가 없으면 생성 가능 (username, password 필수; name, phone 선택).\n기존 User 승격은 promote_existing=true 재확인이 필요하며 자격 증명은 변경하지 않음.",
         "operationId": "core_tenants_owner_create",
         "parameters": [
           {
