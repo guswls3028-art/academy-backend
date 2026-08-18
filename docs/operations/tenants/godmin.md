@@ -2,7 +2,7 @@
 
 **기준일:** 2026-08-18 KST
 
-**상태:** Cloudflare zone·가비아 위임·정식 배포 완료 · 운영 DB·구독 입력 대기
+**상태:** Cloudflare zone·가비아 위임·정식 배포·운영 DB 프로비저닝 완료 · 구독 입력 대기
 
 **운영 도메인:** `godmin.kr`
 
@@ -42,7 +42,10 @@
   `bf3f59ded7c30f9dbb6c81a9a08bdaa0e9dc5f6c`는 run `32128046080`에서 후보
   preview·Pages 운영 배포·왕복 E2E를 통과했고 운영 `version.json`과 일치한다.
   API `/healthz`·`/health` 및 프런트 `/login` HTTP 200 readback 완료
-- [ ] **G5 운영 DB·구독** — provision dry-run·적용, 계약 기간 적용
+- [ ] **G5 운영 DB·구독** — `provision_tenant` dry-run 뒤 ID `11`, code `godmin`,
+  apex `godmin.kr`, owner 미요청을 확인해 적용했다. 재조회에서 ACTIVE 테넌트와
+  apex/`www` 도메인·Program 생성을 확인했다. 계약 이용기간이 확정되기 전까지
+  구독은 적용하지 않는다.
 - [ ] **G6 Pages·HTTPS** — apex/`www` Pages·CNAME과 HTTP 200
 - [ ] **G7 대표 계정** — 소유자 0명 확인 후 개발자 콘솔에서 1회 생성
 - [ ] **G8 실제 인계** — 최초 비밀번호 변경과 role·tenant isolation 확인
