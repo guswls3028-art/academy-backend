@@ -316,6 +316,29 @@ class TenantOwnerView(APIView):
                 user = core_repo.user_get_by_tenant_username(tenant, username)
 
                 if user:
+                    if TenantMembership.objects.filter(
+                        tenant=tenant,
+                        user=user,
+                        role="owner",
+                        is_active=True,
+                    ).exists():
+                        record_audit(
+                            request,
+                            action="owner.register",
+                            target_tenant=tenant,
+                            target_user=user,
+                            summary=f"Owner register rejected: {username} already owns {tenant.code}",
+                            payload={
+                                "username": username,
+                                "reason": "owner_already_registered",
+                            },
+                            result="failed",
+                            error="owner_already_registered",
+                        )
+                        return Response(
+                            {"detail": "owner_already_registered"},
+                            status=409,
+                        )
                     if password:
                         from apps.core.services.password import force_reset_password
                         force_reset_password(user, password)
