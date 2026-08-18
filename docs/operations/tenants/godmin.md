@@ -2,7 +2,7 @@
 
 **기준일:** 2026-08-18 KST
 
-**상태:** Cloudflare zone·가비아 위임·정식 배포·운영 DB·무기한 이용·Pages HTTPS 완료 · 대표 계정 입력 대기
+**상태:** Cloudflare zone·가비아 위임·정식 배포·운영 DB·무기한 이용·Pages HTTPS 완료 · 대표 계정 생성 대기
 
 **운영 도메인:** `godmin.kr`
 
@@ -15,9 +15,9 @@
 - 로고: 고객 제공 투명 PNG 워드마크
 - 브랜드 팔레트: 차콜 `#383838`, 코어 민트 `#35c7a0`, 딥 민트 `#147a62`,
   옅은 민트 `#e4f7ef`
-- 대표 로그인 정보와 비밀번호는 문서·Git·셸 명령에 기록하지 않는다.
+- 대표 로그인 정보와 비밀번호는 전달받았지만 문서·Git·셸 명령에 기록하지 않는다.
 - 이용 정책: 명시적으로 승인된 무기한 과금 제외. 만료일과 다음 결제일을 만들지 않는다.
-- 대표 정보는 추후 입력한다. 그 전까지 owner 계정을 만들지 않는다.
+- 대표 계정은 인증된 개발자 콘솔에서 기존 소유자 0명을 확인한 뒤 1회만 만든다.
 
 ## 브랜드 기준
 
@@ -31,7 +31,7 @@
 
 ## 진행 상태
 
-- [x] **G0 입력 확정(계정·기간 제외)** — 표시명·코드·ID·도메인·로고·팔레트
+- [x] **G0 입력 확정** — 표시명·코드·ID·도메인·로고·팔레트·대표 정보·이용 정책
 - [x] **G1 충돌 확인** — 운영 DB에 ID `11`과 code `godmin`이 비어 있음을 확인
 - [x] **G2 Cloudflare 준비** — zone 생성과 NS 1·2차 발급
 - [x] **G3 코드·브랜딩 준비** — backend host/origin, registry·로그인·헤더·학생앱·
@@ -48,13 +48,15 @@
   `BILLING_EXEMPT_TENANT_IDS`에 ID `11`을 기존 값 보존 방식으로 추가하고 API
   ASG 무중단 교체를 완료했다. 런타임 재조회에서 Program `active`, 만료일·다음
   결제일 `NULL`, `is_subscription_active=True`를 확인했고
-  `audit_billing_fields --tenant godmin`은 문제 0건이다.
+  `audit_billing_fields --tenant godmin --strict`은 문제 0건이다.
 - [x] **G6 Pages·HTTPS** — apex/`www`를 `academy-frontend-26b.pages.dev`에
   연결하고 두 Pages custom domain의 `active` 전환을 확인했다. 두 `/login`은
-  HTTPS 200이며 title·OG title `신과함께`, favicon 200이다. 1440×900과
-  390×844에서 로고·입력·버튼·오버플로·콘솔 오류를 검증했다.
-- [ ] **G7 대표 계정** — 소유자 0명 상태를 유지한다. 대표 정보를 받은 뒤
-  개발자 콘솔에서 1회만 생성한다.
+  HTTPS 200이며 title·OG title·OG site name `신과함께`, favicon 200이다.
+  frontend revision `d35381f51fdfda8a2632a3447a7596016b1cc353`을 두 호스트에서
+  재조회했고 1440×900과 390×844에서 로고·입력·버튼·오버플로·메타데이터를
+  검증했다.
+- [ ] **G7 대표 계정** — 대표 정보는 전달받았고 운영 소유자 수는 여전히
+  0명이다. 인증된 개발자 콘솔에서 중복을 확인한 뒤 1회만 생성한다.
 - [ ] **G8 실제 인계** — 최초 비밀번호 변경과 role·tenant isolation 확인
 
 ## 현재 발급된 네임서버
