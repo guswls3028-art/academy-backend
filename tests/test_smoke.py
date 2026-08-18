@@ -370,7 +370,13 @@ class TestSettingsIntegrity(TestCase):
             "assert 'x-score-session-id' in headers; "
             "assert 'x-expected-updated-at' in headers; "
             "assert 'https://dev.hakwonplus.com' in s.CORS_ALLOWED_ORIGINS; "
-            "assert 'https://dev.hakwonplus.com' in s.CSRF_TRUSTED_ORIGINS"
+            "assert 'https://dev.hakwonplus.com' in s.CSRF_TRUSTED_ORIGINS; "
+            "assert 'godmin.kr' in s.ALLOWED_HOSTS; "
+            "assert 'www.godmin.kr' in s.ALLOWED_HOSTS; "
+            "assert 'https://godmin.kr' in s.CORS_ALLOWED_ORIGINS; "
+            "assert 'https://www.godmin.kr' in s.CORS_ALLOWED_ORIGINS; "
+            "assert 'https://godmin.kr' in s.CSRF_TRUSTED_ORIGINS; "
+            "assert 'https://www.godmin.kr' in s.CSRF_TRUSTED_ORIGINS"
         )
         result = subprocess.run(
             [sys.executable, "-c", code],

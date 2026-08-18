@@ -9,3 +9,4 @@
 | [onboarding-run-sheet.md](onboarding-run-sheet.md) | 신규 테넌트마다 복사해 쓰는 G0~G8 실행표 |
 | [gabia-nameserver.md](gabia-nameserver.md) | 가비아 네임서버 셋업 |
 | [movementhui.md](movementhui.md) | 이동휘원소 온보딩 메모와 현재 상태 |
+| [godmin.md](godmin.md) | 신과함께 온보딩 메모와 현재 상태 |
