@@ -81,6 +81,18 @@ UI/API 소비자는 `monthly_supply_amount`, `monthly_tax_amount`,
 체인을 출력해야 한다. `audit_billing_fields --strict`는 만료일이 지난 `active`
 상태와 유예 종료일이 지난 `grace` 상태를 운영 오류로 판정한다.
 
+명시적으로 승인된 무기한 이용 테넌트는 운영 SSM `/academy/api/env`의
+`BILLING_EXEMPT_TENANT_IDS`로 관리한다. 예외 테넌트는 만료일·다음 결제일 없이
+`Program.is_subscription_active=True`이며 402 접근 제한, 정기 청구서 생성과
+구독 만료 전이 대상에서 제외된다. 기간을 임의의 먼 미래 날짜로 만들거나 코드의
+기본 예외값을 운영 계약 기록으로 사용하지 않는다.
+
+예외 추가·제거는 기존 ID를 보존한 단일 키 안전 업데이트로 수행하고 API ASG를
+무중단 교체한다. 적용 후 실제 런타임 예외 목록, 대상 Program의 상태·만료일·다음
+결제일·`is_subscription_active`, `audit_billing_fields --tenant <code>`를 읽어
+확인한다. 예외를 제거할 때는 먼저 승인된 계약 기간과 다음 결제일을 설정해 접근
+공백이나 즉시 만료가 생기지 않게 한다.
+
 인보이스는 `SCHEDULED → PENDING → PAID/FAILED` 상태기계를 따른다.
 `INVOICE_REQUEST`는 due date에 `PENDING`으로 전환된 뒤에만 수동 입금 확인할
 수 있고, 입금 확인과 `PaymentTransaction(provider=manual, SUCCESS)` 기록은
