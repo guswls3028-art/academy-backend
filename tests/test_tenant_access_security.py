@@ -35,6 +35,7 @@ from apps.core.views.program import SubscriptionView
 from apps.core.views.tenant_management import (
     TenantCreateView,
     TenantOwnerDetailView,
+    TenantOwnerListView,
     TenantOwnerView,
 )
 from apps.domains.clinic.models import SessionParticipant
@@ -659,6 +660,21 @@ class TenantOwnerRemovalInvariantTests(TestCase):
                 user_id=user.id,
             )
 
+    def _patch(self, tenant, user, data):
+        request = APIRequestFactory().patch(
+            "/api/v1/core/tenants/owners/",
+            data,
+            format="json",
+        )
+        request.tenant = self.platform
+        force_authenticate(request, user=self.actor)
+        with override_settings(OWNER_TENANT_ID=self.platform.id):
+            return TenantOwnerDetailView.as_view()(
+                request,
+                tenant_id=tenant.id,
+                user_id=user.id,
+            )
+
     def test_self_removal_is_forbidden(self):
         response = self._delete(self.platform, self.actor)
         self.assertEqual(response.status_code, 409, response.data)
@@ -685,6 +701,62 @@ class TenantOwnerRemovalInvariantTests(TestCase):
                 user=self.target_owner,
             ).is_active
         )
+
+    def test_inactive_owner_membership_can_be_removed_when_an_active_owner_remains(self):
+        replacement = _user(self.target, "active-replacement-owner", is_staff=True)
+        TenantMembership.ensure_active(
+            tenant=self.target,
+            user=replacement,
+            role="owner",
+        )
+        self.target_owner.is_active = False
+        self.target_owner.save(update_fields=["is_active"])
+
+        response = self._delete(self.target, self.target_owner)
+
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(
+            TenantMembership.objects.get(
+                tenant=self.target,
+                user=self.target_owner,
+            ).is_active
+        )
+
+    def test_owner_profile_update_rejects_overlong_values_without_mutation(self):
+        self.target_owner.name = "Original Name"
+        self.target_owner.phone = "01000000000"
+        self.target_owner.save(update_fields=["name", "phone"])
+
+        response = self._patch(
+            self.target,
+            self.target_owner,
+            {"name": "n" * 51, "phone": "0" * 21},
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(response.data["detail"], "owner_update_invalid")
+        self.target_owner.refresh_from_db()
+        self.assertEqual(self.target_owner.name, "Original Name")
+        self.assertEqual(self.target_owner.phone, "01000000000")
+
+    def test_owner_list_marks_inactive_user_accounts(self):
+        self.target_owner.is_active = False
+        self.target_owner.save(update_fields=["is_active"])
+        request = APIRequestFactory().get(
+            f"/api/v1/core/tenants/{self.target.id}/owners/"
+        )
+        request.tenant = self.platform
+        force_authenticate(request, user=self.actor)
+
+        with override_settings(OWNER_TENANT_ID=self.platform.id):
+            response = TenantOwnerListView.as_view()(
+                request,
+                tenant_id=self.target.id,
+            )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(len(response.data), 1)
+        self.assertFalse(response.data[0]["isActive"])
 
 
 class TenantProvisioningInvariantTests(TestCase):
@@ -791,6 +863,135 @@ class TenantProvisioningInvariantTests(TestCase):
         self.assertEqual(audit.result, "failed")
         self.assertEqual(audit.payload["reason"], "owner_already_registered")
         self.assertNotIn("password", audit.payload)
+
+    def test_existing_user_promotion_requires_confirmation_without_mutation(self):
+        target = _tenant("owner-promotion-confirmation-target")
+        existing = _user(
+            target,
+            "existing-staff",
+            password="original-password",
+            name="Original Name",
+            phone="01000000000",
+            must_change_password=False,
+            token_version=4,
+        )
+        membership = TenantMembership.ensure_active(
+            tenant=target,
+            user=existing,
+            role="staff",
+        )
+        original_password = existing.password
+
+        request = APIRequestFactory().post(
+            f"/api/v1/core/tenants/{target.id}/owner/",
+            {
+                "username": "existing-staff",
+                "password": "replacement-password",
+                "name": "Replacement Name",
+                "phone": "01099999999",
+            },
+            format="json",
+        )
+        request.tenant = self.platform
+        force_authenticate(request, user=self.actor)
+
+        with override_settings(OWNER_TENANT_ID=self.platform.id):
+            response = TenantOwnerView.as_view()(request, tenant_id=target.id)
+
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertEqual(
+            response.data["detail"],
+            "owner_promotion_confirmation_required",
+        )
+        existing.refresh_from_db()
+        membership.refresh_from_db()
+        self.assertEqual(existing.password, original_password)
+        self.assertEqual(existing.name, "Original Name")
+        self.assertEqual(existing.phone, "01000000000")
+        self.assertFalse(existing.must_change_password)
+        self.assertEqual(existing.token_version, 4)
+        self.assertEqual(membership.role, "staff")
+
+    def test_confirmed_existing_user_promotion_preserves_credentials_and_profile(self):
+        target = _tenant("owner-promotion-target")
+        existing = _user(
+            target,
+            "existing-teacher",
+            password="original-password",
+            name="Original Name",
+            phone="01000000000",
+            must_change_password=False,
+            token_version=9,
+        )
+        membership = TenantMembership.ensure_active(
+            tenant=target,
+            user=existing,
+            role="teacher",
+        )
+        original_password = existing.password
+
+        request = APIRequestFactory().post(
+            f"/api/v1/core/tenants/{target.id}/owner/",
+            {
+                "username": "existing-teacher",
+                "password": "must-not-be-applied",
+                "name": "Must Not Replace",
+                "phone": "01099999999",
+                "promote_existing": True,
+            },
+            format="json",
+        )
+        request.tenant = self.platform
+        force_authenticate(request, user=self.actor)
+
+        with override_settings(OWNER_TENANT_ID=self.platform.id):
+            response = TenantOwnerView.as_view()(request, tenant_id=target.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        existing.refresh_from_db()
+        membership.refresh_from_db()
+        self.assertEqual(existing.password, original_password)
+        self.assertEqual(existing.name, "Original Name")
+        self.assertEqual(existing.phone, "01000000000")
+        self.assertFalse(existing.must_change_password)
+        self.assertEqual(existing.token_version, 9)
+        self.assertEqual(membership.role, "owner")
+        audit = OpsAuditLog.objects.get(
+            action="owner.register",
+            target_tenant=target,
+            target_user=existing,
+            result="success",
+        )
+        self.assertFalse(audit.payload["created_user"])
+        self.assertTrue(audit.payload["promoted_existing"])
+        self.assertFalse(audit.payload["password_changed"])
+        self.assertNotIn("password", audit.payload)
+        self.assertNotIn("name", audit.payload)
+        self.assertNotIn("phone", audit.payload)
+
+    def test_owner_registration_rejects_overlong_fields_before_database_write(self):
+        target = _tenant("owner-validation-target")
+        cases = (
+            {"username": "u" * 151, "password": "temporary-password"},
+            {"username": "valid-owner", "password": "temporary-password", "name": "n" * 51},
+            {"username": "valid-owner", "password": "temporary-password", "phone": "0" * 21},
+        )
+
+        for payload in cases:
+            with self.subTest(payload_keys=tuple(payload)):
+                request = APIRequestFactory().post(
+                    f"/api/v1/core/tenants/{target.id}/owner/",
+                    payload,
+                    format="json",
+                )
+                request.tenant = self.platform
+                force_authenticate(request, user=self.actor)
+                with override_settings(OWNER_TENANT_ID=self.platform.id):
+                    response = TenantOwnerView.as_view()(request, tenant_id=target.id)
+                self.assertEqual(response.status_code, 400, response.data)
+                self.assertEqual(response.data["detail"], "owner_registration_invalid")
+
+        self.assertFalse(target.users.exists())
 
     def test_creation_normalizes_and_atomically_provisions_domain_and_program(self):
         response = self._post({

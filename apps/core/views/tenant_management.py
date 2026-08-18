@@ -5,6 +5,7 @@ import re
 from django.conf import settings
 from django.db import IntegrityError, transaction
 
+from rest_framework import serializers
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -19,6 +20,56 @@ from apps.core.services.ops_audit import record_audit
 from academy.adapters.db.django import repositories_core as core_repo
 
 logger = logging.getLogger(__name__)
+
+
+class TenantOwnerRegistrationSerializer(serializers.Serializer):
+    username = serializers.CharField(max_length=150, trim_whitespace=True)
+    password = serializers.CharField(
+        required=False,
+        allow_blank=False,
+        trim_whitespace=False,
+        write_only=True,
+    )
+    name = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        max_length=50,
+    )
+    phone = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        max_length=20,
+    )
+    promote_existing = serializers.BooleanField(required=False, default=False)
+
+    def validate_username(self, value):
+        tenant = self.context["tenant"]
+        from django.contrib.auth import get_user_model
+
+        stored_max_length = get_user_model()._meta.get_field("username").max_length
+        prefix_length = len(f"t{tenant.id}_")
+        if len(value) > stored_max_length - prefix_length:
+            raise serializers.ValidationError(
+                "테넌트 접두사를 포함한 아이디 길이가 허용 범위를 초과합니다."
+            )
+        return value
+
+
+class TenantOwnerUpdateSerializer(serializers.Serializer):
+    name = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        max_length=50,
+    )
+    phone = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        max_length=20,
+    )
 
 
 class TenantProvisioningConflict(ValueError):
@@ -286,42 +337,81 @@ class TenantOwnerView(APIView):
     POST /api/v1/core/tenants/<tenant_id>/owner/
     dev_app 전용 — owner role만. 테넌트에 owner 등록.
     User가 없으면 생성 가능 (username, password 필수; name, phone 선택).
+    기존 User 승격은 promote_existing=true 재확인이 필요하며 자격 증명은 변경하지 않음.
     """
     permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
 
     def post(self, request, tenant_id: int):
-        import logging
-        logger = logging.getLogger(__name__)
         if not is_platform_admin_tenant(request):
             return Response({"detail": "Platform admin tenant required."}, status=403)
+        tenant = core_repo.tenant_get_by_id_any(tenant_id)
+        if not tenant:
+            return Response({"detail": "Tenant not found."}, status=404)
+
+        serializer = TenantOwnerRegistrationSerializer(
+            data=request.data,
+            context={"tenant": tenant},
+        )
+        if not serializer.is_valid():
+            return Response(
+                {
+                    "detail": "owner_registration_invalid",
+                    "errors": serializer.errors,
+                },
+                status=400,
+            )
+
+        username = serializer.validated_data["username"]
+        password = serializer.validated_data.get("password")
+        name = serializer.validated_data.get("name")
+        phone = serializer.validated_data.get("phone")
+        promote_existing = serializer.validated_data["promote_existing"]
+
         try:
-            tenant = core_repo.tenant_get_by_id_any(tenant_id)
-            if not tenant:
-                return Response({"detail": "Tenant not found."}, status=404)
-
-            username = request.data.get("username")
-            password = request.data.get("password")
-            name = request.data.get("name")
-            phone = request.data.get("phone")
-
-            if not username:
-                return Response({"detail": "username is required."}, status=400)
-
             from django.contrib.auth import get_user_model
             User = get_user_model()
 
             with transaction.atomic():
                 # Tenant row is the owner-set mutex (add/remove use the same lock).
                 tenant = Tenant.objects.select_for_update().get(pk=tenant.pk)
-                user = core_repo.user_get_by_tenant_username(tenant, username)
+                candidates = core_repo.user_list_by_tenant_login_identifier(
+                    tenant,
+                    username,
+                )
+                direct_user = core_repo.user_get_by_tenant_username(tenant, username)
+                if direct_user and all(
+                    candidate.id != direct_user.id for candidate in candidates
+                ):
+                    candidates.append(direct_user)
+
+                if len(candidates) > 1:
+                    record_audit(
+                        request,
+                        action="owner.register",
+                        target_tenant=tenant,
+                        summary=f"Owner register rejected: ambiguous identifier in {tenant.code}",
+                        payload={
+                            "username": username,
+                            "reason": "owner_identifier_ambiguous",
+                        },
+                        result="failed",
+                        error="owner_identifier_ambiguous",
+                    )
+                    return Response(
+                        {"detail": "owner_identifier_ambiguous"},
+                        status=409,
+                    )
+
+                user = candidates[0] if candidates else None
+                created_user = user is None
 
                 if user:
-                    if TenantMembership.objects.filter(
+                    membership = TenantMembership.objects.filter(
                         tenant=tenant,
                         user=user,
-                        role="owner",
                         is_active=True,
-                    ).exists():
+                    ).first()
+                    if membership and membership.role == "owner":
                         record_audit(
                             request,
                             action="owner.register",
@@ -339,19 +429,55 @@ class TenantOwnerView(APIView):
                             {"detail": "owner_already_registered"},
                             status=409,
                         )
-                    if password:
-                        from apps.core.services.password import force_reset_password
-                        force_reset_password(user, password)
-                    if name is not None:
-                        user.name = name
-                    if phone is not None:
-                        user.phone = phone
-                    if name is not None or phone is not None:
-                        user.save(update_fields=["name", "phone"])
+                    if not user.is_active:
+                        record_audit(
+                            request,
+                            action="owner.register",
+                            target_tenant=tenant,
+                            target_user=user,
+                            summary=f"Owner register rejected: {username} is inactive",
+                            payload={
+                                "username": username,
+                                "reason": "owner_user_inactive",
+                            },
+                            result="failed",
+                            error="owner_user_inactive",
+                        )
+                        return Response(
+                            {"detail": "owner_user_inactive"},
+                            status=409,
+                        )
+                    if not promote_existing:
+                        record_audit(
+                            request,
+                            action="owner.register",
+                            target_tenant=tenant,
+                            target_user=user,
+                            summary=f"Owner promotion requires confirmation: {username} in {tenant.code}",
+                            payload={
+                                "username": username,
+                                "current_role": getattr(membership, "role", ""),
+                                "reason": "owner_promotion_confirmation_required",
+                            },
+                            result="failed",
+                            error="owner_promotion_confirmation_required",
+                        )
+                        return Response(
+                            {
+                                "detail": "owner_promotion_confirmation_required",
+                                "currentRole": getattr(membership, "role", ""),
+                            },
+                            status=409,
+                        )
                 else:
+                    if promote_existing:
+                        return Response(
+                            {"detail": "owner_existing_user_not_found"},
+                            status=409,
+                        )
                     if not password:
                         return Response(
-                            {"detail": "password is required when creating a new user."},
+                            {"detail": "owner_password_required"},
                             status=400,
                         )
                     from apps.core.models.user import user_internal_username
@@ -387,9 +513,9 @@ class TenantOwnerView(APIView):
                 summary=f"Owner registered: {username} -> {tenant.code}",
                 payload={
                     "username": username,
-                    "password_changed": bool(password),
-                    "name": name,
-                    "phone": phone,
+                    "created_user": created_user,
+                    "promoted_existing": not created_user,
+                    "password_changed": created_user,
                 },
             )
             return Response({
@@ -398,6 +524,7 @@ class TenantOwnerView(APIView):
                 "userId": user.id,
                 "username": user_display_username(user),
                 "name": getattr(user, "name", "") or "",
+                "isActive": bool(user.is_active),
                 "role": membership.role,
             })
         except Exception as e:
@@ -445,6 +572,7 @@ class TenantOwnerListView(APIView):
                 "username": user_display_username(m.user),
                 "name": getattr(m.user, "name", "") or "",
                 "phone": getattr(m.user, "phone", "") or "",
+                "isActive": bool(m.user.is_active),
                 "role": m.role,
             }
             for m in memberships
@@ -487,17 +615,35 @@ class TenantOwnerDetailView(APIView):
         if err:
             msg = "Platform admin tenant required." if err == 403 else "Owner not found."
             return Response({"detail": msg}, status=err)
+        serializer = TenantOwnerUpdateSerializer(data=request.data, partial=True)
+        if not serializer.is_valid():
+            return Response(
+                {"detail": "owner_update_invalid", "errors": serializer.errors},
+                status=400,
+            )
         user = membership.user
-        if "name" in request.data:
-            user.name = request.data.get("name") or ""
-        if "phone" in request.data:
-            user.phone = request.data.get("phone") or ""
-        user.save(update_fields=["name", "phone"])
+        changed_fields = []
+        for field in ("name", "phone"):
+            if field in serializer.validated_data:
+                setattr(user, field, serializer.validated_data[field] or "")
+                changed_fields.append(field)
+        if changed_fields:
+            user.save(update_fields=changed_fields)
+            record_audit(
+                request,
+                action="owner.update",
+                target_tenant=tenant,
+                target_user=user,
+                summary=f"Owner profile updated in {tenant.code}",
+                payload={"changed_fields": changed_fields},
+            )
         from apps.core.models.user import user_display_username
         return Response({
             "userId": user.id,
             "username": user_display_username(user),
             "name": getattr(user, "name", "") or "",
+            "phone": getattr(user, "phone", "") or "",
+            "isActive": bool(user.is_active),
             "role": membership.role,
         })
 
@@ -521,13 +667,13 @@ class TenantOwnerDetailView(APIView):
                 role="owner",
                 is_active=True,
             )
-            active_owner_count = TenantMembership.objects.filter(
+            remaining_active_owner_count = TenantMembership.objects.filter(
                 tenant=tenant,
                 role="owner",
                 is_active=True,
                 user__is_active=True,
-            ).count()
-            if active_owner_count <= 1:
+            ).exclude(user=target_user).count()
+            if remaining_active_owner_count < 1:
                 return Response(
                     {"detail": "final_active_owner_required"},
                     status=409,
