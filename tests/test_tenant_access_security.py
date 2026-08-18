@@ -737,6 +737,61 @@ class TenantProvisioningInvariantTests(TestCase):
         self.assertNotIn("password", audit.payload)
         self.assertTrue(audit.payload["password_changed"])
 
+    def test_duplicate_owner_registration_is_rejected_without_mutation(self):
+        target = _tenant("duplicate-owner-target")
+        owner = _user(
+            target,
+            "existing-owner",
+            password="original-password",
+            is_staff=True,
+            name="Original Name",
+            phone="01000000000",
+            must_change_password=False,
+            token_version=7,
+        )
+        membership = TenantMembership.ensure_active(
+            tenant=target,
+            user=owner,
+            role="owner",
+        )
+        original_password = owner.password
+
+        request = APIRequestFactory().post(
+            f"/api/v1/core/tenants/{target.id}/owner/",
+            {
+                "username": "existing-owner",
+                "password": "replacement-password",
+                "name": "Replacement Name",
+                "phone": "01099999999",
+            },
+            format="json",
+        )
+        request.tenant = self.platform
+        force_authenticate(request, user=self.actor)
+
+        with override_settings(OWNER_TENANT_ID=self.platform.id):
+            response = TenantOwnerView.as_view()(request, tenant_id=target.id)
+
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertEqual(response.data["detail"], "owner_already_registered")
+        owner.refresh_from_db()
+        membership.refresh_from_db()
+        self.assertEqual(owner.password, original_password)
+        self.assertEqual(owner.name, "Original Name")
+        self.assertEqual(owner.phone, "01000000000")
+        self.assertFalse(owner.must_change_password)
+        self.assertEqual(owner.token_version, 7)
+        self.assertTrue(membership.is_active)
+        self.assertEqual(membership.role, "owner")
+        audit = OpsAuditLog.objects.get(
+            action="owner.register",
+            target_tenant=target,
+            target_user=owner,
+        )
+        self.assertEqual(audit.result, "failed")
+        self.assertEqual(audit.payload["reason"], "owner_already_registered")
+        self.assertNotIn("password", audit.payload)
+
     def test_creation_normalizes_and_atomically_provisions_domain_and_program(self):
         response = self._post({
             "code": "  New-Academy  ",
