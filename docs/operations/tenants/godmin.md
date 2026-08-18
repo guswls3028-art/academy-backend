@@ -2,7 +2,7 @@
 
 **기준일:** 2026-08-18 KST
 
-**상태:** Cloudflare zone·가비아 위임 완료 · 코드·브랜딩 검증 완료 · 정식 배포 대기
+**상태:** Cloudflare zone·가비아 위임·정식 배포 완료 · 운영 DB·구독 입력 대기
 
 **운영 도메인:** `godmin.kr`
 
@@ -36,8 +36,12 @@
 - [x] **G3 코드·브랜딩 준비** — backend host/origin, registry·로그인·헤더·학생앱·
   성적표·OG/PWA 반영. Django check/migration check, provision 4 tests, frontend
   typecheck/lint/build, PWA 9 tests, 1366×768·390×844 시각 검증 통과
-- [ ] **G4 위임·정식 배포** — `.kr` 권위 DNS와 `1.1.1.1`·`8.8.8.8` 위임은
-  확인 완료, backend/frontend 정식 배포 대기
+- [x] **G4 위임·정식 배포** — `.kr` 권위 DNS와 `1.1.1.1`·`8.8.8.8` 위임 확인.
+  backend `d2f3a397bca0b31801eb2f4aa8b751011aeacf1c`는 run `32128046410`에서
+  격리 개발·사전운영·운영 ASG 교체와 최종 검증을 통과했다. frontend
+  `bf3f59ded7c30f9dbb6c81a9a08bdaa0e9dc5f6c`는 run `32128046080`에서 후보
+  preview·Pages 운영 배포·왕복 E2E를 통과했고 운영 `version.json`과 일치한다.
+  API `/healthz`·`/health` 및 프런트 `/login` HTTP 200 readback 완료
 - [ ] **G5 운영 DB·구독** — provision dry-run·적용, 계약 기간 적용
 - [ ] **G6 Pages·HTTPS** — apex/`www` Pages·CNAME과 HTTP 200
 - [ ] **G7 대표 계정** — 소유자 0명 확인 후 개발자 콘솔에서 1회 생성
@@ -53,4 +57,4 @@
 가비아에서는 기존 네임서버를 제거하고 위 두 호스트만 1차·2차에 입력한다. IP
 필드는 비워 둔다. 2026-08-18 KST에 `.kr` 권위 DNS와 Cloudflare·Google 공용
 DNS에서 위 두 값의 위임을 확인했다. Pages custom domain과 apex/`www` CNAME은
-G4 정식 배포 뒤 G6 절차에서 활성화한다.
+G5 운영 DB·구독 적용 뒤 G6 절차에서 활성화한다.
