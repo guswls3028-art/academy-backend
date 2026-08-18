@@ -31,6 +31,21 @@
             "nullable": true,
             "type": "integer"
           },
+          "correction_session_id": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "correction_status": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CorrectionStatusEnum"
+              },
+              {
+                "$ref": "#/components/schemas/NullEnum"
+              }
+            ]
+          },
           "enrollment_id": {
             "type": "integer"
           },
@@ -1497,6 +1512,15 @@
           "title"
         ],
         "type": "object"
+      },
+      "CorrectionStatusEnum": {
+        "description": "* `PENDING` - PENDING\n* `COMPLETED` - COMPLETED\n* `NOT_REQUIRED` - NOT_REQUIRED",
+        "enum": [
+          "PENDING",
+          "COMPLETED",
+          "NOT_REQUIRED"
+        ],
+        "type": "string"
       },
       "DayOfWeekEnum": {
         "description": "* `0` - 월\n* `1` - 화\n* `2` - 수\n* `3` - 목\n* `4` - 금\n* `5` - 토\n* `6` - 일",

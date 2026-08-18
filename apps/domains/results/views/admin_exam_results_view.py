@@ -10,6 +10,10 @@ from apps.domains.results.models import Result, ResultFact, ExamAttempt
 from apps.domains.results.serializers.admin_exam_result_row import (
     AdminExamResultRowSerializer,
 )
+from apps.domains.results.services.assessment_correction_status import (
+    assessment_correction_payload,
+    exam_correction_fingerprint,
+)
 
 from apps.support.results.admin_exam_dependencies import (
     get_enrollments_for_tenant_by_id,
@@ -27,6 +31,10 @@ from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight
 from apps.domains.results.utils.ranking import compute_exam_rankings
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement_bulk
 from apps.domains.results.utils.exam_absence import current_exam_absence_counts
+from apps.support.results.admin_student_grades_dependencies import (
+    primary_session_metadata_by_exam_and_lecture,
+)
+from apps.support.results.assessment_correction_dependencies import AssessmentCorrection
 
 
 _FAILED_SUBMISSION_STATUSES = {"failed", "error"}
@@ -113,6 +121,7 @@ class AdminExamResultsView(ListAPIView):
             )
             .filter(enrollment__tenant=self.request.tenant)
             .exclude(enrollment_id__isnull=True)
+            .prefetch_related("items")
             .order_by("enrollment_id")
         )
 
@@ -141,6 +150,33 @@ class AdminExamResultsView(ListAPIView):
         student_name_map = {
             eid: _safe_student_name(enrollment_map.get(eid))
             for eid in enrollment_ids_page
+        }
+
+        # 시험이 여러 강의/차시에 재사용될 수 있으므로 수강 강의까지 일치하는
+        # 차시가 정확히 하나일 때만 교사 오답 확인 상태를 연결한다.
+        exam_lecture_pairs = {
+            (exam_id, int(enrollment.lecture_id))
+            for enrollment in enrollment_map.values()
+            if getattr(enrollment, "lecture_id", None) is not None
+        }
+        correction_session_meta = primary_session_metadata_by_exam_and_lecture(
+            tenant=request.tenant,
+            exam_lecture_pairs=exam_lecture_pairs,
+        )
+        correction_session_ids = {
+            int(meta["session_id"])
+            for meta in correction_session_meta.values()
+            if meta.get("session_id") is not None
+        }
+        correction_map = {
+            (int(correction.enrollment_id), int(correction.session_id)): correction
+            for correction in AssessmentCorrection.objects.filter(
+                tenant=request.tenant,
+                enrollment_id__in=enrollment_ids_page,
+                session_id__in=correction_session_ids,
+                source_type=AssessmentCorrection.SourceType.EXAM,
+                source_id=exam_id,
+            )
         }
 
         # -------------------------------------------------
@@ -293,6 +329,31 @@ class AdminExamResultsView(ListAPIView):
                 visible_total_score=visible_total_score,
                 is_provisional=bool(achievement_data["is_provisional"]),
             )
+            enrollment = enrollment_map.get(enrollment_id)
+            lecture_id = getattr(enrollment, "lecture_id", None)
+            correction_meta = (
+                correction_session_meta.get((exam_id, int(lecture_id)))
+                if lecture_id is not None
+                else None
+            ) or {}
+            correction_session_id = correction_meta.get("session_id")
+            correction = (
+                correction_map.get((enrollment_id, int(correction_session_id)))
+                if correction_session_id is not None
+                else None
+            )
+            correction_status = None
+            if correction_session_id is not None:
+                correction_status = assessment_correction_payload(
+                    source_type=AssessmentCorrection.SourceType.EXAM,
+                    score=visible_total_score,
+                    max_score=raw_max_score,
+                    source_fingerprint=exam_correction_fingerprint(
+                        result=r,
+                        items=r.items.all(),
+                    ),
+                    correction=correction,
+                )["correction_status"]
 
             rows.append({
                 "enrollment_id": enrollment_id,
@@ -323,6 +384,8 @@ class AdminExamResultsView(ListAPIView):
                 "submission_id": submission_id,
                 "submission_status": submission_status,
                 "result_status": result_status,
+                "correction_session_id": correction_session_id,
+                "correction_status": correction_status,
                 "name_highlight_clinic_target": highlight_map.get(enrollment_id, False),
                 "exam_not_submitted_count": exam_absence_count_map.get(enrollment_id, 0),
 

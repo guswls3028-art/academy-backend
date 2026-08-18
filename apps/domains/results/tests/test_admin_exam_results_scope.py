@@ -4,7 +4,11 @@ from django.test import SimpleTestCase, TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
+from django.apps import apps as django_apps
 from apps.domains.results.models import ExamAttempt, Result
+from apps.domains.results.services.assessment_correction_status import (
+    exam_correction_fingerprint,
+)
 from apps.domains.results.views.admin_exam_results_view import (
     AdminExamResultsView,
     _result_display_status,
@@ -157,6 +161,59 @@ class AdminExamResultsScopeTest(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["count"], 1)
         self.assertEqual(response.data["results"][0]["enrollment_id"], self.enrollment.id)
+
+    def test_results_expose_current_correction_for_one_exact_lecture_session(self):
+        exam = self._make_exam()
+        result = Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.enrollment,
+            total_score=70,
+            max_score=100,
+        )
+
+        pending = self._get(exam.id)
+
+        self.assertEqual(pending.status_code, 200, pending.data)
+        self.assertEqual(
+            pending.data["results"][0]["correction_session_id"],
+            self.lec_session.id,
+        )
+        self.assertEqual(pending.data["results"][0]["correction_status"], "PENDING")
+
+        assessment_correction = django_apps.get_model("progress", "AssessmentCorrection")
+        assessment_correction.objects.create(
+            tenant=self.tenant,
+            enrollment=self.enrollment,
+            session=self.lec_session,
+            source_type=assessment_correction.SourceType.EXAM,
+            source_id=exam.id,
+            completed=True,
+            source_fingerprint=exam_correction_fingerprint(
+                result=result,
+                items=result.items.all(),
+            ),
+            updated_by=self.admin_user,
+        )
+
+        completed = self._get(exam.id)
+
+        self.assertEqual(completed.data["results"][0]["correction_status"], "COMPLETED")
+
+        result.total_score = 60
+        result.save(update_fields=["total_score", "updated_at"])
+        stale = self._get(exam.id)
+        self.assertEqual(stale.data["results"][0]["correction_status"], "PENDING")
+
+        second_session = self.Session.objects.create(
+            lecture=self.lecture,
+            order=2,
+            title="2회차",
+        )
+        exam.sessions.add(second_session)
+        ambiguous = self._get(exam.id)
+        self.assertIsNone(ambiguous.data["results"][0]["correction_session_id"])
+        self.assertIsNone(ambiguous.data["results"][0]["correction_status"])
 
     def test_results_expose_ranking_score_and_backend_status_in_rank_order(self):
         exam = self._make_exam()
