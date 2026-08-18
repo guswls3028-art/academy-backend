@@ -12,8 +12,8 @@
 | 테넌트 코드 | `<code>` |
 | 운영 ID | `<id>` |
 | apex / www | `<domain>` / `www.<domain>` |
-| 대표 표시명 | `<owner-display-name>` |
-| 초기 이용기간 | `<contract-value>` |
+| 대표 표시명 | `<owner-display-name 또는 G7까지 유예>` |
+| 초기 이용 정책 | `<계약 기간 또는 승인된 무기한 과금 제외>` |
 | 로고 유형 | `투명 / 단색 배경 / 사진·그라데이션 배경` |
 | 브랜드 팔레트 | `surface / surfaceSoft / foreground / accent` |
 
@@ -25,7 +25,8 @@
 해당 단계의 읽기 전용 확인 또는 dry-run을 반복한다.
 
 - [ ] **G0 입력 확정**
-  - 코드·ID·도메인·표시명·이용기간·로고 원본 확정
+  - 코드·ID·도메인·표시명·이용 정책·로고 원본 확정
+  - 대표 정보는 G7 전까지 유예할 수 있으며 그동안 owner를 생성하지 않음
   - 증거:
 - [ ] **G1 충돌 확인**
   - 운영 DB ID·코드와 기존 도메인 소유 관계 확인
@@ -45,7 +46,12 @@
   - 증거:
 - [ ] **G5 운영 DB·구독**
   - `provision_tenant` dry-run과 실제 적용
-  - 계약 기간으로 `extend_subscription` dry-run과 실제 적용
+  - 기간 계약이면 계약값으로 `extend_subscription` dry-run과 실제 적용
+  - 명시적으로 승인된 무기한 이용이면 운영 SSM의
+    `BILLING_EXEMPT_TENANT_IDS`에 해당 ID만 추가하고 기존 ID를 보존
+  - API ASG 무중단 교체 뒤 런타임 예외 목록, Program의 `active` 상태,
+    만료일·다음 결제일 `NULL`, `is_subscription_active=True`,
+    `audit_billing_fields --tenant <code>` 성공을 재조회
   - 증거:
 - [ ] **G6 Pages·HTTPS**
   - apex/`www` Pages 등록과 CNAME 활성화
