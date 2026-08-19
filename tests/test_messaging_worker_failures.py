@@ -158,6 +158,30 @@ def test_provider_boundary_rejection_prevents_sdk_call(mock_get_client: MagicMoc
     assert result["provider_called"] is False
 
 
+@patch.dict(
+    "os.environ",
+    {"MESSAGING_RECIPIENT_DENYLIST": "010-9999-8888"},
+)
+@patch("apps.worker.messaging_worker.sqs_main._get_solapi_client")
+def test_recipient_denylist_prevents_provider_call(mock_get_client: MagicMock) -> None:
+    client = MagicMock()
+    mock_get_client.return_value = client
+
+    result = send_one_alimtalk(
+        SimpleNamespace(),
+        to="01099998888",
+        sender="0212345678",
+        pf_id="PFID",
+        template_id="TEMPLATE",
+    )
+
+    mock_get_client.assert_not_called()
+    client.send.assert_not_called()
+    assert result["reason"] == "recipient_blocked_by_policy"
+    assert result["provider_called"] is False
+    assert result["definitely_not_accepted"] is True
+
+
 @patch("apps.worker.messaging_worker.sqs_main._get_solapi_client")
 def test_sdk_timeout_is_explicitly_after_provider_boundary(mock_get_client: MagicMock) -> None:
     client = MagicMock()

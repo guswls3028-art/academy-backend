@@ -540,6 +540,17 @@ def send_one_alimtalk(
             "reason": "to_pf_template_required",
             "provider_called": False,
         }
+    from apps.domains.messaging.policy import check_recipient_allowed
+
+    if not check_recipient_allowed(to):
+        return {
+            "status": "error",
+            "reason": "recipient_blocked_by_policy",
+            "provider_called": False,
+            "provider_outcome": "rejected",
+            "definitely_not_accepted": True,
+            "provider_retryable": False,
+        }
     provider_called = False
     try:
         client = _get_solapi_client(cfg)
@@ -556,6 +567,17 @@ def send_one_alimtalk(
                 "status": "error",
                 "reason": "provider_boundary_claim_failed",
                 "provider_called": False,
+            }
+        # The queue payload may have been accepted before an operations block
+        # was added. Recheck immediately before crossing the provider boundary.
+        if not check_recipient_allowed(to):
+            return {
+                "status": "error",
+                "reason": "recipient_blocked_by_policy",
+                "provider_called": False,
+                "provider_outcome": "rejected",
+                "definitely_not_accepted": True,
+                "provider_retryable": False,
             }
         provider_called = True
         response = client.send(message)
@@ -924,6 +946,20 @@ def main() -> int:
 
                     to = str(data.get("to", "")).replace("-", "").strip()
                     text = str(data.get("text", ""))
+                    from apps.domains.messaging.policy import check_recipient_allowed
+
+                    if not check_recipient_allowed(to):
+                        logger.warning(
+                            "Message skipped: recipient=%s rejected by policy",
+                            to[:4] + "****" if to else "missing",
+                        )
+                        queue_client.delete_message(
+                            queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
+                            receipt_handle=receipt_handle,
+                        )
+                        _msg_deleted = True
+                        _current_receipt_handle = None
+                        continue
                     # 공용 채널 계약: 큐 payload의 발신번호는 신뢰하지 않는다.
                     sender = ""
                     target_name = (data.get("target_name") or "").strip()

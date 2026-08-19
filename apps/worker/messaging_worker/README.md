@@ -24,6 +24,8 @@ SQS `academy-messaging-jobs` 수신 → 공용 알림톡만 발송. 예약 취�
 | `AWS_REGION` | - | 기본값 `ap-northeast-2` |
 | `MESSAGING_SQS_WAIT_SECONDS` | - | Long Polling 대기(기본 20) |
 | `DJANGO_SETTINGS_MODULE` | - | 예약 취소 Double Check 시 설정 |
+| `MESSAGING_DISABLED_TENANT_IDS` | - | 콤마 구분 업무 tenant ID. API enqueue와 워커 소비 양쪽에서 전체 발송 중지 |
+| `MESSAGING_RECIPIENT_DENYLIST` | - | 콤마 구분 수신번호. 큐 소비와 공급사 호출 직전에 재확인하여 영구 차단 |
 
 ---
 
@@ -77,6 +79,9 @@ python -m apps.worker.messaging_worker.sqs_main
   `source_tenant_id`로만 보존하며, 예약 취소 같은 업무 조회에만 사용한다.
 - **SMS/LMS**
   신규 실발송 금지. legacy SMS payload는 워커에서 실패 로그로 닫는다.
+- **운영 수신자 차단**
+  `MESSAGING_RECIPIENT_DENYLIST`는 하이픈을 제거해 비교한다. 이미 SQS에 들어간
+  메시지도 워커 입구에서 삭제하고, Solapi 호출 직전 같은 정책을 다시 확인한다.
 
 API 키/시크릿은 **환경변수**로만 설정하고 코드에 노출하지 마세요.
 

@@ -1305,6 +1305,20 @@ class TestRecipientWhitelist(TestCase):
         from apps.domains.messaging.policy import check_recipient_allowed
         self.assertTrue(check_recipient_allowed("01099999999"))
 
+    @patch.dict(
+        "os.environ",
+        {
+            "MESSAGING_RECIPIENT_DENYLIST": "010-9999-8888",
+            "MESSAGING_TEST_WHITELIST": "01099998888,01031217466",
+        },
+    )
+    def test_operational_denylist_overrides_whitelist(self):
+        from apps.domains.messaging.policy import check_recipient_allowed
+
+        self.assertFalse(check_recipient_allowed("01099998888"))
+        self.assertFalse(check_recipient_allowed("010-9999-8888"))
+        self.assertTrue(check_recipient_allowed("01031217466"))
+
 
 class TestDryRunMode(TestCase):
     """dry-run 모드: 로그만 남기고 실발송 안 함."""

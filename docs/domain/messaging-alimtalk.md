@@ -525,19 +525,24 @@ SHA-256(canonical) -> 64자 hex
   - 비어있으면: dry-run 없음 (운영 모드)
 - 가입/비번 관련 5개 트리거는 dry-run 대상에서 **항상 제외** (ALWAYS_LIVE_TRIGGERS, line 160-166)
 
-### 테스트 화이트리스트
+### 수신자 denylist와 테스트 화이트리스트
 
 출처: `policy.py:106-138`
 
 - 환경변수 `MESSAGING_TEST_WHITELIST`: 콤마 구분 전화번호
 - 설정 시: 해당 번호에만 실발송 (테스트 모드)
 - 미설정 시: 모든 번호 허용 (운영 모드)
+- 환경변수 `MESSAGING_RECIPIENT_DENYLIST`: 콤마 구분 전화번호. 하이픈 제거 후
+  whitelist보다 먼저 적용하며 API enqueue, 워커 소비, 공용 Solapi 호출 직전에
+  같은 번호를 다시 거부한다. 이미 큐에 들어간 메시지도 공급사에 전달하지 않는다.
 
 ### 테넌트 레벨 비활성화
 
 - `is_messaging_disabled(tenant_id)`: TEST_TENANT_ID(기본 9999) 또는 전체 차단 목록에 포함되면 모든 메시징 스킵
 - `TEMPORARILY_DISABLED_MESSAGING_TENANTS`: 2026-07-09 KST 기준 `ymath` tenant id `4`는 원장 공지 전까지 모든 알림톡 발송을 스킵한다. 이 차단은 업무 tenant 기준이므로 owner 공용 대리 발송의 `source_tenant_id=4`도 차단된다.
 - `MESSAGING_DISABLED_TENANT_IDS`: 런타임 env 콤마 구분 목록으로 전체 차단 tenant id를 추가할 수 있다.
+  운영 변경 후 API와 messaging worker가 새 env를 읽었는지 확인해야 하며, 최소한
+  messaging worker는 재기동 전까지 기존 큐를 소비하게 두지 않는다.
 - `is_messaging_restricted(tenant_id)`: RESTRICTED_MESSAGING_TENANTS에 포함되면 비계정 메시징 차단 (현재 비어있음)
 - `AutoSendConfig.enabled`: 트리거별 on/off (models.py:249)
 
@@ -546,6 +551,7 @@ SHA-256(canonical) -> 64자 hex
 - 예약 취소 Double Check: `reservation_id` 있으면 발송 직전 DB 확인 (sqs_main.py:441-457)
 - 잔액 검증: 발송 전 잔액 < 단가이면 스킵 (sqs_main.py:564-596)
 - 테넌트 ID 필수: `tenant_id` 없으면 메시지 삭제 (sqs_main.py:414-425)
+- 수신자 운영 차단: denylist 번호는 큐 입구에서 삭제하고 provider 호출 직전에 재확인
 - `sending`/`ambiguous` 결과는 자동 재발송 금지. `operations/status.log_24h.action_required`(`sending + ambiguous`)와 `provider_outcome_ambiguous` risk로 확인
 - 결제 `notice_payment`처럼 논리 매핑은 있으나 provider SID가 없는 유형은 preflight와 실제 send 모두 `unified_template_unavailable`로 fail-close. 과거 tenant template SID로 fallback 금지
 

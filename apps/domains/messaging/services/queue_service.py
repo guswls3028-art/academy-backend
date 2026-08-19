@@ -121,9 +121,9 @@ def enqueue_sms(
         logger.info("enqueue_sms blocked: tenant_id=%s messaging restricted (account-only)", original_tenant_id)
         return False
 
-    # Recipient whitelist guard (테스트 모드 시 허용 번호만 발송)
+    # Recipient guard: 운영 denylist 및 테스트 whitelist를 모두 적용한다.
     if not check_recipient_allowed(to):
-        logger.info("enqueue_sms blocked: recipient %s not in test whitelist", (to or "")[:4] + "****")
+        logger.info("enqueue_sms blocked: recipient %s rejected by policy", (to or "")[:4] + "****")
         return False
 
     mode = (message_mode or "").strip().lower() or "alimtalk"
