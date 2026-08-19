@@ -41,9 +41,9 @@
 
 | 문서 | 스코프 |
 |------|--------|
-| [tenants/sswe-checklist.md](tenants/sswe-checklist.md) | SSWE 테넌트 셋업 체크리스트 |
-| [tenants/custom-domain.md](tenants/custom-domain.md) | 신규 테넌트 커스텀 도메인 등록 |
-| [tenants/onboarding-run-sheet.md](tenants/onboarding-run-sheet.md) | 신규 테넌트 G0~G8 실행표 |
+| [tenants/sswe-checklist.md](tenants/sswe-checklist.md) | SSWE 당시 셋업 역사 기록; 신규 온보딩 재사용 금지 |
+| [tenants/custom-domain.md](tenants/custom-domain.md) | 신규 테넌트 전체 서비스·커스텀 도메인 등록 정본 |
+| [tenants/onboarding-run-sheet.md](tenants/onboarding-run-sheet.md) | 신규 테넌트 G0~G9 실행표와 최종 감사 |
 | [tenants/gabia-nameserver.md](tenants/gabia-nameserver.md) | 가비아 네임서버 셋업 |
 
 ## 작성 규칙

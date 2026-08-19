@@ -14,6 +14,11 @@
 - 백엔드 배포는 상시 격리 development, 임시 격리 preproduction,
   ASG 무중단 교체를 순서대로 통과해야 한다.
 - 같은 명령을 다시 실행해도 중복 생성되지 않아야 한다.
+- 신규 테넌트마다 모든 제품을 고객별 목록에 추가하지 않는다. 아래 서비스
+  매트릭스에서 `개별 등록`으로 분류된 경계만 변경하고 공유형 경계는 tenant
+  isolation과 안전 기본값을 검증한다.
+- 완료 판정은 체크박스만으로 하지 않고 읽기 전용
+  `audit_tenant_onboarding`과 외부 DNS/HTTPS/R2 probe를 함께 통과해야 한다.
 
 `setup_three_tenants`는 기존 테넌트 복구용 레거시 명령이다. 신규 온보딩 목록에
 테넌트를 추가하지 않는다.
@@ -27,20 +32,40 @@
 
 | 게이트 | 실행 | 통과 증거 |
 |---|---|---|
-| G0 입력 확정 | 코드·ID·도메인·표시명·기간·브랜드 입력 | 비밀정보 없는 입력표 |
+| G0 입력 확정 | 코드·ID·도메인·브랜드·과금·메시징 결정 | 비밀정보 없는 입력표 |
 | G1 충돌 확인 | `check_tenants`, 호스트·코드 검색 | 사용할 ID·코드·도메인 확정 |
 | G2 DNS 준비 | Cloudflare zone 생성, NS 1·2차 전달 | zone과 발급 NS |
-| G3 코드 준비 | backend host/origin, frontend 전체 브랜딩 | 로컬 검사와 시각 검증 |
+| G3 소스 준비 | 개별 등록 경계와 공유 서비스 안전 기본값 | 로컬 검사와 시각 검증 |
 | G4 위임·배포 | 공용 DNS NS 확인, 양쪽 정식 배포 | 배포 revision과 성공 run |
-| G5 운영 DB | `provision_tenant` dry-run/적용, 구독 dry-run/적용 | tenant/code/domain/만기일 |
+| G5 운영 DB | 프로비저닝·구독·메시징·안전 기본값 감사 | owner 전 audit PASS |
 | G6 Pages·HTTPS | apex/`www` Pages·CNAME 활성화 | 두 URL HTTP 200 |
 | G7 대표 계정 | 개발자 콘솔 소유자 탭에서 1회 생성 | 소유자 수와 role `owner` |
 | G8 실제 인계 | 커스텀 도메인 로그인·최초 비밀번호 변경·격리 확인 | owner 화면과 빈 초기 데이터 |
+| G9 최종 봉인 | owner 포함 audit와 외부 probe 재실행 | audit PASS와 증거 링크 |
 
 운영 신규 테넌트에는 개발자 콘솔의 목록 화면에 있는 간편 생성 폼을 사용하지
 않는다. 이 폼만으로는 명시적 운영 ID, 양쪽 코드 배포, DNS, 구독, 전체 브랜딩을
 완료할 수 없다. 운영 DB 생성은 G4 이후 범용 `provision_tenant`만 사용하고,
 개발자 콘솔은 G7의 대표 계정 등록에만 사용한다.
+
+### 서비스 전수 매트릭스
+
+새 기능이 추가되면 이 표에서 어느 경계에 속하는지 먼저 정하고, 고객별 등록이
+필요해졌다면 같은 변경에서 이 문서와 감사 명령을 갱신한다.
+
+| 경계 | 신규 테넌트 처리 | 완료 증거 |
+|---|---|---|
+| API 요청 라우팅·세션 | **개별 등록**: backend host, CORS, CSRF와 DB `TenantDomain` apex/`www` | runtime 설정 audit, 실제 로그인 |
+| 브라우저→Video R2 업로드 | **개별 origin 수렴**: API origin 목록을 R2 bucket CORS에도 적용 | apex/`www` PUT 200, ACAO, ETag, abort 잔여 0 |
+| 프런트 로그인·내부 헤더·학생앱·성적표·OG/PWA | **개별 등록**: tenant registry, 테마, 팔레트, 정적 에셋 | build, 1366/390, 역할별 라이트/다크 |
+| Tenant·Program·구독 | **개별 등록**: `provision_tenant`, `contract` 또는 `exempt` | DB audit와 이용 가능 readback |
+| 대표 계정·권한 | **개별 등록**: 개발자 콘솔에서 기존 owner 0명 확인 후 1회 생성 | active owner 1명, 실제 도메인 로그인 |
+| 알림톡 | **기본 비활성**: 별도 승인 전 `messaging_is_active=false`; 승인돼도 공용 owner 채널·exact 승인 템플릿 사용 | 선택한 messaging mode audit; 공급사 credential을 문서에 남기지 않음 |
+| 결제·청구 | **명시 결정**: 기간 계약 또는 승인된 과금 제외 중 하나만 선택 | 만료·다음 결제일 또는 runtime exempt ID audit |
+| Video Batch·AI·Tools·공용 큐 | **공유형**: 고객별 worker/queue 목록 추가 금지, payload·DB·R2 key의 tenant scope 사용 | 정식 배포 worker/queue gate와 역할별 기능 smoke |
+| 일반 R2 다운로드·문서 변환 | **공유형**: tenant-prefixed key와 서명/CDN 경계 사용, 버킷 복제 금지 | 배포의 XLSX/PPT/R2 real-use smoke |
+| 제품 분석·오류 관측 | **공유형**: runtime tenant context 사용, 고객별 SDK 키 추가 금지 | 이벤트·로그의 tenant 식별과 타 tenant 미노출 |
+| 학생가입·클리닉 자동승인·영상 동시접속 제한 | **안전 기본값**: 수동승인, 수동승인, 제한 없음(0); 별도 승인 기능은 기본 온보딩 봉인 뒤 변경 | `safety.defaults` audit |
 
 ## 1. 입력 시트
 
@@ -54,9 +79,12 @@
 | apex 도메인 | saebom.com | `www` 제외 |
 | 대표자 표시명 | 홍길동 | 직원관리 대표 행 |
 | 대표 로그인 ID | 별도 전달 | 문서·커밋에 기록하지 않음 |
-| 초기 이용기간 | 30일 | 계약 또는 온보딩 결정값. 추정하지 않음 |
+| 과금 모드 | `contract` | `contract` 또는 승인 근거가 있는 `exempt` |
+| 초기 이용기간 | 30일 | `contract`의 계약값. 추정하지 않음 |
+| 메시징 모드 | `disabled` | 별도 승인이 있을 때만 `approved` |
 | 브랜드 색상 | `#123456`, `#fedcba` | 로고 실측 또는 고객 지정 |
 | 로고 원본 | PNG/SVG | 고객 제공 원본 보존 |
+| 안전 기본값 | 수동/수동/0 | 학생가입·클리닉·영상 제한. 변경은 별도 승인 |
 | 고객 메모 | 요청 기능·운영 방식 | 비밀정보 제외 |
 
 운영 ID와 기존 코드를 읽기 전용으로 확인한다.
@@ -255,7 +283,8 @@ cd C:\academy\backend
 
 대표 계정은 테넌트·Program·구독이 준비된 뒤 HTTPS 개발자 콘솔에서 만든다.
 `provision_tenant`의 owner 인수나 운영 셸 환경변수는 신규 온보딩의 표준 경로로
-사용하지 않는다.
+사용하지 않는다. 아래 구독·안전 기본값 설정과 owner 없는 G5 감사를 먼저 통과한
+뒤 이 절차를 시작한다.
 
 1. 승인된 플랫폼 운영 계정의 기존 브라우저 세션 또는 비밀 저장소를 사용해
    `https://dev.hakwonplus.com/dev/tenants/<tenant-id>`로 이동한다. 플랫폼
@@ -316,6 +345,29 @@ Program 생성 직후에는 이용기간이 비어 있어 로그인 화면에 �
 적용 결과에서 `subscription_expires_at`과 `next_billing_at`이 함께 설정되고,
 로그인 화면의 이용 연장 안내가 사라졌는지 확인한다.
 
+명시적으로 승인된 `exempt` 테넌트는 `extend_subscription`을 실행하지 않는다.
+운영 SSM의 `BILLING_EXEMPT_TENANT_IDS`에 정확한 신규 ID만 추가하고 기존 ID를
+보존한 뒤 정식 API ASG 교체를 통과한다. 이 모드에서는 만료일과 다음 결제일이
+모두 `NULL`이고 runtime `is_subscription_active=True`여야 한다. 설정 파일이나
+문서에 tenant별 비밀정보를 넣지 않는다.
+
+메시징은 별도 활성화 승인이 없으면 `messaging_is_active=false`를 유지한다. 제품
+메시징은 [messaging-policy.md](../../ssot/messaging-policy.md)의 공용 owner 채널과
+exact 승인 템플릿을 사용하므로 신규 tenant PFID/provider/공급사 키를 만들지
+않는다. 학생가입 자동승인과 클리닉 자동승인은 `false`, 영상 동시 세션·디바이스
+제한은 `0`으로 먼저 봉인하고 고객별 변경은 기본 온보딩 완료 후 별도 승인으로
+적용한다.
+
+owner 생성 전 G5 읽기 전용 감사를 실행한다. `contract`/`exempt`와
+`disabled`/`approved`는 입력 시트에서 선택한 정확한 값으로 바꾼다.
+
+```powershell
+.\scripts\v1\run-api-management-remote.ps1 -Command 'audit_tenant_onboarding saebom --tenant-id 10 --domain saebom.com --billing-mode contract --messaging-mode disabled'
+```
+
+`TENANT_ONBOARDING_AUDIT_PASS`가 아니면 owner를 만들지 않는다. 실패 key에 해당하는
+G1·G3·G5 경계를 고친 뒤 같은 읽기 전용 명령을 다시 실행한다.
+
 ## 7. Pages·DNS 활성화
 
 DB와 양쪽 배포가 준비된 뒤 실행한다.
@@ -333,7 +385,7 @@ cd C:\academy\backend
 3. 올바른 proxied CNAME은 유지
 4. 누락된 레코드를 `academy-frontend-26b.pages.dev`로 생성
 
-## 8. 완료 검증
+## 8. 완료 검증과 G9 봉인
 
 ```powershell
 Resolve-DnsName -Type NS saebom.com -Server 1.1.1.1
@@ -355,6 +407,8 @@ curl.exe -sS -o NUL -w "%{http_code}`n" https://www.saebom.com/login
 - 새 테넌트의 학생·강의·성적 목록이 비어 있음
 - 다른 테넌트 데이터가 보이지 않음
 - 백엔드 `/healthz`, `/health` 정상
+- 신규 apex와 `www`에서 browser 형태 R2 PUT 200, 정확한 ACAO·ETag 노출,
+  multipart abort 뒤 임시 객체 0
 
 프론트 가용성 스크립트로 신규 URL만 좁게 재검증할 수 있다.
 
@@ -364,6 +418,19 @@ $env:TENANT_AVAILABILITY_URLS = "https://saebom.com/login,https://www.saebom.com
 pnpm verify:tenant-availability
 Remove-Item Env:TENANT_AVAILABILITY_URLS
 ```
+
+마지막으로 owner 포함 감사 명령을 실행한다. G5와 동일한 과금·메시징 모드를
+유지하며 `--require-owner`만 추가한다.
+
+```powershell
+cd C:\academy\backend
+.\scripts\v1\run-api-management-remote.ps1 -Command 'audit_tenant_onboarding saebom --tenant-id 10 --domain saebom.com --billing-mode contract --messaging-mode disabled --require-owner'
+```
+
+G9 완료 증거에는 `TENANT_ONBOARDING_AUDIT_PASS`, backend/frontend 배포 revision,
+DNS·HTTPS, R2 probe, 1366/390 역할별 화면, 합성 QA tenant/user/object 0 readback을
+함께 연결한다. 하나라도 없으면 “부분 완료”이며 신규 테넌트 운영 완료로 보고하지
+않는다.
 
 ## 9. 실패 시 중단·복구
 
@@ -379,6 +446,8 @@ Remove-Item Env:TENANT_AVAILABILITY_URLS
 | 소유자는 있으나 로그인 실패 | ID를 재생성하지 말고 대상 도메인·테넌트와 계정 활성 상태 확인 |
 | 로그인 후 비밀번호 변경 화면 | 정상 초기 인증 상태. 대표자에게 최종 비밀번호 설정 인계 |
 | 개발자 콘솔 임퍼소네이션만 성공 | 실제 비밀번호·도메인 인증 증거가 아니므로 G8 미완료 |
+| `TENANT_ONBOARDING_AUDIT_FAILED` | 출력된 key의 G1·G3·G5·G7 소유 경계로 돌아가 수정. 감사 명령은 데이터를 고치지 않음 |
+| 영상만 네트워크 오류 | API presign 성공 여부와 별개로 R2 bucket CORS의 apex/`www`, ACAO, ETag를 직접 확인 |
 
 관련 스크립트:
 
@@ -389,4 +458,5 @@ Remove-Item Env:TENANT_AVAILABILITY_URLS
 | Pages·CNAME 활성화 | `scripts/pages-add-custom-domain.ps1` |
 | zone 레코드 조회 | `scripts/get-zone-dns.ps1` |
 | DB 범용 프로비저닝 | `python manage.py provision_tenant` |
+| 신규 테넌트 최종 감사 | `python manage.py audit_tenant_onboarding` |
 | 운영 Django 명령 | `scripts/v1/run-api-management-remote.ps1` |
