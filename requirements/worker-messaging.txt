@@ -1,5 +1,5 @@
 # worker-messaging.txt — Messaging Worker 전용
 -r ./common.txt
 
-# Solapi SMS/LMS
+# Solapi Kakao Alimtalk
 solapi>=5.0.0

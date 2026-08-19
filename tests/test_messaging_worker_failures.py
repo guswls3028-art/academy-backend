@@ -8,6 +8,9 @@ from apps.worker.messaging_worker.sqs_main import (
     _safe_payload_shape,
     _send_failure_disposition,
     send_one_alimtalk,
+    send_one_sms,
+    send_one_sms_own_solapi,
+    send_one_sms_ppurio,
 )
 
 
@@ -21,6 +24,33 @@ def test_ppurio_credential_failures_are_non_retryable() -> None:
 
 def test_ppurio_provider_unavailable_remains_retryable() -> None:
     assert not _is_non_retryable_send_failure("ppurio_token_unavailable")
+
+
+def test_all_legacy_worker_sms_callables_fail_before_provider() -> None:
+    expected = {
+        "status": "error",
+        "reason": "sms_disabled",
+        "provider_called": False,
+    }
+
+    assert (
+        send_one_sms(SimpleNamespace(), "01012345678", "text", "0212345678")
+        == expected
+    )
+    assert send_one_sms_ppurio(
+        "01012345678",
+        "text",
+        "0212345678",
+        api_key="configured",
+        account="configured",
+    ) == expected
+    assert send_one_sms_own_solapi(
+        "01012345678",
+        "text",
+        "0212345678",
+        api_key="configured",
+        api_secret="configured",
+    ) == expected
 
 
 def test_provider_call_timeout_is_ambiguous_and_must_not_auto_retry() -> None:

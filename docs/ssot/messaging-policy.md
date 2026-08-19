@@ -58,7 +58,7 @@
 2. **SYSTEM_AUTO 외에는 사용자가 투명하게 보고 통제 가능.**
 3. **일반 강의와 클리닉 정책 절대 분리.**
 4. **숨겨진 자동 발송 금지.** 모든 발송 경로가 설정 콘솔에 노출.
-5. **공용 알림톡 only.** 제품/고객 SMS/LMS, tenant별 PFID, tenant별 알림톡 provider는 실발송에 사용하지 않는다. 유일한 예외는 `01031217466` 고정 수신 플랫폼 운영자 장애 SMS이며 제품 메시징과 분리한다.
+5. **공용 알림톡 only.** 제품·고객·운영 경로 모두 SMS/LMS를 실발송하지 않는다. tenant별 PFID/provider도 사용하지 않으며, 운영 오류 알림은 Slack webhook만 사용한다.
 6. **fallback 금지.** exact trigger의 공용 승인 템플릿 또는 명시 unified category 템플릿이 없으면 발송하지 않는다.
 
 ## 공용 알림톡 정책
@@ -103,6 +103,7 @@
 - 제품 메시징 사고는 `python manage.py diagnose_messaging_incident --tenant-id <id> --recipient <번호> [--origin-id <job-id>] [--since-hours 72] [--provider]`로 조회한다. 출력은 상태/트리거/연결 건수와 공급자 type/status 집계만 포함하고 번호·본문·비밀번호·provider ID·입력한 origin ID를 출력하지 않는다.
 
 ## 변경 이력
+- 2026-08-20: 플랫폼 운영자 장애 SMS 예외와 활성화 스크립트·워크플로 입력·provider 호출 코드를 제거했다. 운영 오류는 Slack으로만 알리고, 기존 SMS audit action은 이력 조회와 짧은 중복 억제 기간에만 읽는다.
 - 2026-08-20: 공유 공급자 KST 일일 900건 기본 브레이크, 수신번호 HMAC 지문, Excel job provenance, canonical business-key 재검증, 개인정보 없는 단일 incident 진단 명령을 추가했다.
 - 2026-08-19: 신규 학생 계정 안내 발송 시점을 학생 마스터 생성/가입 승인에서 첫 ACTIVE 수강 확정으로 이동. 초기 안내값은 암호화 보관하고 전체 계정 outbox 확보 후 제거하며, 기존 학생·추가 수강·동일 요청 재시도는 중복 발송하지 않도록 고정.
 - 2026-08-19: 잘못 등록된 외부 수신번호와 대량 계정 알림 사고 대응을 위해 운영 수신번호 denylist를 API enqueue·워커 소비·Solapi 호출 직전의 세 경계에 적용하고, tenant 긴급 중지의 재기동/해제 조건을 명시.

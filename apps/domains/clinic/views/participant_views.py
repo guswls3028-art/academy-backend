@@ -199,7 +199,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
     def complete(self, request, pk=None):
         """
         POST /clinic/participants/{id}/complete/
-        자율학습 완료 처리 — 이력 기록 + 문자 트리거
+        자율학습 완료 처리 — 이력 기록 + 알림톡 트리거
 
         상태 전이: PENDING/BOOKED → ATTENDED (complete 전용 전이)
         이미 ATTENDED/NO_SHOW/CANCELLED/REJECTED인 경우 상태는 변경하지 않고

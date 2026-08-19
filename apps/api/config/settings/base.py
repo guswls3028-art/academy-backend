@@ -455,8 +455,6 @@ TENANT_DB_USAGE_SLOW_REQUEST_MS = int(
 # 비어 있으면 전송 생략 — check_dev_alerts 커맨드는 조건 평가만 수행.
 DEV_ALERTS_WEBHOOK_URL = os.getenv("DEV_ALERTS_WEBHOOK_URL", "")
 # 고객 메시지와 완전히 분리된 운영자 장애 SMS. 아래 고정 통제번호 외 발송은 코드에서 차단한다.
-DEV_ALERTS_SMS_ENABLED = os.getenv("DEV_ALERTS_SMS_ENABLED", "").lower() in ("1", "true", "yes")
-DEV_ALERTS_SMS_RECIPIENT = os.getenv("DEV_ALERTS_SMS_RECIPIENT", "")
 # Runtime 5xx responses must not wait for the incident audit insert.
 USER_INCIDENT_AUDIT_ASYNC = True
 # 로컬 기능 테스트용 tenant. 이 tenant에서는 알림톡 발송 없이 기능만 동작.

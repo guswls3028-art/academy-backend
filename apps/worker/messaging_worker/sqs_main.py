@@ -406,50 +406,29 @@ def send_one_alimtalk_ppurio(
         }
 
 
+def _sms_disabled_result() -> dict:
+    """Legacy callable boundary: SMS/LMS can never reach a provider."""
+    return {
+        "status": "error",
+        "reason": "sms_disabled",
+        "provider_called": False,
+    }
+
+
 def send_one_sms_ppurio(
     to: str, text: str, sender: str,
-    *, api_key: str = "", account: str = "",
+    *,
+    api_key: str = "", account: str = "",
 ) -> dict:
-    """뿌리오 SMS/LMS 1건 발송. Solapi send_one_sms와 동일 인터페이스."""
-    try:
-        from apps.domains.messaging.ppurio_client import send_ppurio_sms
-        return send_ppurio_sms(to=to, text=text, sender=sender, api_key=api_key, account=account)
-    except Exception as e:
-        logger.exception("ppurio sms failed to=%s****", (to or "")[:4])
-        return {"status": "error", "reason": str(e)[:500]}
+    return _sms_disabled_result()
 
 
 def send_one_sms_own_solapi(
     to: str, text: str, sender: str,
-    *, api_key: str, api_secret: str,
+    *,
+    api_key: str, api_secret: str,
 ) -> dict:
-    """테넌트 자체 솔라피 키로 SMS 1건 발송."""
-    try:
-        from solapi.model import RequestMessage
-        from solapi.model.message_type import MessageType
-        from solapi import SolapiMessageService
-    except ImportError:
-        return {"status": "error", "reason": "solapi_not_installed"}
-    client = SolapiMessageService(api_key=api_key, api_secret=api_secret)
-    sender = (sender or "").strip().replace("-", "")
-    to = (to or "").replace("-", "").strip()
-    text = (text or "").strip()
-    if not to or not text or not sender:
-        return {"status": "error", "reason": "to_text_sender_required"}
-    text_bytes = text.encode("utf-8")
-    if len(text_bytes) <= 90:
-        message = RequestMessage(from_=sender, to=to, text=text, type=MessageType.SMS)
-    else:
-        subject = (text[:20] + "…") if len(text) > 20 else text
-        message = RequestMessage(from_=sender, to=to, text=text, type=MessageType.LMS, subject=subject)
-    try:
-        response = client.send(message)
-        group_id = getattr(getattr(response, "group_info", None), "group_id", None)
-        logger.info("send_sms_own ok to=%s**** group_id=%s", to[:4], group_id)
-        return {"status": "ok", "group_id": group_id}
-    except Exception as e:
-        logger.warning("send_sms_own failed to=%s****: %s", to[:4], e)
-        return {"status": "error", "reason": str(e)[:500]}
+    return _sms_disabled_result()
 
 
 def _build_variables_dict(replacements: Optional[list]) -> Optional[dict]:
@@ -636,65 +615,7 @@ def send_one_alimtalk(
 
 
 def send_one_sms(cfg, to: str, text: str, sender: str) -> dict:
-    """
-    Solapi로 SMS/LMS 1건 발송.
-    - 90byte 이하: SMS (type 명시로 자동판단 오류 방지)
-    - 90byte 초과: LMS (subject 필수라서 본문 앞 20자 사용)
-    Returns: {"status": "ok"|"error", "group_id"?, "reason"?}
-    """
-    try:
-        from solapi.model import RequestMessage
-        from solapi.model.message_type import MessageType
-    except ImportError as e:
-        logger.error("solapi SDK not installed: %s", e)
-        return {"status": "error", "reason": "solapi_not_installed"}
-    client = _get_solapi_client(cfg)
-    sender = (sender or cfg.SOLAPI_SENDER or "").strip().replace("-", "")
-    if not sender:
-        return {"status": "error", "reason": "sender_required"}
-
-    to = (to or "").replace("-", "").strip()
-    text = (text or "").strip()
-    if not to or not text:
-        return {"status": "error", "reason": "to_and_text_required"}
-
-    # Solapi: SMS 90byte 이하, LMS는 subject 필수. 타입 미지정 시 "발송 가능한 메시지 없음" 발생 가능.
-    text_bytes = text.encode("utf-8")
-    if len(text_bytes) <= 90:
-        message = RequestMessage(from_=sender, to=to, text=text, type=MessageType.SMS)
-    else:
-        # LMS: subject 필수(장문 제목, 30자 내외 권장)
-        subject = (text[:20] + "…") if len(text) > 20 else text
-        message = RequestMessage(
-            from_=sender, to=to, text=text, type=MessageType.LMS, subject=subject
-        )
-
-    try:
-        response = client.send(message)
-        group_id = getattr(getattr(response, "group_info", None), "group_id", None)
-        logger.info("send_sms ok to=%s**** group_id=%s", to[:4], group_id)
-        return {"status": "ok", "group_id": group_id}
-    except Exception as e:
-        reason = str(e)[:500]
-        try:
-            from solapi.error.MessageNotReceiveError import MessageNotReceivedError
-            if isinstance(e, MessageNotReceivedError) and getattr(e, "failed_messages", None):
-                parts = []
-                for fm in e.failed_messages[:3]:
-                    status_code = getattr(fm, "status_code", "") or ""
-                    status_message = getattr(fm, "status_message", "") or ""
-                    parts.append(f"[{status_code}] {status_message}")
-                if parts:
-                    reason = "; ".join(parts)[:500]
-                logger.warning(
-                    "send_sms MessageNotReceivedError to=%s**** reason=%s",
-                    to[:4], reason,
-                )
-            else:
-                logger.exception("send_sms failed to=%s****", to[:4])
-        except Exception:
-            logger.exception("send_sms failed to=%s****", to[:4])
-        return {"status": "error", "reason": reason}
+    return _sms_disabled_result()
 
 
 def main() -> int:

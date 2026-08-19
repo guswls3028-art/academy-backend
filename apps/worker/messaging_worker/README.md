@@ -78,7 +78,8 @@ python -m apps.worker.messaging_worker.sqs_main
   worker 입구에서 `tenant_id`를 owner tenant로 강제 정규화한다. 원 업무 테넌트는
   `source_tenant_id`로만 보존하며, 예약 취소 같은 업무 조회에만 사용한다.
 - **SMS/LMS**
-  신규 실발송 금지. legacy SMS payload는 워커에서 실패 로그로 닫는다.
+  실발송 예외 없음. legacy SMS payload와 호환 callable은 provider를 호출하지 않고
+  `sms_disabled` 실패로 닫는다.
 - **운영 수신자 차단**
   `MESSAGING_RECIPIENT_DENYLIST`는 하이픈을 제거해 비교한다. 이미 SQS에 들어간
   메시지도 워커 입구에서 삭제하고, Solapi 호출 직전 같은 정책을 다시 확인한다.

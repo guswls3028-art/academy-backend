@@ -16129,7 +16129,7 @@
     },
     "/api/v1/clinic/participants/{id}/complete/": {
       "post": {
-        "description": "POST /clinic/participants/{id}/complete/\n자율학습 완료 처리 — 이력 기록 + 문자 트리거\n\n상태 전이: PENDING/BOOKED → ATTENDED (complete 전용 전이)\n이미 ATTENDED/NO_SHOW/CANCELLED/REJECTED인 경우 상태는 변경하지 않고\ncompleted_at만 기록한다.",
+        "description": "POST /clinic/participants/{id}/complete/\n자율학습 완료 처리 — 이력 기록 + 알림톡 트리거\n\n상태 전이: PENDING/BOOKED → ATTENDED (complete 전용 전이)\n이미 ATTENDED/NO_SHOW/CANCELLED/REJECTED인 경우 상태는 변경하지 않고\ncompleted_at만 기록한다.",
         "operationId": "clinic_participants_complete_create",
         "parameters": [
           {
@@ -36003,7 +36003,7 @@
     },
     "/api/v1/results/admin/clinic-bookings/{id}/complete/": {
       "post": {
-        "description": "POST /clinic/participants/{id}/complete/\n자율학습 완료 처리 — 이력 기록 + 문자 트리거\n\n상태 전이: PENDING/BOOKED → ATTENDED (complete 전용 전이)\n이미 ATTENDED/NO_SHOW/CANCELLED/REJECTED인 경우 상태는 변경하지 않고\ncompleted_at만 기록한다.",
+        "description": "POST /clinic/participants/{id}/complete/\n자율학습 완료 처리 — 이력 기록 + 알림톡 트리거\n\n상태 전이: PENDING/BOOKED → ATTENDED (complete 전용 전이)\n이미 ATTENDED/NO_SHOW/CANCELLED/REJECTED인 경우 상태는 변경하지 않고\ncompleted_at만 기록한다.",
         "operationId": "results_admin_clinic_bookings_complete_create",
         "parameters": [
           {

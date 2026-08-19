@@ -1,8 +1,9 @@
 # apps/support/messaging/services/__init__.py
 """
 Re-export all public symbols for backward compatibility.
-`enqueue_sms` is the historical public API name; it enqueues either SMS or
-Alimtalk depending on `message_mode`.
+`enqueue_sms` and `send_sms` are historical public API names. The former
+accepts only Alimtalk mode and the latter always fails closed with
+`sms_disabled`.
 """
 
 from .solapi_client import (
