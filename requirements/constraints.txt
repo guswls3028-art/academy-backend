@@ -14,8 +14,8 @@ djangorestframework-simplejwt==5.5.1
 cryptography==50.0.0
 
 # AWS / Infrastructure
-boto3==1.43.67
-botocore==1.43.67
+boto3==1.43.72
+botocore==1.43.72
 
 # Database
 psycopg2-binary==2.9.12
