@@ -70,6 +70,26 @@ def _create_scheduled_notification_unlocked(
         tenant_id=tenant_id,
         payload=durable_payload,
     )
+    from apps.domains.messaging.security import build_recipient_fingerprint
+
+    recipient_fingerprint = build_recipient_fingerprint(durable_payload.get("to"))
+    origin_type = str(
+        durable_payload.get("origin_type")
+        or durable_payload.get("source_use_case")
+        or durable_payload.get("source_domain")
+        or ""
+    ).strip()[:64]
+    origin_id = str(
+        durable_payload.get("origin_id")
+        or durable_payload.get("domain_object_id")
+        or ""
+    ).strip()[:128]
+    if recipient_fingerprint:
+        durable_payload["recipient_fingerprint"] = recipient_fingerprint
+    if origin_type:
+        durable_payload["origin_type"] = origin_type
+    if origin_id:
+        durable_payload["origin_id"] = origin_id
     return ScheduledNotification.objects.create(
         tenant_id=tenant_id,
         trigger=trigger,
@@ -77,6 +97,9 @@ def _create_scheduled_notification_unlocked(
         payload=durable_payload,
         dispatch_key=dispatch_key,
         business_idempotency_key=business_key,
+        recipient_fingerprint=recipient_fingerprint,
+        origin_type=origin_type,
+        origin_id=origin_id,
         status=ScheduledNotification.Status.PENDING,
     )
 
@@ -315,6 +338,31 @@ def _ensure_notification_dispatch_identity(notification) -> None:
             payload=payload,
         )
         update_fields.append("business_idempotency_key")
+    from apps.domains.messaging.security import build_recipient_fingerprint
+
+    if not notification.recipient_fingerprint:
+        notification.recipient_fingerprint = build_recipient_fingerprint(
+            payload.get("to")
+        )
+        if notification.recipient_fingerprint:
+            update_fields.append("recipient_fingerprint")
+    if not notification.origin_type:
+        notification.origin_type = str(
+            payload.get("origin_type")
+            or payload.get("source_use_case")
+            or payload.get("source_domain")
+            or ""
+        ).strip()[:64]
+        if notification.origin_type:
+            update_fields.append("origin_type")
+    if not notification.origin_id:
+        notification.origin_id = str(
+            payload.get("origin_id")
+            or payload.get("domain_object_id")
+            or ""
+        ).strip()[:128]
+        if notification.origin_id:
+            update_fields.append("origin_id")
     if update_fields:
         notification.save(update_fields=update_fields)
 
@@ -327,7 +375,13 @@ def _claim_due_notifications(
 ) -> tuple[list[_DispatchClaim], int, int, int]:
     from apps.core.models import Tenant
     from apps.domains.messaging.models import ScheduledNotification
-    from apps.domains.messaging.selectors import notification_logs_for_business_tenant
+    from apps.domains.messaging.policy import get_owner_tenant_id
+    from apps.domains.messaging.selectors import (
+        get_provider_daily_dispatch_limit,
+        get_provider_daily_notification_usage,
+        get_provider_day_window,
+        notification_logs_for_business_tenant,
+    )
 
     stale_before = now - DISPATCH_CLAIM_TIMEOUT
     due_filter = (
@@ -354,13 +408,23 @@ def _claim_due_notifications(
     reconciled_count = 0
     with transaction.atomic():
         due = list(due_qs[: max(1, int(batch_size))])
+        if not due:
+            return claims, terminal_count, deferred_count, reconciled_count
         tenant_ids = sorted({notification.tenant_id for notification in due})
+        owner_tenant_id = int(get_owner_tenant_id())
+        lock_tenant_ids = sorted({*tenant_ids, owner_tenant_id})
         tenants = {
             tenant.id: tenant
             for tenant in Tenant.objects.select_for_update()
-            .filter(id__in=tenant_ids)
+            .filter(id__in=lock_tenant_ids)
             .order_by("id")
         }
+        if owner_tenant_id not in tenants:
+            raise RuntimeError("messaging_owner_tenant_missing")
+        provider_daily_limit = get_provider_daily_dispatch_limit()
+        provider_daily_usage = get_provider_daily_notification_usage(now=now)
+        provider_day_start, provider_day_end = get_provider_day_window(now=now)
+        provider_release_at = provider_day_end + timedelta(minutes=5)
         cutoff = now - timedelta(hours=1)
         usage_by_tenant: dict[int, int] = {}
         release_at_by_tenant: dict[int, datetime] = {}
@@ -464,6 +528,22 @@ def _claim_due_notifications(
 
             payload = notification.payload
 
+            already_daily_reserved = bool(
+                notification.last_attempt_at
+                and provider_day_start <= notification.last_attempt_at < provider_day_end
+            )
+            if (
+                not already_daily_reserved
+                and provider_daily_usage >= provider_daily_limit
+            ):
+                notification.next_attempt_at = provider_release_at
+                notification.error_message = "provider_daily_dispatch_quota_deferred"
+                notification.save(
+                    update_fields=["next_attempt_at", "error_message"]
+                )
+                deferred_count += 1
+                continue
+
             already_reserved = bool(
                 notification.last_attempt_at
                 and notification.last_attempt_at >= cutoff
@@ -498,6 +578,8 @@ def _claim_due_notifications(
             )
             if not already_reserved:
                 usage_by_tenant[notification.tenant_id] += 1
+            if not already_daily_reserved:
+                provider_daily_usage += 1
             claims.append(
                 _DispatchClaim(
                     notification_id=notification.id,

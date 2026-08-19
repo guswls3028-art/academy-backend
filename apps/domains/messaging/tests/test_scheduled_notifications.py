@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.db import transaction
-from django.test import TestCase, TransactionTestCase
+from django.test import TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
@@ -33,6 +33,9 @@ User = get_user_model()
 class ScheduledNotificationProcessingTests(TransactionTestCase):
     def setUp(self):
         self.tenant = Tenant.objects.create(code="msg-scheduled", name="Msg Scheduled", is_active=True)
+        owner_setting = override_settings(OWNER_TENANT_ID=self.tenant.id)
+        owner_setting.enable()
+        self.addCleanup(owner_setting.disable)
 
     def _notification(self, **overrides):
         values = {
@@ -341,6 +344,72 @@ class ScheduledNotificationProcessingTests(TransactionTestCase):
             ).count(),
             1,
         )
+
+    @override_settings(MESSAGING_PROVIDER_DAILY_DISPATCH_LIMIT=1)
+    def test_provider_daily_quota_defers_new_reservation_until_next_kst_day(self):
+        already_reserved = self._notification(
+            status=ScheduledNotification.Status.SENT,
+            last_attempt_at=timezone.now(),
+        )
+        due = self._notification(
+            payload={
+                "tenant_id": self.tenant.id,
+                "to": "01022223333",
+                "text": "daily quota",
+                "message_mode": "alimtalk",
+            },
+        )
+
+        with patch("apps.domains.messaging.services.enqueue_sms") as enqueue_sms:
+            stats = process_due_notifications(batch_size=10)
+
+        enqueue_sms.assert_not_called()
+        self.assertEqual(stats["deferred"], 1)
+        due.refresh_from_db()
+        self.assertEqual(due.status, ScheduledNotification.Status.PENDING)
+        self.assertEqual(
+            due.error_message,
+            "provider_daily_dispatch_quota_deferred",
+        )
+        self.assertIsNotNone(due.next_attempt_at)
+        self.assertGreater(due.next_attempt_at, already_reserved.last_attempt_at)
+
+    def test_outbox_persists_privacy_safe_recipient_and_origin_trace(self):
+        outbox = create_notification_outboxes(
+            tenant_id=self.tenant.id,
+            notifications=[
+                {
+                    "trigger": "registration_approved_parent",
+                    "send_at": timezone.now(),
+                    "payload": {
+                        "tenant_id": self.tenant.id,
+                        "to": "010-3333-4444",
+                        "text": "temporary secret",
+                        "message_mode": "alimtalk",
+                        "origin_type": "excel_import",
+                        "origin_id": "job-trace-1",
+                    },
+                }
+            ],
+        )[0]
+
+        self.assertEqual(outbox.origin_type, "excel_import")
+        self.assertEqual(outbox.origin_id, "job-trace-1")
+        self.assertEqual(len(outbox.recipient_fingerprint), 64)
+        self.assertNotIn("01033334444", outbox.recipient_fingerprint)
+
+        with patch("apps.domains.messaging.services.enqueue_sms", return_value=True):
+            process_due_notifications(batch_size=1)
+
+        outbox.refresh_from_db()
+        self.assertEqual(outbox.payload["redacted"], True)
+        self.assertEqual(outbox.payload["origin_id"], "job-trace-1")
+        self.assertEqual(
+            outbox.payload["recipient_fingerprint"],
+            outbox.recipient_fingerprint,
+        )
+        self.assertNotIn("010-3333-4444", str(outbox.payload))
+        self.assertNotIn("temporary secret", str(outbox.payload))
 
     def test_quota_deduplicates_log_created_from_same_outbox_business_key(self):
         outbox = create_notification_outboxes(

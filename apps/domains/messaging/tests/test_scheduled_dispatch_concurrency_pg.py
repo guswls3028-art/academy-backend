@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
 from django.db import close_old_connections, connection
-from django.test import TransactionTestCase
+from django.test import TransactionTestCase, override_settings
 from django.utils import timezone
 
 from apps.core.models import Tenant
@@ -111,6 +111,53 @@ class ScheduledDispatchConcurrencyPostgresTests(TransactionTestCase):
         self.assertEqual(
             ScheduledNotification.objects.filter(
                 tenant=self.tenant,
+                status=ScheduledNotification.Status.SENT,
+            ).count(),
+            1,
+        )
+
+    def test_concurrent_tenants_cannot_oversubscribe_provider_daily_quota(self):
+        other_tenant = Tenant.objects.create(
+            code="msg-dispatch-pg-other",
+            name="Messaging Dispatch PG Other",
+            is_active=True,
+        )
+        barrier = threading.Barrier(2)
+        for tenant, suffix in ((self.tenant, "1"), (other_tenant, "2")):
+            ScheduledNotification.objects.create(
+                tenant=tenant,
+                trigger="provider_daily_concurrency",
+                send_at=timezone.now(),
+                payload={
+                    "tenant_id": tenant.id,
+                    "to": f"0100000000{suffix}",
+                    "text": "provider daily quota",
+                    "message_mode": "alimtalk",
+                },
+            )
+
+        def drain() -> dict:
+            close_old_connections()
+            try:
+                barrier.wait(timeout=5)
+                return process_due_notifications(batch_size=1)
+            finally:
+                close_old_connections()
+
+        with (
+            override_settings(
+                OWNER_TENANT_ID=self.tenant.id,
+                MESSAGING_PROVIDER_DAILY_DISPATCH_LIMIT=1,
+            ),
+            patch("apps.domains.messaging.services.enqueue_sms", return_value=True),
+        ):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(lambda _index: drain(), [1, 2]))
+
+        self.assertEqual(sum(result["sent"] for result in results), 1)
+        self.assertEqual(sum(result["deferred"] for result in results), 1)
+        self.assertEqual(
+            ScheduledNotification.objects.filter(
                 status=ScheduledNotification.Status.SENT,
             ).count(),
             1,

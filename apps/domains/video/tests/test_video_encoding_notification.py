@@ -20,27 +20,27 @@ class VideoEncodingNotificationTests(TestCase):
             session=session,
         )
 
-    @patch("apps.domains.messaging.services.enqueue_sms")
+    @patch("apps.domains.messaging.scheduled.dispatch_notification_now")
     @patch("apps.domains.messaging.alimtalk_content_builders.get_solapi_template_id", return_value=None)
     @patch("apps.domains.messaging.selectors.get_auto_send_config", return_value=None)
     def test_video_encoding_complete_without_config_does_not_send_sms(
         self,
         mock_config,
         mock_unified_tid,
-        mock_enqueue,
+        mock_dispatch,
     ) -> None:
         _notify_video_encoding_complete(self.video, self.tenant.id)
 
-        mock_enqueue.assert_not_called()
+        mock_dispatch.assert_not_called()
 
-    @patch("apps.domains.messaging.services.enqueue_sms")
+    @patch("apps.domains.messaging.scheduled.dispatch_notification_now")
     @patch("apps.domains.messaging.alimtalk_content_builders.get_solapi_template_id", return_value=None)
     @patch("apps.domains.messaging.selectors.get_auto_send_config")
     def test_video_encoding_complete_without_approved_template_does_not_send_sms(
         self,
         mock_config,
         mock_unified_tid,
-        mock_enqueue,
+        mock_dispatch,
     ) -> None:
         mock_config.return_value = SimpleNamespace(
             enabled=True,
@@ -55,16 +55,16 @@ class VideoEncodingNotificationTests(TestCase):
 
         _notify_video_encoding_complete(self.video, self.tenant.id)
 
-        mock_enqueue.assert_not_called()
+        mock_dispatch.assert_not_called()
 
-    @patch("apps.domains.messaging.services.enqueue_sms", return_value=True)
+    @patch("apps.domains.messaging.scheduled.dispatch_notification_now")
     @patch("apps.domains.messaging.alimtalk_content_builders.get_solapi_template_id", return_value=None)
     @patch("apps.domains.messaging.selectors.get_auto_send_config")
     def test_video_encoding_complete_approved_template_uses_alimtalk_only(
         self,
         mock_config,
         mock_unified_tid,
-        mock_enqueue,
+        mock_dispatch,
     ) -> None:
         mock_config.return_value = SimpleNamespace(
             enabled=True,
@@ -77,12 +77,14 @@ class VideoEncodingNotificationTests(TestCase):
             delay_value=None,
         )
 
+        mock_dispatch.return_value = SimpleNamespace(status="pending")
+
         _notify_video_encoding_complete(self.video, self.tenant.id)
 
-        mock_enqueue.assert_called_once()
-        kwargs = mock_enqueue.call_args.kwargs
-        self.assertEqual(kwargs["message_mode"], "alimtalk")
-        self.assertEqual(kwargs["template_id"], "KA01VIDEO")
-        self.assertEqual(kwargs["event_type"], "video_encoding_complete")
-        self.assertEqual(kwargs["source_domain"], "video")
-        self.assertNotEqual(kwargs["message_mode"], "sms")
+        mock_dispatch.assert_called_once()
+        payload = mock_dispatch.call_args.kwargs["payload"]
+        self.assertEqual(payload["message_mode"], "alimtalk")
+        self.assertEqual(payload["template_id"], "KA01VIDEO")
+        self.assertEqual(payload["event_type"], "video_encoding_complete")
+        self.assertEqual(payload["source_domain"], "video")
+        self.assertNotEqual(payload["message_mode"], "sms")

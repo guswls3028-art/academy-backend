@@ -8,6 +8,7 @@ from typing import Any
 from django.core.exceptions import ImproperlyConfigured
 
 TENANT_BINDING_SIGNATURE_VERSION = "v1"
+RECIPIENT_FINGERPRINT_VERSION = "v1"
 
 SENSITIVE_NOTIFICATION_TYPES = frozenset(
     {
@@ -31,6 +32,64 @@ _SENSITIVE_LINE_MARKERS = (
     "password",
     "pw",
 )
+
+
+def normalize_recipient_phone(value: Any) -> str:
+    """Return the digits-only recipient representation used at every boundary."""
+
+    return re.sub(r"\D", "", str(value or ""))
+
+
+def build_recipient_fingerprint(value: Any, *, key: str | None = None) -> str:
+    """Build a stable, non-reversible lookup key without retaining phone PII."""
+
+    from django.conf import settings
+
+    normalized = normalize_recipient_phone(value)
+    if not normalized:
+        return ""
+    resolved_key = str(
+        key
+        if key is not None
+        else getattr(settings, "MESSAGING_TENANT_BINDING_KEY", "")
+        or ""
+    ).strip()
+    if not resolved_key:
+        raise ImproperlyConfigured("MESSAGING_TENANT_BINDING_KEY is required")
+    material = (
+        f"messaging-recipient-fingerprint:{RECIPIENT_FINGERPRINT_VERSION}:"
+        f"{normalized}"
+    ).encode("utf-8")
+    return hmac.new(
+        resolved_key.encode("utf-8"),
+        material,
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def build_recipient_fingerprint_candidates(value: Any) -> tuple[str, ...]:
+    """Include rotation fallbacks so incident lookup survives an active key rotation."""
+
+    from django.conf import settings
+
+    keys = (
+        str(getattr(settings, "MESSAGING_TENANT_BINDING_KEY", "") or "").strip(),
+        *tuple(
+            str(item).strip()
+            for item in getattr(
+                settings,
+                "MESSAGING_TENANT_BINDING_FALLBACK_KEYS",
+                (),
+            )
+            if str(item).strip()
+        ),
+    )
+    fingerprints = [
+        build_recipient_fingerprint(value, key=item)
+        for item in keys
+        if item
+    ]
+    return tuple(dict.fromkeys(item for item in fingerprints if item))
 
 
 def build_tenant_binding_signature(
@@ -164,6 +223,12 @@ def redact_terminal_delivery_payload(*, trigger: str, payload: object) -> object
         "occurrence_key",
         "message_mode",
         "template_id",
+        "recipient_fingerprint",
+        "origin_type",
+        "origin_id",
+        "source_domain",
+        "source_use_case",
+        "domain_object_id",
     ):
         value = payload.get(key)
         if value not in (None, ""):

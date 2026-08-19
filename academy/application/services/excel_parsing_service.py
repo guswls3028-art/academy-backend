@@ -687,6 +687,7 @@ class ExcelParsingService:
                         initial_password=password_policy.fixed_password,
                         password_mode=password_policy.mode,
                         session_id=int(session_id) if session_id is not None else None,
+                        source_job_id=str(job_id),
                     )
                     if isinstance(result, dict) and lecture_title:
                         result["lecture_title"] = lecture_title
@@ -725,6 +726,7 @@ class ExcelParsingService:
                         default=True,
                     ),
                     on_row_progress=_row_progress if on_progress else None,
+                    source_job_id=str(job_id),
                 )
                 if parsing_errors:
                     result["failed"].extend(

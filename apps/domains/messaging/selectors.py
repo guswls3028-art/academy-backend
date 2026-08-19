@@ -2,12 +2,64 @@
 
 from datetime import timedelta
 from typing import Optional
+from zoneinfo import ZoneInfo
 
+from django.conf import settings
 from django.db.models import Q
 from django.utils import timezone
 
 from apps.domains.messaging.models import AutoSendConfig, NotificationLog
 from apps.domains.messaging.scheduled import HOURLY_SEND_LIMIT
+
+KST = ZoneInfo("Asia/Seoul")
+DEFAULT_PROVIDER_DAILY_DISPATCH_LIMIT = 900
+
+
+def get_provider_daily_dispatch_limit() -> int:
+    """Return the provider-account KST calendar-day safety ceiling."""
+
+    return max(
+        1,
+        int(
+            getattr(
+                settings,
+                "MESSAGING_PROVIDER_DAILY_DISPATCH_LIMIT",
+                DEFAULT_PROVIDER_DAILY_DISPATCH_LIMIT,
+            )
+        ),
+    )
+
+
+def get_provider_day_window(*, now=None):
+    """Return the current provider quota window as timezone-aware KST bounds."""
+
+    current = (now or timezone.now()).astimezone(KST)
+    start = current.replace(hour=0, minute=0, second=0, microsecond=0)
+    return start, start + timedelta(days=1)
+
+
+def get_provider_daily_notification_usage(*, now=None) -> int:
+    """Count global outbox reservations plus disjoint legacy provider attempts."""
+
+    from apps.domains.messaging.models import ScheduledNotification
+
+    start, end = get_provider_day_window(now=now)
+    outbox_qs = ScheduledNotification.objects.filter(
+        last_attempt_at__gte=start,
+        last_attempt_at__lt=end,
+    )
+    outbox_keys = list(
+        outbox_qs.exclude(business_idempotency_key="").values_list(
+            "business_idempotency_key",
+            flat=True,
+        )
+    )
+    legacy_log_count = (
+        NotificationLog.objects.filter(sent_at__gte=start, sent_at__lt=end)
+        .exclude(business_idempotency_key__in=outbox_keys)
+        .count()
+    )
+    return outbox_qs.count() + legacy_log_count
 
 
 def notification_logs_for_business_tenant(tenant):

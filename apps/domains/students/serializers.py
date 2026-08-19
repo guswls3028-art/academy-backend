@@ -389,6 +389,8 @@ class StudentCreateSerializer(serializers.ModelSerializer):
             "pending_account_notice_student_password_ciphertext",
             "pending_account_notice_parent_password_ciphertext",
             "pending_account_notice_since",
+            "pending_account_notice_origin_type",
+            "pending_account_notice_origin_id",
         )
         read_only_fields = ("deleted_at", "profile_photo")
 

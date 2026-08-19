@@ -167,7 +167,31 @@ def _worker_tenant_binding_error(data: dict) -> str:
 
     signature = str(data.get("tenant_binding_signature") or "")
     if signature:
-        return "" if _has_valid_worker_tenant_binding(data) else "invalid_tenant_binding_signature"
+        if not _has_valid_worker_tenant_binding(data):
+            return "invalid_tenant_binding_signature"
+        if data.get("occurrence_key"):
+            from apps.domains.messaging.sqs_queue import (
+                build_business_idempotency_key,
+            )
+
+            expected_key = build_business_idempotency_key(
+                tenant_id=int(data.get("tenant_id")),
+                source_tenant_id=(
+                    int(data["source_tenant_id"])
+                    if data.get("source_tenant_id") is not None
+                    else None
+                ),
+                channel=str(data.get("message_mode") or "alimtalk").strip().lower(),
+                event_type=str(data.get("event_type") or "manual_send"),
+                target_type=str(data.get("target_type") or ""),
+                target_id=str(data.get("target_id") or ""),
+                recipient=str(data.get("to") or ""),
+                occurrence_key=str(data.get("occurrence_key") or ""),
+                template_id=str(data.get("template_id") or ""),
+            )
+            if expected_key != str(data.get("business_idempotency_key") or ""):
+                return "invalid_business_idempotency_key"
+        return ""
     if bool(getattr(settings, "MESSAGING_TENANT_BINDING_ENFORCED", False)):
         return "missing_tenant_binding_signature"
     return ""
@@ -947,12 +971,66 @@ def main() -> int:
                     to = str(data.get("to", "")).replace("-", "").strip()
                     text = str(data.get("text", ""))
                     from apps.domains.messaging.policy import check_recipient_allowed
+                    from apps.domains.messaging.security import (
+                        build_recipient_fingerprint,
+                    )
+
+                    recipient_fingerprint_msg = build_recipient_fingerprint(to)
+                    origin_type_msg = str(
+                        data.get("origin_type")
+                        or data.get("source_use_case")
+                        or data.get("source_domain")
+                        or ""
+                    ).strip()[:64]
+                    origin_id_msg = str(
+                        data.get("origin_id")
+                        or data.get("domain_object_id")
+                        or ""
+                    ).strip()[:128]
 
                     if not check_recipient_allowed(to):
                         logger.warning(
                             "Message skipped: recipient=%s rejected by policy",
                             to[:4] + "****" if to else "missing",
                         )
+                        if os.environ.get("DJANGO_SETTINGS_MODULE"):
+                            try:
+                                from decimal import Decimal
+                                from academy.adapters.db.django.repositories_messaging import (
+                                    create_notification_log,
+                                )
+
+                                create_notification_log(
+                                    tenant_id=int(tenant_id),
+                                    success=False,
+                                    amount_deducted=Decimal("0"),
+                                    recipient_summary="차단된 수신자",
+                                    failure_reason="recipient_blocked_by_policy",
+                                    message_body="",
+                                    message_mode=str(
+                                        data.get("message_mode") or "alimtalk"
+                                    ),
+                                    sqs_message_id=message_id,
+                                    notification_type=str(
+                                        data.get("event_type") or ""
+                                    ),
+                                    source_tenant_id=source_tenant_id_msg,
+                                    target_type=str(data.get("target_type") or ""),
+                                    target_id=str(data.get("target_id") or ""),
+                                    target_name=str(data.get("target_name") or ""),
+                                    business_idempotency_key=_resolve_worker_business_key(
+                                        data,
+                                        message_id,
+                                    ),
+                                    recipient_fingerprint=recipient_fingerprint_msg,
+                                    origin_type=origin_type_msg,
+                                    origin_id=origin_id_msg,
+                                )
+                            except Exception as exc:
+                                logger.warning(
+                                    "recipient policy block log creation failed: %s",
+                                    exc,
+                                )
                         queue_client.delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
@@ -1099,6 +1177,9 @@ def main() -> int:
                                 target_type=target_type_msg,
                                 target_id=target_id_msg,
                                 target_name=target_name,
+                                recipient_fingerprint=recipient_fingerprint_msg,
+                                origin_type=origin_type_msg,
+                                origin_id=origin_id_msg,
                             )
                             if not claimed:
                                 if claim_log_id is not None:

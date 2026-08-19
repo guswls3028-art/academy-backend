@@ -55,6 +55,10 @@ def create_notification_log(
     target_type: str = "",
     target_id: int | str | None = None,
     target_name: str = "",
+    business_idempotency_key: str = "",
+    recipient_fingerprint: str = "",
+    origin_type: str = "",
+    origin_id: str = "",
 ) -> bool:
     """
     NotificationLog 1건 생성. Worker에서 직접 ORM 접근 대신 이 함수만 사용.
@@ -98,6 +102,14 @@ def create_notification_log(
         target_type=target_type[:30] if target_type else "",
         target_id=sanitize_notification_target_id(target_id)[:80],
         target_name=target_name[:80] if target_name else "",
+        business_idempotency_key=(
+            business_idempotency_key[:64] if business_idempotency_key else ""
+        ),
+        recipient_fingerprint=(
+            recipient_fingerprint[:64] if recipient_fingerprint else ""
+        ),
+        origin_type=origin_type[:64] if origin_type else "",
+        origin_id=origin_id[:128] if origin_id else "",
     )
     return True
 
@@ -150,6 +162,9 @@ def claim_notification_slot(
     target_type: str = "",
     target_id: int | str | None = None,
     target_name: str = "",
+    recipient_fingerprint: str = "",
+    origin_type: str = "",
+    origin_id: str = "",
     stale_after_seconds: int = 300,
 ) -> tuple[bool, int | None]:
     """
@@ -190,6 +205,11 @@ def claim_notification_slot(
                 target_type=target_type[:30] if target_type else "",
                 target_id=durable_target_id,
                 target_name=target_name[:80] if target_name else "",
+                recipient_fingerprint=(
+                    recipient_fingerprint[:64] if recipient_fingerprint else ""
+                ),
+                origin_type=origin_type[:64] if origin_type else "",
+                origin_id=origin_id[:128] if origin_id else "",
             )
         return True, log.id
     except IntegrityError:
@@ -221,6 +241,11 @@ def claim_notification_slot(
                     target_type=target_type[:30] if target_type else "",
                     target_id=durable_target_id,
                     target_name=target_name[:80] if target_name else "",
+                    recipient_fingerprint=(
+                        recipient_fingerprint[:64] if recipient_fingerprint else ""
+                    ),
+                    origin_type=origin_type[:64] if origin_type else "",
+                    origin_id=origin_id[:128] if origin_id else "",
                 )
                 if updated == 1:
                     return True, existing.id
@@ -256,6 +281,11 @@ def claim_notification_slot(
                 target_type=target_type[:30] if target_type else "",
                 target_id=durable_target_id,
                 target_name=target_name[:80] if target_name else "",
+                recipient_fingerprint=(
+                    recipient_fingerprint[:64] if recipient_fingerprint else ""
+                ),
+                origin_type=origin_type[:64] if origin_type else "",
+                origin_id=origin_id[:128] if origin_id else "",
             )
             if updated == 1:
                 return True, existing.id

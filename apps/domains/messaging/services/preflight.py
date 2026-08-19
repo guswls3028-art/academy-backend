@@ -24,6 +24,8 @@ from apps.domains.messaging.policy import (
 from apps.domains.messaging.selectors import (
     HOURLY_SEND_LIMIT,
     get_hourly_notification_usage,
+    get_provider_daily_dispatch_limit,
+    get_provider_daily_notification_usage,
     notification_logs_for_business_tenant,
 )
 from apps.domains.messaging.services.recipients import resolve_student_message_recipients
@@ -287,6 +289,9 @@ def build_send_preflight(tenant, data: dict[str, Any]) -> dict[str, Any]:
 
     recent_count = get_hourly_notification_usage(tenant)
     remaining_hourly = max(0, HOURLY_SEND_LIMIT - recent_count)
+    provider_daily_limit = get_provider_daily_dispatch_limit()
+    provider_daily_used = get_provider_daily_notification_usage()
+    remaining_provider_daily = max(0, provider_daily_limit - provider_daily_used)
     expected_dispatches = valid_phone
     if not scheduled_send_at:
         if expected_dispatches > remaining_hourly:
@@ -303,6 +308,25 @@ def build_send_preflight(tenant, data: dict[str, Any]) -> dict[str, Any]:
                     "hourly_limit_near",
                     "발송 한도 임박",
                     f"최근 1시간 내 {recent_count}건을 발송했습니다.",
+                )
+            )
+        if expected_dispatches > remaining_provider_daily:
+            blockers.append(
+                PreflightIssue(
+                    "provider_daily_limit",
+                    "일일 발송 안전 한도 초과",
+                    (
+                        f"오늘 공급자 계정 발송 예약 {provider_daily_used}건 기준으로 "
+                        f"{remaining_provider_daily}건만 추가 발송할 수 있습니다."
+                    ),
+                )
+            )
+        elif remaining_provider_daily <= 50:
+            warnings.append(
+                PreflightIssue(
+                    "provider_daily_limit_near",
+                    "일일 발송 안전 한도 임박",
+                    f"오늘 공급자 계정 발송 예약이 {provider_daily_used}건입니다.",
                 )
             )
 
@@ -346,6 +370,9 @@ def build_send_preflight(tenant, data: dict[str, Any]) -> dict[str, Any]:
             "hourly_limit": HOURLY_SEND_LIMIT,
             "sent_last_hour": recent_count,
             "remaining_this_hour": remaining_hourly,
+            "provider_daily_limit": provider_daily_limit,
+            "provider_daily_used": provider_daily_used,
+            "provider_daily_remaining": remaining_provider_daily,
         },
         "blockers": [issue.as_dict() for issue in blockers],
         "warnings": [issue.as_dict() for issue in warnings],
@@ -383,6 +410,8 @@ def build_messaging_operations_status(tenant) -> dict[str, Any]:
     log_qs = business_log_qs.filter(sent_at__gte=since_24h)
     unresolved_qs = business_log_qs.filter(status__in=["sending", "ambiguous"])
     hourly_used = get_hourly_notification_usage(tenant, now=now)
+    provider_daily_limit = get_provider_daily_dispatch_limit()
+    provider_daily_used = get_provider_daily_notification_usage(now=now)
 
     pending_qs = scheduled_qs.filter(status=ScheduledNotification.Status.PENDING)
     ready_pending_qs = pending_qs.filter(
@@ -499,6 +528,17 @@ def build_messaging_operations_status(tenant) -> dict[str, Any]:
                 ),
             }
         )
+    if provider_daily_used >= provider_daily_limit:
+        risks.append(
+            {
+                "code": "provider_daily_limit_reached",
+                "title": "일일 발송 안전 한도 도달",
+                "detail": (
+                    f"공급자 계정 기준 오늘 {provider_daily_used}건이 예약되어 "
+                    "신규 발송은 다음 KST 날짜로 이월됩니다."
+                ),
+            }
+        )
     heartbeat = _latest_worker_heartbeat()
     if (
         heartbeat["status"] in {"unknown", "stale"}
@@ -560,6 +600,12 @@ def build_messaging_operations_status(tenant) -> dict[str, Any]:
             "limit": HOURLY_SEND_LIMIT,
             "used": hourly_used,
             "remaining": max(0, HOURLY_SEND_LIMIT - hourly_used),
+        },
+        "rate_limit_provider_daily": {
+            "limit": provider_daily_limit,
+            "used": provider_daily_used,
+            "remaining": max(0, provider_daily_limit - provider_daily_used),
+            "timezone": "Asia/Seoul",
         },
         "templates": {
             "approved": approved_count,

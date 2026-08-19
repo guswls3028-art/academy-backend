@@ -247,6 +247,7 @@ def resolve_student_import_row(
     identity_policy: StudentImportIdentityPolicy = "phone_if_available",
     valid_school_types: frozenset[str] | None = None,
     custom_field_definitions=None,
+    source_job_id: str = "",
 ) -> StudentImportRowResolution:
     """Resolve one imported row to an active student in one tenant."""
     initial_password = (initial_password or "").strip()
@@ -339,6 +340,8 @@ def resolve_student_import_row(
             password=initial_password,
             student_data=student_data,
             must_change_password=True,
+            account_notice_origin_type=("excel_import" if source_job_id else ""),
+            account_notice_origin_id=source_job_id,
         )
 
     return StudentImportRowResolution(
@@ -359,6 +362,7 @@ def import_students_from_rows(
     password_mode: str = "fixed",
     send_welcome_message: bool = True,
     on_row_progress: Callable[[int, int], None] | None = None,
+    source_job_id: str = "",
 ) -> dict:
     """
     Import parsed student rows without lecture enrollment.
@@ -414,6 +418,7 @@ def import_students_from_rows(
                 identity_policy="phone_if_available",
                 valid_school_types=valid_school_types,
                 custom_field_definitions=custom_field_definitions,
+                source_job_id=source_job_id,
             )
         except (StudentImportRowError, StudentImportPasswordError) as exc:
             failed.append({

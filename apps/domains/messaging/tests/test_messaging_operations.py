@@ -238,6 +238,38 @@ class SendMessagePreflightViewTests(MessagingOperationsBase):
             item["code"] == "hourly_limit" for item in response.data["blockers"]
         ))
 
+    def test_immediate_preflight_blocks_when_provider_daily_limit_is_full(self):
+        student = self._student("009")
+        with (
+            patch(
+                "apps.domains.messaging.services.preflight.get_provider_daily_dispatch_limit",
+                return_value=1,
+            ),
+            patch(
+                "apps.domains.messaging.services.preflight.get_provider_daily_notification_usage",
+                return_value=1,
+            ),
+        ):
+            response = SendMessagePreflightView.as_view()(
+                self._request(
+                    "post",
+                    "/api/v1/messaging/send/preflight/",
+                    {
+                        "send_to": "parent",
+                        "student_ids": [student.id],
+                        "raw_body": "일일 한도 확인",
+                        "block_category": "attendance",
+                    },
+                )
+            )
+
+        self.assertFalse(response.data["ok"])
+        self.assertEqual(response.data["limits"]["provider_daily_remaining"], 0)
+        self.assertTrue(any(
+            item["code"] == "provider_daily_limit"
+            for item in response.data["blockers"]
+        ))
+
     def test_operationally_disabled_tenant_is_a_preflight_blocker(self):
         student = self._student("008")
         with (
@@ -326,6 +358,10 @@ class MessagingOperationsStatusViewTests(MessagingOperationsBase):
         self.assertEqual(response.data["scheduled"]["failed_24h"], 1)
         self.assertEqual(response.data["log_24h"]["sent"], 1)
         self.assertEqual(response.data["log_24h"]["failed"], 1)
+        self.assertEqual(
+            response.data["rate_limit_provider_daily"]["timezone"],
+            "Asia/Seoul",
+        )
         self.assertEqual(response.data["auto_send"]["enabled_without_template"], 1)
         self.assertTrue(any(item["code"] == "scheduled_overdue" for item in response.data["risks"]))
 

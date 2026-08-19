@@ -1208,12 +1208,12 @@ class TestIdempotencyMetadata(_DispatchThroughQueueMixin, TestCase):
 class TestOwnerAlimtalkMetadata(TestCase):
     """계정/비밀번호 알림톡도 운영 로그 추적 메타데이터를 전달."""
 
-    @patch(f"{_SVC}.enqueue_sms")
+    @patch("apps.domains.messaging.scheduled.dispatch_notification_now")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
     def test_password_reset_passes_event_metadata(
-        self, mock_owner, mock_disabled, mock_config, mock_enqueue
+        self, mock_owner, mock_disabled, mock_config, mock_dispatch
     ):
         """비밀번호 재설정 알림톡은 trigger와 계정 식별 정보를 큐에 남김."""
         config = _make_config(
@@ -1222,7 +1222,7 @@ class TestOwnerAlimtalkMetadata(TestCase):
             body="#{학생이름} #{학생아이디} #{학생비밀번호} #{사이트링크}",
         )
         mock_config.return_value = config
-        mock_enqueue.return_value = True
+        mock_dispatch.return_value = SimpleNamespace(status="pending")
 
         from apps.domains.messaging.policy import send_alimtalk_via_owner
         result = send_alimtalk_via_owner(
@@ -1237,20 +1237,23 @@ class TestOwnerAlimtalkMetadata(TestCase):
         )
 
         self.assertTrue(result)
-        kwargs = mock_enqueue.call_args.kwargs
-        self.assertEqual(kwargs["event_type"], "password_reset_student")
-        self.assertEqual(kwargs["target_type"], "account")
-        self.assertEqual(kwargs["target_id"], "jeon-test")
-        self.assertEqual(kwargs["target_name"], "전청조")
-        self.assertEqual(kwargs["message_mode"], "alimtalk")
-        self.assertEqual(kwargs["template_id"], "KA01TP_PASSWORD")
+        kwargs = mock_dispatch.call_args.kwargs
+        self.assertEqual(kwargs["trigger"], "password_reset_student")
+        payload = kwargs["payload"]
+        self.assertEqual(payload["event_type"], "password_reset_student")
+        self.assertEqual(payload["target_type"], "account")
+        self.assertEqual(payload["target_id"], "jeon-test")
+        self.assertEqual(payload["target_name"], "전청조")
+        self.assertEqual(payload["message_mode"], "alimtalk")
+        self.assertEqual(payload["template_id"], "KA01TP_PASSWORD")
+        self.assertEqual(payload["origin_type"], "system_account")
 
-    @patch(f"{_SVC}.enqueue_sms")
+    @patch("apps.domains.messaging.scheduled.dispatch_notification_now")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
     def test_missing_exact_template_does_not_fallback(
-        self, mock_owner, mock_disabled, mock_config, mock_enqueue
+        self, mock_owner, mock_disabled, mock_config, mock_dispatch
     ):
         """exact trigger 템플릿이 미승인이면 다른 trigger로 fallback하지 않음."""
         pending_config = _make_config(
@@ -1260,7 +1263,6 @@ class TestOwnerAlimtalkMetadata(TestCase):
             body="#{인증번호}",
         )
         mock_config.return_value = pending_config
-        mock_enqueue.return_value = True
 
         from apps.domains.messaging.policy import send_alimtalk_via_owner
         result = send_alimtalk_via_owner(
@@ -1274,7 +1276,7 @@ class TestOwnerAlimtalkMetadata(TestCase):
 
         self.assertFalse(result)
         mock_config.assert_called_once_with(1, "password_find_otp")
-        mock_enqueue.assert_not_called()
+        mock_dispatch.assert_not_called()
 
 
 class TestRecipientWhitelist(TestCase):

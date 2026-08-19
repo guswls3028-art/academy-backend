@@ -113,6 +113,8 @@ class MessagingSQSQueue:
         source_use_case: Optional[str] = None,
         domain_object_id: Optional[str] = None,
         actor_id: Optional[int | str] = None,
+        origin_type: Optional[str] = None,
+        origin_id: Optional[str] = None,
     ) -> bool:
         """
         발송 작업을 SQS에 추가
@@ -138,6 +140,8 @@ class MessagingSQSQueue:
         if mode == "sms":
             logger.error("enqueue blocked: SMS/LMS sending is disabled service-wide (tenant=%s)", tenant_id)
             return False
+
+        from apps.domains.messaging.security import build_recipient_fingerprint
 
         message = {
             "tenant_id": int(tenant_id),
@@ -169,20 +173,32 @@ class MessagingSQSQueue:
             message["domain_object_id"] = str(domain_object_id)[:120]
         if actor_id:
             message["actor_id"] = str(actor_id)[:50]
+        resolved_origin_type = str(
+            origin_type or source_use_case or source_domain or ""
+        ).strip()[:64]
+        resolved_origin_id = str(
+            origin_id or domain_object_id or ""
+        ).strip()[:128]
+        if resolved_origin_type:
+            message["origin_type"] = resolved_origin_type
+        if resolved_origin_id:
+            message["origin_id"] = resolved_origin_id
+        message["recipient_fingerprint"] = build_recipient_fingerprint(message["to"])
         et = (event_type or "").strip()
         if et:
             message["event_type"] = et[:30]
         resolved_occurrence_key = occurrence_key or f"manual-{uuid4().hex}"
+        message["occurrence_key"] = str(resolved_occurrence_key)[:128]
         message["business_idempotency_key"] = build_business_idempotency_key(
             tenant_id=int(tenant_id),
             source_tenant_id=int(source_tenant_id) if source_tenant_id is not None else None,
             channel=mode,
-            event_type=event_type or "manual_send",
-            target_type=target_type or "",
-            target_id=str(target_id) if target_id else "",
+            event_type=str(message.get("event_type") or "manual_send"),
+            target_type=str(message.get("target_type") or ""),
+            target_id=str(message.get("target_id") or ""),
             recipient=message["to"],
-            occurrence_key=resolved_occurrence_key,
-            template_id=str(template_id) if template_id else "",
+            occurrence_key=message["occurrence_key"],
+            template_id=str(message.get("template_id") or ""),
         )
         from apps.domains.messaging.security import build_tenant_binding_signature
 

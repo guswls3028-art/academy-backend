@@ -470,14 +470,22 @@ def send_alimtalk_via_owner(
     Returns:
         True if enqueue 성공
     """
+    from apps.domains.messaging.models import ScheduledNotification
+    from apps.domains.messaging.scheduled import dispatch_notification_now
     from apps.domains.messaging.selectors import get_auto_send_config
-    from apps.domains.messaging.services import enqueue_sms
 
     owner_id = get_owner_tenant_id()
 
     if is_messaging_disabled(owner_id):
         logger.info("send_alimtalk_via_owner: messaging disabled for owner tenant")
         return True  # 테스트 환경에서는 성공 간주
+    business_tenant_id = int(source_tenant_id or owner_id)
+    if is_messaging_disabled(business_tenant_id):
+        logger.info(
+            "send_alimtalk_via_owner: messaging disabled for business tenant=%s",
+            business_tenant_id,
+        )
+        return False
 
     config = get_auto_send_config(owner_id, trigger)
     t = config.template if config else None
@@ -517,20 +525,32 @@ def send_alimtalk_via_owner(
     )
 
     try:
-        return enqueue_sms(
-            tenant_id=owner_id,
-            to=to,
-            text=text,
-            message_mode="alimtalk",
-            template_id=solapi_id,
-            alimtalk_replacements=alimtalk_replacements,
-            event_type=trigger,
-            target_type=log_target_type or "account",
-            target_id=log_target_id if log_target_id is not None else target_id,
-            target_name=log_target_name or target_name,
-            source_tenant_id=source_tenant_id,
-            trusted_business_tenant_id=source_tenant_id or owner_id,
+        resolved_target_id = (
+            log_target_id if log_target_id is not None else target_id
         )
+        notification = dispatch_notification_now(
+            tenant_id=business_tenant_id,
+            trigger=trigger,
+            payload={
+                "tenant_id": owner_id,
+                "to": to,
+                "text": text,
+                "message_mode": "alimtalk",
+                "template_id": solapi_id,
+                "alimtalk_replacements": alimtalk_replacements,
+                "event_type": trigger,
+                "target_type": log_target_type or "account",
+                "target_id": resolved_target_id,
+                "target_name": log_target_name or target_name,
+                "source_tenant_id": source_tenant_id,
+                "origin_type": "system_account",
+                "origin_id": str(resolved_target_id or ""),
+            },
+        )
+        return notification.status in {
+            ScheduledNotification.Status.PENDING,
+            ScheduledNotification.Status.SENT,
+        }
     except Exception as exc:
-        logger.error("send_alimtalk_via_owner: enqueue failed trigger=%s error=%s", trigger, exc)
+        logger.error("send_alimtalk_via_owner: outbox failed trigger=%s error=%s", trigger, exc)
         return False

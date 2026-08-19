@@ -86,6 +86,8 @@ def send_welcome_messages(
     student_password_by_id: dict[int, str] | None = None,
     parent_password_by_phone: dict = None,
     site_url: str = "",
+    origin_type: str = "student_account",
+    origin_id: str = "",
 ):
     """
     가입 안내 알림톡 일괄 발송 (학생 + 학부모).
@@ -192,6 +194,8 @@ def send_welcome_messages(
                     source_tenant_id=tenant_id,
                     source_domain="students",
                     source_use_case="students.welcome.student",
+                    origin_type=origin_type,
+                    origin_id=origin_id or str(getattr(student, "id", "") or ""),
                 )
             except MessagingPolicyError:
                 logger.info("send_welcome student skipped (policy: tenant_id=%s)", tenant_id)
@@ -238,6 +242,8 @@ def send_welcome_messages(
                     source_tenant_id=tenant_id,
                     source_domain="students",
                     source_use_case="students.welcome.parent",
+                    origin_type=origin_type,
+                    origin_id=origin_id or str(getattr(student, "id", "") or ""),
                 )
             except MessagingPolicyError:
                 logger.info("send_welcome parent skipped (policy: tenant_id=%s)", tenant_id)

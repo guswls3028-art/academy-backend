@@ -876,7 +876,6 @@ def _notify_video_encoding_complete(video, tenant_id: int) -> None:
     except Exception:
         pass
 
-    from apps.domains.messaging.services import enqueue_sms
     from apps.domains.messaging.selectors import get_auto_send_config
     from apps.domains.messaging.alimtalk_content_builders import (
         get_solapi_template_id,
@@ -999,8 +998,14 @@ def _notify_video_encoding_complete(video, tenant_id: int) -> None:
     delay_value = getattr(config, "delay_value", None)
 
     if delay_mode == "immediate" or not delay_value:
-        # 즉시 발송
-        enqueue_sms(**message_kwargs)
+        # 즉시 발송도 durable outbox를 먼저 확보한다.
+        from apps.domains.messaging.scheduled import dispatch_notification_now
+
+        dispatch_notification_now(
+            tenant_id=tenant_id,
+            trigger=trigger,
+            payload=message_kwargs,
+        )
         _log.info("video_encoding_complete: enqueued alimtalk to %s staff_id=%s video_id=%s",
                    phone[:4] + "****", uploaded_by.id, video.id)
     else:

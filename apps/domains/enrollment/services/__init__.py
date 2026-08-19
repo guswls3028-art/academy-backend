@@ -38,6 +38,7 @@ def lecture_enroll_from_excel_rows(
     initial_password: str,
     password_mode: str = "fixed",
     session_id: int | None = None,
+    source_job_id: str = "",
 ) -> dict:
     """
     엑셀 파싱된 행으로 강의 수강 등록 + 차시 등록·출결.
@@ -122,6 +123,7 @@ def lecture_enroll_from_excel_rows(
                     row_password,
                     identity_policy="phone_if_available",
                     valid_school_types=valid_school_types,
+                    source_job_id=source_job_id,
                 )
             except StudentImportDependencyError as e:
                 skipped_reasons.append(f"row{row_index}:{e.detail}")

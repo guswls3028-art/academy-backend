@@ -56,6 +56,8 @@ def stage_pending_account_notice(
     student: Student,
     student_password: str,
     parent_password: str,
+    origin_type: str = "",
+    origin_id: str = "",
 ) -> None:
     """Store only encrypted one-time notice values until first enrollment."""
     student.pending_account_notice_student_password_ciphertext = _encrypt(
@@ -65,11 +67,15 @@ def stage_pending_account_notice(
         parent_password
     )
     student.pending_account_notice_since = timezone.now()
+    student.pending_account_notice_origin_type = str(origin_type or "").strip()[:64]
+    student.pending_account_notice_origin_id = str(origin_id or "").strip()[:128]
     student.save(
         update_fields=[
             "pending_account_notice_student_password_ciphertext",
             "pending_account_notice_parent_password_ciphertext",
             "pending_account_notice_since",
+            "pending_account_notice_origin_type",
+            "pending_account_notice_origin_id",
             "updated_at",
         ]
     )
@@ -101,6 +107,12 @@ def dispatch_pending_account_notice(*, student_id: int) -> dict:
 
         student_ciphertext = student.pending_account_notice_student_password_ciphertext
         parent_ciphertext = student.pending_account_notice_parent_password_ciphertext
+        origin_type = (
+            student.pending_account_notice_origin_type or "student_account"
+        )
+        origin_id = (
+            student.pending_account_notice_origin_id or str(student.id)
+        )
         if not student_ciphertext or not parent_ciphertext:
             return {"status": "skip", "reason": "no_pending_notice"}
 
@@ -126,6 +138,8 @@ def dispatch_pending_account_notice(*, student_id: int) -> dict:
             created_students=[student],
             student_password=student_password,
             parent_password_by_phone={student.parent_phone: parent_password},
+            origin_type=origin_type,
+            origin_id=origin_id,
         )
         if result.get("status") != "enqueued" or result.get("enqueued", 0) < expected:
             return {
@@ -137,11 +151,15 @@ def dispatch_pending_account_notice(*, student_id: int) -> dict:
         student.pending_account_notice_student_password_ciphertext = ""
         student.pending_account_notice_parent_password_ciphertext = ""
         student.pending_account_notice_since = None
+        student.pending_account_notice_origin_type = ""
+        student.pending_account_notice_origin_id = ""
         student.save(
             update_fields=[
                 "pending_account_notice_student_password_ciphertext",
                 "pending_account_notice_parent_password_ciphertext",
                 "pending_account_notice_since",
+                "pending_account_notice_origin_type",
+                "pending_account_notice_origin_id",
                 "updated_at",
             ]
         )

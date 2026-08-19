@@ -1,6 +1,6 @@
 # 장애 대응 런북
 
-**Version:** V1.11.28 | **최종 수정:** 2026-07-28
+**Version:** V1.11.29 | **최종 수정:** 2026-08-20
 
 > 모든 AWS 명령은 `scripts/v1/run-with-env.ps1 --` 접두사를 사용한다.
 > 아래에서 `RUN_ENV`는 이 접두사의 줄임말이다:
@@ -96,6 +96,40 @@ pwsh scripts/v1/set-dev-alerts-sms.ps1 -Disable -AwsProfile default
 진단 시 `OpsAuditLog`의 `user_incident.*`, `alerts.user_incident_sms`,
 `alerts.user_incident_sms_test`, `alerts.external_signal_sms`,
 `cron.check_dev_alerts` action과 provider group id를 함께 확인한다.
+
+---
+
+## 0-A. 제품 알림톡 오수신·대량 발송
+
+모르는 수신자 제보가 오면 먼저 원 업무 tenant를 `MESSAGING_DISABLED_TENANT_IDS`에,
+정확한 제보 번호를 `MESSAGING_RECIPIENT_DENYLIST`에 넣고 API와 messaging worker가
+새 값을 읽었는지 확인한다. 연락처 수정만으로 이미 생성된 outbox/SQS가 사라지지 않으므로
+tenant hold와 recipient denylist를 모두 유지한 채 아래 read-only 진단을 실행한다.
+
+```powershell
+python manage.py diagnose_messaging_incident `
+  --tenant-id <tenant-id> `
+  --recipient <exact-phone> `
+  --origin-id <excel-or-batch-job-id> `
+  --since-hours 72 `
+  --provider
+```
+
+결과의 `outbox.statuses`, `delivery_log.statuses`, `linkage`, `provider.status_codes`를
+함께 본다. 출력에는 번호·본문·계정 비밀·provider ID가 없으므로 incident evidence로
+보존할 수 있다. `outbox.sent`는 SQS 접수일 뿐 최종 전달 성공이 아니고,
+`delivery_log.sent`도 provider 접수 성공이다. provider 결과가 `sending`/`ambiguous`이거나
+조회 오류이면 중복 피해 방지를 위해 자동 재발송하지 않는다.
+
+공급자 계정 일일 안전 한도는 KST 기준 기본 900건이다. 한도 도달 행은
+`provider_daily_dispatch_quota_deferred`로 다음 날 00:05에 이월되므로 failed로 수동
+재생성하지 않는다. 계약 한도가 바뀌면 `MESSAGING_PROVIDER_DAILY_DISPATCH_LIMIT`을
+실제 provider 한도보다 안전 여유를 둔 값으로 조정하고 API runtime readback,
+`operations/status.rate_limit_provider_daily`, 다음 due claim을 확인한다.
+
+hold 해제 전에는 연락처 정본, active outbox, SQS visible/inflight/delayed, provider pending,
+최근 tenant log, denylist readback을 모두 확인한다. 제보 번호 denylist는 incident 보존과
+사업자 확인이 끝날 때까지 별도로 유지할 수 있다.
 
 ---
 

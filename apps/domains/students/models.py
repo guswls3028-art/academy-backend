@@ -142,6 +142,18 @@ class Student(TimestampModel):
         blank=True,
         help_text="학생 생성 후 첫 실제 수강 확정을 기다리는 계정 안내 생성 시각",
     )
+    pending_account_notice_origin_type = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        help_text="첫 수강 계정 안내를 만든 원천 종류(excel_import 등)",
+    )
+    pending_account_notice_origin_id = models.CharField(
+        max_length=128,
+        blank=True,
+        default="",
+        help_text="첫 수강 계정 안내를 만든 job/batch 식별자",
+    )
     is_managed = models.BooleanField(default=True)
 
     # 학생이 학생앱에서만 설정 (관리자 편집 불가)
