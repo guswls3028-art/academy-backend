@@ -18,7 +18,22 @@ Endpoint
 """
 
 from django.db import transaction
-from drf_spectacular.utils import OpenApiResponse, extend_schema
+try:
+    from drf_spectacular.utils import OpenApiResponse, extend_schema
+except ModuleNotFoundError as exc:
+    if exc.name != "drf_spectacular":
+        raise
+
+    class OpenApiResponse:  # type: ignore[no-redef]
+        def __init__(self, *, description: str):
+            self.description = description
+
+    def extend_schema(*args, **kwargs):  # type: ignore[no-redef]
+        def decorator(view):
+            return view
+
+        return decorator
+
 from rest_framework import serializers, status as drf_status
 from rest_framework.views import APIView
 from rest_framework.response import Response
