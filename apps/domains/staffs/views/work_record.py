@@ -1,6 +1,5 @@
 # PATH: apps/domains/staffs/views/work_record.py
 
-from datetime import datetime, timedelta
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
@@ -15,8 +14,14 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from academy.adapters.db.django import repositories_staffs as staff_repo
 
 from ..models import WorkRecord
-from ..serializers import WorkRecordSerializer
-from ..services import OpenWorkRecordConflict, has_open_work_record_conflict
+from ..serializers import StaffWorkEndRequestSerializer, WorkRecordSerializer
+from ..services import (
+    end_work_break,
+    end_work_record,
+    OpenWorkRecordConflict,
+    has_open_work_record_conflict,
+    start_work_break,
+)
 from ..filters import WorkRecordFilter
 from apps.core.permissions import TenantResolvedAndStaff
 from .helpers import (
@@ -276,130 +281,41 @@ class WorkRecordViewSet(viewsets.ModelViewSet):
         return Response(WorkRecordSerializer(record).data)
 
     @action(detail=True, methods=["post"])
-    @transaction.atomic
     def start_break(self, request, pk=None):
         record_ref = self.get_object()
         self._assert_self_service_or_manager(record_ref)
-        record = staff_repo.work_record_get_for_update(
-            record_ref.tenant_id,
-            record_ref.id,
+        start_work_break(
+            record=record_ref,
+            started_at=timezone.localtime(timezone.now()),
         )
-        self._assert_self_service_or_manager(record)
-        locked_staff = staff_repo.staff_get_for_update(
-            record.tenant_id,
-            record.staff_id,
-        )
-
-        if is_month_locked(locked_staff, record.date):
-            raise ValidationError("마감된 월입니다.")
-
-        if record.current_break_started_at:
-            raise ValidationError("이미 휴게 중입니다.")
-        if record.end_time:
-            raise ValidationError("이미 종료된 근무에서는 휴게를 시작할 수 없습니다.")
-
-        record.current_break_started_at = timezone.localtime(timezone.now())
-        record.save(update_fields=["current_break_started_at"])
 
         return Response({"status": "BREAK_STARTED"})
 
     @action(detail=True, methods=["post"])
-    @transaction.atomic
     def end_break(self, request, pk=None):
         record_ref = self.get_object()
         self._assert_self_service_or_manager(record_ref)
-        record = staff_repo.work_record_get_for_update(
-            record_ref.tenant_id,
-            record_ref.id,
+        end_work_break(
+            record=record_ref,
+            ended_at=timezone.localtime(timezone.now()),
         )
-        self._assert_self_service_or_manager(record)
-        locked_staff = staff_repo.staff_get_for_update(
-            record.tenant_id,
-            record.staff_id,
-        )
-
-        if is_month_locked(locked_staff, record.date):
-            raise ValidationError("마감된 월입니다.")
-
-        if not record.current_break_started_at:
-            raise ValidationError("휴게 중이 아닙니다.")
-        if record.end_time:
-            raise ValidationError("이미 종료된 근무에서는 휴게를 종료할 수 없습니다.")
-
-        now = timezone.localtime(timezone.now())
-        delta = now - record.current_break_started_at
-        delta_seconds = int(delta.total_seconds())
-        record.break_total_seconds = getattr(record, "break_total_seconds", 0) + delta_seconds
-        record.break_minutes = record.break_total_seconds // 60
-        record.current_break_started_at = None
-        record.save(update_fields=["break_minutes", "break_total_seconds", "current_break_started_at"])
 
         return Response({"status": "BREAK_ENDED"})
 
     @action(detail=True, methods=["post"])
-    @transaction.atomic
     def end_work(self, request, pk=None):
         record_ref = self.get_object()
         self._assert_self_service_or_manager(record_ref)
-        record = staff_repo.work_record_get_for_update(
-            record_ref.tenant_id,
-            record_ref.id,
+        request_serializer = StaffWorkEndRequestSerializer(data=request.data)
+        request_serializer.is_valid(raise_exception=True)
+        record = end_work_record(
+            record=record_ref,
+            ended_at=timezone.localtime(timezone.now()),
+            meal_minutes=request_serializer.validated_data.get("meal_minutes"),
+            adjustment_amount=request_serializer.validated_data.get(
+                "adjustment_amount"
+            ),
+            allow_adjustment=can_manage_payroll(request.user, record_ref.tenant),
         )
-        self._assert_self_service_or_manager(record)
-        locked_staff = staff_repo.staff_get_for_update(
-            record.tenant_id,
-            record.staff_id,
-        )
-
-        if is_month_locked(locked_staff, record.date):
-            raise ValidationError("마감된 월입니다.")
-
-        if record.end_time:
-            raise ValidationError("이미 종료된 근무입니다.")
-
-        if record.current_break_started_at:
-            now = timezone.localtime(timezone.now())
-            delta = now - record.current_break_started_at
-            delta_seconds = int(delta.total_seconds())
-            record.break_total_seconds = getattr(record, "break_total_seconds", 0) + delta_seconds
-            record.break_minutes = record.break_total_seconds // 60
-            record.current_break_started_at = None
-
-        # Accept optional meal_minutes and adjustment_amount from request
-        meal_minutes = request.data.get("meal_minutes")
-        if meal_minutes is not None:
-            try:
-                parsed_meal_minutes = int(meal_minutes)
-            except (TypeError, ValueError) as exc:
-                raise ValidationError("meal_minutes는 0 이상의 정수여야 합니다.") from exc
-            if parsed_meal_minutes < 0:
-                raise ValidationError("meal_minutes는 0 이상의 정수여야 합니다.")
-            record.meal_minutes = parsed_meal_minutes
-
-        adjustment_amount = request.data.get("adjustment_amount")
-        if adjustment_amount is not None:
-            if not can_manage_payroll(request.user, record.tenant):
-                raise PermissionDenied("급여 조정액은 관리자만 입력할 수 있습니다.")
-            try:
-                record.adjustment_amount = int(adjustment_amount)
-            except (TypeError, ValueError) as exc:
-                raise ValidationError("adjustment_amount는 정수여야 합니다.") from exc
-
-        record.end_time = timezone.localtime(timezone.now()).time()
-        start_dt = datetime.combine(record.date, record.start_time)
-        end_dt = datetime.combine(record.date, record.end_time)
-        if end_dt <= start_dt:
-            end_dt += timedelta(days=1)
-        elapsed_minutes = int((end_dt - start_dt).total_seconds() // 60)
-        if record.break_minutes + record.meal_minutes >= elapsed_minutes:
-            raise ValidationError(
-                {
-                    "meal_minutes": (
-                        "휴게·식사시간 합계는 전체 근무시간보다 짧아야 합니다."
-                    )
-                }
-            )
-        # save() auto-calculates work_hours, amount, resolved_hourly_wage
-        record.save()
 
         return Response(WorkRecordSerializer(record).data)

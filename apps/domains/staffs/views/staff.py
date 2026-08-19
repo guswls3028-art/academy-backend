@@ -40,6 +40,12 @@ from ..serializers import (
     WorkRecordSerializer,
 )
 from ..services import start_work_record
+from ..selectors import (
+    current_work_record_for_staff,
+    open_work_records_for_tenant,
+    work_current_status,
+    work_records_for_staff_range,
+)
 from academy.adapters.db.django import repositories_staffs as staff_repo
 from academy.adapters.db.django import repositories_core as core_repo
 from academy.adapters.db.django import repositories_teachers as teacher_repo
@@ -50,7 +56,6 @@ from .helpers import (
     _owner_display_for_tenant,
     IsPayrollManager,
     StaffDomainPagination,
-    is_month_locked,
     can_manage_payroll,
 )
 
@@ -419,12 +424,7 @@ class StaffViewSet(viewsets.ModelViewSet):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response([])
-        records = (
-            WorkRecord.objects
-            .filter(tenant=tenant, end_time__isnull=True)
-            .select_related("staff", "work_type")
-            .order_by("staff_id", "-date", "-start_time")
-        )
+        records = open_work_records_for_tenant(tenant=tenant)
         seen_staff = set()
         record_by_staff = {}
         for rec in records:
@@ -516,15 +516,11 @@ class StaffViewSet(viewsets.ModelViewSet):
         staff = self.get_object()
         self._assert_self_service_or_manager(request, staff)
         date_from, date_to = self._parse_work_range(request)
-        records = (
-            WorkRecord.objects.filter(
-                tenant=staff.tenant,
-                staff=staff,
-                date__gte=date_from,
-                date__lte=date_to,
-            )
-            .select_related("staff", "work_type")
-            .order_by("-date", "-start_time")
+        records = work_records_for_staff_range(
+            tenant=request.tenant,
+            staff=staff,
+            date_from=date_from,
+            date_to=date_to,
         )
         page = self.paginate_queryset(records)
         if page is not None:
@@ -543,51 +539,11 @@ class StaffViewSet(viewsets.ModelViewSet):
         staff = self.get_object()
         self._assert_self_service_or_manager(request, staff)
 
-        record = (
-            WorkRecord.objects
-            .filter(staff=staff, tenant=staff.tenant, end_time__isnull=True)
-            .select_related("work_type")
-            .order_by("-start_time")
-            .first()
+        record = current_work_record_for_staff(
+            tenant=request.tenant,
+            staff=staff,
         )
-
-        if not record:
-            return Response({"status": "OFF"})
-
-        # JSON 직렬화를 위해 time/datetime을 문자열로 변환
-        started_at_str = (
-            record.start_time.strftime("%H:%M:%S")
-            if hasattr(record.start_time, "strftime")
-            else str(record.start_time)
-        )
-
-        if record.current_break_started_at:
-            break_sec = getattr(record, "break_total_seconds", 0) or (record.break_minutes * 60)
-            return Response({
-                "status": "BREAK",
-                "work_record_id": record.id,
-                "date": record.date.isoformat(),
-                "started_at": started_at_str,
-                "work_type": record.work_type_id,
-                "work_type_name": record.work_type.name,
-                "hourly_wage": record.resolved_hourly_wage,
-                "break_minutes": record.break_minutes,
-                "break_total_seconds": break_sec,
-                "break_started_at": record.current_break_started_at.isoformat(),
-            })
-
-        break_sec = getattr(record, "break_total_seconds", 0) or (record.break_minutes * 60)
-        return Response({
-            "status": "WORKING",
-            "work_record_id": record.id,
-            "date": record.date.isoformat(),
-            "started_at": started_at_str,
-            "work_type": record.work_type_id,
-            "work_type_name": record.work_type.name,
-            "hourly_wage": record.resolved_hourly_wage,
-            "break_minutes": record.break_minutes,
-            "break_total_seconds": break_sec,
-        })
+        return Response(work_current_status(record))
 
     @extend_schema(
         request=StaffWorkStartRequestSerializer,
@@ -601,45 +557,19 @@ class StaffViewSet(viewsets.ModelViewSet):
     )
     def start_work(self, request, pk=None):
         staff = self.get_object()
-        if not can_manage_payroll(request.user, staff.tenant) and staff.user_id != request.user.id:
+        is_manager = can_manage_payroll(request.user, staff.tenant)
+        if not is_manager and staff.user_id != request.user.id:
             raise PermissionDenied("본인 근무만 시작할 수 있습니다.")
+        request_serializer = StaffWorkStartRequestSerializer(data=request.data)
+        request_serializer.is_valid(raise_exception=True)
         now = timezone.localtime(timezone.now())
-
-        if is_month_locked(staff, now.date()):
-            raise ValidationError("마감된 월입니다.")
-
-        work_type_id = request.data.get("work_type")
-        if not work_type_id:
-            raise ValidationError("work_type은 필수입니다.")
-        if not WorkType.objects.filter(
-            id=work_type_id,
-            tenant=staff.tenant,
-            is_active=True,
-        ).exists():
-            raise ValidationError({"work_type": "선택한 근무 유형이 유효하지 않습니다."})
-        if not staff.is_active:
-            raise ValidationError("퇴사 처리된 직원은 근무를 시작할 수 없습니다.")
-        if (
-            not can_manage_payroll(request.user, staff.tenant)
-            and not staff.staff_work_types.filter(
-                tenant=staff.tenant,
-                work_type_id=work_type_id,
-                work_type__is_active=True,
-            ).exists()
-        ):
-            raise ValidationError(
-                {"work_type": "본인에게 배정된 근무 유형만 선택할 수 있습니다."}
-            )
 
         record = start_work_record(
             staff=staff,
-            work_type_id=work_type_id,
+            work_type_id=request_serializer.validated_data["work_type"],
             date=now.date(),
             start_time=now.time(),
-            require_assignment=not can_manage_payroll(
-                request.user,
-                staff.tenant,
-            ),
+            require_assignment=not is_manager,
         )
 
         return Response(WorkRecordSerializer(record).data, status=201)
