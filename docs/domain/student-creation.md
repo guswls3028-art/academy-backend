@@ -102,4 +102,4 @@ Excel 파서의 학생 행 판별은 유효한 학부모/학생 전화번호가 
 - `pnpm build`
 - `pnpm guard:legacy-api`
 
-운영 QA는 최소 하나의 disposable 학생 생성, 로그인 가능성, 알림톡 전송 여부, cleanup(soft delete + permanent delete)을 포함한다.
+운영 QA는 최소 하나의 disposable 학생을 명부에 생성해 알림톡이 발송되지 않음을 확인하고, 첫 ACTIVE 수강 확정 후 계정 안내 알림톡 발송과 로그인을 확인해야 한다. 이어서 수강·강의와 학생을 cleanup(soft delete + permanent delete)하고 잔여 데이터가 없는지 확인한다.
