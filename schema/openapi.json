@@ -580,7 +580,7 @@
             "nullable": true,
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ResolutionTypeEnum"
+                "$ref": "#/components/schemas/ClinicLinkResolutionTypeEnum"
               },
               {
                 "$ref": "#/components/schemas/BlankEnum"
@@ -659,7 +659,7 @@
             "nullable": true,
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ResolutionTypeEnum"
+                "$ref": "#/components/schemas/ClinicLinkResolutionTypeEnum"
               },
               {
                 "$ref": "#/components/schemas/BlankEnum"
@@ -683,6 +683,19 @@
           "session"
         ],
         "type": "object"
+      },
+      "ClinicLinkResolutionTypeEnum": {
+        "description": "* `EXAM_PASS` - 시험 통과\n* `HOMEWORK_PASS` - 과제 통과\n* `MANUAL_OVERRIDE` - 관리자 수동 해소\n* `WAIVED` - 면제\n* `CARRIED_OVER` - 다음 차수로 이월\n* `SOURCE_REMOVED` - 원본 삭제\n* `BOOKING_LEGACY` - 레거시(예약 기반)",
+        "enum": [
+          "EXAM_PASS",
+          "HOMEWORK_PASS",
+          "MANUAL_OVERRIDE",
+          "WAIVED",
+          "CARRIED_OVER",
+          "SOURCE_REMOVED",
+          "BOOKING_LEGACY"
+        ],
+        "type": "string"
       },
       "ClinicReasonEnum": {
         "description": "* `exam` - Exam\n* `homework` - Homework\n* `both` - Both",
@@ -5792,7 +5805,7 @@
             "nullable": true,
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ResolutionTypeEnum"
+                "$ref": "#/components/schemas/ClinicLinkResolutionTypeEnum"
               },
               {
                 "$ref": "#/components/schemas/BlankEnum"
@@ -10130,19 +10143,6 @@
           "pending",
           "approved",
           "rejected"
-        ],
-        "type": "string"
-      },
-      "ResolutionTypeEnum": {
-        "description": "* `EXAM_PASS` - 시험 통과\n* `HOMEWORK_PASS` - 과제 통과\n* `MANUAL_OVERRIDE` - 관리자 수동 해소\n* `WAIVED` - 면제\n* `CARRIED_OVER` - 다음 차수로 이월\n* `SOURCE_REMOVED` - 원본 삭제\n* `BOOKING_LEGACY` - 레거시(예약 기반)",
-        "enum": [
-          "EXAM_PASS",
-          "HOMEWORK_PASS",
-          "MANUAL_OVERRIDE",
-          "WAIVED",
-          "CARRIED_OVER",
-          "SOURCE_REMOVED",
-          "BOOKING_LEGACY"
         ],
         "type": "string"
       },
@@ -14484,6 +14484,57 @@
         "enum": [
           "ENROLLED",
           "PUBLIC"
+        ],
+        "type": "string"
+      },
+      "WaiveMissingExamRequest": {
+        "properties": {
+          "enrollment_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "exam_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "memo": {
+            "maxLength": 500,
+            "minLength": 2,
+            "type": "string"
+          },
+          "session_id": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "exam_id",
+          "memo",
+          "session_id"
+        ],
+        "type": "object"
+      },
+      "WaiveMissingExamResponse": {
+        "properties": {
+          "clinic_link_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "resolution_type": {
+            "$ref": "#/components/schemas/WaiveMissingExamResponseResolutionTypeEnum"
+          }
+        },
+        "required": [
+          "clinic_link_id",
+          "resolution_type"
+        ],
+        "type": "object"
+      },
+      "WaiveMissingExamResponseResolutionTypeEnum": {
+        "description": "* `WAIVED` - WAIVED",
+        "enum": [
+          "WAIVED"
         ],
         "type": "string"
       },
@@ -36132,6 +36183,77 @@
         "responses": {
           "200": {
             "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/api/v1/results/admin/clinic-targets/waive-missing/": {
+      "post": {
+        "description": "Record an explicit exam absence as a source-specific clinic waiver.",
+        "operationId": "results_admin_clinic_targets_waive_missing_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WaiveMissingExamRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/WaiveMissingExamRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/WaiveMissingExamRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WaiveMissingExamResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WaiveMissingExamResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid request fields"
+          },
+          "403": {
+            "description": "Tenant or role denied"
+          },
+          "404": {
+            "description": "Explicit missing exam target not found"
+          },
+          "409": {
+            "description": "Target already resolved or update conflict"
           }
         },
         "security": [

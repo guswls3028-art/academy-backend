@@ -32,6 +32,10 @@ from apps.domains.results.guards.score_edit_lease_guard import (
     score_edit_payload_parts,
     score_edit_payload_is_invalidated,
 )
+from apps.domains.results.guards.score_edit_lease_state import (
+    score_edit_changes_are_exclusive,
+    score_edit_changes_conflict,
+)
 from apps.domains.results.models import ScoreEditDraft
 from apps.support.results.progress_read_dependencies import (
     get_session_for_tenant_or_404,
@@ -79,10 +83,11 @@ class ScoreDraftView(APIView):
         for active in active_drafts:
             if score_edit_payload_is_invalidated(active.payload):
                 continue
-            stored_client_id, _ = score_edit_payload_parts(active.payload)
-            if active.editor_user_id != request.user.id:
-                return _locked_response()
-            if stored_client_id is not None and stored_client_id != client_id:
+            stored_client_id, active_changes = score_edit_payload_parts(active.payload)
+            if active.editor_user_id == request.user.id:
+                if stored_client_id is not None and stored_client_id != client_id:
+                    return _locked_response()
+            elif score_edit_changes_are_exclusive(active_changes):
                 return _locked_response()
 
         draft = ScoreEditDraft.objects.filter(
@@ -121,10 +126,11 @@ class ScoreDraftView(APIView):
                     continue
                 if score_edit_payload_is_invalidated(existing.payload):
                     continue
-                stored_client_id, _ = score_edit_payload_parts(existing.payload)
-                if existing.editor_user_id != request.user.id:
-                    return _locked_response()
-                if stored_client_id is not None and stored_client_id != client_id:
+                stored_client_id, existing_changes = score_edit_payload_parts(existing.payload)
+                if existing.editor_user_id == request.user.id:
+                    if stored_client_id is not None and stored_client_id != client_id:
+                        return _locked_response()
+                elif score_edit_changes_conflict(existing_changes, changes):
                     return _locked_response()
 
             draft = next(

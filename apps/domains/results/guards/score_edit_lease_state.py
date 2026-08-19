@@ -27,6 +27,42 @@ def score_edit_payload_is_invalidated(payload) -> bool:
     return bool(isinstance(payload, dict) and payload.get("invalidated"))
 
 
+def score_edit_homework_keys(changes: list) -> frozenset[tuple[int, int]] | None:
+    """Return homework cell keys, or None when the draft needs an exclusive lease."""
+    keys: set[tuple[int, int]] = set()
+    for change in changes:
+        if not isinstance(change, dict) or change.get("type") != "homework":
+            return None
+        enrollment_id = change.get("enrollmentId")
+        homework_id = change.get("homeworkId")
+        if (
+            isinstance(enrollment_id, bool)
+            or isinstance(homework_id, bool)
+            or not isinstance(enrollment_id, int)
+            or not isinstance(homework_id, int)
+            or enrollment_id <= 0
+            or homework_id <= 0
+        ):
+            return None
+        keys.add((enrollment_id, homework_id))
+    return frozenset(keys)
+
+
+def score_edit_changes_conflict(left_changes: list, right_changes: list) -> bool:
+    """Empty drafts coexist; disjoint homework cells coexist; all else is exclusive."""
+    if not left_changes or not right_changes:
+        return False
+    left_keys = score_edit_homework_keys(left_changes)
+    right_keys = score_edit_homework_keys(right_changes)
+    if left_keys is None or right_keys is None:
+        return True
+    return bool(left_keys & right_keys)
+
+
+def score_edit_changes_are_exclusive(changes: list) -> bool:
+    return bool(changes) and score_edit_homework_keys(changes) is None
+
+
 def score_edit_lease_payload(
     *,
     client_id: str | None,

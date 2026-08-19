@@ -23,16 +23,14 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from academy.adapters.db.django.repositories_clinic_targets import (
-    active_enrollment_ids_by_lecture,
     clinic_links_for_admin_targets,
     completed_progress_pairs,
     enrollment_map_for_ids,
-    existing_clinic_link_pairs_for_sessions,
+    explicit_not_submitted_exam_targets,
     filter_links_by_section,
     first_homework_score,
     homework_policy_cutline_for_session,
     homework_scores_for_target,
-    recent_sessions_for_tenant,
     regular_exam_for_source,
     regular_homework_for_clinic_target,
     student_name_by_enrollment_id,
@@ -329,6 +327,11 @@ class ClinicTargetService:
 
                 original_score = float(first_hw_score.score or 0) if first_hw_score and first_hw_score.score is not None else None
                 hw_max_score = float(first_hw_score.max_score or 100) if first_hw_score and first_hw_score.max_score else 100.0
+                meta_status = (
+                    (first_hw_score.meta or {}).get("status")
+                    if first_hw_score and isinstance(first_hw_score.meta, dict)
+                    else None
+                )
 
                 # 과제 cutline은 HomeworkPolicy 기반
                 hw_tenant = getattr(lecture, "tenant", None) if lecture else None
@@ -362,10 +365,13 @@ class ClinicTargetService:
                 out.append({
                     **base_row,
                     "exam_id": None,
-                    "reason": "score",
+                    "reason": "missing" if meta_status == "NOT_SUBMITTED" else "score",
                     "clinic_reason": "homework",
                     "exam_score": original_score,
                     "cutline_score": float(cutline),
+                    "homework_score": original_score,
+                    "homework_cutline": float(cutline),
+                    "meta_status": meta_status,
                     "max_score": hw_max_score,
                     "source_title": hw_title,
                     "latest_attempt_index": latest_attempt_index,
@@ -415,12 +421,18 @@ class ClinicTargetService:
                     target_id=exam_id,
                     enrollment_id=enrollment_id,
                 )
+                .select_related("attempt")
                 .order_by("-id")
                 .first()
             )
 
             exam_score = _safe_float(getattr(result, "total_score", 0.0) if result else 0.0, 0.0)
             attempt_id = int(getattr(result, "attempt_id", 0) or 0) if result else 0
+            attempt_meta_status = None
+            if attempt_id:
+                attempt = getattr(result, "attempt", None)
+                if attempt and isinstance(attempt.meta, dict):
+                    attempt_meta_status = attempt.meta.get("status")
 
             # 재시도 이력 (ExamAttempt 전체)
             all_attempts = ExamAttempt.objects.filter(
@@ -451,11 +463,14 @@ class ClinicTargetService:
                 latest_attempt_index = max(latest_attempt_index, att.attempt_index)
 
             # reason 판정
-            reason = "confidence" if _is_low_confidence_for_attempt(
-                exam_id=exam_id,
-                enrollment_id=enrollment_id,
-                attempt_id=attempt_id if attempt_id else None,
-            ) else "score"
+            if attempt_meta_status == "NOT_SUBMITTED":
+                reason = "missing"
+            else:
+                reason = "confidence" if _is_low_confidence_for_attempt(
+                    exam_id=exam_id,
+                    enrollment_id=enrollment_id,
+                    attempt_id=attempt_id if attempt_id else None,
+                ) else "score"
 
             out.append({
                 **base_row,
@@ -464,129 +479,65 @@ class ClinicTargetService:
                 "clinic_reason": clinic_reason,
                 "exam_score": float(exam_score),
                 "cutline_score": float(cutline),
+                "meta_status": attempt_meta_status,
                 "max_score": exam_max_score,
                 "source_title": exam_title,
                 "latest_attempt_index": latest_attempt_index,
                 "attempt_history": attempt_history,
             })
 
-        # 미응시(missing)는 클리닉 대상이 아님 — 시험/과제를 아직 응시하지 않은 학생은
-        # 불합격한 것이 아니므로 클리닉 보강 대상에서 제외한다.
-
-        return out
-
-    @staticmethod
-    def _find_missing_students(
-        *,
-        tenant: Any,
-        exams_cache: Dict[int, Optional[Any]],
-        existing_enrollment_session_pairs: set,
-    ) -> List[Dict[str, Any]]:
-        """
-        누락자 감지: 수강 중이지만 시험 결과가 없는 학생.
-        - 시험이 이미 실시된(최소 1명의 결과 존재) 차시만 대상
-        - 해당 강의에 ACTIVE 수강 중인 학생 중 Result가 없는 학생을 반환
-        """
-        import datetime
-        from django.utils import timezone
-        if tenant is None:
-            return []
-
-        out: List[Dict[str, Any]] = []
-
-        # 최근 90일 내 세션만 대상 (성능 제한)
-        cutoff = timezone.localdate() - datetime.timedelta(days=90)
-
-        # 시험이 있는 세션 수집
-        sessions_with_exams: Dict[int, tuple] = {}  # session_id → (session, exam)
-        for session in recent_sessions_for_tenant(tenant=tenant, cutoff=cutoff):
-            sid = session.id
-            if sid in exams_cache:
-                exam = exams_cache[sid]
-            else:
-                exams = list(get_exams_for_session(session))
-                exam = sorted(exams, key=lambda x: x.id)[0] if exams else None
-                exams_cache[sid] = exam
-            if exam:
-                sessions_with_exams[sid] = (session, exam)
-
-        if not sessions_with_exams:
-            return out
-
-        # 시험이 실시되었는지 확인 (최소 1명의 Result 존재)
-        exam_ids = list({exam.id for _, exam in sessions_with_exams.values()})
-        exams_with_results = set(
-            Result.objects.filter(
-                target_type="exam",
-                target_id__in=exam_ids,
-            ).values_list("target_id", flat=True).distinct()
-        )
-
-        # 실시된 시험이 있는 세션만 대상
-        active_sessions = {
-            sid: (session, exam)
-            for sid, (session, exam) in sessions_with_exams.items()
-            if exam.id in exams_with_results
-        }
-        if not active_sessions:
-            return out
-
-        # 강의별 ACTIVE 수강생 일괄 조회
-        lecture_ids = list({session.lecture_id for session, _ in active_sessions.values()})
-        enrollments_by_lecture = active_enrollment_ids_by_lecture(
+        # 명시적으로 미응시 처리된 시험은 점수 미달과 구분된 "판정 대기" 행이다.
+        # 조회가 ClinicLink를 만들지는 않는다. 사용자가 면제 사유를 확정할 때만
+        # source-specific WAIVED 이력을 생성한다.
+        for result, session in explicit_not_submitted_exam_targets(
             tenant=tenant,
-            lecture_ids=lecture_ids,
-        )
-
-        # 시험별 결과가 있는 수강생 일괄 조회
-        results_by_exam: Dict[int, set] = {}
-        for exam_id_val, eid in (
-            Result.objects.filter(
-                target_type="exam",
-                target_id__in=[exam.id for _, exam in active_sessions.values()],
-            ).values_list("target_id", "enrollment_id")
+            section_id=section_id,
         ):
-            results_by_exam.setdefault(exam_id_val, set()).add(eid)
-
-        # 기존 ClinicLink가 있는 (session, enrollment) 쌍 일괄 조회
-        existing_links = existing_clinic_link_pairs_for_sessions(
-            active_sessions.keys()
-        )
-
-        # 누락자 수집
-        for sid, (session, exam) in active_sessions.items():
-            enrolled_ids = enrollments_by_lecture.get(session.lecture_id, set())
-            with_results = results_by_exam.get(exam.id, set())
-            cutline = _safe_float(getattr(exam, "pass_score", 0.0), 0.0)
-
-            for eid in enrolled_ids:
-                if eid in with_results:
-                    continue
-                if (sid, eid) in existing_links:
-                    continue
-                if (eid, sid) in existing_enrollment_session_pairs:
-                    continue
-
-                out.append({
-                    "enrollment_id": eid,
-                    "student_name": _get_student_name_by_enrollment_id(eid),
-                    "session_title": _get_session_title(session),
-                    "reason": "missing",
-                    "clinic_reason": "exam",
-                    "exam_score": None,
-                    "cutline_score": float(cutline),
-                    "max_score": float(getattr(exam, "max_score", 100.0) or 100.0),
-                    "source_type": "exam",
-                    "source_id": int(exam.id),
-                    "source_title": _safe_str(getattr(exam, "title", None), "-"),
-                    "lecture_title": _safe_str(
-                        getattr(getattr(session, "lecture", None), "title", None), ""
-                    ),
-                    "lecture_color": getattr(getattr(session, "lecture", None), "color", None),
-                    "lecture_chip_label": getattr(getattr(session, "lecture", None), "chip_label", None),
-                    "latest_attempt_index": 0,
-                    "attempt_history": [],
-                    "created_at": None,
-                })
+            enrollment = result.enrollment
+            student = getattr(enrollment, "student", None)
+            exam = result.attempt.exam
+            lecture = session.lecture
+            school_type = getattr(student, "school_type", "HIGH") if student else "HIGH"
+            if school_type == "ELEMENTARY":
+                school_name = getattr(student, "elementary_school", None) if student else None
+            elif school_type == "HIGH":
+                school_name = getattr(student, "high_school", None) if student else None
+            else:
+                school_name = getattr(student, "middle_school", None) if student else None
+            out.append({
+                "enrollment_id": int(enrollment.id),
+                "student_id": int(student.id) if student else None,
+                "student_name": _safe_str(getattr(student, "name", None), "-"),
+                "session_title": _get_session_title(session),
+                "reason": "missing",
+                "clinic_reason": "exam",
+                "exam_score": None,
+                "cutline_score": _safe_float(exam.pass_score, 0.0),
+                "meta_status": "NOT_SUBMITTED",
+                "clinic_link_id": None,
+                "cycle_no": 1,
+                "resolution_type": None,
+                "resolved_at": None,
+                "session_id": int(session.id),
+                "lecture_id": int(lecture.id),
+                "exam_id": int(exam.id),
+                "source_type": "exam",
+                "source_id": int(exam.id),
+                "source_title": _safe_str(exam.title, "-"),
+                "lecture_title": _safe_str(lecture.title, ""),
+                "lecture_color": getattr(lecture, "color", None),
+                "lecture_chip_label": getattr(lecture, "chip_label", None),
+                "name_highlight_clinic_target": False,
+                "parent_phone": getattr(student, "parent_phone", None) or "",
+                "student_phone": getattr(student, "phone", None) or "",
+                "school": school_name or "",
+                "school_type": school_type,
+                "grade": getattr(student, "grade", None) if student else None,
+                "profile_photo_url": _get_student_photo_url(student),
+                "max_score": _safe_float(exam.max_score, 100.0),
+                "latest_attempt_index": 0,
+                "attempt_history": [],
+                "created_at": getattr(result.attempt, "created_at", None),
+            })
 
         return out

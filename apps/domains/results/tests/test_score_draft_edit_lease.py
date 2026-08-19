@@ -13,6 +13,7 @@ from apps.domains.results.guards.score_edit_lease_guard import (
     ScoreEditLeaseConflict,
     ScoreEditLeaseStale,
     invalidate_score_edit_leases_for_exam,
+    require_homework_score_edit_lease,
     require_score_edit_lease,
 )
 from apps.domains.results.views.score_draft_view import (
@@ -114,16 +115,89 @@ class ScoreDraftEditLeaseTests(TestCase):
             session_id=self.session.id,
         )
 
-    def test_active_lease_blocks_other_staff_and_other_tab(self):
+    def test_empty_drafts_coexist_but_same_user_other_tab_is_blocked(self):
         self.assertEqual(self._put(self.admin_a, "tab-a").status_code, 200)
 
         other_staff = self._put(self.admin_b, "tab-b")
-        self.assertEqual(other_staff.status_code, 409)
-        self.assertEqual(other_staff.data["code"], "SCORE_EDIT_LOCKED")
+        self.assertEqual(other_staff.status_code, 200)
 
         other_tab = self._get(self.admin_a, "tab-a-2")
         self.assertEqual(other_tab.status_code, 409)
         self.assertEqual(other_tab.data["code"], "SCORE_EDIT_LOCKED")
+
+    def test_disjoint_homework_cells_coexist_but_same_cell_conflicts(self):
+        first = {
+            "type": "homework",
+            "enrollmentId": 21,
+            "homeworkId": 31,
+            "score": 80,
+        }
+        disjoint = {
+            "type": "homework",
+            "enrollmentId": 22,
+            "homeworkId": 31,
+            "score": 90,
+        }
+        self.assertEqual(self._put(self.admin_a, "tab-a", [first]).status_code, 200)
+        self.assertEqual(self._put(self.admin_b, "tab-b", [disjoint]).status_code, 200)
+
+        request_a = self._request("patch", self.admin_a, "tab-a")
+        request_b = self._request("patch", self.admin_b, "tab-b")
+        with transaction.atomic():
+            self.assertEqual(
+                require_homework_score_edit_lease(
+                    request_a,
+                    session_id=self.session.id,
+                    enrollment_id=21,
+                    homework_id=31,
+                ).id,
+                self.session.id,
+            )
+        with transaction.atomic():
+            self.assertEqual(
+                require_homework_score_edit_lease(
+                    request_b,
+                    session_id=self.session.id,
+                    enrollment_id=22,
+                    homework_id=31,
+                ).id,
+                self.session.id,
+            )
+        with self.assertRaises(ScoreEditLeaseConflict):
+            with transaction.atomic():
+                require_homework_score_edit_lease(
+                    request_b,
+                    session_id=self.session.id,
+                    enrollment_id=21,
+                    homework_id=31,
+                )
+
+        conflict = self._put(self.admin_b, "tab-b", [first])
+        self.assertEqual(conflict.status_code, 409)
+        self.assertEqual(conflict.data["code"], "SCORE_EDIT_LOCKED")
+
+    def test_exam_changes_remain_exclusive_after_empty_drafts_coexist(self):
+        self.assertEqual(self._put(self.admin_a, "tab-a").status_code, 200)
+        self.assertEqual(self._put(self.admin_b, "tab-b").status_code, 200)
+        exam_change_a = {
+            "type": "examTotal",
+            "examId": 11,
+            "enrollmentId": 21,
+            "score": 70,
+        }
+        exam_change_b = {
+            "type": "examTotal",
+            "examId": 11,
+            "enrollmentId": 22,
+            "score": 80,
+        }
+        self.assertEqual(
+            self._put(self.admin_a, "tab-a", [exam_change_a]).status_code,
+            200,
+        )
+        response = self._put(self.admin_b, "tab-b", [exam_change_b])
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data["code"], "SCORE_EDIT_LOCKED")
 
     def test_autosave_commit_keeps_lease_until_explicit_release(self):
         change = {
@@ -143,7 +217,8 @@ class ScoreDraftEditLeaseTests(TestCase):
             editor_user=self.admin_a,
         )
         self.assertEqual(draft.payload["changes"], [])
-        self.assertEqual(self._put(self.admin_b, "tab-b").status_code, 409)
+        self.assertEqual(self._put(self.admin_b, "tab-b").status_code, 200)
+        self.assertEqual(self._get(self.admin_a, "tab-a-2").status_code, 409)
 
         self.assertEqual(
             self._commit(self.admin_a, "tab-a", release_lease=True).status_code,
@@ -158,7 +233,13 @@ class ScoreDraftEditLeaseTests(TestCase):
         self.assertEqual(self._put(self.admin_b, "tab-b").status_code, 200)
 
     def test_expired_lease_can_be_taken_over(self):
-        self.assertEqual(self._put(self.admin_a, "tab-a").status_code, 200)
+        change = {
+            "type": "examTotal",
+            "examId": 11,
+            "enrollmentId": 22,
+            "score": 74,
+        }
+        self.assertEqual(self._put(self.admin_a, "tab-a", [change]).status_code, 200)
         ScoreEditDraft.objects.filter(
             session=self.session,
             editor_user=self.admin_a,
@@ -211,11 +292,22 @@ class ScoreDraftEditLeaseTests(TestCase):
         )
         exam.sessions.add(self.session, sibling)
 
-        self.assertEqual(self._put(self.admin_a, "tab-a").status_code, 200)
+        change = {
+            "type": "examTotal",
+            "examId": exam.id,
+            "enrollmentId": 22,
+            "score": 74,
+        }
+
+        self.assertEqual(
+            self._put(self.admin_a, "tab-a", [change]).status_code,
+            200,
+        )
 
         response = self._put(
             self.admin_b,
             "tab-b",
+            [{**change, "enrollmentId": 23}],
             session=sibling,
         )
         self.assertEqual(response.status_code, 409)

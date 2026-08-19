@@ -5,6 +5,118 @@ from __future__ import annotations
 from typing import Any
 
 
+def explicit_not_submitted_exam_results(*, tenant):
+    """Latest exam result per enrollment, only when it is explicitly absent."""
+    from apps.domains.results.models import Result
+    from django.db.models import F, OuterRef, Subquery
+
+    latest_result_id = (
+        Result.objects.filter(
+            target_type="exam",
+            target_id=OuterRef("target_id"),
+            enrollment_id=OuterRef("enrollment_id"),
+        )
+        .order_by("-id")
+        .values("id")[:1]
+    )
+    return Result.objects.filter(
+        id=Subquery(latest_result_id),
+        target_type="exam",
+        target_id=F("attempt__exam_id"),
+        enrollment__tenant=tenant,
+        enrollment__status="ACTIVE",
+        attempt__meta__status="NOT_SUBMITTED",
+        attempt__exam__tenant=tenant,
+        attempt__exam__exam_type="regular",
+        attempt__exam__is_active=True,
+    )
+
+
+def explicit_not_submitted_exam_targets(*, tenant, section_id: int | None = None):
+    """Return exact roster/session rows for exams explicitly marked NOT_SUBMITTED.
+
+    A missing score alone is intentionally insufficient: this projection only exposes
+    a staff-authored absence marker and never infers absence from an empty result.
+    Existing source-specific ClinicLink history suppresses the projection, including
+    an already waived case.
+    """
+    from apps.domains.enrollment.models import SessionEnrollment
+    from apps.domains.lectures.models import Session
+    from apps.domains.progress.models import ClinicLink
+    from django.db.models import Q
+
+    results = list(
+        explicit_not_submitted_exam_results(tenant=tenant).select_related(
+            "attempt__exam",
+            "enrollment__student",
+            "enrollment__lecture",
+        )
+    )
+    if not results:
+        return []
+
+    enrollment_ids = {int(row.enrollment_id) for row in results if row.enrollment_id}
+    if section_id:
+        from apps.domains.lectures.models import SectionAssignment
+
+        allowed_ids = set(
+            SectionAssignment.objects.filter(
+                tenant=tenant,
+            ).filter(
+                Q(class_section_id=int(section_id))
+                | Q(clinic_section_id=int(section_id))
+            ).values_list("enrollment_id", flat=True)
+        )
+        enrollment_ids &= allowed_ids
+        results = [
+            row for row in results if int(row.enrollment_id or 0) in enrollment_ids
+        ]
+        if not results:
+            return []
+
+    exam_ids = {int(row.target_id) for row in results}
+    roster_links = list(
+        SessionEnrollment.objects.filter(
+            tenant=tenant,
+            enrollment_id__in=enrollment_ids,
+            session__lecture__tenant=tenant,
+            session__exams__id__in=exam_ids,
+        ).values_list("enrollment_id", "session_id", "session__exams__id").distinct()
+    )
+    session_ids = {int(session_id) for _, session_id, _ in roster_links}
+    sessions = {
+        int(session.id): session
+        for session in Session.objects.filter(
+            id__in=session_ids,
+            lecture__tenant=tenant,
+        ).select_related("lecture")
+    }
+    existing = set(
+        ClinicLink.objects.filter(
+            tenant=tenant,
+            enrollment_id__in=enrollment_ids,
+            session_id__in=session_ids,
+            source_type="exam",
+            source_id__in=exam_ids,
+        ).values_list("enrollment_id", "session_id", "source_id")
+    )
+
+    result_by_key = {
+        (int(row.enrollment_id), int(row.target_id)): row for row in results
+    }
+    targets = []
+    for enrollment_id, session_id, exam_id in roster_links:
+        key = (int(enrollment_id), int(exam_id))
+        result = result_by_key.get(key)
+        session = sessions.get(int(session_id))
+        if not result or not session:
+            continue
+        if (int(enrollment_id), int(session_id), int(exam_id)) in existing:
+            continue
+        targets.append((result, session))
+    return targets
+
+
 def clinic_links_for_admin_targets(*, tenant, include_resolved: bool):
     from apps.domains.progress.models import ClinicLink
 
@@ -158,35 +270,3 @@ def regular_exam_for_source(*, exam_id: int, tenant, session_id: int):
         is_active=True,
         sessions__id=int(session_id),
     ).first()
-
-
-def recent_sessions_for_tenant(*, tenant, cutoff):
-    from apps.domains.lectures.models import Session
-
-    return (
-        Session.objects.filter(lecture__tenant=tenant, date__gte=cutoff)
-        .select_related("lecture")
-    )
-
-
-def active_enrollment_ids_by_lecture(*, tenant, lecture_ids: list[int]) -> dict[int, set[int]]:
-    from apps.domains.enrollment.models import Enrollment
-
-    enrollments_by_lecture: dict[int, set[int]] = {}
-    for row in Enrollment.objects.filter(
-        lecture_id__in=lecture_ids,
-        tenant=tenant,
-        status="ACTIVE",
-    ).values("id", "lecture_id"):
-        enrollments_by_lecture.setdefault(row["lecture_id"], set()).add(row["id"])
-    return enrollments_by_lecture
-
-
-def existing_clinic_link_pairs_for_sessions(session_ids) -> set[tuple[int, int]]:
-    from apps.domains.progress.models import ClinicLink
-
-    return set(
-        ClinicLink.objects.filter(
-            session_id__in=session_ids,
-        ).values_list("session_id", "enrollment_id")
-    )

@@ -152,6 +152,24 @@ objective + subjective 합산과 문항별 만점 검증을 깨면 안 된다.
 결과를 제거한다. 결시 행은 상세 기록에는 남지만 점수·석차·백분위·응시자 평균
 및 추이 집계에서는 제외하며, 조회 응답 조립 단계에서도 이 값을 다시 차단한다.
 
+클리닉 운영 목록의 `GET /results/admin/clinic-targets/`는 점수 미달과
+`NOT_SUBMITTED`를 구분한다. 과제 미제출은 기존 source-specific `ClinicLink`를
+`reason=missing`, `homework_score`, `homework_cutline`, `meta_status`와 함께
+반환한다. 시험 미응시는 점수 실패가 아니므로 조회가 미해결 `ClinicLink`를
+자동 생성하지 않는다. 대신 같은 tenant의 활성 수강, 실제 차시 roster, 시험 연결,
+가장 최근 `Result`의 명시적 `ExamAttempt.meta.status=NOT_SUBMITTED`가 모두 일치할 때만
+`clinic_link_id=null`인 판정 대기 행으로 투영한다. 단순히 점수가 없다는 이유로
+미응시를 추정하지 않으며, 이후 채점 결과가 생기면 과거 미응시 표식은 다시
+대상으로 노출하거나 면제할 수 없다.
+
+결석 등으로 면제할 때는
+`POST /results/admin/clinic-targets/waive-missing/`에 정확한 차시·수강·시험 ID와
+2~500자의 사유를 보낸다. 서버는 위 미응시 조건을 다시 잠금·검증하고 그때만
+source-specific `ClinicLink`를 만든 뒤 `WAIVED`로 해소한다. 반복 요청은 같은
+이력을 반환하고 다른 tenant·roster·정상 점수는 실패 폐쇄한다.
+`include_resolved=true`는 해소 이력을 함께 반환하며 기본 조회는 현재 미해결과
+판정 대기만 반환한다.
+
 Session Assessment Inspection
 -----------------------------
 
