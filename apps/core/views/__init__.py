@@ -23,6 +23,7 @@ from apps.core.views.tenant_management import (
     TenantOwnerView,
     TenantOwnerListView,
     TenantOwnerDetailView,
+    TenantOwnerPasswordResetView,
 )
 from apps.core.views.tenant_info import (
     MaintenanceModeView,
@@ -64,6 +65,7 @@ __all__ = [
     "TenantOwnerView",
     "TenantOwnerListView",
     "TenantOwnerDetailView",
+    "TenantOwnerPasswordResetView",
     "MaintenanceModeView",
     "TenantInfoView",
     "PublicOgMetaView",

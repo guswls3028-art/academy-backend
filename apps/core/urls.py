@@ -22,6 +22,7 @@ from apps.core.views import (
     TenantOwnerView,
     TenantOwnerListView,
     TenantOwnerDetailView,
+    TenantOwnerPasswordResetView,
     PublicOgMetaView,
     LegalConfigView,
     DevDashboardSummaryView,
@@ -94,6 +95,7 @@ urlpatterns = [
     path("tenants/<int:tenant_id>/owner/", TenantOwnerView.as_view(), name="core-tenant-owner"),
     path("tenants/<int:tenant_id>/owners/", TenantOwnerListView.as_view(), name="core-tenant-owners"),
     path("tenants/<int:tenant_id>/owners/<int:user_id>/", TenantOwnerDetailView.as_view(), name="core-tenant-owner-detail"),
+    path("tenants/<int:tenant_id>/owners/<int:user_id>/password/", TenantOwnerPasswordResetView.as_view(), name="core-tenant-owner-password-reset"),
     # Dev/운영 콘솔
     path("dev/dashboard/", DevDashboardSummaryView.as_view(), name="core-dev-dashboard"),
     path("dev/tenants/<int:tenant_id>/usage/", DevTenantUsageView.as_view(), name="core-dev-tenant-usage"),

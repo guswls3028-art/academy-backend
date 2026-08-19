@@ -36,6 +36,7 @@ from apps.core.views.tenant_management import (
     TenantCreateView,
     TenantOwnerDetailView,
     TenantOwnerListView,
+    TenantOwnerPasswordResetView,
     TenantOwnerView,
 )
 from apps.domains.clinic.models import SessionParticipant
@@ -675,6 +676,27 @@ class TenantOwnerRemovalInvariantTests(TestCase):
                 user_id=user.id,
             )
 
+    def _reset_password(self, tenant, user, password, *, platform_tenant_id=None):
+        request = APIRequestFactory().post(
+            f"/api/v1/core/tenants/{tenant.id}/owners/{user.id}/password/",
+            {"password": password},
+            format="json",
+        )
+        request.tenant = self.platform
+        force_authenticate(request, user=self.actor)
+        with override_settings(
+            OWNER_TENANT_ID=(
+                self.platform.id
+                if platform_tenant_id is None
+                else platform_tenant_id
+            )
+        ):
+            return TenantOwnerPasswordResetView.as_view()(
+                request,
+                tenant_id=tenant.id,
+                user_id=user.id,
+            )
+
     def test_self_removal_is_forbidden(self):
         response = self._delete(self.platform, self.actor)
         self.assertEqual(response.status_code, 409, response.data)
@@ -757,6 +779,119 @@ class TenantOwnerRemovalInvariantTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(len(response.data), 1)
         self.assertFalse(response.data[0]["isActive"])
+
+    def test_owner_password_reset_preserves_linked_parent_and_invalidates_credentials(self):
+        self.target_owner.token_version = 6
+        self.target_owner.must_change_password = False
+        self.target_owner.save(update_fields=["token_version", "must_change_password"])
+        parent = Parent.objects.create(
+            tenant=self.target,
+            user=self.target_owner,
+            name="Linked Parent",
+            phone="01012345678",
+        )
+        create_pending_password_reset(self.target_owner, "pending-password")
+
+        response = self._reset_password(
+            self.target,
+            self.target_owner,
+            "replacement-password",
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["detail"], "owner_password_reset")
+        self.target_owner.refresh_from_db()
+        parent.refresh_from_db()
+        membership = TenantMembership.objects.get(
+            tenant=self.target,
+            user=self.target_owner,
+        )
+        self.assertTrue(self.target_owner.check_password("replacement-password"))
+        self.assertTrue(self.target_owner.must_change_password)
+        self.assertEqual(self.target_owner.token_version, 7)
+        self.assertEqual(parent.user_id, self.target_owner.id)
+        self.assertTrue(membership.is_active)
+        self.assertEqual(membership.role, "owner")
+        self.assertFalse(
+            PendingPasswordReset.objects.filter(user=self.target_owner).exists()
+        )
+        audit = OpsAuditLog.objects.get(
+            action="owner.password_reset",
+            target_tenant=self.target,
+            target_user=self.target_owner,
+        )
+        self.assertEqual(audit.payload, {"user_id": self.target_owner.id})
+        self.assertNotIn("password", audit.payload)
+        self.assertNotIn("replacement-password", str(audit.payload))
+
+    def test_owner_password_reset_rejects_short_password_without_mutation(self):
+        original_password = self.target_owner.password
+        original_token_version = self.target_owner.token_version
+
+        response = self._reset_password(self.target, self.target_owner, "123")
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(response.data["detail"], "owner_password_reset_invalid")
+        self.target_owner.refresh_from_db()
+        self.assertEqual(self.target_owner.password, original_password)
+        self.assertEqual(self.target_owner.token_version, original_token_version)
+        self.assertFalse(
+            OpsAuditLog.objects.filter(action="owner.password_reset").exists()
+        )
+
+    def test_owner_password_reset_is_platform_admin_only(self):
+        original_password = self.target_owner.password
+        other_platform = _tenant("owner-password-reset-other-platform")
+
+        response = self._reset_password(
+            self.target,
+            self.target_owner,
+            "replacement-password",
+            platform_tenant_id=other_platform.id,
+        )
+
+        self.assertEqual(response.status_code, 403, response.data)
+        self.target_owner.refresh_from_db()
+        self.assertEqual(self.target_owner.password, original_password)
+
+    def test_owner_password_reset_rejects_inactive_user_without_mutation(self):
+        original_password = self.target_owner.password
+        self.target_owner.is_active = False
+        self.target_owner.save(update_fields=["is_active"])
+
+        response = self._reset_password(
+            self.target,
+            self.target_owner,
+            "replacement-password",
+        )
+
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertEqual(response.data["detail"], "owner_user_inactive")
+        self.target_owner.refresh_from_db()
+        self.assertEqual(self.target_owner.password, original_password)
+
+    def test_owner_password_reset_endpoint_does_not_expose_owner_delete(self):
+        request = APIRequestFactory().delete(
+            f"/api/v1/core/tenants/{self.target.id}/owners/"
+            f"{self.target_owner.id}/password/"
+        )
+        request.tenant = self.platform
+        force_authenticate(request, user=self.actor)
+
+        with override_settings(OWNER_TENANT_ID=self.platform.id):
+            response = TenantOwnerPasswordResetView.as_view()(
+                request,
+                tenant_id=self.target.id,
+                user_id=self.target_owner.id,
+            )
+
+        self.assertEqual(response.status_code, 405, response.data)
+        self.assertTrue(
+            TenantMembership.objects.get(
+                tenant=self.target,
+                user=self.target_owner,
+            ).is_active
+        )
 
 
 class TenantProvisioningInvariantTests(TestCase):
