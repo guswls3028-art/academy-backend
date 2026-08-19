@@ -1413,7 +1413,8 @@ def test_dev_alerts_cron_reconciles_failed_wrong_note_pdf_objects_safely() -> No
 
     assert "python manage.py help cleanup_failed_wrong_note_pdfs" in workflow
     assert "python manage.py cleanup_failed_wrong_note_pdfs --silent --limit 50" in workflow
-    assert 'if [ "$DRY_RUN" = "true" ] || [ "$TEST_SMS" = "true" ]' in workflow
+    assert 'if [ "$DRY_RUN" = "true" ]; then' in workflow
+    assert "TEST_SMS" not in workflow
     assert 'CLEANUP_COMMAND=""' in workflow
     assert "${CLEANUP_COMMAND}${PUSH_COMMAND}python manage.py check_dev_alerts" in workflow
 
