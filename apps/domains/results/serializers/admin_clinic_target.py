@@ -31,6 +31,9 @@ class AdminClinicTargetSerializer(serializers.Serializer):
 
     exam_score = serializers.FloatField(allow_null=True)
     cutline_score = serializers.FloatField(allow_null=True)
+    homework_score = serializers.FloatField(required=False, allow_null=True)
+    homework_cutline = serializers.FloatField(required=False, allow_null=True)
+    meta_status = serializers.CharField(required=False, allow_null=True)
 
     # ✅ V1.1.1 remediation: ClinicLink 식별/상태 필드
     clinic_link_id = serializers.IntegerField(required=False, allow_null=True)

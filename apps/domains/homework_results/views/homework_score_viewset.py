@@ -50,7 +50,7 @@ from apps.domains.homework_results.filters import HomeworkScoreFilter
 
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.results.contracts import (
-    require_score_edit_lease,
+    require_homework_score_edit_lease,
 )
 from apps.support.homework_results.score_dependencies import (
     calc_homework_passed_and_clinic,
@@ -227,7 +227,12 @@ class HomeworkScoreViewSet(ModelViewSet):
         obj: HomeworkScore = self.get_object()
 
         validate_enrollment_belongs_to_tenant(obj.enrollment_id, request.tenant)
-        require_score_edit_lease(request, session_id=obj.session_id)
+        require_homework_score_edit_lease(
+            request,
+            session_id=obj.session_id,
+            enrollment_id=obj.enrollment_id,
+            homework_id=obj.homework_id,
+        )
 
         if getattr(obj, "is_locked", False):
             return _locked_response(obj)
@@ -365,7 +370,12 @@ class HomeworkScoreViewSet(ModelViewSet):
                     {"session_id": "과제의 차시와 요청 차시가 일치하지 않습니다."},
                     status=drf_status.HTTP_400_BAD_REQUEST,
                 )
-            require_score_edit_lease(request, session_id=session.id)
+            require_homework_score_edit_lease(
+                request,
+                session_id=session.id,
+                enrollment_id=enrollment_id,
+                homework_id=homework_id,
+            )
             if not homework_assignment_exists(
                 tenant=request.tenant,
                 homework=homework,

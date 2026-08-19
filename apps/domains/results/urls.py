@@ -58,7 +58,10 @@ from apps.domains.results.views.wrong_note_source_view import (
 )
 
 from apps.domains.results.views.exam_attempt_view import ExamAttemptViewSet
-from apps.domains.results.views.admin_clinic_targets_view import AdminClinicTargetsView
+from apps.domains.results.views.admin_clinic_targets_view import (
+    AdminClinicMissingExamWaiveView,
+    AdminClinicTargetsView,
+)
 from apps.domains.results.views.admin_attempt_history_view import AdminAttemptHistoryView
 
 from apps.support.results.clinic_route_dependencies import AdminClinicBookingViewSet
@@ -171,6 +174,11 @@ urlpatterns = [
     path("admin/teacher-dashboard-counts/", TeacherDashboardCountsView.as_view(), name="teacher-dashboard-counts"),
     path("admin/attempt-history/", AdminAttemptHistoryView.as_view(), name="admin-attempt-history"),
     path("admin/clinic-targets/", AdminClinicTargetsView.as_view(), name="admin-clinic-targets"),
+    path(
+        "admin/clinic-targets/waive-missing/",
+        AdminClinicMissingExamWaiveView.as_view(),
+        name="admin-clinic-targets-waive-missing",
+    ),
     path("wrong-notes", WrongNoteView.as_view(), name="wrong-note"),
     path(
         "wrong-notes/sources/",

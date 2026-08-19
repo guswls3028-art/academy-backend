@@ -6,6 +6,7 @@ from apps.domains.results.guards.score_edit_lease_state import (
     EDIT_LEASE_TTL as EDIT_LEASE_TTL,
     active_score_edit_drafts,
     invalidate_score_edit_leases_for_exam as invalidate_score_edit_leases_for_exam,
+    score_edit_homework_keys,
     score_edit_lease_payload as score_edit_lease_payload,
     score_edit_payload_is_invalidated,
     score_edit_payload_parts,
@@ -83,12 +84,77 @@ def require_score_edit_lease(request, *, session_id: int, exam_id: int | None = 
                 draft = candidate
         if score_edit_payload_is_invalidated(candidate.payload):
             continue
-        if not _same_editor(
+        _, candidate_changes = score_edit_payload_parts(candidate.payload)
+        same_editor = _same_editor(
             candidate,
             user_id=request.user.id,
             client_id=client_id,
-        ):
+        )
+        if int(candidate.editor_user_id) == int(request.user.id) and not same_editor:
             raise ScoreEditLeaseConflict()
+        if not same_editor and candidate_changes:
+            raise ScoreEditLeaseConflict()
+    if draft is None:
+        raise ScoreEditLeaseConflict()
+    if score_edit_payload_is_invalidated(draft.payload):
+        raise ScoreEditLeaseStale()
+    stored_client_id, _ = score_edit_payload_parts(draft.payload)
+    if stored_client_id is None or stored_client_id != client_id:
+        raise ScoreEditLeaseConflict()
+    return session
+
+
+def require_homework_score_edit_lease(
+    request,
+    *,
+    session_id: int,
+    enrollment_id: int,
+    homework_id: int,
+):
+    """Allow assistants to edit disjoint homework cells while fencing collisions."""
+    tenant = getattr(request, "tenant", None)
+    if not tenant:
+        raise ScoreEditLeaseConflict()
+
+    try:
+        session, scope_ids = lock_score_edit_scope_for_session(
+            session_id=int(session_id),
+            tenant=tenant,
+        )
+    except NotFound:
+        raise NotFound({"detail": "session not found", "code": "NOT_FOUND"}) from None
+
+    client_id = score_edit_client_id(request)
+    target_key = (int(enrollment_id), int(homework_id))
+    drafts = list(
+        active_score_edit_drafts(scope_ids=scope_ids, tenant_id=tenant.id)
+        .select_for_update()
+        .order_by("session_id", "id")
+    )
+    draft = None
+    for candidate in drafts:
+        stored_client_id, candidate_changes = score_edit_payload_parts(candidate.payload)
+        same_user = int(candidate.editor_user_id) == int(request.user.id)
+        same_editor = same_user and stored_client_id in (None, client_id)
+        if int(candidate.session_id) == int(session_id) and same_editor:
+            draft = candidate
+        if score_edit_payload_is_invalidated(candidate.payload):
+            continue
+        if same_user and not same_editor:
+            raise ScoreEditLeaseConflict()
+        if same_editor or not candidate_changes:
+            continue
+        homework_keys = score_edit_homework_keys(candidate_changes)
+        if homework_keys is None:
+            raise ScoreEditLeaseConflict()
+        if target_key in homework_keys:
+            raise ScoreEditLeaseConflict(
+                {
+                    "detail": "같은 학생의 같은 과제 점수를 다른 조교가 수정 중입니다.",
+                    "code": "SCORE_EDIT_LOCKED",
+                }
+            )
+
     if draft is None:
         raise ScoreEditLeaseConflict()
     if score_edit_payload_is_invalidated(draft.payload):
@@ -123,6 +189,10 @@ def require_score_edit_scope_available_for_exam(*, exam, tenant) -> list[int]:
         .select_for_update()
         .order_by("session_id", "id")
     )
-    if any(not score_edit_payload_is_invalidated(draft.payload) for draft in active):
+    if any(
+        not score_edit_payload_is_invalidated(draft.payload)
+        and bool(score_edit_payload_parts(draft.payload)[1])
+        for draft in active
+    ):
         raise ScoreEditLeaseConflict()
     return scope_ids
