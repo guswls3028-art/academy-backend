@@ -18,6 +18,7 @@ class Migration(migrations.Migration):
             name="pending_account_notice_origin_id",
             field=models.CharField(
                 blank=True,
+                db_default="",
                 default="",
                 help_text="첫 수강 계정 안내를 만든 job/batch 식별자",
                 max_length=128,
@@ -28,6 +29,7 @@ class Migration(migrations.Migration):
             name="pending_account_notice_origin_type",
             field=models.CharField(
                 blank=True,
+                db_default="",
                 default="",
                 help_text="첫 수강 계정 안내를 만든 원천 종류(excel_import 등)",
                 max_length=64,

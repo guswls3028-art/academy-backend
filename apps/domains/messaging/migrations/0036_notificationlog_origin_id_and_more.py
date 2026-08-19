@@ -44,6 +44,7 @@ class Migration(migrations.Migration):
             name="origin_id",
             field=models.CharField(
                 blank=True,
+                db_default="",
                 default="",
                 help_text="Producer job/batch/domain identifier without recipient PII",
                 max_length=128,
@@ -54,6 +55,7 @@ class Migration(migrations.Migration):
             name="origin_type",
             field=models.CharField(
                 blank=True,
+                db_default="",
                 default="",
                 help_text="Durable producer kind such as excel_import or manual_send",
                 max_length=64,
@@ -64,6 +66,7 @@ class Migration(migrations.Migration):
             name="recipient_fingerprint",
             field=models.CharField(
                 blank=True,
+                db_default="",
                 default="",
                 help_text="HMAC fingerprint of the normalized recipient; never the raw phone number",
                 max_length=64,
@@ -74,6 +77,7 @@ class Migration(migrations.Migration):
             name="origin_id",
             field=models.CharField(
                 blank=True,
+                db_default="",
                 default="",
                 help_text="원천 job/batch/domain 식별자",
                 max_length=128,
@@ -84,6 +88,7 @@ class Migration(migrations.Migration):
             name="origin_type",
             field=models.CharField(
                 blank=True,
+                db_default="",
                 default="",
                 help_text="발송 원천 종류(excel_import, manual_send 등)",
                 max_length=64,
@@ -94,6 +99,7 @@ class Migration(migrations.Migration):
             name="recipient_fingerprint",
             field=models.CharField(
                 blank=True,
+                db_default="",
                 default="",
                 help_text="정규화 수신번호의 HMAC 지문(원문 번호 저장 금지)",
                 max_length=64,

@@ -61,18 +61,21 @@ class NotificationLog(models.Model):
         max_length=64,
         blank=True,
         default="",
+        db_default="",
         help_text="HMAC fingerprint of the normalized recipient; never the raw phone number",
     )
     origin_type = models.CharField(
         max_length=64,
         blank=True,
         default="",
+        db_default="",
         help_text="Durable producer kind such as excel_import or manual_send",
     )
     origin_id = models.CharField(
         max_length=128,
         blank=True,
         default="",
+        db_default="",
         help_text="Producer job/batch/domain identifier without recipient PII",
     )
     status = models.CharField(
@@ -406,18 +409,21 @@ class ScheduledNotification(models.Model):
         max_length=64,
         blank=True,
         default="",
+        db_default="",
         help_text="정규화 수신번호의 HMAC 지문(원문 번호 저장 금지)",
     )
     origin_type = models.CharField(
         max_length=64,
         blank=True,
         default="",
+        db_default="",
         help_text="발송 원천 종류(excel_import, manual_send 등)",
     )
     origin_id = models.CharField(
         max_length=128,
         blank=True,
         default="",
+        db_default="",
         help_text="원천 job/batch/domain 식별자",
     )
     status = models.CharField(

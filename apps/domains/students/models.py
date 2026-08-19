@@ -146,12 +146,14 @@ class Student(TimestampModel):
         max_length=64,
         blank=True,
         default="",
+        db_default="",
         help_text="첫 수강 계정 안내를 만든 원천 종류(excel_import 등)",
     )
     pending_account_notice_origin_id = models.CharField(
         max_length=128,
         blank=True,
         default="",
+        db_default="",
         help_text="첫 수강 계정 안내를 만든 job/batch 식별자",
     )
     is_managed = models.BooleanField(default=True)
