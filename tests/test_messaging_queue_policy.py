@@ -1,3 +1,5 @@
+import re
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -135,6 +137,35 @@ def test_business_key_includes_source_tenant_for_owner_proxy_sends() -> None:
         )
 
 
+def test_canonical_payload_binds_recipient_and_keeps_privacy_safe_trace() -> None:
+    fake_client = _FakeQueueClient()
+    with patch("apps.domains.messaging.sqs_queue.get_queue_client", return_value=fake_client):
+        queue = MessagingSQSQueue()
+        assert queue.enqueue(
+            tenant_id=1,
+            source_tenant_id=2,
+            to="010-1234-5678",
+            text="trace",
+            message_mode="alimtalk",
+            event_type="registration_approved_parent",
+            target_type="account",
+            target_id="parent:7",
+            occurrence_key="dispatch:trace-1",
+            origin_type="excel_import",
+            origin_id="excel-job-1",
+        )
+
+    message = fake_client.messages[0]
+    assert message["origin_type"] == "excel_import"
+    assert message["origin_id"] == "excel-job-1"
+    assert len(message["recipient_fingerprint"]) == 64
+    assert "01012345678" not in message["recipient_fingerprint"]
+    assert _worker_tenant_binding_error(message) == ""
+
+    tampered = {**message, "to": "01099998888"}
+    assert _worker_tenant_binding_error(tampered) == "invalid_business_idempotency_key"
+
+
 def test_worker_normalizes_raw_tenant_payload_to_common_owner() -> None:
     tenant_id, source_tenant_id = _normalize_worker_tenants(
         3,
@@ -206,3 +237,21 @@ def test_worker_rollout_gate_allows_only_missing_not_invalid_signatures(settings
 
     assert _worker_tenant_binding_error(unsigned) == ""
     assert _worker_tenant_binding_error(invalid) == "invalid_tenant_binding_signature"
+
+
+def test_product_producers_cannot_bypass_durable_messaging_outbox() -> None:
+    root = Path(__file__).resolve().parents[1]
+    allowed = {
+        root / "apps/domains/messaging/scheduled.py",
+        root / "apps/domains/messaging/services/queue_service.py",
+    }
+    offenders = []
+    for source_root in (root / "apps", root / "academy"):
+        for path in source_root.rglob("*.py"):
+            if path in allowed or "tests" in path.parts:
+                continue
+            text = path.read_text(encoding="utf-8")
+            if re.search(r"(?<!def )\benqueue_sms\(", text):
+                offenders.append(str(path.relative_to(root)))
+
+    assert offenders == []

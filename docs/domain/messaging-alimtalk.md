@@ -368,7 +368,7 @@ signup 카테고리만 자체 Solapi 템플릿을 유지. 나머지 매핑 카�
 - `message_mode` 기본값: `"alimtalk"`
 - `message_mode`는 알림톡으로 정규화된다. SMS/LMS 실발송은 차단된다.
 - 알림톡 모드이면 공용 승인 `solapi_template_id` 필수
-- Rate limit: 시간당 500건 (line 474-482)
+- Rate limit: 업무 tenant별 rolling 1시간 500건 + 공유 공급자 계정 KST 일일 900건 기본 안전 한도
 - 최대 200명 일괄 발송 (line 504-508)
 - 발신번호/PFID/provider는 공용 owner 설정만 사용한다.
 
@@ -384,6 +384,7 @@ signup 카테고리만 자체 Solapi 템플릿을 유지. 나머지 매핑 카�
 - tenant별 `messaging_provider`, `kakao_pfid`, 자체 Solapi/Ppurio 키는 신규 실발송 경로에서 사용하지 않는다.
 - `enqueue_sms()`는 알림톡 payload의 `tenant_id`를 owner tenant로 정규화하고 원 업무 테넌트는 `source_tenant_id`로 남긴다.
 - worker도 raw/legacy SQS payload의 `tenant_id`를 owner tenant로 재정규화한다. 공용 채널의 물리 발송·로그 tenant는 owner를 유지하지만, 단가·잔액 차감·환불은 `source_tenant_id`로 식별한 실제 업무 테넌트에 귀속한다. 모든 canonical payload의 tenant 결합은 producer HMAC과 durable outbox tenant로 검증하며 서로 모순되는 payload는 발송 전에 폐기한다.
+- 신규 canonical payload는 `occurrence_key`를 싣는다. worker는 payload의 tenant/channel/event/target/recipient/occurrence/template로 business key를 다시 계산하며 producer key와 다르면 `invalid_business_idempotency_key`로 폐기한다. 따라서 유효한 signed key만 복사해 수신번호를 변경해도 provider로 진행하지 않는다.
 
 ### SQS tenant-binding 키와 배포 계약
 
@@ -475,14 +476,23 @@ SHA-256(canonical) -> 64자 hex
 - `occurrence_key`: 도메인 호출자 지정 키. 수동 즉시/예약 발송은 DB dispatch UUID에서 만든 안정 키
 - DB UniqueConstraint: `(tenant, message_mode, business_idempotency_key)` where `business_idempotency_key > ""` (models.py:64-68)
 
+### 개인정보 없는 원천/수신자 추적
+
+- `ScheduledNotification`과 `NotificationLog`는 같은 `business_idempotency_key`로 outbox→worker claim을 연결한다. 별도 중복 trace ID는 만들지 않는다.
+- `recipient_fingerprint`는 정규화 수신번호를 전용 `MESSAGING_TENANT_BINDING_KEY`로 HMAC-SHA256한 64자 값이다. 원문 번호를 terminal payload나 진단 출력에 남기지 않고도 정확한 번호 입력으로 관련 행을 찾는다.
+- `origin_type`/`origin_id`는 producer 종류와 job/batch/domain ID다. Excel 신규 학생은 `excel_import`와 AIJob job ID를 pending 계정 안내에 보존했다가 첫 ACTIVE 수강 outbox와 worker log로 전달한다.
+- HMAC primary key 순환 중 진단은 `MESSAGING_TENANT_BINDING_FALLBACK_KEYS`로 만든 후보도 조회한다. fallback 제거 뒤에는 제거된 키로 만든 과거 지문을 새 번호 입력만으로 재계산할 수 없으므로 incident 보존 기간과 key rotation drain을 맞춘다.
+
 ### DB dispatch(outbox) 상태와 SQS 재시도
 
-- 수동 즉시 발송과 예약/지연 발송은 모두 `ScheduledNotification` 행을 먼저 만든다.
+- 수동·시스템·영상·매치업·커뮤니티의 즉시 발송과 예약/지연 발송은 모두 `ScheduledNotification` 행을 먼저 만든다. `enqueue_sms()`는 outbox drainer 전용 경계이며 product producer가 직접 호출하지 않는다.
 - 상태는 `pending → dispatching → sent` 순서다. 여기서 `sent`/`sent_at`은 **SQS 접수 완료**이며 공급사 최종 발송 성공이 아니다.
 - `dispatch_key`는 행마다 고유한 UUID이고 payload의 `occurrence_key=dispatch:<uuid>`로 고정된다. 폴러/프로세스가 재시작되어 같은 행을 다시 enqueue해도 business key는 바뀌지 않는다.
 - SQS enqueue가 실패하면 영구 실패로 닫지 않는다. 30초부터 지수 백오프하며 최대 8회 시도 후 `failed`가 된다. 입력 누락, SMS 차단, `MessagingPolicyError`는 즉시 terminal `failed`다.
 - `dispatching`이 5분 이상이면 죽은 폴러 claim으로 보고 회수한다. 외부 SQS 호출은 DB transaction과 row lock 밖에서 실행한다.
 - `operations/status`는 `retry_waiting`, `dispatching`, `stale_dispatching`을 별도로 노출한다.
+- tenant별 rolling 1시간 한도는 500건이다. 별도로 공유 provider 계정은 KST 00:00~24:00의 outbox attempt 예약과 outbox에 없는 legacy log를 합산해 `MESSAGING_PROVIDER_DAILY_DISPATCH_LIMIT`(기본 900)으로 제한한다. PostgreSQL transaction advisory lock 아래 tenant 간 claim을 직렬화하며 owner tenant 행의 존재 여부에는 의존하지 않는다. 한도 도달 신규 행은 `provider_daily_dispatch_quota_deferred`와 다음 날 00:05 KST `next_attempt_at`을 남긴다. 재시도 중 같은 일일 예약은 중복 집계하지 않는다.
+- 수동 preflight와 `operations/status.rate_limit_provider_daily`는 전역 limit/used/remaining을 노출한다. 예약 발송은 예약 시점에 오늘 한도를 선점하지 않고 실제 due claim 시점에 검사한다.
 
 ### 워커 provider 상태와 exactly-once 경계
 
@@ -554,6 +564,21 @@ SHA-256(canonical) -> 64자 hex
 - 수신자 운영 차단: denylist 번호는 큐 입구에서 삭제하고 provider 호출 직전에 재확인
 - `sending`/`ambiguous` 결과는 자동 재발송 금지. `operations/status.log_24h.action_required`(`sending + ambiguous`)와 `provider_outcome_ambiguous` risk로 확인
 - 결제 `notice_payment`처럼 논리 매핑은 있으나 provider SID가 없는 유형은 preflight와 실제 send 모두 `unified_template_unavailable`로 fail-close. 과거 tenant template SID로 fallback 금지
+
+### 제품 메시징 incident 진단
+
+```powershell
+python manage.py diagnose_messaging_incident `
+  --tenant-id 11 `
+  --recipient 010-0000-0000 `
+  --origin-id <excel-job-id> `
+  --since-hours 72 `
+  --provider
+```
+
+- `--tenant-id`는 필수이며 `--recipient`와 `--origin-id`는 함께 또는 각각 사용할 수 있다. `--provider`는 exact `--recipient`가 있을 때만 허용한다.
+- JSON은 outbox/log status·trigger·origin type, business-key 연결 누락 건수, provider ATA/statusCode/disableSms 집계만 반환한다. 전화번호, message body, 계정 값, target name, provider message/group ID, 입력 origin ID는 출력하지 않는다.
+- provider 조회는 read-only다. `sent` outbox는 SQS 접수, `NotificationLog.status=sent`는 provider 접수 성공이므로 최종 공급자 상태는 `--provider` 집계를 함께 본다. `sending`/`ambiguous`는 자동 재발송하지 않는다.
 
 ### 금지 패턴
 

@@ -596,6 +596,10 @@ MESSAGING_TENANT_BINDING_ENFORCED = os.getenv(
     "MESSAGING_TENANT_BINDING_ENFORCED",
     "true",
 ).lower() in ("1", "true", "yes")
+MESSAGING_PROVIDER_DAILY_DISPATCH_LIMIT = max(
+    1,
+    int(os.getenv("MESSAGING_PROVIDER_DAILY_DISPATCH_LIMIT", "900")),
+)
 
 # ==================================================
 # SENTRY (에러 모니터링) — DSN 미설정 시 비활성화

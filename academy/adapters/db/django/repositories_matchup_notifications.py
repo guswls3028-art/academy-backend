@@ -11,8 +11,9 @@ from apps.domains.messaging.alimtalk_content_builders import (
     get_solapi_template_id,
 )
 from apps.domains.messaging.policy import is_messaging_disabled
+from apps.domains.messaging.models import ScheduledNotification
+from apps.domains.messaging.scheduled import dispatch_notification_now
 from apps.domains.messaging.selectors import get_auto_send_config
-from apps.domains.messaging.services import enqueue_sms
 
 
 logger = logging.getLogger(__name__)
@@ -123,14 +124,33 @@ def notify_hit_report_submitted(report, _request=None) -> None:
         )
 
         try:
-            ok = enqueue_sms(
+            notification = dispatch_notification_now(
                 tenant_id=tenant_id,
-                to=phone,
-                text=template_body,
-                message_mode="alimtalk",
-                template_id=solapi_tid,
-                alimtalk_replacements=replacements,
+                trigger=trigger,
+                payload={
+                    "tenant_id": tenant_id,
+                    "to": phone,
+                    "text": template_body,
+                    "message_mode": "alimtalk",
+                    "template_id": solapi_tid,
+                    "alimtalk_replacements": replacements,
+                    "event_type": trigger,
+                    "target_type": "staff",
+                    "target_id": user.id,
+                    "target_name": recipient_name,
+                    "occurrence_key": f"{trigger}:report:{report.id}:user:{user.id}",
+                    "source_domain": "matchup",
+                    "source_use_case": "matchup.report_submitted",
+                    "domain_object_id": f"report:{report.id}",
+                    "actor_id": report.author_id,
+                    "origin_type": "matchup_report",
+                    "origin_id": str(report.id),
+                },
             )
+            ok = notification.status in {
+                ScheduledNotification.Status.PENDING,
+                ScheduledNotification.Status.SENT,
+            }
             if ok:
                 sent_count += 1
                 sent_user_ids.append(user.id)

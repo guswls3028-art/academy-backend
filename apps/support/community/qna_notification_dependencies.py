@@ -12,9 +12,20 @@ def resolve_qna_freeform_template(tenant_id: int) -> Any | None:
 
 
 def enqueue_qna_sms(**kwargs: Any) -> Any:
-    from apps.domains.messaging.services import enqueue_sms
+    from apps.domains.messaging.models import ScheduledNotification
+    from apps.domains.messaging.scheduled import dispatch_notification_now
 
-    return enqueue_sms(**kwargs)
+    tenant_id = int(kwargs["tenant_id"])
+    trigger = str(kwargs.get("event_type") or "qna_notification")
+    notification = dispatch_notification_now(
+        tenant_id=tenant_id,
+        trigger=trigger,
+        payload=kwargs,
+    )
+    return notification.status in {
+        ScheduledNotification.Status.PENDING,
+        ScheduledNotification.Status.SENT,
+    }
 
 
 def qna_tenant_site_url(tenant: Any) -> str | None:

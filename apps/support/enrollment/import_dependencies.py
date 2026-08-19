@@ -33,6 +33,7 @@ def resolve_student_import_row(
     *,
     identity_policy: str,
     valid_school_types,
+    source_job_id: str = "",
 ):
     from apps.domains.students.services import (
         StudentImportRowError,
@@ -46,6 +47,7 @@ def resolve_student_import_row(
             initial_password,
             identity_policy=identity_policy,
             valid_school_types=valid_school_types,
+            source_job_id=source_job_id,
         )
     except StudentImportRowError as exc:
         raise StudentImportDependencyError(exc.detail) from exc

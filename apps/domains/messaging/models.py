@@ -57,6 +57,27 @@ class NotificationLog(models.Model):
         max_length=64, blank=True, default="",
         help_text="SHA-256 hash of business dedup key (tenant+channel+event+target+recipient). Empty for legacy.",
     )
+    recipient_fingerprint = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        db_default="",
+        help_text="HMAC fingerprint of the normalized recipient; never the raw phone number",
+    )
+    origin_type = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        db_default="",
+        help_text="Durable producer kind such as excel_import or manual_send",
+    )
+    origin_id = models.CharField(
+        max_length=128,
+        blank=True,
+        default="",
+        db_default="",
+        help_text="Producer job/batch/domain identifier without recipient PII",
+    )
     status = models.CharField(
         max_length=20, blank=True, default="sent",
         choices=[
@@ -101,6 +122,16 @@ class NotificationLog(models.Model):
                 fields=["tenant", "message_mode", "business_idempotency_key"],
                 condition=models.Q(business_idempotency_key__gt=""),
                 name="uniq_notification_business_key_per_tenant_channel",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["recipient_fingerprint", "sent_at"],
+                name="idx_notif_recipient_time",
+            ),
+            models.Index(
+                fields=["origin_id", "sent_at"],
+                name="idx_notif_origin_time",
             ),
         ]
 
@@ -374,6 +405,27 @@ class ScheduledNotification(models.Model):
         db_index=True,
         help_text="enqueue 시 NotificationLog와 공유하는 SHA-256 business key",
     )
+    recipient_fingerprint = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        db_default="",
+        help_text="정규화 수신번호의 HMAC 지문(원문 번호 저장 금지)",
+    )
+    origin_type = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        db_default="",
+        help_text="발송 원천 종류(excel_import, manual_send 등)",
+    )
+    origin_id = models.CharField(
+        max_length=128,
+        blank=True,
+        default="",
+        db_default="",
+        help_text="원천 job/batch/domain 식별자",
+    )
     status = models.CharField(
         max_length=20,
         choices=Status.choices,
@@ -401,6 +453,18 @@ class ScheduledNotification(models.Model):
             models.Index(
                 fields=["status", "next_attempt_at"],
                 name="idx_sched_notif_status_retry",
+            ),
+            models.Index(
+                fields=["recipient_fingerprint", "created_at"],
+                name="idx_sched_recipient_time",
+            ),
+            models.Index(
+                fields=["origin_id", "created_at"],
+                name="idx_sched_origin_time",
+            ),
+            models.Index(
+                fields=["last_attempt_at"],
+                name="idx_sched_last_attempt",
             ),
         ]
         constraints = [

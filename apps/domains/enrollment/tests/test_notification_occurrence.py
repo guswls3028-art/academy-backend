@@ -104,6 +104,46 @@ class EnrollmentNotificationOccurrenceTests(TestCase):
     )
     @patch(
         "apps.support.students.account_notice_dependencies.send_welcome_messages",
+        return_value={"status": "enqueued", "enqueued": 2},
+    )
+    def test_first_enrollment_forwards_and_clears_import_job_origin(
+        self,
+        send_welcome,
+        _assign_fees,
+    ):
+        self.student.pending_account_notice_origin_type = "excel_import"
+        self.student.pending_account_notice_origin_id = "excel-job-origin-1"
+        self.student.save(
+            update_fields=[
+                "pending_account_notice_origin_type",
+                "pending_account_notice_origin_id",
+            ]
+        )
+
+        with self.captureOnCommitCallbacks(execute=True):
+            bulk_create_enrollments(
+                tenant=self.tenant,
+                lecture_id=self.first_lecture.id,
+                student_ids=[self.student.id],
+            )
+
+        self.assertEqual(
+            send_welcome.call_args.kwargs["origin_type"],
+            "excel_import",
+        )
+        self.assertEqual(
+            send_welcome.call_args.kwargs["origin_id"],
+            "excel-job-origin-1",
+        )
+        self.student.refresh_from_db()
+        self.assertEqual(self.student.pending_account_notice_origin_type, "")
+        self.assertEqual(self.student.pending_account_notice_origin_id, "")
+
+    @patch(
+        "apps.domains.enrollment.services.lifecycle.auto_assign_fees_on_enrollment"
+    )
+    @patch(
+        "apps.support.students.account_notice_dependencies.send_welcome_messages",
         side_effect=[
             {"status": "enqueued", "enqueued": 1},
             {"status": "enqueued", "enqueued": 2},

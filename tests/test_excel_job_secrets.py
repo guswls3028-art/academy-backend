@@ -141,6 +141,12 @@ class ExcelJobAtomicCompletionTests(TestCase):
                 name="원자적학생",
             ).exists()
         )
+        student = Student.objects.get(tenant=self.tenant, name="원자적학생")
+        self.assertEqual(student.pending_account_notice_origin_type, "excel_import")
+        self.assertEqual(
+            student.pending_account_notice_origin_id,
+            self.job.job_id,
+        )
         self.assertEqual(result["credentials"][0]["password"], "0042")
         stored = DjangoAIJobRepository().get_result_payload_for_job(
             self.job,

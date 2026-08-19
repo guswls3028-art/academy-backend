@@ -37,6 +37,8 @@ def create_student_account(
     password_hash: str | None = None,
     must_change_password: bool = False,
     account_notice_student_password: str | None = None,
+    account_notice_origin_type: str = "",
+    account_notice_origin_id: str = "",
 ) -> StudentAccountCreationResult:
     """
     Create the canonical student account graph for one tenant.
@@ -108,6 +110,8 @@ def create_student_account(
             student=student,
             student_password=notice_student_password,
             parent_password=parent_password_for_notice or "변경되지 않음",
+            origin_type=account_notice_origin_type,
+            origin_id=account_notice_origin_id,
         )
 
     return StudentAccountCreationResult(

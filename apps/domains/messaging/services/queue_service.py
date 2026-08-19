@@ -44,6 +44,8 @@ def enqueue_sms(
     source_use_case: Optional[str] = None,
     domain_object_id: Optional[str] = None,
     actor_id: Optional[int | str] = None,
+    origin_type: Optional[str] = None,
+    origin_id: Optional[str] = None,
     trusted_business_tenant_id: Optional[int] = None,
 ) -> bool:
     """
@@ -164,6 +166,8 @@ def enqueue_sms(
         source_use_case=source_use_case,
         domain_object_id=domain_object_id,
         actor_id=actor_id,
+        origin_type=origin_type,
+        origin_id=origin_id,
     )
 
 
