@@ -51,6 +51,26 @@ foreach ($marker in $requiredProductionMarkers) {
         $failures += "Production workflow is missing governance marker: $marker"
     }
 }
+$smokeStart = $productionWorkflow.IndexOf("  run-tests:")
+$smokeEnd = if ($smokeStart -ge 0) {
+    $productionWorkflow.IndexOf("  acquire-production-lock:", $smokeStart)
+} else {
+    -1
+}
+if ($smokeStart -lt 0 -or $smokeEnd -le $smokeStart) {
+    $failures += "Production workflow smoke job boundary is missing."
+} else {
+    $smokeWorkflow = $productionWorkflow.Substring($smokeStart, $smokeEnd - $smokeStart)
+    foreach ($marker in @(
+        "requirements/requirements.txt",
+        "requirements/api.txt",
+        "pip install -r requirements/requirements.txt -r requirements/api.txt"
+    )) {
+        if (-not $smokeWorkflow.Contains($marker)) {
+            $failures += "Production smoke job is missing API runtime dependency marker: $marker"
+        }
+    }
+}
 foreach ($marker in @(
     "Backend static and migration contract",
     "Backend Django smoke and deployment contracts",
