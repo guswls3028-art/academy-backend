@@ -27,8 +27,10 @@ from apps.domains.results.models import (
 )
 from apps.domains.results.services.question_stats_service import QuestionStatsService
 from apps.domains.results.services.exam_result_excel_import import (
+    ExamResultWorkbookError,
     apply_exam_result_import,
     build_exam_result_template,
+    build_exam_wrong_note_export,
     plan_exam_result_import,
 )
 from apps.domains.results.utils.exam_absence import current_exam_absence_counts
@@ -38,6 +40,7 @@ from apps.domains.results.views.admin_exam_summary_view import AdminExamSummaryV
 from apps.domains.results.views.admin_exam_result_excel_import_view import (
     AdminExamResultExcelImportView,
     AdminExamResultExcelTemplateView,
+    AdminExamWrongNoteExcelExportView,
 )
 from apps.domains.students.models import Student
 
@@ -1111,6 +1114,129 @@ class ExamResultExcelImportTests(TestCase):
         self.assertTrue(preview_response.data["ok"])
         self.assertEqual(preview_response.data["matched_count"], 1)
 
+    def test_wrong_note_export_contains_current_site_records(self):
+        result = Result.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.enrollment,
+            total_score=60,
+            max_score=100,
+        )
+        ResultItem.objects.create(
+            result=result,
+            question=self.choice_question,
+            answer="=1+1",
+            is_correct=False,
+            include_in_wrong_note=True,
+            score=0,
+            max_score=40,
+            source="manual_grid",
+        )
+        ResultItem.objects.create(
+            result=result,
+            question=self.short_question,
+            answer="42",
+            is_correct=True,
+            include_in_wrong_note=True,
+            score=60,
+            max_score=60,
+            source="manual_grid",
+        )
+
+        payload = build_exam_wrong_note_export(exam=self.exam, tenant=self.tenant)
+        workbook = load_workbook(io.BytesIO(payload), data_only=True)
+        sheet = workbook["학생별 오답"]
+
+        self.assertEqual(sheet.cell(7, 1).value, "수강등록ID")
+        self.assertEqual(sheet.cell(7, 9).value, "오답 문항")
+        self.assertEqual(sheet.cell(8, 1).value, self.enrollment.id)
+        self.assertEqual(sheet.cell(8, 3).value, "김학생")
+        self.assertEqual(sheet.cell(8, 6).value, 60)
+        self.assertEqual(sheet.cell(8, 8).value, 1)
+        self.assertEqual(sheet.cell(8, 9).value, "1")
+        self.assertEqual(sheet.cell(8, 10).value, "1번 0/40")
+        self.assertEqual(sheet.cell(8, 11).value, "1번: =1+1")
+        self.assertEqual(sheet.cell(8, 12).value, 1)
+        self.assertEqual(sheet.cell(8, 13).value, "2")
+        self.assertEqual(sheet.cell(8, 14).value, 2)
+
+    def test_wrong_note_export_omits_students_without_wrong_notes(self):
+        result = Result.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.enrollment,
+            total_score=100,
+            max_score=100,
+        )
+        ResultItem.objects.create(
+            result=result,
+            question=self.choice_question,
+            is_correct=True,
+            include_in_wrong_note=False,
+            score=40,
+            max_score=40,
+            source="manual_grid",
+        )
+
+        with self.assertRaisesRegex(
+            ExamResultWorkbookError,
+            "내보낼 오답 또는 오답노트 지정 기록이 없습니다.",
+        ):
+            build_exam_wrong_note_export(exam=self.exam, tenant=self.tenant)
+
+    def test_wrong_note_export_endpoint_returns_xlsx(self):
+        result = Result.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.enrollment,
+            total_score=0,
+            max_score=100,
+        )
+        ResultItem.objects.create(
+            result=result,
+            question=self.choice_question,
+            is_correct=False,
+            include_in_wrong_note=True,
+            score=0,
+            max_score=40,
+            source="manual_grid",
+        )
+        request = self._request(
+            "get",
+            f"/results/admin/exams/{self.exam.id}/wrong-note-export/",
+        )
+
+        response = AdminExamWrongNoteExcelExportView.as_view()(
+            request,
+            exam_id=self.exam.id,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(bytes(response.content).startswith(b"PK"))
+        self.assertEqual(
+            response["Content-Type"],
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        self.assertIn("wrong_notes.xlsx", response["Content-Disposition"])
+        self.assertEqual(response["Cache-Control"], "private, no-store")
+
+    def test_wrong_note_export_endpoint_explains_empty_records(self):
+        request = self._request(
+            "get",
+            f"/results/admin/exams/{self.exam.id}/wrong-note-export/",
+        )
+
+        response = AdminExamWrongNoteExcelExportView.as_view()(
+            request,
+            exam_id=self.exam.id,
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            str(response.data["detail"]),
+            "내보낼 오답 또는 오답노트 지정 기록이 없습니다.",
+        )
+
     def test_other_tenant_exam_is_not_accessible(self):
         other_tenant = Tenant.objects.create(
             name="Other",
@@ -1122,6 +1248,18 @@ class ExamResultExcelImportTests(TestCase):
             title="Other exam",
             exam_type=Exam.ExamType.REGULAR,
         )
+        other_lecture = Lecture.objects.create(
+            tenant=other_tenant,
+            title="Other lecture",
+            name="Other lecture",
+            subject="MATH",
+        )
+        other_session = Session.objects.create(
+            lecture=other_lecture,
+            order=1,
+            title="Other session",
+        )
+        other_exam.sessions.add(other_session)
         request = self._request(
             "get",
             f"/results/admin/exams/{other_exam.id}/result-import/template/",
@@ -1133,3 +1271,27 @@ class ExamResultExcelImportTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 404)
+
+        export_request = self._request(
+            "get",
+            f"/results/admin/exams/{other_exam.id}/wrong-note-export/",
+        )
+        export_response = AdminExamWrongNoteExcelExportView.as_view()(
+            export_request,
+            exam_id=other_exam.id,
+        )
+        self.assertEqual(export_response.status_code, 404)
+
+    def test_student_cannot_export_wrong_note_records(self):
+        request = self.factory.get(
+            f"/results/admin/exams/{self.exam.id}/wrong-note-export/"
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.enrollment.student.user)
+
+        response = AdminExamWrongNoteExcelExportView.as_view()(
+            request,
+            exam_id=self.exam.id,
+        )
+
+        self.assertEqual(response.status_code, 403)

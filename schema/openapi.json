@@ -36481,6 +36481,45 @@
         ]
       }
     },
+    "/api/v1/results/admin/exams/{exam_id}/wrong-note-export/": {
+      "get": {
+        "operationId": "results_admin_exams_wrong_note_export_retrieve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "exam_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
     "/api/v1/results/admin/facts/": {
       "get": {
         "operationId": "results_admin_facts_retrieve",

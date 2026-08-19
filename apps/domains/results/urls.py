@@ -17,6 +17,7 @@ from apps.domains.results.views.admin_exam_attempts_view import AdminExamAttempt
 from apps.domains.results.views.admin_exam_result_excel_import_view import (
     AdminExamResultExcelImportView,
     AdminExamResultExcelTemplateView,
+    AdminExamWrongNoteExcelExportView,
 )
 from apps.domains.results.views.admin_exam_manual_grading_view import (
     AdminExamManualGradingView,
@@ -76,6 +77,11 @@ urlpatterns = [
         "admin/exams/<int:exam_id>/result-import/",
         AdminExamResultExcelImportView.as_view(),
         name="admin-exam-result-import",
+    ),
+    path(
+        "admin/exams/<int:exam_id>/wrong-note-export/",
+        AdminExamWrongNoteExcelExportView.as_view(),
+        name="admin-exam-wrong-note-export",
     ),
     path(
         "admin/exams/<int:exam_id>/manual-grading/",

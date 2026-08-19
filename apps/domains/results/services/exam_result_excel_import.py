@@ -389,6 +389,147 @@ def build_exam_result_template(*, exam: Any, tenant: Any) -> bytes:
     return stream.getvalue()
 
 
+def build_exam_wrong_note_export(*, exam: Any, tenant: Any) -> bytes:
+    """Export the current representative wrong-note snapshot, one row per student."""
+    questions = _question_specs(exam=exam, tenant=tenant)
+    candidates = _exam_candidates(exam=exam, tenant=tenant)
+    if not candidates:
+        raise ExamResultWorkbookError("이 시험에 등록된 학생이 없습니다.")
+
+    question_by_id = {
+        question.question_id: question
+        for question in questions
+    }
+    results = {
+        int(result.enrollment_id): result
+        for result in Result.objects.filter(
+            target_type="exam",
+            target_id=int(exam.id),
+            enrollment_id__in=[
+                candidate.enrollment_id for candidate in candidates
+            ],
+        ).prefetch_related("items")
+    }
+
+    export_rows: list[list[Any]] = []
+    for candidate in candidates:
+        result = results.get(candidate.enrollment_id)
+        if result is None:
+            continue
+
+        wrong_items = []
+        review_items = []
+        for item in result.items.all():
+            question = question_by_id.get(int(item.question_id))
+            if question is None:
+                continue
+            if not bool(item.is_correct):
+                wrong_items.append((question, item))
+            elif bool(item.include_in_wrong_note):
+                review_items.append((question, item))
+
+        if not wrong_items and not review_items:
+            continue
+        wrong_items.sort(key=lambda pair: pair[0].number)
+        review_items.sort(key=lambda pair: pair[0].number)
+
+        export_rows.append(
+            [
+                candidate.enrollment_id,
+                _safe_excel_text(candidate.school),
+                _safe_excel_text(candidate.student_name),
+                _safe_excel_text(candidate.lecture_title),
+                _safe_excel_text(str(exam.title or "")),
+                float(result.total_score or 0.0),
+                float(result.max_score or exam.max_score or 0.0),
+                len(wrong_items),
+                _format_question_numbers(wrong_items),
+                _format_item_scores(wrong_items),
+                _format_student_answers(wrong_items),
+                len(review_items),
+                _format_question_numbers(review_items),
+                len(wrong_items) + len(review_items),
+                timezone.localtime(result.updated_at).strftime("%Y-%m-%d %H:%M"),
+            ]
+        )
+
+    if not export_rows:
+        raise ExamResultWorkbookError("내보낼 오답 또는 오답노트 지정 기록이 없습니다.")
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "학생별 오답"
+    headers = [
+        "수강등록ID",
+        "학교",
+        "이름",
+        "강의",
+        "시험",
+        "총점",
+        "만점",
+        "오답 수",
+        "오답 문항",
+        "오답별 점수",
+        "학생 답안",
+        "복습 지정 수",
+        "복습 지정 문항",
+        "오답노트 총 문항",
+        "사이트 최종 저장",
+    ]
+    last_column = len(headers)
+    sheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=last_column)
+    sheet.cell(1, 1, _safe_excel_text(f"{exam.title} · 학생별 오답 기록"))
+    sheet.cell(1, 1).font = Font(size=15, bold=True, color="FFFFFF")
+    sheet.cell(1, 1).fill = PatternFill("solid", fgColor="1D4ED8")
+    sheet.cell(1, 1).alignment = Alignment(horizontal="left", vertical="center")
+    sheet.row_dimensions[1].height = 28
+
+    guides = [
+        "현재 사이트의 대표 성적에서 오답과 정답·복습 지정 문항만 학생별로 모았습니다.",
+        "오답과 복습 지정은 서로 분리되며, 문항 번호는 쉼표로 구분됩니다.",
+        "이 파일은 조회용입니다. 사이트 성적을 바꾸려면 정오표 또는 엑셀 가져오기를 이용하세요.",
+    ]
+    for row_index, guide in enumerate(guides, start=3):
+        sheet.merge_cells(
+            start_row=row_index,
+            start_column=1,
+            end_row=row_index,
+            end_column=last_column,
+        )
+        sheet.cell(row_index, 1, guide)
+        sheet.cell(row_index, 1).font = Font(size=10, color="475569")
+
+    header_row = 7
+    for column, header in enumerate(headers, start=1):
+        cell = sheet.cell(header_row, column, header)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="334155")
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    for row_index, values in enumerate(export_rows, start=header_row + 1):
+        for column, value in enumerate(values, start=1):
+            cell = sheet.cell(row_index, column, value)
+            cell.alignment = Alignment(
+                horizontal="center" if column in {1, 6, 7, 8, 12, 14, 15} else "left",
+                vertical="center",
+                wrap_text=column in {9, 10, 11, 13},
+            )
+        sheet.row_dimensions[row_index].height = 24
+
+    widths = [16, 16, 12, 18, 24, 10, 10, 10, 22, 30, 36, 12, 22, 16, 18]
+    for column, width in enumerate(widths, start=1):
+        sheet.column_dimensions[get_column_letter(column)].width = width
+    sheet.freeze_panes = f"A{header_row + 1}"
+    sheet.auto_filter.ref = (
+        f"A{header_row}:{get_column_letter(last_column)}{header_row + len(export_rows)}"
+    )
+    sheet.sheet_view.showGridLines = False
+
+    stream = io.BytesIO()
+    workbook.save(stream)
+    return stream.getvalue()
+
+
 def plan_exam_result_import(
     *,
     exam: Any,
@@ -1475,6 +1616,26 @@ def _safe_excel_text(value: Any) -> str:
     if text.startswith(("=", "+", "-", "@")):
         return f"'{text}"
     return text
+
+
+def _format_question_numbers(items: list[tuple[QuestionSpec, Any]]) -> str:
+    return ", ".join(str(question.number) for question, _ in items)
+
+
+def _format_item_scores(items: list[tuple[QuestionSpec, Any]]) -> str:
+    return ", ".join(
+        f"{question.number}번 {float(item.score or 0.0):g}/{float(item.max_score or question.max_score or 0.0):g}"
+        for question, item in items
+    )
+
+
+def _format_student_answers(items: list[tuple[QuestionSpec, Any]]) -> str:
+    return _safe_excel_text(
+        ", ".join(
+            f"{question.number}번: {str(item.answer or '').strip() or '미입력'}"
+            for question, item in items
+        )
+    )
 
 
 def _normalize_name(value: Any) -> str:
