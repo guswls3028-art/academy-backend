@@ -3,7 +3,7 @@
 /dev 운영 알림 룰.
 
 화이트리스트 룰을 평가해서 임계치 초과 시 Slack incoming webhook으로 전송한다.
-사용자가 실제로 겪은 오류는 고정 통제번호로 운영자 SMS도 전송한다.
+제품 메시징은 공용 카카오 알림톡만 사용하며 이 운영 명령은 SMS를 보내지 않는다.
 크론에서 호출: python manage.py check_dev_alerts [--dry-run] [--silent]
 
 Webhook 설정:
@@ -15,37 +15,25 @@ from __future__ import annotations
 import json
 import hashlib
 import logging
-import re
-import time
 import urllib.error
 import urllib.request
-from contextlib import contextmanager
 from datetime import timedelta
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
-from django.db import connection
 from django.db.models import Max, Sum
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
-CONTROLLED_OPS_PHONE = "01031217466"
 USER_INCIDENT_ACTIONS = (
     "user_incident.manual",
     "user_incident.frontend_exception",
     "user_incident.backend_5xx",
 )
-SMS_DELIVERY_ACTION = "alerts.user_incident_sms"
-SMS_RATE_LIMIT_ACTION = "alerts.user_incident_sms_rate_limited"
-SMS_DELIVERY_WAIT_SECONDS = 120
-SMS_RETRY_COOLDOWN_MINUTES = 5
-SMS_MAX_ATTEMPTS_PER_HOUR = 12
-SMS_MAX_RECONCILIATIONS_PER_RUN = 10
+LEGACY_SMS_DELIVERY_ACTION = "alerts.user_incident_sms"
+SLACK_DELIVERY_ACTION = "alerts.user_incident_slack"
 INCIDENT_RETENTION_DAYS = 2
-EXTERNAL_SIGNAL_CHOICES = ("api_user_impact",)
-SMS_MAX_BYTES = 90
-SMS_TENANT_LABEL_MAX_BYTES = 24
 
 
 class Rule:
@@ -346,7 +334,7 @@ def _delivered_incident_fingerprints() -> set[str]:
     since = timezone.now() - timedelta(days=INCIDENT_RETENTION_DAYS)
     delivered: set[str] = set()
     payloads = OpsAuditLog.objects.filter(
-        action=SMS_DELIVERY_ACTION,
+        action__in=(LEGACY_SMS_DELIVERY_ACTION, SLACK_DELIVERY_ACTION),
         created_at__gte=since,
     ).values_list("result", "payload")
     for result, payload in payloads:
@@ -627,433 +615,18 @@ def _build_slack_blocks(triggered: list[tuple[Rule, dict]]) -> dict:
     return {"blocks": blocks, "text": "Academy Dev Alerts"}
 
 
-def _normalize_phone(value: object) -> str:
-    return "".join(ch for ch in str(value or "") if ch.isdigit())
-
-
-def _mask_phone(value: str) -> str:
-    return f"{value[:3]}****{value[-4:]}" if len(value) >= 7 else "****"
-
-
-def _truncate_utf8(value: str, max_bytes: int) -> str:
-    encoded = value.encode("utf-8")
-    if len(encoded) <= max_bytes:
-        return value
-    result: list[str] = []
-    used = 0
-    for char in value:
-        size = len(char.encode("utf-8"))
-        if used + size > max_bytes:
-            break
-        result.append(char)
-        used += size
-    return "".join(result)
-
-
-def _sms_count(value: object) -> int:
-    try:
-        return max(0, min(int(value or 0), 10000))
-    except (TypeError, ValueError):
-        return 0
-
-
-def _sms_count_text(value: object) -> str:
-    count = _sms_count(value)
-    return "9999+" if count >= 10000 else str(count)
-
-
-def _sms_tenant_label(tenant_id: object, tenant_code: object) -> str:
-    try:
-        tenant_token = f"T{int(tenant_id)}" if tenant_id is not None else "공용"
-    except (TypeError, ValueError):
-        tenant_token = "공용"
-    if tenant_token == "공용":
-        return tenant_token
-
-    # Tenant.name is owner-editable and cannot cross the SMS trust boundary.
-    # Only the platform-issued, unique ASCII code may accompany the FK id.
-    code = str(tenant_code or "").strip().lower()
-    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,31}", code):
-        return tenant_token
-    if re.search(r"(?:\d[_-]*){7,}\d", code):
-        return tenant_token
-    suffix = f"#{int(tenant_id)}"
-    code = _truncate_utf8(
-        code,
-        max(0, SMS_TENANT_LABEL_MAX_BYTES - len(suffix.encode("utf-8"))),
-    ).rstrip("_-")
-    return f"{code}{suffix}" if code else tenant_token
-
-
-def _sms_reason(row: dict) -> str:
-    source = str(row.get("source") or "")
-    if source == "backend":
-        try:
-            status = int(row.get("status"))
-        except (TypeError, ValueError):
-            status = 0
-        return f"서버{status}" if 500 <= status <= 599 else "서버5xx"
-    return {
-        "frontend": "화면오류",
-        "report": "직접신고",
-        "bug_post": "버그제보",
-    }.get(source, "오류")
-
-
-def _incident_sms_groups(data: dict) -> list[dict]:
-    groups: dict[object, dict] = {}
-    for row in data.get("rows") or []:
-        tenant_id = row.get("tenant_id")
-        key = tenant_id if tenant_id is not None else "public"
-        group = groups.setdefault(
-            key,
-            {
-                "tenant_id": tenant_id,
-                "label": _sms_tenant_label(
-                    tenant_id,
-                    row.get("tenant") or row.get("tenant_code"),
-                ),
-                "reasons": {},
-                "total": 0,
-            },
-        )
-        count = _sms_count(row.get("count"))
-        reason = _sms_reason(row)
-        group["reasons"][reason] = group["reasons"].get(reason, 0) + count
-        group["total"] += count
-    return sorted(
-        groups.values(),
-        key=lambda group: (
-            -group["total"],
-            group["tenant_id"] is None,
-            group["tenant_id"] or 0,
-        ),
-    )
-
-
-def _build_user_incident_sms_payload(data: dict) -> tuple[str, dict]:
-    groups = _incident_sms_groups(data)
-    total = _sms_count(data.get("total"))
-    tenant_count = len(groups)
-    header = f"[학원+] 오류{_sms_count_text(total)}건/{tenant_count}곳"
-    footer = "/dev"
-    candidates: list[str] = []
-    for group in groups:
-        reasons = sorted(
-            group["reasons"].items(),
-            key=lambda item: (-item[1], item[0]),
-        )
-        primary_reason, primary_count = reasons[0]
-        extra = f"+{len(reasons) - 1}종" if len(reasons) > 1 else ""
-        candidates.append(
-            f"{group['label']}:{primary_reason}({_sms_count_text(primary_count)}){extra}"
-        )
-
-    displayed: list[str] = []
-    for index, candidate in enumerate(candidates):
-        proposed = " ".join([*displayed, candidate])
-        remaining = len(candidates) - index - 1
-        overflow = f" +{remaining}곳" if remaining else ""
-        proposed_text = f"{header}\n{proposed}{overflow}\n{footer}"
-        if len(proposed_text.encode("utf-8")) > SMS_MAX_BYTES:
-            break
-        displayed.append(candidate)
-
-    if not displayed and groups:
-        group = groups[0]
-        primary_reason = sorted(
-            group["reasons"].items(),
-            key=lambda item: (-item[1], item[0]),
-        )[0][0]
-        displayed = [
-            f"{'T' + str(group['tenant_id']) if group['tenant_id'] else '공용'}:"
-            f"{primary_reason}"
-        ]
-
-    omitted = max(0, tenant_count - len(displayed))
-    detail = " ".join(displayed)
-    if omitted:
-        detail = f"{detail} +{omitted}곳"
-    text = f"{header}\n{detail}\n{footer}"
-    if len(text.encode("utf-8")) > SMS_MAX_BYTES:
-        text = (
-            f"[학원+] 오류{_sms_count_text(total)}건\n"
-            f"{displayed[0] if displayed else '공용:오류'}\n{footer}"
-        )
-    if len(text.encode("utf-8")) > SMS_MAX_BYTES:
-        text = f"[학원+] 오류{_sms_count_text(total)}건\n테넌트 상세\n{footer}"
-
-    return text, {
-        "tenant_count": tenant_count,
-        "displayed_tenant_count": len(displayed),
-        "omitted_tenant_count": omitted,
-        "body_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
-    }
-
-
-def _build_user_incident_sms(data: dict) -> str:
-    text, _metadata = _build_user_incident_sms_payload(data)
-    return text
-
-
-def _get_solapi_client():
-    from apps.domains.messaging.services.solapi_client import get_solapi_client
-
-    return get_solapi_client()
-
-
-def _send_ops_sms(text: str) -> dict:
-    recipient = _normalize_phone(getattr(settings, "DEV_ALERTS_SMS_RECIPIENT", ""))
-    if recipient != CONTROLLED_OPS_PHONE:
-        return {
-            "status": "error",
-            "reason": (
-                "recipient_not_allowed:"
-                f"{_mask_phone(recipient) if recipient else 'unset'}"
-            ),
-        }
-    sender = _normalize_phone(getattr(settings, "SOLAPI_SENDER", ""))
-    if sender != CONTROLLED_OPS_PHONE:
-        return {
-            "status": "error",
-            "reason": (
-                "sender_not_allowed:"
-                f"{_mask_phone(sender) if sender else 'unset'}"
-            ),
-        }
-    if not text or len(text.encode("utf-8")) > 90:
-        return {"status": "error", "reason": "sms_text_must_be_1_to_90_bytes"}
-
-    client = _get_solapi_client()
-    if client is None:
-        return {"status": "error", "reason": "solapi_client_unavailable"}
-    try:
-        from solapi.model import RequestMessage
-        from solapi.model.message_type import MessageType
-
-        response = client.send(
-            RequestMessage(
-                from_=sender,
-                to=recipient,
-                text=text,
-                type=MessageType.SMS,
-            )
-        )
-        group_info = getattr(response, "group_info", None)
-        group_id = str(getattr(group_info, "group_id", "") or "")
-        count = getattr(group_info, "count", None)
-        registered_success = int(getattr(count, "registered_success", 0) or 0)
-        registered_failed = int(getattr(count, "registered_failed", 0) or 0)
-        if not group_id or registered_success < 1 or registered_failed:
-            return {
-                "status": "error",
-                "reason": (
-                    "provider_registration_failed:"
-                    f"success={registered_success},failed={registered_failed}"
-                ),
-                "group_id": group_id,
-            }
-        return {"status": "ok", "group_id": group_id}
-    except Exception as exc:
-        logger.exception("Operator incident SMS send failed")
-        return {"status": "error", "reason": str(exc)[:255]}
-
-
-def _verify_ops_sms_delivery(group_id: str, wait_seconds: int) -> dict:
-    client = _get_solapi_client()
-    if client is None:
-        return {"status": "error", "reason": "solapi_client_unavailable"}
-    deadline = time.monotonic() + max(0, wait_seconds)
-    last = {
-        "sent_total": 0,
-        "sent_success": 0,
-        "sent_pending": 0,
-        "registered_failed": 0,
-    }
-    while time.monotonic() <= deadline:
-        try:
-            group = client.get_group(group_id)
-            count = group.count
-            last = {
-                "sent_total": int(count.sent_total or 0),
-                "sent_success": int(count.sent_success or 0),
-                "sent_pending": int(count.sent_pending or 0),
-                "registered_failed": int(count.registered_failed or 0),
-            }
-            if last["sent_success"] >= 1:
-                return {"status": "ok", **last}
-            if last["registered_failed"] > 0:
-                return {"status": "error", "reason": "provider_delivery_failed", **last}
-            if last["sent_total"] >= 1 and last["sent_pending"] == 0:
-                return {"status": "error", "reason": "provider_delivery_failed", **last}
-        except Exception as exc:
-            logger.warning("Operator SMS delivery lookup failed: %s", exc)
-            last = {**last, "lookup_error": str(exc)[:120]}
-        if time.monotonic() + 3 > deadline:
-            break
-        time.sleep(3)
-    return {"status": "error", "reason": "provider_delivery_timeout", **last}
-
-
-def _provider_delivery_state(result: dict) -> str:
-    if result.get("status") == "ok":
-        return "delivered"
-    reason = str(result.get("reason") or "")
-    if reason.startswith("provider_registration_failed"):
-        return "registration_failed"
-    if not result.get("group_id"):
-        if reason in {
-            "sender_required",
-            "solapi_client_unavailable",
-        } or reason.startswith(("recipient_not_allowed", "sender_not_allowed")):
-            return "registration_failed"
-        return "ambiguous"
-    if (
-        _sms_count(result.get("registered_failed")) > 0
-        or (
-            _sms_count(result.get("sent_total")) > 0
-            and _sms_count(result.get("sent_pending")) == 0
-        )
-    ):
-        return "definitive_failure"
-    return "ambiguous"
-
-
-def _provider_delivery_snapshot(result: dict) -> dict:
-    return {
-        key: result.get(key)
-        for key in (
-            "status",
-            "reason",
-            "sent_total",
-            "sent_success",
-            "sent_pending",
-            "registered_failed",
-        )
-        if result.get(key) is not None
-    }
-
-
-def _create_sms_attempt(
-    data: dict,
-    sms_metadata: dict | None = None,
-):
-    from apps.core.models import OpsAuditLog
-
-    return OpsAuditLog.objects.create(
-        action=SMS_DELIVERY_ACTION,
-        summary=f"User incident SMS attempt ({data.get('total', 0)} events)",
-        payload={
-            "fingerprints": list(data.get("fingerprints") or []),
-            "event_count": _sms_count(data.get("total")),
-            "recipient_last4": CONTROLLED_OPS_PHONE[-4:],
-            "provider_group_id": "",
-            "attempt_state": "created",
-            **(sms_metadata or {}),
-        },
-        result="failed",
-        error="provider_attempt_pending",
-    )
-
-
-def _record_sms_delivery(attempt, result: dict) -> None:
-    state = _provider_delivery_state(result)
-    ok = state == "delivered"
-    payload = dict(attempt.payload or {})
-    payload.update(
-        {
-            "provider_group_id": result.get("group_id") or "",
-            "attempt_state": state,
-            "provider_delivery": _provider_delivery_snapshot(result),
-        }
-    )
-    attempt.summary = (
-        f"User incident SMS {'sent' if ok else state} "
-        f"({payload.get('event_count', 0)} events)"
-    )
-    attempt.payload = payload
-    attempt.result = "success" if ok else "failed"
-    attempt.error = "" if ok else str(result.get("reason") or state)[:255]
-    attempt.save()
-
-
-def _record_sms_registration(attempt, registration: dict) -> None:
-    payload = dict(attempt.payload or {})
-    payload.update(
-        {
-            "provider_group_id": registration.get("group_id") or "",
-            "attempt_state": "registered",
-            "provider_delivery": _provider_delivery_snapshot(registration),
-        }
-    )
-    attempt.summary = (
-        "User incident SMS registered "
-        f"({payload.get('event_count', 0)} events)"
-    )
-    attempt.payload = payload
-    attempt.error = "provider_delivery_pending"
-    attempt.save()
-
-
-def _reconcile_unresolved_sms_attempts() -> None:
-    """Recheck accepted groups; unresolved fingerprints remain held, never resent."""
-    from apps.core.models import OpsAuditLog
-
-    since = timezone.now() - timedelta(days=INCIDENT_RETENTION_DAYS)
-    attempts = OpsAuditLog.objects.filter(
-        action=SMS_DELIVERY_ACTION,
-        result="failed",
-        created_at__gte=since,
-    ).order_by("updated_at", "id")
-    checked = 0
-    for attempt in attempts:
-        payload = attempt.payload or {}
-        state = str(payload.get("attempt_state") or "")
-        if state in {"registration_failed", "definitive_failure"}:
-            continue
-        group_id = str(payload.get("provider_group_id") or "")
-        if not group_id:
-            continue
-        if checked >= SMS_MAX_RECONCILIATIONS_PER_RUN:
-            break
-        checked += 1
-        delivery = _verify_ops_sms_delivery(group_id, 0)
-        result = {**delivery, "group_id": group_id}
-        _record_sms_delivery(attempt, result)
-
-
-def _incident_sms_rate_limit_reason() -> str:
-    from apps.core.models import OpsAuditLog
-
-    now = timezone.now()
-    attempts = OpsAuditLog.objects.filter(
-        action=SMS_DELIVERY_ACTION,
-        created_at__gte=now - timedelta(hours=1),
-    ).order_by("-created_at")
-    if attempts.count() >= SMS_MAX_ATTEMPTS_PER_HOUR:
-        return "hourly_attempt_cap"
-    last_attempt_at = attempts.values_list("created_at", flat=True).first()
-    if (
-        last_attempt_at
-        and now - last_attempt_at < timedelta(minutes=SMS_RETRY_COOLDOWN_MINUTES)
-    ):
-        return "retry_cooldown"
-    return ""
-
-
-def _record_sms_rate_limit(data: dict, reason: str) -> None:
+def _record_user_incident_slack_delivery(data: dict) -> None:
+    """Slack이 수락한 사용자 오류 fingerprint를 저장해 반복 알림을 막는다."""
     from apps.core.models import OpsAuditLog
 
     OpsAuditLog.objects.create(
-        action=SMS_RATE_LIMIT_ACTION,
-        summary=f"User incident SMS deferred ({reason})",
+        action=SLACK_DELIVERY_ACTION,
+        summary=f"User incident Slack delivery ({data.get('total', 0)} events)",
         payload={
-            "reason": reason,
-            "fingerprint_count": len(data.get("fingerprints") or []),
-            "event_count": _sms_count(data.get("total")),
+            "fingerprints": list(data.get("fingerprints") or []),
+            "event_count": max(0, int(data.get("total") or 0)),
         },
-        result="failed",
-        error=reason,
+        result="success",
     )
 
 
@@ -1069,7 +642,6 @@ def _record_cron_invocation(opts: dict, *, result: str, error: str = "") -> None
             payload={
                 "rules": selected_rules or ["all"],
                 "dry_run": bool(opts.get("dry_run")),
-                "test_sms": bool(opts.get("test_sms")),
             },
             result=result,
             error=error[:255],
@@ -1078,57 +650,27 @@ def _record_cron_invocation(opts: dict, *, result: str, error: str = "") -> None
         logger.exception("check_dev_alerts invocation audit failed")
 
 
-@contextmanager
-def _sms_delivery_lock():
-    """Manual dispatch와 scheduled dispatch가 겹쳐도 같은 묶음을 두 번 보내지 않는다."""
-    if connection.vendor != "postgresql":
-        yield True
-        return
-
-    lock_id = 2026072501
-    acquired = False
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT pg_try_advisory_lock(%s)", [lock_id])
-            acquired = bool(cursor.fetchone()[0])
-        yield acquired
-    finally:
-        if acquired:
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT pg_advisory_unlock(%s)", [lock_id])
-
-
 # ── Command ──
 
 class Command(BaseCommand):
-    help = "/dev 운영 알림 룰 평가 + Slack webhook 및 사용자 오류 운영자 SMS 전송"
+    help = "/dev 운영 알림 룰 평가 + Slack webhook 전송"
 
     def add_arguments(self, parser):
         parser.add_argument(
             "--dry-run",
             action="store_true",
-            help="평가 결과만 출력 (Slack/SMS 전송 X).",
-        )
-        parser.add_argument("--silent", action="store_true", help="트리거 없으면 종료 코드 0, 무출력.")
-        parser.add_argument(
-            "--rule", action="append", default=[],
-            help="이 옵션을 반복하면 해당 룰만 평가 (기본: 전체).",
+            help="평가 결과만 출력 (Slack 전송 X).",
         )
         parser.add_argument(
-            "--test-sms",
+            "--silent",
             action="store_true",
-            help="통제번호로 운영자 SMS 1건을 보내고 Solapi 최종 성공을 확인.",
+            help="트리거 없으면 종료 코드 0, 무출력.",
         )
         parser.add_argument(
-            "--wait-seconds",
-            type=int,
-            default=120,
-            help="--test-sms provider 최종 상태 대기 시간 (기본 120초).",
-        )
-        parser.add_argument(
-            "--external-signal",
-            choices=EXTERNAL_SIGNAL_CHOICES,
-            help="DB와 독립된 화이트리스트 운영 신호를 통제번호로 실발송.",
+            "--rule",
+            action="append",
+            default=[],
+            help="이 옵션을 반복하면 해당 룰만 평가 (기본: 전체).",
         )
 
     def handle(self, *args, **opts):
@@ -1143,46 +685,20 @@ class Command(BaseCommand):
     def _handle(self, *args, **opts):
         dry_run = opts["dry_run"]
         silent = opts["silent"]
-        if opts["external_signal"]:
-            if dry_run or opts["test_sms"]:
-                raise CommandError(
-                    "--external-signal은 --dry-run/--test-sms와 함께 사용할 수 없습니다."
-                )
-            self._run_external_signal_sms(
-                signal=opts["external_signal"],
-                wait_seconds=max(0, int(opts["wait_seconds"])),
-            )
-            return
-        if opts["test_sms"]:
-            if dry_run:
-                raise CommandError("--test-sms와 --dry-run은 함께 사용할 수 없습니다.")
-            self._run_test_sms(wait_seconds=max(0, int(opts["wait_seconds"])))
-            return
-
         only = set(opts["rule"] or [])
-        rules = [r for r in RULES if not only or r.key in only]
-
-        sms_enabled = bool(getattr(settings, "DEV_ALERTS_SMS_ENABLED", False))
-        if (
-            not dry_run
-            and sms_enabled
-            and any(rule.key == "user_incidents" for rule in rules)
-        ):
-            with _sms_delivery_lock() as acquired:
-                if acquired:
-                    _reconcile_unresolved_sms_attempts()
+        rules = [rule for rule in RULES if not only or rule.key in only]
 
         triggered: list[tuple[Rule, dict]] = []
         for rule in rules:
             try:
                 result = rule.evaluate()
-            except Exception as e:
+            except Exception as exc:
                 logger.exception("Rule %s evaluate failed", rule.key)
-                self.stdout.write(self.style.ERROR(f"[{rule.key}] error: {e}"))
+                self.stdout.write(self.style.ERROR(f"[{rule.key}] error: {exc}"))
                 if rule.key == "user_incidents":
                     raise CommandError(
-                        f"사용자 오류 모니터링 룰 평가 실패: {e}"
-                    ) from e
+                        f"사용자 오류 모니터링 룰 평가 실패: {exc}"
+                    ) from exc
                 continue
             if result:
                 triggered.append((rule, result))
@@ -1192,194 +708,32 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.SUCCESS("All clear — no rules triggered."))
             return
 
-        # 콘솔 출력
         for rule, data in triggered:
             self.stdout.write(self.style.WARNING(f"\n[{rule.key}] {data.get('title')}"))
-            for r in (data.get("rows") or [])[:10]:
-                self.stdout.write("  " + json.dumps(r, ensure_ascii=False))
+            for row in (data.get("rows") or [])[:10]:
+                self.stdout.write("  " + json.dumps(row, ensure_ascii=False))
+
+        if dry_run:
+            self.stdout.write(self.style.NOTICE("\n--dry-run: Slack 전송 생략."))
+            return
 
         webhook_url = (getattr(settings, "DEV_ALERTS_WEBHOOK_URL", "") or "").strip()
-        if dry_run:
-            self.stdout.write(self.style.NOTICE("\n--dry-run: Slack/SMS 전송 생략."))
-            return
-
-        if webhook_url:
-            payload = _build_slack_blocks(triggered)
-            ok = _post_slack(webhook_url, payload)
-            if ok:
-                self.stdout.write(
-                    self.style.SUCCESS(f"\nSlack 전송 OK ({len(triggered)} rule(s)).")
-                )
-            else:
-                self.stdout.write(self.style.ERROR("\nSlack 전송 실패."))
-        else:
-            self.stdout.write(self.style.NOTICE("\nDEV_ALERTS_WEBHOOK_URL 미설정 — Slack 전송 생략."))
-
-        if not sms_enabled:
-            if any(rule.key == "user_incidents" for rule, _data in triggered):
-                self.stdout.write(
-                    self.style.NOTICE(
-                        "\nDEV_ALERTS_SMS_ENABLED=false — 사용자 오류 SMS 전송 생략."
-                    )
-                )
-            return
-        if not any(rule.key == "user_incidents" for rule, _data in triggered):
-            return
-
-        with _sms_delivery_lock() as acquired:
-            if not acquired:
-                self.stdout.write(
-                    self.style.NOTICE("\n다른 check_dev_alerts 실행이 SMS 발송 중 — 중복 방지로 생략.")
-                )
-                return
-            incident_data = rule_user_incidents()
-            if not incident_data:
-                return
-            rate_limit_reason = _incident_sms_rate_limit_reason()
-            if rate_limit_reason:
-                _record_sms_rate_limit(incident_data, rate_limit_reason)
-                self.stdout.write(
-                    self.style.NOTICE(
-                        "\n사용자 오류 SMS 발송 상한 적용 — 다음 주기에 재평가."
-                    )
-                )
-                return
-            sms_text, sms_metadata = _build_user_incident_sms_payload(incident_data)
-            attempt = _create_sms_attempt(incident_data, sms_metadata)
-            registration = _send_ops_sms(sms_text)
-            group_id = str(registration.get("group_id") or "")
-            if registration.get("status") == "ok":
-                _record_sms_registration(attempt, registration)
-                delivery = _verify_ops_sms_delivery(
-                    group_id,
-                    SMS_DELIVERY_WAIT_SECONDS,
-                )
-                result = {**delivery, "group_id": group_id}
-            else:
-                result = registration
-            _record_sms_delivery(attempt, result)
-            if result.get("status") != "ok":
-                raise CommandError(
-                    f"사용자 오류 SMS 전송 실패: {result.get('reason') or 'unknown'}"
-                )
+        if not webhook_url:
             self.stdout.write(
-                self.style.SUCCESS(
-                    "\n사용자 오류 SMS 전송 OK "
-                    f"({_mask_phone(CONTROLLED_OPS_PHONE)}, "
-                    f"{incident_data['total']} event(s), "
-                    f"group_id={group_id}, "
-                    f"sent_success={result.get('sent_success')})"
+                self.style.NOTICE(
+                    "\nDEV_ALERTS_WEBHOOK_URL 미설정 — Slack 전송 생략."
                 )
             )
+            return
 
-    def _run_test_sms(self, *, wait_seconds: int) -> None:
-        if not getattr(settings, "DEV_ALERTS_SMS_ENABLED", False):
-            raise CommandError("DEV_ALERTS_SMS_ENABLED=true가 필요합니다.")
-        from apps.core.models import Tenant
+        payload = _build_slack_blocks(triggered)
+        if not _post_slack(webhook_url, payload):
+            self.stdout.write(self.style.ERROR("\nSlack 전송 실패."))
+            return
 
-        owner_tenant_id = getattr(settings, "OWNER_TENANT_ID", None)
-        owner_tenant = (
-            Tenant.objects.filter(pk=owner_tenant_id).only("id", "code").first()
-            if owner_tenant_id
-            else None
-        )
-        tenant_id = owner_tenant.id if owner_tenant else owner_tenant_id
-        tenant_code = owner_tenant.code if owner_tenant else ""
-        sample = _build_user_incident_sms(
-            {
-                "total": 1,
-                "rows": [
-                    {
-                        "tenant_id": tenant_id,
-                        "tenant_code": tenant_code,
-                        "source": "backend",
-                        "status": 500,
-                        "count": 1,
-                    }
-                ],
-            }
-        )
-        detail = sample.splitlines()[1]
-        now = timezone.localtime().strftime("%Y-%m-%d %H:%M")
-        text = f"[학원+] 문자테스트 {now[-5:]}\n{detail}\n/dev"
-        result = _send_ops_sms(text)
-        if result.get("status") != "ok":
-            raise CommandError(
-                f"운영자 SMS 테스트 등록 실패: {result.get('reason') or 'unknown'}"
-            )
-        group_id = str(result["group_id"])
-        delivery = _verify_ops_sms_delivery(group_id, wait_seconds)
-        from apps.core.models import OpsAuditLog
-
-        OpsAuditLog.objects.create(
-            action="alerts.user_incident_sms_test",
-            summary="Operator incident SMS delivery verification",
-            payload={
-                "recipient_last4": CONTROLLED_OPS_PHONE[-4:],
-                "provider_group_id": group_id,
-                "provider_delivery": delivery,
-            },
-            result="success" if delivery.get("status") == "ok" else "failed",
-            error=(
-                ""
-                if delivery.get("status") == "ok"
-                else str(delivery.get("reason") or "unknown")[:255]
-            ),
-        )
-        if delivery.get("status") != "ok":
-            raise CommandError(
-                f"운영자 SMS provider 최종 확인 실패: {delivery.get('reason') or 'unknown'}"
-            )
+        for rule, data in triggered:
+            if rule.key == "user_incidents":
+                _record_user_incident_slack_delivery(data)
         self.stdout.write(
-            self.style.SUCCESS(
-                "운영자 SMS 실발송 확인 OK "
-                f"({_mask_phone(CONTROLLED_OPS_PHONE)}, group_id={group_id}, "
-                f"sent_success={delivery.get('sent_success')})"
-            )
-        )
-
-    def _run_external_signal_sms(self, *, signal: str, wait_seconds: int) -> None:
-        if not getattr(settings, "DEV_ALERTS_SMS_ENABLED", False):
-            raise CommandError("DEV_ALERTS_SMS_ENABLED=true가 필요합니다.")
-        texts = {
-            "api_user_impact": "[학원+] API 장애 감지\n5xx 급증 또는 정상 서버 0대\n/dev",
-        }
-        registration = _send_ops_sms(texts[signal])
-        if registration.get("status") != "ok":
-            raise CommandError(
-                f"외부 운영 신호 SMS 등록 실패: {registration.get('reason') or 'unknown'}"
-            )
-        group_id = str(registration["group_id"])
-        delivery = _verify_ops_sms_delivery(group_id, wait_seconds)
-        try:
-            from apps.core.models import OpsAuditLog
-
-            OpsAuditLog.objects.create(
-                action="alerts.external_signal_sms",
-                summary=f"External operator signal: {signal}",
-                payload={
-                    "signal": signal,
-                    "recipient_last4": CONTROLLED_OPS_PHONE[-4:],
-                    "provider_group_id": group_id,
-                    "provider_delivery": delivery,
-                },
-                result="success" if delivery.get("status") == "ok" else "failed",
-                error=(
-                    ""
-                    if delivery.get("status") == "ok"
-                    else str(delivery.get("reason") or "unknown")[:255]
-                ),
-            )
-        except Exception:
-            logger.exception("External signal SMS audit persistence failed")
-        if delivery.get("status") != "ok":
-            raise CommandError(
-                f"외부 운영 신호 SMS 최종 확인 실패: {delivery.get('reason') or 'unknown'}"
-            )
-        self.stdout.write(
-            self.style.SUCCESS(
-                "외부 운영 신호 SMS 확인 OK "
-                f"({_mask_phone(CONTROLLED_OPS_PHONE)}, signal={signal}, "
-                f"group_id={group_id}, sent_success={delivery.get('sent_success')})"
-            )
+            self.style.SUCCESS(f"\nSlack 전송 OK ({len(triggered)} rule(s)).")
         )

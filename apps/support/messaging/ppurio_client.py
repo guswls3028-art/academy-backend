@@ -118,67 +118,12 @@ def send_ppurio_sms(
     api_key: str = "",
     account: str = "",
 ) -> dict:
-    creds = _get_ppurio_credentials(api_key=api_key, account=account)
-    if not creds["account"] or not creds["api_key"]:
-        return {"status": "skipped", "reason": "ppurio_not_configured"}
-
-    token, token_reason = _get_access_token_result(creds)
-    if not token:
-        return {"status": "error", "reason": token_reason}
-
-    to = (to or "").replace("-", "").strip()
-    text = (text or "").strip()
-    sender = (sender or "").replace("-", "").strip()
-
-    if not to or not text or not sender:
-        return {"status": "error", "reason": "to_text_sender_required"}
-
-    try:
-        text_bytes_len = len(text.encode("euc-kr", errors="replace"))
-    except Exception:
-        text_bytes_len = len(text.encode("utf-8"))
-
-    refkey = _generate_refkey()
-    msg_type = "SMS" if text_bytes_len <= 90 else "LMS"
-
-    payload = {
-        "account": creds["account"],
-        "messageType": msg_type,
-        "content": text,
-        "from": sender,
-        "duplicateFlag": "N",
-        "refKey": refkey,
-        "targetCount": 1,
-        "targets": [
-            {"to": to},
-        ],
+    """Legacy compatibility boundary; SMS/LMS provider calls are forbidden."""
+    return {
+        "status": "error",
+        "reason": "sms_disabled",
+        "provider_called": False,
     }
-
-    try:
-        resp = requests.post(
-            f"{creds['api_url']}/v1/message",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=15,
-        )
-        data = resp.json()
-        if resp.status_code in (200, 201) and "messageKey" in data:
-            messagekey = data["messageKey"]
-            logger.info(
-                "ppurio SMS ok to=%s**** refkey=%s messagekey=%s type=%s",
-                to[:4], refkey, messagekey, msg_type,
-            )
-            return {"status": "ok", "refkey": refkey, "messagekey": messagekey}
-        code = data.get("code", "")
-        reason = data.get("description") or data.get("message") or f"code={code}, http={resp.status_code}"
-        logger.warning("ppurio SMS failed to=%s****: %s", to[:4], reason)
-        return {"status": "error", "reason": reason[:500]}
-    except Exception as e:
-        logger.exception("ppurio SMS exception to=%s****", to[:4])
-        return {"status": "error", "reason": str(e)[:500]}
 
 
 def send_ppurio_alimtalk(

@@ -147,7 +147,6 @@ function Set-IsolatedPreprodApiValues {
         BILLING_KEY_ENCRYPTION_WRITE_ENABLED = "false"
         BILLING_KEY_ENCRYPTION_PRIMARY_KEY = ""
         BILLING_KEY_ENCRYPTION_FALLBACK_KEYS = ""
-        DEV_ALERTS_SMS_ENABLED = "false"
         VAPID_PRIVATE_KEY = ""
         OPENAI_API_KEY = ""
         ANTHROPIC_API_KEY = ""

@@ -1,6 +1,6 @@
-# 메시징 도메인 SSOT (알림톡/SMS 발송 시스템)
+# 메시징 도메인 SSOT (공용 카카오 알림톡 발송 시스템)
 
-> 최종 갱신: 2026-07-09 (ymath 임시 전체 발송 차단 정책 반영)
+> 최종 갱신: 2026-08-20 (SMS 예외 제거 및 공용 알림톡 단일화)
 > 근거: 코드 직접 확인. 추측 없음.
 
 ---
@@ -74,10 +74,11 @@
     -> enqueue_sms()                    [services.py:111]
       -> MessagingSQSQueue.enqueue()    [sqs_queue.py:62]
         -> SQS (academy-v1-messaging-queue)
-          -> 메시징 워커                [sqs_main.py:314]
-            -> _dispatch_alimtalk() / _dispatch_sms()  [sqs_main.py:630/617]
-              -> Solapi SDK / 뿌리오 API
-                -> 카카오 알림톡 / 통신사 SMS
+          -> 메시징 워커
+            -> legacy SMS payload 차단
+            -> 공용 알림톡 provider dispatch
+              -> Solapi SDK / 뿌리오 Kakao API
+                -> 카카오 알림톡
 ```
 
 ### 수동 발송 파이프라인
@@ -116,8 +117,8 @@
 | `enqueue_sms` | services.py:111 | 정책 검증(disabled/restricted/whitelist/SMS 차단), owner tenant_id 정규화, SQS enqueue |
 | `MessagingSQSQueue.enqueue` | sqs_queue.py:62 | SQS 메시지 구성, business_idempotency_key 생성, 큐 전송 |
 | 메시징 워커 `main` | sqs_main.py:314 | SQS Long Polling, Redis 멱등 잠금, 예약 취소 확인, 잔액 검증/차감, 공급자별 발송, 로그 기록 |
-| `_dispatch_alimtalk` | sqs_main.py:630 | 공용 시스템 PFID + 공용 Solapi로 알림톡 발송 |
-| `_dispatch_sms` | sqs_main.py:617 | legacy 함수. 신규 발송은 정책에서 차단되며 큐 SMS payload도 실패 로그로 닫는다 |
+| 알림톡 provider dispatch | `sqs_main.py` | 공용 시스템 PFID + 공용 provider로 알림톡 발송. Solapi fallback은 `disable_sms=True` |
+| legacy SMS boundary | `sqs_main.py` | 큐 payload와 호환 callable 모두 `sms_disabled`로 닫고 provider를 호출하지 않음 |
 
 운영 실사용 검증은 `scripts/v1/run-messaging-verify-send.ps1` → `messaging_verify_common_alimtalk`로만 수행한다. 이 경로는 통제번호 `01031217466`으로 `password_reset_student` owner exact approved template을 발송하고, 워커가 `NotificationLog.provider_message_id`를 남긴 뒤 성공으로 판정한다.
 
@@ -410,6 +411,8 @@ signup 카테고리만 자체 Solapi 템플릿을 유지. 나머지 매핑 카�
 - `can_send_sms()`는 항상 `False`.
 - `message_mode="sms"` 신규 enqueue는 `MessagingPolicyError(reason="sms_disabled")`.
 - worker가 legacy SMS payload를 받으면 발송하지 않고 실패 로그로 닫는다.
+- legacy Solapi/뿌리오 SMS callable도 `sms_disabled`를 반환하며 provider를 호출하지 않는다.
+- 운영 오류 알림에도 SMS 예외가 없으며 `check_dev_alerts`는 Slack webhook만 사용한다.
 - 테스트 테넌트(9999): 모든 메시징 비활성
 
 ### 테넌트 자체 연동 키
@@ -433,7 +436,7 @@ legacy 설정 필드는 남아 있을 수 있으나 신규 실발송 경로에�
 | `tenant_id` | int | 공용 owner 테넌트 ID |
 | `source_tenant_id` | int/null | 원 업무 테넌트 ID. 발송 채널/provider 결정에는 사용하지 않음 |
 | `to` | str | 수신 번호 (하이픈 제거됨) |
-| `text` | str | 본문 (SMS용 + 알림톡 대체 텍스트) |
+| `text` | str | legacy envelope 호환용 본문. 알림톡 fallback SMS에는 사용하지 않음 |
 | `sender` | null | 공용 owner 발신 설정을 worker가 사용 |
 | `created_at` | str (ISO) | 생성 시각 |
 | `message_mode` | "alimtalk" | 발송 방식. SMS/LMS는 차단 |

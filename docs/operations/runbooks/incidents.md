@@ -10,92 +10,47 @@
 
 ---
 
-## 0. 사용자 오류 운영자 문자
+## 0. 사용자 오류 운영 알림
 
-`Dev Alerts Cron`이 사용자 오류 신호를 5분마다, 기존 결제·worker 등 전체 운영 룰을
+`Dev Alerts Cron`은 사용자 오류 신호를 5분마다, 결제·worker 등 전체 운영 룰을
 매시 2분에 평가한다.
 
-- API의 사용자 경로에서 반환된 HTTP 5xx
-- 브라우저의 지속적인 React/window/unhandled-rejection 오류
+- API 사용자 경로의 HTTP 5xx
+- 브라우저 React/window/unhandled-rejection 오류
 - 공용 `문제 신고` 모달 접수
 - 관리자·선생님 개발자 메뉴의 `[BUG]` 제보
 
-늦게 확정 실패한 공급사 attempt도 놓치지 않도록 매번 2일 보존 범위 전체를 읽는다.
-같은 테넌트·경로·오류 유형은 15분 단위로 묶고, 성공했거나 공급사 결과가 미확정인
-발송 fingerprint는
-`OpsAuditLog(action=alerts.user_incident_sms)`에 남겨 다시 보내지 않는다. 문자에는
-서버가 확인한 플랫폼 발급 테넌트 코드·내부 ID와 통제된 사유(`서버5xx`, `화면오류`, `직접신고`,
-`버그제보`), 유형별 건수, `/dev` 안내만 포함한다. 사용자 입력 본문·경로·학생명·
-전화번호·예외명/메시지와 owner가 수정할 수 있는 테넌트명은 넣지 않는다. 테넌트
-코드는 소문자 ASCII allowlist를 통과한 경우에만 내부 ID와 함께 표시하고, 아니면
-`T{id}`로 대체하며 전체 식별자는 24 UTF-8 byte로 제한한다.
+운영 알림 채널은 Slack webhook 하나다. `DEV_ALERTS_WEBHOOK_URL`이 없으면 룰 평가와
+stdout/audit 기록만 수행하고 외부 발송은 하지 않는다. SMS/LMS 설정, 실발송 테스트,
+CloudWatch transition 문자 발송 예외는 모두 제거되었다. 운영 장애용으로 승인된 공용
+카카오 템플릿이 없으므로 이 경로를 임의의 알림톡으로 대체하지 않고 fail-closed한다.
 
-본문은 한 cron 실행당 SMS 1건으로 집계한다. 90 byte 안에 들어오는 테넌트를
-발생 건수 순으로 표시하며, 나머지는 `+N곳`으로 표시한다. `+N곳`의 상세 테넌트와
-경로는 `/dev` 감사 로그에서 확인한다. 성공 receipt에는 전체 fingerprint를 기록하므로
-표시 공간 때문에 생략된 테넌트도 중복 발송하지 않는다.
-
-```text
-[학원+] 오류3건/2곳
-알파#12:서버500(2) 베타#19:화면오류(1)
-/dev
-```
+같은 테넌트·경로·오류 유형은 15분 단위 fingerprint로 묶는다. Slack webhook이 성공을
+반환하면 `OpsAuditLog(action=alerts.user_incident_slack)`에 fingerprint를 저장해
+2일 보존 범위에서 반복 알림을 제외한다. Slack 실패나 webhook 미설정, `--dry-run`은
+fingerprint를 소비하지 않는다. 폐기 전 SMS가 남긴
+`OpsAuditLog(action=alerts.user_incident_sms)`는 기존 2일 중복 억제와 사고 이력
+조회에만 읽으며, 새 SMS provider 호출이나 재조회·재시도에는 사용하지 않는다.
 
 5xx 폭주가 장애 중 DB 부하를 증폭하지 않도록 같은 테넌트·경로·오류 유형은 API
 프로세스별 60초에 1건만 bounded 비동기 큐로 감사 로그에 저장한다. 사용자 응답은
 DB INSERT를 기다리지 않으며 PII 없는 동일 신호를 애플리케이션 로그에도 남긴다.
-문자 건수는 이 샘플 수이며 원시 요청 횟수는 CloudWatch/Sentry에서 확인한다.
-테스트 설정은 같은 감사 writer를 동기 실행해 각 테스트의 DB rollback 경계 안에
-기록을 가두지만, 운영 설정은 항상 위 비동기 응답 계약을 유지한다.
-
-DB 장애처럼 감사 로그 자체를 쓸 수 없는 상황은 `academy-api-Target5XX`와
-`HealthyHostCount < 1`인 `academy-api-UnHealthyHosts`를 묶은
-`academy-api-UserImpact` composite alarm으로 독립 감지한다. 배포 중 새 대상이
-준비되는 동안 기존 정상 대상이 하나라도 있으면 사용자 영향 장애로 보지 않는다.
-이 외부 신호 문자는 `5xx 급증 또는 정상 서버 0대`로 두 원인을 구분해 표시한다.
-cron은 alarm transition timestamp를 SSM에 발송 전 `claimed:` 상태로 기록하고,
-Solapi `sent_success` 확인 뒤 `delivered:` 상태로 바꾼다. 원격 명령 결과가
-유실되거나 timeout이어도 같은 transition을 자동 재발송하지 않는다.
-
-운영자 SMS는 고객 알림톡/SMS 경로와 분리되어 있다. 수신번호와 발신번호 모두 코드와
-환경설정 양쪽에서 `01031217466`으로 고정하며 다른 번호는 provider 호출 전에 차단한다.
-Solapi 문자 발신번호도 운영 계정의 유일한 ACTIVE 등록 번호인 같은 통제번호로
-정규화한다. 미등록 발신번호는 Solapi 상태코드 `1062`로 접수 거절되므로 설정
-스크립트가 수신번호와 발신번호를 함께 갱신한다.
+원시 요청 횟수는 CloudWatch/Sentry에서 확인한다. `academy-api-UserImpact`
+composite alarm은 인프라 관측 신호로 유지하지만 `Dev Alerts Cron`이 이를 휴대전화
+문자로 변환하지 않는다.
 
 ```powershell
-# 설정 활성화 (cron이 매 실행 전 SSM에서 runtime env를 원자적으로 동기화)
-pwsh scripts/v1/set-dev-alerts-sms.ps1 -AwsProfile default
-
-# SSM env를 원자적으로 동기화한 pinned image로 통제번호에 1건 발송.
-# 본문에는 owner 테넌트 식별값과 통제 사유 `서버500`이 테스트 표시와 함께 나온다.
-gh workflow run dev-alerts-cron.yml -f test_sms=true
+# 발송 없이 사용자 오류 룰만 평가. 전체 운영 룰까지 보려면 full_rules=true 추가.
+gh workflow run dev-alerts-cron.yml -f dry_run=true
 Start-Sleep -Seconds 3
 $runId = gh run list --workflow dev-alerts-cron.yml --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId'
 gh run watch $runId --exit-status
-
-# 발송 없이 사용자 오류 룰만 평가. 전체 운영 룰까지 보려면 full_rules=true 추가.
-gh workflow run dev-alerts-cron.yml -f dry_run=true
-
-# 비상 비활성화
-pwsh scripts/v1/set-dev-alerts-sms.ps1 -Disable -AwsProfile default
 ```
 
-활성화/비활성화는 다음 5분 cron 실행부터 반영되며 API 컨테이너를 재시작하지 않는다.
-정기 발송도 Solapi `sent_success`를 확인한 뒤에만 성공 fingerprint로 중복 제외한다.
-공급사 등록 전에 실패 상태의 attempt receipt를 먼저 기록하고, 접수 응답의 group ID는
-최종 조회 전에 즉시 저장한다. timeout/pending group은 2일 incident 보존 기간 동안 매
-주기 `updated_at`이 오래된 순서로 최대 10건씩 재조회하고, 조회한 미확정 건은 순번의
-뒤로 보내 공정하게 순환한다. 결과 미확정 또는 group ID 유실 attempt의 fingerprint는 자동
-재발송하지 않고 `/dev` 운영 위험으로 남긴다. 확정 실패만 5분 cooldown 후 재시도하며,
-정기/수동 `user_incidents` 실행을 합쳐 시간당 provider 시도는 12건을 넘지 않는다.
-상한에 걸린 fingerprint는 소비하지 않고 다음 주기에 다시 평가한다. 명시적
-`--test-sms`와 CloudWatch alarm-transition 경로는 별도 검증/비상 신호이며 이 quota에
-포함하지 않는다.
-
-진단 시 `OpsAuditLog`의 `user_incident.*`, `alerts.user_incident_sms`,
-`alerts.user_incident_sms_test`, `alerts.external_signal_sms`,
-`cron.check_dev_alerts` action과 provider group id를 함께 확인한다.
+진단 시 `OpsAuditLog`의 `user_incident.*`,
+`alerts.user_incident_slack`, 과거 `alerts.user_incident_sms*`,
+`cron.check_dev_alerts` action을 확인한다. 과거 SMS action은 감사 이력이며
+재활성화 절차가 아니다.
 
 ---
 

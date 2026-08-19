@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from datetime import timedelta
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from django.core.management import call_command
-from django.core.management.base import CommandError
 from django.http import HttpRequest, JsonResponse
 from django.test import SimpleTestCase, TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
@@ -17,14 +15,8 @@ from apps.api.common.middleware import UnhandledExceptionMiddleware
 from apps.api.common import middleware as incident_middleware
 from apps.api.common.throttles import UserIncidentReportThrottle
 from apps.core.management.commands.check_dev_alerts import (
-    CONTROLLED_OPS_PHONE,
-    SMS_DELIVERY_ACTION,
-    SMS_MAX_RECONCILIATIONS_PER_RUN,
-    SMS_RATE_LIMIT_ACTION,
-    _build_user_incident_sms,
-    _provider_delivery_state,
-    _reconcile_unresolved_sms_attempts,
-    _send_ops_sms,
+    LEGACY_SMS_DELIVERY_ACTION,
+    SLACK_DELIVERY_ACTION,
     rule_user_incidents,
 )
 from apps.core.models import OpsAuditLog, Tenant, TenantMembership, User
@@ -264,7 +256,7 @@ class UserIncidentAlertRuleTests(TestCase):
             result="failed",
         )
 
-    def test_repeated_same_error_is_grouped_and_sms_is_short(self):
+    def test_repeated_same_error_is_grouped_without_sensitive_details(self):
         self._backend_incident()
         self._backend_incident()
 
@@ -274,621 +266,83 @@ class UserIncidentAlertRuleTests(TestCase):
         self.assertEqual(result["total"], 2)
         self.assertEqual(len(result["rows"]), 1)
         self.assertEqual(result["rows"][0]["count"], 2)
-        sms = _build_user_incident_sms(result)
-        self.assertLessEqual(len(sms.encode("utf-8")), 90)
-        self.assertIn(f"{self.tenant.code}#{self.tenant.id}", sms)
-        self.assertIn("서버500", sms)
-        self.assertNotIn("ValueError", sms)
-        self.assertNotIn("api/v1/results", sms)
+        self.assertNotIn("ValueError", str(result["rows"]))
 
-    def test_sms_identifies_multiple_tenants_with_controlled_reasons(self):
-        second_tenant = Tenant.objects.create(
-            code="second",
-            name="Second Tenant",
-            is_active=True,
-        )
-        self._backend_incident()
-        OpsAuditLog.objects.create(
-            action="user_incident.frontend_exception",
-            target_tenant=second_tenant,
-            payload={
-                "route": "/admin/students/secret-name",
-                "error_name": "UserSuppliedError",
-                "message": "학생 홍길동 01012345678",
-            },
-            result="failed",
-        )
-
-        sms = _build_user_incident_sms(rule_user_incidents())
-
-        self.assertIn("2곳", sms)
-        self.assertIn(f"{self.tenant.code}#{self.tenant.id}:서버500", sms)
-        self.assertIn(f"{second_tenant.code}#{second_tenant.id}:화면오류", sms)
-        self.assertNotIn("secret-name", sms)
-        self.assertNotIn("UserSuppliedError", sms)
-        self.assertNotIn("홍길동", sms)
-        self.assertNotIn("01012345678", sms)
-        self.assertLessEqual(len(sms.encode("utf-8")), 90)
-
-    def test_sms_sanitizes_hostile_tenant_metadata_and_reports_overflow(self):
-        self.tenant.name = "악성\n010-3121-7466 010 9999 8888\u202e학원"
-        self.tenant.save(update_fields=["name"])
-        self._backend_incident()
-        for index in range(8):
-            tenant = Tenant.objects.create(
-                code=f"overflow-{index}",
-                name=f"아주긴테넌트이름{index}",
-                is_active=True,
-            )
-            self._backend_incident(tenant=tenant)
-
-        result = rule_user_incidents()
-        sms = _build_user_incident_sms(result)
-
-        self.assertIn(f"{self.tenant.code}#{self.tenant.id}", sms)
-        self.assertRegex(sms, r"\+\d+곳")
-        self.assertNotIn("악성", sms)
-        self.assertNotIn("010-3121-7466", sms)
-        self.assertNotIn("010 9999 8888", sms)
-        self.assertNotIn("\u202e", sms)
-        self.assertEqual(sms.count("\n"), 2)
-        self.assertTrue(sms.endswith("/dev"))
-        self.assertLessEqual(len(sms.encode("utf-8")), 90)
-
-    def test_sms_compacts_multiple_reasons_and_rejects_untrusted_status(self):
-        sms = _build_user_incident_sms(
-            {
-                "total": 3,
-                "rows": [
-                    {
-                        "tenant_id": self.tenant.id,
-                        "tenant_code": self.tenant.code,
-                        "source": "backend",
-                        "status": 200,
-                        "count": 2,
-                    },
-                    {
-                        "tenant_id": self.tenant.id,
-                        "tenant_code": self.tenant.code,
-                        "source": "report",
-                        "count": 1,
-                    },
-                ],
-            }
-        )
-
-        self.assertIn("서버5xx(2)+1종", sms)
-        self.assertNotIn("서버200", sms)
-        self.assertLessEqual(len(sms.encode("utf-8")), 90)
-
-    def test_sms_marks_counts_over_display_bound(self):
-        sms = _build_user_incident_sms(
-            {
-                "total": 15000,
-                "rows": [
-                    {
-                        "tenant_id": self.tenant.id,
-                        "tenant_code": self.tenant.code,
-                        "source": "backend",
-                        "status": 500,
-                        "count": 15000,
-                    }
-                ],
-            }
-        )
-
-        self.assertIn("오류9999+건", sms)
-        self.assertIn("서버500(9999+)", sms)
-        self.assertLessEqual(len(sms.encode("utf-8")), 90)
-
-    def test_successful_delivery_suppresses_duplicate_group(self):
+    def test_legacy_sms_receipt_remains_read_only_dedup_history(self):
         self._backend_incident()
         result = rule_user_incidents()
         OpsAuditLog.objects.create(
-            action=SMS_DELIVERY_ACTION,
-            summary="sent",
-            payload={"fingerprints": result["fingerprints"]},
-            result="success",
-        )
-
-        self.assertIsNone(rule_user_incidents())
-
-    @override_settings(
-        DEV_ALERTS_SMS_ENABLED=True,
-        DEV_ALERTS_SMS_RECIPIENT=CONTROLLED_OPS_PHONE,
-    )
-    @patch(
-        "apps.core.management.commands.check_dev_alerts._verify_ops_sms_delivery",
-        return_value={"status": "ok", "sent_success": 1},
-    )
-    @patch(
-        "apps.core.management.commands.check_dev_alerts._send_ops_sms",
-        return_value={"status": "ok", "group_id": "group-1"},
-    )
-    def test_command_sends_once_and_persists_delivery_receipt(
-        self,
-        send_mock,
-        verify_mock,
-    ):
-        self._backend_incident()
-        for index in range(8):
-            tenant = Tenant.objects.create(
-                code=f"receipt-tenant-{index}",
-                name=f"Receipt Tenant {index}",
-                is_active=True,
-            )
-            self._backend_incident(tenant=tenant)
-        output = StringIO()
-
-        def verify_after_registration(group_id, wait_seconds):
-            receipt = OpsAuditLog.objects.get(action=SMS_DELIVERY_ACTION)
-            self.assertEqual(receipt.payload["attempt_state"], "registered")
-            self.assertEqual(receipt.payload["provider_group_id"], group_id)
-            self.assertEqual(wait_seconds, 120)
-            return {"status": "ok", "sent_success": 1}
-
-        verify_mock.side_effect = verify_after_registration
-
-        call_command(
-            "check_dev_alerts",
-            "--rule",
-            "user_incidents",
-            "--silent",
-            stdout=output,
-        )
-        call_command(
-            "check_dev_alerts",
-            "--rule",
-            "user_incidents",
-            "--silent",
-            stdout=output,
-        )
-
-        send_mock.assert_called_once()
-        verify_mock.assert_called_once_with("group-1", 120)
-        receipt = OpsAuditLog.objects.get(action=SMS_DELIVERY_ACTION)
-        self.assertEqual(receipt.result, "success")
-        self.assertEqual(receipt.payload["recipient_last4"], "7466")
-        self.assertEqual(receipt.payload["provider_group_id"], "group-1")
-        self.assertEqual(len(receipt.payload["fingerprints"]), 9)
-        self.assertEqual(receipt.payload["tenant_count"], 9)
-        self.assertEqual(receipt.payload["displayed_tenant_count"], 1)
-        self.assertEqual(receipt.payload["omitted_tenant_count"], 8)
-        self.assertEqual(len(receipt.payload["body_sha256"]), 64)
-
-    @override_settings(
-        DEV_ALERTS_SMS_ENABLED=True,
-        DEV_ALERTS_SMS_RECIPIENT=CONTROLLED_OPS_PHONE,
-    )
-    @patch(
-        "apps.core.management.commands.check_dev_alerts._verify_ops_sms_delivery"
-    )
-    @patch(
-        "apps.core.management.commands.check_dev_alerts._send_ops_sms",
-        return_value={"status": "ok", "group_id": "ambiguous-group"},
-    )
-    def test_ambiguous_provider_result_is_reconciled_without_resend(
-        self,
-        send_mock,
-        verify_mock,
-    ):
-        verify_mock.side_effect = [
-            {
-                "status": "error",
-                "reason": "provider_delivery_timeout",
-                "sent_total": 0,
-                "sent_success": 0,
-                "sent_pending": 0,
-                "registered_failed": 0,
-            },
-            {
-                "status": "ok",
-                "sent_total": 1,
-                "sent_success": 1,
-                "sent_pending": 0,
-                "registered_failed": 0,
-            },
-        ]
-        self._backend_incident()
-
-        with self.assertRaises(CommandError):
-            call_command(
-                "check_dev_alerts",
-                "--rule",
-                "user_incidents",
-                "--silent",
-                stdout=StringIO(),
-            )
-        call_command(
-            "check_dev_alerts",
-            "--rule",
-            "user_incidents",
-            "--silent",
-            stdout=StringIO(),
-        )
-
-        send_mock.assert_called_once()
-        self.assertEqual(verify_mock.call_args_list[0].args, ("ambiguous-group", 120))
-        self.assertEqual(verify_mock.call_args_list[1].args, ("ambiguous-group", 0))
-        receipt = OpsAuditLog.objects.get(action=SMS_DELIVERY_ACTION)
-        self.assertEqual(receipt.result, "success")
-        self.assertEqual(receipt.payload["attempt_state"], "delivered")
-
-    @override_settings(
-        DEV_ALERTS_SMS_ENABLED=True,
-        DEV_ALERTS_SMS_RECIPIENT=CONTROLLED_OPS_PHONE,
-    )
-    @patch(
-        "apps.core.management.commands.check_dev_alerts._verify_ops_sms_delivery",
-        return_value={
-            "status": "error",
-            "reason": "provider_delivery_timeout",
-            "sent_total": 0,
-            "sent_success": 0,
-            "sent_pending": 0,
-            "registered_failed": 0,
-        },
-    )
-    @patch(
-        "apps.core.management.commands.check_dev_alerts._send_ops_sms",
-        return_value={"status": "ok", "group_id": "pending-group"},
-    )
-    def test_pending_provider_result_holds_fingerprints_without_resend(
-        self,
-        send_mock,
-        _verify_mock,
-    ):
-        self._backend_incident()
-
-        with self.assertRaises(CommandError):
-            call_command(
-                "check_dev_alerts",
-                "--rule",
-                "user_incidents",
-                "--silent",
-                stdout=StringIO(),
-            )
-        call_command(
-            "check_dev_alerts",
-            "--rule",
-            "user_incidents",
-            "--silent",
-            stdout=StringIO(),
-        )
-
-        send_mock.assert_called_once()
-        receipt = OpsAuditLog.objects.get(action=SMS_DELIVERY_ACTION)
-        self.assertEqual(receipt.result, "failed")
-        self.assertEqual(receipt.payload["attempt_state"], "ambiguous")
-
-    @override_settings(
-        DEV_ALERTS_SMS_ENABLED=True,
-        DEV_ALERTS_SMS_RECIPIENT=CONTROLLED_OPS_PHONE,
-    )
-    @patch(
-        "apps.core.management.commands.check_dev_alerts._verify_ops_sms_delivery",
-        return_value={
-            "status": "error",
-            "reason": "provider_delivery_timeout",
-            "sent_total": 0,
-            "sent_success": 0,
-            "sent_pending": 0,
-            "registered_failed": 0,
-        },
-    )
-    @patch("apps.core.management.commands.check_dev_alerts._send_ops_sms")
-    def test_aged_ambiguous_attempt_is_reconciled_but_never_resent(
-        self,
-        send_mock,
-        verify_mock,
-    ):
-        self._backend_incident()
-        incident_data = rule_user_incidents()
-        attempt = OpsAuditLog.objects.create(
-            action=SMS_DELIVERY_ACTION,
-            summary="ambiguous",
+            action=LEGACY_SMS_DELIVERY_ACTION,
+            summary="Historical operator delivery",
             payload={
-                "fingerprints": incident_data["fingerprints"],
-                "provider_group_id": "aged-group",
-                "attempt_state": "ambiguous",
-            },
-            result="failed",
-        )
-        OpsAuditLog.objects.filter(pk=attempt.pk).update(
-            created_at=timezone.now() - timedelta(minutes=20)
-        )
-
-        call_command(
-            "check_dev_alerts",
-            "--rule",
-            "user_incidents",
-            "--silent",
-            stdout=StringIO(),
-        )
-
-        send_mock.assert_not_called()
-        verify_mock.assert_called_once_with("aged-group", 0)
-        self.assertIsNone(rule_user_incidents())
-
-    @override_settings(
-        DEV_ALERTS_SMS_ENABLED=True,
-        DEV_ALERTS_SMS_RECIPIENT=CONTROLLED_OPS_PHONE,
-    )
-    @patch("apps.core.management.commands.check_dev_alerts._send_ops_sms")
-    def test_aged_no_group_attempt_is_held_without_resend(
-        self,
-        send_mock,
-    ):
-        self._backend_incident()
-        incident_data = rule_user_incidents()
-        attempt = OpsAuditLog.objects.create(
-            action=SMS_DELIVERY_ACTION,
-            summary="created",
-            payload={
-                "fingerprints": incident_data["fingerprints"],
-                "provider_group_id": "",
-                "attempt_state": "created",
-            },
-            result="failed",
-        )
-        OpsAuditLog.objects.filter(pk=attempt.pk).update(
-            created_at=timezone.now() - timedelta(minutes=20)
-        )
-
-        call_command(
-            "check_dev_alerts",
-            "--rule",
-            "user_incidents",
-            "--silent",
-            stdout=StringIO(),
-        )
-
-        send_mock.assert_not_called()
-        self.assertIsNone(rule_user_incidents())
-
-    def test_aged_definitive_failure_remains_retryable_after_newer_success(self):
-        incident = self._backend_incident()
-        OpsAuditLog.objects.filter(pk=incident.pk).update(
-            created_at=timezone.now() - timedelta(minutes=70)
-        )
-        aged_data = rule_user_incidents()
-        OpsAuditLog.objects.create(
-            action=SMS_DELIVERY_ACTION,
-            summary="definitive failure",
-            payload={
-                "fingerprints": aged_data["fingerprints"],
-                "provider_group_id": "failed-group",
-                "attempt_state": "definitive_failure",
-            },
-            result="failed",
-        )
-        OpsAuditLog.objects.create(
-            action=SMS_DELIVERY_ACTION,
-            summary="newer unrelated success",
-            payload={
-                "fingerprints": ["unrelated"],
+                "fingerprints": result["fingerprints"],
                 "attempt_state": "delivered",
             },
             result="success",
         )
 
-        retry_data = rule_user_incidents()
+        self.assertIsNone(rule_user_incidents())
 
-        self.assertIsNotNone(retry_data)
-        self.assertEqual(retry_data["fingerprints"], aged_data["fingerprints"])
-
+    @override_settings(DEV_ALERTS_WEBHOOK_URL="https://hooks.example.invalid/test")
     @patch(
-        "apps.core.management.commands.check_dev_alerts._verify_ops_sms_delivery",
-        return_value={
-            "status": "error",
-            "reason": "provider_delivery_timeout",
-            "sent_total": 0,
-            "sent_success": 0,
-            "sent_pending": 0,
-            "registered_failed": 0,
-        },
+        "apps.core.management.commands.check_dev_alerts._post_slack",
+        return_value=True,
     )
-    def test_reconciliation_is_capped_and_rotates_oldest_first(self, verify_mock):
-        total = SMS_MAX_RECONCILIATIONS_PER_RUN + 2
-        for index in range(total):
-            attempt = OpsAuditLog.objects.create(
-                action=SMS_DELIVERY_ACTION,
-                summary=f"ambiguous {index}",
-                payload={
-                    "fingerprints": [f"fingerprint-{index}"],
-                    "provider_group_id": f"group-{index}",
-                    "attempt_state": "ambiguous",
-                },
-                result="failed",
-            )
-            OpsAuditLog.objects.filter(pk=attempt.pk).update(
-                updated_at=timezone.now() - timedelta(minutes=total - index)
-            )
-        _reconcile_unresolved_sms_attempts()
-
-        self.assertEqual(
-            verify_mock.call_count,
-            SMS_MAX_RECONCILIATIONS_PER_RUN,
-        )
-        self.assertEqual(
-            [call.args[0] for call in verify_mock.call_args_list],
-            [
-                f"group-{index}"
-                for index in range(SMS_MAX_RECONCILIATIONS_PER_RUN)
-            ],
-        )
-        verify_mock.reset_mock()
-
-        _reconcile_unresolved_sms_attempts()
-
-        self.assertEqual(
-            [call.args[0] for call in verify_mock.call_args_list[:2]],
-            [
-                f"group-{SMS_MAX_RECONCILIATIONS_PER_RUN}",
-                f"group-{SMS_MAX_RECONCILIATIONS_PER_RUN + 1}",
-            ],
-        )
-
-    @override_settings(
-        DEV_ALERTS_SMS_ENABLED=True,
-        DEV_ALERTS_SMS_RECIPIENT=CONTROLLED_OPS_PHONE,
-    )
-    @patch("apps.core.management.commands.check_dev_alerts._send_ops_sms")
-    def test_hourly_attempt_cap_defers_without_consuming_fingerprints(
-        self,
-        send_mock,
-    ):
+    def test_command_records_successful_slack_delivery_and_deduplicates(self, post_mock):
         self._backend_incident()
-        for index in range(12):
-            OpsAuditLog.objects.create(
-                action=SMS_DELIVERY_ACTION,
-                summary=f"failed attempt {index}",
-                payload={"attempt_state": "registration_failed"},
-                result="failed",
-            )
 
         call_command(
             "check_dev_alerts",
             "--rule",
             "user_incidents",
-            "--silent",
             stdout=StringIO(),
         )
 
-        send_mock.assert_not_called()
-        self.assertTrue(OpsAuditLog.objects.filter(action=SMS_RATE_LIMIT_ACTION).exists())
-        self.assertIsNotNone(rule_user_incidents())
+        post_mock.assert_called_once()
+        receipt = OpsAuditLog.objects.get(action=SLACK_DELIVERY_ACTION)
+        self.assertEqual(receipt.result, "success")
+        self.assertEqual(len(receipt.payload["fingerprints"]), 1)
+        self.assertIsNone(rule_user_incidents())
 
-
-class OperatorSmsSafetyTests(TestCase):
-    def setUp(self):
-        self.tenant = Tenant.objects.create(
-            code="ops-test-tenant",
-            name="운영 테스트 학원",
-            is_active=True,
-        )
-
-    @override_settings(
-        DEV_ALERTS_SMS_RECIPIENT="01099999999",
-        SOLAPI_SENDER="01011112222",
-    )
-    def test_sender_rejects_any_non_controlled_recipient_before_provider_call(self):
-        with patch(
-            "apps.core.management.commands.check_dev_alerts._get_solapi_client"
-        ) as client_mock:
-            result = _send_ops_sms("[학원+] 테스트")
-
-        self.assertEqual(result["status"], "error")
-        self.assertIn("recipient_not_allowed", result["reason"])
-        client_mock.assert_not_called()
-
-    @override_settings(
-        DEV_ALERTS_SMS_RECIPIENT=CONTROLLED_OPS_PHONE,
-        SOLAPI_SENDER=CONTROLLED_OPS_PHONE,
-    )
-    def test_sender_forces_sms_and_returns_provider_group(self):
-        count = SimpleNamespace(registered_success=1, registered_failed=0)
-        client = Mock()
-        client.send.return_value = SimpleNamespace(
-            group_info=SimpleNamespace(group_id="group-safe", count=count)
-        )
-        with patch(
-            "apps.core.management.commands.check_dev_alerts._get_solapi_client",
-            return_value=client,
-        ):
-            result = _send_ops_sms("[학원+] 테스트")
-
-        self.assertEqual(result, {"status": "ok", "group_id": "group-safe"})
-        message = client.send.call_args.args[0]
-        self.assertEqual(str(message.from_), CONTROLLED_OPS_PHONE)
-        self.assertEqual(str(message.to), CONTROLLED_OPS_PHONE)
-        self.assertEqual(str(message.type), "SMS")
-
-    @override_settings(
-        DEV_ALERTS_SMS_RECIPIENT=CONTROLLED_OPS_PHONE,
-        SOLAPI_SENDER="01011112222",
-    )
-    def test_sender_rejects_non_controlled_sender_before_provider_call(self):
-        with patch(
-            "apps.core.management.commands.check_dev_alerts._get_solapi_client"
-        ) as client_mock:
-            result = _send_ops_sms("[학원+] 테스트")
-
-        self.assertEqual(result["status"], "error")
-        self.assertIn("sender_not_allowed", result["reason"])
-        self.assertEqual(_provider_delivery_state(result), "registration_failed")
-        client_mock.assert_not_called()
-
-    @override_settings(
-        DEV_ALERTS_SMS_ENABLED=True,
-        DEV_ALERTS_SMS_RECIPIENT=CONTROLLED_OPS_PHONE,
-    )
+    @override_settings(DEV_ALERTS_WEBHOOK_URL="https://hooks.example.invalid/test")
     @patch(
-        "apps.core.management.commands.check_dev_alerts._verify_ops_sms_delivery",
-        return_value={"status": "ok", "sent_success": 1},
+        "apps.core.management.commands.check_dev_alerts._post_slack",
+        return_value=False,
     )
-    @patch(
-        "apps.core.management.commands.check_dev_alerts._send_ops_sms",
-        return_value={"status": "ok", "group_id": "test-safe"},
-    )
-    def test_test_sms_contains_tenant_and_controlled_reason(
-        self,
-        send_mock,
-        verify_mock,
-    ):
-        with override_settings(OWNER_TENANT_ID=self.tenant.id):
-            call_command(
-                "check_dev_alerts",
-                "--test-sms",
-                "--wait-seconds",
-                "120",
-                stdout=StringIO(),
-            )
-
-        text = send_mock.call_args.args[0]
-        self.assertIn(f"{self.tenant.code}#{self.tenant.id}", text)
-        self.assertIn("서버500(1)", text)
-        self.assertNotIn("010", text)
-        self.assertLessEqual(len(text.encode("utf-8")), 90)
-        verify_mock.assert_called_once_with("test-safe", 120)
-
-    @override_settings(
-        DEV_ALERTS_SMS_ENABLED=True,
-        DEV_ALERTS_SMS_RECIPIENT=CONTROLLED_OPS_PHONE,
-    )
-    @patch(
-        "apps.core.management.commands.check_dev_alerts._verify_ops_sms_delivery",
-        return_value={"status": "ok", "sent_success": 1},
-    )
-    @patch(
-        "apps.core.management.commands.check_dev_alerts._send_ops_sms",
-        return_value={"status": "ok", "group_id": "external-safe"},
-    )
-    def test_external_signal_uses_fixed_privacy_safe_sms(
-        self,
-        send_mock,
-        verify_mock,
-    ):
-        output = StringIO()
+    def test_failed_slack_delivery_does_not_consume_incidents(self, post_mock):
+        self._backend_incident()
 
         call_command(
             "check_dev_alerts",
-            "--external-signal",
-            "api_user_impact",
-            "--wait-seconds",
-            "120",
-            stdout=output,
+            "--rule",
+            "user_incidents",
+            stdout=StringIO(),
         )
 
-        text = send_mock.call_args.args[0]
-        self.assertLessEqual(len(text.encode("utf-8")), 90)
-        self.assertIn("5xx 급증", text)
-        self.assertIn("정상 서버 0대", text)
-        self.assertNotIn("비정상 대상", text)
-        self.assertNotIn("tenant", text.lower())
-        verify_mock.assert_called_once_with("external-safe", 120)
-        receipt = OpsAuditLog.objects.get(action="alerts.external_signal_sms")
-        self.assertEqual(receipt.result, "success")
+        post_mock.assert_called_once()
+        self.assertFalse(
+            OpsAuditLog.objects.filter(action=SLACK_DELIVERY_ACTION).exists()
+        )
+        self.assertIsNotNone(rule_user_incidents())
+
+    @override_settings(DEV_ALERTS_WEBHOOK_URL="https://hooks.example.invalid/test")
+    @patch("apps.core.management.commands.check_dev_alerts._post_slack")
+    def test_dry_run_never_dispatches_or_consumes_incidents(self, post_mock):
+        self._backend_incident()
+
+        call_command(
+            "check_dev_alerts",
+            "--rule",
+            "user_incidents",
+            "--dry-run",
+            stdout=StringIO(),
+        )
+
+        post_mock.assert_not_called()
+        self.assertFalse(
+            OpsAuditLog.objects.filter(action=SLACK_DELIVERY_ACTION).exists()
+        )
+        self.assertIsNotNone(rule_user_incidents())
 
 
 class DevAlertsWorkflowContractTests(SimpleTestCase):
@@ -902,40 +356,29 @@ class DevAlertsWorkflowContractTests(SimpleTestCase):
             / "dev-alerts-cron.yml"
         ).read_text(encoding="utf-8")
 
-    def test_dry_run_preserves_default_user_incident_scope(self):
-        self.assertIn(
-            'EXTRA_ARGS="${EXTRA_ARGS:+$EXTRA_ARGS }--dry-run"',
-            self.workflow,
-        )
-        self.assertNotIn('EXTRA_ARGS="--dry-run"', self.workflow)
-        self.assertNotIn(
-            'DRY_RUN="${{ github.event.inputs.dry_run }}"',
-            self.workflow,
-        )
-        self.assertIn('DRY_RUN="${DRY_RUN_INPUT:-false}"', self.workflow)
-        self.assertIn(
-            'if [ "$INPUT_VALUE" != "true" ] && [ "$INPUT_VALUE" != "false" ]',
-            self.workflow,
-        )
+    def test_default_dispatch_evaluates_user_incidents_only(self):
+        self.assertIn('EXTRA_ARGS="--rule user_incidents"', self.workflow)
+        self.assertIn('SCHEDULE_EXPRESSION: ${{ github.event.schedule }}', self.workflow)
+        self.assertIn('"2 * * * *"', self.workflow)
+        self.assertIn('FULL_RULES_INPUT: ${{ github.event.inputs.full_rules }}', self.workflow)
 
-    def test_dry_run_and_test_sms_never_dispatch_platform_push(self):
-        self.assertIn(
-            'if [ "$DRY_RUN" = "true" ] || [ "$TEST_SMS" = "true" ]; then',
-            self.workflow,
-        )
+    def test_workflow_has_no_sms_or_external_signal_dispatch(self):
+        lowered = self.workflow.lower()
+        for forbidden in (
+            "test_sms",
+            "--test-sms",
+            "dev_alerts_sms",
+            "--external-signal",
+            "messagetype.sms",
+            "operator sms",
+        ):
+            self.assertNotIn(forbidden, lowered)
+
+    def test_dry_run_never_dispatches_platform_push(self):
+        self.assertIn('if [ "$DRY_RUN" = "true" ]; then', self.workflow)
         self.assertIn('PUSH_COMMAND=""', self.workflow)
         self.assertIn('CLEANUP_COMMAND=""', self.workflow)
         self.assertIn(
             "sh -c '${CLEANUP_COMMAND}${PUSH_COMMAND}python manage.py check_dev_alerts",
             self.workflow,
         )
-
-    def test_external_signal_claim_precedes_dispatch_and_delivery_marker(self):
-        claim = '--value "claimed:${EXTERNAL_SIGNAL_TOKEN}"'
-        dispatch = "COMMAND_ID=$(aws ssm send-command"
-        delivered = '--value "delivered:${EXTERNAL_SIGNAL_TOKEN}"'
-
-        self.assertIn('"claimed:$ALARM_UPDATED"', self.workflow)
-        self.assertIn('"delivered:$ALARM_UPDATED"', self.workflow)
-        self.assertLess(self.workflow.index(claim), self.workflow.index(dispatch))
-        self.assertLess(self.workflow.index(dispatch), self.workflow.index(delivered))

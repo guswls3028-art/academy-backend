@@ -62,7 +62,7 @@
 │  t4g.medium       │  │  t4g.small             │  │  t4g.medium            │
 │  ASG: min=1 max=3 │  │  ASG: min=1 max=3     │  │  ASG: min=0 max=5     │
 │  Gunicorn 4w      │  │  SQS long-poll         │  │  SQS long-poll         │
-│  gevent           │  │  SMS/LMS via Solapi    │  │  queue-woken           │
+│  gevent           │  │  Kakao via Solapi      │  │  queue-woken           │
 │  ❌ No ffmpeg     │  │                         │  │                        │
 │  ❌ No video      │  │                         │  │                        │
 │     daemon        │  │                         │  │                        │
@@ -101,7 +101,7 @@
 | Service | Owns | Must NOT do |
 |---------|------|-------------|
 | **API** | HTTP requests, presigned URLs, DB writes, health endpoints | ffmpeg, video daemon, any CPU-heavy batch work |
-| **Messaging Worker** | SQS → Solapi SMS/LMS, scheduled sends | Video encoding, AI tasks |
+| **Messaging Worker** | SQS → Solapi Kakao Alimtalk, scheduled sends | Video encoding, AI tasks |
 | **AI Worker** | OCR, Excel parsing, document analysis | Video encoding, messaging |
 | **Video Worker** | Video download, ffmpeg encode, R2 upload, HLS publish | API request handling |
 | **Video Batch** | Long videos (>= 90 min) via AWS Batch | Short video processing |
@@ -641,8 +641,8 @@ New deployment has a bug. Should I roll back?
 
 ### 10.1 Problem
 
-Message sending (SQS → Solapi SMS/LMS) had no durable dedup mechanism. Redis-based dedup was **fail-open**: if Redis was unavailable, messages sent without dedup checks. **[COMPLETED — fixed to fail-closed with DB dedup fallback, see code changes in libs/redis/idempotency.py and sqs_main.py]**. Previously this caused:
-- Duplicate SMS delivery to students
+Message sending (SQS → Solapi) had no durable dedup mechanism. Redis-based dedup was **fail-open**: if Redis was unavailable, messages sent without dedup checks. **[COMPLETED — fixed to fail-closed with DB dedup fallback, see code changes in libs/redis/idempotency.py and sqs_main.py]**. Previously this caused:
+- Duplicate message delivery to students
 - Double billing from Solapi
 - User trust erosion
 

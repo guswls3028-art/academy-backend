@@ -210,7 +210,6 @@ function Set-IsolatedDevelopmentValues {
         BILLING_KEY_ENCRYPTION_WRITE_ENABLED = "false"
         BILLING_KEY_ENCRYPTION_PRIMARY_KEY = ""
         BILLING_KEY_ENCRYPTION_FALLBACK_KEYS = ""
-        DEV_ALERTS_SMS_ENABLED = "false"
         SENTRY_ENVIRONMENT = "development"
     }
     foreach ($entry in $values.GetEnumerator()) {
