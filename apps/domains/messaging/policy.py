@@ -248,19 +248,42 @@ def get_messaging_test_whitelist() -> frozenset[str]:
     return frozenset(n.replace("-", "").strip() for n in raw.split(",") if n.strip())
 
 
+def get_messaging_recipient_denylist() -> frozenset[str]:
+    """Return normalized recipients that must never reach a provider call."""
+    import os
+
+    raw = os.environ.get("MESSAGING_RECIPIENT_DENYLIST", "").strip()
+    if not raw:
+        return frozenset()
+    return frozenset(
+        n.replace("-", "").strip()
+        for n in raw.split(",")
+        if n.replace("-", "").strip()
+    )
+
+
 def check_recipient_allowed(to: str) -> bool:
     """
     수신 번호가 발송 허용 대상인지 확인.
+    운영 차단목록은 테스트 whitelist보다 먼저 적용한다.
     테스트 모드(MESSAGING_TEST_WHITELIST 설정됨)에서는 whitelist에 있는 번호만 허용.
     운영 모드(미설정)에서는 모든 번호 허용.
 
     Returns:
         True if allowed, False if blocked
     """
+    normalized = (to or "").replace("-", "").strip()
+    denylist = get_messaging_recipient_denylist()
+    if normalized in denylist:
+        logger.warning(
+            "recipient_guard: blocked sending to %s (operational denylist)",
+            normalized[:4] + "****",
+        )
+        return False
+
     whitelist = get_messaging_test_whitelist()
     if not whitelist:
         return True  # 운영 모드: 모든 번호 허용
-    normalized = (to or "").replace("-", "").strip()
     if normalized in whitelist:
         return True
     logger.warning(
