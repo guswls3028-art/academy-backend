@@ -6,8 +6,10 @@ from django.test import TestCase
 
 from apps.core.models import Tenant
 from apps.domains.enrollment.services.lifecycle import bulk_create_enrollments
-from apps.domains.students.models import Student
-from apps.domains.students.services.creation import create_student_account
+from apps.domains.students.test_support import (
+    create_student_account_fixture,
+    create_student_fixture,
+)
 
 Lecture = apps.get_model("lectures", "Lecture")
 
@@ -19,7 +21,7 @@ class EnrollmentNotificationOccurrenceTests(TestCase):
             name="Enrollment Occurrence",
             is_active=True,
         )
-        self.student = create_student_account(
+        self.student = create_student_account_fixture(
             tenant=self.tenant,
             password="first-password",
             student_data={
@@ -30,7 +32,7 @@ class EnrollmentNotificationOccurrenceTests(TestCase):
                 "parent_phone": "01012345678",
                 "school_type": "HIGH",
             },
-        ).student
+        )
         self.first_lecture = Lecture.objects.create(
             tenant=self.tenant,
             title="첫 강의",
@@ -153,7 +155,7 @@ class EnrollmentNotificationOccurrenceTests(TestCase):
             password="test1234",
             tenant=self.tenant,
         )
-        legacy_student = Student.objects.create(
+        legacy_student = create_student_fixture(
             tenant=self.tenant,
             user=legacy_user,
             ps_number="LEGACY001",
