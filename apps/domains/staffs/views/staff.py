@@ -7,7 +7,19 @@ from django.db.models import Count
 from django.utils import timezone
 
 from django_filters.rest_framework import DjangoFilterBackend
-from drf_spectacular.utils import extend_schema
+try:
+    from drf_spectacular.utils import extend_schema
+except ModuleNotFoundError as exc:
+    if exc.name != "drf_spectacular":
+        raise
+
+    def extend_schema(*args, **kwargs):  # type: ignore[no-redef]
+        """Keep runtime views importable when schema-only tooling is absent."""
+
+        def decorator(view):
+            return view
+
+        return decorator
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.filters import SearchFilter, OrderingFilter
