@@ -109,7 +109,9 @@ class StudentIdentityConvergenceTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         student.refresh_from_db()
+        student.user.refresh_from_db()
         self.assertIsNone(student.phone)
+        self.assertIsNone(student.user.phone)
         self.assertTrue(student.uses_identifier)
         self.assertEqual(student.omr_code, "99998888")
 
