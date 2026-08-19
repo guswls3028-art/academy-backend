@@ -579,7 +579,7 @@ python manage.py diagnose_messaging_incident `
 - `--tenant-id`는 필수이며 `--recipient`와 `--origin-id`는 함께 또는 각각 사용할 수 있다. `--provider`는 exact `--recipient`가 있을 때만 허용한다.
 - JSON은 outbox/log status·trigger·origin type, business-key 연결 누락 건수, provider ATA/statusCode/disableSms 집계만 반환한다. 전화번호, message body, 계정 값, target name, provider message/group ID, 입력 origin ID는 출력하지 않는다.
 - provider 조회는 read-only다. `sent` outbox는 SQS 접수, `NotificationLog.status=sent`는 provider 접수 성공이므로 최종 공급자 상태는 `--provider` 집계를 함께 본다. `sending`/`ambiguous`는 자동 재발송하지 않는다.
-- provider 조회는 Solapi SDK가 지원하는 KST 달력 날짜 문자열로 범위를 전달한다. 진단 실행 중 `httpx`/`httpcore`/`solapi` 요청 로그는 exact recipient가 URL에 노출되지 않도록 일시 억제하고, 완료 후 logger 상태를 복구한다. JSON의 `provider.window`에는 실제 조회한 KST 시작일·종료일만 남긴다.
+- provider 조회는 Solapi SDK가 지원하는 KST 달력 날짜 문자열로 범위를 전달하고, 목록 API의 최대 page size인 500건씩 최대 10 page를 읽는다. 진단 실행 중 `httpx`/`httpcore`/`solapi` 요청 로그는 exact recipient가 URL에 노출되지 않도록 일시 억제하고, 완료 후 logger 상태를 복구한다. JSON의 `provider.window`에는 실제 조회한 KST 시작일·종료일만 남긴다.
 
 ### 금지 패턴
 

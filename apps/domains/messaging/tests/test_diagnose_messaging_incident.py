@@ -117,6 +117,7 @@ class DiagnoseMessagingIncidentCommandTests(TestCase):
         )
         self.assertNotIn(" ", request.start_date)
         self.assertNotIn(" ", request.end_date)
+        self.assertEqual(request.limit, 500)
         self.assertEqual(
             report["provider"]["window"]["timezone"],
             "Asia/Seoul",

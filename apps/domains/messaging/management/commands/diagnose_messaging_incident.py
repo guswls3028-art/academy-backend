@@ -77,7 +77,9 @@ def _provider_snapshot(*, recipient: str, since, until) -> dict:
                     date_type="CREATED",
                     start_date=start_date,
                     end_date=end_date,
-                    limit=1000,
+                    # Solapi rejects list requests above 500. Keep the
+                    # diagnostic paginated at the provider's documented cap.
+                    limit=500,
                     start_key=start_key,
                 )
             )
