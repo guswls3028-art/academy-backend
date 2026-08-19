@@ -74,6 +74,8 @@ Required invariants:
 - internal username mirrors `ps_number` through `user_internal_username(tenant, ps_number)`.
 - student phone is optional; parent phone is required on creation/import/signup.
 - phone fields are normalized to numeric `010XXXXXXXX` 11-digit strings.
+- `User.phone` mirrors `Student.phone`; profile changes update or clear both so
+  account and notification paths cannot retain a stale student recipient.
 - malformed student phone is rejected. Do not silently convert it to identifier mode.
 - if student phone exists, `omr_code` is the last 8 digits of student phone.
 - if student phone is absent, `omr_code` is the last 8 digits of parent phone.
