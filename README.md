@@ -24,7 +24,7 @@ Cloudflare R2 · AWS SQS · AWS Batch (video) · Docker (linux/arm64)
 
 - **Video** (AWS Batch only; EC2 daemon/SQS path retired 2026-05-10)
 - **Messaging** (SQS + EC2 t4g.small 상시)
-- **AI** (SQS + EC2 ASG, scale-to-zero)
-- **Tools** (SQS + EC2 ASG, scale-to-zero)
+- **AI** (SQS + EC2 ASG, one warm worker + burst scale-out)
+- **Tools** (SQS + EC2 ASG, one warm worker + burst scale-out)
 
 상세: [docs/architecture/설계.md](docs/architecture/설계.md)

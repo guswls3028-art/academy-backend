@@ -20,6 +20,9 @@ DEPLOY = REPO_ROOT / "scripts" / "v1" / "deploy.ps1"
 DEPLOY_AND_VERIFY = REPO_ROOT / "scripts" / "v1" / "deploy-api-and-verify-workers.ps1"
 RUN_DEPLOY_VERIFICATION = REPO_ROOT / "scripts" / "v1" / "run-deploy-verification.ps1"
 PIN_ASG_IMAGE = REPO_ROOT / "scripts" / "v1" / "pin-asg-image.ps1"
+CONVERGE_WORKER_BASELINE = (
+    REPO_ROOT / "scripts" / "v1" / "converge-worker-warm-baseline.ps1"
+)
 DIFF = REPO_ROOT / "scripts" / "v1" / "core" / "diff.ps1"
 SYNC_ENV = REPO_ROOT / "scripts" / "v1" / "core" / "sync_env.ps1"
 WORKER_USERDATA = REPO_ROOT / "scripts" / "v1" / "resources" / "worker_userdata.ps1"
@@ -91,6 +94,50 @@ def test_cloudflare_mutation_scripts_require_explicit_should_process() -> None:
         assert "SupportsShouldProcess = $true" in source
         assert "ConfirmImpact = 'High'" in source
         assert "$PSCmdlet.ShouldProcess" in source
+
+
+def test_worker_release_converges_warm_baseline_before_digest_refresh() -> None:
+    workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    converge = CONVERGE_WORKER_BASELINE.read_text(encoding="utf-8-sig")
+
+    ai = workflow.split("\n  deploy-ai:\n", maxsplit=1)[1].split(
+        "\n  deploy-tools:\n", maxsplit=1
+    )[0]
+    tools = workflow.split("\n  deploy-tools:\n", maxsplit=1)[1].split(
+        "\n  deploy-video:\n", maxsplit=1
+    )[0]
+
+    assert "converge-worker-warm-baseline.ps1 -Service ai -Ci" in ai
+    assert "converge-worker-warm-baseline.ps1 -Service tools -Ci" in tools
+    assert ai.index("converge-worker-warm-baseline.ps1") < ai.index(
+        "Pin AI Launch Template"
+    )
+    assert tools.index("converge-worker-warm-baseline.ps1") < tools.index(
+        "Pin Tools Launch Template"
+    )
+    for block in (ai, tools):
+        assert '\"MinHealthyPercentage\":100' in block
+        assert '\"MaxHealthyPercentage\":200' in block
+        assert "skip_refresh" not in block
+        assert "desired=0" not in block
+    for token in (
+        "Assert-AwsMutationIdentity",
+        "Load-SSOT -Env prod",
+        '"--min-size", [string]$expectedMin',
+        '"--desired-capacity", [string]$targetDesired',
+        "expectedMin -lt 1",
+        "healthyCount -ge $expectedMin",
+        "WORKER_WARM_BASELINE_READY",
+    ):
+        assert token in converge
+
+    verify = workflow.split("\n  verify-deployment:\n", maxsplit=1)[1].split(
+        "\n  release-production-lock:\n", maxsplit=1
+    )[0]
+    assert "warm baseline drift" in verify
+    assert "warm runtime desired capacity is invalid" in verify
+    assert "no instances (desired=0" not in verify
+    assert "no running digest to inspect" not in verify
 
 
 def test_api_user_impact_alarm_requires_zero_healthy_targets() -> None:

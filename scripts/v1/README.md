@@ -89,9 +89,14 @@ pwsh scripts/v1/disable-legacy-deploy-crons.ps1 -Action Off -AwsProfile default
   정확히 1대로 확인한 뒤 localhost:18000 SSM tunnel만 연다. public
   listener/ALB는 만들지 않는다.
 - **Tools development warm path**: Excel/PPT는 AI queue가 아니라 Tools queue로
-  라우팅한다. 운영 Tools ASG는 `t4g.small` min/desired=0 scale-to-zero를
-  유지하고, persistent development host만 별도 Tools container/process를
-  함께 실행해 Excel/PPT/R2 실사용 smoke를 검증한다.
+  라우팅한다. 운영 Tools ASG도 `t4g.small` min/desired=1 warm baseline을
+  유지하고, persistent development host는 운영과 격리된 별도 Tools
+  container/process로 Excel/PPT/R2 실사용 smoke를 검증한다.
+- **AI/Tools production warm path**: release는
+  `converge-worker-warm-baseline.ps1`로 기존 안정 digest의 healthy worker를
+  최소 1대 확보한 뒤 새 digest를 pin한다. refresh는
+  MinHealthy=100/MaxHealthy=200으로 launch-before-terminate하며, burst 중인
+  desired는 baseline으로 강제 축소하지 않는다.
 - **ECR 이미지**: 6개 repo는 `IMMUTABLE_WITH_EXCLUSION`, 단 하나의 `latest` wildcard exclusion, `scanOnPush=true`를 exact readback한다. CI는 신규·재사용 build digest의 scan 완료와 승인되지 않은 critical=0을 요구한다. 예외는 `docs/ssot/ecr-critical-risk-acceptance.json`의 exact·expiring 항목만 허용하고, preprod·운영 검증 성공 후에만 여섯 digest를 `latest`로 승격한다.
 - **런타임 불변성**: migration과 API/Messaging/AI/Tools Launch Template, Video Batch 8개 job definition은 모두 해당 빌드 tag를 `repo@sha256:...`로 해석해 사용한다. `latest`는 호환성 alias일 뿐 증거가 아니다.
 - **격리 DB 경계**: `converge-api-preprod-database.ps1`이

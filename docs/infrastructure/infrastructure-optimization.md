@@ -60,9 +60,9 @@
 ┌────────▼─────────┐  ┌─────────────▼──────────┐  ┌─────────────▼──────────┐
 │  API Server       │  │  Messaging Worker      │  │  AI Worker             │
 │  t4g.medium       │  │  t4g.small             │  │  t4g.medium            │
-│  ASG: min=1 max=3 │  │  ASG: min=1 max=3     │  │  ASG: min=0 max=5     │
+│  ASG: min=1 max=3 │  │  ASG: min=1 max=3     │  │  ASG: min=1 max=5     │
 │  Gunicorn 4w      │  │  SQS long-poll         │  │  SQS long-poll         │
-│  gevent           │  │  Kakao via Solapi      │  │  queue-woken           │
+│  gevent           │  │  Kakao via Solapi      │  │  1 warm + burst        │
 │  ❌ No ffmpeg     │  │                         │  │                        │
 │  ❌ No video      │  │                         │  │                        │
 │     daemon        │  │                         │  │                        │
@@ -391,28 +391,28 @@ done
 |---------|-----------------|-----------------|--------|-------|
 | **ECR Storage** | **$213** | **~$5** | **-98%** | 5.2TB → <50GB after cleanup (검증 완료 2026-03-17) |
 | **VPC** | $82 | ~$20 | -76% | Interface endpoints removed, self-resolving |
-| **EC2 Compute** | $87 | API 1대 + Messaging 1대 baseline + worker burst runtime | Variable | API는 평시 1대 + target tracking. Messaging은 계정복구/알림톡 즉시성을 위해 평시 1대. AI/Tools는 SSOT상 idle min/desired=0/0이며 SQS 알람으로 scale-out |
+| **EC2 Compute** | $87 | API + Messaging + AI + Tools 각 1대 baseline, backlog 시 worker burst | Stability floor increased | 사용자 대기 경로의 콜드스타트를 없애기 위해 4개 런타임을 warm 유지하고, SQS backlog에서만 추가 확장 |
 | **RDS** | $136.44 MTD (2026-06-01..25) | ~$73/mo instance compute floor + storage/backup | -$73/mo projected compute | SSOT downsize to db.t4g.medium, applied |
 | **ElastiCache** | $38 | $38 | 0% | Keep cache.t4g.small |
 | **EC2-Other** | $44 | $35 | -20% | IPv4 reduction where possible |
 | **ALB** | $10 | $10 | 0% | Required |
 | **Tax** | $61 | ~$25 | Proportional | |
-| **Total** | **~$606** | **~$260 미만 + Messaging baseline + worker burst runtime** | **~57% + variable** | API 1대 baseline + Messaging 1대 baseline + AI/Tools idle min/desired=0/0 반영 |
+| **Total** | **~$606** | **managed-service floor + 4 warm EC2 + worker burst** | **usage dependent** | 과거 scale-to-zero 추정치는 더 이상 현재 정책이 아니다. 실제 비용은 다음 완전한 Cost Explorer 기간으로 검증 |
 
-**Cost floor (theoretical minimum):** API 1대 baseline + Messaging 1대 baseline + managed services + AI/Tools worker burst runtime. Messaging은 계정복구/알림톡 즉시성을 위해 warm baseline을 유지한다. AI/Tools workers는 상시 RI 대상이 아니며, idle baseline은 `docs/ssot/params.yaml`의 min/desired=0/0을 따른다. Requires 1yr no-upfront RIs. Only commit after 3 months of stable usage.
+**Cost floor (current reliability policy):** API, Messaging, AI, Tools 각 1대 + managed services. AI/Tools의 추가 상시 비용은 학생 Excel 분석과 문서 변환 첫 요청이 꺼진 인스턴스를 기다리거나 실패하던 운영 비용을 제거하기 위한 선택이다. RI 여부는 warm baseline 적용 후 3개월의 실제 사용률과 Cost Explorer 데이터를 보고 결정한다.
 
-### 5.1.1 Worker Scale-To-Zero Policy
+### 5.1.1 Worker Warm-Baseline Policy
 
 | Worker | Current SSOT | Savings | Justification |
 |--------|--------------|---------|---------------|
 | **Messaging** | t4g.small min/desired=1/1 max=3 | ~$15.18/mo projected compute reduction vs t4g.medium | 90-day CPU avg 0.50%, peak 57.41%; live container ~80 MiB and host available memory 84.3%. Account recovery and Alimtalk delivery stay warm. |
-| **AI** | t4g.medium min/desired=0/0 max=5 | Idle baseline removed | SQS CloudWatch alarms and API wake-up start work; worker-owned live SQS depth check scales back to 0. |
-| **Tools** | t4g.small min/desired=0/0 max=2 | Idle baseline removed | Deterministic conversion jobs can wait for queue-woken cold start; scale-in uses visible+in-flight+delayed backlog. |
+| **AI** | t4g.medium min/desired=1/1 max=5 | One-instance reliability floor | 학생 Excel/문제 생성 첫 요청을 즉시 처리하고, worker-owned live SQS depth 확인 후 burst 용량만 1대로 축소한다. |
+| **Tools** | t4g.small min/desired=1/1 max=2 | One-instance reliability floor | Excel/PPT/PDF 변환 첫 요청의 cold start를 제거하며, SQS backlog에서만 2대까지 확장한다. |
 | **API** | t4g.medium min/desired=1/1 max=3 | One always-on instance retained | Target tracking adds capacity during bursts; CI preserves desired capacity and Instance Refresh launches the replacement first. |
 
 **Worker Capacity Policy (SSOT):**
 
-Messaging idle capacity is min/desired=1/1 because account recovery and Alimtalk delivery are user-facing wait paths. AI/Tools idle capacity is min/desired=0/0. Jobs enter SQS, CloudWatch alarms scale worker ASGs out on visible messages, and scale-in returns Messaging to 1 and AI/Tools to 0 after idle time. This matches `docs/ssot/params.yaml` and `docs/infrastructure/deployment-architecture.md`; CI deploy logs may still warn for AI/Tools when they have no current instances without indicating a failed deploy.
+Messaging, AI, and Tools idle capacity is min/desired=1/1 because account recovery, student import/AI, and document conversion are user-facing wait paths. Jobs enter SQS, CloudWatch alarms add burst capacity on visible messages, and idle scale-in returns each worker to its one-instance baseline. Release CI first converges the stable baseline, then pins the candidate digest and refreshes with `MinHealthyPercentage=100`, `MaxHealthyPercentage=200`.
 
 ### 5.1.2 Reserved Instance Recommendation [PROPOSED]
 
@@ -422,7 +422,7 @@ Messaging idle capacity is min/desired=1/1 because account recovery and Alimtalk
 | RDS db.t4g.medium | 1yr no-upfront | $0.102/hr on-demand | $0.0792/hr | consider only after 3 months stable on medium |
 | **Total RI savings** | | | | **API known + RDS TBD after 3 months** |
 
-**Note:** Only commit to RIs after 3 months of stable usage patterns. Messaging has a 1-instance stability baseline; do not reserve AI/Tools worker capacity while their SSOT idle baseline remains min/desired=0/0.
+**Note:** Only commit to RIs after 3 months of stable warm-baseline usage. AI/Tools now have a one-instance reliability floor, but that policy change alone is not sufficient evidence for a reservation purchase.
 
 ### 5.2 What NOT to Cut
 
@@ -431,8 +431,8 @@ Messaging idle capacity is min/desired=1/1 because account recovery and Alimtalk
 | API t4g.medium | Gunicorn 4w + gevent needs headroom; downsizing risks latency spikes |
 | RDS db.t4g.medium | Current SSOT target after downsize; keep until connection, memory, and slow-query data proves another move safe |
 | Redis cache.t4g.small | Video progress + session cache; t4g.micro has only 0.5GB |
-| API/Messaging baseline | API stays warm for request latency; Messaging stays warm for account-recovery/Alimtalk latency; AI/Tools are intentionally queue-woken from min/desired=0/0. |
-| MinHealthyPercentage: API=100%, Workers=0% | Zero-downtime via ASG-native launch-before-terminate (API) and SQS buffering (workers) |
+| API/Messaging/AI/Tools baseline | All four user-facing runtimes keep one warm instance; worker queues still own burst scale-out. |
+| ASG refresh 100%/200% | Launch-before-terminate keeps each one-instance warm baseline available while a candidate is replaced. |
 
 **Measured right-size (2026-07-25):** Messaging moved from `t4g.medium` to `t4g.small`. API stayed `t4g.medium` after a 99.87% CPU burst; RDS/Redis stayed at current classes because their 30-day memory/credit lows did not prove another safe reduction. Evidence: `docs/reports/cost-waste-audit.latest.md`.
 
@@ -571,7 +571,7 @@ No additional drain work needed.
 | 7 | AWS Budget alerts | Cost guardrail ($300/$340/$380) | 15 min | ✅ [COMPLETED] academy-monthly-infra created |
 | 8 | ~~Single 720p encoding switch~~ | SUPERSEDED by 2-tier ABR (§3.1). Not applicable. | — | SUPERSEDED |
 | 9 | DAEMON_MAX_DURATION_SECONDS → 5400 | Daemon handles up to 90min videos | 10 min | ✅ [APPLIED 2026-03-17] base.py, daemon_main.py, video_encoding.py |
-| 10 | AI worker min/desired=0/0 | Idle baseline reduction; SQS wakes worker on demand | Completed | ✅ [CURRENT SSOT] `docs/ssot/params.yaml` |
+| 10 | AI/Tools worker min/desired=1/1 | Remove user-facing cold start; retain SQS burst scaling | Completed | ✅ [CURRENT SSOT] `docs/ssot/params.yaml` |
 | 11 | Messaging worker → t4g.small | $15.18/mo projected compute savings | 30 min | ✅ [APPLIED 2026-07-25] 30/90-day CloudWatch + live SSM memory evidence |
 | 12 | Video worker ASG separation [PROPOSED] | API stability + encoding throughput | Half day | Pending (infra creation) |
 | 13 | Tablet QA for 720p text | RESOLVED — 2-tier ABR retains original resolution in v2 variant (§3.2). | — | RESOLVED |

@@ -29,18 +29,18 @@ CI는 **이미지 빌드 → 푸시 → ASG refresh**만 한다. 인프라 변�
 
 ---
 
-## 3. API 비용 기준선 및 워커 큐 기반 축소 위반 금지
+## 3. API/worker warm baseline 위반 금지
 
-API ASG는 비용 기준선으로 `MinSize=1`, `DesiredCapacity=1`, `MaxSize=3`을 유지한다. 배포는 `MinHealthyPercentage=100`, `MaxHealthyPercentage=200`의 ASG Instance Refresh가 후보를 먼저 기동하게 하며 CI가 `min`/`desired`를 선증설하지 않는다. 이미 부하로 `desired == max`인 경우에만 `max`를 교체 슬롯 한 개만큼 잠시 높이고 성공·실패/보상 뒤 원래 ceiling을 readback한다. Messaging worker는 계정복구/알림톡 즉시성을 위해 `MinSize=1`, `DesiredCapacity>=1`, `MaxSize=3` warm baseline을 유지한다. AI/Tools 워커는 SQS alarm 기반 scale-to-zero가 SSOT이므로 임의로 상시 1대 기준으로 되돌리지 않는다.
+API ASG는 `MinSize=1`, `DesiredCapacity=1`, `MaxSize=3`을 유지한다. 배포는 `MinHealthyPercentage=100`, `MaxHealthyPercentage=200`의 ASG Instance Refresh가 후보를 먼저 기동하게 하며 CI가 `min`/`desired`를 선증설하지 않는다. 이미 부하로 `desired == max`인 경우에만 `max`를 교체 슬롯 한 개만큼 잠시 높이고 성공·실패/보상 뒤 원래 ceiling을 readback한다. Messaging, AI, Tools worker도 사용자-facing 작업의 콜드스타트를 막기 위해 각각 `MinSize=1`, `DesiredCapacity>=1` warm baseline을 유지한다. SQS scaling은 baseline 위 burst만 소유한다.
 
 ```
 academy-v1-api-asg              → min=1 desired=1 max=3
 academy-v1-messaging-worker-asg → min=1 desired>=1 max=3, queue alarm scale-out
-academy-v1-ai-worker-asg        → min = 0, queue/API wake-up scale-out
-academy-v1-tools-worker-asg     → min = 0, queue alarm scale-out
+academy-v1-ai-worker-asg        → min=1 desired>=1 max=5, queue/API burst scale-out
+academy-v1-tools-worker-asg     → min=1 desired>=1 max=2, queue burst scale-out
 ```
 
-API min=0은 사용자 요청 중단을 만들 수 있다. API를 배포 편의를 위해 `desired=2`로 선증설하거나 상시 2대 기준으로 되돌리는 것도 금지한다. Messaging은 사용자-facing 발송 지연을 줄이기 위해 1대 baseline을 유지한다. AI/Tools 워커는 SQS가 버퍼 역할을 하므로 scale-to-zero 정책을 깨지 않는 것이 비용·운영 SSOT다.
+API/worker min=0은 첫 요청 지연과 장애 복구 공백을 만들 수 있다. API를 배포 편의를 위해 `desired=2`로 상시 선증설하는 것도 금지한다. AI/Tools 배포는 기존 안정 worker가 healthy인 상태에서 MinHealthy=100/MaxHealthy=200으로 교체하고, 유휴 scale-in은 desired=1 아래로 내리지 않는다.
 
 ---
 
