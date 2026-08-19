@@ -35,7 +35,7 @@
   - zone 생성, NS 1·2차 발급·전달
   - 증거:
 - [ ] **G3 코드·브랜딩 준비**
-  - backend host/CORS/CSRF
+  - backend host/API CORS/CSRF와 영상 R2 CORS
   - frontend registry, 로그인, 공용 헤더, 학생앱, 성적표, OG/PWA, 정적 에셋
   - typecheck·lint·build와 1366/390, 역할·라이트/다크 시각 검증
   - 증거:
@@ -43,6 +43,8 @@
   - 1.1.1.1·8.8.8.8에서 발급 NS 확인
   - backend 상시 development·임시 preproduction·무중단 운영 배포 통과
   - frontend quality gate 통과
+  - 신규 apex/`www` Origin의 R2 PUT 200, `Access-Control-Allow-Origin`,
+    `ETag` 노출과 임시 multipart 잔여 0 확인
   - 증거:
 - [ ] **G5 운영 DB·구독**
   - `provision_tenant` dry-run과 실제 적용
