@@ -10,6 +10,7 @@ from apps.core.models import Tenant
 from apps.domains.enrollment.services import lecture_enroll_from_excel_rows
 from apps.domains.lectures.models import Lecture
 from apps.domains.students.models import Student
+from apps.domains.students.services.account_notice import _decrypt
 from apps.domains.students.services import (
     import_students_from_rows,
 )
@@ -24,7 +25,7 @@ class StudentExcelImportPasswordModeTests(TestCase):
         )
 
     @patch("apps.domains.messaging.services.send_welcome_messages")
-    def test_phone_last4_sets_each_created_student_password_and_notice(self, send_mock):
+    def test_phone_last4_stages_each_created_student_password_until_enrollment(self, send_mock):
         result = import_students_from_rows(
             tenant_id=self.tenant.id,
             students_data=[
@@ -56,9 +57,14 @@ class StudentExcelImportPasswordModeTests(TestCase):
         self.assertTrue(second.user.check_password("5678"))
         self.assertTrue(first.user.must_change_password)
         self.assertTrue(second.user.must_change_password)
+        send_mock.assert_not_called()
         self.assertEqual(
-            send_mock.call_args.kwargs["student_password_by_id"],
-            {first.id: "1234", second.id: "5678"},
+            _decrypt(first.pending_account_notice_student_password_ciphertext),
+            "1234",
+        )
+        self.assertEqual(
+            _decrypt(second.pending_account_notice_student_password_ciphertext),
+            "5678",
         )
         self.assertNotIn("credentials", result)
 
@@ -128,12 +134,17 @@ class StudentExcelImportPasswordModeTests(TestCase):
                 "password": "0042",
             }],
         )
+        send_mock.assert_not_called()
         self.assertEqual(
-            send_mock.call_args.kwargs["student_password_by_id"],
-            {student.id: "0042"},
+            _decrypt(student.pending_account_notice_student_password_ciphertext),
+            "0042",
         )
 
-    def test_lecture_excel_import_uses_phone_last4_policy(self):
+    @patch(
+        "apps.support.students.account_notice_dependencies.send_welcome_messages",
+        return_value={"status": "enqueued", "enqueued": 2},
+    )
+    def test_lecture_excel_import_sends_notice_after_enrollment(self, send_welcome):
         lecture = Lecture.objects.create(
             tenant=self.tenant,
             title="비밀번호 방식 강의",
@@ -141,24 +152,27 @@ class StudentExcelImportPasswordModeTests(TestCase):
             subject="MATH",
         )
 
-        result = lecture_enroll_from_excel_rows(
-            tenant_id=self.tenant.id,
-            lecture_id=lecture.id,
-            students_data=[
-                {
-                    "name": "강의등록학생",
-                    "parent_phone": "01070005555",
-                    "phone": "01090008765",
-                    "school_type": "HIGH",
-                    "grade": 1,
-                    "uses_identifier": False,
-                }
-            ],
-            initial_password="",
-            password_mode="phone_last4",
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            result = lecture_enroll_from_excel_rows(
+                tenant_id=self.tenant.id,
+                lecture_id=lecture.id,
+                students_data=[
+                    {
+                        "name": "강의등록학생",
+                        "parent_phone": "01070005555",
+                        "phone": "01090008765",
+                        "school_type": "HIGH",
+                        "grade": 1,
+                        "uses_identifier": False,
+                    }
+                ],
+                initial_password="",
+                password_mode="phone_last4",
+            )
 
         student = Student.objects.get(tenant=self.tenant, name="강의등록학생")
         self.assertTrue(student.user.check_password("8765"))
         self.assertEqual(result["created_students_count"], 1)
         self.assertEqual(result["enrolled_count"], 1)
+        send_welcome.assert_called_once()
+        self.assertEqual(send_welcome.call_args.kwargs["student_password"], "8765")

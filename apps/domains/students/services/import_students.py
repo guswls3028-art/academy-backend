@@ -36,7 +36,6 @@ from .identity import (
 from .import_passwords import StudentImportPasswordError, build_student_import_password_policy
 from .lifecycle import permanently_delete_students, restore_student
 from .school import get_valid_school_types, is_valid_grade, normalize_school_from_name
-from apps.support.students.import_dependencies import get_tenant_site_url, send_welcome_messages
 
 logger = logging.getLogger(__name__)
 
@@ -342,7 +341,6 @@ def resolve_student_import_row(
             must_change_password=True,
         )
 
-    created.student._parent_password_for_notice = created.parent_password_for_notice
     return StudentImportRowResolution(
         student=created.student,
         created=True,
@@ -384,12 +382,10 @@ def import_students_from_rows(
         initial_password=initial_password,
     )
     created_students: list[Any] = []
-    student_password_by_id: dict[int, str] = {}
     random_credentials: list[dict[str, str]] = []
     failed: list[dict[str, Any]] = []
     duplicates: list[dict[str, Any]] = []
     restored: list[dict[str, Any]] = []
-    parent_password_by_phone: dict[str, str] = {}
     total = len(students_data)
     skipped_empty = 0
     valid_school_types = student_import_valid_school_types(tenant)
@@ -447,18 +443,12 @@ def import_students_from_rows(
 
         if resolved.created:
             created_students.append(resolved.student)
-            student_password_by_id[resolved.student.id] = row_password
             if password_policy.mode == "random":
                 random_credentials.append({
                     "name": resolved.student.name or display_name,
                     "login_id": resolved.student.ps_number or "",
                     "password": row_password,
                 })
-            if resolved.parent_phone:
-                parent_password_by_phone[resolved.parent_phone] = (
-                    resolved.parent_password_for_notice
-                    or getattr(resolved.student, "_parent_password_for_notice", "변경되지 않음")
-                )
         elif resolved.restored:
             restored.append({
                 "row": display_row,
@@ -471,18 +461,6 @@ def import_students_from_rows(
                 "name": display_name,
                 "student_id": resolved.student.id,
             })
-
-    if created_students:
-        try:
-            send_welcome_messages(
-                created_students=created_students,
-                student_password=password_policy.fixed_password,
-                student_password_by_id=student_password_by_id,
-                parent_password_by_phone=parent_password_by_phone,
-                site_url=get_tenant_site_url(tenant),
-            )
-        except Exception:
-            logger.exception("student_import: send_welcome_messages failed (non-fatal)")
 
     if not created_students and not failed and not duplicates and not restored and total > 0:
         logger.error(
@@ -535,8 +513,6 @@ def resolve_student_import_conflicts(
     created_count = 0
     restored_count = 0
     failed: list[dict[str, Any]] = []
-    created_students: list[Any] = []
-    parent_password_by_phone: dict[str, str] = {}
     valid_school_types = student_import_valid_school_types(tenant)
     custom_field_definitions = active_custom_field_definitions(tenant)
 
@@ -623,12 +599,6 @@ def resolve_student_import_conflicts(
                 )
             if resolved.created:
                 created_count += 1
-                created_students.append(resolved.student)
-                if resolved.parent_phone:
-                    parent_password_by_phone[resolved.parent_phone] = (
-                        resolved.parent_password_for_notice
-                        or getattr(resolved.student, "_parent_password_for_notice", "변경되지 않음")
-                    )
             elif resolved.restored:
                 restored_count += 1
             elif resolved.duplicate:
@@ -659,17 +629,6 @@ def resolve_student_import_conflicts(
                 "error": str(exc)[:500],
                 "conflict_student_id": None,
             })
-
-    if created_students:
-        try:
-            send_welcome_messages(
-                created_students=created_students,
-                student_password=initial_password,
-                parent_password_by_phone=parent_password_by_phone,
-                site_url=get_tenant_site_url(tenant),
-            )
-        except Exception:
-            logger.exception("student_import_conflicts: send_welcome_messages failed (non-fatal)")
 
     return {
         "created": created_count,

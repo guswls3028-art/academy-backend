@@ -10,6 +10,8 @@ from academy.adapters.db.django import repositories_students as student_repo
 from apps.core.models import TenantMembership
 from apps.support.students.lifecycle_dependencies import ensure_parent_account_for_student
 
+from .account_notice import stage_pending_account_notice
+
 
 @dataclass(frozen=True)
 class StudentAccountCreationResult:
@@ -34,12 +36,13 @@ def create_student_account(
     password: str | None = None,
     password_hash: str | None = None,
     must_change_password: bool = False,
+    account_notice_student_password: str | None = None,
 ) -> StudentAccountCreationResult:
     """
     Create the canonical student account graph for one tenant.
 
-    Owns only the durable graph:
-    Parent ensure -> User -> Student -> TenantMembership(student).
+    Owns the durable graph and encrypted first-enrollment notice staging:
+    Parent ensure -> User -> Student -> TenantMembership(student) -> pending notice.
 
     Callers keep validation, duplicate/deleted-student policy, API response
     shape, and message dispatch so existing surfaces can migrate safely.
@@ -94,6 +97,17 @@ def create_student_account(
             tenant=tenant,
             user=user,
             role="student",
+        )
+
+        notice_student_password = account_notice_student_password or password
+        if not notice_student_password:
+            raise ValueError(
+                "account_notice_student_password is required with password_hash"
+            )
+        stage_pending_account_notice(
+            student=student,
+            student_password=notice_student_password,
+            parent_password=parent_password_for_notice or "변경되지 않음",
         )
 
     return StudentAccountCreationResult(

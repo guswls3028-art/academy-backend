@@ -554,7 +554,7 @@ rejected → {} (종단)
 
 1. **원자성 필수:** approve와 reject는 `select_for_update`로 동시 실행 방지
 2. **approved → 학생 생성:** `students.services.registration_approval.approve_registration_request()`가 `pending -> approved` 전이와 학생 계정 생성을 같은 트랜잭션에서 처리
-3. **발송 분리:** 승인 알림톡 실패는 이미 커밋된 승인/학생 생성을 API 실패로 되돌리지 않음
+3. **발송 분리:** 승인은 계정 안내값만 암호화 staging하고 알림톡을 보내지 않음. 첫 ACTIVE 수강 확정 후 outbox를 만들며, 실패해도 이미 커밋된 승인/학생/수강 생성을 되돌리지 않음
 
 ---
 

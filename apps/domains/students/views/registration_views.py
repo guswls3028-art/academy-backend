@@ -25,10 +25,6 @@ from ..serializers import (
 )
 from ..services import RegistrationApprovalError, RegistrationApprovalResult, approve_registration_request
 from .student_views import StudentListPagination
-from apps.support.students.view_dependencies import (
-    get_tenant_site_url,
-    send_registration_approved_messages,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -46,30 +42,6 @@ def _copy_approval_result_to_instance(reg, result: RegistrationApprovalResult) -
     reg._approval_result = result
 
 
-def _send_registration_approved_notice(request, result: RegistrationApprovalResult) -> dict:
-    try:
-        notice = result.notice
-        return send_registration_approved_messages(
-            tenant_id=request.tenant.id,
-            site_url=get_tenant_site_url(request.tenant) or "",
-            student_name=notice.student_name,
-            student_phone=notice.student_phone,
-            student_id=notice.student_id,
-            student_password=notice.student_password,
-            parent_phone=notice.parent_phone,
-            parent_password=notice.parent_password,
-            student_pk=result.student.id,
-        )
-    except Exception as exc:
-        logger.exception(
-            "registration approved notification failed: reg_id=%s student_id=%s error=%s",
-            result.registration.id,
-            result.student.id,
-            exc,
-        )
-        return {"status": "error", "enqueued": 0}
-
-
 def _approve_registration_request_with_result(request, reg):
     try:
         result = approve_registration_request(
@@ -77,7 +49,6 @@ def _approve_registration_request_with_result(request, reg):
             registration_id=reg.pk,
         )
         _copy_approval_result_to_instance(reg, result)
-        _send_registration_approved_notice(request, result)
         return None, result
     except RegistrationApprovalError as e:
         return Response({"detail": e.detail}, status=e.status_code), None

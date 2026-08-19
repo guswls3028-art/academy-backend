@@ -66,9 +66,9 @@ Body: { "username": "{학부모전화번호}", "password": "{비밀번호}" }
 - 학부모 비밀번호 찾기: 동일 검증 후 6자리 숫자 임시 비밀번호를 pending reset으로 발급한다. 실제 비밀번호 변경과 `must_change_password=True` 적용은 학부모가 임시 비밀번호로 로그인할 때 수행한다.
 - legacy Parent row에 user가 없으면, 복구 과정에서 `ensure_parent_for_student()`로 계정을 생성/연결한다.
 
-## 5. 가입 승인 알림톡
+## 5. 첫 수강 확정 계정 안내 알림톡
 
-학부모 가입 안내는 `registration_approved_parent` 트리거를 사용한다.
+학부모 계정 안내는 `registration_approved_parent` 트리거를 사용한다. 학생 마스터 생성이나 가입 승인만으로는 발송하지 않고, 변경 후 생성된 학생의 첫 ACTIVE 수강이 확정된 뒤 한 번만 발송한다.
 
 | 변수 | 값 |
 |------|----|
@@ -79,11 +79,11 @@ Body: { "username": "{학부모전화번호}", "password": "{비밀번호}" }
 | `#{비밀번호안내}` | 상황별 안내 문구 |
 
 계정/비밀번호 복구 발송 정책은 `send_alimtalk_via_owner()`를 따른다. SMS fallback과 템플릿 fallback은 없다.
-학생 직접 등록 welcome 경로와 가입 승인 경로 모두 큐 payload에
+첫 수강 확정 계정 안내 경로는 큐 payload에
 `event_type=registration_approved_student|registration_approved_parent`를 실어
 운영 로그가 계정성 알림으로 분류되게 한다. 이 분류는
 `NotificationLog.message_body` 보안 마스킹의 기준이므로 신규 가입 안내 발송 경로에서
-생략하면 안 된다.
+생략하면 안 된다. 학생/학부모 비밀번호 안내값은 수강 전까지 별도 암호문으로 보관하며, 유효 수신자 전체의 durable outbox가 확보되면 즉시 제거한다.
 
 ## 6. 유지보수 명령
 
