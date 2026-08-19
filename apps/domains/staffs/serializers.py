@@ -33,6 +33,11 @@ class StaffWorkStartRequestSerializer(serializers.Serializer):
     work_type = serializers.IntegerField(required=True, min_value=1)
 
 
+class StaffWorkEndRequestSerializer(serializers.Serializer):
+    meal_minutes = serializers.IntegerField(required=False, min_value=0)
+    adjustment_amount = serializers.IntegerField(required=False)
+
+
 class StaffWorkCurrentStatusSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=["OFF", "WORKING", "BREAK"])
     work_record_id = serializers.IntegerField(required=False)

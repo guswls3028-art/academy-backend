@@ -128,8 +128,9 @@ Boundary rule for the structure reform:
 | Item | Current state |
 |---|---|
 | Owned data | `Staff`, `WorkType`, `StaffWorkType`, `WorkRecord`, work-month locks, payroll snapshots |
-| Public interface | `staffs.services.start_work_record` for clock-in |
-| Forbidden dependency | HTTP views implementing check-then-create clock-in logic without the service and DB constraint |
+| Public read interface | `staffs.selectors.current_work_record_for_staff`, `work_records_for_staff_range`, `open_work_records_for_tenant`, `work_current_status` |
+| Public write interface | `staffs.services.start_work_record`, `start_work_break`, `end_work_break`, `end_work_record` |
+| Forbidden dependency | HTTP views implementing work-session state transitions, check-then-create clock-in, break accumulation, or payroll close calculations outside the service and DB constraint |
 | Tenant rule | Staff, work type, and work record must belong to the same request tenant |
 | Invariant | A staff member has at most one open (`end_time IS NULL`) work record; conflicts return HTTP 409 |
 
