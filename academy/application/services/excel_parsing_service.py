@@ -39,7 +39,7 @@ def _payload_bool(value: Any, *, default: bool) -> bool:
 
 class ExcelValidationError(ValueError):
     """
-    학부모 전화 필수 검증 등 엑셀 파싱 검증 실패 시 (Fail-Fast).
+    학부모 전화 필수 검증 등 엑셀 파싱 검증 실패 시.
     errors: [{"row": int, "reason": str}, ...] — 전체 오류 목록(1행 단위).
     """
 
@@ -144,7 +144,7 @@ def _rule_guess_parent_score(header: str, values: list[str]) -> float:
     """
     Rule 기반 parent_phone 컬럼 점수. 0~1.
     - parent 키워드 포함 +0.6, student 키워드 -0.5
-    - phone_ratio(010 10~11자리 비율) * 0.7
+    - phone_ratio(010 포함 11자리 비율) * 0.7
     - 헤더에 부모/학생 키워드가 둘 다 없을 때: 중복도(duplicate_ratio) 가산 — 부모 전화는 형제로 인해 중복 가능성 높음
     """
     h = (header or "").replace(" ", "").lower()
@@ -433,11 +433,19 @@ def _get_academy_parent_mapping(_academy_id: int, _headers: list[str]) -> int | 
     return None
 
 
-def parse_student_excel_file(local_path: str) -> tuple[list[dict[str, Any]], str]:
+def parse_student_excel_file(
+    local_path: str,
+    *,
+    validation_errors_out: list[dict[str, Any]] | None = None,
+) -> tuple[list[dict[str, Any]], str]:
     """
     로컬 엑셀 파일을 파싱하여 강의 수강 등록용 행 리스트와 강의 제목 반환.
     양식 안 맞춰도 인식: 헤더 별칭 넓게 지원, 이름+전화 없으면 첫 행 기준으로도 시도.
     Returns: (rows, lecture_title)
+
+    ``validation_errors_out``가 주어지면 행 단위 오류를 그 목록에 모으고
+    유효한 행은 계속 반환한다. 주어지지 않으면 기존 강의 등록 호환을 위해
+    하나의 행 오류도 전체 파싱 오류로 처리한다.
     """
     import openpyxl
 
@@ -528,9 +536,10 @@ def parse_student_excel_file(local_path: str) -> tuple[list[dict[str, Any]], str
         if not _validate_parent_phone(parent_phone_raw):
             display_val = _cell_str(row, parent_col) or parent_phone_raw or "(비어있음)"
             validation_errors.append({
-                "row": r + 2,
+                "row": r + 1,
+                "name": name or "(이름 없음)",
                 "value": display_val[:20] + ("..." if len(str(display_val)) > 20 else ""),
-                "reason": "학부모 전화번호가 없거나 형식이 잘못되었습니다(010 10~11자리).",
+                "reason": "학부모 전화번호가 없거나 형식이 잘못되었습니다(010 포함 11자리).",
             })
             continue
 
@@ -575,14 +584,18 @@ def parse_student_excel_file(local_path: str) -> tuple[list[dict[str, Any]], str
             "uses_identifier": uses_identifier,
             "high_school_class": _cell_str(row, col.get("school_class")),
             "_extra_columns": extra_columns,
+            "_excel_row": r + 1,
         })
 
     if validation_errors:
-        err_msg = (
-            f"학부모 전화번호 검증 실패: {len(validation_errors)}건. "
-            "010 10~11자리 형식이어야 합니다."
-        )
-        raise ExcelValidationError(err_msg, errors=validation_errors)
+        if validation_errors_out is not None:
+            validation_errors_out.extend(validation_errors)
+        else:
+            err_msg = (
+                f"학부모 전화번호 검증 실패: {len(validation_errors)}건. "
+                "010 포함 11자리 형식이어야 합니다."
+            )
+            raise ExcelValidationError(err_msg, errors=validation_errors)
 
     lecture_title = _extract_lecture_title(rows, header_idx)
     return result, lecture_title
@@ -650,8 +663,12 @@ class ExcelParsingService:
 
         try:
             self._storage.download_to_path(bucket, file_key, str(local_path))
-            rows, lecture_title = parse_student_excel_file(str(local_path))
-            if not rows:
+            parsing_errors: list[dict[str, Any]] = []
+            rows, lecture_title = parse_student_excel_file(
+                str(local_path),
+                validation_errors_out=parsing_errors if lecture_id is None else None,
+            )
+            if not rows and not parsing_errors:
                 raise ValueError("등록할 학생 데이터가 없습니다.")
 
             if lecture_id is not None:
@@ -709,6 +726,18 @@ class ExcelParsingService:
                     ),
                     on_row_progress=_row_progress if on_progress else None,
                 )
+                if parsing_errors:
+                    result["failed"].extend(
+                        {
+                            "row": error["row"],
+                            "name": error.get("name") or "(이름 없음)",
+                            "error": error["reason"],
+                            "conflict_student_id": None,
+                        }
+                        for error in parsing_errors
+                    )
+                    result["failed"].sort(key=lambda item: item["row"])
+                    result["total"] += len(parsing_errors)
                 if isinstance(result, dict) and lecture_title:
                     result["lecture_title"] = lecture_title
                 if not DjangoAIJobRepository().mark_done(

@@ -178,3 +178,40 @@ class ExcelJobAtomicCompletionTests(TestCase):
                 name="원자적학생",
             ).exists()
         )
+
+    @patch("apps.domains.messaging.services.send_welcome_messages")
+    def test_invalid_excel_row_does_not_block_valid_students(self, _welcome_mock):
+        rows = [
+            ["이름", "학부모전화번호", "학생전화번호"],
+            ["정상학생하나", "01070001111", "01090001234"],
+            ["오류학생", "번호오류", "01090005678"],
+            ["정상학생둘", "01070003333", "01090009876"],
+        ]
+
+        result = ExcelParsingService(_WorkbookStorage(rows)).run(
+            self.job.job_id,
+            {
+                "file_key": "excel/partial.xlsx",
+                "bucket": "academy-excel",
+                "tenant_id": self.tenant.id,
+                "password_mode": "phone_last4",
+            },
+        )
+
+        self.job.refresh_from_db()
+        self.assertEqual(self.job.status, "DONE")
+        self.assertEqual(result["created"], 2)
+        self.assertEqual(result["total"], 3)
+        self.assertEqual(
+            result["failed"],
+            [{
+                "row": 3,
+                "name": "오류학생",
+                "error": "학부모 전화번호가 없거나 형식이 잘못되었습니다(010 포함 11자리).",
+                "conflict_student_id": None,
+            }],
+        )
+        self.assertSetEqual(
+            set(Student.objects.filter(tenant=self.tenant).values_list("name", flat=True)),
+            {"정상학생하나", "정상학생둘"},
+        )

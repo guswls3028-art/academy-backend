@@ -11,7 +11,6 @@ from apps.domains.enrollment.services import lecture_enroll_from_excel_rows
 from apps.domains.lectures.models import Lecture
 from apps.domains.students.models import Student
 from apps.domains.students.services import (
-    StudentImportPasswordError,
     import_students_from_rows,
 )
 
@@ -63,25 +62,37 @@ class StudentExcelImportPasswordModeTests(TestCase):
         )
         self.assertNotIn("credentials", result)
 
-    def test_phone_last4_rejects_identifier_before_creating_any_student(self):
-        with self.assertRaises(StudentImportPasswordError):
-            import_students_from_rows(
-                tenant_id=self.tenant.id,
-                students_data=[
-                    {
-                        "name": "번호없는학생",
-                        "parent_phone": "01070003333",
-                        "phone": None,
-                        "school_type": "HIGH",
-                        "grade": 1,
-                        "uses_identifier": True,
-                    }
-                ],
-                initial_password="",
-                password_mode="phone_last4",
-            )
+    def test_phone_last4_skips_invalid_row_and_creates_valid_student(self):
+        result = import_students_from_rows(
+            tenant_id=self.tenant.id,
+            students_data=[
+                {
+                    "name": "번호없는학생",
+                    "parent_phone": "01070003333",
+                    "phone": None,
+                    "school_type": "HIGH",
+                    "grade": 1,
+                    "uses_identifier": True,
+                },
+                {
+                    "name": "번호있는학생",
+                    "parent_phone": "01070004444",
+                    "phone": "01090004321",
+                    "school_type": "HIGH",
+                    "grade": 1,
+                    "uses_identifier": False,
+                },
+            ],
+            initial_password="",
+            password_mode="phone_last4",
+        )
 
-        self.assertFalse(Student.objects.filter(tenant=self.tenant).exists())
+        self.assertEqual(result["created"], 1)
+        self.assertEqual(result["failed"][0]["row"], 1)
+        self.assertIn("학생 전화번호가 없어", result["failed"][0]["error"])
+        self.assertFalse(Student.objects.filter(tenant=self.tenant, name="번호없는학생").exists())
+        student = Student.objects.get(tenant=self.tenant, name="번호있는학생")
+        self.assertTrue(student.user.check_password("4321"))
 
     @patch("apps.domains.messaging.services.send_welcome_messages")
     @patch("apps.domains.students.services.import_passwords.secrets.randbelow", return_value=42)
