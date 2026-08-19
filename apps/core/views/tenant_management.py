@@ -5,7 +5,19 @@ import re
 from django.conf import settings
 from django.db import IntegrityError, transaction
 
-from drf_spectacular.utils import extend_schema
+try:
+    from drf_spectacular.utils import extend_schema
+except ModuleNotFoundError as exc:
+    if exc.name != "drf_spectacular":
+        raise
+
+    def extend_schema(*args, **kwargs):  # type: ignore[no-redef]
+        """Keep runtime views importable when schema-only tooling is absent."""
+
+        def decorator(view):
+            return view
+
+        return decorator
 from rest_framework import serializers
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
