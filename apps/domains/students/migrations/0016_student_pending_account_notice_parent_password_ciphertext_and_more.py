@@ -17,6 +17,7 @@ class Migration(migrations.Migration):
                 blank=True,
                 default="",
                 help_text="첫 수강 확정 시 계정 안내에 사용할 학부모 비밀번호 안내값의 암호문",
+                null=True,
             ),
         ),
         migrations.AddField(
@@ -35,6 +36,7 @@ class Migration(migrations.Migration):
                 blank=True,
                 default="",
                 help_text="첫 수강 확정 시 계정 안내에 사용할 학생 비밀번호 안내값의 암호문",
+                null=True,
             ),
         ),
     ]

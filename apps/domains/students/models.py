@@ -126,11 +126,13 @@ class Student(TimestampModel):
         help_text="테넌트별 학생 사용자 정의 필드 값. 정의의 stable key를 사용한다.",
     )
     pending_account_notice_student_password_ciphertext = models.TextField(
+        null=True,
         blank=True,
         default="",
         help_text="첫 수강 확정 시 계정 안내에 사용할 학생 비밀번호 안내값의 암호문",
     )
     pending_account_notice_parent_password_ciphertext = models.TextField(
+        null=True,
         blank=True,
         default="",
         help_text="첫 수강 확정 시 계정 안내에 사용할 학부모 비밀번호 안내값의 암호문",
