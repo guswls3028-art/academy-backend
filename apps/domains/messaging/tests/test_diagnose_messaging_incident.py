@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from io import StringIO
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -105,3 +106,63 @@ class DiagnoseMessagingIncidentCommandTests(TestCase):
         self.assertEqual(report["provider"]["kakao_disable_sms"]["true"], 1)
         self.assertNotIn("provider-secret-id", raw)
         self.assertNotIn("01088369576", raw.replace("-", ""))
+        request = get_client.return_value.get_messages.call_args.args[0]
+        self.assertRegex(
+            request.start_date,
+            r"^\d{4}-\d{2}-\d{2}T00:00:00[+-]\d{2}:\d{2}$",
+        )
+        self.assertRegex(
+            request.end_date,
+            r"^\d{4}-\d{2}-\d{2}T00:00:00[+-]\d{2}:\d{2}$",
+        )
+        self.assertNotIn(" ", request.start_date)
+        self.assertNotIn(" ", request.end_date)
+        self.assertEqual(
+            report["provider"]["window"]["timezone"],
+            "Asia/Seoul",
+        )
+
+    @patch(
+        "apps.domains.messaging.services.solapi_client.get_solapi_client"
+    )
+    def test_provider_failure_suppresses_request_logs_and_restores_logger(
+        self,
+        get_client,
+    ):
+        httpx_logger = logging.getLogger("httpx")
+        original_disabled = httpx_logger.disabled
+        original_level = httpx_logger.level
+        stream = StringIO()
+        handler = logging.StreamHandler(stream)
+        httpx_logger.addHandler(handler)
+        httpx_logger.setLevel(logging.INFO)
+
+        def fail_with_sensitive_request_log(_request):
+            self.assertTrue(httpx_logger.disabled)
+            httpx_logger.info("GET provider.example?to=%s", self.phone)
+            raise Exception("provider query rejected")
+
+        get_client.return_value.get_messages.side_effect = (
+            fail_with_sensitive_request_log
+        )
+        output = StringIO()
+        try:
+            call_command(
+                "diagnose_messaging_incident",
+                tenant_id=self.tenant.id,
+                recipient=self.phone,
+                provider=True,
+                stdout=output,
+            )
+            self.assertEqual(httpx_logger.disabled, original_disabled)
+        finally:
+            httpx_logger.removeHandler(handler)
+            httpx_logger.disabled = original_disabled
+            httpx_logger.setLevel(original_level)
+
+        report = json.loads(output.getvalue())
+        self.assertEqual(
+            report["provider"],
+            {"reason": "Exception", "status": "error"},
+        )
+        self.assertEqual(stream.getvalue(), "")

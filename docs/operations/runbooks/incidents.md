@@ -117,7 +117,8 @@ python manage.py diagnose_messaging_incident `
 
 결과의 `outbox.statuses`, `delivery_log.statuses`, `linkage`, `provider.status_codes`를
 함께 본다. 출력에는 번호·본문·계정 비밀·provider ID가 없으므로 incident evidence로
-보존할 수 있다. `outbox.sent`는 SQS 접수일 뿐 최종 전달 성공이 아니고,
+보존할 수 있다. provider 조회 범위는 KST 달력 날짜이며 외부 HTTP 요청 URL 로그도
+억제된다. `outbox.sent`는 SQS 접수일 뿐 최종 전달 성공이 아니고,
 `delivery_log.sent`도 provider 접수 성공이다. provider 결과가 `sending`/`ambiguous`이거나
 조회 오류이면 중복 피해 방지를 위해 자동 재발송하지 않는다.
 
