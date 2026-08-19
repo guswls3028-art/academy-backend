@@ -5,6 +5,7 @@ import re
 from django.conf import settings
 from django.db import IntegrityError, transaction
 
+from drf_spectacular.utils import extend_schema
 from rest_framework import serializers
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
@@ -79,6 +80,12 @@ class TenantOwnerPasswordResetSerializer(serializers.Serializer):
         trim_whitespace=False,
         write_only=True,
     )
+
+
+class TenantOwnerPasswordResetResponseSerializer(serializers.Serializer):
+    detail = serializers.CharField()
+    userId = serializers.IntegerField()
+    mustChangePassword = serializers.BooleanField()
 
 
 class TenantProvisioningConflict(ValueError):
@@ -718,6 +725,10 @@ class TenantOwnerPasswordResetView(APIView):
       - 기존 세션 무효화 및 다음 로그인 비밀번호 변경 강제
     """
 
+    @extend_schema(
+        request=TenantOwnerPasswordResetSerializer,
+        responses={200: TenantOwnerPasswordResetResponseSerializer},
+    )
     def post(self, request, tenant_id: int, user_id: int):
         tenant, _membership, err = _get_active_owner_membership(
             request,
