@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections import Counter
+from contextlib import contextmanager
 from datetime import timedelta
+from zoneinfo import ZoneInfo
 
 from django.core.management.base import BaseCommand, CommandError
 from django.db.models import Q
@@ -15,6 +18,9 @@ from apps.domains.messaging.security import (
     build_recipient_fingerprint_candidates,
     normalize_recipient_phone,
 )
+
+KST = ZoneInfo("Asia/Seoul")
+_SENSITIVE_PROVIDER_LOGGERS = ("httpx", "httpcore", "solapi")
 
 
 def _iso(value) -> str | None:
@@ -31,6 +37,22 @@ def _range(qs, field: str) -> dict[str, str | None]:
     return {"first": _iso(first), "last": _iso(last)}
 
 
+@contextmanager
+def _suppress_provider_request_logs():
+    """Prevent provider query URLs from leaking the exact recipient."""
+
+    states = []
+    for name in _SENSITIVE_PROVIDER_LOGGERS:
+        logger = logging.getLogger(name)
+        states.append((logger, logger.disabled))
+        logger.disabled = True
+    try:
+        yield
+    finally:
+        for logger, disabled in states:
+            logger.disabled = disabled
+
+
 def _provider_snapshot(*, recipient: str, since, until) -> dict:
     from apps.domains.messaging.services.solapi_client import get_solapi_client
 
@@ -40,23 +62,29 @@ def _provider_snapshot(*, recipient: str, since, until) -> dict:
 
     from solapi.model.request.messages.get_messages import GetMessagesRequest
 
+    # The SDK's official examples use calendar-date strings. Passing aware
+    # datetimes currently serializes a space-separated value with an offset
+    # that the list endpoint rejects.
+    start_date = since.astimezone(KST).date().isoformat()
+    end_date = until.astimezone(KST).date().isoformat()
     messages = []
     start_key = None
-    for _page in range(10):
-        response = client.get_messages(
-            GetMessagesRequest(
-                to=recipient,
-                dateType="CREATED",
-                startDate=since,
-                endDate=until,
-                limit=1000,
-                startKey=start_key,
+    with _suppress_provider_request_logs():
+        for _page in range(10):
+            response = client.get_messages(
+                GetMessagesRequest(
+                    to=recipient,
+                    date_type="CREATED",
+                    start_date=start_date,
+                    end_date=end_date,
+                    limit=1000,
+                    start_key=start_key,
+                )
             )
-        )
-        messages.extend((response.message_list or {}).values())
-        start_key = response.next_key
-        if not start_key:
-            break
+            messages.extend((response.message_list or {}).values())
+            start_key = response.next_key
+            if not start_key:
+                break
 
     def _message_type(message) -> str:
         value = getattr(message, "type", None)
@@ -79,7 +107,11 @@ def _provider_snapshot(*, recipient: str, since, until) -> dict:
             "true": sum(1 for value in disable_sms if value),
             "false": sum(1 for value in disable_sms if not value),
         },
-        "window": {"since": _iso(since), "until": _iso(until)},
+        "window": {
+            "timezone": "Asia/Seoul",
+            "query_start_date": start_date,
+            "query_end_date": end_date,
+        },
         "truncated": bool(start_key),
     }
 
