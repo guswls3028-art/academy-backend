@@ -1,10 +1,13 @@
 # PATH: apps/domains/staffs/views/staff.py
 
+from datetime import datetime
+
 from django.db import transaction
 from django.db.models import Count
 from django.utils import timezone
 
 from django_filters.rest_framework import DjangoFilterBackend
+from drf_spectacular.utils import extend_schema
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.filters import SearchFilter, OrderingFilter
@@ -17,6 +20,11 @@ from ..serializers import (
     StaffListSerializer,
     StaffDetailSerializer,
     StaffCreateUpdateSerializer,
+    CurrentlyWorkingStaffSerializer,
+    StaffWorkCurrentStatusSerializer,
+    StaffWorkRangeQuerySerializer,
+    StaffWorkStartRequestSerializer,
+    StaffWorkSummarySerializer,
     WorkRecordSerializer,
 )
 from ..services import start_work_record
@@ -48,7 +56,12 @@ class StaffViewSet(viewsets.ModelViewSet):
     ordering_fields = ["name", "created_at", "is_active"]
 
     def get_permissions(self):
-        if self.action in ("work_current", "start_work"):
+        if self.action in (
+            "work_current",
+            "work_records",
+            "summary",
+            "start_work",
+        ):
             return [IsAuthenticated(), TenantResolvedAndStaff()]
         if self.action == "me":
             return [IsAuthenticated(), TenantResolvedAndMember()]
@@ -62,6 +75,8 @@ class StaffViewSet(viewsets.ModelViewSet):
         return StaffCreateUpdateSerializer
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return Staff.objects.none()
         qs = staff_repo.staff_queryset_tenant(self.request.tenant)
         # list 액션: 오너 Staff 제외 (owner 영역에서 별도 표시하므로 중복 방지)
         if self.action == "list":
@@ -378,7 +393,15 @@ class StaffViewSet(viewsets.ModelViewSet):
             return "TEACHER"
         return "ASSISTANT"
 
-    @action(detail=False, methods=["get"], url_path="currently-working", permission_classes=[IsAuthenticated, TenantResolvedAndStaff])
+    @extend_schema(responses=CurrentlyWorkingStaffSerializer(many=True))
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="currently-working",
+        permission_classes=[IsAuthenticated, TenantResolvedAndStaff],
+        pagination_class=None,
+        filter_backends=[],
+    )
     def currently_working(self, request):
         """현재 근무 중인 직원 목록 (end_time 이 null 인 WorkRecord 가 있는 직원). 직급(role) + 근무 시작 시각·휴식 정보(드롭다운용)."""
         tenant = getattr(request, "tenant", None)
@@ -387,7 +410,7 @@ class StaffViewSet(viewsets.ModelViewSet):
         records = (
             WorkRecord.objects
             .filter(tenant=tenant, end_time__isnull=True)
-            .select_related("staff")
+            .select_related("staff", "work_type")
             .order_by("staff_id", "-date", "-start_time")
         )
         seen_staff = set()
@@ -426,6 +449,8 @@ class StaffViewSet(viewsets.ModelViewSet):
             if rec:
                 item["date"] = rec.date.isoformat()
                 item["started_at"] = rec.start_time.strftime("%H:%M:%S") if hasattr(rec.start_time, "strftime") else str(rec.start_time)
+                item["work_type"] = rec.work_type_id
+                item["work_type_name"] = rec.work_type.name
                 item["break_minutes"] = getattr(rec, "break_minutes", 0) or 0
                 item["break_total_seconds"] = getattr(rec, "break_total_seconds", 0) or (item["break_minutes"] * 60)
                 if getattr(rec, "current_break_started_at", None):
@@ -437,6 +462,65 @@ class StaffViewSet(viewsets.ModelViewSet):
     # 실시간 근무 (Staff 기준)
     # ===========================
 
+    @staticmethod
+    def _assert_self_service_or_manager(request, staff):
+        if can_manage_payroll(request.user, staff.tenant):
+            return
+        if staff.user_id == request.user.id:
+            return
+        raise PermissionDenied("본인 근무 기록만 조회할 수 있습니다.")
+
+    @staticmethod
+    def _parse_work_range(request):
+        date_from = request.query_params.get("date_from")
+        date_to = request.query_params.get("date_to")
+        if not date_from or not date_to:
+            raise ValidationError("date_from, date_to는 필수입니다.")
+        try:
+            parsed_from = datetime.strptime(date_from, "%Y-%m-%d").date()
+            parsed_to = datetime.strptime(date_to, "%Y-%m-%d").date()
+        except ValueError as exc:
+            raise ValidationError(
+                "date_from, date_to는 YYYY-MM-DD 형식이어야 합니다."
+            ) from exc
+        if parsed_from > parsed_to:
+            raise ValidationError("date_from은 date_to 이전이어야 합니다.")
+        return parsed_from, parsed_to
+
+    @extend_schema(
+        operation_id="staffs_personal_work_records_list",
+        parameters=[StaffWorkRangeQuerySerializer],
+        responses=WorkRecordSerializer(many=True),
+    )
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="work-records",
+        permission_classes=[IsAuthenticated, TenantResolvedAndStaff],
+        filter_backends=[],
+    )
+    def work_records(self, request, pk=None):
+        """본인 또는 급여 관리자가 조회하는 기간별 정본 근무 기록."""
+        staff = self.get_object()
+        self._assert_self_service_or_manager(request, staff)
+        date_from, date_to = self._parse_work_range(request)
+        records = (
+            WorkRecord.objects.filter(
+                tenant=staff.tenant,
+                staff=staff,
+                date__gte=date_from,
+                date__lte=date_to,
+            )
+            .select_related("staff", "work_type")
+            .order_by("-date", "-start_time")
+        )
+        page = self.paginate_queryset(records)
+        if page is not None:
+            serializer = WorkRecordSerializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        return Response(WorkRecordSerializer(records, many=True).data)
+
+    @extend_schema(responses=StaffWorkCurrentStatusSerializer)
     @action(
         detail=True,
         methods=["get"],
@@ -445,12 +529,12 @@ class StaffViewSet(viewsets.ModelViewSet):
     )
     def work_current(self, request, pk=None):
         staff = self.get_object()
-        if not can_manage_payroll(request.user, staff.tenant) and staff.user_id != request.user.id:
-            raise PermissionDenied("본인 근무 기록만 조회할 수 있습니다.")
+        self._assert_self_service_or_manager(request, staff)
 
         record = (
             WorkRecord.objects
             .filter(staff=staff, tenant=staff.tenant, end_time__isnull=True)
+            .select_related("work_type")
             .order_by("-start_time")
             .first()
         )
@@ -472,6 +556,9 @@ class StaffViewSet(viewsets.ModelViewSet):
                 "work_record_id": record.id,
                 "date": record.date.isoformat(),
                 "started_at": started_at_str,
+                "work_type": record.work_type_id,
+                "work_type_name": record.work_type.name,
+                "hourly_wage": record.resolved_hourly_wage,
                 "break_minutes": record.break_minutes,
                 "break_total_seconds": break_sec,
                 "break_started_at": record.current_break_started_at.isoformat(),
@@ -483,10 +570,17 @@ class StaffViewSet(viewsets.ModelViewSet):
             "work_record_id": record.id,
             "date": record.date.isoformat(),
             "started_at": started_at_str,
+            "work_type": record.work_type_id,
+            "work_type_name": record.work_type.name,
+            "hourly_wage": record.resolved_hourly_wage,
             "break_minutes": record.break_minutes,
             "break_total_seconds": break_sec,
         })
 
+    @extend_schema(
+        request=StaffWorkStartRequestSerializer,
+        responses={201: WorkRecordSerializer},
+    )
     @action(
         detail=True,
         methods=["post"],
@@ -538,22 +632,16 @@ class StaffViewSet(viewsets.ModelViewSet):
 
         return Response(WorkRecordSerializer(record).data, status=201)
 
+    @extend_schema(
+        parameters=[StaffWorkRangeQuerySerializer],
+        responses=StaffWorkSummarySerializer,
+    )
     @action(detail=True, methods=["get"], url_path="summary")
     def summary(self, request, pk=None):
         """직원별 기간 집계. 쿼리: date_from, date_to (YYYY-MM-DD)."""
         staff = self.get_object()
-        date_from = request.query_params.get("date_from")
-        date_to = request.query_params.get("date_to")
-        if not date_from or not date_to:
-            raise ValidationError("date_from, date_to는 필수입니다.")
-        from datetime import datetime
-        try:
-            df = datetime.strptime(date_from, "%Y-%m-%d").date()
-            dt = datetime.strptime(date_to, "%Y-%m-%d").date()
-        except ValueError:
-            raise ValidationError("date_from, date_to는 YYYY-MM-DD 형식이어야 합니다.")
-        if df > dt:
-            raise ValidationError("date_from은 date_to 이전이어야 합니다.")
+        self._assert_self_service_or_manager(request, staff)
+        df, dt = self._parse_work_range(request)
 
         from django.db.models import Sum
         wr_qs = WorkRecord.objects.filter(

@@ -1522,6 +1522,58 @@
         ],
         "type": "string"
       },
+      "CurrentlyWorkingStaff": {
+        "properties": {
+          "break_minutes": {
+            "type": "integer"
+          },
+          "break_started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "break_total_seconds": {
+            "type": "integer"
+          },
+          "date": {
+            "format": "date",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/CurrentlyWorkingStaffRoleEnum"
+          },
+          "staff_id": {
+            "type": "integer"
+          },
+          "staff_name": {
+            "type": "string"
+          },
+          "started_at": {
+            "format": "time",
+            "type": "string"
+          },
+          "work_type": {
+            "type": "integer"
+          },
+          "work_type_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "staff_id",
+          "staff_name"
+        ],
+        "type": "object"
+      },
+      "CurrentlyWorkingStaffRoleEnum": {
+        "description": "* `owner` - owner\n* `TEACHER` - TEACHER\n* `ASSISTANT` - ASSISTANT",
+        "enum": [
+          "owner",
+          "TEACHER",
+          "ASSISTANT"
+        ],
+        "type": "string"
+      },
       "DayOfWeekEnum": {
         "description": "* `0` - 월\n* `1` - 화\n* `2` - 수\n* `3` - 목\n* `4` - 금\n* `5` - 토\n* `6` - 일",
         "enum": [
@@ -7367,7 +7419,7 @@
           "role": {
             "allOf": [
               {
-                "$ref": "#/components/schemas/RoleEnum"
+                "$ref": "#/components/schemas/StaffWriteRoleEnum"
               }
             ],
             "writeOnly": true
@@ -10199,14 +10251,6 @@
         ],
         "type": "string"
       },
-      "RoleEnum": {
-        "description": "* `TEACHER` - 강사\n* `ASSISTANT` - 조교",
-        "enum": [
-          "TEACHER",
-          "ASSISTANT"
-        ],
-        "type": "string"
-      },
       "SchoolTypeEnum": {
         "description": "* `ELEMENTARY` - 초등\n* `MIDDLE` - 중등\n* `HIGH` - 고등",
         "enum": [
@@ -11505,6 +11549,57 @@
         ],
         "type": "object"
       },
+      "StaffWorkCurrentStatus": {
+        "properties": {
+          "break_minutes": {
+            "type": "integer"
+          },
+          "break_started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "break_total_seconds": {
+            "type": "integer"
+          },
+          "date": {
+            "format": "date",
+            "type": "string"
+          },
+          "hourly_wage": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "started_at": {
+            "format": "time",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/StaffWorkCurrentStatusStatusEnum"
+          },
+          "work_record_id": {
+            "type": "integer"
+          },
+          "work_type": {
+            "type": "integer"
+          },
+          "work_type_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "StaffWorkCurrentStatusStatusEnum": {
+        "description": "* `OFF` - OFF\n* `WORKING` - WORKING\n* `BREAK` - BREAK",
+        "enum": [
+          "OFF",
+          "WORKING",
+          "BREAK"
+        ],
+        "type": "string"
+      },
       "StaffWorkRecord": {
         "properties": {
           "adjustment_amount": {
@@ -11674,6 +11769,46 @@
           "staff",
           "start_time",
           "work_type"
+        ],
+        "type": "object"
+      },
+      "StaffWorkStartRequestRequest": {
+        "properties": {
+          "work_type": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "work_type"
+        ],
+        "type": "object"
+      },
+      "StaffWorkSummary": {
+        "properties": {
+          "expense_amount": {
+            "type": "integer"
+          },
+          "staff_id": {
+            "type": "integer"
+          },
+          "total_amount": {
+            "type": "integer"
+          },
+          "work_amount": {
+            "type": "integer"
+          },
+          "work_hours": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "expense_amount",
+          "staff_id",
+          "total_amount",
+          "work_amount",
+          "work_hours"
         ],
         "type": "object"
       },
@@ -11894,7 +12029,7 @@
           "role": {
             "allOf": [
               {
-                "$ref": "#/components/schemas/RoleEnum"
+                "$ref": "#/components/schemas/StaffWriteRoleEnum"
               }
             ],
             "writeOnly": true
@@ -11910,6 +12045,14 @@
           "role"
         ],
         "type": "object"
+      },
+      "StaffWriteRoleEnum": {
+        "description": "* `TEACHER` - 강사\n* `ASSISTANT` - 조교",
+        "enum": [
+          "TEACHER",
+          "ASSISTANT"
+        ],
+        "type": "string"
       },
       "Status2d4Enum": {
         "description": "* `ACTIVE` - 활성\n* `INACTIVE` - 비활성\n* `PENDING` - 대기",
@@ -37604,6 +37747,20 @@
         "operationId": "staffs_list",
         "parameters": [
           {
+            "in": "query",
+            "name": "is_active",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "is_manager",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "description": "결과 정렬 시 사용할 필드.",
             "in": "query",
             "name": "ordering",
@@ -37628,6 +37785,13 @@
             "required": false,
             "schema": {
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pay_type",
+            "schema": {
+              "type": "string"
             }
           },
           {
@@ -37714,13 +37878,16 @@
     "/api/v1/staffs/currently-working/": {
       "get": {
         "description": "현재 근무 중인 직원 목록 (end_time 이 null 인 WorkRecord 가 있는 직원). 직급(role) + 근무 시작 시각·휴식 정보(드롭다운용).",
-        "operationId": "staffs_currently_working_retrieve",
+        "operationId": "staffs_currently_working_list",
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/StaffWrite"
+                  "items": {
+                    "$ref": "#/components/schemas/CurrentlyWorkingStaff"
+                  },
+                  "type": "array"
                 }
               }
             },
@@ -39417,11 +39584,12 @@
         "operationId": "staffs_destroy",
         "parameters": [
           {
+            "description": "staff을 식별하는 고유한 정수 값.",
             "in": "path",
             "name": "id",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "integer"
             }
           }
         ],
@@ -39446,11 +39614,12 @@
         "operationId": "staffs_retrieve",
         "parameters": [
           {
+            "description": "staff을 식별하는 고유한 정수 값.",
             "in": "path",
             "name": "id",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "integer"
             }
           }
         ],
@@ -39482,11 +39651,12 @@
         "operationId": "staffs_partial_update",
         "parameters": [
           {
+            "description": "staff을 식별하는 고유한 정수 값.",
             "in": "path",
             "name": "id",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "integer"
             }
           }
         ],
@@ -39537,11 +39707,12 @@
         "operationId": "staffs_update",
         "parameters": [
           {
+            "description": "staff을 식별하는 고유한 정수 값.",
             "in": "path",
             "name": "id",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "integer"
             }
           }
         ],
@@ -39596,11 +39767,12 @@
         "operationId": "staffs_change_password_create",
         "parameters": [
           {
+            "description": "staff을 식별하는 고유한 정수 값.",
             "in": "path",
             "name": "id",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "integer"
             }
           }
         ],
@@ -39655,11 +39827,30 @@
         "operationId": "staffs_summary_retrieve",
         "parameters": [
           {
+            "in": "query",
+            "name": "date_from",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date_to",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          },
+          {
+            "description": "staff을 식별하는 고유한 정수 값.",
             "in": "path",
             "name": "id",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "integer"
             }
           }
         ],
@@ -39668,7 +39859,83 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/StaffWrite"
+                  "$ref": "#/components/schemas/StaffWorkSummary"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "staffs"
+        ]
+      }
+    },
+    "/api/v1/staffs/{id}/work-records/": {
+      "get": {
+        "description": "본인 또는 급여 관리자가 조회하는 기간별 정본 근무 기록.",
+        "operationId": "staffs_personal_work_records_list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "date_from",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date_to",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          },
+          {
+            "description": "staff을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "페이지네이션된 결과 집합 내의 페이지 번호.",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedStaffWorkRecordList"
                 }
               }
             },
@@ -39693,11 +39960,12 @@
         "operationId": "staffs_work_records_current_retrieve",
         "parameters": [
           {
+            "description": "staff을 식별하는 고유한 정수 값.",
             "in": "path",
             "name": "id",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "integer"
             }
           }
         ],
@@ -39706,7 +39974,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/StaffWrite"
+                  "$ref": "#/components/schemas/StaffWorkCurrentStatus"
                 }
               }
             },
@@ -39731,11 +39999,12 @@
         "operationId": "staffs_work_records_start_work_create",
         "parameters": [
           {
+            "description": "staff을 식별하는 고유한 정수 값.",
             "in": "path",
             "name": "id",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "integer"
             }
           }
         ],
@@ -39743,28 +40012,28 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/StaffWriteRequest"
+                "$ref": "#/components/schemas/StaffWorkStartRequestRequest"
               }
             },
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/StaffWriteRequest"
+                "$ref": "#/components/schemas/StaffWorkStartRequestRequest"
               }
             },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/StaffWriteRequest"
+                "$ref": "#/components/schemas/StaffWorkStartRequestRequest"
               }
             }
           },
           "required": true
         },
         "responses": {
-          "200": {
+          "201": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/StaffWrite"
+                  "$ref": "#/components/schemas/StaffWorkRecord"
                 }
               }
             },

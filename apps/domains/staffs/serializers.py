@@ -23,6 +23,50 @@ from academy.adapters.db.django import repositories_core as core_repo
 
 User = get_user_model()
 
+
+class StaffWorkRangeQuerySerializer(serializers.Serializer):
+    date_from = serializers.DateField(required=True)
+    date_to = serializers.DateField(required=True)
+
+
+class StaffWorkStartRequestSerializer(serializers.Serializer):
+    work_type = serializers.IntegerField(required=True, min_value=1)
+
+
+class StaffWorkCurrentStatusSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=["OFF", "WORKING", "BREAK"])
+    work_record_id = serializers.IntegerField(required=False)
+    date = serializers.DateField(required=False)
+    started_at = serializers.TimeField(required=False)
+    work_type = serializers.IntegerField(required=False)
+    work_type_name = serializers.CharField(required=False)
+    hourly_wage = serializers.IntegerField(required=False, allow_null=True)
+    break_minutes = serializers.IntegerField(required=False)
+    break_total_seconds = serializers.IntegerField(required=False)
+    break_started_at = serializers.DateTimeField(required=False)
+
+
+class CurrentlyWorkingStaffSerializer(serializers.Serializer):
+    staff_id = serializers.IntegerField()
+    staff_name = serializers.CharField()
+    role = serializers.ChoiceField(choices=["owner", "TEACHER", "ASSISTANT"])
+    date = serializers.DateField(required=False)
+    started_at = serializers.TimeField(required=False)
+    work_type = serializers.IntegerField(required=False)
+    work_type_name = serializers.CharField(required=False)
+    break_minutes = serializers.IntegerField(required=False)
+    break_total_seconds = serializers.IntegerField(required=False)
+    break_started_at = serializers.DateTimeField(required=False)
+
+
+class StaffWorkSummarySerializer(serializers.Serializer):
+    staff_id = serializers.IntegerField()
+    work_hours = serializers.FloatField()
+    work_amount = serializers.IntegerField()
+    expense_amount = serializers.IntegerField()
+    total_amount = serializers.IntegerField()
+
+
 # ---------------------------
 # WorkType
 # ---------------------------
