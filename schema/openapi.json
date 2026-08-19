@@ -14267,6 +14267,39 @@
         ],
         "type": "object"
       },
+      "TenantOwnerPasswordResetRequest": {
+        "properties": {
+          "password": {
+            "maxLength": 128,
+            "minLength": 4,
+            "type": "string",
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "password"
+        ],
+        "type": "object"
+      },
+      "TenantOwnerPasswordResetResponse": {
+        "properties": {
+          "detail": {
+            "type": "string"
+          },
+          "mustChangePassword": {
+            "type": "boolean"
+          },
+          "userId": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "detail",
+          "mustChangePassword",
+          "userId"
+        ],
+        "type": "object"
+      },
       "TokenRefresh": {
         "properties": {
           "access": {
@@ -21365,6 +21398,73 @@
         "responses": {
           "200": {
             "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "core"
+        ]
+      }
+    },
+    "/api/v1/core/tenants/{tenant_id}/owners/{user_id}/password/": {
+      "post": {
+        "description": "POST /api/v1/core/tenants/<tenant_id>/owners/<user_id>/password/\n  - 플랫폼 운영자가 활성 owner의 임시 비밀번호를 재설정\n  - 기존 세션 무효화 및 다음 로그인 비밀번호 변경 강제",
+        "operationId": "core_tenants_owners_password_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TenantOwnerPasswordResetRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/TenantOwnerPasswordResetRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/TenantOwnerPasswordResetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantOwnerPasswordResetResponse"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [

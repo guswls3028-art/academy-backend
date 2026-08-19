@@ -25,7 +25,7 @@
 - **me/**: GET, MeView, TenantResolvedAndMember — tenantRole 등. **program/**: GET AllowAny+TenantResolved, PATCH TenantResolvedAndStaff.
 - **Tenant Branding (dev_app 전용, TenantResolvedAndOwner)**: GET/PATCH `tenant-branding/<id>/`, POST `tenant-branding/<id>/upload-logo/`. DTO: tenantId, loginTitle, loginSubtitle, logoUrl, windowTitle, displayName (snake_case 저장).
 - **Tenants (dev_app 전용)**: GET tenants/, GET tenants/<id>/, PATCH tenants/<id>/, POST tenants/create/. 목록/상세/생성.
-- **Tenant Owner (dev_app 전용)**: POST tenants/<id>/owner/ (username 필수, password/name/phone), GET tenants/<id>/owners/, GET tenants/<id>/owners/<user_id>/.
+- **Tenant Owner (dev_app 전용)**: POST tenants/<id>/owner/ (username 필수, password/name/phone), GET tenants/<id>/owners/, PATCH/DELETE tenants/<id>/owners/<user_id>/, POST tenants/<id>/owners/<user_id>/password/ (활성 owner 임시 비밀번호 재설정·기존 세션 폐기).
 - **Staff (staffs 도메인)**: 기준 URL은 `apps/domains/staffs/urls.py`. 주요 리소스는 work-types, staff-work-types, work-records, expense-records, work-month-locks, payroll-snapshots, staff 루트.
 - 기타: profile/, job_progress/, messaging(/api/v1/messaging/).
 

@@ -5,6 +5,7 @@ import re
 from django.conf import settings
 from django.db import IntegrityError, transaction
 
+from drf_spectacular.utils import extend_schema
 from rest_framework import serializers
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
@@ -72,8 +73,44 @@ class TenantOwnerUpdateSerializer(serializers.Serializer):
     )
 
 
+class TenantOwnerPasswordResetSerializer(serializers.Serializer):
+    password = serializers.CharField(
+        min_length=4,
+        max_length=128,
+        trim_whitespace=False,
+        write_only=True,
+    )
+
+
+class TenantOwnerPasswordResetResponseSerializer(serializers.Serializer):
+    detail = serializers.CharField()
+    userId = serializers.IntegerField()
+    mustChangePassword = serializers.BooleanField()
+
+
 class TenantProvisioningConflict(ValueError):
     pass
+
+
+def _get_active_owner_membership(request, tenant_id: int, user_id: int):
+    if not is_platform_admin_tenant(request):
+        return None, None, 403
+    tenant = core_repo.tenant_get_by_id_any(tenant_id)
+    if not tenant:
+        return None, None, 404
+    membership = (
+        TenantMembership.objects.filter(
+            tenant=tenant,
+            user_id=user_id,
+            role="owner",
+            is_active=True,
+        )
+        .select_related("user")
+        .first()
+    )
+    if not membership:
+        return None, None, 404
+    return tenant, membership, None
 
 
 def _normalize_tenant_code(value) -> str | None:
@@ -589,29 +626,12 @@ class TenantOwnerDetailView(APIView):
     """
     permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
 
-    def _get_owner_membership(self, request, tenant_id: int, user_id: int):
-        if not is_platform_admin_tenant(request):
-            return None, None, 403
-        tenant = core_repo.tenant_get_by_id_any(tenant_id)
-        if not tenant:
-            return None, None, 404
-        from django.contrib.auth import get_user_model
-        User = get_user_model()
-        user = User.objects.filter(id=user_id).first()
-        if not user:
-            return None, None, 404
-        membership = TenantMembership.objects.filter(
-            tenant=tenant,
-            user=user,
-            role="owner",
-            is_active=True,
-        ).first()
-        if not membership:
-            return None, None, 404
-        return tenant, membership, None
-
     def patch(self, request, tenant_id: int, user_id: int):
-        tenant, membership, err = self._get_owner_membership(request, tenant_id, user_id)
+        tenant, membership, err = _get_active_owner_membership(
+            request,
+            tenant_id,
+            user_id,
+        )
         if err:
             msg = "Platform admin tenant required." if err == 403 else "Owner not found."
             return Response({"detail": msg}, status=err)
@@ -648,7 +668,11 @@ class TenantOwnerDetailView(APIView):
         })
 
     def delete(self, request, tenant_id: int, user_id: int):
-        tenant, membership, err = self._get_owner_membership(request, tenant_id, user_id)
+        tenant, membership, err = _get_active_owner_membership(
+            request,
+            tenant_id,
+            user_id,
+        )
         if err:
             msg = "Platform admin tenant required." if err == 403 else "Owner not found."
             return Response({"detail": msg}, status=err)
@@ -692,3 +716,82 @@ class TenantOwnerDetailView(APIView):
             summary=f"Owner removed: {getattr(membership.user, 'username', '')} from {tenant.code}",
         )
         return Response(status=204)
+
+
+class TenantOwnerPasswordResetView(APIView):
+    """
+    POST /api/v1/core/tenants/<tenant_id>/owners/<user_id>/password/
+      - 플랫폼 운영자가 활성 owner의 임시 비밀번호를 재설정
+      - 기존 세션 무효화 및 다음 로그인 비밀번호 변경 강제
+    """
+
+    @extend_schema(
+        request=TenantOwnerPasswordResetSerializer,
+        responses={200: TenantOwnerPasswordResetResponseSerializer},
+    )
+    def post(self, request, tenant_id: int, user_id: int):
+        tenant, _membership, err = _get_active_owner_membership(
+            request,
+            tenant_id,
+            user_id,
+        )
+        if err:
+            msg = "Platform admin tenant required." if err == 403 else "Owner not found."
+            return Response({"detail": msg}, status=err)
+
+        serializer = TenantOwnerPasswordResetSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                {
+                    "detail": "owner_password_reset_invalid",
+                    "errors": serializer.errors,
+                },
+                status=400,
+            )
+
+        with transaction.atomic():
+            Tenant.objects.select_for_update().get(pk=tenant.pk)
+            from django.contrib.auth import get_user_model
+
+            target_user = get_user_model().objects.select_for_update().get(pk=user_id)
+            if not target_user.is_active:
+                return Response(
+                    {"detail": "owner_user_inactive"},
+                    status=409,
+                )
+            try:
+                TenantMembership.objects.select_for_update().get(
+                    tenant=tenant,
+                    user=target_user,
+                    role="owner",
+                    is_active=True,
+                )
+            except TenantMembership.DoesNotExist:
+                return Response({"detail": "Owner not found."}, status=404)
+
+            from apps.core.services.password import (
+                clear_pending_password_reset,
+                force_reset_password,
+            )
+
+            force_reset_password(
+                target_user,
+                serializer.validated_data["password"],
+            )
+            clear_pending_password_reset(target_user)
+
+        record_audit(
+            request,
+            action="owner.password_reset",
+            target_tenant=tenant,
+            target_user=target_user,
+            summary=f"Owner password reset in {tenant.code}",
+            payload={"user_id": target_user.id},
+        )
+        return Response(
+            {
+                "detail": "owner_password_reset",
+                "userId": target_user.id,
+                "mustChangePassword": True,
+            }
+        )
