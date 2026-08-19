@@ -1,8 +1,12 @@
 from pathlib import Path
 
+import pytest
 from openpyxl import Workbook
 
-from academy.application.services.excel_parsing_service import parse_student_excel_file
+from academy.application.services.excel_parsing_service import (
+    ExcelValidationError,
+    parse_student_excel_file,
+)
 
 
 def _write_student_excel(path: Path, *, name: str, parent_phone: str = "01031217466") -> None:
@@ -24,3 +28,13 @@ def test_parse_student_excel_allows_long_name_when_valid_phone_exists(tmp_path):
     assert len(rows) == 1
     assert rows[0]["name"] == name
     assert rows[0]["parent_phone"] == "01031217466"
+
+
+def test_parse_student_excel_remains_strict_without_partial_error_collector(tmp_path):
+    path = tmp_path / "invalid-students.xlsx"
+    _write_student_excel(path, name="오류학생", parent_phone="번호오류")
+
+    with pytest.raises(ExcelValidationError) as exc_info:
+        parse_student_excel_file(str(path))
+
+    assert exc_info.value.errors[0]["row"] == 2

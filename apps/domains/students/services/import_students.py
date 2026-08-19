@@ -33,7 +33,7 @@ from .identity import (
     phone_digits,
     resolve_student_login_id,
 )
-from .import_passwords import build_student_import_password_policy
+from .import_passwords import StudentImportPasswordError, build_student_import_password_policy
 from .lifecycle import permanently_delete_students, restore_student
 from .school import get_valid_school_types, is_valid_grade, normalize_school_from_name
 from apps.support.students.import_dependencies import get_tenant_site_url, send_welcome_messages
@@ -383,8 +383,6 @@ def import_students_from_rows(
         password_mode=password_mode,
         initial_password=initial_password,
     )
-    password_policy.validate_rows(students_data)
-
     created_students: list[Any] = []
     student_password_by_id: dict[int, str] = {}
     random_credentials: list[dict[str, str]] = []
@@ -402,6 +400,8 @@ def import_students_from_rows(
             on_row_progress(row_index, total)
 
         row = dict(raw) if isinstance(raw, dict) else {}
+        source_row = row.get("_excel_row")
+        display_row = source_row if isinstance(source_row, int) and source_row > 0 else row_index
         raw_name = str(row.get("name") or "").strip()
         display_name = raw_name or "(이름 없음)"
         parent_phone = _digits(row.get("parent_phone") or row.get("parentPhone"))
@@ -419,12 +419,14 @@ def import_students_from_rows(
                 valid_school_types=valid_school_types,
                 custom_field_definitions=custom_field_definitions,
             )
-        except StudentImportRowError as exc:
+        except (StudentImportRowError, StudentImportPasswordError) as exc:
             failed.append({
-                "row": row_index,
+                "row": display_row,
                 "name": display_name,
-                "error": exc.detail,
-                "conflict_student_id": exc.conflict_student_id,
+                "error": exc.detail if isinstance(exc, StudentImportRowError) else str(exc),
+                "conflict_student_id": (
+                    exc.conflict_student_id if isinstance(exc, StudentImportRowError) else None
+                ),
             })
             continue
         except Exception as exc:
@@ -436,7 +438,7 @@ def import_students_from_rows(
                 exc_info=True,
             )
             failed.append({
-                "row": row_index,
+                "row": display_row,
                 "name": display_name,
                 "error": str(exc)[:500],
                 "conflict_student_id": None,
@@ -459,13 +461,13 @@ def import_students_from_rows(
                 )
         elif resolved.restored:
             restored.append({
-                "row": row_index,
+                "row": display_row,
                 "name": display_name,
                 "student_id": resolved.student.id,
             })
         elif resolved.duplicate:
             duplicates.append({
-                "row": row_index,
+                "row": display_row,
                 "name": display_name,
                 "student_id": resolved.student.id,
             })
