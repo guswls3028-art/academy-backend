@@ -232,6 +232,18 @@ def test_every_deploy_oidc_step_has_a_bounded_action_timeout() -> None:
         assert "action-timeout-s: 180" in step_body
 
 
+def test_release_smoke_installs_the_same_api_dependencies_as_the_runtime() -> None:
+    workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    smoke = _job_block(workflow, "run-tests")
+
+    assert "requirements/requirements.txt" in smoke
+    assert "requirements/api.txt" in smoke
+    assert (
+        "pip install -r requirements/requirements.txt -r requirements/api.txt"
+        in smoke
+    )
+
+
 def _job_block(workflow: str, job_name: str) -> str:
     match = re.search(
         rf"(?ms)^  {re.escape(job_name)}:\n(.*?)(?=^  [a-z][a-z0-9-]*:\n|\Z)",
