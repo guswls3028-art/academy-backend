@@ -146,7 +146,6 @@ class ScheduledDispatchConcurrencyPostgresTests(TransactionTestCase):
 
         with (
             override_settings(
-                OWNER_TENANT_ID=self.tenant.id,
                 MESSAGING_PROVIDER_DAILY_DISPATCH_LIMIT=1,
             ),
             patch("apps.domains.messaging.services.enqueue_sms", return_value=True),

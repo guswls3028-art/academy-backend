@@ -491,7 +491,7 @@ SHA-256(canonical) -> 64자 hex
 - SQS enqueue가 실패하면 영구 실패로 닫지 않는다. 30초부터 지수 백오프하며 최대 8회 시도 후 `failed`가 된다. 입력 누락, SMS 차단, `MessagingPolicyError`는 즉시 terminal `failed`다.
 - `dispatching`이 5분 이상이면 죽은 폴러 claim으로 보고 회수한다. 외부 SQS 호출은 DB transaction과 row lock 밖에서 실행한다.
 - `operations/status`는 `retry_waiting`, `dispatching`, `stale_dispatching`을 별도로 노출한다.
-- tenant별 rolling 1시간 한도는 500건이다. 별도로 공유 provider 계정은 KST 00:00~24:00의 outbox attempt 예약과 outbox에 없는 legacy log를 합산해 `MESSAGING_PROVIDER_DAILY_DISPATCH_LIMIT`(기본 900)으로 제한한다. owner tenant row lock 아래 tenant 간 claim을 직렬화하며, 한도 도달 신규 행은 `provider_daily_dispatch_quota_deferred`와 다음 날 00:05 KST `next_attempt_at`을 남긴다. 재시도 중 같은 일일 예약은 중복 집계하지 않는다.
+- tenant별 rolling 1시간 한도는 500건이다. 별도로 공유 provider 계정은 KST 00:00~24:00의 outbox attempt 예약과 outbox에 없는 legacy log를 합산해 `MESSAGING_PROVIDER_DAILY_DISPATCH_LIMIT`(기본 900)으로 제한한다. PostgreSQL transaction advisory lock 아래 tenant 간 claim을 직렬화하며 owner tenant 행의 존재 여부에는 의존하지 않는다. 한도 도달 신규 행은 `provider_daily_dispatch_quota_deferred`와 다음 날 00:05 KST `next_attempt_at`을 남긴다. 재시도 중 같은 일일 예약은 중복 집계하지 않는다.
 - 수동 preflight와 `operations/status.rate_limit_provider_daily`는 전역 limit/used/remaining을 노출한다. 예약 발송은 예약 시점에 오늘 한도를 선점하지 않고 실제 due claim 시점에 검사한다.
 
 ### 워커 provider 상태와 exactly-once 경계

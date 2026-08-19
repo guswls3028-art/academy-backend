@@ -33,9 +33,27 @@ MAX_RETRY_DELAY_SECONDS = 60 * 60
 HOURLY_SEND_LIMIT = 500
 QUOTA_MIN_RETRY_DELAY = timedelta(seconds=30)
 
+# PostgreSQL transaction-scoped advisory lock namespace for the one shared
+# provider account.  It does not depend on an owner-tenant row existing, and
+# PostgreSQL releases it automatically on commit/rollback or connection loss.
+_PROVIDER_DAILY_LOCK_NAMESPACE = 0x4D534747  # "MSGG"
+_PROVIDER_DAILY_LOCK_KEY = 0x4441494C  # "DAIL"
+
 
 class MessagingHourlyQuotaExceeded(Exception):
     """The business tenant has no reservation capacity in the rolling hour."""
+
+
+def _acquire_provider_daily_dispatch_lock() -> None:
+    """Serialize account-wide daily reservations on the production database."""
+
+    if connection.vendor != "postgresql":
+        return
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT pg_advisory_xact_lock(%s, %s)",
+            [_PROVIDER_DAILY_LOCK_NAMESPACE, _PROVIDER_DAILY_LOCK_KEY],
+        )
 
 
 @dataclass(frozen=True)
@@ -375,7 +393,6 @@ def _claim_due_notifications(
 ) -> tuple[list[_DispatchClaim], int, int, int]:
     from apps.core.models import Tenant
     from apps.domains.messaging.models import ScheduledNotification
-    from apps.domains.messaging.policy import get_owner_tenant_id
     from apps.domains.messaging.selectors import (
         get_provider_daily_dispatch_limit,
         get_provider_daily_notification_usage,
@@ -411,16 +428,17 @@ def _claim_due_notifications(
         if not due:
             return claims, terminal_count, deferred_count, reconciled_count
         tenant_ids = sorted({notification.tenant_id for notification in due})
-        owner_tenant_id = int(get_owner_tenant_id())
-        lock_tenant_ids = sorted({*tenant_ids, owner_tenant_id})
+        # Lock order is global provider account first, then tenant ids. This
+        # serializes the shared daily reservation without coupling delivery to
+        # a configurable owner-tenant row, while tenant rows retain the rolling
+        # hourly quota boundary.
+        _acquire_provider_daily_dispatch_lock()
         tenants = {
             tenant.id: tenant
             for tenant in Tenant.objects.select_for_update()
-            .filter(id__in=lock_tenant_ids)
+            .filter(id__in=tenant_ids)
             .order_by("id")
         }
-        if owner_tenant_id not in tenants:
-            raise RuntimeError("messaging_owner_tenant_missing")
         provider_daily_limit = get_provider_daily_dispatch_limit()
         provider_daily_usage = get_provider_daily_notification_usage(now=now)
         provider_day_start, provider_day_end = get_provider_day_window(now=now)
