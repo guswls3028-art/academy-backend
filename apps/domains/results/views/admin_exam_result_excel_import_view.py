@@ -1,6 +1,22 @@
 from __future__ import annotations
 
 from django.http import HttpResponse
+
+try:
+    from drf_spectacular.types import OpenApiTypes
+    from drf_spectacular.utils import extend_schema
+except ModuleNotFoundError as exc:
+    if exc.name != "drf_spectacular":
+        raise
+
+    class OpenApiTypes:  # type: ignore[no-redef]
+        BINARY = bytes
+
+    def extend_schema(*args, **kwargs):  # type: ignore[no-redef]
+        def decorator(view):
+            return view
+
+        return decorator
 from rest_framework import status
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
@@ -13,6 +29,7 @@ from apps.domains.results.services.exam_result_excel_import import (
     MAX_UPLOAD_BYTES,
     apply_exam_result_import,
     build_exam_result_template,
+    build_exam_wrong_note_export,
     plan_exam_result_import,
 )
 from apps.support.results.admin_exam_dependencies import (
@@ -46,6 +63,43 @@ class AdminExamResultExcelTemplateView(APIView):
         response["Content-Disposition"] = (
             f'attachment; filename="exam_{int(exam.id)}_results.xlsx"'
         )
+        return response
+
+
+class AdminExamWrongNoteExcelExportView(APIView):
+    permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
+
+    @extend_schema(
+        responses={
+            (
+                200,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ): OpenApiTypes.BINARY
+        }
+    )
+    def get(self, request, exam_id: int):
+        exam = get_regular_active_exam_for_tenant(
+            exam_id=int(exam_id),
+            tenant=request.tenant,
+        )
+        try:
+            payload = build_exam_wrong_note_export(
+                exam=exam,
+                tenant=request.tenant,
+            )
+        except ExamResultWorkbookError as exc:
+            raise ValidationError({"detail": str(exc)}) from exc
+
+        response = HttpResponse(
+            payload,
+            content_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+        )
+        response["Content-Disposition"] = (
+            f'attachment; filename="exam_{int(exam.id)}_wrong_notes.xlsx"'
+        )
+        response["Cache-Control"] = "private, no-store"
         return response
 
 

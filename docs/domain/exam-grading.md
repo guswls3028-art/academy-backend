@@ -375,6 +375,23 @@ cross-tenant fallback을 사용하지 않는다.
   `수강등록ID`를 요구한다.
 - 미리보기는 쓰지 않고, 확정은 전체 transaction으로 반영한다.
 
+## 학생별 오답 엑셀 내보내기
+
+교직원은 시험의 **채점·결과 → 통계 → 학생별 틀린 문항 (엑셀)**에서
+현재 사이트에 저장된 대표 성적의 오답 기록을 `.xlsx`로 내려받는다.
+`GET /results/admin/exams/{exam_id}/wrong-note-export/`는 인증된 같은 tenant의
+teacher/admin만 허용하며, 시험 roster 밖의 수강 등록이나 다른 tenant의 시험을
+추정하거나 합치지 않는다.
+
+파일은 오답 또는 복습 지정 문항이 있는 학생만 한 행씩 싣는다. `is_correct=false`는
+**오답**, `is_correct=true && include_in_wrong_note=true`는 **복습 지정**으로 분리하고,
+학교·이름·강의·총점·문항 번호·문항별 점수·학생 답안·사이트 최종 저장 시각을 함께
+기록한다. 현재 `Result` 대표 snapshot만 읽기 때문에 재채점으로 해소된 과거 오답은
+다시 나타나지 않는다. 내보낼 현재 기록이 없으면 빈 파일을 성공으로 반환하지 않고
+사용자에게 안내 가능한 검증 오류로 실패한다. 파일은 조회용이며 업로드나 성적 수정은
+기존 정오표/엑셀 가져오기 계약이 계속 소유한다. 학생 정보가 포함된 응답은
+`Cache-Control: private, no-store`로 반환한다.
+
 ## 오답노트와 통계
 
 오답노트 대상은 `ResultItem.is_correct=false` 또는
@@ -467,6 +484,7 @@ API는 호환 별칭으로 유지한다.
 | POST | `/results/wrong-notes/documents/` | 기존 enrollment 범위 또는 학생 `source_selection` 통합 문서 job 생성 |
 | GET | `/results/admin/exams/{id}/result-import/template/` | 시험 전용 엑셀 양식 다운로드 |
 | POST | `/results/admin/exams/{id}/result-import/` | 엑셀 미리보기 또는 원자적 확정 |
+| GET | `/results/admin/exams/{id}/wrong-note-export/` | 현재 대표 성적의 학생별 오답·복습 지정 기록 XLSX 다운로드 |
 | GET | `/results/wrong-notes` | 학생의 현재 대표 오답·복습 문항과 안정적인 `source_fingerprint` 조회. `from_session_order`~선택적 `to_session_order` 포함 |
 | POST | `/results/wrong-notes/documents/` | `output_format=pdf|hwpx`, 회차 범위와 선택적 `source_fingerprint` 검증 뒤 비동기 문서 job 생성 |
 | GET | `/results/wrong-notes/documents/{job_id}/` | 형식·파일명·상태와 attachment URL 조회 |
