@@ -9,6 +9,7 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.students.models import Student, StudentRegistrationRequest
+from apps.domains.students.serializers import StudentCreateSerializer
 from apps.domains.students.services.account_notice import _decrypt
 from apps.domains.students.views.registration_views import (
     RegistrationRequestViewSet,
@@ -47,6 +48,19 @@ class RegistrationPasswordSafetyTests(TestCase):
             "gender": "M",
             "address": "서울",
         }
+
+    def test_student_create_serializer_hides_pending_notice_secrets(self):
+        fields = StudentCreateSerializer().fields
+
+        self.assertNotIn(
+            "pending_account_notice_student_password_ciphertext",
+            fields,
+        )
+        self.assertNotIn(
+            "pending_account_notice_parent_password_ciphertext",
+            fields,
+        )
+        self.assertNotIn("pending_account_notice_since", fields)
 
     def test_registration_create_does_not_persist_plain_password(self):
         request = self.factory.post(
