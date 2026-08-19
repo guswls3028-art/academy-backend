@@ -286,7 +286,7 @@
 | `clinic_self_study_completed` | `clinic/services/lifecycle.py` + `clinic/views/participant_views.py` | complete service 이벤트, view가 `on_commit` 발송 |
 | `check_in_complete` | attendance/views.py:80 | `_send_attendance_notification` |
 | `absent_occurred` | attendance/views.py:80 | `_send_attendance_notification` |
-| `registration_approved_*` | (가입 승인 플로우) | `send_alimtalk_via_owner` 경유 |
+| `registration_approved_*` | 신규 학생 첫 ACTIVE 수강 확정 + 계정 변경 플로우 | `send_alimtalk_via_owner` 경유 |
 | `password_find_otp` | legacy OTP 경로 | `send_alimtalk_via_owner` 경유 |
 | `password_reset_*` | 현재 공개 비밀번호 찾기 + 관리자/선생님 재설정 | `send_alimtalk_via_owner` 경유 |
 

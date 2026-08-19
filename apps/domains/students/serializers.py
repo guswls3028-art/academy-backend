@@ -383,7 +383,13 @@ class StudentCreateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Student
-        exclude = ("tenant", "user")
+        exclude = (
+            "tenant",
+            "user",
+            "pending_account_notice_student_password_ciphertext",
+            "pending_account_notice_parent_password_ciphertext",
+            "pending_account_notice_since",
+        )
         read_only_fields = ("deleted_at", "profile_photo")
 
     def _require(self, attrs, key: str):

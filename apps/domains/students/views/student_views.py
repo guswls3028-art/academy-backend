@@ -32,10 +32,8 @@ from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_excel
 from apps.support.students.view_dependencies import (
     dispatch_job,
     get_excel_parsing_job_status_response,
-    get_tenant_site_url,
     protect_excel_initial_password,
     send_event_notification,
-    send_welcome_messages,
 )
 
 from academy.adapters.db.django import repositories_students as student_repo
@@ -159,7 +157,7 @@ class StudentViewSet(ModelViewSet):
         1. 삭제된 학생 체크 (전화번호 또는 이름+학부모전화)
         2. 입력값 검증 (StudentCreateSerializer)
         3. create_student_account SSOT로 Parent/User/Student/Membership 생성
-        4. (옵션) 가입 성공 메시지 일괄 발송
+        4. 계정 안내는 첫 실제 수강 확정 시 발송
         """
         tenant = request.tenant
         raw_data = request.data
@@ -221,14 +219,6 @@ class StudentViewSet(ModelViewSet):
             password=password,
         )
         student = result.student
-
-        site_url = get_tenant_site_url(request.tenant)
-        send_welcome_messages(
-            created_students=[student],
-            student_password=password,
-            parent_password_by_phone=result.parent_password_by_phone,
-            site_url=site_url,
-        )
 
         output = StudentDetailSerializer(
             student,

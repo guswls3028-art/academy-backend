@@ -40675,7 +40675,7 @@
         ]
       },
       "post": {
-        "description": "학생 생성 시 처리 흐름\n\n1. 삭제된 학생 체크 (전화번호 또는 이름+학부모전화)\n2. 입력값 검증 (StudentCreateSerializer)\n3. create_student_account SSOT로 Parent/User/Student/Membership 생성\n4. (옵션) 가입 성공 메시지 일괄 발송",
+        "description": "학생 생성 시 처리 흐름\n\n1. 삭제된 학생 체크 (전화번호 또는 이름+학부모전화)\n2. 입력값 검증 (StudentCreateSerializer)\n3. create_student_account SSOT로 Parent/User/Student/Membership 생성\n4. 계정 안내는 첫 실제 수강 확정 시 발송",
         "operationId": "students_create",
         "requestBody": {
           "content": {

@@ -566,7 +566,7 @@ class TestBulkRestoreFlow(TestCase):
         self.assertTrue(student.user.is_active)
         self.assertEqual(student.parent_id, self.parent.id)
 
-    @patch("apps.domains.students.views.student_views.send_welcome_messages")
+    @patch("apps.domains.messaging.services.send_welcome_messages")
     def test_bulk_resolve_restore_does_not_send_new_password_notice(self, send_mock):
         request = self.factory.post(
             "/api/v1/students/bulk_resolve_conflicts/",

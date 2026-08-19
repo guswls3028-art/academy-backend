@@ -25,10 +25,12 @@ def deactivate_fees_for_enrollment(enrollment: Any):
     return deactivate(enrollment)
 
 
-def send_event_notification(**kwargs):
-    from apps.domains.messaging.services import send_event_notification as send
+def schedule_pending_account_notice(*, student_id: int) -> None:
+    from apps.domains.students.services.account_notice import (
+        schedule_pending_account_notice as schedule,
+    )
 
-    return send(**kwargs)
+    schedule(student_id=student_id)
 
 
 def get_exam_learning_access_models():

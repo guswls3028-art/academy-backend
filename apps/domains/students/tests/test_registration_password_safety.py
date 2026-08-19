@@ -9,6 +9,8 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.students.models import Student, StudentRegistrationRequest
+from apps.domains.students.serializers import StudentCreateSerializer
+from apps.domains.students.services.account_notice import _decrypt
 from apps.domains.students.views.registration_views import (
     RegistrationRequestViewSet,
     _approve_registration_request,
@@ -47,6 +49,19 @@ class RegistrationPasswordSafetyTests(TestCase):
             "address": "서울",
         }
 
+    def test_student_create_serializer_hides_pending_notice_secrets(self):
+        fields = StudentCreateSerializer().fields
+
+        self.assertNotIn(
+            "pending_account_notice_student_password_ciphertext",
+            fields,
+        )
+        self.assertNotIn(
+            "pending_account_notice_parent_password_ciphertext",
+            fields,
+        )
+        self.assertNotIn("pending_account_notice_since", fields)
+
     def test_registration_create_does_not_persist_plain_password(self):
         request = self.factory.post(
             "/api/v1/students/registration-requests/",
@@ -62,8 +77,7 @@ class RegistrationPasswordSafetyTests(TestCase):
         self.assertEqual(reg.initial_password_plain, "")
         self.assertNotEqual(reg.initial_password, "rawpw1234")
 
-    @patch("apps.domains.students.views.registration_views.send_registration_approved_messages")
-    def test_approval_message_uses_non_secret_password_phrase(self, send_mock):
+    def test_approval_stages_non_secret_password_phrase_until_enrollment(self):
         reg = StudentRegistrationRequest.objects.create(
             tenant=self.tenant,
             status=StudentRegistrationRequest.PENDING,
@@ -86,18 +100,22 @@ class RegistrationPasswordSafetyTests(TestCase):
         error = _approve_registration_request(request, reg)
 
         self.assertIsNone(error)
-        send_mock.assert_called_once()
         self.assertEqual(
-            send_mock.call_args.kwargs["student_password"],
+            _decrypt(
+                reg.student.pending_account_notice_student_password_ciphertext
+            ),
             "가입 신청 시 입력한 비밀번호",
         )
-        self.assertEqual(send_mock.call_args.kwargs["parent_password"], "6666")
+        self.assertEqual(
+            _decrypt(
+                reg.student.pending_account_notice_parent_password_ciphertext
+            ),
+            "6666",
+        )
         reg.refresh_from_db()
         self.assertEqual(reg.initial_password_plain, "")
-        self.assertEqual(send_mock.call_args.kwargs["student_pk"], reg.student_id)
 
-    @patch("apps.domains.students.views.registration_views.send_registration_approved_messages")
-    def test_approval_message_says_parent_password_unchanged_for_existing_parent(self, send_mock):
+    def test_approval_stages_parent_password_unchanged_for_existing_parent(self):
         ensure_parent_account_for_student(
             tenant=self.tenant,
             parent_phone="01055556666",
@@ -125,10 +143,14 @@ class RegistrationPasswordSafetyTests(TestCase):
         error = _approve_registration_request(request, reg)
 
         self.assertIsNone(error)
-        self.assertEqual(send_mock.call_args.kwargs["parent_password"], "변경되지 않음")
+        self.assertEqual(
+            _decrypt(
+                reg.student.pending_account_notice_parent_password_ciphertext
+            ),
+            "변경되지 않음",
+        )
 
-    @patch("apps.domains.students.views.registration_views.send_registration_approved_messages")
-    def test_approve_action_returns_created_student_without_refreshing_input_instance(self, send_mock):
+    def test_approve_action_returns_created_student_without_refreshing_input_instance(self):
         reg = StudentRegistrationRequest.objects.create(
             tenant=self.tenant,
             status=StudentRegistrationRequest.PENDING,
@@ -156,10 +178,9 @@ class RegistrationPasswordSafetyTests(TestCase):
         reg.refresh_from_db()
         self.assertEqual(reg.status, StudentRegistrationRequest.APPROVED)
         self.assertIsNotNone(reg.student_id)
-        send_mock.assert_called_once()
+        self.assertIsNotNone(reg.student.pending_account_notice_since)
 
-    @patch("apps.domains.students.views.registration_views.send_registration_approved_messages")
-    def test_auto_approve_create_returns_student_and_approves_request(self, send_mock):
+    def test_auto_approve_create_returns_student_and_approves_request(self):
         self.tenant.student_registration_auto_approve = True
         self.tenant.save(update_fields=["student_registration_auto_approve"])
         request = self.factory.post(
@@ -180,13 +201,12 @@ class RegistrationPasswordSafetyTests(TestCase):
         reg = StudentRegistrationRequest.objects.get(username="REGSAFE05")
         self.assertEqual(reg.status, StudentRegistrationRequest.APPROVED)
         self.assertIsNotNone(reg.student_id)
-        send_mock.assert_called_once()
+        self.assertIsNotNone(reg.student.pending_account_notice_since)
 
     @patch(
-        "apps.domains.students.views.registration_views.send_registration_approved_messages",
-        side_effect=RuntimeError("alimtalk transport down"),
+        "apps.domains.messaging.services.send_registration_approved_messages",
     )
-    def test_approval_notification_failure_does_not_hide_committed_approval(self, _send_mock):
+    def test_approval_does_not_dispatch_before_enrollment(self, send_mock):
         reg = StudentRegistrationRequest.objects.create(
             tenant=self.tenant,
             status=StudentRegistrationRequest.PENDING,
@@ -213,9 +233,10 @@ class RegistrationPasswordSafetyTests(TestCase):
         reg.refresh_from_db()
         self.assertEqual(reg.status, StudentRegistrationRequest.APPROVED)
         self.assertIsNotNone(reg.student_id)
+        send_mock.assert_not_called()
 
-    @patch("apps.domains.students.views.student_views.send_welcome_messages")
-    def test_student_create_welcome_uses_parent_initial_password_ssot(self, send_mock):
+    @patch("apps.domains.messaging.services.send_welcome_messages")
+    def test_student_create_stages_parent_initial_password_until_enrollment(self, send_mock):
         request = self.factory.post(
             "/api/v1/students/",
             {
@@ -236,12 +257,14 @@ class RegistrationPasswordSafetyTests(TestCase):
         response = StudentViewSet.as_view({"post": "create"})(request)
 
         self.assertEqual(response.status_code, 201)
+        send_mock.assert_not_called()
+        student = Student.objects.get(pk=response.data["id"])
         self.assertEqual(
-            send_mock.call_args.kwargs["parent_password_by_phone"],
-            {"01055556666": "6666"},
+            _decrypt(student.pending_account_notice_parent_password_ciphertext),
+            "6666",
         )
 
-    @patch("apps.domains.students.views.student_views.send_welcome_messages")
+    @patch("apps.domains.messaging.services.send_welcome_messages")
     def test_student_create_without_student_phone_creates_separate_student_and_parent_accounts(self, send_mock):
         request = self.factory.post(
             "/api/v1/students/",
@@ -267,15 +290,18 @@ class RegistrationPasswordSafetyTests(TestCase):
         self.assertTrue(student.uses_identifier)
         self.assertIsNotNone(student.parent_id)
         self.assertIsNotNone(student.parent.user_id)
-        self.assertEqual(send_mock.call_args.kwargs["created_students"], [student])
-        self.assertEqual(send_mock.call_args.kwargs["student_password"], "stud1234")
+        send_mock.assert_not_called()
         self.assertEqual(
-            send_mock.call_args.kwargs["parent_password_by_phone"],
-            {"01055556669": "6669"},
+            _decrypt(student.pending_account_notice_student_password_ciphertext),
+            "stud1234",
+        )
+        self.assertEqual(
+            _decrypt(student.pending_account_notice_parent_password_ciphertext),
+            "6669",
         )
 
-    @patch("apps.domains.students.views.student_views.send_welcome_messages")
-    def test_student_create_welcome_says_parent_password_unchanged_when_account_exists(self, send_mock):
+    @patch("apps.domains.messaging.services.send_welcome_messages")
+    def test_student_create_stages_parent_password_unchanged_when_account_exists(self, send_mock):
         ensure_parent_account_for_student(
             tenant=self.tenant,
             parent_phone="01055556666",
@@ -301,14 +327,15 @@ class RegistrationPasswordSafetyTests(TestCase):
         response = StudentViewSet.as_view({"post": "create"})(request)
 
         self.assertEqual(response.status_code, 201)
+        send_mock.assert_not_called()
+        student = Student.objects.get(pk=response.data["id"])
         self.assertEqual(
-            send_mock.call_args.kwargs["parent_password_by_phone"],
-            {"01055556666": "변경되지 않음"},
+            _decrypt(student.pending_account_notice_parent_password_ciphertext),
+            "변경되지 않음",
         )
 
-    @patch("apps.domains.messaging.services.get_tenant_site_url", return_value="https://hakwonplus.com")
     @patch("apps.domains.messaging.services.send_welcome_messages")
-    def test_excel_worker_welcome_uses_parent_initial_password_ssot(self, send_mock, _site_mock):
+    def test_student_excel_stages_parent_initial_password_until_enrollment(self, send_mock):
         from apps.domains.students.services.bulk_from_excel import (
             bulk_create_students_from_excel_rows,
         )
@@ -328,13 +355,15 @@ class RegistrationPasswordSafetyTests(TestCase):
         )
 
         self.assertEqual(result["created"], 1)
+        send_mock.assert_not_called()
+        student = Student.objects.get(tenant=self.tenant, name="엑셀등록학생")
         self.assertEqual(
-            send_mock.call_args.kwargs["parent_password_by_phone"],
-            {"01055556666": "6666"},
+            _decrypt(student.pending_account_notice_parent_password_ciphertext),
+            "6666",
         )
 
     @patch("apps.domains.messaging.services.send_welcome_messages")
-    def test_excel_worker_sends_welcome_even_when_legacy_flag_false(self, send_mock):
+    def test_student_excel_legacy_flag_cannot_send_before_enrollment(self, send_mock):
         from apps.domains.students.services.bulk_from_excel import (
             bulk_create_students_from_excel_rows,
         )
@@ -355,7 +384,9 @@ class RegistrationPasswordSafetyTests(TestCase):
         )
 
         self.assertEqual(result["created"], 1)
-        send_mock.assert_called_once()
+        send_mock.assert_not_called()
+        student = Student.objects.get(tenant=self.tenant, name="엑셀무알림학생")
+        self.assertIsNotNone(student.pending_account_notice_since)
 
     @patch("apps.domains.messaging.services.send_welcome_messages")
     def test_student_import_reports_active_duplicate_without_new_account(self, send_mock):
@@ -506,9 +537,8 @@ class RegistrationPasswordSafetyTests(TestCase):
         )
         send_mock.assert_not_called()
 
-    @patch("apps.domains.messaging.services.get_tenant_site_url", return_value="https://hakwonplus.com")
     @patch("apps.domains.messaging.services.send_welcome_messages")
-    def test_bulk_resolve_delete_recreate_uses_import_parent_notice(self, send_mock, _site_mock):
+    def test_bulk_resolve_delete_recreate_stages_parent_notice(self, send_mock):
         from apps.domains.students.models import Student
         from apps.domains.students.services import create_student_account, soft_delete_student
 
@@ -566,9 +596,15 @@ class RegistrationPasswordSafetyTests(TestCase):
                 deleted_at__isnull=True,
             ).exists()
         )
+        send_mock.assert_not_called()
+        replacement = Student.objects.get(
+            tenant=self.tenant,
+            name="삭제재생성대상",
+            phone="01077778903",
+        )
         self.assertEqual(
-            send_mock.call_args.kwargs["parent_password_by_phone"],
-            {"01055556671": "변경되지 않음"},
+            _decrypt(replacement.pending_account_notice_parent_password_ciphertext),
+            "변경되지 않음",
         )
 
     def test_bulk_resolve_delete_recreate_failure_keeps_deleted_student(self):

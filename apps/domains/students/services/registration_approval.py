@@ -72,6 +72,7 @@ def approve_registration_request(
         result = create_student_account(
             tenant=tenant,
             password_hash=reg.initial_password,
+            account_notice_student_password="가입 신청 시 입력한 비밀번호",
             student_data={
                 "name": reg.name,
                 "parent_phone": parent_phone,

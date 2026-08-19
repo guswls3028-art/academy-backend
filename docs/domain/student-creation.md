@@ -1,7 +1,7 @@
 # 학생 생성 SSOT
 
 **상태:** Active  
-**최종 점검:** 2026-07-29
+**최종 점검:** 2026-08-19
 **코드 기준:** `apps/domains/students/services/creation.py`, `apps/domains/students/services/registration_approval.py`, `apps/domains/students/services/import_students.py`, `apps/domains/students/services/import_passwords.py`, `apps/domains/students/services/custom_fields.py`, `apps/domains/students/views/student_views.py`, `apps/domains/students/views/registration_views.py`, `apps/domains/students/services/lecture_enroll.py`, `apps/domains/students/services/bulk_from_excel.py`
 
 ## 1. 책임 경계
@@ -16,6 +16,7 @@
 - `Student` 생성
 - `TenantMembership(role="student")` 활성화
 - 학부모 안내용 비밀번호 문구 반환
+- 첫 수강 전 학생·학부모 계정 안내값 암호화 staging
 
 이 서비스가 소유하지 않는 것:
 
@@ -24,12 +25,11 @@
 - 삭제 학생 복원 또는 delete-and-recreate 결정
 - 가입 신청 상태 전이(`approve_registration_request()`가 소유)
 - Excel/R2/AI job dispatch
-- 알림톡 발송
 - HTTP 응답 모양
 
-가입 신청 승인의 durable orchestration SSOT는 `approve_registration_request()`다. 이 서비스는 `pending -> approved` 전이와 학생 계정 생성 그래프 호출을 하나의 트랜잭션으로 처리한다. HTTP 응답 모양과 알림톡 발송은 여전히 view compatibility boundary다.
+가입 신청 승인의 durable orchestration SSOT는 `approve_registration_request()`다. 이 서비스는 `pending -> approved` 전이와 학생 계정 생성 그래프 호출을 하나의 트랜잭션으로 처리한다. 승인만으로 알림톡을 보내지 않으며, 첫 수강 확정 후 발송할 비밀번호 안내 문구를 암호화해 학생에 staging한다.
 
-Excel/import/JSON bulk row orchestration SSOT는 `import_students_from_rows()`, `resolve_student_import_row()`, `resolve_student_import_conflicts()`다. 이 서비스는 학생 import 행의 중복/복원/생성 판단, school_level_mode 검증, 계정 그래프 호출, 학생-only Excel/JSON bulk welcome dispatch, delete-and-recreate conflict resolution을 소유한다. R2 업로드, AI job dispatch, HTTP 응답 모양은 여전히 view/worker compatibility boundary다.
+Excel/import/JSON bulk row orchestration SSOT는 `import_students_from_rows()`, `resolve_student_import_row()`, `resolve_student_import_conflicts()`다. 이 서비스는 학생 import 행의 중복/복원/생성 판단, school_level_mode 검증, 계정 그래프 호출, 첫 수강용 계정 안내 staging, delete-and-recreate conflict resolution을 소유한다. R2 업로드, AI job dispatch, HTTP 응답 모양은 여전히 view/worker compatibility boundary다.
 
 Excel 신규 학생 초기 비밀번호 정책 SSOT는 `build_student_import_password_policy()`다. `fixed`는 공통 4자 이상 비밀번호, `phone_last4`는 실제 학생 전화번호 뒤 4자리, `random`은 학생별 4자리 랜덤 비밀번호를 사용한다. 학생-only Excel 등록에서 `phone_last4`를 선택했는데 학생 전화번호가 없거나 자동 식별자를 사용한 행은 그 행만 실패 처리하고 나머지 정상 행은 계속 등록한다. 강의 수강 Excel은 기존 전체 행 사전 검증을 유지한다. 모든 Excel 신규 계정은 첫 로그인에서 비밀번호 변경이 필요하다. `fixed` 입력값과 `random` 결과는 서버 비밀키로 암호화해 AI job/result DB에 저장하고, 작업 종료 시 입력값은 제거한다. 랜덤 결과는 스태프 전용 tenant-scoped 상태 조회에서 완료 후 한 시간 동안만 복호화하며 Redis에는 평문을 캐시하지 않는다. 학생 생성과 암호화된 작업 완료 결과는 같은 DB 트랜잭션으로 커밋한다.
 
@@ -45,7 +45,7 @@ Excel 파서의 학생 행 판별은 유효한 학부모/학생 전화번호가 
 삭제하지 않는다. 맞춤 컬럼이 없는 테넌트의 기존 Excel/JSON 계약은
 변경되지 않는다.
 
-알림톡 outbox화와 단건 생성 duplicate response shape 수렴은 별도 슬라이스다.
+계정 안내 암호문은 `Student.pending_account_notice_*`에만 보관한다. 신규 학생의 첫 ACTIVE 수강이 커밋된 뒤 `apps/domains/students/services/account_notice.py`가 계정 안내 outbox를 만들고, 학생·학부모 등 모든 유효 수신자 outbox가 확보된 경우에만 암호문과 대기 시각을 제거한다.
 
 ## 2. 현재 진입점
 
@@ -56,7 +56,7 @@ Excel 파서의 학생 행 판별은 유효한 학부모/학생 전화번호가 
 | 충돌 delete-and-recreate | `StudentViewSet.bulk_resolve_conflicts` -> `resolve_student_import_conflicts` | 영구삭제+재생성 conflict resolution을 학생 도메인 import row SSOT로 처리 |
 | 가입 신청 승인 | `approve_registration_request` + view facade | `pending -> approved`와 `create_student_account(password_hash=reg.initial_password)`를 atomic 처리 |
 | 강의/수강 Excel 신규 학생 | `lecture_enroll_from_excel_rows` -> `resolve_student_import_row` | 학생 도메인 import row SSOT로 중복/복원/생성 판단 |
-| 학생 Excel worker | `ExcelParsingService` -> `import_students_from_rows` | 학생 도메인 import row SSOT로 생성, 신규 학생만 welcome 발송 |
+| 학생 Excel worker | `ExcelParsingService` -> `import_students_from_rows` | 학생 도메인 import row SSOT로 생성, 첫 수강 전 계정 안내값만 staging |
 
 ## 3. 불변 조건
 
@@ -66,18 +66,21 @@ Excel 파서의 학생 행 판별은 유효한 학부모/학생 전화번호가 
 - 학생 전화번호가 비어 있어도 학생 `User`와 `TenantMembership(student)`는 생성된다. 학부모 계정과 공유 계정이 되는 것이 아니다.
 - 학부모가 새로 생성되면 안내 비밀번호는 `parent_initial_password(parent_phone)`이다.
 - 기존 학부모 계정이면 안내 문구는 `변경되지 않음`이다.
-- welcome/approval 알림톡은 caller가 서비스 결과의 `parent_password_by_phone` 또는 `parent_password_for_notice`를 사용한다.
-- 신규 학생 생성 welcome은 SYSTEM_AUTO다. legacy `send_welcome_message=false` 입력은 호환용으로만 받으며 계정 안내 발송을 끄지 않는다.
+- 학생 마스터 생성, 가입 승인, 학생-only Excel/JSON 등록은 알림톡을 발송하지 않는다.
+- 신규 학생 생성 시 학생 초기 비밀번호 안내값과 `parent_password_for_notice`를 서로 다른 암호문으로 staging한다. 평문 비밀번호는 DB에 저장하지 않는다.
+- 첫 ACTIVE 수강 확정 후 계정 안내는 SYSTEM_AUTO다. legacy `send_welcome_message=false` 입력은 호환용으로만 받으며 이 발송을 끄지 않는다.
+- 첫 수강 outbox가 완전하지 않으면 암호문을 보존해 동일 수강 요청에서 재시도한다. outbox가 모두 확보되면 암호문을 즉시 지우므로 같은 수강 재시도와 이후 추가 수강은 조용하다.
+- 마이그레이션 기본값은 빈 값이므로 배포 전부터 있던 학생은 새 수강을 추가해도 과거 가입 안내를 받지 않는다.
 - 학생 전화번호를 나중에 최초 등록하면 기존 학생 계정의 아이디 안내를 새 학생 번호로 발송한다. 비밀번호 변수는 `변경되지 않음`이다.
 - 복원은 생성이 아니므로 비밀번호를 재발급하지 않고 welcome 알림톡도 새 비밀번호처럼 보내지 않는다.
-- Excel 비밀번호 방식이 학생별로 달라지는 경우 welcome 알림톡은 학생 ID별 비밀번호 매핑을 사용한다.
-- 가입 신청 승인 알림톡 실패는 이미 커밋된 승인/학생 생성을 API 500으로 되돌리지 않는다. 발송 장애는 운영 로그/알림 재처리 대상이다.
+- Excel 비밀번호 방식이 학생별로 달라지는 경우 학생별 암호문에 해당 값을 staging한다.
+- 첫 수강 계정 안내 실패는 이미 커밋된 학생/수강 생성을 API 실패로 되돌리지 않는다. 암호문을 보존하고 재시도한다.
 
 ## 4. Frontend 계약
 
 - 학생 생성 API 호출은 `src/shared/api/contracts/students.ts`의 `createStudent()`가 canonical mapper다.
 - teacher 모바일 생성 시트는 role-local raw `/students/` POST를 쓰지 않고 shared contract를 호출한다.
-- admin/teacher Excel 업로드의 `sendWelcomeMessage`/`send_welcome_message` 값은 legacy compatibility 입력이다. 백엔드는 신규 계정 안내를 SYSTEM_AUTO로 발송한다.
+- admin/teacher Excel 업로드의 `sendWelcomeMessage`/`send_welcome_message` 값은 legacy compatibility 입력이다. 학생-only 등록에서는 발송하지 않고 첫 수강 확정 시 SYSTEM_AUTO 계정 안내가 발송된다.
 - admin/teacher Excel 업로드는 `phone_last4`를 기본으로 표시하고 `fixed`, `random`을 선택할 수 있다.
 - teacher 모바일 Excel 업로드도 파일 선택 직후 즉시 업로드하지 않는다. `StudentListPage`의 Excel import bottom sheet에서 초기 비밀번호 방식을 명시 확정한 뒤 shared upload contract를 호출한다.
 - 학생-only Excel 업로드는 일부 행에 오류가 있어도 등록 버튼을 허용한다. 완료 작업에는 신규/복원/중복/실패 수와 실패한 실제 Excel 행 번호·이름·사유를 표시한다.

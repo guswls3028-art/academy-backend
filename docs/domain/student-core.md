@@ -168,13 +168,19 @@ Student account Alimtalk is system-critical but still fail-closed:
   notice. ID-only changes, parent phone relinks, and first-time student phone
   registration use `registration_approved_*` with password phrase
   `변경되지 않음`.
-- welcome/approval notices use service-returned parent password phrases:
+- student creation and registration approval stage, but do not send, the initial
+  account notice. The first confirmed active enrollment dispatches it once.
+- staged student and parent password notice values are encrypted separately and
+  removed only after all expected durable outbox rows exist.
+- first-enrollment notices use service-returned parent password phrases:
   - new parent account: parent initial password phrase;
   - existing parent account: `변경되지 않음`.
 - account notification logs are linked back through `source_tenant_id`,
   `target_type="account"`, and stable target IDs.
 - student detail UI may show account-notification status metadata, never the
   message body or temporary password.
+- preexisting students have no pending notice marker, so adding another lecture
+  after this behavior ships does not back-send a historical welcome message.
 
 ## 5. Student-Linked Content Rule
 

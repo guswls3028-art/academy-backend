@@ -14,6 +14,9 @@ from apps.support.enrollment.import_dependencies import (
     student_import_password_policy,
     student_import_valid_school_types,
 )
+from apps.support.enrollment.lifecycle_dependencies import (
+    schedule_pending_account_notice,
+)
 
 from ..models import Enrollment, SessionEnrollment
 
@@ -193,7 +196,11 @@ def lecture_enroll_from_excel_rows(
                 student_id=sid,
                 defaults={"status": "ACTIVE"},
             )
+            if not created and obj.status != "ACTIVE":
+                obj.status = "ACTIVE"
+                obj.save(update_fields=["status"])
             enrollments_created.append(obj)
+            schedule_pending_account_notice(student_id=obj.student_id)
             if created:
                 logger.debug("[lecture_enroll_excel] enrollment created lecture_id=%s student_id=%s", lecture_id, sid)
 

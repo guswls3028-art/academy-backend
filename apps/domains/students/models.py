@@ -125,6 +125,23 @@ class Student(TimestampModel):
         blank=True,
         help_text="테넌트별 학생 사용자 정의 필드 값. 정의의 stable key를 사용한다.",
     )
+    pending_account_notice_student_password_ciphertext = models.TextField(
+        null=True,
+        blank=True,
+        default="",
+        help_text="첫 수강 확정 시 계정 안내에 사용할 학생 비밀번호 안내값의 암호문",
+    )
+    pending_account_notice_parent_password_ciphertext = models.TextField(
+        null=True,
+        blank=True,
+        default="",
+        help_text="첫 수강 확정 시 계정 안내에 사용할 학부모 비밀번호 안내값의 암호문",
+    )
+    pending_account_notice_since = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="학생 생성 후 첫 실제 수강 확정을 기다리는 계정 안내 생성 시각",
+    )
     is_managed = models.BooleanField(default=True)
 
     # 학생이 학생앱에서만 설정 (관리자 편집 불가)

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from django.db import transaction
 from rest_framework.exceptions import NotFound, ValidationError
 
 from academy.adapters.db.django import repositories_enrollment as enroll_repo
@@ -20,7 +19,7 @@ from apps.support.enrollment.lifecycle_dependencies import (
     ensure_session_roster_membership,
     get_exam_learning_access_models,
     get_homework_learning_access_models,
-    send_event_notification,
+    schedule_pending_account_notice,
 )
 
 
@@ -45,6 +44,7 @@ def sync_enrollment_status_side_effects(enrollment: Enrollment) -> None:
         enrollment.lecture,
         enrollment,
     )
+    schedule_pending_account_notice(student_id=enrollment.student_id)
 
 
 def delete_enrollment(enrollment: Enrollment) -> None:
@@ -86,20 +86,7 @@ def bulk_create_enrollments(*, tenant, lecture_id, student_ids) -> list[Enrollme
         student = getattr(obj, "student", None)
         if student:
             auto_assign_fees_on_enrollment(tenant, student, lecture, obj)
-
-        if created_new and student:
-            transaction.on_commit(
-                lambda t=tenant, s=student, title=lecture.title, enrollment_id=obj.id: send_event_notification(
-                    tenant=t,
-                    trigger="class_enrollment_complete",
-                    student=s,
-                    send_to="parent",
-                    context={
-                        "강의명": title,
-                        "_domain_object_id": f"enrollment:{enrollment_id}",
-                    },
-                )
-            )
+            schedule_pending_account_notice(student_id=student.id)
 
     return created
 
