@@ -259,6 +259,10 @@ def update_student_profile(
     if changed:
         student.save(update_fields=changed)
 
+    if "phone" in data and student.user_id and student.user.phone != student.phone:
+        student.user.phone = student.phone
+        student.user.save(update_fields=["phone"])
+
     parent_relinked = False
     parent_password_for_notice = ""
     parent_user_created = False
