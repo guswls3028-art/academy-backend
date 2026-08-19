@@ -5,6 +5,8 @@ Staff 도메인 운영 안정화 테스트.
 - Staff role 판별
 - 비밀번호 변경
 """
+from datetime import date, time
+
 from django.test import TestCase, RequestFactory
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIRequestFactory, force_authenticate
@@ -22,6 +24,7 @@ from apps.domains.staffs.models import (
     WorkType,
 )
 from apps.domains.staffs.serializers import StaffCreateUpdateSerializer, StaffListSerializer
+from apps.domains.staffs.views import StaffViewSet
 from apps.domains.staffs.views.helpers import can_access_staff_management
 from apps.domains.staffs.views.work_month_lock import WorkMonthLockViewSet
 from academy.adapters.db.django import repositories_teachers as teacher_repo
@@ -341,6 +344,103 @@ class TestStaffManagementPermissions(TestCase):
                 end_time__isnull=True,
             ).exists()
         )
+
+    def test_non_manager_staff_can_read_only_own_canonical_work_history(self):
+        own_record = WorkRecord.objects.create(
+            tenant=self.tenant,
+            staff=self.staff,
+            work_type=self.work_type,
+            date=date(2026, 8, 19),
+            start_time=time(13, 0),
+            end_time=time(15, 0),
+        )
+        other_staff = _create_staff_teacher(
+            self.tenant,
+            name="다른강사",
+            phone="01034343434",
+        )
+        WorkRecord.objects.create(
+            tenant=self.tenant,
+            staff=other_staff,
+            work_type=self.work_type,
+            date=date(2026, 8, 19),
+            start_time=time(9, 0),
+            end_time=time(10, 0),
+        )
+
+        request = self.factory.get(
+            f"/staffs/{self.staff.id}/work-records/",
+            {"date_from": "2026-08-01", "date_to": "2026-08-31"},
+        )
+        force_authenticate(request, user=self.staff.user)
+        request.tenant = self.tenant
+        response = StaffViewSet.as_view({"get": "work_records"})(
+            request,
+            pk=self.staff.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["id"], own_record.id)
+        self.assertEqual(response.data["results"][0]["work_type_name"], "기본")
+        self.assertEqual(response.data["results"][0]["amount"], 20_000)
+
+        summary_request = self.factory.get(
+            f"/staffs/{self.staff.id}/summary/",
+            {"date_from": "2026-08-01", "date_to": "2026-08-31"},
+        )
+        force_authenticate(summary_request, user=self.staff.user)
+        summary_request.tenant = self.tenant
+        summary = StaffViewSet.as_view({"get": "summary"})(
+            summary_request,
+            pk=self.staff.id,
+        )
+        self.assertEqual(summary.status_code, 200, summary.data)
+        self.assertEqual(summary.data["work_hours"], 2)
+        self.assertEqual(summary.data["work_amount"], 20_000)
+
+        other_request = self.factory.get(
+            f"/staffs/{other_staff.id}/work-records/",
+            {"date_from": "2026-08-01", "date_to": "2026-08-31"},
+        )
+        force_authenticate(other_request, user=self.staff.user)
+        other_request.tenant = self.tenant
+        denied = StaffViewSet.as_view({"get": "work_records"})(
+            other_request,
+            pk=other_staff.id,
+        )
+        self.assertEqual(denied.status_code, 403, denied.data)
+
+        denied_summary = StaffViewSet.as_view({"get": "summary"})(
+            other_request,
+            pk=other_staff.id,
+        )
+        self.assertEqual(denied_summary.status_code, 403, denied_summary.data)
+
+    def test_current_work_exposes_selected_type_and_clock_in_wage(self):
+        record = WorkRecord.objects.create(
+            tenant=self.tenant,
+            staff=self.staff,
+            work_type=self.work_type,
+            date=date(2026, 8, 19),
+            start_time=time(13, 0),
+        )
+        request = self.factory.get(
+            f"/staffs/{self.staff.id}/work-records/current/"
+        )
+        force_authenticate(request, user=self.staff.user)
+        request.tenant = self.tenant
+
+        response = StaffViewSet.as_view({"get": "work_current"})(
+            request,
+            pk=self.staff.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["work_record_id"], record.id)
+        self.assertEqual(response.data["work_type"], self.work_type.id)
+        self.assertEqual(response.data["work_type_name"], "기본")
+        self.assertEqual(response.data["hourly_wage"], 10_000)
 
     def test_start_work_rejects_cross_tenant_work_type(self):
         other_tenant = _make_tenant(name="다른학원")
