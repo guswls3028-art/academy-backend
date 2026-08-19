@@ -105,6 +105,23 @@ cd C:\academy\backend
 - `CORS_ALLOWED_ORIGINS`
 - `CSRF_TRUSTED_ORIGINS`
 
+영상 파일은 API가 발급한 URL로 브라우저에서 R2에 직접 전송되므로 API CORS만
+갱신해서는 부족하다. `setup_r2_cors`는 하드코딩된 고객 목록이 아니라 현재
+`CORS_ALLOWED_ORIGINS`를 사용한다. 운영 영상 버킷의 기존 규칙을 먼저 읽고, 정확한
+대상 버킷과 추가 origin을 확인한 뒤 bucket CORS 변경 권한이 있는 운영자 환경에서
+수렴한다.
+
+```powershell
+python manage.py setup_r2_cors --bucket academy-video
+```
+
+운영 API의 object 전용 R2 credential은 `PutBucketCors`가 거부될 수 있다. 이 경우
+`AccessDenied`를 성공으로 처리하지 말고, 출력된 정책을 Cloudflare account API 또는
+대시보드에서 같은 버킷에 적용한다. 적용 뒤 신규 apex와 `www`가 모두 readback되는지,
+브라우저 형태의 multipart PUT 응답이 200인지, `Access-Control-Allow-Origin`이 정확한
+origin인지, `Access-Control-Expose-Headers`에 `ETag`가 있는지 확인하고 임시 upload를
+abort해 잔여 객체가 없음을 확인한다.
+
 DB 프로비저닝 코드는 고객별 목록에 추가하지 않는다. 배포 후 범용 명령
 `provision_tenant`를 사용한다.
 

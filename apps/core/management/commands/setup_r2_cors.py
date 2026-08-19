@@ -1,10 +1,23 @@
-# PATH: apps/core/management/commands/setup_r2_cors.py
-# R2 버킷 CORS 설정 자동화
-
-from django.core.management.base import BaseCommand
-from django.conf import settings
-import boto3
 import json
+
+import boto3
+from django.conf import settings
+from django.core.management.base import BaseCommand, CommandError
+
+
+def _configured_allowed_origins() -> list[str]:
+    origins = list(
+        dict.fromkeys(
+            origin.strip()
+            for origin in getattr(settings, "CORS_ALLOWED_ORIGINS", [])
+            if isinstance(origin, str) and origin.strip()
+        )
+    )
+    if not origins:
+        raise CommandError(
+            "CORS_ALLOWED_ORIGINS is empty; refusing to overwrite the R2 CORS policy."
+        )
+    return origins
 
 
 class Command(BaseCommand):
@@ -18,33 +31,24 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        bucket_name = options.get("bucket") or getattr(settings, "R2_VIDEO_BUCKET", "academy-video")
-        
+        bucket_name = options.get("bucket") or getattr(
+            settings, "R2_VIDEO_BUCKET", "academy-video"
+        )
+        allowed_origins = _configured_allowed_origins()
+
         s3 = boto3.client(
             "s3",
             endpoint_url=settings.R2_ENDPOINT,
             aws_access_key_id=settings.R2_ACCESS_KEY,
             aws_secret_access_key=settings.R2_SECRET_KEY,
-            region_name="auto",
+            region_name=getattr(settings, "R2_REGION", "auto") or "auto",
         )
 
         # CORS 설정
         cors_config = {
             "CORSRules": [
                 {
-                    "AllowedOrigins": [
-                        "https://tchul.com",
-                        "https://www.tchul.com",
-                        "https://hakwonplus.com",
-                        "https://www.hakwonplus.com",
-                        "https://limglish.kr",
-                        "https://www.limglish.kr",
-                        "https://ymath.co.kr",
-                        "https://www.ymath.co.kr",
-                        "https://academy-frontend.pages.dev",
-                        "http://localhost:5173",
-                        "http://localhost:5174",
-                    ],
+                    "AllowedOrigins": allowed_origins,
                     "AllowedMethods": ["GET", "PUT", "POST", "HEAD", "DELETE"],
                     "AllowedHeaders": ["*"],
                     "ExposeHeaders": ["ETag", "Content-Length"],
@@ -65,7 +69,7 @@ class Command(BaseCommand):
                 self.stdout.write(
                     self.style.WARNING(
                         "⚠️ 권한이 없습니다. Cloudflare 대시보드에서 직접 설정해주세요:\n"
-                        "1. Cloudflare Dashboard → R2 → academy-video 버킷 선택\n"
+                        f"1. Cloudflare Dashboard → R2 → {bucket_name} 버킷 선택\n"
                         "2. Settings → CORS Policy\n"
                         "3. 다음 JSON 설정 추가:\n"
                         + json.dumps(cors_config, indent=2, ensure_ascii=False)
