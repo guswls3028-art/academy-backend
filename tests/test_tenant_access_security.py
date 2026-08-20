@@ -1188,6 +1188,27 @@ class TenantProvisioningInvariantTests(TestCase):
 
         self.assertFalse(target.users.exists())
 
+    def test_new_owner_rejects_short_password_before_database_write(self):
+        target = _tenant("owner-short-password-target")
+        request = APIRequestFactory().post(
+            f"/api/v1/core/tenants/{target.id}/owner/",
+            {
+                "username": "new-owner",
+                "password": "123",
+            },
+            format="json",
+        )
+        request.tenant = self.platform
+        force_authenticate(request, user=self.actor)
+
+        with override_settings(OWNER_TENANT_ID=self.platform.id):
+            response = TenantOwnerView.as_view()(request, tenant_id=target.id)
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(response.data["detail"], "owner_registration_invalid")
+        self.assertIn("password", response.data["errors"])
+        self.assertFalse(target.users.exists())
+
     def test_creation_normalizes_and_atomically_provisions_domain_and_program(self):
         response = self._post({
             "code": "  New-Academy  ",
@@ -1197,6 +1218,14 @@ class TenantProvisioningInvariantTests(TestCase):
 
         self.assertEqual(response.status_code, 201, response.data)
         tenant = Tenant.objects.get(code="new-academy")
+        self.assertEqual(response.data, {
+            "id": tenant.id,
+            "code": "new-academy",
+            "name": "New Academy",
+            "isActive": True,
+            "primaryDomain": "academy.example.com",
+            "domains": ["new-academy", "academy.example.com"],
+        })
         self.assertEqual(tenant.name, "New Academy")
         self.assertEqual(
             set(tenant.domains.values_list("host", flat=True)),

@@ -40,6 +40,8 @@ class TenantOwnerRegistrationSerializer(serializers.Serializer):
     password = serializers.CharField(
         required=False,
         allow_blank=False,
+        min_length=4,
+        max_length=128,
         trim_whitespace=False,
         write_only=True,
     )
@@ -322,8 +324,9 @@ class TenantDetailView(APIView):
 
 class TenantCreateView(APIView):
     """
-    POST /api/v1/core/tenants/
-    플랫폼 관리 테넌트(OWNER_TENANT_ID) 전용 — owner role만. 새 테넌트 생성.
+    POST /api/v1/core/tenants/create/
+    플랫폼 관리 테넌트(OWNER_TENANT_ID) 전용 — 개발·QA 기본 테넌트 생성.
+    운영 신규 테넌트는 명시적 ID와 전체 설정을 받는 provision_tenant를 사용한다.
     """
     permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
 
@@ -404,10 +407,15 @@ class TenantCreateView(APIView):
             return Response({"detail": str(exc)}, status=409)
         except IntegrityError:
             return Response({"detail": "tenant_provisioning_conflict"}, status=409)
+        domains = TenantDomain.objects.filter(tenant=tenant, is_active=True)
+        primary_domain = domains.filter(is_primary=True).first()
         return Response({
             "id": tenant.id,
             "code": tenant.code,
             "name": tenant.name,
+            "isActive": tenant.is_active,
+            "primaryDomain": primary_domain.host if primary_domain else None,
+            "domains": [domain.host for domain in domains],
         }, status=201)
 
 
