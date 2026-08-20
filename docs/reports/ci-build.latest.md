@@ -1,18 +1,18 @@
 ## V1.1.0 CI Build — immutable release candidate (OIDC)
 
-**Generated:** 2026-08-20T01:56:07+00:00
+**Generated:** 2026-08-20T02:58:26+00:00
 **SSOT:** docs/infrastructure/deployment-architecture.md
 **Region:** ap-northeast-2
-**gitSha:** f8127ef70901fbdf6bb6acf16e0db02eb14fdecd
-**shortSha:** f8127ef7
-**releaseImageTag:** sha-f8127ef70901fbdf6bb6acf16e0db02eb14fdecd-run-32320821631-1
+**gitSha:** 26ae73bd028f3b2b716b7d8856c8233630991ee4
+**shortSha:** 26ae73bd
+**releaseImageTag:** sha-26ae73bd028f3b2b716b7d8856c8233630991ee4-run-32324962775-1
 **Changes:** api=true video=true messaging=true ai=true tools=true force_full=true
 
 | repo | tags | imageDigest |
 |------|------|-------------|
-| academy-base | sha-f8127ef70901fbdf6bb6acf16e0db02eb14fdecd-run-32320821631-1 (built) | sha256:4e57c4f12a7a56e303f4be45843f29d4f9124e283fbeb74ce16df29e35518f03 |
-| academy-api | sha-f8127ef70901fbdf6bb6acf16e0db02eb14fdecd-run-32320821631-1 (built) | sha256:2d7d45b2e61721b730dbbca8d19c72de9cdc0e842bc76b35ae44c16676b75ab6 |
-| academy-video-worker | sha-f8127ef70901fbdf6bb6acf16e0db02eb14fdecd-run-32320821631-1 (built) | sha256:65f343439ae6ee1b2a3fcf1a6e6f3c4ac62886708ffe8d48d47cc725474f153d |
-| academy-messaging-worker | sha-f8127ef70901fbdf6bb6acf16e0db02eb14fdecd-run-32320821631-1 (built) | sha256:66f59d7d25d0c546fee705dad6a4ef32246c52497e834d7da829101f35affa77 |
-| academy-ai-worker-cpu | sha-f8127ef70901fbdf6bb6acf16e0db02eb14fdecd-run-32320821631-1 (built) | sha256:aa9d275a63c977f35a62e8b28c324208062832b4788193d5fe3094748f46c76b |
-| academy-tools-worker | sha-f8127ef70901fbdf6bb6acf16e0db02eb14fdecd-run-32320821631-1 (built) | sha256:baaa5dbf7d9e7d19c35e61b6dc2ee1ff61c5bdd3f93c103f840914a3ef723fd3 |
+| academy-base | sha-26ae73bd028f3b2b716b7d8856c8233630991ee4-run-32324962775-1 (built) | sha256:a0a82a1ed0578236c0a62dcf2ca63a2a30035d1a7478864bd34edabf7daa4104 |
+| academy-api | sha-26ae73bd028f3b2b716b7d8856c8233630991ee4-run-32324962775-1 (built) | sha256:ad4203cbb3dc0552d33b38f2dd74bdcc28d6eb7ac04dd56bcbe3c476c9ecb98b |
+| academy-video-worker | sha-26ae73bd028f3b2b716b7d8856c8233630991ee4-run-32324962775-1 (built) | sha256:7bb4e2c295ec7f46b8714add67a8a3743933d4d2227e191ba9abce52c382ffe2 |
+| academy-messaging-worker | sha-26ae73bd028f3b2b716b7d8856c8233630991ee4-run-32324962775-1 (built) | sha256:142ad058e6e8955f51994e55eca33b6f25e9898468f9b0c6070099bad5c0ecfc |
+| academy-ai-worker-cpu | sha-26ae73bd028f3b2b716b7d8856c8233630991ee4-run-32324962775-1 (built) | sha256:c39ef38dc93390c680d90de35fba05d3c78c462013055eaa6576b9cf56673609 |
+| academy-tools-worker | sha-26ae73bd028f3b2b716b7d8856c8233630991ee4-run-32324962775-1 (built) | sha256:13fa095128e2b2e1e2236da3c3f7481043ec3a25bf0a2fe46b562e7edfa463f7 |
