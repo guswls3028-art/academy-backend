@@ -1,9 +1,7 @@
 # apps/support/messaging/services/solapi_client.py
 # SSOT 문서: backend/docs/domain/messaging.md, backend/docs/domain/messaging-alimtalk.md
 """
-Solapi 클라이언트 — 인증 정보, Mock 모드.
-
-SMS/LMS 직접 발송은 정책상 비활성이다. 실발송은 SQS 공용 알림톡 경로만 사용한다.
+Solapi 알림톡 클라이언트 — 인증 정보, Mock 모드.
 """
 
 import logging
@@ -50,25 +48,3 @@ def get_solapi_client():
     except ImportError as e:
         logger.warning("solapi SDK not installed: %s", e)
         return None
-
-
-def send_sms(
-    to: str,
-    text: str,
-    sender: Optional[str] = None,
-    tenant_id: Optional[int] = None,
-) -> dict:
-    """
-    SMS/LMS 즉시 발송은 정책상 비활성.
-
-    Args:
-        to: 수신 번호 (01012345678)
-        text: 본문
-        sender: legacy argument, ignored
-        tenant_id: 요청 tenant, 로그용
-
-    Returns:
-        dict: {"status": "error", "reason": "sms_disabled"}
-    """
-    logger.error("send_sms blocked: SMS/LMS sending is disabled service-wide (tenant_id=%s)", tenant_id)
-    return {"status": "error", "reason": "sms_disabled"}

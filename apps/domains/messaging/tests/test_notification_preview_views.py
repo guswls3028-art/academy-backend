@@ -476,8 +476,8 @@ class NotificationBatchDispatchPolicyTests(TestCase):
         self.tenant = Tenant.objects.create(code="msg-batch", name="Msg Batch", is_active=True)
 
     @patch("apps.domains.messaging.policy.check_recipient_allowed", return_value=True)
-    @patch("apps.domains.messaging.services.enqueue_sms", return_value=True)
-    def test_legacy_sms_preview_payload_is_sent_as_alimtalk_only(self, mock_enqueue, _mock_allowed):
+    @patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=True)
+    def test_non_alimtalk_preview_payload_is_blocked(self, mock_enqueue, _mock_allowed):
         result = execute_notification_batch(
             tenant=self.tenant,
             payload={
@@ -498,17 +498,14 @@ class NotificationBatchDispatchPolicyTests(TestCase):
             staff_id=7,
         )
 
-        self.assertEqual(result["sent_count"], 1)
+        self.assertEqual(result["sent_count"], 0)
         self.assertEqual(result["pending_count"], 0)
-        self.assertEqual(result["accepted_count"], 1)
-        mock_enqueue.assert_called_once()
-        kwargs = mock_enqueue.call_args.kwargs
-        self.assertEqual(kwargs["message_mode"], "alimtalk")
-        self.assertEqual(kwargs["template_id"], "KA01TP_TEST")
-        self.assertEqual(kwargs["target_type"], "parent")
+        self.assertEqual(result["accepted_count"], 0)
+        self.assertEqual(result["failed_count"], 1)
+        mock_enqueue.assert_not_called()
 
     @patch("apps.domains.messaging.policy.check_recipient_allowed", return_value=True)
-    @patch("apps.domains.messaging.services.enqueue_sms", return_value=True)
+    @patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=True)
     def test_preview_batch_marks_student_target_when_sending_to_student(self, mock_enqueue, _mock_allowed):
         result = execute_notification_batch(
             tenant=self.tenant,
@@ -594,7 +591,7 @@ class NotificationPreviewConfirmDurabilityTests(TestCase):
         return ManualNotificationConfirmView.as_view()(request)
 
     @patch("apps.domains.messaging.policy.check_recipient_allowed", return_value=True)
-    @patch("apps.domains.messaging.services.enqueue_sms", return_value=False)
+    @patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=False)
     def test_queue_failure_keeps_durable_pending_outbox_and_consumes_token_once(
         self,
         mock_enqueue,

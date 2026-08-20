@@ -71,13 +71,13 @@
   -> send_event_notification()          [services.py:267]
     -> AutoSendConfig 조회 (enabled 확인)
     -> 통합 템플릿 매핑 (alimtalk_content_builders.py)
-    -> enqueue_sms()                    [services.py:111]
+    -> enqueue_alimtalk()                    [services.py:111]
       -> MessagingSQSQueue.enqueue()    [sqs_queue.py:62]
         -> SQS (academy-v1-messaging-queue)
           -> 메시징 워커
             -> legacy SMS payload 차단
             -> 공용 알림톡 provider dispatch
-              -> Solapi SDK / 뿌리오 Kakao API
+              -> 공용 Solapi SDK
                 -> 카카오 알림톡
 ```
 
@@ -88,7 +88,7 @@
   -> SendMessageView.post()             [views/send_views.py]
     -> 통합 승인 봉투 매핑 (CATEGORY_TO_TEMPLATE_TYPE)
     -> build_manual_replacements()       [alimtalk_content_builders.py]
-    -> enqueue_sms()                     [services.py:111]
+    -> enqueue_alimtalk()                     [services.py:111]
       -> (이하 동일, tenant별 PFID/provider fallback 없음)
 ```
 
@@ -98,7 +98,7 @@
 가입 승인 / 계정 복구
   -> send_alimtalk_via_owner()          [apps/domains/messaging/policy.py]
     -> 오너 테넌트의 승인 템플릿 조회
-    -> enqueue_sms() (오너 tenant_id로)
+    -> enqueue_alimtalk() (오너 tenant_id로)
       -> (이하 동일)
 ```
 
@@ -114,11 +114,11 @@
 | 단계 | 파일 | 역할 |
 |------|------|------|
 | `send_event_notification` | services.py:267 | AutoSendConfig 조회, enabled/dry-run 확인, 공용 owner 템플릿 또는 unified 템플릿 resolve, 수신자 전화번호 추출 |
-| `enqueue_sms` | services.py:111 | 정책 검증(disabled/restricted/whitelist/SMS 차단), owner tenant_id 정규화, SQS enqueue |
+| `enqueue_alimtalk` | `services/queue_service.py` | 정책 검증(disabled/restricted/whitelist/알림톡 전용), owner tenant_id 정규화, SQS enqueue |
 | `MessagingSQSQueue.enqueue` | sqs_queue.py:62 | SQS 메시지 구성, business_idempotency_key 생성, 큐 전송 |
 | 메시징 워커 `main` | sqs_main.py:314 | SQS Long Polling, Redis 멱등 잠금, 예약 취소 확인, 잔액 검증/차감, 공급자별 발송, 로그 기록 |
 | 알림톡 provider dispatch | `sqs_main.py` | 공용 시스템 PFID + 공용 provider로 알림톡 발송. Solapi fallback은 `disable_sms=True` |
-| legacy SMS boundary | `sqs_main.py` | 큐 payload와 호환 callable 모두 `sms_disabled`로 닫고 provider를 호출하지 않음 |
+| 비알림톡 boundary | `queue_service.py`, `sqs_queue.py`, `scheduled.py`, `sqs_main.py` | SMS/LMS는 `sms_disabled`, 그 밖의 명시 채널은 `unsupported_message_mode`로 닫고 provider를 호출하지 않음 |
 
 운영 실사용 검증은 `scripts/v1/run-messaging-verify-send.ps1` → `messaging_verify_common_alimtalk`로만 수행한다. 이 경로는 통제번호 `01031217466`으로 `password_reset_student` owner exact approved template을 발송하고, 워커가 `NotificationLog.provider_message_id`를 남긴 뒤 성공으로 판정한다.
 
@@ -367,7 +367,7 @@ signup 카테고리만 자체 Solapi 템플릿을 유지. 나머지 매핑 카�
 ### 수동 발송 제약
 
 - `message_mode` 기본값: `"alimtalk"`
-- `message_mode`는 알림톡으로 정규화된다. SMS/LMS 실발송은 차단된다.
+- `message_mode` 기본값은 알림톡이지만, 명시된 비알림톡 값은 알림톡으로 보정하지 않고 차단한다.
 - 알림톡 모드이면 공용 승인 `solapi_template_id` 필수
 - Rate limit: 업무 tenant별 rolling 1시간 500건 + 공유 공급자 계정 KST 일일 900건 기본 안전 한도
 - 최대 200명 일괄 발송 (line 504-508)
@@ -383,7 +383,7 @@ signup 카테고리만 자체 Solapi 템플릿을 유지. 나머지 매핑 카�
 
 - 실발송 provider/PFID는 `OWNER_TENANT_ID` 공용 설정만 사용한다.
 - tenant별 `messaging_provider`, `kakao_pfid`, 자체 Solapi/Ppurio 키는 신규 실발송 경로에서 사용하지 않는다.
-- `enqueue_sms()`는 알림톡 payload의 `tenant_id`를 owner tenant로 정규화하고 원 업무 테넌트는 `source_tenant_id`로 남긴다.
+- `enqueue_alimtalk()`는 알림톡 payload의 `tenant_id`를 owner tenant로 정규화하고 원 업무 테넌트는 `source_tenant_id`로 남긴다.
 - worker도 raw/legacy SQS payload의 `tenant_id`를 owner tenant로 재정규화한다. 공용 채널의 물리 발송·로그 tenant는 owner를 유지하지만, 단가·잔액 차감·환불은 `source_tenant_id`로 식별한 실제 업무 테넌트에 귀속한다. 모든 canonical payload의 tenant 결합은 producer HMAC과 durable outbox tenant로 검증하며 서로 모순되는 payload는 발송 전에 폐기한다.
 - 신규 canonical payload는 `occurrence_key`를 싣는다. worker는 payload의 tenant/channel/event/target/recipient/occurrence/template로 business key를 다시 계산하며 producer key와 다르면 `invalid_business_idempotency_key`로 폐기한다. 따라서 유효한 signed key만 복사해 수신번호를 변경해도 provider로 진행하지 않는다.
 
@@ -408,10 +408,10 @@ signup 카테고리만 자체 Solapi 템플릿을 유지. 나머지 매핑 카�
 출처: `policy.py`, `queue_service.py`, `sqs_main.py`
 
 - SMS/LMS 실발송 전체 금지.
-- `can_send_sms()`는 항상 `False`.
 - `message_mode="sms"` 신규 enqueue는 `MessagingPolicyError(reason="sms_disabled")`.
+- `message_mode="lms"`도 `sms_disabled`, 그 밖의 명시 비알림톡 값은 `unsupported_message_mode`로 차단한다.
 - worker가 legacy SMS payload를 받으면 발송하지 않고 실패 로그로 닫는다.
-- legacy Solapi/뿌리오 SMS callable도 `sms_disabled`를 반환하며 provider를 호출하지 않는다.
+- SMS/LMS 호환 callable과 `sms_allowed` API capability 필드는 제공하지 않는다.
 - 운영 오류 알림에도 SMS 예외가 없으며 `check_dev_alerts`는 Slack webhook만 사용한다.
 - 테스트 테넌트(9999): 모든 메시징 비활성
 
@@ -420,6 +420,7 @@ signup 카테고리만 자체 Solapi 템플릿을 유지. 나머지 매핑 카�
 출처: `policy.py`
 
 legacy 설정 필드는 남아 있을 수 있으나 신규 실발송 경로에서 사용하지 않는다.
+기존 `messaging_sender`·provider·자체 키 데이터는 삭제하지 않고 읽기 전용 이력으로 보존한다.
 
 ### 제한 테넌트
 
@@ -488,7 +489,7 @@ SHA-256(canonical) -> 64자 hex
 
 ### DB dispatch(outbox) 상태와 SQS 재시도
 
-- 수동·시스템·영상·매치업·커뮤니티의 즉시 발송과 예약/지연 발송은 모두 `ScheduledNotification` 행을 먼저 만든다. `enqueue_sms()`는 outbox drainer 전용 경계이며 product producer가 직접 호출하지 않는다.
+- 수동·시스템·영상·매치업·커뮤니티의 즉시 발송과 예약/지연 발송은 모두 `ScheduledNotification` 행을 먼저 만든다. `enqueue_alimtalk()`는 outbox drainer 전용 경계이며 product producer가 직접 호출하지 않는다.
 - 상태는 `pending → dispatching → sent` 순서다. 여기서 `sent`/`sent_at`은 **SQS 접수 완료**이며 공급사 최종 발송 성공이 아니다.
 - `dispatch_key`는 행마다 고유한 UUID이고 payload의 `occurrence_key=dispatch:<uuid>`로 고정된다. 폴러/프로세스가 재시작되어 같은 행을 다시 enqueue해도 business key는 바뀌지 않는다.
 - SQS enqueue가 실패하면 영구 실패로 닫지 않는다. 30초부터 지수 백오프하며 최대 8회 시도 후 `failed`가 된다. 입력 누락, SMS 차단, `MessagingPolicyError`는 즉시 terminal `failed`다.

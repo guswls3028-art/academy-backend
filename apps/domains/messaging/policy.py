@@ -201,8 +201,8 @@ def get_disabled_messaging_tenant_ids() -> frozenset[int]:
 # 제한된 테넌트: 가입/등록/비번 관련 알림톡만 발송 가능.
 # 이 트리거들은 send_alimtalk_via_owner / send_welcome_messages /
 # send_registration_approved_messages에서 OWNER_TENANT_ID로 발송되므로
-# enqueue_sms 단에서 tenant_id 기준 차단 시 자동 우회됨.
-RESTRICTED_MESSAGING_TENANTS: frozenset = frozenset()  # 림글리쉬 제한 해제 (뿌리오 자체 연동 완료)
+# enqueue_alimtalk 단에서 tenant_id 기준 차단 시 자동 우회됨.
+RESTRICTED_MESSAGING_TENANTS: frozenset = frozenset()
 
 
 def is_messaging_restricted(tenant_id: int) -> bool:
@@ -221,7 +221,7 @@ def get_test_tenant_id() -> int:
 
 
 def is_messaging_disabled(tenant_id: int) -> bool:
-    """True면 해당 tenant의 모든 알림톡/SMS enqueue·발송을 스킵한다."""
+    """True면 해당 tenant의 모든 알림톡 enqueue·발송을 스킵한다."""
     tid = int(tenant_id)
     return tid == get_test_tenant_id() or tid in get_disabled_messaging_tenant_ids()
 
@@ -332,28 +332,21 @@ def is_event_dry_run(trigger: str) -> bool:
     return trigger in dry_triggers
 
 
-def _has_own_sms_credentials(tenant_id: int) -> bool:
-    """테넌트가 자체 SMS 발송 가능한 연동 키를 갖고 있는지."""
-    try:
-        creds = get_tenant_own_credentials(tenant_id)
-        provider = creds.get("provider", "solapi")
-        if provider == "ppurio":
-            return bool(creds.get("ppurio_api_key") and creds.get("ppurio_account"))
-        return bool(creds.get("solapi_api_key") and creds.get("solapi_api_secret"))
-    except Exception:
-        return False
-
-
-def can_send_sms(tenant_id: int) -> bool:
-    """SMS/LMS 실발송은 전체 서비스에서 사용하지 않는다."""
-    return False
-
-
 class MessagingPolicyError(Exception):
-    """메시징 정책 위반 (예: 비허용 tenant의 SMS 요청)."""
+    """메시징 정책 위반."""
     def __init__(self, message: str, reason: str = "policy"):
         super().__init__(message)
         self.reason = reason
+
+
+def get_message_mode_block_reason(raw_mode: str | None) -> str:
+    """Return a terminal reason for explicit non-Alimtalk delivery modes."""
+    mode = (raw_mode or "alimtalk").strip().lower()
+    if mode == "alimtalk":
+        return ""
+    if mode in {"sms", "lms"}:
+        return "sms_disabled"
+    return "unsupported_message_mode"
 
 
 def resolve_kakao_channel(tenant_id: int) -> dict:
@@ -365,86 +358,6 @@ def resolve_kakao_channel(tenant_id: int) -> dict:
     """
     default_pf_id = (getattr(settings, "SOLAPI_KAKAO_PF_ID", None) or "").strip()
     return {"pf_id": default_pf_id or "", "use_default": True}
-
-
-def get_tenant_provider(tenant_id: int) -> str:
-    """
-    테넌트의 메시징 공급자(solapi/ppurio) 반환.
-    DB 조회 실패 시 기본값 'solapi'.
-    """
-    try:
-        from apps.core.models import Tenant
-        provider = (
-            Tenant.objects.filter(pk=int(tenant_id))
-            .values_list("messaging_provider", flat=True)
-            .first()
-        )
-        return (provider or "solapi").strip().lower()
-    except Exception as e:
-        logger.warning("get_tenant_provider failed: %s", e)
-        return "solapi"
-
-
-def get_tenant_own_credentials(tenant_id: int) -> dict:
-    """
-    테넌트 자체 연동 키 반환. 직접 연동 모드에서 사용.
-    Returns: {"solapi_api_key", "solapi_api_secret", "ppurio_api_key", "ppurio_account", "provider"}
-    비어 있으면 시스템 기본 키 사용.
-    """
-    try:
-        from apps.core.models import Tenant
-        t = Tenant.objects.filter(pk=int(tenant_id)).values(
-            "messaging_provider",
-            "own_solapi_api_key", "own_solapi_api_secret",
-            "own_ppurio_api_key", "own_ppurio_account",
-        ).first()
-        if not t:
-            return {}
-        provider = (t.get("messaging_provider") or "solapi").strip().lower()
-        return {
-            "provider": provider,
-            "solapi_api_key": (t.get("own_solapi_api_key") or "").strip(),
-            "solapi_api_secret": (t.get("own_solapi_api_secret") or "").strip(),
-            "ppurio_api_key": (t.get("own_ppurio_api_key") or "").strip(),
-            "ppurio_account": (t.get("own_ppurio_account") or "").strip(),
-        }
-    except Exception as e:
-        logger.warning("get_tenant_own_credentials failed: %s", e)
-        return {}
-
-
-def resolve_messaging_provider(tenant_id: int, message_type: str) -> dict:
-    """
-    발송 유형별 허용 여부 및 채널 정보를 한 곳에서 결정.
-
-    Args:
-        tenant_id: 테넌트 ID
-        message_type: "sms" | "alimtalk"
-
-    Returns:
-        - message_type == "sms":
-          {"allowed": bool, "reason": str | None, "provider": str}
-        - message_type == "alimtalk":
-          {"allowed": True, "pf_id": str, "use_default": bool, "provider": str}
-    """
-    tenant_id = int(tenant_id)
-    # DB의 과거 provider 값과 무관하게 실발송 공급자는 공용 Solapi 하나다.
-    provider = "solapi"
-    if message_type == "sms":
-        return {
-            "allowed": False,
-            "reason": "sms_disabled",
-            "provider": provider,
-        }
-    if message_type == "alimtalk":
-        channel = resolve_kakao_channel(tenant_id)
-        return {
-            "allowed": True,
-            "pf_id": channel["pf_id"],
-            "use_default": channel["use_default"],
-            "provider": provider,
-        }
-    return {"allowed": False, "reason": "unknown_message_type", "provider": provider}
 
 
 def send_alimtalk_via_owner(

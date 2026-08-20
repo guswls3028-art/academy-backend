@@ -8,7 +8,7 @@ from typing import Iterable
 from django.utils.html import strip_tags
 from apps.support.community.qna_notification_dependencies import (
     active_staff_profiles_for_qna,
-    enqueue_qna_sms,
+    enqueue_qna_alimtalk,
     qna_tenant_site_url,
     resolve_qna_freeform_template,
 )
@@ -144,7 +144,7 @@ def _send_qna_alimtalk_to_recipients(
             action_label=action_label,
         )
         try:
-            ok = enqueue_qna_sms(
+            ok = enqueue_qna_alimtalk(
                 tenant_id=tenant.id,
                 to=recipient.phone,
                 text=text,

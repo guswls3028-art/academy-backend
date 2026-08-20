@@ -61,7 +61,7 @@ class ScheduledNotificationProcessingTests(TransactionTestCase):
     def test_enqueue_false_schedules_exponential_retry(self):
         notification = self._notification()
 
-        with patch("apps.domains.messaging.services.enqueue_sms", return_value=False):
+        with patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=False):
             stats = process_due_notifications(batch_size=10)
 
         self.assertEqual(
@@ -79,15 +79,15 @@ class ScheduledNotificationProcessingTests(TransactionTestCase):
         self.assertEqual(notification.attempt_count, 1)
         self.assertIsNotNone(notification.next_attempt_at)
         self.assertGreater(notification.next_attempt_at, notification.last_attempt_at)
-        self.assertIn("enqueue_sms returned false", notification.error_message)
+        self.assertIn("enqueue_alimtalk returned false", notification.error_message)
 
     def test_retry_reuses_stable_occurrence_key_then_marks_queue_acceptance(self):
         notification = self._notification()
 
         with patch(
-            "apps.domains.messaging.services.enqueue_sms",
+            "apps.domains.messaging.services.enqueue_alimtalk",
             side_effect=[False, True],
-        ) as enqueue_sms:
+        ) as enqueue_alimtalk:
             first_stats = process_due_notifications(batch_size=10)
             notification.refresh_from_db()
             first_occurrence = notification.payload["occurrence_key"]
@@ -98,12 +98,12 @@ class ScheduledNotificationProcessingTests(TransactionTestCase):
 
         self.assertEqual(first_stats["retried"], 1)
         self.assertEqual(second_stats["sent"], 1)
-        self.assertEqual(enqueue_sms.call_count, 2)
+        self.assertEqual(enqueue_alimtalk.call_count, 2)
         self.assertEqual(
-            enqueue_sms.call_args_list[0].kwargs["occurrence_key"],
-            enqueue_sms.call_args_list[1].kwargs["occurrence_key"],
+            enqueue_alimtalk.call_args_list[0].kwargs["occurrence_key"],
+            enqueue_alimtalk.call_args_list[1].kwargs["occurrence_key"],
         )
-        self.assertEqual(first_occurrence, enqueue_sms.call_args.kwargs["occurrence_key"])
+        self.assertEqual(first_occurrence, enqueue_alimtalk.call_args.kwargs["occurrence_key"])
         notification.refresh_from_db()
         self.assertEqual(notification.status, ScheduledNotification.Status.SENT)
         self.assertEqual(notification.attempt_count, 2)
@@ -119,12 +119,12 @@ class ScheduledNotificationProcessingTests(TransactionTestCase):
             last_attempt_at=timezone.now() - DISPATCH_CLAIM_TIMEOUT - timedelta(seconds=1),
         )
 
-        with patch("apps.domains.messaging.services.enqueue_sms", return_value=True) as enqueue_sms:
+        with patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=True) as enqueue_alimtalk:
             stats = process_due_notifications(batch_size=10)
 
         self.assertEqual(stats["sent"], 1)
         self.assertEqual(
-            enqueue_sms.call_args.kwargs["occurrence_key"],
+            enqueue_alimtalk.call_args.kwargs["occurrence_key"],
             f"dispatch:{notification.dispatch_key.hex}",
         )
         notification.refresh_from_db()
@@ -136,7 +136,7 @@ class ScheduledNotificationProcessingTests(TransactionTestCase):
             business_idempotency_key="",
         )
 
-        with patch("apps.domains.messaging.services.enqueue_sms", return_value=True) as enqueue_sms:
+        with patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=True) as enqueue_alimtalk:
             stats = process_due_notifications(batch_size=1)
 
         self.assertEqual(stats["sent"], 1)
@@ -144,7 +144,7 @@ class ScheduledNotificationProcessingTests(TransactionTestCase):
         self.assertIsNotNone(notification.dispatch_key)
         self.assertTrue(notification.business_idempotency_key)
         self.assertEqual(
-            enqueue_sms.call_args.kwargs["occurrence_key"],
+            enqueue_alimtalk.call_args.kwargs["occurrence_key"],
             f"dispatch:{notification.dispatch_key.hex}",
         )
 
@@ -153,11 +153,11 @@ class ScheduledNotificationProcessingTests(TransactionTestCase):
             payload={"tenant_id": self.tenant.id, "text": "test"},
         )
 
-        with patch("apps.domains.messaging.services.enqueue_sms") as enqueue_sms:
+        with patch("apps.domains.messaging.services.enqueue_alimtalk") as enqueue_alimtalk:
             stats = process_due_notifications(batch_size=10)
 
         self.assertEqual(stats["failed"], 1)
-        enqueue_sms.assert_not_called()
+        enqueue_alimtalk.assert_not_called()
         notification.refresh_from_db()
         self.assertEqual(notification.status, ScheduledNotification.Status.FAILED)
         self.assertEqual(notification.error_message, "invalid_payload_missing_recipient")
@@ -179,13 +179,13 @@ class ScheduledNotificationProcessingTests(TransactionTestCase):
                 "apps.domains.messaging.policy.is_messaging_disabled",
                 return_value=True,
             ),
-            patch("apps.domains.messaging.services.enqueue_sms") as enqueue_sms,
+            patch("apps.domains.messaging.services.enqueue_alimtalk") as enqueue_alimtalk,
         ):
             stats = process_due_notifications(batch_size=10)
 
         self.assertEqual(stats["failed"], 1)
         self.assertEqual(stats["retried"], 0)
-        enqueue_sms.assert_not_called()
+        enqueue_alimtalk.assert_not_called()
         notification.refresh_from_db()
         self.assertEqual(notification.status, ScheduledNotification.Status.FAILED)
         self.assertEqual(notification.attempt_count, 0)
@@ -203,11 +203,11 @@ class ScheduledNotificationProcessingTests(TransactionTestCase):
         notification = self._notification(payload=original_payload)
         original_dispatch_key = notification.dispatch_key
 
-        with patch("apps.domains.messaging.services.enqueue_sms") as enqueue_sms:
+        with patch("apps.domains.messaging.services.enqueue_alimtalk") as enqueue_alimtalk:
             stats = process_due_notifications(batch_size=10)
 
         self.assertEqual(stats["failed"], 1)
-        enqueue_sms.assert_not_called()
+        enqueue_alimtalk.assert_not_called()
         notification.refresh_from_db()
         self.assertEqual(notification.status, ScheduledNotification.Status.FAILED)
         self.assertEqual(notification.error_message, "invalid_payload_not_object")
@@ -230,14 +230,14 @@ class ScheduledNotificationProcessingTests(TransactionTestCase):
         )
 
         with patch(
-            "apps.domains.messaging.services.enqueue_sms",
+            "apps.domains.messaging.services.enqueue_alimtalk",
             return_value=True,
-        ) as enqueue_sms:
+        ) as enqueue_alimtalk:
             stats = process_due_notifications(batch_size=10)
 
         self.assertEqual(stats["sent"], 1)
-        self.assertEqual(enqueue_sms.call_args.kwargs["to"], "01011112222")
-        self.assertIn("secret-1234", enqueue_sms.call_args.kwargs["text"])
+        self.assertEqual(enqueue_alimtalk.call_args.kwargs["to"], "01011112222")
+        self.assertIn("secret-1234", enqueue_alimtalk.call_args.kwargs["text"])
         notification.refresh_from_db()
         self.assertEqual(notification.payload["redacted"], True)
         self.assertEqual(notification.payload["target_id"], "student:7")
@@ -259,7 +259,7 @@ class ScheduledNotificationProcessingTests(TransactionTestCase):
             },
         )
 
-        with patch("apps.domains.messaging.services.enqueue_sms", return_value=False):
+        with patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=False):
             first_stats = process_due_notifications(batch_size=10)
 
         self.assertEqual(first_stats["retried"], 1)
@@ -271,7 +271,7 @@ class ScheduledNotificationProcessingTests(TransactionTestCase):
             attempt_count=MAX_ENQUEUE_ATTEMPTS - 1,
             next_attempt_at=timezone.now() - timedelta(seconds=1),
         )
-        with patch("apps.domains.messaging.services.enqueue_sms", return_value=False):
+        with patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=False):
             final_stats = process_due_notifications(batch_size=10)
 
         self.assertEqual(final_stats["failed"], 1)
@@ -283,7 +283,7 @@ class ScheduledNotificationProcessingTests(TransactionTestCase):
     def test_retry_budget_exhaustion_is_terminal(self):
         notification = self._notification(attempt_count=MAX_ENQUEUE_ATTEMPTS - 1)
 
-        with patch("apps.domains.messaging.services.enqueue_sms", return_value=False):
+        with patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=False):
             stats = process_due_notifications(batch_size=10)
 
         self.assertEqual(stats["failed"], 1)
@@ -319,10 +319,10 @@ class ScheduledNotificationProcessingTests(TransactionTestCase):
             business_idempotency_key=notification.business_idempotency_key,
         )
 
-        with patch("apps.domains.messaging.services.enqueue_sms") as enqueue_sms:
+        with patch("apps.domains.messaging.services.enqueue_alimtalk") as enqueue_alimtalk:
             stats = process_due_notifications(batch_size=1)
 
-        enqueue_sms.assert_not_called()
+        enqueue_alimtalk.assert_not_called()
         self.assertEqual(stats["sent"], 1)
         self.assertEqual(stats["failed"], 0)
         notification.refresh_from_db()
@@ -338,7 +338,7 @@ class ScheduledNotificationProcessingTests(TransactionTestCase):
             return True
 
         with patch(
-            "apps.domains.messaging.services.enqueue_sms",
+            "apps.domains.messaging.services.enqueue_alimtalk",
             side_effect=assert_outside_transaction,
         ):
             stats = process_due_notifications(batch_size=10)
@@ -372,7 +372,7 @@ class ScheduledNotificationProcessingTests(TransactionTestCase):
 
         with (
             patch("apps.domains.messaging.scheduled.HOURLY_SEND_LIMIT", 1),
-            patch("apps.domains.messaging.services.enqueue_sms", return_value=True),
+            patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=True),
         ):
             stats = process_due_notifications(batch_size=2)
 
@@ -402,10 +402,10 @@ class ScheduledNotificationProcessingTests(TransactionTestCase):
             },
         )
 
-        with patch("apps.domains.messaging.services.enqueue_sms") as enqueue_sms:
+        with patch("apps.domains.messaging.services.enqueue_alimtalk") as enqueue_alimtalk:
             stats = process_due_notifications(batch_size=10)
 
-        enqueue_sms.assert_not_called()
+        enqueue_alimtalk.assert_not_called()
         self.assertEqual(stats["deferred"], 1)
         due.refresh_from_db()
         self.assertEqual(due.status, ScheduledNotification.Status.PENDING)
@@ -440,7 +440,7 @@ class ScheduledNotificationProcessingTests(TransactionTestCase):
         self.assertEqual(len(outbox.recipient_fingerprint), 64)
         self.assertNotIn("01033334444", outbox.recipient_fingerprint)
 
-        with patch("apps.domains.messaging.services.enqueue_sms", return_value=True):
+        with patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=True):
             process_due_notifications(batch_size=1)
 
         outbox.refresh_from_db()
@@ -513,7 +513,7 @@ class ScheduledNotificationProcessingTests(TransactionTestCase):
         self.assertEqual(get_hourly_notification_usage(self.tenant), 2)
 
     def test_outer_business_rollback_discards_outbox_and_sqs_callback(self):
-        with patch("apps.domains.messaging.services.enqueue_sms") as enqueue_sms:
+        with patch("apps.domains.messaging.services.enqueue_alimtalk") as enqueue_alimtalk:
             with self.assertRaisesRegex(RuntimeError, "rollback business write"):
                 with transaction.atomic():
                     _dispatch_registration_durably(
@@ -528,7 +528,7 @@ class ScheduledNotificationProcessingTests(TransactionTestCase):
                     )
                     raise RuntimeError("rollback business write")
 
-        enqueue_sms.assert_not_called()
+        enqueue_alimtalk.assert_not_called()
         self.assertFalse(ScheduledNotification.objects.exists())
 
 
@@ -651,7 +651,7 @@ class ScheduledNotificationViewTests(TestCase):
         self.assertEqual(notification.status, ScheduledNotification.Status.DISPATCHING)
 
     def test_registration_enqueue_failure_remains_in_durable_outbox(self):
-        with patch("apps.domains.messaging.services.enqueue_sms", return_value=False):
+        with patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=False):
             with self.captureOnCommitCallbacks(execute=True):
                 accepted = _dispatch_registration_durably(
                     business_tenant_id=self.tenant.id,

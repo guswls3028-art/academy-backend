@@ -32,7 +32,7 @@ POST /api/v1/auth/account-recovery/dispatch/
 ## 2. 보안/테넌트 원칙
 
 - `AllowAny` 엔드포인트지만 `TenantResolved`가 필수다.
-- `SmsEndpointThrottle`을 적용한다.
+- `AlimtalkEndpointThrottle`을 적용한다.
 - 요청 전화번호는 숫자만 남긴 뒤 `010`으로 시작하는 11자리만 허용한다.
 - 조회 실패, 동명이인/공유번호 등 다건 매칭, 성공 모두 공개 응답은 generic message로 통일한다.
 - API 응답에 아이디나 비밀번호를 직접 반환하지 않는다.

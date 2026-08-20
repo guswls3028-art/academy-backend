@@ -87,7 +87,7 @@ class SendMessageViewTests(TestCase):
 
         with (
             patch("apps.domains.messaging.services.get_tenant_site_url", return_value="https://example.test"),
-            patch("apps.domains.messaging.services.enqueue_sms", return_value=True) as enqueue_sms,
+            patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=True) as enqueue_alimtalk,
         ):
             response = self._send(request)
 
@@ -96,12 +96,12 @@ class SendMessageViewTests(TestCase):
         # durable outbox is accepted as scheduled, then the callback enqueues it.
         self.assertEqual(response.data["enqueued"], 0)
         self.assertEqual(response.data["scheduled"], 1)
-        enqueue_sms.assert_called_once()
+        enqueue_alimtalk.assert_called_once()
         self.assertEqual(
             ScheduledNotification.objects.get(tenant=self.tenant).status,
             ScheduledNotification.Status.SENT,
         )
-        kwargs = enqueue_sms.call_args.kwargs
+        kwargs = enqueue_alimtalk.call_args.kwargs
         self.assertEqual(kwargs["to"], "01011112222")
         self.assertEqual(kwargs["target_type"], "student")
         self.assertEqual(kwargs["target_id"], self.student.id)
@@ -137,12 +137,12 @@ class SendMessageViewTests(TestCase):
 
         with (
             patch("apps.domains.messaging.views.send_views.HOURLY_SEND_LIMIT", 1),
-            patch("apps.domains.messaging.services.enqueue_sms", return_value=True) as enqueue_sms,
+            patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=True) as enqueue_alimtalk,
         ):
             response = self._send(request)
 
         self.assertEqual(response.status_code, 429)
-        enqueue_sms.assert_not_called()
+        enqueue_alimtalk.assert_not_called()
 
     def test_default_direct_alimtalk_requires_selected_envelope(self):
         request = self.factory.post(
@@ -159,12 +159,12 @@ class SendMessageViewTests(TestCase):
         request.user = self.admin
         request.tenant = self.tenant
 
-        with patch("apps.domains.messaging.services.enqueue_sms", return_value=True) as enqueue_sms:
+        with patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=True) as enqueue_alimtalk:
             response = self._send(request)
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("카카오 승인 봉투", response.data["detail"])
-        enqueue_sms.assert_not_called()
+        enqueue_alimtalk.assert_not_called()
 
     def test_exam_category_manual_send_uses_attendance_unified_envelope(self):
         template = MessageTemplate.objects.create(
@@ -198,12 +198,12 @@ class SendMessageViewTests(TestCase):
 
         with (
             patch("apps.domains.messaging.services.get_tenant_site_url", return_value="https://example.test"),
-            patch("apps.domains.messaging.services.enqueue_sms", return_value=True) as enqueue_sms,
+            patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=True) as enqueue_alimtalk,
         ):
             response = self._send(request)
 
         self.assertEqual(response.status_code, 200, response.data)
-        kwargs = enqueue_sms.call_args.kwargs
+        kwargs = enqueue_alimtalk.call_args.kwargs
         self.assertEqual(kwargs["template_id"], "KA01TP260406121126868FGddLmrDFUC")
         replacements = {item["key"]: item["value"] for item in kwargs["alimtalk_replacements"]}
         self.assertEqual(replacements["강의명"], "수학A반")
@@ -227,13 +227,13 @@ class SendMessageViewTests(TestCase):
 
         with (
             patch("apps.domains.messaging.services.get_tenant_site_url", return_value="https://example.test"),
-            patch("apps.domains.messaging.services.enqueue_sms", return_value=True) as enqueue_sms,
+            patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=True) as enqueue_alimtalk,
         ):
             response = self._send(request)
 
         self.assertEqual(response.status_code, 200)
-        enqueue_sms.assert_called_once()
-        kwargs = enqueue_sms.call_args.kwargs
+        enqueue_alimtalk.assert_called_once()
+        kwargs = enqueue_alimtalk.call_args.kwargs
         self.assertEqual(kwargs["to"], "01033334444")
         self.assertEqual(kwargs["target_type"], "parent")
         self.assertEqual(kwargs["target_id"], self.student.id)
@@ -257,14 +257,14 @@ class SendMessageViewTests(TestCase):
 
         with (
             patch("apps.domains.messaging.services.get_tenant_site_url", return_value="https://example.test"),
-            patch("apps.domains.messaging.services.enqueue_sms", return_value=True) as enqueue_sms,
+            patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=True) as enqueue_alimtalk,
         ):
             response = self._send(request)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["enqueued"], 0)
         self.assertEqual(response.data["scheduled"], 1)
-        enqueue_sms.assert_not_called()
+        enqueue_alimtalk.assert_not_called()
         scheduled = ScheduledNotification.objects.get(tenant=self.tenant)
         self.assertEqual(scheduled.trigger, "manual_send")
         self.assertEqual(scheduled.status, ScheduledNotification.Status.PENDING)
@@ -301,13 +301,13 @@ class SendMessageViewTests(TestCase):
 
         with (
             patch("apps.domains.messaging.views.send_views.HOURLY_SEND_LIMIT", 1),
-            patch("apps.domains.messaging.services.enqueue_sms") as enqueue_sms,
+            patch("apps.domains.messaging.services.enqueue_alimtalk") as enqueue_alimtalk,
         ):
             response = self._send(request)
 
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["scheduled"], 1)
-        enqueue_sms.assert_not_called()
+        enqueue_alimtalk.assert_not_called()
         scheduled = ScheduledNotification.objects.get(tenant=self.tenant)
         self.assertEqual(scheduled.status, ScheduledNotification.Status.PENDING)
 
@@ -332,9 +332,9 @@ class SendMessageViewTests(TestCase):
                 return_value="https://example.test",
             ),
             patch(
-                "apps.domains.messaging.services.enqueue_sms",
+                "apps.domains.messaging.services.enqueue_alimtalk",
                 return_value=False,
-            ) as enqueue_sms,
+            ) as enqueue_alimtalk,
         ):
             response = self._send(request)
 
@@ -342,7 +342,7 @@ class SendMessageViewTests(TestCase):
         self.assertEqual(response.data["enqueued"], 0)
         self.assertEqual(response.data["scheduled"], 1)
         self.assertEqual(response.data["enqueue_failed"], 0)
-        enqueue_sms.assert_called_once()
+        enqueue_alimtalk.assert_called_once()
         dispatch = ScheduledNotification.objects.get(tenant=self.tenant)
         self.assertEqual(dispatch.status, ScheduledNotification.Status.PENDING)
         self.assertEqual(dispatch.attempt_count, 1)
@@ -365,12 +365,12 @@ class SendMessageViewTests(TestCase):
         request.user = self.admin
         request.tenant = self.tenant
 
-        with patch("apps.domains.messaging.services.enqueue_sms", return_value=True) as enqueue_sms:
+        with patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=True) as enqueue_alimtalk:
             response = self._send(request)
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("scheduled_send_at", response.data)
-        enqueue_sms.assert_not_called()
+        enqueue_alimtalk.assert_not_called()
         self.assertFalse(ScheduledNotification.objects.exists())
 
     def test_payment_send_fail_closes_when_provider_sid_is_missing(self):
@@ -398,13 +398,13 @@ class SendMessageViewTests(TestCase):
         request.user = self.admin
         request.tenant = self.tenant
 
-        with patch("apps.domains.messaging.services.enqueue_sms") as enqueue_sms:
+        with patch("apps.domains.messaging.services.enqueue_alimtalk") as enqueue_alimtalk:
             response = self._send(request)
 
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.data["code"], "unified_template_unavailable")
         self.assertEqual(response.data["template_type"], "notice_payment")
-        enqueue_sms.assert_not_called()
+        enqueue_alimtalk.assert_not_called()
 
     def test_student_direct_alimtalk_omits_deleted_and_cross_tenant_students(self):
         deleted_user = User.objects.create_user(
@@ -457,15 +457,15 @@ class SendMessageViewTests(TestCase):
 
         with (
             patch("apps.domains.messaging.services.get_tenant_site_url", return_value="https://example.test"),
-            patch("apps.domains.messaging.services.enqueue_sms", return_value=True) as enqueue_sms,
+            patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=True) as enqueue_alimtalk,
         ):
             response = self._send(request)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["enqueued"], 0)
         self.assertEqual(response.data["scheduled"], 1)
-        enqueue_sms.assert_called_once()
-        kwargs = enqueue_sms.call_args.kwargs
+        enqueue_alimtalk.assert_called_once()
+        kwargs = enqueue_alimtalk.call_args.kwargs
         self.assertEqual(kwargs["target_id"], self.student.id)
         self.assertEqual(kwargs["to"], "01033334444")
 
@@ -483,12 +483,12 @@ class SendMessageViewTests(TestCase):
         request.user = self.admin
         request.tenant = self.tenant
 
-        with patch("apps.domains.messaging.services.enqueue_sms", return_value=True) as enqueue_sms:
+        with patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=True) as enqueue_alimtalk:
             response = self._send(request)
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("block_category", response.data)
-        enqueue_sms.assert_not_called()
+        enqueue_alimtalk.assert_not_called()
 
     def test_staff_target_manual_send_is_disabled(self):
         request = self.factory.post(
@@ -505,12 +505,12 @@ class SendMessageViewTests(TestCase):
         request.user = self.admin
         request.tenant = self.tenant
 
-        with patch("apps.domains.messaging.services.enqueue_sms", return_value=True) as enqueue_sms:
+        with patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=True) as enqueue_alimtalk:
             response = self._send(request)
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("send_to", response.data)
-        enqueue_sms.assert_not_called()
+        enqueue_alimtalk.assert_not_called()
 
     def test_staff_membership_cannot_send_manual_messages(self):
         staff_user = User.objects.create_user(
@@ -534,11 +534,11 @@ class SendMessageViewTests(TestCase):
         request.user = staff_user
         request.tenant = self.tenant
 
-        with patch("apps.domains.messaging.services.enqueue_sms", return_value=True) as enqueue_sms:
+        with patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=True) as enqueue_alimtalk:
             response = self._send(request)
 
         self.assertEqual(response.status_code, 403)
-        enqueue_sms.assert_not_called()
+        enqueue_alimtalk.assert_not_called()
 
     def test_student_template_category_is_saved_as_default(self):
         request = self.factory.post(

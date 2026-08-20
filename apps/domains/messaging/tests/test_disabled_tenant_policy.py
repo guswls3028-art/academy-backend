@@ -11,11 +11,11 @@ class DisabledTenantMessagingPolicyTests(SimpleTestCase):
 
     @patch("apps.domains.messaging.sqs_queue.MessagingSQSQueue")
     def test_disabled_source_tenant_skipped_before_sqs(self, mock_queue_cls):
-        from apps.domains.messaging.services import enqueue_sms
+        from apps.domains.messaging.services import enqueue_alimtalk
 
         mock_queue_cls.return_value = MagicMock()
 
-        result = enqueue_sms(
+        result = enqueue_alimtalk(
             tenant_id=1,
             source_tenant_id=4,
             trusted_business_tenant_id=4,

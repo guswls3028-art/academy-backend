@@ -256,7 +256,8 @@ class ProvisionDefaultTemplatesTests(TestCase):
             )
         )
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("message_mode", response.data)
         config.refresh_from_db()
         self.assertEqual(config.message_mode, "alimtalk")
         self.assertTrue(config.enabled)

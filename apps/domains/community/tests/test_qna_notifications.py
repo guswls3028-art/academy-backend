@@ -65,14 +65,14 @@ class QnaNotificationTests(TestCase):
             status="published",
         )
 
-    @patch("apps.domains.messaging.services.enqueue_sms", return_value=True)
+    @patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=True)
     def test_notify_qna_created_skips_external_alimtalk_without_approved_envelope(self, mock_enqueue):
         sent = notify_qna_created(self.post, actor_user=self.student_user)
 
         self.assertEqual(sent, 0)
         mock_enqueue.assert_not_called()
 
-    @patch("apps.domains.messaging.services.enqueue_sms", return_value=True)
+    @patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=True)
     def test_notify_qna_created_skips_e2e_marked_post(self, mock_enqueue):
         self.post.title = "[E2E] QnA 테스트 질문"
         self.post.save(update_fields=["title"])
@@ -82,7 +82,7 @@ class QnaNotificationTests(TestCase):
         self.assertEqual(sent, 0)
         mock_enqueue.assert_not_called()
 
-    @patch("apps.domains.messaging.services.enqueue_sms", return_value=True)
+    @patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=True)
     def test_notify_qna_created_does_not_fallback_to_attendance_envelope(self, mock_enqueue):
         self.freeform_template.delete()
 
@@ -91,7 +91,7 @@ class QnaNotificationTests(TestCase):
         self.assertEqual(sent, 0)
         mock_enqueue.assert_not_called()
 
-    @patch("apps.domains.messaging.services.enqueue_sms", return_value=True)
+    @patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=True)
     def test_notify_qna_answered_skips_external_alimtalk_without_approved_envelope(self, mock_enqueue):
         reply = PostReply.objects.create(
             tenant=self.tenant,
@@ -106,7 +106,7 @@ class QnaNotificationTests(TestCase):
         self.assertEqual(sent, 0)
         mock_enqueue.assert_not_called()
 
-    @patch("apps.domains.messaging.services.enqueue_sms", return_value=True)
+    @patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=True)
     def test_notify_qna_answered_skips_e2e_marked_post(self, mock_enqueue):
         self.post.title = "[E2E-SAFE] 검증 질문"
         self.post.save(update_fields=["title"])
@@ -123,7 +123,7 @@ class QnaNotificationTests(TestCase):
         self.assertEqual(sent, 0)
         mock_enqueue.assert_not_called()
 
-    @patch("apps.domains.messaging.services.enqueue_sms", return_value=True)
+    @patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=True)
     def test_notify_qna_answered_does_not_fallback_to_attendance_envelope(self, mock_enqueue):
         self.freeform_template.delete()
         reply = PostReply.objects.create(

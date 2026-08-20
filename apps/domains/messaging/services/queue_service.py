@@ -2,8 +2,8 @@
 """
 SQS 큐 기반 메시지 발송.
 
-`enqueue_sms`는 기존 public API 이름이며, 실제로는 message_mode에 따라
-알림톡만 큐에 넣는다. SMS/LMS 실발송은 정책상 금지되어 있다.
+공용 알림톡만 큐에 넣는다. SMS/LMS 또는 알 수 없는 채널 값은
+알림톡으로 보정하지 않고 실패 폐쇄한다.
 """
 
 import logging
@@ -24,7 +24,7 @@ def _require_active_business_tenant(tenant_id: int) -> None:
         )
 
 
-def enqueue_sms(
+def enqueue_alimtalk(
     tenant_id: int,
     to: str,
     text: str,
@@ -74,6 +74,7 @@ def enqueue_sms(
     from apps.domains.messaging.policy import (
         MessagingPolicyError,
         check_recipient_allowed,
+        get_message_mode_block_reason,
         get_owner_tenant_id,
         is_messaging_disabled,
         is_messaging_restricted,
@@ -112,7 +113,7 @@ def enqueue_sms(
 
     if is_messaging_disabled(policy_tenant_id):
         logger.info(
-            "enqueue_sms skipped: business_tenant_id=%s messaging disabled",
+            "enqueue_alimtalk skipped: business_tenant_id=%s messaging disabled",
             policy_tenant_id,
         )
         return False
@@ -120,23 +121,25 @@ def enqueue_sms(
     # 제한 테넌트: 계정 관련(registration/password) 외 메시징 차단
     # 계정 관련 발송은 OWNER_TENANT_ID로 enqueue되므로 여기서 차단되지 않음
     if is_messaging_restricted(original_tenant_id):
-        logger.info("enqueue_sms blocked: tenant_id=%s messaging restricted (account-only)", original_tenant_id)
+        logger.info("enqueue_alimtalk blocked: tenant_id=%s messaging restricted (account-only)", original_tenant_id)
         return False
 
     # Recipient guard: 운영 denylist 및 테스트 whitelist를 모두 적용한다.
     if not check_recipient_allowed(to):
-        logger.info("enqueue_sms blocked: recipient %s rejected by policy", (to or "")[:4] + "****")
+        logger.info("enqueue_alimtalk blocked: recipient %s rejected by policy", (to or "")[:4] + "****")
         return False
 
     mode = (message_mode or "").strip().lower() or "alimtalk"
-    if mode not in ("sms", "alimtalk"):
-        mode = "alimtalk"
-
-    if mode == "sms":
-        logger.error("enqueue_sms blocked: SMS/LMS sending is disabled service-wide (tenant_id=%s)", original_tenant_id)
+    block_reason = get_message_mode_block_reason(mode)
+    if block_reason:
+        logger.error(
+            "enqueue_alimtalk blocked: non-Alimtalk mode=%s tenant_id=%s",
+            mode,
+            original_tenant_id,
+        )
         raise MessagingPolicyError(
-            "SMS 발송은 사용하지 않습니다. 공용 알림톡만 발송할 수 있습니다.",
-            reason="sms_disabled",
+            "공용 알림톡만 발송할 수 있습니다.",
+            reason=block_reason,
         )
 
     _require_active_business_tenant(policy_tenant_id)
@@ -182,8 +185,17 @@ def build_enqueued_business_key(*, tenant_id: int, payload: dict) -> str:
     if source_tenant_id is None and original_tenant_id != owner_id:
         source_tenant_id = original_tenant_id
     mode = str(payload.get("message_mode") or "alimtalk").strip().lower()
-    if mode not in ("sms", "alimtalk"):
-        mode = "alimtalk"
+    from apps.domains.messaging.policy import (
+        MessagingPolicyError,
+        get_message_mode_block_reason,
+    )
+
+    block_reason = get_message_mode_block_reason(mode)
+    if block_reason:
+        raise MessagingPolicyError(
+            "공용 알림톡만 발송할 수 있습니다.",
+            reason=block_reason,
+        )
     return build_business_idempotency_key(
         tenant_id=owner_id,
         source_tenant_id=(

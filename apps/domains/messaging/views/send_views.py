@@ -331,7 +331,7 @@ class SendMessageView(APIView):
                 )
             except MessagingPolicyError as e:
                 return Response(
-                    {"detail": str(e) or "SMS 발송은 사용하지 않습니다. 공용 알림톡만 발송할 수 있습니다."},
+                    {"detail": str(e) or "알림톡 발송 정책에 의해 차단되었습니다."},
                     status=status.HTTP_403_FORBIDDEN,
                 )
             if dispatch_result == "enqueued":

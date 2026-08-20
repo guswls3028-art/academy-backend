@@ -5,7 +5,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
 
 from apps.core.permissions import TenantResolved
-from apps.api.common.throttles import SmsEndpointThrottle
+from apps.api.common.throttles import AlimtalkEndpointThrottle
 
 from .password_views import _normalize_phone_for_reset
 
@@ -16,7 +16,7 @@ class SendExistingCredentialsView(APIView):
     (회원가입 시 중복 감지 → "카카오톡으로 ID/비밀번호 발송" 버튼용)
     """
     permission_classes = [AllowAny, TenantResolved]
-    throttle_classes = [SmsEndpointThrottle]
+    throttle_classes = [AlimtalkEndpointThrottle]
 
     def get_authenticators(self):
         return []

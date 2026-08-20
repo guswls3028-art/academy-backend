@@ -309,7 +309,7 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "anon": "60/minute",
         "user": "300/minute",
-        "sms_endpoint": "5/hour",
+        "alimtalk_endpoint": "5/hour",
         "messaging_diagnostic": "10/hour",
         "staff_password_reset": "60/hour",
         "signup_check": "30/minute",
@@ -454,7 +454,7 @@ TENANT_DB_USAGE_SLOW_REQUEST_MS = int(
 # /dev 운영 콘솔 알림 webhook (Slack incoming webhook URL).
 # 비어 있으면 전송 생략 — check_dev_alerts 커맨드는 조건 평가만 수행.
 DEV_ALERTS_WEBHOOK_URL = os.getenv("DEV_ALERTS_WEBHOOK_URL", "")
-# 고객 메시지와 완전히 분리된 운영자 장애 SMS. 아래 고정 통제번호 외 발송은 코드에서 차단한다.
+# 운영자 장애 알림은 Slack webhook만 사용한다.
 # Runtime 5xx responses must not wait for the incident audit insert.
 USER_INCIDENT_AUDIT_ASYNC = True
 # 로컬 기능 테스트용 tenant. 이 tenant에서는 알림톡 발송 없이 기능만 동작.

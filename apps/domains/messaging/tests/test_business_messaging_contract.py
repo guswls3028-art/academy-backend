@@ -61,6 +61,7 @@ class BusinessMessagingContractTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["delivery_policy"], "common_alimtalk_only")
+        self.assertNotIn("sms_allowed", response.data)
         self.assertEqual(response.data["messaging_provider"], "solapi")
         self.assertEqual(response.data["kakao_pfid"], "")
         self.assertEqual(response.data["own_solapi_api_key"], "")

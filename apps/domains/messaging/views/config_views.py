@@ -197,7 +197,7 @@ class AutoSendConfigView(APIView):
             if "message_mode" in item:
                 message_mode = (item.get("message_mode") or "alimtalk").strip().lower()
                 if message_mode != "alimtalk":
-                    message_mode = "alimtalk"
+                    return reject({"message_mode": "공용 알림톡만 설정할 수 있습니다."})
                 config.message_mode = message_mode
             if "minutes_before" in item:
                 config.minutes_before = minutes_before

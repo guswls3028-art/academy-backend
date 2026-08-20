@@ -130,16 +130,22 @@ class MessagingSQSQueue:
             template_id: 알림톡 템플릿 ID (미지정 시 워커 기본값 사용)
         """
         mode = (message_mode or "").strip().lower() or "alimtalk"
-        if mode not in ("sms", "alimtalk"):
-            import logging
-            logging.getLogger(__name__).warning(
-                "Invalid message_mode '%s' downgraded to 'alimtalk' (tenant=%s, to=%s)",
-                message_mode, tenant_id, to,
+        from apps.domains.messaging.policy import (
+            MessagingPolicyError,
+            get_message_mode_block_reason,
+        )
+
+        block_reason = get_message_mode_block_reason(mode)
+        if block_reason:
+            logger.error(
+                "enqueue blocked: non-Alimtalk mode=%s tenant=%s",
+                mode,
+                tenant_id,
             )
-            mode = "alimtalk"
-        if mode == "sms":
-            logger.error("enqueue blocked: SMS/LMS sending is disabled service-wide (tenant=%s)", tenant_id)
-            return False
+            raise MessagingPolicyError(
+                "공용 알림톡만 발송할 수 있습니다.",
+                reason=block_reason,
+            )
 
         from apps.domains.messaging.security import build_recipient_fingerprint
 
