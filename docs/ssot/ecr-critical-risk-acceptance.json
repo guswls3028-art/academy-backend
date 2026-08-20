@@ -13,7 +13,7 @@
         "academy-ai-worker-cpu",
         "academy-tools-worker"
       ],
-      "expiresOn": "2026-08-19",
+      "expiresOn": "2026-09-19",
       "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-5450",
       "rationale": "Debian classifies this as a no-DSA minor issue. The vulnerable native scanf %mc path with an explicit oversized width is not invoked by Academy's Python processes; ingress TLS terminates at ALB. Keep exact package-version matching until Debian publishes a stable fix."
     },
@@ -29,7 +29,7 @@
         "academy-ai-worker-cpu",
         "academy-tools-worker"
       ],
-      "expiresOn": "2026-08-19",
+      "expiresOn": "2026-09-19",
       "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-12087",
       "rationale": "Debian has no stable update for this constrained Perl pack_ip path. Perl is inherited from the reviewed upstream slim image, but Academy has no Perl script, interpreter invocation, or pack_ip call in any runtime entrypoint. Keep exact package-version matching until Debian publishes a stable fix."
     },
@@ -45,7 +45,7 @@
         "academy-ai-worker-cpu",
         "academy-tools-worker"
       ],
-      "expiresOn": "2026-08-19",
+      "expiresOn": "2026-09-19",
       "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-13221",
       "rationale": "Debian has no stable update for the oversized-regex trie path. Perl is inherited from the reviewed upstream slim image, while Academy has no Perl script or interpreter invocation and does not pass user-controlled regular expressions to Perl. Keep exact package-version matching until a stable fix exists."
     },
@@ -61,7 +61,7 @@
         "academy-ai-worker-cpu",
         "academy-tools-worker"
       ],
-      "expiresOn": "2026-08-19",
+      "expiresOn": "2026-09-19",
       "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-57433",
       "rationale": "Debian stable remains affected by crafted Storable deserialization. Perl is inherited from the reviewed upstream slim image, but Academy has no Perl execution path and never invokes Perl Storable on user-controlled data. Keep exact package-version matching until Debian publishes a stable fix."
     },
@@ -74,7 +74,7 @@
         "academy-video-worker",
         "academy-ai-worker-cpu"
       ],
-      "expiresOn": "2026-08-19",
+      "expiresOn": "2026-09-19",
       "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-34872",
       "rationale": "Debian classifies this as a no-DSA minor issue. Mbed TLS is a transitive media-tool dependency in these images and Academy does not expose or invoke its finite-field Diffie-Hellman API. Keep exact package-version matching until Debian publishes a stable fix."
     },
@@ -87,7 +87,7 @@
         "academy-video-worker",
         "academy-ai-worker-cpu"
       ],
-      "expiresOn": "2026-08-19",
+      "expiresOn": "2026-09-19",
       "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-34873",
       "rationale": "Debian classifies this as a no-DSA minor issue. Mbed TLS is a transitive media-tool dependency and is not Academy's TLS client, server, or TLS 1.3 session-resumption implementation; ALB terminates public TLS. Keep exact package-version matching until a stable fix exists."
     },
@@ -100,7 +100,7 @@
         "academy-video-worker",
         "academy-ai-worker-cpu"
       ],
-      "expiresOn": "2026-08-19",
+      "expiresOn": "2026-09-19",
       "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-34875",
       "rationale": "Debian classifies this as a no-DSA minor issue. Mbed TLS is installed transitively by media tools and Academy does not call its finite-field Diffie-Hellman key-export API. Keep exact package-version matching until Debian publishes a stable fix."
     },
@@ -113,7 +113,7 @@
         "academy-ai-worker-cpu",
         "academy-tools-worker"
       ],
-      "expiresOn": "2026-08-19",
+      "expiresOn": "2026-09-19",
       "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-58016",
       "rationale": "Debian classifies this malformed GDBus introspection-XML out-of-bounds read as a no-DSA minor issue and has no stable fix. GLib is retained only as a mandatory tesseract-ocr dependency in the API, AI, and Tools OCR runtimes; Academy invokes neither g_dbus_node_info_new_for_xml nor D-Bus introspection XML. Keep exact repository and package-version matching until Debian publishes a stable fix."
     }
