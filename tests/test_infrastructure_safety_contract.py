@@ -552,7 +552,10 @@ def test_selective_build_diffs_from_each_last_verified_runtime_image() -> None:
     }.items():
         assert f'{flag}_PREV=$(resolve_image_base "{repo}")' in detect
         assert f'CHANGED_{flag}=$(git diff --name-only "${flag}_PREV" HEAD)' in detect
-        assert f'CHANGED="$CHANGED_{flag}"' in detect
+        if flag in {"API", "AI"}:
+            assert f'CHANGED="$(runtime_changes "$CHANGED_{flag}")"' in detect
+        else:
+            assert f'CHANGED="$CHANGED_{flag}"' in detect
     assert 'force_full_build "academy-tools-worker source commit is unavailable"' in detect
 
 
@@ -1460,6 +1463,10 @@ def test_workflow_checks_release_freshness_under_lock_and_always_releases() -> N
 
     assert "'docs/reports/**'" in workflow
     assert "'docs/ssot/runtime-current.md'" in workflow
+    assert "'scripts/codex/**'" in workflow
+    assert "runtime_changes() { grep -vE '^scripts/codex/'" in workflow
+    assert 'CHANGED="$(runtime_changes "$CHANGED_API")"' in workflow
+    assert 'CHANGED="$(runtime_changes "$CHANGED_AI")"' in workflow
     for output in (
         "build_base",
         "build_api",
