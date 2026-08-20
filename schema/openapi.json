@@ -21436,7 +21436,7 @@
     },
     "/api/v1/core/tenants/create/": {
       "post": {
-        "description": "POST /api/v1/core/tenants/\n플랫폼 관리 테넌트(OWNER_TENANT_ID) 전용 — owner role만. 새 테넌트 생성.",
+        "description": "POST /api/v1/core/tenants/create/\n플랫폼 관리 테넌트(OWNER_TENANT_ID) 전용 — 개발·QA 기본 테넌트 생성.\n운영 신규 테넌트는 명시적 ID와 전체 설정을 받는 provision_tenant를 사용한다.",
         "operationId": "core_tenants_create_create",
         "responses": {
           "200": {
