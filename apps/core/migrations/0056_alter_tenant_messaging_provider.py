@@ -10,9 +10,14 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AlterField(
-            model_name='tenant',
-            name='messaging_provider',
-            field=models.CharField(choices=[('solapi', '솔라피(Solapi)'), ('ppurio', '뿌리오(Ppurio)')], default='solapi', help_text='레거시 공급자 기록. 제품 실발송에는 사용하지 않음', max_length=10),
+        migrations.SeparateDatabaseAndState(
+            database_operations=[],
+            state_operations=[
+                migrations.AlterField(
+                    model_name='tenant',
+                    name='messaging_provider',
+                    field=models.CharField(choices=[('solapi', '솔라피(Solapi)'), ('ppurio', '뿌리오(Ppurio)')], default='solapi', help_text='레거시 공급자 기록. 제품 실발송에는 사용하지 않음', max_length=10),
+                ),
+            ],
         ),
     ]

@@ -10,9 +10,14 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AlterField(
-            model_name='schedulednotification',
-            name='payload',
-            field=models.JSONField(help_text='enqueue_alimtalk kwargs (to, text, message_mode, template_id, etc.)'),
+        migrations.SeparateDatabaseAndState(
+            database_operations=[],
+            state_operations=[
+                migrations.AlterField(
+                    model_name='schedulednotification',
+                    name='payload',
+                    field=models.JSONField(help_text='enqueue_alimtalk kwargs (to, text, message_mode, template_id, etc.)'),
+                ),
+            ],
         ),
     ]
