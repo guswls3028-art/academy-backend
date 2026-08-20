@@ -120,7 +120,7 @@ def ensure_messaging_worker_asg_min_capacity(min_capacity: int = 1) -> bool:
 
 
 def ensure_tools_worker_asg_min_capacity(min_capacity: int = 1) -> bool:
-    """Wake the scale-to-zero tools worker after a user-triggered document job."""
+    """Ensure document jobs retain at least the Tools warm baseline."""
     return _ensure_worker_asg_min_capacity(
         asg_name=TOOLS_WORKER_ASG_NAME,
         label="Tools",
@@ -171,9 +171,9 @@ def start_ai_worker_instance():
         logger.warning("[AI] AI 워커 기동 시도 실패 — job은 SQS에 정상 등록됨", exc_info=True)
 
 
-def scale_down_ai_worker_asg_to_zero_if_idle(queue_counts: dict[str, int]) -> bool:
+def scale_down_ai_worker_asg_to_baseline_if_idle(queue_counts: dict[str, int]) -> bool:
     """
-    AI worker self scale-in.
+    AI worker self scale-in to the configured warm baseline.
 
     CloudWatch SQS metrics can lag while a just-launched worker is still pulling
     its image. The worker therefore scales itself in only after live SQS counts
@@ -201,14 +201,22 @@ def scale_down_ai_worker_asg_to_zero_if_idle(queue_counts: dict[str, int]) -> bo
             logger.warning("[AI] ASG %s not found — skip scale-in", AI_WORKER_ASG_NAME)
             return False
 
-        desired = int(groups[0].get("DesiredCapacity") or 0)
-        if desired <= 0:
+        group = groups[0]
+        desired = int(group.get("DesiredCapacity") or 0)
+        min_size = int(group.get("MinSize") or 0)
+        max_size = int(group.get("MaxSize") or 0)
+        baseline = min(max_size, max(1, min_size))
+        if desired <= baseline:
             return True
 
-        logger.info("[AI] idle queue confirmed → ASG desired=%d to 0", desired)
+        logger.info(
+            "[AI] idle queue confirmed → ASG desired=%d to warm baseline=%d",
+            desired,
+            baseline,
+        )
         asg.set_desired_capacity(
             AutoScalingGroupName=AI_WORKER_ASG_NAME,
-            DesiredCapacity=0,
+            DesiredCapacity=baseline,
             HonorCooldown=False,
         )
         return True

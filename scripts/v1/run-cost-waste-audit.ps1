@@ -771,7 +771,7 @@ Add-TableRow $sb @(
 Add-TableRow $sb @("Batch jobdef cleanup dry-run", "keep=$batchKeep, drop=$batchDrop, status=$batchStatus", $(if ($batchStatus -eq "skipped") { "skipped" } elseif ($batchDrop -gt 0) { "cleanup candidate" } else { "no deregistration needed" }))
 Add-TableRow $sb @("RDS class", "$rdsClass, status=$rdsStatus, pending=$rdsPending", $(if ($rdsClass -eq $script:RdsInstanceClass) { "matches SSOT" } else { "class drift" }))
 Add-TableRow $sb @("Redis node", "$redisType, status=$redisStatus", $(if ($redisType -eq $script:RedisNodeType) { "matches SSOT" } else { "node type drift" }))
-Add-TableRow $sb @("Running EC2 in academy VPC", "$($runningInstances.Count)", "API/Messaging warm baseline plus active worker/batch bursts")
+Add-TableRow $sb @("Running EC2 in academy VPC", "$($runningInstances.Count)", "API/Messaging/AI/Tools warm baseline plus active batch bursts")
 Add-TableRow $sb @("NAT Gateway", "$natCount available", $(if ($natCount -eq 0) { "matches NAT-off posture" } else { "review recurring VPC cost" }))
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("## Capacity SSOT vs Actual")
@@ -817,13 +817,13 @@ Add-TableRow $sb @(
     "AI CPU",
     "avg=$(Format-MetricNumber $aiCpu.Recent.Average '%'), peak=$(Format-MetricNumber $aiCpu.Recent.Peak '%')",
     "avg=$(Format-MetricNumber $aiCpu.Long.Average '%'), peak=$(Format-MetricNumber $aiCpu.Long.Peak '%')",
-    "keep scale-to-zero; active bursts need current CPU class"
+    "keep one warm baseline; active bursts need current CPU class"
 )
 Add-TableRow $sb @(
     "Tools CPU",
     "avg=$(Format-MetricNumber $toolsCpu.Recent.Average '%'), peak=$(Format-MetricNumber $toolsCpu.Recent.Peak '%')",
     "avg=$(Format-MetricNumber $toolsCpu.Long.Average '%'), peak=$(Format-MetricNumber $toolsCpu.Long.Peak '%')",
-    "keep scale-to-zero t4g.small"
+    "keep one warm baseline t4g.small"
 )
 foreach ($usage in $queueUsageRows) {
     Add-TableRow $sb @(
@@ -864,7 +864,7 @@ Add-TableRow $sb @(
 [void]$sb.AppendLine("|-----------|----------|-----------------|")
 Add-TableRow $sb @("API", $apiDecision, "confirmed CloudWatch history + current SSM memory")
 Add-TableRow $sb @("Messaging", $messagingDecision, "confirmed CloudWatch history + current SSM memory")
-Add-TableRow $sb @("AI / Tools", "retain current scale-to-zero classes", "confirmed burst CPU + zero idle capacity")
+Add-TableRow $sb @("AI / Tools", "retain current one-instance warm baselines", "user-facing cold-start policy + confirmed burst CPU")
 Add-TableRow $sb @("RDS", $rdsDecision, "confirmed CloudWatch memory, swap, credits, connections")
 Add-TableRow $sb @("Redis", $redisDecision, "confirmed CloudWatch dataset, memory, credits, connections, evictions")
 [void]$sb.AppendLine("")
@@ -931,6 +931,7 @@ Add-TableRow $sb @("Academy historical tagged cost", "Cost allocation cannot be 
 [void]$sb.AppendLine("|-------------|------------------------|")
 Add-TableRow $sb @("API scale-to-zero or smaller class", "Rejected: public API warm-baseline policy plus observed CPU burst near saturation.")
 Add-TableRow $sb @("Messaging scale-to-zero", "Rejected: account recovery and Alimtalk latency require one warm worker; instance class can still be reduced.")
+Add-TableRow $sb @("AI/Tools scale-to-zero", "Rejected: student import, AI, and document conversion are user-facing wait paths; each keeps one warm worker.")
 Add-TableRow $sb @("RDS / Redis further downsize", "Rejected for this pass: observed memory/credit lows and single-node restart risk conflict with stability guardrails.")
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("## Recommended Actions")
@@ -945,7 +946,7 @@ foreach ($action in $actions) { Add-TableRow $sb @($action) }
 [void]$sb.AppendLine("|------|--------|")
 Add-TableRow $sb @("API warm baseline", 'kept at one `t4g.medium`; target tracking keeps headroom for public API latency.')
 Add-TableRow $sb @("Messaging worker warm baseline", "kept at one ``$($script:MessagingInstanceType)``; account recovery and Alimtalk wait paths should not cold-start.")
-Add-TableRow $sb @("AI/Tools workers", "scale-to-zero policy retained; queue alarms/API wake-up own burst scale-out.")
+Add-TableRow $sb @("AI/Tools workers", "one warm instance retained for first-request latency; queue alarms own burst scale-out.")
 Add-TableRow $sb @("Standard video encoding", "Spot Batch CE retained; paid encode tests are not submitted by this audit.")
 Add-TableRow $sb @("RDS/Redis", "current classes retained because this audit found memory/credit guardrails against another downsize.")
 

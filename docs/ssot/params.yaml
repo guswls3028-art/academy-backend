@@ -145,22 +145,22 @@ messagingWorker:
   dlqSuffix: -dlq
 
 aiWorker:
-  # 문제 생성/OCR성 작업은 SQS 큐로 분리하고 유휴 시 0대까지 축소한다.
-  # scale-out 알람이 첫 메시지부터 워커를 깨운다.
+  # 문제 생성/OCR 작업은 첫 요청 지연과 장애 회복을 줄이기 위해 1대 warm baseline을 유지한다.
+  # SQS scale-out은 backlog 시 추가 용량만 확장한다.
   asgName: academy-v1-ai-worker-asg
   launchTemplateName: academy-v1-ai-worker-lt
   instanceTagValue: academy-v1-ai-worker
   amiId: ami-0885e191a9bcf28b0
   instanceType: t4g.medium
-  minSize: 0
+  minSize: 1
   maxSize: 5
-  desiredCapacity: 0
-  # V1.1.1: scale-in protection 비활성화. min=0이면 큐가 비었을 때 0까지 축소 가능.
+  desiredCapacity: 1
+  # scale-in protection은 refresh 교착 방지를 위해 비활성화하되 min=1이 warm baseline을 보장한다.
   # protection=true면 instance refresh 실패 → 배포 차단 (근본 원인 확인됨).
   scaleInProtection: false
   scalingPolicyScaleOutCooldown: 300
   scalingPolicyScaleOutThreshold: 0
-  # Scale-in은 CloudWatch 지표 지연을 피하기 위해 워커가 live SQS depth를 확인한 뒤 직접 수행한다.
+  # Scale-in은 CloudWatch 지표 지연을 피하기 위해 워커가 live SQS depth를 확인한 뒤 baseline=1까지 직접 수행한다.
   # ai-worker-queue-low 알람은 관측용이며 ASG scale-in action을 갖지 않는다.
   sqsQueueUrl: https://sqs.ap-northeast-2.amazonaws.com/809466760795/academy-v1-ai-queue
   sqsQueueName: academy-v1-ai-queue
@@ -170,15 +170,15 @@ aiWorker:
 
 toolsWorker:
   # PPT/PDF 등 도구성 변환 작업은 AI/OCR 모델 캐시와 분리한다.
-  # 비용 최적화를 위해 평시 0대. 큐에 작업이 들어오면 SQS alarm이 워커를 깨운다.
+  # Excel/PPT/PDF 첫 요청의 콜드스타트를 없애기 위해 1대 warm baseline을 유지한다.
   asgName: academy-v1-tools-worker-asg
   launchTemplateName: academy-v1-tools-worker-lt
   instanceTagValue: academy-v1-tools-worker
   amiId: ami-0885e191a9bcf28b0
   instanceType: t4g.small
-  minSize: 0
+  minSize: 1
   maxSize: 2
-  desiredCapacity: 0
+  desiredCapacity: 1
   scaleInProtection: false
   scalingPolicyScaleOutCooldown: 300
   scalingPolicyScaleInCooldown: 900

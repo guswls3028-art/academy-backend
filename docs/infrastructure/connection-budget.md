@@ -24,16 +24,17 @@
 | 워커 | 인스턴스 | 평시 커넥션 |
 |---|---|---|
 | Messaging | 1 warm baseline | ~1-3 |
-| AI | 0 | 0 |
+| AI | 1 warm baseline | ~1-3 |
+| Tools | 1 warm baseline | ~1-3 |
 | RDS admin | - | ~3 |
 | Background | - | ~5 |
 
 ## 시나리오별 예산
 | 시나리오 | 예상 커넥션 | 여유 |
 |---|---|---|
-| 평시 (API 1대, Messaging 1대, AI/Tools idle) | ~10-25 | 93%+ |
-| 평시 배포 (기존 API 1 + 후보 1 일시) | ~15-30 | 92%+ |
-| 부하 중 배포 (`desired + 1`, 최대 4대 순간) | ~25-60 | 84%+ |
+| 평시 (API, Messaging, AI, Tools 각 1대) | ~12-31 | 92%+ |
+| 평시 배포 (API/worker 후보가 일시 중첩) | ~20-45 | 88%+ |
+| 부하 중 배포 (`desired + 1`과 worker burst 중첩) | ~30-70 | 82%+ |
 | 장애 시 재시도 폭주 | 400 포화 가능 | 0% |
 
 ## 규칙

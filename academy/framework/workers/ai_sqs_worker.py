@@ -23,7 +23,7 @@ from django.db import close_old_connections, connections
 from academy.adapters.db.django.uow import DjangoUnitOfWork
 from academy.adapters.queue.sqs.ai_queue import SQSAIQueueAdapter
 from academy.adapters.queue.sqs.visibility_extender import SQSVisibilityExtender
-from academy.adapters.compute.ec2_control import scale_down_ai_worker_asg_to_zero_if_idle
+from academy.adapters.compute.ec2_control import scale_down_ai_worker_asg_to_baseline_if_idle
 from libs.queue import QueueUnavailableError
 from academy.application.use_cases.ai.process_ai_job_from_sqs import (
     prepare_ai_job,
@@ -185,7 +185,7 @@ def _try_idle_scale_in(queue: SQSAIQueueAdapter, tier: str) -> bool:
     if _active_running_ai_jobs_exist():
         logger.info("AI_IDLE_SCALE_IN_SKIP_AFTER_CONFIRM | active_running_job=true")
         return False
-    return scale_down_ai_worker_asg_to_zero_if_idle(confirmed_counts)
+    return scale_down_ai_worker_asg_to_baseline_if_idle(confirmed_counts)
 
 
 

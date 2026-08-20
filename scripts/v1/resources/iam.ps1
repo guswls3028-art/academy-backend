@@ -917,7 +917,7 @@ function Ensure-EC2InstanceProfileSSM {
         Invoke-Aws @("iam", "put-role-policy", "--role-name", $roleName, "--policy-name", $inlineName, "--policy-document", "file://$($policyWorkersSqs -replace '\\','/')") -ErrorMessage "put workers SQS policy" | Out-Null
         Write-Ok "Ensured inline policy $inlineName on $roleName (Messaging/AI SQS consume)"
     }
-    # API와 AI/Tools 작업 로그는 인스턴스 교체·scale-to-zero 뒤에도 남긴다.
+    # API와 AI/Tools 작업 로그는 인스턴스 교체·scale-in 뒤에도 남긴다.
     $policyEc2CloudWatchLogs = Join-Path $TemplatesPath "policy_ec2_cloudwatch_logs.json"
     if (Test-Path $policyEc2CloudWatchLogs) {
         $inlineName = "academy-ec2-cloudwatch-logs"

@@ -57,7 +57,7 @@ class AIWorkerIdleScaleInTests(SimpleTestCase):
             patch.object(ai_sqs_worker, "IDLE_SCALE_IN_COUNT_TIERS", ("basic",)),
             patch.object(ai_sqs_worker, "IDLE_SCALE_IN_CONFIRM_SECONDS", 0),
             patch.object(ai_sqs_worker, "_active_running_ai_jobs_exist", return_value=False),
-            patch.object(ai_sqs_worker, "scale_down_ai_worker_asg_to_zero_if_idle") as scale_down,
+            patch.object(ai_sqs_worker, "scale_down_ai_worker_asg_to_baseline_if_idle") as scale_down,
         ):
             self.assertFalse(ai_sqs_worker._try_idle_scale_in(queue, "basic"))
 
@@ -73,7 +73,7 @@ class AIWorkerIdleScaleInTests(SimpleTestCase):
             patch.object(ai_sqs_worker, "_active_running_ai_jobs_exist", return_value=False),
             patch.object(
                 ai_sqs_worker,
-                "scale_down_ai_worker_asg_to_zero_if_idle",
+                "scale_down_ai_worker_asg_to_baseline_if_idle",
                 return_value=True,
             ) as scale_down,
         ):
@@ -93,7 +93,7 @@ class AIWorkerIdleScaleInTests(SimpleTestCase):
             patch.object(ai_sqs_worker, "IDLE_SCALE_IN_COUNT_TIERS", ("basic",)),
             patch.object(ai_sqs_worker, "IDLE_SCALE_IN_CONFIRM_SECONDS", 0),
             patch.object(ai_sqs_worker, "_active_running_ai_jobs_exist", return_value=False),
-            patch.object(ai_sqs_worker, "scale_down_ai_worker_asg_to_zero_if_idle") as scale_down,
+            patch.object(ai_sqs_worker, "scale_down_ai_worker_asg_to_baseline_if_idle") as scale_down,
         ):
             self.assertFalse(ai_sqs_worker._try_idle_scale_in(queue, "basic"))
 
@@ -112,7 +112,7 @@ class AIWorkerIdleScaleInTests(SimpleTestCase):
             patch.object(ai_sqs_worker, "IDLE_SCALE_IN_COUNT_TIERS", ("basic", "lite", "premium")),
             patch.object(ai_sqs_worker, "IDLE_SCALE_IN_CONFIRM_SECONDS", 0),
             patch.object(ai_sqs_worker, "_active_running_ai_jobs_exist", return_value=False),
-            patch.object(ai_sqs_worker, "scale_down_ai_worker_asg_to_zero_if_idle") as scale_down,
+            patch.object(ai_sqs_worker, "scale_down_ai_worker_asg_to_baseline_if_idle") as scale_down,
         ):
             self.assertFalse(ai_sqs_worker._try_idle_scale_in(queue, "basic"))
 
@@ -125,7 +125,7 @@ class AIWorkerIdleScaleInTests(SimpleTestCase):
             patch.object(ai_sqs_worker, "IDLE_SCALE_IN_COUNT_TIERS", ("basic",)),
             patch.object(ai_sqs_worker, "IDLE_SCALE_IN_CONFIRM_SECONDS", 0),
             patch.object(ai_sqs_worker, "_active_running_ai_jobs_exist", return_value=True),
-            patch.object(ai_sqs_worker, "scale_down_ai_worker_asg_to_zero_if_idle") as scale_down,
+            patch.object(ai_sqs_worker, "scale_down_ai_worker_asg_to_baseline_if_idle") as scale_down,
         ):
             self.assertFalse(ai_sqs_worker._try_idle_scale_in(queue, "basic"))
 

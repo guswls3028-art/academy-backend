@@ -52,21 +52,25 @@ class ExcelValidationError(ValueError):
 # 완전 일치 + 부분 포함(contains) 둘 다 시도
 HEADER_ALIASES: dict[str, tuple[str, ...]] = {
     "name": (
-        "이름", "성명", "학생명", "학생 이름", "이름(학생)", "성함", "학생성명",
+        "이름", "성명", "학생명", "학생 이름", "이름(학생)", "성함", "학생성명", "수강생",
+        "name", "student name",
     ),
     "parent_phone": (
         "학부모전화번호", "부모핸드폰", "부모 전화", "학부모 전화", "보호자 전화", "보호자전화",
         "학부모연락처", "부모 연락처", "보호자 연락처", "연락처(학부모)", "전화(학부모)",
         "휴대폰", "핸드폰", "연락처", "전화번호", "전화", "폰", "폰번호",
         "부모핸드", "학부모", "보호자",
+        "parent phone", "parent mobile", "guardian phone", "guardian mobile",
+        "emergency contact",
     ),
     "student_phone": (
         "학생전화번호", "학생핸드폰", "학생 전화", "학생연락처", "학생 연락처",
         "연락처(학생)", "전화(학생)", "학생폰", "학생 폰",
         "학생핸드", "학생전화",
+        "student phone", "student mobile",
     ),
-    "school": ("학교", "학교(학년)", "학교명", "출신학교", "학교(학년)"),
-    "grade": ("학년", "학년도"),
+    "school": ("학교", "학교(학년)", "학교명", "출신학교", "school", "school / grade"),
+    "grade": ("학년", "학년도", "grade"),
     "gender": ("성별", "남자", "여자", "남성", "여성", "남", "여", "녀"),
     "school_class": ("반", "학급"),
     "major": ("계열", "이과", "문과"),
@@ -127,8 +131,8 @@ def _find_header_row_fallback(rows: list[list[Any]]) -> int:
     return -1
 
 
-_PARENT_KEYWORDS = ("부모", "학부모", "보호자", "guardian")
-_STUDENT_KEYWORDS = ("학생",)
+_PARENT_KEYWORDS = ("부모", "학부모", "보호자", "guardian", "parent", "emergency")
+_STUDENT_KEYWORDS = ("학생", "student")
 
 
 def _duplicate_ratio(values: list[str]) -> float:
@@ -170,10 +174,9 @@ def _infer_missing_columns(
 ) -> dict[str, int]:
     """
     필수 컬럼(name, parent_phone)이 없을 때, 샘플 데이터로 컬럼 추측.
-    - phone_candidate: 010 패턴 비율(phone_hits) 2행 이상인 컬럼만 후보. 바로 학부모 단정 금지.
-    - phone_candidate 2개 이상: 전체 후보를 AI에 동시 전달, AI가 반드시 하나 선택. null/conf<0.8 → 업로드 실패.
-    - Rule score >= 0.9 → parent_phone 확정
-    - 0.6 <= score < 0.9 → AI 2차 판정, AI conf < 0.8 시 업로드 실패
+    - 일반 명단은 010 패턴 2행 이상, 데이터가 한 행뿐이면 1행을 컬럼 후보로 본다.
+    - 전화 후보가 하나이고 학생 번호 표식이 없으면 rule score >= 0.6에서 학부모 번호로 확정한다.
+    - 전화 후보가 여러 개면 전체 후보를 AI에 동시 전달한다. null/conf<0.8이면 업로드를 실패한다.
     """
     out = dict(col)
     sample = rows[header_idx + 1 : header_idx + 21]  # 최대 20행 샘플
@@ -183,6 +186,10 @@ def _infer_missing_columns(
     phone_col_candidates: list[tuple[int, int, float]] = []  # (col_idx, phone_hits, parent_score)
     name_col_candidates: list[tuple[int, int]] = []
     korean_name = re.compile(r"^[가-힣]{2,5}[A-Za-z0-9]*\*?$")
+    populated_sample_rows = sum(
+        1 for row in sample if any(str(value or "").strip() for value in row)
+    )
+    minimum_hits = 1 if populated_sample_rows <= 1 else 2
 
     max_col = max(len(r) for r in sample) if sample else 0
     for ci in range(max_col):
@@ -198,20 +205,31 @@ def _infer_missing_columns(
                 phone_hits += 1
             if korean_name.match(v):
                 name_hits += 1
-        if phone_hits >= 2:
+        if phone_hits >= minimum_hits:
             header_label = str(header_row[ci] if ci < len(header_row) else "").strip()
             parent_score = _rule_guess_parent_score(header_label, sample_vals)
             phone_col_candidates.append((ci, phone_hits, parent_score))
-        if name_hits >= 2:
+        if name_hits >= minimum_hits:
             name_col_candidates.append((ci, name_hits))
 
     if out.get("parent_phone") is None and phone_col_candidates:
         phone_col_candidates.sort(key=lambda x: (-x[2], -x[1]))  # score desc, then hits
         best_idx, _, best_score = phone_col_candidates[0]
 
-        if best_score >= 0.9:
+        best_header = str(
+            header_row[best_idx] if best_idx < len(header_row) else ""
+        ).strip().lower()
+        best_is_student_labeled = any(
+            keyword in best_header for keyword in _STUDENT_KEYWORDS
+        )
+
+        if (
+            len(phone_col_candidates) == 1
+            and best_score >= 0.6
+            and not best_is_student_labeled
+        ):
             out["parent_phone"] = best_idx
-        elif best_score >= 0.6:
+        elif len(phone_col_candidates) > 1 and best_score >= 0.6:
             ai_col, ai_conf = _ai_infer_parent_phone(
                 header_row, sample, phone_col_candidates
             )
@@ -234,19 +252,157 @@ def _infer_missing_columns(
     return out
 
 
+def _phone_header_role(label: str) -> str | None:
+    normalized = _normalize_header(label)
+    if not (
+        _match_header(label, "parent_phone")
+        or _match_header(label, "student_phone")
+    ):
+        return None
+    has_parent = any(
+        _normalize_header(keyword) in normalized for keyword in _PARENT_KEYWORDS
+    )
+    has_student = any(
+        _normalize_header(keyword) in normalized for keyword in _STUDENT_KEYWORDS
+    )
+    if has_parent and not has_student:
+        return "parent_phone"
+    if has_student and not has_parent:
+        return "student_phone"
+    return None
+
+
 def _build_header_map(header_row: list[Any]) -> dict[str, int]:
     out: dict[str, int] = {}
+    used_indices: set[int] = set()
+
+    # 전화번호는 의미 표식(학생/보호자)을 먼저 본다. 일반 별칭 "연락처"가
+    # "학생 연락처"를 학부모 번호로 선점하면 계정 그래프가 잘못 연결된다.
+    for i, cell in enumerate(header_row):
+        label = str(cell or "").strip()
+        role = _phone_header_role(label)
+        if role and role not in out:
+            out[role] = i
+            used_indices.add(i)
+
+    # 의미 표식이 없는 기존 양식의 휴대폰/연락처는 학부모 번호로 유지한다.
+    for key in ("parent_phone", "student_phone"):
+        if key in out:
+            continue
+        for i, cell in enumerate(header_row):
+            if i in used_indices:
+                continue
+            label = str(cell or "").strip()
+            if label and _match_header(label, key):
+                out[key] = i
+                used_indices.add(i)
+                break
+
     for i, cell in enumerate(header_row):
         label = str(cell or "").strip()
         if not label:
             continue
         for key in HEADER_ALIASES:
+            if key in {"parent_phone", "student_phone"}:
+                continue
             if key in out:
                 continue
             if _match_header(label, key):
                 out[key] = i
                 break
     return out
+
+
+def _worksheet_candidate_score(
+    rows: list[list[Any]],
+    *,
+    is_active: bool,
+) -> tuple[int, int, int, int, int, int] | None:
+    header_idx = _find_header_row(rows)
+    strict_header = header_idx >= 0
+    if header_idx < 0:
+        header_idx = _find_header_row_fallback(rows)
+    if header_idx < 0:
+        return None
+
+    col = _build_header_map(rows[header_idx])
+    sample_rows = rows[header_idx + 1 : header_idx + 51]
+    phone_columns = {
+        ci
+        for row in sample_rows
+        for ci, value in enumerate(row)
+        if _validate_parent_phone(str(value or ""))
+    }
+    meaningful_rows = sum(
+        1
+        for row in sample_rows
+        if any(str(value or "").strip() for value in row)
+        and any(
+            _validate_parent_phone(str(value or ""))
+            for value in row
+        )
+    )
+    return (
+        int(strict_header),
+        int(col.get("parent_phone") is not None),
+        int(col.get("name") is not None),
+        meaningful_rows,
+        len(phone_columns),
+        int(is_active),
+    )
+
+
+def _select_worksheet_rows(workbook) -> tuple[list[list[Any]], str]:
+    candidates: list[tuple[tuple[int, ...], int, list[list[Any]], str]] = []
+    active = workbook.active
+    for position, worksheet in enumerate(workbook.worksheets):
+        rows = [
+            list(row) if row else []
+            for row in worksheet.iter_rows(values_only=True)
+        ]
+        score = _worksheet_candidate_score(
+            rows,
+            is_active=worksheet is active,
+        )
+        if score is not None:
+            candidates.append((score, position, rows, str(worksheet.title)))
+
+    if candidates:
+        score, _position, rows, title = max(
+            candidates,
+            key=lambda item: (item[0], -item[1]),
+        )
+        same_quality = [
+            candidate
+            for candidate in candidates
+            if candidate[0][:-1] == score[:-1]
+        ]
+        if len(same_quality) > 1:
+            active_matches = [
+                candidate for candidate in same_quality if candidate[0][-1] == 1
+            ]
+            if len(active_matches) == 1:
+                score, _position, rows, title = active_matches[0]
+            else:
+                titles = ", ".join(candidate[3] for candidate in same_quality)
+                raise ExcelValidationError(
+                    "명단으로 보이는 시트가 여러 개입니다. "
+                    f"등록할 시트를 Excel에서 활성화한 뒤 다시 업로드해 주세요: {titles}"
+                )
+        logger.info(
+            "excel_parsing: selected worksheet title=%s score=%s candidates=%d",
+            title,
+            score,
+            len(candidates),
+        )
+        return rows, title
+
+    if active is None:
+        raise ValueError("No active sheet")
+    return (
+        [list(row) if row else [] for row in active.iter_rows(values_only=True)],
+        str(active.title),
+    )
 
 
 def _cell_str(row: list[Any], col_index: int | None) -> str:
@@ -454,16 +610,10 @@ def parse_student_excel_file(
         raise FileNotFoundError(f"File not found: {local_path}")
 
     wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
-    ws = wb.active
-    if not ws:
+    try:
+        rows, _worksheet_title = _select_worksheet_rows(wb)
+    finally:
         wb.close()
-        raise ValueError("No active sheet")
-
-    rows: list[list[Any]] = []
-    for row in ws.iter_rows(values_only=True):
-        rows.append(list(row) if row else [])
-
-    wb.close()
 
     if not rows:
         return [], ""

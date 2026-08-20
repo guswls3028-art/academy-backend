@@ -42,14 +42,19 @@ def _job_block(source: str, name: str) -> str:
     return block if next_job is None else block[: next_job.start()]
 
 
-def test_development_host_keeps_tools_and_ai_workers_warm_without_production_capacity_change() -> None:
+def test_development_and_production_keep_tools_and_ai_workers_warm() -> None:
     params = yaml.safe_load(PARAMS.read_text(encoding="utf-8"))
+    ai = params["aiWorker"]
     tools = params["toolsWorker"]
     deploy = DEPLOY.read_text(encoding="utf-8-sig")
 
+    assert ai["instanceType"] == "t4g.medium"
+    assert ai["minSize"] == 1
+    assert ai["desiredCapacity"] == 1
+    assert ai["maxSize"] == 5
     assert tools["instanceType"] == "t4g.small"
-    assert tools["minSize"] == 0
-    assert tools["desiredCapacity"] == 0
+    assert tools["minSize"] == 1
+    assert tools["desiredCapacity"] == 1
     assert tools["maxSize"] == 2
     assert "academy-tools-development" in deploy
     assert "academy-ai-development" in deploy
