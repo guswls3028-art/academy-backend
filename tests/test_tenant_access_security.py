@@ -779,6 +779,27 @@ class TenantOwnerRemovalInvariantTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(len(response.data), 1)
         self.assertFalse(response.data[0]["isActive"])
+        self.assertTrue(response.data[0]["hasUsablePassword"])
+        self.assertFalse(response.data[0]["mustChangePassword"])
+
+    def test_owner_list_exposes_first_login_handoff_state(self):
+        self.target_owner.must_change_password = True
+        self.target_owner.save(update_fields=["must_change_password"])
+        request = APIRequestFactory().get(
+            f"/api/v1/core/tenants/{self.target.id}/owners/"
+        )
+        request.tenant = self.platform
+        force_authenticate(request, user=self.actor)
+
+        with override_settings(OWNER_TENANT_ID=self.platform.id):
+            response = TenantOwnerListView.as_view()(
+                request,
+                tenant_id=self.target.id,
+            )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data[0]["hasUsablePassword"])
+        self.assertTrue(response.data[0]["mustChangePassword"])
 
     def test_owner_password_reset_preserves_linked_parent_and_invalidates_credentials(self):
         self.target_owner.token_version = 6

@@ -100,6 +100,17 @@ class TenantOwnerPasswordResetResponseSerializer(serializers.Serializer):
     mustChangePassword = serializers.BooleanField()
 
 
+class TenantOwnerListItemSerializer(serializers.Serializer):
+    userId = serializers.IntegerField()
+    username = serializers.CharField()
+    name = serializers.CharField(allow_blank=True)
+    phone = serializers.CharField(allow_blank=True)
+    isActive = serializers.BooleanField()
+    hasUsablePassword = serializers.BooleanField()
+    mustChangePassword = serializers.BooleanField()
+    role = serializers.CharField()
+
+
 class TenantProvisioningConflict(ValueError):
     pass
 
@@ -574,6 +585,10 @@ class TenantOwnerView(APIView):
                 "username": user_display_username(user),
                 "name": getattr(user, "name", "") or "",
                 "isActive": bool(user.is_active),
+                "hasUsablePassword": bool(user.has_usable_password()),
+                "mustChangePassword": bool(
+                    getattr(user, "must_change_password", False)
+                ),
                 "role": membership.role,
             })
         except Exception as e:
@@ -599,6 +614,7 @@ class TenantOwnerListView(APIView):
     """
     permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
 
+    @extend_schema(responses={200: TenantOwnerListItemSerializer(many=True)})
     def get(self, request, tenant_id: int):
         if not is_platform_admin_tenant(request):
             return Response({"detail": "Platform admin tenant required."}, status=403)
@@ -622,6 +638,10 @@ class TenantOwnerListView(APIView):
                 "name": getattr(m.user, "name", "") or "",
                 "phone": getattr(m.user, "phone", "") or "",
                 "isActive": bool(m.user.is_active),
+                "hasUsablePassword": bool(m.user.has_usable_password()),
+                "mustChangePassword": bool(
+                    getattr(m.user, "must_change_password", False)
+                ),
                 "role": m.role,
             }
             for m in memberships
@@ -676,6 +696,10 @@ class TenantOwnerDetailView(APIView):
             "name": getattr(user, "name", "") or "",
             "phone": getattr(user, "phone", "") or "",
             "isActive": bool(user.is_active),
+            "hasUsablePassword": bool(user.has_usable_password()),
+            "mustChangePassword": bool(
+                getattr(user, "must_change_password", False)
+            ),
             "role": membership.role,
         })
 

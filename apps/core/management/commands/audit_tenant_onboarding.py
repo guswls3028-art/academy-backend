@@ -50,6 +50,14 @@ class Command(BaseCommand):
             action="store_true",
             help="Require exactly one active owner membership and active user.",
         )
+        parser.add_argument(
+            "--require-owner-handoff",
+            action="store_true",
+            help=(
+                "Require the active owner to have a usable password and to have "
+                "completed the forced first-password change."
+            ),
+        )
 
     def handle(self, *args, **options):
         code = str(options["code"] or "").strip().lower()
@@ -183,13 +191,41 @@ class Command(BaseCommand):
             ).select_related("user")
         )
         active_owners = [row for row in owner_memberships if row.user.is_active]
-        if options["require_owner"]:
-            owner_ok = len(owner_memberships) == 1 and len(active_owners) == 1
+        require_owner = bool(
+            options["require_owner"] or options["require_owner_handoff"]
+        )
+        owner_ok = len(owner_memberships) == 1 and len(active_owners) == 1
+        if require_owner:
             owner_detail = (
                 f"active_memberships={len(owner_memberships)} "
                 f"active_users={len(active_owners)}"
             )
             record("owner.ready", owner_ok, owner_detail)
+
+            owner_user = active_owners[0].user if owner_ok else None
+            credential_ready = bool(
+                owner_user is not None and owner_user.has_usable_password()
+            )
+            record(
+                "owner.credential_ready",
+                credential_ready,
+                "usable_password="
+                f"{str(credential_ready).lower()}",
+            )
+
+            if options["require_owner_handoff"]:
+                must_change_password = bool(
+                    getattr(owner_user, "must_change_password", True)
+                )
+                handoff_complete = bool(
+                    credential_ready and not must_change_password
+                )
+                record(
+                    "owner.handoff_complete",
+                    handoff_complete,
+                    "must_change_password="
+                    f"{str(must_change_password).lower()}",
+                )
         else:
             record(
                 "owner.not_duplicated",

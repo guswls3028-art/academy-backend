@@ -88,8 +88,43 @@ class AuditTenantOnboardingCommandTests(TestCase):
         self.assertIn("[PASS] runtime.cors", stdout)
         self.assertIn("[PASS] billing.access", stdout)
         self.assertIn("[PASS] owner.ready", stdout)
+        self.assertIn("[PASS] owner.credential_ready", stdout)
         self.assertIn("TENANT_ONBOARDING_AUDIT_PASS", stdout)
         self.assertEqual(stderr, "")
+
+    def test_owner_handoff_requires_forced_password_change_completion(self):
+        self.owner.must_change_password = True
+        self.owner.save(update_fields=["must_change_password"])
+
+        stdout = StringIO()
+        stderr = StringIO()
+        with self.assertRaisesMessage(
+            CommandError,
+            "keys=owner.handoff_complete",
+        ):
+            self._audit(
+                require_owner_handoff=True,
+                stdout=stdout,
+                stderr=stderr,
+            )
+
+        self.assertIn("[PASS] owner.credential_ready", stdout.getvalue())
+        self.assertIn("[FAIL] owner.handoff_complete", stderr.getvalue())
+
+        self.owner.must_change_password = False
+        self.owner.save(update_fields=["must_change_password"])
+        stdout, _ = self._audit(require_owner_handoff=True)
+        self.assertIn("[PASS] owner.handoff_complete", stdout)
+
+    def test_owner_without_usable_password_fails_readiness(self):
+        self.owner.set_unusable_password()
+        self.owner.save(update_fields=["password"])
+
+        with self.assertRaisesMessage(
+            CommandError,
+            "keys=owner.credential_ready",
+        ):
+            self._audit()
 
     def test_missing_origin_and_unsafe_activation_fail_closed(self):
         self.tenant.messaging_is_active = True

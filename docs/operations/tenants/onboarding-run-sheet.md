@@ -81,7 +81,8 @@
   - 권유형 계정 안내에서 표시 ID와 내 정보 이동을 확인하고, 재로그인 시 다시 뜨지 않는지 확인
   - 증거:
 - [ ] **G9 최종 봉인**
-  - `audit_tenant_onboarding`을 `--require-owner`로 다시 실행해
+  - `audit_tenant_onboarding`을 `--require-owner --require-owner-handoff`로
+    다시 실행해
     `TENANT_ONBOARDING_AUDIT_PASS` 확인
   - apex/`www` 가용성, R2 browser PUT, 배포 revision, 역할별 1366/390 증거 연결
   - 비밀정보와 합성 QA 데이터가 남지 않았음을 확인
@@ -89,17 +90,21 @@
 
 ## 감사 명령
 
-G5에서는 `--require-owner`를 빼고 실행한다. G9에서는 반드시 붙인다.
+G5에서는 owner 관련 플래그를 빼고 실행한다. G7 직후에는 `--require-owner`로
+활성 owner와 usable password를 확인한다. G9에서는
+`--require-owner --require-owner-handoff`를 모두 붙여 대표자가 강제 최초
+비밀번호 변경까지 끝냈는지 확인한다.
 `<billing-mode>`은 `contract` 또는 `exempt`, `<messaging-mode>`은 `disabled`
 또는 별도 승인된 `approved`다.
 
 ```powershell
 cd C:\academy\backend
-.\scripts\v1\run-api-management-remote.ps1 -Command 'audit_tenant_onboarding <code> --tenant-id <id> --domain <domain> --billing-mode <billing-mode> --messaging-mode <messaging-mode> --require-owner'
+.\scripts\v1\run-api-management-remote.ps1 -Command 'audit_tenant_onboarding <code> --tenant-id <id> --domain <domain> --billing-mode <billing-mode> --messaging-mode <messaging-mode> --require-owner --require-owner-handoff'
 ```
 
 명령은 읽기 전용이며 Tenant/Domain/Program, runtime host/CORS/CSRF, 브랜딩,
-기능 플래그, 구독 또는 예외, owner 중복·활성, 메시징 모드, 안전 기본값 중 하나라도
+기능 플래그, 구독 또는 예외, owner 중복·활성·usable password·최초 비밀번호
+변경, 메시징 모드, 안전 기본값 중 하나라도
 다르면 실패한다. DNS/Pages/인증서와 실제 R2 bucket CORS는 외부 경계이므로 이
 명령의 성공으로 대체하지 않고 G4·G6·G9의 실측 증거를 별도로 남긴다.
 
