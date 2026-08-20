@@ -14,6 +14,8 @@ on:
     paths-ignore:
       - '*.md'
       - 'README*'
+      - 'docs/reports/**'
+      - 'docs/ssot/runtime-current.md'
       - '.gitignore'
       - 'LICENSE'
   workflow_dispatch:
@@ -428,6 +430,14 @@ jobs:
       contents: read
       id-token: write
     needs: [detect-changes, run-lint, run-tests]
+    if: |
+      needs.detect-changes.outputs.build_base == 'true' ||
+      needs.detect-changes.outputs.build_api == 'true' ||
+      needs.detect-changes.outputs.build_video == 'true' ||
+      needs.detect-changes.outputs.build_messaging == 'true' ||
+      needs.detect-changes.outputs.build_ai == 'true' ||
+      needs.detect-changes.outputs.build_tools == 'true' ||
+      needs.detect-changes.outputs.force_full == 'true'
     steps:
       - name: Checkout deployment guards
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

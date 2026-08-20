@@ -1458,6 +1458,18 @@ def test_workflow_checks_release_freshness_under_lock_and_always_releases() -> N
     prepare_block = _job_block(workflow, "prepare-build")
     release_block = _job_block(workflow, "release-production-lock")
 
+    assert "'docs/reports/**'" in workflow
+    assert "'docs/ssot/runtime-current.md'" in workflow
+    for output in (
+        "build_base",
+        "build_api",
+        "build_video",
+        "build_messaging",
+        "build_ai",
+        "build_tools",
+        "force_full",
+    ):
+        assert f"needs.detect-changes.outputs.{output} == 'true'" in acquire_block
     assert "deployment_lock.py seal-legacy" in acquire_block
     assert acquire_block.index("deployment_lock.py seal-legacy") < acquire_block.index(
         "deployment_lock.py acquire"

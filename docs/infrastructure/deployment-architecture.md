@@ -110,6 +110,13 @@ git push main
 Change predicates use the `changed_matches` here-string helper instead of `echo | grep -q`; this avoids a `pipefail`/SIGPIPE false negative on large multi-commit push ranges.
 Push change detection derives each service's diff base from that image's source commit in the last complete verified release manifest, not from `github.event.before`. Therefore a failed workflow followed by a small hotfix still includes earlier unshipped API/worker changes. Missing, non-ancestor, or malformed image source evidence fails safe to a full build.
 
+Evidence-only pushes under `docs/reports/**` and updates to
+`docs/ssot/runtime-current.md` do not start the production release workflow.
+Other non-runtime changes may still run lint and smoke checks, but the
+production environment approval, shared mutation lock, AWS readbacks, image
+builds, and deploy jobs are all skipped unless change detection selects at
+least one runtime image or `force_full`.
+
 `prepare-build` resolves one digest-pinned base before service work starts.
 `build-runtime-images` then fans API, Video, Messaging, AI, and Tools out to
 isolated matrix runners. Unchanged matrix entries terminate before checkout or
