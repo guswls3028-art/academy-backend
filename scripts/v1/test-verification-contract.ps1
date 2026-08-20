@@ -261,7 +261,8 @@ Assert-True ($runtimeCollectorSource.Contains('ManifestHash = $manifestHash')) "
 Assert-True ($verificationSource.Contains('$manifestEvidence = Get-CurrentReleaseManifestEvidence')) "UNKNOWN runtime evidence must validate the successful release manifest"
 $pinAsgSource = Get-Content -Raw -LiteralPath (Join-Path $ScriptRoot "pin-asg-image.ps1")
 Assert-True ($pinAsgSource.Contains('$runtimeInventory = Wait-AsgRuntimeInventory -AsgName $deployment.ASG')) "ASG pin must wait for wake-up or scale-in inventory convergence"
-Assert-True ($pinAsgSource.Contains('$startupDeadline = (Get-Date).AddSeconds(600)')) "ASG pre-pin inventory must bound container startup readiness"
+Assert-True ($pinAsgSource.Contains('$startupDeadline = $startupStartedAt.AddSeconds(600)')) "ASG pre-pin inventory must bound container startup readiness"
+Assert-True ($pinAsgSource.Contains('responseCode=$($result.ResponseCode) stderr=$stderr')) "ASG pre-pin failures must preserve actionable SSM diagnostics"
 Assert-True ($pinAsgSource.Contains('Waiting for pre-pin runtime container')) "ASG pre-pin inventory must retry transient container startup failures"
 $workflowSource = Get-Content -Raw -LiteralPath (Join-Path $ScriptRoot "..\..\.github\workflows\v1-build-and-push-latest.yml")
 Assert-True ($workflowSource.Contains('Deploy verification FAILED: an owning deploy job ended as $deploy_result')) "manifest promotion must fail closed after any owning deploy-job failure"

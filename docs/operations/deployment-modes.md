@@ -49,7 +49,11 @@ main에 push하면 자동으로 서버 반영까지 완료된다:
    ceiling을 한 슬롯 임시 확장하고 종료 경로에서 원복·readback한다. AI/Tools worker는
    먼저 SSOT min/desired=1 warm baseline과 안정 digest로 수렴한 뒤 후보를 pin하고,
    `MinHealthyPercentage=100`, `MaxHealthyPercentage=200`으로 교체한다. baseline이
-   healthy하지 않으면 후보 refresh 전에 실패한다. development, preprod
+   healthy하지 않으면 후보 refresh 전에 실패한다. EC2의 `Healthy/InService`는
+   UserData·Docker·컨테이너 준비 완료를 뜻하지 않으므로 pre-pin runtime inventory는
+   기존 컨테이너 digest를 읽을 수 있을 때까지 최대 600초간 기다린다. 각 실패는 SSM
+   status·response code·stderr를 남기며, 끝까지 준비되지 않으면 Launch Template을
+   변경하기 전에 실패 폐쇄한다. development, preprod
    또는 임시 서버 cleanup 실패 시 어떤 운영 서비스도 변경하지 않는다.
 8. 새 인스턴스 기동 → UserData로 ECR pull + 운영 SSM env 역할 검증 + docker run
 9. `verify-deployment` job → API health, ASG 상태, tenant maintenance flag, 실제 digest 확인 + API 변경 시 학생 영상 playback chain smoke. 검증 직전 자동 확장된 worker는 EC2 `Healthy/InService` 이후에도 SSM과 Docker가 준비되는 시간이 필요하므로 실제 digest readback을 최대 18회, 10초 간격으로 재시도한다. 끝까지 컨테이너가 준비되지 않거나 후보 digest가 아니면 실패 폐쇄한다. 학생 계정 secret이 없으면 skip하지 않고 실패한다.

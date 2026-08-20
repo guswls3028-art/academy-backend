@@ -87,7 +87,8 @@ function Get-AsgActualRuntimeDigest {
         # Wait for the actual container instead of treating that startup window as
         # a stale-runtime failure. Keep this bounded so a broken userdata path still
         # fails closed before the Launch Template is mutated.
-        $startupDeadline = (Get-Date).AddSeconds(600)
+        $startupStartedAt = Get-Date
+        $startupDeadline = $startupStartedAt.AddSeconds(600)
         $retryDelaySec = 15
         $attempt = 0
         $lastFailure = "not attempted"
@@ -104,7 +105,11 @@ function Get-AsgActualRuntimeDigest {
                     Start-Sleep -Seconds 3
                     $result = Invoke-AwsJson @("ssm", "get-command-invocation", "--command-id", $sent.Command.CommandId, "--instance-id", $instance.InstanceId, "--region", $script:Region, "--output", "json")
                     if ([string]$result.Status -eq "Success") { break }
-                    if ([string]$result.Status -in @("Failed", "Cancelled", "TimedOut", "Cancelling")) { throw "SSM command ended as $($result.Status)" }
+                    if ([string]$result.Status -in @("Failed", "Cancelled", "TimedOut", "Cancelling")) {
+                        $stderr = ([string]$result.StandardErrorContent).Trim()
+                        if (-not $stderr) { $stderr = "<empty>" }
+                        throw "SSM command status=$($result.Status) responseCode=$($result.ResponseCode) stderr=$stderr"
+                    }
                 }
                 if ([string]$result.Status -ne "Success") { throw "SSM command did not finish within 120 seconds" }
                 $uris = @(([string]$result.StandardOutputContent -split "`r?`n") | Where-Object { $_.StartsWith($expectedPrefix) } | Sort-Object -Unique)
@@ -116,7 +121,8 @@ function Get-AsgActualRuntimeDigest {
                 if ((Get-Date) -ge $startupDeadline) {
                     throw "Pre-pin runtime inventory failed on $($instance.InstanceId) after $attempt attempts within 600 seconds: $lastFailure"
                 }
-                Write-Host "Waiting for pre-pin runtime container on $($instance.InstanceId) after attempt $attempt failed: $lastFailure" -ForegroundColor DarkGray
+                $elapsedSeconds = [int]((Get-Date) - $startupStartedAt).TotalSeconds
+                Write-Host "Waiting for pre-pin runtime container on $($instance.InstanceId) after attempt $attempt failed (elapsed=${elapsedSeconds}s): $lastFailure" -ForegroundColor DarkGray
                 Start-Sleep -Seconds $retryDelaySec
             }
         }
