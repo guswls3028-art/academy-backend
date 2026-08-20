@@ -156,6 +156,42 @@ class ScheduledNotificationProcessingTests(TransactionTestCase):
         self.assertEqual(notification.status, ScheduledNotification.Status.FAILED)
         self.assertEqual(notification.error_message, "invalid_payload_missing_recipient")
 
+    def test_operationally_disabled_tenant_is_terminal_without_sqs_retry(self):
+        notification = self._notification(
+            trigger="registration_approved_student",
+            payload={
+                "tenant_id": self.tenant.id,
+                "to": "01011112222",
+                "text": "temporary-secret",
+                "message_mode": "alimtalk",
+                "event_type": "registration_approved_student",
+            },
+        )
+
+        with (
+            patch(
+                "apps.domains.messaging.policy.is_messaging_disabled",
+                return_value=True,
+            ),
+            patch("apps.domains.messaging.services.enqueue_sms") as enqueue_sms,
+        ):
+            stats = process_due_notifications(batch_size=10)
+
+        self.assertEqual(stats["failed"], 1)
+        self.assertEqual(stats["retried"], 0)
+        enqueue_sms.assert_not_called()
+        notification.refresh_from_db()
+        self.assertEqual(notification.status, ScheduledNotification.Status.FAILED)
+        self.assertEqual(notification.attempt_count, 0)
+        self.assertIsNone(notification.next_attempt_at)
+        self.assertEqual(
+            notification.error_message,
+            "business_tenant_messaging_disabled",
+        )
+        self.assertEqual(notification.payload["redacted"], True)
+        self.assertNotIn("01011112222", str(notification.payload))
+        self.assertNotIn("temporary-secret", str(notification.payload))
+
     def test_non_object_payload_is_terminal_and_preserves_forensic_value(self):
         original_payload = ["legacy", "01011112222", "temporary-secret"]
         notification = self._notification(payload=original_payload)

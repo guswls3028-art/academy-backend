@@ -16,7 +16,7 @@ from __future__ import annotations
 
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import RequestFactory, TestCase
 
 from apps.domains.clinic.tests import ClinicTestMixin
 from apps.core.models import TenantMembership
@@ -34,6 +34,7 @@ from apps.domains.progress.services.clinic_resolution_service import (
 from apps.domains.progress.services.clinic_trigger_service import (
     ClinicTriggerService,
 )
+from apps.domains.progress.views import ClinicLinkViewSet
 
 User = get_user_model()
 
@@ -47,6 +48,25 @@ class DriftResolutionTest(TestCase, ClinicTestMixin):
         self.enrollment = self.data["enrollments"][0]
         self.lec_session = self.data["lec_session"]
         self.lecture = self.data["lecture"]
+
+    def test_clinic_link_viewset_rejects_mismatched_enrollment_tenant(self):
+        other = self.setup_full_tenant("drift-other", student_count=1)
+        mismatched = self.make_clinic_link(
+            other["enrollments"][0],
+            self.lec_session,
+            tenant=self.tenant,
+        )
+
+        request = RequestFactory().get("/progress/clinic-links/")
+        request.tenant = self.tenant
+        request.query_params = request.GET
+        view = ClinicLinkViewSet()
+        view.request = request
+
+        self.assertNotIn(
+            mismatched.id,
+            set(view.get_queryset().values_list("id", flat=True)),
+        )
 
     def test_session_not_completed_when_any_exam_failed(self):
         """세션에 시험 2개, 1개 통과/1개 불합격 → exam_passed=False"""

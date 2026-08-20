@@ -290,7 +290,13 @@ def clinic_link_queryset_for_session(
 ):
     from apps.domains.progress.models import ClinicLink
 
-    qs = ClinicLink.objects.filter(session=session)
+    qs = ClinicLink.objects.filter(
+        session=session,
+        session__lecture__tenant_id=tenant_id,
+        enrollment__tenant_id=tenant_id,
+        enrollment__student__tenant_id=tenant_id,
+        enrollment__lecture__tenant_id=tenant_id,
+    )
     if tenant_id is not None:
         qs = qs.filter(tenant_id=tenant_id)
     qs = qs.filter(resolved_at__isnull=True)
@@ -312,6 +318,10 @@ def unresolved_auto_clinic_links_for_enrollments(
         resolved_at__isnull=True,
         enrollment_id__in=enrollment_ids,
         tenant=tenant,
+        enrollment__tenant=tenant,
+        enrollment__student__tenant=tenant,
+        enrollment__lecture__tenant=tenant,
+        session__lecture__tenant=tenant,
     )
     if session is not None:
         clinic_qs = clinic_qs.filter(session=session)

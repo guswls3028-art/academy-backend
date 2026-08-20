@@ -981,7 +981,17 @@ class ExamResultExcelImportTests(TestCase):
             session=self.session,
             tenant=self.tenant,
             editor_user=self.admin,
-            payload={"client_id": "score-tab", "changes": []},
+            payload={
+                "client_id": "score-tab",
+                "changes": [
+                    {
+                        "type": "examTotal",
+                        "examId": self.exam.id,
+                        "enrollmentId": self.enrollment.id,
+                        "value": 50,
+                    }
+                ],
+            },
         )
 
         with self.assertRaises(ScoreEditLeaseConflict):
