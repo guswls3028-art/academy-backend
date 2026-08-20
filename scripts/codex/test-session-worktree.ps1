@@ -122,6 +122,35 @@ try {
 
     [void](& $scriptUnderTest `
         -Action Start `
+        -Session stale-main-test `
+        -Repository backend `
+        -WorkspaceRoot $fixtureRoot)
+    $staleMainWorktree = Join-Path $fixtureRoot "_worktrees\sessions\stale-main-test\backend"
+    Set-Content -LiteralPath (Join-Path $staleMainWorktree "remote-only.txt") -Value "remote" -Encoding UTF8
+    [void](Invoke-Git -Root $staleMainWorktree -Arguments @("add", "remote-only.txt"))
+    [void](Invoke-Git -Root $staleMainWorktree -Arguments @("commit", "-m", "fixture remote-only advance"))
+    [void](Invoke-Git -Root $staleMainWorktree -Arguments @("push", "origin", "HEAD:main"))
+    $canonicalBeforeClose = @(Invoke-Git -Root $backendRoot -Arguments @("rev-parse", "HEAD"))[0]
+    $sessionBeforeClose = @(Invoke-Git -Root $staleMainWorktree -Arguments @("rev-parse", "HEAD"))[0]
+    Assert-True (
+        $canonicalBeforeClose -ne $sessionBeforeClose
+    ) "Stale-main close fixture must leave canonical HEAD behind the merged session."
+    $staleCloseOutput = @(& $scriptUnderTest `
+        -Action Close `
+        -Session stale-main-test `
+        -Repository backend `
+        -WorkspaceRoot $fixtureRoot)
+    Assert-True (
+        @($staleCloseOutput -match "integration=ancestor").Count -gt 0
+    ) "Close failed when origin/main contained the branch but canonical main was stale."
+    Assert-True (-not (Test-Path -LiteralPath $staleMainWorktree)) "Stale-main worktree remains after close."
+    Assert-True (
+        @((Invoke-Git -Root $backendRoot -Arguments @("branch", "--list", "codex/stale-main-test-backend-*"))).Count -eq 0
+    ) "Stale-main local branch remains after close."
+    [void](Invoke-Git -Root $backendRoot -Arguments @("merge", "--ff-only", "origin/main"))
+
+    [void](& $scriptUnderTest `
+        -Action Start `
         -Session patch-test `
         -Repository backend `
         -WorkspaceRoot $fixtureRoot)
