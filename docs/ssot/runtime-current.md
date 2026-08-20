@@ -1,6 +1,6 @@
 # Current Production Runtime SSOT
 
-**Verified:** 2026-08-20T12:51:46+09:00
+**Verified:** 2026-08-20T13:34:28+09:00
 **Scope:** Academy V1 production, AWS account `809466760795`, region `ap-northeast-2`.
 **Truth sources:** AWS `describe-*` reads with profile `default`, `docs/ssot/params.yaml`, `docs/reports/drift.latest.md`, `docs/reports/resource-cleanup.latest.md`, `docs/reports/cost-waste-audit.latest.md`.
 
@@ -65,10 +65,10 @@ instance. Batch-managed ASGs should have desired 0 when no Batch job is active.
 
 ## Verification
 
-Latest verification after the warm-worker release:
+Latest verification after the runtime-audit hardening release:
 
-- GitHub run `32324962775`, source
-  `26ae73bd028f3b2b716b7d8856c8233630991ee4`, passed immutable builds, exact
+- GitHub run `32330381855`, source
+  `fc4f748dfbf47575eb9424ee301f6771c47116de`, passed immutable builds, exact
   ECR scan identity, persistent development, isolated preprod, migration,
   launch-before-terminate API/worker refreshes, runtime digest verification,
   Video Batch verification, and successful release-manifest promotion.
@@ -80,8 +80,9 @@ Latest verification after the warm-worker release:
   checks/migrations/invariants passed, and explicit production E2E residue was 0.
 - `pwsh scripts/v1/run-cost-waste-audit.ps1 -AwsProfile default -PythonExecutable <venv-python>`
   -> 30/90-day usage captured, warm-baseline SSOT matched AWS, exact persistent
-  development runtime excluded from orphan candidates, and cleanup checks ran
-  as dry-runs only.
+  development and dynamic Batch runtimes excluded from orphan candidates,
+  ECR/Batch cleanup candidates were 0, and no immediate deletion or downsize
+  target remained.
 - 2026-07-30 connection-incident readback: RDS `max_connections=400`,
   `superuser_reserved_connections=3`; `/academy/api/env` version 74 applies
   `DB_CONN_MAX_AGE=0`. The rollback-protected API env refresh passed both

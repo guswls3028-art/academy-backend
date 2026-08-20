@@ -1,6 +1,6 @@
 # Production Canary
 
-**Generated:** 2026-08-20T12:23:09.5547233+09:00
+**Generated:** 2026-08-20T13:31:50.6823029+09:00
 **Mode:** PostDeploy
 **Verdict:** PASS
 
@@ -33,6 +33,6 @@
 | AWS | video_batch_ce | PASS | ENABLED/VALID |
 | AWS | video_ops_queue | PASS | ENABLED/VALID |
 | AWS | video_ops_ce | PASS | ENABLED/VALID |
-| REMOTE | django_check_deploy | PASS | instance=i-0174c38e622c4f03f status=Success rc=0 |
-| REMOTE | django_migrations_applied | PASS | instance=i-0174c38e622c4f03f status=Success rc=0 |
-| REMOTE | django_production_canary | PASS | instance=i-0174c38e622c4f03f status=Success rc=0 |
+| REMOTE | django_check_deploy | PASS | instance=i-04363daa9fba5e9f4 status=Success rc=0 |
+| REMOTE | django_migrations_applied | PASS | instance=i-04363daa9fba5e9f4 status=Success rc=0 |
+| REMOTE | django_production_canary | PASS | instance=i-04363daa9fba5e9f4 status=Success rc=0 |
