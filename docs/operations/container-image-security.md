@@ -84,6 +84,15 @@
    한다. 알 수 없는 항목, 누락된 기존 항목, identity/count 불일치 중 어느 것도
    development/preprod로 진행할 수 없다.
 
+2026-08-20 재검토에서 Debian 공식 tracker는 승인된 exact Trixie 패키지의
+8개 Critical을 계속 affected로 표시했고 stable 수정 패키지를 제공하지 않았다.
+glibc·Mbed TLS·GLib 항목은 계속 `no-dsa`/minor이며, Perl 항목도 수정이
+unstable/forky/sid에만 있어 stable 이미지를 교체할 수 없었다. Academy의 Python
+entrypoint, ALB TLS 종료, Perl 미사용, Mbed TLS FFDH/TLS 1.3 미사용, GLib D-Bus
+introspection 미사용 경계를 다시 확인하고 repository/CVE/package/version identity를
+변경하지 않은 채 2026-09-19까지만 재승인했다. 그 이전이라도 Debian stable
+수정이나 package identity 변경이 감지되면 예외는 즉시 무효화하고 기준선을 낮춘다.
+
 2026-08-09 ECR 데이터베이스 갱신으로 동일한 GLib `2.84.4-3~deb13u3`에
 `CVE-2026-58010`부터 `CVE-2026-58015`까지 여섯 High가 새로 나타났다. 후보와 직전
 운영 digest의 finding identity를 대조해 패키지 변경이 아니라 신규 공개분임을

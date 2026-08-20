@@ -50,6 +50,9 @@ def test_current_acceptance_is_exact_and_time_bounded() -> None:
         acceptances,
     )
     assert len(accepted) == 1
+    assert {acceptance["expiresOn"] for _, acceptance in accepted} == {
+        "2026-09-19"
+    }
 
 
 def test_upstream_perl_findings_are_exact_and_expiring() -> None:
@@ -101,7 +104,7 @@ def test_expired_acceptance_blocks_before_scanning() -> None:
             / "docs"
             / "ssot"
             / "ecr-critical-risk-acceptance.json",
-            date(2026, 8, 20),
+            date(2026, 9, 20),
         )
 
 
