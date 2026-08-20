@@ -23,6 +23,7 @@ PIN_ASG_IMAGE = REPO_ROOT / "scripts" / "v1" / "pin-asg-image.ps1"
 CONVERGE_WORKER_BASELINE = (
     REPO_ROOT / "scripts" / "v1" / "converge-worker-warm-baseline.ps1"
 )
+COST_WASTE_AUDIT = REPO_ROOT / "scripts" / "v1" / "run-cost-waste-audit.ps1"
 DIFF = REPO_ROOT / "scripts" / "v1" / "core" / "diff.ps1"
 SYNC_ENV = REPO_ROOT / "scripts" / "v1" / "core" / "sync_env.ps1"
 WORKER_USERDATA = REPO_ROOT / "scripts" / "v1" / "resources" / "worker_userdata.ps1"
@@ -138,6 +139,23 @@ def test_worker_release_converges_warm_baseline_before_digest_refresh() -> None:
     assert "warm runtime desired capacity is invalid" in verify
     assert "no instances (desired=0" not in verify
     assert "no running digest to inspect" not in verify
+
+
+def test_cost_audit_preserves_development_runtime_and_fails_closed_on_dry_run_errors() -> None:
+    audit = COST_WASTE_AUDIT.read_text(encoding="utf-8-sig")
+
+    assert '$name -eq $script:ApiDevelopmentInstanceName' in audit
+    assert '$managedBy -eq $script:ApiDevelopmentManagedByTag' in audit
+    assert 'Key -eq "aws:autoscaling:groupName"' in audit
+    assert '$asgName -like "$prefix*"' in audit
+    assert '-not $isBatchRuntime' in audit
+    assert '$developmentInstances.Count -ne 1' in audit
+    assert '[string]$PythonExecutable = "python"' in audit
+    assert 'Invoke-ProcessText $PythonExecutable' in audit
+    assert '$batchStatus -like "failed*"' in audit
+    assert "blocked; investigate runtime or AWS access before deregistration" in audit
+    assert "$redisFreeMemory.Long.Low -lt 0.75GB" in audit
+    assert "$redisCredits.Long.Low -lt 50" in audit
 
 
 def test_api_user_impact_alarm_requires_zero_healthy_targets() -> None:

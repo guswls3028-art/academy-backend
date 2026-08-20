@@ -1,6 +1,6 @@
 # Current Production Runtime SSOT
 
-**Verified:** 2026-08-05T04:25:00+09:00
+**Verified:** 2026-08-20T12:51:46+09:00
 **Scope:** Academy V1 production, AWS account `809466760795`, region `ap-northeast-2`.
 **Truth sources:** AWS `describe-*` reads with profile `default`, `docs/ssot/params.yaml`, `docs/reports/drift.latest.md`, `docs/reports/resource-cleanup.latest.md`, `docs/reports/cost-waste-audit.latest.md`.
 
@@ -12,12 +12,14 @@ This document records the verified current runtime shape. `params.yaml` remains 
 |-----------|-----------------|--------------|
 | API ASG | `academy-v1-api-asg`, `t4g.medium`, min=1 desired=1 max=3, 1 running instance | warm baseline, CPU target tracking |
 | Messaging ASG | `academy-v1-messaging-worker-asg`, `t4g.small`, min=1 desired=1 max=3, 1 running instance | measured right-size; warm baseline retained for account recovery and Alimtalk latency |
-| AI ASG | `academy-v1-ai-worker-asg`, `t4g.medium`, min=0 desired=0 max=5, 0 running instances | scale-to-zero |
-| Tools ASG | `academy-v1-tools-worker-asg`, `t4g.small`, min=0 desired=0 max=2, 0 running instances | scale-to-zero |
+| AI ASG | `academy-v1-ai-worker-asg`, `t4g.medium`, min=1 desired=1 max=5, 1 running instance | warm baseline for student import and AI wait paths; SQS burst scale-out |
+| Tools ASG | `academy-v1-tools-worker-asg`, `t4g.small`, min=1 desired=1 max=2, 1 running instance | warm baseline for document conversion wait paths; SQS burst scale-out |
 | Standard Video Batch CE | `academy-v1-video-batch-ce-200gb`, `SPOT`, desired=0 max=40 vCPU, `c6g.4xlarge`/`c6g.2xlarge`/`c6g.xlarge` | video encoding burst only |
 | Video Ops Batch CE | `academy-v1-video-ops-ce`, `EC2`, desired=0 max=1 vCPU, `m6g.medium` | lightweight recovery burst only |
 
-Steady-state running EC2 in the academy VPC is only API 1 + Messaging 1. Batch-managed ASGs should have desired 0 when no Batch job is active.
+Steady-state running EC2 in the academy VPC is API 1 + Messaging 1 + AI 1 +
+Tools 1, plus exactly one termination-protected, SSM-only persistent development
+instance. Batch-managed ASGs should have desired 0 when no Batch job is active.
 
 ## Data Stores
 
@@ -55,7 +57,7 @@ Steady-state running EC2 in the academy VPC is only API 1 + Messaging 1. Batch-m
 |-----------|------------------|
 | API | Keep 1 warm `t4g.medium`; do not scale to zero. |
 | Messaging | Keep 1 warm `t4g.small`; 90-day CPU averaged 0.53% with a 57.41% peak, and post-change live memory had 1.24 GiB available. |
-| AI/Tools | Keep min/desired 0; SQS alarms/API wake-up own burst scale-out. |
+| AI/Tools | Keep min/desired 1; user-facing first work stays warm and SQS alarms own burst scale-out above the baseline. |
 | Standard video encoding | Use AWS Batch Spot and desired 0 when idle. |
 | Video ops | Keep desired 0 when idle; run hourly fallback/recovery jobs as short bursts. |
 | RDS | Keep `db.t4g.medium` until connection/memory data proves another move safe. |
@@ -63,22 +65,23 @@ Steady-state running EC2 in the academy VPC is only API 1 + Messaging 1. Batch-m
 
 ## Verification
 
-Latest local verification after the cost pass:
+Latest verification after the warm-worker release:
 
-- 2026-08-05 read-only optimization audit: API/Messaging ASGs remained healthy
-  at desired 1; AI/Tools remained desired 0. Over the latest 24 hours API CPU
-  averaged 9.36% (5-minute maximum 61.15%), RDS CPU averaged 4.13%, and RDS
-  connections averaged 2.02 with a maximum of 6. ALB response time averaged
-  43ms at p50, 159ms at p95, and 453ms at p99 across populated five-minute
-  windows. These measurements do not justify a runtime size, DB connection, or
-  cache topology change; release-build parallelism is the lower-risk current
-  optimization boundary.
-
-- `pwsh scripts/v1/apply-messaging-rightsize.ps1 -AwsProfile default` -> Launch Template v28, instance refresh `Successful`, immutable image preserved.
-- `pwsh scripts/v1/run-production-canary.ps1 -Mode PostDeploy -AwsProfile default -WriteReport` -> PASS=30 WARN=0 FAIL=0.
-- `pwsh scripts/v1/run-cost-waste-audit.ps1 -AwsProfile default` -> 30/90-day usage captured; `Project` cost-allocation tag Active.
-- Messaging runtime -> `t4g.small`, 1.8 GiB total, 1.24 GiB available, container 62.82 MiB, SQS visible/in-flight/DLQ all 0.
-- Full deploy verification is intentionally deferred until the stale local release manifest is reconciled with the ECR-valid `origin/main` manifest; the targeted refresh and production canary are the deployment evidence for this change.
+- GitHub run `32324962775`, source
+  `26ae73bd028f3b2b716b7d8856c8233630991ee4`, passed immutable builds, exact
+  ECR scan identity, persistent development, isolated preprod, migration,
+  launch-before-terminate API/worker refreshes, runtime digest verification,
+  Video Batch verification, and successful release-manifest promotion.
+- `docs/reports/release-manifest.latest.json` is `complete=true`,
+  `status=successful`, and records the same source SHA and run-bound image tag.
+- `pwsh scripts/v1/run-production-canary.ps1 -Mode PostDeploy -AwsProfile default -StrictWarnings -WriteReport`
+  -> `PASS=30 WARN=0 FAIL=0`; API/worker ASGs were 1/1 healthy, ALB 1/1,
+  RDS/Redis available, all three queues and DLQs empty, Batch valid, Django
+  checks/migrations/invariants passed, and explicit production E2E residue was 0.
+- `pwsh scripts/v1/run-cost-waste-audit.ps1 -AwsProfile default -PythonExecutable <venv-python>`
+  -> 30/90-day usage captured, warm-baseline SSOT matched AWS, exact persistent
+  development runtime excluded from orphan candidates, and cleanup checks ran
+  as dry-runs only.
 - 2026-07-30 connection-incident readback: RDS `max_connections=400`,
   `superuser_reserved_connections=3`; `/academy/api/env` version 74 applies
   `DB_CONN_MAX_AGE=0`. The rollback-protected API env refresh passed both
