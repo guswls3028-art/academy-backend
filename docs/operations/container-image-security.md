@@ -84,6 +84,14 @@
    한다. 알 수 없는 항목, 누락된 기존 항목, identity/count 불일치 중 어느 것도
    development/preprod로 진행할 수 없다.
 
+2026-08-20 후보 run `32316780655`의 새 digest 6개는 ECR 기본 scan `COMPLETE`
+readback에서 기존 Critical exact identity가 계속 관측됐다. 같은 날 Debian tracker는
+Trixie의 glibc, Perl, Mbed TLS, GLib 패키지가 여전히 vulnerable이며 안정판 수정이
+없음을 확인했고, 저장소 실행 경로 감사에서도 기존 도달 불가 근거가 유지됐다.
+따라서 repository/CVE/package/version 범위를 넓히지 않고 2026-08-27까지만 재승인했다.
+ECR enhanced finding 요약이 0이더라도 기본 scan exact identity 게이트를 대신하지
+않으며, 다음 만료 전에 vendor·실행 경로를 다시 검토해야 한다.
+
 2026-08-09 ECR 데이터베이스 갱신으로 동일한 GLib `2.84.4-3~deb13u3`에
 `CVE-2026-58010`부터 `CVE-2026-58015`까지 여섯 High가 새로 나타났다. 후보와 직전
 운영 digest의 finding identity를 대조해 패키지 변경이 아니라 신규 공개분임을

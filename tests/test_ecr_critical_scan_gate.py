@@ -42,7 +42,7 @@ def _scan(*findings: dict) -> dict:
 def test_current_acceptance_is_exact_and_time_bounded() -> None:
     acceptances = gate.load_acceptances(
         Path(__file__).parents[1] / "docs" / "ssot" / "ecr-critical-risk-acceptance.json",
-        date(2026, 7, 31),
+        date(2026, 8, 20),
     )
     accepted = gate.evaluate_findings(
         "academy-api",
@@ -50,12 +50,13 @@ def test_current_acceptance_is_exact_and_time_bounded() -> None:
         acceptances,
     )
     assert len(accepted) == 1
+    assert {entry["expiresOn"] for entry in acceptances.values()} == {"2026-08-27"}
 
 
 def test_upstream_perl_findings_are_exact_and_expiring() -> None:
     acceptances = gate.load_acceptances(
         Path(__file__).parents[1] / "docs" / "ssot" / "ecr-critical-risk-acceptance.json",
-        date(2026, 7, 31),
+        date(2026, 8, 20),
     )
     accepted = gate.evaluate_findings(
         "academy-base",
@@ -86,7 +87,7 @@ def test_unknown_or_changed_critical_finding_fails_closed(
 ) -> None:
     acceptances = gate.load_acceptances(
         Path(__file__).parents[1] / "docs" / "ssot" / "ecr-critical-risk-acceptance.json",
-        date(2026, 7, 31),
+        date(2026, 8, 20),
     )
     with pytest.raises(gate.GateError, match="unaccepted critical"):
         gate.evaluate_findings(
@@ -94,15 +95,36 @@ def test_unknown_or_changed_critical_finding_fails_closed(
         )
 
 
-def test_expired_acceptance_blocks_before_scanning() -> None:
+def test_expired_acceptance_blocks_before_scanning(tmp_path: Path) -> None:
+    acceptance = tmp_path / "acceptance.json"
+    acceptance.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "acceptedFindings": [
+                    {
+                        "cve": "CVE-2099-9999",
+                        "packageName": "demo",
+                        "packageVersion": "1",
+                        "repositories": ["academy-api"],
+                        "expiresOn": "2026-08-19",
+                        "vendorTracker": (
+                            "https://security-tracker.debian.org/tracker/"
+                            "CVE-2099-9999"
+                        ),
+                        "rationale": (
+                            "Synthetic time-bound acceptance used only to prove that "
+                            "the gate rejects an expired exception before scanning."
+                        ),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
     with pytest.raises(gate.GateError, match="expired"):
-        gate.load_acceptances(
-            Path(__file__).parents[1]
-            / "docs"
-            / "ssot"
-            / "ecr-critical-risk-acceptance.json",
-            date(2026, 8, 20),
-        )
+        gate.load_acceptances(acceptance, date(2026, 8, 20))
 
 
 def test_high_finding_does_not_consume_critical_acceptance() -> None:
