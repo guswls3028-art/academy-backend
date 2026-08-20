@@ -419,12 +419,12 @@ pnpm verify:tenant-availability
 Remove-Item Env:TENANT_AVAILABILITY_URLS
 ```
 
-마지막으로 owner 포함 감사 명령을 실행한다. G5와 동일한 과금·메시징 모드를
-유지하며 `--require-owner`만 추가한다.
+마지막으로 owner 인계 포함 감사 명령을 실행한다. G5와 동일한 과금·메시징
+모드를 유지하며 `--require-owner --require-owner-handoff`를 추가한다.
 
 ```powershell
 cd C:\academy\backend
-.\scripts\v1\run-api-management-remote.ps1 -Command 'audit_tenant_onboarding saebom --tenant-id 10 --domain saebom.com --billing-mode contract --messaging-mode disabled --require-owner'
+.\scripts\v1\run-api-management-remote.ps1 -Command 'audit_tenant_onboarding saebom --tenant-id 10 --domain saebom.com --billing-mode contract --messaging-mode disabled --require-owner --require-owner-handoff'
 ```
 
 G9 완료 증거에는 `TENANT_ONBOARDING_AUDIT_PASS`, backend/frontend 배포 revision,
@@ -446,7 +446,9 @@ DNS·HTTPS, R2 probe, 1366/390 역할별 화면, 합성 QA tenant/user/object 0 
 | 소유자는 있으나 로그인 실패 | ID를 재생성하지 말고 대상 도메인·테넌트와 계정 활성 상태 확인 |
 | 로그인 후 비밀번호 변경 화면 | 정상 초기 인증 상태. 대표자에게 최종 비밀번호 설정 인계 |
 | 개발자 콘솔 임퍼소네이션만 성공 | 실제 비밀번호·도메인 인증 증거가 아니므로 G8 미완료 |
-| `TENANT_ONBOARDING_AUDIT_FAILED` | 출력된 key의 G1·G3·G5·G7 소유 경계로 돌아가 수정. 감사 명령은 데이터를 고치지 않음 |
+| `owner.credential_ready` 실패 | 계정을 재생성하지 말고 활성 owner의 비밀번호 설정 상태를 개발자 콘솔에서 확인 |
+| `owner.handoff_complete` 실패 | 대표자의 커스텀 도메인 로그인과 최초 비밀번호 변경을 인계하고 완료 후 감사를 재실행 |
+| `TENANT_ONBOARDING_AUDIT_FAILED` | 출력된 key의 G1·G3·G5·G7·G8 소유 경계로 돌아가 수정. 감사 명령은 데이터를 고치지 않음 |
 | 영상만 네트워크 오류 | API presign 성공 여부와 별개로 R2 bucket CORS의 apex/`www`, ACAO, ETag를 직접 확인 |
 
 관련 스크립트:

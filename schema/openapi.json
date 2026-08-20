@@ -14410,6 +14410,45 @@
         ],
         "type": "object"
       },
+      "TenantOwnerListItem": {
+        "properties": {
+          "hasUsablePassword": {
+            "type": "boolean"
+          },
+          "isActive": {
+            "type": "boolean"
+          },
+          "mustChangePassword": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "phone": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "userId": {
+            "type": "integer"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "hasUsablePassword",
+          "isActive",
+          "mustChangePassword",
+          "name",
+          "phone",
+          "role",
+          "userId",
+          "username"
+        ],
+        "type": "object"
+      },
       "TenantOwnerPasswordResetRequest": {
         "properties": {
           "password": {
@@ -21500,7 +21539,7 @@
     "/api/v1/core/tenants/{tenant_id}/owners/": {
       "get": {
         "description": "GET /api/v1/core/tenants/<tenant_id>/owners/\ndev_app 전용 — owner role만. 해당 테넌트의 Owner 목록 조회.",
-        "operationId": "core_tenants_owners_retrieve",
+        "operationId": "core_tenants_owners_list",
         "parameters": [
           {
             "in": "path",
@@ -21513,7 +21552,17 @@
         ],
         "responses": {
           "200": {
-            "description": "No response body"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TenantOwnerListItem"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [
