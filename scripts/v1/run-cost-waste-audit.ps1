@@ -9,6 +9,7 @@ param(
     [int]$UsageDays = 90,
     [ValidateRange(7, 90)]
     [int]$RecentDays = 30,
+    [string]$PythonExecutable = "python",
     [switch]$SkipHostMemory,
     [switch]$SkipCleanupDryRuns
 )
@@ -476,15 +477,34 @@ foreach ($asg in $allAsgs) {
 
 $runningInstances = @()
 $orphanInstances = @()
+$developmentInstances = @()
 if ($VpcId) {
     $instRes = Invoke-AwsJson @("ec2", "describe-instances", "--filters", "Name=vpc-id,Values=$VpcId", "Name=instance-state-name,Values=pending,running,stopping,stopped", "--region", $R, "--output", "json")
     if ($instRes -and $instRes.Reservations) {
         foreach ($rev in @($instRes.Reservations)) {
             foreach ($i in @($rev.Instances)) {
                 $name = (@($i.Tags) | Where-Object { $_.Key -eq "Name" } | Select-Object -First 1).Value
+                $managedBy = (@($i.Tags) | Where-Object { $_.Key -eq "ManagedBy" } | Select-Object -First 1).Value
+                $asgName = (@($i.Tags) | Where-Object { $_.Key -eq "aws:autoscaling:groupName" } | Select-Object -First 1).Value
                 $row = [PSCustomObject]@{ Id = $i.InstanceId; Name = $name; State = $i.State.Name; Type = $i.InstanceType }
                 if ($i.State.Name -eq "running") { $runningInstances += $row }
-                if (-not $usedInstanceIds.Contains($i.InstanceId)) { $orphanInstances += $row }
+                $isDevelopmentRuntime = (
+                    $script:ApiDevelopmentEnabled -and
+                    $name -eq $script:ApiDevelopmentInstanceName -and
+                    $managedBy -eq $script:ApiDevelopmentManagedByTag
+                )
+                $isBatchRuntime = $false
+                foreach ($prefix in $batchAsgPrefixes) {
+                    if ($asgName -and $asgName -like "$prefix*") { $isBatchRuntime = $true; break }
+                }
+                if ($isDevelopmentRuntime) { $developmentInstances += $row }
+                if (
+                    -not $usedInstanceIds.Contains($i.InstanceId) -and
+                    -not $isDevelopmentRuntime -and
+                    -not $isBatchRuntime
+                ) {
+                    $orphanInstances += $row
+                }
             }
         }
     }
@@ -549,9 +569,10 @@ $batchExit = 0
 $batchKeep = 0
 $batchDrop = 0
 $batchStatus = "skipped"
+$batchDiagnostic = ""
 if (-not $SkipCleanupDryRuns) {
     Write-Host "  ECR dry-run..." -ForegroundColor Gray
-    $ecr = Invoke-ProcessText "python" @((Join-Path $ScriptRoot "ecr-cleanup.py"), "--dry-run", "--keep", "$EcrKeep")
+    $ecr = Invoke-ProcessText $PythonExecutable @((Join-Path $ScriptRoot "ecr-cleanup.py"), "--dry-run", "--keep", "$EcrKeep")
     $ecrExit = $ecr.ExitCode
     $ecrStatus = if ($ecrExit -eq 0) { "ok" } else { "failed(exit=$ecrExit)" }
     if ($ecr.Text -match "Total:\s+(\d+)\s+images,\s+([0-9.]+)\s+GB reclaimable") {
@@ -563,9 +584,13 @@ if (-not $SkipCleanupDryRuns) {
     }
 
     Write-Host "  Batch jobdef dry-run..." -ForegroundColor Gray
-    $batch = Invoke-ProcessText "python" @((Join-Path $ScriptRoot "batch-jobdef-cleanup.py"), "--dry-run", "--keep", "$BatchJobdefKeep")
+    $batch = Invoke-ProcessText $PythonExecutable @((Join-Path $ScriptRoot "batch-jobdef-cleanup.py"), "--dry-run", "--keep", "$BatchJobdefKeep")
     $batchExit = $batch.ExitCode
     $batchStatus = if ($batchExit -eq 0) { "ok" } else { "failed(exit=$batchExit)" }
+    if ($batchExit -ne 0) {
+        $diagnosticLines = @(([string]$batch.Text -split "`r?`n") | Where-Object { $_.Trim() })
+        $batchDiagnostic = if ($diagnosticLines.Count -gt 0) { $diagnosticLines[-1].Trim() } else { "no process output" }
+    }
     if ($batch.Text -match "Totals:\s+keep=(\d+),\s+drop=(\d+)") {
         $batchKeep = Convert-ToInt $matches[1]
         $batchDrop = Convert-ToInt $matches[2]
@@ -696,7 +721,9 @@ $rdsDecision = if (
 }
 $redisDecision = if (
     $redisFreeMemory.Recent.Low -lt 0.75GB -or
+    $redisFreeMemory.Long.Low -lt 0.75GB -or
     $redisCredits.Recent.Low -lt 50 -or
+    $redisCredits.Long.Low -lt 50 -or
     $redisEvictions.Long.Total -gt 0
 ) {
     "keep $redisType; single-node micro headroom is not proven"
@@ -720,6 +747,9 @@ if ($availableVolumes.Count -gt 0) {
 if ($orphanInstances.Count -gt 0) {
     [void]$actions.Add("Review $($orphanInstances.Count) EC2 instance(s) not attached to kept ASGs before terminate/stop decisions.")
 }
+if ($script:ApiDevelopmentEnabled -and $developmentInstances.Count -ne 1) {
+    [void]$actions.Add("Restore the persistent development runtime to exactly one exact-tagged instance; current count=$($developmentInstances.Count).")
+}
 $dlqTotal = (@($queueRows | Measure-Object -Property Dlq -Sum).Sum)
 if ($dlqTotal -gt 0) {
     [void]$actions.Add("Review SQS DLQ message(s) before treating worker queues as fully clean; current DLQ total=$dlqTotal.")
@@ -732,6 +762,9 @@ if ($ecrStatus -like "failed*") {
 }
 if ($batchDrop -gt 0) {
     [void]$actions.Add("Run ``python scripts/v1/batch-jobdef-cleanup.py --execute --keep $BatchJobdefKeep`` to deregister $batchDrop old ACTIVE job definition revision(s).")
+}
+if ($batchStatus -like "failed*") {
+    [void]$actions.Add("Investigate the failed Batch job-definition cleanup dry-run before any deregistration; diagnostic: $batchDiagnostic")
 }
 if ($budgetStatus -eq "over-budget" -or $budgetStatus -eq "watch") {
     [void]$actions.Add("Budget status is $budgetStatus; inspect Cost Explorer service rows before changing warm baselines.")
@@ -768,10 +801,29 @@ Add-TableRow $sb @(
         "no ECR deletion needed"
     })
 )
-Add-TableRow $sb @("Batch jobdef cleanup dry-run", "keep=$batchKeep, drop=$batchDrop, status=$batchStatus", $(if ($batchStatus -eq "skipped") { "skipped" } elseif ($batchDrop -gt 0) { "cleanup candidate" } else { "no deregistration needed" }))
+$batchResult = "keep=$batchKeep, drop=$batchDrop, status=$batchStatus"
+if ($batchDiagnostic) { $batchResult += "; diagnostic=$batchDiagnostic" }
+Add-TableRow $sb @(
+    "Batch jobdef cleanup dry-run",
+    $batchResult,
+    $(if ($batchStatus -eq "skipped") {
+        "skipped"
+    } elseif ($batchStatus -like "failed*") {
+        "blocked; investigate runtime or AWS access before deregistration"
+    } elseif ($batchDrop -gt 0) {
+        "cleanup candidate"
+    } else {
+        "no deregistration needed"
+    })
+)
 Add-TableRow $sb @("RDS class", "$rdsClass, status=$rdsStatus, pending=$rdsPending", $(if ($rdsClass -eq $script:RdsInstanceClass) { "matches SSOT" } else { "class drift" }))
 Add-TableRow $sb @("Redis node", "$redisType, status=$redisStatus", $(if ($redisType -eq $script:RedisNodeType) { "matches SSOT" } else { "node type drift" }))
-Add-TableRow $sb @("Running EC2 in academy VPC", "$($runningInstances.Count)", "API/Messaging/AI/Tools warm baseline plus active batch bursts")
+Add-TableRow $sb @("Running EC2 in academy VPC", "$($runningInstances.Count)", "API/Messaging/AI/Tools warm baseline + persistent development runtime + active Batch bursts")
+Add-TableRow $sb @(
+    "Persistent development EC2",
+    "$($developmentInstances.Count) exact-tagged instance(s)",
+    $(if (-not $script:ApiDevelopmentEnabled) { "disabled" } elseif ($developmentInstances.Count -eq 1) { "confirmed" } else { "count drift" })
+)
 Add-TableRow $sb @("NAT Gateway", "$natCount available", $(if ($natCount -eq 0) { "matches NAT-off posture" } else { "review recurring VPC cost" }))
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("## Capacity SSOT vs Actual")
