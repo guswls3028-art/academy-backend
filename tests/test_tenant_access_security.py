@@ -781,6 +781,7 @@ class TenantOwnerRemovalInvariantTests(TestCase):
         self.assertFalse(response.data[0]["isActive"])
         self.assertTrue(response.data[0]["hasUsablePassword"])
         self.assertFalse(response.data[0]["mustChangePassword"])
+        self.assertEqual(response.data[0]["handoffStatus"], "account_inactive")
 
     def test_owner_list_exposes_first_login_handoff_state(self):
         self.target_owner.must_change_password = True
@@ -800,6 +801,44 @@ class TenantOwnerRemovalInvariantTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertTrue(response.data[0]["hasUsablePassword"])
         self.assertTrue(response.data[0]["mustChangePassword"])
+        self.assertEqual(response.data[0]["handoffStatus"], "first_login_pending")
+
+    def test_owner_list_reports_complete_and_password_setup_handoff_states(self):
+        request = APIRequestFactory().get(
+            f"/api/v1/core/tenants/{self.target.id}/owners/"
+        )
+        request.tenant = self.platform
+        force_authenticate(request, user=self.actor)
+
+        with override_settings(OWNER_TENANT_ID=self.platform.id):
+            complete_response = TenantOwnerListView.as_view()(
+                request,
+                tenant_id=self.target.id,
+            )
+
+        self.assertEqual(complete_response.status_code, 200, complete_response.data)
+        self.assertEqual(complete_response.data[0]["handoffStatus"], "complete")
+
+        self.target_owner.set_unusable_password()
+        self.target_owner.save(update_fields=["password"])
+        password_request = APIRequestFactory().get(
+            f"/api/v1/core/tenants/{self.target.id}/owners/"
+        )
+        password_request.tenant = self.platform
+        force_authenticate(password_request, user=self.actor)
+
+        with override_settings(OWNER_TENANT_ID=self.platform.id):
+            password_response = TenantOwnerListView.as_view()(
+                password_request,
+                tenant_id=self.target.id,
+            )
+
+        self.assertEqual(password_response.status_code, 200, password_response.data)
+        self.assertFalse(password_response.data[0]["hasUsablePassword"])
+        self.assertEqual(
+            password_response.data[0]["handoffStatus"],
+            "password_setup_required",
+        )
 
     def test_owner_password_reset_preserves_linked_parent_and_invalidates_credentials(self):
         self.target_owner.token_version = 6

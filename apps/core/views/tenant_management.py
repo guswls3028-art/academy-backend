@@ -100,6 +100,24 @@ class TenantOwnerPasswordResetResponseSerializer(serializers.Serializer):
     mustChangePassword = serializers.BooleanField()
 
 
+OWNER_HANDOFF_STATUS_CHOICES = (
+    "account_inactive",
+    "password_setup_required",
+    "first_login_pending",
+    "complete",
+)
+
+
+def _owner_handoff_status(user) -> str:
+    if not user.is_active:
+        return "account_inactive"
+    if not user.has_usable_password():
+        return "password_setup_required"
+    if getattr(user, "must_change_password", False):
+        return "first_login_pending"
+    return "complete"
+
+
 class TenantOwnerListItemSerializer(serializers.Serializer):
     userId = serializers.IntegerField()
     username = serializers.CharField()
@@ -108,6 +126,7 @@ class TenantOwnerListItemSerializer(serializers.Serializer):
     isActive = serializers.BooleanField()
     hasUsablePassword = serializers.BooleanField()
     mustChangePassword = serializers.BooleanField()
+    handoffStatus = serializers.ChoiceField(choices=OWNER_HANDOFF_STATUS_CHOICES)
     role = serializers.CharField()
 
 
@@ -589,6 +608,7 @@ class TenantOwnerView(APIView):
                 "mustChangePassword": bool(
                     getattr(user, "must_change_password", False)
                 ),
+                "handoffStatus": _owner_handoff_status(user),
                 "role": membership.role,
             })
         except Exception as e:
@@ -642,6 +662,7 @@ class TenantOwnerListView(APIView):
                 "mustChangePassword": bool(
                     getattr(m.user, "must_change_password", False)
                 ),
+                "handoffStatus": _owner_handoff_status(m.user),
                 "role": m.role,
             }
             for m in memberships
@@ -700,6 +721,7 @@ class TenantOwnerDetailView(APIView):
             "mustChangePassword": bool(
                 getattr(user, "must_change_password", False)
             ),
+            "handoffStatus": _owner_handoff_status(user),
             "role": membership.role,
         })
 
