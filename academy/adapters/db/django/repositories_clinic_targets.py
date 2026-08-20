@@ -24,6 +24,8 @@ def explicit_not_submitted_exam_results(*, tenant):
         target_type="exam",
         target_id=F("attempt__exam_id"),
         enrollment__tenant=tenant,
+        enrollment__student__tenant=tenant,
+        enrollment__lecture__tenant=tenant,
         enrollment__status="ACTIVE",
         attempt__meta__status="NOT_SUBMITTED",
         attempt__exam__tenant=tenant,
@@ -124,6 +126,10 @@ def clinic_links_for_admin_targets(*, tenant, include_resolved: bool):
         ClinicLink.objects.filter(
             is_auto=True,
             tenant=tenant,
+            enrollment__tenant=tenant,
+            enrollment__student__tenant=tenant,
+            enrollment__lecture__tenant=tenant,
+            session__lecture__tenant=tenant,
         )
         .select_related("session", "session__lecture")
         .order_by("-created_at")
@@ -168,51 +174,6 @@ def enrollment_map_for_ids(*, tenant, enrollment_ids: list[int]) -> dict[int, An
             tenant=tenant,
         ).select_related("student", "lecture")
     }
-
-
-def student_name_by_enrollment_id(enrollment_id: int) -> str:
-    try:
-        from apps.domains.enrollments.models import SessionEnrollment  # type: ignore
-
-        session_enrollment = (
-            SessionEnrollment.objects.filter(enrollment_id=int(enrollment_id))
-            .order_by("-id")
-            .first()
-        )
-        if session_enrollment:
-            value = getattr(session_enrollment, "student_name", None)
-            if value:
-                return str(value)
-
-            student = getattr(session_enrollment, "student", None)
-            if student and hasattr(student, "name"):
-                return str(getattr(student, "name", "-") or "-")
-    except Exception:
-        pass
-
-    try:
-        from apps.domains.enrollment.models import Enrollment
-
-        enrollment = (
-            Enrollment.objects.filter(id=int(enrollment_id))
-            .select_related()
-            .first()
-        )
-        if not enrollment:
-            return "-"
-
-        student = getattr(enrollment, "student", None)
-        if student and hasattr(student, "name"):
-            return str(getattr(student, "name", "-") or "-")
-
-        user = getattr(enrollment, "user", None)
-        if user:
-            name = getattr(user, "name", None) or getattr(user, "username", None)
-            return str(name or "-")
-    except Exception:
-        pass
-
-    return "-"
 
 
 def regular_homework_for_clinic_target(*, homework_id: int, tenant, session_id: int):

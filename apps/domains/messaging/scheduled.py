@@ -326,6 +326,15 @@ def _terminal_payload_error(payload: object) -> str:
     return ""
 
 
+def _terminal_policy_error(*, business_tenant_id: int) -> str:
+    """Return durable policy blocks that cannot succeed through queue retries."""
+    from apps.domains.messaging.policy import is_messaging_disabled
+
+    if is_messaging_disabled(business_tenant_id):
+        return "business_tenant_messaging_disabled"
+    return ""
+
+
 def _ensure_dispatch_occurrence(payload: dict, dispatch_key: UUID) -> dict:
     durable_payload = dict(payload)
     durable_payload["occurrence_key"] = (
@@ -479,6 +488,10 @@ def _claim_due_notifications(
 
         for notification in due:
             terminal_error = _terminal_payload_error(notification.payload)
+            if not terminal_error:
+                terminal_error = _terminal_policy_error(
+                    business_tenant_id=notification.tenant_id,
+                )
             if terminal_error:
                 terminal_payload = redact_terminal_delivery_payload(
                     trigger=notification.trigger,

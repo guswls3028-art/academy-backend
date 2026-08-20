@@ -6,10 +6,12 @@ AI Worker ASG/EC2 제어 어댑터.
 - 2026-05-12: `apps/domains/ai/services/worker_instance_control.py` 에서 이관.
   헥사고날 §6: `apps/domains/<x>/` boto3 직접 호출 금지 정책 준수.
 """
-import os
-import boto3
 import logging
+import os
+import threading
+import time
 
+import boto3
 from botocore.config import Config
 
 logger = logging.getLogger(__name__)
@@ -20,6 +22,15 @@ REGION = "ap-northeast-2"
 AI_WORKER_ASG_NAME = "academy-v1-ai-worker-asg"
 MESSAGING_WORKER_ASG_NAME = "academy-v1-messaging-worker-asg"
 TOOLS_WORKER_ASG_NAME = "academy-v1-tools-worker-asg"
+
+_CAPACITY_ENSURE_SUCCESS_TTL_SECONDS = 30.0
+_CAPACITY_ENSURE_FAILURE_TTL_SECONDS = 2.0
+_capacity_ensure_cache: dict[str, tuple[int, bool, float]] = {}
+_capacity_ensure_locks = {
+    AI_WORKER_ASG_NAME: threading.Lock(),
+    MESSAGING_WORKER_ASG_NAME: threading.Lock(),
+    TOOLS_WORKER_ASG_NAME: threading.Lock(),
+}
 
 
 def _aws_client(service: str, *, fast_fail: bool = False):
@@ -58,39 +69,68 @@ def _ensure_worker_asg_min_capacity(
     except (TypeError, ValueError):
         min_capacity = default_capacity
 
-    try:
-        asg = _aws_client("autoscaling", fast_fail=True)
-        resp = asg.describe_auto_scaling_groups(
-            AutoScalingGroupNames=[asg_name]
-        )
-        groups = resp.get("AutoScalingGroups", [])
-        if not groups:
-            logger.warning("[%s] ASG %s not found — skip capacity ensure", label, asg_name)
-            return False
+    with _capacity_ensure_locks[asg_name]:
+        now = time.monotonic()
+        cached = _capacity_ensure_cache.get(asg_name)
+        if cached is not None:
+            cached_capacity, cached_result, expires_at = cached
+            if now < expires_at and (
+                not cached_result or cached_capacity >= min_capacity
+            ):
+                return cached_result
 
-        group = groups[0]
-        desired = int(group.get("DesiredCapacity") or 0)
-        max_size = int(group.get("MaxSize") or min_capacity)
-        target_capacity = min(min_capacity, max_size)
-        if desired >= target_capacity:
-            logger.info(
-                "[%s] ASG desired already sufficient (desired=%d target=%d)",
-                label,
-                desired,
-                target_capacity,
+        result = False
+        try:
+            asg = _aws_client("autoscaling", fast_fail=True)
+            resp = asg.describe_auto_scaling_groups(
+                AutoScalingGroupNames=[asg_name]
             )
-            return True
+            groups = resp.get("AutoScalingGroups", [])
+            if not groups:
+                logger.warning("[%s] ASG %s not found — skip capacity ensure", label, asg_name)
+            else:
+                group = groups[0]
+                desired = int(group.get("DesiredCapacity") or 0)
+                max_size = int(group.get("MaxSize") or min_capacity)
+                target_capacity = min(min_capacity, max_size)
+                if desired >= target_capacity:
+                    logger.info(
+                        "[%s] ASG desired already sufficient (desired=%d target=%d)",
+                        label,
+                        desired,
+                        target_capacity,
+                    )
+                else:
+                    logger.info(
+                        "[%s] ASG desired=%d → setting to %d",
+                        label,
+                        desired,
+                        target_capacity,
+                    )
+                    asg.set_desired_capacity(
+                        AutoScalingGroupName=asg_name,
+                        DesiredCapacity=target_capacity,
+                        HonorCooldown=False,
+                    )
+                result = True
+        except Exception:
+            logger.warning(
+                "[%s] worker capacity ensure failed — job remains queued",
+                label,
+                exc_info=True,
+            )
 
-        logger.info("[%s] ASG desired=%d → setting to %d", label, desired, target_capacity)
-        asg.set_desired_capacity(
-            AutoScalingGroupName=asg_name,
-            DesiredCapacity=target_capacity,
-            HonorCooldown=False,
+        ttl = (
+            _CAPACITY_ENSURE_SUCCESS_TTL_SECONDS
+            if result
+            else _CAPACITY_ENSURE_FAILURE_TTL_SECONDS
         )
-        return True
-    except Exception:
-        logger.warning("[%s] worker capacity ensure failed — job remains queued", label, exc_info=True)
-        return False
+        _capacity_ensure_cache[asg_name] = (
+            min_capacity,
+            result,
+            time.monotonic() + ttl,
+        )
+        return result
 
 
 def ensure_ai_worker_asg_min_capacity(min_capacity: int = 3) -> bool:

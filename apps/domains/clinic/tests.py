@@ -260,6 +260,69 @@ class MultiTenantIsolationTest(TestCase, ClinicTestMixin):
         # 교차 오염 없음
         self.assertTrue(enrollment_ids_a.isdisjoint(enrollment_ids_b))
 
+    def test_clinic_target_service_rejects_mismatched_link_relations(self):
+        """링크의 tenant만 맞고 수강생 tenant가 다른 손상 데이터는 노출하지 않음."""
+        from apps.domains.results.utils.clinic import (
+            get_clinic_enrollment_ids_for_session,
+        )
+        from apps.domains.results.utils.clinic_highlight import (
+            compute_clinic_highlight_map,
+        )
+        from apps.domains.results.services.clinic_target_service import ClinicTargetService
+
+        mismatched = self.make_clinic_link(
+            self.b["enrollments"][1],
+            self.a["lec_session"],
+            tenant=self.a["tenant"],
+            source_type="exam",
+            source_id=self.exam_a.id,
+        )
+        mismatched_source = self.make_clinic_link(
+            self.a["enrollments"][1],
+            self.a["lec_session"],
+            tenant=self.a["tenant"],
+            source_type="exam",
+            source_id=self.exam_b.id,
+            cycle_no=2,
+        )
+        mismatched_source.resolved_at = timezone.now()
+        mismatched_source.resolution_type = ClinicLink.ResolutionType.WAIVED
+        mismatched_source.save(update_fields=["resolved_at", "resolution_type"])
+
+        targets_a = ClinicTargetService.list_admin_targets(tenant=self.a["tenant"])
+        history_a = ClinicTargetService.list_admin_targets(
+            tenant=self.a["tenant"],
+            include_resolved=True,
+        )
+
+        self.assertFalse(
+            any(target.get("clinic_link_id") == mismatched.id for target in targets_a)
+        )
+        self.assertFalse(
+            any(
+                target.get("clinic_link_id") == mismatched_source.id
+                for target in history_a
+            )
+        )
+        self.assertFalse(
+            any(
+                target.get("enrollment_id") == self.b["enrollments"][1].id
+                for target in targets_a
+            )
+        )
+        self.assertNotIn(
+            self.b["enrollments"][1].id,
+            get_clinic_enrollment_ids_for_session(
+                session=self.a["lec_session"],
+            ),
+        )
+        self.assertFalse(
+            compute_clinic_highlight_map(
+                tenant=self.a["tenant"],
+                enrollment_ids={self.b["enrollments"][1].id},
+            ).get(self.b["enrollments"][1].id, False)
+        )
+
 
 # ═══════════════════════════════════════════════════
 # 2. 상태 전이 (실제 DB 기반)

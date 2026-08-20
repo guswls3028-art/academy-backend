@@ -170,6 +170,17 @@ source-specific `ClinicLink`를 만든 뒤 `WAIVED`로 해소한다. 반복 요�
 `include_resolved=true`는 해소 이력을 함께 반환하며 기본 조회는 현재 미해결과
 판정 대기만 반환한다.
 
+클리닉 읽기 경계는 `ClinicLink.tenant`만 신뢰하지 않는다. 링크의 enrollment,
+student, enrollment lecture, session lecture가 모두 요청 tenant에 속해야 하며,
+다형 `source_type/source_id`가 현재 다른 tenant의 시험·과제를 가리키면 현재 목록과
+해소 이력에서 모두 제외한다. 삭제된 같은 tenant 원본의 해소 이력은 보존한다.
+일반 `ClinicLinkViewSet`, 관리자 대상 목록, 차시 대상 ID와 하이라이트 projection이
+같은 관계 검증으로 실패 폐쇄한다. 회귀 검증은
+`apps/domains/clinic/tests.py::MultiTenantIsolationTest::test_clinic_target_service_rejects_mismatched_link_relations`가
+손상된 link tenant, enrollment graph와 resolved source ID를 함께 확인하고,
+`apps/domains/progress/tests/test_drift_and_resolution.py::DriftResolutionTest::test_clinic_link_viewset_rejects_mismatched_enrollment_tenant`가
+일반 API 경계를 확인한다.
+
 Session Assessment Inspection
 -----------------------------
 

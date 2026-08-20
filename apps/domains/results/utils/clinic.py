@@ -132,6 +132,65 @@ def filter_live_source_links(
     return live_links
 
 
+def filter_tenant_consistent_source_links(
+    links: Iterable[Any],
+    *,
+    tenant: Any,
+) -> list[Any]:
+    """Reject a polymorphic source ID when it currently belongs to another tenant.
+
+    Missing sources are retained so resolved SOURCE_REMOVED history remains visible;
+    unresolved callers apply ``filter_live_source_links`` afterwards.
+    """
+    links_list = list(links)
+    if not links_list or tenant is None:
+        return []
+
+    exam_ids = {
+        source_id
+        for link in links_list
+        for source_id in [_link_source_id(link, "exam")]
+        if source_id is not None
+    }
+    homework_ids = {
+        source_id
+        for link in links_list
+        for source_id in [_link_source_id(link, "homework")]
+        if source_id is not None
+    }
+
+    foreign_exam_ids: set[int] = set()
+    if exam_ids:
+        Exam = apps.get_model("exams", "Exam")
+        foreign_exam_ids = {
+            int(exam_id)
+            for exam_id in Exam.objects.filter(id__in=exam_ids)
+            .exclude(tenant=tenant)
+            .values_list("id", flat=True)
+        }
+
+    foreign_homework_ids: set[int] = set()
+    if homework_ids:
+        Homework = apps.get_model("homework_results", "Homework")
+        foreign_homework_ids = {
+            int(homework_id)
+            for homework_id in Homework.objects.filter(id__in=homework_ids)
+            .exclude(tenant=tenant)
+            .values_list("id", flat=True)
+        }
+
+    consistent: list[Any] = []
+    for link in links_list:
+        exam_id = _link_source_id(link, "exam")
+        if exam_id is not None and exam_id in foreign_exam_ids:
+            continue
+        homework_id = _link_source_id(link, "homework")
+        if homework_id is not None and homework_id in foreign_homework_ids:
+            continue
+        consistent.append(link)
+    return consistent
+
+
 def get_clinic_enrollment_ids_for_session(
     *,
     session: Any,

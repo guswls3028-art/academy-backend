@@ -33,12 +33,14 @@ from academy.adapters.db.django.repositories_clinic_targets import (
     homework_scores_for_target,
     regular_exam_for_source,
     regular_homework_for_clinic_target,
-    student_name_by_enrollment_id,
 )
 from apps.domains.results.models import Result, ResultFact, ExamAttempt
 
 # ✅ 단일 진실 유틸
-from apps.domains.results.utils.clinic import filter_live_source_links
+from apps.domains.results.utils.clinic import (
+    filter_live_source_links,
+    filter_tenant_consistent_source_links,
+)
 from apps.domains.results.utils.session_exam import get_exams_for_session
 
 
@@ -124,18 +126,6 @@ def _is_low_confidence_for_attempt(*, exam_id: int, enrollment_id: int, attempt_
     return False
 
 
-def _get_student_name_by_enrollment_id(enrollment_id: int) -> str:
-    """
-    enrollment_id → student_name 매핑은 프로젝트마다 도메인이 다를 수 있어 방어적으로 구현.
-
-    우선순위:
-    1) enrollments.SessionEnrollment (session-enrollments) 모델이 있으면 student_name 필드/조인 사용
-    2) enrollment.Enrollment 모델이 있으면 student/user 조인 시도
-    3) 실패 시 "-"
-    """
-    return _safe_str(student_name_by_enrollment_id(int(enrollment_id)), "-")
-
-
 def _get_session_title(session: Any) -> str:
     """
     세션 타이틀은 프로젝트마다 표현이 달라서:
@@ -197,6 +187,11 @@ class ClinicTargetService:
             )
 
         links_list = list(links)
+        if links_list:
+            links_list = filter_tenant_consistent_source_links(
+                links_list,
+                tenant=tenant,
+            )
         if not include_resolved and links_list:
             links_list = filter_live_source_links(links_list, tenant=tenant)
 
@@ -257,11 +252,12 @@ class ClinicTargetService:
 
             # 학생 이름: enrollment_map에서 일괄 조회 (N+1 방지)
             enr = enrollment_map.get(enrollment_id)
-            student = getattr(enr, "student", None) if enr else None
-            if student:
-                student_name = _safe_str(getattr(student, "name", None), "-")
-            else:
-                student_name = _get_student_name_by_enrollment_id(enrollment_id)
+            if enr is None:
+                continue
+            student = getattr(enr, "student", None)
+            if student is None:
+                continue
+            student_name = _safe_str(getattr(student, "name", None), "-")
 
             # 학생 프로필 필드 (ClinicTargetSelectModal 테이블 컬럼용)
             parent_phone = getattr(student, "parent_phone", None) if student else None
