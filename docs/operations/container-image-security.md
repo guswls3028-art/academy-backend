@@ -84,14 +84,15 @@
    한다. 알 수 없는 항목, 누락된 기존 항목, identity/count 불일치 중 어느 것도
    development/preprod로 진행할 수 없다.
 
-2026-08-20 재검토에서 Debian 공식 tracker는 승인된 exact Trixie 패키지의
-8개 Critical을 계속 affected로 표시했고 stable 수정 패키지를 제공하지 않았다.
-glibc·Mbed TLS·GLib 항목은 계속 `no-dsa`/minor이며, Perl 항목도 수정이
-unstable/forky/sid에만 있어 stable 이미지를 교체할 수 없었다. Academy의 Python
-entrypoint, ALB TLS 종료, Perl 미사용, Mbed TLS FFDH/TLS 1.3 미사용, GLib D-Bus
-introspection 미사용 경계를 다시 확인하고 repository/CVE/package/version identity를
-변경하지 않은 채 2026-09-19까지만 재승인했다. 그 이전이라도 Debian stable
-수정이나 package identity 변경이 감지되면 예외는 즉시 무효화하고 기준선을 낮춘다.
+2026-08-20 후보 `sha-31d3845d9...-run-32316780655-1`의 완료된 ECR scan을
+재검토했다. Base·Video·Messaging은 glibc 1건과 Perl 3건으로 Critical 4건,
+API·AI·Tools는 여기에 GLib 1건이 더해져 Critical 5건이었다. Debian 공식
+tracker는 이 exact Trixie 패키지를 계속 affected 또는 `no-dsa`/minor로 표시하고
+stable 수정 패키지를 제공하지 않는다. Academy의 Python entrypoint, Perl 미사용,
+GLib D-Bus introspection 미사용 경계를 다시 확인한 뒤 이 다섯 exact
+CVE/package/version 항목만 2026-09-19까지 재승인했다. 이전 Mbed TLS Critical
+3건은 같은 후보의 완료 scan에서 더 이상 관측되지 않아 acceptance에서 즉시
+삭제했다. 다시 나타나거나 identity가 달라지면 새 Critical로 실패 폐쇄한다.
 
 2026-08-09 ECR 데이터베이스 갱신으로 동일한 GLib `2.84.4-3~deb13u3`에
 `CVE-2026-58010`부터 `CVE-2026-58015`까지 여섯 High가 새로 나타났다. 후보와 직전
@@ -129,20 +130,17 @@ GLib 6건, libssh2 6건인 총 20건이다. Debian tracker는 trixie
 유지하지만, 그 사실이 다른 CVE나 버전으로의 조용한 교체를 허용하지는 않는다.
 
 현재 Critical 한시 항목은 Debian stable에 수정본이 아직 없거나 Debian이
-`no-dsa`/minor로 분류한 glibc·GLib·Mbed TLS·Perl finding이다. GLib의
+`no-dsa`/minor로 분류한 glibc·GLib·Perl finding이다. GLib의
 `g_dbus_node_info_new_for_xml` malformed introspection-XML 경로는 OCR CLI와
 Academy Python 워커가 호출하지 않으며, 워커는 D-Bus introspection XML을 입력으로
-받지 않는다. glibc 취약 native
-`scanf` 경로와 Mbed TLS FFDH/TLS-session 경로는 Academy Python 앱의 실행
-경로가 아니며, 공개 TLS는 ALB가 종단한다. Mbed TLS는 API/Video/AI 이미지의
-미디어 도구 전이 의존성이다. Perl은 고정한 upstream slim base에서 상속되지만
+받지 않는다. glibc 취약 native `scanf` 경로도 Academy Python 앱의 실행
+경로가 아니다. Perl은 고정한 upstream slim base에서 상속되지만
 저장소의 runtime 코드·Docker entrypoint·운영 스크립트에는 Perl script,
-interpreter, `pack_ip`, Storable 실행 경로가 없다. 2026-08-05 재검토에서도
-고정된 `python:3.11-slim` OCI digest가 upstream 최신 digest와 일치했고 Debian
-trixie는 해당 glibc·Perl·Mbed TLS 패키지를 계속 vulnerable 또는 `no-dsa`로
-표시했다. 따라서 unstable 패키지를 운영 이미지에 혼합하지 않고 정확한 현재
-버전에 대한 한시 승인만 2026-08-19까지 갱신한다. 이 판단은 위험을 삭제하지
-않으며 다음 연장은 다시 vendor 상태와 실제 실행 경로를 검토한 PR이 필요하다.
+interpreter, `pack_ip`, Storable 실행 경로가 없다. Debian trixie는 해당
+glibc·Perl·GLib 패키지를 계속 vulnerable 또는 `no-dsa`로 표시한다. 따라서
+unstable 패키지를 운영 이미지에 혼합하지 않고 정확한 현재 버전에 대한 한시
+승인만 2026-09-19까지 유지한다. 이 판단은 위험을 삭제하지 않으며 다음 연장은
+다시 vendor 상태와 실제 실행 경로를 검토한 PR이 필요하다.
 
 사용하지 않는 `postgresql-client` CLI는 런타임 공격 표면과 이미지 크기를 줄이기
 위해 제거했지만 ECR 재검증 결과 Perl source finding의 원인은 아니었다. vendor

@@ -108,6 +108,20 @@ def test_expired_acceptance_blocks_before_scanning() -> None:
         )
 
 
+def test_retired_mbedtls_critical_findings_fail_closed() -> None:
+    acceptances = gate.load_acceptances(
+        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-critical-risk-acceptance.json",
+        date(2026, 8, 20),
+    )
+
+    with pytest.raises(gate.GateError, match="unaccepted critical"):
+        gate.evaluate_findings(
+            "academy-api",
+            _scan(_finding("CVE-2026-34872", "mbedtls", "3.6.5-0.1~deb13u1")),
+            acceptances,
+        )
+
+
 def test_high_finding_does_not_consume_critical_acceptance() -> None:
     accepted = gate.evaluate_findings(
         "academy-api", _scan(_finding("CVE-2099-9999", "demo", "1", "HIGH")), {}
