@@ -289,9 +289,12 @@ function Invoke-Close {
             [void](Invoke-GitChecked -Root $plan.Root -Arguments @(
                 "worktree", "remove", $plan.Path
             ))
-            $deleteMode = if ($plan.Integration -eq "ancestor") { "-d" } else { "-D" }
+            # Integration was already verified against the freshly fetched
+            # origin/main. The canonical checkout may intentionally remain
+            # behind while concurrent sessions are active, so `branch -d`
+            # would incorrectly compare against that stale local HEAD.
             [void](Invoke-GitChecked -Root $plan.Root -Arguments @(
-                "branch", $deleteMode, $plan.Branch
+                "branch", "-D", $plan.Branch
             ))
             Write-Output (
                 "SESSION_WORKTREE_CLOSED repo=$($plan.Name) branch=$($plan.Branch) integration=$($plan.Integration)"

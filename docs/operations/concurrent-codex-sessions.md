@@ -114,6 +114,11 @@ pwsh C:\academy\backend\scripts\codex\session-worktree.ps1 -Action Sync
 `Sync` refuses dirty, non-`main`, or divergent canonical roots. It never resets,
 rebases, force-checks out, or deletes user work.
 
+`Close` validates integration against freshly fetched `origin/main`, not the
+possibly stale canonical checkout. After that fail-closed preflight succeeds it
+removes the exact session branch even when concurrent work intentionally keeps
+the canonical `main` behind the remote.
+
 ## Verification
 
 ```powershell
