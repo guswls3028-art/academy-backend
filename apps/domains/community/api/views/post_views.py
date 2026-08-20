@@ -10,6 +10,8 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 
+from apps.api.common.query_params import parse_query_int
+
 from apps.domains.community.api.serializers import (
     PostEntitySerializer,
     PostReplySerializer,
@@ -323,14 +325,21 @@ class PostViewSet(viewsets.ModelViewSet):
         elif ordering == "replies":
             qs = qs.order_by("-replies_count", "-created_at")
 
-        try:
-            page_size = min(int(request.query_params.get("page_size") or 50), 200)
-        except (TypeError, ValueError):
-            page_size = 50
-        try:
-            page = max(1, int(request.query_params.get("page") or 1))
-        except (TypeError, ValueError):
-            page = 1
+        page_size = min(
+            parse_query_int(
+                request.query_params,
+                "page_size",
+                default=50,
+                min_value=1,
+            ),
+            200,
+        )
+        page = parse_query_int(
+            request.query_params,
+            "page",
+            default=1,
+            min_value=1,
+        )
         total = qs.count()
         offset = (page - 1) * page_size
         page_qs = self._with_is_liked(qs, request)[offset : offset + page_size]
@@ -361,10 +370,13 @@ class PostViewSet(viewsets.ModelViewSet):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
-        try:
-            days = max(1, min(int(request.query_params.get("days") or 30), 365))
-        except (TypeError, ValueError):
-            days = 30
+        days = max(
+            1,
+            min(
+                parse_query_int(request.query_params, "days", default=30),
+                365,
+            ),
+        )
         since = timezone.now() - timedelta(days=days)
 
         request_student = get_request_student(request)

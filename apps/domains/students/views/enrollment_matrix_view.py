@@ -16,6 +16,7 @@ from __future__ import annotations
 from rest_framework import status, views
 from rest_framework.response import Response
 
+from apps.api.common.query_params import parse_query_int
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.support.students.enrollment_matrix_dependencies import (
     build_student_enrollment_matrix,
@@ -30,11 +31,12 @@ class StudentEnrollmentMatrixView(views.APIView):
 
     def get(self, request, student_id: int):
         tenant = request.tenant
-        try:
-            lecture_id = int(request.query_params.get("lecture_id") or 0)
-        except ValueError:
-            return Response({"detail": "lecture_id 잘못됨"}, status=status.HTTP_400_BAD_REQUEST)
-        if lecture_id <= 0:
+        lecture_id = parse_query_int(
+            request.query_params,
+            "lecture_id",
+            min_value=1,
+        )
+        if lecture_id is None:
             return Response({"detail": "lecture_id 필수"}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response(

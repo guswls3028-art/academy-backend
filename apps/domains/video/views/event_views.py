@@ -14,6 +14,7 @@ from rest_framework.filters import SearchFilter
 from django_filters.rest_framework import DjangoFilterBackend
 
 from apps.core.permissions import TenantResolvedAndStaff as _TenantResolvedAndStaff
+from apps.api.common.query_params import parse_query_int
 
 from ..models import VideoPlaybackEvent
 from ..serializers import (
@@ -79,8 +80,10 @@ class VideoPlaybackEventViewSet(ReadOnlyModelViewSet):
             .select_related("enrollment", "enrollment__student", "video")
         ) if tenant else VideoPlaybackEvent.objects.none()
 
-        video_id = self.request.query_params.get("video")
-        if video_id:
+        video_id = parse_query_int(
+            self.request.query_params, "video", min_value=1
+        )
+        if video_id is not None:
             qs = qs.filter(video_id=video_id)
 
         range_key = self.request.query_params.get("range", "24h")
@@ -102,11 +105,16 @@ class VideoPlaybackEventViewSet(ReadOnlyModelViewSet):
     # --------------------------------------------------
     @action(detail=False, methods=["get"], url_path="risk")
     def risk(self, request):
-        video_id = request.query_params.get("video")
-        if not video_id:
+        video_id = parse_query_int(
+            request.query_params, "video", min_value=1
+        )
+        if video_id is None:
             return Response({"detail": "video is required"}, status=400)
 
-        limit = int(request.query_params.get("limit") or 5)
+        limit = min(
+            parse_query_int(request.query_params, "limit", default=5, min_value=1),
+            100,
+        )
         range_key = request.query_params.get("range", "24h")
         since = _range_to_since(range_key)
 
@@ -156,8 +164,10 @@ class VideoPlaybackEventViewSet(ReadOnlyModelViewSet):
     # --------------------------------------------------
     @action(detail=False, methods=["get"], url_path="export")
     def export_csv(self, request):
-        video_id = request.query_params.get("video")
-        if not video_id:
+        video_id = parse_query_int(
+            request.query_params, "video", min_value=1
+        )
+        if video_id is None:
             return Response({"detail": "video is required"}, status=400)
 
         range_key = request.query_params.get("range", "24h")

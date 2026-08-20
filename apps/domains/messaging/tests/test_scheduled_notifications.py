@@ -559,7 +559,7 @@ class ScheduledNotificationViewTests(TestCase):
         response = ScheduledNotificationListView.as_view()(request)
 
         self.assertEqual(response.status_code, 400, response.data)
-        self.assertIn("page", response.data["detail"])
+        self.assertIn("page", response.data)
 
     def test_list_pending_scheduled_notifications_masks_recipient(self):
         ScheduledNotification.objects.create(

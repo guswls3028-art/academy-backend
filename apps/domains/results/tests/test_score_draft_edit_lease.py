@@ -125,6 +125,21 @@ class ScoreDraftEditLeaseTests(TestCase):
         self.assertEqual(other_tab.status_code, 409)
         self.assertEqual(other_tab.data["code"], "SCORE_EDIT_LOCKED")
 
+    def test_draft_and_commit_reject_ambiguous_boolean_values(self):
+        put_response = self._put(
+            self.admin_a,
+            "tab-invalid-put",
+            acknowledge_stale="sometimes",
+        )
+        commit_response = self._commit(
+            self.admin_a,
+            "tab-invalid-commit",
+            release_lease="sometimes",
+        )
+
+        self.assertEqual(put_response.status_code, 400)
+        self.assertEqual(commit_response.status_code, 400)
+
     def test_disjoint_homework_cells_coexist_but_same_cell_conflicts(self):
         first = {
             "type": "homework",

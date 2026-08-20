@@ -12,6 +12,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
+from apps.api.common.query_params import parse_query_int
 from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
 from apps.support.results.enterprise_analytics import (
     build_student_enterprise_analytics,
@@ -92,5 +93,8 @@ class MyGradesAnalyticsView(APIView):
         if not tenant:
             return Response({"detail": "tenant not resolved"}, status=403)
 
-        days = normalize_analytics_days(request.query_params.get("days"), default=365)
+        days = normalize_analytics_days(
+            parse_query_int(request.query_params, "days", default=365),
+            default=365,
+        )
         return Response(build_student_enterprise_analytics(tenant=tenant, student=student, days=days))

@@ -15,6 +15,7 @@ from rest_framework.exceptions import NotFound
 
 from academy.adapters.db.django import repositories_enrollment as enroll_repo
 from apps.core.parsing import parse_bool
+from apps.api.common.query_params import parse_query_int
 from .models import Attendance
 from .serializers import (
     AttendanceSerializer,
@@ -582,8 +583,8 @@ class AttendanceViewSet(ModelViewSet):
     def matrix(self, request):
         tenant = getattr(request, "tenant", None)
 
-        lecture_id = request.query_params.get("lecture")
-        if not lecture_id:
+        lecture_id = parse_query_int(request.query_params, "lecture", min_value=1)
+        if lecture_id is None:
             return Response(
                 {"detail": "lecture 파라미터는 필수입니다"},
                 status=status.HTTP_400_BAD_REQUEST,

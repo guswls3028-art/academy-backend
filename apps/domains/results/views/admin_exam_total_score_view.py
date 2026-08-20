@@ -15,6 +15,7 @@ from rest_framework.exceptions import ValidationError, NotFound
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.models import Result, ResultFact, ExamAttempt
+from apps.domains.results.validation import parse_finite_score
 
 from apps.domains.results.guards.exam_enrollment_guard import validate_exam_enrollment_assigned
 from apps.domains.results.guards.score_edit_lease_guard import (
@@ -68,10 +69,7 @@ class AdminExamTotalScoreView(APIView):
         if "score" not in request.data:
             raise ValidationError({"detail": "score is required", "code": "INVALID"})
 
-        try:
-            new_score = float(request.data.get("score"))
-        except Exception:
-            raise ValidationError({"detail": "score must be number", "code": "INVALID"})
+        new_score = parse_finite_score(request.data.get("score"))
 
         if new_score < 0:
             raise ValidationError({"detail": "score must be >= 0", "code": "INVALID"})
@@ -79,10 +77,7 @@ class AdminExamTotalScoreView(APIView):
         # max_score: 프론트에서 전달하면 사용, 없으면 시험 모델에서 가져옴 (기본 100)
         req_max = request.data.get("max_score")
         if req_max is not None:
-            try:
-                max_score = float(req_max)
-            except (TypeError, ValueError):
-                max_score = float(getattr(exam, "max_score", 100.0) or 100.0)
+            max_score = parse_finite_score(req_max, field_name="max_score")
         else:
             max_score = float(getattr(exam, "max_score", 100.0) or 100.0)
 

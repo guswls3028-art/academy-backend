@@ -3,6 +3,7 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from apps.core.parsing import parse_bool
 from apps.core.permissions import TenantResolved, TenantResolvedAndMember, TenantResolvedAndStaff
 
 from ..serializers import (
@@ -125,7 +126,10 @@ class PublicPostReplyViewSet(viewsets.GenericViewSet):
             ).first()
             if not parent_reply:
                 return Response({"detail": "부모 댓글이 없습니다."}, status=status.HTTP_404_NOT_FOUND)
-        is_anonymous = bool(request.data.get("is_anonymous", False))
+        is_anonymous = parse_bool(
+            request.data.get("is_anonymous", False),
+            field_name="is_anonymous",
+        )
         user = request.user
         role = _resolve_role(user, tenant)
         is_owner = role == "owner"
@@ -171,6 +175,9 @@ class PublicPostReplyViewSet(viewsets.GenericViewSet):
     @action(detail=True, methods=["post"], url_path="hide")
     def hide(self, request, pk=None):
         obj = self.get_object()
-        obj.is_hidden = bool(request.data.get("is_hidden", True))
+        obj.is_hidden = parse_bool(
+            request.data.get("is_hidden", True),
+            field_name="is_hidden",
+        )
         obj.save(update_fields=["is_hidden", "updated_at"])
         return Response(PublicPostReplySerializer(obj, context={"request": request}).data)

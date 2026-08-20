@@ -2,6 +2,7 @@
 
 from django.conf import settings
 from rest_framework.response import Response
+from apps.api.common.query_params import parse_query_int
 
 
 from ..models import Video, AccessMode
@@ -231,8 +232,8 @@ class VideoPlaybackMixin:
     # 학생 영상 목록 (재생 가능 여부 판단)
     # ==================================================
     def _student_list_impl(self, request):
-        session_id = request.query_params.get("session")
-        if not session_id:
+        session_id = parse_query_int(request.query_params, "session", min_value=1)
+        if session_id is None:
             return Response({"detail": "session is required"}, status=400)
 
         student = self._get_student_for_user(request)

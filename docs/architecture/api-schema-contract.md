@@ -2,7 +2,7 @@
 
 **Status:** Active
 **Owners:** Backend API and frontend API consumers
-**Last reviewed:** 2026-08-11
+**Last reviewed:** 2026-08-21
 
 ## Purpose and ownership
 
@@ -58,6 +58,26 @@ a flat-list response.
 This contract is required by the teacher/admin exam, homework, result, and
 selection APIs. Silently ignoring `page_size` can hide records beyond the
 first 20 and is treated as a transport regression.
+
+## Scalar query parsing contract
+
+Touched DRF endpoints parse integer and boolean query parameters through
+`apps.api.common.query_params`. Missing or blank values may use the documented
+default, but malformed values never silently become that default. Integer
+identifiers and bounded values fail with field-keyed `400` validation; boolean
+parameters accept only `true/false` and `1/0`, so a typo such as `flase` cannot
+change a filter or permission-sensitive view to false. Endpoints with an
+established upper-cap contract still cap an oversized positive `page_size`;
+the parser distinction is between a valid integer and malformed input.
+
+Mutation bodies that are not already owned by a DRF serializer parse boolean
+fields through `apps.core.parsing.parse_bool`. JSON booleans and the documented
+boolean string/integer forms retain their value; Python truthiness is never
+used on request values because `bool("false")` is true. Ambiguous values fail
+with field-keyed `400` validation before a database, queue, publication, or
+permission-sensitive mutation. This applies to maintenance and landing
+publication flags, score-edit leases, public-board moderation, worker controls,
+payroll reruns, and Problem Studio confirmation/options.
 
 ## Compatibility and verification
 

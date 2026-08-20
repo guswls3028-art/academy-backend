@@ -9,6 +9,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.api.common.query_params import parse_query_int
 from apps.core.permissions import IsPlatformAdmin
 from apps.core.product_analytics.constants import MAX_BATCH_BYTES, SURFACES
 from apps.core.product_analytics.queries import build_overview
@@ -110,10 +111,7 @@ class ProductUsageOverviewView(APIView):
     permission_classes = [IsAuthenticated, IsPlatformAdmin]
 
     def get(self, request):
-        try:
-            days = int(request.query_params.get("days") or 28)
-        except (TypeError, ValueError):
-            days = 28
+        days = parse_query_int(request.query_params, "days", default=28)
         if days not in (7, 28, 90):
             return Response(
                 {"detail": "days는 7, 28, 90 중 하나여야 합니다."},

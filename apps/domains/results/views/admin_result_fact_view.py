@@ -14,6 +14,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.api.common.query_params import parse_query_int
 from apps.domains.results.models import ResultFact
 from apps.support.results.admin_exam_dependencies import regular_active_exam_ids_for_tenant
 
@@ -22,9 +23,14 @@ class AdminResultFactView(APIView):
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
 
     def get(self, request):
-        exam_id = request.query_params.get("exam_id")
-        enrollment_id = request.query_params.get("enrollment_id")
-        limit = int(request.query_params.get("limit", 100))
+        exam_id = parse_query_int(request.query_params, "exam_id", min_value=1)
+        enrollment_id = parse_query_int(
+            request.query_params, "enrollment_id", min_value=1
+        )
+        limit = min(
+            parse_query_int(request.query_params, "limit", default=100, min_value=1),
+            500,
+        )
 
         # ✅ tenant isolation: scope ResultFact to exams belonging to tenant
         tenant_exam_ids = regular_active_exam_ids_for_tenant(tenant=request.tenant)
@@ -37,7 +43,7 @@ class AdminResultFactView(APIView):
         if enrollment_id:
             qs = qs.filter(enrollment_id=int(enrollment_id))
 
-        qs = qs[: min(limit, 500)]
+        qs = qs[:limit]
 
         return Response([
             {

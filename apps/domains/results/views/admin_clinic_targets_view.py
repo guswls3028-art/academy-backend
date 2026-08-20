@@ -39,6 +39,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
+from apps.api.common.query_params import parse_query_bool, parse_query_int
 from academy.adapters.db.django.repositories_clinic_targets import (
     explicit_not_submitted_exam_results,
 )
@@ -48,10 +49,6 @@ from apps.domains.results.serializers.admin_clinic_target import AdminClinicTarg
 from apps.support.results.clinic_target_write_dependencies import (
     waive_explicit_missing_exam_target,
 )
-
-
-def _query_flag(value) -> bool:
-    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 class WaiveMissingExamSerializer(serializers.Serializer):
@@ -73,19 +70,14 @@ class AdminClinicTargetsView(APIView):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response([], status=200)
-        section_id = request.query_params.get("section_id")
-        try:
-            section_id = int(section_id) if section_id else None
-        except (TypeError, ValueError):
-            return Response(
-                {"detail": "section_id must be an integer"},
-                status=drf_status.HTTP_400_BAD_REQUEST,
-            )
+        section_id = parse_query_int(
+            request.query_params, "section_id", min_value=1
+        )
         rows = ClinicTargetService.list_admin_targets(
             tenant=tenant,
             section_id=section_id,
-            include_resolved=_query_flag(
-                request.query_params.get("include_resolved")
+            include_resolved=parse_query_bool(
+                request.query_params, "include_resolved", default=False
             ),
         )
         return Response(AdminClinicTargetSerializer(rows, many=True).data)

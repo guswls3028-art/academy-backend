@@ -1,20 +1,16 @@
-# PATH: apps/domains/clinic/views/test_views.py
-from rest_framework import viewsets
+# PATH: apps/domains/clinic/views/assessment_views.py
+from rest_framework import serializers, viewsets
+from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.permissions import IsAuthenticated
-from rest_framework import serializers
 
 from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework.filters import SearchFilter, OrderingFilter
+
+from apps.core.permissions import TenantResolvedAndStaff
 
 from ..models import Test
 from ..serializers import ClinicTestSerializer
 
-from apps.core.permissions import TenantResolvedAndStaff
 
-
-# ============================================================
-# Test
-# ============================================================
 class TestViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
     serializer_class = ClinicTestSerializer
@@ -37,7 +33,6 @@ class TestViewSet(viewsets.ModelViewSet):
             raise serializers.ValidationError(
                 {"tenant": "테넌트 컨텍스트가 필요합니다."}
             )
-        # P1 수정: session FK가 현재 테넌트 소속인지 검증
         session = serializer.validated_data.get("session")
         if session and session.tenant_id != tenant.id:
             raise serializers.ValidationError(

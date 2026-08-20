@@ -11,6 +11,7 @@ from django.utils import timezone
 from rest_framework import status, views
 from rest_framework.response import Response
 
+from apps.api.common.query_params import parse_query_bool, parse_query_int
 from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.community.models import CommunityNotification
 
@@ -24,12 +25,17 @@ class CommunityNotificationListView(views.APIView):
         user = request.user
         if not tenant or not user or not user.is_authenticated:
             return Response({"detail": "tenant + auth required"}, status=status.HTTP_403_FORBIDDEN)
-        unread_only = (request.query_params.get("unread") or "").lower() in ("1", "true", "yes")
-        try:
-            page = max(1, int(request.query_params.get("page") or 1))
-            page_size = min(int(request.query_params.get("page_size") or 20), 100)
-        except (TypeError, ValueError):
-            page, page_size = 1, 20
+        unread_only = parse_query_bool(request.query_params, "unread", default=False)
+        page = parse_query_int(request.query_params, "page", default=1, min_value=1)
+        page_size = min(
+            parse_query_int(
+                request.query_params,
+                "page_size",
+                default=20,
+                min_value=1,
+            ),
+            100,
+        )
 
         qs = CommunityNotification.objects.filter(tenant=tenant, recipient=user)
         if unread_only:

@@ -16,6 +16,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.core.parsing import parse_bool
 from apps.core.models import LandingPage
 from apps.core.permissions import TenantResolvedAndStaff
 
@@ -278,7 +279,10 @@ class LandingHitReportToggleView(APIView):
         except (TypeError, ValueError):
             return Response({"detail": "report_id 필수"}, status=400)
         action = (request.data.get("action") or "").strip()
-        auto_publish = bool(request.data.get("auto_publish", True))
+        auto_publish = parse_bool(
+            request.data.get("auto_publish", True),
+            field_name="auto_publish",
+        )
 
         try:
             result = toggle_hit_report_on_landing(

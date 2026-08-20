@@ -18,6 +18,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.api.common.query_params import parse_query_int
 from apps.core.models import Tenant, TenantDomain, TenantMembership
 from apps.core.permissions import IsPlatformAdmin
 
@@ -27,10 +28,10 @@ class DevGlobalSearchView(APIView):
 
     def get(self, request):
         q = (request.query_params.get("q") or "").strip()
-        try:
-            limit = max(1, min(50, int(request.query_params.get("limit") or 10)))
-        except (TypeError, ValueError):
-            limit = 10
+        limit = min(
+            parse_query_int(request.query_params, "limit", default=10, min_value=1),
+            50,
+        )
 
         if not q:
             return Response({"tenants": [], "users": []})

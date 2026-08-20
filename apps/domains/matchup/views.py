@@ -751,9 +751,11 @@ class DocumentCrossMatchesView(View):
             return JsonResponse({"detail": "Not found"}, status=404)
 
         try:
-            top_k = max(1, min(int(request.GET.get("top_k", 1)), 5))
+            top_k = int(request.GET.get("top_k", 1))
         except (TypeError, ValueError):
-            top_k = 1
+            return JsonResponse({"detail": "top_k must be an integer"}, status=400)
+        if not 1 <= top_k <= 5:
+            return JsonResponse({"detail": "top_k must be between 1 and 5"}, status=400)
 
         problems = list(
             doc.problems.exclude(embedding__isnull=True)
@@ -1702,7 +1704,12 @@ class SimilarProblemView(View):
         except Exception:
             body = {}
 
-        top_k = min(int(body.get("top_k", 10)), 50)
+        try:
+            top_k = int(body.get("top_k", 10))
+        except (TypeError, ValueError):
+            return JsonResponse({"detail": "top_k must be an integer"}, status=400)
+        if not 1 <= top_k <= 50:
+            return JsonResponse({"detail": "top_k must be between 1 and 50"}, status=400)
 
         # 저작권 격리: 호출자 자신의 자료 + legacy 공용 풀만 후보.
         # admin/owner는 운영 검증 시 author=NULL로 우회 가능 (전체 풀). 일반 강사는 본인 풀.

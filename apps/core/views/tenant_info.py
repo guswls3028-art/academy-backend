@@ -5,6 +5,7 @@ from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 
+from apps.core.parsing import parse_bool
 from apps.core.models import Program, TenantDomain
 from apps.core.permissions import (
     TenantResolvedAndOwner,
@@ -52,7 +53,10 @@ class MaintenanceModeView(APIView):
     def patch(self, request):
         if not is_platform_admin_tenant(request):
             return Response({"detail": "Platform admin tenant required."}, status=403)
-        enabled = bool((request.data or {}).get("enabled"))
+        enabled = parse_bool(
+            (request.data or {}).get("enabled", False),
+            field_name="enabled",
+        )
         if enabled:
             record_audit(
                 request,

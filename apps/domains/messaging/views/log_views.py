@@ -8,6 +8,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from apps.core.permissions import TenantResolvedAndStaff
+from apps.api.common.query_params import parse_query_int
 from apps.domains.messaging.models import NotificationLog
 from apps.domains.messaging.security import sanitize_notification_target_id
 from apps.domains.messaging.selectors import notification_logs_for_business_tenant
@@ -18,8 +19,13 @@ class NotificationLogListView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def get(self, request):
-        page = max(1, int(request.query_params.get("page", 1)))
-        page_size = min(50, max(1, int(request.query_params.get("page_size", 20))))
+        page = parse_query_int(request.query_params, "page", default=1, min_value=1)
+        page_size = min(
+            parse_query_int(
+                request.query_params, "page_size", default=20, min_value=1
+            ),
+            50,
+        )
         offset = (page - 1) * page_size
         # status 필터: success / failure / all (기본 all)
         status_filter = (request.query_params.get("status") or "").strip().lower()

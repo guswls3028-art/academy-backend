@@ -197,7 +197,9 @@ class StaffWorkType(TimestampModel):
 
     @property
     def effective_hourly_wage(self) -> int:
-        return self.hourly_wage or self.work_type.base_hourly_wage
+        if self.hourly_wage is None:
+            return self.work_type.base_hourly_wage
+        return self.hourly_wage
 
     def __str__(self) -> str:
         return f"{self.staff.name} - {self.work_type.name}"

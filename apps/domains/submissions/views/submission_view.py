@@ -427,7 +427,7 @@ class SubmissionViewSet(ModelViewSet):
 
             # ✅ 중복 매칭 차단 (기본): 같은 시험의 다른 submission이 이미 같은 enrollment로 active면 409.
             #    override=1 쿼리파라미터로만 덮어쓰기 허용 (운영자 명시적 선택).
-            allow_duplicate = str(request.query_params.get("allow_duplicate") or "").lower() in ("1", "true", "yes")
+            allow_duplicate = allow_duplicate_requested(request)
             if exam_id and not allow_duplicate:
                 dup_qs = (
                     Submission.objects

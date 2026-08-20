@@ -16,6 +16,7 @@ from rest_framework.exceptions import ValidationError, NotFound
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.models import Result, ResultItem, ResultFact, ExamAttempt
+from apps.domains.results.validation import parse_finite_score
 from apps.domains.results.guards.exam_enrollment_guard import validate_exam_enrollment_assigned
 from apps.domains.results.guards.score_edit_lease_guard import (
     require_score_edit_lease_from_headers,
@@ -128,10 +129,7 @@ class AdminExamItemScoreView(APIView):
         if "score" not in request.data:
             raise ValidationError({"detail": "score is required", "code": "INVALID"})
 
-        try:
-            new_score = float(request.data.get("score"))
-        except Exception:
-            raise ValidationError({"detail": "score must be number", "code": "INVALID"})
+        new_score = parse_finite_score(request.data.get("score"))
 
         # ✅ 답안 필드 (수동 입력용, 선택 사항)
         new_answer = request.data.get("answer")  # None이면 미변경

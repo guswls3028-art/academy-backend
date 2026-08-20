@@ -24,6 +24,7 @@ from ..serializers import PayrollSnapshotSerializer
 from academy.adapters.db.django import repositories_staffs as staff_repo
 from .helpers import IsPayrollManager, StaffDomainPagination
 from apps.core.models import TenantMembership
+from apps.core.parsing import parse_bool
 from apps.support.staffs.ai_dependencies import dispatch_staffs_ai_job
 
 # ===========================
@@ -162,7 +163,10 @@ class PayrollSnapshotViewSet(ReadOnlyModelViewSet):
         revision = hashlib.sha256(
             revision_source.encode("utf-8")
         ).hexdigest()[:16]
-        force_rerun = request.data.get("force_rerun") is True
+        force_rerun = parse_bool(
+            request.data.get("force_rerun", False),
+            field_name="force_rerun",
+        )
         out = dispatch_staffs_ai_job(
             job_type="staff_excel_export",
             payload={
