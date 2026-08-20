@@ -30,9 +30,14 @@ from apps.domains.messaging.services.registration_service import (
 User = get_user_model()
 
 
-@override_settings(TEST_TENANT_ID=-1)
 class ScheduledNotificationProcessingTests(TransactionTestCase):
     def setUp(self):
+        messaging_policy = patch(
+            "apps.domains.messaging.policy.is_messaging_disabled",
+            return_value=False,
+        )
+        messaging_policy.start()
+        self.addCleanup(messaging_policy.stop)
         self.tenant = Tenant.objects.create(code="msg-scheduled", name="Msg Scheduled", is_active=True)
         owner_setting = override_settings(OWNER_TENANT_ID=self.tenant.id)
         owner_setting.enable()
