@@ -83,10 +83,16 @@ function Get-AsgActualRuntimeDigest {
     $expectedPrefix = "$($script:AccountId).dkr.ecr.$($script:Region).amazonaws.com/$Repo@"
     $digests = [Collections.Generic.HashSet[string]]::new()
     foreach ($instance in $instances) {
-        $maxAttempts = 4
+        # ASG InService/Healthy and SSM Online precede a large worker image pull.
+        # Wait for the actual container instead of treating that startup window as
+        # a stale-runtime failure. Keep this bounded so a broken userdata path still
+        # fails closed before the Launch Template is mutated.
+        $startupDeadline = (Get-Date).AddSeconds(600)
         $retryDelaySec = 15
+        $attempt = 0
         $lastFailure = "not attempted"
-        for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+        while ($true) {
+            $attempt++
             try {
                 $remote = "set -e; ID=`$(docker inspect --format '{{.Image}}' '$Container'); docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' `"`$ID`""
                 $params = Convert-JsonArgToFileRef (@{commands=@($remote);executionTimeout=@("120")} | ConvertTo-Json -Compress)
@@ -107,10 +113,10 @@ function Get-AsgActualRuntimeDigest {
                 break
             } catch {
                 $lastFailure = $_.Exception.Message
-                if ($attempt -eq $maxAttempts) {
-                    throw "Pre-pin runtime inventory failed on $($instance.InstanceId) after $maxAttempts attempts: $lastFailure"
+                if ((Get-Date) -ge $startupDeadline) {
+                    throw "Pre-pin runtime inventory failed on $($instance.InstanceId) after $attempt attempts within 600 seconds: $lastFailure"
                 }
-                Write-Host "Retrying pre-pin runtime inventory on $($instance.InstanceId) after attempt $attempt/$maxAttempts failed: $lastFailure" -ForegroundColor DarkGray
+                Write-Host "Waiting for pre-pin runtime container on $($instance.InstanceId) after attempt $attempt failed: $lastFailure" -ForegroundColor DarkGray
                 Start-Sleep -Seconds $retryDelaySec
             }
         }
