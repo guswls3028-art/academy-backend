@@ -30,6 +30,7 @@ from apps.domains.messaging.services.registration_service import (
 User = get_user_model()
 
 
+@override_settings(TEST_TENANT_ID=-1)
 class ScheduledNotificationProcessingTests(TransactionTestCase):
     def setUp(self):
         self.tenant = Tenant.objects.create(code="msg-scheduled", name="Msg Scheduled", is_active=True)
