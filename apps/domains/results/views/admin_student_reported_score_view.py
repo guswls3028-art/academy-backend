@@ -2,6 +2,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.core.parsing import parse_bool
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.support.results.student_reported_scores import (
     ReportedScoreTransitionConflict,
@@ -22,8 +23,14 @@ class AdminStudentReportedScoreReviewView(APIView):
 
         action = str(request.data.get("action") or "").strip()
         note = str(request.data.get("review_note") or "").strip()
-        review_all_evidence = request.data.get("review_all_evidence") is True
-        grade_scale_confirmed = request.data.get("grade_scale_confirmed") is True
+        review_all_evidence = parse_bool(
+            request.data.get("review_all_evidence", False),
+            field_name="review_all_evidence",
+        )
+        grade_scale_confirmed = parse_bool(
+            request.data.get("grade_scale_confirmed", False),
+            field_name="grade_scale_confirmed",
+        )
         try:
             rows = review_student_scores(
                 tenant=tenant,

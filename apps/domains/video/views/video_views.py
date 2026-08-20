@@ -25,6 +25,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 
 from apps.core.models import Tenant
 from apps.core.parsing import parse_bool
+from apps.api.common.query_params import parse_query_int
 
 from academy.adapters.storage.r2_presign import (
     create_presigned_put_url,
@@ -1552,8 +1553,8 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 {"detail": "Tenant required"},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        session_id = request.query_params.get("session_id")
-        if session_id:
+        session_id = parse_query_int(request.query_params, "session_id", min_value=1)
+        if session_id is not None:
             # 레거시 호환: session_id가 전달되면 해당 세션의 폴더 조회
             try:
                 session = video_repo.get_session_by_id_with_lecture_tenant(session_id)

@@ -2,6 +2,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.api.common.query_params import parse_query_int
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.support.results.enterprise_analytics import (
     build_teacher_enterprise_analytics,
@@ -21,5 +22,8 @@ class AdminEnterpriseAnalyticsView(APIView):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"detail": "tenant not resolved"}, status=403)
-        days = normalize_analytics_days(request.query_params.get("days"), default=180)
+        days = normalize_analytics_days(
+            parse_query_int(request.query_params, "days", default=180),
+            default=180,
+        )
         return Response(build_teacher_enterprise_analytics(tenant=tenant, days=days))

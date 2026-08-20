@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from apps.core.permissions import TenantResolvedAndStaff
+from apps.api.common.query_params import parse_query_int
 
 from django.db import IntegrityError, transaction
 
@@ -31,18 +32,17 @@ class HomeworkPolicyViewSet(viewsets.ModelViewSet):
         if self.kwargs.get("pk"):
             return qs_base
 
-        session_id = self.request.query_params.get("session")
-        if not session_id:
+        session_id = parse_query_int(
+            self.request.query_params, "session", min_value=1
+        )
+        if session_id is None:
             return qs_base.none()
 
         # tenant 미설정 시 get_or_create 시 500 방지
         if not tenant:
             return qs_base.none()
 
-        try:
-            sid = int(session_id)
-        except (TypeError, ValueError):
-            return qs_base.none()
+        sid = session_id
 
         # session 존재 및 해당 tenant 소유 여부 검증 (500/잘못된 정책 생성 방지)
         if not session_exists_for_tenant(session_id=sid, tenant=tenant):

@@ -19,6 +19,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 
 from apps.core.parsing import parse_bool
+from apps.api.common.query_params import parse_query_bool
 from apps.api.common.upload_validation import (
     DEFAULT_MAX_EXCEL_SIZE,
     EXCEL_CONTENT_TYPES,
@@ -118,7 +119,11 @@ class StudentViewSet(ModelViewSet):
         qs = students_for_tenant(self.request.tenant, deleted="any")
 
         if self.action == "list":
-            show_deleted = self.request.query_params.get("deleted") == "true"
+            show_deleted = parse_query_bool(
+                self.request.query_params,
+                "deleted",
+                default=False,
+            )
             if show_deleted:
                 qs = qs.filter(deleted_at__isnull=False)
             else:

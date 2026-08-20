@@ -75,15 +75,19 @@ class WrongNotePDFCreateView(APIView):
         lecture_id = request.data.get("lecture_id")
         exam_id = request.data.get("exam_id")
 
-        lecture_id_i = int(lecture_id) if lecture_id else None
+        lecture_id_i = int(lecture_id) if lecture_id not in (None, "") else None
         if lecture_id_i is not None:
+            if lecture_id_i < 1:
+                raise ValidationError({"lecture_id": "유효한 강의를 선택해 주세요."})
             if lecture_id_i != enrollment.lecture_id:
                 raise ValidationError({"lecture_id": "수강 등록의 강의와 일치하지 않습니다."})
             if not lecture_exists_for_tenant(lecture_id=lecture_id_i, tenant=request.tenant):
                 raise ValidationError({"lecture_id": "해당 강의를 찾을 수 없습니다."})
 
-        exam_id_i = int(exam_id) if exam_id else None
+        exam_id_i = int(exam_id) if exam_id not in (None, "") else None
         if exam_id_i is not None:
+            if exam_id_i < 1:
+                raise ValidationError({"exam_id": "유효한 시험을 선택해 주세요."})
             if not exam_exists_for_tenant(
                 exam_id=exam_id_i,
                 tenant=request.tenant,
@@ -142,7 +146,12 @@ class WrongNotePDFCreateView(APIView):
         else:
             try:
                 enrollment_id_i = int(enrollment_id)
-                from_order = int(request.data.get("from_session_order", 2) or 2)
+                raw_from_order = request.data.get("from_session_order", 2)
+                from_order = (
+                    2
+                    if raw_from_order in (None, "")
+                    else int(raw_from_order)
+                )
                 requested_to_order = request.data.get("to_session_order")
                 to_order = (
                     int(requested_to_order)

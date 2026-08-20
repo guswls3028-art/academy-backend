@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+
+from apps.api.common.query_params import parse_query_bool
 from rest_framework import status
 
 from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
@@ -82,11 +84,9 @@ class StudentExamListView(APIView):
         request_student = get_request_student(request)
         if not request_student:
             return Response({"items": []})
-        include_upcoming = str(request.query_params.get("include_upcoming") or "").lower() in {
-            "1",
-            "true",
-            "yes",
-        }
+        include_upcoming = parse_query_bool(
+            request.query_params, "include_upcoming", default=False
+        )
         qs = _exam_queryset_for_student(
             request_student,
             tenant,

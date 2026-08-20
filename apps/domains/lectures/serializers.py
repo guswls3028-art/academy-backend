@@ -18,8 +18,16 @@ class LectureSerializer(serializers.ModelSerializer):
         ref_name = "Lecture"
 
     def validate(self, attrs):
-        start = attrs.get("start_date") or (self.instance and self.instance.start_date)
-        end = attrs.get("end_date") or (self.instance and self.instance.end_date)
+        start = (
+            attrs["start_date"]
+            if "start_date" in attrs
+            else (self.instance and self.instance.start_date)
+        )
+        end = (
+            attrs["end_date"]
+            if "end_date" in attrs
+            else (self.instance and self.instance.end_date)
+        )
         if start and end and start > end:
             raise serializers.ValidationError(
                 {"end_date": "종료일은 시작일보다 같거나 이후여야 합니다."}

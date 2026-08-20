@@ -23,6 +23,7 @@ from rest_framework.exceptions import ValidationError, NotFound
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.models import Result, ResultFact, ExamAttempt
+from apps.domains.results.validation import parse_finite_score
 from apps.domains.results.guards.exam_enrollment_guard import validate_exam_enrollment_assigned
 from apps.domains.results.guards.score_edit_lease_guard import (
     require_score_edit_lease_from_headers,
@@ -58,10 +59,7 @@ class AdminExamSubjectiveScoreView(APIView):
         if "score" not in request.data:
             raise ValidationError({"detail": "score is required", "code": "INVALID"})
 
-        try:
-            new_subjective = float(request.data.get("score"))
-        except Exception:
-            raise ValidationError({"detail": "score must be number", "code": "INVALID"})
+        new_subjective = parse_finite_score(request.data.get("score"))
 
         if new_subjective < 0:
             raise ValidationError({"detail": "score must be >= 0", "code": "INVALID"})

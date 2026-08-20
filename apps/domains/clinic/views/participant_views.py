@@ -27,6 +27,7 @@ from ..services import (
 )
 
 from apps.core.permissions import TenantResolvedAndMember, TenantResolvedAndStaff
+from apps.api.common.query_params import parse_query_int
 from apps.core.services.tenant_access import STAFF_ROLES, get_active_membership_role
 from apps.support.clinic.session_dependencies import (
     get_student_for_clinic_request,
@@ -295,8 +296,8 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         """
         GET /clinic/participants/by_session/?session_id=12
         """
-        session_id = request.query_params.get("session_id")
-        if not session_id:
+        session_id = parse_query_int(request.query_params, "session_id", min_value=1)
+        if session_id is None:
             return Response(
                 {"detail": "session_id is required"},
                 status=status.HTTP_400_BAD_REQUEST,

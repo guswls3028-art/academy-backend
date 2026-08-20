@@ -2,12 +2,14 @@ from types import SimpleNamespace
 from contextlib import nullcontext
 from unittest.mock import patch
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, TestCase
 from rest_framework.exceptions import ValidationError
 
 from apps.core.parsing import parse_bool
+from apps.core.landing.views_hit_report import LandingHitReportToggleView
 from apps.domains.clinic.views.settings_views import ClinicSettingsView
 from apps.domains.students.views.registration_views import RegistrationRequestViewSet
+from apps.core.views.tenant_info import MaintenanceModeView
 from apps.core.views.tenant_management import TenantDetailView
 
 class TestParseBool(SimpleTestCase):
@@ -73,3 +75,32 @@ class TestSettingsBooleanParsing(SimpleTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertFalse(tenant_obj.is_active)
+
+    def test_hit_report_false_string_disables_auto_publish(self):
+        request = SimpleNamespace(
+            data={"report_id": 1, "action": "add", "auto_publish": "false"},
+            tenant=SimpleNamespace(id=1),
+        )
+        with patch(
+            "apps.core.landing.views_hit_report.toggle_hit_report_on_landing",
+            return_value={"ok": True},
+        ) as toggle:
+            response = LandingHitReportToggleView().post(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(toggle.call_args.kwargs["auto_publish"])
+
+
+class TestMaintenanceBooleanParsing(TestCase):
+    def test_false_string_does_not_enable_global_lock(self):
+        request = SimpleNamespace(data={"enabled": "false"})
+        with patch(
+            "apps.core.views.tenant_info.is_platform_admin_tenant",
+            return_value=True,
+        ), patch(
+            "apps.core.views.tenant_info.Program.objects.only",
+            return_value=[],
+        ), patch("apps.core.views.tenant_info.record_audit"):
+            response = MaintenanceModeView().patch(request)
+
+        self.assertEqual(response.status_code, 200)

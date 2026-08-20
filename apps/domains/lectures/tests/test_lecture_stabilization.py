@@ -786,6 +786,27 @@ class TestDateValidation(LectureTestBase):
         )
         self.assertEqual(lec.start_date, lec.end_date)
 
+    def test_partial_update_can_clear_start_while_moving_end_before_old_start(self):
+        lecture = Lecture.objects.create(
+            tenant=self.tenant,
+            title="Flexible dates",
+            name="Flexible dates",
+            subject="math",
+            start_date="2026-05-10",
+            end_date="2026-05-20",
+        )
+        lecture.refresh_from_db()
+        serializer = LectureSerializer(
+            lecture,
+            data={"start_date": None, "end_date": "2026-05-01"},
+            partial=True,
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        updated = serializer.save()
+        self.assertIsNone(updated.start_date)
+        self.assertEqual(updated.end_date.isoformat(), "2026-05-01")
+
 
 class TestLectureReportProgress(LectureTestBase):
     """F. 강의 리포트 영상 진척률 계산"""

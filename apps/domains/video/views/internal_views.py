@@ -7,6 +7,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 
+from apps.core.parsing import parse_bool
 from apps.core.permissions import IsLambdaInternal
 
 logger = logging.getLogger(__name__)
@@ -272,9 +273,20 @@ class VideoReconcileView(APIView):
         from io import StringIO
 
         data = getattr(request, "data", None) or {}
-        dry_run = bool(data.get("dry_run", False))
-        older_than_minutes = int(data.get("older_than_minutes", 5))
-        resubmit = bool(data.get("resubmit", False))
+        dry_run = parse_bool(data.get("dry_run", False), field_name="dry_run")
+        resubmit = parse_bool(data.get("resubmit", False), field_name="resubmit")
+        try:
+            older_than_minutes = int(data.get("older_than_minutes", 5))
+        except (TypeError, ValueError, OverflowError):
+            return Response(
+                {"detail": "older_than_minutes must be an integer"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if older_than_minutes < 1:
+            return Response(
+                {"detail": "older_than_minutes must be at least 1"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         out = StringIO()
         try:

@@ -31,6 +31,7 @@ from .serializers import (
 )
 
 from apps.core.models import TenantMembership
+from apps.api.common.query_params import parse_query_bool, parse_query_int
 from rest_framework.permissions import IsAuthenticated
 from apps.core.permissions import TenantResolvedAndStaff
 
@@ -349,16 +350,19 @@ class SessionViewSet(ModelViewSet):
         qs = qs.select_related("section")
         qs = qs.filter(lecture__tenant=self.request.tenant)
 
-        lecture = self.request.query_params.get("lecture")
-        if lecture:
+        lecture = parse_query_int(self.request.query_params, "lecture", min_value=1)
+        if lecture is not None:
             qs = qs.filter(lecture_id=lecture)
 
-        date = self.request.query_params.get("date")
-        if date:
+        raw_date = self.request.query_params.get("date")
+        if raw_date:
+            date = parse_date(raw_date)
+            if date is None:
+                raise ValidationError({"date": "YYYY-MM-DD 형식의 날짜를 입력해 주세요."})
             qs = qs.filter(date=date)
 
-        section = self.request.query_params.get("section")
-        if section:
+        section = parse_query_int(self.request.query_params, "section", min_value=1)
+        if section is not None:
             qs = qs.filter(section_id=section)
 
         section_type = self.request.query_params.get("section_type")
@@ -366,7 +370,11 @@ class SessionViewSet(ModelViewSet):
             qs = qs.filter(section__section_type=section_type)
 
         # 진척률 옵션 — 선생앱 모바일 "오늘" 카드 등에서만 사용
-        if self.request.query_params.get("include_progress") in ("1", "true", "True"):
+        if parse_query_bool(
+            self.request.query_params,
+            "include_progress",
+            default=False,
+        ):
             section_total = (
                 SectionAssignment.objects
                 .filter(class_section_id=OuterRef("section_id"), enrollment__status="ACTIVE")
@@ -394,7 +402,11 @@ class SessionViewSet(ModelViewSet):
 
     def get_serializer_context(self):
         ctx = super().get_serializer_context()
-        ctx["include_progress"] = self.request.query_params.get("include_progress") in ("1", "true", "True")
+        ctx["include_progress"] = parse_query_bool(
+            self.request.query_params,
+            "include_progress",
+            default=False,
+        )
         return ctx
 
     def perform_create(self, serializer):

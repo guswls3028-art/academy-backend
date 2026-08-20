@@ -15,6 +15,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.core.parsing import parse_bool
 from apps.core.permissions import TenantResolvedAndStaff
 from academy.adapters.db.django import repositories_ai as ai_repo
 from apps.domains.tools.problem_studio.services import extract_sources, parse_payload, source_extraction_to_payload
@@ -276,7 +277,10 @@ class ProblemStudioVoiceProfileCollectionView(APIView):
                 name=request.data.get("name"),
                 subject=request.data.get("subject"),
                 style_instructions=request.data.get("style_instructions"),
-                is_default=request.data.get("is_default") is True,
+                is_default=parse_bool(
+                    request.data.get("is_default", False),
+                    field_name="is_default",
+                ),
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -322,7 +326,10 @@ class ProblemStudioVoiceProfileDetailView(APIView):
                     else None
                 ),
                 is_default=(
-                    request.data.get("is_default") is True
+                    parse_bool(
+                        request.data.get("is_default"),
+                        field_name="is_default",
+                    )
                     if "is_default" in request.data
                     else None
                 ),
@@ -360,7 +367,10 @@ class ProblemStudioVoiceSampleCollectionView(APIView):
                 problem_text=request.data.get("problem_text"),
                 answer=request.data.get("answer"),
                 explanation=request.data.get("explanation"),
-                rights_confirmed=request.data.get("rights_confirmed") is True,
+                rights_confirmed=parse_bool(
+                    request.data.get("rights_confirmed", False),
+                    field_name="rights_confirmed",
+                ),
                 rights_note=request.data.get("rights_note"),
             )
         except ValueError as exc:
@@ -861,8 +871,14 @@ class ProblemStudioGenerationReviewView(APIView):
                 final_question=request.data.get("final_question"),
                 outcome=request.data.get("outcome"),
                 feedback_note=request.data.get("feedback_note"),
-                learn_from_this=request.data.get("learn_from_this") is True,
-                rights_confirmed=request.data.get("rights_confirmed") is True,
+                learn_from_this=parse_bool(
+                    request.data.get("learn_from_this", False),
+                    field_name="learn_from_this",
+                ),
+                rights_confirmed=parse_bool(
+                    request.data.get("rights_confirmed", False),
+                    field_name="rights_confirmed",
+                ),
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)

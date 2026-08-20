@@ -1675,8 +1675,9 @@ class HitReportBoardPreviewView(View):
         try:
             limit = int(request.GET.get("limit") or 5)
         except ValueError:
-            limit = 5
-        limit = max(1, min(limit, 12))
+            return JsonResponse({"detail": "limit must be an integer"}, status=400)
+        if not 1 <= limit <= 12:
+            return JsonResponse({"detail": "limit must be between 1 and 12"}, status=400)
 
         # 학원 LandingPage.published_config 의 hit_reports section items
         ordered_ids: list[int] = []

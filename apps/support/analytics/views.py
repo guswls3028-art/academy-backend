@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from apps.core.permissions import TenantResolvedAndStaff
+from apps.api.common.query_params import parse_query_int
 from apps.support.analytics.serializers import (
     ExamSummarySerializer,
     QuestionStatSerializer,
@@ -61,7 +62,10 @@ class ExamAnalyticsTopWrongView(APIView):
 
     def get(self, request, exam_id: int):
         tenant = _get_tenant(request)
-        limit = int(request.query_params.get("limit") or 5)
+        limit = min(
+            parse_query_int(request.query_params, "limit", default=5, min_value=1),
+            100,
+        )
         rows = get_top_wrong_questions(
             exam_id=int(exam_id),
             tenant=tenant,
@@ -78,7 +82,10 @@ class ExamAnalyticsWrongDistributionView(APIView):
 
     def get(self, request, exam_id: int, question_id: int):
         tenant = _get_tenant(request)
-        limit = int(request.query_params.get("limit") or 5)
+        limit = min(
+            parse_query_int(request.query_params, "limit", default=5, min_value=1),
+            100,
+        )
         data = get_wrong_answer_distribution(
             exam_id=int(exam_id),
             question_id=int(question_id),

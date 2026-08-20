@@ -364,6 +364,45 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
         self.assertEqual(response.status_code, 400, response.data)
         self._assert_no_manual_score_side_effects()
 
+    def test_manual_score_writes_reject_non_finite_numbers_without_side_effects(self):
+        cases = (
+            (AdminExamTotalScoreView, {"score": "NaN", "max_score": 100}, {}),
+            (AdminExamTotalScoreView, {"score": 10, "max_score": "Infinity"}, {}),
+            (AdminExamTotalScoreView, {"score": True, "max_score": 100}, {}),
+            (AdminExamObjectiveScoreView, {"score": "Infinity"}, {}),
+            (AdminExamSubjectiveScoreView, {"score": "-Infinity"}, {}),
+            (
+                AdminExamItemScoreView,
+                {"score": "NaN", "answer": "2"},
+                {"question_id": self.question.id},
+            ),
+        )
+
+        for view_cls, payload, kwargs in cases:
+            with self.subTest(view=view_cls.__name__, score=payload["score"]):
+                response = self._patch(
+                    view_cls,
+                    payload,
+                    enrollment=self.assigned_enrollment,
+                    **kwargs,
+                )
+                self.assertEqual(response.status_code, 400, response.data)
+
+        self.assertFalse(
+            Result.objects.filter(
+                target_type="exam",
+                target_id=self.exam.id,
+                enrollment=self.assigned_enrollment,
+            ).exists()
+        )
+        self.assertFalse(
+            ResultFact.objects.filter(
+                target_type="exam",
+                target_id=self.exam.id,
+                enrollment_id=self.assigned_enrollment.id,
+            ).exists()
+        )
+
     @patch("apps.domains.results.views.admin_exam_item_score_view.dispatch_progress_pipeline")
     def test_item_score_recomputes_required_multi_choice_answer_on_server(self, mock_dispatch):
         AnswerKey.objects.create(
@@ -475,6 +514,31 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
                 target_type="exam",
                 target_id=exam.id,
                 source="manual_subjective",
+            ).exists()
+        )
+        mock_dispatch.assert_not_called()
+
+    @patch("apps.domains.results.views.admin_exam_objective_score_view.dispatch_progress_pipeline")
+    def test_objective_score_rejects_essay_only_exam(self, mock_dispatch):
+        exam, _questions = self._create_structured_exam("Essay only", [], [100])
+        result = self._create_result(exam, objective_score=0)
+
+        response = self._patch_for_exam(
+            AdminExamObjectiveScoreView,
+            exam,
+            {"score": 5},
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(response.data["code"], "INVALID")
+        self.assertIn("채점 대상 선택형", response.data["detail"])
+        result.refresh_from_db()
+        self.assertEqual(float(result.total_score), 0.0)
+        self.assertFalse(
+            ResultFact.objects.filter(
+                target_type="exam",
+                target_id=exam.id,
+                source="manual_objective",
             ).exists()
         )
         mock_dispatch.assert_not_called()

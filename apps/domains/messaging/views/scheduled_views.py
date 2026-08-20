@@ -7,6 +7,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.api.common.query_params import parse_query_int
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.messaging.models import ScheduledNotification
 from apps.domains.messaging.permissions import can_send_messages
@@ -24,17 +25,16 @@ class ScheduledNotificationListView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        try:
-            page = max(1, int(request.query_params.get("page", 1)))
-            page_size = min(
-                100,
-                max(1, int(request.query_params.get("page_size", 30))),
-            )
-        except (TypeError, ValueError):
-            return Response(
-                {"detail": "page와 page_size는 정수여야 합니다."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        page = parse_query_int(request.query_params, "page", default=1, min_value=1)
+        page_size = min(
+            parse_query_int(
+                request.query_params,
+                "page_size",
+                default=30,
+                min_value=1,
+            ),
+            100,
+        )
         offset = (page - 1) * page_size
         status_filter = (request.query_params.get("status") or "").strip().lower()
 

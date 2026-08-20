@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
+from apps.api.common.query_params import parse_query_int
 from apps.core.permissions import TenantResolvedAndStaff
 
 from apps.domains.results.serializers.wrong_note_serializers import (
@@ -48,42 +49,47 @@ class WrongNoteView(APIView):
         - offset (optional, default=0)
         - limit (optional, default=50)
         """
-        enrollment_id = request.query_params.get("enrollment_id")
-        if not enrollment_id:
+        enrollment_id_i = parse_query_int(
+            request.query_params,
+            "enrollment_id",
+            min_value=1,
+        )
+        if enrollment_id_i is None:
             return Response({"detail": "enrollment_id is required"}, status=400)
 
-        try:
-            enrollment_id_i = int(enrollment_id)
-            exam_id_i = (
-                int(request.query_params.get("exam_id"))
-                if request.query_params.get("exam_id")
-                else None
-            )
-            requested_lecture_id = (
-                int(request.query_params.get("lecture_id"))
-                if request.query_params.get("lecture_id")
-                else None
-            )
-            from_order = int(request.query_params.get("from_session_order", 2))
-            to_session_order = request.query_params.get("to_session_order")
-            to_order = (
-                int(to_session_order)
-                if to_session_order not in (None, "")
-                else None
-            )
-            offset = int(request.query_params.get("offset", 0))
-            limit = min(int(request.query_params.get("limit", 50)), 200)
-            if (
-                enrollment_id_i < 1
-                or (exam_id_i is not None and exam_id_i < 1)
-                or (requested_lecture_id is not None and requested_lecture_id < 1)
-                or from_order < 1
-                or (to_order is not None and to_order < from_order)
-                or offset < 0
-                or limit < 1
-            ):
-                raise ValueError
-        except (TypeError, ValueError):
+        exam_id_i = parse_query_int(request.query_params, "exam_id", min_value=1)
+        requested_lecture_id = parse_query_int(
+            request.query_params,
+            "lecture_id",
+            min_value=1,
+        )
+        from_order = parse_query_int(
+            request.query_params,
+            "from_session_order",
+            default=2,
+            min_value=1,
+        )
+        to_order = parse_query_int(
+            request.query_params,
+            "to_session_order",
+            min_value=1,
+        )
+        offset = parse_query_int(
+            request.query_params,
+            "offset",
+            default=0,
+            min_value=0,
+        )
+        limit = min(
+            parse_query_int(
+                request.query_params,
+                "limit",
+                default=50,
+                min_value=1,
+            ),
+            200,
+        )
+        if to_order is not None and to_order < from_order:
             raise ValidationError(
                 {"detail": "조회 범위와 페이지 값을 다시 확인해 주세요."}
             )

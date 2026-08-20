@@ -20,6 +20,7 @@ from ..serializers import ClinicSessionSerializer
 from ..filters import SessionFilter
 
 from apps.core.permissions import TenantResolvedAndMember, TenantResolvedAndStaff
+from apps.api.common.query_params import parse_query_int
 from apps.support.clinic.session_dependencies import (
     enrollments_for_clinic_tenant,
     get_student_for_clinic_request,
@@ -288,9 +289,18 @@ class SessionViewSet(viewsets.ModelViewSet):
                 {"tenant": "테넌트 컨텍스트가 필요합니다. (호스트 또는 X-Tenant-Code 확인)"}
             )
 
-        year = request.query_params.get("year")
-        month = request.query_params.get("month")
-        section_id = request.query_params.get("section")
+        year = parse_query_int(
+            request.query_params, "year", min_value=1900, max_value=9999
+        )
+        month = parse_query_int(
+            request.query_params, "month", min_value=1, max_value=12
+        )
+        raw_section = request.query_params.get("section")
+        section_id = (
+            None
+            if raw_section == "unassigned"
+            else parse_query_int(request.query_params, "section", min_value=1)
+        )
 
         if not year or not month:
             return Response(
@@ -336,14 +346,10 @@ class SessionViewSet(viewsets.ModelViewSet):
             .order_by("date", "start_time", "id")
         )
 
-        if section_id:
-            if section_id == "unassigned":
-                qs = qs.filter(section__isnull=True)
-            else:
-                try:
-                    qs = qs.filter(section_id=int(section_id))
-                except (TypeError, ValueError):
-                    pass
+        if raw_section == "unassigned":
+            qs = qs.filter(section__isnull=True)
+        elif section_id is not None:
+            qs = qs.filter(section_id=section_id)
 
         data = [
             {

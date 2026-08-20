@@ -7,7 +7,7 @@ Re-exports all public symbols for backward compatibility.
 
 from .session_views import SessionViewSet
 from .participant_views import ParticipantViewSet
-from .test_views import TestViewSet
+from .assessment_views import TestViewSet
 from .submission_views import SubmissionViewSet
 from .settings_views import ClinicSettingsView
 from .idcard_views import StudentClinicIdcardView

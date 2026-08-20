@@ -56,6 +56,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import ValidationError
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.api.common.query_params import parse_query_int
 from apps.support.results.admin_attempt_history_dependencies import (
     enrollment_belongs_to_tenant,
     get_exam_history_models,
@@ -71,9 +72,13 @@ class AdminAttemptHistoryView(APIView):
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
 
     def get(self, request):
-        enrollment_id = request.query_params.get("enrollment_id")
-        exam_id = request.query_params.get("exam_id")
-        homework_id = request.query_params.get("homework_id")
+        enrollment_id = parse_query_int(
+            request.query_params, "enrollment_id", min_value=1
+        )
+        exam_id = parse_query_int(request.query_params, "exam_id", min_value=1)
+        homework_id = parse_query_int(
+            request.query_params, "homework_id", min_value=1
+        )
 
         if not enrollment_id:
             raise ValidationError("enrollment_id is required.")
@@ -84,8 +89,6 @@ class AdminAttemptHistoryView(APIView):
         if exam_id and homework_id:
             raise ValidationError("Provide either exam_id or homework_id, not both.")
 
-        enrollment_id = int(enrollment_id)
-
         if not enrollment_belongs_to_tenant(
             enrollment_id=enrollment_id,
             tenant=request.tenant,
@@ -93,9 +96,9 @@ class AdminAttemptHistoryView(APIView):
             raise ValidationError("Enrollment not found for this tenant.")
 
         if exam_id:
-            return self._exam_history(request, enrollment_id, int(exam_id))
+            return self._exam_history(request, enrollment_id, exam_id)
         else:
-            return self._homework_history(request, enrollment_id, int(homework_id))
+            return self._homework_history(request, enrollment_id, homework_id)
 
     def _exam_history(self, request, enrollment_id: int, exam_id: int):
         Exam, ExamAttempt, Result, ClinicLink = get_exam_history_models()

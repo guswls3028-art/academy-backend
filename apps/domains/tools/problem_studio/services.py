@@ -593,13 +593,36 @@ def scrub_problem_studio_job_payload(payload: Any) -> dict[str, Any]:
 
 
 def parse_payload(raw: Any) -> dict[str, Any]:
+    parsed: dict[str, Any]
     if isinstance(raw, dict):
-        return raw
-    if isinstance(raw, str) and raw.strip():
+        parsed = dict(raw)
+    elif isinstance(raw, str) and raw.strip():
         try:
-            parsed = json.loads(raw)
+            decoded = json.loads(raw)
         except json.JSONDecodeError as exc:
             raise ValueError("payload JSON 형식이 올바르지 않습니다.") from exc
-        if isinstance(parsed, dict):
-            return parsed
-    return {}
+        parsed = decoded if isinstance(decoded, dict) else {}
+    else:
+        return {}
+
+    for field_name in (
+        "ai_transcription",
+        "auto_explanations",
+        "learn_source_explanation_style",
+        "source_style_rights_confirmed",
+        "transfer_only",
+        "use_ai",
+    ):
+        if field_name not in parsed:
+            continue
+        value = parsed[field_name]
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int) and value in (0, 1):
+            parsed[field_name] = bool(value)
+            continue
+        if isinstance(value, str) and value.strip().lower() in {"true", "false"}:
+            parsed[field_name] = value.strip().lower() == "true"
+            continue
+        raise ValueError(f"{field_name} 값은 true 또는 false여야 합니다.")
+    return parsed

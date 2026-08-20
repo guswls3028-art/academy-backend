@@ -842,6 +842,17 @@ class ProblemStudioServiceTests(SimpleTestCase):
         with self.assertRaises(ValueError):
             parse_payload("{not-json")
 
+    def test_parse_payload_normalizes_false_strings_and_rejects_typos(self):
+        parsed = parse_payload(
+            '{"use_ai":"false","transfer_only":"true","auto_explanations":0}'
+        )
+
+        self.assertFalse(parsed["use_ai"])
+        self.assertTrue(parsed["transfer_only"])
+        self.assertFalse(parsed["auto_explanations"])
+        with self.assertRaises(ValueError):
+            parse_payload({"ai_transcription": "flase"})
+
     def test_hwp_image_normalization_inflates_compressed_bindata(self):
         from PIL import Image
 

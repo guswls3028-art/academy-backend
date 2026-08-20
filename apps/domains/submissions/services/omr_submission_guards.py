@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from apps.api.common.query_params import parse_query_bool
 from apps.domains.submissions.models import Submission
 from apps.domains.submissions.services.lifecycle import OMR_CONFLICT_STATUSES
 from apps.support.omr.candidate_matching import (
@@ -9,8 +10,13 @@ from apps.support.omr.candidate_matching import (
 
 
 def allow_duplicate_requested(request) -> bool:
-    raw = str(request.query_params.get("allow_duplicate") or "").lower()
-    return raw in ("1", "true", "yes")
+    return bool(
+        parse_query_bool(
+            request.query_params,
+            "allow_duplicate",
+            default=False,
+        )
+    )
 
 
 def find_conflicting_exam_submission(

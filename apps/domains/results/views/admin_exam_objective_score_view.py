@@ -22,6 +22,7 @@ from rest_framework.exceptions import ValidationError, NotFound
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.models import Result, ResultFact, ExamAttempt
+from apps.domains.results.validation import parse_finite_score
 from apps.domains.results.guards.exam_enrollment_guard import validate_exam_enrollment_assigned
 from apps.domains.results.guards.score_edit_lease_guard import (
     require_score_edit_lease_from_headers,
@@ -58,10 +59,7 @@ class AdminExamObjectiveScoreView(APIView):
         if "score" not in request.data:
             raise ValidationError({"detail": "score is required", "code": "INVALID"})
 
-        try:
-            new_objective = float(request.data.get("score"))
-        except Exception:
-            raise ValidationError({"detail": "score must be number", "code": "INVALID"})
+        new_objective = parse_finite_score(request.data.get("score"))
 
         if new_objective < 0:
             raise ValidationError({"detail": "score must be >= 0", "code": "INVALID"})
@@ -72,7 +70,11 @@ class AdminExamObjectiveScoreView(APIView):
             or getattr(exam, "max_score", 100.0)
             or 100.0
         )
-        objective_max = float(score_shape.objective_max_score or max_score)
+        objective_max = float(score_shape.objective_max_score)
+        if objective_max <= 0 and score_shape.shape_source != "no_sheet" and new_objective > 0:
+            raise ValidationError(
+                {"detail": "이 시험에는 채점 대상 선택형 문항이 없습니다.", "code": "INVALID"}
+            )
         if objective_max > 0 and new_objective > objective_max:
             raise ValidationError(
                 {"detail": f"score must be between 0 and {objective_max}", "code": "INVALID"}

@@ -18,6 +18,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.api.common.query_params import parse_query_bool
 from apps.billing.models import (
     BankTransferNotice,
     BillingKey,
@@ -237,10 +238,10 @@ class AdminBankTransferNoticeListView(generics.ListAPIView):
             "invoice__tax_invoice_issue",
             "reviewed_by",
         ).order_by("-submitted_at", "-id")
-        if self.request.query_params.get("actionable", "").lower() in (
-            "1",
-            "true",
-            "yes",
+        if parse_query_bool(
+            self.request.query_params,
+            "actionable",
+            default=False,
         ):
             qs = qs.filter(
                 Q(status="SUBMITTED")

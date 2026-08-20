@@ -7,6 +7,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
+from apps.core.parsing import parse_bool
 from apps.core.permissions import TenantResolved, TenantResolvedAndMember, TenantResolvedAndStaff
 
 from ..serializers import (
@@ -218,7 +219,7 @@ class PublicBoardPostViewSet(viewsets.GenericViewSet):
         updates = {}
         for field in ("is_pinned", "is_hot", "external_visible"):
             if field in request.data:
-                updates[field] = bool(request.data[field])
+                updates[field] = parse_bool(request.data[field], field_name=field)
         if "status" in request.data:
             v = request.data["status"]
             if v in (PublicBoardPost.Status.PUBLISHED, PublicBoardPost.Status.HIDDEN, PublicBoardPost.Status.DELETED):

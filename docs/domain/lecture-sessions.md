@@ -38,6 +38,9 @@
   `session_type=SUPPLEMENT`와 사용자 이름인 `title`을 받는다.
 - `PATCH /lectures/sessions/{id}/`의 `title` 수정은 같은 수업 ID와 연결 데이터를
   유지한 채 보강 표시 이름을 바꾼다.
+- 부분 수정의 `start_date`·`end_date` 검증은 요청에 실제 포함된 필드를 우선한다.
+  nullable 시작일을 `null`로 지우면서 종료일을 함께 옮기는 요청은 이전 시작일을
+  되살려 비교하지 않으며, 최종 두 값이 모두 있을 때만 순서를 검사한다.
 - 모든 조회·생성·수정·삭제는 요청의 tenant와 직원 권한으로 제한한다. 다른
   tenant 강의·반은 조회하거나 연결할 수 없다.
 

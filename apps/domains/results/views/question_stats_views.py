@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.api.common.query_params import parse_query_int
 from apps.domains.results.services.question_stats_service import QuestionStatsService
 from apps.domains.results.serializers.question_stats import (
     QuestionStatSerializer,
@@ -69,7 +70,10 @@ class ExamTopWrongQuestionsView(APIView):
 
     def get(self, request, exam_id: int):
         _verify_exam_tenant(request, int(exam_id))
-        n = int(request.query_params.get("n", 5))
+        n = min(
+            parse_query_int(request.query_params, "n", default=5, min_value=1),
+            100,
+        )
         data = QuestionStatsService.top_n_wrong_questions(
             exam_id=int(exam_id),
             n=n,

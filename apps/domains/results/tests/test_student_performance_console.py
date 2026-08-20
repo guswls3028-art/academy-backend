@@ -214,8 +214,8 @@ class StudentPerformanceConsoleTest(TestCase, ClinicTestMixin):
         self.assertEqual(invalid_lecture.status_code, 400)
 
         invalid_days = self._get({"days": "not-a-period"})
-        self.assertEqual(invalid_days.status_code, 200)
-        self.assertEqual(invalid_days.data["period"]["days"], 180)
+        self.assertEqual(invalid_days.status_code, 400)
+        self.assertIn("days", invalid_days.data)
 
         invalid_session_type = self._get({"session_type": "mixed"})
         self.assertEqual(invalid_session_type.status_code, 400)

@@ -21,6 +21,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.api.common.query_params import parse_query_int
 from apps.core.models import (
     LandingConsultRequest,
     OpsAuditLog,
@@ -279,14 +280,16 @@ class PlatformInboxListView(APIView):
                 {"detail": "status는 all, open, resolved 중 하나여야 합니다."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        try:
-            page = max(1, int(request.query_params.get("page") or 1))
-            page_size = min(100, max(1, int(request.query_params.get("page_size") or 50)))
-        except (TypeError, ValueError):
-            return Response(
-                {"detail": "page와 page_size는 정수여야 합니다."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        page = parse_query_int(request.query_params, "page", default=1, min_value=1)
+        page_size = min(
+            parse_query_int(
+                request.query_params,
+                "page_size",
+                default=50,
+                min_value=1,
+            ),
+            100,
+        )
 
         from apps.core.services.platform_inbox import platform_inbox_summary
 

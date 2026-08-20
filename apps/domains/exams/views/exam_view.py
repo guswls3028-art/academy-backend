@@ -10,6 +10,7 @@ from rest_framework.exceptions import ValidationError, PermissionDenied
 from rest_framework.response import Response
 
 from apps.core.permissions import TenantResolvedAndMember
+from apps.api.common.query_params import parse_query_bool, parse_query_int
 from apps.core.optimistic_concurrency import assert_expected_updated_at
 from apps.domains.exams.models import Exam, ExamEnrollment
 from apps.domains.exams.serializers.exam import ExamSerializer
@@ -289,13 +290,7 @@ class ExamViewSet(ModelViewSet):
         return regular_exam_delete_blocker(obj)
 
     def _delete_session_id(self, request) -> int | None:
-        raw = request.query_params.get("session_id")
-        if raw in (None, ""):
-            return None
-        try:
-            return int(raw)
-        except (TypeError, ValueError):
-            raise ValidationError({"session_id": "must be integer"})
+        return parse_query_int(request.query_params, "session_id", min_value=1)
 
     def _session_for_delete(self, request, obj: Exam, session_id: int):
         Session = get_session_model()
@@ -423,25 +418,21 @@ class ExamViewSet(ModelViewSet):
             exam_type = str(exam_type).lower()
             qs = qs.filter(exam_type=exam_type)
 
-        session_id = self.request.query_params.get("session_id")
-        if session_id:
-            try:
-                sid = int(session_id)
-            except (TypeError, ValueError):
-                raise ValidationError({"session_id": "must be integer"})
-            qs = qs.filter(sessions__id=sid)
+        session_id = parse_query_int(
+            self.request.query_params, "session_id", min_value=1
+        )
+        if session_id is not None:
+            qs = qs.filter(sessions__id=session_id)
 
-        lecture_id = self.request.query_params.get("lecture_id")
-        if lecture_id:
-            try:
-                lid = int(lecture_id)
-            except (TypeError, ValueError):
-                raise ValidationError({"lecture_id": "must be integer"})
-            qs = qs.filter(sessions__lecture_id=lid)
+        lecture_id = parse_query_int(
+            self.request.query_params, "lecture_id", min_value=1
+        )
+        if lecture_id is not None:
+            qs = qs.filter(sessions__lecture_id=lecture_id)
 
-        include_inactive = str(
-            self.request.query_params.get("include_inactive") or ""
-        ).lower() in {"1", "true", "yes"}
+        include_inactive = parse_query_bool(
+            self.request.query_params, "include_inactive", default=False
+        )
         if session_id or lecture_id:
             qs = qs.filter(
                 exam_type=Exam.ExamType.REGULAR,

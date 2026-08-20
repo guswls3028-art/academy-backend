@@ -12,6 +12,8 @@ from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+
+from apps.api.common.query_params import parse_query_bool
 from rest_framework_simplejwt.tokens import RefreshToken
 
 logger = logging.getLogger(__name__)
@@ -291,7 +293,9 @@ class DevTenantStorageView(APIView):
         if not tenant:
             return Response({"detail": "Tenant not found."}, status=404)
 
-        force_refresh = (request.query_params.get("refresh") or "").lower() in ("1", "true", "yes")
+        force_refresh = parse_query_bool(
+            request.query_params, "refresh", default=False
+        )
         cache_key = f"dev:tenant_storage:{tenant_id}"
         cached = None if force_refresh else cache.get(cache_key)
         if cached is not None:

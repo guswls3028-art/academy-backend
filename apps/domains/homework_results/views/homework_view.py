@@ -28,6 +28,7 @@ from django.utils import timezone
 
 from apps.core.permissions import TenantResolvedAndMember
 from apps.core.optimistic_concurrency import assert_expected_updated_at
+from apps.api.common.query_params import parse_query_bool, parse_query_int
 
 from apps.domains.homework_results.models import Homework, HomeworkScore
 from apps.domains.homework_results.serializers.homework import HomeworkSerializer
@@ -105,13 +106,11 @@ class HomeworkViewSet(ModelViewSet):
             "source_exam__sheet",
         )
 
-        session_id = self.request.query_params.get("session_id")
-        if session_id:
-            try:
-                sid = int(session_id)
-                qs = qs.filter(session_id=sid)
-            except Exception:
-                qs = qs.none()
+        session_id = parse_query_int(
+            self.request.query_params, "session_id", min_value=1
+        )
+        if session_id is not None:
+            qs = qs.filter(session_id=session_id)
 
         homework_type = self.request.query_params.get("homework_type")
         if homework_type:
@@ -120,11 +119,9 @@ class HomeworkViewSet(ModelViewSet):
         if session_id:
             qs = qs.filter(homework_type=Homework.HomeworkType.REGULAR)
 
-        include_removed = str(self.request.query_params.get("include_removed") or "").lower() in {
-            "1",
-            "true",
-            "yes",
-        }
+        include_removed = parse_query_bool(
+            self.request.query_params, "include_removed", default=False
+        )
         if not include_removed:
             qs = qs.exclude(meta__removed_from_session_at__isnull=False)
 

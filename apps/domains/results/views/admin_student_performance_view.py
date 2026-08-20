@@ -2,10 +2,11 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.api.common.query_params import parse_query_int
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.support.results.student_performance_console import (
+    PERFORMANCE_DAY_OPTIONS,
     build_student_performance_console,
-    normalize_performance_days,
     performance_lecture_exists,
 )
 
@@ -76,7 +77,16 @@ class AdminStudentPerformanceView(APIView):
         search = str(request.query_params.get("search") or "").strip()[:80]
         subject = str(request.query_params.get("subject") or "").strip()[:50]
 
-        days = normalize_performance_days(request.query_params.get("days"), default=180)
+        raw_days = request.query_params.get("days")
+        if isinstance(raw_days, str) and raw_days.strip().lower() == "all":
+            days = None
+        else:
+            days = parse_query_int(request.query_params, "days", default=180)
+            if days not in PERFORMANCE_DAY_OPTIONS:
+                return Response(
+                    {"detail": "days invalid"},
+                    status=400,
+                )
         return Response(
             build_student_performance_console(
                 tenant=tenant,

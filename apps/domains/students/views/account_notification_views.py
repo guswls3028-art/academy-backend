@@ -4,6 +4,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.api.common.query_params import parse_query_int
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.students.models import Student
 from apps.domains.students.services.account_recovery import list_recent_account_notification_logs
@@ -23,10 +24,12 @@ class StudentAccountNotificationLogView(APIView):
         if not student:
             return Response({"detail": "학생 정보를 찾을 수 없습니다."}, status=404)
 
-        try:
-            limit = int(request.query_params.get("limit") or 5)
-        except (TypeError, ValueError):
-            limit = 5
+        limit = parse_query_int(
+            request.query_params,
+            "limit",
+            default=5,
+            min_value=1,
+        )
 
         return Response({
             "results": list_recent_account_notification_logs(student, limit=limit),

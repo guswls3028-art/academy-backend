@@ -22,6 +22,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework import status as drf_status
 
+from apps.core.parsing import parse_bool
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.results.guards.score_edit_lease_guard import (
     EDIT_LEASE_TTL,
@@ -110,7 +111,10 @@ class ScoreDraftView(APIView):
         changes = request.data.get("changes")
         if not isinstance(changes, list):
             return Response({"detail": "changes must be a list"}, status=400)
-        acknowledge_stale = bool(request.data.get("acknowledge_stale", False))
+        acknowledge_stale = parse_bool(
+            request.data.get("acknowledge_stale", False),
+            field_name="acknowledge_stale",
+        )
         client_id = score_edit_client_id(request)
         with transaction.atomic():
             _, scope_ids = _lock_session(session_id=int(session_id), tenant=tenant)
@@ -168,7 +172,10 @@ class ScoreDraftCommitView(APIView):
         if not tenant:
             return Response({"detail": "Tenant required"}, status=403)
         client_id = score_edit_client_id(request)
-        release_lease = bool(request.data.get("release_lease", True))
+        release_lease = parse_bool(
+            request.data.get("release_lease", True),
+            field_name="release_lease",
+        )
         with transaction.atomic():
             _lock_session(session_id=int(session_id), tenant=tenant)
             draft = (

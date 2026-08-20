@@ -85,6 +85,21 @@ class WorkClockBoundaryTests(TestCase):
         self.assertEqual(closed.resolved_hourly_wage, 10_000)
         self.assertEqual(closed.amount, 7_500)
 
+    def test_explicit_zero_assignment_wage_does_not_fall_back_to_base_wage(self):
+        assignment = StaffWorkType.objects.get(
+            tenant=self.tenant,
+            staff=self.staff,
+            work_type=self.work_type,
+        )
+        assignment.hourly_wage = 0
+        assignment.save(update_fields=["hourly_wage"])
+
+        record = self._start()
+        closed = end_work_record(record=record, ended_at=self._at(10, 0))
+
+        self.assertEqual(closed.resolved_hourly_wage, 0)
+        self.assertEqual(closed.amount, 0)
+
     def test_invalid_close_rolls_back_active_break_and_open_record(self):
         record = self._start()
         break_started_at = self._at(9, 10)

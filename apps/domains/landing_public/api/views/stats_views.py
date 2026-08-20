@@ -5,6 +5,7 @@ from django.utils import timezone
 from rest_framework import views
 from rest_framework.response import Response
 
+from apps.api.common.query_params import parse_query_int
 from apps.core.permissions import TenantResolved
 
 from ...models import PublicBoardPost, PublicReview
@@ -21,11 +22,13 @@ class PublicCommunityStatsView(views.APIView):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"reviews_week": 0, "board_week": 0, "reviews_total": 0, "board_total": 0, "average_rating": 0.0})
-        try:
-            days = int(request.query_params.get("days") or 7)
-        except ValueError:
-            days = 7
-        days = max(1, min(days, 90))
+        days = max(
+            1,
+            min(
+                parse_query_int(request.query_params, "days", default=7),
+                90,
+            ),
+        )
         since = timezone.now() - timedelta(days=days)
 
         reviews_qs = PublicReview.objects.filter(tenant=tenant, status=PublicReview.Status.APPROVED)

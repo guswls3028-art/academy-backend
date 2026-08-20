@@ -7,6 +7,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.api.common.query_params import parse_query_int
 from apps.domains.community.api.serializers import PostEntitySerializer
 from apps.domains.community.models import (
     CommunityReport,
@@ -38,24 +39,23 @@ class AdminPostViewSet(viewsets.GenericViewSet):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
-        def _int_or_none(val):
-            if val is None or val == "":
-                return None
-            try:
-                return int(val)
-            except (TypeError, ValueError):
-                return None
-
         post_type = (request.query_params.get("post_type") or "").strip().lower() or None
-        lecture_id = _int_or_none(request.query_params.get("lecture_id"))
+        lecture_id = parse_query_int(
+            request.query_params,
+            "lecture_id",
+            min_value=1,
+        )
         q = (request.query_params.get("q") or "").strip() or None
-        try:
-            page = int(request.query_params.get("page") or 1)
-            page_size = int(request.query_params.get("page_size") or 20)
-        except (TypeError, ValueError):
-            page, page_size = 1, 20
-        page = max(page, 1)
-        page_size = min(max(page_size, 1), 100)
+        page = parse_query_int(request.query_params, "page", default=1, min_value=1)
+        page_size = min(
+            parse_query_int(
+                request.query_params,
+                "page_size",
+                default=20,
+                min_value=1,
+            ),
+            100,
+        )
         qs, total = get_admin_post_list(
             tenant,
             post_type=post_type,
@@ -117,11 +117,16 @@ class AdminReportsViewSet(viewsets.GenericViewSet):
             return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
         status_filter = (request.query_params.get("status") or "").strip().lower()
         target_type = (request.query_params.get("target_type") or "").strip().lower()
-        try:
-            page = max(1, int(request.query_params.get("page") or 1))
-            page_size = min(int(request.query_params.get("page_size") or 20), 100)
-        except (TypeError, ValueError):
-            page, page_size = 1, 20
+        page = parse_query_int(request.query_params, "page", default=1, min_value=1)
+        page_size = min(
+            parse_query_int(
+                request.query_params,
+                "page_size",
+                default=20,
+                min_value=1,
+            ),
+            100,
+        )
 
         qs = CommunityReport.objects.filter(tenant=tenant).select_related("reporter")
         if status_filter in dict(CommunityReport.STATUS_CHOICES):
@@ -273,10 +278,13 @@ class CommunityStatsView(APIView):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
-        try:
-            days = max(1, min(int(request.query_params.get("days") or 30), 365))
-        except (TypeError, ValueError):
-            days = 30
+        days = max(
+            1,
+            min(
+                parse_query_int(request.query_params, "days", default=30),
+                365,
+            ),
+        )
         since = timezone.now() - timedelta(days=days)
 
         # 글 카운트 — published 기준, post_type별 + 전체

@@ -8,6 +8,7 @@ from rest_framework.views import APIView
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework import status
+from apps.api.common.query_params import parse_query_bool, parse_query_int
 from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.exceptions import ValidationError
 
@@ -110,12 +111,12 @@ class FeeTemplateViewSet(ModelViewSet):
         if fee_type:
             qs = qs.filter(fee_type=fee_type)
 
-        is_active = self.request.query_params.get("is_active")
+        is_active = parse_query_bool(self.request.query_params, "is_active")
         if is_active is not None:
-            qs = qs.filter(is_active=is_active.lower() == "true")
+            qs = qs.filter(is_active=is_active)
 
-        lecture_id = self.request.query_params.get("lecture")
-        if lecture_id:
+        lecture_id = parse_query_int(self.request.query_params, "lecture", min_value=1)
+        if lecture_id is not None:
             qs = qs.filter(lecture_id=lecture_id)
 
         return qs.order_by("-created_at")
@@ -153,17 +154,17 @@ class StudentFeeViewSet(ModelViewSet):
             .select_related("student", "fee_template", "fee_template__lecture")
         )
 
-        student_id = self.request.query_params.get("student")
-        if student_id:
+        student_id = parse_query_int(self.request.query_params, "student", min_value=1)
+        if student_id is not None:
             qs = qs.filter(student_id=student_id)
 
-        lecture_id = self.request.query_params.get("lecture")
-        if lecture_id:
+        lecture_id = parse_query_int(self.request.query_params, "lecture", min_value=1)
+        if lecture_id is not None:
             qs = qs.filter(fee_template__lecture_id=lecture_id)
 
-        is_active = self.request.query_params.get("is_active")
+        is_active = parse_query_bool(self.request.query_params, "is_active")
         if is_active is not None:
-            qs = qs.filter(is_active=is_active.lower() == "true")
+            qs = qs.filter(is_active=is_active)
 
         return qs.order_by("student__name")
 
@@ -259,19 +260,23 @@ class StudentInvoiceViewSet(ModelViewSet):
         )
 
         # 필터
-        year = self.request.query_params.get("billing_year")
-        month = self.request.query_params.get("billing_month")
-        if year:
-            qs = qs.filter(billing_year=int(year))
-        if month:
-            qs = qs.filter(billing_month=int(month))
+        year = parse_query_int(
+            self.request.query_params, "billing_year", min_value=1900, max_value=9999
+        )
+        month = parse_query_int(
+            self.request.query_params, "billing_month", min_value=1, max_value=12
+        )
+        if year is not None:
+            qs = qs.filter(billing_year=year)
+        if month is not None:
+            qs = qs.filter(billing_month=month)
 
         status_filter = self.request.query_params.get("status")
         if status_filter:
             qs = qs.filter(status=status_filter)
 
-        student_id = self.request.query_params.get("student")
-        if student_id:
+        student_id = parse_query_int(self.request.query_params, "student", min_value=1)
+        if student_id is not None:
             qs = qs.filter(student_id=student_id)
 
         search = self.request.query_params.get("search")
@@ -282,8 +287,8 @@ class StudentInvoiceViewSet(ModelViewSet):
             )
 
         # 강의 필터: 해당 강의의 비목이 포함된 청구서
-        lecture_id = self.request.query_params.get("lecture")
-        if lecture_id:
+        lecture_id = parse_query_int(self.request.query_params, "lecture", min_value=1)
+        if lecture_id is not None:
             qs = qs.filter(items__fee_template__lecture_id=lecture_id).distinct()
 
         # 비목 유형 필터
@@ -372,12 +377,12 @@ class FeePaymentViewSet(ModelViewSet):
             .select_related("student", "invoice")
         )
 
-        invoice_id = self.request.query_params.get("invoice")
-        if invoice_id:
+        invoice_id = parse_query_int(self.request.query_params, "invoice", min_value=1)
+        if invoice_id is not None:
             qs = qs.filter(invoice_id=invoice_id)
 
-        student_id = self.request.query_params.get("student")
-        if student_id:
+        student_id = parse_query_int(self.request.query_params, "student", min_value=1)
+        if student_id is not None:
             qs = qs.filter(student_id=student_id)
 
         return qs.order_by("-paid_at")
@@ -439,8 +444,20 @@ class FeeDashboardView(APIView):
 
     def get(self, request):
         today = timezone.localdate()
-        year = int(request.query_params.get("year", today.year))
-        month = int(request.query_params.get("month", today.month))
+        year = parse_query_int(
+            request.query_params,
+            "year",
+            default=today.year,
+            min_value=1900,
+            max_value=9999,
+        )
+        month = parse_query_int(
+            request.query_params,
+            "month",
+            default=today.month,
+            min_value=1,
+            max_value=12,
+        )
 
         stats = services.get_dashboard_stats(request.tenant, year, month)
         return Response(stats)
