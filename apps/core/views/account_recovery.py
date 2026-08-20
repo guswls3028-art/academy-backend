@@ -4,7 +4,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.api.common.throttles import SmsEndpointThrottle
+from apps.api.common.throttles import AlimtalkEndpointThrottle
 from apps.core.permissions import TenantResolved
 from apps.domains.students.services.account_recovery import (
     AccountRecoveryDeliveryError,
@@ -36,7 +36,7 @@ class AccountRecoveryDispatchView(APIView):
     """
 
     permission_classes = [AllowAny, TenantResolved]
-    throttle_classes = [SmsEndpointThrottle]
+    throttle_classes = [AlimtalkEndpointThrottle]
 
     def get_authenticators(self):
         return []

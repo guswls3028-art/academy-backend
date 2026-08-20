@@ -40,23 +40,22 @@ class Tenant(models.Model):
         SOLAPI = "solapi", "솔라피(Solapi)"
         PPURIO = "ppurio", "뿌리오(Ppurio)"
 
-    # 메시징 공급자 (솔라피 or 뿌리오)
+    # 레거시 테넌트별 공급자 값. 제품 실발송은 공용 Solapi 알림톡만 사용한다.
     messaging_provider = models.CharField(
         max_length=10,
         choices=MessagingProvider.choices,
         default=MessagingProvider.SOLAPI,
-        help_text="SMS/알림톡 발송에 사용할 공급자 (solapi 또는 ppurio=뿌리오)",
+        help_text="레거시 공급자 기록. 제품 실발송에는 사용하지 않음",
     )
     # 학원 개별 카카오 프로필 ID (연동 시 저장)
     kakao_pfid = models.CharField(max_length=100, blank=True, default="")
-    # 학원별 SMS 발신번호 (솔라피에 등록·인증된 번호, 예: 01031217466)
+    # 레거시 학원별 발신번호. 데이터 보존용이며 제품 실발송에는 사용하지 않는다.
     messaging_sender = models.CharField(max_length=20, blank=True, default="")
     # 선불 충전 잔액 (원)
     credit_balance = models.DecimalField(
         max_digits=12, decimal_places=0, default=Decimal("0")
     )
-    # 직접 연동 모드: 학원이 본인 솔라피/뿌리오 계정을 사용할 때 저장
-    # 비어 있으면 플랫폼 기본(시스템 환경변수) 키 사용
+    # 레거시 직접 연동 값. 데이터 보존용이며 제품 실발송에는 사용하지 않는다.
     own_solapi_api_key = models.CharField(
         max_length=200, blank=True, default="",
         help_text="학원 자체 솔라피 API Key (직접 연동 시)",

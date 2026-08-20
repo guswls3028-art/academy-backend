@@ -76,20 +76,20 @@ def _get_template_summary(event_type: str, template_id: str, message_mode: str) 
     trigger = event_type.removeprefix("manual_") if event_type else ""
     label = _TRIGGER_LABELS.get(trigger, "")
     if label:
-        mode = "알림톡" if message_mode == "alimtalk" else "SMS(blocked)"
+        mode = "알림톡" if message_mode == "alimtalk" else "비지원 채널 차단"
         return f"{label} ({mode})"
     if message_mode == "alimtalk" and template_id:
         return f"알림톡"
-    return "SMS(blocked)" if message_mode == "sms" else message_mode or "alimtalk"
+    return "비지원 채널 차단"
 
 
 def _video_encoding_block_reason(event_type: str, message_mode: str, template_id: str) -> str:
     """영상 인코딩 완료는 알림톡 승인 템플릿 없이 발송하지 않는다."""
     if event_type != "video_encoding_complete":
         return ""
-    if message_mode == "sms":
-        return "video_encoding_complete_sms_blocked"
-    if message_mode == "alimtalk" and not (template_id or "").strip():
+    if message_mode != "alimtalk":
+        return "video_encoding_complete_non_alimtalk_blocked"
+    if not (template_id or "").strip():
         return "video_encoding_complete_template_required"
     return ""
 
@@ -406,31 +406,6 @@ def send_one_alimtalk_ppurio(
         }
 
 
-def _sms_disabled_result() -> dict:
-    """Legacy callable boundary: SMS/LMS can never reach a provider."""
-    return {
-        "status": "error",
-        "reason": "sms_disabled",
-        "provider_called": False,
-    }
-
-
-def send_one_sms_ppurio(
-    to: str, text: str, sender: str,
-    *,
-    api_key: str = "", account: str = "",
-) -> dict:
-    return _sms_disabled_result()
-
-
-def send_one_sms_own_solapi(
-    to: str, text: str, sender: str,
-    *,
-    api_key: str, api_secret: str,
-) -> dict:
-    return _sms_disabled_result()
-
-
 def _build_variables_dict(replacements: Optional[list]) -> Optional[dict]:
     """Convert [{"key": "학생이름2", "value": "길동"}, ...] → {"#{학생이름2}": "길동", ...}"""
     if not replacements:
@@ -525,7 +500,7 @@ def send_one_alimtalk(
     """
     Solapi 알림톡 1건 발송.
     replacements: [{"key": "학생이름2", "value": "길동"}, ...] — 템플릿 #{학생이름2}, #{날짜}, #{클리닉명} 등 치환.
-    text: SMS 대체 본문 (Solapi 필수 필드).
+    text: Solapi 요청에 필요한 알림톡 본문 필드. SMS fallback은 비활성화된다.
     """
     try:
         from solapi.model import RequestMessage
@@ -612,10 +587,6 @@ def send_one_alimtalk(
             "reason": str(e)[:500],
             "provider_called": provider_called,
         }
-
-
-def send_one_sms(cfg, to: str, text: str, sender: str) -> dict:
-    return _sms_disabled_result()
 
 
 def main() -> int:
@@ -964,9 +935,9 @@ def main() -> int:
                     target_name = (data.get("target_name") or "").strip()
                     target_type_msg = (data.get("target_type") or "").strip()
                     target_id_msg = str(data.get("target_id") or "").strip()
-                    message_mode = (data.get("message_mode") or "").strip().lower()
-                    if not message_mode or message_mode not in ("sms", "alimtalk"):
-                        message_mode = "alimtalk"
+                    message_mode = (
+                        data.get("message_mode") or "alimtalk"
+                    ).strip().lower()
                     alimtalk_replacements = data.get("alimtalk_replacements") or []
                     template_id_msg = data.get("template_id") or ""
                     event_type_msg = (data.get("event_type") or "").strip()[:30]
@@ -981,8 +952,18 @@ def main() -> int:
                         allowed_template_ids = _allowed_common_template_ids(event_type_msg)
                         if template_id_normalized not in allowed_template_ids:
                             template_policy_block_reason = "common_template_not_allowed"
+                    channel_policy_block_reason = ""
+                    if message_mode != "alimtalk":
+                        from apps.domains.messaging.policy import (
+                            get_message_mode_block_reason,
+                        )
+                        channel_policy_block_reason = get_message_mode_block_reason(
+                            message_mode
+                        )
                     policy_block_reason = (
-                        video_encoding_block_reason or template_policy_block_reason
+                        channel_policy_block_reason
+                        or video_encoding_block_reason
+                        or template_policy_block_reason
                     )
                     if policy_block_reason:
                         logger.error(
@@ -1150,7 +1131,7 @@ def main() -> int:
                             except Exception as e:
                                 logger.warning("DB dedup check failed (proceeding): %s", e)
 
-                    # 서비스 계약은 알림톡 전용이다. 레거시 SMS/미지원 모드는
+                    # 서비스 계약은 알림톡 전용이다. 비지원 모드는
                     # 크레딧을 예약하기 전에 영구 실패로 닫는다.
                     if message_mode != "alimtalk":
                         from decimal import Decimal
@@ -1164,7 +1145,7 @@ def main() -> int:
                                 claim_log_id,
                                 success=False,
                                 amount_deducted=Decimal("0"),
-                                failure_reason="sms_disabled",
+                                failure_reason=channel_policy_block_reason,
                                 message_body=text[:2000],
                                 notification_type=event_type_msg,
                             )
@@ -1177,7 +1158,7 @@ def main() -> int:
                                     (f"{target_name} " if target_name else "")
                                     + (to[:4] + "****")
                                 ),
-                                failure_reason="sms_disabled",
+                                failure_reason=channel_policy_block_reason,
                                 message_body=text[:2000],
                                 message_mode=message_mode,
                                 sqs_message_id=message_id,

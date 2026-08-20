@@ -188,7 +188,7 @@ def schedule_notification(
         trigger: AutoSendConfig 트리거명
         delay_mode: "delay_minutes" | "scheduled_hour"
         delay_value: 분 수 또는 시각(0-23)
-        payload: enqueue_sms kwargs (JSON 직렬화 가능해야 함)
+        payload: enqueue_alimtalk kwargs (JSON 직렬화 가능해야 함)
     """
     now = dj_tz.now()
 
@@ -321,9 +321,10 @@ def _terminal_payload_error(payload: object) -> str:
         return "invalid_payload_missing_recipient"
     if not str(payload.get("text") or "").strip():
         return "invalid_payload_missing_text"
-    if str(payload.get("message_mode") or "alimtalk").strip().lower() == "sms":
-        return "sms_disabled"
-    return ""
+    mode = str(payload.get("message_mode") or "alimtalk").strip().lower()
+    from apps.domains.messaging.policy import get_message_mode_block_reason
+
+    return get_message_mode_block_reason(mode)
 
 
 def _terminal_policy_error(*, business_tenant_id: int) -> str:
@@ -637,7 +638,7 @@ def process_due_notifications(
         {"processed": int, "sent": int, "retried": int, "failed": int}
     """
     from apps.domains.messaging.models import ScheduledNotification
-    from apps.domains.messaging.services import enqueue_sms
+    from apps.domains.messaging.services import enqueue_alimtalk
 
     now = dj_tz.now()
     claims, terminal_count, deferred_count, reconciled_count = _claim_due_notifications(
@@ -660,12 +661,12 @@ def process_due_notifications(
         try:
             if terminal_error:
                 raise ValueError(terminal_error)
-            enqueued = enqueue_sms(
+            enqueued = enqueue_alimtalk(
                 **claim.payload,
                 trusted_business_tenant_id=claim.business_tenant_id,
             )
             if not enqueued:
-                raise RuntimeError("enqueue_sms returned false")
+                raise RuntimeError("enqueue_alimtalk returned false")
         except Exception as exc:
             from apps.domains.messaging.policy import MessagingPolicyError
 

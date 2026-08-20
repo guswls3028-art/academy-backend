@@ -14,7 +14,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 
 from apps.core.parsing import parse_bool
 from apps.core.permissions import TenantResolvedAndStaff, TenantResolved
-from apps.api.common.throttles import SmsEndpointThrottle, SignupCheckThrottle
+from apps.api.common.throttles import AlimtalkEndpointThrottle, SignupCheckThrottle
 
 from academy.adapters.db.django import repositories_students as student_repo
 from ..models import Student, StudentRegistrationRequest
@@ -101,7 +101,7 @@ class RegistrationRequestViewSet(ModelViewSet):
         if getattr(self, "action", None) == "check_duplicate":
             return [SignupCheckThrottle()]
         if getattr(self, "action", None) == "create":
-            return [SmsEndpointThrottle()]
+            return [AlimtalkEndpointThrottle()]
         return super().get_throttles()
 
     def get_permissions(self):

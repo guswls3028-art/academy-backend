@@ -1,19 +1,15 @@
 # apps/support/messaging/services/__init__.py
 """
-Re-export all public symbols for backward compatibility.
-`enqueue_sms` and `send_sms` are historical public API names. The former
-accepts only Alimtalk mode and the latter always fails closed with
-`sms_disabled`.
+Public messaging service exports. Product delivery is Alimtalk-only.
 """
 
 from .solapi_client import (
     _get_solapi_credentials,
     _is_mock_mode,
     get_solapi_client,
-    send_sms,
 )
 from .queue_service import (
-    enqueue_sms,
+    enqueue_alimtalk,
     is_reservation_cancelled,
 )
 from .url_helpers import (
@@ -41,9 +37,8 @@ __all__ = [
     "_get_solapi_credentials",
     "_is_mock_mode",
     "get_solapi_client",
-    "send_sms",
     # queue_service
-    "enqueue_sms",
+    "enqueue_alimtalk",
     "is_reservation_cancelled",
     # url_helpers
     "get_site_url",

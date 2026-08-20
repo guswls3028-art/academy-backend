@@ -58,7 +58,7 @@ class ScheduledDispatchConcurrencyPostgresTests(TransactionTestCase):
             return True
 
         with patch(
-            "apps.domains.messaging.services.enqueue_sms",
+            "apps.domains.messaging.services.enqueue_alimtalk",
             side_effect=blocking_enqueue,
         ):
             with ThreadPoolExecutor(max_workers=2) as pool:
@@ -101,7 +101,7 @@ class ScheduledDispatchConcurrencyPostgresTests(TransactionTestCase):
 
         with (
             patch("apps.domains.messaging.scheduled.HOURLY_SEND_LIMIT", 1),
-            patch("apps.domains.messaging.services.enqueue_sms", return_value=True),
+            patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=True),
         ):
             with ThreadPoolExecutor(max_workers=2) as pool:
                 results = list(pool.map(lambda _index: drain(), [1, 2]))
@@ -148,7 +148,7 @@ class ScheduledDispatchConcurrencyPostgresTests(TransactionTestCase):
             override_settings(
                 MESSAGING_PROVIDER_DAILY_DISPATCH_LIMIT=1,
             ),
-            patch("apps.domains.messaging.services.enqueue_sms", return_value=True),
+            patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=True),
         ):
             with ThreadPoolExecutor(max_workers=2) as pool:
                 results = list(pool.map(lambda _index: drain(), [1, 2]))

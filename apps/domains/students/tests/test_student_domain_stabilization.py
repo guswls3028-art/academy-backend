@@ -596,10 +596,10 @@ class TestB10BulkResolveConflictsAtomicity(TestCase):
 class TestThrottleConfiguration(TestCase):
     """비인증 엔드포인트에 throttle이 올바르게 적용됐는지 확인."""
 
-    def test_sms_endpoint_throttle_class_exists(self):
-        from apps.api.common.throttles import SmsEndpointThrottle, StaffPasswordResetThrottle
-        self.assertEqual(SmsEndpointThrottle.rate, "5/hour")
-        self.assertEqual(SmsEndpointThrottle.scope, "sms_endpoint")
+    def test_alimtalk_endpoint_throttle_class_exists(self):
+        from apps.api.common.throttles import AlimtalkEndpointThrottle, StaffPasswordResetThrottle
+        self.assertEqual(AlimtalkEndpointThrottle.rate, "5/hour")
+        self.assertEqual(AlimtalkEndpointThrottle.scope, "alimtalk_endpoint")
         self.assertEqual(StaffPasswordResetThrottle.rate, "60/hour")
         self.assertEqual(StaffPasswordResetThrottle.scope, "staff_password_reset")
 
@@ -610,41 +610,41 @@ class TestThrottleConfiguration(TestCase):
 
     def test_send_existing_credentials_has_throttle(self):
         from apps.domains.students.views import SendExistingCredentialsView
-        from apps.api.common.throttles import SmsEndpointThrottle
+        from apps.api.common.throttles import AlimtalkEndpointThrottle
         self.assertTrue(
-            any(issubclass(t, SmsEndpointThrottle) or t is SmsEndpointThrottle
+            any(issubclass(t, AlimtalkEndpointThrottle) or t is AlimtalkEndpointThrottle
                 for t in SendExistingCredentialsView.throttle_classes),
-            "SendExistingCredentialsView에 SmsEndpointThrottle 미적용!"
+            "SendExistingCredentialsView에 AlimtalkEndpointThrottle 미적용!"
         )
 
     def test_password_find_request_has_throttle(self):
         from apps.domains.students.views import StudentPasswordFindRequestView
-        from apps.api.common.throttles import SmsEndpointThrottle
+        from apps.api.common.throttles import AlimtalkEndpointThrottle
         self.assertTrue(
-            any(issubclass(t, SmsEndpointThrottle) or t is SmsEndpointThrottle
+            any(issubclass(t, AlimtalkEndpointThrottle) or t is AlimtalkEndpointThrottle
                 for t in StudentPasswordFindRequestView.throttle_classes),
-            "StudentPasswordFindRequestView에 SmsEndpointThrottle 미적용!"
+            "StudentPasswordFindRequestView에 AlimtalkEndpointThrottle 미적용!"
         )
 
     def test_password_reset_send_has_throttle(self):
         from apps.domains.students.views import StudentPasswordResetSendView
-        from apps.api.common.throttles import SmsEndpointThrottle
+        from apps.api.common.throttles import AlimtalkEndpointThrottle
         self.assertTrue(
-            any(issubclass(t, SmsEndpointThrottle) or t is SmsEndpointThrottle
+            any(issubclass(t, AlimtalkEndpointThrottle) or t is AlimtalkEndpointThrottle
                 for t in StudentPasswordResetSendView.throttle_classes),
-            "StudentPasswordResetSendView에 SmsEndpointThrottle 미적용!"
+            "StudentPasswordResetSendView에 AlimtalkEndpointThrottle 미적용!"
         )
 
     @override_settings(REST_FRAMEWORK={
         "DEFAULT_THROTTLE_RATES": {
             "anon": "60/minute", "user": "300/minute",
-            "sms_endpoint": "5/hour", "staff_password_reset": "60/hour",
+            "alimtalk_endpoint": "5/hour", "staff_password_reset": "60/hour",
             "signup_check": "30/minute",
         },
     })
     def test_throttle_rates_in_settings(self):
         from django.conf import settings
         rates = settings.REST_FRAMEWORK.get("DEFAULT_THROTTLE_RATES", {})
-        self.assertIn("sms_endpoint", rates)
+        self.assertIn("alimtalk_endpoint", rates)
         self.assertIn("staff_password_reset", rates)
         self.assertIn("signup_check", rates)

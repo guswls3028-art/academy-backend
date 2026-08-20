@@ -14,7 +14,6 @@ from apps.domains.messaging.models import MessageTemplate
 from apps.domains.messaging.serializers import MessagingInfoSerializer
 from apps.domains.messaging.permissions import can_manage_messaging_settings
 from apps.domains.messaging.policy import (
-    can_send_sms,
     get_messaging_disabled_reason,
     get_owner_tenant_id,
     is_messaging_disabled,
@@ -45,7 +44,6 @@ class MessagingInfoView(APIView):
             "delivery_policy": "common_alimtalk_only",
         })
         # 정책 SSOT 기반: 발송 허용·채널 출처 (API 응답만 사용, 프론트에서 재계산 금지)
-        data["sms_allowed"] = can_send_sms(tenant.id)
         channel = resolve_kakao_channel(tenant.id)
         data["channel_source"] = "common_owner"
         resolved_pf_id = (channel.get("pf_id") or "").strip()

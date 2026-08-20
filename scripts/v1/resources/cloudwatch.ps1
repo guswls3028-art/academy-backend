@@ -240,7 +240,7 @@ function Ensure-ApiCloudWatchAlarms {
     $compositeArgs = @(
         "cloudwatch", "put-composite-alarm",
         "--alarm-name", "academy-api-UserImpact",
-        "--alarm-description", "API 5XX burst or unhealthy target; Dev Alerts Cron sends fixed-recipient SMS.",
+        "--alarm-description", "API 5XX burst or unhealthy target; Dev Alerts Cron notifies the configured Slack webhook.",
         "--alarm-rule", 'ALARM("academy-api-Target5XX") OR ALARM("academy-api-UnHealthyHosts")',
         "--region", $R
     )

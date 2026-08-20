@@ -110,22 +110,6 @@ def _generate_refkey() -> str:
     return uuid.uuid4().hex[:32]
 
 
-def send_ppurio_sms(
-    to: str,
-    text: str,
-    sender: str,
-    *,
-    api_key: str = "",
-    account: str = "",
-) -> dict:
-    """Legacy compatibility boundary; SMS/LMS provider calls are forbidden."""
-    return {
-        "status": "error",
-        "reason": "sms_disabled",
-        "provider_called": False,
-    }
-
-
 def send_ppurio_alimtalk(
     to: str,
     sender: str,

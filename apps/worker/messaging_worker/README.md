@@ -32,7 +32,7 @@ SQS `academy-messaging-jobs` 수신 → 공용 알림톡만 발송. 예약 취�
 ## 3. SQS 운용 전략
 
 - **Visibility Timeout**: 솔라피 타임아웃(약 5~10초)보다 넉넉히 **30~60초** (기본 60). 짧으면 중복 발송 대참사.
-- **Dead Letter Queue (DLQ)**: **3번 재시도** 후 실패 메시지는 DLQ로 격리 → "왜 문자 안 왔냐" 민원 확인용 로그.
+- **Dead Letter Queue (DLQ)**: **3번 재시도** 후 실패 메시지는 DLQ로 격리 → 미수신 원인 확인용 로그.
 - **Long Polling**: `WaitTimeSeconds` **20초** → SQS 빈 쿼리 비용 최소화.
 
 ---
@@ -42,7 +42,7 @@ SQS `academy-messaging-jobs` 수신 → 공용 알림톡만 발송. 예약 취�
 | message_mode | 동작 |
 |--------------|------|
 | `alimtalk` | 공용 owner 채널로 알림톡 발송. pf_id·template_id 필수. |
-| `sms` | legacy payload 호환용. 실발송하지 않고 실패 로그 처리. |
+| 그 외 명시 값 | `sms_disabled` 또는 `unsupported_message_mode`로 실패 폐쇄. |
 
 - **템플릿 관리**: 카카오 검수 끝난 **템플릿 ID**를 ENV(`SOLAPI_KAKAO_TEMPLATE_ID`) 또는 payload `template_id`로 전달.
 
@@ -72,14 +72,14 @@ python -m apps.worker.messaging_worker.sqs_main
 ## 7. API/서비스에서 발송 요청
 
 - **비동기 (권장)**
-  `enqueue_sms(..., message_mode="alimtalk", template_id="...", alimtalk_replacements=[...])` → 공용 알림톡만
+  `enqueue_alimtalk(..., message_mode="alimtalk", template_id="...", alimtalk_replacements=[...])` → 공용 알림톡만
   → SQS 적재, 워커가 owner tenant 잔액 검증·차감 후 공용 채널로 발송.
 - **Raw/legacy SQS payload**
   worker 입구에서 `tenant_id`를 owner tenant로 강제 정규화한다. 원 업무 테넌트는
   `source_tenant_id`로만 보존하며, 예약 취소 같은 업무 조회에만 사용한다.
 - **SMS/LMS**
-  실발송 예외 없음. legacy SMS payload와 호환 callable은 provider를 호출하지 않고
-  `sms_disabled` 실패로 닫는다.
+  실발송 예외와 호환 callable이 없다. legacy SMS/LMS payload는 provider를 호출하지
+  않고 `sms_disabled` 실패로 닫으며, 그 밖의 비지원 값도 알림톡으로 보정하지 않는다.
 - **운영 수신자 차단**
   `MESSAGING_RECIPIENT_DENYLIST`는 하이픈을 제거해 비교한다. 이미 SQS에 들어간
   메시지도 워커 입구에서 삭제하고, Solapi 호출 직전 같은 정책을 다시 확인한다.

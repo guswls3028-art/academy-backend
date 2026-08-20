@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from unittest.mock import Mock, patch
 
-from apps.domains.messaging.ppurio_client import send_ppurio_alimtalk, send_ppurio_sms
+from apps.domains.messaging.ppurio_client import send_ppurio_alimtalk
 
 
 def _response(status_code: int, payload: dict) -> Mock:
@@ -11,24 +11,6 @@ def _response(status_code: int, payload: dict) -> Mock:
     resp.text = "x"
     resp.json.return_value = payload
     return resp
-
-
-@patch("apps.support.messaging.ppurio_client.requests.post")
-def test_ppurio_sms_is_hard_blocked_before_provider(mock_post: Mock) -> None:
-    result = send_ppurio_sms(
-        "01012345678",
-        "hello",
-        "01011112222",
-        api_key="configured",
-        account="configured",
-    )
-
-    assert result == {
-        "status": "error",
-        "reason": "sms_disabled",
-        "provider_called": False,
-    }
-    mock_post.assert_not_called()
 
 
 @patch("apps.support.messaging.ppurio_client.requests.post")

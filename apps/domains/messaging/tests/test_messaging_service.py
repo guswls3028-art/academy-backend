@@ -5,7 +5,7 @@ DB 의존 없이 mock 기반으로 핵심 로직을 검증.
 
 검증 범위:
 1. send_event_notification — 트리거별 발송 경로
-2. enqueue_sms — SQS enqueue 정책 / tenant isolation
+2. enqueue_alimtalk — SQS enqueue 정책 / tenant isolation
 3. is_reservation_cancelled — tenant isolation
 4. 템플릿 변수 치환 — 누락/오입력 방어
 5. 성적표 메시지 포맷 — 시험/과제/합불/미응시
@@ -76,7 +76,7 @@ class _DispatchThroughQueueMixin:
     Durable outbox behavior is covered by ``test_scheduled_notifications``.  These
     tests intentionally exercise the payload handed to the queue boundary, so the
     adapter below makes the mocked dispatch boundary forward that payload to the
-    already-mocked ``enqueue_sms`` function.
+    already-mocked ``enqueue_alimtalk`` function.
     """
 
     def setUp(self):
@@ -91,10 +91,10 @@ class _DispatchThroughQueueMixin:
     @staticmethod
     def _dispatch_through_queue(*, tenant_id, trigger, payload):
         from apps.domains.messaging.models import ScheduledNotification
-        from apps.domains.messaging.services.queue_service import enqueue_sms
+        from apps.domains.messaging.services.queue_service import enqueue_alimtalk
 
         del tenant_id, trigger
-        enqueued = enqueue_sms(**payload)
+        enqueued = enqueue_alimtalk(**payload)
         return SimpleNamespace(
             status=(
                 ScheduledNotification.Status.SENT
@@ -111,7 +111,7 @@ class _DispatchThroughQueueMixin:
 class TestSendEventNotification(_DispatchThroughQueueMixin, TestCase):
     """send_event_notification 핵심 경로 테스트."""
 
-    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_alimtalk")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -152,7 +152,7 @@ class TestSendEventNotification(_DispatchThroughQueueMixin, TestCase):
         self.assertEqual(reps["학생이름"], "홍길동")
         self.assertEqual(reps["강의명"], "수학A반")
 
-    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_alimtalk")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -174,7 +174,7 @@ class TestSendEventNotification(_DispatchThroughQueueMixin, TestCase):
         self.assertEqual(mock_enqueue.call_args.kwargs["to"], "01099998888")
         self.assertEqual(mock_enqueue.call_args.kwargs["target_type"], "student")
 
-    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_alimtalk")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -191,7 +191,7 @@ class TestSendEventNotification(_DispatchThroughQueueMixin, TestCase):
         self.assertFalse(result)
         mock_enqueue.assert_not_called()
 
-    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_alimtalk")
     @patch(f"{_SEL}.get_auto_send_config", return_value=None)
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -206,7 +206,7 @@ class TestSendEventNotification(_DispatchThroughQueueMixin, TestCase):
         self.assertFalse(result)
         mock_enqueue.assert_not_called()
 
-    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_alimtalk")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -228,14 +228,14 @@ class TestSendEventNotification(_DispatchThroughQueueMixin, TestCase):
             "KA01TP260406121126868FGddLmrDFUC",
         )
 
-    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_alimtalk")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
-    def test_auto_send_normalizes_legacy_sms_mode_to_alimtalk(
+    def test_auto_send_blocks_legacy_sms_mode(
         self, mock_owner, mock_disabled, mock_config, mock_enqueue
     ):
-        """AutoSendConfig는 운영 발송에서 알림톡 전용으로 처리된다."""
+        """명시적인 비알림톡 설정은 조용히 알림톡으로 바꾸지 않는다."""
         tenant = _make_tenant()
         student = _make_student()
         config = _make_config("check_in_complete", message_mode="sms")
@@ -245,11 +245,10 @@ class TestSendEventNotification(_DispatchThroughQueueMixin, TestCase):
         from apps.domains.messaging.services import send_event_notification
         result = send_event_notification(tenant=tenant, trigger="check_in_complete", student=student)
 
-        self.assertTrue(result)
-        mock_enqueue.assert_called_once()
-        self.assertEqual(mock_enqueue.call_args.kwargs["message_mode"], "alimtalk")
+        self.assertFalse(result)
+        mock_enqueue.assert_not_called()
 
-    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_alimtalk")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -279,7 +278,7 @@ class TestSendEventNotification(_DispatchThroughQueueMixin, TestCase):
 
         self.assertFalse(result)
 
-    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_alimtalk")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -298,7 +297,7 @@ class TestSendEventNotification(_DispatchThroughQueueMixin, TestCase):
         mock_enqueue.assert_not_called()
         mock_config.assert_called_once_with(2, "check_in_complete")
 
-    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_alimtalk")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -318,7 +317,7 @@ class TestSendEventNotification(_DispatchThroughQueueMixin, TestCase):
         mock_config.assert_called_once_with(2, "qna_answered")
 
     @patch("apps.domains.messaging.scheduled.schedule_notification")
-    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_alimtalk")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -346,7 +345,7 @@ class TestSendEventNotification(_DispatchThroughQueueMixin, TestCase):
         self.assertEqual(kwargs["payload"]["target_type"], "parent")
 
     @patch("apps.domains.messaging.scheduled.schedule_notification")
-    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_alimtalk")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -367,7 +366,7 @@ class TestSendEventNotification(_DispatchThroughQueueMixin, TestCase):
         mock_schedule.assert_not_called()
 
     @patch("apps.domains.messaging.scheduled.schedule_notification")
-    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_alimtalk")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -388,7 +387,7 @@ class TestSendEventNotification(_DispatchThroughQueueMixin, TestCase):
         mock_schedule.assert_not_called()
 
     @patch("apps.domains.messaging.scheduled.schedule_notification")
-    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_alimtalk")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -435,7 +434,7 @@ class TestTenantIsolation(_DispatchThroughQueueMixin, TestCase):
         result = is_reservation_cancelled(reservation_id=123, tenant_id=None)
         self.assertFalse(result)
 
-    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_alimtalk")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -456,7 +455,7 @@ class TestTenantIsolation(_DispatchThroughQueueMixin, TestCase):
         self.assertEqual(mock_enqueue.call_args.kwargs["tenant_id"], 1)
         self.assertEqual(mock_enqueue.call_args.kwargs["source_tenant_id"], 2)
 
-    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_alimtalk")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -482,20 +481,20 @@ class TestTenantIsolation(_DispatchThroughQueueMixin, TestCase):
 
 
 # ──────────────────────────────────────────
-# 3. enqueue_sms 정책 테스트
+# 3. enqueue_alimtalk 정책 테스트
 # ──────────────────────────────────────────
 
-class TestEnqueueSmsPolicy(TestCase):
-    """enqueue_sms 메시지 모드 및 정책 테스트."""
+class TestEnqueueAlimtalkPolicy(TestCase):
+    """enqueue_alimtalk 메시지 모드 및 정책 테스트."""
 
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     def test_sms_mode_is_disabled_service_wide(self, mock_disabled):
         """SMS 모드는 전체 서비스에서 차단."""
-        from apps.domains.messaging.services import enqueue_sms
+        from apps.domains.messaging.services import enqueue_alimtalk
         from apps.domains.messaging.policy import MessagingPolicyError
 
         with self.assertRaises(MessagingPolicyError) as ctx:
-            enqueue_sms(
+            enqueue_alimtalk(
                 tenant_id=1,
                 to="01012345678",
                 text="테스트",
@@ -506,11 +505,11 @@ class TestEnqueueSmsPolicy(TestCase):
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     def test_sms_blocked_for_non_owner(self, mock_disabled):
         """SMS는 owner 여부와 관계없이 MessagingPolicyError 발생."""
-        from apps.domains.messaging.services import enqueue_sms
+        from apps.domains.messaging.services import enqueue_alimtalk
         from apps.domains.messaging.policy import MessagingPolicyError
 
         with self.assertRaises(MessagingPolicyError) as ctx:
-            enqueue_sms(tenant_id=5, to="01012345678", text="테스트", message_mode="sms")
+            enqueue_alimtalk(tenant_id=5, to="01012345678", text="테스트", message_mode="sms")
         self.assertEqual(ctx.exception.reason, "sms_disabled")
 
     @patch(f"{_SQS}.MessagingSQSQueue")
@@ -527,8 +526,8 @@ class TestEnqueueSmsPolicy(TestCase):
         mock_queue.enqueue.return_value = True
         mock_queue_cls.return_value = mock_queue
 
-        from apps.domains.messaging.services import enqueue_sms
-        result = enqueue_sms(
+        from apps.domains.messaging.services import enqueue_alimtalk
+        result = enqueue_alimtalk(
             tenant_id=5, to="01012345678", text="테스트", message_mode="alimtalk",
             sender="01099999999",
         )
@@ -551,12 +550,12 @@ class TestEnqueueSmsPolicy(TestCase):
         mock_tenant_filter,
     ):
         from apps.domains.messaging.policy import MessagingPolicyError
-        from apps.domains.messaging.services import enqueue_sms
+        from apps.domains.messaging.services import enqueue_alimtalk
 
         mock_tenant_filter.return_value.exists.return_value = False
 
         with self.assertRaisesRegex(MessagingPolicyError, "비활성화") as raised:
-            enqueue_sms(
+            enqueue_alimtalk(
                 tenant_id=77,
                 to="01012345678",
                 text="test",
@@ -575,10 +574,10 @@ class TestEnqueueSmsPolicy(TestCase):
         mock_recipient,
         mock_active_tenant,
     ):
-        from apps.domains.messaging.services import enqueue_sms
+        from apps.domains.messaging.services import enqueue_alimtalk
 
         with self.assertRaisesRegex(RuntimeError, "db down"):
-            enqueue_sms(
+            enqueue_alimtalk(
                 tenant_id=5,
                 to="01012345678",
                 text="test",
@@ -588,30 +587,9 @@ class TestEnqueueSmsPolicy(TestCase):
     @patch(f"{_POL}.is_messaging_disabled", return_value=True)
     def test_test_tenant_skipped(self, mock_disabled):
         """테스트 테넌트(9999)는 enqueue 스킵."""
-        from apps.domains.messaging.services import enqueue_sms
-        result = enqueue_sms(tenant_id=9999, to="01012345678", text="테스트")
+        from apps.domains.messaging.services import enqueue_alimtalk
+        result = enqueue_alimtalk(tenant_id=9999, to="01012345678", text="테스트")
         self.assertFalse(result)
-
-
-class TestMessagingProviderResolution(TestCase):
-    """정책 분기: provider/pf_id/use_default/sms 허용 여부."""
-
-    @patch(f"{_POL}.resolve_kakao_channel", return_value={"pf_id": "", "use_default": True})
-    def test_resolve_alimtalk_provider_with_default_channel(self, mock_channel):
-        from apps.domains.messaging.policy import resolve_messaging_provider
-        result = resolve_messaging_provider(tenant_id=2, message_type="alimtalk")
-        self.assertTrue(result["allowed"])
-        self.assertEqual(result["provider"], "solapi")
-        self.assertEqual(result["pf_id"], "")
-        self.assertTrue(result["use_default"])
-
-    @patch(f"{_POL}.get_tenant_provider", return_value="solapi")
-    def test_resolve_sms_provider_blocked(self, mock_provider):
-        from apps.domains.messaging.policy import resolve_messaging_provider
-        result = resolve_messaging_provider(tenant_id=5, message_type="sms")
-        self.assertFalse(result["allowed"])
-        self.assertEqual(result["reason"], "sms_disabled")
-        self.assertEqual(result["provider"], "solapi")
 
 
 # ──────────────────────────────────────────
@@ -621,7 +599,7 @@ class TestMessagingProviderResolution(TestCase):
 class TestTemplateVariableSubstitution(_DispatchThroughQueueMixin, TestCase):
     """알림톡 템플릿 변수 치환 검증."""
 
-    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_alimtalk")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -648,7 +626,7 @@ class TestTemplateVariableSubstitution(_DispatchThroughQueueMixin, TestCase):
             "학생이름2": "철수",
         })
 
-    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_alimtalk")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -676,7 +654,7 @@ class TestTemplateVariableSubstitution(_DispatchThroughQueueMixin, TestCase):
         self.assertIn("14:00", text)
         self.assertNotIn("#{", text)
 
-    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_alimtalk")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -703,7 +681,7 @@ class TestTemplateVariableSubstitution(_DispatchThroughQueueMixin, TestCase):
         self.assertIn("85/100", text)
         self.assertNotIn("#{", text)
 
-    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_alimtalk")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -1040,7 +1018,7 @@ class TestRegistrationMessages(TestCase):
 class TestEnrollmentAndWithdrawalNotifications(_DispatchThroughQueueMixin, TestCase):
     """반 등록 완료, 퇴원 알림 테스트."""
 
-    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_alimtalk")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -1066,7 +1044,7 @@ class TestEnrollmentAndWithdrawalNotifications(_DispatchThroughQueueMixin, TestC
         self.assertEqual(reps["학원명"], "학원플러스")
         self.assertEqual(reps["학생이름2"], "길동")
 
-    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_alimtalk")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -1146,14 +1124,14 @@ class TestTimeGuard(TestCase):
 
 
 class TestIdempotencyMetadata(_DispatchThroughQueueMixin, TestCase):
-    """send_event_notification이 멱등성 메타데이터를 enqueue_sms에 전달."""
+    """send_event_notification이 멱등성 메타데이터를 enqueue_alimtalk에 전달."""
 
-    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_alimtalk")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
     def test_passes_event_metadata(self, mock_owner, mock_disabled, mock_config, mock_enqueue):
-        """trigger, student_id, occurrence_key가 enqueue_sms에 전달됨."""
+        """trigger, student_id, occurrence_key가 enqueue_alimtalk에 전달됨."""
         tenant = _make_tenant()
         student = SimpleNamespace(
             id=42, pk=42, name="홍길동", phone="01012345678",
@@ -1172,7 +1150,7 @@ class TestIdempotencyMetadata(_DispatchThroughQueueMixin, TestCase):
         self.assertEqual(kwargs["target_id"], 42)
         self.assertTrue(kwargs["occurrence_key"])  # 날짜 기반 키
 
-    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_alimtalk")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -1353,7 +1331,7 @@ class TestDryRunMode(TestCase):
         from apps.domains.messaging.policy import is_event_dry_run
         self.assertFalse(is_event_dry_run("check_in_complete"))
 
-    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_alimtalk")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)

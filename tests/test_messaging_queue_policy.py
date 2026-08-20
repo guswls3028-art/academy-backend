@@ -7,7 +7,7 @@ import pytest
 
 from apps.domains.messaging.policy import MessagingPolicyError
 from apps.domains.messaging.sqs_queue import MessagingSQSQueue
-from apps.domains.messaging.services import enqueue_sms
+from apps.domains.messaging.services import enqueue_alimtalk
 from apps.worker.messaging_worker.sqs_main import (
     _allowed_common_template_ids,
     _has_valid_worker_tenant_binding,
@@ -27,15 +27,14 @@ class _FakeQueueClient:
         return True
 
 
-def test_video_encoding_complete_sms_is_blocked_even_when_sms_allowed() -> None:
+def test_video_encoding_complete_non_alimtalk_mode_is_blocked() -> None:
     with (
         patch("apps.domains.messaging.policy.is_messaging_disabled", return_value=False),
         patch("apps.domains.messaging.policy.is_messaging_restricted", return_value=False),
         patch("apps.domains.messaging.policy.check_recipient_allowed", return_value=True),
-        patch("apps.domains.messaging.policy.can_send_sms", return_value=True),
     ):
         with pytest.raises(MessagingPolicyError) as exc:
-            enqueue_sms(
+            enqueue_alimtalk(
                 tenant_id=1,
                 to="01012345678",
                 text="영상 인코딩 완료",
@@ -53,7 +52,7 @@ def test_worker_blocks_video_encoding_complete_sms_and_missing_template() -> Non
             message_mode="sms",
             template_id="KA01VIDEO",
         )
-        == "video_encoding_complete_sms_blocked"
+        == "video_encoding_complete_non_alimtalk_blocked"
     )
     assert (
         _video_encoding_block_reason(
@@ -105,6 +104,24 @@ def test_manual_enqueue_without_occurrence_key_gets_unique_business_key() -> Non
     keys = [m["business_idempotency_key"] for m in fake_client.messages]
     assert len(keys) == 2
     assert keys[0] != keys[1]
+
+
+@pytest.mark.parametrize("message_mode", ["lms", "both", "email"])
+def test_queue_rejects_every_explicit_non_alimtalk_mode(message_mode: str) -> None:
+    queue = MessagingSQSQueue()
+    queue.queue_client = _FakeQueueClient()
+
+    with pytest.raises(MessagingPolicyError) as exc:
+        queue.enqueue(
+            tenant_id=1,
+            to="01012345678",
+            text="차단 대상",
+            message_mode=message_mode,
+        )
+
+    expected = "sms_disabled" if message_mode == "lms" else "unsupported_message_mode"
+    assert exc.value.reason == expected
+    assert queue.queue_client.messages == []
 
 
 def test_business_key_includes_source_tenant_for_owner_proxy_sends() -> None:
@@ -195,7 +212,7 @@ def test_worker_rejects_contradictory_legacy_tenant_binding() -> None:
 
 def test_enqueue_rejects_cross_tenant_source_spoof() -> None:
     with pytest.raises(MessagingPolicyError) as exc:
-        enqueue_sms(
+        enqueue_alimtalk(
             tenant_id=2,
             source_tenant_id=3,
             to="01012345678",
@@ -251,7 +268,7 @@ def test_product_producers_cannot_bypass_durable_messaging_outbox() -> None:
             if path in allowed or "tests" in path.parts:
                 continue
             text = path.read_text(encoding="utf-8")
-            if re.search(r"(?<!def )\benqueue_sms\(", text):
+            if re.search(r"(?<!def )\benqueue_alimtalk\(", text):
                 offenders.append(str(path.relative_to(root)))
 
     assert offenders == []

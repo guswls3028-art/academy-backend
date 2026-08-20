@@ -123,11 +123,11 @@ def send_event_notification(
 
     effective_mode = (config.message_mode or "alimtalk").strip().lower()
     if effective_mode != "alimtalk":
-        logger.info(
-            "send_event_notification: trigger=%s tenant=%s normalized auto-send mode %s to alimtalk",
+        logger.error(
+            "send_event_notification blocked: trigger=%s tenant=%s non-Alimtalk mode=%s",
             trigger, tenant.id, effective_mode,
         )
-        effective_mode = "alimtalk"
+        return False
 
     # ── 통합 알림톡 템플릿 감지 ──
     # 트리거에 매핑된 통합 템플릿이 있으면 해당 ID 사용
@@ -187,7 +187,7 @@ def send_event_notification(
             site_url=site_url,
         )
 
-        # Solapi text 필드 (알림톡: disable_sms=True → 실제 SMS 발송 안 됨)
+        # Solapi 알림톡 본문 필드. 공급사 SMS fallback은 worker에서 비활성화한다.
         _enqueue_text = next(
             (r["value"] for r in replacements if r["key"] == "선생님메모"),
             content_body,

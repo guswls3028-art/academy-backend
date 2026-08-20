@@ -7,7 +7,7 @@ from rest_framework.exceptions import ValidationError
 
 from apps.core.permissions import TenantResolved
 from apps.core.parsing import parse_bool
-from apps.api.common.throttles import SmsEndpointThrottle, StaffPasswordResetThrottle
+from apps.api.common.throttles import AlimtalkEndpointThrottle, StaffPasswordResetThrottle
 from apps.core.models import TenantMembership
 
 
@@ -24,7 +24,7 @@ def _pw_reset_cache_key(tenant_id, phone: str) -> str:
 class StudentPasswordFindRequestView(APIView):
     """Legacy OTP password recovery endpoint, sealed in favor of account recovery."""
     permission_classes = [AllowAny, TenantResolved]
-    throttle_classes = [SmsEndpointThrottle]
+    throttle_classes = [AlimtalkEndpointThrottle]
 
     def get_authenticators(self):
         return []  # 비로그인 요청 허용, 만료 JWT 시 401 방지
@@ -36,7 +36,7 @@ class StudentPasswordFindRequestView(APIView):
 class StudentPasswordFindVerifyView(APIView):
     """Legacy OTP verification endpoint, sealed in favor of account recovery."""
     permission_classes = [AllowAny, TenantResolved]
-    throttle_classes = [SmsEndpointThrottle]
+    throttle_classes = [AlimtalkEndpointThrottle]
 
     def get_authenticators(self):
         return []  # 비로그인 요청 허용, 만료 JWT 시 401 방지
@@ -73,7 +73,7 @@ class StudentPasswordResetSendView(APIView):
     공개 요청은 pending 임시 비밀번호, staff 요청은 즉시 변경 경로로 정본 서비스에 위임한다.
     """
     permission_classes = [AllowAny, TenantResolved]
-    throttle_classes = [SmsEndpointThrottle]
+    throttle_classes = [AlimtalkEndpointThrottle]
 
     def get_authenticators(self):
         """AllowAny이지만 JWT가 있으면 파싱 — staff 판별용 (temp_password/skip_notify)."""
@@ -84,7 +84,7 @@ class StudentPasswordResetSendView(APIView):
     def get_throttles(self):
         if _is_staff_password_reset_request(getattr(self, "request", None)):
             return [StaffPasswordResetThrottle()]
-        return [SmsEndpointThrottle()]
+        return [AlimtalkEndpointThrottle()]
 
     def post(self, request):
         tenant = getattr(request, "tenant", None)

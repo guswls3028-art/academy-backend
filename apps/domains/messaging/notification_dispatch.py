@@ -23,11 +23,9 @@ MAX_PREVIEW_TOKEN_PAYLOAD_BYTES = 2_000_000
 MAX_PREVIEW_MESSAGE_BODY_LENGTH = 5_000
 
 
-def _alimtalk_only_mode(raw_mode: str | None) -> str:
-    """Manual notification dispatch is alimtalk-only; legacy SMS modes are normalized."""
-    if (raw_mode or "").strip().lower() != "alimtalk":
-        logger.info("manual notification mode normalized to alimtalk: %s", raw_mode)
-    return "alimtalk"
+def _is_alimtalk_mode(raw_mode: str | None) -> bool:
+    """Missing legacy values mean Alimtalk; explicit non-Alimtalk values fail closed."""
+    return (raw_mode or "alimtalk").strip().lower() == "alimtalk"
 
 
 def build_attendance_preview(
@@ -84,7 +82,9 @@ def build_attendance_preview(
     if owner_template and owner_template.tenant_id != owner_tenant_id:
         return {"error": "공용 승인 템플릿의 테넌트가 일치하지 않습니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
     template = content_template
-    effective_mode = _alimtalk_only_mode(config.message_mode if config else "alimtalk")
+    if not _is_alimtalk_mode(config.message_mode if config else "alimtalk"):
+        return {"error": "알림톡 전용 설정이 아닙니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
+    effective_mode = "alimtalk"
     solapi_template_id = ""
     solapi_approved = False
 
@@ -252,7 +252,9 @@ def build_student_list_preview(
     if owner_template and owner_template.tenant_id != owner_tenant_id:
         return {"error": "공용 승인 템플릿의 테넌트가 일치하지 않습니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
     template = content_template
-    effective_mode = _alimtalk_only_mode(config.message_mode if config else "alimtalk")
+    if not _is_alimtalk_mode(config.message_mode if config else "alimtalk"):
+        return {"error": "알림톡 전용 설정이 아닙니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
+    effective_mode = "alimtalk"
     solapi_template_id = ""
     solapi_approved = False
 
@@ -497,12 +499,12 @@ def execute_notification_batch(
 
     recipients = payload.get("recipients", [])
     solapi_template_id = payload.get("solapi_template_id", "")
-    raw_message_mode = _alimtalk_only_mode(payload.get("message_mode", "alimtalk"))
+    raw_message_mode = str(payload.get("message_mode") or "alimtalk").strip().lower()
     notification_type = payload.get("notification_type", "")
     send_to = payload.get("send_to", "parent")
     target_type = "parent" if send_to == "parent" else "student"
 
-    _can_alimtalk = bool(solapi_template_id)
+    _can_alimtalk = raw_message_mode == "alimtalk" and bool(solapi_template_id)
     modes_to_send = ["alimtalk"] if _can_alimtalk else []
 
     if not modes_to_send:

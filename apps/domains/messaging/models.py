@@ -390,7 +390,7 @@ class ScheduledNotification(models.Model):
     )
     trigger = models.CharField(max_length=60, db_index=True)
     send_at = models.DateTimeField(db_index=True)
-    payload = models.JSONField(help_text="enqueue_sms kwargs (to, text, message_mode, template_id, etc.)")
+    payload = models.JSONField(help_text="enqueue_alimtalk kwargs (to, text, message_mode, template_id, etc.)")
     dispatch_key = models.UUIDField(
         default=uuid4,
         null=True,

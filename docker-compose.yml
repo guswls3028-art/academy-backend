@@ -257,7 +257,7 @@ services:
     #           capabilities: [gpu]
 
   # ============================================================================
-  # Messaging Worker (SQS + Solapi SMS/알림톡)
+  # Messaging Worker (SQS + Solapi 공용 알림톡)
   # ============================================================================
   messaging-worker:
     build:
