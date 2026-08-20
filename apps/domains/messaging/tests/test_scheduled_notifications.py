@@ -440,10 +440,18 @@ class ScheduledNotificationProcessingTests(TransactionTestCase):
         self.assertEqual(len(outbox.recipient_fingerprint), 64)
         self.assertNotIn("01033334444", outbox.recipient_fingerprint)
 
-        with patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=True):
+        with patch(
+            "apps.domains.messaging.services.enqueue_alimtalk",
+            autospec=True,
+            return_value=True,
+        ) as enqueue_alimtalk:
             process_due_notifications(batch_size=1)
 
         outbox.refresh_from_db()
+        self.assertNotIn(
+            "recipient_fingerprint",
+            enqueue_alimtalk.call_args.kwargs,
+        )
         self.assertEqual(outbox.payload["redacted"], True)
         self.assertEqual(outbox.payload["origin_id"], "job-trace-1")
         self.assertEqual(

@@ -661,8 +661,10 @@ def process_due_notifications(
         try:
             if terminal_error:
                 raise ValueError(terminal_error)
+            enqueue_payload = dict(claim.payload)
+            enqueue_payload.pop("recipient_fingerprint", None)
             enqueued = enqueue_alimtalk(
-                **claim.payload,
+                **enqueue_payload,
                 trusted_business_tenant_id=claim.business_tenant_id,
             )
             if not enqueued:
