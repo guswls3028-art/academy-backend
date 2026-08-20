@@ -99,11 +99,11 @@ git push main
 | Worker 공통 import: `apps/{shared,support,core,infrastructure}/`, `apps/api/common/`, `apps/api/config/settings/worker.py` | ALL images (force_full) |
 | Python package import roots: `apps/__init__.py`, `apps/{api,domains,worker}/__init__.py`, `apps/api/config[/settings]/__init__.py` | ALL images (force_full) |
 | Django startup import: `apps/domains/*/{models.py,models/,apps.py,signals.py,signals/,__init__.py}` | ALL images (force_full) |
-| `apps/`, `scripts/`, `docker/api/`, `requirements/api.txt` | API |
+| `apps/`, runtime `scripts/` except `scripts/codex/`, `docker/api/`, `requirements/api.txt` | API |
 | `apps/worker/video_worker/`, `apps/support/video/`, `apps/domains/video/`, `apps/api/config/settings/worker.py`, `docker/video-worker/`, `requirements/worker-video.txt` | Video Worker |
 | Legacy aggregate `requirements/requirements.txt` | API + Video Worker only; it is not a base/AI/Messaging/Tools input |
 | `apps/worker/messaging_worker/`, `apps/support/messaging/`, `apps/domains/messaging/`, `apps/api/config/settings/worker.py`, `docker/messaging-worker/`, `requirements/worker-messaging.txt` | Messaging Worker |
-| `apps/worker/ai_worker/`, `apps/worker/omr/`, `apps/domains/`, `apps/support/ai/`, `apps/api/config/settings/(worker|base).py`, `models/`, `scripts/`, `academy/`, `libs/queue/`, `docker/ai-worker*`, `requirements/worker-ai*` | AI Worker |
+| `apps/worker/ai_worker/`, `apps/worker/omr/`, `apps/domains/`, `apps/support/ai/`, `apps/api/config/settings/(worker|base).py`, `models/`, runtime `scripts/` except `scripts/codex/`, `academy/`, `libs/queue/`, `docker/ai-worker*`, `requirements/worker-ai*` | AI Worker |
 | `apps/worker/tools_worker/`, `apps/domains/tools/`, `apps/domains/ai/queueing/`, PDF 오답노트 서비스/정답 포맷터/한글 폰트, `apps/support/ai/services/sqs_queue.py`, `academy/(application/use_cases/tools|domain/tools|adapters/tools|framework/workers|adapters/queue/sqs)/`, `docker/tools-worker/`, `requirements/worker-tools.txt` | Tools Worker |
 
 `force_full` is a correctness boundary for code imported by more than one runtime. It builds all six images, including `academy-base`; service-specific paths retain selective builds. `workflow_dispatch` always performs a full build/deploy. Every worker Dockerfile imports its actual runtime entrypoint during the immutable build, so a candidate with a missing module or incompatible import cannot reach production deployment. Every release, including worker-only selective releases, still runs the persistent API/Tools development gate before preprod.
@@ -112,6 +112,9 @@ Push change detection derives each service's diff base from that image's source 
 
 Evidence-only pushes under `docs/reports/**` and updates to
 `docs/ssot/runtime-current.md` do not start the production release workflow.
+Local worktree lifecycle tooling under `scripts/codex/**` is also excluded from
+the push trigger and from accumulated API/AI image diffs; it is exercised by
+the backend quality gate but cannot request production approval or AWS work.
 Other non-runtime changes may still run lint and smoke checks, but the
 production environment approval, shared mutation lock, AWS readbacks, image
 builds, and deploy jobs are all skipped unless change detection selects at

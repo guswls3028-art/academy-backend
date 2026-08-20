@@ -16,6 +16,7 @@ on:
       - 'README*'
       - 'docs/reports/**'
       - 'docs/ssot/runtime-current.md'
+      - 'scripts/codex/**'
       - '.gitignore'
       - 'LICENSE'
   workflow_dispatch:
@@ -160,6 +161,10 @@ jobs:
           # Avoid echo|grep -q under GitHub's `bash -o pipefail`: on a large
           # multi-commit diff, grep can exit early and make echo fail with SIGPIPE.
           changed_matches() { grep -qE "$1" <<< "$CHANGED"; }
+          # Local Codex worktree tooling is never copied for a product purpose.
+          # Exclude it from accumulated per-image diffs as well as push triggers,
+          # otherwise a later workflow-file change would reclassify it as API/AI.
+          runtime_changes() { grep -vE '^scripts/codex/' <<< "$1" || true; }
 
           # 전체 빌드 트리거: base/공통 requirements와 모든 worker가 import하는 코드.
           # Worker settings가 apps.core/api.common/shared와 각 domain model을 초기화하고,
@@ -205,7 +210,7 @@ jobs:
           echo "build_base=$BASE" >> $GITHUB_OUTPUT
 
           # API: apps/ (대부분), docker/api/, requirements/api.txt
-          CHANGED="$CHANGED_API"
+          CHANGED="$(runtime_changes "$CHANGED_API")"
           API=false
           changed_matches "^apps/" && API=true
           changed_matches "^scripts/" && API=true
@@ -258,7 +263,7 @@ jobs:
           # 워커 settings INSTALLED_APPS 동기화가 필요하고, 코드 image 자체에도
           # 새 모델 정의가 들어가야 한다. 누락 시 운영 콜백 ValueError로 swallow → DB stuck.
           # 경험상(2026-04-27 inventory 누락) 보수적 트리거가 필요해 도메인 패턴을 넓게 잡는다.
-          CHANGED="$CHANGED_AI"
+          CHANGED="$(runtime_changes "$CHANGED_AI")"
           AI=false
           changed_matches "^apps/worker/ai_worker/" && AI=true
           changed_matches "^apps/worker/omr/" && AI=true
