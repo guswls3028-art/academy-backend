@@ -1,9 +1,10 @@
 # PATH: apps/core/models/ops_audit.py
 """
-플랫폼 운영(/dev) 콘솔 감사 로그.
+운영·보안·지원 감사 로그.
 
 dev_app에서 발생한 모든 변경(테넌트 생성/수정, owner 등록/제거,
-maintenance 토글, billing 연장/플랜변경/입금처리, 임퍼소네이션, 인박스 답변 등)을 기록.
+maintenance 토글, billing 연장/플랜변경/입금처리, 임퍼소네이션, 인박스 답변 등)과
+학생 지원 대리보기·활동 증거를 기록한다.
 """
 from django.conf import settings
 from django.db import models
@@ -12,7 +13,7 @@ from .base import TimestampModel
 
 
 class OpsAuditLog(TimestampModel):
-    """플랫폼 운영 작업 감사 로그."""
+    """테넌트 대상을 포함할 수 있는 운영·보안·지원 감사 로그."""
 
     class Result(models.TextChoices):
         SUCCESS = "success", "Success"
@@ -69,6 +70,7 @@ class OpsAuditLog(TimestampModel):
             models.Index(fields=["action", "-created_at"], name="ops_audit_l_action_idx"),
             models.Index(fields=["target_tenant", "-created_at"], name="ops_audit_l_tenant_idx"),
             models.Index(fields=["actor_user", "-created_at"], name="ops_audit_l_actor_idx"),
+            models.Index(fields=["target_user", "-created_at"], name="ops_audit_l_target_idx"),
         ]
 
     def __str__(self) -> str:

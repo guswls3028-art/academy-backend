@@ -10,6 +10,14 @@
         ],
         "type": "string"
       },
+      "ActorModeEnum": {
+        "description": "* `student` - student\n* `support` - support",
+        "enum": [
+          "student",
+          "support"
+        ],
+        "type": "string"
+      },
       "AdminExamResultRow": {
         "properties": {
           "achievement": {
@@ -517,7 +525,7 @@
           ""
         ]
       },
-      "CategoryEnum": {
+      "CategoryEccEnum": {
         "description": "* `free` - 자유\n* `tip` - 공부 팁\n* `story` - 수강 이야기\n* `question` - 질문\n* `other` - 기타",
         "enum": [
           "free",
@@ -1599,6 +1607,24 @@
           6
         ],
         "type": "integer"
+      },
+      "DaysEnum": {
+        "description": "* `7` - 7\n* `30` - 30\n* `90` - 90",
+        "enum": [
+          7,
+          30,
+          90
+        ],
+        "type": "integer"
+      },
+      "DeviceClassEnum": {
+        "description": "* `mobile` - mobile\n* `tablet` - tablet\n* `desktop` - desktop",
+        "enum": [
+          "mobile",
+          "tablet",
+          "desktop"
+        ],
+        "type": "string"
       },
       "Enrollment": {
         "properties": {
@@ -6789,7 +6815,7 @@
       "PatchedPublicBoardPostWriteRequest": {
         "properties": {
           "category": {
-            "$ref": "#/components/schemas/CategoryEnum"
+            "$ref": "#/components/schemas/CategoryEccEnum"
           },
           "content": {
             "minLength": 1,
@@ -8791,7 +8817,7 @@
             "type": "string"
           },
           "category": {
-            "$ref": "#/components/schemas/CategoryEnum"
+            "$ref": "#/components/schemas/CategoryEccEnum"
           },
           "content": {
             "type": "string"
@@ -8900,7 +8926,7 @@
             "type": "string"
           },
           "category": {
-            "$ref": "#/components/schemas/CategoryEnum"
+            "$ref": "#/components/schemas/CategoryEccEnum"
           },
           "cover_image_url": {
             "oneOf": [
@@ -8997,7 +9023,7 @@
             "type": "string"
           },
           "category": {
-            "$ref": "#/components/schemas/CategoryEnum"
+            "$ref": "#/components/schemas/CategoryEccEnum"
           },
           "cover_image_url": {
             "oneOf": [
@@ -9062,7 +9088,7 @@
       "PublicBoardPostWrite": {
         "properties": {
           "category": {
-            "$ref": "#/components/schemas/CategoryEnum"
+            "$ref": "#/components/schemas/CategoryEccEnum"
           },
           "content": {
             "type": "string"
@@ -9101,7 +9127,7 @@
       "PublicBoardPostWriteRequest": {
         "properties": {
           "category": {
-            "$ref": "#/components/schemas/CategoryEnum"
+            "$ref": "#/components/schemas/CategoryEccEnum"
           },
           "content": {
             "minLength": 1,
@@ -12127,6 +12153,117 @@
         ],
         "type": "string"
       },
+      "StudentActivityAcceptedSchema": {
+        "properties": {
+          "accepted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "accepted"
+        ],
+        "type": "object"
+      },
+      "StudentActivityFeedSchema": {
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "days": {
+            "$ref": "#/components/schemas/DaysEnum"
+          },
+          "include_support": {
+            "type": "boolean"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/StudentActivityItemSchema"
+            },
+            "type": "array"
+          },
+          "student": {
+            "$ref": "#/components/schemas/StudentSupportSummarySchema"
+          }
+        },
+        "required": [
+          "count",
+          "days",
+          "include_support",
+          "results",
+          "student"
+        ],
+        "type": "object"
+      },
+      "StudentActivityItemSchema": {
+        "properties": {
+          "actor_mode": {
+            "$ref": "#/components/schemas/ActorModeEnum"
+          },
+          "category": {
+            "$ref": "#/components/schemas/StudentActivityItemSchemaCategoryEnum"
+          },
+          "device_class": {
+            "$ref": "#/components/schemas/DeviceClassEnum"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "label": {
+            "type": "string"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "screen_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "actor_mode",
+          "category",
+          "device_class",
+          "id",
+          "label",
+          "occurred_at",
+          "screen_id"
+        ],
+        "type": "object"
+      },
+      "StudentActivityItemSchemaCategoryEnum": {
+        "description": "* `login` - login\n* `home` - home\n* `homework` - homework\n* `video` - video\n* `exam` - exam\n* `result` - result\n* `attendance` - attendance\n* `clinic` - clinic\n* `notice` - notice\n* `profile` - profile\n* `fee` - fee\n* `guide` - guide",
+        "enum": [
+          "login",
+          "home",
+          "homework",
+          "video",
+          "exam",
+          "result",
+          "attendance",
+          "clinic",
+          "notice",
+          "profile",
+          "fee",
+          "guide"
+        ],
+        "type": "string"
+      },
+      "StudentActivityRecordSchemaRequest": {
+        "properties": {
+          "device_class": {
+            "$ref": "#/components/schemas/DeviceClassEnum"
+          },
+          "screen_id": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_class",
+          "screen_id"
+        ],
+        "type": "object"
+      },
       "StudentCreate": {
         "properties": {
           "address": {
@@ -13605,6 +13742,46 @@
           "parent_phone",
           "phone",
           "school_type"
+        ],
+        "type": "object"
+      },
+      "StudentSupportSessionSchema": {
+        "properties": {
+          "access": {
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "session_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "student": {
+            "$ref": "#/components/schemas/StudentSupportSummarySchema"
+          }
+        },
+        "required": [
+          "access",
+          "expires_at",
+          "session_id",
+          "student"
+        ],
+        "type": "object"
+      },
+      "StudentSupportSummarySchema": {
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
         ],
         "type": "object"
       },
@@ -41917,6 +42094,55 @@
         ]
       }
     },
+    "/api/v1/students/me/activity/": {
+      "post": {
+        "description": "Record a successful student-app screen open with server receipt time.",
+        "operationId": "students_activity_record",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentActivityRecordSchemaRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentActivityRecordSchemaRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentActivityRecordSchemaRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentActivityAcceptedSchema"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      }
+    },
     "/api/v1/students/password_find/request/": {
       "post": {
         "description": "Legacy OTP password recovery endpoint, sealed in favor of account recovery.",
@@ -43206,6 +43432,100 @@
         ]
       }
     },
+    "/api/v1/students/{student_id}/activities/": {
+      "get": {
+        "description": "Tenant-scoped student activity timeline for staff support.",
+        "operationId": "students_activity_list",
+        "parameters": [
+          {
+            "description": "* `login` - login\n* `home` - home\n* `homework` - homework\n* `video` - video\n* `exam` - exam\n* `result` - result\n* `attendance` - attendance\n* `clinic` - clinic\n* `notice` - notice\n* `profile` - profile\n* `fee` - fee\n* `guide` - guide",
+            "in": "query",
+            "name": "category",
+            "schema": {
+              "enum": [
+                "login",
+                "home",
+                "homework",
+                "video",
+                "exam",
+                "result",
+                "attendance",
+                "clinic",
+                "notice",
+                "profile",
+                "fee",
+                "guide"
+              ],
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "* `7` - 7\n* `30` - 30\n* `90` - 90",
+            "in": "query",
+            "name": "days",
+            "schema": {
+              "default": 30,
+              "enum": [
+                7,
+                30,
+                90
+              ],
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_support",
+            "schema": {
+              "default": false,
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentActivityFeedSchema"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      }
+    },
     "/api/v1/students/{student_id}/enrollment-matrix/": {
       "get": {
         "description": "GET /students/{id}/enrollment-matrix/?lecture_id=N",
@@ -43255,6 +43575,45 @@
         "responses": {
           "200": {
             "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      }
+    },
+    "/api/v1/students/{student_id}/support-session/": {
+      "post": {
+        "description": "Issue a short-lived, access-only student token for staff support.",
+        "operationId": "students_support_session_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentSupportSessionSchema"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [
