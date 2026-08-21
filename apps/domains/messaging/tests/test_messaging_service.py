@@ -964,6 +964,52 @@ class TestRegistrationMessages(TestCase):
     @patch(f"{_REG}._dispatch_registration_durably")
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
     @patch(f"{_SEL}.get_auto_send_config")
+    def test_send_welcome_system_auto_ignores_stale_disabled_flags(
+        self,
+        mock_config,
+        mock_owner,
+        mock_enqueue,
+    ):
+        """SYSTEM_AUTO 계정 안내는 legacy enabled=False 때문에 누락되지 않는다."""
+        student_config = _make_config(
+            "registration_approved_student",
+            enabled=False,
+            body="#{학생이름} #{학생아이디} #{학생비밀번호} #{사이트링크}",
+        )
+        parent_config = _make_config(
+            "registration_approved_parent",
+            enabled=False,
+            body="#{학생이름} #{학생아이디} #{학생비밀번호} #{학부모아이디} #{학부모비밀번호} #{사이트링크}",
+        )
+        mock_config.side_effect = [student_config, parent_config]
+        mock_enqueue.return_value = True
+        student = SimpleNamespace(
+            name="홍길동",
+            phone="01012345678",
+            parent_phone="01087654321",
+            ps_number="PS001",
+            tenant_id=1,
+            id=10,
+        )
+
+        from apps.domains.messaging.services import send_welcome_messages
+
+        result = send_welcome_messages(
+            created_students=[student],
+            student_password="test1234",
+            parent_password_by_phone={"01087654321": "4321"},
+            site_url="https://hakwonplus.com",
+        )
+
+        self.assertEqual(result, {"status": "enqueued", "enqueued": 2})
+        self.assertEqual(
+            [call.kwargs["event_type"] for call in mock_enqueue.call_args_list],
+            ["registration_approved_student", "registration_approved_parent"],
+        )
+
+    @patch(f"{_REG}._dispatch_registration_durably")
+    @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
+    @patch(f"{_SEL}.get_auto_send_config")
     def test_send_welcome_dedupes_same_student_parent_phone(self, mock_config, mock_owner, mock_enqueue):
         """직접 등록 welcome도 같은 번호에는 parent 템플릿 1건만 보낸다."""
         student_config = _make_config(

@@ -69,6 +69,7 @@ Body: { "username": "{학부모전화번호}", "password": "{비밀번호}" }
 ## 5. 첫 수강 확정 계정 안내 알림톡
 
 학부모 계정 안내는 `registration_approved_parent` 트리거를 사용한다. 학생 마스터 생성이나 가입 승인만으로는 발송하지 않고, 변경 후 생성된 학생의 첫 ACTIVE 수강이 확정된 뒤 한 번만 발송한다.
+이 트리거는 `SYSTEM_AUTO`이므로 legacy `AutoSendConfig.enabled=False`가 남아 있어도 발송을 막지 않는다. 다만 공용 owner의 exact APPROVED 학부모 템플릿이 없으면 발송하지 않고 pending 안내값을 유지한다. 두 번째 이후 수강 등록은 현재 비밀번호를 재발송하지 않는다.
 
 | 변수 | 값 |
 |------|----|
