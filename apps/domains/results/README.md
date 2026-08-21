@@ -194,11 +194,22 @@ Session Assessment Inspection
   PostgreSQL은 nullable outer join의 반대편 잠금을 거부하기 때문이다.
 - 과제는 종이 검사처럼 점수가 없어도 `PENDING`/`COMPLETED`와 메모를 저장할 수 있다.
   시험은 유효한 점수와 만점이 있는 비만점 결과에서만 오답 확인 상태를 바꾼다.
+- `COMPLETED`는 원점수·`passed`·제출 row를 수정하지 않는다. 대신
+  `AssessmentCorrection`을 교사 결정 정본으로 저장하고 source-specific
+  `ClinicLink`를 사유·사용자·source fingerprint가 있는 `MANUAL_OVERRIDE`로 해소한다.
+  따라서 25점 시험과 점수 없는 과제도 원자료 그대로 재시험/자동 Clinic 대상에서
+  제외된다. 해제는 같은 링크를 미해소로 돌려 현재 원자료로 재평가한다.
+- 완료 저장은 2자 이상의 사유와 `expected_updated_at`을 요구한다. 다른 탭이 먼저
+  저장한 경우 `409 ASSESSMENT_CORRECTION_CONFLICT`와 최신 시각을 반환하며, 일반
+  학생·학부모와 다른 tenant/roster/source는 실패 폐쇄한다. `EXAM_PASS`와
+  `HOMEWORK_PASS` 같은 사실 근거는 교사 토글보다 강하므로 해제하지 않는다.
 - `COMPLETED` 당시 시험의 대표 결과·대표 시도·점수·문항별 답안/정오/배점을
   SHA-256 내용 지문으로 저장한다. 같은 값을 다시 동기화해 `updated_at`만 바뀐
   경우에는 완료를 유지하고, 실제 점수나 답안 내용이 바뀐 경우에만 조회 시
   `PENDING`으로 돌려 교사가 변경된 결과를 재확인하게 한다. 지문 도입 전의 기존
   완료 기록은 교사 입력을 보존해 완료로 읽고, 다음 수동 저장부터 지문을 기록한다.
+  내용이 바뀐 시험의 stale `MANUAL_OVERRIDE`는 성취도/진행 파이프라인에서도 제외하고
+  링크를 다시 열어 원점수 기준 Clinic 판정을 복원한다.
 - tenant 차시 roster 밖 학생, 다른 차시 평가, 만점 시험의 수동 변경은 실패 폐쇄한다.
 - 성적표와 세션 요약은 여러 시험의 대표 `Result`를
   `(target_id, enrollment_id)` 단위로 한 번에 선택한다. 시험 열 수만큼 대표 결과

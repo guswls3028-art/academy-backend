@@ -59,6 +59,9 @@ from apps.domains.results.serializers.session_scores import (
     AssessmentCorrectionUpdateSerializer,
     SessionScoreRowSerializer,
 )
+from apps.support.results.assessment_correction_dependencies import (
+    set_teacher_assessment_resolution,
+)
 from apps.support.results.session_scores_dependencies import (
     AssessmentCorrection,
     ClinicLink,
@@ -998,7 +1001,7 @@ class SessionScoresView(APIView):
 
 
 class SessionScoreCorrectionView(APIView):
-    """점수 합불을 바꾸지 않고 시험/과제별 오답 확인 상태만 저장한다."""
+    """원점수/제출을 바꾸지 않고 교사의 시험 통과·과제 완료 판정을 저장한다."""
 
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
@@ -1130,6 +1133,31 @@ class SessionScoreCorrectionView(APIView):
             )
             .first()
         )
+        if "expected_updated_at" in payload:
+            expected_updated_at = payload.get("expected_updated_at")
+            actual_updated_at = (
+                existing_correction.updated_at if existing_correction else None
+            )
+            if expected_updated_at != actual_updated_at:
+                return Response(
+                    {
+                        "detail": "다른 화면에서 판정이 변경되었습니다. 새로고침 후 다시 확인해 주세요.",
+                        "code": "ASSESSMENT_CORRECTION_CONFLICT",
+                    },
+                    status=409,
+                )
+
+        next_note = str(
+            payload.get(
+                "note",
+                existing_correction.note if existing_correction else "",
+            )
+            or ""
+        )
+        if completed and len(next_note.strip()) < 2:
+            raise ValidationError(
+                {"note": "통과 또는 완료 처리 사유를 2자 이상 입력해 주세요."}
+            )
         completed_at = None
         if completed:
             completed_at = (
@@ -1145,9 +1173,8 @@ class SessionScoreCorrectionView(APIView):
             "source_updated_at_snapshot": source_updated_at,
             "source_fingerprint": source_fingerprint,
             "updated_by": request.user,
+            "note": next_note,
         }
-        if "note" in payload:
-            correction_defaults["note"] = payload["note"]
         correction, _ = AssessmentCorrection.objects.update_or_create(
             tenant=tenant,
             enrollment_id=enrollment_id,
@@ -1155,6 +1182,18 @@ class SessionScoreCorrectionView(APIView):
             source_type=source_type,
             source_id=source_id,
             defaults=correction_defaults,
+        )
+        set_teacher_assessment_resolution(
+            tenant_id=int(tenant.id),
+            enrollment_id=enrollment_id,
+            session_id=int(session.id),
+            source_type=source_type,
+            source_id=source_id,
+            completed=completed,
+            correction_id=int(correction.id),
+            user_id=int(request.user.id),
+            memo=next_note,
+            source_fingerprint=source_fingerprint,
         )
         return Response(
             assessment_correction_payload(

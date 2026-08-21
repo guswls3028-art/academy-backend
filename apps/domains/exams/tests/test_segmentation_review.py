@@ -9,6 +9,7 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.exams.models import (
+    AnswerKey,
     Exam,
     ExamQuestion,
     ExamQuestionProposal,
@@ -52,6 +53,15 @@ class ExamSegmentationReviewTests(TestCase):
                     f"{self.exam.id}/q001-source-attachment.png"
                 ),
                 "source_attachment_requires_review": True,
+                "answer_candidate": "4",
+                "answer_source_image_key": (
+                    f"tenants/{self.tenant.id}/exams/answer-sources/"
+                    f"{self.exam.id}/page-001.png"
+                ),
+                "answer_source_requested": True,
+                "explanation_source_requested": True,
+                "paired_source_status": "partial",
+                "source_issues": ["explanation_coverage_incomplete"],
             },
             engine="hwp_endnote",
         )
@@ -83,6 +93,13 @@ class ExamSegmentationReviewTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.data["items"]), 2)
+        self.assertEqual(response.data["paired_source_status"], "partial")
+        self.assertEqual(
+            response.data["source_issues"],
+            ["explanation_coverage_incomplete"],
+        )
+        self.assertTrue(response.data["answer_source_requested"])
+        self.assertTrue(response.data["explanation_source_requested"])
         self.assertTrue(response.data["items"][0]["has_teacher_explanation"])
         self.assertTrue(response.data["items"][0]["crop_adjustable"])
         self.assertEqual(response.data["items"][0]["problem_crop_ratio"], 1.0)
@@ -96,6 +113,11 @@ class ExamSegmentationReviewTests(TestCase):
         )
         self.assertFalse(response.data["items"][0]["explanation_text_requires_review"])
         self.assertTrue(response.data["items"][1]["explanation_text_requires_review"])
+        self.assertEqual(response.data["items"][0]["answer"], "4")
+        self.assertIn(
+            "answer-sources",
+            response.data["items"][0]["answer_source_image_url"],
+        )
 
     @patch("apps.domains.ai.gateway.dispatch_job")
     def test_text_only_ocr_is_not_saved_when_reviewer_does_not_confirm_it(self, _dispatch):
@@ -147,8 +169,72 @@ class ExamSegmentationReviewTests(TestCase):
         explanation = QuestionExplanation.objects.get(question=question)
         self.assertEqual(explanation.source, QuestionExplanation.Source.SOURCE_FILE)
         self.assertTrue(explanation.image_key.endswith("q001.png"))
+        self.assertEqual(
+            AnswerKey.objects.get(exam=self.exam).answers,
+            {str(question.id): "4"},
+        )
         self.assertFalse(ExamQuestionProposal.objects.filter(exam=self.exam).exists())
         dispatch.assert_called_once()
+
+    @patch("apps.domains.ai.gateway.dispatch_job")
+    def test_approve_saves_teacher_reviewed_answer_by_created_question_id(
+        self,
+        _dispatch,
+    ):
+        response = ExamSegmentationApproveView.as_view()(
+            self._request(
+                "post",
+                "/approve",
+                {
+                    "items": [
+                        {
+                            "id": self.p1.id,
+                            "number": 7,
+                            "included": True,
+                            "answer": "2|4",
+                        },
+                        {"id": self.p2.id, "number": 2, "included": False},
+                    ]
+                },
+            ),
+            exam_id=self.exam.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        question = ExamQuestion.objects.get(sheet__exam=self.exam)
+        self.assertEqual(question.number, 7)
+        self.assertEqual(
+            AnswerKey.objects.get(exam=self.exam).answers,
+            {str(question.id): "2|4"},
+        )
+
+    def test_choice_approval_fails_closed_when_requested_answer_is_missing(self):
+        self.exam.grading_mode = Exam.GradingMode.CHOICE
+        self.exam.save(update_fields=["grading_mode", "updated_at"])
+
+        response = ExamSegmentationApproveView.as_view()(
+            self._request(
+                "post",
+                "/approve",
+                {
+                    "items": [
+                        {"id": self.p1.id, "number": 1, "included": True},
+                        {"id": self.p2.id, "number": 2, "included": True},
+                    ]
+                },
+            ),
+            exam_id=self.exam.id,
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("2번", str(response.data["items"]))
+        self.assertFalse(ExamQuestion.objects.filter(sheet__exam=self.exam).exists())
+        self.assertFalse(AnswerKey.objects.filter(exam=self.exam).exists())
+        self.exam.refresh_from_db()
+        self.assertEqual(
+            self.exam.segmentation_status,
+            Exam.SegmentationStatus.REVIEW_REQUIRED,
+        )
 
     @patch("apps.domains.ai.gateway.dispatch_job")
     def test_approve_can_explicitly_choose_reviewed_source_attachment(self, _dispatch):

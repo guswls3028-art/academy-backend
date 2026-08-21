@@ -119,6 +119,27 @@ def sync_homework_clinic_link(
         )
         return
 
+    latest_link = (
+        ClinicLink.objects.filter(
+            enrollment_id=enrollment_id,
+            session=session,
+            source_type="homework",
+            source_id=homework_id,
+        )
+        .order_by("-cycle_no", "-id")
+        .first()
+    )
+    if (
+        latest_link
+        and latest_link.resolved_at
+        and latest_link.resolution_type == ClinicLink.ResolutionType.MANUAL_OVERRIDE
+        and (latest_link.resolution_evidence or {}).get("assessment_correction_id")
+    ):
+        # 현장 협의 완료는 원점수와 독립적이다. 이후 점수 저장이 완료 판정을
+        # 덮거나 새 Clinic 대상을 만들면 안 된다. 교사가 미완료로 되돌릴 때
+        # resolution service가 이 링크를 다시 연다.
+        return
+
     existing_unresolved = ClinicLink.objects.filter(
         enrollment_id=enrollment_id,
         session=session,

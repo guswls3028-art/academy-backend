@@ -5,6 +5,7 @@ from unittest.mock import patch
 from apps.shared.contracts.ai_job import AIJob
 from academy.application.use_cases.ai.pipelines.pdf_question_pipeline import (
     _build_question_list,
+    _extract_numbered_support_entries,
     _extract_explanations,
     _find_academy_review_cover_pages,
     _find_solution_tail_start,
@@ -154,6 +155,192 @@ def test_explanations_continue_across_tail_pages_without_repeated_heading():
 
     assert [item["question_number"] for item in explanations] == [1, 2, 3]
     assert [item["page_index"] for item in explanations] == [3, 3, 4]
+
+
+def test_answer_source_extracts_numbered_facts_without_rewriting():
+    answers = _extract_numbered_support_entries(
+        {0: "정답표\n1. ④\n2. -25\n3. A/C\n4. x=√3/2 풀이: 원본 참조"},
+        source_role="answer",
+    )
+
+    assert answers == [
+        {
+            "question_number": 1,
+            "answer": "4",
+            "source_text": "④",
+            "page_index": 0,
+            "match_confidence": 1.0,
+            "source": "source_file",
+        },
+        {
+            "question_number": 2,
+            "answer": "-25",
+            "source_text": "-25",
+            "page_index": 0,
+            "match_confidence": 1.0,
+            "source": "source_file",
+        },
+        {
+            "question_number": 3,
+            "answer": "A/C",
+            "source_text": "A/C",
+            "page_index": 0,
+            "match_confidence": 1.0,
+            "source": "source_file",
+        },
+        {
+            "question_number": 4,
+            "answer": "x=√3/2",
+            "source_text": "x=√3/2 풀이: 원본 참조",
+            "page_index": 0,
+            "match_confidence": 1.0,
+            "source": "source_file",
+        },
+    ]
+
+
+def test_answer_source_accepts_common_korean_and_bare_line_markers():
+    answers = _extract_numbered_support_entries(
+        {0: "정답표\n1번 ②\n2 A\n3번: x=7"},
+        source_role="answer",
+    )
+
+    assert [item["question_number"] for item in answers] == [1, 2, 3]
+    assert [item["answer"] for item in answers] == ["2", "A", "x=7"]
+
+
+def test_explanation_source_preserves_teacher_text_for_review():
+    explanations = _extract_numbered_support_entries(
+        {
+            0: (
+                "1. 교사가 쓴 식 x²+2x+1=(x+1)²을 그대로 사용한다.\n"
+                "2. 손글씨 도형은 원본 페이지에서 확인한다."
+            )
+        },
+        source_role="explanation",
+    )
+
+    assert [item["question_number"] for item in explanations] == [1, 2]
+    assert explanations[0]["text"] == (
+        "교사가 쓴 식 x²+2x+1=(x+1)²을 그대로 사용한다."
+    )
+    assert explanations[1]["text"] == "손글씨 도형은 원본 페이지에서 확인한다."
+    assert all(
+        item["source_render_mode"] == "source_page_preserved"
+        and item["source_attachment_requires_review"] is True
+        for item in explanations
+    )
+
+
+@patch(
+    "academy.application.use_cases.ai.pipelines.pdf_question_pipeline."
+    "_extract_ocr_page_texts",
+    return_value={},
+)
+@patch(
+    "academy.application.use_cases.ai.pipelines.pdf_question_pipeline."
+    "_extract_pdf_text",
+    return_value=({}, {0: "정답\n1. ⑤\n2. 13"}),
+)
+@patch(
+    "academy.application.use_cases.ai.pipelines.pdf_question_pipeline."
+    "register_pdf_seg_tmp_dirs",
+)
+@patch(
+    "academy.application.use_cases.ai.pipelines.pdf_question_pipeline."
+    "segment_questions_multipage",
+    return_value={
+        "is_pdf": True,
+        "tmp_dirs": ["paired-source-fixture"],
+        "pages": [
+            {
+                "page_index": 0,
+                "image_path": "",
+                "boxes": [],
+                "numbers": [],
+                "has_embedded_text": True,
+            }
+        ],
+    },
+)
+def test_real_support_pipeline_returns_reviewable_answer_entries(
+    _segment,
+    register_tmp,
+    _extract_pdf,
+    _extract_ocr,
+):
+    job = AIJob.new(type="question_segmentation", payload={})
+
+    result = run_pdf_question_pipeline(
+        job=job,
+        local_path="answers.pdf",
+        payload={"exam_id": "31", "source_role": "answer"},
+        tenant_id="7",
+        record_progress=lambda *args, **kwargs: None,
+    )
+
+    assert result.status == "DONE"
+    assert [entry["answer"] for entry in result.result["answers"]] == ["5", "13"]
+    assert result.result["recognition_status"] == "recognized"
+    assert result.result["ocr_augmented"] is False
+    register_tmp.assert_called_once_with(["paired-source-fixture"])
+
+
+@patch(
+    "academy.application.use_cases.ai.pipelines.pdf_question_pipeline."
+    "_extract_ocr_page_texts",
+    side_effect=[{}, {0: "정답표\n1. ④\n2. x=√3/2"}],
+)
+@patch(
+    "academy.application.use_cases.ai.pipelines.pdf_question_pipeline."
+    "_extract_pdf_text",
+    return_value=({}, {0: "학원명 워터마크"}),
+)
+@patch(
+    "academy.application.use_cases.ai.pipelines.pdf_question_pipeline."
+    "register_pdf_seg_tmp_dirs",
+)
+@patch(
+    "academy.application.use_cases.ai.pipelines.pdf_question_pipeline."
+    "segment_questions_multipage",
+    return_value={
+        "is_pdf": True,
+        "tmp_dirs": ["hybrid-support-fixture"],
+        "pages": [
+            {
+                "page_index": 0,
+                "image_path": "answer-scan.png",
+                "boxes": [],
+                "numbers": [],
+                "has_embedded_text": True,
+            }
+        ],
+    },
+)
+def test_support_pdf_ocr_recovers_numbered_facts_behind_embedded_header(
+    _segment,
+    _register_tmp,
+    _extract_pdf,
+    extract_ocr,
+):
+    job = AIJob.new(type="question_segmentation", payload={})
+
+    result = run_pdf_question_pipeline(
+        job=job,
+        local_path="hybrid-answers.pdf",
+        payload={"exam_id": "31", "source_role": "answer"},
+        tenant_id="7",
+        record_progress=lambda *args, **kwargs: None,
+    )
+
+    assert result.status == "DONE"
+    assert [entry["answer"] for entry in result.result["answers"]] == [
+        "4",
+        "x=√3/2",
+    ]
+    assert result.result["recognition_status"] == "recognized"
+    assert result.result["ocr_augmented"] is True
+    assert extract_ocr.call_count == 2
 
 
 @patch(

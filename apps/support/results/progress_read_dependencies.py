@@ -396,6 +396,7 @@ def exam_remediation_link_values(
 
     return list(
         ClinicLink.objects.filter(**link_filter).values(
+            "id",
             "enrollment_id",
             "source_id",
             "session_id",

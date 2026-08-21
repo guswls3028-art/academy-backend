@@ -54,6 +54,15 @@ _SOLUTION_TAIL_MARKER = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 
+_SUPPORT_ENTRY_RE = re.compile(
+    r"(?:^|(?<=\s))(\d{1,3})\s*[.):/]\s*(.*?)"
+    r"(?=(?:\s+\d{1,3}\s*[.):/]\s*)|\Z)",
+    re.MULTILINE | re.DOTALL,
+)
+_CIRCLED_ANSWER_TRANSLATION = str.maketrans(
+    {character: str(index) for index, character in enumerate("①②③④⑤⑥⑦⑧⑨", 1)}
+)
+
 
 def run_pdf_question_pipeline(
     *,
@@ -151,6 +160,68 @@ def run_pdf_question_pipeline(
             len(questions),
             solution_tail_start,
         )
+
+    source_role = str(payload.get("source_role") or "problem").strip().lower()
+    if source_role in {"answer", "explanation"}:
+        if not is_pdf:
+            full_text_by_page.update(_extract_ocr_page_texts(pages))
+        entries = _extract_numbered_support_entries(
+            full_text_by_page,
+            source_role=source_role,
+        )
+        ocr_augmented = False
+        if is_pdf:
+            # A scanned support PDF can still expose a small embedded header or
+            # watermark. The general PDF pass then marks that page as text-backed,
+            # although the numbered answers/explanations remain pixels. OCR those
+            # hybrid pages and merge only new numbered facts, keeping native PDF
+            # text authoritative when both paths recognize the same number.
+            hybrid_page_texts = _extract_ocr_page_texts(
+                [p for p in pages if p.get("has_embedded_text")]
+            )
+            ocr_entries = _extract_numbered_support_entries(
+                hybrid_page_texts,
+                source_role=source_role,
+            )
+            recognized_numbers = {
+                int(entry["question_number"])
+                for entry in entries
+            }
+            for entry in ocr_entries:
+                number = int(entry["question_number"])
+                if number in recognized_numbers:
+                    continue
+                entries.append(entry)
+                recognized_numbers.add(number)
+                ocr_augmented = True
+            entries.sort(
+                key=lambda entry: (
+                    int(entry.get("page_index") or 0),
+                    int(entry["question_number"]),
+                )
+            )
+        _attach_preserved_support_pages(
+            entries=entries,
+            pages=pages,
+            tenant_id=tenant_id,
+            exam_id=payload.get("exam_id"),
+            job_id=job.id,
+            source_role=source_role,
+        )
+        result = {
+            "exam_id": payload.get("exam_id"),
+            "source_role": source_role,
+            "page_count": len(pages),
+            "source_entry_count": len(entries),
+            "recognition_status": "recognized" if entries else "unrecognized",
+            "ocr_augmented": ocr_augmented,
+            "source_issues": ([] if entries else [f"{source_role}_entries_not_recognized"]),
+        }
+        if source_role == "answer":
+            result["answers"] = entries
+        else:
+            result["explanations"] = entries
+        return AIResult.done(job.id, result)
 
     # 텍스트·OCR 둘 다 실패 → OpenCV fallback (페이지 단위)
     if not questions:
@@ -493,6 +564,159 @@ def _extract_ocr_page_texts(pages: List[Dict]) -> Dict[int, str]:
             )
 
     return page_texts
+
+
+def _extract_numbered_support_entries(
+    full_text_by_page: Dict[int, str],
+    *,
+    source_role: str,
+) -> List[Dict]:
+    """Extract numbered source facts without generating or rewriting content."""
+    entries: List[Dict] = []
+    seen: set[int] = set()
+    for page_idx in sorted(full_text_by_page):
+        page_text = _normalize_support_entry_markers(
+            str(full_text_by_page.get(page_idx) or "")
+        )
+        for match in _SUPPORT_ENTRY_RE.finditer(page_text):
+            number = int(match.group(1))
+            if number <= 0 or number in seen:
+                continue
+            source_text = " ".join(match.group(2).split()).strip()
+            if not source_text:
+                continue
+            if source_role == "answer":
+                answer = _extract_answer_value(source_text)
+                if answer is None:
+                    continue
+                entry = {
+                    "question_number": number,
+                    "answer": answer,
+                    "source_text": source_text[:500],
+                    "page_index": int(page_idx),
+                    "match_confidence": 1.0,
+                    "source": "source_file",
+                }
+            else:
+                entry = {
+                    "question_number": number,
+                    "text": source_text[:2000],
+                    "page_index": int(page_idx),
+                    "match_confidence": 1.0,
+                    "source": "source_file",
+                    "source_render_mode": "source_page_preserved",
+                    "source_attachment_requires_review": True,
+                }
+            seen.add(number)
+            entries.append(entry)
+    return entries
+
+
+def _normalize_support_entry_markers(page_text: str) -> str:
+    """Normalize only unambiguous line-leading source question markers."""
+    normalized = re.sub(
+        r"(?m)^(\s*\d{1,3})\s*번\s*(?:[.):/\-–—]\s*)?",
+        r"\1. ",
+        page_text,
+    )
+    return re.sub(
+        r"(?m)^(\s*\d{1,3})\s+(?=\S)",
+        r"\1. ",
+        normalized,
+    )
+
+
+def _extract_answer_value(source_text: str) -> str | None:
+    text = re.sub(r"^\s*(?:정답|답)\s*[:：]?\s*", "", source_text).strip()
+    if not text or re.match(r"^(?:해설\s*참조|풀이\s*참조)", text):
+        return None
+    # A dedicated answer source can contain symbolic short answers such as
+    # ``x=2`` or ``√3/2``. Keep that teacher-authored value verbatim instead of
+    # dropping it merely because it is not an OMR token. If an explanation is
+    # present in the same numbered block, only use text before its explicit
+    # marker; the preserved source page remains available for review.
+    answer_text = re.split(
+        r"\s+(?:해설|풀이)\s*[:：]?\s*",
+        text,
+        maxsplit=1,
+    )[0].strip()
+    if not answer_text:
+        return None
+    token_match = re.match(
+        r"([①②③④⑤⑥⑦⑧⑨](?:\s*[,/&]\s*[①②③④⑤⑥⑦⑧⑨])*)"
+        r"|([A-Ea-e](?:\s*[,/&]\s*[A-Ea-e])*)"
+        r"|([+-]?\d{1,3}(?:\s*[,/&]\s*[+-]?\d{1,3})*)",
+        answer_text,
+    )
+    if not token_match:
+        return answer_text[:500]
+    return re.sub(r"\s+", "", token_match.group(0)).translate(
+        _CIRCLED_ANSWER_TRANSLATION
+    ).upper()
+
+
+def _attach_preserved_support_pages(
+    *,
+    entries: List[Dict],
+    pages: List[Dict],
+    tenant_id: Optional[str],
+    exam_id: Optional[str],
+    job_id: str,
+    source_role: str,
+) -> None:
+    """Attach original rendered pages so handwriting, images and formulae survive OCR."""
+    if not entries or not tenant_id or not exam_id:
+        return
+    try:
+        import cv2
+        import io
+
+        from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_storage
+    except Exception:
+        return
+
+    page_paths = {
+        int(page.get("page_index") or 0): str(page.get("image_path") or "")
+        for page in pages
+    }
+    keys: Dict[int, str] = {}
+    for page_idx in {int(entry["page_index"]) for entry in entries}:
+        page_path = page_paths.get(page_idx)
+        if not page_path:
+            continue
+        image = cv2.imread(page_path)
+        if image is None:
+            continue
+        encoded, buffer = cv2.imencode(".png", image)
+        if not encoded:
+            continue
+        key = (
+            f"tenants/{tenant_id}/exams/{source_role}-sources/{exam_id}/"
+            f"{job_id}-page-{page_idx + 1:03d}.png"
+        )
+        try:
+            upload_fileobj_to_r2_storage(
+                fileobj=io.BytesIO(buffer.tobytes()),
+                key=key,
+                content_type="image/png",
+            )
+            keys[page_idx] = key
+        except Exception:
+            logger.warning(
+                "SUPPORT_PAGE_UPLOAD_FAILED | job_id=%s | role=%s | page=%s",
+                job_id,
+                source_role,
+                page_idx,
+                exc_info=True,
+            )
+    for entry in entries:
+        key = keys.get(int(entry["page_index"]))
+        if not key:
+            continue
+        if source_role == "answer":
+            entry["source_image_key"] = key
+        else:
+            entry["image_key"] = key
 
 
 def _extract_pdf_text(
@@ -840,7 +1064,10 @@ def _crop_and_upload_explanation_images(
             continue
         if box_index >= len(boxes):
             continue
-        image = cv2.imread(str(page.get("image_path") or ""))
+        image_path = str(page.get("image_path") or "")
+        if not image_path:
+            continue
+        image = cv2.imread(image_path)
         if image is None:
             continue
         x, y, width, height = (int(value) for value in boxes[box_index])

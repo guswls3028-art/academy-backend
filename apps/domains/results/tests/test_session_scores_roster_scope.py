@@ -2,6 +2,7 @@ from django.contrib.auth import get_user_model
 from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
+from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
@@ -393,6 +394,7 @@ class SessionScoresRosterScopeTests(TestCase):
 
         self.assertEqual(completion.status_code, 200, completion.data)
         self.assertEqual(completion.data["correction_status"], "COMPLETED")
+        self.assertTrue(completion.data["teacher_resolved"])
         self.assertEqual(
             completion.data["correction_note"],
             "서술형 3번 풀이를 다시 확인함",
@@ -418,6 +420,12 @@ class SessionScoresRosterScopeTests(TestCase):
         )
         self.assertEqual(refreshed_row["correction_pending_count"], 0)
         self.assertFalse(refreshed_row["name_highlight_followup_required"])
+        refreshed_block = refreshed_row["exams"][0]["block"]
+        self.assertEqual(refreshed_block["score"], 50.0)
+        self.assertFalse(refreshed_block["passed"])
+        self.assertTrue(refreshed_block["final_pass"])
+        self.assertEqual(refreshed_block["achievement"], "REMEDIATED")
+        self.assertFalse(refreshed_row["clinic_required"])
         correction = AssessmentCorrection.objects.get(
             tenant=self.tenant,
             enrollment=self.active_enrollment,
@@ -426,6 +434,22 @@ class SessionScoresRosterScopeTests(TestCase):
             source_id=self.exam.id,
         )
         self.assertEqual(len(correction.source_fingerprint), 64)
+        teacher_link = ClinicLink.objects.get(
+            tenant=self.tenant,
+            enrollment=self.active_enrollment,
+            session=self.session,
+            source_type="exam",
+            source_id=self.exam.id,
+        )
+        self.assertIsNotNone(teacher_link.resolved_at)
+        self.assertEqual(
+            teacher_link.resolution_type,
+            ClinicLink.ResolutionType.MANUAL_OVERRIDE,
+        )
+        self.assertEqual(
+            teacher_link.resolution_evidence["assessment_correction_id"],
+            correction.id,
+        )
 
         result.save(update_fields=["updated_at"])
         timestamp_only_request = self.factory.get(
@@ -462,6 +486,10 @@ class SessionScoresRosterScopeTests(TestCase):
         self.assertTrue(
             stale.data["rows"][0]["name_highlight_followup_required"]
         )
+        stale_block = stale.data["rows"][0]["exams"][0]["block"]
+        self.assertFalse(stale_block["teacher_resolved"])
+        self.assertFalse(stale_block["final_pass"])
+        self.assertEqual(stale_block["achievement"], "FAIL")
 
     def test_legacy_exam_completion_without_fingerprint_remains_complete(self):
         result = Result.objects.create(
@@ -510,6 +538,7 @@ class SessionScoresRosterScopeTests(TestCase):
                 "source_type": "exam",
                 "source_id": self.exam.id,
                 "completed": True,
+                "note": "잠금 쿼리 확인",
             },
             format="json",
         )
@@ -554,6 +583,7 @@ class SessionScoresRosterScopeTests(TestCase):
                     "source_type": "homework",
                     "source_id": self.homework.id,
                     "completed": completed,
+                    "note": "협의 후 완료" if completed else "추가 확인 필요",
                 },
                 format="json",
             )
@@ -662,10 +692,252 @@ class SessionScoresRosterScopeTests(TestCase):
         )
         self.assertEqual(complete.status_code, 200, complete.data)
         self.assertEqual(complete.data["correction_status"], "COMPLETED")
+        self.assertTrue(complete.data["teacher_resolved"])
         self.assertEqual(
             complete.data["correction_note"],
             "연습문제 12~15번 미완료",
         )
+        self.assertFalse(
+            HomeworkScore.objects.filter(
+                enrollment=self.active_enrollment,
+                session=self.session,
+                homework=self.homework,
+            ).exists()
+        )
+        teacher_link = ClinicLink.objects.get(
+            tenant=self.tenant,
+            enrollment=self.active_enrollment,
+            session=self.session,
+            source_type="homework",
+            source_id=self.homework.id,
+        )
+        self.assertIsNotNone(teacher_link.resolved_at)
+        self.assertEqual(
+            teacher_link.resolution_type,
+            ClinicLink.ResolutionType.MANUAL_OVERRIDE,
+        )
+
+    def test_zero_score_teacher_pass_preserves_raw_score_and_unset_reopens_clinic(self):
+        result = Result.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.active_enrollment,
+            total_score=0,
+            max_score=100,
+        )
+        complete_request = self.factory.patch(
+            f"/api/v1/results/admin/sessions/{self.session.id}/score-correction/",
+            {
+                "enrollment_id": self.active_enrollment.id,
+                "source_type": "exam",
+                "source_id": self.exam.id,
+                "completed": True,
+                "note": "현장 풀이 재확인 완료",
+                "expected_updated_at": None,
+            },
+            format="json",
+        )
+        complete_request.tenant = self.tenant
+        force_authenticate(complete_request, user=self.admin)
+        complete = SessionScoreCorrectionView.as_view()(
+            complete_request,
+            session_id=self.session.id,
+        )
+        self.assertEqual(complete.status_code, 200, complete.data)
+
+        correction = AssessmentCorrection.objects.get(
+            tenant=self.tenant,
+            enrollment=self.active_enrollment,
+            session=self.session,
+            source_type=AssessmentCorrection.SourceType.EXAM,
+            source_id=self.exam.id,
+        )
+        conflict_request = self.factory.patch(
+            f"/api/v1/results/admin/sessions/{self.session.id}/score-correction/",
+            {
+                "enrollment_id": self.active_enrollment.id,
+                "source_type": "exam",
+                "source_id": self.exam.id,
+                "completed": False,
+                "expected_updated_at": "2000-01-01T00:00:00Z",
+            },
+            format="json",
+        )
+        conflict_request.tenant = self.tenant
+        force_authenticate(conflict_request, user=self.admin)
+        conflict = SessionScoreCorrectionView.as_view()(
+            conflict_request,
+            session_id=self.session.id,
+        )
+        self.assertEqual(conflict.status_code, 409, conflict.data)
+
+        reopen_request = self.factory.patch(
+            f"/api/v1/results/admin/sessions/{self.session.id}/score-correction/",
+            {
+                "enrollment_id": self.active_enrollment.id,
+                "source_type": "exam",
+                "source_id": self.exam.id,
+                "completed": False,
+                "note": "추가 보완 필요",
+                "expected_updated_at": correction.updated_at.isoformat(),
+            },
+            format="json",
+        )
+        reopen_request.tenant = self.tenant
+        force_authenticate(reopen_request, user=self.admin)
+        reopened = SessionScoreCorrectionView.as_view()(
+            reopen_request,
+            session_id=self.session.id,
+        )
+        self.assertEqual(reopened.status_code, 200, reopened.data)
+        self.assertFalse(reopened.data["teacher_resolved"])
+
+        result.refresh_from_db()
+        self.assertEqual(result.total_score, 0)
+        link = ClinicLink.objects.get(
+            tenant=self.tenant,
+            enrollment=self.active_enrollment,
+            session=self.session,
+            source_type="exam",
+            source_id=self.exam.id,
+        )
+        self.assertIsNone(link.resolved_at)
+        self.assertIsNone(link.resolution_type)
+        self.assertEqual(
+            link.resolution_history[-1]["action"],
+            "unresolve_teacher_assessment",
+        )
+
+        scores_request = self.factory.get(
+            f"/api/v1/results/admin/sessions/{self.session.id}/scores/"
+        )
+        scores_request.tenant = self.tenant
+        force_authenticate(scores_request, user=self.admin)
+        scores = SessionScoresView.as_view()(
+            scores_request,
+            session_id=self.session.id,
+        )
+        block = scores.data["rows"][0]["exams"][0]["block"]
+        self.assertEqual(block["score"], 0.0)
+        self.assertFalse(block["final_pass"])
+        self.assertEqual(block["achievement"], "FAIL")
+        self.assertTrue(block["clinic_required"])
+
+    def test_teacher_toggle_does_not_replace_or_reopen_existing_waiver(self):
+        result = Result.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.active_enrollment,
+            total_score=25,
+            max_score=100,
+        )
+        waived = ClinicLink.objects.create(
+            tenant=self.tenant,
+            enrollment=self.active_enrollment,
+            session=self.session,
+            source_type="exam",
+            source_id=self.exam.id,
+            reason=ClinicLink.Reason.AUTO_FAILED,
+            is_auto=True,
+            approved=True,
+            cycle_no=1,
+            resolved_at=timezone.now(),
+            resolution_type=ClinicLink.ResolutionType.WAIVED,
+            resolution_evidence={"memo": "결석 사유 확인"},
+            memo="결석 사유 확인",
+        )
+
+        complete_request = self.factory.patch(
+            f"/api/v1/results/admin/sessions/{self.session.id}/score-correction/",
+            {
+                "enrollment_id": self.active_enrollment.id,
+                "source_type": "exam",
+                "source_id": self.exam.id,
+                "completed": True,
+                "note": "현장 풀이 확인",
+                "expected_updated_at": None,
+            },
+            format="json",
+        )
+        complete_request.tenant = self.tenant
+        force_authenticate(complete_request, user=self.admin)
+        complete = SessionScoreCorrectionView.as_view()(
+            complete_request,
+            session_id=self.session.id,
+        )
+        self.assertEqual(complete.status_code, 200, complete.data)
+        self.assertTrue(complete.data["teacher_resolved"])
+
+        correction = AssessmentCorrection.objects.get(
+            tenant=self.tenant,
+            enrollment=self.active_enrollment,
+            session=self.session,
+            source_type=AssessmentCorrection.SourceType.EXAM,
+            source_id=self.exam.id,
+        )
+        reopen_request = self.factory.patch(
+            f"/api/v1/results/admin/sessions/{self.session.id}/score-correction/",
+            {
+                "enrollment_id": self.active_enrollment.id,
+                "source_type": "exam",
+                "source_id": self.exam.id,
+                "completed": False,
+                "note": "추가 보완 필요",
+                "expected_updated_at": correction.updated_at.isoformat(),
+            },
+            format="json",
+        )
+        reopen_request.tenant = self.tenant
+        force_authenticate(reopen_request, user=self.admin)
+        reopened = SessionScoreCorrectionView.as_view()(
+            reopen_request,
+            session_id=self.session.id,
+        )
+
+        self.assertEqual(reopened.status_code, 200, reopened.data)
+        waived.refresh_from_db()
+        result.refresh_from_db()
+        self.assertEqual(result.total_score, 25)
+        self.assertIsNotNone(waived.resolved_at)
+        self.assertEqual(waived.resolution_type, ClinicLink.ResolutionType.WAIVED)
+        self.assertEqual(
+            ClinicLink.objects.filter(
+                tenant=self.tenant,
+                enrollment=self.active_enrollment,
+                session=self.session,
+                source_type="exam",
+                source_id=self.exam.id,
+            ).count(),
+            1,
+        )
+
+    def test_student_cannot_set_teacher_assessment_resolution(self):
+        Result.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.active_enrollment,
+            total_score=25,
+            max_score=100,
+        )
+        request = self.factory.patch(
+            f"/api/v1/results/admin/sessions/{self.session.id}/score-correction/",
+            {
+                "enrollment_id": self.active_enrollment.id,
+                "source_type": "exam",
+                "source_id": self.exam.id,
+                "completed": True,
+                "note": "권한 없는 변경",
+            },
+            format="json",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.active_enrollment.student.user)
+        response = SessionScoreCorrectionView.as_view()(
+            request,
+            session_id=self.session.id,
+        )
+        self.assertEqual(response.status_code, 403, response.data)
+        self.assertFalse(AssessmentCorrection.objects.exists())
 
     def test_homework_manual_completion_is_independent_from_later_score_entry(self):
         request = self.factory.patch(

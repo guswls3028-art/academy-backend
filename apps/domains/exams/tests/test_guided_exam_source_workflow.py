@@ -10,6 +10,7 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.ai.callbacks import _handle_exam_ai_result
 from apps.domains.exams.models import (
+    AnswerKey,
     Exam,
     ExamAsset,
     ExamQuestion,
@@ -53,10 +54,13 @@ class GuidedExamSourceWorkflowTests(TestCase):
         exam: Exam,
         upload: SimpleUploadedFile,
         explanation_upload: SimpleUploadedFile | None = None,
+        answer_upload: SimpleUploadedFile | None = None,
     ):
         data = {"exam_id": exam.id, "file": upload}
         if explanation_upload is not None:
             data["explanation_file"] = explanation_upload
+        if answer_upload is not None:
+            data["answer_file"] = answer_upload
         request = self.factory.post(
             "/api/v1/exams/pdf-extract/",
             data,
@@ -183,6 +187,235 @@ class GuidedExamSourceWorkflowTests(TestCase):
         self.assertEqual(
             payload["explanation_download_url"],
             "https://files.test/teacher.hwp",
+        )
+
+    @patch(
+        "apps.domains.exams.views.pdf_question_extract_view."
+        "generate_presigned_download_url",
+        side_effect=[
+            "https://files.test/explanations.png",
+            "https://files.test/answers.pdf",
+            "https://files.test/problems.pdf",
+        ],
+    )
+    @patch(
+        "apps.domains.exams.views.pdf_question_extract_view.dispatch_ai_job",
+        return_value={"job_id": "three-source-job"},
+    )
+    @patch(
+        "apps.domains.exams.views.pdf_question_extract_view."
+        "upload_fileobj_to_r2_storage"
+    )
+    def test_problem_answer_and_explanation_roles_are_preserved_and_dispatched(
+        self,
+        upload_file,
+        dispatch_job,
+        _presign,
+    ):
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="세 파일 역할 시험",
+            exam_type=Exam.ExamType.REGULAR,
+            grading_mode=Exam.GradingMode.MIXED,
+        )
+        response = PdfQuestionExtractView.as_view()(
+            self._request(
+                exam,
+                SimpleUploadedFile(
+                    "문제지.pdf",
+                    b"%PDF-1.4 problems",
+                    content_type="application/pdf",
+                ),
+                SimpleUploadedFile(
+                    "해설지.png",
+                    b"png-explanation-fixture",
+                    content_type="image/png",
+                ),
+                SimpleUploadedFile(
+                    "정답지.pdf",
+                    b"%PDF-1.4 answers",
+                    content_type="application/pdf",
+                ),
+            )
+        )
+
+        self.assertEqual(response.status_code, 202, response.data)
+        self.assertEqual(upload_file.call_count, 3)
+        self.assertTrue(
+            ExamAsset.objects.filter(
+                exam=exam,
+                asset_type=ExamAsset.AssetType.ANSWER_SOURCE,
+            ).exists()
+        )
+        self.assertTrue(
+            ExamAsset.objects.filter(
+                exam=exam,
+                asset_type=ExamAsset.AssetType.TEACHER_EXPLANATION_SOURCE,
+            ).exists()
+        )
+        payload = dispatch_job.call_args.kwargs["payload"]
+        self.assertEqual(payload["filename"], "문제지.pdf")
+        self.assertEqual(payload["answer_filename"], "정답지.pdf")
+        self.assertEqual(payload["explanation_filename"], "해설지.png")
+        self.assertEqual(
+            payload["answer_download_url"],
+            "https://files.test/answers.pdf",
+        )
+        self.assertEqual(
+            payload["explanation_download_url"],
+            "https://files.test/explanations.png",
+        )
+        self.assertTrue(payload["answer_source_requested"])
+        self.assertTrue(payload["explanation_source_requested"])
+
+    @patch(
+        "apps.domains.exams.views.pdf_question_extract_view."
+        "delete_object_r2_storage"
+    )
+    @patch(
+        "apps.domains.exams.views.pdf_question_extract_view."
+        "upload_fileobj_to_r2_storage",
+        side_effect=[None, RuntimeError("answer upload failed")],
+    )
+    def test_partial_multi_source_upload_deletes_only_unreferenced_objects(
+        self,
+        upload_file,
+        delete_object,
+    ):
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="부분 업로드 실패 시험",
+            exam_type=Exam.ExamType.REGULAR,
+        )
+
+        response = PdfQuestionExtractView.as_view()(
+            self._request(
+                exam,
+                SimpleUploadedFile(
+                    "문제지.pdf",
+                    b"%PDF-1.4 problems",
+                    content_type="application/pdf",
+                ),
+                answer_upload=SimpleUploadedFile(
+                    "정답지.pdf",
+                    b"%PDF-1.4 answers",
+                    content_type="application/pdf",
+                ),
+            )
+        )
+
+        self.assertEqual(response.status_code, 500, response.data)
+        exam.refresh_from_db()
+        self.assertEqual(exam.segmentation_status, Exam.SegmentationStatus.FAILED)
+        self.assertFalse(ExamAsset.objects.filter(exam=exam).exists())
+        first_uploaded_key = upload_file.call_args_list[0].kwargs["key"]
+        delete_object.assert_called_once_with(key=first_uploaded_key)
+
+    @patch(
+        "apps.domains.exams.views.pdf_question_extract_view."
+        "delete_object_r2_storage"
+    )
+    @patch(
+        "apps.domains.exams.views.pdf_question_extract_view."
+        "generate_presigned_download_url",
+        side_effect=[
+            "https://files.test/explanation-old.pdf",
+            "https://files.test/answer-old.pdf",
+            "https://files.test/problem-new.pdf",
+        ],
+    )
+    @patch(
+        "apps.domains.exams.views.pdf_question_extract_view.dispatch_ai_job",
+        return_value={"job_id": "reprocess-job"},
+    )
+    @patch(
+        "apps.domains.exams.views.pdf_question_extract_view."
+        "upload_fileobj_to_r2_storage"
+    )
+    def test_reprocess_replaces_assets_and_deletes_unreferenced_old_original(
+        self,
+        _upload_file,
+        dispatch_job,
+        _presign,
+        delete_object,
+    ):
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="재처리 시험",
+            exam_type=Exam.ExamType.REGULAR,
+            segmentation_status=Exam.SegmentationStatus.REVIEW_REQUIRED,
+        )
+        old_key = f"tenants/{self.tenant.id}/exams/pdf-extract/old/source.pdf"
+        ExamAsset.objects.create(
+            exam=exam,
+            asset_type=ExamAsset.AssetType.PROBLEM_SOURCE,
+            file_key=old_key,
+            file_type="application/pdf",
+            file_size=10,
+        )
+        old_answer_key = (
+            f"tenants/{self.tenant.id}/exams/pdf-extract/old/answers.pdf"
+        )
+        old_explanation_key = (
+            f"tenants/{self.tenant.id}/exams/pdf-extract/old/explanations.pdf"
+        )
+        ExamAsset.objects.create(
+            exam=exam,
+            asset_type=ExamAsset.AssetType.ANSWER_SOURCE,
+            file_key=old_answer_key,
+            file_type="application/pdf",
+            file_size=20,
+        )
+        ExamAsset.objects.create(
+            exam=exam,
+            asset_type=ExamAsset.AssetType.TEACHER_EXPLANATION_SOURCE,
+            file_key=old_explanation_key,
+            file_type="application/pdf",
+            file_size=30,
+        )
+
+        response = PdfQuestionExtractView.as_view()(
+            self._request(
+                exam,
+                SimpleUploadedFile(
+                    "새문제지.pdf",
+                    b"%PDF-1.4 new",
+                    content_type="application/pdf",
+                ),
+            )
+        )
+
+        self.assertEqual(response.status_code, 202, response.data)
+        new_key = ExamAsset.objects.get(
+            exam=exam,
+            asset_type=ExamAsset.AssetType.PROBLEM_SOURCE,
+        ).file_key
+        self.assertNotEqual(new_key, old_key)
+        delete_object.assert_called_once_with(key=old_key)
+        payload = dispatch_job.call_args.kwargs["payload"]
+        self.assertTrue(payload["answer_source_requested"])
+        self.assertTrue(payload["explanation_source_requested"])
+        self.assertEqual(
+            payload["answer_download_url"],
+            "https://files.test/answer-old.pdf",
+        )
+        self.assertEqual(
+            payload["explanation_download_url"],
+            "https://files.test/explanation-old.pdf",
+        )
+        self.assertEqual(
+            ExamAsset.objects.get(
+                exam=exam,
+                asset_type=ExamAsset.AssetType.ANSWER_SOURCE,
+            ).file_key,
+            old_answer_key,
+        )
+        self.assertEqual(
+            ExamAsset.objects.get(
+                exam=exam,
+                asset_type=ExamAsset.AssetType.TEACHER_EXPLANATION_SOURCE,
+            ).file_key,
+            old_explanation_key,
         )
 
     @patch(
@@ -542,6 +775,25 @@ class GuidedExamSourceWorkflowTests(TestCase):
                         "source_attachment_requires_review": True,
                     }
                 ],
+                "answers": [
+                    {
+                        "question_number": 1,
+                        "answer": "4",
+                        "source_image_key": (
+                            f"tenants/{self.tenant.id}/exams/answer-sources/"
+                            f"{exam.id}/page-001.png"
+                        ),
+                    }
+                ],
+                "answer_source_requested": True,
+                "explanation_source_requested": True,
+                "missing_answer_numbers": [2],
+                "missing_explanation_numbers": [1],
+                "source_issues": [
+                    "answer_coverage_incomplete",
+                    "explanation_coverage_incomplete",
+                ],
+                "paired_source_status": "partial",
                 "segmentation_method": "hwp_endnote",
             },
             error=None,
@@ -576,6 +828,14 @@ class GuidedExamSourceWorkflowTests(TestCase):
                 "q002-source-attachment.png"
             )
         )
+        self.assertEqual(proposals[0].region_meta["answer_candidate"], "4")
+        self.assertTrue(proposals[1].region_meta["answer_missing"])
+        self.assertTrue(proposals[0].region_meta["explanation_missing"])
+        self.assertEqual(
+            proposals[0].region_meta["paired_source_status"],
+            "partial",
+        )
+        self.assertFalse(AnswerKey.objects.filter(exam=exam).exists())
         dispatch_matchup.assert_not_called()
 
     def test_grading_workflow_can_change_after_questions_exist(self):
