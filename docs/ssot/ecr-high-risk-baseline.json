@@ -5,7 +5,7 @@
     "academy-api": 20,
     "academy-video-worker": 8,
     "academy-messaging-worker": 8,
-    "academy-ai-worker-cpu": 20,
+    "academy-ai-worker-cpu": 15,
     "academy-tools-worker": 20
   },
   "knownHighFindings": [
@@ -179,7 +179,6 @@
       "packageVersion": "1.11.1-1+deb13u1",
       "repositories": [
         "academy-api",
-        "academy-ai-worker-cpu",
         "academy-tools-worker"
       ]
     },
@@ -189,7 +188,6 @@
       "packageVersion": "1.11.1-1+deb13u1",
       "repositories": [
         "academy-api",
-        "academy-ai-worker-cpu",
         "academy-tools-worker"
       ]
     },
@@ -209,7 +207,6 @@
       "packageVersion": "1.11.1-1+deb13u1",
       "repositories": [
         "academy-api",
-        "academy-ai-worker-cpu",
         "academy-tools-worker"
       ]
     },
@@ -219,7 +216,6 @@
       "packageVersion": "1.11.1-1+deb13u1",
       "repositories": [
         "academy-api",
-        "academy-ai-worker-cpu",
         "academy-tools-worker"
       ]
     },
@@ -229,7 +225,6 @@
       "packageVersion": "1.11.1-1+deb13u1",
       "repositories": [
         "academy-api",
-        "academy-ai-worker-cpu",
         "academy-tools-worker"
       ]
     }

@@ -74,9 +74,9 @@ def test_reviewed_ocr_images_own_the_extended_high_budget() -> None:
         repository for repository, maximum in baseline.items() if maximum == 20
     } == {
         "academy-api",
-        "academy-ai-worker-cpu",
         "academy-tools-worker",
     }
+    assert baseline["academy-ai-worker-cpu"] == 15
     exact_counts = {repository: 0 for repository in baseline}
     for finding in document["knownHighFindings"]:
         for repository in finding["repositories"]:
