@@ -72,11 +72,11 @@ def test_reviewed_runtime_images_own_exact_high_budgets() -> None:
     assert document["schemaVersion"] == 2
     assert baseline == {
         "academy-base": 8,
-        "academy-api": 15,
+        "academy-api": 14,
         "academy-video-worker": 8,
         "academy-messaging-worker": 8,
-        "academy-ai-worker-cpu": 15,
-        "academy-tools-worker": 15,
+        "academy-ai-worker-cpu": 14,
+        "academy-tools-worker": 14,
     }
     exact_counts = {repository: 0 for repository in baseline}
     for finding in document["knownHighFindings"]:
