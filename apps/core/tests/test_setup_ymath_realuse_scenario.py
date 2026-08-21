@@ -61,9 +61,15 @@ class SetupYmathRealuseScenarioTests(TestCase):
             TenantMembership.objects.filter(tenant=tenant, role="admin", is_active=True).count(),
             1,
         )
+        self.assertEqual(
+            TenantMembership.objects.filter(tenant=tenant, role="student", is_active=True).count(),
+            2,
+        )
         User = get_user_model()
         teacher = User.objects.get(username=f"t{tenant.id}_ymath-qa-teacher")
         self.assertTrue(teacher.check_password("scenario-test-password"))
+        student = User.objects.get(username=f"t{tenant.id}_ymath-qa-student-01")
+        self.assertTrue(student.check_password("scenario-test-password"))
 
     def test_rejects_non_scenario_tenant_code(self):
         with self.assertRaisesMessage(CommandError, "tenant-code must start"):
