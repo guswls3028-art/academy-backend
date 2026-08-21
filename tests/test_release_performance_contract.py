@@ -63,20 +63,21 @@ def test_headless_opencv_images_do_not_explicitly_install_system_glib() -> None:
     assert "OpenCV wheel video support OK" in _read(PRODUCTION_DOCKERFILES["ai"])
 
 
-def test_reviewed_ocr_images_own_the_extended_high_budget() -> None:
+def test_reviewed_runtime_images_own_exact_high_budgets() -> None:
     document = json.loads(
         _read(REPO_ROOT / "docs" / "ssot" / "ecr-high-risk-baseline.json")
     )
     baseline = document["maximumHighFindings"]
 
     assert document["schemaVersion"] == 2
-    assert {
-        repository for repository, maximum in baseline.items() if maximum == 20
-    } == {
-        "academy-api",
-        "academy-tools-worker",
+    assert baseline == {
+        "academy-base": 8,
+        "academy-api": 15,
+        "academy-video-worker": 8,
+        "academy-messaging-worker": 8,
+        "academy-ai-worker-cpu": 15,
+        "academy-tools-worker": 20,
     }
-    assert baseline["academy-ai-worker-cpu"] == 15
     exact_counts = {repository: 0 for repository in baseline}
     for finding in document["knownHighFindings"]:
         for repository in finding["repositories"]:

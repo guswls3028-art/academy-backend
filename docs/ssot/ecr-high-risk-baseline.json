@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "maximumHighFindings": {
     "academy-base": 8,
-    "academy-api": 20,
+    "academy-api": 15,
     "academy-video-worker": 8,
     "academy-messaging-worker": 8,
     "academy-ai-worker-cpu": 15,
@@ -178,7 +178,6 @@
       "packageName": "libssh2",
       "packageVersion": "1.11.1-1+deb13u1",
       "repositories": [
-        "academy-api",
         "academy-tools-worker"
       ]
     },
@@ -187,7 +186,6 @@
       "packageName": "libssh2",
       "packageVersion": "1.11.1-1+deb13u1",
       "repositories": [
-        "academy-api",
         "academy-tools-worker"
       ]
     },
@@ -206,7 +204,6 @@
       "packageName": "libssh2",
       "packageVersion": "1.11.1-1+deb13u1",
       "repositories": [
-        "academy-api",
         "academy-tools-worker"
       ]
     },
@@ -215,7 +212,6 @@
       "packageName": "libssh2",
       "packageVersion": "1.11.1-1+deb13u1",
       "repositories": [
-        "academy-api",
         "academy-tools-worker"
       ]
     },
@@ -224,7 +220,6 @@
       "packageName": "libssh2",
       "packageVersion": "1.11.1-1+deb13u1",
       "repositories": [
-        "academy-api",
         "academy-tools-worker"
       ]
     }
