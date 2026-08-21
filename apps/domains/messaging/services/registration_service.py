@@ -130,7 +130,9 @@ def send_welcome_messages(
     def _resolve(trigger: str):
         from apps.domains.messaging.selectors import get_auto_send_config
         config = get_auto_send_config(owner_id, trigger)
-        if config and config.enabled and config.template:
+        # registration_approved_* is SYSTEM_AUTO.  A stale legacy enabled=False
+        # row must not suppress the required first-enrollment account notice.
+        if config and config.template:
             t = config.template
             if t.tenant_id != owner_id:
                 logger.error(
