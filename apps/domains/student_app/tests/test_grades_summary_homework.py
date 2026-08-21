@@ -5,6 +5,7 @@ import json
 from django.contrib.auth import get_user_model
 from django.apps import apps as django_apps
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
@@ -520,6 +521,92 @@ class MyGradesSummaryHomeworkTests(TestCase):
         self.assertEqual(row["achievement"], "NOT_SUBMITTED")
         self.assertEqual(row["lecture_title"], "수학")
         self.assertEqual(row["recorded_at"], assignment.created_at.isoformat())
+
+    def test_teacher_completed_unscored_homework_preserves_submission_state_for_student_and_parent(self):
+        homework = Homework.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title="현장 협의 완료 과제",
+            meta={"default_max_score": 20},
+        )
+        HomeworkAssignment.objects.create(
+            tenant=self.tenant,
+            homework=homework,
+            session=self.session,
+            enrollment=self.enrollment,
+        )
+        correction = self.AssessmentCorrection.objects.create(
+            tenant=self.tenant,
+            enrollment=self.enrollment,
+            session=self.session,
+            source_type=self.AssessmentCorrection.SourceType.HOMEWORK,
+            source_id=homework.id,
+            completed=True,
+            completed_at=timezone.now(),
+            note="수업 중 풀이 확인",
+            updated_by=self.user,
+        )
+        ClinicLink = django_apps.get_model("progress", "ClinicLink")
+        ClinicLink.objects.create(
+            tenant=self.tenant,
+            enrollment=self.enrollment,
+            session=self.session,
+            source_type="homework",
+            source_id=homework.id,
+            reason="AUTO_FAILED",
+            is_auto=True,
+            approved=True,
+            cycle_no=1,
+            resolved_at=timezone.now(),
+            resolution_type="MANUAL_OVERRIDE",
+            resolution_evidence={
+                "assessment_correction_id": correction.id,
+                "memo": correction.note,
+            },
+            memo=correction.note,
+        )
+
+        student_response = self._call()
+        student_row = student_response.data["homeworks"][0]
+
+        self.assertEqual(student_response.status_code, 200)
+        self.assertIsNone(student_row["score"])
+        self.assertFalse(student_row["passed"])
+        self.assertEqual(student_row["achievement"], "REMEDIATED")
+        self.assertTrue(student_row["teacher_resolved"])
+        self.assertNotIn("correction_note", student_row)
+
+        parent_user = User.objects.create_user(
+            username="student-grades-hw-parent",
+            password="pw1234",
+            tenant=self.tenant,
+        )
+        TenantMembership.ensure_active(
+            tenant=self.tenant,
+            user=parent_user,
+            role="parent",
+        )
+        Parent = django_apps.get_model("parents", "Parent")
+        parent = Parent.objects.create(
+            tenant=self.tenant,
+            user=parent_user,
+            name="학부모",
+            phone="01099998888",
+        )
+        self.student.parent = parent
+        self.student.save(update_fields=["parent", "updated_at"])
+        parent_request = self.factory.get(
+            "/api/v1/student/grades/",
+            HTTP_X_STUDENT_ID=str(self.student.id),
+        )
+        parent_request.tenant = self.tenant
+        force_authenticate(parent_request, user=parent_user)
+        parent_response = MyGradesSummaryView.as_view()(parent_request)
+
+        self.assertEqual(parent_response.status_code, 200)
+        self.assertTrue(parent_response.data["homeworks"][0]["teacher_resolved"])
+        self.assertIsNone(parent_response.data["homeworks"][0]["score"])
+        self.assertNotIn("correction_note", parent_response.data["homeworks"][0])
 
     def test_submitted_ungraded_homework_is_visible_as_waiting_for_review(self):
         homework = Homework.objects.create(

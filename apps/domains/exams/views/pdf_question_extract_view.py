@@ -4,6 +4,7 @@
 import hashlib
 import logging
 import uuid
+from pathlib import PurePosixPath
 
 from django.conf import settings
 from rest_framework import status
@@ -14,19 +15,35 @@ from rest_framework.parsers import MultiPartParser
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.exams.models import Exam, ExamAsset
 from apps.domains.exams.services.source_upload_policy import (
-    AUTO_PAIR_EXPLANATION_SUFFIXES,
     AUTO_PAIR_PRIMARY_SUFFIXES,
+    AUTO_PAIR_SUPPORT_SUFFIXES,
     AUTO_SEGMENT_SUFFIXES,
     storage_content_type,
     validate_source_upload,
 )
 from apps.support.exams.view_dependencies import dispatch_ai_job, pdf_extract_exam_validation_error
 from apps.infrastructure.storage.r2 import (
+    delete_object_r2_storage,
     upload_fileobj_to_r2_storage,
     generate_presigned_get_url_storage as generate_presigned_download_url,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _delete_unreferenced_source_objects(keys) -> None:
+    """Best-effort cleanup without deleting an original referenced by any exam."""
+    for key in {str(candidate or "").strip() for candidate in keys} - {""}:
+        if ExamAsset.objects.filter(file_key=key).exists():
+            continue
+        try:
+            delete_object_r2_storage(key=key)
+        except Exception:
+            logger.warning(
+                "Failed to delete unreferenced exam source object key=%s",
+                key,
+                exc_info=True,
+            )
 
 
 class PdfQuestionExtractView(APIView):
@@ -67,6 +84,19 @@ class PdfQuestionExtractView(APIView):
             if explanation_error:
                 return Response(
                     {"detail": explanation_error},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        answer_file = request.FILES.get("answer_file")
+        answer_filename = ""
+        answer_suffix = ""
+        if answer_file is not None:
+            answer_filename, answer_suffix, answer_error = validate_source_upload(
+                answer_file
+            )
+            if answer_error:
+                return Response(
+                    {"detail": answer_error},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
@@ -114,12 +144,50 @@ class PdfQuestionExtractView(APIView):
                 {"detail": ("이 형식의 원본을 보관하려면 먼저 시험을 선택해 주세요.")},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        can_auto_pair = bool(
-            explanation_file is not None
+
+        existing_support_assets = {}
+        if exam is not None:
+            existing_support_assets = {
+                asset.asset_type: asset
+                for asset in ExamAsset.objects.filter(
+                    exam=exam,
+                    asset_type__in=[
+                        ExamAsset.AssetType.ANSWER_SOURCE,
+                        ExamAsset.AssetType.TEACHER_EXPLANATION_SOURCE,
+                    ],
+                )
+            }
+        existing_explanation = existing_support_assets.get(
+            ExamAsset.AssetType.TEACHER_EXPLANATION_SOURCE
+        )
+        existing_answer = existing_support_assets.get(
+            ExamAsset.AssetType.ANSWER_SOURCE
+        )
+        if explanation_file is None and existing_explanation is not None:
+            explanation_filename = PurePosixPath(existing_explanation.file_key).name
+            explanation_suffix = PurePosixPath(explanation_filename).suffix.lower()
+        if answer_file is None and existing_answer is not None:
+            answer_filename = PurePosixPath(existing_answer.file_key).name
+            answer_suffix = PurePosixPath(answer_filename).suffix.lower()
+        explanation_source_requested = bool(
+            explanation_file is not None or existing_explanation is not None
+        )
+        answer_source_requested = bool(
+            answer_file is not None or existing_answer is not None
+        )
+        can_process_explanation = bool(
+            explanation_source_requested
             and source_suffix in AUTO_PAIR_PRIMARY_SUFFIXES
-            and explanation_suffix in AUTO_PAIR_EXPLANATION_SUFFIXES
+            and explanation_suffix in AUTO_PAIR_SUPPORT_SUFFIXES
+        )
+        can_process_answer = bool(
+            answer_source_requested
+            and source_suffix in AUTO_PAIR_PRIMARY_SUFFIXES
+            and answer_suffix in AUTO_PAIR_SUPPORT_SUFFIXES
         )
 
+        uploaded_keys: set[str] = set()
+        replaced_keys: set[str] = set()
         try:
             # Upload to R2
             name_hash = hashlib.md5(source_filename.encode()).hexdigest()[:8]
@@ -129,6 +197,7 @@ class PdfQuestionExtractView(APIView):
                 key=r2_key,
                 content_type=storage_content_type(source_file, source_suffix),
             )
+            uploaded_keys.add(r2_key)
 
             explanation_key = ""
             explanation_download_url = ""
@@ -146,10 +215,50 @@ class PdfQuestionExtractView(APIView):
                         explanation_suffix,
                     ),
                 )
-                if can_auto_pair:
-                    explanation_download_url = generate_presigned_download_url(key=explanation_key)
+                uploaded_keys.add(explanation_key)
+                if can_process_explanation:
+                    explanation_download_url = generate_presigned_download_url(
+                        key=explanation_key
+                    )
+            elif existing_explanation is not None and can_process_explanation:
+                explanation_download_url = generate_presigned_download_url(
+                    key=existing_explanation.file_key
+                )
+
+            answer_key = ""
+            answer_download_url = ""
+            if answer_file is not None:
+                answer_name_hash = hashlib.md5(answer_filename.encode()).hexdigest()[:8]
+                answer_key = (
+                    f"tenants/{tenant.id}/exams/pdf-extract/{uuid.uuid4()}/"
+                    f"{answer_name_hash}_{answer_filename}"
+                )
+                upload_fileobj_to_r2_storage(
+                    fileobj=answer_file,
+                    key=answer_key,
+                    content_type=storage_content_type(answer_file, answer_suffix),
+                )
+                uploaded_keys.add(answer_key)
+                if can_process_answer:
+                    answer_download_url = generate_presigned_download_url(key=answer_key)
+            elif existing_answer is not None and can_process_answer:
+                answer_download_url = generate_presigned_download_url(
+                    key=existing_answer.file_key
+                )
 
             if exam is not None:
+                replacing_types = [
+                    ExamAsset.AssetType.PROBLEM_SOURCE,
+                    ExamAsset.AssetType.PROBLEM_PDF,
+                    ExamAsset.AssetType.ANSWER_SOURCE,
+                    ExamAsset.AssetType.TEACHER_EXPLANATION_SOURCE,
+                ]
+                replaced_keys.update(
+                    ExamAsset.objects.filter(
+                        exam=exam,
+                        asset_type__in=replacing_types,
+                    ).values_list("file_key", flat=True)
+                )
                 source_defaults = {
                     "file_key": r2_key,
                     "file_type": source_file.content_type or "",
@@ -168,6 +277,13 @@ class PdfQuestionExtractView(APIView):
                         asset_type=ExamAsset.AssetType.PROBLEM_PDF,
                         defaults=source_defaults,
                     )
+                else:
+                    # A previous PDF distribution asset must not masquerade as
+                    # the newly selected non-PDF problem source after reprocess.
+                    ExamAsset.objects.filter(
+                        exam=exam,
+                        asset_type=ExamAsset.AssetType.PROBLEM_PDF,
+                    ).delete()
                 if explanation_file is not None:
                     ExamAsset.objects.update_or_create(
                         exam=exam,
@@ -178,7 +294,18 @@ class PdfQuestionExtractView(APIView):
                             "file_size": int(explanation_file.size or 0),
                         },
                     )
+                if answer_file is not None:
+                    ExamAsset.objects.update_or_create(
+                        exam=exam,
+                        asset_type=ExamAsset.AssetType.ANSWER_SOURCE,
+                        defaults={
+                            "file_key": answer_key,
+                            "file_type": answer_file.content_type or "",
+                            "file_size": int(answer_file.size or 0),
+                        },
+                    )
                 exam.source_filename = source_filename[:255]
+                _delete_unreferenced_source_objects(replaced_keys)
 
             if not can_auto_segment:
                 exam.segmentation_status = Exam.SegmentationStatus.CONVERSION_REQUIRED
@@ -225,7 +352,13 @@ class PdfQuestionExtractView(APIView):
                     "exam_id": str(exam_id) if exam_id else None,
                     "filename": source_filename,
                     "explanation_download_url": explanation_download_url,
-                    "explanation_filename": (explanation_filename if can_auto_pair else ""),
+                    "explanation_filename": (
+                        explanation_filename if can_process_explanation else ""
+                    ),
+                    "answer_download_url": answer_download_url,
+                    "answer_filename": answer_filename if can_process_answer else "",
+                    "answer_source_requested": answer_source_requested,
+                    "explanation_source_requested": explanation_source_requested,
                 },
                 tenant_id=str(tenant.id),
                 source_domain="exams",
@@ -234,11 +367,14 @@ class PdfQuestionExtractView(APIView):
             )
 
             message = "자료 유형을 확인한 뒤 문항과 원본 해설 분리를 시작합니다."
-            if explanation_file is not None and not can_auto_pair:
+            if (
+                (explanation_source_requested and not can_process_explanation)
+                or (answer_source_requested and not can_process_answer)
+            ):
                 message = (
-                    "두 원본을 형식 그대로 저장했습니다. 문제 자료의 자동 문항 "
-                    "분리를 시작하며, 해설 원본은 시험 상세에서 직접 연결해 "
-                    "검수할 수 있습니다."
+                    "지원되는 원본은 번호 맞춤을 시작했고, 나머지 원본도 형식 "
+                    "그대로 저장했습니다. 자동 인식되지 않은 정답·해설은 시험 "
+                    "상세에서 직접 검수할 수 있습니다."
                 )
             return Response(
                 {
@@ -252,6 +388,7 @@ class PdfQuestionExtractView(APIView):
 
         except Exception as e:
             logger.exception("Exam source processing failed: %s", e)
+            _delete_unreferenced_source_objects(uploaded_keys)
             if exam is not None:
                 Exam.objects.filter(id=exam.id, tenant=tenant).update(
                     segmentation_status=Exam.SegmentationStatus.FAILED,

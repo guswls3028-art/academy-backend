@@ -21,6 +21,9 @@ from django.db.models import Max
 from apps.domains.progress.models import ClinicLink, SessionProgress
 from apps.domains.progress.services.clinic_exam_rule_service import ClinicExamRuleService
 from apps.support.progress.clinic_trigger_dependencies import get_enrollment_tenant_id
+from apps.support.progress.assessment_correction_dependencies import (
+    is_current_teacher_exam_resolution,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +59,45 @@ def _latest_source_resolution_type(
         .values_list("resolution_type", flat=True)
         .first()
     )
+
+
+def _reopen_stale_teacher_exam_resolution(
+    *,
+    enrollment_id: int,
+    session,
+    exam_id: int,
+) -> None:
+    """Reopen a teacher pass when its saved score/answer fingerprint is stale."""
+    link = (
+        ClinicLink.objects.filter(
+            enrollment_id=enrollment_id,
+            session=session,
+            source_type="exam",
+            source_id=exam_id,
+            resolved_at__isnull=False,
+            resolution_type=ClinicLink.ResolutionType.MANUAL_OVERRIDE,
+        )
+        .order_by("-resolved_at", "-id")
+        .first()
+    )
+    evidence = link.resolution_evidence if link and isinstance(link.resolution_evidence, dict) else {}
+    correction_id = int(evidence.get("assessment_correction_id") or 0)
+    if not link or not correction_id:
+        return
+    if is_current_teacher_exam_resolution(
+        tenant_id=int(link.tenant_id),
+        enrollment_id=int(enrollment_id),
+        session_id=int(session.id),
+        exam_id=int(exam_id),
+        correction_id=correction_id,
+    ):
+        return
+
+    from apps.domains.progress.services.clinic_resolution_service import (
+        ClinicResolutionService,
+    )
+
+    ClinicResolutionService.unresolve(clinic_link_id=int(link.id))
 
 
 def _idempotent_create_clinic_link(
@@ -145,6 +187,12 @@ class ClinicTriggerService:
             exam_id = int(exam_row.get("exam_id", 0) or 0)
             if not exam_id:
                 continue
+
+            _reopen_stale_teacher_exam_resolution(
+                enrollment_id=int(session_progress.enrollment_id),
+                session=session_progress.session,
+                exam_id=exam_id,
+            )
 
             # Missing/ungraded exams keep the session incomplete, but they are
             # not a scored failure. Creating a ClinicLink here makes multi-exam

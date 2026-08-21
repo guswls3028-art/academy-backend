@@ -12,6 +12,7 @@ from rest_framework.views import APIView
 
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.exams.models import (
+    AnswerKey,
     Exam,
     ExamQuestion,
     ExamQuestionProposal,
@@ -52,11 +53,42 @@ class ExamSegmentationReviewView(APIView):
         if not exam:
             return Response({"detail": "시험을 찾을 수 없습니다."}, status=404)
         proposals = list(exam.question_proposals.all())
+        proposal_meta = [
+            item.region_meta
+            for item in proposals
+            if isinstance(item.region_meta, dict)
+        ]
+        paired_source_status = next(
+            (
+                str(meta.get("paired_source_status") or "")
+                for meta in proposal_meta
+                if meta.get("paired_source_status")
+            ),
+            "",
+        )
+        source_issues = list(
+            dict.fromkeys(
+                str(issue)
+                for meta in proposal_meta
+                for issue in (meta.get("source_issues") or [])
+                if issue
+            )
+        )
         return Response(
             {
                 "exam_id": int(exam.id),
                 "status": exam.segmentation_status,
                 "source_filename": exam.source_filename,
+                "paired_source_status": paired_source_status,
+                "source_issues": source_issues,
+                "answer_source_requested": any(
+                    bool(meta.get("answer_source_requested"))
+                    for meta in proposal_meta
+                ),
+                "explanation_source_requested": any(
+                    bool(meta.get("explanation_source_requested"))
+                    for meta in proposal_meta
+                ),
                 "items": [
                     {
                         "id": int(item.id),
@@ -103,6 +135,24 @@ class ExamSegmentationReviewView(APIView):
                         "has_teacher_explanation": bool(
                             item.explanation_text or item.explanation_image_key
                         ),
+                        "answer": str(
+                            (item.region_meta or {}).get("answer_candidate") or ""
+                        ),
+                        "answer_source_image_url": _proposal_url(
+                            tenant_id=int(request.tenant.id),
+                            key=str(
+                                (item.region_meta or {}).get(
+                                    "answer_source_image_key"
+                                )
+                                or ""
+                            ),
+                        ),
+                        "answer_missing": bool(
+                            (item.region_meta or {}).get("answer_missing")
+                        ),
+                        "explanation_missing": bool(
+                            (item.region_meta or {}).get("explanation_missing")
+                        ),
                     }
                     for item in proposals
                 ],
@@ -118,7 +168,10 @@ class ExamSegmentationApproveView(APIView):
         if not isinstance(raw_items, list):
             raise ValidationError({"items": "검수한 문항 목록이 필요합니다."})
 
-        requested: dict[int, tuple[int, bool, float | None, str, bool]] = {}
+        requested: dict[
+            int,
+            tuple[int, bool, float | None, str, bool, str | None],
+        ] = {}
         for raw in raw_items:
             try:
                 proposal_id = int(raw.get("id"))
@@ -130,6 +183,12 @@ class ExamSegmentationApproveView(APIView):
                     raw.get("explanation_variant") or "reconstructed"
                 )
                 include_explanation_text = raw.get("include_explanation_text", True)
+                answer = None
+                if "answer" in raw:
+                    raw_answer = raw.get("answer")
+                    if isinstance(raw_answer, (dict, list, tuple)):
+                        raise ValueError
+                    answer = str(raw_answer or "").strip()
             except (AttributeError, TypeError, ValueError):
                 raise ValidationError({"items": "문항 번호를 다시 확인해 주세요."})
             if not isinstance(included, bool):
@@ -148,6 +207,10 @@ class ExamSegmentationApproveView(APIView):
                 raise ValidationError(
                     {"items": "해설 원본 선택을 다시 확인해 주세요."}
                 )
+            if answer is not None and len(answer) > 500:
+                raise ValidationError(
+                    {"items": "정답은 문항당 500자 이내로 입력해 주세요."}
+                )
             if proposal_id in requested:
                 raise ValidationError({"items": "같은 후보가 중복되었습니다."})
             requested[proposal_id] = (
@@ -156,6 +219,7 @@ class ExamSegmentationApproveView(APIView):
                 crop_ratio,
                 explanation_variant,
                 include_explanation_text,
+                answer,
             )
 
         exam_snapshot = Exam.objects.filter(
@@ -186,7 +250,7 @@ class ExamSegmentationApproveView(APIView):
 
         try:
             for proposal in proposal_snapshot:
-                _, included, requested_ratio, _, _ = requested[int(proposal.id)]
+                _, included, requested_ratio, _, _, _ = requested[int(proposal.id)]
                 if not included or requested_ratio is None:
                     continue
                 if abs(requested_ratio - float(proposal.problem_crop_ratio)) < 0.0001:
@@ -254,11 +318,19 @@ class ExamSegmentationApproveView(APIView):
                         requested[int(item.id)][0],
                         requested[int(item.id)][3],
                         requested[int(item.id)][4],
+                        (
+                            requested[int(item.id)][5]
+                            if requested[int(item.id)][5] is not None
+                            else str(
+                                (item.region_meta or {}).get("answer_candidate")
+                                or ""
+                            ).strip()
+                        ),
                     )
                     for item in proposals
                     if requested[int(item.id)][1]
                 ]
-                numbers = [number for _, number, _, _ in selected]
+                numbers = [number for _, number, _, _, _ in selected]
                 if not selected:
                     raise ValidationError({"items": "한 문항 이상 포함해 주세요."})
                 if len(numbers) != len(set(numbers)):
@@ -274,6 +346,31 @@ class ExamSegmentationApproveView(APIView):
                         min(max(int(exam.choice_question_count or 1), 1), total - 1)
                         if total > 1
                         else 0
+                    )
+
+                answer_source_requested = any(
+                    bool((proposal.region_meta or {}).get("answer_source_requested"))
+                    for proposal in proposals
+                )
+                missing_choice_numbers = [
+                    number
+                    for index, (_, number, _, _, answer) in enumerate(
+                        selected,
+                        start=1,
+                    )
+                    if index <= choice_count and not answer
+                ]
+                if answer_source_requested and missing_choice_numbers:
+                    missing_labels = ", ".join(
+                        f"{number}번" for number in missing_choice_numbers[:10]
+                    )
+                    raise ValidationError(
+                        {
+                            "items": (
+                                f"정답이 인식되지 않은 선택형 문항({missing_labels})의 "
+                                "정답을 확인해 주세요."
+                            )
+                        }
                     )
 
                 sheet, _ = Sheet.objects.get_or_create(
@@ -295,7 +392,14 @@ class ExamSegmentationApproveView(APIView):
                 )
 
                 base_score = round(float(exam.max_score or 0.0) / total, 2)
-                for index, (proposal, number, explanation_variant, include_explanation_text) in enumerate(
+                answers: dict[str, str] = {}
+                for index, (
+                    proposal,
+                    number,
+                    explanation_variant,
+                    include_explanation_text,
+                    answer,
+                ) in enumerate(
                     selected,
                     start=1,
                 ):
@@ -356,6 +460,14 @@ class ExamSegmentationApproveView(APIView):
                             source=QuestionExplanation.Source.SOURCE_FILE,
                             match_confidence=proposal.match_confidence,
                         )
+                    if answer:
+                        answers[str(question.id)] = answer
+
+                if answer_source_requested and answers:
+                    AnswerKey.objects.update_or_create(
+                        exam=exam,
+                        defaults={"answers": answers},
+                    )
 
                 exam.choice_question_count = choice_count
                 exam.segmentation_status = Exam.SegmentationStatus.READY

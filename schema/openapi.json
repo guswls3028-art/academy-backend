@@ -37313,7 +37313,7 @@
     },
     "/api/v1/results/admin/sessions/{session_id}/score-correction/": {
       "patch": {
-        "description": "점수 합불을 바꾸지 않고 시험/과제별 오답 확인 상태만 저장한다.",
+        "description": "원점수/제출을 바꾸지 않고 교사의 시험 통과·과제 완료 판정을 저장한다.",
         "operationId": "results_admin_sessions_score_correction_partial_update",
         "parameters": [
           {

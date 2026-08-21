@@ -7,7 +7,9 @@ MAX_SOURCE_FILE_SIZE = 50 * 1024 * 1024
 
 AUTO_SEGMENT_SUFFIXES = frozenset({".pdf", ".png", ".jpg", ".jpeg", ".hwp", ".hwpx"})
 AUTO_PAIR_PRIMARY_SUFFIXES = frozenset({".pdf", ".png", ".jpg", ".jpeg"})
-AUTO_PAIR_EXPLANATION_SUFFIXES = frozenset({".hwp", ".hwpx"})
+AUTO_PAIR_SUPPORT_SUFFIXES = frozenset(
+    {".pdf", ".png", ".jpg", ".jpeg", ".hwp", ".hwpx"}
+)
 
 # Source documents are intentionally broad. Only formats that can execute code
 # or render active browser content are rejected at the upload boundary.

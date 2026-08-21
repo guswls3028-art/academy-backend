@@ -25,6 +25,9 @@ from apps.domains.results.models import ExamResult, ExamAttempt
 from apps.support.results.progress_read_dependencies import (
     exam_remediation_link_values,
 )
+from apps.support.progress.assessment_correction_dependencies import (
+    stale_teacher_exam_resolution_link_ids,
+)
 
 
 def compute_first_pass(
@@ -210,13 +213,20 @@ def compute_exam_achievement_bulk(
     #   use_session_filter=False → (enrollment_id, exam_id, None) — session 무관
     # 동일 key 에 link 가 여러 개면 resolved_at 최신만 보관.
     link_map: dict[tuple[int, int, int | None], dict[str, Any]] = {}
-    for cl in exam_remediation_link_values(
+    remediation_links = exam_remediation_link_values(
         enrollment_ids=enrollment_ids,
         exam_ids=exam_ids,
         session_ids=session_ids,
         use_session_filter=use_session_filter,
         tenant=tenant,
-    ):
+    )
+    stale_teacher_link_ids = stale_teacher_exam_resolution_link_ids(
+        links=remediation_links,
+        tenant_id=int(tenant.id),
+    )
+    for cl in remediation_links:
+        if int(cl["id"]) in stale_teacher_link_ids:
+            continue
         if use_session_filter:
             sid = int(cl["session_id"]) if cl.get("session_id") is not None else None
         else:

@@ -166,6 +166,180 @@ class ClinicResolutionService:
 
     @staticmethod
     @transaction.atomic
+    def set_teacher_assessment_resolution(
+        *,
+        tenant_id: int,
+        enrollment_id: int,
+        session_id: int,
+        source_type: str,
+        source_id: int,
+        completed: bool,
+        correction_id: int,
+        user_id: Optional[int],
+        memo: str,
+        source_fingerprint: str | None = None,
+    ) -> Optional[ClinicLink]:
+        """Apply or reopen a source-specific teacher decision without changing score.
+
+        ``AssessmentCorrection`` owns the teacher decision. ``ClinicLink`` keeps
+        the existing remediation resolution/read-model contract and append-only
+        transition history. A missing link is materialized as an already-resolved
+        source record so a later async progress run cannot recreate the target.
+        """
+        if source_type not in {"exam", "homework"}:
+            raise ValueError(f"Unsupported assessment source_type: {source_type}")
+
+        tenant_id = int(tenant_id)
+        enrollment_id = int(enrollment_id)
+        session_id = int(session_id)
+        source_id = int(source_id)
+        correction_id = int(correction_id)
+        normalized_memo = str(memo or "").strip()
+
+        links = list(
+            ClinicLink.objects.select_for_update()
+            .filter(
+                tenant_id=tenant_id,
+                enrollment_id=enrollment_id,
+                session_id=session_id,
+                source_type=source_type,
+                source_id=source_id,
+            )
+            .order_by("-cycle_no", "-id")
+        )
+        latest = links[0] if links else None
+        latest_evidence = (
+            latest.resolution_evidence
+            if latest and isinstance(latest.resolution_evidence, dict)
+            else {}
+        )
+        latest_is_teacher_resolution = bool(
+            latest
+            and latest.resolution_type == ClinicLink.ResolutionType.MANUAL_OVERRIDE
+            and int(latest_evidence.get("assessment_correction_id") or 0)
+            == correction_id
+        )
+
+        if not completed:
+            if latest and latest_is_teacher_resolution and latest.resolved_at:
+                link = latest
+                _append_history(link, action="unresolve_teacher_assessment")
+                link.resolved_at = None
+                link.resolution_type = None
+                link.resolution_evidence = None
+                link.save(
+                    update_fields=[
+                        "resolved_at",
+                        "resolution_type",
+                        "resolution_evidence",
+                        "resolution_history",
+                        "updated_at",
+                    ]
+                )
+            elif latest:
+                if latest.resolved_at:
+                    # A factual retake/pass or unrelated waiver is stronger than
+                    # this review control and must not be reopened here.
+                    return latest
+                link = latest
+            else:
+                link = ClinicLink.objects.create(
+                    tenant_id=tenant_id,
+                    enrollment_id=enrollment_id,
+                    session_id=session_id,
+                    source_type=source_type,
+                    source_id=source_id,
+                    reason=ClinicLink.Reason.AUTO_FAILED,
+                    is_auto=True,
+                    approved=False,
+                    cycle_no=1,
+                    meta={
+                        "kind": "TEACHER_ASSESSMENT_INCOMPLETE",
+                        f"{source_type}_id": source_id,
+                        "assessment_correction_id": correction_id,
+                    },
+                )
+            _dispatch_progress_for_link(link)
+            return link
+
+        if len(normalized_memo) < 2:
+            raise ValueError("Teacher assessment resolution requires a reason")
+
+        # Preserve a factual retake/source pass, waiver or unrelated manual
+        # closure. The correction row records this review, but the teacher
+        # toggle must not replace or later reopen an already-resolved source.
+        if latest and latest.resolved_at and not latest_is_teacher_resolution:
+            return latest
+
+        link = latest
+        if link is None:
+            max_cycle = max((int(item.cycle_no or 0) for item in links), default=0)
+            link = ClinicLink.objects.create(
+                tenant_id=tenant_id,
+                enrollment_id=enrollment_id,
+                session_id=session_id,
+                source_type=source_type,
+                source_id=source_id,
+                reason=ClinicLink.Reason.AUTO_FAILED,
+                is_auto=True,
+                approved=True,
+                cycle_no=max(max_cycle + 1, 1),
+                meta={
+                    "kind": "TEACHER_ASSESSMENT_RESOLUTION",
+                    f"{source_type}_id": source_id,
+                },
+            )
+
+        was_teacher_resolved = bool(
+            link.resolved_at and latest_is_teacher_resolution
+        )
+        now = timezone.now()
+        _append_history(
+            link,
+            action=(
+                "confirm_teacher_assessment"
+                if link.resolved_at
+                else "resolve_teacher_assessment"
+            ),
+            at=now,
+        )
+        link.resolved_at = link.resolved_at or now
+        link.resolution_type = ClinicLink.ResolutionType.MANUAL_OVERRIDE
+        link.resolution_evidence = {
+            "user_id": user_id,
+            "memo": normalized_memo,
+            "assessment_correction_id": correction_id,
+            "source_type": source_type,
+            "source_id": source_id,
+            "source_fingerprint": source_fingerprint,
+        }
+        link.memo = normalized_memo
+        link.approved = True
+        link.save(
+            update_fields=[
+                "resolved_at",
+                "resolution_type",
+                "resolution_evidence",
+                "resolution_history",
+                "memo",
+                "approved",
+                "updated_at",
+            ]
+        )
+        _dispatch_progress_for_link(link)
+        if not was_teacher_resolved:
+            _eid, _sid = enrollment_id, session_id
+            transaction.on_commit(
+                lambda: _send_resolution_notification(
+                    _eid,
+                    _sid,
+                    ClinicLink.ResolutionType.MANUAL_OVERRIDE,
+                )
+            )
+        return link
+
+    @staticmethod
+    @transaction.atomic
     def resolve_by_removed_source(
         *,
         tenant_id: int,

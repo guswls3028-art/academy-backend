@@ -21,7 +21,7 @@
 - 구성 수정 권한은 같은 테넌트의 `owner`와 `admin`이다. 일반 교사·직원,
   학생·학부모는 실패 폐쇄한다.
 
-## 오답 완료·미완료 상태
+## 오답 확인과 교사 최종 처리 상태
 
 학생 시험 카드의 `correction_status`는 차시 성적표에서 교사가 저장한
 `AssessmentCorrection`을 읽은 값이다. 프론트엔드는 점수나 오답 개수로 상태를
@@ -41,6 +41,17 @@
 
 구현은 `apps/domains/results/services/assessment_correction_status.py`의 내용 지문과
 상태 판정을 교사용 차시 성적표와 학생 성적 요약이 함께 사용한다.
+
+시험은 원점수의 `is_pass=false`를 보존해도 현재 교사 완료가 유효하면 최종 성취를
+`REMEDIATED`로 읽어 재시험 필요 카드와 실패 통계에서 제외한다. 실제 점수·답안이
+바뀌면 지문 검증이 이 최종 처리를 무효화해 다시 확인 대상으로 돌린다.
+
+과제는 `teacher_resolved=true`를 별도로 반환한다. 점수 없는 미제출 과제를 교사가
+현장에서 확인해 완료한 경우에도 `score=null`과 원래 `passed`/제출 사실은 바꾸지
+않고 `achievement=REMEDIATED`로 표시한다. 학생·학부모 성적 카드에는 **교사 확인
+완료**로 보이며, 대시보드의 미통과·제출 화면의 재제출 대상·과제 통과 통계에서는
+완료로 센다. 교사 메모는 학생/학부모 응답에 포함하지 않는다. 교사가 완료를 해제하면
+`teacher_resolved=false`와 현재 원자료의 `FAIL`/`NOT_SUBMITTED` 상태가 다시 표시된다.
 
 ## 성장 그래프 구성
 
@@ -93,7 +104,8 @@ PATCH는 모든 알려진 섹션을 중복 없이 포함하고 `visible`을 bool
 
 - `apps/core/tests/test_student_grade_report_layout.py`: owner/admin 권한, 일반 교사 차단,
   정규화, 검증, 다른 `ui_config` 보존
-- `apps/domains/student_app/tests/test_grades_summary_homework.py`: 학생 응답의 현재 완료 상태,
-  점수 변경 뒤 미완료 전이, 테넌트 구성 projection
+- `apps/domains/student_app/tests/test_grades_summary_homework.py`: 학생·학부모 응답의 현재
+  시험 완료 상태, 점수 변경 뒤 미완료 전이, 점수 없는 교사 완료 과제와 메모 비노출,
+  테넌트 구성 projection
 - `apps/domains/results/tests/test_session_scores_roster_scope.py`: 교사용 저장·재조회와 같은
   지문 판정 유지

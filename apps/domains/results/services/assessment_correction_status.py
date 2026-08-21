@@ -32,18 +32,24 @@ def assessment_correction_payload(
             "correction_status": "COMPLETED" if correction.completed else "PENDING",
             "correction_completed_at": correction.completed_at if correction.completed else None,
             "correction_note": note,
+            "correction_updated_at": correction.updated_at,
+            "teacher_resolved": bool(correction.completed),
         }
     if score is None or max_score is None or max_score <= 0:
         return {
             "correction_status": None,
             "correction_completed_at": None,
             "correction_note": note,
+            "correction_updated_at": correction.updated_at if correction else None,
+            "teacher_resolved": False,
         }
     if score >= max_score:
         return {
             "correction_status": "NOT_REQUIRED",
             "correction_completed_at": None,
             "correction_note": note,
+            "correction_updated_at": correction.updated_at if correction else None,
+            "teacher_resolved": False,
         }
     is_current_completion = bool(
         correction
@@ -57,6 +63,8 @@ def assessment_correction_payload(
         "correction_status": "COMPLETED" if is_current_completion else "PENDING",
         "correction_completed_at": correction.completed_at if is_current_completion else None,
         "correction_note": note,
+        "correction_updated_at": correction.updated_at if correction else None,
+        "teacher_resolved": is_current_completion,
     }
 
 

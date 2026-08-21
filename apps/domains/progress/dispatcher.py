@@ -64,3 +64,33 @@ def resolve_removed_source_clinic_links(
         user_id=user_id,
         reason=reason,
     )
+
+
+def set_teacher_assessment_resolution(
+    *,
+    tenant_id: int,
+    enrollment_id: int,
+    session_id: int,
+    source_type: str,
+    source_id: int,
+    completed: bool,
+    correction_id: int,
+    user_id: int | None,
+    memo: str,
+    source_fingerprint: str | None = None,
+):
+    """Public progress entrypoint for score-preserving teacher decisions."""
+    from apps.domains.progress.services.clinic_resolution_service import ClinicResolutionService
+
+    return ClinicResolutionService.set_teacher_assessment_resolution(
+        tenant_id=tenant_id,
+        enrollment_id=enrollment_id,
+        session_id=session_id,
+        source_type=source_type,
+        source_id=source_id,
+        completed=completed,
+        correction_id=correction_id,
+        user_id=user_id,
+        memo=memo,
+        source_fingerprint=source_fingerprint,
+    )
