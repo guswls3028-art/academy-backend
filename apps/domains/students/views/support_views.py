@@ -4,6 +4,8 @@ import uuid
 from datetime import timedelta
 
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema
+from rest_framework import serializers
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -17,10 +19,66 @@ from apps.domains.students.models import Student
 from apps.domains.students.services.activity import record_student_screen_view
 
 
-ACTIVITY_CATEGORIES = {
-    "login", "home", "homework", "video", "exam", "result",
-    "attendance", "clinic", "notice", "profile", "fee", "guide",
-}
+ACTIVITY_CATEGORIES = (
+    "login",
+    "home",
+    "homework",
+    "video",
+    "exam",
+    "result",
+    "attendance",
+    "clinic",
+    "notice",
+    "profile",
+    "fee",
+    "guide",
+)
+
+
+class StudentSupportSummarySchema(serializers.Serializer):
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+
+
+class StudentSupportSessionSchema(serializers.Serializer):
+    access = serializers.CharField()
+    expires_at = serializers.DateTimeField()
+    session_id = serializers.UUIDField()
+    student = StudentSupportSummarySchema()
+
+
+class StudentActivityQuerySchema(serializers.Serializer):
+    days = serializers.ChoiceField(choices=(7, 30, 90), required=False, default=30)
+    limit = serializers.IntegerField(min_value=1, max_value=100, required=False, default=50)
+    category = serializers.ChoiceField(choices=ACTIVITY_CATEGORIES, required=False)
+    include_support = serializers.BooleanField(required=False, default=False)
+
+
+class StudentActivityItemSchema(serializers.Serializer):
+    id = serializers.IntegerField()
+    occurred_at = serializers.DateTimeField()
+    category = serializers.ChoiceField(choices=ACTIVITY_CATEGORIES)
+    label = serializers.CharField()
+    actor_mode = serializers.ChoiceField(choices=("student", "support"))
+    device_class = serializers.ChoiceField(choices=("mobile", "tablet", "desktop"))
+    screen_id = serializers.CharField()
+
+
+class StudentActivityFeedSchema(serializers.Serializer):
+    student = StudentSupportSummarySchema()
+    results = StudentActivityItemSchema(many=True)
+    count = serializers.IntegerField()
+    days = serializers.ChoiceField(choices=(7, 30, 90))
+    include_support = serializers.BooleanField()
+
+
+class StudentActivityRecordSchema(serializers.Serializer):
+    screen_id = serializers.CharField()
+    device_class = serializers.ChoiceField(choices=("mobile", "tablet", "desktop"))
+
+
+class StudentActivityAcceptedSchema(serializers.Serializer):
+    accepted = serializers.BooleanField()
 
 
 def _student_for_staff(request, student_id: int) -> Student | None:
@@ -37,6 +95,11 @@ class StudentSupportSessionView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
     lifetime = timedelta(minutes=15)
 
+    @extend_schema(
+        operation_id="students_support_session_create",
+        request=None,
+        responses={200: StudentSupportSessionSchema},
+    )
     def post(self, request, student_id: int):
         student = _student_for_staff(request, student_id)
         if student is None:
@@ -84,6 +147,11 @@ class StudentActivityView(APIView):
 
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
+    @extend_schema(
+        operation_id="students_activity_list",
+        parameters=[StudentActivityQuerySchema],
+        responses={200: StudentActivityFeedSchema},
+    )
     def get(self, request, student_id: int):
         student = _student_for_staff(request, student_id)
         if student is None:
@@ -176,6 +244,11 @@ class StudentActivityRecordView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        operation_id="students_activity_record",
+        request=StudentActivityRecordSchema,
+        responses={202: StudentActivityAcceptedSchema},
+    )
     def post(self, request):
         screen_id = str((request.data or {}).get("screen_id") or "").strip()
         device_class = str((request.data or {}).get("device_class") or "").strip()
