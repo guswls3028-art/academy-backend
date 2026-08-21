@@ -136,10 +136,13 @@ GLib 6건, libssh2 6건인 총 20건이다. Debian tracker는 trixie
 `CVE-2026-66035`를 더 이상 반환하지 않았다. 두 digest의 exact High 집합은 공통
 8건, GLib 6건, libssh2 1건인 총 15건이므로 API·AI 상한과 다섯 finding의
 repository identity를 함께 낮췄다. 같은 후보의 Video·Messaging은 기존 8건을
-유지했다. Tools는 재사용된 직전 운영 digest의 완료 scan이 아직 20건을 반환하므로
-상한과 다섯 identity를 유지하며, 새 Tools digest의 완료 scan에서 감소가 확인될
-때만 별도 검토로 낮춘다. 이는 패키지 업그레이드나 위험 승인 확대가 아니라 ECR의
-digest별 완료 scan readback을 exact 기준선에 반영한 것이다.
+유지했다. 후속 후보 `sha-d06e895c1...-run-32498688185-1`은 새 Tools digest
+`sha256:35123a457b7903688bd7553f5fb84a6938be5f72aef4f60d2f105618ed6b7481`을
+빌드했다. 그 digest의 완료 scan도 동일한 다섯 CVE를 더 이상 반환하지 않고 공통
+8건, GLib 6건, libssh2 1건인 exact High 15건을 반환했다. 따라서 Tools 상한을
+15로 낮추고 기준선에서 다섯 finding을 제거했다. 이는 패키지 업그레이드나 위험
+승인 확대가 아니라 ECR의 digest별 완료 scan readback을 exact 기준선에 반영한
+것이다.
 
 현재 Critical 한시 항목은 Debian stable에 수정본이 아직 없거나 Debian이
 `no-dsa`/minor로 분류한 glibc·GLib·Perl finding이다. GLib의
