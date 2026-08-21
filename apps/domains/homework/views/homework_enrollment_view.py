@@ -20,6 +20,7 @@ from apps.domains.homework.serializers.homework_enrollment_serializer import (
 from apps.support.homework.view_dependencies import (
     active_enrollment_ids_for_session,
     active_session_enrollments_for_session,
+    get_session_for_homework_enrollment,
     session_exists_for_tenant,
 )
 
@@ -133,7 +134,11 @@ class HomeworkEnrollmentManageView(APIView):
 
         tenant = getattr(request, "tenant", None)
 
-        if not session_exists_for_tenant(session_id=session_id, tenant=tenant):
+        if get_session_for_homework_enrollment(
+            session_id=session_id,
+            tenant=tenant,
+            for_update=True,
+        ) is None:
             return Response({"detail": "해당 차시를 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
 
         ser = HomeworkEnrollmentUpdateSerializer(data=request.data)
@@ -156,9 +161,20 @@ class HomeworkEnrollmentManageView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        current_active_ids = set(
+            HomeworkEnrollment.objects.filter(
+                tenant=tenant,
+                session_id=session_id,
+                enrollment_id__in=valid_ids,
+            ).values_list("enrollment_id", flat=True)
+        )
+        removed_ids = current_active_ids - incoming_ids
+        added_ids = incoming_ids - current_active_ids
+
         HomeworkEnrollment.objects.filter(
             tenant=tenant,
             session_id=session_id,
+            enrollment_id__in=removed_ids,
         ).delete()
 
         HomeworkEnrollment.objects.bulk_create(
@@ -168,7 +184,7 @@ class HomeworkEnrollmentManageView(APIView):
                     session_id=session_id,
                     enrollment_id=eid,
                 )
-                for eid in sorted(incoming_ids)
+                for eid in sorted(added_ids)
             ]
         )
 

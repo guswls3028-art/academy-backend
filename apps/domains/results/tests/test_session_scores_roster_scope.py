@@ -911,6 +911,72 @@ class SessionScoresRosterScopeTests(TestCase):
         targets = ClinicTargetService.list_admin_targets(tenant=self.tenant)
         self.assertFalse(any(target.get("clinic_link_id") == link.id for target in targets))
 
+    def test_homework_clinic_target_uses_homework_specific_cutline(self):
+        self.homework.meta = {"default_max_score": 20}
+        self.homework.cutline_mode = Homework.CutlineMode.COUNT
+        self.homework.cutline_value = 15
+        self.homework.round_unit_percent = 5
+        self.homework.save(
+            update_fields=[
+                "meta",
+                "cutline_mode",
+                "cutline_value",
+                "round_unit_percent",
+                "updated_at",
+            ]
+        )
+        HomeworkScore.objects.create(
+            enrollment=self.active_enrollment,
+            session=self.session,
+            homework=self.homework,
+            attempt_index=1,
+            score=10,
+            max_score=20,
+            passed=False,
+            clinic_required=True,
+        )
+        link = ClinicLink.objects.create(
+            tenant=self.tenant,
+            enrollment=self.active_enrollment,
+            session=self.session,
+            reason=ClinicLink.Reason.AUTO_FAILED,
+            is_auto=True,
+            approved=True,
+            source_type="homework",
+            source_id=self.homework.id,
+            meta={"kind": "HOMEWORK_FAILED", "homework_id": self.homework.id},
+        )
+
+        count_target = next(
+            target
+            for target in ClinicTargetService.list_admin_targets(tenant=self.tenant)
+            if target.get("clinic_link_id") == link.id
+        )
+
+        self.assertIsNone(count_target["exam_score"])
+        self.assertIsNone(count_target["cutline_score"])
+        self.assertEqual(count_target["homework_score"], 10.0)
+        self.assertEqual(count_target["homework_cutline"], 15.0)
+        self.assertEqual(count_target["homework_cutline_mode"], "COUNT")
+        self.assertEqual(count_target["homework_cutline_value"], 15.0)
+        self.assertEqual(count_target["max_score"], 20.0)
+
+        self.homework.cutline_mode = Homework.CutlineMode.PERCENT
+        self.homework.cutline_value = 70
+        self.homework.save(
+            update_fields=["cutline_mode", "cutline_value", "updated_at"]
+        )
+        percent_target = next(
+            target
+            for target in ClinicTargetService.list_admin_targets(tenant=self.tenant)
+            if target.get("clinic_link_id") == link.id
+        )
+
+        self.assertEqual(percent_target["homework_cutline"], 14.0)
+        self.assertEqual(percent_target["homework_cutline_mode"], "PERCENT")
+        self.assertEqual(percent_target["homework_cutline_value"], 70.0)
+        self.assertEqual(percent_target["homework_round_unit_percent"], 5)
+
     def test_session_scores_include_retake_history_and_final_pass(self):
         self.exam.pass_score = 70
         self.exam.max_score = 100
