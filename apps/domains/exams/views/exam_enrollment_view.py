@@ -46,6 +46,16 @@ class ExamEnrollmentManageView(APIView):
 
     permission_classes = [TenantResolvedAndStaff]
 
+    def _get_exam(self, request, exam_id: int, *, for_update: bool = False) -> Exam:
+        queryset = Exam.objects.filter(
+            tenant=request.tenant,
+            exam_type=Exam.ExamType.REGULAR,
+            is_active=True,
+        )
+        if for_update:
+            queryset = queryset.select_for_update()
+        return get_object_or_404(queryset, pk=exam_id)
+
     def _get_session_id_or_400(self, request, exam: Exam) -> int:
         """
         ✅ M:N 구조 대응:
@@ -63,7 +73,10 @@ class ExamEnrollmentManageView(APIView):
 
         # ✅ exam.sessions에 포함된 세션인지 검증
         if hasattr(exam, "sessions"):
-            ok = exam.sessions.filter(id=session_id).exists()
+            ok = exam.sessions.filter(
+                id=session_id,
+                lecture__tenant=request.tenant,
+            ).exists()
             if not ok:
                 raise ValueError("This exam is not linked to the given session_id")
         # (legacy) 단일 session 필드가 있는 경우만 fallback
@@ -75,15 +88,7 @@ class ExamEnrollmentManageView(APIView):
 
     def get(self, request, exam_id: int):
         tenant = request.tenant
-        exam = get_object_or_404(
-            Exam.objects.filter(
-                tenant=tenant,
-                exam_type=Exam.ExamType.REGULAR,
-                is_active=True,
-                sessions__lecture__tenant=tenant,
-            ).distinct(),
-            pk=exam_id,
-        )
+        exam = self._get_exam(request, exam_id)
 
         try:
             session_id = self._get_session_id_or_400(request, exam)
@@ -178,15 +183,10 @@ class ExamEnrollmentManageView(APIView):
     @transaction.atomic
     def put(self, request, exam_id: int):
         tenant = request.tenant
-        exam = get_object_or_404(
-            Exam.objects.filter(
-                tenant=tenant,
-                exam_type=Exam.ExamType.REGULAR,
-                is_active=True,
-                sessions__lecture__tenant=tenant,
-            ).distinct(),
-            pk=exam_id,
-        )
+        # The PUT contract replaces the selected roster. Serialize concurrent
+        # replacements on the owning exam so two requests cannot leave the
+        # union of both selections under PostgreSQL MVCC.
+        exam = self._get_exam(request, exam_id, for_update=True)
 
         try:
             session_id = self._get_session_id_or_400(request, exam)

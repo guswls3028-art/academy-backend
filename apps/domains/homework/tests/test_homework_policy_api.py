@@ -717,3 +717,67 @@ class HomeworkPolicyApiTests(APITestCase):
         self.assertIsNotNone(link.resolved_at)
         self.assertEqual(link.resolution_type, ClinicLink.ResolutionType.SOURCE_REMOVED)
         self.assertEqual(link.resolution_evidence["reason"], "homework_assignment_removed")
+
+    def test_assignment_update_preserves_inactive_student_history(self):
+        SessionEnrollment.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            enrollment=self.enrollment,
+        )
+        inactive_user = get_user_model().objects.create(
+            tenant=self.tenant,
+            username=f"t{self.tenant.id}_inactive_history",
+            is_active=True,
+        )
+        inactive_student = Student.objects.create(
+            tenant=self.tenant,
+            user=inactive_user,
+            name="퇴원 이력 학생",
+            ps_number=f"PS-INACTIVE-{inactive_user.id}",
+            omr_code=f"{inactive_user.id:08d}"[-8:],
+        )
+        inactive_enrollment = Enrollment.objects.create(
+            tenant=self.tenant,
+            student=inactive_student,
+            lecture=self.lecture,
+            status="INACTIVE",
+        )
+        SessionEnrollment.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            enrollment=inactive_enrollment,
+        )
+        homework = Homework.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title="이력 보존 과제",
+        )
+        HomeworkAssignment.objects.bulk_create([
+            HomeworkAssignment(
+                tenant=self.tenant,
+                session=self.session,
+                homework=homework,
+                enrollment=self.enrollment,
+            ),
+            HomeworkAssignment(
+                tenant=self.tenant,
+                session=self.session,
+                homework=homework,
+                enrollment=inactive_enrollment,
+            ),
+        ])
+
+        response = self.client.put(
+            f"/api/v1/homework/assignments/?homework_id={homework.id}",
+            {"enrollment_ids": [self.enrollment.id]},
+            format="json",
+            **self.req_headers,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(
+            HomeworkAssignment.objects.filter(
+                homework=homework,
+                enrollment=inactive_enrollment,
+            ).exists()
+        )

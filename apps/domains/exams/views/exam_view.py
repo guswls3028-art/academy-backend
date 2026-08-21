@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from django.db import transaction
-from django.db.models import Max
+from django.db.models import Exists, Max, OuterRef
 from django.shortcuts import get_object_or_404
 
 from rest_framework.viewsets import ModelViewSet
@@ -428,7 +428,18 @@ class ExamViewSet(ModelViewSet):
             self.request.query_params, "lecture_id", min_value=1
         )
         if lecture_id is not None:
-            qs = qs.filter(sessions__lecture_id=lecture_id)
+            # A regular exam may be linked to more than one session in the
+            # same lecture. Filtering through the M2M join duplicates that
+            # exam in list/count responses. EXISTS keeps one Exam row and is
+            # also compatible with the row lock used by policy updates.
+            matching_session = Exam.sessions.through.objects.filter(
+                exam_id=OuterRef("pk"),
+                session__lecture_id=lecture_id,
+                session__lecture__tenant=self.request.tenant,
+            )
+            qs = qs.annotate(
+                _matches_lecture=Exists(matching_session),
+            ).filter(_matches_lecture=True)
 
         include_inactive = parse_query_bool(
             self.request.query_params, "include_inactive", default=False
