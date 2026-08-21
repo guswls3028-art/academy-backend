@@ -31,6 +31,7 @@ TERMINAL_JOB_STATUSES = {
 SUPPORTED_COMBINED_STATUSES = {"combined_document_ready"}
 SOURCE_REANALYSIS_STATUSES = {
     "question_count_mismatch",
+    "answer_coverage_incomplete",
     "teacher_explanation_coverage_incomplete",
     "job_failed",
     "conversion_required",
@@ -158,6 +159,19 @@ def build_source_plan(
                     )
         else:
             item.update(route="blocked", reason="unsupported_extension")
+        raw_support = pairings.get(source_id)
+        if isinstance(raw_support, dict) and item.get("route") not in {
+            "blocked",
+            "consumed_by_pair",
+        }:
+            if raw_support.get("answer_path"):
+                item["answer_path"] = str(Path(str(raw_support["answer_path"])))
+            if raw_support.get("explanation_path") and not item.get(
+                "explanation_path"
+            ):
+                item["explanation_path"] = str(
+                    Path(str(raw_support["explanation_path"]))
+                )
         plan.append(item)
     return plan
 
@@ -219,6 +233,7 @@ class AcademyClient:
         *,
         exam_id: int,
         upload_path: Path,
+        answer_path: Path | None,
         explanation_path: Path | None,
     ) -> dict[str, Any]:
         handles = []
@@ -228,6 +243,14 @@ class AcademyClient:
             files: dict[str, Any] = {
                 "file": (upload_path.name, primary, _content_type(upload_path)),
             }
+            if answer_path is not None:
+                answer = answer_path.open("rb")
+                handles.append(answer)
+                files["answer_file"] = (
+                    answer_path.name,
+                    answer,
+                    _content_type(answer_path),
+                )
             if explanation_path is not None:
                 explanation = explanation_path.open("rb")
                 handles.append(explanation)
@@ -443,6 +466,9 @@ def execute_item(
             upload = client.upload_source(
                 exam_id=exam_id,
                 upload_path=Path(item["upload_path"]),
+                answer_path=(
+                    Path(item["answer_path"]) if item.get("answer_path") else None
+                ),
                 explanation_path=(
                     Path(item["explanation_path"]) if item.get("explanation_path") else None
                 ),
@@ -465,6 +491,11 @@ def execute_item(
     explanation_count = sum(
         1 for review_item in review.get("items") or [] if review_item.get("has_teacher_explanation")
     )
+    answer_count = sum(
+        1
+        for review_item in review.get("items") or []
+        if str(review_item.get("answer") or "").strip()
+    )
     expected = int(item.get("detected_question_count") or 0)
     quality_status = "review_required"
     expects_conversion = item.get("expected_execution_status") == "conversion_required"
@@ -478,6 +509,8 @@ def execute_item(
         quality_status = f"unexpected_review_status:{review.get('status')}"
     elif expected and proposal_count != expected:
         quality_status = "question_count_mismatch"
+    elif item.get("answer_path") and answer_count != proposal_count:
+        quality_status = "answer_coverage_incomplete"
     elif item.get("route") == "paired_problem_and_explanation" and explanation_count != proposal_count:
         quality_status = "teacher_explanation_coverage_incomplete"
     return {
@@ -490,6 +523,7 @@ def execute_item(
         "job_result": result,
         "review_status": review.get("status"),
         "proposal_count": proposal_count,
+        "answer_count": answer_count,
         "teacher_explanation_count": explanation_count,
         "review_items": review.get("items") or [],
         "elapsed_seconds": round(time.time() - started, 3),
