@@ -454,6 +454,7 @@ def _handle_exam_ai_result(
     boxes = result_payload.get("boxes", [])
     questions_data = result_payload.get("questions", [])
     explanations_data = result_payload.get("explanations", [])
+    answers_data = result_payload.get("answers", [])
     question_image_keys = result_payload.get("question_image_keys") or {}
 
     if result_payload.get("conversion_required"):
@@ -557,6 +558,29 @@ def _handle_exam_ai_result(
                     for item in explanations_data
                     if item.get("question_number")
                 }
+                answer_by_number = {
+                    int(item.get("question_number")): item
+                    for item in answers_data
+                    if item.get("question_number")
+                }
+                answer_source_requested = bool(
+                    result_payload.get("answer_source_requested")
+                )
+                explanation_source_requested = bool(
+                    result_payload.get("explanation_source_requested")
+                )
+                paired_source_status = str(
+                    result_payload.get("paired_source_status") or ""
+                )
+                source_issues = list(result_payload.get("source_issues") or [])
+                missing_answer_numbers = {
+                    int(number)
+                    for number in result_payload.get("missing_answer_numbers") or []
+                }
+                missing_explanation_numbers = {
+                    int(number)
+                    for number in result_payload.get("missing_explanation_numbers") or []
+                }
                 ExamQuestionProposal.objects.filter(exam=exam).delete()
                 proposals = []
                 for position, q_data in enumerate(questions_data or [], start=1):
@@ -568,6 +592,7 @@ def _handle_exam_ai_result(
                     proposed_number = int(q_data.get("number") or position)
                     bbox = list(q_data.get("bbox") or [0, 0, 0, 0])
                     explanation = explanation_by_number.get(detected_number, {})
+                    answer = answer_by_number.get(detected_number, {})
                     image_key = (
                         question_image_keys.get(proposed_number)
                         or question_image_keys.get(str(proposed_number))
@@ -593,6 +618,24 @@ def _handle_exam_ai_result(
                                 ),
                                 "source_attachment_requires_review": bool(
                                     explanation.get("source_attachment_requires_review")
+                                ),
+                                "answer_candidate": str(
+                                    answer.get("answer") or ""
+                                )[:500],
+                                "answer_source_image_key": str(
+                                    answer.get("source_image_key") or ""
+                                ),
+                                "answer_source_requested": answer_source_requested,
+                                "explanation_source_requested": (
+                                    explanation_source_requested
+                                ),
+                                "paired_source_status": paired_source_status,
+                                "source_issues": source_issues,
+                                "answer_missing": (
+                                    detected_number in missing_answer_numbers
+                                ),
+                                "explanation_missing": (
+                                    detected_number in missing_explanation_numbers
                                 ),
                             },
                             problem_image_key=str(image_key),

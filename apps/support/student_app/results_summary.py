@@ -263,7 +263,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             int(session_id),
             exam_id,
         )) if session_id is not None else None
-        correction_status = assessment_correction_payload(
+        correction_payload = assessment_correction_payload(
             source_type=AssessmentCorrection.SourceType.EXAM,
             score=exam.get("total_score"),
             max_score=exam.get("max_score"),
@@ -273,7 +273,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
                 else None
             ),
             correction=correction,
-        )["correction_status"]
+        )
         exam.update({
             "rank": rank_info.get("rank"),
             "percentile": rank_info.get("percentile"),
@@ -284,7 +284,8 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             "wrong_count": item_analysis["wrong_count"],
             "accuracy_rate": item_analysis["accuracy_rate"],
             "wrong_question_numbers": item_analysis["wrong_question_numbers"],
-            "correction_status": correction_status,
+            "correction_status": correction_payload["correction_status"],
+            "teacher_resolved": correction_payload["teacher_resolved"],
             "lecture_active": lecture_active_by_enrollment.get(enrollment_id, False),
         })
     exam_trend, exam_summary = build_exam_progression(exam_list)
@@ -305,7 +306,26 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
         .select_related("homework", "session", "session__lecture")
         .order_by("-updated_at")
     )
-    homework_ids = list({score.homework_id for score in homework_scores})
+    assigned_homeworks = list(
+        HomeworkAssignment.objects
+        .filter(
+            tenant=tenant,
+            enrollment_id__in=enrollment_ids,
+            enrollment__tenant=tenant,
+            homework__tenant=tenant,
+            session__lecture__tenant=tenant,
+            session__lecture_id=F("enrollment__lecture_id"),
+            homework__session_id=F("session_id"),
+        )
+        .exclude(homework__meta__removed_from_session_at__isnull=False)
+        .exclude(session__lecture__is_system=True)
+        .select_related("homework", "session", "session__lecture")
+        .order_by("-homework__updated_at", "-homework_id")
+    )
+    assigned_homework_ids = {assignment.homework_id for assignment in assigned_homeworks}
+    homework_ids = list(
+        {score.homework_id for score in homework_scores} | assigned_homework_ids
+    )
     resolved_homework_links = {}
     if homework_ids and enrollment_ids:
         for link in ClinicLink.objects.filter(
@@ -315,8 +335,15 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             source_id__in=homework_ids,
             resolved_at__isnull=False,
             resolution_type__in=["EXAM_PASS", "HOMEWORK_PASS", "MANUAL_OVERRIDE"],
+        ).order_by(
+            "enrollment_id",
+            "source_id",
+            "-resolved_at",
+            "-id",
         ).values("enrollment_id", "source_id", "resolution_type"):
-            resolved_homework_links[(link["enrollment_id"], link["source_id"])] = link["resolution_type"]
+            key = (link["enrollment_id"], link["source_id"])
+            if key not in resolved_homework_links:
+                resolved_homework_links[key] = link["resolution_type"]
 
     homework_retake_counts = {}
     if homework_ids and enrollment_ids:
@@ -372,6 +399,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             "max_score": effective_max,
             "passed": is_pass_1st,
             "achievement": achievement,
+            "teacher_resolved": resolution == "MANUAL_OVERRIDE",
             "retake_count": max_attempt,
             "grading_mode": score.homework.grading_mode,
             "display_order": score.homework.display_order,
@@ -382,23 +410,6 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             **session_metadata,
         })
 
-    assigned_homeworks = list(
-        HomeworkAssignment.objects
-        .filter(
-            tenant=tenant,
-            enrollment_id__in=enrollment_ids,
-            enrollment__tenant=tenant,
-            homework__tenant=tenant,
-            session__lecture__tenant=tenant,
-            session__lecture_id=F("enrollment__lecture_id"),
-            homework__session_id=F("session_id"),
-        )
-        .exclude(homework__meta__removed_from_session_at__isnull=False)
-        .exclude(session__lecture__is_system=True)
-        .select_related("homework", "session", "session__lecture")
-        .order_by("-homework__updated_at", "-homework_id")
-    )
-    assigned_homework_ids = {assignment.homework_id for assignment in assigned_homeworks}
     submitted_homework_keys = set()
     if assigned_homework_ids:
         submitted_homework_keys = submitted_homework_keys_for_grades(
@@ -420,6 +431,11 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             assignment.enrollment_id,
             assignment.homework_id,
         ) in submitted_homework_keys
+        resolution = resolved_homework_links.get((
+            assignment.enrollment_id,
+            assignment.homework_id,
+        ))
+        teacher_resolved = resolution == "MANUAL_OVERRIDE"
         session_metadata = _homework_session_metadata(session)
 
         homework_list.append({
@@ -429,7 +445,12 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             "score": None,
             "max_score": effective_max,
             "passed": None if was_submitted else False,
-            "achievement": None if was_submitted else "NOT_SUBMITTED",
+            "achievement": (
+                "REMEDIATED"
+                if teacher_resolved
+                else None if was_submitted else "NOT_SUBMITTED"
+            ),
+            "teacher_resolved": teacher_resolved,
             "retake_count": 0,
             "grading_mode": homework.grading_mode,
             "display_order": homework.display_order,

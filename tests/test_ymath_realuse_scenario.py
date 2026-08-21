@@ -124,6 +124,7 @@ def test_execute_item_reuploads_same_product_after_quality_failure(monkeypatch):
         def upload_source(**kwargs):
             assert kwargs["exam_id"] == 45
             assert kwargs["upload_path"] == Path("problems.pdf")
+            assert kwargs["answer_path"] is None
             assert kwargs["explanation_path"] == Path("teacher.hwp")
             return {"job_id": "new-job"}
 
@@ -251,6 +252,7 @@ def test_build_source_plan_groups_problem_and_explanation_sources(tmp_path: Path
     pairings = {
         "problem-hwp": {
             "problem_path": str(tmp_path / "clean-problems.pdf"),
+            "answer_path": str(tmp_path / "answers.pdf"),
             "explanation_source_id": "explanation-hwp",
             "consumed_source_ids": ["problem-hwp", "explanation-hwp"],
         }
@@ -259,6 +261,7 @@ def test_build_source_plan_groups_problem_and_explanation_sources(tmp_path: Path
     plan = build_source_plan(manifest, qa, pairings)
 
     assert plan[0]["route"] == "paired_problem_and_explanation"
+    assert plan[0]["answer_path"].endswith("answers.pdf")
     assert plan[0]["explanation_path"].endswith("teacher.hwp")
     assert plan[0]["extracted_explanation_count"] == 23
     assert plan[1]["route"] == "consumed_by_pair"
@@ -319,6 +322,44 @@ def test_execute_item_fails_closed_on_partial_teacher_explanations(monkeypatch):
     assert result["proposal_count"] == 2
     assert result["teacher_explanation_count"] == 1
     assert result["execution_status"] == "teacher_explanation_coverage_incomplete"
+
+
+def test_execute_item_fails_closed_on_partial_answers(monkeypatch):
+    class Client:
+        @staticmethod
+        def get_json(path):
+            assert path == "/api/v1/exams/33/segmentation-review/"
+            return {
+                "status": "review_required",
+                "items": [
+                    {"answer": "4", "has_teacher_explanation": True},
+                    {"answer": "", "has_teacher_explanation": True},
+                ],
+            }
+
+    monkeypatch.setattr(
+        ymath_realuse_scenario,
+        "_wait_for_job",
+        lambda *_args, **_kwargs: {"status": "DONE", "result": {}},
+    )
+
+    result = execute_item(
+        client=Client(),
+        item={
+            "source_id": "paired",
+            "route": "paired_problem_and_explanation",
+            "answer_path": "answers.pdf",
+            "detected_question_count": 2,
+        },
+        session_id=1,
+        job_timeout=1,
+        prior={"product_type": "exam", "exam_id": 33, "job_id": "job-33"},
+        checkpoint=lambda _state: None,
+    )
+
+    assert result["proposal_count"] == 2
+    assert result["answer_count"] == 1
+    assert result["execution_status"] == "answer_coverage_incomplete"
 
 
 def test_execute_item_records_expected_conversion_as_remediation(monkeypatch):

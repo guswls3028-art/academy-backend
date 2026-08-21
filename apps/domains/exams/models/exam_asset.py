@@ -25,6 +25,7 @@ class ExamAsset(BaseModel):
             "teacher_explanation_source",
             "Teacher explanation source",
         )
+        ANSWER_SOURCE = "answer_source", "Original answer-key source"
         OMR_SHEET = "omr_sheet", "OMR Sheet"
 
     exam = models.ForeignKey(

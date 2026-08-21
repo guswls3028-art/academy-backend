@@ -61,6 +61,12 @@ class ScoreBlockSerializer(serializers.Serializer):
         required=False,
         default="",
     )
+    correction_updated_at = serializers.DateTimeField(
+        allow_null=True,
+        required=False,
+        default=None,
+    )
+    teacher_resolved = serializers.BooleanField(required=False, default=False)
 
 
 class AttemptSummarySerializer(serializers.Serializer):
@@ -147,5 +153,9 @@ class AssessmentCorrectionUpdateSerializer(serializers.Serializer):
     note = serializers.CharField(
         allow_blank=True,
         max_length=500,
+        required=False,
+    )
+    expected_updated_at = serializers.DateTimeField(
+        allow_null=True,
         required=False,
     )

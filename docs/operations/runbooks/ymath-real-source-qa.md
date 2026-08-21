@@ -114,8 +114,23 @@ python manage.py setup_ymath_realuse_scenario `
 
 먼저 `scripts/v1/connect-api-development.ps1`로 loopback SSM tunnel을 연다.
 PDF가 추가로 필요한 HWP/HWPX는 `source_id`를 깨끗한 문제 PDF 절대 경로에
-매핑한 JSON을 준비한다. 문제와 답 표시가 섞인 PDF는 깨끗한 문제지로 인정하지
-않는다.
+매핑한 JSON을 준비한다. 같은 항목의 분리 정답지는 `answer_path`, 분리 해설지는
+`explanation_path`로 지정하며 runner가 각각 `answer_file`, `explanation_file` 역할로
+보낸다. 번호가 일부만 연결되면 `answer_coverage_incomplete` 또는
+`teacher_explanation_coverage_incomplete`로 실패 폐쇄하고 같은 시험을 재분석한다.
+문제와 답 표시가 섞인 PDF는 깨끗한 문제지로 인정하지 않는다.
+
+```json
+{
+  "b70fd8b2883ffcc1": {
+    "problem_path": "C:\\academy\\_artifacts\\...\\b70fd8b2883ffcc1.pdf",
+    "answer_path": "C:\\academy\\_artifacts\\...\\answers.pdf",
+    "explanation_source_id": "b70fd8b2883ffcc1",
+    "consumed_source_ids": ["b70fd8b2883ffcc1"],
+    "expected_question_count": 24
+  }
+}
+```
 
 ```powershell
 python scripts/ymath_realuse_scenario.py `
