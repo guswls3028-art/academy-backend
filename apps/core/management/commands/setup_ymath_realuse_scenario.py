@@ -253,6 +253,11 @@ class Command(BaseCommand):
                     name=f"검증학생 {index:02d}",
                     is_staff=False,
                 )
+                TenantMembership.ensure_active(
+                    tenant=tenant,
+                    user=student_user,
+                    role="student",
+                )
                 student, _ = Student.objects.update_or_create(
                     tenant=tenant,
                     user=student_user,

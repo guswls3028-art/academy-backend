@@ -87,6 +87,8 @@ python manage.py setup_ymath_realuse_scenario `
 
 출력 JSON의 `tenant_code`, 교사 ID, 학생·강의·회차 ID와 개수를 보존한다. reset은
 정확히 같은 `qa-ymath-realuse-*` tenant만 지우고 다시 만든다.
+생성된 교사와 학생은 각각 활성 `admin`, `student` 테넌트 멤버십을 가져야 하며,
+출력된 학생 로그인 아이디로 격리 API에 로그인할 수 있어야 한다.
 
 화면 검수는 검수할 frontend exact checkout을 로컬 `5174`에서 실행하고
 `VITE_DEV_PROXY_TARGET=http://127.0.0.1:18000`으로 SSM tunnel에 연결한다. 교사
