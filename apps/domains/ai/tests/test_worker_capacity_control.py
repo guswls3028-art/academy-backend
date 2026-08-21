@@ -1,3 +1,4 @@
+import os
 from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
@@ -37,6 +38,17 @@ class WorkerCapacityControlTests(SimpleTestCase):
         self.assertEqual(config.read_timeout, 3)
         self.assertEqual(config.retries["total_max_attempts"], 1)
         autoscaling.set_desired_capacity.assert_called_once()
+
+    @patch("academy.adapters.compute.ec2_control._aws_client")
+    def test_isolated_local_worker_runtime_never_calls_production_asg(self, client_factory):
+        for runtime_env in ("development", "preprod"):
+            with self.subTest(runtime_env=runtime_env), patch.dict(
+                os.environ,
+                {"ACADEMY_RUNTIME_ENV": runtime_env},
+            ):
+                self.assertTrue(ensure_tools_worker_asg_min_capacity())
+
+        client_factory.assert_not_called()
 
     @patch("academy.adapters.compute.ec2_control._aws_client")
     def test_burst_capacity_checks_share_one_asg_read(self, client_factory):

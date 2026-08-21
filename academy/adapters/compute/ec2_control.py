@@ -25,6 +25,7 @@ TOOLS_WORKER_ASG_NAME = "academy-v1-tools-worker-asg"
 
 _CAPACITY_ENSURE_SUCCESS_TTL_SECONDS = 30.0
 _CAPACITY_ENSURE_FAILURE_TTL_SECONDS = 2.0
+_LOCAL_WORKER_RUNTIME_ENVS = frozenset({"development", "preprod"})
 _capacity_ensure_cache: dict[str, tuple[int, bool, float]] = {}
 _capacity_ensure_locks = {
     AI_WORKER_ASG_NAME: threading.Lock(),
@@ -64,6 +65,15 @@ def _ensure_worker_asg_min_capacity(
     min_capacity: int,
     default_capacity: int,
 ) -> bool:
+    runtime_env = os.getenv("ACADEMY_RUNTIME_ENV", "").strip().lower()
+    if runtime_env in _LOCAL_WORKER_RUNTIME_ENVS:
+        logger.info(
+            "[%s] %s runtime uses isolated local workers — skip production ASG capacity ensure",
+            label,
+            runtime_env,
+        )
+        return True
+
     try:
         min_capacity = max(1, int(min_capacity or 1))
     except (TypeError, ValueError):
