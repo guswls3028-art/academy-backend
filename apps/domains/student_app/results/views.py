@@ -39,7 +39,7 @@ class MyExamResultView(APIView):
             return Response({"detail": "result not found"}, status=404)
         student = get_request_student(request)
         if student:
-            from apps.domains.students.services.activity import record_student_target_open
+            from apps.domains.students.activity import record_student_target_open
 
             record_student_target_open(
                 request=request,

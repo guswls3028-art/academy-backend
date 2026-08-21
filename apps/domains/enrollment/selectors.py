@@ -146,6 +146,26 @@ def active_enrollments_for_student(*, tenant, student, include_system: bool = Fa
     )
 
 
+def active_homework_assignment_for_student(*, tenant, student, homework_id: int):
+    """Return one homework assignment inside the student's current access scope."""
+    HomeworkAssignment = get_homework_assignment_model()
+    enrollment_ids = active_enrollments_for_student(
+        tenant=tenant,
+        student=student,
+    ).values_list("id", flat=True)
+    return (
+        HomeworkAssignment.objects
+        .filter(
+            tenant=tenant,
+            homework_id=homework_id,
+            enrollment_id__in=enrollment_ids,
+            session__lecture__is_active=True,
+        )
+        .select_related("homework")
+        .first()
+    )
+
+
 def learning_history_enrollments_for_student(*, tenant, student):
     """Readonly learning history, including lectures that have been ended."""
     tenant = require_tenant(tenant)

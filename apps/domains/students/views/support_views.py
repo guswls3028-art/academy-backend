@@ -15,8 +15,7 @@ from apps.api.common.query_params import parse_query_bool, parse_query_int
 from apps.core.models import OpsAuditLog
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.core.services.ops_audit import record_audit
-from apps.domains.enrollment.selectors import active_enrollments_for_student
-from apps.domains.homework.models import HomeworkAssignment
+from apps.domains.enrollment.selectors import active_homework_assignment_for_student
 from apps.domains.students.models import Student
 from apps.domains.students.services.activity import (
     record_student_screen_view,
@@ -298,20 +297,10 @@ class StudentHomeworkOpenActivityView(APIView):
         ).first()
         if student is None:
             return Response({"detail": "기록할 수 없는 학생 활동입니다."}, status=403)
-        enrollment_ids = active_enrollments_for_student(
+        assignment = active_homework_assignment_for_student(
             tenant=request.tenant,
             student=student,
-        ).values_list("id", flat=True)
-        assignment = (
-            HomeworkAssignment.objects
-            .filter(
-                tenant=request.tenant,
-                homework_id=homework_id,
-                enrollment_id__in=enrollment_ids,
-                session__lecture__is_active=True,
-            )
-            .select_related("homework")
-            .first()
+            homework_id=homework_id,
         )
         if assignment is None:
             return Response({"detail": "열람할 수 없는 과제입니다."}, status=404)
