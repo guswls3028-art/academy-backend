@@ -129,6 +129,15 @@ GLib 6건, libssh2 6건인 총 20건이다. Debian tracker는 trixie
 현재 앱·워커 entrypoint에는 SSH/SFTP client 호출 경로가 없다는 도달 가능성 경계는
 유지하지만, 그 사실이 다른 CVE나 버전으로의 조용한 교체를 허용하지는 않는다.
 
+2026-08-22 후보 `sha-8f8014d5a...-run-32493438087-1`의 완료된 ECR scan은
+AI 이미지에서 같은 `libssh2` 버전의 `CVE-2026-58050`, `CVE-2026-58051`,
+`CVE-2026-66033`, `CVE-2026-66034`, `CVE-2026-66035`를 더 이상 반환하지
+않았다. API·Tools에는 이 다섯 identity가 계속 남고 AI에는
+`CVE-2026-66032`만 남으므로, 사라진 AI repository membership만 exact 목록에서
+제거하고 AI High 상한을 20에서 15로 낮췄다. 다른 repository의 finding이나 AI의
+나머지 15건을 함께 지우지 않으며, 이후 scan에서 다시 나타나면 미검토 High로
+실패 폐쇄한다.
+
 현재 Critical 한시 항목은 Debian stable에 수정본이 아직 없거나 Debian이
 `no-dsa`/minor로 분류한 glibc·GLib·Perl finding이다. GLib의
 `g_dbus_node_info_new_for_xml` malformed introspection-XML 경로는 OCR CLI와
