@@ -22,7 +22,10 @@
 - Tools worker와 AI worker는 같은 EC2 안의 별도 `academy-tools-development`,
   `academy-ai-development` 컨테이너로 실행되며 각각 개발 전용 큐만 소비한다.
   개발 AI worker는 운영 ASG scale-in 제어를 비활성화한다. 운영 Tools/AI ASG의
-  평시 용량은 변경하지 않는다.
+  평시 용량은 변경하지 않는다. API enqueue 경로도 `ACADEMY_RUNTIME_ENV`가
+  `development` 또는 `preprod`이면 운영 worker ASG capacity ensure를 호출하지 않고
+  격리 런타임의 로컬 worker 계약을 사용한다. 해당 인스턴스 역할의 운영 ASG 접근 거부는
+  계속 필수 경계다.
 - 알림톡은 mock/dry-run, 자동 결제와 외부 알림 발송은 비활성화한다.
 
 ## 최초 구성

@@ -144,6 +144,15 @@ repository identity를 함께 낮췄다. 같은 후보의 Video·Messaging은 �
 승인 확대가 아니라 ECR의 digest별 완료 scan readback을 exact 기준선에 반영한
 것이다.
 
+후속 후보 `sha-f92c02728...-run-32532674189-1`의 완료된 ECR scan에서는 API
+`sha256:dd4ee4be...`, AI `sha256:ee976e64...`, Tools `sha256:bb19687d...` 세
+digest 모두 같은 패키지의 마지막 `CVE-2026-66032`도 더 이상 반환하지 않았다.
+세 digest의 exact High 집합은 공통 8건과 GLib 6건인 14건이며 나머지 finding
+identity와 package version은 변하지 않았다. 따라서 세 저장소 상한을 14로
+낮추고 마지막 libssh2 identity를 제거한다. 해당 후보는 stale 기준선 때문에
+development 진입 전에 실패했고 production을 변경하지 않았으며, 이 축소를 포함한
+다음 후보가 전체 release gate를 다시 통과해야 한다.
+
 현재 Critical 한시 항목은 Debian stable에 수정본이 아직 없거나 Debian이
 `no-dsa`/minor로 분류한 glibc·GLib·Perl finding이다. GLib의
 `g_dbus_node_info_new_for_xml` malformed introspection-XML 경로는 OCR CLI와
