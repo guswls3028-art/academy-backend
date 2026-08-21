@@ -28,7 +28,7 @@ from apps.support.homework.view_dependencies import (
 class HomeworkAssignmentManageView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
-    def _get_homework(self, request):
+    def _get_homework(self, request, *, for_update: bool = False):
         hid = request.query_params.get("homework_id")
         if not hid:
             raise ValueError("homework_id is required")
@@ -38,6 +38,7 @@ class HomeworkAssignmentManageView(APIView):
         return get_homework_for_assignment(
             homework_id=int(hid),
             tenant=tenant,
+            for_update=for_update,
         )
 
     def get(self, request):
@@ -135,7 +136,7 @@ class HomeworkAssignmentManageView(APIView):
     @transaction.atomic
     def put(self, request):
         try:
-            homework = self._get_homework(request)
+            homework = self._get_homework(request, for_update=True)
         except Exception as e:
             return Response({"detail": str(e)}, status=400)
 
@@ -171,9 +172,14 @@ class HomeworkAssignmentManageView(APIView):
         )
         removed_ids = sorted(existing_ids - incoming_ids)
 
+        # Replace only the currently editable (active session roster) rows.
+        # Inactive students are hidden from this editor, but their historical
+        # assignment and score relationship must remain intact.
         HomeworkAssignment.objects.filter(
             tenant=tenant,
             homework=homework,
+            session=homework.session,
+            enrollment_id__in=valid_ids,
         ).delete()
 
         HomeworkAssignment.objects.bulk_create(

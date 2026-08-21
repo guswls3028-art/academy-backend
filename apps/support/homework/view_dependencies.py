@@ -5,10 +5,15 @@ from __future__ import annotations
 from typing import Any
 
 
-def get_homework_for_assignment(*, homework_id: int, tenant: Any) -> Any:
+def get_homework_for_assignment(
+    *,
+    homework_id: int,
+    tenant: Any,
+    for_update: bool = False,
+) -> Any:
     from apps.domains.homework_results.models import Homework
 
-    return (
+    queryset = (
         Homework.objects.select_related(
             "session",
             "session__lecture",
@@ -16,11 +21,14 @@ def get_homework_for_assignment(*, homework_id: int, tenant: Any) -> Any:
         .exclude(
             meta__removed_from_session_at__isnull=False,
         )
-        .get(
+        .filter(
             id=homework_id,
             session__lecture__tenant=tenant,
         )
     )
+    if for_update:
+        queryset = queryset.select_for_update(of=("self",))
+    return queryset.get()
 
 
 def active_enrollment_ids_for_session(*, tenant: Any, session_id: int) -> set[int]:
