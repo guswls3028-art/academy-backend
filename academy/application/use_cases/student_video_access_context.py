@@ -88,6 +88,8 @@ def get_enrollment_for_student(request, enrollment_id: Optional[int], lecture_id
     )
     if not enrollment:
         raise StudentVideoAccessError("해당 수강 정보에 접근할 수 없습니다.")
+    if not _lecture_allows_student_learning(enrollment.lecture):
+        raise StudentVideoAccessError("종료된 강의의 영상은 시청할 수 없습니다.")
     if lecture_id is not None and enrollment.lecture_id != lecture_id:
         raise StudentVideoAccessError(
             "수강 정보가 해당 강의와 일치하지 않습니다.",
@@ -105,7 +107,7 @@ def find_active_enrollment_for_lecture(request, lecture_id: Optional[int], expli
     if not students or not tenant or not lecture_id:
         return None
 
-    return (
+    enrollment = (
         active_enrollments_for_students(
             tenant=tenant,
             students=students,
@@ -115,6 +117,9 @@ def find_active_enrollment_for_lecture(request, lecture_id: Optional[int], expli
         .order_by("-id")
         .first()
     )
+    if enrollment and not _lecture_allows_student_learning(enrollment.lecture):
+        return None
+    return enrollment
 
 
 def find_active_enrollment_for_video(request, video, explicit_enrollment_id: Optional[int] = None):
@@ -176,6 +181,8 @@ def student_can_access_session(request, session) -> bool:
     lecture = getattr(session, "lecture", None)
     if not lecture:
         return False
+    if not _lecture_allows_student_learning(lecture):
+        return False
     tenant = getattr(lecture, "tenant", None)
     if not tenant:
         return False
@@ -202,6 +209,17 @@ def _video_tenant_id(video) -> int | None:
     return getattr(lecture, "tenant_id", None) if lecture else None
 
 
+def _lecture_allows_student_learning(lecture) -> bool:
+    """Keep the tenant-wide system library open while closing ended paid lectures."""
+    return bool(
+        lecture
+        and (
+            getattr(lecture, "is_system", False)
+            or getattr(lecture, "is_active", False)
+        )
+    )
+
+
 def is_public_video(video) -> bool:
     from apps.domains.video.models import Video
 
@@ -215,10 +233,14 @@ def student_can_access_video(request, video) -> bool:
     if _video_tenant_id(video) != tenant.id:
         return False
 
+    session = getattr(video, "session", None)
+    lecture = getattr(session, "lecture", None) if session else None
+    if lecture and not _lecture_allows_student_learning(lecture):
+        return False
+
     if is_public_video(video):
         return any(getattr(student, "tenant_id", None) == tenant.id for student in get_students_for_request(request))
 
-    session = getattr(video, "session", None)
     return bool(session and student_can_access_session(request, session))
 
 

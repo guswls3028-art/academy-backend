@@ -7,9 +7,11 @@ from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
+from apps.core.models.program import Program
 from apps.domains.assets.omr.dto.omr_document import OMRDocument
 from apps.domains.assets.omr.renderer.html_renderer import OMRHtmlRenderer
 from apps.domains.assets.omr.renderer.pdf_renderer import OMRPdfRenderer
+from apps.domains.assets.omr.services.omr_document_service import OMRDocumentService
 from apps.domains.assets.omr.views.omr_pdf_views import OMRPdfView
 from apps.domains.assets.omr.views.omr_document_views import ToolsOMRPreviewView
 from apps.domains.exams.models import Exam, ExamAsset
@@ -85,6 +87,27 @@ class OMRPdfViewTests(TestCase):
 
 
 class OMRDocumentRenderingTests(TestCase):
+    @patch("apps.infrastructure.storage.r2.get_admin_object_bytes")
+    def test_pdf_uses_same_uploaded_logo_object_as_html_preview(self, get_logo_bytes):
+        get_logo_bytes.return_value = (b"uploaded-logo", "image/webp")
+        doc = OMRDocument(
+            exam_title="Exam",
+            logo_url="https://signed.example.test/tenant-logo.webp",
+            logo_key="tenant-logos/1/logo.webp",
+        )
+
+        html = OMRHtmlRenderer().render(doc).decode("utf-8")
+        pdf_doc = OMRDocumentService.fetch_logo_bytes(doc, tenant=self)
+
+        self.assertIn(doc.logo_url, html)
+        self.assertEqual(pdf_doc.logo_bytes, b"uploaded-logo")
+        self.assertEqual(pdf_doc.logo_mime, "image/webp")
+        get_logo_bytes.assert_called_once_with(
+            key="tenant-logos/1/logo.webp",
+            max_bytes=5 * 1024 * 1024,
+            timeout_seconds=5,
+        )
+
     def test_objective_only_document_renders_decorative_essay_area(self):
         doc = OMRDocument(exam_title="Exam", mc_count=20, essay_count=0)
 
@@ -205,6 +228,25 @@ class OMRDocumentApiContractTests(TestCase):
         force_authenticate(request, user=self.user)
         request.tenant = self.tenant
         return ToolsOMRPreviewView.as_view()(request)
+
+    @patch("apps.infrastructure.storage.r2.resolve_admin_logo_url")
+    def test_document_rejects_logo_key_outside_current_tenant(self, resolve_logo_url):
+        program = Program.objects.get(tenant=self.tenant)
+        program.ui_config = {
+            "logo_key": f"tenant-logos/{self.tenant.id + 1}/logo.webp",
+        }
+        program.save(update_fields=["ui_config"])
+
+        doc = OMRDocumentService.from_params(
+            tenant=self.tenant,
+            exam_title="Tenant scoped logo",
+            mc_count=20,
+            essay_count=0,
+            n_choices=5,
+        )
+
+        self.assertIsNone(doc.logo_key)
+        resolve_logo_url.assert_not_called()
 
     def test_preview_contract_hides_optional_essay_area(self):
         response = self._post_preview({

@@ -16,6 +16,7 @@ def get_active_student_session_ids(*, student: Any, tenant: Any) -> list[int]:
             enrollment__student=student,
             enrollment__tenant=tenant,
             enrollment__status="ACTIVE",
+            session__lecture__is_active=True,
         )
         .values_list("session_id", flat=True)
         .distinct()
@@ -32,7 +33,11 @@ def get_student_lecture_sessions(
     from apps.domains.lectures.models import Session as LectureSession
 
     sessions = (
-        LectureSession.objects.filter(id__in=list(session_ids), lecture__tenant=tenant)
+        LectureSession.objects.filter(
+            id__in=list(session_ids),
+            lecture__tenant=tenant,
+            lecture__is_active=True,
+        )
         .select_related("lecture")
         .order_by("date", "order", "id")
     )
@@ -114,6 +119,7 @@ def student_owns_session(*, student: Any, tenant: Any, session_id: Any) -> bool:
         enrollment__tenant=tenant,
         enrollment__status="ACTIVE",
         session__lecture__tenant=tenant,
+        session__lecture__is_active=True,
         session_id=session_id,
     ).exists()
 

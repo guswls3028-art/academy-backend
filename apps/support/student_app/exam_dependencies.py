@@ -43,6 +43,7 @@ def student_exam_queryset(student, tenant, *, include_upcoming_days: int = 0):
         Exam.objects.filter(
             exam_type=Exam.ExamType.REGULAR,
             exam_enrollments__enrollment_id__in=enrollment_ids,
+            exam_enrollments__enrollment__lecture__is_active=True,
             is_active=True,
         )
         .filter(

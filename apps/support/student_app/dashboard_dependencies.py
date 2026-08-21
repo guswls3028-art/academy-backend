@@ -46,6 +46,7 @@ def today_lecture_sessions_for_dashboard(*, tenant: Any, student: Any, today):
             session_enrollments__enrollment__student=student,
             session_enrollments__enrollment__tenant=tenant,
             session_enrollments__enrollment__status="ACTIVE",
+            lecture__is_active=True,
             date=today,
         )
         .select_related("lecture")

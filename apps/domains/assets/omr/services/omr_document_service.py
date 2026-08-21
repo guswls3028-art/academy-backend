@@ -100,6 +100,7 @@ class OMRDocumentService:
 
         # 로고 & 브랜드 컬러 resolve
         logo_url = OMRDocumentService._resolve_logo_url(tenant)
+        logo_key = OMRDocumentService._resolve_logo_key(tenant)
         if not logo_url:
             logo_url = OMRDocumentService._resolve_static_logo_data_uri(tenant)
         brand_color = OMRDocumentService._resolve_brand_color(tenant)
@@ -115,6 +116,7 @@ class OMRDocumentService:
             choice_question_numbers=tuple(resolved_choice_numbers or ()),
             essay_question_numbers=tuple(resolved_essay_numbers or ()),
             logo_url=logo_url,
+            logo_key=logo_key,
             brand_color=brand_color,
         )
 
@@ -134,6 +136,7 @@ class OMRDocumentService:
     ) -> OMRDocument:
         """도구 페이지용. 시험 없이 직접 파라미터로 OMRDocument 생성."""
         logo_url = OMRDocumentService._resolve_logo_url(tenant)
+        logo_key = OMRDocumentService._resolve_logo_key(tenant)
         if not logo_url:
             logo_url = OMRDocumentService._resolve_static_logo_data_uri(tenant)
         brand_color = OMRDocumentService._resolve_brand_color(tenant)
@@ -149,6 +152,7 @@ class OMRDocumentService:
             choice_question_numbers=tuple(choice_question_numbers or ()),
             essay_question_numbers=tuple(essay_question_numbers or ()),
             logo_url=logo_url,
+            logo_key=logo_key,
             brand_color=brand_color,
         )
 
@@ -164,9 +168,13 @@ class OMRDocumentService:
                 return None
 
             ui = program.ui_config or {}
-            logo_key = ui.get("logo_key")
+            raw_logo_key = ui.get("logo_key")
+            logo_key = OMRDocumentService._validated_logo_key(tenant, raw_logo_key)
             logo_url = ui.get("logo_url")
 
+            if raw_logo_key and not logo_key:
+                logger.warning("OMR 테넌트 범위를 벗어난 로고 키 거부: %s", raw_logo_key)
+                return None
             if not logo_key and not logo_url:
                 return None
 
@@ -196,6 +204,30 @@ class OMRDocumentService:
         return None
 
     @staticmethod
+    def _resolve_logo_key(tenant) -> Optional[str]:
+        """테넌트가 업로드한 Admin 버킷 로고 원본 키를 반환한다."""
+        try:
+            from apps.core.models import Program
+
+            program = Program.objects.filter(tenant=tenant).first()
+            if not program:
+                return None
+            ui = program.ui_config or {}
+            return OMRDocumentService._validated_logo_key(tenant, ui.get("logo_key"))
+        except Exception:
+            logger.warning("OMR 로고 키 resolve 실패", exc_info=True)
+            return None
+
+    @staticmethod
+    def _validated_logo_key(tenant, logo_key) -> Optional[str]:
+        """Admin 버킷 로고 키가 현재 테넌트 경로에 속할 때만 반환한다."""
+        tenant_id = getattr(tenant, "id", None)
+        if not tenant_id or not isinstance(logo_key, str):
+            return None
+        prefix = f"tenant-logos/{tenant_id}/"
+        return logo_key if logo_key.startswith(prefix) and len(logo_key) > len(prefix) else None
+
+    @staticmethod
     def _resolve_brand_color(tenant) -> Optional[str]:
         """테넌트 브랜드 프라이머리 컬러 resolve."""
         try:
@@ -220,7 +252,25 @@ class OMRDocumentService:
         PDF 렌더링용: logo_url에서 이미지 바이너리를 다운로드하여 OMRDocument에 추가.
         로고가 없거나 다운로드 실패 시 테넌트 정적 로고 → 기본 로고 순서로 폴백.
         """
-        # 1) 절대 URL인 테넌트 로고가 있으면 다운로드 시도 (R2 업로드 로고)
+        # 1) 업로드 원본 키가 있으면 Admin 버킷에서 직접 읽는다. HTML preview가
+        #    가리키는 것과 동일한 객체이므로 presigned HTTP 실패로 다른 로고가
+        #    출력되는 일을 막는다.
+        if doc.logo_key:
+            try:
+                from apps.infrastructure.storage.r2 import get_admin_object_bytes
+
+                result = get_admin_object_bytes(
+                    key=doc.logo_key,
+                    max_bytes=5 * 1024 * 1024,
+                    timeout_seconds=5,
+                )
+                if result is not None:
+                    logo_bytes, mime = result
+                    return doc.with_logo_bytes(logo_bytes, mime)
+            except Exception:
+                logger.warning("OMR Admin 버킷 로고 로드 실패: %s", doc.logo_key, exc_info=True)
+
+        # 2) 외부 URL만 있는 과거 설정은 기존 HTTP 경로를 유지한다.
         # SSRF 방어: https + public host 만 허용. 내부망/메타데이터 endpoint 차단.
         if doc.logo_url and doc.logo_url.startswith("http"):
             try:
@@ -231,7 +281,7 @@ class OMRDocumentService:
             except Exception:
                 logger.warning("OMR 로고 다운로드 실패: %s", doc.logo_url, exc_info=True)
 
-        # 2) data URI (정적 로고가 base64로 이미 임베드된 경우)
+        # 3) data URI (정적 로고가 base64로 이미 임베드된 경우)
         if doc.logo_url and doc.logo_url.startswith("data:"):
             try:
                 header, b64_data = doc.logo_url.split(",", 1)
@@ -241,13 +291,13 @@ class OMRDocumentService:
             except Exception:
                 logger.warning("data URI 로고 디코딩 실패", exc_info=True)
 
-        # 3) 테넌트 정적 로고 (로그인 페이지와 동일한 로고 파일)
+        # 4) 테넌트 정적 로고 (로그인 페이지와 동일한 로고 파일)
         if tenant:
             result = OMRDocumentService._apply_tenant_static_logo(doc, tenant)
             if result is not None:
                 return result
 
-        # 4) 기본 로고
+        # 5) 기본 로고
         return OMRDocumentService._apply_default_logo(doc)
 
     @staticmethod

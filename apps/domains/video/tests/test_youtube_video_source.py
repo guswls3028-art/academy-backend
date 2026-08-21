@@ -8,7 +8,9 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.student_app.media.views import (
     StudentSessionVideoListView,
+    StudentVideoMeView,
     StudentVideoPlaybackView,
+    StudentVideoStatsView,
 )
 from apps.domains.video.models import Video
 from apps.domains.video.views.video_views import VideoViewSet
@@ -183,3 +185,45 @@ class YouTubeVideoSourceTests(TestCase):
             [item["title"] for item in response.data["items"]],
             ["영상이름 - 1", "영상이름 - 2", "영상이름 - 10"],
         )
+
+    def test_ended_lecture_is_removed_from_student_video_access(self):
+        student_user, _student, enrollment = self._create_student(index=3)
+        video = Video.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title="종료 강의 영상",
+            status=Video.Status.READY,
+            source_type=Video.SourceType.YOUTUBE,
+            youtube_video_id="VnqgmOJaMGc",
+            youtube_url="https://www.youtube.com/watch?v=VnqgmOJaMGc",
+        )
+        self.lecture.is_active = False
+        self.lecture.save(update_fields=["is_active", "updated_at"])
+
+        def get(path: str):
+            request = self.factory.get(path, {"enrollment": enrollment.id})
+            request.tenant = self.tenant
+            force_authenticate(request, user=student_user)
+            return request
+
+        playlist_response = StudentSessionVideoListView.as_view()(
+            get(f"/api/v1/student/video/sessions/{self.session.id}/videos/"),
+            session_id=self.session.id,
+        )
+        playback_response = StudentVideoPlaybackView.as_view()(
+            get(f"/api/v1/student/video/videos/{video.id}/playback/"),
+            video_id=video.id,
+        )
+        home_response = StudentVideoMeView.as_view()(
+            get("/api/v1/student/video/me/"),
+        )
+        stats_response = StudentVideoStatsView.as_view()(
+            get("/api/v1/student/video/me/stats/"),
+        )
+
+        self.assertEqual(playlist_response.status_code, 403)
+        self.assertEqual(playback_response.status_code, 403)
+        self.assertEqual(home_response.status_code, 200)
+        self.assertEqual(home_response.data["lectures"], [])
+        self.assertEqual(stats_response.status_code, 200)
+        self.assertEqual(stats_response.data["total_videos"], 0)

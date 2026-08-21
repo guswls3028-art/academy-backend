@@ -282,6 +282,14 @@ are display metadata, not a second policy source.
 If playback policy cannot be resolved for the selected active enrollment, the
 request fails closed rather than choosing another enrollment or tenant.
 
+An `ACTIVE` enrollment alone does not keep a paid lecture open after the
+lecture is ended. When a regular `Lecture.is_active` becomes false, student and
+parent operational reads remove its sessions, current exams, video library,
+playback and progress writes immediately. The tenant-wide `is_system` public
+library remains available. Published exam and homework history stays readable
+from the grades contract so ending a lecture revokes learning access without
+erasing the student's record.
+
 Add for frontend account/student UI changes:
 
 ```powershell
