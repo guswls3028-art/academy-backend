@@ -363,6 +363,41 @@ def upload_fileobj_to_r2_admin(
     )
 
 
+def get_admin_object_bytes(
+    *,
+    key: str,
+    max_bytes: int | None = None,
+    timeout_seconds: int | None = None,
+) -> tuple[bytes, str] | None:
+    """R2 Admin 버킷 객체를 직접 읽고 ``(bytes, content_type)``을 반환한다.
+
+    테넌트 로고처럼 작고 이미 인증된 내부 객체를 presigned HTTP로 다시
+    가져오지 않아도 되는 서버 렌더링 경로에서 사용한다. 객체가 없거나
+    ``max_bytes``를 넘으면 ``None``을 반환한다.
+    """
+    from botocore.exceptions import ClientError
+
+    s3 = _get_s3_client(timeout_seconds=timeout_seconds)
+    try:
+        resp = s3.get_object(Bucket=_admin_bucket(), Key=key)
+        body = resp["Body"]
+        try:
+            if max_bytes is not None and int(resp.get("ContentLength") or 0) > max_bytes:
+                return None
+            data = body.read(max_bytes + 1 if max_bytes is not None else None)
+            if max_bytes is not None and len(data) > max_bytes:
+                return None
+            content_type = str(resp.get("ContentType") or "application/octet-stream")
+            return data, content_type
+        finally:
+            body.close()
+    except ClientError as err:
+        code = (err.response.get("Error") or {}).get("Code", "")
+        if code in ("404", "NoSuchKey", "NotFound"):
+            return None
+        raise
+
+
 def get_admin_object_public_url(*, key: str) -> str | None:
     """
     Admin 버킷 객체의 공개 URL.

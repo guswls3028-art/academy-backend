@@ -138,6 +138,30 @@ class ParentExamChildSelectionTests(TestCase):
         self.assertEqual(response_b.status_code, 200)
         self.assertEqual([row["id"] for row in response_b.data["items"]], [self.exam_b.id])
 
+    def test_ended_lecture_hides_active_exam_but_preserves_published_result(self):
+        lecture = self.enrollment_a.lecture
+        lecture.is_active = False
+        lecture.save(update_fields=["is_active", "updated_at"])
+
+        exam_response = StudentExamListView.as_view()(
+            self._request("/student/exams/", student=self.student_a)
+        )
+        result_response = MyExamResultView.as_view()(
+            self._request(
+                f"/student/results/me/exams/{self.exam_a.id}/",
+                student=self.student_a,
+            ),
+            exam_id=self.exam_a.id,
+        )
+
+        self.assertEqual(exam_response.status_code, 200)
+        self.assertNotIn(
+            self.exam_a.id,
+            [row["id"] for row in exam_response.data["items"]],
+        )
+        self.assertEqual(result_response.status_code, 200, result_response.data)
+        self.assertEqual(result_response.data["total_score"], 10)
+
     def test_exam_list_can_include_upcoming_dashboard_window(self):
         view = StudentExamListView.as_view()
         future_exam, _, _ = self._exam_for_student(self.student_a, "Upcoming Exam")

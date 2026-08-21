@@ -1,6 +1,6 @@
 from typing import Any, Dict, Optional
 
-from django.db.models import Prefetch
+from django.db.models import Prefetch, Q
 from django.http import Http404
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -215,7 +215,11 @@ class StudentVideoMeView(APIView):
         enrollment_by_lecture = {e.lecture_id: e.id for e in enrollments}
         lecture_ids = list(enrollment_by_lecture.keys())
         lectures_qs = (
-            Lecture.objects.filter(id__in=lecture_ids, tenant=tenant)
+            Lecture.objects.filter(
+                id__in=lecture_ids,
+                tenant=tenant,
+            )
+            .filter(Q(is_active=True) | Q(is_system=True))
             .prefetch_related("sessions")
             .order_by("title")
         )
@@ -363,7 +367,7 @@ class StudentVideoStatsView(APIView):
                 tenant=tenant,
                 student=student,
                 include_system=True,
-            )
+            ).filter(Q(lecture__is_active=True) | Q(lecture__is_system=True))
         )
 
         enrollment_ids = [e.id for e in enrollments]

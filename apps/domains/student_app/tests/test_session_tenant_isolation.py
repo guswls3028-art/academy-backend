@@ -18,6 +18,9 @@ from apps.domains.student_app.sessions.views import (
     StudentSessionListView,
 )
 from apps.domains.students.models import Student
+from apps.support.student_app.dashboard_dependencies import (
+    today_lecture_sessions_for_dashboard,
+)
 
 
 def _create_tenant(code):
@@ -177,6 +180,34 @@ class StudentSessionTenantIsolationTests(TestCase):
         self.assertEqual(response.status_code, 404)
         self.student_a.refresh_from_db()
         self.assertEqual(self.student_a.schedule_hidden_ids, [])
+
+    def test_ended_lecture_is_removed_from_student_schedule(self):
+        enrollment = self._enroll_student_a()
+        session = _create_session(self.lecture_a, title="Ended lecture session")
+        SessionEnrollment.objects.create(
+            tenant=self.tenant_a,
+            enrollment=enrollment,
+            session=session,
+        )
+        self.lecture_a.is_active = False
+        self.lecture_a.save(update_fields=["is_active", "updated_at"])
+
+        list_response = StudentSessionListView().get(
+            _request(self.user_a, self.tenant_a)
+        )
+        detail_response = StudentSessionDetailView().get(
+            _request(self.user_a, self.tenant_a),
+            session.id,
+        )
+        dashboard_sessions = today_lecture_sessions_for_dashboard(
+            tenant=self.tenant_a,
+            student=self.student_a,
+            today=timezone.localdate(),
+        )
+
+        self.assertNotIn(session.id, {item["id"] for item in list_response.data})
+        self.assertEqual(detail_response.status_code, 404)
+        self.assertFalse(dashboard_sessions.exists())
 
     def test_attendance_summary_ignores_inactive_own_enrollment(self):
         Attendance = django_apps.get_model("attendance", "Attendance")
