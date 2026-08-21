@@ -240,6 +240,22 @@ Rules:
 | QnA/community/counseling | student author/target must be tenant-scoped and not inferred from display name |
 | Messaging | recipients come from the verified student/parent phone in the resolved student graph |
 
+### Staff student-support session and ended-lecture boundary
+
+The staff support-preview and student activity contract is owned by
+`student-support-audit.md`. Support tokens revalidate the operator's active
+staff access on every request and never create a student login event. Exact
+homework, video, and result opens are stored in the same `OpsAuditLog` activity
+stream as screen-level evidence; records begin at feature release and are not
+inferred retroactively.
+
+An ended lecture (`Lecture.is_active=False`) is not current learning access even
+when its `Enrollment.status` remains `ACTIVE`. Student session, exam, homework
+submission target, video list, playback, and progress paths must require an
+active lecture. Historical grades and video progress use the separate readonly
+history selector and may include ended lectures; they must not return a playable
+session or media URL.
+
 ## 7. Minimum Change Gate
 
 When a change touches any of these surfaces, run the smallest focused set that
@@ -266,6 +282,7 @@ Add for student video/progress access changes:
 ```powershell
 cd C:\academy\backend
 python -m pytest tests\test_student_video_progress_enrollment_resolution.py -v --tb=short -x
+python -m pytest apps\domains\students\tests\test_student_support.py -v --tb=short -x
 ```
 
 ### Student video playback controls

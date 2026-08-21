@@ -184,6 +184,7 @@ def get_enrollment_for_student_exam(student, exam_id, tenant=None):
             enrollment__student=student,
             enrollment__tenant=tenant,
             enrollment__status="ACTIVE",
+            enrollment__lecture__is_active=True,
         )
         .select_related("enrollment", "enrollment__tenant")
         .order_by("id")

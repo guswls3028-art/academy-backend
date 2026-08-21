@@ -15,6 +15,7 @@ from .views import (
     StudentSupportSessionView,
     SendExistingCredentialsView,
     StudentAccountNotificationLogView,
+    StudentHomeworkOpenActivityView,
 )
 from .views.enrollment_matrix_view import (
     StudentEnrollmentMatrixView,
@@ -35,6 +36,7 @@ router.register(r"", StudentViewSet, basename="student")
 
 urlpatterns = [
     path("me/activity/", StudentActivityRecordView.as_view(), name="student-activity-record"),
+    path("me/activity/homework-open/", StudentHomeworkOpenActivityView.as_view(), name="student-homework-open-activity"),
     path("password_find/request/", StudentPasswordFindRequestView.as_view(), name="student-password-find-request"),
     path("password_find/verify/", StudentPasswordFindVerifyView.as_view(), name="student-password-find-verify"),
     path("password_reset_send/", StudentPasswordResetSendView.as_view(), name="student-password-reset-send"),

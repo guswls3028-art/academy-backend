@@ -22,6 +22,7 @@ from apps.domains.results.services.assessment_correction_status import (
 )
 from apps.domains.results.services.answer_matching import format_answer_for_display
 from apps.domains.results.aggregations.exam_report import summarize_result_items
+from apps.domains.enrollment.selectors import learning_history_enrollments_for_student
 from apps.support.results.student_result_dependencies import (
     active_enrollments_for_student,
     get_request_student,
@@ -34,6 +35,18 @@ def active_exam_enrollment_ids_for_student(*, tenant, student, exam_id: int) -> 
     allowed_enrollment_ids = exams_repo.exam_enrollment_ids_for_tenant_exam(exam_id, tenant)
     return list(
         active_enrollments_for_student(
+            tenant=tenant,
+            student=student,
+        )
+        .filter(id__in=allowed_enrollment_ids)
+        .values_list("id", flat=True)
+    )
+
+
+def _history_exam_enrollment_ids_for_student(*, tenant, student, exam_id: int) -> list[int]:
+    allowed_enrollment_ids = exams_repo.exam_enrollment_ids_for_tenant_exam(exam_id, tenant)
+    return list(
+        learning_history_enrollments_for_student(
             tenant=tenant,
             student=student,
         )
@@ -60,13 +73,13 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
     if not student:
         raise Http404("student not found")
 
-    enrollment_ids = active_exam_enrollment_ids_for_student(
+    enrollment_ids = _history_exam_enrollment_ids_for_student(
         tenant=tenant,
         student=student,
         exam_id=exam_id,
     )
     enrollment = (
-        active_enrollments_for_student(tenant=tenant, student=student)
+        learning_history_enrollments_for_student(tenant=tenant, student=student)
         .filter(id__in=enrollment_ids)
         .order_by("id")
         .first()
@@ -103,7 +116,11 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
         exam_id=exam_id,
         enrollment_id=enrollment_id,
     ).count()
-    can_retake = bool(allow_retake and attempt_count < max_attempts)
+    can_retake = bool(
+        enrollment.lecture.is_active
+        and allow_retake
+        and attempt_count < max_attempts
+    )
 
     # 시험 응시 기록과 교직원 성적 운영은 유지하되, 학생·학부모에게는
     # 공개 전 점수·문항·석차를 전혀 직렬화하지 않는다. 재응시 가능 여부는

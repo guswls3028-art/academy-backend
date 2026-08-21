@@ -63,6 +63,9 @@ def _create_activity(
     category: str,
     device_class: str,
     screen_id: str,
+    target_type: str = "",
+    target_id: str | int = "",
+    target_label: str = "",
 ) -> None:
     ip, user_agent = _request_context(request)
     OpsAuditLog.objects.create(
@@ -78,10 +81,48 @@ def _create_activity(
             "category": category,
             "device_class": device_class,
             "screen_id": screen_id,
+            "target_type": str(target_type)[:32],
+            "target_id": str(target_id)[:64],
+            "target_label": str(target_label)[:255],
         },
         ip=ip,
         user_agent=user_agent,
     )
+
+
+def _resolve_activity_actor(*, request, student: Student):
+    tenant = getattr(request, "tenant", None)
+    if tenant is None or student.tenant_id != tenant.id or student.user_id != request.user.id:
+        return None
+    if not TenantMembership.objects.filter(
+        tenant=tenant,
+        user=request.user,
+        role="student",
+        is_active=True,
+    ).exists():
+        return None
+
+    auth = getattr(request, "auth", None)
+    getter = getattr(auth, "get", None)
+    support_preview = bool(getter("support_preview")) if callable(getter) else False
+    impersonated_by = getter("impersonated_by") if callable(getter) else None
+    if not support_preview:
+        return request.user, "student"
+    if not impersonated_by:
+        return None
+    operator = get_user_model().objects.filter(
+        pk=impersonated_by,
+        tenant=tenant,
+        is_active=True,
+    ).first()
+    if operator is None or not TenantMembership.objects.filter(
+        tenant=tenant,
+        user=operator,
+        role__in=("owner", "admin", "teacher", "staff"),
+        is_active=True,
+    ).exists():
+        return None
+    return operator, "support"
 
 
 def record_student_login(*, request, tenant, user) -> None:
@@ -143,34 +184,10 @@ def record_student_screen_view(
     ).first()
     if student is None:
         return False
-    if not TenantMembership.objects.filter(
-        tenant=tenant,
-        user=request.user,
-        role="student",
-        is_active=True,
-    ).exists():
+    actor = _resolve_activity_actor(request=request, student=student)
+    if actor is None:
         return False
-
-    auth = getattr(request, "auth", None)
-    getter = getattr(auth, "get", None)
-    support_preview = bool(getter("support_preview")) if callable(getter) else False
-    impersonated_by = getter("impersonated_by") if callable(getter) else None
-    actor_user = request.user
-    actor_mode = "student"
-    if support_preview and impersonated_by:
-        actor_user = get_user_model().objects.filter(
-            pk=impersonated_by,
-            tenant=tenant,
-            is_active=True,
-        ).first()
-        if actor_user is None or not TenantMembership.objects.filter(
-            tenant=tenant,
-            user=actor_user,
-            role__in=("owner", "admin", "teacher", "staff"),
-            is_active=True,
-        ).exists():
-            return False
-        actor_mode = "support"
+    actor_user, actor_mode = actor
 
     category, summary = presentation
     _create_activity(
@@ -185,3 +202,49 @@ def record_student_screen_view(
         screen_id=screen_id,
     )
     return True
+
+
+def record_student_target_open(
+    *,
+    request,
+    student: Student | None,
+    screen_id: str,
+    target_type: str,
+    target_id: str | int,
+    target_label: str,
+) -> bool:
+    """Best-effort evidence for an exact homework, video, or result open."""
+    presentation = SCREEN_PRESENTATION.get(str(screen_id or "").strip())
+    if student is None or presentation is None:
+        return False
+    actor = _resolve_activity_actor(request=request, student=student)
+    if actor is None:
+        return False
+    actor_user, actor_mode = actor
+    category, default_summary = presentation
+    label = str(target_label or "").strip()
+    summary = f"{label} 열람" if label else default_summary
+    try:
+        _create_activity(
+            request=request,
+            student=student,
+            actor_user=actor_user,
+            actor_mode=actor_mode,
+            action="student_activity.target_open",
+            summary=summary,
+            category=category,
+            device_class=_device_class(request),
+            screen_id=screen_id,
+            target_type=target_type,
+            target_id=target_id,
+            target_label=label,
+        )
+        return True
+    except Exception:
+        logger.exception(
+            "student target activity persistence failed: student_id=%s target=%s:%s",
+            student.id,
+            target_type,
+            target_id,
+        )
+        return False

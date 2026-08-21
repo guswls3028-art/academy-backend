@@ -34,6 +34,7 @@ from academy.application.use_cases.student_video_access_context import (
     resolve_student_video_access_context,
     student_can_access_video,
 )
+from apps.domains.enrollment.selectors import learning_history_enrollments_for_student
 from .serializers import (
     StudentVideoListItemSerializer,
     StudentVideoPlaybackSerializer,
@@ -214,6 +215,20 @@ class StudentVideoMeView(APIView):
         )
         enrollment_by_lecture = {e.lecture_id: e.id for e in enrollments}
         lecture_ids = list(enrollment_by_lecture.keys())
+        history_enrollments = list(
+            learning_history_enrollments_for_student(
+                tenant=tenant,
+                student=student,
+            ).order_by("lecture__title")
+        )
+        archived_enrollments = [
+            enrollment
+            for enrollment in history_enrollments
+            if not enrollment.lecture.is_active
+        ]
+        archived_lecture_ids = [
+            enrollment.lecture_id for enrollment in archived_enrollments
+        ]
         lectures_qs = (
             Lecture.objects.filter(
                 id__in=lecture_ids,
@@ -237,7 +252,7 @@ class StudentVideoMeView(APIView):
         Video = get_video_model()
 
         # 수강 강의 세션 + 전체공개영상 세션 모두 포함
-        all_lecture_ids = lecture_ids + [public_lecture.id]
+        all_lecture_ids = lecture_ids + archived_lecture_ids + [public_lecture.id]
         session_ids_all = list(
             Session.objects.filter(lecture_id__in=all_lecture_ids)
             .values_list("id", flat=True)
@@ -329,9 +344,95 @@ class StudentVideoMeView(APIView):
             "thumbnail_url": pub_thumb_url,
         }
 
+        archived_data = []
+        VideoProgress = get_video_progress_model()
+        archived_videos_by_lecture: Dict[int, list[dict[str, Any]]] = {}
+        archived_video_ids: list[int] = []
+        if archived_lecture_ids:
+            archived_videos = list(
+                Video.objects.filter(
+                    tenant=tenant,
+                    session__lecture_id__in=archived_lecture_ids,
+                    session__lecture__tenant=tenant,
+                    status=Video.Status.READY,
+                ).values("id", "duration", "session__lecture_id")
+            )
+            for video in archived_videos:
+                archived_videos_by_lecture.setdefault(
+                    int(video["session__lecture_id"]), []
+                ).append(video)
+                archived_video_ids.append(int(video["id"]))
+        archived_progress_map = {}
+        archived_open_count_by_video: dict[int, int] = {}
+        if archived_video_ids:
+            archived_progress_map = {
+                (int(progress["enrollment_id"]), int(progress["video_id"])): progress
+                for progress in VideoProgress.objects.filter(
+                    enrollment_id__in=[item.id for item in archived_enrollments],
+                    video_id__in=archived_video_ids,
+                ).values("enrollment_id", "video_id", "progress", "completed")
+            }
+            from apps.core.models import OpsAuditLog
+
+            archived_open_count_by_video = {
+                int(row["payload__target_id"]): int(row["open_count"])
+                for row in (
+                    OpsAuditLog.objects
+                    .filter(
+                        target_tenant=tenant,
+                        target_user=student.user,
+                        action="student_activity.target_open",
+                        payload__actor_mode="student",
+                        payload__category="video",
+                        payload__target_type="video",
+                        payload__target_id__in=[
+                            str(video_id) for video_id in archived_video_ids
+                        ],
+                    )
+                    .values("payload__target_id")
+                    .annotate(open_count=Count("id"))
+                )
+            }
+        for enrollment in archived_enrollments:
+            lecture_videos = archived_videos_by_lecture.get(enrollment.lecture_id, [])
+            progresses = [
+                (video, archived_progress_map.get((enrollment.id, int(video["id"]))))
+                for video in lecture_videos
+            ]
+            completed_count = sum(
+                1
+                for _, progress in progresses
+                if progress
+                if is_video_progress_complete(
+                    progress.get("progress"), progress.get("completed", False)
+                )
+            )
+            watch_duration = sum(
+                int(
+                    _safe_video_progress(progress.get("progress"))
+                    * _safe_video_duration(video.get("duration"))
+                )
+                for video, progress in progresses
+                if progress
+            )
+            archived_data.append(
+                {
+                    "id": enrollment.lecture_id,
+                    "title": enrollment.lecture.title or "종료 강의",
+                    "video_count": len(lecture_videos),
+                    "completed_count": completed_count,
+                    "watch_duration": watch_duration,
+                    "play_count": sum(
+                        archived_open_count_by_video.get(int(video["id"]), 0)
+                        for video in lecture_videos
+                    ),
+                }
+            )
+
         return Response({
             "public": public_data,  # null이어도 항상 필드 제공
             "lectures": lectures_data,
+            "archived_lectures": archived_data,
         }, status=status.HTTP_200_OK)
 
 
@@ -749,6 +850,19 @@ class StudentVideoPlaybackView(APIView):
                     status=status.HTTP_503_SERVICE_UNAVAILABLE,
                 )
         
+        student = get_request_student(request)
+        if student:
+            from apps.domains.students.activity import record_student_target_open
+
+            record_student_target_open(
+                request=request,
+                student=student,
+                screen_id="student.video.player",
+                target_type="video",
+                target_id=video.id,
+                target_label=video.title,
+            )
+
         thumb = build_thumbnail_url(video)
 
         # 조회수 증가 — 동일 사용자 5분 내 중복 카운트 방지

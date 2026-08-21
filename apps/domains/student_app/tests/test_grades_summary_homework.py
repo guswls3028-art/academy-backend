@@ -202,9 +202,31 @@ class MyGradesSummaryHomeworkTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["exam_trend"], [])
         self.assertEqual(response.data["lecture_options"], [
-            {"id": self.lecture.id, "title": "수학", "color": "#2563eb", "chip_label": "수"},
-            {"id": second_lecture.id, "title": "심화 수학", "color": "#7c3aed", "chip_label": "심"},
+            {"id": self.lecture.id, "title": "수학", "color": "#2563eb", "chip_label": "수", "is_active": True},
+            {"id": second_lecture.id, "title": "심화 수학", "color": "#7c3aed", "chip_label": "심", "is_active": True},
         ])
+
+    def test_ended_lecture_keeps_readonly_exam_history_with_inactive_marker(self):
+        result = self._score_exam(
+            title="종료 강의 시험",
+            order=1,
+            score=80,
+            max_score=100,
+        )
+        exam = self.Exam.objects.get(id=result.target_id)
+        self.ExamEnrollment.objects.create(exam=exam, enrollment=self.enrollment)
+        self.lecture.is_active = False
+        self.lecture.save(update_fields=["is_active", "updated_at"])
+
+        response = self._call()
+        result_response = self._call_exam_result(exam.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(len(response.data["exams"]), 1)
+        self.assertFalse(response.data["exams"][0]["lecture_active"])
+        self.assertFalse(response.data["lecture_options"][0]["is_active"])
+        self.assertEqual(result_response.status_code, 200, result_response.data)
+        self.assertFalse(result_response.data["can_retake"])
 
     def test_student_summary_returns_tenant_layout_and_current_teacher_correction_status(self):
         program = self.tenant.program
@@ -293,6 +315,7 @@ class MyGradesSummaryHomeworkTests(TestCase):
             "title": "수학",
             "color": "#3b82f6",
             "chip_label": "",
+            "is_active": True,
         }])
 
     def test_not_submitted_exam_stays_in_list_but_not_in_trend(self):

@@ -141,13 +141,14 @@ class EnrollmentSerializer(serializers.ModelSerializer):
         allow_blank=True,
         default="",
     )
+    lecture_active = serializers.BooleanField(source="lecture.is_active", read_only=True)
 
     class Meta:
         model = Enrollment
         fields = [
             "id", "student", "lecture", "status",
             "enrolled_at", "created_at", "updated_at",
-            "lecture_name", "lecture_color", "lecture_chip_label",
+            "lecture_name", "lecture_color", "lecture_chip_label", "lecture_active",
         ]
         ref_name = "StudentEnrollment"
 

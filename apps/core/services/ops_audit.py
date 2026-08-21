@@ -59,12 +59,13 @@ def record_audit(
     payload: Any = None,
     result: str = "success",
     error: str = "",
+    actor_user=None,
 ) -> Any | None:
     """감사 로그 1건 기록. 실패해도 호출자 흐름은 끊지 않는다."""
     try:
         from apps.core.models import OpsAuditLog
 
-        actor = getattr(request, "user", None) if request else None
+        actor = actor_user or (getattr(request, "user", None) if request else None)
         actor_user = actor if (actor and getattr(actor, "is_authenticated", False)) else None
         actor_username = ""
         if actor_user is not None:

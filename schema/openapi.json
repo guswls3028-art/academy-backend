@@ -12989,6 +12989,10 @@
           "lecture": {
             "type": "integer"
           },
+          "lecture_active": {
+            "readOnly": true,
+            "type": "boolean"
+          },
           "lecture_chip_label": {
             "default": "",
             "readOnly": true,
@@ -13020,6 +13024,7 @@
           "enrolled_at",
           "id",
           "lecture",
+          "lecture_active",
           "lecture_chip_label",
           "lecture_color",
           "lecture_name",
@@ -13189,6 +13194,18 @@
         "required": [
           "fee_template",
           "student"
+        ],
+        "type": "object"
+      },
+      "StudentHomeworkOpenSchemaRequest": {
+        "properties": {
+          "homework_id": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "homework_id"
         ],
         "type": "object"
       },
@@ -42113,6 +42130,55 @@
             "multipart/form-data": {
               "schema": {
                 "$ref": "#/components/schemas/StudentActivityRecordSchemaRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentActivityAcceptedSchema"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      }
+    },
+    "/api/v1/students/me/activity/homework-open/": {
+      "post": {
+        "description": "Record an exact homework open after validating current student access.",
+        "operationId": "students_homework_open_activity_record",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentHomeworkOpenSchemaRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentHomeworkOpenSchemaRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentHomeworkOpenSchemaRequest"
               }
             }
           },

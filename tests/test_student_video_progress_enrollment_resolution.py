@@ -293,6 +293,7 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
                 self.video.refresh_from_db()
                 self.assertEqual(self.video.like_count, 0)
                 self.assertEqual(self.video.comment_count, 0)
+                self.assertEqual(self.video.view_count, 0)
 
     def test_malformed_explicit_enrollment_rejects_without_fallback_or_mutation(self):
         invalid_values = (
@@ -316,6 +317,34 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
                 self.assertFalse(VideoPlaybackSession.objects.exists())
                 self.video.refresh_from_db()
                 self.assertEqual(self.video.view_count, 0)
+
+    def test_ended_lecture_blocks_playback_and_returns_readonly_history(self):
+        VideoProgress.objects.create(
+            video=self.video,
+            enrollment=self.target_enrollment,
+            progress=1,
+            completed=True,
+            last_position=100,
+        )
+        initial_playback = self._get_playback(
+            enrollment_id=self.target_enrollment.id,
+        )
+        self.assertEqual(initial_playback.status_code, 200, initial_playback.data)
+        self.target_lecture.is_active = False
+        self.target_lecture.save(update_fields=["is_active", "updated_at"])
+
+        playback = self._get_playback(enrollment_id=self.target_enrollment.id)
+        self.assertEqual(playback.status_code, 403)
+
+        overview = self._get_me()
+        self.assertEqual(overview.status_code, 200)
+        self.assertNotIn(self.target_lecture.id, [row["id"] for row in overview.data["lectures"]])
+        archived = overview.data["archived_lectures"]
+        self.assertEqual(len(archived), 1)
+        self.assertEqual(archived[0]["id"], self.target_lecture.id)
+        self.assertEqual(archived[0]["video_count"], 1)
+        self.assertEqual(archived[0]["completed_count"], 1)
+        self.assertEqual(archived[0]["play_count"], 1)
 
     def test_progress_without_explicit_enrollment_uses_video_lecture_enrollment(self):
         response = self._post_progress({

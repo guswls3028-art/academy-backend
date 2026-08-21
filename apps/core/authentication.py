@@ -88,3 +88,68 @@ class TokenVersionJWTAuthentication(JWTAuthentication):
                 code="tenant_mismatch",
             )
         return user
+
+    def authenticate(self, request):
+        authenticated = super().authenticate(request)
+        if authenticated is None:
+            return None
+        user, token = authenticated
+        if not token.get("support_preview"):
+            return authenticated
+
+        from apps.core.services.ops_audit import record_audit
+        from apps.core.services.tenant_access import user_has_active_staff_access
+        from apps.core.models import User
+        from apps.domains.students.models import Student
+
+        tenant_id = token.get("tenant_id")
+        student_id = token.get("support_student_id")
+        operator_id = token.get("impersonated_by")
+        session_id = str(token.get("support_session_id") or "").strip()
+        student = (
+            Student.objects
+            .filter(
+                id=student_id,
+                tenant_id=tenant_id,
+                user=user,
+                deleted_at__isnull=True,
+            )
+            .select_related("tenant")
+            .first()
+        )
+        operator = User.objects.filter(
+            id=operator_id,
+            tenant_id=tenant_id,
+            is_active=True,
+        ).first()
+        if not session_id or not student or not operator:
+            raise AuthenticationFailed(
+                "학생 지원 세션 정보가 올바르지 않습니다.",
+                code="student_support_session_inactive",
+            )
+        if not user_has_active_staff_access(
+            operator,
+            student.tenant,
+        ):
+            raise AuthenticationFailed(
+                "학생 지원 담당자의 권한이 만료되었습니다.",
+                code="student_support_operator_inactive",
+            )
+        request.student_support_operator = operator
+        request.student_support_session_id = session_id
+        if request.method not in {"GET", "HEAD", "OPTIONS"}:
+            record_audit(
+                request,
+                actor_user=operator,
+                action="student_support.action",
+                summary=f"학생 지원 화면 조작: {request.method} {request.path}",
+                target_tenant=student.tenant,
+                target_user=user,
+                payload={
+                    "student_id": student.id,
+                    "support_session_id": session_id,
+                    "method": request.method,
+                    "path": request.path,
+                },
+            )
+        return user, token

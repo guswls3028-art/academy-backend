@@ -16,6 +16,7 @@ def get_active_student_session_ids(*, student: Any, tenant: Any) -> list[int]:
             enrollment__student=student,
             enrollment__tenant=tenant,
             enrollment__status="ACTIVE",
+            enrollment__lecture__is_active=True,
             session__lecture__is_active=True,
         )
         .values_list("session_id", flat=True)
@@ -118,6 +119,7 @@ def student_owns_session(*, student: Any, tenant: Any, session_id: Any) -> bool:
         enrollment__student=student,
         enrollment__tenant=tenant,
         enrollment__status="ACTIVE",
+        enrollment__lecture__is_active=True,
         session__lecture__tenant=tenant,
         session__lecture__is_active=True,
         session_id=session_id,
