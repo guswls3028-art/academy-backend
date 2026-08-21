@@ -17,6 +17,11 @@ from .password_views import (
 )
 from .credential_views import SendExistingCredentialsView
 from .account_notification_views import StudentAccountNotificationLogView
+from .support_views import (
+    StudentActivityRecordView,
+    StudentActivityView,
+    StudentSupportSessionView,
+)
 
 __all__ = [
     "TagViewSet",
@@ -32,4 +37,7 @@ __all__ = [
     "StudentPasswordResetSendView",
     "SendExistingCredentialsView",
     "StudentAccountNotificationLogView",
+    "StudentActivityView",
+    "StudentActivityRecordView",
+    "StudentSupportSessionView",
 ]

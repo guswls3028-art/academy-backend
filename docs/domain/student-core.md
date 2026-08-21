@@ -8,6 +8,7 @@ This document is the integration SSOT for the student domain. More specific
 documents still own their detailed contracts:
 
 - creation and import: `student-creation.md`
+- staff support preview and activity evidence: `student-support-audit.md`
 - deletion/restore/permanent delete: `student-lifecycle.md`
 - login ID and password recovery: `account-recovery.md`
 - parent account graph: `parent-account.md`

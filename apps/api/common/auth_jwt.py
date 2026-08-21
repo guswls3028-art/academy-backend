@@ -165,6 +165,9 @@ class TenantAwareTokenObtainPairSerializer(TokenObtainPairSerializer):
         mcp = bool(getattr(user, "must_change_password", False))
         refresh["mcp"] = mcp
         refresh.access_token["mcp"] = mcp
+        from apps.domains.students.services.activity import record_student_login
+
+        record_student_login(request=request, tenant=tenant, user=user)
         return {
             "refresh": str(refresh),
             "access": str(refresh.access_token),
