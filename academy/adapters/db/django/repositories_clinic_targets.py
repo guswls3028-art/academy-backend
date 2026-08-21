@@ -212,13 +212,17 @@ def homework_scores_for_target(*, enrollment_id: int, session_id: int, homework_
     ).order_by("attempt_index")
 
 
-def homework_policy_cutline_for_session(*, tenant, session, default: float = 80.0) -> float:
-    from apps.domains.homework.models import HomeworkPolicy
+def homework_cutline_settings_for_target(*, session, homework=None):
+    """Read the exact per-homework-or-session-fallback grading contract."""
+    from apps.domains.homework.utils.homework_policy import (
+        resolve_homework_cutline_settings,
+    )
 
-    policy = HomeworkPolicy.objects.filter(tenant=tenant, session=session).first()
-    if not policy:
-        return float(default)
-    return float(getattr(policy, "cutline_value", default) or default)
+    return resolve_homework_cutline_settings(
+        session=session,
+        homework=homework,
+        create_policy=False,
+    )
 
 
 def regular_exam_for_source(*, exam_id: int, tenant, session_id: int):

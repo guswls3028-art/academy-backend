@@ -6,15 +6,11 @@
 
 설계 계약 (중요)
 1) 단일 진실: enrollment_id (학생 식별은 enrollment_id로만)
-2) 현재 clinic_required 판단은 SessionProgress.completed=False AND ClinicLink(자동 트리거) 기준
-3) 점수/커트라인/사유(reason)는 results/exams에서 파생
+2) 현재 clinic_required 판단은 미해소 ClinicLink(자동 트리거)와 미완료 진행 상태 기준
+3) 점수/커트라인/사유(reason)는 source별 시험·과제 정책에서 파생
 4) Session ↔ Exam 매핑은 results.utils.session_exam.get_exams_for_session() 단일 진실 사용
-
-⚠️ 현실적 제약 (보류/명시)
-- "세션에 시험이 여러 개"인 구조에서, ClinicTarget의 exam_score/cutline_score는 1개 숫자만 담는다.
-  따라서 본 서비스는 "대표 exam"을 1개 선정해서 표기한다.
-  - 기본 정책: get_exams_for_session(session) 중 id가 가장 작은 exam을 대표로 사용
-  - 향후 정책 필요 시: ProgressPolicy(strategy)나 운영 규칙에 따라 변경 가능
+- source가 있는 현재 링크는 정확한 시험·과제를 사용한다. source 없는 legacy 링크만
+  세션의 가장 작은 exam id를 호환 표시 대상으로 사용한다.
 """
 
 from __future__ import annotations
@@ -29,7 +25,7 @@ from academy.adapters.db.django.repositories_clinic_targets import (
     explicit_not_submitted_exam_targets,
     filter_links_by_section,
     first_homework_score,
-    homework_policy_cutline_for_session,
+    homework_cutline_settings_for_target,
     homework_scores_for_target,
     regular_exam_for_source,
     regular_homework_for_clinic_target,
@@ -322,22 +318,28 @@ class ClinicTargetService:
                 )
 
                 original_score = float(first_hw_score.score or 0) if first_hw_score and first_hw_score.score is not None else None
-                hw_max_score = float(first_hw_score.max_score or 100) if first_hw_score and first_hw_score.max_score else 100.0
+                hw_max_score = (
+                    float(first_hw_score.max_score)
+                    if first_hw_score and first_hw_score.max_score is not None
+                    else float(getattr(hw, "default_max_score", 100.0) or 100.0)
+                )
                 meta_status = (
                     (first_hw_score.meta or {}).get("status")
                     if first_hw_score and isinstance(first_hw_score.meta, dict)
                     else None
                 )
 
-                # 과제 cutline은 HomeworkPolicy 기반
-                hw_tenant = getattr(lecture, "tenant", None) if lecture else None
-                cutline = 80.0
-                if hw_tenant:
-                    cutline = homework_policy_cutline_for_session(
-                        tenant=hw_tenant,
-                        session=session,
-                        default=80.0,
-                    )
+                cutline_settings = homework_cutline_settings_for_target(
+                    session=session,
+                    homework=hw,
+                )
+                cutline_mode = str(cutline_settings.mode)
+                cutline_value = float(cutline_settings.value)
+                cutline = (
+                    cutline_value
+                    if cutline_mode == "COUNT"
+                    else hw_max_score * cutline_value / 100.0
+                )
 
                 # 재시도 이력
                 all_hw_scores = homework_scores_for_target(
@@ -363,10 +365,15 @@ class ClinicTargetService:
                     "exam_id": None,
                     "reason": "missing" if meta_status == "NOT_SUBMITTED" else "score",
                     "clinic_reason": "homework",
-                    "exam_score": original_score,
-                    "cutline_score": float(cutline),
+                    "exam_score": None,
+                    "cutline_score": None,
                     "homework_score": original_score,
                     "homework_cutline": float(cutline),
+                    "homework_cutline_mode": cutline_mode,
+                    "homework_cutline_value": cutline_value,
+                    "homework_round_unit_percent": int(
+                        cutline_settings.round_unit_percent
+                    ),
                     "meta_status": meta_status,
                     "max_score": hw_max_score,
                     "source_title": hw_title,

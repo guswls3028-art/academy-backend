@@ -8,9 +8,8 @@
 - enrollment_id 기준(단일 진실)으로 내려준다.
 - 프론트의 ClinicTarget 타입과 1:1로 맞춘다.
 
-보류된 기능 (명시)
-- reason의 세부 판정(점수/신뢰도)은 서비스에서 보수적으로 판정한다.
-  (프로젝트마다 LOW_CONFIDENCE 신호가 Attempt.meta에 있을 수도, ResultFact.meta에 있을 수도 있어 방어 구현)
+신뢰도 reason은 Attempt.meta와 ResultFact.meta의 현재 호환 신호를 서비스가
+보수적으로 합성한다.
 """
 
 from rest_framework import serializers
@@ -33,6 +32,16 @@ class AdminClinicTargetSerializer(serializers.Serializer):
     cutline_score = serializers.FloatField(allow_null=True)
     homework_score = serializers.FloatField(required=False, allow_null=True)
     homework_cutline = serializers.FloatField(required=False, allow_null=True)
+    homework_cutline_mode = serializers.ChoiceField(
+        choices=["PERCENT", "COUNT"],
+        required=False,
+        allow_null=True,
+    )
+    homework_cutline_value = serializers.FloatField(required=False, allow_null=True)
+    homework_round_unit_percent = serializers.IntegerField(
+        required=False,
+        allow_null=True,
+    )
     meta_status = serializers.CharField(required=False, allow_null=True)
 
     # ✅ V1.1.1 remediation: ClinicLink 식별/상태 필드

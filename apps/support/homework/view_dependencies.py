@@ -49,6 +49,27 @@ def session_exists_for_tenant(*, session_id: int, tenant: Any) -> bool:
     return Session.objects.filter(id=session_id, lecture__tenant=tenant).exists()
 
 
+def get_session_for_homework_enrollment(
+    *,
+    session_id: int,
+    tenant: Any,
+    for_update: bool = False,
+) -> Any | None:
+    """Return the tenant-owned session that serializes roster replacement."""
+    from apps.domains.lectures.models import Session
+
+    queryset = Session.objects.filter(
+        id=session_id,
+        lecture__tenant=tenant,
+    )
+    if for_update:
+        queryset = queryset.select_for_update(
+            no_key=True,
+            of=("self",),
+        )
+    return queryset.first()
+
+
 def recalc_scores_for_policy_change(*, policy: Any) -> None:
     from apps.domains.homework_results.services.policy_recalc import recalc_scores_for_policy_change as _recalc
 

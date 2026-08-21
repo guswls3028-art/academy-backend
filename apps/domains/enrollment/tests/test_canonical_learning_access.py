@@ -258,3 +258,76 @@ class StudentLearningAccessCanonicalServiceTests(APITestCase):
                 enrollment=inactive_enrollment,
             ).exists()
         )
+
+    def test_homework_enrollment_put_preserves_inactive_history(self):
+        SessionEnrollment.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            enrollment=self.enrollment,
+        )
+        inactive_user = User.objects.create_user(
+            username="access-a-history",
+            password="pw1234",
+            tenant=self.tenant,
+        )
+        inactive_student = Student.objects.create(
+            tenant=self.tenant,
+            user=inactive_user,
+            name="Inactive History",
+            ps_number="ACCESS-A-003",
+            omr_code="00000004",
+            parent_phone="01000000004",
+        )
+        inactive_enrollment = Enrollment.objects.create(
+            tenant=self.tenant,
+            student=inactive_student,
+            lecture=self.lecture,
+            status="INACTIVE",
+        )
+        SessionEnrollment.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            enrollment=inactive_enrollment,
+        )
+        historical = HomeworkEnrollment.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            enrollment=inactive_enrollment,
+        )
+
+        resp = self.client.put(
+            f"/api/v1/homework/enrollments/?session_id={self.session.id}",
+            {
+                "session_id": self.session.id,
+                "enrollment_ids": [self.enrollment.id],
+            },
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data["selected_count"], 1)
+        self.assertTrue(
+            HomeworkEnrollment.objects.filter(id=historical.id).exists()
+        )
+        active = HomeworkEnrollment.objects.get(
+            tenant=self.tenant,
+            session=self.session,
+            enrollment=self.enrollment,
+        )
+
+        repeated = self.client.put(
+            f"/api/v1/homework/enrollments/?session_id={self.session.id}",
+            {
+                "session_id": self.session.id,
+                "enrollment_ids": [self.enrollment.id],
+            },
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(repeated.status_code, 200, repeated.data)
+        self.assertTrue(
+            HomeworkEnrollment.objects.filter(id=historical.id).exists()
+        )
+        self.assertTrue(HomeworkEnrollment.objects.filter(id=active.id).exists())
