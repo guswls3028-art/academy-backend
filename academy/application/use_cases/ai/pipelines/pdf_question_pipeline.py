@@ -169,6 +169,37 @@ def run_pdf_question_pipeline(
             full_text_by_page,
             source_role=source_role,
         )
+        ocr_augmented = False
+        if is_pdf:
+            # A scanned support PDF can still expose a small embedded header or
+            # watermark. The general PDF pass then marks that page as text-backed,
+            # although the numbered answers/explanations remain pixels. OCR those
+            # hybrid pages and merge only new numbered facts, keeping native PDF
+            # text authoritative when both paths recognize the same number.
+            hybrid_page_texts = _extract_ocr_page_texts(
+                [p for p in pages if p.get("has_embedded_text")]
+            )
+            ocr_entries = _extract_numbered_support_entries(
+                hybrid_page_texts,
+                source_role=source_role,
+            )
+            recognized_numbers = {
+                int(entry["question_number"])
+                for entry in entries
+            }
+            for entry in ocr_entries:
+                number = int(entry["question_number"])
+                if number in recognized_numbers:
+                    continue
+                entries.append(entry)
+                recognized_numbers.add(number)
+                ocr_augmented = True
+            entries.sort(
+                key=lambda entry: (
+                    int(entry.get("page_index") or 0),
+                    int(entry["question_number"]),
+                )
+            )
         _attach_preserved_support_pages(
             entries=entries,
             pages=pages,
@@ -183,6 +214,7 @@ def run_pdf_question_pipeline(
             "page_count": len(pages),
             "source_entry_count": len(entries),
             "recognition_status": "recognized" if entries else "unrecognized",
+            "ocr_augmented": ocr_augmented,
             "source_issues": ([] if entries else [f"{source_role}_entries_not_recognized"]),
         }
         if source_role == "answer":

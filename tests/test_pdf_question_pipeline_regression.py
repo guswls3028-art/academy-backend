@@ -234,6 +234,11 @@ def test_explanation_source_preserves_teacher_text_for_review():
 
 @patch(
     "academy.application.use_cases.ai.pipelines.pdf_question_pipeline."
+    "_extract_ocr_page_texts",
+    return_value={},
+)
+@patch(
+    "academy.application.use_cases.ai.pipelines.pdf_question_pipeline."
     "_extract_pdf_text",
     return_value=({}, {0: "정답\n1. ⑤\n2. 13"}),
 )
@@ -262,6 +267,7 @@ def test_real_support_pipeline_returns_reviewable_answer_entries(
     _segment,
     register_tmp,
     _extract_pdf,
+    _extract_ocr,
 ):
     job = AIJob.new(type="question_segmentation", payload={})
 
@@ -276,7 +282,65 @@ def test_real_support_pipeline_returns_reviewable_answer_entries(
     assert result.status == "DONE"
     assert [entry["answer"] for entry in result.result["answers"]] == ["5", "13"]
     assert result.result["recognition_status"] == "recognized"
+    assert result.result["ocr_augmented"] is False
     register_tmp.assert_called_once_with(["paired-source-fixture"])
+
+
+@patch(
+    "academy.application.use_cases.ai.pipelines.pdf_question_pipeline."
+    "_extract_ocr_page_texts",
+    side_effect=[{}, {0: "정답표\n1. ④\n2. x=√3/2"}],
+)
+@patch(
+    "academy.application.use_cases.ai.pipelines.pdf_question_pipeline."
+    "_extract_pdf_text",
+    return_value=({}, {0: "학원명 워터마크"}),
+)
+@patch(
+    "academy.application.use_cases.ai.pipelines.pdf_question_pipeline."
+    "register_pdf_seg_tmp_dirs",
+)
+@patch(
+    "academy.application.use_cases.ai.pipelines.pdf_question_pipeline."
+    "segment_questions_multipage",
+    return_value={
+        "is_pdf": True,
+        "tmp_dirs": ["hybrid-support-fixture"],
+        "pages": [
+            {
+                "page_index": 0,
+                "image_path": "answer-scan.png",
+                "boxes": [],
+                "numbers": [],
+                "has_embedded_text": True,
+            }
+        ],
+    },
+)
+def test_support_pdf_ocr_recovers_numbered_facts_behind_embedded_header(
+    _segment,
+    _register_tmp,
+    _extract_pdf,
+    extract_ocr,
+):
+    job = AIJob.new(type="question_segmentation", payload={})
+
+    result = run_pdf_question_pipeline(
+        job=job,
+        local_path="hybrid-answers.pdf",
+        payload={"exam_id": "31", "source_role": "answer"},
+        tenant_id="7",
+        record_progress=lambda *args, **kwargs: None,
+    )
+
+    assert result.status == "DONE"
+    assert [entry["answer"] for entry in result.result["answers"]] == [
+        "4",
+        "x=√3/2",
+    ]
+    assert result.result["recognition_status"] == "recognized"
+    assert result.result["ocr_augmented"] is True
+    assert extract_ocr.call_count == 2
 
 
 @patch(
