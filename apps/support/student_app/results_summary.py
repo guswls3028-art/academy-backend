@@ -7,7 +7,7 @@ from typing import Any
 
 from django.db.models import F, Max
 
-from apps.domains.enrollment.selectors import active_enrollments_for_student
+from apps.domains.enrollment.selectors import learning_history_enrollments_for_student
 from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.homework_results.models import HomeworkScore
 from apps.core.services.student_grade_report_layout import (
@@ -152,21 +152,26 @@ def _safe_homework_number(value: Any, *, positive: bool = False) -> float | None
 
 def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]:
     report_layout = get_student_grade_report_layout(tenant=tenant)
-    active_enrollments = list(
-        active_enrollments_for_student(
+    history_enrollments = list(
+        learning_history_enrollments_for_student(
             tenant=tenant,
             student=student,
         ).order_by("lecture_id")
     )
-    enrollment_ids = [int(enrollment.id) for enrollment in active_enrollments]
+    enrollment_ids = [int(enrollment.id) for enrollment in history_enrollments]
+    lecture_active_by_enrollment = {
+        int(enrollment.id): bool(enrollment.lecture.is_active)
+        for enrollment in history_enrollments
+    }
     lecture_options = [
         {
             "id": int(enrollment.lecture_id),
             "title": enrollment.lecture.title,
             "color": enrollment.lecture.color,
             "chip_label": enrollment.lecture.chip_label,
+            "is_active": bool(enrollment.lecture.is_active),
         }
-        for enrollment in active_enrollments
+        for enrollment in history_enrollments
     ]
     if not enrollment_ids:
         return {
@@ -280,6 +285,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             "accuracy_rate": item_analysis["accuracy_rate"],
             "wrong_question_numbers": item_analysis["wrong_question_numbers"],
             "correction_status": correction_status,
+            "lecture_active": lecture_active_by_enrollment.get(enrollment_id, False),
         })
     exam_trend, exam_summary = build_exam_progression(exam_list)
 
@@ -372,6 +378,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             "session_title": session_title,
             "lecture_title": lecture_title,
             "recorded_at": score.updated_at.isoformat(),
+            "lecture_active": bool(score.session.lecture.is_active),
             **session_metadata,
         })
 
@@ -429,6 +436,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             "session_title": assignment_session_title,
             "lecture_title": assignment_lecture_title,
             "recorded_at": assignment.created_at.isoformat(),
+            "lecture_active": bool(session.lecture.is_active),
             **session_metadata,
         })
 

@@ -178,6 +178,17 @@ class ParentExamChildSelectionTests(TestCase):
         self.assertEqual(upcoming_response.status_code, 200)
         self.assertIn(future_exam.id, [row["id"] for row in upcoming_response.data["items"]])
 
+    def test_exam_list_excludes_ended_lecture_from_ongoing_count(self):
+        self.enrollment_a.lecture.is_active = False
+        self.enrollment_a.lecture.save(update_fields=["is_active", "updated_at"])
+
+        response = StudentExamListView.as_view()(
+            self._request("/student/exams/?include_upcoming=true", student=self.student_a)
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertNotIn(self.exam_a.id, [row["id"] for row in response.data["items"]])
+
     def test_parent_exam_result_uses_selected_child(self):
         view = MyExamResultView.as_view()
 

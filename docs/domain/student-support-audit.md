@@ -17,6 +17,8 @@
 - 15분짜리 access token만 발급하며 refresh token은 만들지 않는다.
 - `support_preview`, `impersonated_by`, `support_session_id`,
   `support_student_id` claim으로 일반 학생 세션과 구분한다.
+- 매 요청마다 `impersonated_by` 교직원의 현재 활성 staff membership을 다시
+  확인한다. 권한이 회수되면 아직 만료 전인 토큰도 즉시 거부한다.
 - 시작은 `OpsAuditLog(action="student_support_view.start")`에 교직원 actor와 학생
   target을 함께 남긴다.
 - 토큰 만료·계정 비활성화·테넌트 불일치 시 학생 API 권한이 닫힌다.
@@ -47,6 +49,11 @@
 이 기록은 화면을 열었다는 서버 수신 증거다. 영상 완주, 과제 제출 완료, 시험
 응시 완료처럼 각 도메인의 별도 상태 전이를 대신하지 않으며 분쟁 확인 시 해당
 정본 데이터와 함께 판단한다. 기록 실패는 학습 화면을 막지 않는다.
+
+과제 선택, 영상 재생 URL 발급, 시험 결과 열람은 검증된 대상 ID와 제목도
+`student_activity.target_open`에 남긴다. 종료 강의의 영상 재생 횟수는 이 학생별
+target 기록만 집계하며 전체 영상 조회수나 다른 학생 기록을 섞지 않는다. 이 세부
+기록 역시 기능 배포 이후부터 쌓이며 과거 횟수를 추정하지 않는다.
 
 일반 학생 사용은 `actor_mode=student`, 대리보기 사용은
 `actor_mode=support`로 저장한다. 후자는 실제 교직원을 `actor_user`로 남기므로
@@ -80,5 +87,5 @@ python manage.py test apps.domains.students.tests.test_student_support -v 2
 ```
 
 테스트는 실제 로그인 1건, access-only 15분 세션, 대리보기 로그인 미기록,
-student/support actor 분리, 기본 제외·명시 포함, 분류 필터와 테넌트 격리를
-검증한다.
+student/support actor 분리, 운영자 권한 회수 즉시 차단, 기본 제외·명시 포함,
+분류 필터와 테넌트 격리를 검증한다.

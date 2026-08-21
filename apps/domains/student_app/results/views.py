@@ -37,6 +37,18 @@ class MyExamResultView(APIView):
             data = get_student_exam_result_data(request, int(exam_id), tenant=request.tenant)
         except Http404:
             return Response({"detail": "result not found"}, status=404)
+        student = get_request_student(request)
+        if student:
+            from apps.domains.students.services.activity import record_student_target_open
+
+            record_student_target_open(
+                request=request,
+                student=student,
+                screen_id="student.exam.result",
+                target_type="exam",
+                target_id=exam_id,
+                target_label=data.get("exam_title") or data.get("title") or f"시험 #{exam_id}",
+            )
         return Response(data)
 
 

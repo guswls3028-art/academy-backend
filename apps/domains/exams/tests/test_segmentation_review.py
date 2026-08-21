@@ -94,6 +94,33 @@ class ExamSegmentationReviewTests(TestCase):
         self.assertTrue(
             response.data["items"][0]["source_attachment_requires_review"]
         )
+        self.assertFalse(response.data["items"][0]["explanation_text_requires_review"])
+        self.assertTrue(response.data["items"][1]["explanation_text_requires_review"])
+
+    @patch("apps.domains.ai.gateway.dispatch_job")
+    def test_text_only_ocr_is_not_saved_when_reviewer_does_not_confirm_it(self, _dispatch):
+        response = ExamSegmentationApproveView.as_view()(
+            self._request(
+                "post",
+                "/approve",
+                {
+                    "items": [
+                        {"id": self.p1.id, "number": 1, "included": False},
+                        {
+                            "id": self.p2.id,
+                            "number": 2,
+                            "included": True,
+                            "include_explanation_text": False,
+                        },
+                    ]
+                },
+            ),
+            exam_id=self.exam.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        question = ExamQuestion.objects.get(sheet__exam=self.exam)
+        self.assertFalse(QuestionExplanation.objects.filter(question=question).exists())
 
     @patch("apps.domains.ai.gateway.dispatch_job")
     def test_approve_can_renumber_exclude_and_preserves_source_explanation(self, dispatch):

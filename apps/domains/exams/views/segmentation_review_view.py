@@ -76,6 +76,9 @@ class ExamSegmentationReviewView(APIView):
                             key=item.problem_image_key,
                         ),
                         "explanation_text": item.explanation_text,
+                        "explanation_text_requires_review": bool(
+                            item.explanation_text and not item.explanation_image_key
+                        ),
                         "explanation_image_url": _proposal_url(
                             tenant_id=int(request.tenant.id),
                             key=item.explanation_image_key,
@@ -115,7 +118,7 @@ class ExamSegmentationApproveView(APIView):
         if not isinstance(raw_items, list):
             raise ValidationError({"items": "검수한 문항 목록이 필요합니다."})
 
-        requested: dict[int, tuple[int, bool, float | None, str]] = {}
+        requested: dict[int, tuple[int, bool, float | None, str, bool]] = {}
         for raw in raw_items:
             try:
                 proposal_id = int(raw.get("id"))
@@ -126,10 +129,13 @@ class ExamSegmentationApproveView(APIView):
                 explanation_variant = str(
                     raw.get("explanation_variant") or "reconstructed"
                 )
+                include_explanation_text = raw.get("include_explanation_text", True)
             except (AttributeError, TypeError, ValueError):
                 raise ValidationError({"items": "문항 번호를 다시 확인해 주세요."})
             if not isinstance(included, bool):
                 raise ValidationError({"items": "포함 여부를 다시 확인해 주세요."})
+            if not isinstance(include_explanation_text, bool):
+                raise ValidationError({"items": "자동 인식 해설 사용 여부를 다시 확인해 주세요."})
             if proposal_id <= 0 or number <= 0 or number > 999:
                 raise ValidationError({"items": "문항 번호는 1~999만 가능합니다."})
             if crop_ratio is not None and not (
@@ -149,6 +155,7 @@ class ExamSegmentationApproveView(APIView):
                 included,
                 crop_ratio,
                 explanation_variant,
+                include_explanation_text,
             )
 
         exam_snapshot = Exam.objects.filter(
@@ -179,7 +186,7 @@ class ExamSegmentationApproveView(APIView):
 
         try:
             for proposal in proposal_snapshot:
-                _, included, requested_ratio, _ = requested[int(proposal.id)]
+                _, included, requested_ratio, _, _ = requested[int(proposal.id)]
                 if not included or requested_ratio is None:
                     continue
                 if abs(requested_ratio - float(proposal.problem_crop_ratio)) < 0.0001:
@@ -246,11 +253,12 @@ class ExamSegmentationApproveView(APIView):
                         item,
                         requested[int(item.id)][0],
                         requested[int(item.id)][3],
+                        requested[int(item.id)][4],
                     )
                     for item in proposals
                     if requested[int(item.id)][1]
                 ]
-                numbers = [number for _, number, _ in selected]
+                numbers = [number for _, number, _, _ in selected]
                 if not selected:
                     raise ValidationError({"items": "한 문항 이상 포함해 주세요."})
                 if len(numbers) != len(set(numbers)):
@@ -287,7 +295,7 @@ class ExamSegmentationApproveView(APIView):
                 )
 
                 base_score = round(float(exam.max_score or 0.0) / total, 2)
-                for index, (proposal, number, explanation_variant) in enumerate(
+                for index, (proposal, number, explanation_variant, include_explanation_text) in enumerate(
                     selected,
                     start=1,
                 ):
@@ -333,10 +341,13 @@ class ExamSegmentationApproveView(APIView):
                             else base_score
                         ),
                     )
-                    if proposal.explanation_text or proposal.explanation_image_key:
+                    explanation_text = (
+                        proposal.explanation_text if include_explanation_text else ""
+                    )
+                    if explanation_text or proposal.explanation_image_key:
                         QuestionExplanation.objects.create(
                             question=question,
-                            text=proposal.explanation_text,
+                            text=explanation_text,
                             image_key=(
                                 source_attachment_key
                                 if explanation_variant == "source_attachment"

@@ -228,3 +228,24 @@ class StudentSupportTests(TestCase):
         )
         claims = AccessToken(response.data["access"])
         self.assertLessEqual(claims["exp"] - claims["iat"], 15 * 60)
+
+    def test_support_token_fails_closed_after_operator_access_is_revoked(self):
+        response = APIClient().post(
+            f"/api/v1/students/{self.student.id}/support-session/",
+            {},
+            format="json",
+            **self._headers(),
+        )
+        TenantMembership.objects.filter(
+            tenant=self.tenant,
+            user=self.staff,
+        ).update(is_active=False)
+
+        denied = APIClient().get(
+            "/api/v1/student/dashboard/",
+            HTTP_HOST="api.hakwonplus.com",
+            HTTP_X_TENANT_CODE=self.tenant.code,
+            HTTP_AUTHORIZATION=f"Bearer {response.data['access']}",
+        )
+
+        self.assertEqual(denied.status_code, 401, denied.content)

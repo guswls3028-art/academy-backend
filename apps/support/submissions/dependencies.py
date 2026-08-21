@@ -294,6 +294,7 @@ def target_enrollment_assignment_exists(
             id=enrollment_id_i,
             tenant=tenant,
             status="ACTIVE",
+            lecture__is_active=True,
             student__deleted_at__isnull=True,
         )
         .select_related("lecture")

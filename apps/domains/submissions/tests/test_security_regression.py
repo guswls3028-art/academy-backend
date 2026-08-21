@@ -339,6 +339,38 @@ class TestC1bStudentCreateAllowed(_SecurityFixtureMixin, TestCase):
         self.assertEqual(resp.status_code, 403,
                          "CRITICAL: 학생이 타인 enrollment_id로 제출 가능!")
 
+    def test_student_create_for_ended_lecture_blocked(self):
+        """종료된 강의는 활성 enrollment가 남아 있어도 새 제출을 받지 않는다."""
+        self.lecture.is_active = False
+        self.lecture.save(update_fields=["is_active"])
+
+        view = SubmissionViewSet.as_view({"post": "create"})
+        with patch("apps.domains.submissions.views.submission_view.dispatch_submission") as mock_dispatch:
+            resp = self._call(
+                lambda: view,
+                "post",
+                "/api/v1/submissions/submissions/",
+                user=self.student_user,
+                data={
+                    "target_type": "exam",
+                    "target_id": self.exam.id,
+                    "source": "online",
+                    "enrollment_id": self.enrollment.id,
+                    "payload": {"answers": []},
+                },
+            )
+
+        self.assertEqual(resp.status_code, 403, resp.data)
+        mock_dispatch.assert_not_called()
+        self.assertFalse(
+            Submission.objects.filter(
+                tenant=self.tenant,
+                target_type=Submission.TargetType.EXAM,
+                target_id=self.exam.id,
+                enrollment_id=self.enrollment.id,
+            ).exists()
+        )
+
     def test_create_rejects_enrollment_not_assigned_to_exam(self):
         """같은 테넌트라도 다른 강의 enrollment로 시험 제출 생성 불가."""
         other_lecture = Lecture.objects.create(

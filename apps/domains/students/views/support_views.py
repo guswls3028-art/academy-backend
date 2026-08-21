@@ -15,8 +15,13 @@ from apps.api.common.query_params import parse_query_bool, parse_query_int
 from apps.core.models import OpsAuditLog
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.core.services.ops_audit import record_audit
+from apps.domains.enrollment.selectors import active_enrollments_for_student
+from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.students.models import Student
-from apps.domains.students.services.activity import record_student_screen_view
+from apps.domains.students.services.activity import (
+    record_student_screen_view,
+    record_student_target_open,
+)
 
 
 ACTIVITY_CATEGORIES = (
@@ -79,6 +84,10 @@ class StudentActivityRecordSchema(serializers.Serializer):
 
 class StudentActivityAcceptedSchema(serializers.Serializer):
     accepted = serializers.BooleanField()
+
+
+class StudentHomeworkOpenSchema(serializers.Serializer):
+    homework_id = serializers.IntegerField(min_value=1)
 
 
 def _student_for_staff(request, student_id: int) -> Student | None:
@@ -189,7 +198,11 @@ class StudentActivityView(APIView):
         queryset = OpsAuditLog.objects.filter(
             target_tenant=request.tenant,
             target_user=student.user,
-            action__in=("student_activity.login", "student_activity.screen_view"),
+            action__in=(
+                "student_activity.login",
+                "student_activity.screen_view",
+                "student_activity.target_open",
+            ),
             created_at__gte=timezone.now() - timedelta(days=days),
         )
         if not include_support:
@@ -260,4 +273,54 @@ class StudentActivityRecordView(APIView):
             device_class=device_class,
         ):
             return Response({"detail": "기록할 수 없는 학생 활동입니다."}, status=403)
+        return Response({"accepted": True}, status=202)
+
+
+class StudentHomeworkOpenActivityView(APIView):
+    """Record an exact homework open after validating current student access."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        operation_id="students_homework_open_activity_record",
+        request=StudentHomeworkOpenSchema,
+        responses={202: StudentActivityAcceptedSchema},
+    )
+    def post(self, request):
+        try:
+            homework_id = int((request.data or {}).get("homework_id"))
+        except (TypeError, ValueError):
+            return Response({"detail": "과제를 다시 확인해 주세요."}, status=400)
+        student = Student.objects.filter(
+            tenant=request.tenant,
+            user=request.user,
+            deleted_at__isnull=True,
+        ).first()
+        if student is None:
+            return Response({"detail": "기록할 수 없는 학생 활동입니다."}, status=403)
+        enrollment_ids = active_enrollments_for_student(
+            tenant=request.tenant,
+            student=student,
+        ).values_list("id", flat=True)
+        assignment = (
+            HomeworkAssignment.objects
+            .filter(
+                tenant=request.tenant,
+                homework_id=homework_id,
+                enrollment_id__in=enrollment_ids,
+                session__lecture__is_active=True,
+            )
+            .select_related("homework")
+            .first()
+        )
+        if assignment is None:
+            return Response({"detail": "열람할 수 없는 과제입니다."}, status=404)
+        record_student_target_open(
+            request=request,
+            student=student,
+            screen_id="student.assignment.submit",
+            target_type="homework",
+            target_id=assignment.homework_id,
+            target_label=assignment.homework.title,
+        )
         return Response({"accepted": True}, status=202)
