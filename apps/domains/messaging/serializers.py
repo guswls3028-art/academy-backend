@@ -57,6 +57,12 @@ class MessagingInfoSerializer(serializers.ModelSerializer):
         return bool(obj.own_solapi_api_key and obj.own_solapi_api_secret)
 
 
+class MessagingActivationSerializer(serializers.Serializer):
+    """학원 대표/관리자가 직접 제어하는 알림톡 전체 사용 설정."""
+
+    tenant_messaging_enabled = serializers.BooleanField()
+
+
 class NotificationLogSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     sent_at = serializers.DateTimeField()

@@ -11,22 +11,27 @@ from rest_framework.permissions import IsAuthenticated
 
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.messaging.models import MessageTemplate
-from apps.domains.messaging.serializers import MessagingInfoSerializer
+from apps.domains.messaging.serializers import (
+    MessagingActivationSerializer,
+    MessagingInfoSerializer,
+)
 from apps.domains.messaging.permissions import can_manage_messaging_settings
 from apps.domains.messaging.policy import (
     get_messaging_disabled_reason,
     get_owner_tenant_id,
     is_messaging_disabled,
+    is_messaging_ops_held,
     resolve_kakao_channel,
 )
+from apps.core.services.ops_audit import record_audit
 
 
 class MessagingInfoView(APIView):
-    """GET: 공용 알림톡 발송 상태. 테넌트별 공급자 설정은 읽기 전용이다."""
+    """공용 알림톡 상태와 학원별 전체 사용 설정."""
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
-    def get(self, request):
-        tenant = request.tenant
+    @staticmethod
+    def _response_data(request, tenant):
         serializer = MessagingInfoSerializer(tenant)
         data = dict(serializer.data)
         # 과거 테넌트별 연동 값은 데이터 보존용일 뿐 제품 발송 계약이 아니다.
@@ -49,6 +54,9 @@ class MessagingInfoView(APIView):
         resolved_pf_id = (channel.get("pf_id") or "").strip()
         data["resolved_pf_id"] = resolved_pf_id
         messaging_disabled = is_messaging_disabled(tenant.id)
+        data["tenant_messaging_enabled"] = bool(tenant.messaging_is_active)
+        data["messaging_ops_hold"] = is_messaging_ops_held(tenant.id)
+        data["can_manage_messaging"] = can_manage_messaging_settings(request, tenant)
         data["messaging_disabled"] = messaging_disabled
         data["messaging_disabled_reason"] = get_messaging_disabled_reason(tenant.id)
         from apps.domains.messaging.alimtalk_content_builders import (
@@ -65,7 +73,33 @@ class MessagingInfoView(APIView):
             and resolved_pf_id
             and has_registered_unified_envelope
         )
-        return Response(data)
+        return data
+
+    def get(self, request):
+        return Response(self._response_data(request, request.tenant))
+
+    def patch(self, request):
+        tenant = request.tenant
+        if not can_manage_messaging_settings(request, tenant):
+            return Response(
+                {"detail": "알림톡 전체 사용 설정은 대표 또는 관리자만 변경할 수 있습니다."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        serializer = MessagingActivationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        enabled = serializer.validated_data["tenant_messaging_enabled"]
+        previous = bool(tenant.messaging_is_active)
+        if previous != enabled:
+            tenant.messaging_is_active = enabled
+            tenant.save(update_fields=["messaging_is_active"])
+            record_audit(
+                request,
+                action="messaging.tenant_activation",
+                target_tenant=tenant,
+                summary=f"tenant messaging {'enabled' if enabled else 'disabled'}",
+                payload={"previous": previous, "enabled": enabled},
+            )
+        return Response(self._response_data(request, tenant))
 
 class ChannelCheckView(APIView):
     """GET: 채널 공유 확인 (파트너 등록 여부) — 4단계, 스텁 가능"""

@@ -67,7 +67,7 @@
 | 프런트 로그인·내부 헤더·학생앱·성적표·OG/PWA | **개별 등록**: tenant registry, 테마, 팔레트, 정적 에셋 | build, 1366/390, 역할별 라이트/다크 |
 | Tenant·Program·구독 | **개별 등록**: `provision_tenant`, `contract` 또는 `exempt` | DB audit와 이용 가능 readback |
 | 대표 계정·권한 | **개별 등록**: 개발자 콘솔에서 기존 owner 0명 확인 후 1회 생성 | active owner 1명, 실제 도메인 로그인 |
-| 알림톡 | **기본 비활성**: 별도 승인 전 `messaging_is_active=false`; 승인돼도 공용 owner 채널·exact 승인 템플릿 사용 | 선택한 messaging mode audit; 공급사 credential을 문서에 남기지 않음 |
+| 알림톡 | **기본 활성**: 공용 owner 채널·exact 승인 템플릿만 사용. 대표·관리자가 제품 화면에서 전체 사용을 끌 수 있음 | `messaging_is_active=true`와 승인 봉투 audit; 공급사 credential을 문서에 남기지 않음 |
 | 결제·청구 | **명시 결정**: 기간 계약 또는 승인된 과금 제외 중 하나만 선택 | 만료·다음 결제일 또는 runtime exempt ID audit |
 | Video Batch·AI·Tools·공용 큐 | **공유형**: 고객별 worker/queue 목록 추가 금지, payload·DB·R2 key의 tenant scope 사용 | 정식 배포 worker/queue gate와 역할별 기능 smoke |
 | 일반 R2 다운로드·문서 변환 | **공유형**: tenant-prefixed key와 서명/CDN 경계 사용, 버킷 복제 금지 | 배포의 XLSX/PPT/R2 real-use smoke |
@@ -366,7 +366,7 @@ Program 생성 직후에는 이용기간이 비어 있어 로그인 화면에 �
 모두 `NULL`이고 runtime `is_subscription_active=True`여야 한다. 설정 파일이나
 문서에 tenant별 비밀정보를 넣지 않는다.
 
-메시징은 별도 활성화 승인이 없으면 `messaging_is_active=false`를 유지한다. 제품
+메시징은 온보딩 뒤 `messaging_is_active=true`를 기본으로 즉시 사용 가능하게 한다. 대표·관리자는 제품의 **알림톡 전체 사용**에서 직접 중지·재개한다. 제품
 메시징은 [messaging-policy.md](../../ssot/messaging-policy.md)의 공용 owner 채널과
 exact 승인 템플릿을 사용하므로 신규 tenant PFID/provider/공급사 키를 만들지
 않는다. 학생가입 자동승인과 클리닉 자동승인은 `false`, 영상 동시 세션·디바이스
@@ -374,7 +374,7 @@ exact 승인 템플릿을 사용하므로 신규 tenant PFID/provider/공급사 
 적용한다.
 
 owner 생성 전 G5 읽기 전용 감사를 실행한다. `contract`/`exempt`와
-`disabled`/`approved`는 입력 시트에서 선택한 정확한 값으로 바꾼다.
+기본 `approved`를 사용하되 고객이 명시적으로 전체 사용을 끈 경우에만 `disabled`로 감사한다.
 
 ```powershell
 .\scripts\v1\run-api-management-remote.ps1 -Command 'audit_tenant_onboarding saebom --tenant-id 10 --domain saebom.com --billing-mode contract --messaging-mode disabled'

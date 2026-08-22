@@ -7,6 +7,8 @@ from django.db import transaction
 from django.utils import timezone
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.db.models import F, Value
+from django.db.models.functions import NullIf, Trim
 
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.decorators import action
@@ -328,9 +330,33 @@ class StudentViewSet(ModelViewSet):
         "phone",
         "parent_phone",
         "high_school",
+        "high_school_class",
         "grade",
     ]
     ordering = ["-id"]
+
+    def filter_queryset(self, queryset):
+        queryset = super().filter_queryset(queryset)
+        requested = (self.request.query_params.get("ordering") or "").strip()
+        if requested not in {"high_school_class", "-high_school_class"}:
+            return queryset
+
+        # 빈 반은 항상 마지막, 같은 반은 이름순으로 고정해 페이지를 넘겨도
+        # 같은 학생이 앞뒤 페이지를 오가지 않게 한다.
+        descending = requested.startswith("-")
+        queryset = queryset.annotate(
+            _normalized_high_school_class=NullIf(
+                Trim("high_school_class"),
+                Value(""),
+            )
+        )
+        class_order = F("_normalized_high_school_class")
+        class_order = (
+            class_order.desc(nulls_last=True)
+            if descending
+            else class_order.asc(nulls_last=True)
+        )
+        return queryset.order_by(class_order, "name", "id")
 
     # ------------------------------
     # Tag 관리

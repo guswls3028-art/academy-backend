@@ -4,7 +4,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
-from apps.core.models import Tenant, TenantMembership
+from apps.core.models import OpsAuditLog, Tenant, TenantMembership
 from apps.domains.messaging.models import MessageTemplate
 from apps.domains.messaging.serializers import (
     MessageTemplateSerializer,
@@ -56,7 +56,7 @@ class BusinessMessagingContractTests(TestCase):
         request.tenant = self.tenant
         return request
 
-    def test_messaging_info_is_read_only_and_hides_legacy_tenant_provider_fields(self):
+    def test_messaging_info_hides_legacy_provider_fields_and_owner_controls_activation(self):
         response = MessagingInfoView.as_view()(self._request("get", "/api/v1/messaging/info/"))
 
         self.assertEqual(response.status_code, 200)
@@ -66,18 +66,53 @@ class BusinessMessagingContractTests(TestCase):
         self.assertEqual(response.data["kakao_pfid"], "")
         self.assertEqual(response.data["own_solapi_api_key"], "")
         self.assertFalse(response.data["has_own_credentials"])
+        self.assertTrue(response.data["tenant_messaging_enabled"])
+        self.assertTrue(response.data["can_manage_messaging"])
 
         patch_response = MessagingInfoView.as_view()(
             self._request(
                 "patch",
                 "/api/v1/messaging/info/",
-                {"messaging_provider": "solapi", "kakao_pfid": "CHANGED"},
+                {"tenant_messaging_enabled": False},
             )
         )
-        self.assertEqual(patch_response.status_code, 405)
+        self.assertEqual(patch_response.status_code, 200)
+        self.assertFalse(patch_response.data["tenant_messaging_enabled"])
+        self.assertTrue(patch_response.data["messaging_disabled"])
         self.tenant.refresh_from_db()
         self.assertEqual(self.tenant.messaging_provider, "ppurio")
         self.assertEqual(self.tenant.kakao_pfid, "TENANT-PFID")
+        self.assertFalse(self.tenant.messaging_is_active)
+        audit = OpsAuditLog.objects.get(action="messaging.tenant_activation")
+        self.assertEqual(audit.target_tenant_id, self.tenant.id)
+        self.assertEqual(audit.payload, {"previous": True, "enabled": False})
+
+    def test_teacher_cannot_change_tenant_messaging_activation(self):
+        teacher = User.objects.create_user(
+            username="business-msg-activation-teacher",
+            password="test1234",
+            tenant=self.tenant,
+            is_staff=True,
+        )
+        TenantMembership.ensure_active(
+            tenant=self.tenant,
+            user=teacher,
+            role="teacher",
+        )
+        request = self.factory.patch(
+            "/api/v1/messaging/info/",
+            {"tenant_messaging_enabled": False},
+            format="json",
+        )
+        force_authenticate(request, user=teacher)
+        request.user = teacher
+        request.tenant = self.tenant
+
+        response = MessagingInfoView.as_view()(request)
+
+        self.assertEqual(response.status_code, 403)
+        self.tenant.refresh_from_db()
+        self.assertTrue(self.tenant.messaging_is_active)
 
     def test_provider_template_mutation_endpoints_are_gone(self):
         template = MessageTemplate.objects.create(

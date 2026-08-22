@@ -234,6 +234,50 @@ class TestStudentListQueryShape(TestCase):
         )
 
 
+class TestStudentClassOrdering(TestCase):
+    def setUp(self):
+        self.factory = APIRequestFactory()
+        self.tenant = _make_tenant("Class Ordering Academy", "class_ordering")
+        self.admin = _make_admin(self.tenant, "class_order_admin")
+        cases = [
+            ("2반 김", "2반"),
+            ("1반 박", "1반"),
+            ("미지정", ""),
+            ("1반 강", "1반"),
+            ("공백", "   "),
+        ]
+        for index, (name, school_class) in enumerate(cases):
+            student = _make_student(
+                self.tenant,
+                f"C{index:03d}",
+                phone=f"0107711{index:04d}",
+                parent_phone=f"0106622{index:04d}",
+                name=name,
+            )
+            student.high_school_class = school_class
+            student.save(update_fields=["high_school_class"])
+
+    def _ordered_names(self, ordering):
+        request = self.factory.get("/api/v1/students/", {"ordering": ordering})
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+        response = StudentViewSet.as_view({"get": "list"})(request)
+        self.assertEqual(response.status_code, 200)
+        return [row["name"] for row in response.data["results"]]
+
+    def test_class_sort_groups_names_and_keeps_blank_values_last(self):
+        self.assertEqual(
+            self._ordered_names("high_school_class"),
+            ["1반 강", "1반 박", "2반 김", "공백", "미지정"],
+        )
+
+    def test_descending_class_sort_still_keeps_blank_values_last(self):
+        self.assertEqual(
+            self._ordered_names("-high_school_class"),
+            ["2반 김", "1반 강", "1반 박", "공백", "미지정"],
+        )
+
+
 class TestStudentExcelUploadValidation(TestCase):
     """엑셀 업로드는 확장자/MIME뿐 아니라 파일 서명도 검증한다."""
 
