@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from datetime import timedelta
 from decimal import Decimal
+from hashlib import sha256
 from io import StringIO
 import threading
 import time
@@ -234,6 +235,8 @@ class RecoveryFixtureMixin:
         student: Student,
         trigger: str,
         status: str,
+        outbox_id: int | None = None,
+        dispatch_key: str | None = None,
         error_message: str = "",
         origin_type: str = "excel_import",
         origin_id: str | None = None,
@@ -241,12 +244,14 @@ class RecoveryFixtureMixin:
     ) -> ScheduledNotification:
         prefix = "student" if trigger.endswith("student") else "parent"
         target_id = f"{prefix}:{student.id}"
-        resolved_origin_id = origin_id or f"excel-job-{student.id}"
-        return ScheduledNotification.objects.create(
-            tenant=self.tenant,
-            trigger=trigger,
-            send_at=timezone.now(),
-            payload={
+        resolved_origin_id = (
+            f"excel-job-{student.id}" if origin_id is None else origin_id
+        )
+        values = {
+            "tenant": self.tenant,
+            "trigger": trigger,
+            "send_at": timezone.now(),
+            "payload": {
                 "target_id": target_id,
                 "event_type": trigger,
                 "message_mode": "alimtalk",
@@ -255,12 +260,17 @@ class RecoveryFixtureMixin:
                 "origin_id": resolved_origin_id,
                 "redacted": True,
             },
-            business_idempotency_key=business_idempotency_key,
-            origin_type=origin_type,
-            origin_id=resolved_origin_id,
-            status=status,
-            error_message=error_message,
-        )
+            "business_idempotency_key": business_idempotency_key,
+            "origin_type": origin_type,
+            "origin_id": resolved_origin_id,
+            "status": status,
+            "error_message": error_message,
+        }
+        if outbox_id is not None:
+            values["id"] = outbox_id
+        if dispatch_key is not None:
+            values["dispatch_key"] = dispatch_key
+        return ScheduledNotification.objects.create(**values)
 
     def _failed_pair(self, student: Student):
         self._outbox(
@@ -283,19 +293,63 @@ class RecoveryFixtureMixin:
             student=student,
             trigger="registration_approved_student",
             status=ScheduledNotification.Status.SENT,
+            outbox_id=1174,
+            dispatch_key="e3b6c52e-1890-4ee9-b549-60d789a8507b",
+            origin_type="",
+            origin_id="",
+            business_idempotency_key=(
+                "f1645e709a33ffa71c1687743eccf169"
+                "774a583f02fd1995f06736c434788a69"
+            ),
+        )
+        self._outbox(
+            student=student,
+            trigger="registration_approved_student",
+            status=ScheduledNotification.Status.SENT,
+            outbox_id=1654,
+            dispatch_key="3055120a-c519-487e-b4ac-20b8057bc588",
             origin_type="system_account",
             origin_id=f"student:{student.id}",
-            business_idempotency_key="student-system-account-outbox-key",
+            business_idempotency_key=(
+                "6403f10f32e0633115ffd041b1e1888"
+                "22abb4c7bdded5b8ab66277dcfb40bcbb"
+            ),
         )
         self._outbox(
             student=student,
             trigger="registration_approved_parent",
             status=ScheduledNotification.Status.SENT,
-            origin_type="system_account",
-            origin_id=f"parent:{student.id}",
-            business_idempotency_key="parent-system-account-outbox-key",
+            outbox_id=1759,
+            dispatch_key="707ce6d8-756d-4a1f-86ff-1c5eb26811de",
+            origin_type="credential_incident",
+            origin_id="godmin-20260822",
+            business_idempotency_key=(
+                "ac83900afd8620f05e14a4d37fa3305"
+                "4367d63446bfd9a9e4564707dd051e4b0"
+            ),
         )
         NotificationLog.objects.create(
+            id=4570,
+            tenant=self.owner,
+            source_tenant=self.tenant,
+            success=False,
+            status="failed",
+            message_mode="alimtalk",
+            notification_type="registration_approved_student",
+            target_type="account",
+            target_id=f"student:{student.id}",
+            provider_message_id="",
+            amount_deducted=Decimal("0"),
+            business_idempotency_key=(
+                "f1645e709a33ffa71c1687743eccf169"
+                "774a583f02fd1995f06736c434788a69"
+            ),
+            origin_type="",
+            origin_id="",
+            failure_reason="provider_quota_exceeded_not_accepted",
+        )
+        NotificationLog.objects.create(
+            id=5060,
             tenant=self.owner,
             source_tenant=self.tenant,
             success=False,
@@ -305,12 +359,20 @@ class RecoveryFixtureMixin:
             target_type="account",
             target_id=f"student:{student.id}",
             provider_message_id="",
-            business_idempotency_key="student-system-account-outbox-key",
+            amount_deducted=Decimal("0"),
+            business_idempotency_key=(
+                "6403f10f32e0633115ffd041b1e1888"
+                "22abb4c7bdded5b8ab66277dcfb40bcbb"
+            ),
             origin_type="system_account",
             origin_id=f"student:{student.id}",
-            failure_reason="('NotEnoughBalance', 'rejected')",
+            failure_reason=(
+                "('NotEnoughBalance', '보유 잔액이 부족하여 발송에 실패하였습니다.\n"
+                "[차감금액: 13, 보유잔액: 9, 보유포인트: 0, 보유예치금: 0]')"
+            ),
         )
         NotificationLog.objects.create(
+            id=5145,
             tenant=self.owner,
             source_tenant=self.tenant,
             success=True,
@@ -320,20 +382,14 @@ class RecoveryFixtureMixin:
             target_type="account",
             target_id=f"parent:{student.id}",
             provider_message_id="provider-parent-proof",
-            business_idempotency_key="parent-system-account-outbox-key",
-            origin_type="system_account",
-            origin_id=f"parent:{student.id}",
-        )
-        NotificationLog.objects.create(
-            tenant=self.owner,
-            source_tenant=self.tenant,
-            success=False,
-            status="ambiguous",
-            message_mode="alimtalk",
-            notification_type="registration_approved_parent",
-            target_type="account",
-            target_id=f"parent:{student.id}",
-            failure_reason="provider_result_unresolved",
+            amount_deducted=Decimal("0"),
+            business_idempotency_key=(
+                "ac83900afd8620f05e14a4d37fa3305"
+                "4367d63446bfd9a9e4564707dd051e4b0"
+            ),
+            origin_type="credential_incident",
+            origin_id="godmin-20260822",
+            failure_reason="",
         )
 
     def _command_args(self):
@@ -362,6 +418,38 @@ class RepairFailedFirstEnrollmentNoticesTests(RecoveryFixtureMixin, TestCase):
         output = StringIO()
         outbox_count = ScheduledNotification.objects.count()
         hashes_before = dict(self.original_password_hashes)
+
+        self.assertEqual(
+            set(
+                ScheduledNotification.objects.filter(
+                    payload__target_id__in=("student:3656", "parent:3656")
+                ).values_list("id", flat=True)
+            ),
+            {1174, 1654, 1759},
+        )
+        self.assertEqual(
+            set(
+                NotificationLog.objects.filter(
+                    target_id__in=("student:3656", "parent:3656")
+                ).values_list("id", flat=True)
+            ),
+            {4570, 5060, 5145},
+        )
+        self.assertEqual(
+            {
+                row.id: sha256(
+                    row.business_idempotency_key.encode("utf-8")
+                ).hexdigest()
+                for row in ScheduledNotification.objects.filter(
+                    id__in=(1174, 1654, 1759)
+                )
+            },
+            {
+                1174: "8050d4118fb4e540f3b98b3afe28110fa9a6fad1820ed8c5d5427f39eb37416d",
+                1654: "9316b583e88b5f0613dc59f2efbb9ea720598499add2229e71a80838ca632e07",
+                1759: "7ffab7837325994335e0cb5756528b8cc64eebd9cc0919a67da833e605134025",
+            },
+        )
 
         call_command(*self._command_args(), stdout=output)
 
@@ -393,12 +481,35 @@ class RepairFailedFirstEnrollmentNoticesTests(RecoveryFixtureMixin, TestCase):
         )
         historical_outboxes = list(
             ScheduledNotification.objects.order_by("id").values_list(
-                "id", "status", "error_message", "origin_type", "payload"
+                "id",
+                "tenant_id",
+                "trigger",
+                "status",
+                "error_message",
+                "dispatch_key",
+                "business_idempotency_key",
+                "origin_type",
+                "origin_id",
+                "payload",
             )
         )
         historical_logs = list(
             NotificationLog.objects.order_by("id").values_list(
-                "id", "status", "success", "provider_message_id", "failure_reason"
+                "id",
+                "tenant_id",
+                "source_tenant_id",
+                "status",
+                "success",
+                "provider_message_id",
+                "failure_reason",
+                "amount_deducted",
+                "business_idempotency_key",
+                "message_mode",
+                "notification_type",
+                "target_type",
+                "target_id",
+                "origin_type",
+                "origin_id",
             )
         )
         output = StringIO()
@@ -488,14 +599,39 @@ class RepairFailedFirstEnrollmentNoticesTests(RecoveryFixtureMixin, TestCase):
             list(
                 ScheduledNotification.objects.exclude(origin_type="recovery")
                 .order_by("id")
-                .values_list("id", "status", "error_message", "origin_type", "payload")
+                .values_list(
+                    "id",
+                    "tenant_id",
+                    "trigger",
+                    "status",
+                    "error_message",
+                    "dispatch_key",
+                    "business_idempotency_key",
+                    "origin_type",
+                    "origin_id",
+                    "payload",
+                )
             ),
             historical_outboxes,
         )
         self.assertEqual(
             list(
                 NotificationLog.objects.order_by("id").values_list(
-                    "id", "status", "success", "provider_message_id", "failure_reason"
+                    "id",
+                    "tenant_id",
+                    "source_tenant_id",
+                    "status",
+                    "success",
+                    "provider_message_id",
+                    "failure_reason",
+                    "amount_deducted",
+                    "business_idempotency_key",
+                    "message_mode",
+                    "notification_type",
+                    "target_type",
+                    "target_id",
+                    "origin_type",
+                    "origin_id",
                 )
             ),
             historical_logs,
@@ -672,24 +808,18 @@ class RepairFailedFirstEnrollmentNoticesTests(RecoveryFixtureMixin, TestCase):
                 log.delete()
 
     def test_generic_ambiguous_student_result_is_refused(self):
-        log = NotificationLog.objects.get(
-            notification_type="registration_approved_student",
-            target_id="student:3656",
-        )
+        log = NotificationLog.objects.get(pk=5060)
         log.failure_reason = "provider_result_unresolved"
         log.save(update_fields=["failure_reason"])
 
         with self.assertRaisesMessage(
             CommandError,
-            "provider_acceptance_evidence_exists",
+            "reviewed_student_log_pair_drift",
         ):
             call_command(*self._command_args())
 
     def test_student_provider_provenance_drift_is_refused(self):
-        log = NotificationLog.objects.get(
-            notification_type="registration_approved_student",
-            target_id="student:3656",
-        )
+        log = NotificationLog.objects.get(pk=5060)
         original = {
             "tenant_id": log.tenant_id,
             "source_tenant_id": log.source_tenant_id,
@@ -705,38 +835,184 @@ class RepairFailedFirstEnrollmentNoticesTests(RecoveryFixtureMixin, TestCase):
                 NotificationLog.objects.filter(pk=log.pk).update(**variant)
                 with self.assertRaisesMessage(
                     CommandError,
-                    "provider_acceptance_evidence_exists",
+                    "reviewed_student_log_pair_drift",
                 ):
                     call_command(*self._command_args())
                 NotificationLog.objects.filter(pk=log.pk).update(**original)
 
     def test_parent_success_must_match_historical_outbox_business_key(self):
-        log = NotificationLog.objects.get(
-            notification_type="registration_approved_parent",
-            target_id="parent:3656",
-            status="sent",
-        )
+        log = NotificationLog.objects.get(pk=5145)
         log.business_idempotency_key = "wrong-parent-business-key"
         log.save(update_fields=["business_idempotency_key"])
 
-        with self.assertRaisesMessage(CommandError, "reviewed_parent_success_required"):
+        with self.assertRaisesMessage(CommandError, "reviewed_student_log_pair_drift"):
+            call_command(*self._command_args())
+
+    def test_parent_success_requires_nonblank_provider_id(self):
+        NotificationLog.objects.filter(pk=5145).update(provider_message_id=" \t ")
+
+        with self.assertRaisesMessage(CommandError, "reviewed_student_log_pair_drift"):
             call_command(*self._command_args())
 
     def test_reviewed_system_account_outbox_origin_drift_is_refused(self):
-        outbox = next(
-            row
-            for row in ScheduledNotification.objects.filter(
-                trigger="registration_approved_student"
-            )
-            if row.payload.get("target_id") == "student:3656"
-        )
+        outbox = ScheduledNotification.objects.get(pk=1654)
         outbox.origin_type = "excel_import"
         outbox.save(update_fields=["origin_type"])
 
         with self.assertRaisesMessage(
             CommandError,
-            "reviewed_system_account_outbox_drift",
+            "reviewed_student_outbox_pair_drift",
         ):
+            call_command(*self._command_args())
+
+    def test_reviewed_student_outbox_row_and_payload_drift_are_refused(self):
+        for outbox_id in (1174, 1654, 1759):
+            outbox = ScheduledNotification.objects.get(pk=outbox_id)
+            original = {
+                "tenant_id": outbox.tenant_id,
+                "trigger": outbox.trigger,
+                "status": outbox.status,
+                "error_message": outbox.error_message,
+                "dispatch_key": outbox.dispatch_key,
+                "business_idempotency_key": outbox.business_idempotency_key,
+                "origin_type": outbox.origin_type,
+                "origin_id": outbox.origin_id,
+                "payload": dict(outbox.payload),
+            }
+            scalar_variants = {
+                "tenant_id": self.owner.id,
+                "trigger": (
+                    "registration_approved_parent"
+                    if outbox.trigger == "registration_approved_student"
+                    else "registration_approved_student"
+                ),
+                "status": ScheduledNotification.Status.FAILED,
+                "error_message": "unexpected_terminal_error",
+                "dispatch_key": f"00000000-0000-0000-0000-{outbox_id:012d}",
+                "business_idempotency_key": "0" * 64,
+                "origin_type": "drifted_origin",
+                "origin_id": "drifted-origin-id",
+            }
+            for field, value in scalar_variants.items():
+                with self.subTest(outbox_id=outbox_id, row_field=field):
+                    ScheduledNotification.objects.filter(pk=outbox_id).update(
+                        **{field: value}
+                    )
+                    with self.assertRaisesMessage(CommandError, "reviewed_student"):
+                        call_command(*self._command_args())
+                    ScheduledNotification.objects.filter(pk=outbox_id).update(
+                        **original
+                    )
+
+            payload_variants = {
+                "event_type": (
+                    "registration_approved_parent"
+                    if outbox.trigger == "registration_approved_student"
+                    else "registration_approved_student"
+                ),
+                "target_id": "student:999999",
+                "message_mode": "sms",
+                "source_tenant_id": self.owner.id,
+                "origin_type": "drifted_payload_origin",
+                "origin_id": "drifted-payload-origin-id",
+            }
+            for field, value in payload_variants.items():
+                with self.subTest(outbox_id=outbox_id, payload_field=field):
+                    payload = dict(original["payload"])
+                    payload[field] = value
+                    ScheduledNotification.objects.filter(pk=outbox_id).update(
+                        payload=payload
+                    )
+                    with self.assertRaisesMessage(CommandError, "reviewed_student"):
+                        call_command(*self._command_args())
+                    ScheduledNotification.objects.filter(pk=outbox_id).update(
+                        **original
+                    )
+
+    def test_reviewed_student_log_field_drift_is_refused(self):
+        for log_id in (4570, 5060, 5145):
+            log = NotificationLog.objects.get(pk=log_id)
+            original = {
+                "tenant_id": log.tenant_id,
+                "source_tenant_id": log.source_tenant_id,
+                "notification_type": log.notification_type,
+                "target_type": log.target_type,
+                "target_id": log.target_id,
+                "message_mode": log.message_mode,
+                "status": log.status,
+                "success": log.success,
+                "provider_message_id": log.provider_message_id,
+                "amount_deducted": log.amount_deducted,
+                "business_idempotency_key": log.business_idempotency_key,
+                "origin_type": log.origin_type,
+                "origin_id": log.origin_id,
+                "failure_reason": log.failure_reason,
+            }
+            variants = {
+                "tenant_id": self.tenant.id,
+                "source_tenant_id": self.owner.id,
+                "notification_type": (
+                    "registration_approved_parent"
+                    if log.notification_type == "registration_approved_student"
+                    else "registration_approved_student"
+                ),
+                "target_type": "student",
+                "target_id": "student:999999",
+                "message_mode": "sms",
+                "status": "processing",
+                "success": not log.success,
+                "provider_message_id": (
+                    "" if log.provider_message_id else "unexpected-provider-proof"
+                ),
+                "amount_deducted": Decimal("1"),
+                "business_idempotency_key": "0" * 64,
+                "origin_type": "drifted_origin",
+                "origin_id": "drifted-origin-id",
+                "failure_reason": "drifted_failure_reason",
+            }
+            for field, value in variants.items():
+                with self.subTest(log_id=log_id, field=field):
+                    NotificationLog.objects.filter(pk=log_id).update(**{field: value})
+                    with self.assertRaisesMessage(CommandError, "reviewed_student"):
+                        call_command(*self._command_args())
+                    NotificationLog.objects.filter(pk=log_id).update(**original)
+
+    def test_reviewed_student_history_extra_rows_are_refused(self):
+        extra_outbox = self._outbox(
+            student=self.students[3656],
+            trigger="unexpected_history",
+            status=ScheduledNotification.Status.SENT,
+            origin_type="unexpected_history",
+            origin_id="unexpected-outbox",
+        )
+        with self.assertRaisesMessage(CommandError, "reviewed_student_outbox_set_drift"):
+            call_command(*self._command_args())
+        extra_outbox.delete()
+
+        NotificationLog.objects.create(
+            tenant=self.owner,
+            source_tenant=self.tenant,
+            success=False,
+            status="failed",
+            message_mode="alimtalk",
+            notification_type="unexpected_history",
+            target_type="account",
+            target_id="student:3656",
+            failure_reason="unexpected_extra_history",
+        )
+        with self.assertRaisesMessage(CommandError, "reviewed_student_log_set_drift"):
+            call_command(*self._command_args())
+
+    def test_reviewed_student_missing_outbox_is_refused(self):
+        ScheduledNotification.objects.filter(pk=1174).delete()
+
+        with self.assertRaisesMessage(CommandError, "reviewed_student_outbox_set_drift"):
+            call_command(*self._command_args())
+
+    def test_reviewed_student_missing_log_is_refused(self):
+        NotificationLog.objects.filter(pk=4570).delete()
+
+        with self.assertRaisesMessage(CommandError, "reviewed_student_log_set_drift"):
             call_command(*self._command_args())
 
     def test_failed_pair_outbox_provenance_drift_is_refused(self):
@@ -1075,10 +1351,7 @@ class RepairFailedFirstEnrollmentNoticesPostgresConcurrencyTests(
         self._assert_writer_lock_fails_closed(mutate)
 
     def test_concurrent_provider_log_drift_aborts_without_dispatch(self):
-        log_id = NotificationLog.objects.get(
-            notification_type="registration_approved_student",
-            target_id="student:3656",
-        ).id
+        log_id = 5060
 
         def mutate():
             log = NotificationLog.objects.select_for_update(of=("self",)).get(pk=log_id)
