@@ -120,6 +120,7 @@ class RecoveryFixtureMixin:
             parent=self.students[3656].parent,
         )
         self._student_only_history(self.students[3656])
+        self._unrelated_password_reset_parent_history(self.students[3656])
         for student_id in (4102, 4103, 4104, 4105):
             self._failed_pair(self.students[student_id])
 
@@ -392,6 +393,32 @@ class RecoveryFixtureMixin:
             failure_reason="",
         )
 
+    def _unrelated_password_reset_parent_history(self, student: Student):
+        outbox = self._outbox(
+            student=student,
+            trigger="password_reset_parent",
+            status=ScheduledNotification.Status.SENT,
+            origin_type="legacy_password_reset",
+            origin_id="redacted-legacy-origin",
+            business_idempotency_key="legacy-password-reset-parent-business-key",
+        )
+        NotificationLog.objects.create(
+            tenant=self.owner,
+            source_tenant=self.tenant,
+            success=True,
+            status="sent",
+            message_mode="alimtalk",
+            notification_type="password_reset_parent",
+            target_type="account",
+            target_id=f"parent:{student.id}",
+            provider_message_id="legacy-provider-proof",
+            amount_deducted=Decimal("0"),
+            business_idempotency_key=outbox.business_idempotency_key,
+            origin_type=outbox.origin_type,
+            origin_id=outbox.origin_id,
+            failure_reason="",
+        )
+
     def _command_args(self):
         return (
             "repair_failed_first_enrollment_notices",
@@ -422,7 +449,11 @@ class RepairFailedFirstEnrollmentNoticesTests(RecoveryFixtureMixin, TestCase):
         self.assertEqual(
             set(
                 ScheduledNotification.objects.filter(
-                    payload__target_id__in=("student:3656", "parent:3656")
+                    trigger__in=(
+                        "registration_approved_student",
+                        "registration_approved_parent",
+                    ),
+                    payload__target_id__in=("student:3656", "parent:3656"),
                 ).values_list("id", flat=True)
             ),
             {1174, 1654, 1759},
@@ -430,7 +461,11 @@ class RepairFailedFirstEnrollmentNoticesTests(RecoveryFixtureMixin, TestCase):
         self.assertEqual(
             set(
                 NotificationLog.objects.filter(
-                    target_id__in=("student:3656", "parent:3656")
+                    notification_type__in=(
+                        "registration_approved_student",
+                        "registration_approved_parent",
+                    ),
+                    target_id__in=("student:3656", "parent:3656"),
                 ).values_list("id", flat=True)
             ),
             {4570, 5060, 5145},
@@ -469,6 +504,29 @@ class RepairFailedFirstEnrollmentNoticesTests(RecoveryFixtureMixin, TestCase):
         self.assertEqual(ScheduledNotification.objects.count(), outbox_count)
         for user_id, password_hash in hashes_before.items():
             self.assertEqual(User.objects.get(id=user_id).password, password_hash)
+
+    def test_unrelated_password_reset_parent_history_is_outside_incident_set(self):
+        output = StringIO()
+
+        call_command(*self._command_args(), stdout=output)
+
+        text = output.getvalue()
+        for expected in (
+            "mode=dry-run",
+            "candidates=5",
+            "student_only=1",
+            "pairs=4",
+            "expected_credentials_rotated=9",
+            "expected_outboxes=9",
+        ):
+            self.assertIn(expected, text)
+        for unrelated_sentinel in (
+            "legacy_password_reset",
+            "redacted-legacy-origin",
+            "legacy-password-reset-parent-business-key",
+            "legacy-provider-proof",
+        ):
+            self.assertNotIn(unrelated_sentinel, text)
 
     def test_apply_preserves_shared_parent_and_creates_exact_nine_outboxes(self):
         from apps.core.management.commands import repair_failed_first_enrollment_notices as command
@@ -980,7 +1038,7 @@ class RepairFailedFirstEnrollmentNoticesTests(RecoveryFixtureMixin, TestCase):
     def test_reviewed_student_history_extra_rows_are_refused(self):
         extra_outbox = self._outbox(
             student=self.students[3656],
-            trigger="unexpected_history",
+            trigger="registration_approved_student",
             status=ScheduledNotification.Status.SENT,
             origin_type="unexpected_history",
             origin_id="unexpected-outbox",
@@ -995,10 +1053,72 @@ class RepairFailedFirstEnrollmentNoticesTests(RecoveryFixtureMixin, TestCase):
             success=False,
             status="failed",
             message_mode="alimtalk",
-            notification_type="unexpected_history",
+            notification_type="registration_approved_student",
             target_type="account",
             target_id="student:3656",
             failure_reason="unexpected_extra_history",
+        )
+        with self.assertRaisesMessage(CommandError, "reviewed_student_log_set_drift"):
+            call_command(*self._command_args())
+
+    def test_reviewed_student_relevant_acceptance_evidence_is_refused(self):
+        NotificationLog.objects.create(
+            tenant=self.owner,
+            source_tenant=self.tenant,
+            success=True,
+            status="sent",
+            message_mode="alimtalk",
+            notification_type="registration_approved_student",
+            target_type="account",
+            target_id="student:3656",
+            provider_message_id="unexpected-later-provider-proof",
+            amount_deducted=Decimal("1"),
+            business_idempotency_key="unexpected-later-acceptance-business-key",
+            origin_type="later_history",
+            origin_id="student:3656",
+            failure_reason="",
+        )
+
+        with self.assertRaisesMessage(CommandError, "reviewed_student_log_set_drift"):
+            call_command(*self._command_args())
+
+    def test_reviewed_student_relevant_pending_outbox_is_refused(self):
+        self._outbox(
+            student=self.students[3656],
+            trigger="registration_approved_student",
+            status=ScheduledNotification.Status.PENDING,
+            origin_type="unexpected_pending_history",
+            origin_id="student:3656",
+        )
+
+        with self.assertRaisesMessage(CommandError, "reviewed_student_outbox_set_drift"):
+            call_command(*self._command_args())
+
+    def test_reviewed_student_cross_tenant_relevant_history_is_refused(self):
+        extra_outbox = self._outbox(
+            student=self.students[3656],
+            trigger="registration_approved_parent",
+            status=ScheduledNotification.Status.SENT,
+            origin_type="unexpected_cross_tenant_history",
+            origin_id="parent:3656",
+        )
+        ScheduledNotification.objects.filter(pk=extra_outbox.pk).update(
+            tenant_id=self.owner.id
+        )
+        with self.assertRaisesMessage(CommandError, "reviewed_student_outbox_set_drift"):
+            call_command(*self._command_args())
+        ScheduledNotification.objects.filter(pk=extra_outbox.pk).delete()
+
+        NotificationLog.objects.create(
+            tenant=self.tenant,
+            source_tenant=self.owner,
+            success=False,
+            status="failed",
+            message_mode="alimtalk",
+            notification_type="registration_approved_parent",
+            target_type="account",
+            target_id="parent:3656",
+            failure_reason="unexpected_cross_tenant_history",
         )
         with self.assertRaisesMessage(CommandError, "reviewed_student_log_set_drift"):
             call_command(*self._command_args())

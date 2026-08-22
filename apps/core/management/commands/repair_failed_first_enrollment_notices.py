@@ -694,6 +694,7 @@ def _load_candidates(
     logs = list(log_query)
 
     reviewed_outbox_query = ScheduledNotification.objects.filter(
+        trigger__in=ACCOUNT_TRIGGERS,
         payload__target_id__in=REVIEWED_STUDENT_ONLY_TARGET_IDS,
     ).order_by("created_at", "id")
     if lock:
@@ -705,6 +706,7 @@ def _load_candidates(
     reviewed_student_outboxes = list(reviewed_outbox_query)
 
     reviewed_log_query = NotificationLog.objects.filter(
+        notification_type__in=ACCOUNT_TRIGGERS,
         target_id__in=REVIEWED_STUDENT_ONLY_TARGET_IDS,
     ).order_by("sent_at", "id")
     if lock:
