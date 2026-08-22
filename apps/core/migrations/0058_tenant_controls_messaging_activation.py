@@ -1,6 +1,12 @@
 from django.db import migrations, models
 
 
+ACADEMY_MIGRATION_PHASE = "contract"
+ACADEMY_MIGRATION_REASON = (
+    "기존 표시용 기본값을 고객이 직접 제어하는 알림톡 제품 기본값으로 전환한다."
+)
+
+
 def preserve_existing_messaging_choices(apps, schema_editor):
     Tenant = apps.get_model("core", "Tenant")
 

@@ -8,6 +8,7 @@ from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from drf_spectacular.utils import extend_schema
 
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.messaging.models import MessageTemplate
@@ -75,9 +76,14 @@ class MessagingInfoView(APIView):
         )
         return data
 
+    @extend_schema(responses=MessagingInfoSerializer)
     def get(self, request):
         return Response(self._response_data(request, request.tenant))
 
+    @extend_schema(
+        request=MessagingActivationSerializer,
+        responses=MessagingInfoSerializer,
+    )
     def patch(self, request):
         tenant = request.tenant
         if not can_manage_messaging_settings(request, tenant):
