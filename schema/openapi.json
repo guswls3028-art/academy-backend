@@ -12257,8 +12257,14 @@
           "days": {
             "$ref": "#/components/schemas/DaysEnum"
           },
+          "has_more": {
+            "type": "boolean"
+          },
           "include_support": {
             "type": "boolean"
+          },
+          "query": {
+            "type": "string"
           },
           "results": {
             "items": {
@@ -12268,19 +12274,28 @@
           },
           "student": {
             "$ref": "#/components/schemas/StudentSupportSummarySchema"
+          },
+          "total_count": {
+            "type": "integer"
           }
         },
         "required": [
           "count",
           "days",
+          "has_more",
           "include_support",
+          "query",
           "results",
-          "student"
+          "student",
+          "total_count"
         ],
         "type": "object"
       },
       "StudentActivityItemSchema": {
         "properties": {
+          "actor_label": {
+            "type": "string"
+          },
           "actor_mode": {
             "$ref": "#/components/schemas/ActorModeEnum"
           },
@@ -12289,6 +12304,9 @@
           },
           "device_class": {
             "$ref": "#/components/schemas/DeviceClassEnum"
+          },
+          "evidence_id": {
+            "type": "string"
           },
           "id": {
             "type": "integer"
@@ -12302,16 +12320,22 @@
           },
           "screen_id": {
             "type": "string"
+          },
+          "target_label": {
+            "type": "string"
           }
         },
         "required": [
+          "actor_label",
           "actor_mode",
           "category",
           "device_class",
+          "evidence_id",
           "id",
           "label",
           "occurred_at",
-          "screen_id"
+          "screen_id",
+          "target_label"
         ],
         "type": "object"
       },
@@ -13844,6 +13868,17 @@
           "parent_phone",
           "phone",
           "school_type"
+        ],
+        "type": "object"
+      },
+      "StudentSupportSessionEndedSchema": {
+        "properties": {
+          "ended": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ended"
         ],
         "type": "object"
       },
@@ -42302,6 +42337,35 @@
         ]
       }
     },
+    "/api/v1/students/me/support-session/end/": {
+      "post": {
+        "description": "End the current support token immediately from the student popup.",
+        "operationId": "students_support_session_end_current",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentSupportSessionEndedSchema"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      }
+    },
     "/api/v1/students/password_find/request/": {
       "post": {
         "description": "Legacy OTP password recovery endpoint, sealed in favor of account recovery.",
@@ -43726,6 +43790,14 @@
             }
           },
           {
+            "in": "query",
+            "name": "q",
+            "schema": {
+              "maxLength": 80,
+              "type": "string"
+            }
+          },
+          {
             "in": "path",
             "name": "student_id",
             "required": true,
@@ -43843,6 +43915,54 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/StudentSupportSessionSchema"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      }
+    },
+    "/api/v1/students/{student_id}/support-sessions/{session_id}/end/": {
+      "post": {
+        "description": "End an issued support session when its popup closes.",
+        "operationId": "students_support_session_end_by_staff",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentSupportSessionEndedSchema"
                 }
               }
             },

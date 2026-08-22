@@ -3,7 +3,8 @@
 **상태:** Active  
 **최종 확인:** 2026-08-22 KST  
 **정본 구현:** `apps/domains/students/views/support_views.py`,
-`apps/domains/students/services/activity.py`, `apps/api/common/auth_jwt.py`
+`apps/domains/students/services/activity.py`, `apps/domains/students/models.py`,
+`apps/core/authentication.py`
 
 ## 목적과 권한
 
@@ -19,9 +20,17 @@
   `support_student_id` claim으로 일반 학생 세션과 구분한다.
 - 매 요청마다 `impersonated_by` 교직원의 현재 활성 staff membership을 다시
   확인한다. 권한이 회수되면 아직 만료 전인 토큰도 즉시 거부한다.
+- 발급 세션은 `StudentSupportSession`에 학생·교직원·만료·종료 시각을 저장한다.
+  JWT의 세션 UUID와 활성 DB 행이 함께 일치해야 하므로 브라우저 저장소에서 토큰만
+  복사하거나 이미 종료한 세션을 다시 사용할 수 없다.
 - 시작은 `OpsAuditLog(action="student_support_view.start")`에 교직원 actor와 학생
   target을 함께 남긴다.
-- 토큰 만료·계정 비활성화·테넌트 불일치 시 학생 API 권한이 닫힌다.
+- 학생 팝업의 `POST /api/v1/students/me/support-session/end/`와 교직원 원창의
+  `POST /api/v1/students/<student_id>/support-sessions/<session_id>/end/`는 같은
+  세션을 멱등적으로 종료한다. 종료 시 `student_support_view.end`를 남긴다.
+- 토큰 만료·명시 종료·계정 비활성화·테넌트 불일치 시 학생 API 권한이 닫힌다.
+  세션 행은 지원 감사 수명주기 증거이므로 종료 뒤에도 유지하며 학생 학습 기록으로
+  합치거나 로그인 기록으로 변환하지 않는다.
 
 프런트 팝업 전달·저장 경계는 academy-frontend
 `docs/STUDENT-PARENT-APP-CONTRACT.md`가 소유한다.
@@ -67,9 +76,14 @@ target 기록만 집계하며 전체 영상 조회수나 다른 학생 기록을
 
 - 기간은 7일·30일·90일 중 하나이며 기본값은 30일이다.
 - 결과는 최신순 최대 100건이다.
-- 분류 필터를 지원한다.
+- 분류 필터와 80자 이하 검색어 `q`를 지원한다. 검색은 활동 요약, 검증된 대상
+  제목과 교직원 계정 스냅샷에 서버 측으로 적용되므로 최신 100건 바깥의 기록도
+  먼저 검색 범위에 포함한다.
 - 기본 응답은 `actor_mode=support`를 제외한다. `include_support=true`를 명시한
   경우에만 교직원 대리보기 기록도 함께 반환한다.
+- `count`는 이번 응답 건수, `total_count`는 조건 전체 건수이며 `has_more`는 최신
+  100건 제한 여부를 뜻한다. 각 결과는 사람이 읽을 수 있는 `actor_label`,
+  검증된 `target_label`, 고객지원 확인용 `evidence_id`를 제공한다.
 - 조회 자체는 `student_activity.view` 감사 로그를 남긴다.
 
 ## 실패 동작과 검증
@@ -79,6 +93,7 @@ target 기록만 집계하며 전체 영상 조회수나 다른 학생 기록을
 - 잘못된 기간·분류·기기 값: 400
 - 학생이 아닌 계정 또는 허용되지 않은 화면 ID의 기록: 403
 - 다른 테넌트 학생: 존재 여부를 넓히지 않고 404
+- 종료되었거나 DB 수명주기 행이 없는 대리보기 토큰: 401
 
 집중 회귀는 다음을 증명한다.
 
@@ -88,4 +103,5 @@ python manage.py test apps.domains.students.tests.test_student_support -v 2
 
 테스트는 실제 로그인 1건, access-only 15분 세션, 대리보기 로그인 미기록,
 student/support actor 분리, 운영자 권한 회수 즉시 차단, 기본 제외·명시 포함,
-분류 필터와 테넌트 격리를 검증한다.
+분류·검색 필터, 전체 건수·증거 상세, 팝업/교직원 종료 뒤 즉시 토큰 차단과
+테넌트 격리를 검증한다.

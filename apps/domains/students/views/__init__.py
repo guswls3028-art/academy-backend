@@ -21,6 +21,8 @@ from .support_views import (
     StudentActivityRecordView,
     StudentActivityView,
     StudentHomeworkOpenActivityView,
+    StudentSupportSessionEndView,
+    StudentSupportSessionRevokeView,
     StudentSupportSessionView,
 )
 
@@ -41,5 +43,7 @@ __all__ = [
     "StudentActivityView",
     "StudentActivityRecordView",
     "StudentHomeworkOpenActivityView",
+    "StudentSupportSessionEndView",
+    "StudentSupportSessionRevokeView",
     "StudentSupportSessionView",
 ]
