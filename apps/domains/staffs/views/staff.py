@@ -248,9 +248,9 @@ class StaffViewSet(viewsets.ModelViewSet):
                     "관리자 계정 비밀번호는 대표만 변경할 수 있습니다."
                 )
 
-            from apps.core.services.password import force_reset_password
+            from apps.core.services.password import change_password
 
-            force_reset_password(target_user, new_password)
+            change_password(target_user, new_password)
         from apps.core.services.ops_audit import record_audit
         record_audit(
             request,

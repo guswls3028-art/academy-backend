@@ -358,8 +358,6 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
                         name=validated_data.get("name") or username,
                         phone=validated_data.get("phone") or "",
                     )
-                    user.must_change_password = True
-                    user.save(update_fields=["must_change_password"])
                     core_repo.membership_ensure_active(
                         tenant=tenant,
                         user=user,
