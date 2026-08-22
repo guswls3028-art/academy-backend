@@ -110,6 +110,41 @@ python manage.py setup_ymath_realuse_scenario `
 `YMATH_REALUSE_SCENARIO_ABSENT`여야 한다. 두 경우 모두 `remaining.tenants=0`과
 `remaining.users=0`을 확인한다. 이 확인 전에는 검수 완료로 기록하지 않는다.
 
+## iPhone Safari 로그인 30계정 UAT
+
+로그인 회귀는 실사용 계정을 열지 않고 같은 격리 시나리오의 `--login-uat`
+분기를 사용한다. 이 분기는 `--student-count`를 무시하고 학생 10명, 연결된 학부모
+10명, 직원 10명을 고정 생성한다. 학부모는 제품의 parent ensure 서비스로 만든 뒤
+비밀번호 SSOT인 `core.services.password.change_password`를 통과시켜
+`must_change_password=false`와 token version 증가를 함께 보장한다. DB 필드를
+직접 우회 갱신하지 않는다. 직원은 각각 `Staff`와 활성 `staff` membership을 갖는다.
+시나리오 소유 admin 1명은 30계정 manifest에 포함하지 않는다.
+
+```powershell
+python manage.py setup_ymath_realuse_scenario `
+  --tenant-code qa-ymath-realuse-login-uat-<yyyymmddhhmm> `
+  --session-count 1 `
+  --login-uat `
+  --reset
+```
+
+마지막 stdout JSON의 `login_manifest`는 schema version, tenant code, 정확히 30개의
+합성 role·username·landing path만 포함한다. 비밀번호나 토큰은 포함하지 않는다.
+이 JSON만 로컬 artifact로 저장하고 비밀번호는 기존
+`YMATH_REALUSE_SCENARIO_PASSWORD` 환경 변수로만 frontend runner에 전달한다.
+frontend exact checkout은 SSM loopback API를 proxy로 사용하고
+`pnpm test:e2e:iphone-safari-uat`를 실행한다. runner는 frontend와 API URL이 모두
+`127.0.0.1` 또는 `localhost`이고 tenant code가 `qa-ymath-realuse-`로 시작하며
+student·parent·staff가 각각 10명일 때만 WebKit·Chromium 390px 로그인 → 역할
+landing → UI 로그아웃을 진행한다.
+
+성공·실패와 관계없이 `finally` 경계에서 같은 tenant code로 `--destroy`를 실행한다.
+완료 조건은 기존 cleanup과 동일하게 `remaining.tenants=0` 및
+`remaining.users=0`이다. manifest나 테스트 결과만 있고 이 readback이 없으면 UAT
+완료가 아니다. 실행 계약과 frontend 변수는
+`frontend/docs/ACCOUNT-CREDENTIAL-FLOWS.md`의 persistent-development 항목을 함께
+따른다.
+
 ## API 전수 실행
 
 먼저 `scripts/v1/connect-api-development.ps1`로 loopback SSM tunnel을 연다.
