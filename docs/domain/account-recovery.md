@@ -1,8 +1,8 @@
 # 계정 복구 SSOT
 
 **상태:** Active
-**최종 점검:** 2026-06-06
-**코드 기준:** `apps/core/views/account_recovery.py`, `apps/domains/students/services/account_recovery.py`, `apps/core/services/password.py`, `apps/api/common/auth_jwt.py`, `apps/domains/students/views/password_views.py`
+**최종 점검:** 2026-08-22
+**코드 기준:** `apps/core/views/account_recovery.py`, `apps/domains/students/services/account_recovery.py`, `apps/domains/students/views/account_notification_views.py`, `apps/core/services/password.py`, `apps/api/common/auth_jwt.py`, `apps/domains/students/views/password_views.py`
 
 ## 1. 정본 경로
 
@@ -125,6 +125,23 @@ generate_temp_password() -> 숫자 6자리
 - 테스트 테넌트의 메시징 disabled 상태에서는 실제 발송을 건너뛰고 성공으로 간주한다. 비밀번호 복구는 전달되지 않는 임시 비밀번호를 만들지 않기 위해 pending reset도 만들지 않는다.
 - 계정 아이디 변경, 학부모 전화번호 변경/계정 연결, 학생 전화번호 최초 등록은 `account_notifications.py`를 통해 `registration_approved_*` exact trigger로 발송한다. 비밀번호가 바뀌지 않은 경우 비밀번호 변수는 `변경되지 않음`이다.
 
+### 인증된 관리자·선생님의 아이디 안내
+
+```
+GET  /api/v1/students/<student_id>/account-notifications/?limit=5
+POST /api/v1/students/<student_id>/account-notifications/
+{
+  "target": "student" | "parent"
+}
+```
+
+- 현재 테넌트의 인증된 staff만 사용하고, `<student_id>`를 정확히 조회한다. 다른 테넌트 학생은 404로 닫힌다.
+- GET은 최근 계정 알림톡 이력만 조회하고, POST는 선택한 학생 또는 학부모 계정의 아이디를 다시 안내한다.
+- POST는 `registration_approved_student`/`registration_approved_parent` 승인 템플릿을 재사용하며 비밀번호 변수는 `변경되지 않음`으로 보낸다.
+- 아이디 안내는 현재 비밀번호, `must_change_password`, `token_version`, `PendingPasswordReset`, 이미 발급된 세션을 절대 변경하지 않는다. 비밀번호 초기화는 별도 화면과 staff reset 경로로만 수행한다.
+- 학생 대상은 학생 전화번호를 우선하고, 없으면 기존 학부모 전화번호 fallback 계약을 따른다. 학부모 대상은 등록된 학부모 전화번호와 연결된 학부모 계정을 사용한다.
+- 잘못된 target·수신처/계정 없음은 400, 발송 실패는 503으로 응답하고 비밀번호 상태는 그대로 유지한다.
+
 ## 7. Legacy compatibility
 
 아래 경로는 기존 호출처 호환을 위해 남아 있다. 신규 공개 복구 UI는 추가하지 않는다.
@@ -135,7 +152,7 @@ generate_temp_password() -> 숫자 6자리
 | `/api/v1/students/password_find/verify/` | legacy OTP 봉인: 410 Gone |
 | `/api/v1/students/password_reset_send/` | 관리자/선생님 비밀번호 재설정 + 공개 비밀번호 복구 호환. 모두 정본 서비스 위임 |
 | `/api/v1/students/send_existing_credentials/` | legacy 중복가입 자격 안내 호환 |
-| `/api/v1/students/<id>/account-notifications/` | 학생 상세 최근 계정 알림톡 상태 |
+| `/api/v1/students/<id>/account-notifications/` | GET: 학생 상세 최근 계정 알림톡 상태, POST: 학생/학부모 아이디 안내 |
 
 legacy 공개 호환 규칙:
 
@@ -160,6 +177,8 @@ legacy 공개 호환 규칙:
 - 로그인 활성화: pending 임시 비밀번호로 `/api/v1/token/` 로그인이 성공하고 `must_change_password=True` 토큰이 발급되는지 확인한다.
 - 기존 비밀번호 보호: 발송 실패, unknown account, ambiguous match, 워커/공급자 실패 상황에서 기존 비밀번호가 유지되는지 확인한다.
 - 개인정보 보호: unknown/ambiguous/success 공개 응답은 generic message로 구분되지 않아야 한다.
+- staff 아이디 안내: 선택 target에 대한 exact trigger/마스킹 수신자를 확인하고, 발송 전후 비밀번호·`must_change_password`·`token_version`·pending reset이 유지되는지 검증한다.
+- staff 테넌트 경계: 다른 테넌트의 `<student_id>`는 404이고 발송 부수효과가 없어야 한다.
 - 반복 요청: 새 pending reset이 이전 pending reset을 대체해야 한다.
 - 실패 복원: 이미 발급된 pending reset이 있을 때 다음 발송이 실패하면 기존 pending reset이 유지되어야 한다.
 - 실발송: 운영 설정에서 실제 알림톡 enqueue와 워커 발송 성공을 확인해야 한다.

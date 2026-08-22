@@ -12153,6 +12153,91 @@
         ],
         "type": "string"
       },
+      "StudentAccountGuidanceRequestSchemaRequest": {
+        "properties": {
+          "target": {
+            "$ref": "#/components/schemas/TargetEnum"
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "type": "object"
+      },
+      "StudentAccountGuidanceResponseSchema": {
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "type": "object"
+      },
+      "StudentAccountNotificationItemSchema": {
+        "properties": {
+          "failure_reason": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "notification_type": {
+            "type": "string"
+          },
+          "provider_message_id": {
+            "type": "string"
+          },
+          "recipient_summary": {
+            "type": "string"
+          },
+          "sent_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "target_id": {
+            "type": "string"
+          },
+          "target_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "failure_reason",
+          "id",
+          "notification_type",
+          "provider_message_id",
+          "recipient_summary",
+          "sent_at",
+          "status",
+          "success",
+          "target_id",
+          "target_name"
+        ],
+        "type": "object"
+      },
+      "StudentAccountNotificationListSchema": {
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/StudentAccountNotificationItemSchema"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "type": "object"
+      },
       "StudentActivityAcceptedSchema": {
         "properties": {
           "accepted": {
@@ -14296,6 +14381,14 @@
         "enum": [
           "bug",
           "feedback"
+        ],
+        "type": "string"
+      },
+      "TargetEnum": {
+        "description": "* `student` - student\n* `parent` - parent",
+        "enum": [
+          "student",
+          "parent"
         ],
         "type": "string"
       },
@@ -43468,9 +43561,19 @@
     },
     "/api/v1/students/{student_id}/account-notifications/": {
       "get": {
-        "description": "GET: 학생 상세용 최근 계정 알림톡 발송 상태.",
-        "operationId": "students_account_notifications_retrieve",
+        "description": "Student-detail account Alimtalk history and username guidance.",
+        "operationId": "students_account_notifications_list",
         "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 5,
+              "maximum": 20,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
           {
             "in": "path",
             "name": "student_id",
@@ -43482,7 +43585,71 @@
         ],
         "responses": {
           "200": {
-            "description": "No response body"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentAccountNotificationListSchema"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      },
+      "post": {
+        "description": "Send username guidance without changing the current password.",
+        "operationId": "students_account_guidance_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentAccountGuidanceRequestSchemaRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentAccountGuidanceRequestSchemaRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentAccountGuidanceRequestSchemaRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentAccountGuidanceResponseSchema"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [
