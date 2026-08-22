@@ -32,6 +32,7 @@ from apps.core.services.tenant_access import STAFF_ROLES, get_active_membership_
 from apps.support.clinic.session_dependencies import (
     get_student_for_clinic_request,
     send_clinic_event_notification,
+    send_clinic_reminder_for_participant,
 )
 
 logger = logging.getLogger(__name__)
@@ -86,7 +87,14 @@ class ParticipantViewSet(viewsets.ModelViewSet):
     ordering = ["-created_at", "-id"]
 
     def get_permissions(self):
-        if self.action in ("update", "partial_update", "destroy", "complete", "uncomplete"):
+        if self.action in (
+            "update",
+            "partial_update",
+            "destroy",
+            "complete",
+            "uncomplete",
+            "remind",
+        ):
             return [TenantResolvedAndStaff()]
         return [IsAuthenticated(), TenantResolvedAndMember()]
 
@@ -202,9 +210,8 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         POST /clinic/participants/{id}/complete/
         자율학습 완료 처리 — 이력 기록 + 알림톡 트리거
 
-        상태 전이: PENDING/BOOKED → ATTENDED (complete 전용 전이)
-        이미 ATTENDED/NO_SHOW/CANCELLED/REJECTED인 경우 상태는 변경하지 않고
-        completed_at만 기록한다.
+        ATTENDED 상태에서만 completed_at을 기록한다.
+        참석 처리 전 상태에서는 완료 처리할 수 없으며, 완료 취소도 참석 상태를 유지한다.
         """
         result = complete_participant(
             tenant=getattr(request, "tenant", None),
@@ -228,6 +235,38 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             obj, context={"request": request}
         ).data
         return Response(out)
+
+    @action(detail=True, methods=["post"])
+    def remind(self, request, pk=None):
+        """
+        POST /clinic/participants/{id}/remind/
+        승인된 단일 예약 학생에게 클리닉 재촉 알림톡을 발송한다.
+        """
+        participant = self.get_object()
+        if participant.status != SessionParticipant.Status.BOOKED:
+            return Response(
+                {"detail": "참석 전인 승인 예약만 재촉할 수 있습니다."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        result = send_clinic_reminder_for_participant(
+            tenant_id=getattr(request, "tenant", None).id,
+            participant_id=participant.id,
+            actor_id=getattr(request.user, "id", None),
+        )
+        if result.get("status") == "not_found":
+            return Response(result, status=status.HTTP_404_NOT_FOUND)
+        if result.get("status") == "invalid_status":
+            return Response(result, status=status.HTTP_409_CONFLICT)
+        if not result.get("sent"):
+            return Response(
+                {
+                    **result,
+                    "detail": "재촉 알림톡을 보내지 못했습니다. 알림 설정과 학생 전화번호를 확인해 주세요.",
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        return Response({"ok": True, **result})
 
     @action(detail=True, methods=["post"])
     def uncomplete(self, request, pk=None):

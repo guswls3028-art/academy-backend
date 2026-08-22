@@ -370,36 +370,26 @@ class StatusTransitionDBTest(TestCase, ClinicTestMixin):
         p.refresh_from_db()
         self.assertEqual(p.status, "cancelled")
 
-    def test_complete_transitions_pending_to_attended(self):
-        """complete()는 pending → attended 전환"""
-        p = self._create_participant(status="pending")
-        self.assertIsNone(p.completed_at)
+    def test_complete_requires_attended_status(self):
+        """complete()는 참석 상태와 완료 상태를 합치지 않는다."""
+        from apps.domains.clinic.services import COMPLETE_ALLOWED_STATUSES
 
-        # complete 로직 시뮬레이션 (service SSOT 핵심 로직)
-        from apps.domains.clinic.services import COMPLETE_ALLOWED_TRANSITIONS
-        if p.status in COMPLETE_ALLOWED_TRANSITIONS:
-            p.status = "attended"
-        p.completed_at = timezone.now()
-        p.save()
-        p.refresh_from_db()
-
-        self.assertEqual(p.status, "attended")
-        self.assertIsNotNone(p.completed_at)
+        self.assertEqual(COMPLETE_ALLOWED_STATUSES, {SessionParticipant.Status.ATTENDED})
 
     def test_complete_blocked_for_cancelled(self):
         """cancelled 상태에서 complete 불가"""
         p = self._create_participant(status="cancelled")
-        from apps.domains.clinic.services import COMPLETE_ALLOWED_TRANSITIONS
+        from apps.domains.clinic.services import COMPLETE_ALLOWED_STATUSES
         terminal = {SessionParticipant.Status.CANCELLED, SessionParticipant.Status.REJECTED}
         self.assertIn(p.status, terminal)
         # complete 시 상태 변경하지 않아야 함
-        self.assertNotIn(p.status, COMPLETE_ALLOWED_TRANSITIONS)
+        self.assertNotIn(p.status, COMPLETE_ALLOWED_STATUSES)
 
     def test_complete_blocked_for_rejected(self):
         """rejected 상태에서 complete 불가"""
         p = self._create_participant(status="rejected")
-        from apps.domains.clinic.services import COMPLETE_ALLOWED_TRANSITIONS
-        self.assertNotIn(p.status, COMPLETE_ALLOWED_TRANSITIONS)
+        from apps.domains.clinic.services import COMPLETE_ALLOWED_STATUSES
+        self.assertNotIn(p.status, COMPLETE_ALLOWED_STATUSES)
 
 
 # ═══════════════════════════════════════════════════
@@ -1290,7 +1280,7 @@ class ParticipantCreateServiceAPITest(APITestCase, ClinicAPITestMixin):
 
 
 class CompleteBlockedAPITest(APITestCase, ClinicAPITestMixin):
-    """cancelled/rejected 참가자에 대한 complete API → 400."""
+    """참석 전·불참·취소·거절 참가자에 대한 complete API → 400."""
 
     def setUp(self):
         self.data = self.setup_api_tenant("comp_api", student_count=2)
@@ -1321,8 +1311,21 @@ class CompleteBlockedAPITest(APITestCase, ClinicAPITestMixin):
         )
         self.assertEqual(resp.status_code, 400)
 
-    def test_complete_booked_returns_200(self):
-        """booked 상태 참가자 complete → 200 (정상 전이)."""
+    def test_complete_no_show_returns_400_without_completion_timestamp(self):
+        p = self.make_participant(
+            self.tenant, self.data["clinic_session"],
+            self.data["students"][0], status="no_show",
+        )
+        resp = self.client.post(
+            f"/api/v1/clinic/participants/{p.id}/complete/",
+            **self._headers(self.tenant),
+        )
+        self.assertEqual(resp.status_code, 400)
+        p.refresh_from_db()
+        self.assertIsNone(p.completed_at)
+
+    def test_complete_booked_returns_400_without_changing_attendance(self):
+        """booked 상태 참가자는 참석 처리 전 완료할 수 없다."""
         p = self.make_participant(
             self.tenant, self.data["clinic_session"],
             self.data["students"][0], status="booked",
@@ -1331,10 +1334,30 @@ class CompleteBlockedAPITest(APITestCase, ClinicAPITestMixin):
             f"/api/v1/clinic/participants/{p.id}/complete/",
             **self._headers(self.tenant),
         )
-        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.status_code, 400)
+        p.refresh_from_db()
+        self.assertEqual(p.status, "booked")
+        self.assertIsNone(p.completed_at)
+
+    def test_complete_and_uncomplete_preserve_attendance(self):
+        p = self.make_participant(
+            self.tenant, self.data["clinic_session"],
+            self.data["students"][0], status="attended",
+        )
+        complete_resp = self.client.post(
+            f"/api/v1/clinic/participants/{p.id}/complete/",
+            **self._headers(self.tenant),
+        )
+        self.assertEqual(complete_resp.status_code, 200)
+
+        uncomplete_resp = self.client.post(
+            f"/api/v1/clinic/participants/{p.id}/uncomplete/",
+            **self._headers(self.tenant),
+        )
+        self.assertEqual(uncomplete_resp.status_code, 200)
         p.refresh_from_db()
         self.assertEqual(p.status, "attended")
-        self.assertIsNotNone(p.completed_at)
+        self.assertIsNone(p.completed_at)
 
 
 class ParticipantStatusTransitionAPITest(APITestCase, ClinicAPITestMixin):

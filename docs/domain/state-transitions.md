@@ -430,15 +430,16 @@ STUDENT_STATUS_TRANSITIONS = {
 }
 ```
 
-완료 처리는 별도 use-case다.
+완료 처리는 출석 전이와 분리된 별도 use-case다.
 
 ```python
-COMPLETE_ALLOWED_TRANSITIONS = {"pending", "booked"}
+COMPLETE_ALLOWED_STATUSES = {"attended"}
 ```
 
-`complete`는 pending/booked 참가자를 attended로 전환하고 `completed_at`을 기록한다.
-이미 attended/no_show인 참가자는 상태를 바꾸지 않고 완료 시간만 기록한다.
-cancelled/rejected 참가자는 완료 처리할 수 없다.
+`complete`는 이미 `attended`인 참가자에게만 `completed_at`을 기록한다. 따라서
+`pending`, `booked`, `no_show`, `cancelled`, `rejected` 참가자는 완료 처리할 수 없다.
+`uncomplete`는 완료 시각만 취소하고 출석 상태는 유지한다. 출석 상태를 정정하면 이전
+`completed_at`/`completed_by`도 함께 비워 모순된 `no_show + 완료` 기록을 남기지 않는다.
 
 #### 금지 전이
 
@@ -453,11 +454,17 @@ cancelled/rejected 참가자는 완료 처리할 수 없다.
 | 상태 | Admin | Student |
 |------|-------|---------|
 | pending | 승인(→booked), 거절(→rejected), 취소(→cancelled) | 취소(→cancelled) |
-| booked | 출석(→attended), 미출석(→no_show), 취소(→cancelled) | (변경 불가, "확정" 표시) |
-| attended | 출석취소(→booked), 미출석 정정(→no_show) | (미노출) |
-| no_show | 정정(→booked, →attended) | (미노출) |
+| booked | 참석(→attended), 재촉 알림톡, 취소(→cancelled) | (변경 불가, "확정" 표시) |
+| attended | UI는 이력 표시; 호환 API는 →booked/→no_show | (미노출) |
+| no_show | 기존 기록에서 참석으로 정정(→attended); 호환 API는 →booked | (미노출) |
 | cancelled | 종단 | (미노출) |
 | rejected | 종단 | (미노출) |
+
+`no_show` 상태와 서버 전이는 기존 이력·호환을 위해 유지하지만 신규 운영 화면에는
+불참 입력을 노출하지 않는다. 단일 `booked` 참가자 재촉은
+`POST /clinic/participants/{id}/remind/`가 소유하며, 현재 테넌트의 해당 학생에게
+승인된 공용 `clinic_reminder` 알림톡만 발송한다. 비활성 설정·누락 템플릿·유효하지
+않은 학생 전화번호는 실패 폐쇄하고 성공으로 표시하지 않는다.
 
 ---
 
