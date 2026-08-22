@@ -23,12 +23,15 @@ from apps.core.models import Tenant, TenantMembership
 from apps.domains.fees.models import (
     FeePayment,
     FeeTemplate,
+    StudentFee,
     StudentInvoice,
     InvoiceItem,
 )
 from apps.domains.fees.services import (
     cancel_invoice,
     cancel_payment,
+    generate_monthly_invoices,
+    get_dashboard_stats,
     mark_overdue_invoices,
     record_payment,
 )
@@ -381,6 +384,57 @@ class InvoiceCancelGuardTest(FeesTestMixin, TestCase):
                 self.tenant, self.invoice.id, 10_000, "CASH",
                 idempotency_key="cancelled",
             )
+
+    def test_cancelled_invoice_can_be_reissued_for_same_student_and_period(self):
+        template = self.make_fee_template(self.tenant, amount=50_000)
+        StudentFee.objects.create(
+            tenant=self.tenant,
+            student=self.student,
+            fee_template=template,
+        )
+        cancel_invoice(self.tenant, self.invoice.id)
+
+        result = generate_monthly_invoices(
+            self.tenant,
+            billing_year=self.invoice.billing_year,
+            billing_month=self.invoice.billing_month,
+            due_date=timezone.localdate() + timedelta(days=10),
+        )
+
+        self.assertEqual(result, {"created": 1, "skipped": 0, "errors": []})
+        invoices = list(
+            StudentInvoice.objects.filter(
+                tenant=self.tenant,
+                student=self.student,
+                billing_year=self.invoice.billing_year,
+                billing_month=self.invoice.billing_month,
+            ).order_by("id")
+        )
+        self.assertEqual(len(invoices), 2)
+        self.assertEqual(invoices[0].status, "CANCELLED")
+        self.assertEqual(invoices[1].status, "PENDING")
+        self.assertNotEqual(invoices[0].invoice_number, invoices[1].invoice_number)
+
+
+class FeeDashboardQueryTest(FeesTestMixin, TestCase):
+    def test_dashboard_uses_one_invoice_aggregate_and_one_item_aggregate(self):
+        tenant = self.make_tenant(code="t_dashboard_queries")
+        pending = self.make_invoice(tenant, self.make_student(tenant, suffix=201), total=100_000)
+        overdue = self.make_invoice(tenant, self.make_student(tenant, suffix=202), total=70_000)
+        paid = self.make_invoice(tenant, self.make_student(tenant, suffix=203), total=30_000)
+        StudentInvoice.objects.filter(pk=overdue.pk).update(status="OVERDUE", paid_amount=20_000)
+        StudentInvoice.objects.filter(pk=paid.pk).update(status="PAID", paid_amount=30_000)
+
+        with self.assertNumQueries(2):
+            stats = get_dashboard_stats(tenant, pending.billing_year, pending.billing_month)
+
+        self.assertEqual(stats["total_billed"], 200_000)
+        self.assertEqual(stats["total_paid"], 50_000)
+        self.assertEqual(stats["total_outstanding"], 150_000)
+        self.assertEqual(stats["overdue_count"], 1)
+        self.assertEqual(stats["pending_count"], 1)
+        self.assertEqual(stats["paid_count"], 1)
+        self.assertEqual(stats["invoice_count"], 3)
 
 
 class OverdueTest(FeesTestMixin, TestCase):
