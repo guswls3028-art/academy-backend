@@ -143,7 +143,7 @@ REVIEWED_STUDENT_ONLY_HISTORY = (
         log_status="ambiguous",
         log_success=False,
         failure_reason=(
-            "('NotEnoughBalance', '보유 잔액이 부족하여 발송에 실패하였습니다.\n"
+            "('NotEnoughBalance', '보유 잔액이 부족하여 발송에 실패하였습니다.\\n"
             "[차감금액: 13, 보유잔액: 9, 보유포인트: 0, 보유예치금: 0]')"
         ),
         provider_message_required=False,
