@@ -25,6 +25,7 @@ def ensure_parent_account_for_student(
     tenant: Any,
     parent_phone: str,
     student_name: str,
+    initial_password: str | None = None,
 ) -> Any:
     from apps.domains.parents.services import ensure_parent_account_for_student as _ensure_parent_account
 
@@ -32,6 +33,7 @@ def ensure_parent_account_for_student(
         tenant=tenant,
         parent_phone=parent_phone,
         student_name=student_name,
+        initial_password=initial_password,
     )
 
 

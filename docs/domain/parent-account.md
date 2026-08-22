@@ -10,8 +10,8 @@
 |------|-----------|
 | 내부 username | `p_{tenant_id}_{parent_phone}` |
 | 로그인 입력값 | 학부모 전화번호 |
-| 초기 비밀번호 | 학부모 전화번호 숫자 기준 마지막 4자리 |
-| 강제 변경 | `must_change_password=True` |
+| 초기 비밀번호 | 직원이 학생 등록에 입력한 초기 비밀번호. 독립 ensure/복구는 학부모 전화번호 숫자 기준 마지막 4자리 |
+| 변경 권장 | `must_change_password=True`; 로그인·API 사용은 차단하지 않음 |
 | 이름 | 기존 Parent 이름 우선, 없으면 `{학생이름} 학부모` |
 | 역할 | `TenantMembership.role = "parent"` |
 | 생성 시점 | 학생 생성 SSOT 또는 계정복구 중 parent ensure 호출 |
@@ -24,25 +24,31 @@
 
 ```
 학생 등록 또는 legacy 학부모 계정 복구
-  -> ensure_parent_account_for_student(tenant, parent_phone, student_name)
+  -> ensure_parent_account_for_student(tenant, parent_phone, student_name, initial_password?)
     -> Parent(tenant + phone) 조회
     -> Parent 없음:
          User(username=p_{tenant_id}_{phone}, phone=phone, tenant=tenant) 생성
-         password=parent_initial_password(phone)
+         password=입력된 학생 초기 비밀번호 또는 parent_initial_password(phone)
          must_change_password=True
          Parent 생성
          TenantMembership(parent) 활성화
-         result.password_for_notice = parent_initial_password(phone)
+         result.password_for_notice = 실제 설정한 초기 비밀번호
     -> Parent 있음 + user 없음:
          기존 Parent.name 보존
          User 생성/연결
          TenantMembership(parent) 활성화
-         result.password_for_notice = parent_initial_password(phone)
+         result.password_for_notice = 실제 설정한 초기 비밀번호
     -> Parent 있음 + user 있음:
          기존 Parent 반환
          TenantMembership(parent) 활성 상태 보정
          result.password_for_notice = "변경되지 않음"
 ```
+
+학생을 단건·JSON·Excel로 직접 등록하면서 4자 이상의 초기 비밀번호를 입력하면,
+새 학생 계정과 새 학부모 계정에 같은 값을 설정하고 각각의 첫 수강 안내에도 같은
+값을 staging한다. 가입 신청 승인은 학생이 제출한 hash만 보유하므로 학부모 평문을
+재사용하지 않고 전화번호 뒤 4자리 fallback을 적용한다. 기존 학부모 계정의
+비밀번호는 새 자녀를 등록해도 변경하지 않는다.
 
 동일 테넌트에서 같은 학부모 번호를 가진 학생 둘을 동시에 등록할 수 있다.
 서비스는 Parent row를 잠그고, 신규 row 경합은 DB의 User username 및
@@ -84,7 +90,7 @@ Body: { "username": "{학부모전화번호}", "password": "{비밀번호}" }
 | 변수 | 값 |
 |------|----|
 | `#{학부모아이디}` | 학부모 전화번호 |
-| `#{학부모비밀번호}` | 최초 발급 시 전화번호 뒤 4자리, 아이디 찾기 시 `변경되지 않음` |
+| `#{학부모비밀번호}` | 직접 학생 등록 시 입력한 초기 비밀번호, 독립 생성 시 전화번호 뒤 4자리, 아이디 찾기 시 `변경되지 않음` |
 | `#{학생아이디}` | 학생 `ps_number` |
 | `#{학생비밀번호}` | 가입 승인/학생 안내 값 또는 `변경되지 않음` |
 | `#{비밀번호안내}` | 상황별 안내 문구 |
@@ -119,7 +125,7 @@ python manage.py reset_all_parent_passwords --tenant-code <code> --apply --confi
 `--apply`가 없으면 항상 dry-run이다. 실제 실행은 현재 대상 수가
 `--confirm-count`와 정확히 일치할 때만 진행한다. 출력은 초기 비밀번호와 동일한
 전화번호 끝 네 자리를 노출하지 않는다. 실행된 계정은 `token_version` 증가,
-`must_change_password=True`, 기존 pending reset 폐기를 함께 적용한다. 신규 초기
+`must_change_password=True` 변경 권장 상태, 기존 pending reset 폐기를 함께 적용한다. 신규 초기
 비밀번호 정책은 이 명령이 아니라 `parent_initial_password()`가 SSOT다.
 
 집중 검증:

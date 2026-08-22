@@ -29,6 +29,27 @@ class ParentAccountCreationTests(TestCase):
 
         self.assertFalse(Parent.objects.filter(tenant=self.tenant).exists())
 
+    def test_explicit_student_registration_password_is_shared_with_new_parent(self):
+        result = ensure_parent_account_for_student(
+            tenant=self.tenant,
+            parent_phone="01012345678",
+            student_name="학생",
+            initial_password="stud1234",
+        )
+
+        self.assertEqual(result.initial_password, "stud1234")
+        self.assertTrue(result.parent.user.check_password("stud1234"))
+        self.assertTrue(result.parent.user.must_change_password)
+
+    def test_explicit_password_does_not_bypass_parent_phone_validation(self):
+        with self.assertRaisesMessage(ValueError, "010 11자리"):
+            ensure_parent_account_for_student(
+                tenant=self.tenant,
+                parent_phone="1234",
+                student_name="학생",
+                initial_password="stud1234",
+            )
+
     def test_repeated_ensure_is_idempotent(self):
         first = ensure_parent_account_for_student(
             tenant=self.tenant,

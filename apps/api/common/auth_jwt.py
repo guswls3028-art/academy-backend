@@ -163,7 +163,7 @@ class TenantAwareTokenObtainPairSerializer(TokenObtainPairSerializer):
         tv = getattr(user, "token_version", 0) or 0
         refresh["token_version"] = tv
         refresh.access_token["token_version"] = tv
-        # mcp(must_change_password) — 초기 비번 강제 변경 게이트(MustChangePasswordGate)에서 사용.
+        # mcp(must_change_password) — 클라이언트의 초기/임시 비밀번호 변경 권장 UI에 사용.
         # change_password 후 토큰 무효화 → 새 토큰엔 mcp=0 으로 자동 반영.
         mcp = bool(getattr(user, "must_change_password", False))
         refresh["mcp"] = mcp

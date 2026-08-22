@@ -95,8 +95,8 @@ def force_reset_password(user, new_password: str) -> None:
     """
     관리자에 의한 강제 임시 비밀번호 리셋.
 
-    임시 비번은 정의상 1회용이므로 must_change_password=True 강제 설정.
-    MustChangePasswordGate 가 첫 로그인 후 비번 변경 외 모든 요청 차단.
+    임시 비밀번호이므로 must_change_password=True로 변경 권장 상태를 표시한다.
+    이 플래그는 로그인이나 다른 API 사용을 차단하지 않는다.
     """
     locked_user = get_user_model().objects.select_for_update().get(pk=user.pk)
     locked_user.set_password(new_password)

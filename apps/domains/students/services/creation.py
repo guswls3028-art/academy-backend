@@ -70,6 +70,7 @@ def create_student_account(
                 tenant=tenant,
                 parent_phone=parent_phone,
                 student_name=name,
+                initial_password=password,
             )
             parent = parent_result.parent
             parent_password_for_notice = parent_result.password_for_notice

@@ -231,6 +231,7 @@ class StudentViewSet(ModelViewSet):
             tenant=request.tenant,
             student_data=data,
             password=password,
+            must_change_password=True,
         )
         student = result.student
 

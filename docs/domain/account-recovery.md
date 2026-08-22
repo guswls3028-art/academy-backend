@@ -124,9 +124,10 @@ generate_temp_password() -> 숫자 6자리
 - pending 임시 비밀번호의 로그인 소비는 User row를 먼저 잠근 뒤 pending row를
   다시 확인한다. 따라서 staff 초기화와 동시에 로그인해도 이전 pending 값이
   더 늦게 새 비밀번호를 덮어쓸 수 없다.
-- 운영 복구 명령 `fix_user_password`도 같은 강제 초기화 정본을 사용한다. 기존
+- 운영 복구 명령 `fix_user_password`도 같은 초기화 정본을 사용한다. 기존
   계정은 `token_version` 증가와 pending reset 폐기를 함께 적용하고, 신규·기존
-  모두 다음 로그인에서 본인 비밀번호 변경이 필요하다. `--cleanup-bare` 삭제는
+  모두 다음 로그인에서 본인 비밀번호 변경을 권장한다. 로그인과 다른 API는
+  계속 사용할 수 있다. `--cleanup-bare` 삭제는
   대체 계정 비밀번호·membership 갱신과 같은 트랜잭션이며, 학원 조회나 후속
   갱신이 실패하면 명령도 실패하고 삭제를 포함한 변경 전체를 롤백한다.
 
@@ -200,7 +201,7 @@ legacy 공개 호환 규칙:
 ## 8. 상품/파괴 테스트 기준
 
 - 단위/통합: `python -m pytest apps\domains\students\tests\test_account_recovery.py apps\domains\students\tests\test_password_reset_safety.py -v --tb=short -x`
-- 로그인 활성화: pending 임시 비밀번호로 `/api/v1/token/` 로그인이 성공하고 `must_change_password=True` 토큰이 발급되는지 확인한다.
+- 로그인 활성화: pending 임시 비밀번호로 `/api/v1/token/` 로그인이 성공하고 `must_change_password=True` 토큰이 발급되며 일반 API도 차단되지 않는지 확인한다.
 - 기존 비밀번호 보호: 발송 실패, unknown account, ambiguous match, 워커/공급자 실패 상황에서 기존 비밀번호가 유지되는지 확인한다.
 - 개인정보 보호: unknown/ambiguous/success/delivery failure 공개 응답은 status와 generic message로 구분되지 않아야 한다.
 - 본인 변경 원자성: 알림톡 예약 실패 전후의 비밀번호, `must_change_password`, `token_version`이 모두 동일해야 한다.
