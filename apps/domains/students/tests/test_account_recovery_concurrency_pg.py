@@ -7,11 +7,17 @@ from unittest.mock import patch
 import pytest
 from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import check_password
-from django.db import close_old_connections, connection
+from django.db import close_old_connections, connection, transaction
 from django.test import TransactionTestCase
 
 from apps.core.models import PendingPasswordReset, Tenant
 from apps.core.models.user import user_internal_username
+from apps.core.services.password import (
+    clear_pending_password_reset,
+    consume_pending_password_reset,
+    create_pending_password_reset,
+    force_reset_password,
+)
 from apps.domains.students.models import Student
 from apps.domains.students.services.account_recovery import (
     RecoveryAccount,
@@ -102,3 +108,71 @@ class AccountRecoveryConcurrencyPostgresTests(TransactionTestCase):
         pending = PendingPasswordReset.objects.get(user=user)
         self.assertTrue(check_password("33334444", pending.password_hash))
         self.assertFalse(check_password("11112222", pending.password_hash))
+
+    def test_staff_reset_cannot_be_overwritten_by_stale_pending_login(self):
+        tenant = Tenant.objects.create(name="Recovery Consume Race", code="recovery-consume-race")
+        user = get_user_model().objects.create_user(
+            username=user_internal_username(tenant, "student1"),
+            password="oldpw123",
+            tenant=tenant,
+            token_version=0,
+        )
+        create_pending_password_reset(user, "pending123")
+
+        staff_locked = threading.Event()
+        release_staff = threading.Event()
+        consume_started = threading.Event()
+        outcomes: list[tuple[str, object]] = []
+        errors: list[Exception] = []
+
+        def staff_worker():
+            close_old_connections()
+            try:
+                with transaction.atomic():
+                    locked_user = get_user_model().objects.select_for_update().get(pk=user.pk)
+                    force_reset_password(locked_user, "staff-reset-123")
+                    clear_pending_password_reset(locked_user)
+                    staff_locked.set()
+                    release_staff.wait(timeout=10)
+                outcomes.append(("staff", True))
+            except Exception as exc:
+                errors.append(exc)
+            finally:
+                close_old_connections()
+
+        def consume_worker():
+            close_old_connections()
+            try:
+                thread_user = get_user_model().objects.get(pk=user.pk)
+                consume_started.set()
+                outcomes.append(
+                    ("consume", consume_pending_password_reset(thread_user, "pending123"))
+                )
+            except Exception as exc:
+                errors.append(exc)
+            finally:
+                close_old_connections()
+
+        staff = threading.Thread(target=staff_worker)
+        consume = threading.Thread(target=consume_worker)
+        staff.start()
+        self.assertTrue(staff_locked.wait(timeout=10))
+        consume.start()
+        self.assertTrue(consume_started.wait(timeout=10))
+        # Give the competing login time to reach the locked account boundary.
+        consume.join(timeout=0.5)
+        self.assertTrue(consume.is_alive())
+        release_staff.set()
+        staff.join(timeout=15)
+        consume.join(timeout=15)
+
+        self.assertFalse(staff.is_alive())
+        self.assertFalse(consume.is_alive())
+        self.assertEqual(errors, [])
+        self.assertIn(("staff", True), outcomes)
+        self.assertIn(("consume", False), outcomes)
+        user.refresh_from_db()
+        self.assertTrue(user.check_password("staff-reset-123"))
+        self.assertFalse(user.check_password("pending123"))
+        self.assertEqual(user.token_version, 1)
+        self.assertFalse(PendingPasswordReset.objects.filter(user=user).exists())

@@ -9,9 +9,14 @@ from django.db import close_old_connections, connection
 from django.test import TestCase, TransactionTestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
-from apps.core.models import Tenant, TenantMembership
+from apps.core.models import PendingPasswordReset, Tenant, TenantMembership
 from apps.core.models.user import user_internal_username
-from apps.core.services.password import CurrentPasswordMismatch, change_password_with_notice
+from apps.core.services.password import (
+    CurrentPasswordMismatch,
+    change_password_with_notice,
+    create_pending_password_reset,
+    force_reset_password,
+)
 from apps.core.views.auth import ChangePasswordView
 from apps.domains.students.models import Student
 
@@ -38,6 +43,7 @@ class PasswordChangeRollbackTests(TestCase):
         )
 
     def test_notice_failure_rolls_back_password_and_all_session_state(self):
+        create_pending_password_reset(self.user, "pending123")
         request = APIRequestFactory().post(
             "/api/v1/core/change-password/",
             {"old_password": "oldpw123", "new_password": "newpw123"},
@@ -55,6 +61,32 @@ class PasswordChangeRollbackTests(TestCase):
         self.assertTrue(self.user.check_password("oldpw123"))
         self.assertTrue(self.user.must_change_password)
         self.assertEqual(self.user.token_version, 0)
+        self.assertTrue(PendingPasswordReset.objects.filter(user=self.user).exists())
+
+    def test_successful_password_change_revokes_older_pending_reset(self):
+        create_pending_password_reset(self.user, "pending123")
+
+        change_password_with_notice(
+            self.user,
+            current_password="oldpw123",
+            new_password="newpw123",
+            send_notice=lambda **_kwargs: True,
+        )
+
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("newpw123"))
+        self.assertFalse(PendingPasswordReset.objects.filter(user=self.user).exists())
+
+    def test_force_reset_revokes_older_pending_reset(self):
+        create_pending_password_reset(self.user, "pending123")
+
+        force_reset_password(self.user, "staff-reset-123")
+
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("staff-reset-123"))
+        self.assertTrue(self.user.must_change_password)
+        self.assertEqual(self.user.token_version, 1)
+        self.assertFalse(PendingPasswordReset.objects.filter(user=self.user).exists())
 
 
 pytestmark = pytest.mark.django_db(transaction=True)

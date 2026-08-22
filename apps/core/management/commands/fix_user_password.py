@@ -1,8 +1,9 @@
 # 프로덕션 유저 비밀번호 복구/생성용.
 # username은 "표시용 아이디" (예: admin97). 내부적으로 t{tenant_id}_ 접두사 자동 적용.
-# Usage: python manage.py fix_user_password --username=admin97 --password=kjkszpj123 --tenant-code=hakwonplus
-from django.core.management.base import BaseCommand
+# Usage: python manage.py fix_user_password --username=<id> --password=<temporary-password> --tenant-code=<code>
+from django.core.management.base import BaseCommand, CommandError
 from django.contrib.auth import get_user_model
+from django.db import transaction
 
 
 class Command(BaseCommand):
@@ -25,56 +26,69 @@ class Command(BaseCommand):
         User = get_user_model()
         tc = options["tenant_code"].strip()
         display_uname = options["username"].strip()
-        pw = options["password"].strip()
+        pw = str(options["password"])
         name = options.get("name")
         role = options.get("role", "owner")
 
         tenant = Tenant.objects.filter(code__iexact=tc, is_active=True).first()
         if not tenant:
-            self.stderr.write(f"Tenant '{tc}' not found or inactive.")
-            return
+            raise CommandError(f"Tenant '{tc}' not found or inactive.")
 
         # Internal username: t{tenant_id}_{display}
         internal_uname = user_internal_username(tenant, display_uname)
         self.stdout.write(f"Display: {display_uname} -> Internal: {internal_uname}")
 
-        # Cleanup bare username (without prefix) if requested
-        if options.get("cleanup_bare"):
-            bare = User.objects.filter(username=display_uname).first()
-            if bare and bare.username != internal_uname:
-                bare.delete()
-                self.stdout.write(self.style.WARNING(f"Deleted bare user '{display_uname}' (id={bare.id})"))
+        deleted_bare_id = None
+        with transaction.atomic():
+            # The destructive cleanup and replacement/reset are one unit. A
+            # later membership or password failure must restore the bare user.
+            if options.get("cleanup_bare"):
+                bare = User.objects.select_for_update().filter(username=display_uname).first()
+                if bare and bare.username != internal_uname:
+                    deleted_bare_id = bare.id
+                    bare.delete()
 
-        user = User.objects.filter(username=internal_uname).first()
-        if not user:
-            user = User(
-                username=internal_uname,
-                tenant=tenant,
-                is_active=True,
-                is_staff=True,
+            user = User.objects.select_for_update().filter(username=internal_uname).first()
+            if not user:
+                user = User(
+                    username=internal_uname,
+                    tenant=tenant,
+                    is_active=True,
+                    is_staff=True,
+                    must_change_password=True,
+                )
+                if name:
+                    user.name = name
+                user.set_password(pw)
+                user.save()
+                core_repo.membership_ensure_active(tenant=tenant, user=user, role=role)
+                self.stdout.write(self.style.SUCCESS(
+                    f"CREATED user '{internal_uname}' on tenant '{tc}' (id={user.id})"
+                ))
+            else:
+                user.is_active = True
+                user.tenant = tenant
+                fields = ["is_active", "tenant"]
+                if name:
+                    user.name = name
+                    fields.append("name")
+                user.save(update_fields=fields)
+
+                from apps.core.services.password import force_reset_password
+
+                force_reset_password(user, pw)
+                mem = core_repo.membership_ensure_active(
+                    tenant=tenant,
+                    user=user,
+                    role=role,
+                )
+                self.stdout.write(self.style.SUCCESS(
+                    f"RESET password for '{internal_uname}' on tenant '{tc}' (id={user.id}, role={mem.role})"
+                ))
+
+        if deleted_bare_id is not None:
+            self.stdout.write(
+                self.style.WARNING(
+                    f"Deleted bare user '{display_uname}' (id={deleted_bare_id})"
+                )
             )
-            if name:
-                user.name = name
-            user.set_password(pw)
-            user.save()
-            core_repo.membership_ensure_active(tenant=tenant, user=user, role=role)
-            self.stdout.write(self.style.SUCCESS(
-                f"CREATED user '{internal_uname}' on tenant '{tc}' (id={user.id})"
-            ))
-        else:
-            user.set_password(pw)
-            user.is_active = True
-            user.tenant = tenant
-            fields = ["password", "is_active", "tenant"]
-            if name:
-                user.name = name
-                fields.append("name")
-            user.save(update_fields=fields)
-            mem = core_repo.membership_ensure_active(
-                tenant=tenant,
-                user=user,
-                role=role,
-            )
-            self.stdout.write(self.style.SUCCESS(
-                f"RESET password for '{internal_uname}' on tenant '{tc}' (id={user.id}, role={mem.role})"
-            ))
