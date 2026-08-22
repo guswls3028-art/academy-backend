@@ -5,7 +5,7 @@ from rest_framework_simplejwt.tokens import AccessToken
 
 from apps.core.models import OpsAuditLog, Tenant, TenantMembership
 from apps.core.models.user import user_internal_username
-from apps.domains.students.models import Student
+from apps.domains.students.models import Student, StudentSupportSession
 
 
 @override_settings(
@@ -42,6 +42,7 @@ class StudentSupportTests(TestCase):
             password="teacherpw123",
             tenant=self.tenant,
             token_version=0,
+            name="상담교사",
         )
         TenantMembership.ensure_active(
             tenant=self.tenant,
@@ -113,6 +114,15 @@ class StudentSupportTests(TestCase):
         self.assertEqual(claims["impersonated_by"], self.staff.id)
         self.assertEqual(claims["support_student_id"], self.student.id)
         self.assertFalse(OpsAuditLog.objects.filter(action="student_activity.login").exists())
+        self.assertTrue(
+            StudentSupportSession.objects.filter(
+                pk=claims["support_session_id"],
+                tenant=self.tenant,
+                student=self.student,
+                operator=self.staff,
+                ended_at__isnull=True,
+            ).exists()
+        )
         self.assertTrue(
             OpsAuditLog.objects.filter(
                 action="student_support_view.start",
@@ -219,6 +229,54 @@ class StudentSupportTests(TestCase):
         )
         self.assertEqual(denied.status_code, 404)
 
+    def test_activity_search_returns_total_and_human_evidence_details(self):
+        self._activity(category="video", support=False)
+        support_event = self._activity(category="result", support=True)
+        support_event.summary = "중간고사 결과 열람"
+        support_event.payload["target_label"] = "8월 중간고사"
+        support_event.save(update_fields=["summary", "payload"])
+
+        response = APIClient().get(
+            f"/api/v1/students/{self.student.id}/activities/"
+            "?days=30&include_support=1&q=중간고사&limit=1",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["total_count"], 1)
+        self.assertFalse(response.data["has_more"])
+        self.assertEqual(response.data["query"], "중간고사")
+        self.assertEqual(response.data["results"][0]["actor_label"], "상담교사")
+        self.assertEqual(response.data["results"][0]["target_label"], "8월 중간고사")
+        self.assertEqual(
+            response.data["results"][0]["evidence_id"],
+            f"ACT-{support_event.id}",
+        )
+
+        actor_search = APIClient().get(
+            f"/api/v1/students/{self.student.id}/activities/"
+            "?days=30&include_support=1&q=상담교사",
+            **self._headers(),
+        )
+        self.assertEqual(actor_search.status_code, 200, actor_search.content)
+        self.assertEqual(actor_search.data["total_count"], 1)
+        self.assertEqual(actor_search.data["results"][0]["id"], support_event.id)
+
+    def test_activity_feed_reports_when_result_is_truncated(self):
+        for category in ("video", "exam", "result"):
+            self._activity(category=category, support=False)
+
+        response = APIClient().get(
+            f"/api/v1/students/{self.student.id}/activities/?days=30&limit=1",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["total_count"], 3)
+        self.assertTrue(response.data["has_more"])
+
     def test_support_token_expires_within_fifteen_minutes(self):
         response = APIClient().post(
             f"/api/v1/students/{self.student.id}/support-session/",
@@ -246,6 +304,83 @@ class StudentSupportTests(TestCase):
             HTTP_HOST="api.hakwonplus.com",
             HTTP_X_TENANT_CODE=self.tenant.code,
             HTTP_AUTHORIZATION=f"Bearer {response.data['access']}",
+        )
+
+        self.assertEqual(denied.status_code, 401, denied.content)
+
+    def test_support_popup_end_revokes_token_immediately(self):
+        response = APIClient().post(
+            f"/api/v1/students/{self.student.id}/support-session/",
+            {},
+            format="json",
+            **self._headers(),
+        )
+        access = response.data["access"]
+
+        ended = APIClient().post(
+            "/api/v1/students/me/support-session/end/",
+            {},
+            format="json",
+            HTTP_HOST="api.hakwonplus.com",
+            HTTP_X_TENANT_CODE=self.tenant.code,
+            HTTP_AUTHORIZATION=f"Bearer {access}",
+        )
+
+        self.assertEqual(ended.status_code, 200, ended.content)
+        self.assertTrue(ended.data["ended"])
+        session = StudentSupportSession.objects.get(pk=response.data["session_id"])
+        self.assertIsNotNone(session.ended_at)
+        self.assertEqual(session.end_reason, StudentSupportSession.EndReason.MANUAL)
+        self.assertTrue(
+            OpsAuditLog.objects.filter(
+                action="student_support_view.end",
+                payload__support_session_id=str(session.id),
+            ).exists()
+        )
+
+        denied = APIClient().get(
+            "/api/v1/student/dashboard/",
+            HTTP_HOST="api.hakwonplus.com",
+            HTTP_X_TENANT_CODE=self.tenant.code,
+            HTTP_AUTHORIZATION=f"Bearer {access}",
+        )
+        self.assertEqual(denied.status_code, 401, denied.content)
+
+    def test_staff_can_revoke_own_session_after_popup_closes(self):
+        response = APIClient().post(
+            f"/api/v1/students/{self.student.id}/support-session/",
+            {},
+            format="json",
+            **self._headers(),
+        )
+
+        revoked = APIClient().post(
+            f"/api/v1/students/{self.student.id}/support-sessions/"
+            f"{response.data['session_id']}/end/",
+            {},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(revoked.status_code, 200, revoked.content)
+        self.assertTrue(revoked.data["ended"])
+        session = StudentSupportSession.objects.get(pk=response.data["session_id"])
+        self.assertEqual(session.end_reason, StudentSupportSession.EndReason.WINDOW_CLOSED)
+
+    def test_malformed_support_session_claim_fails_as_unauthorized(self):
+        token = AccessToken.for_user(self.student_user)
+        token["tenant_id"] = self.tenant.id
+        token["token_version"] = 0
+        token["support_preview"] = True
+        token["support_student_id"] = self.student.id
+        token["impersonated_by"] = self.staff.id
+        token["support_session_id"] = "not-a-session-id"
+
+        denied = APIClient().get(
+            "/api/v1/student/dashboard/",
+            HTTP_HOST="api.hakwonplus.com",
+            HTTP_X_TENANT_CODE=self.tenant.code,
+            HTTP_AUTHORIZATION=f"Bearer {str(token)}",
         )
 
         self.assertEqual(denied.status_code, 401, denied.content)

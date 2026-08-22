@@ -13,6 +13,8 @@ from .views import (
     StudentActivityView,
     StudentActivityRecordView,
     StudentSupportSessionView,
+    StudentSupportSessionEndView,
+    StudentSupportSessionRevokeView,
     SendExistingCredentialsView,
     StudentAccountNotificationLogView,
     StudentHomeworkOpenActivityView,
@@ -37,6 +39,7 @@ router.register(r"", StudentViewSet, basename="student")
 urlpatterns = [
     path("me/activity/", StudentActivityRecordView.as_view(), name="student-activity-record"),
     path("me/activity/homework-open/", StudentHomeworkOpenActivityView.as_view(), name="student-homework-open-activity"),
+    path("me/support-session/end/", StudentSupportSessionEndView.as_view(), name="student-support-session-end-current"),
     path("password_find/request/", StudentPasswordFindRequestView.as_view(), name="student-password-find-request"),
     path("password_find/verify/", StudentPasswordFindVerifyView.as_view(), name="student-password-find-verify"),
     path("password_reset_send/", StudentPasswordResetSendView.as_view(), name="student-password-reset-send"),
@@ -44,6 +47,11 @@ urlpatterns = [
     path("<int:student_id>/account-notifications/", StudentAccountNotificationLogView.as_view(), name="student-account-notifications"),
     path("<int:student_id>/activities/", StudentActivityView.as_view(), name="student-activities"),
     path("<int:student_id>/support-session/", StudentSupportSessionView.as_view(), name="student-support-session"),
+    path(
+        "<int:student_id>/support-sessions/<uuid:session_id>/end/",
+        StudentSupportSessionRevokeView.as_view(),
+        name="student-support-session-end-by-staff",
+    ),
     # Phase #11/#12 — 학생 단위 enrollment matrix (시험/과제 개별 추가/제거)
     path("<int:student_id>/enrollment-matrix/",
          StudentEnrollmentMatrixView.as_view(), name="student-enrollment-matrix"),

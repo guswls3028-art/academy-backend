@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import uuid
 from datetime import timedelta
 
+from django.db.models import Q
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema
 from rest_framework import serializers
@@ -16,7 +16,8 @@ from apps.core.models import OpsAuditLog
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.core.services.ops_audit import record_audit
 from apps.domains.enrollment.selectors import active_homework_assignment_for_student
-from apps.domains.students.models import Student
+from apps.core.models.user import user_display_username
+from apps.domains.students.models import Student, StudentSupportSession
 from apps.domains.students.services.activity import (
     record_student_screen_view,
     record_student_target_open,
@@ -56,6 +57,7 @@ class StudentActivityQuerySchema(serializers.Serializer):
     limit = serializers.IntegerField(min_value=1, max_value=100, required=False, default=50)
     category = serializers.ChoiceField(choices=ACTIVITY_CATEGORIES, required=False)
     include_support = serializers.BooleanField(required=False, default=False)
+    q = serializers.CharField(required=False, allow_blank=True, max_length=80)
 
 
 class StudentActivityItemSchema(serializers.Serializer):
@@ -66,14 +68,20 @@ class StudentActivityItemSchema(serializers.Serializer):
     actor_mode = serializers.ChoiceField(choices=("student", "support"))
     device_class = serializers.ChoiceField(choices=("mobile", "tablet", "desktop"))
     screen_id = serializers.CharField()
+    actor_label = serializers.CharField()
+    target_label = serializers.CharField()
+    evidence_id = serializers.CharField()
 
 
 class StudentActivityFeedSchema(serializers.Serializer):
     student = StudentSupportSummarySchema()
     results = StudentActivityItemSchema(many=True)
     count = serializers.IntegerField()
+    total_count = serializers.IntegerField()
+    has_more = serializers.BooleanField()
     days = serializers.ChoiceField(choices=(7, 30, 90))
     include_support = serializers.BooleanField()
+    query = serializers.CharField()
 
 
 class StudentActivityRecordSchema(serializers.Serializer):
@@ -83,6 +91,10 @@ class StudentActivityRecordSchema(serializers.Serializer):
 
 class StudentActivityAcceptedSchema(serializers.Serializer):
     accepted = serializers.BooleanField()
+
+
+class StudentSupportSessionEndedSchema(serializers.Serializer):
+    ended = serializers.BooleanField()
 
 
 class StudentHomeworkOpenSchema(serializers.Serializer):
@@ -115,8 +127,13 @@ class StudentSupportSessionView(APIView):
         if not student.user.is_active:
             return Response({"detail": "비활성 학생 계정은 화면을 열 수 없습니다."}, status=409)
 
-        session_id = uuid.uuid4()
         expires_at = timezone.now() + self.lifetime
+        support_session = StudentSupportSession.objects.create(
+            tenant=request.tenant,
+            student=student,
+            operator=request.user,
+            expires_at=expires_at,
+        )
         token = AccessToken.for_user(student.user)
         token.set_exp(from_time=timezone.now(), lifetime=self.lifetime)
         token["tenant_id"] = request.tenant.id
@@ -124,7 +141,7 @@ class StudentSupportSessionView(APIView):
         token["mcp"] = False
         token["impersonated_by"] = request.user.id
         token["support_preview"] = True
-        token["support_session_id"] = str(session_id)
+        token["support_session_id"] = str(support_session.id)
         token["support_student_id"] = student.id
 
         record_audit(
@@ -135,7 +152,7 @@ class StudentSupportSessionView(APIView):
             summary=f"학생 화면 대리보기 시작: {student.name}",
             payload={
                 "student_id": student.id,
-                "support_session_id": str(session_id),
+                "support_session_id": str(support_session.id),
                 "expires_at": expires_at.isoformat(),
             },
         )
@@ -144,7 +161,7 @@ class StudentSupportSessionView(APIView):
             {
                 "access": str(token),
                 "expires_at": expires_at.isoformat(),
-                "session_id": str(session_id),
+                "session_id": str(support_session.id),
                 "student": {"id": student.id, "name": student.name},
             }
         )
@@ -193,6 +210,9 @@ class StudentActivityView(APIView):
             "include_support",
             default=False,
         )
+        query = str(request.query_params.get("q") or "").strip()
+        if len(query) > 80:
+            return Response({"detail": "검색어는 80자 이하로 입력해 주세요."}, status=400)
 
         queryset = OpsAuditLog.objects.filter(
             target_tenant=request.tenant,
@@ -208,20 +228,48 @@ class StudentActivityView(APIView):
             queryset = queryset.exclude(payload__actor_mode="support")
         if category:
             queryset = queryset.filter(payload__category=category)
+        if query:
+            queryset = queryset.filter(
+                Q(summary__icontains=query)
+                | Q(payload__target_label__icontains=query)
+                | Q(actor_user__name__icontains=query)
+                | Q(actor_username__icontains=query)
+            )
 
-        rows = list(queryset.order_by("-created_at", "-id")[:limit])
+        total_count = queryset.count()
+        rows = list(
+            queryset.select_related("actor_user").order_by("-created_at", "-id")[:limit]
+        )
         results = []
         for row in rows:
             payload = row.payload if isinstance(row.payload, dict) else {}
+            actor_mode = "support" if payload.get("actor_mode") == "support" else "student"
+            category_value = payload.get("category", "home")
+            if category_value not in ACTIVITY_CATEGORIES:
+                category_value = "home"
+            device_class = payload.get("device_class", "desktop")
+            if device_class not in {"mobile", "tablet", "desktop"}:
+                device_class = "desktop"
+            actor_label = "학생 본인"
+            if actor_mode == "support":
+                actor = row.actor_user
+                actor_label = (
+                    str(getattr(actor, "name", "") or "").strip()
+                    or user_display_username(actor)
+                    or "교직원"
+                )
             results.append(
                 {
                     "id": row.id,
                     "occurred_at": row.created_at.isoformat(),
-                    "category": payload.get("category", "home"),
+                    "category": category_value,
                     "label": row.summary,
-                    "actor_mode": payload.get("actor_mode", "student"),
-                    "device_class": payload.get("device_class", "desktop"),
+                    "actor_mode": actor_mode,
+                    "device_class": device_class,
                     "screen_id": payload.get("screen_id", ""),
+                    "actor_label": actor_label,
+                    "target_label": str(payload.get("target_label") or ""),
+                    "evidence_id": f"ACT-{row.id}",
                 }
             )
 
@@ -237,6 +285,8 @@ class StudentActivityView(APIView):
                 "category": category,
                 "include_support": include_support,
                 "result_count": len(results),
+                "total_count": total_count,
+                "query": query,
             },
         )
 
@@ -245,10 +295,94 @@ class StudentActivityView(APIView):
                 "student": {"id": student.id, "name": student.name},
                 "results": results,
                 "count": len(results),
+                "total_count": total_count,
+                "has_more": total_count > len(results),
                 "days": days,
                 "include_support": include_support,
+                "query": query,
             }
         )
+
+
+def _end_support_session(*, request, support_session: StudentSupportSession, reason: str) -> bool:
+    ended_at = timezone.now()
+    updated = StudentSupportSession.objects.filter(
+        pk=support_session.pk,
+        ended_at__isnull=True,
+    ).update(
+        ended_at=ended_at,
+        end_reason=reason,
+        updated_at=ended_at,
+    )
+    if not updated:
+        return False
+    record_audit(
+        request,
+        actor_user=support_session.operator,
+        action="student_support_view.end",
+        target_tenant=support_session.tenant,
+        target_user=support_session.student.user,
+        summary=f"학생 화면 대리보기 종료: {support_session.student.name}",
+        payload={
+            "student_id": support_session.student_id,
+            "support_session_id": str(support_session.id),
+            "end_reason": reason,
+        },
+    )
+    return True
+
+
+class StudentSupportSessionEndView(APIView):
+    """End the current support token immediately from the student popup."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        operation_id="students_support_session_end_current",
+        request=None,
+        responses={200: StudentSupportSessionEndedSchema},
+    )
+    def post(self, request):
+        support_session = getattr(request, "student_support_session", None)
+        if support_session is None:
+            return Response({"detail": "학생 지원 세션이 아닙니다."}, status=403)
+        ended = _end_support_session(
+            request=request,
+            support_session=support_session,
+            reason=StudentSupportSession.EndReason.MANUAL,
+        )
+        return Response({"ended": ended or support_session.ended_at is not None})
+
+
+class StudentSupportSessionRevokeView(APIView):
+    """End an issued support session when its popup closes."""
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+
+    @extend_schema(
+        operation_id="students_support_session_end_by_staff",
+        request=None,
+        responses={200: StudentSupportSessionEndedSchema},
+    )
+    def post(self, request, student_id: int, session_id):
+        support_session = (
+            StudentSupportSession.objects.select_related("student__user", "tenant", "operator")
+            .filter(
+                pk=session_id,
+                tenant=request.tenant,
+                student_id=student_id,
+                operator=request.user,
+            )
+            .first()
+        )
+        if support_session is None:
+            return Response({"detail": "학생 지원 세션을 찾을 수 없습니다."}, status=404)
+        ended = _end_support_session(
+            request=request,
+            support_session=support_session,
+            reason=StudentSupportSession.EndReason.WINDOW_CLOSED,
+        )
+        return Response({"ended": ended or support_session.ended_at is not None})
 
 
 class StudentActivityRecordView(APIView):

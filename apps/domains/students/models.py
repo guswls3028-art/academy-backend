@@ -357,6 +357,58 @@ class StudentTag(models.Model):
         return f"{self.student.name} - {self.tag.name}"
 
 
+class StudentSupportSession(TimestampModel):
+    """Server-revocable staff support access to one exact student account."""
+
+    class EndReason(models.TextChoices):
+        MANUAL = "manual", "학생 화면에서 종료"
+        WINDOW_CLOSED = "window_closed", "지원 창 닫힘"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="student_support_sessions",
+    )
+    student = models.ForeignKey(
+        Student,
+        on_delete=models.CASCADE,
+        related_name="support_sessions",
+    )
+    operator = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    expires_at = models.DateTimeField(db_index=True)
+    ended_at = models.DateTimeField(null=True, blank=True)
+    end_reason = models.CharField(
+        max_length=24,
+        choices=EndReason.choices,
+        blank=True,
+        default="",
+    )
+
+    class Meta:
+        db_table = "student_support_session"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(
+                fields=["tenant", "student", "-created_at"],
+                name="stu_sup_student_created_idx",
+            ),
+            models.Index(
+                fields=["operator", "expires_at"],
+                name="stu_sup_operator_exp_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"support-session:{self.id} student={self.student_id}"
+
+
 class StudentRegistrationRequest(TimestampModel):
     """
     학생 회원가입 신청 (로그인 페이지 셀프 등록).

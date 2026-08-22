@@ -1,5 +1,7 @@
 # apps/core/authentication.py
 
+import uuid
+
 from rest_framework.authentication import SessionAuthentication
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import AuthenticationFailed
@@ -99,34 +101,45 @@ class TokenVersionJWTAuthentication(JWTAuthentication):
 
         from apps.core.services.ops_audit import record_audit
         from apps.core.services.tenant_access import user_has_active_staff_access
-        from apps.core.models import User
-        from apps.domains.students.models import Student
+        from django.utils import timezone
+        from apps.domains.students.models import StudentSupportSession
 
         tenant_id = token.get("tenant_id")
         student_id = token.get("support_student_id")
         operator_id = token.get("impersonated_by")
         session_id = str(token.get("support_session_id") or "").strip()
-        student = (
-            Student.objects
-            .filter(
-                id=student_id,
-                tenant_id=tenant_id,
-                user=user,
-                deleted_at__isnull=True,
-            )
-            .select_related("tenant")
-            .first()
-        )
-        operator = User.objects.filter(
-            id=operator_id,
-            tenant_id=tenant_id,
-            is_active=True,
-        ).first()
-        if not session_id or not student or not operator:
+        try:
+            session_uuid = uuid.UUID(session_id)
+        except (TypeError, ValueError, AttributeError):
             raise AuthenticationFailed(
                 "학생 지원 세션 정보가 올바르지 않습니다.",
                 code="student_support_session_inactive",
             )
+        support_session = (
+            StudentSupportSession.objects
+            .select_related("student__user", "student__tenant", "operator")
+            .filter(
+                id=session_uuid,
+                tenant_id=tenant_id,
+                student_id=student_id,
+                student__tenant_id=tenant_id,
+                student__user=user,
+                student__deleted_at__isnull=True,
+                operator_id=operator_id,
+                operator__tenant_id=tenant_id,
+                operator__is_active=True,
+                ended_at__isnull=True,
+                expires_at__gt=timezone.now(),
+            )
+            .first()
+        )
+        if support_session is None or support_session.operator is None:
+            raise AuthenticationFailed(
+                "학생 지원 세션 정보가 올바르지 않습니다.",
+                code="student_support_session_inactive",
+            )
+        student = support_session.student
+        operator = support_session.operator
         if not user_has_active_staff_access(
             operator,
             student.tenant,
@@ -137,6 +150,7 @@ class TokenVersionJWTAuthentication(JWTAuthentication):
             )
         request.student_support_operator = operator
         request.student_support_session_id = session_id
+        request.student_support_session = support_session
         if request.method not in {"GET", "HEAD", "OPTIONS"}:
             record_audit(
                 request,
