@@ -533,6 +533,39 @@ class ProvisionDefaultTemplatesTests(TestCase):
             ).exists()
         )
 
+    def test_autosend_patch_cannot_change_another_tenant_preference(self):
+        other_tenant = Tenant.objects.create(
+            code="msg-provision-other",
+            name="Msg Provision Other",
+            is_active=True,
+        )
+        own_config = AutoSendConfig.objects.create(
+            tenant=self.tenant,
+            trigger="clinic_reminder",
+            enabled=True,
+            message_mode="alimtalk",
+        )
+        other_config = AutoSendConfig.objects.create(
+            tenant=other_tenant,
+            trigger="clinic_reminder",
+            enabled=True,
+            message_mode="alimtalk",
+        )
+
+        response = AutoSendConfigView.as_view()(
+            self._request(
+                "patch",
+                "/api/v1/messaging/auto-send/",
+                {"configs": [{"trigger": "clinic_reminder", "enabled": False}]},
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        own_config.refresh_from_db()
+        other_config.refresh_from_db()
+        self.assertFalse(own_config.enabled)
+        self.assertTrue(other_config.enabled)
+
     def test_community_answer_triggers_are_not_enabled_by_default(self):
         response = AutoSendConfigView.as_view()(
             self._request("get", "/api/v1/messaging/auto-send/")

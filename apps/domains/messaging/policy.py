@@ -396,6 +396,8 @@ def send_alimtalk_via_owner(
     log_target_type: str = "account",
     log_target_id: int | str | None = None,
     log_target_name: str = "",
+    origin_type: str = "system_account",
+    origin_id: str | None = None,
 ) -> bool:
     """
     오너 테넌트의 승인된 알림톡 템플릿으로 발송.
@@ -485,8 +487,10 @@ def send_alimtalk_via_owner(
                 "target_id": resolved_target_id,
                 "target_name": log_target_name or target_name,
                 "source_tenant_id": source_tenant_id,
-                "origin_type": "system_account",
-                "origin_id": str(resolved_target_id or ""),
+                "origin_type": str(origin_type or "system_account")[:64],
+                "origin_id": str(
+                    resolved_target_id if origin_id is None else origin_id
+                )[:128],
             },
         )
         return notification.status in {

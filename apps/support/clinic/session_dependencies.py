@@ -192,6 +192,27 @@ def send_clinic_session_reminder(*, session_id: int):
     return send_clinic_reminder_for_students(session_id=session_id)
 
 
+def _dispatched_clinic_reminder_student_ids(*, tenant_id: int, session_id: int) -> set[int]:
+    """Return students already represented by the durable automatic outbox."""
+    from apps.domains.messaging.models import ScheduledNotification
+
+    origin_id = f"clinic_session:{int(session_id)}:reminder"
+    payloads = ScheduledNotification.objects.filter(
+        tenant_id=int(tenant_id),
+        trigger="clinic_reminder",
+        origin_id=origin_id,
+    ).values_list("payload", flat=True)
+    student_ids: set[int] = set()
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            continue
+        try:
+            student_ids.add(int(payload.get("target_id")))
+        except (TypeError, ValueError):
+            continue
+    return student_ids
+
+
 def send_clinic_reminder_for_students(*, session_id: int):
     """
     Send the clinic reminder Alimtalk for booked participants in one session.
@@ -221,21 +242,30 @@ def send_clinic_reminder_for_students(*, session_id: int):
         )
     )
 
+    domain_object_id = f"clinic_session:{session.id}:reminder"
     context = {
         "클리닉명": (session.title or "클리닉").strip(),
         "장소": session.location or "",
         "날짜": session.date.isoformat() if session.date else "",
         "시간": session.start_time.strftime("%H:%M") if session.start_time else "",
-        "_domain_object_id": f"clinic_session:{session.id}:reminder",
+        "_domain_object_id": domain_object_id,
         "_source_domain": "clinic",
         "_source_use_case": "clinic.reminder",
     }
 
+    dispatched_student_ids = _dispatched_clinic_reminder_student_ids(
+        tenant_id=session.tenant_id,
+        session_id=session.id,
+    )
     attempted = 0
     sent = 0
+    deduplicated = 0
     for participant in participants:
         student = participant.student
         if not student:
+            continue
+        if int(student.id) in dispatched_student_ids:
+            deduplicated += 1
             continue
         attempted += 1
         if send_event_notification(
@@ -252,6 +282,7 @@ def send_clinic_reminder_for_students(*, session_id: int):
         "attempted": attempted,
         "sent": sent,
         "skipped": max(0, attempted - sent),
+        "deduplicated": deduplicated,
     }
 
 
@@ -303,6 +334,7 @@ def send_due_clinic_reminders(
         "attempted": 0,
         "sent": 0,
         "skipped": 0,
+        "deduplicated": 0,
     }
 
     tz = timezone.get_current_timezone()
@@ -352,15 +384,35 @@ def send_due_clinic_reminders(
             if start_at < current:
                 continue
 
-            stats["sessions_due"] += 1
             if dry_run:
-                stats["attempted"] += int(session.booked_count or 0)
+                booked_student_ids = set(
+                    SessionParticipant.objects.filter(
+                        tenant_id=config.tenant_id,
+                        session_id=session.id,
+                        status=SessionParticipant.Status.BOOKED,
+                    ).values_list("student_id", flat=True)
+                )
+                dispatched_student_ids = _dispatched_clinic_reminder_student_ids(
+                    tenant_id=config.tenant_id,
+                    session_id=session.id,
+                )
+                outstanding = booked_student_ids - dispatched_student_ids
+                if outstanding:
+                    stats["sessions_due"] += 1
+                stats["attempted"] += len(outstanding)
+                stats["deduplicated"] += len(
+                    booked_student_ids & dispatched_student_ids
+                )
                 continue
 
             result = send_clinic_reminder_for_students(session_id=session.id)
-            stats["attempted"] += int(result.get("attempted") or 0)
+            attempted = int(result.get("attempted") or 0)
+            if attempted:
+                stats["sessions_due"] += 1
+            stats["attempted"] += attempted
             stats["sent"] += int(result.get("sent") or 0)
             stats["skipped"] += int(result.get("skipped") or 0)
+            stats["deduplicated"] += int(result.get("deduplicated") or 0)
 
     return stats
 

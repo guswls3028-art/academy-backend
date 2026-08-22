@@ -251,6 +251,16 @@ def _classify_definitely_rejected_provider_exception(exc: Exception) -> str:
     return ""
 
 
+_REQUIRED_ACCOUNT_NOTICE_EVENTS = frozenset(
+    {"registration_approved_student", "registration_approved_parent"}
+)
+_DISABLED_ACCOUNT_NOTICE_VISIBILITY_SECONDS = 12 * 60 * 60
+
+
+def _should_defer_disabled_tenant_message(event_type: str) -> bool:
+    return str(event_type or "").strip() in _REQUIRED_ACCOUNT_NOTICE_EVENTS
+
+
 def _resolve_tenant_delivery_context(
     tenant_id: int,
     source_tenant_id: int | None = None,
@@ -849,10 +859,24 @@ def main() -> int:
                         from apps.domains.messaging.policy import is_messaging_disabled
 
                         if is_messaging_disabled(business_tenant_id):
+                            event_type_for_policy = str(
+                                data.get("event_type") or ""
+                            ).strip()
                             logger.info(
                                 "Message skipped: business_tenant_id=%s messaging disabled",
                                 business_tenant_id,
                             )
+                            if _should_defer_disabled_tenant_message(
+                                event_type_for_policy
+                            ):
+                                queue_client.change_message_visibility(
+                                    queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
+                                    receipt_handle=receipt_handle,
+                                    visibility_timeout=(
+                                        _DISABLED_ACCOUNT_NOTICE_VISIBILITY_SECONDS
+                                    ),
+                                )
+                                continue
                             queue_client.delete_message(
                                 queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                                 receipt_handle=receipt_handle,
@@ -1468,6 +1492,9 @@ def main() -> int:
                                             provider_message_id=provider_message_id,
                                             notification_type=event_type_msg,
                                             failure_status=failure_status,
+                                            provider_definitely_not_accepted=bool(
+                                                result.get("definitely_not_accepted")
+                                            ),
                                         )
                                     else:
                                         create_notification_log(

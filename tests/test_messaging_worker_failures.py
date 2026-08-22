@@ -7,6 +7,7 @@ from apps.worker.messaging_worker.sqs_main import (
     _resolve_worker_business_key,
     _safe_payload_shape,
     _send_failure_disposition,
+    _should_defer_disabled_tenant_message,
     send_one_alimtalk,
 )
 
@@ -31,6 +32,12 @@ def test_provider_call_timeout_is_ambiguous_and_must_not_auto_retry() -> None:
         )
         == "ambiguous"
     )
+
+
+def test_disabled_tenant_defers_only_required_first_enrollment_notices() -> None:
+    assert _should_defer_disabled_tenant_message("registration_approved_student")
+    assert _should_defer_disabled_tenant_message("registration_approved_parent")
+    assert not _should_defer_disabled_tenant_message("manual_send")
 
 
 def test_pre_provider_transient_failure_remains_retryable() -> None:
@@ -205,3 +212,32 @@ def test_sdk_timeout_is_explicitly_after_provider_boundary(mock_get_client: Magi
         result["reason"],
         provider_send_started=result["provider_called"],
     ) == "ambiguous"
+
+
+@patch("apps.worker.messaging_worker.sqs_main._get_solapi_client")
+def test_solapi_balance_rejection_is_definite_and_not_auto_retryable(
+    mock_get_client: MagicMock,
+) -> None:
+    client = MagicMock()
+    client.send.side_effect = Exception("NotEnoughBalance", "잔액이 부족합니다")
+    mock_get_client.return_value = client
+
+    result = send_one_alimtalk(
+        SimpleNamespace(),
+        to="01012345678",
+        sender="0212345678",
+        pf_id="PFID",
+        template_id="TEMPLATE",
+    )
+
+    client.send.assert_called_once()
+    assert result["provider_called"] is True
+    assert result["provider_outcome"] == "rejected"
+    assert result["definitely_not_accepted"] is True
+    assert result["provider_retryable"] is False
+    assert _send_failure_disposition(
+        result["reason"],
+        provider_send_started=result["provider_called"],
+        definitely_not_accepted=result["definitely_not_accepted"],
+        provider_retryable=result["provider_retryable"],
+    ) == "terminal"

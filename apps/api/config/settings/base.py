@@ -418,6 +418,9 @@ SITE_URL = os.getenv("SITE_URL", "")  # 예: https://academy.example.com
 SOLAPI_API_KEY = os.getenv("SOLAPI_API_KEY", "")
 SOLAPI_API_SECRET = os.getenv("SOLAPI_API_SECRET", "")
 SOLAPI_SENDER = os.getenv("SOLAPI_SENDER", "")  # 공용 알림톡 발신 번호 (예: 01012345678)
+MESSAGING_PROVIDER_LOW_BALANCE_ALERT_THRESHOLD = int(
+    os.getenv("MESSAGING_PROVIDER_LOW_BALANCE_ALERT_THRESHOLD", "10000")
+)
 # 알림톡: 카카오 검수 완료 템플릿만 ENV로 관리 (코드 수정 없이 교체)
 SOLAPI_KAKAO_PF_ID = os.getenv("SOLAPI_KAKAO_PF_ID", "")
 SOLAPI_KAKAO_TEMPLATE_ID = os.getenv("SOLAPI_KAKAO_TEMPLATE_ID", "")

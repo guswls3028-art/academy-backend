@@ -18,10 +18,11 @@ import logging
 import urllib.error
 import urllib.request
 from datetime import timedelta
+from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
-from django.db.models import Max, Sum
+from django.db.models import Count, Max, Sum
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
@@ -537,8 +538,73 @@ def rule_circuit_breaker_open():
     }
 
 
+def rule_messaging_delivery_health(window_minutes: int = 30):
+    """Alert on shared Alimtalk balance risk and confirmed retryable rejections."""
+    from apps.domains.messaging.models import NotificationLog
+    from apps.domains.messaging.services.solapi_client import get_solapi_client
+
+    since = timezone.now() - timedelta(minutes=window_minutes)
+    failure_groups = (
+        NotificationLog.objects.filter(
+            sent_at__gte=since,
+            status__in=["retryable_failed", "ambiguous"],
+            failure_reason__icontains="NotEnoughBalance",
+        )
+        .values("source_tenant__code", "tenant__code", "status")
+        .annotate(count=Count("id"))
+        .order_by("source_tenant__code", "tenant__code", "status")
+    )
+    rows = [
+        {
+            "tenant": row["source_tenant__code"] or row["tenant__code"] or "unknown",
+            "state": row["status"],
+            "count": row["count"],
+            "window_minutes": window_minutes,
+        }
+        for row in failure_groups
+    ]
+
+    threshold = Decimal(
+        str(getattr(settings, "MESSAGING_PROVIDER_LOW_BALANCE_ALERT_THRESHOLD", 10_000))
+    )
+    try:
+        client = get_solapi_client()
+        if client is None:
+            rows.append({"provider_balance_check": "client_unavailable"})
+        else:
+            response = client.get_balance()
+            raw_balance = getattr(response, "balance", None)
+            balance = Decimal(str(raw_balance))
+            if balance < threshold:
+                rows.append(
+                    {
+                        "provider_balance": str(balance),
+                        "alert_threshold": str(threshold),
+                    }
+                )
+    except (InvalidOperation, TypeError, ValueError):
+        rows.append({"provider_balance_check": "invalid_response"})
+    except Exception as exc:
+        logger.warning("Solapi balance check failed: %s", exc)
+        rows.append({"provider_balance_check": "request_failed"})
+
+    if not rows:
+        return None
+    return {
+        "title": f"📨 알림톡 공급자 잔액/재시도 확인 필요 — {len(rows)}건",
+        "rows": rows,
+        "total": sum(int(row.get("count", 1)) for row in rows),
+    }
+
+
 RULES: list[Rule] = [
     Rule("user_incidents", "사용자 오류/문제 신고", rule_user_incidents, "danger"),
+    Rule(
+        "messaging_delivery_health",
+        "알림톡 공급자 잔액/재시도",
+        rule_messaging_delivery_health,
+        "danger",
+    ),
     Rule("expiring_3d", "만료 3일 이내", rule_expiring_3d, "warning"),
     Rule("overdue_invoices", "연체/실패 인보이스", rule_overdue_invoices, "danger"),
     Rule(

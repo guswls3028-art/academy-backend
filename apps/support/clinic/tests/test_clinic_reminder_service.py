@@ -9,7 +9,8 @@ from django.utils import timezone
 
 from apps.core.models import Tenant
 from apps.domains.clinic.models import Session as ClinicSession, SessionParticipant
-from apps.domains.messaging.models import AutoSendConfig
+from apps.domains.messaging.alimtalk_content_builders import get_solapi_template_id
+from apps.domains.messaging.models import AutoSendConfig, MessageTemplate, ScheduledNotification
 from apps.domains.students.models import Student
 from apps.support.clinic.session_dependencies import (
     send_clinic_reminder_for_students,
@@ -137,6 +138,72 @@ class ClinicReminderServiceTest(TestCase):
         self.assertEqual(result["attempted"], 1)
         self.assertEqual(result["sent"], 1)
         mock_send.assert_called_once_with(session_id=due_session.id)
+
+    @patch("apps.domains.messaging.policy.get_owner_tenant_id")
+    @patch("apps.domains.messaging.policy.is_messaging_disabled", return_value=False)
+    def test_send_due_clinic_reminders_dispatches_each_session_once_within_window(
+        self,
+        _mock_disabled,
+        mock_owner_tenant_id,
+    ):
+        mock_owner_tenant_id.return_value = self.tenant.id
+        template = MessageTemplate.objects.create(
+            tenant=self.tenant,
+            category=MessageTemplate.Category.CLINIC,
+            name="클리닉 시작 알림",
+            body="#{학생이름} 학생, #{시간} 클리닉이 곧 시작됩니다.",
+        )
+        AutoSendConfig.objects.create(
+            tenant=self.tenant,
+            trigger="clinic_reminder",
+            enabled=True,
+            minutes_before=30,
+            message_mode="alimtalk",
+            template=template,
+        )
+        due_at = timezone.make_aware(
+            datetime(2026, 5, 15, 18, 0),
+            timezone.get_current_timezone(),
+        )
+        due_session = ClinicSession.objects.create(
+            tenant=self.tenant,
+            title="정확히 한 번 알림",
+            date=due_at.date(),
+            start_time=(due_at + timedelta(minutes=30)).time(),
+            duration_minutes=60,
+            location="2층",
+            max_participants=12,
+        )
+        student = self._student("004", "한번학생")
+        SessionParticipant.objects.create(
+            tenant=self.tenant,
+            session=due_session,
+            student=student,
+            status=SessionParticipant.Status.BOOKED,
+        )
+
+        first = send_due_clinic_reminders(now=due_at, window_minutes=5)
+        second = send_due_clinic_reminders(
+            now=due_at + timedelta(minutes=1),
+            window_minutes=5,
+        )
+
+        self.assertEqual(first["sessions_due"], 1)
+        self.assertEqual(second["sessions_due"], 0)
+        self.assertEqual(first["sent"], 1)
+        self.assertEqual(second["sent"], 0)
+        self.assertEqual(second["deduplicated"], 1)
+        outbox = ScheduledNotification.objects.get(
+            tenant=self.tenant,
+            trigger="clinic_reminder",
+        )
+        self.assertEqual(outbox.origin_id, f"clinic_session:{due_session.id}:reminder")
+        self.assertEqual(outbox.payload["message_mode"], "alimtalk")
+        self.assertEqual(
+            outbox.payload["template_id"],
+            get_solapi_template_id("clinic_reminder"),
+        )
+        self.assertEqual(outbox.payload["target_id"], student.id)
 
     @patch("apps.support.clinic.session_dependencies.send_clinic_reminder_for_students")
     def test_send_due_clinic_reminders_ignores_disabled_configs(self, mock_send):

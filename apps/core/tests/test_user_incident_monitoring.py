@@ -356,8 +356,11 @@ class DevAlertsWorkflowContractTests(SimpleTestCase):
             / "dev-alerts-cron.yml"
         ).read_text(encoding="utf-8")
 
-    def test_default_dispatch_evaluates_user_incidents_only(self):
-        self.assertIn('EXTRA_ARGS="--rule user_incidents"', self.workflow)
+    def test_five_minute_dispatch_evaluates_user_and_messaging_incidents(self):
+        self.assertIn(
+            'EXTRA_ARGS="--rule user_incidents --rule messaging_delivery_health"',
+            self.workflow,
+        )
         self.assertIn('SCHEDULE_EXPRESSION: ${{ github.event.schedule }}', self.workflow)
         self.assertIn('"2 * * * *"', self.workflow)
         self.assertIn('FULL_RULES_INPUT: ${{ github.event.inputs.full_rules }}', self.workflow)
