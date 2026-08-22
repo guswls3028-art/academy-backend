@@ -464,6 +464,32 @@ teacher/admin만 허용하며, 시험 roster 밖의 수강 등록이나 다른 t
 기존 정오표/엑셀 가져오기 계약이 계속 소유한다. 학생 정보가 포함된 응답은
 `Cache-Control: private, no-store`로 반환한다.
 
+## 수업 분석 리포트 Excel
+
+교직원은 시험의 **채점·결과 → 이번 수업에서 바로 결정할 것 → 수업 분석
+리포트 (엑셀)**에서 현재 대표 성적을 수업 전달용 `.xlsx`로 내려받는다.
+`GET /results/admin/exams/{exam_id}/analysis-export/`는 인증된 같은 tenant의
+teacher/admin만 허용하고, 시험 roster와 현재 대표 `Result` 밖의 학생을
+추정하거나 다른 tenant의 통계를 섞지 않는다.
+
+리포트는 다음 네 시트를 한 파일로 제공한다.
+
+- **수업 브리핑**: 응시·미응시/미채점, 평균·중앙값·상위 10%·표준편차,
+  합격률, 만점 대비 점수 분포, 보충 우선 문항과 수업 행동 제안
+- **문항 우선순위**: `ResultFact` 문항 통계의 정답률이 낮은 순서와
+  공통 재설명·재풀이·유사 문항·개별 확인 제안
+- **학생별 등수**: 현재 대표 결과와 서버의 competition rank, 학교·강의,
+  원점수·득점률·평균 대비·합격/보충·오답 문항
+- **학생별 답안**: 현재 대표 `ResultItem`의 학생 답안과 정오 상태
+
+점수 분포와 편차 판단은 시험 만점이 100점이 아니어도 득점률로 정규화한다.
+합격 판정은 원점수와 현재 `Exam.pass_score`를 사용하며 공동 등수는 기존
+`compute_exam_rankings` 계약을 그대로 따른다. 응시 5명 미만은 표본 확인을
+우선하고, 정답률 30%/50%와 만점 대비 표준편차 20%를 수업 제안의 설명 가능한
+경계로 사용한다. 이 제안은 조회·전달용이며 컷, 합격 판정, 재시험 정책이나
+성적 데이터를 자동 수정하지 않는다. 학생 답안과 이름은 Excel 수식 주입을
+막고, 응답은 `Cache-Control: private, no-store`로 반환한다.
+
 ## 오답노트와 통계
 
 오답노트 대상은 `ResultItem.is_correct=false` 또는
@@ -556,6 +582,7 @@ API는 호환 별칭으로 유지한다.
 | POST | `/results/wrong-notes/documents/` | 기존 enrollment 범위 또는 학생 `source_selection` 통합 문서 job 생성 |
 | GET | `/results/admin/exams/{id}/result-import/template/` | 시험 전용 엑셀 양식 다운로드 |
 | POST | `/results/admin/exams/{id}/result-import/` | 엑셀 미리보기 또는 원자적 확정 |
+| GET | `/results/admin/exams/{id}/analysis-export/` | 수업 브리핑·분포·문항 우선순위·등수·답안 XLSX 다운로드 |
 | GET | `/results/admin/exams/{id}/wrong-note-export/` | 현재 대표 성적의 학생별 오답·복습 지정 기록 XLSX 다운로드 |
 | GET | `/results/wrong-notes` | 학생의 현재 대표 오답·복습 문항과 안정적인 `source_fingerprint` 조회. `from_session_order`~선택적 `to_session_order` 포함 |
 | POST | `/results/wrong-notes/documents/` | `output_format=pdf|hwpx`, 회차 범위와 선택적 `source_fingerprint` 검증 뒤 비동기 문서 job 생성 |

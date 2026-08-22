@@ -15,6 +15,7 @@ from apps.domains.results.views.admin_exam_subjective_score_view import AdminExa
 from apps.domains.results.views.admin_representative_attempt_view import AdminRepresentativeAttemptView
 from apps.domains.results.views.admin_exam_attempts_view import AdminExamAttemptsView
 from apps.domains.results.views.admin_exam_result_excel_import_view import (
+    AdminExamAnalysisExcelExportView,
     AdminExamResultExcelImportView,
     AdminExamResultExcelTemplateView,
     AdminExamWrongNoteExcelExportView,
@@ -80,6 +81,11 @@ urlpatterns = [
         "admin/exams/<int:exam_id>/result-import/",
         AdminExamResultExcelImportView.as_view(),
         name="admin-exam-result-import",
+    ),
+    path(
+        "admin/exams/<int:exam_id>/analysis-export/",
+        AdminExamAnalysisExcelExportView.as_view(),
+        name="admin-exam-analysis-export",
     ),
     path(
         "admin/exams/<int:exam_id>/wrong-note-export/",

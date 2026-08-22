@@ -33,11 +33,15 @@ from apps.domains.results.services.exam_result_excel_import import (
     build_exam_wrong_note_export,
     plan_exam_result_import,
 )
+from apps.domains.results.services.exam_analysis_export import (
+    build_exam_analysis_export,
+)
 from apps.domains.results.utils.exam_absence import current_exam_absence_counts
 from apps.domains.results.utils.ranking import compute_exam_rankings
 from apps.domains.results.views.admin_exam_results_view import AdminExamResultsView
 from apps.domains.results.views.admin_exam_summary_view import AdminExamSummaryView
 from apps.domains.results.views.admin_exam_result_excel_import_view import (
+    AdminExamAnalysisExcelExportView,
     AdminExamResultExcelImportView,
     AdminExamResultExcelTemplateView,
     AdminExamWrongNoteExcelExportView,
@@ -1170,6 +1174,97 @@ class ExamResultExcelImportTests(TestCase):
         self.assertEqual(sheet.cell(8, 13).value, "2")
         self.assertEqual(sheet.cell(8, 14).value, 2)
 
+    def test_analysis_export_combines_briefing_questions_rank_and_answers(self):
+        second_enrollment = self._create_enrollment(
+            name="박학생",
+            username="excel-student-analysis-2",
+            ps_number="EX-002",
+            phone="01022223333",
+            parent_phone="01044445555",
+        )
+        ExamEnrollment.objects.create(exam=self.exam, enrollment=second_enrollment)
+        payload = _workbook_bytes(
+            [
+                ["수강등록ID", "이름", 1, 2],
+                [self.enrollment.id, "김학생", "O", "O"],
+                [second_enrollment.id, "박학생", "O", "X"],
+            ]
+        )
+        apply_exam_result_import(
+            plan=plan_exam_result_import(
+                exam=self.exam,
+                tenant=self.tenant,
+                filename="analysis-source.xlsx",
+                workbook_bytes=payload,
+            )
+        )
+        top_result = Result.objects.get(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.enrollment,
+        )
+        top_item = top_result.items.get(question=self.choice_question)
+        top_item.answer = "=1+1"
+        top_item.save(update_fields=["answer", "updated_at"])
+
+        exported = build_exam_analysis_export(exam=self.exam, tenant=self.tenant)
+        workbook = load_workbook(io.BytesIO(exported), data_only=True)
+
+        self.assertEqual(
+            workbook.sheetnames,
+            ["수업 브리핑", "문항 우선순위", "학생별 등수", "학생별 답안"],
+        )
+        briefing = workbook["수업 브리핑"]
+        self.assertIn("수업 분석 리포트", briefing.cell(1, 1).value)
+        self.assertEqual(briefing.cell(7, 1).value, "표본 확인 후 판단")
+        self.assertEqual(briefing.cell(13, 1).value, "2명")
+        self.assertEqual(briefing.cell(13, 3).value, "0명")
+
+        questions = workbook["문항 우선순위"]
+        self.assertEqual(questions.cell(5, 1).value, "우선순위")
+        self.assertEqual(questions.cell(6, 2).value, 2)
+        self.assertEqual(questions.cell(6, 3).value, 0.5)
+
+        ranked = workbook["학생별 등수"]
+        self.assertEqual(ranked.cell(6, 1).value, 1)
+        self.assertEqual(ranked.cell(6, 3).value, "김학생")
+        self.assertEqual(ranked.cell(7, 1).value, 2)
+        self.assertEqual(ranked.cell(7, 3).value, "박학생")
+        self.assertEqual(ranked.cell(7, 10).value, "보충 대상")
+
+        answers = workbook["학생별 답안"]
+        self.assertEqual(answers.cell(5, 8).value, "1번")
+        self.assertEqual(answers.cell(6, 8).value, "'=1+1")
+
+    def test_analysis_export_endpoint_returns_private_xlsx(self):
+        apply_exam_result_import(
+            plan=plan_exam_result_import(
+                exam=self.exam,
+                tenant=self.tenant,
+                filename="analysis-source.xlsx",
+                workbook_bytes=_workbook_bytes(
+                    [
+                        ["수강등록ID", "이름", 1, 2],
+                        [self.enrollment.id, "김학생", "O", "X"],
+                    ]
+                ),
+            )
+        )
+        request = self._request(
+            "get",
+            f"/results/admin/exams/{self.exam.id}/analysis-export/",
+        )
+
+        response = AdminExamAnalysisExcelExportView.as_view()(
+            request,
+            exam_id=self.exam.id,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(bytes(response.content).startswith(b"PK"))
+        self.assertIn("analysis.xlsx", response["Content-Disposition"])
+        self.assertEqual(response["Cache-Control"], "private, no-store")
+
     def test_wrong_note_export_omits_students_without_wrong_notes(self):
         result = Result.objects.create(
             target_type="exam",
@@ -1292,6 +1387,16 @@ class ExamResultExcelImportTests(TestCase):
         )
         self.assertEqual(export_response.status_code, 404)
 
+        analysis_request = self._request(
+            "get",
+            f"/results/admin/exams/{other_exam.id}/analysis-export/",
+        )
+        analysis_response = AdminExamAnalysisExcelExportView.as_view()(
+            analysis_request,
+            exam_id=other_exam.id,
+        )
+        self.assertEqual(analysis_response.status_code, 404)
+
     def test_student_cannot_export_wrong_note_records(self):
         request = self.factory.get(
             f"/results/admin/exams/{self.exam.id}/wrong-note-export/"
@@ -1305,3 +1410,14 @@ class ExamResultExcelImportTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 403)
+
+        analysis_request = self.factory.get(
+            f"/results/admin/exams/{self.exam.id}/analysis-export/"
+        )
+        analysis_request.tenant = self.tenant
+        force_authenticate(analysis_request, user=self.enrollment.student.user)
+        analysis_response = AdminExamAnalysisExcelExportView.as_view()(
+            analysis_request,
+            exam_id=self.exam.id,
+        )
+        self.assertEqual(analysis_response.status_code, 403)
