@@ -42,6 +42,8 @@ class AuditTenantOnboardingCommandTests(TestCase):
             stdout=StringIO(),
         )
         self.tenant = Tenant.objects.get(code="movementhui")
+        self.tenant.messaging_is_active = False
+        self.tenant.save(update_fields=["messaging_is_active"])
         self.program = Program.objects.get(tenant=self.tenant)
         today = timezone.localdate()
         self.program.subscription_started_at = today

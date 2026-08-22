@@ -37,6 +37,11 @@ class DisabledTenantMessagingPolicyTests(TestCase):
 
         self.assertFalse(is_messaging_disabled(11))
 
+    def test_owner_customer_setting_is_not_a_global_runtime_hold(self):
+        from apps.domains.messaging.policy import is_messaging_runtime_held
+
+        self.assertFalse(is_messaging_runtime_held(4))
+
     @patch.dict(os.environ, {"MESSAGING_DISABLED_TENANT_IDS": "11"})
     def test_emergency_ops_hold_is_separate_from_tenant_setting(self):
         from apps.domains.messaging.policy import (

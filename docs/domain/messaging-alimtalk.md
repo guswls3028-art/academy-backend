@@ -379,6 +379,8 @@ signup 카테고리만 자체 Solapi 템플릿을 유지. 나머지 매핑 카�
 
 ### 공용 owner provider
 
+- owner tenant는 승인 채널 인프라의 소유자다. owner 학원의 고객용 `messaging_is_active=false`는 다른 업무 tenant로 전파하지 않으며, 공용 채널 경계에서 공유하는 차단은 테스트 tenant와 긴급 운영 hold뿐이다. 업무 tenant 자신의 고객 토글은 계속 발송 전에 fail-closed로 검사한다.
+
 출처: `policy.py`, `queue_service.py`, `sqs_main.py`
 
 - 실발송 provider/PFID는 `OWNER_TENANT_ID` 공용 설정만 사용한다.

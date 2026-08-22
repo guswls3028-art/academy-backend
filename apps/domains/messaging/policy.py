@@ -245,6 +245,12 @@ def is_messaging_ops_held(tenant_id: int) -> bool:
     return int(tenant_id) in get_disabled_messaging_tenant_ids()
 
 
+def is_messaging_runtime_held(tenant_id: int) -> bool:
+    """공용 채널 런타임 자체를 막는 테스트/긴급 운영 보호 여부."""
+    tid = int(tenant_id)
+    return tid == get_test_tenant_id() or is_messaging_ops_held(tid)
+
+
 def get_messaging_disabled_reason(tenant_id: int) -> str:
     """Return a stable user-facing reason when messaging is operationally paused."""
     if not is_messaging_disabled(tenant_id):
@@ -410,8 +416,10 @@ def send_alimtalk_via_owner(
 
     owner_id = get_owner_tenant_id()
 
-    if is_messaging_disabled(owner_id):
-        logger.info("send_alimtalk_via_owner: messaging disabled for owner tenant")
+    # 공용 owner는 채널 인프라 소유자다. owner 학원의 고객용 off 설정이 다른
+    # 학원의 발송까지 전역 중지시키면 안 되며, 테스트/긴급 hold만 공유한다.
+    if is_messaging_runtime_held(owner_id):
+        logger.info("send_alimtalk_via_owner: owner channel runtime held")
         return True  # 테스트 환경에서는 성공 간주
     business_tenant_id = int(source_tenant_id or owner_id)
     if is_messaging_disabled(business_tenant_id):
