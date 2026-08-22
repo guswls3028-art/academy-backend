@@ -488,6 +488,11 @@ class VideoProgress(models.Model):
     progress = models.FloatField(default=0)
     last_position = models.IntegerField(default=0)
     completed = models.BooleanField(default=False)
+    forward_skip_seconds_used = models.PositiveIntegerField(
+        default=0,
+        db_default=0,
+        help_text="온라인 수업 대체 모드에서 서버가 승인한 앞으로 건너뛰기 누적 초",
+    )
 
     updated_at = models.DateTimeField(auto_now=True)
 

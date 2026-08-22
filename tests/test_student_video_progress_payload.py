@@ -4,6 +4,7 @@ from apps.domains.student_app.media.views import (
     _safe_video_progress,
 )
 from apps.domains.student_app.media.serializers import StudentVideoPlaybackSerializer
+from apps.domains.video.policy import video_forward_skip_budget
 from scripts.post_deploy_smoke.video_playback_chain import _resolve_hls_relative
 
 
@@ -67,3 +68,13 @@ def test_video_smoke_resolves_hls_relative_paths_from_manifest_directory():
 
     assert variant == "https://cdn.example.test/tenants/1/video/hls/284/v2/index.m3u8?exp=2&sig=y"
     assert segment == "https://cdn.example.test/tenants/1/video/hls/284/v2/seg-00001.ts?exp=3&sig=z"
+
+
+def test_video_forward_skip_budget_uses_twenty_percent_with_thirty_minute_cap():
+    one_hour = video_forward_skip_budget(duration=60 * 60, used_seconds=0)
+    three_hours = video_forward_skip_budget(duration=3 * 60 * 60, used_seconds=1795)
+
+    assert one_hour["limit_seconds"] == 12 * 60
+    assert one_hour["remaining_seconds"] == 12 * 60
+    assert three_hours["limit_seconds"] == 30 * 60
+    assert three_hours["remaining_seconds"] == 5

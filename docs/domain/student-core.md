@@ -409,10 +409,33 @@ python -m pytest apps\domains\students\tests\test_student_support.py -v --tb=sho
 
 `FREE_REVIEW` and `PROCTORED_CLASS` decide whether monitored playback sessions
 and event writes are required. They do not erase the teacher's saved video
-controls. In review mode, `Video.allow_skip`, `Video.max_speed`, and
-`Video.show_watermark` are returned as the effective seek, playback-rate, and
-watermark policy. In proctored mode the stricter class controls remain in
-force. The student player must consume the nested `policy` returned by
+controls. In review mode, `Video.max_speed` and `Video.show_watermark` remain the
+effective playback-rate and watermark policy. `Video.allow_skip=True` keeps the
+existing free seek behavior; the default `False` now selects the limited
+forward-skip budget instead of blocking every useful jump.
+
+Default-limited review and proctored playback both block arbitrary forward
+seeking, but the student may move forward through the server-approved
+`budgeted_forward` control in fixed 10-second steps. The per-video allowance is
+the smaller of 20% of the encoded duration and 30 minutes.
+`VideoProgress.forward_skip_seconds_used` is the
+server-owned cumulative counter, so refreshes, devices, tabs, and new playback
+sessions do not reset it. `POST
+/api/v1/student/video/videos/{video_id}/forward-skip/` locks the selected
+enrollment before granting at most one step; the final grant may be shorter than
+10 seconds and concurrent requests cannot exceed the allowance. Approved jumps
+advance the ordinary playback position and therefore count as permitted course
+progress. Backward 10-second movement remains available. Arbitrary progress-bar
+forward movement and direct unapproved seeks still fail closed and enter the
+proctored event stream.
+
+The budget is unavailable when the duration is missing, and an explicit
+`VideoAccess.block_seek` still blocks all seeking. Parents may watch through the
+existing selected-child contract but cannot consume the student's persisted
+skip allowance. Once the proctored completion rule changes the video to
+`FREE_REVIEW`, free seeking applies only when the teacher explicitly enabled
+`Video.allow_skip`; otherwise the same persisted limited allowance remains.
+The student player must consume the nested `policy` returned by
 `GET /api/v1/student/video/videos/{video_id}/playback/`; the flat video fields
 are display metadata, not a second policy source.
 

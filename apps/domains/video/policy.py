@@ -6,6 +6,49 @@ from typing import Dict, Tuple, Optional
 VIDEO_COMPLETION_THRESHOLD = 0.9
 MIN_VIDEO_MAX_SPEED = 0.25
 MAX_VIDEO_MAX_SPEED = 5.0
+VIDEO_FORWARD_SKIP_RATIO = 0.2
+VIDEO_FORWARD_SKIP_MAX_SECONDS = 30 * 60
+VIDEO_FORWARD_SKIP_STEP_SECONDS = 10
+
+
+def video_forward_skip_budget(*, duration: object, used_seconds: object = 0) -> Dict[str, int | str | bool]:
+    """Return the server-owned forward-skip allowance for one video progress row."""
+    try:
+        total_seconds = int(duration or 0)
+    except (TypeError, ValueError):
+        total_seconds = 0
+
+    try:
+        consumed_seconds = int(used_seconds or 0)
+    except (TypeError, ValueError):
+        consumed_seconds = 0
+
+    total_seconds = max(0, total_seconds)
+    consumed_seconds = max(0, consumed_seconds)
+    limit_seconds = min(
+        int(total_seconds * VIDEO_FORWARD_SKIP_RATIO),
+        VIDEO_FORWARD_SKIP_MAX_SECONDS,
+    )
+    consumed_seconds = min(consumed_seconds, limit_seconds)
+    remaining_seconds = max(0, limit_seconds - consumed_seconds)
+
+    if total_seconds <= 0:
+        unavailable_reason = "duration_unavailable"
+    elif remaining_seconds <= 0:
+        unavailable_reason = "limit_reached"
+    else:
+        unavailable_reason = ""
+
+    return {
+        "enabled": total_seconds > 0 and remaining_seconds > 0,
+        "step_seconds": VIDEO_FORWARD_SKIP_STEP_SECONDS,
+        "ratio_percent": int(VIDEO_FORWARD_SKIP_RATIO * 100),
+        "max_seconds": VIDEO_FORWARD_SKIP_MAX_SECONDS,
+        "limit_seconds": limit_seconds,
+        "used_seconds": consumed_seconds,
+        "remaining_seconds": remaining_seconds,
+        "unavailable_reason": unavailable_reason,
+    }
 
 
 def normalize_video_max_speed(value: object) -> float:
