@@ -354,7 +354,11 @@ PostgreSQL 최초 생성 경쟁은
   평균, 석차, 합불, 문항 통계에서 0점 응시자로 계산하지 않는다.
 
 AI OMR 성공 콜백은 인식 fact를 저장한 뒤 같은 worker 프로세스에서 채점과
-`Result` 동기화를 닫는다. CPU/GPU AI worker 이미지는 API 전용 DRF를 설치하지
+`Result` 동기화를 닫는다. 이 동기화는 문항별 최신 `ResultItem`과 append-only
+`ResultFact`를 같은 transaction에서 함께 저장하므로 점수 목록과 문항 분석이
+부분 성공으로 갈라지지 않는다. 수동 검토가 필요하지 않은 OMR은 legacy
+`ExamResult`도 `FINAL`로 확정한 다음 진행도와 수업 분석을 갱신하며, 검토 필요
+표시가 있는 OMR만 DRAFT로 유지한다. CPU/GPU AI worker 이미지는 API 전용 DRF를 설치하지
 않으므로 이 경로의 점수 편집 임대 무효화는 Django ORM만 의존하는
 `score_edit_lease_state`를 사용한다. worker 이미지 빌드와
 `tests/test_worker_entrypoint_imports.py`는 DRF가 없는 환경에서

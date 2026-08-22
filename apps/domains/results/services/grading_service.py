@@ -36,6 +36,12 @@ def grade_submission(submission_id: int) -> ExamResult:
         )
         raise
 
+    # A fully recognized OMR submission has no remaining teacher-owned grading
+    # step. Publish its compatibility snapshot before progress/analytics read it.
+    # OMR rows explicitly marked for manual review remain DRAFT above.
+    if submission.source == submission.Source.OMR_SCAN:
+        result.finalize()
+
     # ✅ 시험 채점 완료 → progress / clinic 자동 갱신
     dispatch_progress_pipeline(submission_id=int(submission_id))
 

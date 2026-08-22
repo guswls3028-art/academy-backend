@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from apps.api.common.query_params import parse_query_bool
 from apps.domains.submissions.models import Submission
 from apps.domains.submissions.services.lifecycle import OMR_CONFLICT_STATUSES
 from apps.support.omr.candidate_matching import (
@@ -10,6 +9,10 @@ from apps.support.omr.candidate_matching import (
 
 
 def allow_duplicate_requested(request) -> bool:
+    # HTTP-only validation must not become an import-time dependency of the
+    # AI worker callback, whose intentionally minimal image does not ship DRF.
+    from apps.api.common.query_params import parse_query_bool
+
     return bool(
         parse_query_bool(
             request.query_params,
