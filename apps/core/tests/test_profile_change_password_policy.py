@@ -24,6 +24,7 @@ class ProfileChangePasswordPolicyTests(TestCase):
             is_active=True,
         )
         self.view = ProfileViewSet.as_view({"post": "change_password"})
+        self.update_view = ProfileViewSet.as_view({"patch": "update_me"})
 
     def _post(self, data: dict):
         request = self.factory.post("/api/v1/core/profile/change-password/", data, format="json")
@@ -44,3 +45,19 @@ class ProfileChangePasswordPolicyTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.user.refresh_from_db()
         self.assertTrue(self.user.check_password("oldpw123"))
+
+    def test_invalid_profile_payload_does_not_partially_change_username(self):
+        original_username = self.user.username
+        request = self.factory.patch(
+            "/api/v1/core/profile/update_me/",
+            {"username": "renamed-teacher", "name": "x" * 51},
+            format="json",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.user)
+
+        response = self.update_view(request)
+
+        self.assertEqual(response.status_code, 400)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.username, original_username)

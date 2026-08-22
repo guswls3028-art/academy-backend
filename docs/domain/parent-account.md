@@ -1,7 +1,7 @@
 # 학부모 계정 SSOT
 
 **상태:** Active
-**최종 점검:** 2026-05-23
+**최종 점검:** 2026-08-22
 **코드 기준:** `apps/domains/parents/services/__init__.py`, `apps/domains/parents/models.py`, `apps/api/common/auth_jwt.py`
 
 ## 1. 계정 생성 규칙
@@ -17,6 +17,8 @@
 | 생성 시점 | 학생 생성 SSOT 또는 계정복구 중 parent ensure 호출 |
 
 `PARENT_DEFAULT_PASSWORD = "0000"` 상수는 외부 import 호환용 deprecated 값이다. 신규 코드에서 초기 비밀번호로 사용하지 않는다.
+입력은 하이픈/공백을 제거한 뒤 `010` 11자리여야 하며, 짧거나 잘못된 번호를
+`0000` 또는 다른 공용 비밀번호로 보정하지 않고 요청을 실패시킨다.
 
 ## 2. 생성/연결 플로우
 
@@ -38,8 +40,16 @@
          result.password_for_notice = parent_initial_password(phone)
     -> Parent 있음 + user 있음:
          기존 Parent 반환
+         TenantMembership(parent) 활성 상태 보정
          result.password_for_notice = "변경되지 않음"
 ```
+
+동일 테넌트에서 같은 학부모 번호를 가진 학생 둘을 동시에 등록할 수 있다.
+서비스는 Parent row를 잠그고, 신규 row 경합은 DB의 User username 및
+`uniq_parent_phone_per_tenant` 유일 제약 충돌 후 한 번 재조회한다. 두 요청은
+같은 Parent/User/Membership을 반환하며 초기 비밀번호를 실제로 만든 요청만
+`user_created=True`와 안내용 초기 비밀번호를 갖는다. 기존 User/Parent의
+비밀번호는 idempotent ensure 중 다시 설정하지 않는다.
 
 학생 생성 경로의 Parent/User/Student/Membership 계정 그래프는
 [student-creation.md](student-creation.md)가 정본이다.
@@ -106,3 +116,13 @@ python manage.py reset_all_parent_passwords
 ```
 
 전체 학부모 계정에 영향을 줄 수 있으므로 운영 실행 전 대상 row 수를 확인하고 사용자 명시 승인을 받아야 한다. 신규 초기 비밀번호 정책은 이 명령이 아니라 `parent_initial_password()`가 SSOT다.
+
+집중 검증:
+
+```powershell
+python manage.py test apps.domains.parents.tests.test_account_creation
+python manage.py test apps.domains.parents.tests.test_account_creation_concurrency_pg
+```
+
+두 번째 테스트는 PostgreSQL row/unique-lock 동작을 검증하므로 SQLite에서는
+skip이 정답이다.

@@ -1,5 +1,7 @@
 # PATH: apps/domains/students/views/password_views.py
 
+import logging
+
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
@@ -9,6 +11,9 @@ from apps.core.permissions import TenantResolved
 from apps.core.parsing import parse_bool
 from apps.api.common.throttles import AlimtalkEndpointThrottle, StaffPasswordResetThrottle
 from apps.core.models import TenantMembership
+
+
+logger = logging.getLogger(__name__)
 
 
 LEGACY_PASSWORD_FIND_GONE = (
@@ -146,10 +151,13 @@ class StudentPasswordResetSendView(APIView):
 
             try:
                 send_password_recovery(account)
-            except AccountRecoveryValidationError as e:
-                return Response({"detail": e.detail}, status=400)
-            except AccountRecoveryDeliveryError as e:
-                return Response({"detail": e.detail}, status=503)
+            except (AccountRecoveryValidationError, AccountRecoveryDeliveryError):
+                logger.warning(
+                    "Legacy public password recovery could not reserve delivery tenant_id=%s target=%s",
+                    tenant.id,
+                    recovery_target,
+                    exc_info=True,
+                )
             return Response({"message": message}, status=200)
 
         from apps.domains.students.services.account_recovery import (

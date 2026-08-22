@@ -7,12 +7,23 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Callable
 
 from django.contrib.auth.hashers import check_password, make_password
+from django.contrib.auth import get_user_model
+from django.db import transaction
 from django.utils import timezone
 
 TEMP_PASSWORD_LENGTH = 6
 PENDING_PASSWORD_RESET_TTL_MINUTES = 30
+
+
+class CurrentPasswordMismatch(ValueError):
+    """The supplied current password no longer matches the locked user row."""
+
+
+class PasswordNoticeDeliveryError(RuntimeError):
+    """The password change could not be committed with its required notice."""
 
 
 def generate_temp_password(length: int = TEMP_PASSWORD_LENGTH) -> str:
@@ -41,6 +52,39 @@ def change_password(user, new_password: str) -> None:
     user.save(update_fields=["password", "token_version", "must_change_password"])
 
 
+def change_password_with_notice(
+    user,
+    *,
+    current_password: str,
+    new_password: str,
+    send_notice: Callable[..., bool],
+):
+    """Atomically verify, change, invalidate tokens, and reserve the notice.
+
+    The current-password check is deliberately repeated after ``select_for_update``.
+    Without that lock, two concurrent requests can both validate the same old
+    password and the last writer silently wins.  Raising on notice failure also
+    rolls back ``password``, ``token_version``, ``must_change_password`` and the
+    durable notification reservation together.
+    """
+
+    User = get_user_model()
+    with transaction.atomic():
+        locked_user = User.objects.select_for_update().get(pk=user.pk)
+        if not locked_user.check_password(current_password):
+            raise CurrentPasswordMismatch("현재 비밀번호가 올바르지 않습니다.")
+
+        change_password(locked_user, new_password)
+        if not send_notice(user=locked_user, password=str(new_password)):
+            raise PasswordNoticeDeliveryError(
+                "비밀번호 변경 알림톡 발송에 실패했습니다. 잠시 후 다시 시도해 주세요."
+            )
+
+    for field in ("password", "token_version", "must_change_password"):
+        setattr(user, field, getattr(locked_user, field))
+    return locked_user
+
+
 def force_reset_password(user, new_password: str) -> None:
     """
     관리자에 의한 강제 임시 비밀번호 리셋.
@@ -52,24 +96,6 @@ def force_reset_password(user, new_password: str) -> None:
     user.token_version = (getattr(user, "token_version", 0) or 0) + 1
     user.must_change_password = True
     user.save(update_fields=["password", "token_version", "must_change_password"])
-
-
-def rollback_password(
-    user,
-    old_password_hash: str,
-    *,
-    must_change_password: bool | None = None,
-) -> None:
-    """
-    비밀번호 변경 후 알림톡 발송 실패 등으로 롤백할 때 사용.
-    token_version은 롤백하지 않는다 (이미 변경된 토큰은 무효화 유지).
-    """
-    user.password = old_password_hash
-    update_fields = ["password"]
-    if must_change_password is not None:
-        user.must_change_password = must_change_password
-        update_fields.append("must_change_password")
-    user.save(update_fields=update_fields)
 
 
 def create_pending_password_reset(
@@ -103,38 +129,6 @@ def clear_pending_password_reset(user) -> None:
     from apps.core.models import PendingPasswordReset
 
     PendingPasswordReset.objects.filter(user=user).delete()
-
-
-def snapshot_pending_password_reset(user) -> dict[str, object] | None:
-    """Capture the current pending reset so a failed delivery can restore it."""
-    from apps.core.models import PendingPasswordReset
-
-    pending = (
-        PendingPasswordReset.objects
-        .filter(user=user)
-        .order_by("-created_at")
-        .values("password_hash", "expires_at")
-        .first()
-    )
-    return dict(pending) if pending else None
-
-
-def restore_pending_password_reset(user, snapshot: dict[str, object] | None) -> None:
-    """Restore a pending reset snapshot, or clear pending state when absent."""
-    from apps.core.models import PendingPasswordReset
-
-    if snapshot is None:
-        PendingPasswordReset.objects.filter(user=user).delete()
-        return
-
-    PendingPasswordReset.objects.update_or_create(
-        user=user,
-        defaults={
-            "tenant_id": user.tenant_id,
-            "password_hash": snapshot["password_hash"],
-            "expires_at": snapshot["expires_at"],
-        },
-    )
 
 
 def consume_pending_password_reset(user, raw_password: str) -> bool:

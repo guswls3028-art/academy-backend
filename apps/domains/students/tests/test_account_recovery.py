@@ -361,7 +361,11 @@ class AccountRecoveryDispatchTests(TestCase):
             }
         )
 
-        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.data["message"],
+            "입력한 정보가 등록되어 있다면 해당 번호로 임시 비밀번호 알림톡이 발송됩니다.",
+        )
         send_mock.assert_called_once()
         self.user.refresh_from_db()
         self.assertTrue(self.user.check_password("oldpw123"))
@@ -382,7 +386,7 @@ class AccountRecoveryDispatchTests(TestCase):
         second_response = self._post(payload)
 
         self.assertEqual(first_response.status_code, 200)
-        self.assertEqual(second_response.status_code, 503)
+        self.assertEqual(second_response.status_code, 200)
         self.assertEqual(send_mock.call_count, 2)
         self.user.refresh_from_db()
         self.assertTrue(self.user.check_password("oldpw123"))
@@ -405,7 +409,7 @@ class AccountRecoveryDispatchTests(TestCase):
         second_response = self._api_post(payload, tenant_code=self.tenant.code)
 
         self.assertEqual(first_response.status_code, 200)
-        self.assertEqual(second_response.status_code, 503)
+        self.assertEqual(second_response.status_code, 200)
         self.assertEqual(send_mock.call_count, 2)
         self.assertEqual(PendingPasswordReset.objects.filter(user=self.user).count(), 1)
         self.assertEqual(self._api_token_post("S001", "33334444").status_code, 400)

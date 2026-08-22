@@ -73,6 +73,13 @@ class AccountNoticeDeliveryFailed(APIException):
     default_detail = "계정 안내 알림톡 발송에 실패했습니다. 잠시 후 다시 시도해 주세요."
     default_code = "account_notice_delivery_failed"
 
+
+class StudentProfilePhotoStorageFailed(APIException):
+    status_code = 503
+    default_detail = "프로필 사진 저장에 실패했습니다. 잠시 후 다시 시도해 주세요."
+    default_code = "student_profile_photo_storage_failed"
+
+
 class StudentListPagination(PageNumberPagination):
     """SSOT: 프론트엔드가 총 개수(count)와 results를 기대하므로 응답에 count 포함."""
     page_size = 50
@@ -751,11 +758,6 @@ class StudentViewSet(ModelViewSet):
         new_pw = (data.get("new_password") or "").strip()
         password_changed = bool(current_pw and new_pw)
         if password_changed:
-            if not user.check_password(current_pw):
-                return Response(
-                    {"detail": "현재 비밀번호가 일치하지 않습니다."},
-                    status=400,
-                )
             if len(new_pw) < 4:
                 return Response(
                     {"detail": "새 비밀번호는 4자 이상이어야 합니다."},
@@ -783,25 +785,25 @@ class StudentViewSet(ModelViewSet):
 
             # 비밀번호 변경
             if password_changed:
-                from apps.core.services.password import change_password, rollback_password
+                from apps.core.services.password import (
+                    CurrentPasswordMismatch,
+                    PasswordNoticeDeliveryError,
+                    change_password_with_notice,
+                )
                 from apps.domains.students.services.account_notifications import (
                     send_user_password_changed_notice,
                 )
-                previous_password_hash = user.password
-                previous_must_change_password = bool(getattr(user, "must_change_password", False))
-                change_password(user, new_pw)
-                if not send_user_password_changed_notice(user=user, password=new_pw):
-                    rollback_password(
+                try:
+                    change_password_with_notice(
                         user,
-                        previous_password_hash,
-                        must_change_password=previous_must_change_password,
+                        current_password=current_pw,
+                        new_password=new_pw,
+                        send_notice=send_user_password_changed_notice,
                     )
-                    raise AccountNoticeDeliveryFailed("비밀번호 변경 알림톡 발송에 실패했습니다. 잠시 후 다시 시도해 주세요.")
-
-            # 프로필 사진
-            if "profile_photo" in request.FILES:
-                student.profile_photo = request.FILES["profile_photo"]
-                student.save(update_fields=["profile_photo"])
+                except CurrentPasswordMismatch:
+                    raise ValidationError({"detail": "현재 비밀번호가 일치하지 않습니다."})
+                except PasswordNoticeDeliveryError as exc:
+                    raise AccountNoticeDeliveryFailed(str(exc))
 
             try:
                 result = update_student_profile(
@@ -836,6 +838,25 @@ class StudentViewSet(ModelViewSet):
                     to=student.parent_phone,
                 ):
                     raise AccountNoticeDeliveryFailed()
+
+            # Legacy /students/me/ compatibility uses the same R2-only photo
+            # boundary as /student-app/me/. Keep it last so earlier account
+            # notice failures cannot leave an uploaded replacement behind.
+            if "profile_photo" in request.FILES:
+                from apps.domains.students.services.profile_photo import (
+                    StudentProfilePhotoStorageError,
+                    StudentProfilePhotoValidationError,
+                    replace_student_profile_photo,
+                )
+                try:
+                    student = replace_student_profile_photo(
+                        student=student,
+                        photo=request.FILES["profile_photo"],
+                    )
+                except StudentProfilePhotoValidationError as exc:
+                    raise ValidationError({"detail": str(exc)})
+                except StudentProfilePhotoStorageError as exc:
+                    raise StudentProfilePhotoStorageFailed(str(exc))
 
         serializer = StudentDetailSerializer(
             student,

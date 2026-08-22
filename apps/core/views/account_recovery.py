@@ -1,5 +1,7 @@
 # PATH: apps/core/views/account_recovery.py
 
+import logging
+
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -20,6 +22,7 @@ GENERIC_MESSAGES = {
     "username": "입력한 정보가 등록되어 있다면 해당 번호로 아이디 안내 알림톡이 발송됩니다.",
     "password": "입력한 정보가 등록되어 있다면 해당 번호로 임시 비밀번호 알림톡이 발송됩니다.",
 }
+logger = logging.getLogger(__name__)
 
 
 class AccountRecoveryDispatchView(APIView):
@@ -70,9 +73,13 @@ class AccountRecoveryDispatchView(APIView):
                 send_username_recovery(account)
             else:
                 send_password_recovery(account)
-        except AccountRecoveryValidationError as e:
-            return Response({"detail": e.detail}, status=400)
-        except AccountRecoveryDeliveryError as e:
-            return Response({"detail": e.detail}, status=503)
+        except (AccountRecoveryValidationError, AccountRecoveryDeliveryError):
+            logger.warning(
+                "Public account recovery could not reserve delivery tenant_id=%s mode=%s target=%s",
+                tenant.id,
+                mode,
+                target,
+                exc_info=True,
+            )
 
         return Response({"message": GENERIC_MESSAGES[mode]}, status=200)

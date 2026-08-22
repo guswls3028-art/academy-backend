@@ -14742,6 +14742,36 @@
         ],
         "type": "object"
       },
+      "TenantAwareTokenRefresh": {
+        "description": "Reject refresh tokens whose account or tenant authorization is stale.",
+        "properties": {
+          "access": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "refresh": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "access",
+          "refresh"
+        ],
+        "type": "object"
+      },
+      "TenantAwareTokenRefreshRequest": {
+        "description": "Reject refresh tokens whose account or tenant authorization is stale.",
+        "properties": {
+          "refresh": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "refresh"
+        ],
+        "type": "object"
+      },
       "TenantOwnerListItem": {
         "properties": {
           "handoffStatus": {
@@ -14815,34 +14845,6 @@
           "detail",
           "mustChangePassword",
           "userId"
-        ],
-        "type": "object"
-      },
-      "TokenRefresh": {
-        "properties": {
-          "access": {
-            "readOnly": true,
-            "type": "string"
-          },
-          "refresh": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "access",
-          "refresh"
-        ],
-        "type": "object"
-      },
-      "TokenRefreshRequest": {
-        "properties": {
-          "refresh": {
-            "minLength": 1,
-            "type": "string"
-          }
-        },
-        "required": [
-          "refresh"
         ],
         "type": "object"
       },
@@ -45350,17 +45352,17 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/TokenRefreshRequest"
+                "$ref": "#/components/schemas/TenantAwareTokenRefreshRequest"
               }
             },
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/TokenRefreshRequest"
+                "$ref": "#/components/schemas/TenantAwareTokenRefreshRequest"
               }
             },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/TokenRefreshRequest"
+                "$ref": "#/components/schemas/TenantAwareTokenRefreshRequest"
               }
             }
           },
@@ -45371,7 +45373,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TokenRefresh"
+                  "$ref": "#/components/schemas/TenantAwareTokenRefresh"
                 }
               }
             },

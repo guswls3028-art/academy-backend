@@ -99,39 +99,19 @@ class StudentProfileView(APIView):
         # 1) 프로필 사진 (multipart) → R2 업로드
         photo = request.FILES.get("profile_photo")
         if photo:
-            if not (photo.content_type and photo.content_type.startswith("image/")):
-                return Response({"detail": "이미지 파일만 업로드할 수 있습니다."}, status=400)
-            if photo.size and photo.size > 10 * 1024 * 1024:  # 10MB
-                return Response({"detail": "프로필 사진은 10MB 이하만 업로드할 수 있습니다."}, status=400)
-            # 매직바이트 검증 — Content-Type 위장 차단.
-            from apps.api.common.image_validator import is_real_image
-            if not is_real_image(photo):
-                return Response({"detail": "이미지 파일이 손상되었거나 이미지 형식이 아닙니다."}, status=400)
-            # R2에 업로드
+            from apps.support.students.profile_photo_dependencies import (
+                StudentProfilePhotoStorageError,
+                StudentProfilePhotoValidationError,
+                replace_student_profile_photo,
+            )
             try:
-                import uuid
-                from apps.core.r2_paths import profile_photo_key
-                from academy.adapters.storage.r2_objects import upload_fileobj
-
-                ext = (photo.name or "photo.jpg").rsplit(".", 1)[-1].lower() or "jpg"
-                if ext not in ("jpg", "jpeg", "png", "gif", "webp"):
-                    ext = "jpg"
-                r2_key = profile_photo_key(
-                    tenant_id=student.tenant_id,
-                    student_id=student.id,
-                    unique_id=str(uuid.uuid4())[:8],
-                    ext=ext,
-                )
-                upload_fileobj(photo, r2_key, content_type=photo.content_type)
-                student.profile_photo_r2_key = r2_key
-                student.save(update_fields=["profile_photo_r2_key"])
-                return _profile_response(request, student)
-            except Exception as e:
-                logger.error("R2 profile photo upload failed: %s", e)
-                # Fallback to local storage
-                student.profile_photo = photo
-                student.save(update_fields=["profile_photo"])
-                return _profile_response(request, student)
+                student = replace_student_profile_photo(student=student, photo=photo)
+            except StudentProfilePhotoValidationError as exc:
+                return Response({"detail": str(exc)}, status=400)
+            except StudentProfilePhotoStorageError as exc:
+                logger.warning("Profile photo replacement failed student_id=%s", student.id)
+                return Response({"detail": str(exc)}, status=503)
+            return _profile_response(request, student)
 
         # 2) JSON: name, username, 비밀번호 변경
         data = getattr(request, "data", None) or {}
@@ -146,8 +126,6 @@ class StudentProfileView(APIView):
         new_password = data.get("new_password")
         password_changed = current_password is not None and new_password is not None
         if password_changed:
-            if not request.user.check_password(current_password):
-                return Response({"detail": "현재 비밀번호가 일치하지 않습니다."}, status=400)
             if not str(new_password).strip() or len(str(new_password)) < 4:
                 return Response({"detail": "새 비밀번호는 4자 이상이어야 합니다."}, status=400)
 
@@ -171,17 +149,22 @@ class StudentProfileView(APIView):
                 parent_phone_changed = (student.parent_phone or "") != old_parent_phone
 
                 if password_changed:
-                    from apps.core.services.password import change_password, rollback_password
-                    previous_password_hash = request.user.password
-                    previous_must_change_password = bool(getattr(request.user, "must_change_password", False))
-                    change_password(request.user, new_password)
-                    if not send_user_password_changed_notice(user=request.user, password=str(new_password)):
-                        rollback_password(
+                    from apps.core.services.password import (
+                        CurrentPasswordMismatch,
+                        PasswordNoticeDeliveryError,
+                        change_password_with_notice,
+                    )
+                    try:
+                        change_password_with_notice(
                             request.user,
-                            previous_password_hash,
-                            must_change_password=previous_must_change_password,
+                            current_password=str(current_password),
+                            new_password=str(new_password),
+                            send_notice=send_user_password_changed_notice,
                         )
-                        raise AccountNoticeDeliveryFailed("비밀번호 변경 알림톡 발송에 실패했습니다. 잠시 후 다시 시도해 주세요.")
+                    except CurrentPasswordMismatch:
+                        raise StudentProfileUpdateError({"detail": "현재 비밀번호가 일치하지 않습니다."})
+                    except PasswordNoticeDeliveryError as exc:
+                        raise AccountNoticeDeliveryFailed(str(exc))
 
                 if not password_changed and (username_changed or phone_changed):
                     if not send_student_account_credentials_notice(

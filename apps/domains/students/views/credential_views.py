@@ -1,5 +1,7 @@
 # PATH: apps/domains/students/views/credential_views.py
 
+import logging
+
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
@@ -8,6 +10,9 @@ from apps.core.permissions import TenantResolved
 from apps.api.common.throttles import AlimtalkEndpointThrottle
 
 from .password_views import _normalize_phone_for_reset
+
+
+logger = logging.getLogger(__name__)
 
 
 class SendExistingCredentialsView(APIView):
@@ -65,9 +70,11 @@ class SendExistingCredentialsView(APIView):
 
         try:
             send_password_recovery(account)
-        except AccountRecoveryValidationError as e:
-            return Response({"detail": e.detail}, status=400)
-        except AccountRecoveryDeliveryError as e:
-            return Response({"detail": e.detail}, status=503)
+        except (AccountRecoveryValidationError, AccountRecoveryDeliveryError):
+            logger.warning(
+                "Legacy public credential recovery could not reserve delivery tenant_id=%s",
+                tenant.id,
+                exc_info=True,
+            )
 
         return Response({"message": message}, status=200)

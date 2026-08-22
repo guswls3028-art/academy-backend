@@ -1,7 +1,9 @@
 # PATH: apps/domains/students/tests/test_student_profile_canonicalization.py
+import base64
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.test import APIRequestFactory, force_authenticate
@@ -215,7 +217,105 @@ class StudentProfileCanonicalizationTests(TestCase):
         self.student.refresh_from_db()
         self.student.user.refresh_from_db()
         self.assertTrue(self.student.user.check_password("test1234"))
+        self.assertFalse(self.student.user.must_change_password)
+        self.assertEqual(self.student.user.token_version, 0)
         self.assertNotEqual(self.student.address, "새 주소")
+
+    @patch("apps.infrastructure.storage.r2.delete_object_r2_storage")
+    @patch("academy.adapters.storage.r2_objects.upload_fileobj", side_effect=RuntimeError("r2 unavailable"))
+    def test_student_profile_photo_storage_failure_is_not_reported_as_success(
+        self,
+        _upload_mock,
+        _delete_mock,
+    ):
+        photo = SimpleUploadedFile(
+            "profile.png",
+            base64.b64decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+            ),
+            content_type="image/png",
+        )
+        request = self.factory.patch(
+            "/api/v1/student-app/me/",
+            data={"profile_photo": photo},
+            format="multipart",
+        )
+        force_authenticate(request, user=self.student.user)
+        request.tenant = self.tenant
+
+        response = StudentProfileView.as_view()(request)
+
+        self.assertEqual(response.status_code, 503)
+        self.student.refresh_from_db()
+        self.assertFalse(self.student.profile_photo_r2_key)
+        self.assertFalse(bool(self.student.profile_photo))
+
+    @patch("apps.infrastructure.storage.r2.delete_object_r2_storage")
+    @patch("academy.adapters.storage.r2_objects.upload_fileobj", side_effect=RuntimeError("r2 unavailable"))
+    def test_legacy_student_profile_photo_uses_same_r2_failure_boundary(
+        self,
+        _upload_mock,
+        _delete_mock,
+    ):
+        photo = SimpleUploadedFile(
+            "profile.png",
+            base64.b64decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+            ),
+            content_type="image/png",
+        )
+        request = self.factory.patch(
+            "/api/v1/students/me/",
+            data={"profile_photo": photo},
+            format="multipart",
+        )
+        force_authenticate(request, user=self.student.user)
+        request.tenant = self.tenant
+
+        response = StudentViewSet.as_view(
+            {"patch": "me"},
+            permission_classes=[IsAuthenticated, IsStudent],
+        )(request)
+
+        self.assertEqual(response.status_code, 503)
+        self.student.refresh_from_db()
+        self.assertFalse(self.student.profile_photo_r2_key)
+        self.assertFalse(bool(self.student.profile_photo))
+
+    @patch("academy.adapters.storage.r2_presign.create_presigned_get_url", return_value="https://r2.example/new")
+    @patch("apps.infrastructure.storage.r2.delete_object_r2_storage")
+    @patch("academy.adapters.storage.r2_objects.upload_fileobj")
+    def test_student_profile_photo_replacement_cleans_previous_object(
+        self,
+        upload_mock,
+        delete_mock,
+        _presign_mock,
+    ):
+        self.student.profile_photo_r2_key = "tenants/old/profile.png"
+        self.student.save(update_fields=["profile_photo_r2_key"])
+        photo = SimpleUploadedFile(
+            "profile.png",
+            base64.b64decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+            ),
+            content_type="image/png",
+        )
+        request = self.factory.patch(
+            "/api/v1/student-app/me/",
+            data={"profile_photo": photo},
+            format="multipart",
+        )
+        force_authenticate(request, user=self.student.user)
+        request.tenant = self.tenant
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = StudentProfileView.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.student.refresh_from_db()
+        self.assertNotEqual(self.student.profile_photo_r2_key, "tenants/old/profile.png")
+        upload_mock.assert_called_once()
+        delete_mock.assert_called_once_with(key="tenants/old/profile.png", timeout_seconds=5)
 
     @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=True)
     def test_student_app_username_change_sends_student_account_notice(self, send_mock):
