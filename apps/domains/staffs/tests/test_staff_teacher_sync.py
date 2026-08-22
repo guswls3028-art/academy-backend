@@ -810,10 +810,16 @@ class TestStaffPasswordChange(TestCase):
 
     def test_password_change_works(self):
         """비밀번호 변경 후 새 비밀번호로 인증 가능."""
+        self.staff.user.must_change_password = True
+        self.staff.user.save(update_fields=["must_change_password"])
+        before_token_version = self.staff.user.token_version
+
         resp = self._call_change_password(self.staff.id, {"password": "new_password_123"})
         self.assertEqual(resp.status_code, 200)
         self.staff.user.refresh_from_db()
         self.assertTrue(self.staff.user.check_password("new_password_123"))
+        self.assertFalse(self.staff.user.must_change_password)
+        self.assertEqual(self.staff.user.token_version, before_token_version + 1)
 
     def test_password_too_short(self):
         """4자 미만 비밀번호는 거부."""

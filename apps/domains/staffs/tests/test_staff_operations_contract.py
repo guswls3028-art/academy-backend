@@ -566,7 +566,7 @@ class StaffOperationsContractTests(TestCase):
 
         self.assertEqual(snapshot.staff_name, "마감 당시 이름")
 
-    def test_created_account_requires_password_change(self):
+    def test_created_account_can_use_configured_password_without_recommendation(self):
         request = SimpleNamespace(tenant=self.tenant, user=self.owner)
         serializer = StaffCreateUpdateSerializer(
             data={
@@ -582,7 +582,8 @@ class StaffOperationsContractTests(TestCase):
         staff = serializer.save()
 
         self.assertIsNotNone(staff.user)
-        self.assertTrue(staff.user.must_change_password)
+        self.assertTrue(staff.user.check_password("1234"))
+        self.assertFalse(staff.user.must_change_password)
 
     def test_non_manager_staff_lacks_payroll_management_permission(self):
         user = User.objects.create_user(
