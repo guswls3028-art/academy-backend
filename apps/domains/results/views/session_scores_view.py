@@ -1085,12 +1085,21 @@ class SessionScoreCorrectionView(APIView):
                 .exclude(meta__removed_from_session_at__isnull=False)
                 .first()
             )
-            if homework is None or not HomeworkAssignment.objects.filter(
-                tenant=tenant,
-                session=session,
-                homework_id=source_id,
-                enrollment_id=enrollment_id,
-            ).exists():
+            homework_assignment = None
+            if homework is not None:
+                homework_assignment = (
+                    HomeworkAssignment.objects
+                    .select_for_update()
+                    .only("id")
+                    .filter(
+                        tenant=tenant,
+                        session=session,
+                        homework_id=source_id,
+                        enrollment_id=enrollment_id,
+                    )
+                    .first()
+                )
+            if homework is None or homework_assignment is None:
                 raise ValidationError(
                     {"source_id": "이 학생에게 등록된 과제가 아닙니다."}
                 )
