@@ -29,6 +29,11 @@ SCENARIO_CODE_PREFIX = "qa-ymath-realuse-"
 DEFAULT_SCENARIO_CODE = "qa-ymath-realuse-20260805"
 PASSWORD_ENV = "YMATH_REALUSE_SCENARIO_PASSWORD"
 LOGIN_UAT_ACCOUNT_COUNT_PER_ROLE = 10
+LOGIN_UAT_RESERVED_USERNAME_PREFIXES = (
+    "ymath-qa-student-",
+    "ymath-qa-staff-",
+    "staff-",
+)
 
 
 def assert_isolated_runtime() -> None:
@@ -102,10 +107,35 @@ class Command(BaseCommand):
         tenant_code = str(options["tenant_code"] or "").strip().lower()
         if not tenant_code.startswith(SCENARIO_CODE_PREFIX):
             raise CommandError(f"tenant-code must start with {SCENARIO_CODE_PREFIX!r}.")
+        teacher_username = str(options["teacher_username"] or "").strip()
+        normalized_teacher_username = teacher_username.lower()
+        if not teacher_username:
+            raise CommandError("teacher-username must not be empty.")
+        if normalized_teacher_username.startswith(LOGIN_UAT_RESERVED_USERNAME_PREFIXES):
+            raise CommandError("teacher-username conflicts with a reserved login UAT username.")
+
         assert_isolated_runtime()
         existing = Tenant.objects.filter(code=tenant_code).first()
         if options["destroy"]:
-            if existing is None:
+            deleted = None
+            with transaction.atomic():
+                existing = Tenant.objects.select_for_update().filter(code=tenant_code).first()
+                if existing is not None:
+                    deleted = {
+                        "tenant_id": existing.id,
+                        "counts": self._tenant_counts(existing),
+                        "users": existing.users.count(),
+                    }
+                    existing.delete()
+
+            remaining = self._remaining_for_code(tenant_code)
+            if any(remaining.values()):
+                raise CommandError(
+                    "Isolated scenario cleanup found a same-code tenant or user residue: "
+                    + json.dumps(remaining, ensure_ascii=False, sort_keys=True)
+                )
+
+            if deleted is None:
                 self.stdout.write(
                     json.dumps(
                         {
@@ -119,27 +149,13 @@ class Command(BaseCommand):
                 )
                 return
 
-            tenant_id = existing.id
-            counts = self._tenant_counts(existing)
-            user_count = existing.users.count()
-            with transaction.atomic():
-                existing.delete()
-            remaining = {
-                "tenants": Tenant.objects.filter(id=tenant_id).count(),
-                "users": get_user_model().objects.filter(tenant_id=tenant_id).count(),
-            }
-            if any(remaining.values()):
-                raise CommandError(
-                    "Isolated scenario cleanup left database residue: "
-                    + json.dumps(remaining, ensure_ascii=False, sort_keys=True)
-                )
             self.stdout.write(
                 json.dumps(
                     {
                         "status": "YMATH_REALUSE_SCENARIO_DESTROYED",
                         "tenant_code": tenant_code,
-                        "tenant_id": tenant_id,
-                        "deleted": {**counts, "users": user_count},
+                        "tenant_id": deleted["tenant_id"],
+                        "deleted": {**deleted["counts"], "users": deleted["users"]},
                         "remaining": remaining,
                     },
                     ensure_ascii=False,
@@ -149,6 +165,8 @@ class Command(BaseCommand):
             return
 
         login_uat = bool(options["login_uat"])
+        if login_uat and existing is not None and not options["reset"]:
+            raise CommandError("--login-uat requires --reset when the tenant already exists.")
         student_count = LOGIN_UAT_ACCOUNT_COUNT_PER_ROLE if login_uat else int(options["student_count"])
         session_count = int(options["session_count"])
         if not 1 <= student_count <= 30:
@@ -160,17 +178,11 @@ class Command(BaseCommand):
         if not password:
             raise CommandError(f"{PASSWORD_ENV} must be set.")
 
-        if existing and options["reset"]:
-            counts = self._tenant_counts(existing)
-            existing.delete()
-            self.stdout.write(
-                self.style.WARNING(
-                    "Deleted isolated scenario tenant before rebuild: "
-                    + json.dumps(counts, ensure_ascii=False, sort_keys=True)
-                )
-            )
-
+        reset_counts = self._tenant_counts(existing) if existing and options["reset"] else None
         with transaction.atomic():
+            if existing and options["reset"]:
+                Tenant.objects.select_for_update().get(pk=existing.pk).delete()
+
             tenant, _ = Tenant.objects.get_or_create(
                 code=tenant_code,
                 defaults={
@@ -200,7 +212,7 @@ class Command(BaseCommand):
 
             teacher = self._ensure_user(
                 tenant=tenant,
-                login_username=str(options["teacher_username"]),
+                login_username=teacher_username,
                 password=password,
                 name="Ymath QA 선생님",
                 is_staff=True,
@@ -339,11 +351,28 @@ class Command(BaseCommand):
                     )
                     login_staff.append(staff)
 
+            if login_uat:
+                self._validate_login_uat_contract(
+                    tenant=tenant,
+                    teacher=teacher,
+                    students=students,
+                    parents=parents,
+                    staffs=login_staff,
+                )
+
+        if reset_counts is not None:
+            self.stdout.write(
+                self.style.WARNING(
+                    "Deleted isolated scenario tenant before rebuild: "
+                    + json.dumps(reset_counts, ensure_ascii=False, sort_keys=True)
+                )
+            )
+
         payload = {
             "status": "YMATH_REALUSE_SCENARIO_READY",
             "tenant_code": tenant.code,
             "tenant_id": tenant.id,
-            "teacher_username": str(options["teacher_username"]),
+            "teacher_username": teacher_username,
             "teacher_user_id": teacher.id,
             "subscription_expires_at": program.subscription_expires_at.isoformat(),
             "student_ids": [student.id for student in students],
@@ -401,9 +430,53 @@ class Command(BaseCommand):
         user.name = name
         user.is_active = True
         user.is_staff = is_staff
-        user.set_password(password)
-        user.save()
+        user.save(update_fields=["tenant", "name", "is_active", "is_staff"])
+        change_password(user, password)
         return user
+
+    @staticmethod
+    def _remaining_for_code(tenant_code: str) -> dict[str, int]:
+        return {
+            "tenants": Tenant.objects.filter(code=tenant_code).count(),
+            "users": get_user_model().objects.filter(tenant__code=tenant_code).count(),
+        }
+
+    @staticmethod
+    def _validate_login_uat_contract(*, tenant, teacher, students, parents, staffs) -> None:
+        Student = apps.get_model("students", "Student")
+        Parent = apps.get_model("parents", "Parent")
+        Staff = apps.get_model("staffs", "Staff")
+        memberships = TenantMembership.objects.filter(tenant=tenant, is_active=True)
+        role_counts = {role: memberships.filter(role=role).count() for role in ("student", "parent", "staff", "admin")}
+        model_counts = {
+            "student": Student.objects.filter(tenant=tenant).count(),
+            "parent": Parent.objects.filter(tenant=tenant).count(),
+            "staff": Staff.objects.filter(tenant=tenant).count(),
+        }
+        account_user_ids = [student.user_id for student in students]
+        account_user_ids.extend(parent.user_id for parent in parents)
+        account_user_ids.extend(staff.user_id for staff in staffs)
+        expected = LOGIN_UAT_ACCOUNT_COUNT_PER_ROLE
+        valid = (
+            model_counts == {"student": expected, "parent": expected, "staff": expected}
+            and role_counts == {"student": expected, "parent": expected, "staff": expected, "admin": 1}
+            and len(account_user_ids) == expected * 3
+            and len(set(account_user_ids)) == expected * 3
+            and memberships.filter(role="admin", user=teacher).count() == 1
+        )
+        if not valid:
+            raise CommandError(
+                "Login UAT database contract mismatch: "
+                + json.dumps(
+                    {
+                        "model_counts": model_counts,
+                        "role_counts": role_counts,
+                        "distinct_manifest_users": len(set(account_user_ids)),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+            )
 
     @staticmethod
     def _tenant_counts(tenant) -> dict[str, int]:
