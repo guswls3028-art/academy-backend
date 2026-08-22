@@ -105,13 +105,13 @@ class ExamTopWrongQuestionsView(APIView):
 
     def get(self, request, exam_id: int):
         _verify_exam_tenant(request, int(exam_id))
-        attempt_ids, legacy_enrollment_ids = _finalized_representative_scope(
-            exam_id=int(exam_id),
-            tenant=request.tenant,
-        )
         n = min(
             parse_query_int(request.query_params, "n", default=5, min_value=1),
             100,
+        )
+        attempt_ids, legacy_enrollment_ids = _finalized_representative_scope(
+            exam_id=int(exam_id),
+            tenant=request.tenant,
         )
         data = QuestionStatsService.top_n_wrong_questions(
             exam_id=int(exam_id),
