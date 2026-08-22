@@ -61,6 +61,25 @@ gh run watch $runId --exit-status
 새 값을 읽었는지 확인한다. 연락처 수정만으로 이미 생성된 outbox/SQS가 사라지지 않으므로
 tenant hold와 recipient denylist를 모두 유지한 채 아래 read-only 진단을 실행한다.
 
+tenant hold는 고객 설정이나 온보딩 승인에 쓰지 않는 긴급 사고 전용이다. 두 SSM JSON을
+손으로 따로 편집하지 말고 아래 스크립트로 같은 값을 원자적 순서로 반영한다. 스크립트 성공은
+SSM 갱신까지만 뜻한다. API와 messaging worker를 공식 런타임 절차로 각각 refresh한 뒤 두
+프로세스의 exact hold set과 health를 readback해야 적용 완료다. 해제도 동일한 절차와 검증을
+거치며, 고객이 직접 끈 `Tenant.messaging_is_active` 값은 변경하지 않는다.
+
+```powershell
+pwsh scripts/v1/set-messaging-tenant-hold.ps1 `
+  -TenantId <tenant-id> `
+  -Mode hold `
+  -AwsProfile <approved-operator>
+
+# 해제 전 아래 진단과 active queue/provider 확인을 끝낸 뒤에만 실행
+pwsh scripts/v1/set-messaging-tenant-hold.ps1 `
+  -TenantId <tenant-id> `
+  -Mode release `
+  -AwsProfile <approved-operator>
+```
+
 ```powershell
 python manage.py diagnose_messaging_incident `
   --tenant-id <tenant-id> `

@@ -128,7 +128,7 @@ def rollback_notification_credits(
 
 def get_tenant_messaging_info(tenant_id: int) -> Optional[dict]:
     """워커/API용: 테넌트 메시징 정보 (잔액, PFID, 발신번호, 단가).
-    messaging_is_active는 표시용 반환만 하며, 발송 차단 정책에는 사용하지 않는다."""
+    messaging_is_active는 학원 대표/관리자가 제어하는 전체 알림톡 사용 설정이다."""
     t = Tenant.objects.filter(pk=tenant_id).values(
         "is_active", "kakao_pfid", "credit_balance", "messaging_is_active", "messaging_base_price",
         "messaging_sender", "messaging_provider",

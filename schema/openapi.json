@@ -4199,6 +4199,108 @@
         ],
         "type": "string"
       },
+      "MessagingInfo": {
+        "description": "GET/PATCH 응답: 테넌트 메시징 정보",
+        "properties": {
+          "alimtalk_available": {
+            "readOnly": true,
+            "type": "boolean"
+          },
+          "can_manage_messaging": {
+            "readOnly": true,
+            "type": "boolean"
+          },
+          "channel_source": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "delivery_policy": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "has_own_credentials": {
+            "readOnly": true,
+            "type": "boolean"
+          },
+          "kakao_pfid": {
+            "maxLength": 100,
+            "type": "string"
+          },
+          "messaging_disabled": {
+            "readOnly": true,
+            "type": "boolean"
+          },
+          "messaging_disabled_reason": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "messaging_ops_hold": {
+            "readOnly": true,
+            "type": "boolean"
+          },
+          "messaging_provider": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/MessagingProviderEnum"
+              }
+            ],
+            "description": "레거시 공급자 기록. 제품 실발송에는 사용하지 않음\n\n* `solapi` - 솔라피(Solapi)\n* `ppurio` - 뿌리오(Ppurio)"
+          },
+          "messaging_sender": {
+            "maxLength": 20,
+            "type": "string"
+          },
+          "own_ppurio_account": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "own_ppurio_api_key": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "own_solapi_api_key": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "own_solapi_api_secret": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "resolved_pf_id": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "tenant_messaging_enabled": {
+            "readOnly": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "alimtalk_available",
+          "can_manage_messaging",
+          "channel_source",
+          "delivery_policy",
+          "has_own_credentials",
+          "messaging_disabled",
+          "messaging_disabled_reason",
+          "messaging_ops_hold",
+          "own_ppurio_account",
+          "own_ppurio_api_key",
+          "own_solapi_api_key",
+          "own_solapi_api_secret",
+          "resolved_pf_id",
+          "tenant_messaging_enabled"
+        ],
+        "type": "object"
+      },
+      "MessagingProviderEnum": {
+        "description": "* `solapi` - 솔라피(Solapi)\n* `ppurio` - 뿌리오(Ppurio)",
+        "enum": [
+          "solapi",
+          "ppurio"
+        ],
+        "type": "string"
+      },
       "NullEnum": {
         "enum": [
           null
@@ -6639,6 +6741,15 @@
             "maxLength": 255,
             "minLength": 1,
             "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "PatchedMessagingActivationRequest": {
+        "description": "학원 대표/관리자가 직접 제어하는 알림톡 전체 사용 설정.",
+        "properties": {
+          "tenant_messaging_enabled": {
+            "type": "boolean"
           }
         },
         "type": "object"
@@ -33459,11 +33570,64 @@
     },
     "/api/v1/messaging/info/": {
       "get": {
-        "description": "GET: 공용 알림톡 발송 상태. 테넌트별 공급자 설정은 읽기 전용이다.",
+        "description": "공용 알림톡 상태와 학원별 전체 사용 설정.",
         "operationId": "messaging_info_retrieve",
         "responses": {
           "200": {
-            "description": "No response body"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessagingInfo"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "messaging"
+        ]
+      },
+      "patch": {
+        "description": "공용 알림톡 상태와 학원별 전체 사용 설정.",
+        "operationId": "messaging_info_partial_update",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedMessagingActivationRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedMessagingActivationRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedMessagingActivationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessagingInfo"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [

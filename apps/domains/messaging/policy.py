@@ -178,16 +178,15 @@ def get_trigger_implementation_status(trigger: str) -> str:
 # ──────────────────────────────────────────
 # 테넌트별 메시징 제한
 # ──────────────────────────────────────────
-# 전체 차단 테넌트: 가입/등록/비번/수동/자동을 포함해 어떤 알림톡도 보내지 않는다.
-# 2026-07-09 KST: ymath(4)는 원장 공지 전까지 알림톡을 임시 중지한다.
-TEMPORARILY_DISABLED_MESSAGING_TENANTS: frozenset[int] = frozenset([4])
-
-
 def get_disabled_messaging_tenant_ids() -> frozenset[int]:
-    """Tenant IDs for full messaging shutdown, including temporary ops holds."""
+    """긴급 장애 확산 방지용 운영 hold 테넌트 ID.
+
+    고객 선호나 온보딩 상태는 이 환경변수에 넣지 않는다. 고객이 직접 바꾸는
+    제품 설정은 Tenant.messaging_is_active가 소유한다.
+    """
     import os
 
-    ids = set(TEMPORARILY_DISABLED_MESSAGING_TENANTS)
+    ids: set[int] = set()
     raw = os.environ.get("MESSAGING_DISABLED_TENANT_IDS", "").strip()
     if raw:
         for item in raw.split(","):
@@ -223,7 +222,33 @@ def get_test_tenant_id() -> int:
 def is_messaging_disabled(tenant_id: int) -> bool:
     """True면 해당 tenant의 모든 알림톡 enqueue·발송을 스킵한다."""
     tid = int(tenant_id)
-    return tid == get_test_tenant_id() or tid in get_disabled_messaging_tenant_ids()
+    if tid == get_test_tenant_id() or tid in get_disabled_messaging_tenant_ids():
+        return True
+
+    # 호출 경로에는 API와 SQS worker가 모두 포함된다. 매 호출마다 DB의 최신
+    # 고객 설정을 읽어 별도 프로세스 캐시 때문에 재활성화가 늦어지지 않게 한다.
+    try:
+        from apps.core.models import Tenant
+
+        active = Tenant.objects.filter(pk=tid).values_list(
+            "messaging_is_active", flat=True
+        ).first()
+    except Exception:
+        logger.exception("Failed to read tenant messaging setting tenant_id=%s", tid)
+        return True
+    # 존재하지 않는 테넌트는 fail-closed다.
+    return active is not True
+
+
+def is_messaging_ops_held(tenant_id: int) -> bool:
+    """사용자 설정과 무관한 긴급 운영 hold 여부."""
+    return int(tenant_id) in get_disabled_messaging_tenant_ids()
+
+
+def is_messaging_runtime_held(tenant_id: int) -> bool:
+    """공용 채널 런타임 자체를 막는 테스트/긴급 운영 보호 여부."""
+    tid = int(tenant_id)
+    return tid == get_test_tenant_id() or is_messaging_ops_held(tid)
 
 
 def get_messaging_disabled_reason(tenant_id: int) -> str:
@@ -232,7 +257,9 @@ def get_messaging_disabled_reason(tenant_id: int) -> str:
         return ""
     if int(tenant_id) == get_test_tenant_id():
         return "테스트 학원에서는 실제 알림톡을 발송하지 않습니다."
-    return "현재 이 학원의 알림톡 발송이 운영 정책에 따라 중지되어 있습니다."
+    if is_messaging_ops_held(tenant_id):
+        return "긴급 장애 확산 방지를 위한 운영 보호가 적용되어 있습니다. 담당자에게 즉시 문의해 주세요."
+    return "이 학원의 알림톡 전체 사용이 꺼져 있습니다. 대표 또는 관리자가 다시 켤 수 있습니다."
 
 
 def get_messaging_test_whitelist() -> frozenset[str]:
@@ -389,8 +416,10 @@ def send_alimtalk_via_owner(
 
     owner_id = get_owner_tenant_id()
 
-    if is_messaging_disabled(owner_id):
-        logger.info("send_alimtalk_via_owner: messaging disabled for owner tenant")
+    # 공용 owner는 채널 인프라 소유자다. owner 학원의 고객용 off 설정이 다른
+    # 학원의 발송까지 전역 중지시키면 안 되며, 테스트/긴급 hold만 공유한다.
+    if is_messaging_runtime_held(owner_id):
+        logger.info("send_alimtalk_via_owner: owner channel runtime held")
         return True  # 테스트 환경에서는 성공 간주
     business_tenant_id = int(source_tenant_id or owner_id)
     if is_messaging_disabled(business_tenant_id):

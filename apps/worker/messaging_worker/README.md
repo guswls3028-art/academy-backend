@@ -24,7 +24,7 @@ SQS `academy-messaging-jobs` 수신 → 공용 알림톡만 발송. 예약 취�
 | `AWS_REGION` | - | 기본값 `ap-northeast-2` |
 | `MESSAGING_SQS_WAIT_SECONDS` | - | Long Polling 대기(기본 20) |
 | `DJANGO_SETTINGS_MODULE` | - | 예약 취소 Double Check 시 설정 |
-| `MESSAGING_DISABLED_TENANT_IDS` | - | 콤마 구분 업무 tenant ID. API enqueue와 워커 소비 양쪽에서 전체 발송 중지 |
+| `MESSAGING_DISABLED_TENANT_IDS` | - | 긴급 사고 전용 콤마 구분 업무 tenant ID. 고객 선호는 제품의 전체 사용 토글로 제어하고, 이 값은 API·워커 양쪽의 incident hold에만 사용 |
 | `MESSAGING_RECIPIENT_DENYLIST` | - | 콤마 구분 수신번호. 큐 소비와 공급사 호출 직전에 재확인하여 영구 차단 |
 
 ---
@@ -83,6 +83,9 @@ python -m apps.worker.messaging_worker.sqs_main
 - **운영 수신자 차단**
   `MESSAGING_RECIPIENT_DENYLIST`는 하이픈을 제거해 비교한다. 이미 SQS에 들어간
   메시지도 워커 입구에서 삭제하고, Solapi 호출 직전 같은 정책을 다시 확인한다.
+- **공급자 접수 전 거절**
+  `QuotaExceeded`와 `NotEnoughBalance`는 provider ID·차감이 없는 확정 거절로
+  terminal failed 처리한다. 중복 방지를 위해 worker가 자동 재발송하지 않는다.
 
 API 키/시크릿은 **환경변수**로만 설정하고 코드에 노출하지 마세요.
 

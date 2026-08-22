@@ -234,6 +234,23 @@ def _send_failure_disposition(
     return "retry"
 
 
+def _classify_definitely_rejected_provider_exception(exc: Exception) -> str:
+    """Return a stable reason only for Solapi failures known to precede acceptance.
+
+    These provider responses contain no message/group id and deduct no amount. Treating
+    them as ambiguous strands the log forever even though the provider definitely
+    rejected the request. Other exceptions remain ambiguous after the boundary.
+    """
+    material = " ".join(
+        [exc.__class__.__name__, *(str(item) for item in getattr(exc, "args", ())), str(exc)]
+    ).replace("_", "").replace(" ", "").lower()
+    if "notenoughbalance" in material:
+        return "provider_not_enough_balance"
+    if "quotaexceeded" in material:
+        return "provider_quota_exceeded"
+    return ""
+
+
 def _resolve_tenant_delivery_context(
     tenant_id: int,
     source_tenant_id: int | None = None,
@@ -480,10 +497,20 @@ def send_one_alimtalk_own_solapi(
         }
     except Exception as e:
         logger.warning("alimtalk_own failed to=%s****: %s", to[:4], e)
+        rejected_reason = _classify_definitely_rejected_provider_exception(e)
         return {
             "status": "error",
-            "reason": str(e)[:500],
+            "reason": rejected_reason or str(e)[:500],
             "provider_called": provider_called,
+            **(
+                {
+                    "provider_outcome": "rejected",
+                    "definitely_not_accepted": True,
+                    "provider_retryable": False,
+                }
+                if rejected_reason
+                else {}
+            ),
         }
 
 
@@ -582,10 +609,20 @@ def send_one_alimtalk(
         }
     except Exception as e:
         logger.warning("alimtalk failed to=%s****: %s", to[:4], e)
+        rejected_reason = _classify_definitely_rejected_provider_exception(e)
         return {
             "status": "error",
-            "reason": str(e)[:500],
+            "reason": rejected_reason or str(e)[:500],
             "provider_called": provider_called,
+            **(
+                {
+                    "provider_outcome": "rejected",
+                    "definitely_not_accepted": True,
+                    "provider_retryable": False,
+                }
+                if rejected_reason
+                else {}
+            ),
         }
 
 

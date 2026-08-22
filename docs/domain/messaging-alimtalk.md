@@ -379,6 +379,8 @@ signup 카테고리만 자체 Solapi 템플릿을 유지. 나머지 매핑 카�
 
 ### 공용 owner provider
 
+- owner tenant는 승인 채널 인프라의 소유자다. owner 학원의 고객용 `messaging_is_active=false`는 다른 업무 tenant로 전파하지 않으며, 공용 채널 경계에서 공유하는 차단은 테스트 tenant와 긴급 운영 hold뿐이다. 업무 tenant 자신의 고객 토글은 계속 발송 전에 fail-closed로 검사한다.
+
 출처: `policy.py`, `queue_service.py`, `sqs_main.py`
 
 - 실발송 provider/PFID는 `OWNER_TENANT_ID` 공용 설정만 사용한다.
@@ -552,9 +554,10 @@ SHA-256(canonical) -> 64자 hex
 
 ### 테넌트 레벨 비활성화
 
-- `is_messaging_disabled(tenant_id)`: TEST_TENANT_ID(기본 9999) 또는 전체 차단 목록에 포함되면 모든 메시징 스킵
-- `TEMPORARILY_DISABLED_MESSAGING_TENANTS`: 2026-07-09 KST 기준 `ymath` tenant id `4`는 원장 공지 전까지 모든 알림톡 발송을 스킵한다. 이 차단은 업무 tenant 기준이므로 owner 공용 대리 발송의 `source_tenant_id=4`도 차단된다.
-- `MESSAGING_DISABLED_TENANT_IDS`: 런타임 env 콤마 구분 목록으로 전체 차단 tenant id를 추가할 수 있다.
+- `Tenant.messaging_is_active`: 대표·관리자가 자동발송 화면의 **알림톡 전체 사용**에서 직접 바꾸는 고객 설정. 기본값은 `true`이며 `false`이면 수동·자동·계정 알림을 모두 중지한다. 변경은 `messaging.tenant_activation` 감사 로그에 남는다.
+- `is_messaging_disabled(tenant_id)`: TEST_TENANT_ID(기본 9999), 고객 설정 off 또는 긴급 운영 hold이면 모든 메시징 스킵. 존재하지 않거나 DB 설정을 확인할 수 없는 tenant는 fail-closed다.
+- 기존 ymath 중지 요청은 코드 상수가 아니라 `Tenant.messaging_is_active=false` 고객 설정으로 이관한다.
+- `MESSAGING_DISABLED_TENANT_IDS`: 오발송·중복 확산 같은 긴급 사고에만 쓰는 런타임 env 콤마 구분 hold다. 온보딩 승인이나 고객 선호를 여기에 저장하지 않는다.
   운영 변경 후 API와 messaging worker가 새 env를 읽었는지 확인해야 하며, 최소한
   messaging worker는 재기동 전까지 기존 큐를 소비하게 두지 않는다.
 - `is_messaging_restricted(tenant_id)`: RESTRICTED_MESSAGING_TENANTS에 포함되면 비계정 메시징 차단 (현재 비어있음)
@@ -567,6 +570,7 @@ SHA-256(canonical) -> 64자 hex
 - 테넌트 ID 필수: `tenant_id` 없으면 메시지 삭제 (sqs_main.py:414-425)
 - 수신자 운영 차단: denylist 번호는 큐 입구에서 삭제하고 provider 호출 직전에 재확인
 - `sending`/`ambiguous` 결과는 자동 재발송 금지. `operations/status.log_24h.action_required`(`sending + ambiguous`)와 `provider_outcome_ambiguous` risk로 확인
+- Solapi `QuotaExceeded`·`NotEnoughBalance`는 provider ID·차감 없는 접수 전 거절이므로 terminal failed로 닫고 자동 재발송하지 않는다. 그 밖의 timeout/연결 단절은 기존처럼 ambiguous로 보존한다.
 - 결제 `notice_payment`처럼 논리 매핑은 있으나 provider SID가 없는 유형은 preflight와 실제 send 모두 `unified_template_unavailable`로 fail-close. 과거 tenant template SID로 fallback 금지
 
 ### 제품 메시징 incident 진단

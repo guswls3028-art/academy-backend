@@ -76,8 +76,9 @@ class Tenant(models.Model):
         max_length=200, blank=True, default="",
         help_text="(미사용) 향후 확장용 예비 필드",
     )
-    # 알림톡 기능 활성화 여부
-    messaging_is_active = models.BooleanField(default=False)
+    # 학원 대표/관리자가 직접 제어하는 알림톡 전체 사용 여부.
+    # 공급자 장애 대응용 운영 hold와는 별개의 제품 설정이다.
+    messaging_is_active = models.BooleanField(default=True)
     # 건당 발송 단가 (원, 학원마다 다르게 책정 가능)
     messaging_base_price = models.DecimalField(
         max_digits=10, decimal_places=2, default=Decimal("0")

@@ -23,6 +23,18 @@ class MessagingInfoSerializer(serializers.ModelSerializer):
     own_ppurio_api_key = serializers.SerializerMethodField()
     own_ppurio_account = serializers.CharField(read_only=True)
     has_own_credentials = serializers.SerializerMethodField()
+    channel_source = serializers.CharField(read_only=True)
+    resolved_pf_id = serializers.CharField(read_only=True)
+    delivery_policy = serializers.CharField(read_only=True)
+    alimtalk_available = serializers.BooleanField(read_only=True)
+    tenant_messaging_enabled = serializers.BooleanField(
+        source="messaging_is_active",
+        read_only=True,
+    )
+    messaging_ops_hold = serializers.BooleanField(read_only=True)
+    can_manage_messaging = serializers.BooleanField(read_only=True)
+    messaging_disabled = serializers.BooleanField(read_only=True)
+    messaging_disabled_reason = serializers.CharField(read_only=True)
 
     class Meta:
         model = Tenant
@@ -31,6 +43,10 @@ class MessagingInfoSerializer(serializers.ModelSerializer):
             "own_solapi_api_key", "own_solapi_api_secret",
             "own_ppurio_api_key", "own_ppurio_account",
             "has_own_credentials",
+            "channel_source", "resolved_pf_id", "delivery_policy",
+            "alimtalk_available", "tenant_messaging_enabled",
+            "messaging_ops_hold", "can_manage_messaging",
+            "messaging_disabled", "messaging_disabled_reason",
         ]
 
     @staticmethod
@@ -55,6 +71,12 @@ class MessagingInfoSerializer(serializers.ModelSerializer):
         if provider == "ppurio":
             return bool(obj.own_ppurio_api_key and obj.own_ppurio_account)
         return bool(obj.own_solapi_api_key and obj.own_solapi_api_secret)
+
+
+class MessagingActivationSerializer(serializers.Serializer):
+    """학원 대표/관리자가 직접 제어하는 알림톡 전체 사용 설정."""
+
+    tenant_messaging_enabled = serializers.BooleanField()
 
 
 class NotificationLogSerializer(serializers.Serializer):
