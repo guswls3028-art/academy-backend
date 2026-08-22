@@ -1583,6 +1583,7 @@ def test_ecr_cleanup_retries_bootstrapping_runtime_until_digest_ready(
     registry = f"{cleanup.ACCOUNT_ID}.dkr.ecr.{cleanup.REGION}.amazonaws.com"
     invocations = 0
     sleeps: list[int] = []
+    membership_phases: list[str] = []
 
     def fake_service(service: str, *args):
         nonlocal invocations
@@ -1604,16 +1605,31 @@ def test_ecr_cleanup_retries_bootstrapping_runtime_until_digest_ready(
 
     monkeypatch.setattr(cleanup, "aws_service", fake_service)
     monkeypatch.setattr(cleanup, "wait_for_ssm_command", lambda *_: None)
+    monkeypatch.setattr(
+        cleanup,
+        "assert_runtime_asg_membership",
+        lambda _asg, _instances, *, phase: membership_phases.append(phase),
+    )
     monkeypatch.setattr(cleanup, "RUNTIME_DIGEST_MAX_ATTEMPTS", 3)
     monkeypatch.setattr(cleanup.time, "sleep", sleeps.append)
 
     actual = cleanup.collect_actual_instance_runtime_digest(
-        "i-bootstrapping", "academy-ai-worker-cpu", "academy-ai-worker-cpu"
+        "academy-v1-ai-asg",
+        frozenset({"i-bootstrapping"}),
+        "i-bootstrapping",
+        "academy-ai-worker-cpu",
+        "academy-ai-worker-cpu",
     )
 
     assert actual == digest
     assert invocations == 2
     assert sleeps == [cleanup.RUNTIME_DIGEST_RETRY_SECONDS]
+    assert membership_phases == [
+        "attempt-1-before-ssm",
+        "attempt-1-after-ssm",
+        "attempt-2-before-ssm",
+        "attempt-2-after-ssm",
+    ]
 
 
 def test_ecr_cleanup_still_fails_closed_after_runtime_retry_budget(
@@ -1622,6 +1638,7 @@ def test_ecr_cleanup_still_fails_closed_after_runtime_retry_budget(
     cleanup = _load_ecr_cleanup_module()
     invocations = 0
     sleeps: list[int] = []
+    membership_phases: list[str] = []
 
     def fake_service(service: str, *args):
         nonlocal invocations
@@ -1638,17 +1655,74 @@ def test_ecr_cleanup_still_fails_closed_after_runtime_retry_budget(
 
     monkeypatch.setattr(cleanup, "aws_service", fake_service)
     monkeypatch.setattr(cleanup, "wait_for_ssm_command", lambda *_: None)
+    monkeypatch.setattr(
+        cleanup,
+        "assert_runtime_asg_membership",
+        lambda _asg, _instances, *, phase: membership_phases.append(phase),
+    )
     monkeypatch.setattr(cleanup, "RUNTIME_DIGEST_MAX_ATTEMPTS", 2)
     monkeypatch.setattr(cleanup.time, "sleep", sleeps.append)
 
     with pytest.raises(SystemExit) as exc:
         cleanup.collect_actual_instance_runtime_digest(
-            "i-never-ready", "academy-ai-worker-cpu", "academy-ai-worker-cpu"
+            "academy-v1-ai-asg",
+            frozenset({"i-never-ready"}),
+            "i-never-ready",
+            "academy-ai-worker-cpu",
+            "academy-ai-worker-cpu",
         )
 
     assert exc.value.code == 2
     assert invocations == 2
     assert sleeps == [cleanup.RUNTIME_DIGEST_RETRY_SECONDS]
+    assert membership_phases == [
+        "attempt-1-before-ssm",
+        "attempt-1-after-ssm",
+        "attempt-2-before-ssm",
+        "attempt-2-after-ssm",
+    ]
+
+
+def test_ecr_cleanup_fails_closed_when_runtime_membership_drifts(
+    monkeypatch,
+    capsys,
+) -> None:
+    cleanup = _load_ecr_cleanup_module()
+
+    def fake_service(service: str, *args):
+        assert service == "autoscaling"
+        assert args == (
+            "describe-auto-scaling-groups",
+            "--auto-scaling-group-names",
+            "academy-v1-api-asg",
+        )
+        return {
+            "AutoScalingGroups": [
+                {
+                    "AutoScalingGroupName": "academy-v1-api-asg",
+                    "DesiredCapacity": 1,
+                    "Instances": [
+                        {
+                            "InstanceId": "i-replacement",
+                            "LifecycleState": "InService",
+                            "HealthStatus": "Healthy",
+                        }
+                    ],
+                }
+            ]
+        }
+
+    monkeypatch.setattr(cleanup, "aws_service", fake_service)
+
+    with pytest.raises(SystemExit) as exc:
+        cleanup.assert_runtime_asg_membership(
+            "academy-v1-api-asg",
+            frozenset({"i-original"}),
+            phase="attempt-1-after-ssm",
+        )
+
+    assert exc.value.code == 2
+    assert "runtime ASG membership drifted" in capsys.readouterr().err
 
 
 def test_ecr_cleanup_inventories_asg_current_and_running_lt_and_batch(monkeypatch) -> None:
@@ -1668,8 +1742,7 @@ def test_ecr_cleanup_inventories_asg_current_and_running_lt_and_batch(monkeypatc
 
     def fake_service(service: str, *args):
         if service == "autoscaling":
-            return {
-                "AutoScalingGroups": [
+            groups = [
                     {
                         "AutoScalingGroupName": asg_name,
                         "LaunchTemplate": {
@@ -1681,6 +1754,7 @@ def test_ecr_cleanup_inventories_asg_current_and_running_lt_and_batch(monkeypatc
                                 {
                                     "InstanceId": "i-api-runtime",
                                     "LifecycleState": "InService",
+                                    "HealthStatus": "Healthy",
                                     "LaunchTemplate": {
                                         "LaunchTemplateId": f"lt-{repo}",
                                         "Version": "4",
@@ -1694,7 +1768,14 @@ def test_ecr_cleanup_inventories_asg_current_and_running_lt_and_batch(monkeypatc
                     }
                     for asg_name, repo in asg_repos.items()
                 ]
-            }
+            if "--auto-scaling-group-names" in args:
+                expected_name = args[args.index("--auto-scaling-group-names") + 1]
+                groups = [
+                    group
+                    for group in groups
+                    if group["AutoScalingGroupName"] == expected_name
+                ]
+            return {"AutoScalingGroups": groups}
         if service == "ec2":
             version = args[args.index("--versions") + 1]
             template_id = args[args.index("--launch-template-id") + 1]

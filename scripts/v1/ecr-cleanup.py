@@ -211,8 +211,72 @@ def _launch_template_references(group: dict) -> set[tuple[str, str, str]]:
     return refs
 
 
+def _healthy_inservice_instance_ids(group: dict, asg_name: str) -> frozenset[str]:
+    """Return the exact healthy InService membership or fail closed."""
+    desired = int(group.get("DesiredCapacity", 0))
+    in_service = [
+        instance
+        for instance in group.get("Instances", [])
+        if instance.get("LifecycleState") == "InService"
+    ]
+    instance_ids: list[str] = []
+    for instance in in_service:
+        instance_id = str(instance.get("InstanceId", ""))
+        if not instance_id or instance.get("HealthStatus") != "Healthy":
+            print(
+                f"  [ERROR] {asg_name} runtime inventory requires every InService "
+                f"instance to be healthy and identified: instance={instance_id or '<missing>'} "
+                f"health={instance.get('HealthStatus', '')}",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        instance_ids.append(instance_id)
+    if len(instance_ids) != desired or len(set(instance_ids)) != len(instance_ids):
+        print(
+            f"  [ERROR] {asg_name} actual runtime inventory requires "
+            f"healthy InService={desired}; found={len(instance_ids)}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    return frozenset(instance_ids)
+
+
+def assert_runtime_asg_membership(
+    asg_name: str,
+    expected_instance_ids: frozenset[str],
+    *,
+    phase: str,
+) -> None:
+    """Re-read one ASG and fail closed if runtime membership drifted."""
+    groups = aws_service(
+        "autoscaling",
+        "describe-auto-scaling-groups",
+        "--auto-scaling-group-names",
+        asg_name,
+    ).get("AutoScalingGroups", [])
+    if len(groups) != 1 or groups[0].get("AutoScalingGroupName") != asg_name:
+        print(
+            f"  [ERROR] runtime inventory ASG re-read mismatch: "
+            f"asg={asg_name} phase={phase}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    actual_instance_ids = _healthy_inservice_instance_ids(groups[0], asg_name)
+    if actual_instance_ids != expected_instance_ids:
+        print(
+            f"  [ERROR] runtime ASG membership drifted: asg={asg_name} phase={phase} "
+            f"expected={sorted(expected_instance_ids)} actual={sorted(actual_instance_ids)}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+
 def collect_actual_instance_runtime_digest(
-    instance_id: str, expected_repo: str, container_name: str
+    asg_name: str,
+    expected_instance_ids: frozenset[str],
+    instance_id: str,
+    expected_repo: str,
+    container_name: str,
 ) -> str:
     """Read one ASG container RepoDigest, allowing bounded bootstrap time."""
     remote_command = (
@@ -223,6 +287,11 @@ def collect_actual_instance_runtime_digest(
     )
     last_error = "runtime digest was not checked"
     for attempt in range(1, RUNTIME_DIGEST_MAX_ATTEMPTS + 1):
+        assert_runtime_asg_membership(
+            asg_name,
+            expected_instance_ids,
+            phase=f"attempt-{attempt}-before-ssm",
+        )
         sent = aws_service(
             "ssm", "send-command",
             "--instance-ids", instance_id,
@@ -241,6 +310,11 @@ def collect_actual_instance_runtime_digest(
                 "ssm", "get-command-invocation",
                 "--command-id", command_id,
                 "--instance-id", instance_id,
+            )
+            assert_runtime_asg_membership(
+                asg_name,
+                expected_instance_ids,
+                phase=f"attempt-{attempt}-after-ssm",
             )
             status = str(invocation.get("Status", ""))
             if status == "Success":
@@ -338,24 +412,11 @@ def collect_runtime_protected_digests() -> dict[str, set[str]]:
                 sys.exit(2)
             protected[expected_repo].add(expected[0][1])
 
-        desired = int(group.get("DesiredCapacity", 0))
-        in_service = [
-            instance for instance in group.get("Instances", [])
-            if instance.get("LifecycleState") == "InService"
-        ]
-        if len(in_service) != desired:
-            print(
-                f"  [ERROR] {asg_name} actual runtime inventory requires "
-                f"InService={desired}; found={len(in_service)}",
-                file=sys.stderr,
-            )
-            sys.exit(2)
-        for instance in in_service:
-            instance_id = str(instance.get("InstanceId", ""))
-            if not instance_id:
-                print(f"  [ERROR] {asg_name} has an InService instance without an id", file=sys.stderr)
-                sys.exit(2)
+        expected_instance_ids = _healthy_inservice_instance_ids(group, asg_name)
+        for instance_id in sorted(expected_instance_ids):
             actual_digest = collect_actual_instance_runtime_digest(
+                asg_name,
+                expected_instance_ids,
                 instance_id,
                 expected_repo,
                 ASG_CONTAINERS[asg_name],
