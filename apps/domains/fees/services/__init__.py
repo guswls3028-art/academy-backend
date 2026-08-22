@@ -14,7 +14,7 @@ from itertools import groupby
 from operator import attrgetter
 
 from django.db import IntegrityError, transaction
-from django.db.models import Sum, Q
+from django.db.models import Count, Sum, Q
 from django.utils import timezone
 
 from ..models import (
@@ -521,14 +521,14 @@ def get_dashboard_stats(tenant, year: int, month: int) -> dict:
     agg = invoices.aggregate(
         total_billed=Sum("total_amount"),
         total_paid=Sum("paid_amount"),
+        overdue_count=Count("id", filter=Q(status="OVERDUE")),
+        pending_count=Count("id", filter=Q(status__in=["PENDING", "PARTIAL"])),
+        paid_count=Count("id", filter=Q(status="PAID")),
+        invoice_count=Count("id"),
     )
 
     total_billed = agg["total_billed"] or 0
     total_paid = agg["total_paid"] or 0
-
-    overdue_count = invoices.filter(status="OVERDUE").count()
-    pending_count = invoices.filter(status__in=["PENDING", "PARTIAL"]).count()
-    paid_count = invoices.filter(status="PAID").count()
 
     # 비목 유형별 통계
     from ..models import InvoiceItem
@@ -551,10 +551,10 @@ def get_dashboard_stats(tenant, year: int, month: int) -> dict:
         "total_billed": total_billed,
         "total_paid": total_paid,
         "total_outstanding": total_billed - total_paid,
-        "overdue_count": overdue_count,
-        "pending_count": pending_count,
-        "paid_count": paid_count,
-        "invoice_count": invoices.count(),
+        "overdue_count": agg["overdue_count"],
+        "pending_count": agg["pending_count"],
+        "paid_count": agg["paid_count"],
+        "invoice_count": agg["invoice_count"],
         "by_fee_type": [
             {"fee_type": s["fee_template__fee_type"] or "OTHER", "total": s["total"]}
             for s in fee_type_stats

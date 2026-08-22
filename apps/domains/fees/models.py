@@ -235,7 +235,8 @@ class StudentInvoice(TimestampModel):
             ),
             models.UniqueConstraint(
                 fields=["tenant", "student", "billing_year", "billing_month"],
-                name="uniq_student_invoice_per_period",
+                condition=~Q(status="CANCELLED"),
+                name="uniq_active_student_invoice_per_period",
             ),
         ]
 

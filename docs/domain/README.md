@@ -17,6 +17,7 @@
 | [student-creation.md](student-creation.md) | 학생 | 생성 계정 그래프 |
 | [student-lifecycle.md](student-lifecycle.md) | 학생 | 삭제/복원/영구삭제 생명주기 |
 | [staff-operations.md](staff-operations.md) | 직원 | 권한·퇴사·근태·비용·월마감·정산 표시 계약 |
+| [fees.md](fees.md) | 수납 | 학원별 비목·월 청구·수납·취소 후 재청구 계약 |
 | [lecture-sessions.md](lecture-sessions.md) | 강의 | 정규 수업·보강 유형, 차시 번호, 보강 이름과 API 경계 |
 | [homework-grading.md](homework-grading.md) | 과제 | 과제별 만점, 차시 공통 합격 정책, 성적·클리닉 동기화 |
 | [student-performance-console.md](student-performance-console.md) | 성적 | 학생별 누적 성적과 정규·보강 결과 범위 |
