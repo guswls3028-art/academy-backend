@@ -487,6 +487,92 @@ class StudentPasswordResetSafetyTests(TestCase):
         log = NotificationLog.objects.get(target_id=f"student:{self.student.id}")
         self.assertEqual(log.message_body, "[보안] 계정/인증 알림 본문은 저장하지 않습니다.")
 
+    @override_settings(
+        ALLOWED_HOSTS=["api.hakwonplus.com", "testserver"],
+        TENANT_HEADER_CODE_ALLOWED_HOSTS=("api.hakwonplus.com",),
+    )
+    @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=True)
+    def test_staff_username_guidance_keeps_student_password_state(self, send_mock):
+        response = APIClient().post(
+            f"/api/v1/students/{self.student.id}/account-notifications/",
+            {"target": "student"},
+            format="json",
+            **self._staff_auth_headers(role="teacher"),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("비밀번호는 변경되지 않았습니다", response.data["message"])
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("oldpw123"))
+        self.assertFalse(self.user.must_change_password)
+        self.assertEqual(self.user.token_version, 0)
+        self.assertFalse(PendingPasswordReset.objects.filter(user=self.user).exists())
+        self.assertEqual(send_mock.call_args.kwargs["trigger"], "registration_approved_student")
+        self.assertEqual(send_mock.call_args.kwargs["to"], self.student.phone)
+
+    @override_settings(
+        ALLOWED_HOSTS=["api.hakwonplus.com", "testserver"],
+        TENANT_HEADER_CODE_ALLOWED_HOSTS=("api.hakwonplus.com",),
+    )
+    @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=True)
+    def test_staff_parent_username_guidance_uses_parent_account(self, send_mock):
+        response = APIClient().post(
+            f"/api/v1/students/{self.student.id}/account-notifications/",
+            {"target": "parent"},
+            format="json",
+            **self._staff_auth_headers(role="teacher"),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(send_mock.call_args.kwargs["trigger"], "registration_approved_parent")
+        self.assertEqual(send_mock.call_args.kwargs["to"], self.student.parent_phone)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("oldpw123"))
+
+    @override_settings(
+        ALLOWED_HOSTS=["api.hakwonplus.com", "testserver"],
+        TENANT_HEADER_CODE_ALLOWED_HOSTS=("api.hakwonplus.com",),
+    )
+    def test_staff_username_guidance_is_tenant_scoped(self):
+        other_tenant = Tenant.objects.create(name="다른학원", code="pw-other")
+        User = get_user_model()
+        other_user = User.objects.create_user(
+            username=user_internal_username(other_tenant, "S900"),
+            password="otherpw123",
+            tenant=other_tenant,
+        )
+        other_student = Student.objects.create(
+            tenant=other_tenant,
+            user=other_user,
+            ps_number="S900",
+            omr_code="99990000",
+            name="타학원학생",
+            phone="01099990000",
+        )
+
+        response = APIClient().post(
+            f"/api/v1/students/{other_student.id}/account-notifications/",
+            {"target": "student"},
+            format="json",
+            **self._staff_auth_headers(role="teacher"),
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    @override_settings(
+        ALLOWED_HOSTS=["api.hakwonplus.com", "testserver"],
+        TENANT_HEADER_CODE_ALLOWED_HOSTS=("api.hakwonplus.com",),
+    )
+    def test_staff_username_guidance_rejects_invalid_payload(self):
+        response = APIClient().post(
+            f"/api/v1/students/{self.student.id}/account-notifications/",
+            ["student"],
+            format="json",
+            **self._staff_auth_headers(role="teacher"),
+        )
+
+        self.assertEqual(response.status_code, 400)
+
     def test_auto_temp_password_is_six_digits(self):
         temp_password = generate_temp_password()
 
