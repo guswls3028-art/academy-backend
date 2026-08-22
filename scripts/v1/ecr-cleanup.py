@@ -27,6 +27,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -69,6 +70,8 @@ MANIFEST_TYPES = {TYPE_MANIFEST, TYPE_DOCKER_MANIFEST}
 
 # Tags that must never be deleted
 ALWAYS_KEEP_TAGS = {"latest"}
+RUNTIME_DIGEST_MAX_ATTEMPTS = 40
+RUNTIME_DIGEST_RETRY_SECONDS = 15
 
 REQUIRED_VIDEO_JOB_DEFINITIONS = {
     "academy-v1-video-batch-jobdef",
@@ -211,56 +214,67 @@ def _launch_template_references(group: dict) -> set[tuple[str, str, str]]:
 def collect_actual_instance_runtime_digest(
     instance_id: str, expected_repo: str, container_name: str
 ) -> str:
-    """Read the exact RepoDigest used by one running ASG container via SSM."""
+    """Read one ASG container RepoDigest, allowing bounded bootstrap time."""
     remote_command = (
         "set -e; "
         f"IMAGE_ID=$(docker inspect --format '{{{{.Image}}}}' '{container_name}'); "
         "docker image inspect --format "
         "'{{range .RepoDigests}}{{println .}}{{end}}' \"$IMAGE_ID\""
     )
-    sent = aws_service(
-        "ssm", "send-command",
-        "--instance-ids", instance_id,
-        "--document-name", "AWS-RunShellScript",
-        "--parameters", json.dumps(
-            {"commands": [remote_command], "executionTimeout": ["120"]}
-        ),
-        "--timeout-seconds", "180",
+    last_error = "runtime digest was not checked"
+    for attempt in range(1, RUNTIME_DIGEST_MAX_ATTEMPTS + 1):
+        sent = aws_service(
+            "ssm", "send-command",
+            "--instance-ids", instance_id,
+            "--document-name", "AWS-RunShellScript",
+            "--parameters", json.dumps(
+                {"commands": [remote_command], "executionTimeout": ["120"]}
+            ),
+            "--timeout-seconds", "180",
+        )
+        command_id = str(sent.get("Command", {}).get("CommandId", ""))
+        if not command_id:
+            last_error = "SSM returned no command id"
+        else:
+            wait_for_ssm_command(command_id, instance_id)
+            invocation = aws_service(
+                "ssm", "get-command-invocation",
+                "--command-id", command_id,
+                "--instance-id", instance_id,
+            )
+            status = str(invocation.get("Status", ""))
+            if status == "Success":
+                actual_refs = {
+                    resolved
+                    for line in str(
+                        invocation.get("StandardOutputContent", "")
+                    ).splitlines()
+                    if (resolved := resolve_image_reference(line.strip())) is not None
+                    and resolved[0] == expected_repo
+                }
+                if len(actual_refs) == 1:
+                    return next(iter(actual_refs))[1]
+                last_error = (
+                    f"expected exactly one {expected_repo} RepoDigest; "
+                    f"actual={sorted(actual_refs)}"
+                )
+            else:
+                stderr = str(invocation.get("StandardErrorContent", "")).strip()
+                last_error = f"status={status} stderr={stderr}"
+
+        if attempt < RUNTIME_DIGEST_MAX_ATTEMPTS:
+            print(
+                f"  [WAIT] {instance_id}/{container_name} runtime digest is not ready "
+                f"({attempt}/{RUNTIME_DIGEST_MAX_ATTEMPTS}): {last_error}"
+            )
+            time.sleep(RUNTIME_DIGEST_RETRY_SECONDS)
+
+    print(
+        f"  [ERROR] cannot inventory actual runtime digest on {instance_id}/"
+        f"{container_name} after {RUNTIME_DIGEST_MAX_ATTEMPTS} attempts: {last_error}",
+        file=sys.stderr,
     )
-    command_id = str(sent.get("Command", {}).get("CommandId", ""))
-    if not command_id:
-        print(
-            f"  [ERROR] SSM returned no command id for {instance_id}/{container_name}",
-            file=sys.stderr,
-        )
-        sys.exit(2)
-    wait_for_ssm_command(command_id, instance_id)
-    invocation = aws_service(
-        "ssm", "get-command-invocation",
-        "--command-id", command_id,
-        "--instance-id", instance_id,
-    )
-    if invocation.get("Status") != "Success":
-        print(
-            f"  [ERROR] cannot inventory actual runtime digest on {instance_id}: "
-            f"status={invocation.get('Status')} stderr={invocation.get('StandardErrorContent', '')}",
-            file=sys.stderr,
-        )
-        sys.exit(2)
-    actual_refs = {
-        resolved
-        for line in str(invocation.get("StandardOutputContent", "")).splitlines()
-        if (resolved := resolve_image_reference(line.strip())) is not None
-        and resolved[0] == expected_repo
-    }
-    if len(actual_refs) != 1:
-        print(
-            f"  [ERROR] {instance_id}/{container_name} must report exactly one "
-            f"{expected_repo} RepoDigest; actual={sorted(actual_refs)}",
-            file=sys.stderr,
-        )
-        sys.exit(2)
-    return next(iter(actual_refs))[1]
+    sys.exit(2)
 
 
 def collect_runtime_protected_digests() -> dict[str, set[str]]:

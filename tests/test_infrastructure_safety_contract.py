@@ -1575,6 +1575,82 @@ def test_ecr_cleanup_never_deletes_old_active_runtime_digest(monkeypatch) -> Non
     assert runtime_digest not in manifests
 
 
+def test_ecr_cleanup_retries_bootstrapping_runtime_until_digest_ready(
+    monkeypatch,
+) -> None:
+    cleanup = _load_ecr_cleanup_module()
+    digest = "sha256:" + "7" * 64
+    registry = f"{cleanup.ACCOUNT_ID}.dkr.ecr.{cleanup.REGION}.amazonaws.com"
+    invocations = 0
+    sleeps: list[int] = []
+
+    def fake_service(service: str, *args):
+        nonlocal invocations
+        assert service == "ssm"
+        if args[0] == "send-command":
+            return {"Command": {"CommandId": f"cmd-{invocations + 1}"}}
+        if args[0] == "get-command-invocation":
+            invocations += 1
+            if invocations == 1:
+                return {
+                    "Status": "Failed",
+                    "StandardErrorContent": "docker: command not found",
+                }
+            return {
+                "Status": "Success",
+                "StandardOutputContent": f"{registry}/academy-ai-worker-cpu@{digest}\n",
+            }
+        raise AssertionError((service, args))
+
+    monkeypatch.setattr(cleanup, "aws_service", fake_service)
+    monkeypatch.setattr(cleanup, "wait_for_ssm_command", lambda *_: None)
+    monkeypatch.setattr(cleanup, "RUNTIME_DIGEST_MAX_ATTEMPTS", 3)
+    monkeypatch.setattr(cleanup.time, "sleep", sleeps.append)
+
+    actual = cleanup.collect_actual_instance_runtime_digest(
+        "i-bootstrapping", "academy-ai-worker-cpu", "academy-ai-worker-cpu"
+    )
+
+    assert actual == digest
+    assert invocations == 2
+    assert sleeps == [cleanup.RUNTIME_DIGEST_RETRY_SECONDS]
+
+
+def test_ecr_cleanup_still_fails_closed_after_runtime_retry_budget(
+    monkeypatch,
+) -> None:
+    cleanup = _load_ecr_cleanup_module()
+    invocations = 0
+    sleeps: list[int] = []
+
+    def fake_service(service: str, *args):
+        nonlocal invocations
+        assert service == "ssm"
+        if args[0] == "send-command":
+            return {"Command": {"CommandId": f"cmd-{invocations + 1}"}}
+        if args[0] == "get-command-invocation":
+            invocations += 1
+            return {
+                "Status": "Failed",
+                "StandardErrorContent": "docker: command not found",
+            }
+        raise AssertionError((service, args))
+
+    monkeypatch.setattr(cleanup, "aws_service", fake_service)
+    monkeypatch.setattr(cleanup, "wait_for_ssm_command", lambda *_: None)
+    monkeypatch.setattr(cleanup, "RUNTIME_DIGEST_MAX_ATTEMPTS", 2)
+    monkeypatch.setattr(cleanup.time, "sleep", sleeps.append)
+
+    with pytest.raises(SystemExit) as exc:
+        cleanup.collect_actual_instance_runtime_digest(
+            "i-never-ready", "academy-ai-worker-cpu", "academy-ai-worker-cpu"
+        )
+
+    assert exc.value.code == 2
+    assert invocations == 2
+    assert sleeps == [cleanup.RUNTIME_DIGEST_RETRY_SECONDS]
+
+
 def test_ecr_cleanup_inventories_asg_current_and_running_lt_and_batch(monkeypatch) -> None:
     cleanup = _load_ecr_cleanup_module()
     api_digest = "sha256:" + "a" * 64
