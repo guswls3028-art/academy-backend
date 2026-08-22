@@ -86,7 +86,7 @@ class EnrollmentNotificationOccurrenceTests(TestCase):
         )
         self.assertEqual(
             send_welcome.call_args.kwargs["parent_password_by_phone"],
-            {"01012345678": "5678"},
+            {"01012345678": "first-password"},
         )
         self.student.refresh_from_db()
         self.assertEqual(
