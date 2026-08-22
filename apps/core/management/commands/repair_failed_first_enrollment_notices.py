@@ -7,17 +7,19 @@ outside the reviewed allowlist.
 
 from __future__ import annotations
 
+import re
 from collections import Counter
+from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
-from django.db import transaction
-from django.db.models import Q
+from django.db import DatabaseError, connection, transaction
 
 from apps.core.models import PendingPasswordReset, Tenant
+from apps.core.models.user import user_display_username
 from apps.core.services.password import force_reset_password, generate_temp_password
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.messaging.models import (
@@ -30,8 +32,11 @@ from apps.domains.messaging.policy import (
     get_owner_tenant_id,
     is_messaging_ops_held,
     is_messaging_runtime_held,
+    resolve_kakao_channel,
 )
-from apps.domains.messaging.services import get_solapi_client
+from apps.domains.messaging.services import _get_solapi_credentials, get_solapi_client
+from apps.domains.messaging.solapi_sender_client import get_active_sender_numbers
+from apps.domains.messaging.solapi_template_client import list_kakao_templates
 from apps.domains.messaging.sqs_queue import MessagingSQSQueue
 from apps.domains.parents.models import Parent
 from apps.domains.students.models import Student
@@ -60,6 +65,23 @@ RECOVERY_ORIGIN_PREFIX = "credential-incident"
 STUDENT_TRIGGER = "registration_approved_student"
 PARENT_TRIGGER = "registration_approved_parent"
 ACCOUNT_TRIGGERS = (STUDENT_TRIGGER, PARENT_TRIGGER)
+REQUIRED_PLACEHOLDERS = {
+    STUDENT_TRIGGER: frozenset(
+        {"학생이름", "학생아이디", "학생비밀번호", "사이트링크", "비밀번호안내"}
+    ),
+    PARENT_TRIGGER: frozenset(
+        {
+            "학생이름",
+            "학생아이디",
+            "학생비밀번호",
+            "학부모아이디",
+            "학부모비밀번호",
+            "사이트링크",
+            "비밀번호안내",
+        }
+    ),
+}
+PLACEHOLDER_PATTERN = re.compile(r"#\{([^}]+)\}")
 
 
 @dataclass(frozen=True)
@@ -95,27 +117,139 @@ def _normalize_phone(value: object) -> str:
     return "".join(ch for ch in str(value or "") if ch.isdigit())
 
 
-def _log_scope(tenant: Tenant) -> Q:
-    return Q(source_tenant=tenant) | Q(tenant=tenant, source_tenant__isnull=True)
+def _has_provider_acceptance_evidence(log: NotificationLog) -> bool:
+    return (
+        bool(log.provider_message_id)
+        or Decimal(log.amount_deducted) > Decimal("0")
+        or bool(log.success)
+        or log.status in {"processing", "sending", "sent", "ambiguous"}
+    )
 
 
-def _provider_sent_logs(
-    logs: list[NotificationLog],
+def _is_exact_balance_rejection(
+    log: NotificationLog,
     *,
+    owner_tenant_id: int,
+    tenant_id: int,
+    target_id: str,
+    business_idempotency_key: str,
+) -> bool:
+    reason = str(log.failure_reason or "").strip()
+    exact_reason = reason == "NotEnoughBalance" or reason.startswith(
+        "('NotEnoughBalance',"
+    )
+    return (
+        log.tenant_id == owner_tenant_id
+        and log.source_tenant_id == tenant_id
+        and log.notification_type == STUDENT_TRIGGER
+        and log.target_type == "account"
+        and log.target_id == target_id
+        and log.message_mode == "alimtalk"
+        and log.status in {"ambiguous", "failed"}
+        and not log.success
+        and not log.provider_message_id
+        and Decimal(log.amount_deducted) == Decimal("0")
+        and log.business_idempotency_key == business_idempotency_key
+        and log.origin_type == "system_account"
+        and log.origin_id == target_id
+        and exact_reason
+    )
+
+
+def _is_exact_parent_success(
+    log: NotificationLog,
+    *,
+    owner_tenant_id: int,
+    tenant_id: int,
+    target_id: str,
+    business_idempotency_key: str,
+) -> bool:
+    return (
+        log.tenant_id == owner_tenant_id
+        and log.source_tenant_id == tenant_id
+        and log.notification_type == PARENT_TRIGGER
+        and log.target_type == "account"
+        and log.target_id == target_id
+        and log.message_mode == "alimtalk"
+        and log.status == "sent"
+        and log.success
+        and bool(log.provider_message_id)
+        and log.business_idempotency_key == business_idempotency_key
+        and log.origin_type == "system_account"
+        and log.origin_id == target_id
+    )
+
+
+def _is_allowed_parent_ambiguous_history(
+    log: NotificationLog,
+    *,
+    owner_tenant_id: int,
+    tenant_id: int,
+    target_id: str,
+) -> bool:
+    return (
+        log.tenant_id == owner_tenant_id
+        and log.source_tenant_id == tenant_id
+        and log.notification_type == PARENT_TRIGGER
+        and log.target_type == "account"
+        and log.target_id == target_id
+        and log.message_mode == "alimtalk"
+        and log.status == "ambiguous"
+        and not log.success
+        and not log.provider_message_id
+        and Decimal(log.amount_deducted) == Decimal("0")
+    )
+
+
+def _is_exact_system_account_outbox(
+    notification: ScheduledNotification,
+    *,
+    tenant_id: int,
     trigger: str,
     target_id: str,
-) -> list[NotificationLog]:
-    return [
-        log
-        for log in logs
-        if (
-            log.notification_type == trigger
-            and log.target_id == target_id
-            and log.status == "sent"
-            and log.success
-            and bool(log.provider_message_id)
-        )
-    ]
+) -> bool:
+    payload = notification.payload if isinstance(notification.payload, dict) else {}
+    return (
+        notification.tenant_id == tenant_id
+        and notification.status == ScheduledNotification.Status.SENT
+        and not notification.error_message
+        and bool(notification.dispatch_key)
+        and bool(notification.business_idempotency_key)
+        and notification.origin_type == "system_account"
+        and notification.origin_id == target_id
+        and payload.get("event_type") == trigger
+        and payload.get("target_id") == target_id
+        and payload.get("message_mode") == "alimtalk"
+        and int(payload.get("source_tenant_id") or 0) == tenant_id
+        and payload.get("origin_type") == "system_account"
+        and payload.get("origin_id") == target_id
+    )
+
+
+def _is_exact_failed_pair_outbox(
+    notification: ScheduledNotification,
+    *,
+    tenant_id: int,
+    trigger: str,
+    target_id: str,
+) -> bool:
+    payload = notification.payload if isinstance(notification.payload, dict) else {}
+    return (
+        notification.tenant_id == tenant_id
+        and notification.trigger == trigger
+        and notification.status == ScheduledNotification.Status.FAILED
+        and notification.error_message == FAILURE_REASON
+        and bool(notification.dispatch_key)
+        and bool(notification.business_idempotency_key)
+        and notification.origin_type == ORIGINAL_ORIGIN_TYPE
+        and bool(notification.origin_id)
+        and payload.get("event_type") == trigger
+        and payload.get("target_id") == target_id
+        and payload.get("message_mode") == "alimtalk"
+        and int(payload.get("source_tenant_id") or 0) == tenant_id
+        and payload.get("origin_type") == notification.origin_type
+        and payload.get("origin_id") == notification.origin_id
+    )
 
 
 def _origin_id(student_id: int) -> str:
@@ -124,7 +258,7 @@ def _origin_id(student_id: int) -> str:
 
 def _assert_queue_empty() -> None:
     try:
-        client = get_queue_client()
+        client = get_queue_client(request_timeout_seconds=2)
         for queue_name in (
             getattr(settings, "MESSAGING_SQS_QUEUE_NAME", MessagingSQSQueue.QUEUE_NAME),
             MessagingSQSQueue.DLQ_NAME,
@@ -138,7 +272,171 @@ def _assert_queue_empty() -> None:
         raise CommandError("messaging_queue_health_unavailable") from exc
 
 
-def _assert_runtime_preflight(*, tenant: Tenant, lock: bool) -> None:
+def _assert_db_recovery_quiescent() -> None:
+    if ScheduledNotification.objects.filter(
+        status=ScheduledNotification.Status.DISPATCHING
+    ).exists():
+        raise CommandError("recovery_quiescence_unavailable")
+
+
+def _lock_recovery_write_tables() -> None:
+    """Block target-state inserts/updates during the final PostgreSQL recheck."""
+
+    if connection.vendor != "postgresql":
+        return
+    table_names = (
+        PendingPasswordReset._meta.db_table,
+        Student._meta.db_table,
+        ScheduledNotification._meta.db_table,
+        NotificationLog._meta.db_table,
+    )
+    quoted_tables = ", ".join(
+        connection.ops.quote_name(table_name) for table_name in table_names
+    )
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f"LOCK TABLE {quoted_tables} "  # noqa: S608
+            "IN SHARE ROW EXCLUSIVE MODE NOWAIT"
+        )
+
+
+def _set_recovery_lock_timeout() -> None:
+    if connection.vendor != "postgresql":
+        return
+    with connection.cursor() as cursor:
+        cursor.execute("SET LOCAL lock_timeout = '5s'")
+
+
+def _is_recovery_lock_error(exc: DatabaseError) -> bool:
+    cause = getattr(exc, "__cause__", None)
+    sqlstate = getattr(cause, "pgcode", None) or getattr(cause, "sqlstate", None)
+    return sqlstate in {"40P01", "55P03"}
+
+
+@contextmanager
+def _map_recovery_lock_errors(*, apply_changes: bool):
+    try:
+        yield
+    except DatabaseError as exc:
+        if apply_changes and _is_recovery_lock_error(exc):
+            raise CommandError("recovery_quiescence_unavailable") from exc
+        raise
+
+
+def _normalize_template_body(value: object) -> str:
+    return str(value or "").replace("\r\n", "\n").strip()
+
+
+def _assert_rendered_envelopes(
+    *,
+    tenant: Tenant,
+    candidates: list[RecoveryCandidate],
+    templates_by_trigger: dict[str, MessageTemplate],
+) -> None:
+    from apps.domains.messaging.services import (
+        REGISTRATION_APPROVED_NOTICE,
+        get_tenant_site_url,
+    )
+
+    tenant_site_url = get_tenant_site_url(tenant)
+    account_site_url = getattr(settings, "SITE_URL", "") or "https://hakwonplus.com"
+    envelope_count = 0
+    for candidate in candidates:
+        student = candidate.student
+        student_replacements = {
+            "학생이름": str(student.name or ""),
+            "학생아이디": str(student.ps_number or ""),
+            "학생비밀번호": "__secret_preflight__",
+            "사이트링크": account_site_url if candidate.mode == "student_only" else tenant_site_url,
+            "비밀번호안내": (
+                "로그인 정보가 변경되었습니다. 변경된 정보로 로그인해 주세요."
+                if candidate.mode == "student_only"
+                else REGISTRATION_APPROVED_NOTICE
+            ),
+        }
+        envelopes = [(STUDENT_TRIGGER, student_replacements)]
+        if candidate.mode == "pair":
+            envelopes.append(
+                (
+                    PARENT_TRIGGER,
+                    {
+                        **student_replacements,
+                        "학부모아이디": _normalize_phone(student.parent_phone),
+                        "학부모비밀번호": "__secret_preflight__",
+                    },
+                )
+            )
+        for trigger, replacements in envelopes:
+            template = templates_by_trigger[trigger]
+            placeholders = frozenset(PLACEHOLDER_PATTERN.findall(template.body or ""))
+            if placeholders != REQUIRED_PLACEHOLDERS[trigger]:
+                raise CommandError(f"owner_template_placeholder_drift:{trigger}")
+            rendered = str(template.body or "")
+            for key, value in replacements.items():
+                rendered = rendered.replace(f"#{{{key}}}", str(value))
+            if not rendered.strip() or PLACEHOLDER_PATTERN.search(rendered):
+                raise CommandError(f"account_notice_render_drift:{trigger}")
+            envelope_count += 1
+    if envelope_count != EXPECTED_OUTBOX_COUNT:
+        raise CommandError("account_notice_envelope_count_mismatch")
+
+
+def _assert_live_provider_contract(
+    *,
+    templates_by_trigger: dict[str, MessageTemplate],
+) -> None:
+    api_key, api_secret = _get_solapi_credentials()
+    pf_id = str(resolve_kakao_channel(get_owner_tenant_id()).get("pf_id") or "").strip()
+    sender = _normalize_phone(getattr(settings, "SOLAPI_SENDER", ""))
+    if not api_key or not api_secret or not pf_id or len(sender) < 10:
+        raise CommandError("common_alimtalk_channel_credentials_unavailable")
+    try:
+        active_senders = get_active_sender_numbers(api_key, api_secret)
+        live_templates = list_kakao_templates(
+            api_key,
+            api_secret,
+            pf_id,
+            status_filter="APPROVED",
+        )
+    except Exception as exc:
+        raise CommandError("live_provider_contract_unavailable") from exc
+    if sender not in {_normalize_phone(value) for value in active_senders}:
+        raise CommandError("common_sender_not_active")
+
+    live_by_id = {
+        str(item.get("templateId") or item.get("id") or "").strip(): item
+        for item in live_templates
+        if isinstance(item, dict)
+    }
+    for trigger, template in templates_by_trigger.items():
+        template_id = str(template.solapi_template_id or "").strip()
+        live = live_by_id.get(template_id)
+        live_status = str(
+            (live or {}).get("status")
+            or (live or {}).get("inspectionStatus")
+            or (live or {}).get("templateStatus")
+            or ""
+        ).upper()
+        live_channel = str((live or {}).get("channelId") or "").strip()
+        live_body = _normalize_template_body(
+            (live or {}).get("content") or (live or {}).get("body")
+        )
+        if (
+            live is None
+            or live_status not in {"APPROVED", "ACTIVE"}
+            or live_channel != pf_id
+            or live_body != _normalize_template_body(template.body)
+        ):
+            raise CommandError(f"live_provider_template_drift:{trigger}")
+
+
+def _assert_runtime_preflight(
+    *,
+    tenant: Tenant,
+    candidates: list[RecoveryCandidate],
+    lock: bool,
+    check_external: bool = True,
+) -> None:
     if not tenant.messaging_is_active:
         raise CommandError("business_tenant_messaging_inactive")
     if is_messaging_ops_held(tenant.id):
@@ -147,7 +445,11 @@ def _assert_runtime_preflight(*, tenant: Tenant, lock: bool) -> None:
     owner_id = int(get_owner_tenant_id())
     owner_query = Tenant.objects.filter(pk=owner_id, is_active=True)
     if lock:
-        owner_query = owner_query.select_for_update()
+        owner_query = owner_query.select_for_update(
+            no_key=True,
+            nowait=True,
+            of=("self",),
+        )
     if not owner_query.exists() or is_messaging_runtime_held(owner_id):
         raise CommandError("owner_messaging_runtime_unavailable")
 
@@ -156,7 +458,11 @@ def _assert_runtime_preflight(*, tenant: Tenant, lock: bool) -> None:
         trigger__in=ACCOUNT_TRIGGERS,
     ).order_by("trigger")
     if lock:
-        config_query = config_query.select_for_update()
+        config_query = config_query.select_for_update(
+            no_key=True,
+            nowait=True,
+            of=("self",),
+        )
     configs = list(config_query)
     if {config.trigger for config in configs} != set(ACCOUNT_TRIGGERS):
         raise CommandError("exact_owner_account_templates_required")
@@ -164,8 +470,13 @@ def _assert_runtime_preflight(*, tenant: Tenant, lock: bool) -> None:
     template_ids = [config.template_id for config in configs if config.template_id]
     template_query = MessageTemplate.objects.filter(id__in=template_ids).order_by("id")
     if lock:
-        template_query = template_query.select_for_update()
+        template_query = template_query.select_for_update(
+            no_key=True,
+            nowait=True,
+            of=("self",),
+        )
     templates = {template.id: template for template in template_query}
+    templates_by_trigger: dict[str, MessageTemplate] = {}
     for config in configs:
         template = templates.get(config.template_id)
         if (
@@ -176,6 +487,16 @@ def _assert_runtime_preflight(*, tenant: Tenant, lock: bool) -> None:
             or not str(template.solapi_template_id or "").strip()
         ):
             raise CommandError(f"owner_template_drift:{config.trigger}")
+        templates_by_trigger[config.trigger] = template
+
+    _assert_rendered_envelopes(
+        tenant=tenant,
+        candidates=candidates,
+        templates_by_trigger=templates_by_trigger,
+    )
+    if not check_external:
+        return
+    _assert_live_provider_contract(templates_by_trigger=templates_by_trigger)
 
     try:
         threshold = Decimal(
@@ -202,13 +523,20 @@ def _load_candidates(
     student_ids: list[int],
     lock: bool,
 ) -> list[RecoveryCandidate]:
+    owner_id = int(get_owner_tenant_id())
     base_students = Student.objects.filter(
         tenant=tenant,
         id__in=student_ids,
         deleted_at__isnull=True,
     )
     if lock:
-        list(base_students.select_for_update().order_by("id"))
+        list(
+            base_students.select_for_update(
+                no_key=True,
+                nowait=True,
+                of=("self",),
+            ).order_by("id")
+        )
 
     students = list(
         base_students.select_related("user", "parent__user").order_by("id")
@@ -221,16 +549,54 @@ def _load_candidates(
     parent_ids = [student.parent_id for student in students if student.parent_id]
     parent_query = Parent.objects.filter(id__in=parent_ids).order_by("id")
     if lock:
-        list(parent_query.select_for_update())
+        list(
+            parent_query.select_for_update(
+                no_key=True,
+                nowait=True,
+                of=("self",),
+            )
+        )
     parents = list(parent_query.select_related("user"))
     parent_by_id = {parent.id: parent for parent in parents}
 
+    linked_student_query = (
+        Student.objects.filter(
+            parent_id__in=parent_ids,
+        )
+        .select_related("user")
+        .order_by("id")
+    )
+    if lock:
+        linked_student_query = linked_student_query.select_for_update(
+            no_key=True,
+            nowait=True,
+            of=("self",),
+        )
+    linked_students = list(linked_student_query)
+    linked_students_by_parent: dict[int, list[Student]] = {}
+    for linked_student in linked_students:
+        linked_students_by_parent.setdefault(linked_student.parent_id, []).append(
+            linked_student
+        )
+
     user_ids = [student.user_id for student in students]
     user_ids.extend(parent.user_id for parent in parents if parent.user_id)
+    user_ids.extend(
+        linked_student.user_id
+        for linked_student in linked_students
+        if linked_student.user_id
+    )
     user_query = get_user_model().objects.filter(id__in=user_ids).order_by("id")
-    if lock:
-        list(user_query.select_for_update())
-    users = {user.id: user for user in user_query}
+    user_rows = list(
+        user_query.select_for_update(
+            no_key=True,
+            nowait=True,
+            of=("self",),
+        )
+        if lock
+        else user_query
+    )
+    users = {user.id: user for user in user_rows}
 
     enrollment_query = Enrollment.objects.filter(
         tenant=tenant,
@@ -238,12 +604,24 @@ def _load_candidates(
         status="ACTIVE",
     ).order_by("id")
     if lock:
-        list(enrollment_query.select_for_update())
+        list(
+            enrollment_query.select_for_update(
+                no_key=True,
+                nowait=True,
+                of=("self",),
+            )
+        )
     active_enrollment_counts = Counter(enrollment_query.values_list("student_id", flat=True))
 
     pending_query = PendingPasswordReset.objects.filter(user_id__in=user_ids).order_by("id")
     if lock:
-        list(pending_query.select_for_update())
+        list(
+            pending_query.select_for_update(
+                no_key=True,
+                nowait=True,
+                of=("self",),
+            )
+        )
     if pending_query.exists():
         raise CommandError("pending_password_reset_exists")
 
@@ -253,20 +631,27 @@ def _load_candidates(
         for target in (f"student:{student_id}", f"parent:{student_id}")
     }
     outbox_query = ScheduledNotification.objects.filter(
-        tenant=tenant,
         trigger__in=ACCOUNT_TRIGGERS,
+        payload__target_id__in=expected_targets,
     ).order_by("created_at", "id")
     if lock:
-        list(outbox_query.select_for_update())
-    outboxes = [row for row in outbox_query if _payload_target(row) in expected_targets]
+        outbox_query = outbox_query.select_for_update(
+            no_key=True,
+            nowait=True,
+            of=("self",),
+        )
+    outboxes = list(outbox_query)
 
     log_query = NotificationLog.objects.filter(
-        _log_scope(tenant),
         notification_type__in=ACCOUNT_TRIGGERS,
         target_id__in=expected_targets,
     ).order_by("sent_at", "id")
     if lock:
-        list(log_query.select_for_update())
+        log_query = log_query.select_for_update(
+            no_key=True,
+            nowait=True,
+            of=("self",),
+        )
     logs = list(log_query)
 
     parent_user_ids: list[int] = []
@@ -284,6 +669,8 @@ def _load_candidates(
             raise CommandError(f"parent_user_tenant_mismatch:student_id={student.id}")
         if not student_user.is_active or not parent_user.is_active:
             raise CommandError(f"account_inactive:student_id={student.id}")
+        if not student_user.has_usable_password() or not parent_user.has_usable_password():
+            raise CommandError(f"account_password_unusable:student_id={student.id}")
         if student_user.last_login is not None or parent_user.last_login is not None:
             raise CommandError(f"account_already_used:student_id={student.id}")
         if (
@@ -314,21 +701,37 @@ def _load_candidates(
             or parent_phone != canonical_parent_phone
         ):
             raise CommandError(f"recipient_scope_invalid:student_id={student.id}")
+        if user_display_username(student_user) != str(student.ps_number or "").strip():
+            raise CommandError(f"student_account_identifier_drift:student_id={student.id}")
+        if user_display_username(parent_user) != parent_phone:
+            raise CommandError(f"parent_account_identifier_drift:student_id={student.id}")
 
-        active_siblings = (
-            Student.objects.filter(
-                tenant=tenant,
-                parent_id=parent.id,
-                deleted_at__isnull=True,
-                user__is_active=True,
+        siblings = [
+            linked_student
+            for linked_student in linked_students_by_parent.get(parent.id, [])
+            if linked_student.id != student.id
+        ]
+        if any(sibling.tenant_id != tenant.id for sibling in siblings):
+            raise CommandError(
+                f"cross_tenant_parent_sharing_drift:student_id={student.id}"
             )
-            .exclude(id=student.id)
-            .count()
-        )
-        if mode == "student_only" and active_siblings < 1:
-            raise CommandError(f"reviewed_shared_parent_missing:student_id={student.id}")
-        if mode == "pair" and active_siblings != 0:
-            raise CommandError(f"parent_shared_with_active_sibling:student_id={student.id}")
+        if mode == "student_only":
+            if len(siblings) != 1:
+                raise CommandError(
+                    f"reviewed_shared_parent_drift:student_id={student.id}"
+                )
+            sibling_user = users.get(siblings[0].user_id)
+            if (
+                sibling_user is None
+                or sibling_user.tenant_id != tenant.id
+                or not sibling_user.is_active
+                or siblings[0].deleted_at is not None
+            ):
+                raise CommandError(
+                    f"reviewed_shared_parent_drift:student_id={student.id}"
+                )
+        elif siblings:
+            raise CommandError(f"parent_shared_with_any_student:student_id={student.id}")
         parent_user_ids.append(parent_user.id)
 
         targets = {
@@ -350,40 +753,94 @@ def _load_candidates(
         ):
             raise CommandError(f"recovery_outbox_already_exists:student_id={student.id}")
 
-        student_sent = _provider_sent_logs(
-            logs,
-            trigger=STUDENT_TRIGGER,
-            target_id=targets[STUDENT_TRIGGER],
-        )
-        parent_sent = _provider_sent_logs(
-            logs,
-            trigger=PARENT_TRIGGER,
-            target_id=targets[PARENT_TRIGGER],
-        )
+        student_logs = [
+            log
+            for log in logs
+            if log.notification_type == STUDENT_TRIGGER
+            and log.target_id == targets[STUDENT_TRIGGER]
+        ]
+        parent_logs = [
+            log
+            for log in logs
+            if log.notification_type == PARENT_TRIGGER
+            and log.target_id == targets[PARENT_TRIGGER]
+        ]
         if mode == "student_only":
-            if not matched[STUDENT_TRIGGER]:
-                raise CommandError(f"student_notice_history_required:student_id={student.id}")
-            if student_sent:
-                raise CommandError(
-                    f"later_success_already_exists:student_id={student.id}:trigger={STUDENT_TRIGGER}"
+            exact_outboxes: dict[str, ScheduledNotification] = {}
+            for trigger, target_id in targets.items():
+                rows = matched[trigger]
+                if len(rows) != 1 or not _is_exact_system_account_outbox(
+                    rows[0],
+                    tenant_id=tenant.id,
+                    trigger=trigger,
+                    target_id=target_id,
+                ):
+                    raise CommandError(
+                        f"reviewed_system_account_outbox_drift:student_id={student.id}:"
+                        f"trigger={trigger}"
+                    )
+                exact_outboxes[trigger] = rows[0]
+            student_outbox_key = exact_outboxes[
+                STUDENT_TRIGGER
+            ].business_idempotency_key
+            if any(
+                _has_provider_acceptance_evidence(log)
+                and not _is_exact_balance_rejection(
+                    log,
+                    owner_tenant_id=owner_id,
+                    tenant_id=tenant.id,
+                    target_id=targets[STUDENT_TRIGGER],
+                    business_idempotency_key=student_outbox_key,
                 )
-            student_failure_logs = [
-                log
-                for log in logs
-                if log.notification_type == STUDENT_TRIGGER
-                and log.target_id == targets[STUDENT_TRIGGER]
-                and (not log.success or log.status in {"ambiguous", "failed"})
-            ]
-            if not student_failure_logs:
-                raise CommandError(
-                    f"reviewed_student_failure_required:student_id={student.id}"
-                )
-            if (
-                len(parent_sent) != 1
-                or parent_sent[0].message_mode != "alimtalk"
-                or not parent_sent[0].business_idempotency_key
+                for log in student_logs
             ):
+                raise CommandError(
+                    f"provider_acceptance_evidence_exists:student_id={student.id}:"
+                    f"trigger={STUDENT_TRIGGER}"
+                )
+            if not student_logs or any(
+                not _is_exact_balance_rejection(
+                    log,
+                    owner_tenant_id=owner_id,
+                    tenant_id=tenant.id,
+                    target_id=targets[STUDENT_TRIGGER],
+                    business_idempotency_key=student_outbox_key,
+                )
+                for log in student_logs
+            ):
+                raise CommandError(
+                    f"reviewed_student_balance_rejection_required:student_id={student.id}"
+                )
+            parent_outbox_key = exact_outboxes[
+                PARENT_TRIGGER
+            ].business_idempotency_key
+            canonical_parent_sent = [
+                log
+                for log in parent_logs
+                if _is_exact_parent_success(
+                    log,
+                    owner_tenant_id=owner_id,
+                    tenant_id=tenant.id,
+                    target_id=targets[PARENT_TRIGGER],
+                    business_idempotency_key=parent_outbox_key,
+                )
+            ]
+            if len(canonical_parent_sent) != 1:
                 raise CommandError(f"reviewed_parent_success_required:student_id={student.id}")
+            canonical_parent_sent_id = canonical_parent_sent[0].id
+            if any(
+                log.id != canonical_parent_sent_id
+                and not _is_allowed_parent_ambiguous_history(
+                    log,
+                    owner_tenant_id=owner_id,
+                    tenant_id=tenant.id,
+                    target_id=targets[PARENT_TRIGGER],
+                )
+                for log in parent_logs
+            ):
+                raise CommandError(
+                    f"reviewed_parent_history_drift:student_id={student.id}"
+                )
         else:
             for trigger, rows in matched.items():
                 if len(rows) != 1:
@@ -392,18 +849,20 @@ def _load_candidates(
                         f"trigger={trigger}:count={len(rows)}"
                     )
                 row = rows[0]
-                if (
-                    row.status != ScheduledNotification.Status.FAILED
-                    or row.error_message != FAILURE_REASON
-                    or row.origin_type != ORIGINAL_ORIGIN_TYPE
+                if not _is_exact_failed_pair_outbox(
+                    row,
+                    tenant_id=tenant.id,
+                    trigger=trigger,
+                    target_id=targets[trigger],
                 ):
                     raise CommandError(
                         f"outbox_not_eligible:student_id={student.id}:trigger={trigger}"
                     )
-            if student_sent or parent_sent:
-                trigger = STUDENT_TRIGGER if student_sent else PARENT_TRIGGER
+            if student_logs or parent_logs:
+                trigger = STUDENT_TRIGGER if student_logs else PARENT_TRIGGER
                 raise CommandError(
-                    f"later_success_already_exists:student_id={student.id}:trigger={trigger}"
+                    f"provider_delivery_history_exists:student_id={student.id}:"
+                    f"trigger={trigger}"
                 )
 
         candidate_logs = [
@@ -587,7 +1046,6 @@ def _apply_candidates(*, tenant: Tenant, candidates: list[RecoveryCandidate]) ->
     if historical_after != historical_before:
         raise CommandError("historical_delivery_state_mutated")
 
-    _assert_queue_empty()
     return {
         "credentials_rotated": len(rotated_user_ids),
         "outboxes_created": len(new_outboxes),
@@ -621,11 +1079,44 @@ class Command(BaseCommand):
         student_ids = _parse_student_ids(options["student_ids"])
         apply_changes = bool(options["apply"])
 
+        if apply_changes:
+            preflight_tenant = Tenant.objects.filter(
+                id=tenant_id,
+                is_active=True,
+            ).first()
+            if preflight_tenant is None:
+                raise CommandError(f"active_tenant_not_found:{tenant_id}")
+            if (
+                str(options.get("confirm_tenant") or "").strip()
+                != preflight_tenant.code
+            ):
+                raise CommandError(
+                    "confirmation_required:--confirm-tenant must equal Tenant.code"
+                )
+            preflight_candidates = _load_candidates(
+                tenant=preflight_tenant,
+                student_ids=student_ids,
+                lock=False,
+            )
+            _assert_runtime_preflight(
+                tenant=preflight_tenant,
+                candidates=preflight_candidates,
+                lock=False,
+                check_external=True,
+            )
+
         result: dict | None = None
-        with transaction.atomic():
+        with _map_recovery_lock_errors(apply_changes=apply_changes), transaction.atomic():
+            if apply_changes:
+                _set_recovery_lock_timeout()
+                _lock_recovery_write_tables()
             tenant_query = Tenant.objects.filter(id=tenant_id, is_active=True)
             if apply_changes:
-                tenant_query = tenant_query.select_for_update()
+                tenant_query = tenant_query.select_for_update(
+                    no_key=True,
+                    nowait=True,
+                    of=("self",),
+                )
             tenant = tenant_query.first()
             if tenant is None:
                 raise CommandError(f"active_tenant_not_found:{tenant_id}")
@@ -642,7 +1133,14 @@ class Command(BaseCommand):
                 student_ids=student_ids,
                 lock=apply_changes,
             )
-            _assert_runtime_preflight(tenant=tenant, lock=apply_changes)
+            _assert_runtime_preflight(
+                tenant=tenant,
+                candidates=candidates,
+                lock=apply_changes,
+                check_external=not apply_changes,
+            )
+            if apply_changes:
+                _assert_db_recovery_quiescent()
             mode_counts = Counter(candidate.mode for candidate in candidates)
             mode = "apply" if apply_changes else "dry-run"
             self.stdout.write(

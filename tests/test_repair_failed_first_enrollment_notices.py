@@ -1,17 +1,24 @@
 from __future__ import annotations
 
 from collections import Counter
+from datetime import timedelta
+from decimal import Decimal
 from io import StringIO
+import threading
+import time
 from types import SimpleNamespace
+import unittest
 from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.hashers import make_password
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from django.test import TestCase, override_settings
+from django.db import close_old_connections, connection, transaction
+from django.test import TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 
-from apps.core.models import Tenant
+from apps.core.models import PendingPasswordReset, Tenant
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.lectures.models import Lecture
 from apps.domains.messaging.models import (
@@ -29,13 +36,21 @@ COMMAND_MODULE = "apps.core.management.commands.repair_failed_first_enrollment_n
 TARGET_IDS = (3656, 4102, 4103, 4104, 4105)
 
 
-@override_settings(
-    OWNER_TENANT_ID=1,
-    TEST_TENANT_ID=9999,
-    MESSAGING_PROVIDER_LOW_BALANCE_ALERT_THRESHOLD=10_000,
-    MESSAGING_TENANT_BINDING_KEY="test-credential-recovery-binding",
-)
-class RepairFailedFirstEnrollmentNoticesTests(TestCase):
+RECOVERY_TEST_SETTINGS = {
+    "OWNER_TENANT_ID": 1,
+    "TEST_TENANT_ID": 9999,
+    "MESSAGING_PROVIDER_LOW_BALANCE_ALERT_THRESHOLD": 10_000,
+    "MESSAGING_TENANT_BINDING_KEY": "test-credential-recovery-binding",
+    "SOLAPI_API_KEY": "test-api-key",
+    "SOLAPI_API_SECRET": "test-api-secret",
+    "SOLAPI_SENDER": "0212345678",
+    "SOLAPI_KAKAO_PF_ID": "test-common-pfid",
+    "SITE_URL": "https://test.hakwonplus.com",
+    "PASSWORD_HASHERS": ["django.contrib.auth.hashers.MD5PasswordHasher"],
+}
+
+
+class RecoveryFixtureMixin:
     def setUp(self):
         self.owner = Tenant.objects.create(
             id=1,
@@ -58,6 +73,19 @@ class RepairFailedFirstEnrollmentNoticesTests(TestCase):
             subject="수학",
         )
         self._create_templates()
+
+        self.sender_patcher = patch(
+            f"{COMMAND_MODULE}.get_active_sender_numbers",
+            return_value=[RECOVERY_TEST_SETTINGS["SOLAPI_SENDER"]],
+        )
+        self.sender_patcher.start()
+        self.addCleanup(self.sender_patcher.stop)
+        self.template_list_patcher = patch(
+            f"{COMMAND_MODULE}.list_kakao_templates",
+            side_effect=self._live_provider_templates,
+        )
+        self.template_list_patcher.start()
+        self.addCleanup(self.template_list_patcher.stop)
 
         self.solapi_client = MagicMock()
         self.solapi_client.get_balance.return_value = SimpleNamespace(balance="42911.1")
@@ -95,6 +123,16 @@ class RepairFailedFirstEnrollmentNoticesTests(TestCase):
             self._failed_pair(self.students[student_id])
 
     def _create_templates(self):
+        bodies = {
+            "registration_approved_student": (
+                "#{학생이름} #{학생아이디} #{학생비밀번호} "
+                "#{사이트링크} #{비밀번호안내}"
+            ),
+            "registration_approved_parent": (
+                "#{학생이름} #{학생아이디} #{학생비밀번호} "
+                "#{학부모아이디} #{학부모비밀번호} #{사이트링크} #{비밀번호안내}"
+            ),
+        }
         for trigger, template_id in (
             ("registration_approved_student", "provider-student"),
             ("registration_approved_parent", "provider-parent"),
@@ -103,10 +141,7 @@ class RepairFailedFirstEnrollmentNoticesTests(TestCase):
                 tenant=self.owner,
                 category=MessageTemplate.Category.SIGNUP,
                 name=trigger,
-                body=(
-                    "#{학생이름} #{학생아이디} #{학생비밀번호} "
-                    "#{학부모아이디} #{학부모비밀번호} #{사이트링크} #{비밀번호안내}"
-                ),
+                body=bodies[trigger],
                 solapi_template_id=template_id,
                 solapi_status="APPROVED",
                 is_system=True,
@@ -119,13 +154,34 @@ class RepairFailedFirstEnrollmentNoticesTests(TestCase):
                 message_mode="alimtalk",
             )
 
+    def _live_provider_templates(self, *_args, **_kwargs):
+        return [
+            {
+                "templateId": template.solapi_template_id,
+                "status": "APPROVED",
+                "channelId": RECOVERY_TEST_SETTINGS["SOLAPI_KAKAO_PF_ID"],
+                "content": template.body,
+            }
+            for template in MessageTemplate.objects.filter(
+                tenant=self.owner,
+                name__in=(
+                    "registration_approved_student",
+                    "registration_approved_parent",
+                ),
+            ).order_by("name")
+        ]
+
     def _create_student(self, student_id: int, *, parent: Parent | None = None) -> Student:
         student_phone = f"010{student_id:08d}"
+        ps_number = f"RECOVERY-{student_id}"
         if parent is None:
             parent_phone = f"011{student_id:08d}"
-            parent_user = User.objects.create_user(
-                username=f"parent-{student_id}",
-                password=f"old-parent-{student_id}",
+            parent_user = User.objects.create(
+                username=parent_phone,
+                password=make_password(
+                    f"old-parent-{student_id}",
+                    hasher="md5",
+                ),
                 tenant=self.tenant,
                 phone=parent_phone,
                 token_version=2,
@@ -141,9 +197,12 @@ class RepairFailedFirstEnrollmentNoticesTests(TestCase):
         else:
             parent_phone = parent.phone
 
-        student_user = User.objects.create_user(
-            username=f"student-{student_id}",
-            password=f"old-student-{student_id}",
+        student_user = User.objects.create(
+            username=ps_number,
+            password=make_password(
+                f"old-student-{student_id}",
+                hasher="md5",
+            ),
             tenant=self.tenant,
             phone=student_phone,
             token_version=2,
@@ -155,7 +214,7 @@ class RepairFailedFirstEnrollmentNoticesTests(TestCase):
             tenant=self.tenant,
             user=student_user,
             parent=parent,
-            ps_number=f"RECOVERY-{student_id}",
+            ps_number=ps_number,
             omr_code=f"{student_id:08d}"[-8:],
             name=f"학생-{student_id}",
             phone=student_phone,
@@ -176,20 +235,29 @@ class RepairFailedFirstEnrollmentNoticesTests(TestCase):
         trigger: str,
         status: str,
         error_message: str = "",
+        origin_type: str = "excel_import",
+        origin_id: str | None = None,
+        business_idempotency_key: str = "",
     ) -> ScheduledNotification:
         prefix = "student" if trigger.endswith("student") else "parent"
+        target_id = f"{prefix}:{student.id}"
+        resolved_origin_id = origin_id or f"excel-job-{student.id}"
         return ScheduledNotification.objects.create(
             tenant=self.tenant,
             trigger=trigger,
             send_at=timezone.now(),
             payload={
-                "target_id": f"{prefix}:{student.id}",
+                "target_id": target_id,
                 "event_type": trigger,
                 "message_mode": "alimtalk",
+                "source_tenant_id": self.tenant.id,
+                "origin_type": origin_type,
+                "origin_id": resolved_origin_id,
                 "redacted": True,
             },
-            origin_type="excel_import",
-            origin_id=f"excel-job-{student.id}",
+            business_idempotency_key=business_idempotency_key,
+            origin_type=origin_type,
+            origin_id=resolved_origin_id,
             status=status,
             error_message=error_message,
         )
@@ -200,12 +268,14 @@ class RepairFailedFirstEnrollmentNoticesTests(TestCase):
             trigger="registration_approved_student",
             status=ScheduledNotification.Status.FAILED,
             error_message="business_tenant_messaging_disabled",
+            business_idempotency_key=f"failed-student-{student.id}",
         )
         self._outbox(
             student=student,
             trigger="registration_approved_parent",
             status=ScheduledNotification.Status.FAILED,
             error_message="business_tenant_messaging_disabled",
+            business_idempotency_key=f"failed-parent-{student.id}",
         )
 
     def _student_only_history(self, student: Student):
@@ -213,11 +283,17 @@ class RepairFailedFirstEnrollmentNoticesTests(TestCase):
             student=student,
             trigger="registration_approved_student",
             status=ScheduledNotification.Status.SENT,
+            origin_type="system_account",
+            origin_id=f"student:{student.id}",
+            business_idempotency_key="student-system-account-outbox-key",
         )
         self._outbox(
             student=student,
             trigger="registration_approved_parent",
             status=ScheduledNotification.Status.SENT,
+            origin_type="system_account",
+            origin_id=f"parent:{student.id}",
+            business_idempotency_key="parent-system-account-outbox-key",
         )
         NotificationLog.objects.create(
             tenant=self.owner,
@@ -229,7 +305,10 @@ class RepairFailedFirstEnrollmentNoticesTests(TestCase):
             target_type="account",
             target_id=f"student:{student.id}",
             provider_message_id="",
-            failure_reason="provider_result_unresolved",
+            business_idempotency_key="student-system-account-outbox-key",
+            origin_type="system_account",
+            origin_id=f"student:{student.id}",
+            failure_reason="('NotEnoughBalance', 'rejected')",
         )
         NotificationLog.objects.create(
             tenant=self.owner,
@@ -241,7 +320,20 @@ class RepairFailedFirstEnrollmentNoticesTests(TestCase):
             target_type="account",
             target_id=f"parent:{student.id}",
             provider_message_id="provider-parent-proof",
-            business_idempotency_key="parent-provider-proof-key",
+            business_idempotency_key="parent-system-account-outbox-key",
+            origin_type="system_account",
+            origin_id=f"parent:{student.id}",
+        )
+        NotificationLog.objects.create(
+            tenant=self.owner,
+            source_tenant=self.tenant,
+            success=False,
+            status="ambiguous",
+            message_mode="alimtalk",
+            notification_type="registration_approved_parent",
+            target_type="account",
+            target_id=f"parent:{student.id}",
+            failure_reason="provider_result_unresolved",
         )
 
     def _command_args(self):
@@ -261,6 +353,10 @@ class RepairFailedFirstEnrollmentNoticesTests(TestCase):
             self.tenant.code,
             stdout=stdout,
         )
+
+
+@override_settings(**RECOVERY_TEST_SETTINGS)
+class RepairFailedFirstEnrollmentNoticesTests(RecoveryFixtureMixin, TestCase):
 
     def test_dry_run_is_secret_free_and_does_not_mutate(self):
         output = StringIO()
@@ -287,6 +383,8 @@ class RepairFailedFirstEnrollmentNoticesTests(TestCase):
             self.assertEqual(User.objects.get(id=user_id).password, password_hash)
 
     def test_apply_preserves_shared_parent_and_creates_exact_nine_outboxes(self):
+        from apps.core.management.commands import repair_failed_first_enrollment_notices as command
+
         shared_parent_user = self.students[3656].parent.user
         shared_parent_before = (
             shared_parent_user.password,
@@ -304,9 +402,39 @@ class RepairFailedFirstEnrollmentNoticesTests(TestCase):
             )
         )
         output = StringIO()
+        atomic_started = {"value": False}
+        original_set_timeout = command._set_recovery_lock_timeout
 
-        with self.captureOnCommitCallbacks(execute=False) as callbacks:
-            self._call_apply(stdout=output)
+        def mark_atomic_started():
+            atomic_started["value"] = True
+            return original_set_timeout()
+
+        def outside_atomic_only(original):
+            def wrapped(*args, **kwargs):
+                self.assertFalse(atomic_started["value"])
+                return original(*args, **kwargs)
+
+            return wrapped
+
+        with patch.object(
+            command,
+            "_set_recovery_lock_timeout",
+            side_effect=mark_atomic_started,
+        ), patch.object(
+            command,
+            "_assert_live_provider_contract",
+            side_effect=outside_atomic_only(command._assert_live_provider_contract),
+        ), patch.object(
+            command,
+            "get_solapi_client",
+            side_effect=outside_atomic_only(command.get_solapi_client),
+        ), patch.object(
+            command,
+            "get_queue_client",
+            side_effect=outside_atomic_only(command.get_queue_client),
+        ):
+            with self.captureOnCommitCallbacks(execute=False) as callbacks:
+                self._call_apply(stdout=output)
 
         self.assertEqual(len(callbacks), 9)
         shared_parent_user.refresh_from_db()
@@ -378,12 +506,59 @@ class RepairFailedFirstEnrollmentNoticesTests(TestCase):
     def test_pair_with_active_sibling_is_refused_fail_closed(self):
         self._create_student(5002, parent=self.students[4102].parent)
 
-        with self.assertRaisesMessage(CommandError, "parent_shared_with_active_sibling"):
+        with self.assertRaisesMessage(CommandError, "parent_shared_with_any_student"):
             call_command(*self._command_args())
 
         self.assertFalse(
             ScheduledNotification.objects.filter(origin_type="recovery").exists()
         )
+
+    def test_pair_with_inactive_sibling_is_refused_fail_closed(self):
+        sibling = self._create_student(5002, parent=self.students[4102].parent)
+        sibling.user.is_active = False
+        sibling.user.save(update_fields=["is_active"])
+
+        with self.assertRaisesMessage(CommandError, "parent_shared_with_any_student"):
+            call_command(*self._command_args())
+
+    def test_pair_with_soft_deleted_sibling_is_refused_fail_closed(self):
+        sibling = self._create_student(5002, parent=self.students[4102].parent)
+        sibling.deleted_at = timezone.now()
+        sibling.save(update_fields=["deleted_at"])
+
+        with self.assertRaisesMessage(CommandError, "parent_shared_with_any_student"):
+            call_command(*self._command_args())
+
+    def test_cross_tenant_parent_reference_is_refused_fail_closed(self):
+        other_tenant = Tenant.objects.create(
+            name="격리 검증 학원",
+            code="cross-tenant-parent-drift",
+            is_active=True,
+        )
+        other_user = User.objects.create_user(
+            username="CROSS-TENANT-STUDENT",
+            password="cross-tenant-password",
+            tenant=other_tenant,
+            phone="01099990001",
+            is_active=False,
+        )
+        Student.objects.create(
+            id=6001,
+            tenant=other_tenant,
+            user=other_user,
+            parent=self.students[4102].parent,
+            ps_number="CROSS-TENANT-STUDENT",
+            omr_code="99990001",
+            name="격리 검증 학생",
+            phone="01099990001",
+            parent_phone=self.students[4102].parent_phone,
+        )
+
+        with self.assertRaisesMessage(
+            CommandError,
+            "cross_tenant_parent_sharing_drift",
+        ):
+            call_command(*self._command_args())
 
     def test_any_batch_failure_rolls_back_all_five_targets(self):
         from apps.core.management.commands import repair_failed_first_enrollment_notices as command
@@ -456,7 +631,159 @@ class RepairFailedFirstEnrollmentNoticesTests(TestCase):
             provider_message_id="late-provider-proof",
         )
 
-        with self.assertRaisesMessage(CommandError, "later_success_already_exists"):
+        with self.assertRaisesMessage(
+            CommandError,
+            "provider_delivery_history_exists",
+        ):
+            call_command(*self._command_args())
+
+    def test_all_noncanonical_provider_acceptance_evidence_is_refused(self):
+        variants = (
+            {"provider_message_id": "corrupt-provider-proof"},
+            {"amount_deducted": Decimal("1")},
+            {"success": True},
+            {"status": "sent"},
+            {"status": "sending"},
+            {"status": "processing"},
+            {"status": "ambiguous"},
+        )
+        for index, variant in enumerate(variants):
+            with self.subTest(variant=variant):
+                values = {
+                    "tenant": self.owner,
+                    "source_tenant": self.tenant,
+                    "success": False,
+                    "status": "failed",
+                    "amount_deducted": Decimal("0"),
+                    "message_mode": "alimtalk",
+                    "notification_type": "registration_approved_student",
+                    "target_type": "account",
+                    "target_id": "student:4102",
+                    "failure_reason": "corrupt_noncanonical_delivery_state",
+                    "business_idempotency_key": f"corrupt-acceptance-{index}",
+                }
+                values.update(variant)
+                log = NotificationLog.objects.create(**values)
+                with self.assertRaisesMessage(
+                    CommandError,
+                    "provider_delivery_history_exists",
+                ):
+                    call_command(*self._command_args())
+                log.delete()
+
+    def test_generic_ambiguous_student_result_is_refused(self):
+        log = NotificationLog.objects.get(
+            notification_type="registration_approved_student",
+            target_id="student:3656",
+        )
+        log.failure_reason = "provider_result_unresolved"
+        log.save(update_fields=["failure_reason"])
+
+        with self.assertRaisesMessage(
+            CommandError,
+            "provider_acceptance_evidence_exists",
+        ):
+            call_command(*self._command_args())
+
+    def test_student_provider_provenance_drift_is_refused(self):
+        log = NotificationLog.objects.get(
+            notification_type="registration_approved_student",
+            target_id="student:3656",
+        )
+        original = {
+            "tenant_id": log.tenant_id,
+            "source_tenant_id": log.source_tenant_id,
+            "business_idempotency_key": log.business_idempotency_key,
+        }
+        variants = (
+            {"business_idempotency_key": "wrong-historical-business-key"},
+            {"tenant_id": self.tenant.id},
+            {"source_tenant_id": None},
+        )
+        for variant in variants:
+            with self.subTest(variant=variant):
+                NotificationLog.objects.filter(pk=log.pk).update(**variant)
+                with self.assertRaisesMessage(
+                    CommandError,
+                    "provider_acceptance_evidence_exists",
+                ):
+                    call_command(*self._command_args())
+                NotificationLog.objects.filter(pk=log.pk).update(**original)
+
+    def test_parent_success_must_match_historical_outbox_business_key(self):
+        log = NotificationLog.objects.get(
+            notification_type="registration_approved_parent",
+            target_id="parent:3656",
+            status="sent",
+        )
+        log.business_idempotency_key = "wrong-parent-business-key"
+        log.save(update_fields=["business_idempotency_key"])
+
+        with self.assertRaisesMessage(CommandError, "reviewed_parent_success_required"):
+            call_command(*self._command_args())
+
+    def test_reviewed_system_account_outbox_origin_drift_is_refused(self):
+        outbox = next(
+            row
+            for row in ScheduledNotification.objects.filter(
+                trigger="registration_approved_student"
+            )
+            if row.payload.get("target_id") == "student:3656"
+        )
+        outbox.origin_type = "excel_import"
+        outbox.save(update_fields=["origin_type"])
+
+        with self.assertRaisesMessage(
+            CommandError,
+            "reviewed_system_account_outbox_drift",
+        ):
+            call_command(*self._command_args())
+
+    def test_failed_pair_outbox_provenance_drift_is_refused(self):
+        outbox = next(
+            row
+            for row in ScheduledNotification.objects.filter(
+                trigger="registration_approved_student"
+            )
+            if row.payload.get("target_id") == "student:4102"
+        )
+        original_tenant_id = outbox.tenant_id
+        original_payload = dict(outbox.payload)
+        variants = (
+            ("tenant_id", self.owner.id),
+            ("source_tenant_id", self.owner.id),
+            ("origin_id", "wrong-original-origin"),
+        )
+        for field, value in variants:
+            with self.subTest(field=field):
+                if field == "tenant_id":
+                    ScheduledNotification.objects.filter(pk=outbox.pk).update(
+                        tenant_id=value
+                    )
+                else:
+                    payload = dict(original_payload)
+                    payload[field] = value
+                    ScheduledNotification.objects.filter(pk=outbox.pk).update(
+                        payload=payload
+                    )
+                with self.assertRaisesMessage(CommandError, "outbox_not_eligible"):
+                    call_command(*self._command_args())
+                ScheduledNotification.objects.filter(pk=outbox.pk).update(
+                    tenant_id=original_tenant_id,
+                    payload=original_payload,
+                )
+
+    def test_account_identifier_and_usable_password_drift_are_refused(self):
+        student = self.students[4102]
+        original_ps_number = student.ps_number
+        Student.objects.filter(pk=student.pk).update(ps_number="DRIFTED-STUDENT-ID")
+        with self.assertRaisesMessage(CommandError, "student_account_identifier_drift"):
+            call_command(*self._command_args())
+
+        Student.objects.filter(pk=student.pk).update(ps_number=original_ps_number)
+        student.parent.user.set_unusable_password()
+        student.parent.user.save(update_fields=["password"])
+        with self.assertRaisesMessage(CommandError, "account_password_unusable"):
             call_command(*self._command_args())
 
     def test_last_login_and_token_drift_are_refused(self):
@@ -471,6 +798,74 @@ class RepairFailedFirstEnrollmentNoticesTests(TestCase):
         student.user.save(update_fields=["last_login", "token_version"])
         with self.assertRaisesMessage(CommandError, "token_version_drift"):
             call_command(*self._command_args())
+
+    def test_pending_password_reset_drift_is_refused(self):
+        student = self.students[4102]
+        PendingPasswordReset.objects.create(
+            tenant=self.tenant,
+            user=student.user,
+            password_hash=make_password("pending-reset-secret"),
+            expires_at=timezone.now() + timedelta(minutes=30),
+        )
+
+        with self.assertRaisesMessage(CommandError, "pending_password_reset_exists"):
+            call_command(*self._command_args())
+
+    def test_balance_and_queue_drift_are_refused(self):
+        self.solapi_client.get_balance.return_value = SimpleNamespace(balance="9999")
+        with self.assertRaisesMessage(
+            CommandError,
+            "provider_balance_below_recovery_threshold",
+        ):
+            call_command(*self._command_args())
+
+        self.solapi_client.get_balance.return_value = SimpleNamespace(balance="42911.1")
+        self.queue_client.get_queue_counts.return_value = {
+            "visible": 1,
+            "not_visible": 0,
+            "delayed": 0,
+        }
+        with self.assertRaisesMessage(CommandError, "messaging_queue_not_empty"):
+            call_command(*self._command_args())
+
+    def test_committed_dispatching_claim_fails_db_quiescence(self):
+        baseline_outboxes = ScheduledNotification.objects.count()
+        baseline_tokens = dict(
+            User.objects.filter(id__in=self.original_password_hashes).values_list(
+                "id",
+                "token_version",
+            )
+        )
+        ScheduledNotification.objects.create(
+            tenant=self.tenant,
+            trigger="clinic_reminder",
+            send_at=timezone.now(),
+            payload={"target_id": "student:999999", "message_mode": "alimtalk"},
+            status=ScheduledNotification.Status.DISPATCHING,
+        )
+
+        with self.assertRaisesMessage(
+            CommandError,
+            "recovery_quiescence_unavailable",
+        ):
+            self._call_apply(stdout=StringIO())
+
+        self.assertEqual(
+            ScheduledNotification.objects.count(),
+            baseline_outboxes + 1,
+        )
+        self.assertEqual(
+            dict(
+                User.objects.filter(id__in=self.original_password_hashes).values_list(
+                    "id",
+                    "token_version",
+                )
+            ),
+            baseline_tokens,
+        )
+        self.assertFalse(
+            ScheduledNotification.objects.filter(origin_type="recovery").exists()
+        )
 
     def test_template_drift_and_non_allowlisted_ids_are_refused(self):
         template = MessageTemplate.objects.get(name="registration_approved_student")
@@ -490,3 +885,542 @@ class RepairFailedFirstEnrollmentNoticesTests(TestCase):
                 "--student-ids",
                 "3656",
             )
+
+    def test_placeholder_and_live_provider_channel_drift_are_refused(self):
+        template = MessageTemplate.objects.get(name="registration_approved_student")
+        original_body = template.body
+        template.body = f"{original_body} #{{미승인변수}}"
+        template.save(update_fields=["body"])
+        with self.assertRaisesMessage(
+            CommandError,
+            "owner_template_placeholder_drift",
+        ):
+            call_command(*self._command_args())
+
+        template.body = original_body
+        template.save(update_fields=["body"])
+        live_templates = self._live_provider_templates()
+        live_templates[0]["channelId"] = "wrong-pfid"
+        with patch(
+            f"{COMMAND_MODULE}.list_kakao_templates",
+            return_value=live_templates,
+        ):
+            with self.assertRaisesMessage(
+                CommandError,
+                "live_provider_template_drift",
+            ):
+                call_command(*self._command_args())
+
+    def test_apply_dispatches_only_through_post_commit_outbox_callbacks(self):
+        with patch(
+            "apps.domains.messaging.scheduled.process_due_notifications"
+        ) as process_due:
+            with self.captureOnCommitCallbacks(execute=True) as callbacks:
+                self._call_apply()
+
+        self.assertEqual(len(callbacks), 9)
+        self.assertEqual(process_due.call_count, 9)
+        dispatched_ids = {
+            call.kwargs["notification_ids"][0] for call in process_due.call_args_list
+        }
+        self.assertEqual(
+            dispatched_ids,
+            set(
+                ScheduledNotification.objects.filter(origin_type="recovery").values_list(
+                    "id", flat=True
+                )
+            ),
+        )
+
+
+@override_settings(**RECOVERY_TEST_SETTINGS)
+class RepairFailedFirstEnrollmentNoticesPostgresConcurrencyTests(
+    RecoveryFixtureMixin,
+    TransactionTestCase,
+):
+    @classmethod
+    def setUpClass(cls):
+        if connection.vendor != "postgresql":
+            raise unittest.SkipTest(
+                "PostgreSQL is required for credential recovery row-lock verification."
+            )
+        from django.apps import apps as django_apps
+
+        cls.available_apps = [
+            app_config.name for app_config in django_apps.get_app_configs()
+        ]
+        super().setUpClass()
+
+    def _assert_writer_lock_fails_closed(
+        self,
+        mutate,
+        *,
+        expected_scheduled_delta: int = 0,
+        expected_token_updates: dict[int, int] | None = None,
+    ):
+        writer_ready = threading.Event()
+        release_writer = threading.Event()
+        writer_errors: list[Exception] = []
+        scheduled_count_before = ScheduledNotification.objects.count()
+        token_versions_before = dict(
+            User.objects.filter(id__in=self.original_password_hashes).values_list(
+                "id",
+                "token_version",
+            )
+        )
+        expected_token_versions = {
+            **token_versions_before,
+            **(expected_token_updates or {}),
+        }
+
+        def writer():
+            close_old_connections()
+            try:
+                with transaction.atomic():
+                    mutate()
+                    writer_ready.set()
+                    if not release_writer.wait(timeout=10):
+                        raise TimeoutError("credential recovery concurrency writer timed out")
+            except Exception as exc:
+                writer_errors.append(exc)
+            finally:
+                close_old_connections()
+
+        writer_thread = threading.Thread(target=writer, name="credential-drift-writer")
+        with patch(
+            "apps.domains.messaging.scheduled.process_due_notifications"
+        ) as process_due:
+            writer_thread.start()
+            self.assertTrue(writer_ready.wait(timeout=10))
+            started = time.monotonic()
+            with self.assertRaises(CommandError) as raised:
+                self._call_apply(stdout=StringIO())
+            elapsed = time.monotonic() - started
+            self.assertEqual(
+                str(raised.exception),
+                "recovery_quiescence_unavailable",
+            )
+            driver_error = getattr(raised.exception.__cause__, "__cause__", None)
+            sqlstate = getattr(driver_error, "pgcode", None) or getattr(
+                driver_error,
+                "sqlstate",
+                None,
+            )
+            self.assertEqual(sqlstate, "55P03")
+            release_writer.set()
+            writer_thread.join(timeout=15)
+
+        self.assertFalse(writer_thread.is_alive())
+        self.assertEqual(writer_errors, [])
+        self.assertLess(elapsed, 4)
+        self.assertEqual(
+            ScheduledNotification.objects.count(),
+            scheduled_count_before + expected_scheduled_delta,
+        )
+        self.assertEqual(
+            dict(
+                User.objects.filter(id__in=self.original_password_hashes).values_list(
+                    "id",
+                    "token_version",
+                )
+            ),
+            expected_token_versions,
+        )
+        self.assertFalse(
+            ScheduledNotification.objects.filter(origin_type="recovery").exists()
+        )
+        self.assertFalse(
+            User.objects.filter(
+                id__in=self.original_password_hashes,
+                must_change_password=True,
+            ).exists()
+        )
+        for user_id, password_hash in self.original_password_hashes.items():
+            self.assertEqual(User.objects.get(pk=user_id).password, password_hash)
+        process_due.assert_not_called()
+
+    def test_concurrent_last_login_drift_aborts_without_dispatch(self):
+        user_id = self.students[4102].user_id
+
+        def mutate():
+            user = User.objects.select_for_update(of=("self",)).get(pk=user_id)
+            user.last_login = timezone.now()
+            user.save(update_fields=["last_login"])
+
+        self._assert_writer_lock_fails_closed(mutate)
+
+    def test_concurrent_token_drift_aborts_without_dispatch(self):
+        user_id = self.students[4102].user_id
+
+        def mutate():
+            user = User.objects.select_for_update(of=("self",)).get(pk=user_id)
+            user.token_version = 3
+            user.save(update_fields=["token_version"])
+
+        self._assert_writer_lock_fails_closed(
+            mutate,
+            expected_token_updates={user_id: 3},
+        )
+
+    def test_concurrent_shared_parent_drift_aborts_without_dispatch(self):
+        student_id = self.students[4102].id
+        shared_parent_id = self.students[3656].parent_id
+
+        def mutate():
+            student = Student.objects.select_for_update(of=("self",)).get(pk=student_id)
+            student.parent_id = shared_parent_id
+            student.parent_phone = self.students[3656].parent_phone
+            student.save(update_fields=["parent", "parent_phone"])
+
+        self._assert_writer_lock_fails_closed(mutate)
+
+    def test_concurrent_provider_log_drift_aborts_without_dispatch(self):
+        log_id = NotificationLog.objects.get(
+            notification_type="registration_approved_student",
+            target_id="student:3656",
+        ).id
+
+        def mutate():
+            log = NotificationLog.objects.select_for_update(of=("self",)).get(pk=log_id)
+            log.failure_reason = "provider_result_unresolved"
+            log.save(update_fields=["failure_reason"])
+
+        self._assert_writer_lock_fails_closed(mutate)
+
+    def test_concurrent_outbox_drift_aborts_without_dispatch(self):
+        outbox_id = next(
+            row.id
+            for row in ScheduledNotification.objects.filter(
+                trigger="registration_approved_student",
+                status=ScheduledNotification.Status.FAILED,
+            )
+            if row.payload.get("target_id") == "student:4102"
+        )
+
+        def mutate():
+            outbox = ScheduledNotification.objects.select_for_update(of=("self",)).get(
+                pk=outbox_id
+            )
+            outbox.status = ScheduledNotification.Status.PENDING
+            outbox.save(update_fields=["status"])
+
+        self._assert_writer_lock_fails_closed(mutate)
+
+    def test_concurrent_sibling_insert_blocks_then_aborts_recovery(self):
+        parent_id = self.students[4102].parent_id
+        parent_phone = self.students[4102].parent_phone
+
+        def mutate():
+            sibling_user = User.objects.create_user(
+                username="CONCURRENT-INSERT-SIBLING",
+                password="concurrent-insert-password",
+                tenant=self.tenant,
+                phone="01099990003",
+                is_active=False,
+            )
+            Student.objects.create(
+                id=6003,
+                tenant=self.tenant,
+                user=sibling_user,
+                parent_id=parent_id,
+                ps_number="CONCURRENT-INSERT-SIBLING",
+                omr_code="99990003",
+                name="동시 sibling insert",
+                phone="01099990003",
+                parent_phone=parent_phone,
+            )
+
+        self._assert_writer_lock_fails_closed(mutate)
+
+    def test_concurrent_notification_log_insert_blocks_then_aborts_recovery(self):
+        def mutate():
+            NotificationLog.objects.create(
+                tenant=self.owner,
+                source_tenant=self.tenant,
+                success=False,
+                status="processing",
+                message_mode="alimtalk",
+                notification_type="registration_approved_student",
+                target_type="account",
+                target_id="student:4102",
+                failure_reason="concurrent_insert_delivery_state",
+            )
+
+        self._assert_writer_lock_fails_closed(mutate)
+
+    def test_concurrent_scheduled_outbox_insert_blocks_then_aborts_recovery(self):
+        def mutate():
+            ScheduledNotification.objects.create(
+                tenant=self.tenant,
+                trigger="registration_approved_student",
+                send_at=timezone.now(),
+                payload={
+                    "target_id": "student:4102",
+                    "event_type": "registration_approved_student",
+                    "message_mode": "alimtalk",
+                    "source_tenant_id": self.tenant.id,
+                },
+                origin_type="concurrent_insert",
+                origin_id="student:4102",
+                status=ScheduledNotification.Status.PENDING,
+            )
+
+        self._assert_writer_lock_fails_closed(mutate, expected_scheduled_delta=1)
+
+    def test_concurrent_pending_password_reset_insert_fails_closed(self):
+        def mutate():
+            PendingPasswordReset.objects.create(
+                tenant=self.tenant,
+                user_id=self.students[4102].user_id,
+                password_hash=make_password(
+                    "concurrent-pending-reset",
+                    hasher="md5",
+                ),
+                expires_at=timezone.now() + timedelta(minutes=30),
+            )
+
+        self._assert_writer_lock_fails_closed(mutate)
+
+    def test_existing_target_row_holder_fails_closed_immediately(self):
+        writer_ready = threading.Event()
+        release_writer = threading.Event()
+        writer_errors: list[Exception] = []
+        user_id = self.students[4102].user_id
+        scheduled_count_before = ScheduledNotification.objects.count()
+        token_versions_before = dict(
+            User.objects.filter(id__in=self.original_password_hashes).values_list(
+                "id",
+                "token_version",
+            )
+        )
+
+        def writer():
+            close_old_connections()
+            try:
+                with transaction.atomic():
+                    User.objects.select_for_update(of=("self",)).get(pk=user_id)
+                    writer_ready.set()
+                    if not release_writer.wait(timeout=10):
+                        raise TimeoutError("row lock writer did not release")
+            except Exception as exc:
+                writer_errors.append(exc)
+            finally:
+                close_old_connections()
+
+        writer_thread = threading.Thread(target=writer)
+        writer_thread.start()
+        self.assertTrue(writer_ready.wait(timeout=10))
+        with patch(
+            "apps.domains.messaging.scheduled.process_due_notifications"
+        ) as process_due:
+            started = time.monotonic()
+            with self.assertRaises(CommandError) as raised:
+                self._call_apply(stdout=StringIO())
+            elapsed = time.monotonic() - started
+            self.assertEqual(
+                str(raised.exception),
+                "recovery_quiescence_unavailable",
+            )
+            driver_error = getattr(raised.exception.__cause__, "__cause__", None)
+            sqlstate = getattr(driver_error, "pgcode", None) or getattr(
+                driver_error,
+                "sqlstate",
+                None,
+            )
+            self.assertEqual(sqlstate, "55P03")
+
+        release_writer.set()
+        writer_thread.join(timeout=15)
+        self.assertFalse(writer_thread.is_alive())
+        self.assertEqual(writer_errors, [])
+        self.assertLess(elapsed, 4)
+        self.assertEqual(
+            ScheduledNotification.objects.count(),
+            scheduled_count_before,
+        )
+        self.assertEqual(
+            dict(
+                User.objects.filter(id__in=self.original_password_hashes).values_list(
+                    "id",
+                    "token_version",
+                )
+            ),
+            token_versions_before,
+        )
+        self.assertFalse(
+            ScheduledNotification.objects.filter(origin_type="recovery").exists()
+        )
+        process_due.assert_not_called()
+
+    def test_command_first_table_lock_serializes_later_writer(self):
+        from apps.core.management.commands import repair_failed_first_enrollment_notices as command
+
+        recovery_locked = threading.Event()
+        release_recovery = threading.Event()
+        writer_started = threading.Event()
+        recovery_errors: list[Exception] = []
+        writer_errors: list[Exception] = []
+        backend_pids: dict[str, int] = {}
+        original_load_candidates = command._load_candidates
+
+        def gated_load_candidates(*args, **kwargs):
+            if kwargs.get("lock"):
+                recovery_locked.set()
+                if not release_recovery.wait(timeout=10):
+                    raise TimeoutError("recovery table-lock gate timed out")
+            return original_load_candidates(*args, **kwargs)
+
+        def recover():
+            close_old_connections()
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT pg_backend_pid()")
+                    backend_pids["recovery"] = int(cursor.fetchone()[0])
+                self._call_apply(stdout=StringIO())
+            except Exception as exc:
+                recovery_errors.append(exc)
+            finally:
+                close_old_connections()
+
+        def writer():
+            close_old_connections()
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT pg_backend_pid()")
+                    backend_pids["writer"] = int(cursor.fetchone()[0])
+                writer_started.set()
+                with transaction.atomic():
+                    NotificationLog.objects.create(
+                        tenant=self.owner,
+                        source_tenant=self.tenant,
+                        success=False,
+                        status="failed",
+                        message_mode="alimtalk",
+                        notification_type="registration_approved_student",
+                        target_type="account",
+                        target_id="student:999999",
+                        failure_reason="later_unrelated_writer",
+                    )
+            except Exception as exc:
+                writer_errors.append(exc)
+            finally:
+                close_old_connections()
+
+        recovery_thread = threading.Thread(target=recover, name="credential-recovery")
+        writer_thread = threading.Thread(target=writer, name="later-log-writer")
+        with patch.object(
+            command,
+            "_load_candidates",
+            side_effect=gated_load_candidates,
+        ), patch(
+            "apps.domains.messaging.scheduled.process_due_notifications"
+        ) as process_due:
+            recovery_thread.start()
+            self.assertTrue(recovery_locked.wait(timeout=10))
+            expected_table_locks = {
+                PendingPasswordReset._meta.db_table,
+                Student._meta.db_table,
+                ScheduledNotification._meta.db_table,
+                NotificationLog._meta.db_table,
+            }
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT relation.relname, lock.mode, lock.granted
+                    FROM pg_locks AS lock
+                    JOIN pg_class AS relation ON relation.oid = lock.relation
+                    WHERE lock.pid = %s AND lock.locktype = 'relation'
+                    """,
+                    [backend_pids["recovery"]],
+                )
+                relation_locks = set(cursor.fetchall())
+            self.assertTrue(
+                {
+                    (table_name, "ShareRowExclusiveLock", True)
+                    for table_name in expected_table_locks
+                }.issubset(relation_locks)
+            )
+            writer_thread.start()
+            self.assertTrue(writer_started.wait(timeout=10))
+
+            blocked_by_recovery = False
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT pg_blocking_pids(%s)",
+                        [backend_pids["writer"]],
+                    )
+                    blocking_pids = {int(value) for value in cursor.fetchone()[0]}
+                if backend_pids["recovery"] in blocking_pids:
+                    blocked_by_recovery = True
+                    break
+                time.sleep(0.05)
+
+            release_recovery.set()
+            recovery_thread.join(timeout=20)
+            writer_thread.join(timeout=20)
+
+        self.assertTrue(blocked_by_recovery, "later writer never waited on recovery")
+        self.assertFalse(recovery_thread.is_alive())
+        self.assertFalse(writer_thread.is_alive())
+        self.assertEqual(recovery_errors, [])
+        self.assertEqual(writer_errors, [])
+        self.assertEqual(
+            ScheduledNotification.objects.filter(origin_type="recovery").count(),
+            9,
+        )
+        self.assertEqual(process_due.call_count, 9)
+
+    def test_outer_rollback_discards_all_outboxes_and_callbacks(self):
+        from apps.core.management.commands import repair_failed_first_enrollment_notices as command
+
+        original_dispatch = command.dispatch_pending_account_notice
+        scheduled_count_before = ScheduledNotification.objects.count()
+        token_versions_before = dict(
+            User.objects.filter(id__in=self.original_password_hashes).values_list(
+                "id",
+                "token_version",
+            )
+        )
+
+        def dispatch_or_fail(*, student_id: int):
+            if student_id == 4105:
+                return {"status": "pending", "enqueued": 0}
+            return original_dispatch(student_id=student_id)
+
+        with patch.object(
+            command,
+            "dispatch_pending_account_notice",
+            side_effect=dispatch_or_fail,
+        ), patch(
+            "apps.domains.messaging.scheduled.process_due_notifications"
+        ) as process_due:
+            with self.assertRaisesMessage(
+                CommandError,
+                "replacement_outbox_pair_not_created:student_id=4105",
+            ):
+                self._call_apply(stdout=StringIO())
+
+        self.assertFalse(
+            ScheduledNotification.objects.filter(origin_type="recovery").exists()
+        )
+        self.assertEqual(
+            ScheduledNotification.objects.count(),
+            scheduled_count_before,
+        )
+        self.assertEqual(
+            dict(
+                User.objects.filter(id__in=self.original_password_hashes).values_list(
+                    "id",
+                    "token_version",
+                )
+            ),
+            token_versions_before,
+        )
+        self.assertEqual(connection.run_on_commit, [])
+        process_due.assert_not_called()
+        for user_id, password_hash in self.original_password_hashes.items():
+            user = User.objects.get(pk=user_id)
+            self.assertEqual(user.password, password_hash)
+            self.assertFalse(user.must_change_password)
