@@ -76,20 +76,16 @@ class Migration(migrations.Migration):
             options={
                 "db_table": "student_support_session",
                 "ordering": ["-created_at"],
+                "indexes": [
+                    models.Index(
+                        fields=["tenant", "student", "-created_at"],
+                        name="stu_sup_student_created_idx",
+                    ),
+                    models.Index(
+                        fields=["operator", "expires_at"],
+                        name="stu_sup_operator_exp_idx",
+                    ),
+                ],
             },
-        ),
-        migrations.AddIndex(
-            model_name="studentsupportsession",
-            index=models.Index(
-                fields=["tenant", "student", "-created_at"],
-                name="stu_sup_student_created_idx",
-            ),
-        ),
-        migrations.AddIndex(
-            model_name="studentsupportsession",
-            index=models.Index(
-                fields=["operator", "expires_at"],
-                name="stu_sup_operator_exp_idx",
-            ),
         ),
     ]
