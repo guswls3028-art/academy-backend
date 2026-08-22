@@ -117,7 +117,8 @@ python manage.py setup_ymath_realuse_scenario `
 10명, 직원 10명을 고정 생성한다. 학부모는 제품의 parent ensure 서비스로 만든 뒤
 비밀번호 SSOT인 `core.services.password.change_password`를 통과시켜
 `must_change_password=false`와 token version 증가를 함께 보장한다. DB 필드를
-직접 우회 갱신하지 않는다. 직원은 각각 `Staff`와 활성 `staff` membership을 갖는다.
+직접 우회 갱신하지 않는다. 학생·직원 계정 생성/재사용도 같은 비밀번호 SSOT를
+통과한다. 직원은 각각 `Staff`와 활성 `staff` membership을 갖는다.
 시나리오 소유 admin 1명은 30계정 manifest에 포함하지 않는다.
 
 ```powershell
@@ -127,6 +128,13 @@ python manage.py setup_ymath_realuse_scenario `
   --login-uat `
   --reset
 ```
+
+`--login-uat` 대상 tenant가 이미 있으면 `--reset` 없이는 즉시 실패한다. reset 삭제와
+재생성은 하나의 transaction이며 중간 생성 실패 시 기존 tenant가 그대로 복원된다.
+교사 username은 비어 있거나 `ymath-qa-student-*`, `ymath-qa-staff-*`, `staff-*`
+예약 영역과 겹칠 수 없다. transaction을 커밋하기 전에 실제 DB의 student·parent·staff
+모델과 활성 role이 각각 10, admin이 1, manifest 대상 user가 서로 다른 30명인지
+검증한다.
 
 마지막 stdout JSON의 `login_manifest`는 schema version, tenant code, 정확히 30개의
 합성 role·username·landing path만 포함한다. 비밀번호나 토큰은 포함하지 않는다.
@@ -144,6 +152,12 @@ landing → UI 로그아웃을 진행한다.
 완료가 아니다. 실행 계약과 frontend 변수는
 `frontend/docs/ACCOUNT-CREDENTIAL-FLOWS.md`의 persistent-development 항목을 함께
 따른다.
+
+frontend runner의 정리는 active persistent-development instance만 선택하는
+`scripts/v1/destroy-ymath-login-uat-development.ps1`을 사용한다. 정리는 과거 tenant
+ID가 아니라 tenant code와 `user.tenant__code`를 다시 조회하므로 삭제 직후 같은 code가
+재생성되는 race도 잔여로 보고 실패 폐쇄한다. 운영 runtime은 management command 자체의
+DB/R2 경계에서도 다시 거부된다.
 
 ## API 전수 실행
 
