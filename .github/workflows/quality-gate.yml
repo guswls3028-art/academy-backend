@@ -48,7 +48,11 @@ jobs:
           else
             BASE_REF="HEAD^"
           fi
-          python scripts/lint/check_expand_contract_migrations.py --base-ref "$BASE_REF"
+          ARGS=(--base-ref "$BASE_REF")
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            ARGS+=(--allow-contract-review)
+          fi
+          python scripts/lint/check_expand_contract_migrations.py "${ARGS[@]}"
 
   django-contract:
     name: Backend Django smoke and deployment contracts

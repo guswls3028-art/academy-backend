@@ -441,9 +441,10 @@ def inspect_new_migration(
         return [
             Finding(
                 path,
-                "contract migration is blocked in automatic push deploys; run an "
-                "explicit workflow_dispatch with allow_contract_migrations=true "
-                "only after the expand release is fully deployed",
+                "contract migration is blocked in automatic push deploys; PR review "
+                "may use --allow-contract-review, while execution requires an explicit "
+                "workflow_dispatch with allow_contract_migrations=true only after the "
+                "expand release is fully deployed or compatibility is otherwise proven",
             )
         ]
     return []
@@ -497,9 +498,14 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-ref", default="HEAD^")
     parser.add_argument("--allow-contract", action="store_true")
+    parser.add_argument("--allow-contract-review", action="store_true")
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[2]
-    findings = run(repo, args.base_ref, allow_contract=args.allow_contract)
+    findings = run(
+        repo,
+        args.base_ref,
+        allow_contract=args.allow_contract or args.allow_contract_review,
+    )
     if findings:
         for finding in findings:
             print(

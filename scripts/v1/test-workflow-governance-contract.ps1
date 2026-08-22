@@ -54,12 +54,16 @@ foreach ($marker in $requiredProductionMarkers) {
 foreach ($marker in @(
     "Backend static and migration contract",
     "Backend Django smoke and deployment contracts",
+    "--allow-contract-review",
     "permissions:",
     "contents: read"
 )) {
     if (-not $qualityWorkflow.Contains($marker)) {
         $failures += "Backend quality workflow is missing marker: $marker"
     }
+}
+if (-not $productionWorkflow.Contains('ARGS+=(--allow-contract)')) {
+    $failures += "Production workflow is missing the explicit contract execution marker."
 }
 foreach ($marker in @(
     "repo:guswls3028-art/academy-backend:ref:refs/heads/main",

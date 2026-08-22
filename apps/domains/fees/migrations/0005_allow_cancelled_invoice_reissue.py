@@ -1,6 +1,13 @@
 from django.db import migrations, models
 
 
+ACADEMY_MIGRATION_PHASE = "contract"
+ACADEMY_MIGRATION_REASON = (
+    "Replace the unconditional student-period uniqueness with a cancellation-aware "
+    "constraint; this relaxes writes and remains compatible with older API instances."
+)
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
