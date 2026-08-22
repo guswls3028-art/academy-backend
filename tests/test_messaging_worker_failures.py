@@ -7,6 +7,7 @@ from apps.worker.messaging_worker.sqs_main import (
     _resolve_worker_business_key,
     _safe_payload_shape,
     _send_failure_disposition,
+    _should_defer_disabled_tenant_message,
     send_one_alimtalk,
 )
 
@@ -31,6 +32,12 @@ def test_provider_call_timeout_is_ambiguous_and_must_not_auto_retry() -> None:
         )
         == "ambiguous"
     )
+
+
+def test_disabled_tenant_defers_only_required_first_enrollment_notices() -> None:
+    assert _should_defer_disabled_tenant_message("registration_approved_student")
+    assert _should_defer_disabled_tenant_message("registration_approved_parent")
+    assert not _should_defer_disabled_tenant_message("manual_send")
 
 
 def test_pre_provider_transient_failure_remains_retryable() -> None:

@@ -32,6 +32,10 @@ BASE_RETRY_DELAY_SECONDS = 30
 MAX_RETRY_DELAY_SECONDS = 60 * 60
 HOURLY_SEND_LIMIT = 500
 QUOTA_MIN_RETRY_DELAY = timedelta(seconds=30)
+DISABLED_ACCOUNT_NOTICE_RETRY_DELAY = timedelta(minutes=15)
+REQUIRED_ACCOUNT_NOTICE_TRIGGERS = frozenset(
+    {"registration_approved_student", "registration_approved_parent"}
+)
 
 # PostgreSQL transaction-scoped advisory lock namespace for the one shared
 # provider account.  It does not depend on an owner-tenant row existing, and
@@ -493,6 +497,20 @@ def _claim_due_notifications(
                 terminal_error = _terminal_policy_error(
                     business_tenant_id=notification.tenant_id,
                 )
+            if (
+                terminal_error == "business_tenant_messaging_disabled"
+                and notification.trigger in REQUIRED_ACCOUNT_NOTICE_TRIGGERS
+            ):
+                notification.status = ScheduledNotification.Status.PENDING
+                notification.next_attempt_at = (
+                    now + DISABLED_ACCOUNT_NOTICE_RETRY_DELAY
+                )
+                notification.error_message = terminal_error
+                notification.save(
+                    update_fields=["status", "next_attempt_at", "error_message"]
+                )
+                deferred_count += 1
+                continue
             if terminal_error:
                 terminal_payload = redact_terminal_delivery_payload(
                     trigger=notification.trigger,
