@@ -31,7 +31,7 @@
 
 Excel/import/JSON bulk row orchestration SSOT는 `import_students_from_rows()`, `resolve_student_import_row()`, `resolve_student_import_conflicts()`다. 이 서비스는 학생 import 행의 중복/복원/생성 판단, school_level_mode 검증, 계정 그래프 호출, 첫 수강용 계정 안내 staging, delete-and-recreate conflict resolution을 소유한다. R2 업로드, AI job dispatch, HTTP 응답 모양은 여전히 view/worker compatibility boundary다.
 
-Excel 신규 학생 초기 비밀번호 정책 SSOT는 `build_student_import_password_policy()`다. `fixed`는 공통 4자 이상 비밀번호, `phone_last4`는 실제 학생 전화번호 뒤 4자리, `random`은 학생별 4자리 랜덤 비밀번호를 사용한다. 학생-only Excel 등록에서 `phone_last4`를 선택했는데 학생 전화번호가 없거나 자동 식별자를 사용한 행은 그 행만 실패 처리하고 나머지 정상 행은 계속 등록한다. 강의 수강 Excel은 기존 전체 행 사전 검증을 유지한다. 모든 Excel 신규 계정은 첫 로그인에서 비밀번호 변경이 필요하다. `fixed` 입력값과 `random` 결과는 서버 비밀키로 암호화해 AI job/result DB에 저장하고, 작업 종료 시 입력값은 제거한다. 랜덤 결과는 스태프 전용 tenant-scoped 상태 조회에서 완료 후 한 시간 동안만 복호화하며 Redis에는 평문을 캐시하지 않는다. 학생 생성과 암호화된 작업 완료 결과는 같은 DB 트랜잭션으로 커밋한다.
+Excel 신규 학생 초기 비밀번호 정책 SSOT는 `build_student_import_password_policy()`다. `fixed`는 공통 4자 이상 비밀번호, `phone_last4`는 실제 학생 전화번호 뒤 4자리, `random`은 학생별 4자리 랜덤 비밀번호를 사용한다. 학생-only Excel 등록에서 `phone_last4`를 선택했는데 학생 전화번호가 없거나 자동 식별자를 사용한 행은 그 행만 실패 처리하고 나머지 정상 행은 계속 등록한다. 강의 수강 Excel은 기존 전체 행 사전 검증을 유지한다. 모든 Excel 신규 계정은 첫 로그인에서 비밀번호 변경을 권장하되 원래 화면과 API 사용을 막지 않는다. `fixed` 입력값과 `random` 결과는 서버 비밀키로 암호화해 AI job/result DB에 저장하고, 작업 종료 시 입력값은 제거한다. 랜덤 결과는 스태프 전용 tenant-scoped 상태 조회에서 완료 후 한 시간 동안만 복호화하며 Redis에는 평문을 캐시하지 않는다. 학생 생성과 암호화된 작업 완료 결과는 같은 DB 트랜잭션으로 커밋한다.
 
 Excel 파서의 학생 행 판별은 유효한 학부모/학생 전화번호가 있으면 이름 50자까지 허용한다. 긴 이름을 무조건 비학생 행으로 버리면 실제 외국 이름, 관리 접두어, QA 태그가 있는 정상 행이 `등록할 학생 데이터가 없습니다.`로 실패할 수 있다.
 
@@ -75,7 +75,8 @@ Excel 파서는 active sheet에 고정하지 않고 표지/안내 시트를 건�
 - `student_data.ps_number`는 caller 또는 serializer가 확정한다.
 - `password`와 `password_hash` 중 정확히 하나만 전달한다.
 - 학생 전화번호가 비어 있어도 학생 `User`와 `TenantMembership(student)`는 생성된다. 학부모 계정과 공유 계정이 되는 것이 아니다.
-- 학부모가 새로 생성되면 안내 비밀번호는 `parent_initial_password(parent_phone)`이다.
+- raw 초기 비밀번호를 받는 직접/Excel 생성에서 학부모가 새로 생성되면 학생과 같은 초기 비밀번호를 설정·안내한다.
+- 가입 신청처럼 학생 비밀번호 hash만 전달되는 생성에서 새 학부모 비밀번호는 `parent_initial_password(parent_phone)` fallback이다.
 - 기존 학부모 계정이면 안내 문구는 `변경되지 않음`이다.
 - 학생 마스터 생성, 가입 승인, 학생-only Excel/JSON 등록은 알림톡을 발송하지 않는다.
 - 신규 학생 생성 시 학생 초기 비밀번호 안내값과 `parent_password_for_notice`를 서로 다른 암호문으로 staging한다. 평문 비밀번호는 DB에 저장하지 않는다.

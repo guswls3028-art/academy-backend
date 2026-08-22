@@ -261,8 +261,11 @@ class RegistrationPasswordSafetyTests(TestCase):
         student = Student.objects.get(pk=response.data["id"])
         self.assertEqual(
             _decrypt(student.pending_account_notice_parent_password_ciphertext),
-            "6666",
+            "stud1234",
         )
+        self.assertTrue(student.user.must_change_password)
+        self.assertTrue(student.parent.user.check_password("stud1234"))
+        self.assertTrue(student.parent.user.must_change_password)
 
     @patch("apps.domains.messaging.services.send_welcome_messages")
     def test_student_create_without_student_phone_creates_separate_student_and_parent_accounts(self, send_mock):
@@ -297,7 +300,7 @@ class RegistrationPasswordSafetyTests(TestCase):
         )
         self.assertEqual(
             _decrypt(student.pending_account_notice_parent_password_ciphertext),
-            "6669",
+            "stud1234",
         )
 
     @patch("apps.domains.messaging.services.send_welcome_messages")
@@ -359,7 +362,7 @@ class RegistrationPasswordSafetyTests(TestCase):
         student = Student.objects.get(tenant=self.tenant, name="엑셀등록학생")
         self.assertEqual(
             _decrypt(student.pending_account_notice_parent_password_ciphertext),
-            "6666",
+            "stud1234",
         )
 
     @patch("apps.domains.messaging.services.send_welcome_messages")

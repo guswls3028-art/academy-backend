@@ -209,7 +209,6 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "apps.api.common.middleware.SentryContextMiddleware",
-    "apps.api.common.middleware.MustChangePasswordGate",
 ]
 
 # ==================================================

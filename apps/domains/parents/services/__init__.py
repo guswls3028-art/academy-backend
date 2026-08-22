@@ -15,8 +15,8 @@ from ..models import Parent
 
 
 # 과거 정책: 모든 학부모가 동일 비번 "0000" 사용 → 학부모 전화번호만 알면 자녀 성적/출결 전체 열람.
-# 신규 정책: 학부모 전화번호 마지막 4자리를 초기 비번으로 사용. must_change_password=True 로 첫 로그인
-# 강제 변경 게이트(MustChangePasswordGate)와 결합해 운영.
+# 학생 등록에서 초기 비밀번호를 함께 받으면 학생/학부모 계정에 같은 값을 사용한다.
+# 독립 복구/legacy ensure에는 학부모 전화번호 마지막 4자리를 안전한 fallback으로 쓴다.
 PARENT_DEFAULT_PASSWORD = "0000"  # deprecated — 외부 import 호환용 상수. 신규 코드에서는 절대 쓰지 말 것.
 
 
@@ -44,6 +44,7 @@ def ensure_parent_account_for_student(
     tenant,
     parent_phone: str,
     student_name: str,
+    initial_password: str | None = None,
 ) -> ParentAccountEnsureResult:
     """
     학부모 전화번호로 Parent 조회 또는 생성
@@ -51,7 +52,10 @@ def ensure_parent_account_for_student(
     - 있으면 기존 Parent 반환 (User 없으면 생성)
     """
     parent_phone = "".join(ch for ch in str(parent_phone or "") if ch.isdigit())
-    initial_pw = parent_initial_password(parent_phone)
+    fallback_pw = parent_initial_password(parent_phone)
+    initial_pw = str(initial_password or fallback_pw)
+    if len(initial_pw) < 4:
+        raise ValueError("학부모 초기 비밀번호는 4자 이상이어야 합니다.")
 
     User = get_user_model()
     # tenant 내 유일한 학부모 식별: username = p_{tenant_id}_{phone}

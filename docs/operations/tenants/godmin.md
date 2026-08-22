@@ -64,11 +64,24 @@
   필요하지 않다. 운영 이미지에서 관리자 요청으로
   `GET /api/v1/lectures/lectures/instructor-options/`를 재실행해 `200`과 유일한
   `{name: 신민, type: owner}` 선택지를 확인했다.
-- [ ] **G8 실제 인계** — 계정은 usable password와 `must_change_password=true`
-  상태다. 전달된 초기 비밀번호의 실제 로그인 시도는 실패했으므로, 개발자
-  콘솔에서 새 초기 비밀번호를 최종 확정한 뒤 본인이 로그인하여 강제 비밀번호
-  변경, owner 권한, tenant isolation을 확인한다. 비밀번호 값은 문서·Git·명령에
-  기록하지 않는다.
+- [ ] **G8 실제 인계** — 대표 계정은 usable password 상태다. 본인이 로그인하여
+  owner 권한과 tenant isolation을 최종 확인한다. 초기 비밀번호 값은 문서·Git·
+  명령에 기록하지 않는다.
+
+## 2026-08-22 학생·학부모 계정 정상화
+
+Godmin 실사용자 로그인 장애 대응으로 운영 DB에서 tenant 11의 활성 학생 계정
+1,549개와 순수 학부모 계정 1,519개의 비밀번호를 학원 지정 초기값으로 원자적
+정상화하고 기존 세션을 폐기했다. 직원 역할이 함께 있는 학부모 계정 1개는 직원
+로그인 손상을 막기 위해 일괄 대상에서 제외했다. 운영 감사 행은 각각
+`student_password.bulk_reset` 1959, `parent_password.bulk_reset` 1967이다.
+
+기존 강제 변경 화면이 앱과 API를 함께 차단하던 사고 범위를 해제하기 위해 같은
+3,068개 계정의 `must_change_password` 강제 상태를 해제하고 세션을 다시 폐기했다
+(`credential_change_gate.emergency_disable` 1974). 영구 계약은 이후 생성되는
+초기·임시 비밀번호 계정에 변경을 권장하되, 위험 고지 후 나중에 변경할 수 있게
+하고 API 접근을 차단하지 않는 것이다. 운영 공지는 활성 수강등록 학생만 대상으로
+승인된 공용 알림톡 템플릿과 provider 결과까지 확인한다.
 
 ## 현재 발급된 네임서버
 
