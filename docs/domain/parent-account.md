@@ -109,19 +109,25 @@ python manage.py ensure_parent_accounts_for_students --tenant <code> --execute -
 ```
 
 `apps/domains/parents/management/commands/reset_all_parent_passwords.py`는 legacy 일괄 정비용 명령이다.
+전체 테넌트 대상 실행은 금지하며, 대상 학원과 dry-run row 수를 먼저 고정해야 한다.
 
 ```
-python manage.py reset_all_parent_passwords --dry-run
-python manage.py reset_all_parent_passwords
+python manage.py reset_all_parent_passwords --tenant-code <code>
+python manage.py reset_all_parent_passwords --tenant-code <code> --apply --confirm-count <count>
 ```
 
-전체 학부모 계정에 영향을 줄 수 있으므로 운영 실행 전 대상 row 수를 확인하고 사용자 명시 승인을 받아야 한다. 신규 초기 비밀번호 정책은 이 명령이 아니라 `parent_initial_password()`가 SSOT다.
+`--apply`가 없으면 항상 dry-run이다. 실제 실행은 현재 대상 수가
+`--confirm-count`와 정확히 일치할 때만 진행한다. 출력은 초기 비밀번호와 동일한
+전화번호 끝 네 자리를 노출하지 않는다. 실행된 계정은 `token_version` 증가,
+`must_change_password=True`, 기존 pending reset 폐기를 함께 적용한다. 신규 초기
+비밀번호 정책은 이 명령이 아니라 `parent_initial_password()`가 SSOT다.
 
 집중 검증:
 
 ```powershell
 python manage.py test apps.domains.parents.tests.test_account_creation
 python manage.py test apps.domains.parents.tests.test_account_creation_concurrency_pg
+python manage.py test apps.domains.parents.tests.test_password_reset_command
 ```
 
 두 번째 테스트는 PostgreSQL row/unique-lock 동작을 검증하므로 SQLite에서는

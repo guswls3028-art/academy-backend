@@ -118,6 +118,17 @@ generate_temp_password() -> 숫자 6자리
 - 관리자/선생님 또는 학생/학부모 본인이 인증된 상태에서 수행하는 학생/학부모 비밀번호 변경은 즉시 reset 경로를 사용한다.
 - 본인 변경은 `change_password_with_notice()`가 User row를 잠근 뒤 현재 비밀번호를 다시 확인한다. 따라서 같은 기존 비밀번호를 사용한 동시 요청은 하나만 성공한다.
 - 본인 변경과 staff reset은 비밀번호 hash, `must_change_password`, `token_version`, pending reset 정리, durable 알림톡 예약을 한 DB 트랜잭션으로 처리한다. 알림톡 예약 실패 시 이 상태가 모두 이전 값으로 돌아가며 현재 세션도 유지된다.
+- 이미 발급된 pending 임시 비밀번호는 본인 비밀번호 변경이나 staff/owner 강제
+  초기화가 성공하는 즉시 폐기한다. 알림톡 예약 실패로 상위 트랜잭션이
+  롤백되면 기존 pending reset도 함께 복구된다.
+- pending 임시 비밀번호의 로그인 소비는 User row를 먼저 잠근 뒤 pending row를
+  다시 확인한다. 따라서 staff 초기화와 동시에 로그인해도 이전 pending 값이
+  더 늦게 새 비밀번호를 덮어쓸 수 없다.
+- 운영 복구 명령 `fix_user_password`도 같은 강제 초기화 정본을 사용한다. 기존
+  계정은 `token_version` 증가와 pending reset 폐기를 함께 적용하고, 신규·기존
+  모두 다음 로그인에서 본인 비밀번호 변경이 필요하다. `--cleanup-bare` 삭제는
+  대체 계정 비밀번호·membership 갱신과 같은 트랜잭션이며, 학원 조회나 후속
+  갱신이 실패하면 명령도 실패하고 삭제를 포함한 변경 전체를 롤백한다.
 
 ## 5.1 Refresh token 계정 상태 검증
 

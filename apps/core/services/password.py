@@ -40,16 +40,21 @@ def generate_temp_password(length: int = TEMP_PASSWORD_LENGTH) -> str:
     return "".join(secrets.choice(chars) for _ in range(length))
 
 
+@transaction.atomic
 def change_password(user, new_password: str) -> None:
     """
     비밀번호를 변경하고 token_version을 증가시킨다.
     - set_password + token_version += 1 + save (atomic)
     - 호출자는 old_password 검증을 미리 수행해야 한다.
     """
-    user.set_password(new_password)
-    user.token_version = (getattr(user, "token_version", 0) or 0) + 1
-    user.must_change_password = False
-    user.save(update_fields=["password", "token_version", "must_change_password"])
+    locked_user = get_user_model().objects.select_for_update().get(pk=user.pk)
+    locked_user.set_password(new_password)
+    locked_user.token_version = (getattr(locked_user, "token_version", 0) or 0) + 1
+    locked_user.must_change_password = False
+    locked_user.save(update_fields=["password", "token_version", "must_change_password"])
+    clear_pending_password_reset(locked_user)
+    for field in ("password", "token_version", "must_change_password"):
+        setattr(user, field, getattr(locked_user, field))
 
 
 def change_password_with_notice(
@@ -85,6 +90,7 @@ def change_password_with_notice(
     return locked_user
 
 
+@transaction.atomic
 def force_reset_password(user, new_password: str) -> None:
     """
     관리자에 의한 강제 임시 비밀번호 리셋.
@@ -92,10 +98,14 @@ def force_reset_password(user, new_password: str) -> None:
     임시 비번은 정의상 1회용이므로 must_change_password=True 강제 설정.
     MustChangePasswordGate 가 첫 로그인 후 비번 변경 외 모든 요청 차단.
     """
-    user.set_password(new_password)
-    user.token_version = (getattr(user, "token_version", 0) or 0) + 1
-    user.must_change_password = True
-    user.save(update_fields=["password", "token_version", "must_change_password"])
+    locked_user = get_user_model().objects.select_for_update().get(pk=user.pk)
+    locked_user.set_password(new_password)
+    locked_user.token_version = (getattr(locked_user, "token_version", 0) or 0) + 1
+    locked_user.must_change_password = True
+    locked_user.save(update_fields=["password", "token_version", "must_change_password"])
+    clear_pending_password_reset(locked_user)
+    for field in ("password", "token_version", "must_change_password"):
+        setattr(user, field, getattr(locked_user, field))
 
 
 def create_pending_password_reset(
@@ -140,20 +150,38 @@ def consume_pending_password_reset(user, raw_password: str) -> bool:
     """
     from apps.core.models import PendingPasswordReset
 
-    pending = PendingPasswordReset.objects.filter(user=user).order_by("-created_at").first()
-    if not pending:
-        return False
+    User = get_user_model()
+    with transaction.atomic():
+        locked_user = User.objects.select_for_update().get(pk=user.pk)
 
-    if pending.expires_at <= timezone.now():
-        pending.delete()
-        return False
+        # A staff/owner reset may have completed after login candidate lookup.
+        # Treat the now-current password as valid without consuming a newer,
+        # unrelated pending reset.
+        if locked_user.check_password(raw_password):
+            for field in ("password", "token_version", "must_change_password"):
+                setattr(user, field, getattr(locked_user, field))
+            return True
 
-    if not check_password(raw_password, pending.password_hash):
-        return False
+        pending = (
+            PendingPasswordReset.objects.select_for_update()
+            .filter(user=locked_user)
+            .order_by("-created_at")
+            .first()
+        )
+        if not pending:
+            return False
 
-    force_reset_password(user, raw_password)
-    pending.delete()
-    return True
+        if pending.expires_at <= timezone.now():
+            pending.delete()
+            return False
+
+        if not check_password(raw_password, pending.password_hash):
+            return False
+
+        force_reset_password(locked_user, raw_password)
+        for field in ("password", "token_version", "must_change_password"):
+            setattr(user, field, getattr(locked_user, field))
+        return True
 
 
 def pending_password_reset_matches(user, raw_password: str) -> bool:
