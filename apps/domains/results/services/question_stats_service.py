@@ -23,6 +23,7 @@ def _current_question_facts(
     *,
     exam_id: int,
     attempt_ids: Optional[List[int]] = None,
+    legacy_enrollment_ids: Optional[List[int]] = None,
 ):
     """Return the latest non-absence fact for each attempt/question pair."""
     qs = (
@@ -36,8 +37,16 @@ def _current_question_facts(
             | ~Q(attempt__meta__status="NOT_SUBMITTED")
         )
     )
-    if attempt_ids:
-        qs = qs.filter(attempt_id__in=attempt_ids)
+    if attempt_ids is not None or legacy_enrollment_ids is not None:
+        scope = Q(pk__in=[])
+        if attempt_ids:
+            scope |= Q(attempt_id__in=attempt_ids)
+        if legacy_enrollment_ids:
+            scope |= Q(
+                attempt_id__isnull=True,
+                enrollment_id__in=legacy_enrollment_ids,
+            )
+        qs = qs.filter(scope)
     latest_fact_ids = (
         qs.order_by()
         .values("attempt_id", "enrollment_id", "question_id")
@@ -65,6 +74,7 @@ class QuestionStatsService:
         *,
         exam_id: int,
         attempt_ids: Optional[List[int]] = None,
+        legacy_enrollment_ids: Optional[List[int]] = None,
     ) -> List[Dict]:
         """
         문항별 통계
@@ -78,6 +88,7 @@ class QuestionStatsService:
         qs = _current_question_facts(
             exam_id=exam_id,
             attempt_ids=attempt_ids,
+            legacy_enrollment_ids=legacy_enrollment_ids,
         )
 
         rows = list(
@@ -131,6 +142,7 @@ class QuestionStatsService:
         exam_id: int,
         question_id: int,
         attempt_ids: Optional[List[int]] = None,
+        legacy_enrollment_ids: Optional[List[int]] = None,
     ) -> Dict[str, int]:
         """
         객관식 오답 분포
@@ -140,6 +152,7 @@ class QuestionStatsService:
         qs = _current_question_facts(
             exam_id=exam_id,
             attempt_ids=attempt_ids,
+            legacy_enrollment_ids=legacy_enrollment_ids,
         ).filter(
             question_id=int(question_id),
             is_correct=False,
@@ -163,6 +176,7 @@ class QuestionStatsService:
         exam_id: int,
         n: int = 5,
         attempt_ids: Optional[List[int]] = None,
+        legacy_enrollment_ids: Optional[List[int]] = None,
     ) -> List[Dict]:
         """
         가장 많이 틀린 문항 TOP N
@@ -171,6 +185,7 @@ class QuestionStatsService:
         qs = _current_question_facts(
             exam_id=exam_id,
             attempt_ids=attempt_ids,
+            legacy_enrollment_ids=legacy_enrollment_ids,
         ).filter(
             is_correct=False,
         )

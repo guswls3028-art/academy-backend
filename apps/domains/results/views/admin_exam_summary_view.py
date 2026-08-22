@@ -60,10 +60,12 @@ class AdminExamSummaryView(APIView):
         rs = latest_results_per_enrollment(
             target_type="exam",
             target_id=exam_id,
-        )
+        ).filter(enrollment__tenant=request.tenant)
         scored_rs = rs.filter(
+            Q(attempt__isnull=True) | Q(attempt__status="done"),
+        ).filter(
             Q(attempt__meta__status__isnull=True)
-            | ~Q(attempt__meta__status="NOT_SUBMITTED")
+            | ~Q(attempt__meta__status="NOT_SUBMITTED"),
         )
 
         participant_count = rs.values("enrollment_id").distinct().count()
@@ -76,9 +78,17 @@ class AdminExamSummaryView(APIView):
             max_score=Max("total_score"),
         )
 
-        pass_count = scored_rs.filter(total_score__gte=pass_score).count()
-        fail_count = scored_rs.filter(total_score__lt=pass_score).count()
-        pass_rate = (pass_count / participant_count) if participant_count else 0.0
+        if pass_score > 0:
+            pass_count = scored_rs.filter(total_score__gte=pass_score).count()
+            fail_count = scored_rs.filter(total_score__lt=pass_score).count()
+            scored_count = pass_count + fail_count
+            pass_rate = (pass_count / scored_count) if scored_count else 0.0
+        else:
+            # pass_score <= 0 is the domain-level "criterion not configured"
+            # state, not a zero-point cut that automatically passes everyone.
+            pass_count = 0
+            fail_count = 0
+            pass_rate = 0.0
 
         # ✅ clinic_count는 session 기반으로만 계산 가능(시험만으론 clinic이 정의되지 않음)
         clinic_count = 0

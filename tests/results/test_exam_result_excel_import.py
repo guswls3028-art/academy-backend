@@ -40,6 +40,7 @@ from apps.domains.results.utils.exam_absence import current_exam_absence_counts
 from apps.domains.results.utils.ranking import compute_exam_rankings
 from apps.domains.results.views.admin_exam_results_view import AdminExamResultsView
 from apps.domains.results.views.admin_exam_summary_view import AdminExamSummaryView
+from apps.domains.results.views.question_stats_views import AdminExamQuestionStatsView
 from apps.domains.results.views.admin_exam_result_excel_import_view import (
     AdminExamAnalysisExcelExportView,
     AdminExamResultExcelImportView,
@@ -701,6 +702,84 @@ class ExamResultExcelImportTests(TestCase):
         self.assertEqual(stats[0]["attempts"], 2)
         self.assertEqual(stats[0]["correct"], 1)
 
+    def test_question_stats_empty_attempt_scope_returns_no_rows(self):
+        ResultFact.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.enrollment,
+            submission_id=0,
+            attempt=None,
+            question_id=self.choice_question.id,
+            answer="1",
+            is_correct=True,
+            score=40,
+            max_score=40,
+            source="legacy_import",
+        )
+
+        self.assertEqual(
+            QuestionStatsService.per_question_stats(
+                exam_id=self.exam.id,
+                attempt_ids=[],
+            ),
+            [],
+        )
+
+    def test_question_stats_endpoint_uses_only_current_finalized_attempt(self):
+        old_attempt = ExamAttempt.objects.create(
+            exam=self.exam,
+            enrollment=self.enrollment,
+            attempt_index=1,
+            is_representative=False,
+            status="done",
+        )
+        current_attempt = ExamAttempt.objects.create(
+            exam=self.exam,
+            enrollment=self.enrollment,
+            attempt_index=2,
+            is_retake=True,
+            is_representative=True,
+            status="done",
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.enrollment,
+            attempt=current_attempt,
+            total_score=40,
+            max_score=100,
+        )
+        for attempt, is_correct in (
+            (old_attempt, True),
+            (current_attempt, False),
+        ):
+            ResultFact.objects.create(
+                target_type="exam",
+                target_id=self.exam.id,
+                enrollment=self.enrollment,
+                submission_id=attempt.id,
+                attempt=attempt,
+                question_id=self.choice_question.id,
+                answer="1",
+                is_correct=is_correct,
+                score=40 if is_correct else 0,
+                max_score=40,
+                source="manual_grid",
+            )
+
+        response = AdminExamQuestionStatsView.as_view()(
+            self._request(
+                "get",
+                f"/results/admin/exams/{self.exam.id}/questions/",
+            ),
+            exam_id=self.exam.id,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]["attempts"], 1)
+        self.assertEqual(response.data[0]["correct"], 0)
+
     def test_dimensionless_xlsx_is_matched_and_scored(self):
         payload = _without_worksheet_dimension(
             _workbook_bytes(
@@ -967,6 +1046,136 @@ class ExamResultExcelImportTests(TestCase):
             ),
             {},
         )
+
+    def test_exam_summary_does_not_classify_unset_pass_score(self):
+        self.exam.pass_score = 0
+        self.exam.save(update_fields=["pass_score", "updated_at"])
+        apply_exam_result_import(
+            plan=plan_exam_result_import(
+                exam=self.exam,
+                tenant=self.tenant,
+                filename="unset-pass-score-summary.xlsx",
+                workbook_bytes=_workbook_bytes(
+                    [
+                        ["수강등록ID", "이름", 1, 2],
+                        [self.enrollment.id, "김학생", "O", "X"],
+                    ]
+                ),
+            )
+        )
+
+        response = AdminExamSummaryView.as_view()(
+            self._request(
+                "get",
+                f"/results/admin/exams/{self.exam.id}/summary/",
+            ),
+            exam_id=self.exam.id,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["participant_count"], 1)
+        self.assertEqual(response.data["pass_count"], 0)
+        self.assertEqual(response.data["fail_count"], 0)
+        self.assertEqual(response.data["pass_rate"], 0.0)
+
+    def test_exam_summary_excludes_absence_from_pass_rate_denominator(self):
+        absent_enrollment = self._create_enrollment(
+            name="결시학생",
+            username="excel-student-absent-summary",
+            ps_number="EX-ABSENT-SUMMARY",
+            phone="01055556666",
+            parent_phone="01077778888",
+        )
+        ExamEnrollment.objects.create(
+            exam=self.exam,
+            enrollment=absent_enrollment,
+        )
+        apply_exam_result_import(
+            plan=plan_exam_result_import(
+                exam=self.exam,
+                tenant=self.tenant,
+                filename="absence-pass-rate.xlsx",
+                workbook_bytes=_workbook_bytes(
+                    [
+                        ["수강등록ID", "이름", "미응시", 1, 2],
+                        [self.enrollment.id, "김학생", "", "O", "O"],
+                        [absent_enrollment.id, "결시학생", "O", "", ""],
+                    ]
+                ),
+            )
+        )
+
+        response = AdminExamSummaryView.as_view()(
+            self._request(
+                "get",
+                f"/results/admin/exams/{self.exam.id}/summary/",
+            ),
+            exam_id=self.exam.id,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["participant_count"], 2)
+        self.assertEqual(response.data["pass_count"], 1)
+        self.assertEqual(response.data["fail_count"], 0)
+        self.assertEqual(response.data["pass_rate"], 1.0)
+
+    def test_exam_summary_excludes_unfinalized_attempt_from_score_metrics(self):
+        attempt = ExamAttempt.objects.create(
+            exam=self.exam,
+            enrollment=self.enrollment,
+            attempt_index=1,
+            is_representative=True,
+            status="grading",
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.enrollment,
+            attempt=attempt,
+            total_score=100,
+            max_score=100,
+        )
+
+        response = AdminExamSummaryView.as_view()(
+            self._request(
+                "get",
+                f"/results/admin/exams/{self.exam.id}/summary/",
+            ),
+            exam_id=self.exam.id,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["participant_count"], 1)
+        self.assertEqual(response.data["avg_score"], 0.0)
+        self.assertEqual(response.data["pass_count"], 0)
+        self.assertEqual(response.data["fail_count"], 0)
+
+    def test_exam_summary_fails_closed_for_cross_tenant_enrollment_result(self):
+        other_tenant = Tenant.objects.create(
+            name="Foreign Results",
+            code="foreign-results",
+            is_active=True,
+        )
+        Enrollment.objects.filter(pk=self.enrollment.pk).update(tenant=other_tenant)
+        Result.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.enrollment,
+            total_score=100,
+            max_score=100,
+        )
+
+        response = AdminExamSummaryView.as_view()(
+            self._request(
+                "get",
+                f"/results/admin/exams/{self.exam.id}/summary/",
+            ),
+            exam_id=self.exam.id,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["participant_count"], 0)
+        self.assertEqual(response.data["pass_count"], 0)
 
     def test_apply_is_blocked_while_manual_score_editor_holds_lease(self):
         payload = _workbook_bytes(
@@ -1235,6 +1444,99 @@ class ExamResultExcelImportTests(TestCase):
         answers = workbook["학생별 답안"]
         self.assertEqual(answers.cell(5, 8).value, "1번")
         self.assertEqual(answers.cell(6, 8).value, "'=1+1")
+
+    def test_analysis_export_keeps_unset_pass_score_unclassified(self):
+        self.exam.pass_score = 0
+        self.exam.save(update_fields=["pass_score", "updated_at"])
+        apply_exam_result_import(
+            plan=plan_exam_result_import(
+                exam=self.exam,
+                tenant=self.tenant,
+                filename="unset-pass-score.xlsx",
+                workbook_bytes=_workbook_bytes(
+                    [
+                        ["수강등록ID", "이름", 1, 2],
+                        [self.enrollment.id, "김학생", "O", "X"],
+                    ]
+                ),
+            )
+        )
+
+        exported = build_exam_analysis_export(exam=self.exam, tenant=self.tenant)
+        workbook = load_workbook(io.BytesIO(exported), data_only=True)
+
+        briefing = workbook["수업 브리핑"]
+        self.assertEqual(briefing.cell(7, 4).value, "합격 기준 설정 필요")
+        self.assertEqual(briefing.cell(15, 7).value, "기준 미설정")
+        ranked = workbook["학생별 등수"]
+        self.assertEqual(ranked.cell(6, 10).value, "기준 미설정")
+
+    def test_analysis_export_keeps_first_attempt_score_after_retake_result_changes(self):
+        apply_exam_result_import(
+            plan=plan_exam_result_import(
+                exam=self.exam,
+                tenant=self.tenant,
+                filename="first-attempt-score.xlsx",
+                workbook_bytes=_workbook_bytes(
+                    [
+                        ["수강등록ID", "이름", 1, 2],
+                        [self.enrollment.id, "김학생", "O", "O"],
+                    ]
+                ),
+            )
+        )
+        result = Result.objects.get(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.enrollment,
+        )
+        self.assertEqual(result.attempt.meta["initial_snapshot"]["total_score"], 100.0)
+        result.total_score = 40
+        result.save(update_fields=["total_score", "updated_at"])
+
+        exported = build_exam_analysis_export(exam=self.exam, tenant=self.tenant)
+        workbook = load_workbook(io.BytesIO(exported), data_only=True)
+
+        ranked = workbook["학생별 등수"]
+        answers = workbook["학생별 답안"]
+        self.assertEqual(ranked.cell(6, 5).value, 100)
+        self.assertEqual(answers.cell(6, 5).value, 100)
+
+    def test_analysis_export_marks_manual_remediation_as_completed(self):
+        apply_exam_result_import(
+            plan=plan_exam_result_import(
+                exam=self.exam,
+                tenant=self.tenant,
+                filename="remediated.xlsx",
+                workbook_bytes=_workbook_bytes(
+                    [
+                        ["수강등록ID", "이름", 1, 2],
+                        [self.enrollment.id, "김학생", "O", "X"],
+                    ]
+                ),
+            )
+        )
+        achievement = {
+            (self.enrollment.id, self.exam.id): {
+                "is_pass": False,
+                "remediated": True,
+                "final_pass": True,
+                "clinic_retake": None,
+                "achievement": "REMEDIATED",
+                "is_provisional": False,
+                "meta_status": None,
+            }
+        }
+
+        with patch(
+            "apps.domains.results.services.exam_analysis_export.compute_exam_achievement_bulk",
+            return_value=achievement,
+        ):
+            exported = build_exam_analysis_export(exam=self.exam, tenant=self.tenant)
+        workbook = load_workbook(io.BytesIO(exported), data_only=True)
+
+        ranked = workbook["학생별 등수"]
+        self.assertEqual(ranked.cell(6, 10).value, "보충 완료")
 
     def test_analysis_export_endpoint_returns_private_xlsx(self):
         apply_exam_result_import(
