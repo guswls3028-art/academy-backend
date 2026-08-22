@@ -32,6 +32,9 @@ from apps.domains.results.services.exam_result_excel_import import (
     build_exam_wrong_note_export,
     plan_exam_result_import,
 )
+from apps.domains.results.services.exam_analysis_export import (
+    build_exam_analysis_export,
+)
 from apps.support.results.admin_exam_dependencies import (
     get_regular_active_exam_for_tenant,
 )
@@ -98,6 +101,40 @@ class AdminExamWrongNoteExcelExportView(APIView):
         )
         response["Content-Disposition"] = (
             f'attachment; filename="exam_{int(exam.id)}_wrong_notes.xlsx"'
+        )
+        response["Cache-Control"] = "private, no-store"
+        return response
+
+
+class AdminExamAnalysisExcelExportView(APIView):
+    permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
+
+    @extend_schema(
+        responses={
+            (
+                200,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ): OpenApiTypes.BINARY
+        }
+    )
+    def get(self, request, exam_id: int):
+        exam = get_regular_active_exam_for_tenant(
+            exam_id=int(exam_id),
+            tenant=request.tenant,
+        )
+        try:
+            payload = build_exam_analysis_export(exam=exam, tenant=request.tenant)
+        except ExamResultWorkbookError as exc:
+            raise ValidationError({"detail": str(exc)}) from exc
+
+        response = HttpResponse(
+            payload,
+            content_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+        )
+        response["Content-Disposition"] = (
+            f'attachment; filename="exam_{int(exam.id)}_analysis.xlsx"'
         )
         response["Cache-Control"] = "private, no-store"
         return response

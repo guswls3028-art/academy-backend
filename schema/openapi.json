@@ -36656,6 +36656,45 @@
         ]
       }
     },
+    "/api/v1/results/admin/exams/{exam_id}/analysis-export/": {
+      "get": {
+        "operationId": "results_admin_exams_analysis_export_retrieve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "exam_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
     "/api/v1/results/admin/exams/{exam_id}/enrollments/{enrollment_id}/": {
       "get": {
         "operationId": "results_admin_exams_enrollments_retrieve",
