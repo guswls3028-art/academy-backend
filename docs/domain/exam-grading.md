@@ -278,10 +278,14 @@ submission ID만 유일성을 검사한다. `NULL`은 클리닉 직접 입력 �
 `EXAM_PASS`/`HOMEWORK_PASS` 해소는 더 강한 근거이므로 덮거나 다시 열지 않는다.
 
 저장은 `expected_updated_at` 낙관적 동시성 토큰을 받고 충돌 시 `409`와 최신 시각을
-반환한다. tenant·차시 roster·평가 연결·권한을 잠금 안에서 재검증하고, 사유·사용자·
-source fingerprint와 append-only 해소 이력을 남긴다. 시험 결과 내용이 바뀌면 교사
+반환한다. tenant·차시 roster·평가 연결·권한을 잠금 안에서 재검증하며, 점수 행이 없는
+과제도 배정 행을 잠가 최초 판정 생성 경쟁을 직렬화한다. 사유·사용자·source fingerprint와
+append-only 해소 이력을 남긴다. 시험 결과 내용이 바뀌면 교사
 통과는 stale로 읽혀 `PENDING` 및 Clinic 재평가로 돌아가며 timestamp-only 재저장은
 유지한다.
+
+PostgreSQL 최초 생성 경쟁은
+`apps/domains/results/tests/test_assessment_correction_concurrency_pg.py`가 검증한다.
 
 성적표 마지막 열은 이 상태를 집계하여 완료 현황을 보여줄 수 있다.
 `Program.feature_flags`의
