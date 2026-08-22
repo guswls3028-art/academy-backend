@@ -2,7 +2,7 @@
 
 import uuid
 
-from django.db import models
+from django.db import models, transaction
 from django.conf import settings
 
 from apps.api.common.models import TimestampModel
@@ -218,27 +218,61 @@ class Student(TimestampModel):
         ]
 
     def save(self, *args, **kwargs):
-        if self.pk and self.user_id:
-            try:
-                old = Student.objects.only("ps_number").get(pk=self.pk)
-                if old.ps_number != self.ps_number:
-                    from apps.core.models.user import user_internal_username
-                    new_username = user_internal_username(self.tenant, self.ps_number)
-                    if self.user.username != new_username:
-                        self.user.username = new_username
-                        self.user.save(update_fields=["username"])
-                    # 인벤토리 student_ps 연쇄 업데이트 (ps_number 변경 시 고아 방지)
-                    old_ps = old.ps_number
-                    new_ps = self.ps_number
-                    if old_ps and new_ps and not new_ps.startswith("_del_"):
-                        update_inventory_student_ps(
-                            tenant=self.tenant,
-                            old_ps=old_ps,
-                            new_ps=new_ps,
-                        )
-            except Student.DoesNotExist:
-                pass
-        super().save(*args, **kwargs)
+        if not self.pk:
+            return super().save(*args, **kwargs)
+
+        try:
+            persisted_identity = Student.objects.values("user_id", "tenant_id").get(
+                pk=self.pk
+            )
+        except Student.DoesNotExist:
+            return super().save(*args, **kwargs)
+
+        persisted_user_id = persisted_identity["user_id"]
+        persisted_tenant_id = persisted_identity["tenant_id"]
+        if self.user_id != persisted_user_id:
+            raise ValueError("Student.user cannot be changed through Student.save().")
+        if self.tenant_id != persisted_tenant_id:
+            raise ValueError("Student.tenant cannot be changed through Student.save().")
+
+        update_fields = kwargs.get("update_fields")
+        persists_ps_number = update_fields is None or "ps_number" in update_fields
+        if not persists_ps_number:
+            return super().save(*args, **kwargs)
+
+        with transaction.atomic():
+            user_model = self._meta.get_field("user").remote_field.model
+            locked_user = user_model.objects.select_for_update().get(
+                pk=persisted_user_id
+            )
+            old = (
+                Student.objects.select_for_update()
+                .only("ps_number", "user_id", "tenant_id")
+                .get(pk=self.pk)
+            )
+            if old.user_id != persisted_user_id or self.user_id != old.user_id:
+                raise ValueError("Student account link changed while saving identity.")
+            if old.tenant_id != persisted_tenant_id or self.tenant_id != old.tenant_id:
+                raise ValueError("Student tenant changed while saving identity.")
+
+            if old.ps_number != self.ps_number:
+                from apps.core.models.user import user_internal_username
+
+                new_username = user_internal_username(self.tenant, self.ps_number)
+                if locked_user.username != new_username:
+                    locked_user.username = new_username
+                    locked_user.save(update_fields=["username"])
+                self.user = locked_user
+                # 인벤토리 student_ps 연쇄 업데이트 (ps_number 변경 시 고아 방지)
+                old_ps = old.ps_number
+                new_ps = self.ps_number
+                if old_ps and new_ps and not new_ps.startswith("_del_"):
+                    update_inventory_student_ps(
+                        tenant=self.tenant,
+                        old_ps=old_ps,
+                        new_ps=new_ps,
+                    )
+            return super().save(*args, **kwargs)
 
     def __str__(self):
         return self.name
