@@ -225,8 +225,8 @@ def _is_exact_reviewed_outbox(
         and payload.get("target_id") == pair.target_id
         and payload.get("message_mode") == "alimtalk"
         and payload.get("source_tenant_id") == tenant_id
-        and payload.get("origin_type") == pair.origin_type
-        and payload.get("origin_id") == pair.origin_id
+        and payload.get("origin_type", "") == pair.origin_type
+        and payload.get("origin_id", "") == pair.origin_id
     )
 
 

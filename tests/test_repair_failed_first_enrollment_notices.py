@@ -290,7 +290,7 @@ class RecoveryFixtureMixin:
         )
 
     def _student_only_history(self, student: Student):
-        self._outbox(
+        legacy_blank_origin_outbox = self._outbox(
             student=student,
             trigger="registration_approved_student",
             status=ScheduledNotification.Status.SENT,
@@ -302,6 +302,12 @@ class RecoveryFixtureMixin:
                 "f1645e709a33ffa71c1687743eccf169"
                 "774a583f02fd1995f06736c434788a69"
             ),
+        )
+        legacy_payload = dict(legacy_blank_origin_outbox.payload)
+        legacy_payload.pop("origin_type")
+        legacy_payload.pop("origin_id")
+        ScheduledNotification.objects.filter(pk=legacy_blank_origin_outbox.pk).update(
+            payload=legacy_payload
         )
         self._outbox(
             student=student,
@@ -985,6 +991,72 @@ class RepairFailedFirstEnrollmentNoticesTests(RecoveryFixtureMixin, TestCase):
                         call_command(*self._command_args())
                     ScheduledNotification.objects.filter(pk=outbox_id).update(
                         **original
+                    )
+
+    def test_reviewed_payload_origin_normalization_is_blank_only(self):
+        legacy_payload = ScheduledNotification.objects.get(pk=1174).payload
+        self.assertNotIn("origin_type", legacy_payload)
+        self.assertNotIn("origin_id", legacy_payload)
+
+        explicit_blank_payload = {
+            **legacy_payload,
+            "origin_type": "",
+            "origin_id": "",
+        }
+        ScheduledNotification.objects.filter(pk=1174).update(
+            payload=explicit_blank_payload
+        )
+        call_command(*self._command_args(), stdout=StringIO())
+        ScheduledNotification.objects.filter(pk=1174).update(payload=legacy_payload)
+
+        for outbox_id in (1654, 1759):
+            outbox = ScheduledNotification.objects.get(pk=outbox_id)
+            original_payload = dict(outbox.payload)
+            for field in ("origin_type", "origin_id"):
+                for variant in ("missing", "blank", "wrong"):
+                    with self.subTest(
+                        outbox_id=outbox_id,
+                        payload_field=field,
+                        variant=variant,
+                    ):
+                        payload = dict(original_payload)
+                        if variant == "missing":
+                            payload.pop(field)
+                        elif variant == "blank":
+                            payload[field] = ""
+                        else:
+                            payload[field] = "drifted-payload-origin"
+                        ScheduledNotification.objects.filter(pk=outbox_id).update(
+                            payload=payload
+                        )
+                        with self.assertRaisesMessage(
+                            CommandError,
+                            "reviewed_student_outbox_pair_drift",
+                        ):
+                            call_command(*self._command_args())
+                        ScheduledNotification.objects.filter(pk=outbox_id).update(
+                            payload=original_payload
+                        )
+
+        for field in ("origin_type", "origin_id"):
+            for value in (None, False, 0, [], {}, "drifted-payload-origin"):
+                with self.subTest(
+                    outbox_id=1174,
+                    payload_field=field,
+                    value=value,
+                ):
+                    payload = dict(legacy_payload)
+                    payload[field] = value
+                    ScheduledNotification.objects.filter(pk=1174).update(
+                        payload=payload
+                    )
+                    with self.assertRaisesMessage(
+                        CommandError,
+                        "reviewed_student_outbox_pair_drift",
+                    ):
+                        call_command(*self._command_args())
+                    ScheduledNotification.objects.filter(pk=1174).update(
+                        payload=legacy_payload
                     )
 
     def test_reviewed_student_log_field_drift_is_refused(self):
