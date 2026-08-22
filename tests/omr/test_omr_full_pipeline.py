@@ -150,7 +150,8 @@ def distort(img: np.ndarray, *,
             noise_sigma: float = 0.0,
             blur_ksize: int = 0,
             shadow_pct: float = 0.0,
-            dpi: int = 300) -> np.ndarray:
+            dpi: int = 300,
+            rng: Optional[np.random.Generator] = None) -> np.ndarray:
     """변형 체인. 실스캐너에서 나올 수 있는 왜곡 종류 시뮬."""
     out = img.copy()
     h, w = out.shape[:2]
@@ -178,7 +179,10 @@ def distort(img: np.ndarray, *,
 
     # 가우시안 노이즈 (메모리 절약 위해 float32 → int16 즉시 변환)
     if noise_sigma > 0:
-        noise = (np.random.randn(*out.shape).astype(np.float32) * noise_sigma).astype(np.int16)
+        noise_source = rng if rng is not None else np.random
+        noise = (
+            noise_source.standard_normal(out.shape).astype(np.float32) * noise_sigma
+        ).astype(np.int16)
         out_i = out.astype(np.int16)
         out_i += noise
         out = np.clip(out_i, 0, 255).astype(np.uint8)
@@ -198,6 +202,24 @@ def distort(img: np.ndarray, *,
         out = np.clip(out.astype(np.float32) * mask[..., None], 0, 255).astype(np.uint8)
 
     return out
+
+
+def test_distort_uses_injected_rng_reproducibly() -> None:
+    image = np.full((32, 32, 3), 128, dtype=np.uint8)
+
+    first = distort(
+        image,
+        noise_sigma=5.0,
+        rng=np.random.default_rng(20260822),
+    )
+    second = distort(
+        image,
+        noise_sigma=5.0,
+        rng=np.random.default_rng(20260822),
+    )
+
+    assert np.array_equal(first, second)
+    assert not np.array_equal(first, image)
 
 
 # ══════════════════════════════════════════
