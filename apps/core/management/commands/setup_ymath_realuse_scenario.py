@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from collections import defaultdict
 from datetime import date, timedelta
 
 from django.apps import apps
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
-from django.db import transaction
+from django.db import connection, transaction
 from django.utils import timezone
 
 from apps.core.models import Program, Tenant, TenantMembership
@@ -26,9 +28,14 @@ from apps.core.management.commands.setup_three_tenants import (
 
 
 SCENARIO_CODE_PREFIX = "qa-ymath-realuse-"
+SCENARIO_CODE_RE = re.compile(r"^qa-ymath-realuse-[a-z0-9-]+$")
 DEFAULT_SCENARIO_CODE = "qa-ymath-realuse-20260805"
 PASSWORD_ENV = "YMATH_REALUSE_SCENARIO_PASSWORD"
 LOGIN_UAT_ACCOUNT_COUNT_PER_ROLE = 10
+DEVELOPMENT_SETTINGS_MODULE = "apps.api.config.settings.development"
+DEVELOPMENT_DATABASE_NAME = "academy_api_development"
+DEVELOPMENT_DATABASE_USER = "academy_api_development_app"
+DEVELOPMENT_R2_BUCKET = "academy-development-artifacts"
 LOGIN_UAT_RESERVED_USERNAME_PREFIXES = (
     "ymath-qa-student-",
     "ymath-qa-staff-",
@@ -39,7 +46,9 @@ LOGIN_UAT_RESERVED_USERNAME_PREFIXES = (
 def assert_isolated_runtime() -> None:
     database = settings.DATABASES.get("default", {})
     database_name = str(database.get("NAME") or "")
+    database_user = str(database.get("USER") or "")
     database_engine = str(database.get("ENGINE") or "")
+    settings_module = str(os.environ.get("DJANGO_SETTINGS_MODULE") or "")
     buckets = {
         str(getattr(settings, name, "") or "")
         for name in (
@@ -47,18 +56,28 @@ def assert_isolated_runtime() -> None:
             "R2_STORAGE_BUCKET",
             "R2_EXCEL_BUCKET",
             "R2_ADMIN_BUCKET",
+            "R2_VIDEO_BUCKET",
         )
     }
     development_runtime = (
-        database_name.startswith("academy_api_development")
-        and buckets
-        and all(name.startswith("academy-development-") for name in buckets)
+        settings_module == DEVELOPMENT_SETTINGS_MODULE
+        and database_name == DEVELOPMENT_DATABASE_NAME
+        and database_user == DEVELOPMENT_DATABASE_USER
+        and buckets == {DEVELOPMENT_R2_BUCKET}
     )
     test_runtime = (
         (database_engine.endswith("sqlite3") or database_name == ":memory:" or "test" in database_name.lower())
         and buckets
         and all(name.startswith("test-") for name in buckets)
     )
+    if development_runtime:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT current_database(), current_user")
+            current_database, current_user = cursor.fetchone()
+        development_runtime = (
+            current_database == DEVELOPMENT_DATABASE_NAME
+            and current_user == DEVELOPMENT_DATABASE_USER
+        )
     if not (development_runtime or test_runtime):
         raise CommandError(
             "Ymath real-use scenario is allowed only in the isolated development "
@@ -105,8 +124,8 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         tenant_code = str(options["tenant_code"] or "").strip().lower()
-        if not tenant_code.startswith(SCENARIO_CODE_PREFIX):
-            raise CommandError(f"tenant-code must start with {SCENARIO_CODE_PREFIX!r}.")
+        if not SCENARIO_CODE_RE.fullmatch(tenant_code):
+            raise CommandError("tenant-code must match ^qa-ymath-realuse-[a-z0-9-]+$.")
         teacher_username = str(options["teacher_username"] or "").strip()
         normalized_teacher_username = teacher_username.lower()
         if not teacher_username:
@@ -115,11 +134,11 @@ class Command(BaseCommand):
             raise CommandError("teacher-username conflicts with a reserved login UAT username.")
 
         assert_isolated_runtime()
-        existing = Tenant.objects.filter(code=tenant_code).first()
         if options["destroy"]:
             deleted = None
             with transaction.atomic():
-                existing = Tenant.objects.select_for_update().filter(code=tenant_code).first()
+                self._lock_tenant_code(tenant_code)
+                existing = self._exact_tenant_or_fail_on_case_variant(tenant_code)
                 if existing is not None:
                     deleted = {
                         "tenant_id": existing.id,
@@ -165,8 +184,6 @@ class Command(BaseCommand):
             return
 
         login_uat = bool(options["login_uat"])
-        if login_uat and existing is not None and not options["reset"]:
-            raise CommandError("--login-uat requires --reset when the tenant already exists.")
         student_count = LOGIN_UAT_ACCOUNT_COUNT_PER_ROLE if login_uat else int(options["student_count"])
         session_count = int(options["session_count"])
         if not 1 <= student_count <= 30:
@@ -177,11 +194,23 @@ class Command(BaseCommand):
         password = str(os.environ.get(PASSWORD_ENV) or "")
         if not password:
             raise CommandError(f"{PASSWORD_ENV} must be set.")
+        if login_uat:
+            parent_login_ids = {
+                f"01099{index:06d}"
+                for index in range(1, LOGIN_UAT_ACCOUNT_COUNT_PER_ROLE + 1)
+            }
+            if teacher_username in parent_login_ids:
+                raise CommandError("teacher-username conflicts with a generated parent login identifier.")
 
-        reset_counts = self._tenant_counts(existing) if existing and options["reset"] else None
+        reset_counts = None
         with transaction.atomic():
+            self._lock_tenant_code(tenant_code)
+            existing = self._exact_tenant_or_fail_on_case_variant(tenant_code)
+            if login_uat and existing is not None and not options["reset"]:
+                raise CommandError("--login-uat requires --reset when the tenant already exists.")
+            reset_counts = self._tenant_counts(existing) if existing and options["reset"] else None
             if existing and options["reset"]:
-                Tenant.objects.select_for_update().get(pk=existing.pk).delete()
+                existing.delete()
 
             tenant, _ = Tenant.objects.get_or_create(
                 code=tenant_code,
@@ -359,6 +388,13 @@ class Command(BaseCommand):
                     parents=parents,
                     staffs=login_staff,
                 )
+                self._validate_active_login_identifiers(
+                    tenant=tenant,
+                    teacher=teacher,
+                    students=students,
+                    parents=parents,
+                    staffs=login_staff,
+                )
 
         if reset_counts is not None:
             self.stdout.write(
@@ -414,6 +450,33 @@ class Command(BaseCommand):
         self.stdout.write(json.dumps(payload, ensure_ascii=False, sort_keys=True))
 
     @staticmethod
+    def _lock_tenant_code(tenant_code: str) -> None:
+        if connection.vendor != "postgresql":
+            return
+        if not connection.in_atomic_block:
+            raise RuntimeError("tenant-code advisory lock requires transaction.atomic().")
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                [f"ymath-realuse:{tenant_code}"],
+            )
+
+    @staticmethod
+    def _exact_tenant_or_fail_on_case_variant(tenant_code: str):
+        matches = list(
+            Tenant.objects.select_for_update()
+            .filter(code__iexact=tenant_code)
+            .only("id", "code")
+            .order_by("id")
+        )
+        variants = [tenant.code for tenant in matches if tenant.code != tenant_code]
+        if variants:
+            raise CommandError(
+                "A case-variant tenant code already exists; refusing setup or destroy."
+            )
+        return next((tenant for tenant in matches if tenant.code == tenant_code), None)
+
+    @staticmethod
     def _ensure_user(*, tenant, login_username, password, name, is_staff):
         User = get_user_model()
         internal_username = user_internal_username(tenant, login_username)
@@ -437,8 +500,8 @@ class Command(BaseCommand):
     @staticmethod
     def _remaining_for_code(tenant_code: str) -> dict[str, int]:
         return {
-            "tenants": Tenant.objects.filter(code=tenant_code).count(),
-            "users": get_user_model().objects.filter(tenant__code=tenant_code).count(),
+            "tenants": Tenant.objects.filter(code__iexact=tenant_code).count(),
+            "users": get_user_model().objects.filter(tenant__code__iexact=tenant_code).count(),
         }
 
     @staticmethod
@@ -473,6 +536,67 @@ class Command(BaseCommand):
                         "role_counts": role_counts,
                         "distinct_manifest_users": len(set(account_user_ids)),
                     },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+            )
+
+    @staticmethod
+    def _validate_active_login_identifiers(*, tenant, teacher, students, parents, staffs) -> None:
+        identifiers: dict[str, set[int]] = defaultdict(set)
+        memberships = (
+            TenantMembership.objects
+            .filter(tenant=tenant, is_active=True, user__is_active=True)
+            .select_related("user")
+        )
+        for membership in memberships:
+            identifier = user_display_username(membership.user).strip()
+            if identifier:
+                identifiers[identifier].add(membership.user_id)
+
+        Parent = apps.get_model("parents", "Parent")
+        for parent in (
+            Parent.objects
+            .filter(
+                tenant=tenant,
+                user__is_active=True,
+                user__tenant_memberships__tenant=tenant,
+                user__tenant_memberships__role="parent",
+                user__tenant_memberships__is_active=True,
+            )
+            .select_related("user")
+            .distinct()
+        ):
+            identifier = str(parent.phone or "").strip()
+            if identifier:
+                identifiers[identifier].add(parent.user_id)
+
+        expected_identifiers = {user_display_username(teacher): teacher.id}
+        expected_identifiers.update(
+            {user_display_username(student.user): student.user_id for student in students}
+        )
+        expected_identifiers.update({str(parent.phone): parent.user_id for parent in parents})
+        expected_identifiers.update(
+            {user_display_username(staff.user): staff.user_id for staff in staffs}
+        )
+        ambiguous = {
+            identifier: sorted(user_ids)
+            for identifier, user_ids in identifiers.items()
+            if len(user_ids) != 1
+        }
+        unresolved = {
+            identifier: {
+                "expected_user_id": expected_user_id,
+                "resolved_user_ids": sorted(identifiers.get(identifier, set())),
+            }
+            for identifier, expected_user_id in expected_identifiers.items()
+            if identifiers.get(identifier) != {expected_user_id}
+        }
+        if ambiguous or unresolved:
+            raise CommandError(
+                "Login UAT display identifier contract mismatch: "
+                + json.dumps(
+                    {"ambiguous": ambiguous, "unresolved": unresolved},
                     ensure_ascii=False,
                     sort_keys=True,
                 )

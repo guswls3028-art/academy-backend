@@ -1,5 +1,7 @@
 import json
 import os
+import threading
+import time
 from datetime import timedelta
 from io import StringIO
 from unittest.mock import patch
@@ -7,11 +9,16 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from django.test import TestCase, override_settings
+from django.db import close_old_connections, connection
+from django.test import TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
+from rest_framework_simplejwt.settings import api_settings
+from rest_framework_simplejwt.tokens import AccessToken
 
+from apps.api.common.auth_jwt import TenantAwareTokenObtainPairSerializer
 from apps.core.management.commands.setup_ymath_realuse_scenario import Command
 from apps.core.models import Program, Tenant, TenantMembership
+from apps.core.models.user import user_display_username
 from apps.domains.parents.models import Parent
 from apps.domains.staffs.models import Staff
 
@@ -76,8 +83,19 @@ class SetupYmathRealuseScenarioTests(TestCase):
         self.assertTrue(student.check_password("scenario-test-password"))
 
     def test_rejects_non_scenario_tenant_code(self):
-        with self.assertRaisesMessage(CommandError, "tenant-code must start"):
+        with self.assertRaisesMessage(CommandError, "tenant-code must match"):
             self._call_command(tenant_code="ymath")
+
+    def test_rejects_invalid_scenario_suffix_before_mutation(self):
+        for tenant_code in (
+            "qa-ymath-realuse-",
+            "qa-ymath-realuse-invalid_suffix",
+            "qa-ymath-realuse-invalid.suffix",
+        ):
+            with self.subTest(tenant_code=tenant_code):
+                with self.assertRaisesMessage(CommandError, "tenant-code must match"):
+                    self._call_command(tenant_code=tenant_code)
+                self.assertFalse(Tenant.objects.filter(code=tenant_code).exists())
 
     def test_login_uat_creates_secret_free_ten_by_ten_by_ten_manifest(self):
         out = StringIO()
@@ -135,6 +153,36 @@ class SetupYmathRealuseScenarioTests(TestCase):
         self.assertNotIn(secret, out.getvalue())
         self.assertTrue(all(set(account) == {"role", "username", "landing_path"} for account in accounts))
 
+        expected_users = {}
+        for student in tenant.students.select_related("user"):
+            expected_users[("student", user_display_username(student.user))] = student.user
+        for manifest_parent in Parent.objects.filter(tenant=tenant).select_related("user"):
+            expected_users[("parent", str(manifest_parent.phone))] = manifest_parent.user
+        for manifest_staff in Staff.objects.filter(tenant=tenant).select_related("user"):
+            expected_users[("staff", user_display_username(manifest_staff.user))] = manifest_staff.user
+
+        class RequestStub:
+            META = {}
+            data = {}
+
+            @staticmethod
+            def get_host():
+                return "api.hakwonplus.com"
+
+        for account in accounts:
+            serializer = TenantAwareTokenObtainPairSerializer(
+                data={
+                    "tenant_code": tenant.code,
+                    "username": account["username"],
+                    "password": secret,
+                },
+                context={"request": RequestStub()},
+            )
+            self.assertTrue(serializer.is_valid(), serializer.errors)
+            access = AccessToken(serializer.validated_data["access"])
+            expected_user = expected_users[(account["role"], account["username"])]
+            self.assertEqual(str(access[api_settings.USER_ID_CLAIM]), str(expected_user.id))
+
         parent = Parent.objects.get(tenant=tenant, phone="01099000001")
         self.assertEqual(parent.students.count(), 1)
         self.assertTrue(parent.user.check_password(secret))
@@ -183,6 +231,30 @@ class SetupYmathRealuseScenarioTests(TestCase):
 
         self.assertEqual(Tenant.objects.filter(code="qa-ymath-realuse-login-existing").count(), 1)
 
+    def test_case_variant_tenant_blocks_setup_and_destroy_without_mutation(self):
+        upper_code = "QA-YMATH-REALUSE-CASE-VARIANT"
+        lower_code = upper_code.lower()
+        existing = Tenant.objects.create(code=upper_code, name="preserve case variant")
+
+        with self.assertRaisesMessage(CommandError, "case-variant"):
+            self._call_command(
+                tenant_code=lower_code,
+                login_uat=True,
+                reset=True,
+            )
+        self.assertTrue(Tenant.objects.filter(id=existing.id, code=upper_code).exists())
+        self.assertFalse(Tenant.objects.filter(code=lower_code).exists())
+
+        with self.assertRaisesMessage(CommandError, "case-variant"):
+            with patch.dict(os.environ, {}, clear=True):
+                call_command(
+                    "setup_ymath_realuse_scenario",
+                    tenant_code=lower_code,
+                    destroy=True,
+                )
+        self.assertTrue(Tenant.objects.filter(id=existing.id, code=upper_code).exists())
+        self.assertFalse(Tenant.objects.filter(code=lower_code).exists())
+
     def test_rejects_empty_or_reserved_teacher_username_before_mutation(self):
         for username in ("", "   ", "ymath-qa-student-01", "YMATH-QA-STAFF-10"):
             tenant_code = "qa-ymath-realuse-invalid-" + str(len(username))
@@ -195,6 +267,17 @@ class SetupYmathRealuseScenarioTests(TestCase):
                         reset=True,
                     )
                 self.assertFalse(Tenant.objects.filter(code=tenant_code).exists())
+
+    def test_rejects_teacher_collision_with_dynamic_parent_login_before_mutation(self):
+        tenant_code = "qa-ymath-realuse-parent-teacher-collision"
+        with self.assertRaisesMessage(CommandError, "generated parent login identifier"):
+            self._call_command(
+                tenant_code=tenant_code,
+                teacher_username="01099000001",
+                login_uat=True,
+                reset=True,
+            )
+        self.assertFalse(Tenant.objects.filter(code=tenant_code).exists())
 
     def test_reused_user_password_uses_password_service_token_version(self):
         tenant = Tenant.objects.create(code="qa-ymath-realuse-reused-user", name="reuse")
@@ -306,3 +389,194 @@ class SetupYmathRealuseScenarioTests(TestCase):
     def test_rejects_production_shaped_runtime(self):
         with self.assertRaisesMessage(CommandError, "isolated development"):
             self._call_command(login_uat=True)
+
+
+class SetupYmathRealuseScenarioPostgresLockTests(TransactionTestCase):
+    reset_sequences = True
+
+    @staticmethod
+    def _set_application_name(name):
+        with connection.cursor() as cursor:
+            cursor.execute("SET application_name = %s", [name])
+
+    def _wait_for_advisory_lock(self, application_name, timeout=10):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT wait_event_type, wait_event
+                    FROM pg_stat_activity
+                    WHERE application_name = %s
+                    """,
+                    [application_name],
+                )
+                rows = cursor.fetchall()
+            if any(event_type == "Lock" and event == "advisory" for event_type, event in rows):
+                return
+            time.sleep(0.05)
+        self.fail(f"{application_name} did not enter a PostgreSQL advisory lock wait")
+
+    @staticmethod
+    def _call_full_command(*, tenant_code, stdout, destroy=False):
+        kwargs = {
+            "tenant_code": tenant_code,
+            "stdout": stdout,
+        }
+        if destroy:
+            kwargs["destroy"] = True
+        else:
+            kwargs.update({"login_uat": True, "session_count": 1})
+        call_command("setup_ymath_realuse_scenario", **kwargs)
+
+    def test_full_login_uat_commands_serialize_absent_setup_and_require_reset(self):
+        if connection.vendor != "postgresql":
+            self.skipTest("PostgreSQL advisory-lock regression")
+
+        tenant_code = "qa-ymath-realuse-concurrent-full-setup"
+        first_locked = threading.Event()
+        second_started = threading.Event()
+        allow_first_commit = threading.Event()
+        errors: list[BaseException] = []
+        outcomes = {}
+        original_lock = Command._lock_tenant_code
+
+        def coordinated_lock(code):
+            original_lock(code)
+            if threading.current_thread().name == "ymath-first-setup":
+                first_locked.set()
+                if not allow_first_commit.wait(30):
+                    raise TimeoutError("first setup command was not released")
+
+        def worker(name, application_name):
+            close_old_connections()
+            try:
+                self._set_application_name(application_name)
+                if name == "second":
+                    second_started.set()
+                out = StringIO()
+                try:
+                    self._call_full_command(tenant_code=tenant_code, stdout=out)
+                    outcomes[name] = ("success", out.getvalue())
+                except CommandError as error:
+                    outcomes[name] = ("command_error", str(error))
+                except BaseException as error:  # pragma: no cover - surfaced below
+                    errors.append(error)
+            finally:
+                close_old_connections()
+
+        first = threading.Thread(
+            target=worker,
+            args=("first", "ymath-uat-full-setup-first"),
+            name="ymath-first-setup",
+        )
+        second = threading.Thread(
+            target=worker,
+            args=("second", "ymath-uat-full-setup-second"),
+            name="ymath-second-setup",
+        )
+        with patch.dict(os.environ, {"YMATH_REALUSE_SCENARIO_PASSWORD": "pg-command-password"}):
+            with patch.object(Command, "_lock_tenant_code", new=staticmethod(coordinated_lock)):
+                first.start()
+                self.assertTrue(first_locked.wait(10))
+                second.start()
+                self.assertTrue(second_started.wait(10))
+                try:
+                    self._wait_for_advisory_lock("ymath-uat-full-setup-second")
+                finally:
+                    allow_first_commit.set()
+                first.join(120)
+                second.join(120)
+
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(outcomes["first"][0], "success")
+        self.assertIn("YMATH_REALUSE_SCENARIO_READY", outcomes["first"][1])
+        self.assertEqual(outcomes["second"][0], "command_error")
+        self.assertIn("--reset", outcomes["second"][1])
+
+        tenant = Tenant.objects.get(code=tenant_code)
+        self.assertEqual(tenant.students.count(), 10)
+        self.assertEqual(Parent.objects.filter(tenant=tenant).count(), 10)
+        self.assertEqual(Staff.objects.filter(tenant=tenant).count(), 10)
+        self.assertEqual(
+            {
+                role: TenantMembership.objects.filter(
+                    tenant=tenant,
+                    role=role,
+                    is_active=True,
+                ).count()
+                for role in ("student", "parent", "staff", "admin")
+            },
+            {"student": 10, "parent": 10, "staff": 10, "admin": 1},
+        )
+
+    def test_full_setup_then_destroy_waits_on_advisory_lock_and_reads_exact_zero(self):
+        if connection.vendor != "postgresql":
+            self.skipTest("PostgreSQL advisory-lock regression")
+
+        tenant_code = "qa-ymath-realuse-concurrent-full-destroy"
+        setup_locked = threading.Event()
+        destroy_started = threading.Event()
+        allow_setup_commit = threading.Event()
+        errors: list[BaseException] = []
+        outputs = {}
+        original_lock = Command._lock_tenant_code
+
+        def coordinated_lock(code):
+            original_lock(code)
+            if threading.current_thread().name == "ymath-inflight-setup":
+                setup_locked.set()
+                if not allow_setup_commit.wait(30):
+                    raise TimeoutError("in-flight setup command was not released")
+
+        def setup_worker():
+            close_old_connections()
+            try:
+                self._set_application_name("ymath-uat-inflight-setup")
+                out = StringIO()
+                self._call_full_command(tenant_code=tenant_code, stdout=out)
+                outputs["setup"] = out.getvalue()
+            except BaseException as error:  # pragma: no cover - surfaced below
+                errors.append(error)
+            finally:
+                close_old_connections()
+
+        def destroy_worker():
+            close_old_connections()
+            try:
+                self._set_application_name("ymath-uat-inflight-destroy")
+                destroy_started.set()
+                out = StringIO()
+                self._call_full_command(tenant_code=tenant_code, stdout=out, destroy=True)
+                outputs["destroy"] = out.getvalue()
+            except BaseException as error:  # pragma: no cover - surfaced below
+                errors.append(error)
+            finally:
+                close_old_connections()
+
+        setup = threading.Thread(target=setup_worker, name="ymath-inflight-setup")
+        destroy = threading.Thread(target=destroy_worker, name="ymath-inflight-destroy")
+        with patch.dict(os.environ, {"YMATH_REALUSE_SCENARIO_PASSWORD": "pg-command-password"}):
+            with patch.object(Command, "_lock_tenant_code", new=staticmethod(coordinated_lock)):
+                setup.start()
+                self.assertTrue(setup_locked.wait(10))
+                destroy.start()
+                self.assertTrue(destroy_started.wait(10))
+                try:
+                    self._wait_for_advisory_lock("ymath-uat-inflight-destroy")
+                finally:
+                    allow_setup_commit.set()
+                setup.join(120)
+                destroy.join(120)
+
+        self.assertFalse(setup.is_alive())
+        self.assertFalse(destroy.is_alive())
+        self.assertEqual(errors, [])
+        self.assertIn("YMATH_REALUSE_SCENARIO_READY", outputs["setup"])
+        cleanup = json.loads(outputs["destroy"].splitlines()[-1])
+        self.assertEqual(cleanup["status"], "YMATH_REALUSE_SCENARIO_DESTROYED")
+        self.assertEqual(cleanup["remaining"], {"tenants": 0, "users": 0})
+        self.assertFalse(Tenant.objects.filter(code__iexact=tenant_code).exists())
+        self.assertFalse(get_user_model().objects.filter(tenant__code__iexact=tenant_code).exists())

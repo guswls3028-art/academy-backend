@@ -142,22 +142,27 @@ python manage.py setup_ymath_realuse_scenario `
 `YMATH_REALUSE_SCENARIO_PASSWORD` 환경 변수로만 frontend runner에 전달한다.
 frontend exact checkout은 SSM loopback API를 proxy로 사용하고
 `pnpm test:e2e:iphone-safari-uat`를 실행한다. runner는 frontend와 API URL이 모두
-`127.0.0.1` 또는 `localhost`이고 tenant code가 `qa-ymath-realuse-`로 시작하며
+exact `http://127.0.0.1:5174`, `http://127.0.0.1:18000`이고 tenant code가
+`qa-ymath-realuse-`로 시작하며
 student·parent·staff가 각각 10명일 때만 WebKit·Chromium 390px 로그인 → 역할
 landing → UI 로그아웃을 진행한다.
 
-성공·실패와 관계없이 `finally` 경계에서 같은 tenant code로 `--destroy`를 실행한다.
-완료 조건은 기존 cleanup과 동일하게 `remaining.tenants=0` 및
-`remaining.users=0`이다. manifest나 테스트 결과만 있고 이 readback이 없으면 UAT
-완료가 아니다. 실행 계약과 frontend 변수는
+exact checkout·runtime identity·SSM tunnel/health·proxy를 포함한 preflight가 실패하면
+cleanup mutation은 실행하지 않는다. 모든 preflight가 성공한 뒤 setup SSM dispatch
+직전에 `setupAttempted=true`가 된다. 이 경계 뒤에는 setup timeout, manifest 누락·손상,
+Playwright 실패를 포함한 모든 경로에서 `finally` cleanup을 실행한다. manifest나 테스트
+결과만 있고 cleanup readback이 없으면 UAT 완료가 아니다. 실행 계약과 frontend 변수는
 `frontend/docs/ACCOUNT-CREDENTIAL-FLOWS.md`의 persistent-development 항목을 함께
 따른다.
 
-frontend runner의 정리는 active persistent-development instance만 선택하는
-`scripts/v1/destroy-ymath-login-uat-development.ps1`을 사용한다. 정리는 과거 tenant
-ID가 아니라 tenant code와 `user.tenant__code`를 다시 조회하므로 삭제 직후 같은 code가
-재생성되는 race도 잔여로 보고 실패 폐쇄한다. 운영 runtime은 management command 자체의
-DB/R2 경계에서도 다시 거부된다.
+frontend runner의 정리는 backend-owned
+`scripts/v1/destroy-ymath-login-uat-development.ps1`에 setup과 같은 exact
+`-InstanceId`를 전달한다. 스크립트는 그 instance가 tagged active development
+instance인지 다시 검증한다. 정리는 과거 tenant ID가 아니라 tenant code와
+`user.tenant__code`를 다시 조회하며, `remaining` object와 `tenants`·`users`가
+존재하고 null이 아닌 숫자형 exact `0`일 때만 성공한다. 누락·문자열·비숫자 값이나 삭제
+직후 같은 code가 재생성되는 race는 실패 폐쇄한다. 운영 runtime은 management command
+자체의 exact DB user/R2 경계에서도 다시 거부된다.
 
 ## API 전수 실행
 
