@@ -96,6 +96,85 @@ class NotificationClaimReclaimTests(TestCase):
             "sqs-duplicate",
         )
 
+    def test_balance_rejection_retry_closes_one_alimtalk_log_with_provider_proof(self):
+        business_key = "clinic-t30-balance-retry"
+        claimed, log_id = claim_notification_slot(
+            tenant_id=self.tenant.id,
+            message_mode="alimtalk",
+            business_idempotency_key=business_key,
+            sqs_message_id="sqs-clinic-first",
+        )
+        self.assertTrue(claimed)
+        self.assertTrue(mark_notification_sending(log_id))
+        finalize_notification(
+            log_id,
+            success=False,
+            failure_reason="NotEnoughBalance",
+            failure_status="retryable_failed",
+            notification_type="clinic_reminder",
+            provider_definitely_not_accepted=True,
+        )
+
+        reclaimed, reclaimed_log_id = claim_notification_slot(
+            tenant_id=self.tenant.id,
+            message_mode="alimtalk",
+            business_idempotency_key=business_key,
+            sqs_message_id="sqs-clinic-retry",
+        )
+        self.assertTrue(reclaimed)
+        self.assertEqual(reclaimed_log_id, log_id)
+        self.assertTrue(mark_notification_sending(reclaimed_log_id))
+        finalize_notification(
+            reclaimed_log_id,
+            success=True,
+            provider_message_id="solapi-clinic-accepted-once",
+            notification_type="clinic_reminder",
+        )
+
+        duplicate_claimed, duplicate_log_id = claim_notification_slot(
+            tenant_id=self.tenant.id,
+            message_mode="alimtalk",
+            business_idempotency_key=business_key,
+            sqs_message_id="sqs-clinic-duplicate",
+        )
+
+        self.assertFalse(duplicate_claimed)
+        self.assertIsNone(duplicate_log_id)
+        self.assertEqual(
+            NotificationLog.objects.filter(
+                tenant=self.tenant,
+                business_idempotency_key=business_key,
+            ).count(),
+            1,
+        )
+        log = NotificationLog.objects.get(id=log_id)
+        self.assertTrue(log.success)
+        self.assertEqual(log.status, "sent")
+        self.assertEqual(log.message_mode, "alimtalk")
+        self.assertEqual(log.notification_type, "clinic_reminder")
+        self.assertEqual(log.provider_message_id, "solapi-clinic-accepted-once")
+
+    def test_sending_slot_cannot_retry_without_definite_provider_rejection(self):
+        claimed, log_id = claim_notification_slot(
+            tenant_id=self.tenant.id,
+            message_mode="alimtalk",
+            business_idempotency_key="clinic-ambiguous-retry-block",
+            sqs_message_id="sqs-clinic-ambiguous",
+        )
+        self.assertTrue(claimed)
+        self.assertTrue(mark_notification_sending(log_id))
+
+        with self.assertRaises(ValueError):
+            finalize_notification(
+                log_id,
+                success=False,
+                failure_reason="provider result unknown",
+                failure_status="retryable_failed",
+                notification_type="clinic_reminder",
+            )
+
+        self.assertEqual(NotificationLog.objects.get(id=log_id).status, "sending")
+
     def test_sent_business_slot_remains_duplicate(self):
         claimed, log_id = claim_notification_slot(
             tenant_id=self.tenant.id,

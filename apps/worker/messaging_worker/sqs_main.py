@@ -1492,6 +1492,9 @@ def main() -> int:
                                             provider_message_id=provider_message_id,
                                             notification_type=event_type_msg,
                                             failure_status=failure_status,
+                                            provider_definitely_not_accepted=bool(
+                                                result.get("definitely_not_accepted")
+                                            ),
                                         )
                                     else:
                                         create_notification_log(

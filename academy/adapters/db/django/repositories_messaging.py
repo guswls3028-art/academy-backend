@@ -326,8 +326,13 @@ def finalize_notification(
     provider_message_id: str = "",
     notification_type: str = "",
     failure_status: str = "failed",
+    provider_definitely_not_accepted: bool = False,
 ) -> None:
-    """Update a claimed notification slot with final result."""
+    """Update a claimed notification slot with final result.
+
+    A provider-boundary ``sending`` slot may become retryable only when the
+    provider explicitly proves that it did not accept the request.
+    """
     from apps.domains.messaging.models import NotificationLog
     from apps.domains.messaging.security import sanitize_message_body_for_log
 
@@ -339,8 +344,11 @@ def finalize_notification(
         if failure_status not in allowed_failure_statuses:
             raise ValueError(f"invalid notification failure status: {failure_status}")
         resolved_status = failure_status
+        retryable_expected_statuses = {"processing"}
+        if provider_definitely_not_accepted:
+            retryable_expected_statuses.add("sending")
         expected_statuses = {
-            "retryable_failed": {"processing"},
+            "retryable_failed": retryable_expected_statuses,
             "ambiguous": {"sending"},
             "failed": {"processing", "sending"},
         }[resolved_status]

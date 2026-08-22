@@ -99,6 +99,7 @@
 22. **canonical payload 무결성** — 신규 SQS payload는 `occurrence_key`를 명시하고 worker가 수신자·event·target·template을 다시 조합한 business key와 producer key가 같은지 확인한다. signed key를 복사한 뒤 수신자 등을 바꾼 payload는 `invalid_business_idempotency_key`로 공급자 호출 전에 폐기한다.
 23. **공급자 잔액/재시도 감시** — 5분 주기 `check_dev_alerts`는 사용자 오류와 함께 최근 30분 `NotEnoughBalance` 확정 거절·미확정 건 및 Solapi 공용 잔액을 검사한다. 잔액이 `MESSAGING_PROVIDER_LOW_BALANCE_ALERT_THRESHOLD`(기본 10,000원) 미만이거나 잔액 조회가 실패하면 개인정보 없이 Slack으로 경고한다. 이 운영 경고도 SMS/LMS를 사용하지 않는다.
 24. **과거 운영중지 유실 복구** — `repair_failed_first_enrollment_notices`는 exact tenant와 student ID allowlist를 받는 dry-run 기본 명령이다. 로그인·계정 버전·pending 안내·후속 성공·승인 템플릿·tenant hold·provider 잔액·queue 상태를 잠금 안에서 재검증하고, 공유 parent가 없는 계정만 회전한다. 적용 시 비밀번호·전화번호를 출력하지 않으며 회전·outbox 예상 수가 다르면 전체 transaction을 rollback한다.
+25. **클리닉 T-30 정확히 한 번** — `clinic_reminder`는 enabled tenant의 `minutes_before`(기본 30분) 시점에 `booked` 학생만 대상으로 한다. EventBridge가 5분 보정 창에서 매분 실행되어도 `clinic_session:<session_id>:reminder` origin과 학생 target이 이미 durable `ScheduledNotification`에 있으면 새 outbox를 만들지 않는다. 공급사 잔액의 확정 미접수 거절은 audited retry에서도 같은 business key와 단일 `NotificationLog`만 사용하며, 성공 완료는 `message_mode=alimtalk`과 `provider_message_id`가 모두 있어야 한다. 수동 `clinic.manual_reminder`는 별도 occurrence이므로 자동 T-30 dedup과 섞이지 않는다.
 
 ## 운영 검증
 
@@ -113,6 +114,7 @@
 - 2026-08-22: 숨은 테넌트별 코드 차단을 제거하고 대표·관리자가 직접 바꾸는 전체 알림톡 설정을 발송 정책에 연결했다. 환경변수 hold는 긴급 사고 전용으로 분리해 화면에 명시하며, 공급자 quota/잔액 접수 전 거절은 확정 실패로 종결한다.
 - 2026-08-22: Solapi `NotEnoughBalance` 확정 거부를 미확정 결과와 분리하고, 5분 주기 저잔액/거절 Slack 경보를 추가했다.
 - 2026-08-22: 운영 중지 중 첫 수강 계정 안내는 terminal 삭제하지 않고 outbox/SQS에 보류하고, 과거 유실 복구는 audited dry-run 명령과 원자적 회전/outbox 계약으로 제한했다.
+- 2026-08-22: 클리닉 T-30은 세션+학생별 durable outbox로 반복 scheduler tick을 제거하고, 확정 잔액 거절의 같은 로그 회복과 provider id 완료 증거를 고정했다.
 - 2026-08-21: `enqueue_sms`/`send_sms`/provider SMS 호환 callable, `sms_allowed` API 필드, SMS 이름의 계정 알림 throttle을 제거했다. 명시된 비알림톡 `message_mode`는 API·outbox·SQS·worker 경계에서 알림톡으로 보정하지 않고 terminal fail-closed하도록 고정했다. 기존 로그·테넌트 설정 데이터는 이력으로 보존한다.
 - 2026-08-20: 플랫폼 운영자 장애 SMS 예외와 활성화 스크립트·워크플로 입력·provider 호출 코드를 제거했다. 운영 오류는 Slack으로만 알리고, 기존 SMS audit action은 이력 조회와 짧은 중복 억제 기간에만 읽는다.
 - 2026-08-20: 공유 공급자 KST 일일 900건 기본 브레이크, 수신번호 HMAC 지문, Excel job provenance, canonical business-key 재검증, 개인정보 없는 단일 incident 진단 명령을 추가했다.
