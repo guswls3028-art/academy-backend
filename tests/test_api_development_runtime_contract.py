@@ -17,6 +17,9 @@ PREREQUISITES = (
 PUBLISH = REPO_ROOT / "scripts" / "v1" / "publish-api-development-env.ps1"
 INITIALIZE = REPO_ROOT / "scripts" / "v1" / "initialize-api-development.ps1"
 REAL_USE_SMOKE = REPO_ROOT / "scripts" / "v1" / "run-api-development-smoke.ps1"
+LOGIN_UAT_CLEANUP = (
+    REPO_ROOT / "scripts" / "v1" / "destroy-ymath-login-uat-development.ps1"
+)
 SETTINGS = REPO_ROOT / "apps" / "api" / "config" / "settings" / "development.py"
 WORKER_SETTINGS = REPO_ROOT / "apps" / "api" / "config" / "settings" / "worker.py"
 IAM = REPO_ROOT / "scripts" / "v1" / "resources" / "iam.ps1"
@@ -88,6 +91,21 @@ def test_development_gate_runs_synthetic_excel_ppt_and_r2_review() -> None:
     assert "worker_r2_output" in smoke
     assert "academy-api-asg" not in smoke
     assert "/academy/api/env" not in smoke
+
+
+def test_login_uat_cleanup_targets_only_active_development_and_requires_zero_residue() -> None:
+    source = LOGIN_UAT_CLEANUP.read_text(encoding="utf-8-sig")
+
+    assert "^qa-ymath-realuse-[a-z0-9-]+$" in source
+    assert "ApiDevelopmentInstanceName" in source
+    assert "ApiDevelopmentManagedByTag" in source
+    assert "Name=tag:Lifecycle,Values=active" in source
+    assert "setup_ymath_realuse_scenario --tenant-code '$TenantCode' --destroy" in source
+    assert "YMATH_REALUSE_SCENARIO_DESTROYED" in source
+    assert "YMATH_REALUSE_SCENARIO_ABSENT" in source
+    assert "$payload.remaining.tenants" in source
+    assert "$payload.remaining.users" in source
+    assert "Get-APIASGInstanceIds" not in source
 
 
 def test_development_ssot_is_isolated_and_matches_production_compute() -> None:
