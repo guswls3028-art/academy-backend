@@ -7,6 +7,7 @@ from rest_framework.permissions import IsAuthenticated
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.api.common.query_params import parse_query_int
 from apps.domains.results.services.question_stats_service import QuestionStatsService
+from apps.domains.results.utils.result_queries import latest_results_per_enrollment
 from apps.domains.results.serializers.question_stats import (
     QuestionStatSerializer,
     TopWrongQuestionSerializer,
@@ -19,6 +20,28 @@ def _verify_exam_tenant(request, exam_id: int) -> None:
     from rest_framework.exceptions import NotFound
     if not regular_active_exam_with_session_exists(exam_id=int(exam_id), tenant=request.tenant):
         raise NotFound("Exam not found for this tenant.")
+
+
+def _finalized_representative_scope(*, exam_id: int, tenant) -> tuple[list[int], list[int]]:
+    """Return current finalized attempt ids plus tenant-scoped legacy enrollments."""
+    results = (
+        latest_results_per_enrollment(target_type="exam", target_id=int(exam_id))
+        .filter(enrollment__tenant=tenant)
+        .exclude(enrollment_id__isnull=True)
+        .select_related("attempt")
+    )
+    attempt_ids: list[int] = []
+    legacy_enrollment_ids: list[int] = []
+    for result in results:
+        attempt = result.attempt
+        if attempt is None:
+            legacy_enrollment_ids.append(int(result.enrollment_id))
+            continue
+        meta = attempt.meta if isinstance(attempt.meta, dict) else {}
+        if meta.get("status") == "NOT_SUBMITTED" or attempt.status != "done":
+            continue
+        attempt_ids.append(int(attempt.id))
+    return attempt_ids, legacy_enrollment_ids
 
 
 class AdminExamQuestionStatsView(APIView):
@@ -34,8 +57,14 @@ class AdminExamQuestionStatsView(APIView):
 
     def get(self, request, exam_id: int):
         _verify_exam_tenant(request, int(exam_id))
+        attempt_ids, legacy_enrollment_ids = _finalized_representative_scope(
+            exam_id=int(exam_id),
+            tenant=request.tenant,
+        )
         data = QuestionStatsService.per_question_stats(
             exam_id=int(exam_id),
+            attempt_ids=attempt_ids,
+            legacy_enrollment_ids=legacy_enrollment_ids,
         )
         return Response(QuestionStatSerializer(data, many=True).data)
 
@@ -49,9 +78,15 @@ class ExamQuestionWrongDistributionView(APIView):
 
     def get(self, request, exam_id: int, question_id: int):
         _verify_exam_tenant(request, int(exam_id))
+        attempt_ids, legacy_enrollment_ids = _finalized_representative_scope(
+            exam_id=int(exam_id),
+            tenant=request.tenant,
+        )
         dist = QuestionStatsService.wrong_choice_distribution(
             exam_id=int(exam_id),
             question_id=int(question_id),
+            attempt_ids=attempt_ids,
+            legacy_enrollment_ids=legacy_enrollment_ids,
         )
         return Response(
             {
@@ -70,6 +105,10 @@ class ExamTopWrongQuestionsView(APIView):
 
     def get(self, request, exam_id: int):
         _verify_exam_tenant(request, int(exam_id))
+        attempt_ids, legacy_enrollment_ids = _finalized_representative_scope(
+            exam_id=int(exam_id),
+            tenant=request.tenant,
+        )
         n = min(
             parse_query_int(request.query_params, "n", default=5, min_value=1),
             100,
@@ -77,5 +116,7 @@ class ExamTopWrongQuestionsView(APIView):
         data = QuestionStatsService.top_n_wrong_questions(
             exam_id=int(exam_id),
             n=n,
+            attempt_ids=attempt_ids,
+            legacy_enrollment_ids=legacy_enrollment_ids,
         )
         return Response(TopWrongQuestionSerializer(data, many=True).data)

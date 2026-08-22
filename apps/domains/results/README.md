@@ -223,6 +223,11 @@ Session Assessment Inspection
 - 대표 시도가 `NOT_SUBMITTED`인 결과는 보관하되 점수 평균·최저·최고와 시험별
   합격·불합격 건수에서 제외한다. 손상 데이터에 점수가 남아 있어도 결시를 0점이나
   유효 점수로 되살리지 않는다.
+- 시험별 합격률의 분모는 결시를 포함한 `participant_count`가 아니라 실제 채점 결과가
+  있는 합격·불합격 인원이다. 결시는 참여 이력에는 남지만 합격률을 낮추지 않는다.
+- 관리자 시험 요약은 요청 테넌트의 최신 결과만 조회한다. 채점 중·실패 시도는 참여
+  이력에는 남겨도 평균·최저·최고·합불 집계에 넣지 않으며, 시도 모델 도입 전의
+  attempt 없는 레거시 결과만 완료 결과로 호환한다.
 - 회귀 검증은
   `apps/domains/results/tests/test_session_scores_roster_scope.py`와
   `test_assessment_lifecycle_ssot.py`가 저장·재열기·메모·roster, 잠금 SQL의 nullable
