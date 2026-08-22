@@ -1,9 +1,11 @@
 # PATH: apps/domains/fees/views.py
 
 import logging
+from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
-from rest_framework.viewsets import ModelViewSet
+from rest_framework import mixins
+from rest_framework.viewsets import GenericViewSet, ModelViewSet
 from rest_framework.views import APIView
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -217,13 +219,20 @@ class StudentFeeViewSet(ModelViewSet):
         created = 0
         skipped = 0
         for sid in valid_student_ids:
-            _, was_created = StudentFee.objects.get_or_create(
+            student_fee, was_created = StudentFee.objects.get_or_create(
                 tenant=tenant,
                 student_id=sid,
                 fee_template=template,
                 defaults={"is_active": True},
             )
             if was_created:
+                created += 1
+            elif not student_fee.is_active:
+                student_fee.is_active = True
+                student_fee.billing_end_month = ""
+                student_fee.save(
+                    update_fields=["is_active", "billing_end_month", "updated_at"],
+                )
                 created += 1
             else:
                 skipped += 1
@@ -239,7 +248,13 @@ class StudentFeeViewSet(ModelViewSet):
 # StudentInvoice (청구서)
 # ========================================================
 
-class StudentInvoiceViewSet(ModelViewSet):
+class StudentInvoiceViewSet(
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.UpdateModelMixin,
+    mixins.DestroyModelMixin,
+    GenericViewSet,
+):
     permission_classes = [IsAuthenticated, TenantResolvedAndFeeManager]
     pagination_class = FeesLargePagination
     http_method_names = ["get", "patch", "delete", "post"]
@@ -327,11 +342,24 @@ class StudentInvoiceViewSet(ModelViewSet):
     def update(self, request, *args, **kwargs):
         partial = kwargs.pop("partial", False)
         instance = self.get_object()
-        serializer = self.get_serializer(instance, data=request.data, partial=partial)
-        serializer.is_valid(raise_exception=True)
-        self.perform_update(serializer)
-        instance.refresh_from_db()
-        return Response(StudentInvoiceDetailSerializer(instance).data)
+        with transaction.atomic():
+            locked_invoice = (
+                StudentInvoice.objects
+                .select_for_update()
+                .get(id=instance.id, tenant=request.tenant)
+            )
+            serializer = self.get_serializer(
+                locked_invoice,
+                data=request.data,
+                partial=partial,
+            )
+            serializer.is_valid(raise_exception=True)
+            self.perform_update(serializer)
+            if locked_invoice.status != "CANCELLED":
+                services._recalculate_invoice(locked_invoice)
+            locked_invoice.refresh_from_db()
+            response_data = StudentInvoiceDetailSerializer(locked_invoice).data
+        return Response(response_data)
 
     def destroy(self, request, *args, **kwargs):
         """청구서 취소 (DELETE)."""

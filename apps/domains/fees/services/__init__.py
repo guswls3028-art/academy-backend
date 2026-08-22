@@ -174,7 +174,53 @@ def generate_monthly_invoices(
                         result["skipped"] += 1
                         break
 
-                    total = sum(sf.effective_amount for sf in fees)
+                    # 동일 학생의 비용 할당을 먼저 잠근 뒤 ONE_TIME 청구 이력을
+                    # 다시 확인한다. 서로 다른 청구월을 동시에 생성해도 같은
+                    # 일회성 비목이 두 청구서에 들어가지 않도록 직렬화한다.
+                    fee_ids = [sf.id for sf in fees]
+                    list(
+                        StudentFee.objects
+                        .select_for_update()
+                        .filter(tenant=tenant, id__in=fee_ids)
+                        .order_by("id")
+                        .values_list("id", flat=True)
+                    )
+                    one_time_template_ids = [
+                        sf.fee_template_id
+                        for sf in fees
+                        if sf.fee_template.billing_cycle
+                        == FeeTemplate.BillingCycle.ONE_TIME
+                    ]
+                    billed_one_time_template_ids = set()
+                    if one_time_template_ids:
+                        billed_one_time_template_ids = set(
+                            InvoiceItem.objects.filter(
+                                tenant=tenant,
+                                fee_template_id__in=one_time_template_ids,
+                                invoice__student_id=student_id,
+                                invoice__status__in=[
+                                    "PENDING", "PARTIAL", "PAID", "OVERDUE",
+                                ],
+                            ).values_list("fee_template_id", flat=True)
+                        )
+                    eligible_fees = []
+                    for sf in fees:
+                        if (
+                            sf.fee_template.billing_cycle
+                            == FeeTemplate.BillingCycle.ONE_TIME
+                            and sf.fee_template_id in billed_one_time_template_ids
+                        ):
+                            result["errors"].append(
+                                f"{student_name}: {sf.fee_template.name} (1회성, 이미 청구됨)"
+                            )
+                            continue
+                        eligible_fees.append(sf)
+
+                    if not eligible_fees:
+                        result["skipped"] += 1
+                        break
+
+                    total = sum(sf.effective_amount for sf in eligible_fees)
 
                     if total == 0:
                         result["skipped"] += 1
@@ -193,7 +239,7 @@ def generate_monthly_invoices(
                     )
 
                     items = []
-                    for sf in fees:
+                    for sf in eligible_fees:
                         items.append(InvoiceItem(
                             tenant=tenant,
                             invoice=invoice,
@@ -288,9 +334,17 @@ def record_payment(
             tenant=tenant,
             invoice=invoice,
             idempotency_key=idempotency_key,
-            status="SUCCESS",
         ).first()
         if existing:
+            if existing.status != "SUCCESS":
+                raise ValueError(
+                    "해당 idempotency_key는 이미 사용되어 취소/환불된 수납입니다. "
+                    "새 수납에는 새로운 키를 사용하세요."
+                )
+            if existing.amount != amount or existing.payment_method != payment_method:
+                raise ValueError(
+                    "동일한 idempotency_key의 기존 수납과 요청 정보가 일치하지 않습니다."
+                )
             logger.info(
                 "Duplicate payment blocked: tenant=%s invoice=%s existing_payment=%s",
                 tenant.id,
@@ -583,13 +637,14 @@ def _recalculate_invoice(invoice: StudentInvoice):
         invoice.status = "PAID"
         if not invoice.paid_at:
             invoice.paid_at = timezone.now()
+    elif invoice.due_date < timezone.localdate():
+        invoice.status = "OVERDUE"
+        invoice.paid_at = None
     elif paid_sum > 0:
         invoice.status = "PARTIAL"
         invoice.paid_at = None
     else:
-        # 납부 없음 → 연체 상태는 유지, 아니면 PENDING
-        if invoice.status != "OVERDUE":
-            invoice.status = "PENDING"
+        invoice.status = "PENDING"
         invoice.paid_at = None
 
     invoice.save(update_fields=["paid_amount", "status", "paid_at", "updated_at"])

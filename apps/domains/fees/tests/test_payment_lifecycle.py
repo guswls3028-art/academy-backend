@@ -240,6 +240,43 @@ class PaymentLifecycleTest(FeesTestMixin, TestCase):
         with self.assertRaises(ValueError):
             cancel_payment(self.tenant, p1.id)
 
+    def test_past_due_invoice_stays_overdue_during_payment_recalculation(self):
+        StudentInvoice.objects.filter(pk=self.invoice.pk).update(
+            due_date=timezone.localdate() - timedelta(days=1),
+        )
+
+        payment = record_payment(
+            self.tenant,
+            self.invoice.id,
+            100_000,
+            "CASH",
+            idempotency_key="past-due-paid",
+        )
+        self.invoice.refresh_from_db()
+        self.assertEqual(self.invoice.status, "PAID")
+
+        cancel_payment(self.tenant, payment.id)
+        self.invoice.refresh_from_db()
+        self.assertEqual(self.invoice.paid_amount, 0)
+        self.assertEqual(self.invoice.status, "OVERDUE")
+
+    def test_partial_payment_on_past_due_invoice_is_overdue_immediately(self):
+        StudentInvoice.objects.filter(pk=self.invoice.pk).update(
+            due_date=timezone.localdate() - timedelta(days=1),
+        )
+
+        record_payment(
+            self.tenant,
+            self.invoice.id,
+            30_000,
+            "CASH",
+            idempotency_key="past-due-partial",
+        )
+
+        self.invoice.refresh_from_db()
+        self.assertEqual(self.invoice.paid_amount, 30_000)
+        self.assertEqual(self.invoice.status, "OVERDUE")
+
 
 class StudentFeeParentSelectionTest(FeesTestMixin, TestCase):
     def setUp(self):
@@ -354,6 +391,47 @@ class IdempotencyTest(FeesTestMixin, TestCase):
                 idempotency_key="hard-key",
             )
 
+    def test_cancelled_idempotency_key_returns_domain_error(self):
+        payment = record_payment(
+            self.tenant,
+            self.invoice.id,
+            50_000,
+            "CASH",
+            idempotency_key="cancelled-key",
+        )
+        cancel_payment(self.tenant, payment.id)
+
+        with self.assertRaises(ValueError) as ctx:
+            record_payment(
+                self.tenant,
+                self.invoice.id,
+                50_000,
+                "CASH",
+                idempotency_key="cancelled-key",
+            )
+
+        self.assertIn("이미 사용", str(ctx.exception))
+
+    def test_idempotency_key_rejects_different_payment_parameters(self):
+        record_payment(
+            self.tenant,
+            self.invoice.id,
+            50_000,
+            "CASH",
+            idempotency_key="parameter-key",
+        )
+
+        with self.assertRaises(ValueError) as ctx:
+            record_payment(
+                self.tenant,
+                self.invoice.id,
+                40_000,
+                "BANK_TRANSFER",
+                idempotency_key="parameter-key",
+            )
+
+        self.assertIn("요청 정보", str(ctx.exception))
+
 
 class InvoiceCancelGuardTest(FeesTestMixin, TestCase):
     """청구서 취소 가드: 활성 수납 있으면 취소 불가."""
@@ -457,6 +535,8 @@ class OverdueTest(FeesTestMixin, TestCase):
             tenant, inv_partial.id, 30_000, "CASH",
             idempotency_key="part-overdue",
         )
+        inv_partial.refresh_from_db()
+        self.assertEqual(inv_partial.status, "OVERDUE")
 
         # 기한 미도래 → 제외
         inv_future = self.make_invoice(tenant, student, year=2026, month=3)
@@ -471,7 +551,7 @@ class OverdueTest(FeesTestMixin, TestCase):
         )
 
         updated = mark_overdue_invoices(tenant)
-        self.assertEqual(updated, 2)
+        self.assertEqual(updated, 1)
 
         inv_overdue.refresh_from_db()
         inv_partial.refresh_from_db()
@@ -566,6 +646,51 @@ class FeesInvoiceApiHardeningTest(FeesTestMixin, APITestCase):
         self.assertEqual(self.invoice.total_amount, 100_000)
         self.assertEqual(self.invoice.status, "PENDING")
         self.assertEqual(self.invoice.student_id, self.student.id)
+
+    def test_invoice_patch_recalculates_status_from_due_date(self):
+        url = f"/api/v1/fees/invoices/{self.invoice.id}/"
+        past_due_date = (timezone.localdate() - timedelta(days=1)).isoformat()
+        future_due_date = (timezone.localdate() + timedelta(days=1)).isoformat()
+
+        overdue = self.client.patch(
+            url,
+            data={"due_date": past_due_date},
+            format="json",
+            **self.headers,
+        )
+        self.assertEqual(overdue.status_code, 200, overdue.content)
+        self.assertEqual(overdue.data["status"], "OVERDUE")
+
+        pending = self.client.patch(
+            url,
+            data={"due_date": future_due_date},
+            format="json",
+            **self.headers,
+        )
+        self.assertEqual(pending.status_code, 200, pending.content)
+        self.assertEqual(pending.data["status"], "PENDING")
+
+    def test_direct_invoice_create_is_not_available(self):
+        before = StudentInvoice.objects.filter(tenant=self.tenant).count()
+
+        response = self.client.post(
+            "/api/v1/fees/invoices/",
+            data={
+                "invoice_number": "FORGED-INVOICE",
+                "student": self.student.id,
+                "billing_year": 2026,
+                "billing_month": 8,
+                "total_amount": 1,
+                "paid_amount": 1,
+                "status": "PAID",
+                "due_date": timezone.localdate().isoformat(),
+            },
+            format="json",
+            **self.headers,
+        )
+
+        self.assertEqual(response.status_code, 405, response.content)
+        self.assertEqual(StudentInvoice.objects.filter(tenant=self.tenant).count(), before)
 
     def test_teacher_role_cannot_access_fee_management_api(self):
         teacher = User.objects.create_user(
@@ -674,6 +799,81 @@ class FeesInvoiceApiHardeningTest(FeesTestMixin, APITestCase):
         self.invoice.refresh_from_db()
         self.assertEqual(self.invoice.paid_amount, 40_000)
         self.assertEqual(self.invoice.status, "PARTIAL")
+
+    def test_payment_receipt_note_honors_database_length(self):
+        response = self.client.post(
+            "/api/v1/fees/payments/",
+            data={
+                "invoice_id": self.invoice.id,
+                "amount": 40_000,
+                "payment_method": "CASH",
+                "receipt_note": "x" * 301,
+                "idempotency_key": "receipt-note-too-long",
+            },
+            format="json",
+            **self.headers,
+        )
+
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("receipt_note", response.data)
+
+    def test_student_fee_rejects_invalid_billing_periods(self):
+        invalid_periods = [
+            {"billing_start_month": "2026-13"},
+            {"billing_start_month": "not-a-month"},
+            {
+                "billing_start_month": "2026-09",
+                "billing_end_month": "2026-08",
+            },
+        ]
+
+        for index, values in enumerate(invalid_periods, start=1):
+            with self.subTest(values=values):
+                template = FeeTemplate.objects.create(
+                    tenant=self.tenant,
+                    name=f"기간 검증 비목 {index}",
+                    fee_type=FeeTemplate.FeeType.TUITION,
+                    amount=100_000,
+                )
+                response = self.client.post(
+                    "/api/v1/fees/student-fees/",
+                    data={
+                        "student": self.student.id,
+                        "fee_template": template.id,
+                        "is_active": True,
+                        **values,
+                    },
+                    format="json",
+                    **self.headers,
+                )
+                self.assertEqual(response.status_code, 400, response.content)
+
+    def test_bulk_assign_reactivates_existing_student_fee(self):
+        template = self.make_fee_template(self.tenant)
+        student_fee = StudentFee.objects.create(
+            tenant=self.tenant,
+            student=self.student,
+            fee_template=template,
+            is_active=False,
+            billing_end_month="2026-07",
+        )
+
+        response = self.client.post(
+            "/api/v1/fees/student-fees/bulk-assign/",
+            data={
+                "student_ids": [self.student.id],
+                "fee_template_id": template.id,
+            },
+            format="json",
+            **self.headers,
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.data["created"], 1)
+        self.assertEqual(response.data["skipped"], 0)
+        student_fee.refresh_from_db()
+        self.assertTrue(student_fee.is_active)
+        self.assertEqual(student_fee.billing_end_month, "")
 
     def test_invoice_delete_with_active_payment_returns_400_not_500(self):
         record_payment(

@@ -18,6 +18,7 @@ import threading
 import unittest
 import uuid
 from datetime import timedelta
+from unittest.mock import patch
 
 import pytest
 from django.contrib.auth import get_user_model
@@ -30,9 +31,11 @@ from apps.domains.fees.models import (
     FeePayment,
     FeeTemplate,
     InvoiceItem,
+    StudentFee,
     StudentInvoice,
 )
-from apps.domains.fees.services import record_payment
+from apps.domains.fees import services
+from apps.domains.fees.services import generate_monthly_invoices, record_payment
 from apps.domains.students.models import Student
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -199,3 +202,65 @@ class FeesConcurrencyPGTest(TransactionTestCase):
         self.assertEqual(results["value_errors"], 1)
         invoice.refresh_from_db()
         self.assertEqual(invoice.paid_amount, 40_000)
+
+    def test_one_time_fee_different_month_generation_creates_single_item(self):
+        tenant, invoice = self._setup_invoice(total=100_000)
+        invoice.delete()
+        student = Student.objects.get(tenant=tenant)
+        template = FeeTemplate.objects.get(tenant=tenant)
+        template.billing_cycle = FeeTemplate.BillingCycle.ONE_TIME
+        template.save(update_fields=["billing_cycle", "updated_at"])
+        StudentFee.objects.create(
+            tenant=tenant,
+            student=student,
+            fee_template=template,
+        )
+
+        start_barrier = threading.Barrier(2)
+        invoice_number_barrier = threading.Barrier(2)
+        original_next_invoice_number = services._next_invoice_number
+        results = []
+        errors = []
+
+        def synchronized_next_invoice_number(*args, **kwargs):
+            try:
+                invoice_number_barrier.wait(timeout=2)
+            except threading.BrokenBarrierError:
+                pass
+            return original_next_invoice_number(*args, **kwargs)
+
+        def worker(month: int):
+            start_barrier.wait()
+            try:
+                results.append(generate_monthly_invoices(
+                    tenant,
+                    billing_year=2026,
+                    billing_month=month,
+                    due_date=timezone.localdate() + timedelta(days=10),
+                ))
+            except Exception as exc:  # noqa: BLE001
+                errors.append(repr(exc))
+            finally:
+                close_old_connections()
+
+        with patch(
+            "apps.domains.fees.services._next_invoice_number",
+            side_effect=synchronized_next_invoice_number,
+        ):
+            t1 = threading.Thread(target=worker, args=(5,))
+            t2 = threading.Thread(target=worker, args=(6,))
+            t1.start(); t2.start()
+            t1.join(timeout=10); t2.join(timeout=10)
+
+        self.assertFalse(t1.is_alive() or t2.is_alive(), "generation threads deadlocked")
+        self.assertEqual(errors, [])
+        self.assertEqual(
+            InvoiceItem.objects.filter(
+                tenant=tenant,
+                invoice__student=student,
+                fee_template=template,
+                invoice__status__in=["PENDING", "PARTIAL", "PAID", "OVERDUE"],
+            ).count(),
+            1,
+            results,
+        )
