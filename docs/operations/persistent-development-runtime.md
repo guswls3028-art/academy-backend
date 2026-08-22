@@ -26,6 +26,10 @@
   `development` 또는 `preprod`이면 운영 worker ASG capacity ensure를 호출하지 않고
   격리 런타임의 로컬 worker 계약을 사용한다. 해당 인스턴스 역할의 운영 ASG 접근 거부는
   계속 필수 경계다.
+- Video Batch는 아직 이 상시 개발 런타임의 구성 자원이 아니다. 개발 API·worker env의
+  `VIDEO_BATCH_JOB_QUEUE`와 `VIDEO_BATCH_JOB_DEFINITION`은 빈 값으로 고정하고 settings와
+  배포 readback에서도 이를 강제한다. 따라서 업로드 완료 후 Batch 제출은 누락 설정 오류로
+  실패 폐쇄하며 운영 `academy-v1-video-batch-*` 큐·job definition으로 흘러가지 않는다.
 - 알림톡은 mock/dry-run, 자동 결제와 외부 알림 발송은 비활성화한다.
 
 ## 최초 구성
@@ -74,6 +78,9 @@ lock/mutation job은 environment subject를 사용한다.
 4. `run-api-development-smoke.ps1`이 합성 학생 XLSX 파싱, 1장 PPTX 생성·재열기,
    API와 AI worker 설정 경로 각각에서 개발 R2 객체 put/get/delete를 실행하고
    각 처리시간을 기록한다.
+   현재 이 smoke는 Video Batch 제출 성공을 증명하지 않는다. Video Batch는 전용 개발
+   queue/job definition/job role과 Batch에서 접근 가능한 개발 Redis가 준비되기 전까지
+   비활성 상태여야 한다.
 5. 모든 검증이 성공한 뒤에만 candidate를 active로 승격하고 이전 개발 인스턴스를
    종료한다. 실패하면 candidate만 종료하고 기존 active 인스턴스를 보존한다.
 6. 이어서 별도 임시 preprod EC2 게이트가 통과해야 한다.
@@ -110,6 +117,27 @@ pwsh scripts/v1/connect-api-development.ps1 -AwsProfile <profile>
 - API·AI worker의 개발 R2 객체 round-trip 성공, 운영 R2 버킷 접근 거부
 - 합성 XLSX 파싱과 PPTX 생성·재열기 성공 및 처리시간 제한 통과
 - `/healthz`, `/health`, 로컬 Redis/Valkey `PONG`
+- Video Batch queue/job definition이 빈 값이고 운영 Batch 제출이 불가능함
+
+## Video Batch 개발 canary 준비 계약 [PROPOSED]
+
+전용 development Video Batch 자원이 준비될 때 추가할 canary는 production 이름을
+거부하고 다음 체인을 한 번의 disposable job으로 증명해야 한다. 현재 구현 및 릴리스
+workflow 연결은 없다.
+
+1. 상시 개발 API 컨테이너의 instance role로 `SubmitJob`을 호출한다.
+2. Batch job role로 `/academy/workers/development/...` SecureString을 읽는다.
+3. worker가 `academy_api_development` DB/역할로 연결하고 개발 Redis set/get/delete를 한다.
+4. `academy-development-*` R2 객체를 put/get/delete한다.
+5. job `SUCCEEDED`와 R2 object 잔여 0을 확인한다. timeout job은 terminate 후 terminal
+   상태를 확인하지 못하면 실패한다.
+
+구현 entrypoint는 `scripts/v1/run-video-development-canary.ps1`로 고정하며 dedicated
+queue/job definition, versioned workers env parameter, development bucket, expected DB
+name/user와 release ID를 필수 인자로 받아야 한다. 전용 queue/job definition, 최소 권한
+job role, Batch에서 접근 가능한 개발 Redis가 모두 구성되고 해당 도구가 실제로 통과하기
+전에는 env의 Video Batch 두 값을 채우거나 workflow에 연결하지 않는다. 운영 queue/job
+definition, 운영 worker env, 운영 R2를 대체재로 사용하지 않는다.
 
 개발 검토 중 실패는 운영 배포 차단 사유다. 개발 게이트를 skipped/success 이외의 상태로
 우회하거나 후보를 운영 인스턴스에서 먼저 시험하지 않는다.

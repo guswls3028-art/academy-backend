@@ -4,6 +4,9 @@ set -euo pipefail
 
 SSM_PARAM="${1:-/academy/api/env}"
 REGION="${2:-ap-northeast-2}"
+ENV_FILE="${ACADEMY_API_ENV_FILE:-/opt/api.env}"
+ENV_NEXT="${ENV_FILE}.next"
+ENV_PREVIOUS="${ENV_FILE}.previous"
 export AWS_REGION="$REGION"
 
 ENV_JSON=$(aws ssm get-parameter \
@@ -31,20 +34,24 @@ if actual != expected:
     )
 for key, value in data.items():
     print(f"{key}={value}")
-' > /opt/api.env.next
-test -s /opt/api.env.next
-mv /opt/api.env.next /opt/api.env
+' > "$ENV_NEXT"
+test -s "$ENV_NEXT"
+test -s "$ENV_FILE"
+cp -p "$ENV_FILE" "${ENV_PREVIOUS}.next"
+mv "${ENV_PREVIOUS}.next" "$ENV_PREVIOUS"
+mv "$ENV_NEXT" "$ENV_FILE"
 
 container=academy-api
 rollback_container=academy-api-rollback
-api_image=$(docker inspect "$container" --format '{{.Config.Image}}')
-test -n "$api_image"
-
-docker rm -f "$rollback_container" >/dev/null 2>&1 || true
 
 restore_previous() {
   set +e
   rollback_failed=false
+  if [ -s "$ENV_PREVIOUS" ]; then
+    mv "$ENV_PREVIOUS" "$ENV_FILE" || rollback_failed=true
+  else
+    rollback_failed=true
+  fi
   if docker inspect "$rollback_container" >/dev/null 2>&1; then
     docker rm -f "$container" >/dev/null 2>&1 || rollback_failed=true
     docker rename "$rollback_container" "$container" || rollback_failed=true
@@ -74,6 +81,10 @@ on_exit() {
 
 rollback_required=true
 trap on_exit EXIT
+api_image=$(docker inspect "$container" --format '{{.Config.Image}}')
+test -n "$api_image"
+
+docker rm -f "$rollback_container" >/dev/null 2>&1 || true
 docker stop "$container" >/dev/null
 docker rename "$container" "$rollback_container"
 
@@ -81,7 +92,7 @@ if ! docker run -d \
   --restart unless-stopped \
   --name "$container" \
   -p 8000:8000 \
-  --env-file /opt/api.env \
+  --env-file "$ENV_FILE" \
   "$api_image" >/dev/null; then
   echo "API env refresh docker run failed" >&2
   exit 1
@@ -107,6 +118,7 @@ if [ "$healthy" != "true" ]; then
 fi
 
 docker rm -f "$rollback_container" >/dev/null
+rm -f "$ENV_PREVIOUS"
 rollback_required=false
 trap - EXIT
 echo "API_ENV_REFRESH_PASS healthz=200 health=200"

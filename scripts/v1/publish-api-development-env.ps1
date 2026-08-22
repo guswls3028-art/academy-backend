@@ -194,6 +194,8 @@ function Set-IsolatedDevelopmentValues {
         AI_SQS_QUEUE_NAME_PREMIUM = $script:ApiDevelopmentAiQueueName
         TOOLS_SQS_QUEUE_NAME = $script:ApiDevelopmentToolsQueueName
         MESSAGING_SQS_QUEUE_NAME = $script:ApiDevelopmentMessagingQueueName
+        VIDEO_BATCH_JOB_QUEUE = ""
+        VIDEO_BATCH_JOB_DEFINITION = ""
         REDIS_HOST = "127.0.0.1"
         REDIS_PORT = "6379"
         SOLAPI_MOCK = "true"
@@ -279,6 +281,8 @@ if (
     [string]$actual.DJANGO_SETTINGS_MODULE -ne "apps.api.config.settings.development" -or
     [string]$actual.ACADEMY_RUNTIME_ENV -ne "development" -or
     [string]$actual.TOOLS_SQS_QUEUE_NAME -ne $script:ApiDevelopmentToolsQueueName -or
+    [string]$actual.VIDEO_BATCH_JOB_QUEUE -ne "" -or
+    [string]$actual.VIDEO_BATCH_JOB_DEFINITION -ne "" -or
     [string]$actual.R2_ENDPOINT -ne $r2Endpoint -or
     [string]$actual.R2_ACCESS_KEY -ne $r2AccessKey -or
     [string]$actual.R2_SECRET_KEY -ne $r2SecretKey -or
@@ -307,6 +311,8 @@ if (
     [string]$actualWorkers.DB_USER -ne $developmentDatabaseUser -or
     [string]$actualWorkers.DJANGO_SETTINGS_MODULE -ne "apps.api.config.settings.worker" -or
     [string]$actualWorkers.TOOLS_SQS_QUEUE_NAME -ne $script:ApiDevelopmentToolsQueueName -or
+    [string]$actualWorkers.VIDEO_BATCH_JOB_QUEUE -ne "" -or
+    [string]$actualWorkers.VIDEO_BATCH_JOB_DEFINITION -ne "" -or
     [string]$actualWorkers.R2_ENDPOINT -ne $r2Endpoint -or
     [string]$actualWorkers.R2_ACCESS_KEY -ne $r2AccessKey -or
     [string]$actualWorkers.R2_SECRET_KEY -ne $r2SecretKey -or
