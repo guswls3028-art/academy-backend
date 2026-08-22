@@ -7421,6 +7421,13 @@
           "enrollment": {
             "type": "integer"
           },
+          "forward_skip_seconds_used": {
+            "description": "온라인 수업 대체 모드에서 서버가 승인한 앞으로 건너뛰기 누적 초",
+            "format": "int64",
+            "maximum": 9223372036854775807,
+            "minimum": 0,
+            "type": "integer"
+          },
           "last_position": {
             "format": "int64",
             "maximum": 9223372036854775807,
@@ -11080,6 +11087,13 @@
           "enrollment": {
             "type": "integer"
           },
+          "forward_skip_seconds_used": {
+            "description": "온라인 수업 대체 모드에서 서버가 승인한 앞으로 건너뛰기 누적 초",
+            "format": "int64",
+            "maximum": 9223372036854775807,
+            "minimum": 0,
+            "type": "integer"
+          },
           "id": {
             "readOnly": true,
             "type": "integer"
@@ -11127,6 +11141,13 @@
             "type": "boolean"
           },
           "enrollment": {
+            "type": "integer"
+          },
+          "forward_skip_seconds_used": {
+            "description": "온라인 수업 대체 모드에서 서버가 승인한 앞으로 건너뛰기 누적 초",
+            "format": "int64",
+            "maximum": 9223372036854775807,
+            "minimum": 0,
             "type": "integer"
           },
           "last_position": {
@@ -14585,6 +14606,70 @@
           "name",
           "parent_phone",
           "ps_number"
+        ],
+        "type": "object"
+      },
+      "StudentVideoForwardSkipRequestRequest": {
+        "properties": {
+          "enrollment": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "enrollment_id": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "StudentVideoForwardSkipResponse": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "granted_seconds": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "limit_seconds": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_seconds": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ratio_percent": {
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "remaining_seconds": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "step_seconds": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unavailable_reason": {
+            "type": "string"
+          },
+          "used_seconds": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enabled",
+          "granted_seconds",
+          "limit_seconds",
+          "max_seconds",
+          "ratio_percent",
+          "remaining_seconds",
+          "step_seconds",
+          "unavailable_reason",
+          "used_seconds"
         ],
         "type": "object"
       },
@@ -42422,6 +42507,64 @@
         "responses": {
           "200": {
             "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "student"
+        ]
+      }
+    },
+    "/api/v1/student/video/videos/{video_id}/forward-skip/": {
+      "post": {
+        "description": "Grant one server-counted forward skip step for a limited student watch.",
+        "operationId": "student_video_videos_forward_skip_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "video_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentVideoForwardSkipRequestRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentVideoForwardSkipRequestRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentVideoForwardSkipRequestRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentVideoForwardSkipResponse"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [

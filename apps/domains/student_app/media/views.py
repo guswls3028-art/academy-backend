@@ -3,6 +3,7 @@ from typing import Any, Dict, Optional
 
 from django.db.models import Prefetch, Q
 from django.http import Http404
+from drf_spectacular.utils import extend_schema
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -42,6 +43,8 @@ from academy.application.use_cases.student_video_access_context import (
 )
 from apps.domains.enrollment.selectors import learning_history_enrollments_for_student
 from .serializers import (
+    StudentVideoForwardSkipRequestSerializer,
+    StudentVideoForwardSkipResponseSerializer,
     StudentVideoListItemSerializer,
     StudentVideoPlaybackSerializer,
 )
@@ -1006,6 +1009,10 @@ class StudentVideoForwardSkipView(APIView):
 
     permission_classes = [IsAuthenticated, IsStudentOrParent]
 
+    @extend_schema(
+        request=StudentVideoForwardSkipRequestSerializer,
+        responses={200: StudentVideoForwardSkipResponseSerializer},
+    )
     def post(self, request, video_id: int):
         Video, _VideoPermission = _import_media_models()
         explicit_enrollment_id = _get_explicit_enrollment_id(request, include_body=True)
