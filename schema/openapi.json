@@ -714,6 +714,31 @@
         ],
         "type": "string"
       },
+      "ClinicReminderResponse": {
+        "properties": {
+          "detail": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "sent": {
+            "type": "integer"
+          },
+          "skipped": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sent",
+          "skipped",
+          "status"
+        ],
+        "type": "object"
+      },
       "ClinicSession": {
         "properties": {
           "available_slots": {
@@ -16506,7 +16531,7 @@
     },
     "/api/v1/clinic/participants/{id}/complete/": {
       "post": {
-        "description": "POST /clinic/participants/{id}/complete/\n자율학습 완료 처리 — 이력 기록 + 알림톡 트리거\n\n상태 전이: PENDING/BOOKED → ATTENDED (complete 전용 전이)\n이미 ATTENDED/NO_SHOW/CANCELLED/REJECTED인 경우 상태는 변경하지 않고\ncompleted_at만 기록한다.",
+        "description": "POST /clinic/participants/{id}/complete/\n자율학습 완료 처리 — 이력 기록 + 알림톡 트리거\n\nATTENDED 상태에서만 completed_at을 기록한다.\n참석 처리 전 상태에서는 완료 처리할 수 없으며, 완료 취소도 참석 상태를 유지한다.",
         "operationId": "clinic_participants_complete_create",
         "parameters": [
           {
@@ -16544,6 +16569,75 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ClinicSessionParticipant"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "clinic"
+        ]
+      }
+    },
+    "/api/v1/clinic/participants/{id}/remind/": {
+      "post": {
+        "description": "POST /clinic/participants/{id}/remind/\n승인된 단일 예약 학생에게 클리닉 재촉 알림톡을 발송한다.",
+        "operationId": "clinic_participants_remind_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClinicReminderResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClinicReminderResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClinicReminderResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClinicReminderResponse"
                 }
               }
             },
@@ -36390,7 +36484,7 @@
     },
     "/api/v1/results/admin/clinic-bookings/{id}/complete/": {
       "post": {
-        "description": "POST /clinic/participants/{id}/complete/\n자율학습 완료 처리 — 이력 기록 + 알림톡 트리거\n\n상태 전이: PENDING/BOOKED → ATTENDED (complete 전용 전이)\n이미 ATTENDED/NO_SHOW/CANCELLED/REJECTED인 경우 상태는 변경하지 않고\ncompleted_at만 기록한다.",
+        "description": "POST /clinic/participants/{id}/complete/\n자율학습 완료 처리 — 이력 기록 + 알림톡 트리거\n\nATTENDED 상태에서만 completed_at을 기록한다.\n참석 처리 전 상태에서는 완료 처리할 수 없으며, 완료 취소도 참석 상태를 유지한다.",
         "operationId": "results_admin_clinic_bookings_complete_create",
         "parameters": [
           {
@@ -36428,6 +36522,75 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ClinicSessionParticipant"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/api/v1/results/admin/clinic-bookings/{id}/remind/": {
+      "post": {
+        "description": "POST /clinic/participants/{id}/remind/\n승인된 단일 예약 학생에게 클리닉 재촉 알림톡을 발송한다.",
+        "operationId": "results_admin_clinic_bookings_remind_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClinicReminderResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClinicReminderResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClinicReminderResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClinicReminderResponse"
                 }
               }
             },
