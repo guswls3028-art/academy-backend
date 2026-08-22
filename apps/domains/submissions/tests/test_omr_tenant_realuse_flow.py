@@ -139,7 +139,13 @@ class OMRTenantRealUseFlowTests(TestCase):
             dpi=200,
             jpeg_quality=70,
         )
-        scanned = distort(image, dpi=200, rotation_deg=1.0, noise_sigma=5.0)
+        scanned = distort(
+            image,
+            dpi=200,
+            rotation_deg=1.0,
+            noise_sigma=5.0,
+            rng=np.random.default_rng(20260822),
+        )
         align = align_to_a4_landscape(image_bgr=scanned, meta=meta)
         answers = detect_omr_answers_v7(
             image_bgr=align.image,
@@ -347,6 +353,7 @@ class OMRTenantRealUseFlowTests(TestCase):
             },
         ]
 
+        distortion_rng = np.random.default_rng(20260822)
         for case in cases:
             image = render_marked_pdf(
                 meta,
@@ -355,7 +362,13 @@ class OMRTenantRealUseFlowTests(TestCase):
                 dpi=200,
                 jpeg_quality=70,
             )
-            scanned = distort(image, dpi=200, rotation_deg=1.0, noise_sigma=5.0)
+            scanned = distort(
+                image,
+                dpi=200,
+                rotation_deg=1.0,
+                noise_sigma=5.0,
+                rng=distortion_rng,
+            )
             align = align_to_a4_landscape(image_bgr=scanned, meta=meta)
             answers = detect_omr_answers_v7(
                 image_bgr=align.image,
@@ -373,7 +386,13 @@ class OMRTenantRealUseFlowTests(TestCase):
             if case["expected_status"] == Submission.Status.ANSWERS_READY:
                 self.assertEqual(identifier["identifier"], case["code"])
             else:
-                self.assertIn("?", identifier.get("raw_identifier", ""))
+                self.assertIn(identifier["status"], {"blank", "ambiguous"})
+                self.assertTrue(
+                    any(
+                        digit.get("status") != "ok"
+                        for digit in identifier.get("digits", [])
+                    )
+                )
 
             submission = Submission.objects.create(
                 tenant=tenant,
