@@ -25,9 +25,12 @@ from apps.support.student_app.video_media import (
     issue_proctored_playback_session,
     pick_video_urls,
 )
-from apps.domains.video.contracts import sort_videos_for_playlist, youtube_embed_url
-from apps.domains.video.services.playback_policy import build_effective_playback_policy
-from apps.domains.video.services.skip_budget import consume_video_forward_skip
+from apps.domains.video.contracts import (
+    build_effective_playback_policy,
+    consume_video_forward_skip,
+    sort_videos_for_playlist,
+    youtube_embed_url,
+)
 from academy.application.use_cases.student_video_access_context import (
     StudentVideoAccessError,
     ensure_student_video_watch_allowed,
