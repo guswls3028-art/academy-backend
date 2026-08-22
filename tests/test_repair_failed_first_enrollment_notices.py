@@ -374,7 +374,7 @@ class RecoveryFixtureMixin:
             origin_type="system_account",
             origin_id=f"student:{student.id}",
             failure_reason=(
-                "('NotEnoughBalance', '보유 잔액이 부족하여 발송에 실패하였습니다.\n"
+                "('NotEnoughBalance', '보유 잔액이 부족하여 발송에 실패하였습니다.\\n"
                 "[차감금액: 13, 보유잔액: 9, 보유포인트: 0, 보유예치금: 0]')"
             ),
         )
@@ -874,6 +874,19 @@ class RepairFailedFirstEnrollmentNoticesTests(RecoveryFixtureMixin, TestCase):
     def test_generic_ambiguous_student_result_is_refused(self):
         log = NotificationLog.objects.get(pk=5060)
         log.failure_reason = "provider_result_unresolved"
+        log.save(update_fields=["failure_reason"])
+
+        with self.assertRaisesMessage(
+            CommandError,
+            "reviewed_student_log_pair_drift",
+        ):
+            call_command(*self._command_args())
+
+    def test_reviewed_failure_reason_rejects_actual_line_feed(self):
+        log = NotificationLog.objects.get(pk=5060)
+        self.assertIn("\\n", log.failure_reason)
+        self.assertNotIn("\n", log.failure_reason)
+        log.failure_reason = log.failure_reason.replace("\\n", "\n")
         log.save(update_fields=["failure_reason"])
 
         with self.assertRaisesMessage(
