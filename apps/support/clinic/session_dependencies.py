@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from typing import Iterable
+from uuid import uuid4
 
 
 def empty_lecture_queryset():
@@ -261,7 +262,7 @@ def send_clinic_reminder_for_participant(
         session=participant.session,
         domain_object_id=(
             f"clinic_participant:{participant.id}:manual_reminder:"
-            f"{current.strftime('%Y%m%d%H%M')}"
+            f"{current.strftime('%Y%m%d%H%M%S%f')}:{uuid4().hex}"
         ),
         source_use_case="clinic.manual_reminder",
         actor_id=actor_id,

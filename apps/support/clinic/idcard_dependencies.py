@@ -85,5 +85,90 @@ def unresolved_auto_clinic_links(
             session__lecture__tenant=tenant,
         )
         .select_related("session__lecture")
-        .order_by("session__lecture__title", "session__order", "id")
+        .order_by("-created_at", "-id")
     )
+
+
+def clinic_link_source_projection(
+    *,
+    tenant: Any,
+    clinic_links: list[Any],
+) -> dict[int, dict[str, str | None]]:
+    """Return tenant-safe source titles without inferring scope from filenames."""
+    if not clinic_links:
+        return {}
+
+    from apps.domains.exams.models import Exam
+    from apps.domains.homework_results.models import Homework
+
+    session_ids = {
+        int(link.session_id)
+        for link in clinic_links
+        if getattr(link, "session_id", None)
+    }
+    exam_ids = {
+        int(link.source_id)
+        for link in clinic_links
+        if getattr(link, "source_type", None) == "exam"
+        and getattr(link, "source_id", None)
+    }
+    homework_ids = {
+        int(link.source_id)
+        for link in clinic_links
+        if getattr(link, "source_type", None) == "homework"
+        and getattr(link, "source_id", None)
+    }
+
+    exams_by_source_session: dict[tuple[int, int], Any] = {}
+    if exam_ids:
+        exams = (
+            Exam.objects.filter(
+                id__in=exam_ids,
+                tenant=tenant,
+                exam_type=Exam.ExamType.REGULAR,
+                is_active=True,
+                sessions__id__in=session_ids,
+            )
+            .prefetch_related("sessions")
+            .distinct()
+        )
+        for exam in exams:
+            for session in exam.sessions.all():
+                session_id = int(session.id)
+                if session_id in session_ids:
+                    exams_by_source_session[(int(exam.id), session_id)] = exam
+
+    homeworks_by_source_session: dict[tuple[int, int], Any] = {}
+    if homework_ids:
+        homeworks = (
+            Homework.objects.filter(
+                id__in=homework_ids,
+                tenant=tenant,
+                homework_type=Homework.HomeworkType.REGULAR,
+                session_id__in=session_ids,
+            )
+            .exclude(meta__removed_from_session_at__isnull=False)
+        )
+        homeworks_by_source_session = {
+            (int(homework.id), int(homework.session_id)): homework
+            for homework in homeworks
+        }
+
+    projections: dict[int, dict[str, str | None]] = {}
+    for link in clinic_links:
+        source_id = int(getattr(link, "source_id", 0) or 0)
+        session_id = int(getattr(link, "session_id", 0) or 0)
+        source = None
+        if getattr(link, "source_type", None) == "exam":
+            source = exams_by_source_session.get((source_id, session_id))
+        elif getattr(link, "source_type", None) == "homework":
+            source = homeworks_by_source_session.get((source_id, session_id))
+
+        title = str(getattr(source, "title", "") or "").strip() or None
+        projections[int(link.id)] = {
+            "source_title": title,
+            # Exam/Homework currently have no dedicated unit/range field.
+            # Descriptions and source filenames are not scope SSOTs.
+            "source_scope": None,
+        }
+    return projections

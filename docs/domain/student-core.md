@@ -274,12 +274,19 @@ Rules:
 |---|---|
 | OMR automatic grading | candidate set is same-tenant active roster; identifier is phone/parent-phone last 8 digits; unmatched/ambiguous scans remain reviewable facts |
 | Results/exam scores | submission, exam, enrollment, and tenant must match before score/result writes |
-| Clinic | clinic target and remediation state must resolve through enrollment/session context |
+| Clinic | clinic target and remediation state must resolve through enrollment/session context; `/clinic/idcard/` returns every unresolved target across active enrollments in newest-first order, with the actual source title, nullable dedicated scope, and session label |
 | Homework | assignment/submission rows must carry tenant-scoped enrollment identity |
 | Attendance | attendance status that affects secession/enrollment must call the lifecycle path, not mutate student rows directly |
 | Video/progress | student visibility and progress must use tenant-scoped enrollment/session access |
 | QnA/community/counseling | student author/target must be tenant-scoped and not inferred from display name |
 | Messaging | recipients come from the verified student/parent phone in the resolved student graph |
+
+Clinic source projection never guesses from an uploaded filename or copies a free-form
+description into scope. `source_title` is the tenant-scoped Exam/Homework title, and
+`source_scope` stays `null` until that source domain owns a dedicated unit/range value;
+clients render the missing scope explicitly instead of hiding the rest of the target.
+The passcard consumes only the aggregate `current_result` verdict. Manual clinic PDFs
+remain independently authored content and do not inherit this projection.
 
 ### Staff student-support session and ended-lecture boundary
 

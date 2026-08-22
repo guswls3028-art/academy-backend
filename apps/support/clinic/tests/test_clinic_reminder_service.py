@@ -126,10 +126,47 @@ class ClinicReminderServiceTest(TestCase):
         self.assertEqual(kwargs["send_to"], "student")
         self.assertEqual(kwargs["context"]["_source_use_case"], "clinic.manual_reminder")
         self.assertEqual(kwargs["context"]["_actor_id"], "77")
-        self.assertEqual(
-            kwargs["context"]["_domain_object_id"],
-            f"clinic_participant:{participant.id}:manual_reminder:202605151805",
+        self.assertTrue(
+            kwargs["context"]["_domain_object_id"].startswith(
+                f"clinic_participant:{participant.id}:manual_reminder:202605151805"
+            )
         )
+
+    @patch("apps.domains.messaging.services.notification_service.send_event_notification", return_value=True)
+    def test_staff_can_repeat_manual_reminder_within_the_same_minute(self, mock_send):
+        student = self._student("015", "반복재촉학생")
+        participant = SessionParticipant.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            student=student,
+            status=SessionParticipant.Status.BOOKED,
+        )
+        now = timezone.make_aware(
+            datetime(2026, 5, 15, 18, 5),
+            timezone.get_current_timezone(),
+        )
+
+        first = send_clinic_reminder_for_participant(
+            tenant_id=self.tenant.id,
+            participant_id=participant.id,
+            actor_id=77,
+            now=now,
+        )
+        second = send_clinic_reminder_for_participant(
+            tenant_id=self.tenant.id,
+            participant_id=participant.id,
+            actor_id=77,
+            now=now,
+        )
+
+        self.assertEqual(first, {"status": "ok", "sent": 1, "skipped": 0})
+        self.assertEqual(second, {"status": "ok", "sent": 1, "skipped": 0})
+        self.assertEqual(mock_send.call_count, 2)
+        occurrence_keys = [
+            call.kwargs["context"]["_domain_object_id"]
+            for call in mock_send.call_args_list
+        ]
+        self.assertEqual(len(set(occurrence_keys)), 2)
 
     @patch("apps.domains.messaging.services.notification_service.send_event_notification")
     def test_staff_manual_reminder_rejects_non_booked_participant(self, mock_send):

@@ -21,7 +21,7 @@
 | clinic_cancelled | 클리닉 예약 취소 | 학부모 | 상태 → cancelled |
 | clinic_check_in | 클리닉 입실 | 학부모 | 상태 → attended |
 | clinic_absent | 클리닉 결석 | 학부모 | 상태 → no_show |
-| clinic_reminder | 클리닉 시작 N분 전 또는 스태프 재촉 | 학생 | EventBridge `academy-v1-send-clinic-reminders` → `send_clinic_reminders`; 단일 승인 예약은 `POST /clinic/participants/{id}/remind/` |
+| clinic_reminder | 클리닉 시작 N분 전 또는 스태프 재촉 | 학생 | EventBridge `academy-v1-send-clinic-reminders` → `send_clinic_reminders`; 단일 승인 예약은 `POST /clinic/participants/{id}/remind/`. 스태프의 명시적 재클릭은 매번 독립 요청으로 기록·큐잉 |
 | clinic_self_study_completed | 클리닉 자율학습 완료(퇴실) | 학부모 | 자율학습 완료(complete) 시 |
 | clinic_result_notification | 클리닉 결과 알림 | 학부모 | 클리닉 결과 확정 시 |
 | counseling_reservation_created | 상담 예약 완료 | 학부모 | 상담 예약 시 |

@@ -260,6 +260,40 @@ class MultiTenantIsolationTest(TestCase, ClinicTestMixin):
         # 교차 오염 없음
         self.assertTrue(enrollment_ids_a.isdisjoint(enrollment_ids_b))
 
+    def test_admin_clinic_targets_are_newest_first_with_source_semantics(self):
+        from apps.domains.results.services.clinic_target_service import ClinicTargetService
+
+        newer_exam = Exam.objects.create(
+            tenant=self.a["tenant"],
+            title="신년 모의고사 분자의 구조",
+            exam_type=Exam.ExamType.REGULAR,
+            is_active=True,
+        )
+        newer_exam.sessions.add(self.a["lec_session"])
+        newer_link = self.make_clinic_link(
+            self.a["enrollments"][1],
+            self.a["lec_session"],
+            source_type="exam",
+            source_id=newer_exam.id,
+        )
+        older_at = timezone.now() - datetime.timedelta(hours=2)
+        newer_at = timezone.now() - datetime.timedelta(hours=1)
+        ClinicLink.objects.filter(id=self.link_a.id).update(created_at=older_at)
+        ClinicLink.objects.filter(id=newer_link.id).update(created_at=newer_at)
+
+        rows = ClinicTargetService.list_admin_targets(tenant=self.a["tenant"])
+        source_rows = [
+            row for row in rows
+            if row.get("clinic_link_id") in {self.link_a.id, newer_link.id}
+        ]
+
+        self.assertEqual(
+            [row["clinic_link_id"] for row in source_rows],
+            [newer_link.id, self.link_a.id],
+        )
+        self.assertEqual(source_rows[0]["source_title"], newer_exam.title)
+        self.assertIsNone(source_rows[0]["source_scope"])
+
     def test_clinic_target_service_rejects_mismatched_link_relations(self):
         """링크의 tenant만 맞고 수강생 tenant가 다른 손상 데이터는 노출하지 않음."""
         from apps.domains.results.utils.clinic import (
@@ -1647,6 +1681,89 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
                 and history["clinic_required"] is False
                 for history in resp.data["histories"]
             )
+        )
+
+    def test_idcard_projects_all_sources_newest_first_across_active_enrollments(self):
+        from django.apps import apps as django_apps
+
+        first_enrollment = self.data["enrollments"][0]
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="신년 모의고사 가역반응, 화학평형",
+            exam_type=Exam.ExamType.REGULAR,
+            is_active=True,
+        )
+        exam.sessions.add(self.data["lec_session"])
+        older_link = self.make_clinic_link(
+            first_enrollment,
+            self.data["lec_session"],
+            tenant=self.tenant,
+            source_type="exam",
+            source_id=exam.id,
+        )
+
+        second_lecture = self.make_lecture(
+            self.tenant,
+            title="화학평형특강",
+            name="화학평형반",
+            subject="chemistry",
+        )
+        second_session = self.make_lecture_session(
+            second_lecture,
+            order=3,
+            title="평형상수 3차시",
+        )
+        second_enrollment = self.make_enrollment(
+            self.tenant,
+            self.student,
+            second_lecture,
+        )
+        homework_model = django_apps.get_model("homework_results", "Homework")
+        homework = homework_model.objects.create(
+            tenant=self.tenant,
+            session=second_session,
+            title="부교재 화학평형",
+        )
+        newer_link = self.make_clinic_link(
+            second_enrollment,
+            second_session,
+            tenant=self.tenant,
+            source_type="homework",
+            source_id=homework.id,
+        )
+        older_at = timezone.now() - datetime.timedelta(hours=2)
+        newer_at = timezone.now() - datetime.timedelta(hours=1)
+        ClinicLink.objects.filter(id=older_link.id).update(created_at=older_at)
+        ClinicLink.objects.filter(id=newer_link.id).update(created_at=newer_at)
+
+        resp = self.client.get(
+            "/api/v1/clinic/idcard/",
+            **self._headers(self.tenant),
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(
+            [target["clinic_link_id"] for target in resp.data["current_targets"]],
+            [newer_link.id, older_link.id],
+        )
+        self.assertEqual(
+            [target["source_type"] for target in resp.data["current_targets"]],
+            ["homework", "exam"],
+        )
+        self.assertEqual(
+            [target["source_title"] for target in resp.data["current_targets"]],
+            [homework.title, exam.title],
+        )
+        self.assertEqual(
+            [target["source_scope"] for target in resp.data["current_targets"]],
+            [None, None],
+        )
+        self.assertEqual(
+            [target["session_title"] for target in resp.data["current_targets"]],
+            [second_session.title, self.data["lec_session"].title],
+        )
+        self.assertTrue(
+            all(target["created_at"] for target in resp.data["current_targets"])
         )
 
     def test_deleted_student_cannot_create_own_booking(self):
