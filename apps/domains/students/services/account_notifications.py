@@ -39,6 +39,8 @@ def _send_owner_account_notice(
     replacements: dict[str, str],
     log_target_id: str,
     log_target_name: str,
+    origin_type: str = "system_account",
+    origin_id: str | None = None,
 ) -> bool:
     if account_recovery_delivery_disabled(source_tenant_id):
         return True
@@ -50,6 +52,8 @@ def _send_owner_account_notice(
         log_target_type="account",
         log_target_id=log_target_id,
         log_target_name=log_target_name,
+        origin_type=origin_type,
+        origin_id=origin_id,
     )
 
 
@@ -70,6 +74,8 @@ def send_student_account_credentials_notice(
     student: Student,
     password: str | None = None,
     to: str | None = None,
+    origin_type: str = "system_account",
+    origin_id: str | None = None,
 ) -> bool:
     """Send the current student login ID and the changed password if known."""
 
@@ -93,6 +99,8 @@ def send_student_account_credentials_notice(
         replacements=replacements,
         log_target_id=_student_target_id(student),
         log_target_name=student.name or "",
+        origin_type=origin_type,
+        origin_id=origin_id,
     )
 
 

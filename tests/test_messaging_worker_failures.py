@@ -215,7 +215,7 @@ def test_sdk_timeout_is_explicitly_after_provider_boundary(mock_get_client: Magi
 
 
 @patch("apps.worker.messaging_worker.sqs_main._get_solapi_client")
-def test_solapi_balance_rejection_is_definite_and_retryable(
+def test_solapi_balance_rejection_is_definite_and_not_auto_retryable(
     mock_get_client: MagicMock,
 ) -> None:
     client = MagicMock()
@@ -234,10 +234,10 @@ def test_solapi_balance_rejection_is_definite_and_retryable(
     assert result["provider_called"] is True
     assert result["provider_outcome"] == "rejected"
     assert result["definitely_not_accepted"] is True
-    assert result["provider_retryable"] is True
+    assert result["provider_retryable"] is False
     assert _send_failure_disposition(
         result["reason"],
         provider_send_started=result["provider_called"],
         definitely_not_accepted=result["definitely_not_accepted"],
         provider_retryable=result["provider_retryable"],
-    ) == "retry"
+    ) == "terminal"
