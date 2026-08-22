@@ -205,3 +205,32 @@ def test_sdk_timeout_is_explicitly_after_provider_boundary(mock_get_client: Magi
         result["reason"],
         provider_send_started=result["provider_called"],
     ) == "ambiguous"
+
+
+@patch("apps.worker.messaging_worker.sqs_main._get_solapi_client")
+def test_solapi_balance_rejection_is_definite_and_retryable(
+    mock_get_client: MagicMock,
+) -> None:
+    client = MagicMock()
+    client.send.side_effect = Exception("NotEnoughBalance", "잔액이 부족합니다")
+    mock_get_client.return_value = client
+
+    result = send_one_alimtalk(
+        SimpleNamespace(),
+        to="01012345678",
+        sender="0212345678",
+        pf_id="PFID",
+        template_id="TEMPLATE",
+    )
+
+    client.send.assert_called_once()
+    assert result["provider_called"] is True
+    assert result["provider_outcome"] == "rejected"
+    assert result["definitely_not_accepted"] is True
+    assert result["provider_retryable"] is True
+    assert _send_failure_disposition(
+        result["reason"],
+        provider_send_started=result["provider_called"],
+        definitely_not_accepted=result["definitely_not_accepted"],
+        provider_retryable=result["provider_retryable"],
+    ) == "retry"

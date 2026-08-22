@@ -99,7 +99,7 @@ jobs:
               exit 1
             fi
           done
-          EXTRA_ARGS="--rule user_incidents"
+          EXTRA_ARGS="--rule user_incidents --rule messaging_delivery_health"
           if [ "$SCHEDULE_EXPRESSION" = "2 * * * *" ] || [ "$FULL_RULES" = "true" ]; then
             EXTRA_ARGS=""
           fi
