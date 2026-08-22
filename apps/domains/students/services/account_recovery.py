@@ -329,6 +329,48 @@ def resolve_staff_password_reset_account(
     return account
 
 
+def resolve_staff_account_for_student(*, student: Student, target: str) -> RecoveryAccount:
+    """Resolve an exact tenant-scoped student/parent account for staff guidance."""
+
+    target = str(target or "").strip().lower()
+    if target not in RECOVERY_TARGETS:
+        raise AccountRecoveryValidationError("대상을 선택해 주세요. (학생 / 학부모)")
+
+    if target == "student":
+        if not getattr(student, "user_id", None):
+            raise AccountRecoveryValidationError("학생 로그인 계정이 없어 안내할 수 없습니다.")
+        send_to = normalize_recovery_phone(student.phone) or normalize_recovery_phone(student.parent_phone)
+        if not send_to:
+            raise AccountRecoveryValidationError("등록된 휴대번호가 없어 발송할 수 없습니다.")
+        return RecoveryAccount(
+            target="student",
+            student=student,
+            user=student.user,
+            send_to=send_to,
+            display_name=student.name or "학생",
+            display_username=student.ps_number or user_display_username(student.user),
+        )
+
+    parent_phone = normalize_recovery_phone(student.parent_phone)
+    if not parent_phone:
+        raise AccountRecoveryValidationError("등록된 학부모 휴대번호가 없어 발송할 수 없습니다.")
+    parent = ensure_parent_recovery_account(
+        tenant=student.tenant,
+        parent_phone=parent_phone,
+        student_name=student.name,
+    )
+    if not parent or not getattr(parent, "user_id", None):
+        raise AccountRecoveryValidationError("학부모 로그인 계정이 없어 안내할 수 없습니다.")
+    return RecoveryAccount(
+        target="parent",
+        student=student,
+        user=parent.user,
+        send_to=parent_phone,
+        display_name=parent.name or f"{student.name} 학부모",
+        display_username=parent_phone,
+    )
+
+
 def reset_staff_password(
     account: RecoveryAccount,
     *,
