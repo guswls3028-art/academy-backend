@@ -11,6 +11,7 @@ from apps.domains.submissions.services.omr_submission_guards import (
     duplicate_conflict_payload,
 )
 from apps.domains.submissions.services.lifecycle import (
+    STUCK_RECOVERABLE_STATUSES,
     fail_submission_in_memory,
     mark_answers_ready_in_memory,
     mark_needs_identification,
@@ -61,7 +62,18 @@ def _can_hydrate_late_ai_answers(
     """
     if submission.source != Submission.Source.OMR_SCAN:
         return False
-    if submission.status not in (Submission.Status.ANSWERS_READY, Submission.Status.DONE):
+    if submission.status == Submission.Status.FAILED:
+        recovery = (submission.meta or {}).get("state_recovery") or {}
+        recovered_from = str(recovery.get("from_status") or "")
+        if (
+            recovered_from not in STUCK_RECOVERABLE_STATUSES
+            or submission.error_message != f"stuck:{recovered_from}_timeout"
+        ):
+            return False
+    elif submission.status not in (
+        Submission.Status.ANSWERS_READY,
+        Submission.Status.DONE,
+    ):
         return False
     if not submission.enrollment_id:
         return False
@@ -159,12 +171,11 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     # 구버전 호환: payload["result"] 하위에 있을 수도 있다.
     result = _extract_worker_result(payload)
 
-    late_answer_hydration = False
+    late_answer_hydration = _can_hydrate_late_ai_answers(
+        submission=submission,
+        result=result,
+    )
     if submission.status in _ALREADY_PROCESSED_STATUSES:
-        late_answer_hydration = _can_hydrate_late_ai_answers(
-            submission=submission,
-            result=result,
-        )
         if not late_answer_hydration:
             logger.info(
                 "apply_omr_ai_result: submission %s already %s, skipping (idempotent)",
@@ -351,7 +362,10 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
         identifier_status=identifier_status,
         identifier_payload=identifier,
     )
-    if late_answer_hydration and submission.status == Submission.Status.DONE:
+    if late_answer_hydration and submission.status in (
+        Submission.Status.DONE,
+        Submission.Status.FAILED,
+    ):
         reopen_for_regrade_in_memory(submission, actor="ai_omr_mapper.late_result")
     elif not late_answer_hydration:
         mark_answers_ready_in_memory(submission, actor="ai_omr_mapper")

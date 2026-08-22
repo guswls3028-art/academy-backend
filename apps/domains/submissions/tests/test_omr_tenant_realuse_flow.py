@@ -17,7 +17,7 @@ from apps.domains.exams.models import (
     Sheet,
 )
 from apps.domains.lectures.models import Lecture, Session
-from apps.domains.results.models import Result
+from apps.domains.results.models import ExamResult, Result, ResultFact
 from apps.domains.results.services.answer_matching import answer_matches
 from apps.domains.results.services.grading_service import grade_submission
 from apps.domains.students.services.creation import create_student_account
@@ -227,6 +227,18 @@ class OMRTenantRealUseFlowTests(TestCase):
                 max_score=100,
             ).exists()
         )
+        self.assertEqual(
+            ResultFact.objects.filter(
+                target_type="exam",
+                target_id=exam.id,
+                enrollment_id=enrollment.id,
+                submission_id=submission.id,
+            ).count(),
+            20,
+        )
+        legacy_result = ExamResult.objects.get(submission=submission)
+        self.assertEqual(legacy_result.status, ExamResult.Status.FINAL)
+        self.assertIsNotNone(legacy_result.finalized_at)
 
     def test_tenant_one_batch_omr_scans_map_grade_and_hold_unreadable_identifier(self):
         tag = "[E2E-OMR-BATCH]"
@@ -1709,6 +1721,66 @@ class StateRecoveryTests(TestCase):
                 max_score=100,
             ).exists()
         )
+
+    def test_late_ai_callback_recovers_state_timeout_failure(self):
+        from django.apps import apps
+
+        from apps.domains.ai.callbacks import dispatch_ai_result_to_domain
+
+        submission, enrollment, exam = self._make_done_zero_answer_submission()
+        Submission.objects.filter(id=submission.id).update(
+            status=Submission.Status.FAILED,
+            error_message="stuck:dispatched_timeout",
+            meta={
+                "state_recovery": {
+                    "from_status": Submission.Status.DISPATCHED,
+                    "reason": "dispatched_timeout",
+                }
+            },
+        )
+        job = self._create_late_ai_result(submission)
+        AIResultModel = apps.get_model("ai_domain", "AIResultModel")
+        result_payload = AIResultModel.objects.get(job=job).payload
+
+        handled = dispatch_ai_result_to_domain(
+            job_id=job.job_id,
+            status="DONE",
+            result_payload=result_payload,
+            error=None,
+            source_domain="submissions",
+            source_id=str(submission.id),
+            tier="basic",
+        )
+
+        self.assertTrue(handled)
+        submission.refresh_from_db()
+        self.assertEqual(submission.status, Submission.Status.DONE)
+        self.assertEqual(submission.error_message, "")
+        self.assertEqual(
+            SubmissionAnswer.objects.filter(submission=submission).count(),
+            2,
+        )
+        self.assertTrue(
+            Result.objects.filter(
+                target_type="exam",
+                target_id=exam.id,
+                enrollment_id=enrollment.id,
+                total_score=100,
+                max_score=100,
+            ).exists()
+        )
+        self.assertEqual(
+            ResultFact.objects.filter(
+                target_type="exam",
+                target_id=exam.id,
+                enrollment_id=enrollment.id,
+                submission_id=submission.id,
+            ).count(),
+            2,
+        )
+        legacy_result = ExamResult.objects.get(submission=submission)
+        self.assertEqual(legacy_result.status, ExamResult.Status.FINAL)
+        self.assertIsNotNone(legacy_result.finalized_at)
 
     def test_late_ai_recovery_dry_run_does_not_write(self):
         from academy.application.use_cases.omr.late_answer_recovery import (

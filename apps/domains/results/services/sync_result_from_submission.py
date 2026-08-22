@@ -9,7 +9,7 @@ from __future__ import annotations
 from django.db import transaction
 from django.utils import timezone
 
-from apps.domains.results.models import ExamResult, Result, ResultItem
+from apps.domains.results.models import ExamResult, Result, ResultFact, ResultItem
 from apps.domains.results.guards.grading_contract import GradingContractGuard
 from apps.domains.results.guards.score_edit_lease_state import (
     invalidate_score_edit_leases_for_exam,
@@ -411,6 +411,19 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
         ).delete()
 
     for item in items_payload:
+        ResultFact.objects.create(
+            target_type="exam",
+            target_id=int(exam.id),
+            enrollment_id=int(enrollment_id),
+            submission_id=int(submission.id),
+            attempt_id=int(attempt.id),
+            question_id=item["question_id"],
+            answer=item["answer"],
+            is_correct=item["is_correct"],
+            score=item["score"],
+            max_score=item["max_score"],
+            source=item["source"],
+        )
         ResultItem.objects.update_or_create(
             result=result,
             question_id=item["question_id"],

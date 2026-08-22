@@ -13,6 +13,7 @@ from apps.domains.results.services.exam_grading_service import ExamGradingServic
 from apps.domains.results.services.sync_result_from_submission import (
     sync_result_from_exam_submission,
 )
+from apps.domains.results.services.question_stats_service import QuestionStatsService
 from apps.domains.students.models import Student
 from apps.domains.submissions.models import (
     OMRDetectedAnswer,
@@ -862,6 +863,18 @@ class SubmissionScopeGuardTests(TestCase):
         self.assertEqual(float(legacy.total_score), 70.0)
         self.assertEqual(float(legacy.max_score), 70.0)
         self.assertEqual(list(legacy.breakdown.keys()), [str(n) for n in range(1, 23)])
+        self.assertEqual(
+            ResultFact.objects.filter(
+                target_type="exam",
+                target_id=exam.id,
+                enrollment_id=self.enrollment.id,
+                submission_id=submission.id,
+            ).count(),
+            22,
+        )
+        stats = QuestionStatsService.per_question_stats(exam_id=exam.id)
+        self.assertEqual(len(stats), 22)
+        self.assertEqual({row["attempts"] for row in stats}, {1})
 
     def test_sync_rejects_incomplete_omr_answers_before_creating_first_result(self):
         exam, choice, essay = self._create_mixed_exam()
