@@ -4,10 +4,13 @@ Regression tests for student identity SSOT, lifecycle, and ghost-data eliminatio
 Covers: ps_number/username sync, deletion semantics, restore flow, ghost data filters.
 """
 from importlib import import_module
+import threading
+import unittest
 
 from django.apps import apps
-from django.test import TestCase
 from django.contrib.auth import get_user_model
+from django.db import IntegrityError, close_old_connections, connection
+from django.test import TestCase, TransactionTestCase
 from django.utils import timezone
 from unittest.mock import patch
 from rest_framework.test import APIRequestFactory, force_authenticate
@@ -74,6 +77,69 @@ class TestPsNumberUsernameSyncOnSave(TestCase):
         expected = user_internal_username(self.tenant, "B99999")
         self.assertEqual(self.student.user.username, expected)
 
+    def test_unpersisted_ps_number_does_not_change_login_or_inventory(self):
+        """update_fields에서 제외한 ps_number는 연관 identity에도 반영하지 않는다."""
+        folder = InventoryFolder.objects.create(
+            tenant=self.tenant,
+            student_ps="A12345",
+            name="root",
+        )
+        original_username = self.student.user.username
+
+        self.student.ps_number = "B99999"
+        self.student.name = "이름만 변경"
+        self.student.save(update_fields=["name"])
+
+        self.student.refresh_from_db()
+        self.student.user.refresh_from_db()
+        folder.refresh_from_db()
+        self.assertEqual(self.student.ps_number, "A12345")
+        self.assertEqual(self.student.user.username, original_username)
+        self.assertEqual(folder.student_ps, "A12345")
+
+    def test_in_memory_user_relink_is_rejected_before_unrelated_save(self):
+        original_user_id = self.student.user_id
+        original_username = self.student.user.username
+        other_user = User.objects.create_user(
+            username=user_internal_username(self.tenant, "OTHER01"),
+            password="test1234",
+            tenant=self.tenant,
+        )
+        self.student.user = other_user
+        self.student.name = "이름 변경 시도"
+
+        with self.assertRaisesMessage(ValueError, "Student.user cannot be changed"):
+            self.student.save(update_fields=["name"])
+
+        self.student.refresh_from_db()
+        self.student.user.refresh_from_db()
+        self.assertEqual(self.student.user_id, original_user_id)
+        self.assertEqual(self.student.user.username, original_username)
+
+    def test_username_collision_rolls_back_student_user_and_inventory(self):
+        folder = InventoryFolder.objects.create(
+            tenant=self.tenant,
+            student_ps="A12345",
+            name="root",
+        )
+        original_username = self.student.user.username
+        User.objects.create_user(
+            username=user_internal_username(self.tenant, "TAKEN01"),
+            password="test1234",
+            tenant=self.tenant,
+        )
+        self.student.ps_number = "TAKEN01"
+
+        with self.assertRaises(IntegrityError):
+            self.student.save(update_fields=["ps_number"])
+
+        self.student.refresh_from_db()
+        self.student.user.refresh_from_db()
+        folder.refresh_from_db()
+        self.assertEqual(self.student.ps_number, "A12345")
+        self.assertEqual(self.student.user.username, original_username)
+        self.assertEqual(folder.student_ps, "A12345")
+
     def test_ps_number_change_cascades_inventory(self):
         """ps_number 변경 시 인벤토리 student_ps도 업데이트."""
         folder = InventoryFolder.objects.create(
@@ -117,6 +183,60 @@ class TestPsNumberUsernameSyncOnSave(TestCase):
         self.student.save(update_fields=["ps_number"])
         self.student.user.refresh_from_db()
         self.assertEqual(user_display_username(self.student.user), "D11111")
+
+
+class StudentIdentityConcurrencyPostgresTests(TransactionTestCase):
+    @classmethod
+    def setUpClass(cls):
+        if connection.vendor != "postgresql":
+            raise unittest.SkipTest(
+                "PostgreSQL is required for student identity row-lock verification."
+            )
+        super().setUpClass()
+
+    def test_concurrent_ps_number_changes_keep_all_identity_copies_aligned(self):
+        tenant = _create_tenant(name="Identity Race", code="identity-race")
+        student = _create_student(tenant, "RACE00")
+        folder = InventoryFolder.objects.create(
+            tenant=tenant,
+            student_ps="RACE00",
+            name="root",
+        )
+        barrier = threading.Barrier(2, timeout=10)
+        outcomes: list[str] = []
+        errors: list[BaseException] = []
+
+        def worker(next_ps_number: str):
+            close_old_connections()
+            try:
+                thread_student = Student.objects.get(pk=student.pk)
+                thread_student.ps_number = next_ps_number
+                barrier.wait()
+                thread_student.save(update_fields=["ps_number"])
+                outcomes.append(next_ps_number)
+            except BaseException as exc:  # pragma: no cover - asserted below
+                errors.append(exc)
+            finally:
+                close_old_connections()
+
+        threads = [
+            threading.Thread(target=worker, args=("RACE01",)),
+            threading.Thread(target=worker, args=("RACE02",)),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=20)
+
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+        self.assertEqual(errors, [])
+        self.assertCountEqual(outcomes, ["RACE01", "RACE02"])
+        student.refresh_from_db()
+        student.user.refresh_from_db()
+        folder.refresh_from_db()
+        self.assertIn(student.ps_number, {"RACE01", "RACE02"})
+        self.assertEqual(user_display_username(student.user), student.ps_number)
+        self.assertEqual(folder.student_ps, student.ps_number)
 
 
 class TestSoftDeleteSemantics(TestCase):
