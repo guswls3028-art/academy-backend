@@ -84,9 +84,8 @@ STUDENT_STATUS_TRANSITIONS = {
     SessionParticipant.Status.CANCELLED: set(),
 }
 
-COMPLETE_ALLOWED_TRANSITIONS = {
-    SessionParticipant.Status.PENDING,
-    SessionParticipant.Status.BOOKED,
+COMPLETE_ALLOWED_STATUSES = {
+    SessionParticipant.Status.ATTENDED,
 }
 
 SESSION_CHANGE_NOTICE_STATUSES = (
@@ -318,17 +317,25 @@ def change_participant_status(
     participant.status = next_status
     participant.status_changed_at = timezone.now()
     participant.status_changed_by = actor
+    # Attendance corrections and study completion are separate actions.  Clear a
+    # previous completion whenever staff changes attendance so an old
+    # no-show/attendance correction cannot keep rendering as "clinic complete".
+    completion_was_set = participant.completed_at is not None
+    if completion_was_set:
+        participant.completed_at = None
+        participant.completed_by = None
     if memo is not None:
         participant.memo = memo
-    participant.save(
-        update_fields=[
-            "status",
-            "memo",
-            "status_changed_at",
-            "status_changed_by",
-            "updated_at",
-        ]
-    )
+    update_fields = [
+        "status",
+        "memo",
+        "status_changed_at",
+        "status_changed_by",
+        "updated_at",
+    ]
+    if completion_was_set:
+        update_fields.extend(["completed_at", "completed_by"])
+    participant.save(update_fields=update_fields)
     return ParticipantTransitionResult(
         participant=participant,
         notification=_status_notification(participant, next_status, actor=actor),
@@ -340,27 +347,17 @@ def complete_participant(*, tenant, participant_id: int, actor) -> ParticipantTr
     participant = _locked_participant(tenant=tenant, participant_id=participant_id)
     if participant.completed_at:
         raise ValidationError({"detail": "이미 완료 처리된 참가자입니다."})
-    if participant.status in (
-        SessionParticipant.Status.CANCELLED,
-        SessionParticipant.Status.REJECTED,
-    ):
+    if participant.status not in COMPLETE_ALLOWED_STATUSES:
         raise ValidationError(
             {"detail": f"'{participant.get_status_display()}' 상태의 참가자는 완료 처리할 수 없습니다."}
         )
 
     participant.completed_at = timezone.now()
     participant.completed_by = actor
-    if participant.status in COMPLETE_ALLOWED_TRANSITIONS:
-        participant.status = SessionParticipant.Status.ATTENDED
-        participant.status_changed_at = timezone.now()
-        participant.status_changed_by = actor
     participant.save(
         update_fields=[
             "completed_at",
             "completed_by",
-            "status",
-            "status_changed_at",
-            "status_changed_by",
             "updated_at",
         ]
     )
@@ -378,12 +375,7 @@ def uncomplete_participant(*, tenant, participant_id: int) -> ParticipantTransit
 
     participant.completed_at = None
     participant.completed_by = None
-    if participant.status == SessionParticipant.Status.ATTENDED:
-        participant.status = SessionParticipant.Status.BOOKED
-        update_fields = ["completed_at", "completed_by", "status", "updated_at"]
-    else:
-        update_fields = ["completed_at", "completed_by", "updated_at"]
-    participant.save(update_fields=update_fields)
+    participant.save(update_fields=["completed_at", "completed_by", "updated_at"])
     return ParticipantTransitionResult(participant=participant)
 
 

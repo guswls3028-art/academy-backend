@@ -13,6 +13,7 @@ from apps.domains.messaging.alimtalk_content_builders import get_solapi_template
 from apps.domains.messaging.models import AutoSendConfig, MessageTemplate, ScheduledNotification
 from apps.domains.students.models import Student
 from apps.support.clinic.session_dependencies import (
+    send_clinic_reminder_for_participant,
     send_clinic_reminder_for_students,
     send_due_clinic_reminders,
 )
@@ -87,6 +88,89 @@ class ClinicReminderServiceTest(TestCase):
         self.assertEqual(kwargs["context"]["시간"], "18:30")
         self.assertEqual(kwargs["context"]["_source_domain"], "clinic")
         self.assertEqual(kwargs["context"]["_source_use_case"], "clinic.reminder")
+
+    @patch("apps.domains.messaging.services.notification_service.send_event_notification", return_value=True)
+    def test_staff_manual_reminder_targets_one_booked_participant(self, mock_send):
+        first = self._student("011", "재촉학생")
+        second = self._student("012", "다른학생")
+        participant = SessionParticipant.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            student=first,
+            status=SessionParticipant.Status.BOOKED,
+        )
+        SessionParticipant.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            student=second,
+            status=SessionParticipant.Status.BOOKED,
+        )
+        now = timezone.make_aware(
+            datetime(2026, 5, 15, 18, 5),
+            timezone.get_current_timezone(),
+        )
+
+        result = send_clinic_reminder_for_participant(
+            tenant_id=self.tenant.id,
+            participant_id=participant.id,
+            actor_id=77,
+            now=now,
+        )
+
+        self.assertEqual(result, {"status": "ok", "sent": 1, "skipped": 0})
+        mock_send.assert_called_once()
+        kwargs = mock_send.call_args.kwargs
+        self.assertEqual(kwargs["tenant"], self.tenant)
+        self.assertEqual(kwargs["trigger"], "clinic_reminder")
+        self.assertEqual(kwargs["student"], first)
+        self.assertEqual(kwargs["send_to"], "student")
+        self.assertEqual(kwargs["context"]["_source_use_case"], "clinic.manual_reminder")
+        self.assertEqual(kwargs["context"]["_actor_id"], "77")
+        self.assertEqual(
+            kwargs["context"]["_domain_object_id"],
+            f"clinic_participant:{participant.id}:manual_reminder:202605151805",
+        )
+
+    @patch("apps.domains.messaging.services.notification_service.send_event_notification")
+    def test_staff_manual_reminder_rejects_non_booked_participant(self, mock_send):
+        student = self._student("013", "출석학생")
+        participant = SessionParticipant.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            student=student,
+            status=SessionParticipant.Status.ATTENDED,
+        )
+
+        result = send_clinic_reminder_for_participant(
+            tenant_id=self.tenant.id,
+            participant_id=participant.id,
+        )
+
+        self.assertEqual(result, {"status": "invalid_status", "sent": 0, "skipped": 1})
+        mock_send.assert_not_called()
+
+    @patch("apps.domains.messaging.services.notification_service.send_event_notification")
+    def test_staff_manual_reminder_is_tenant_scoped(self, mock_send):
+        student = self._student("014", "테넌트학생")
+        participant = SessionParticipant.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            student=student,
+            status=SessionParticipant.Status.BOOKED,
+        )
+        other_tenant = Tenant.objects.create(
+            name="Other Academy",
+            code="clinic-reminder-other",
+            is_active=True,
+        )
+
+        result = send_clinic_reminder_for_participant(
+            tenant_id=other_tenant.id,
+            participant_id=participant.id,
+        )
+
+        self.assertEqual(result, {"status": "not_found", "sent": 0, "skipped": 1})
+        mock_send.assert_not_called()
 
     @patch(
         "apps.support.clinic.session_dependencies.send_clinic_reminder_for_students",

@@ -213,6 +213,75 @@ def _dispatched_clinic_reminder_student_ids(*, tenant_id: int, session_id: int) 
     return student_ids
 
 
+def _clinic_reminder_context(*, session, domain_object_id: str, source_use_case: str, actor_id=None) -> dict:
+    context = {
+        "클리닉명": (session.title or "클리닉").strip(),
+        "장소": session.location or "",
+        "날짜": session.date.isoformat() if session.date else "",
+        "시간": session.start_time.strftime("%H:%M") if session.start_time else "",
+        "_domain_object_id": domain_object_id,
+        "_source_domain": "clinic",
+        "_source_use_case": source_use_case,
+    }
+    if actor_id:
+        context["_actor_id"] = str(actor_id)
+    return context
+
+
+def send_clinic_reminder_for_participant(
+    *,
+    tenant_id: int,
+    participant_id: int,
+    actor_id: int | None = None,
+    now=None,
+):
+    """Send one manual clinic reminder to one approved participant."""
+    from django.utils import timezone
+
+    from apps.domains.clinic.models import SessionParticipant
+    from apps.domains.messaging.services.notification_service import send_event_notification
+
+    participant = (
+        SessionParticipant.objects
+        .select_related("student", "session", "tenant")
+        .filter(
+            id=int(participant_id),
+            tenant_id=int(tenant_id),
+            student__deleted_at__isnull=True,
+        )
+        .first()
+    )
+    if not participant or not participant.session:
+        return {"status": "not_found", "sent": 0, "skipped": 1}
+    if participant.status != SessionParticipant.Status.BOOKED:
+        return {"status": "invalid_status", "sent": 0, "skipped": 1}
+
+    current = timezone.localtime(now or timezone.now())
+    context = _clinic_reminder_context(
+        session=participant.session,
+        domain_object_id=(
+            f"clinic_participant:{participant.id}:manual_reminder:"
+            f"{current.strftime('%Y%m%d%H%M')}"
+        ),
+        source_use_case="clinic.manual_reminder",
+        actor_id=actor_id,
+    )
+    sent = bool(
+        send_event_notification(
+            tenant=participant.tenant,
+            trigger="clinic_reminder",
+            student=participant.student,
+            send_to="student",
+            context=context,
+        )
+    )
+    return {
+        "status": "ok" if sent else "delivery_failed",
+        "sent": int(sent),
+        "skipped": int(not sent),
+    }
+
+
 def send_clinic_reminder_for_students(*, session_id: int):
     """
     Send the clinic reminder Alimtalk for booked participants in one session.
@@ -242,16 +311,11 @@ def send_clinic_reminder_for_students(*, session_id: int):
         )
     )
 
-    domain_object_id = f"clinic_session:{session.id}:reminder"
-    context = {
-        "클리닉명": (session.title or "클리닉").strip(),
-        "장소": session.location or "",
-        "날짜": session.date.isoformat() if session.date else "",
-        "시간": session.start_time.strftime("%H:%M") if session.start_time else "",
-        "_domain_object_id": domain_object_id,
-        "_source_domain": "clinic",
-        "_source_use_case": "clinic.reminder",
-    }
+    context = _clinic_reminder_context(
+        session=session,
+        domain_object_id=f"clinic_session:{session.id}:reminder",
+        source_use_case="clinic.reminder",
+    )
 
     dispatched_student_ids = _dispatched_clinic_reminder_student_ids(
         tenant_id=session.tenant_id,

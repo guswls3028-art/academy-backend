@@ -1,6 +1,6 @@
 from .lifecycle import (
     ClinicNotificationEvent,
-    COMPLETE_ALLOWED_TRANSITIONS,
+    COMPLETE_ALLOWED_STATUSES,
     ParticipantTransitionResult,
     ParticipantWriteResult,
     STAFF_STATUS_TRANSITIONS,
@@ -15,7 +15,7 @@ from .lifecycle import (
 
 __all__ = [
     "ClinicNotificationEvent",
-    "COMPLETE_ALLOWED_TRANSITIONS",
+    "COMPLETE_ALLOWED_STATUSES",
     "ParticipantTransitionResult",
     "ParticipantWriteResult",
     "STAFF_STATUS_TRANSITIONS",
