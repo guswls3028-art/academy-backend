@@ -2,6 +2,7 @@
 import logging
 
 from django.db import transaction
+from drf_spectacular.utils import OpenApiParameter, OpenApiTypes, extend_schema
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
@@ -36,6 +37,14 @@ from apps.support.clinic.session_dependencies import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class ClinicReminderResponseSerializer(serializers.Serializer):
+    ok = serializers.BooleanField(required=False)
+    status = serializers.CharField()
+    sent = serializers.IntegerField()
+    skipped = serializers.IntegerField()
+    detail = serializers.CharField(required=False)
 
 
 def _get_request_student_for_clinic(request):
@@ -236,6 +245,16 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         ).data
         return Response(out)
 
+    @extend_schema(
+        request=None,
+        parameters=[OpenApiParameter("id", OpenApiTypes.INT, OpenApiParameter.PATH)],
+        responses={
+            200: ClinicReminderResponseSerializer,
+            404: ClinicReminderResponseSerializer,
+            409: ClinicReminderResponseSerializer,
+            503: ClinicReminderResponseSerializer,
+        },
+    )
     @action(detail=True, methods=["post"])
     def remind(self, request, pk=None):
         """
