@@ -12,7 +12,9 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.core.models import Program, Tenant, TenantMembership
-from apps.core.models.user import user_internal_username
+from apps.core.models.user import user_display_username, user_internal_username
+from apps.core.services.password import change_password
+from apps.domains.parents.services import ensure_parent_account_for_student
 from apps.core.services.student_grade_report_layout import (
     STUDENT_GRADE_REPORT_LAYOUT_KEY,
     ymath_student_grade_report_layout,
@@ -26,6 +28,7 @@ from apps.core.management.commands.setup_three_tenants import (
 SCENARIO_CODE_PREFIX = "qa-ymath-realuse-"
 DEFAULT_SCENARIO_CODE = "qa-ymath-realuse-20260805"
 PASSWORD_ENV = "YMATH_REALUSE_SCENARIO_PASSWORD"
+LOGIN_UAT_ACCOUNT_COUNT_PER_ROLE = 10
 
 
 def assert_isolated_runtime() -> None:
@@ -86,6 +89,11 @@ class Command(BaseCommand):
         parser.add_argument("--teacher-username", default="ymath-qa-teacher")
         parser.add_argument("--student-count", type=int, default=6)
         parser.add_argument("--session-count", type=int, default=24)
+        parser.add_argument(
+            "--login-uat",
+            action="store_true",
+            help="Create a secret-free 10 student + 10 parent + 10 staff login manifest.",
+        )
         lifecycle = parser.add_mutually_exclusive_group()
         lifecycle.add_argument("--reset", action="store_true")
         lifecycle.add_argument("--destroy", action="store_true")
@@ -140,7 +148,8 @@ class Command(BaseCommand):
             )
             return
 
-        student_count = int(options["student_count"])
+        login_uat = bool(options["login_uat"])
+        student_count = LOGIN_UAT_ACCOUNT_COUNT_PER_ROLE if login_uat else int(options["student_count"])
         session_count = int(options["session_count"])
         if not 1 <= student_count <= 30:
             raise CommandError("student-count must be between 1 and 30.")
@@ -207,6 +216,7 @@ class Command(BaseCommand):
             Enrollment = apps.get_model("enrollment", "Enrollment")
             SessionEnrollment = apps.get_model("enrollment", "SessionEnrollment")
             Student = apps.get_model("students", "Student")
+            Staff = apps.get_model("staffs", "Staff")
 
             lecture_specs = (
                 ("공통수학2 정규반", "공수", "#3158d4"),
@@ -245,6 +255,7 @@ class Command(BaseCommand):
                     sessions.append(session)
 
             students = []
+            parents = []
             for index in range(1, student_count + 1):
                 student_user = self._ensure_user(
                     tenant=tenant,
@@ -258,20 +269,33 @@ class Command(BaseCommand):
                     user=student_user,
                     role="student",
                 )
+                parent = None
+                if login_uat:
+                    parent_result = ensure_parent_account_for_student(
+                        tenant=tenant,
+                        parent_phone=f"01099{index:06d}",
+                        student_name=f"검증학생 {index:02d}",
+                    )
+                    parent = parent_result.parent
+                    change_password(parent.user, password)
+                    parents.append(parent)
+                student_defaults = {
+                    "name": f"검증학생 {index:02d}",
+                    "ps_number": f"QA-{index:04d}",
+                    "omr_code": f"98{index:06d}",
+                    "phone": f"01098{index:06d}",
+                    "parent_phone": f"01099{index:06d}",
+                    "grade": 1 + ((index - 1) % 3),
+                    "school_type": "HIGH",
+                    "high_school": "검증고등학교",
+                    "memo": "격리 개발환경 실사용 시나리오 학생",
+                }
+                if parent is not None:
+                    student_defaults["parent"] = parent
                 student, _ = Student.objects.update_or_create(
                     tenant=tenant,
                     user=student_user,
-                    defaults={
-                        "name": f"검증학생 {index:02d}",
-                        "ps_number": f"QA-{index:04d}",
-                        "omr_code": f"98{index:06d}",
-                        "phone": f"01098{index:06d}",
-                        "parent_phone": f"01099{index:06d}",
-                        "grade": 1 + ((index - 1) % 3),
-                        "school_type": "HIGH",
-                        "high_school": "검증고등학교",
-                        "memo": "격리 개발환경 실사용 시나리오 학생",
-                    },
+                    defaults=student_defaults,
                 )
                 students.append(student)
                 for lecture in lectures:
@@ -289,6 +313,32 @@ class Command(BaseCommand):
                             session=session,
                         )
 
+            login_staff = []
+            if login_uat:
+                for index in range(1, LOGIN_UAT_ACCOUNT_COUNT_PER_ROLE + 1):
+                    staff_user = self._ensure_user(
+                        tenant=tenant,
+                        login_username=f"ymath-qa-staff-{index:02d}",
+                        password=password,
+                        name=f"로그인 검증 직원 {index:02d}",
+                        is_staff=True,
+                    )
+                    TenantMembership.ensure_active(
+                        tenant=tenant,
+                        user=staff_user,
+                        role="staff",
+                    )
+                    staff, _ = Staff.objects.update_or_create(
+                        tenant=tenant,
+                        user=staff_user,
+                        defaults={
+                            "name": f"로그인 검증 직원 {index:02d}",
+                            "phone": f"01097{index:06d}",
+                            "is_active": True,
+                        },
+                    )
+                    login_staff.append(staff)
+
         payload = {
             "status": "YMATH_REALUSE_SCENARIO_READY",
             "tenant_code": tenant.code,
@@ -301,6 +351,37 @@ class Command(BaseCommand):
             "session_ids": [session.id for session in sessions],
             "counts": self._tenant_counts(tenant),
         }
+        if login_uat:
+            accounts = [
+                {
+                    "role": "student",
+                    "username": user_display_username(student.user),
+                    "landing_path": "/student",
+                }
+                for student in students
+            ]
+            accounts.extend(
+                {
+                    "role": "parent",
+                    "username": user_display_username(parent.user),
+                    "landing_path": "/student",
+                }
+                for parent in parents
+            )
+            accounts.extend(
+                {
+                    "role": "staff",
+                    "username": user_display_username(staff.user),
+                    "landing_path": "/workspace/mobile",
+                }
+                for staff in login_staff
+            )
+            payload["login_manifest"] = {
+                "schema_version": 1,
+                "tenant_code": tenant.code,
+                "account_count": len(accounts),
+                "accounts": accounts,
+            }
         self.stdout.write(json.dumps(payload, ensure_ascii=False, sort_keys=True))
 
     @staticmethod
@@ -328,6 +409,8 @@ class Command(BaseCommand):
     def _tenant_counts(tenant) -> dict[str, int]:
         model_names = {
             "students": ("students", "Student"),
+            "parents": ("parents", "Parent"),
+            "staffs": ("staffs", "Staff"),
             "lectures": ("lectures", "Lecture"),
             "sessions": ("lectures", "Session"),
             "enrollments": ("enrollment", "Enrollment"),
