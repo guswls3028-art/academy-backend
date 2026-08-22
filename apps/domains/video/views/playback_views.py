@@ -544,7 +544,7 @@ class PlaybackEventBatchView(APIView):
                 seek = (snap or {}).get("seek") or {}
                 allow_seek = bool((snap or {}).get("allow_seek", True))
                 mode = seek.get("mode")
-                if (not allow_seek) or mode in ("blocked", "bounded_forward"):
+                if (not allow_seek) or mode in ("blocked", "bounded_forward", "budgeted_forward"):
                     return True, f"seek_{mode or 'blocked'}"
             if ev_type == "SPEED_CHANGE_ATTEMPT":
                 pr = ((snap or {}).get("playback_rate") or {})

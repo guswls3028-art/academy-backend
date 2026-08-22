@@ -15,6 +15,7 @@ from apps.domains.student_app.media.views import (
     StudentVideoMeView,
     StudentVideoPlaybackView,
     StudentVideoProgressView,
+    StudentVideoForwardSkipView,
     StudentSessionVideoListView,
     StudentVideoStatsView,
 )
@@ -30,6 +31,7 @@ from apps.domains.video.models import (
 )
 
 
+@override_settings(PASSWORD_HASHERS=["django.contrib.auth.hashers.MD5PasswordHasher"])
 class StudentVideoProgressEnrollmentResolutionTests(TestCase):
     def setUp(self):
         self.factory = APIRequestFactory()
@@ -115,6 +117,19 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         request.tenant = self.tenant
         force_authenticate(request, user=user or self.user)
         return StudentVideoProgressView.as_view()(request, video_id=target_video.id)
+
+    def _post_forward_skip(self, *, user=None, enrollment_id=None, selected_student_id=None):
+        payload = {"enrollment_id": enrollment_id} if enrollment_id is not None else {}
+        request = self.factory.post(
+            f"/api/v1/student/video/videos/{self.video.id}/forward-skip/",
+            payload,
+            format="json",
+        )
+        if selected_student_id is not None:
+            request.META["HTTP_X_STUDENT_ID"] = str(selected_student_id)
+        request.tenant = self.tenant
+        force_authenticate(request, user=user or self.user)
+        return StudentVideoForwardSkipView.as_view()(request, video_id=self.video.id)
 
     def _get_playback(self, *, user=None, enrollment_id=None, selected_student_id=None):
         path = f"/api/v1/student/video/videos/{self.video.id}/playback/"
@@ -577,7 +592,7 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         self.assertGreaterEqual(len(query["sig"][0]), 32)
 
     @override_settings(CDN_HLS_BASE_URL="https://cdn.example.test", CDN_HLS_SIGNING_SECRET="")
-    def test_free_review_playback_preserves_teacher_video_controls(self):
+    def test_free_review_default_uses_limited_forward_skip_budget(self):
         self.video.allow_skip = False
         self.video.max_speed = 1.0
         self.video.show_watermark = True
@@ -588,8 +603,9 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["policy"]["access_mode"], AccessMode.FREE_REVIEW.value)
         self.assertFalse(response.data["policy"]["monitoring_enabled"])
-        self.assertFalse(response.data["policy"]["allow_seek"])
-        self.assertEqual(response.data["policy"]["seek"]["mode"], "blocked")
+        self.assertTrue(response.data["policy"]["allow_seek"])
+        self.assertEqual(response.data["policy"]["seek"]["mode"], "budgeted_forward")
+        self.assertEqual(response.data["policy"]["seek"]["limit_seconds"], 20)
         self.assertEqual(response.data["policy"]["playback_rate"]["max"], 1.0)
         self.assertTrue(response.data["policy"]["watermark"]["enabled"])
 
@@ -622,12 +638,85 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["video"]["access_mode"], AccessMode.PROCTORED_CLASS.value)
         self.assertEqual(response.data["policy"]["access_mode"], AccessMode.PROCTORED_CLASS.value)
+        self.assertTrue(response.data["policy"]["allow_seek"])
+        self.assertEqual(response.data["policy"]["seek"]["mode"], "budgeted_forward")
+        self.assertEqual(response.data["policy"]["seek"]["step_seconds"], 10)
+        self.assertEqual(response.data["policy"]["seek"]["limit_seconds"], 20)
+        self.assertEqual(response.data["policy"]["seek"]["remaining_seconds"], 20)
         self.assertIsNotNone(response.data["playback_session_id"])
         self.assertIsNotNone(response.data["playback_token"])
         session = VideoPlaybackSession.objects.get(session_id=response.data["playback_session_id"])
         self.assertEqual(session.video_id, self.video.id)
         self.assertEqual(session.enrollment_id, self.target_enrollment.id)
         self.assertIsNotNone(session.expires_at.tzinfo)
+
+    @override_settings(CDN_HLS_BASE_URL="https://cdn.example.test", CDN_HLS_SIGNING_SECRET="")
+    def test_proctored_forward_skip_is_server_counted_and_survives_playback_reload(self):
+        Attendance.objects.create(
+            tenant=self.tenant,
+            session=self.target_session,
+            enrollment=self.target_enrollment,
+            status="ONLINE",
+        )
+
+        first = self._post_forward_skip(enrollment_id=self.target_enrollment.id)
+        second = self._post_forward_skip(enrollment_id=self.target_enrollment.id)
+        exhausted = self._post_forward_skip(enrollment_id=self.target_enrollment.id)
+
+        self.assertEqual(first.status_code, 200, first.data)
+        self.assertEqual(first.data["granted_seconds"], 10)
+        self.assertEqual(first.data["remaining_seconds"], 10)
+        self.assertEqual(second.data["granted_seconds"], 10)
+        self.assertEqual(second.data["remaining_seconds"], 0)
+        self.assertEqual(exhausted.data["granted_seconds"], 0)
+        self.assertEqual(exhausted.data["unavailable_reason"], "limit_reached")
+
+        progress = VideoProgress.objects.get(
+            video=self.video,
+            enrollment=self.target_enrollment,
+        )
+        self.assertEqual(progress.forward_skip_seconds_used, 20)
+
+        playback = self._get_playback(enrollment_id=self.target_enrollment.id)
+        self.assertEqual(playback.status_code, 200, playback.data)
+        self.assertEqual(playback.data["policy"]["seek"]["used_seconds"], 20)
+        self.assertEqual(playback.data["policy"]["seek"]["remaining_seconds"], 0)
+
+    def test_free_review_forward_skip_uses_the_same_persisted_budget(self):
+        response = self._post_forward_skip(enrollment_id=self.target_enrollment.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["granted_seconds"], 10)
+        progress = VideoProgress.objects.get(video=self.video, enrollment=self.target_enrollment)
+        self.assertEqual(progress.forward_skip_seconds_used, 10)
+
+    def test_forward_skip_rejects_video_with_explicit_free_seeking(self):
+        self.video.allow_skip = True
+        self.video.save(update_fields=["allow_skip"])
+
+        response = self._post_forward_skip(enrollment_id=self.target_enrollment.id)
+
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertEqual(response.data["code"], "skip_budget_not_applicable")
+        self.assertFalse(VideoProgress.objects.filter(video=self.video).exists())
+
+    def test_parent_cannot_consume_student_forward_skip_budget(self):
+        Attendance.objects.create(
+            tenant=self.tenant,
+            session=self.target_session,
+            enrollment=self.target_enrollment,
+            status="ONLINE",
+        )
+
+        response = self._post_forward_skip(
+            user=self.parent_user,
+            enrollment_id=self.target_enrollment.id,
+            selected_student_id=self.student.id,
+        )
+
+        self.assertEqual(response.status_code, 403, response.data)
+        self.assertEqual(response.data["code"], "student_only")
+        self.assertFalse(VideoProgress.objects.filter(video=self.video).exists())
 
     def test_parent_progress_echo_requires_selected_child_video_enrollment(self):
         unlinked_parent_user = User.objects.create_user(

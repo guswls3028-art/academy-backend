@@ -18,3 +18,20 @@ def youtube_embed_url(video_id: str) -> str:
     from .youtube import youtube_embed_url as _impl
 
     return _impl(video_id)
+
+
+def build_effective_playback_policy(*, video, access_mode, permission=None, progress=None) -> dict:
+    from .services.playback_policy import build_effective_playback_policy as _impl
+
+    return _impl(
+        video=video,
+        access_mode=access_mode,
+        permission=permission,
+        progress=progress,
+    )
+
+
+def consume_video_forward_skip(*, video, enrollment) -> dict:
+    from .services.skip_budget import consume_video_forward_skip as _impl
+
+    return _impl(video=video, enrollment=enrollment)
