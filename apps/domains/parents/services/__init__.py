@@ -7,7 +7,7 @@
 
 from dataclasses import dataclass
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.contrib.auth import get_user_model
 
 from apps.core.models import TenantMembership
@@ -21,9 +21,11 @@ PARENT_DEFAULT_PASSWORD = "0000"  # deprecated — 외부 import 호환용 상�
 
 
 def parent_initial_password(parent_phone: str) -> str:
-    """학부모 초기 비번 SSOT — 전화번호 정규화 후 마지막 4자리. 4자 미만이면 fallback."""
+    """학부모 초기 비번 SSOT — 정규화된 휴대번호의 마지막 4자리."""
     digits = "".join(ch for ch in str(parent_phone or "") if ch.isdigit())
-    return digits[-4:] if len(digits) >= 4 else (digits or "0000")
+    if len(digits) != 11 or not digits.startswith("010"):
+        raise ValueError("학부모 휴대번호를 010 11자리로 입력해 주세요.")
+    return digits[-4:]
 
 
 @dataclass(frozen=True)
@@ -48,81 +50,82 @@ def ensure_parent_account_for_student(
     - 없으면 User + Parent + TenantMembership 생성
     - 있으면 기존 Parent 반환 (User 없으면 생성)
     """
-    parent_phone = str(parent_phone or "").strip()
-    if not parent_phone:
-        raise ValueError("학부모 전화번호는 필수입니다.")
+    parent_phone = "".join(ch for ch in str(parent_phone or "") if ch.isdigit())
+    initial_pw = parent_initial_password(parent_phone)
 
     User = get_user_model()
     # tenant 내 유일한 학부모 식별: username = p_{tenant_id}_{phone}
     parent_username = f"p_{tenant.id}_{parent_phone}"
-    initial_pw = parent_initial_password(parent_phone)
 
-    parent = Parent.objects.filter(tenant=tenant, phone=parent_phone).first()
-
-    if parent:
-        if not parent.user_id:
+    # A concurrent enrollment can discover the same new phone before either
+    # transaction commits.  The unique username/parent constraints serialize
+    # the collision; retry once after the losing savepoint rolls back.
+    for attempt in range(2):
+        try:
             with transaction.atomic():
-                # 기존 parent.name이 있으면 우선 사용 — 자녀 N명일 때 마지막 자녀 이름으로 덮이는 문제 회피.
-                user_name = parent.name or f"{student_name} 학부모"
-                user = User.objects.create_user(
-                    username=parent_username,
-                    phone=parent_phone,
-                    name=user_name,
-                    tenant=tenant,
+                parent = (
+                    Parent.objects.select_for_update()
+                    .filter(tenant=tenant, phone=parent_phone)
+                    .first()
                 )
-                user.set_password(initial_pw)
-                user.must_change_password = True
-                user.save()
-                parent.user = user
-                parent.save(update_fields=["user"])
+                if parent and parent.user_id:
+                    TenantMembership.ensure_active(
+                        tenant=tenant,
+                        user=parent.user,
+                        role="parent",
+                    )
+                    return ParentAccountEnsureResult(
+                        parent=parent,
+                        user_created=False,
+                        initial_password=None,
+                    )
+
+                user = (
+                    User.objects.select_for_update()
+                    .filter(username=parent_username)
+                    .first()
+                )
+                user_created = user is None
+                if user is None:
+                    user_name = (parent.name if parent else "") or f"{student_name} 학부모"
+                    user = User.objects.create_user(
+                        username=parent_username,
+                        phone=parent_phone,
+                        name=user_name,
+                        tenant=tenant,
+                    )
+                    user.set_password(initial_pw)
+                    user.must_change_password = True
+                    user.save()
+                elif user.tenant_id != tenant.id:
+                    raise ValueError("학부모 계정의 테넌트가 일치하지 않습니다.")
+
+                if parent is None:
+                    parent = Parent.objects.create(
+                        tenant=tenant,
+                        user=user,
+                        name=f"{student_name} 학부모",
+                        phone=parent_phone,
+                    )
+                elif not parent.user_id:
+                    parent.user = user
+                    parent.save(update_fields=["user"])
+
                 TenantMembership.ensure_active(
                     tenant=tenant,
                     user=user,
                     role="parent",
                 )
-            return ParentAccountEnsureResult(
-                parent=parent,
-                user_created=True,
-                initial_password=initial_pw,
-            )
-        return ParentAccountEnsureResult(
-            parent=parent,
-            user_created=False,
-            initial_password=None,
-        )
+                return ParentAccountEnsureResult(
+                    parent=parent,
+                    user_created=user_created,
+                    initial_password=initial_pw if user_created else None,
+                )
+        except IntegrityError:
+            if attempt:
+                raise
 
-    with transaction.atomic():
-        if User.objects.filter(username=parent_username).exists():
-            raise ValueError(f"학부모 전화번호 {parent_phone}가 이미 다른 학원에서 사용 중입니다.")
-
-        user = User.objects.create_user(
-            username=parent_username,
-            phone=parent_phone,
-            name=f"{student_name} 학부모",
-            tenant=tenant,
-        )
-        user.set_password(initial_pw)
-        user.must_change_password = True
-        user.save()
-
-        parent = Parent.objects.create(
-            tenant=tenant,
-            user=user,
-            name=f"{student_name} 학부모",
-            phone=parent_phone,
-        )
-
-        TenantMembership.ensure_active(
-            tenant=tenant,
-            user=user,
-            role="parent",
-        )
-
-    return ParentAccountEnsureResult(
-        parent=parent,
-        user_created=True,
-        initial_password=initial_pw,
-    )
+    raise RuntimeError("학부모 계정을 생성하지 못했습니다.")
 
 
 def ensure_parent_for_student(

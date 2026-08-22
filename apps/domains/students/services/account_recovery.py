@@ -236,33 +236,35 @@ def send_password_recovery(account: RecoveryAccount, *, temp_password: str | Non
     if len(password) < 4:
         raise AccountRecoveryValidationError("임시 비밀번호는 최소 4자 이상이어야 합니다.")
 
-    user = account.user
     if _account_recovery_delivery_disabled(account.student.tenant_id):
         return
 
-    from apps.core.services.password import (
-        create_pending_password_reset,
-        restore_pending_password_reset,
-        snapshot_pending_password_reset,
-    )
+    from django.contrib.auth import get_user_model
+    from django.db import transaction
 
-    previous_pending = snapshot_pending_password_reset(user)
-    create_pending_password_reset(user, password)
+    from apps.core.services.password import create_pending_password_reset
 
-    trigger = "password_reset_parent" if account.target == "parent" else "password_reset_student"
+    # Serialize recovery requests for one account. Otherwise two callers can
+    # both send a different temporary password while only the last DB write is
+    # usable, and a failed caller can overwrite a successful caller's pending
+    # state during manual rollback.
+    with transaction.atomic():
+        User = get_user_model()
+        user = User.objects.select_for_update().get(pk=account.user.pk)
+        create_pending_password_reset(user, password)
 
-    if _send_owner_alimtalk(
-        source_tenant_id=account.student.tenant_id,
-        trigger=trigger,
-        to=account.send_to,
-        replacements=_password_replacements(account, password),
-        log_target_id=_log_target_id(account),
-        log_target_name=account.student.name or account.display_name,
-    ):
-        return
-
-    restore_pending_password_reset(user, previous_pending)
-    raise AccountRecoveryDeliveryError("임시 비밀번호 발송에 실패했습니다. 잠시 후 다시 시도해 주세요.")
+        trigger = "password_reset_parent" if account.target == "parent" else "password_reset_student"
+        if not _send_owner_alimtalk(
+            source_tenant_id=account.student.tenant_id,
+            trigger=trigger,
+            to=account.send_to,
+            replacements=_password_replacements(account, password),
+            log_target_id=_log_target_id(account),
+            log_target_name=account.student.name or account.display_name,
+        ):
+            raise AccountRecoveryDeliveryError(
+                "임시 비밀번호 발송에 실패했습니다. 잠시 후 다시 시도해 주세요."
+            )
 
 
 def resolve_staff_password_reset_account(
@@ -381,48 +383,42 @@ def reset_staff_password(
     if len(password) < 4:
         raise AccountRecoveryValidationError("임시 비밀번호는 최소 4자 이상이어야 합니다.")
 
-    from apps.core.services.password import (
-        clear_pending_password_reset,
-        force_reset_password,
-        restore_pending_password_reset,
-        rollback_password,
-        snapshot_pending_password_reset,
-    )
+    from django.contrib.auth import get_user_model
+    from django.db import transaction
 
-    user = account.user
-    previous_password_hash = user.password
-    previous_must_change_password = bool(getattr(user, "must_change_password", False))
-    previous_pending = snapshot_pending_password_reset(user)
+    from apps.core.services.password import clear_pending_password_reset, force_reset_password
 
-    force_reset_password(user, password)
-    clear_pending_password_reset(user)
+    with transaction.atomic():
+        User = get_user_model()
+        user = User.objects.select_for_update().get(pk=account.user.pk)
+        force_reset_password(user, password)
+        clear_pending_password_reset(user)
 
-    if skip_notify:
-        # Student/parent credential notices are system-required. Keep the
-        # argument for API compatibility, but never suppress delivery here.
-        pass
+        if skip_notify:
+            # Student/parent credential notices are system-required. Keep the
+            # argument for API compatibility, but never suppress delivery here.
+            pass
 
-    if _account_recovery_delivery_disabled(account.student.tenant_id):
-        return "임시 비밀번호가 발송되었습니다. (테스트 환경에서는 실제 발송이 생략됩니다.)"
+        if _account_recovery_delivery_disabled(account.student.tenant_id):
+            message = "임시 비밀번호가 발송되었습니다. (테스트 환경에서는 실제 발송이 생략됩니다.)"
+        else:
+            trigger = "password_reset_parent" if account.target == "parent" else "password_reset_student"
+            if not _send_owner_alimtalk(
+                source_tenant_id=account.student.tenant_id,
+                trigger=trigger,
+                to=account.send_to,
+                replacements=_password_replacements(account, password),
+                log_target_id=_log_target_id(account),
+                log_target_name=account.student.name or account.display_name,
+            ):
+                raise AccountRecoveryDeliveryError(
+                    "임시 비밀번호 발송에 실패했습니다. 잠시 후 다시 시도해 주세요."
+                )
+            message = "임시 비밀번호가 발송되었습니다. 알림톡을 확인해 주세요."
 
-    trigger = "password_reset_parent" if account.target == "parent" else "password_reset_student"
-    if _send_owner_alimtalk(
-        source_tenant_id=account.student.tenant_id,
-        trigger=trigger,
-        to=account.send_to,
-        replacements=_password_replacements(account, password),
-        log_target_id=_log_target_id(account),
-        log_target_name=account.student.name or account.display_name,
-    ):
-        return "임시 비밀번호가 발송되었습니다. 알림톡을 확인해 주세요."
-
-    rollback_password(
-        user,
-        previous_password_hash,
-        must_change_password=previous_must_change_password,
-    )
-    restore_pending_password_reset(user, previous_pending)
-    raise AccountRecoveryDeliveryError("임시 비밀번호 발송에 실패했습니다. 잠시 후 다시 시도해 주세요.")
+    for field in ("password", "token_version", "must_change_password"):
+        setattr(account.user, field, getattr(user, field))
+    return message
 
 
 def list_recent_account_notification_logs(student: Student, *, limit: int = 5) -> list[dict[str, object]]:

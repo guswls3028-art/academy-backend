@@ -95,6 +95,15 @@ Current canonical entry points:
 | admin/student profile write | `update_student_profile()` |
 | deleted conflict restore/delete | `restore_student()` / `permanently_delete_students()` through import conflict resolver |
 
+Student app profile photos use only the tenant-scoped R2 key returned by
+`profile_photo_key(tenant_id, student_id, unique_id, ext)` as the readable
+production state. An R2 upload or DB key-save failure returns retryable 503 and
+must not fall back to a local `ImageField` that production cannot serve. After
+the new key is saved, the exact replaced R2 object is deleted best-effort; a DB
+save failure cleans the newly uploaded key best-effort and preserves the old DB
+key. Invalid content type, image magic bytes, or files larger than 10 MiB are
+rejected before upload.
+
 ## 2.1 Tenant Custom Student Fields
 
 Teacher-specific profile columns are a tenant-scoped extension of the canonical

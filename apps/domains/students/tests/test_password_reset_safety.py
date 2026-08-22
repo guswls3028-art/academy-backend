@@ -103,6 +103,31 @@ class StudentPasswordResetSafetyTests(TestCase):
         ALLOWED_HOSTS=["api.hakwonplus.com", "testserver"],
         TENANT_HEADER_CODE_ALLOWED_HOSTS=("api.hakwonplus.com",),
     )
+    @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=False)
+    def test_staff_reset_notice_failure_rolls_back_token_and_password_state(self, _send_mock):
+        response = APIClient().post(
+            "/api/v1/students/password_reset_send/",
+            {
+                "target": "student",
+                "student_name": self.student.name,
+                "student_ps_number": self.student.ps_number,
+                "temp_password": "4444",
+            },
+            format="json",
+            **self._staff_auth_headers(role="teacher"),
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("oldpw123"))
+        self.assertFalse(self.user.must_change_password)
+        self.assertEqual(self.user.token_version, 0)
+        self.assertFalse(PendingPasswordReset.objects.filter(user=self.user).exists())
+
+    @override_settings(
+        ALLOWED_HOSTS=["api.hakwonplus.com", "testserver"],
+        TENANT_HEADER_CODE_ALLOWED_HOSTS=("api.hakwonplus.com",),
+    )
     @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=True)
     def test_staff_password_reset_uses_staff_throttle_not_public_sms_ip_bucket(self, send_mock):
         User = get_user_model()
@@ -300,7 +325,8 @@ class StudentPasswordResetSafetyTests(TestCase):
             },
         )
 
-        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("message", response.data)
         self.user.refresh_from_db()
         self.assertTrue(self.user.check_password("oldpw123"))
         self.assertFalse(self.user.must_change_password)
@@ -356,7 +382,8 @@ class StudentPasswordResetSafetyTests(TestCase):
             },
         )
 
-        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("message", response.data)
         self.user.refresh_from_db()
         self.assertTrue(self.user.check_password("oldpw123"))
         self.assertFalse(self.user.must_change_password)

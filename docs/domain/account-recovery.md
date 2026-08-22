@@ -34,10 +34,11 @@ POST /api/v1/auth/account-recovery/dispatch/
 - `AllowAny` 엔드포인트지만 `TenantResolved`가 필수다.
 - `AlimtalkEndpointThrottle`을 적용한다.
 - 요청 전화번호는 숫자만 남긴 뒤 `010`으로 시작하는 11자리만 허용한다.
-- 조회 실패, 동명이인/공유번호 등 다건 매칭, 성공 모두 공개 응답은 generic message로 통일한다.
+- 조회 실패, 동명이인/공유번호 등 다건 매칭, 성공, 계정 확인 후 알림톡 예약 실패 모두 공개 응답은 generic 200 message로 통일한다.
 - API 응답에 아이디나 비밀번호를 직접 반환하지 않는다.
 - 안내 발송은 검증된 전화번호로만 수행한다. 이메일은 사용하지 않는다.
 - legacy 공개 호환 경로도 정본 계정복구 서비스로 위임하며, 사용자 존재 여부를 노출하지 않는다. OTP 인증번호 방식은 410으로 봉인한다.
+- 공개 요청의 알림톡 예약 실패는 전화번호/이름을 남기지 않는 서버 warning과 메시징 운영 로그로 추적한다. 공개 API에서 503이나 내부 실패 원인을 반환하지 않는다. 인증된 staff reset/계정 안내는 운영자가 재시도 판단을 해야 하므로 400/503을 유지한다.
 
 ## 3. 매칭 규칙
 
@@ -113,7 +114,21 @@ generate_temp_password() -> 숫자 6자리
 - plaintext 임시 비밀번호는 DB에 저장하지 않는다. pending reset은 Django password hash만 저장한다.
 - `NotificationLog.message_body`는 계정/인증 트리거 본문을 저장하지 않고 보안 placeholder로 마스킹한다.
 - 사용자별 pending reset은 1개만 유지한다. 새 요청은 이전 pending reset을 대체한다.
-- 관리자/선생님 또는 학생/학부모 본인이 인증된 상태에서 수행하는 학생/학부모 비밀번호 변경은 즉시 reset 경로를 사용하고, 알림톡 발송 실패 시 비밀번호를 롤백한다.
+- 공개 임시비밀번호 요청은 대상 User row를 잠근 트랜잭션 안에서 pending reset과 알림톡 예약을 함께 처리한다. 같은 계정의 동시 요청은 순서대로 처리되며, 발송 실패 요청이 다른 요청의 성공한 pending reset을 복원/덮어쓰지 않는다.
+- 관리자/선생님 또는 학생/학부모 본인이 인증된 상태에서 수행하는 학생/학부모 비밀번호 변경은 즉시 reset 경로를 사용한다.
+- 본인 변경은 `change_password_with_notice()`가 User row를 잠근 뒤 현재 비밀번호를 다시 확인한다. 따라서 같은 기존 비밀번호를 사용한 동시 요청은 하나만 성공한다.
+- 본인 변경과 staff reset은 비밀번호 hash, `must_change_password`, `token_version`, pending reset 정리, durable 알림톡 예약을 한 DB 트랜잭션으로 처리한다. 알림톡 예약 실패 시 이 상태가 모두 이전 값으로 돌아가며 현재 세션도 유지된다.
+
+## 5.1 Refresh token 계정 상태 검증
+
+`POST /api/v1/token/refresh/`는 `TenantAwareTokenRefreshView`가 소유한다. 서명과
+만료 검증만 하는 기본 SimpleJWT refresh view를 직접 사용하지 않는다.
+
+- refresh token에 `user_id`, `tenant_id`, `token_version` claim이 모두 있어야 한다.
+- User와 Tenant가 활성이고, claim의 `token_version`이 현재 User 값과 같아야 한다.
+- claim tenant에 유효한 `TenantMembership`과 역할별 학생/학부모 profile이 있어야 한다.
+- 비밀번호 변경, 계정 비활성화, membership 제거로 위 조건이 깨지면 refresh는 401로 닫힌다. 새 access/refresh token을 발급하거나 기존 refresh token을 회전시키지 않는다.
+- 프론트 세션 종료/복귀 계약은 `frontend/docs/ACCOUNT-CREDENTIAL-FLOWS.md`가 소유한다.
 
 ## 6. 알림톡 발송
 
@@ -176,7 +191,11 @@ legacy 공개 호환 규칙:
 - 단위/통합: `python -m pytest apps\domains\students\tests\test_account_recovery.py apps\domains\students\tests\test_password_reset_safety.py -v --tb=short -x`
 - 로그인 활성화: pending 임시 비밀번호로 `/api/v1/token/` 로그인이 성공하고 `must_change_password=True` 토큰이 발급되는지 확인한다.
 - 기존 비밀번호 보호: 발송 실패, unknown account, ambiguous match, 워커/공급자 실패 상황에서 기존 비밀번호가 유지되는지 확인한다.
-- 개인정보 보호: unknown/ambiguous/success 공개 응답은 generic message로 구분되지 않아야 한다.
+- 개인정보 보호: unknown/ambiguous/success/delivery failure 공개 응답은 status와 generic message로 구분되지 않아야 한다.
+- 본인 변경 원자성: 알림톡 예약 실패 전후의 비밀번호, `must_change_password`, `token_version`이 모두 동일해야 한다.
+- 동시 본인 변경: PostgreSQL에서 같은 기존 비밀번호로 동시에 요청해도 하나만 성공하고 `token_version`은 한 번만 증가해야 한다.
+- 동시 공개 복구: PostgreSQL에서 같은 계정의 두 요청이 User row lock으로 직렬화되고 마지막으로 발송 예약된 pending 비밀번호만 유효해야 한다.
+- refresh 폐쇄: stale `token_version`, 비활성 User/Tenant/membership/profile의 refresh가 401이며 회전 token을 반환하지 않아야 한다.
 - staff 아이디 안내: 선택 target에 대한 exact trigger/마스킹 수신자를 확인하고, 발송 전후 비밀번호·`must_change_password`·`token_version`·pending reset이 유지되는지 검증한다.
 - staff 테넌트 경계: 다른 테넌트의 `<student_id>`는 404이고 발송 부수효과가 없어야 한다.
 - 반복 요청: 새 pending reset이 이전 pending reset을 대체해야 한다.

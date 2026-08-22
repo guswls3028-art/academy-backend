@@ -4,10 +4,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
 
 from academy.adapters.db.django import repositories_core as core_repo
-from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework_simplejwt.exceptions import AuthenticationFailed
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer, TokenRefreshSerializer
+from rest_framework_simplejwt.settings import api_settings
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from rest_framework import serializers
 
 from apps.core.services.password import (
@@ -181,3 +184,39 @@ class TenantAwareTokenObtainPairView(TokenObtainPairView):
     def get_throttles(self):
         from apps.api.common.throttles import LoginThrottle
         return [LoginThrottle()]
+
+
+class TenantAwareTokenRefreshSerializer(TokenRefreshSerializer):
+    """Reject refresh tokens whose account or tenant authorization is stale."""
+
+    def validate(self, attrs):
+        refresh = self.token_class(attrs["refresh"])
+        user_id = refresh.payload.get(api_settings.USER_ID_CLAIM)
+        tenant_id = refresh.payload.get("tenant_id")
+        token_version = refresh.payload.get("token_version")
+        if user_id is None or tenant_id is None or token_version is None:
+            raise AuthenticationFailed("유효하지 않은 로그인 세션입니다.", code="invalid_session")
+
+        User = get_user_model()
+        user = User.objects.filter(**{api_settings.USER_ID_FIELD: user_id}).first()
+        tenant = core_repo.tenant_get_by_id(tenant_id)
+        if user is None or tenant is None or not user.is_active:
+            raise AuthenticationFailed("로그인 세션이 만료되었습니다.", code="session_expired")
+
+        current_version = int(getattr(user, "token_version", 0) or 0)
+        try:
+            presented_version = int(token_version)
+        except (TypeError, ValueError):
+            presented_version = -1
+        if presented_version != current_version:
+            raise AuthenticationFailed("로그인 세션이 만료되었습니다.", code="session_expired")
+
+        from apps.core.services.tenant_access import user_has_active_tenant_access
+        if not user_has_active_tenant_access(user, tenant):
+            raise AuthenticationFailed("로그인할 수 없는 계정입니다.", code="no_active_account")
+
+        return super().validate(attrs)
+
+
+class TenantAwareTokenRefreshView(TokenRefreshView):
+    serializer_class = TenantAwareTokenRefreshSerializer
