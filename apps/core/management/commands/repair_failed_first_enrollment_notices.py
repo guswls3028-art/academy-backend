@@ -92,6 +92,93 @@ class RecoveryCandidate:
     historical_log_ids: tuple[int, ...]
 
 
+@dataclass(frozen=True)
+class ReviewedDeliveryHistoryPair:
+    outbox_id: int
+    log_id: int
+    trigger: str
+    target_id: str
+    dispatch_key: str
+    business_idempotency_key: str
+    origin_type: str
+    origin_id: str
+    log_status: str
+    log_success: bool
+    failure_reason: str
+    provider_message_required: bool
+    amount_deducted: Decimal
+
+
+REVIEWED_STUDENT_ONLY_HISTORY = (
+    ReviewedDeliveryHistoryPair(
+        outbox_id=1174,
+        log_id=4570,
+        trigger=STUDENT_TRIGGER,
+        target_id="student:3656",
+        dispatch_key="e3b6c52e-1890-4ee9-b549-60d789a8507b",
+        business_idempotency_key=(
+            "f1645e709a33ffa71c1687743eccf169"
+            "774a583f02fd1995f06736c434788a69"
+        ),
+        origin_type="",
+        origin_id="",
+        log_status="failed",
+        log_success=False,
+        failure_reason="provider_quota_exceeded_not_accepted",
+        provider_message_required=False,
+        amount_deducted=Decimal("0"),
+    ),
+    ReviewedDeliveryHistoryPair(
+        outbox_id=1654,
+        log_id=5060,
+        trigger=STUDENT_TRIGGER,
+        target_id="student:3656",
+        dispatch_key="3055120a-c519-487e-b4ac-20b8057bc588",
+        business_idempotency_key=(
+            "6403f10f32e0633115ffd041b1e1888"
+            "22abb4c7bdded5b8ab66277dcfb40bcbb"
+        ),
+        origin_type="system_account",
+        origin_id="student:3656",
+        log_status="ambiguous",
+        log_success=False,
+        failure_reason=(
+            "('NotEnoughBalance', '보유 잔액이 부족하여 발송에 실패하였습니다.\n"
+            "[차감금액: 13, 보유잔액: 9, 보유포인트: 0, 보유예치금: 0]')"
+        ),
+        provider_message_required=False,
+        amount_deducted=Decimal("0"),
+    ),
+    ReviewedDeliveryHistoryPair(
+        outbox_id=1759,
+        log_id=5145,
+        trigger=PARENT_TRIGGER,
+        target_id="parent:3656",
+        dispatch_key="707ce6d8-756d-4a1f-86ff-1c5eb26811de",
+        business_idempotency_key=(
+            "ac83900afd8620f05e14a4d37fa3305"
+            "4367d63446bfd9a9e4564707dd051e4b0"
+        ),
+        origin_type="credential_incident",
+        origin_id="godmin-20260822",
+        log_status="sent",
+        log_success=True,
+        failure_reason="",
+        provider_message_required=True,
+        amount_deducted=Decimal("0"),
+    ),
+)
+REVIEWED_STUDENT_ONLY_OUTBOX_IDS = frozenset(
+    pair.outbox_id for pair in REVIEWED_STUDENT_ONLY_HISTORY
+)
+REVIEWED_STUDENT_ONLY_LOG_IDS = frozenset(
+    pair.log_id for pair in REVIEWED_STUDENT_ONLY_HISTORY
+)
+REVIEWED_STUDENT_ONLY_TARGET_IDS = frozenset(
+    pair.target_id for pair in REVIEWED_STUDENT_ONLY_HISTORY
+)
+
+
 def _parse_student_ids(raw: str) -> list[int]:
     values = [value.strip() for value in str(raw or "").split(",") if value.strip()]
     try:
@@ -117,113 +204,65 @@ def _normalize_phone(value: object) -> str:
     return "".join(ch for ch in str(value or "") if ch.isdigit())
 
 
-def _has_provider_acceptance_evidence(log: NotificationLog) -> bool:
-    return (
-        bool(log.provider_message_id)
-        or Decimal(log.amount_deducted) > Decimal("0")
-        or bool(log.success)
-        or log.status in {"processing", "sending", "sent", "ambiguous"}
-    )
-
-
-def _is_exact_balance_rejection(
-    log: NotificationLog,
-    *,
-    owner_tenant_id: int,
-    tenant_id: int,
-    target_id: str,
-    business_idempotency_key: str,
-) -> bool:
-    reason = str(log.failure_reason or "").strip()
-    exact_reason = reason == "NotEnoughBalance" or reason.startswith(
-        "('NotEnoughBalance',"
-    )
-    return (
-        log.tenant_id == owner_tenant_id
-        and log.source_tenant_id == tenant_id
-        and log.notification_type == STUDENT_TRIGGER
-        and log.target_type == "account"
-        and log.target_id == target_id
-        and log.message_mode == "alimtalk"
-        and log.status in {"ambiguous", "failed"}
-        and not log.success
-        and not log.provider_message_id
-        and Decimal(log.amount_deducted) == Decimal("0")
-        and log.business_idempotency_key == business_idempotency_key
-        and log.origin_type == "system_account"
-        and log.origin_id == target_id
-        and exact_reason
-    )
-
-
-def _is_exact_parent_success(
-    log: NotificationLog,
-    *,
-    owner_tenant_id: int,
-    tenant_id: int,
-    target_id: str,
-    business_idempotency_key: str,
-) -> bool:
-    return (
-        log.tenant_id == owner_tenant_id
-        and log.source_tenant_id == tenant_id
-        and log.notification_type == PARENT_TRIGGER
-        and log.target_type == "account"
-        and log.target_id == target_id
-        and log.message_mode == "alimtalk"
-        and log.status == "sent"
-        and log.success
-        and bool(log.provider_message_id)
-        and log.business_idempotency_key == business_idempotency_key
-        and log.origin_type == "system_account"
-        and log.origin_id == target_id
-    )
-
-
-def _is_allowed_parent_ambiguous_history(
-    log: NotificationLog,
-    *,
-    owner_tenant_id: int,
-    tenant_id: int,
-    target_id: str,
-) -> bool:
-    return (
-        log.tenant_id == owner_tenant_id
-        and log.source_tenant_id == tenant_id
-        and log.notification_type == PARENT_TRIGGER
-        and log.target_type == "account"
-        and log.target_id == target_id
-        and log.message_mode == "alimtalk"
-        and log.status == "ambiguous"
-        and not log.success
-        and not log.provider_message_id
-        and Decimal(log.amount_deducted) == Decimal("0")
-    )
-
-
-def _is_exact_system_account_outbox(
+def _is_exact_reviewed_outbox(
     notification: ScheduledNotification,
     *,
     tenant_id: int,
-    trigger: str,
-    target_id: str,
+    pair: ReviewedDeliveryHistoryPair,
 ) -> bool:
     payload = notification.payload if isinstance(notification.payload, dict) else {}
     return (
-        notification.tenant_id == tenant_id
+        notification.id == pair.outbox_id
+        and notification.tenant_id == tenant_id
+        and notification.trigger == pair.trigger
         and notification.status == ScheduledNotification.Status.SENT
-        and not notification.error_message
-        and bool(notification.dispatch_key)
-        and bool(notification.business_idempotency_key)
-        and notification.origin_type == "system_account"
-        and notification.origin_id == target_id
-        and payload.get("event_type") == trigger
-        and payload.get("target_id") == target_id
+        and notification.error_message == ""
+        and str(notification.dispatch_key) == pair.dispatch_key
+        and notification.business_idempotency_key == pair.business_idempotency_key
+        and notification.origin_type == pair.origin_type
+        and notification.origin_id == pair.origin_id
+        and payload.get("event_type") == pair.trigger
+        and payload.get("target_id") == pair.target_id
         and payload.get("message_mode") == "alimtalk"
-        and int(payload.get("source_tenant_id") or 0) == tenant_id
-        and payload.get("origin_type") == "system_account"
-        and payload.get("origin_id") == target_id
+        and payload.get("source_tenant_id") == tenant_id
+        and payload.get("origin_type") == pair.origin_type
+        and payload.get("origin_id") == pair.origin_id
     )
+
+
+def _is_exact_reviewed_log(
+    log: NotificationLog,
+    *,
+    owner_tenant_id: int,
+    tenant_id: int,
+    pair: ReviewedDeliveryHistoryPair,
+) -> bool:
+    exact = (
+        log.id == pair.log_id
+        and log.tenant_id == owner_tenant_id
+        and log.source_tenant_id == tenant_id
+        and log.notification_type == pair.trigger
+        and log.target_type == "account"
+        and log.target_id == pair.target_id
+        and log.message_mode == "alimtalk"
+        and log.status == pair.log_status
+        and log.success is pair.log_success
+        and log.business_idempotency_key == pair.business_idempotency_key
+        and log.origin_type == pair.origin_type
+        and log.origin_id == pair.origin_id
+    )
+    if not exact:
+        return False
+    if pair.provider_message_required:
+        if not bool(str(log.provider_message_id or "").strip()):
+            return False
+    elif log.provider_message_id != "":
+        return False
+    if log.failure_reason != pair.failure_reason:
+        return False
+    if Decimal(log.amount_deducted) != pair.amount_deducted:
+        return False
+    return True
 
 
 def _is_exact_failed_pair_outbox(
@@ -654,6 +693,28 @@ def _load_candidates(
         )
     logs = list(log_query)
 
+    reviewed_outbox_query = ScheduledNotification.objects.filter(
+        payload__target_id__in=REVIEWED_STUDENT_ONLY_TARGET_IDS,
+    ).order_by("created_at", "id")
+    if lock:
+        reviewed_outbox_query = reviewed_outbox_query.select_for_update(
+            no_key=True,
+            nowait=True,
+            of=("self",),
+        )
+    reviewed_student_outboxes = list(reviewed_outbox_query)
+
+    reviewed_log_query = NotificationLog.objects.filter(
+        target_id__in=REVIEWED_STUDENT_ONLY_TARGET_IDS,
+    ).order_by("sent_at", "id")
+    if lock:
+        reviewed_log_query = reviewed_log_query.select_for_update(
+            no_key=True,
+            nowait=True,
+            of=("self",),
+        )
+    reviewed_student_logs = list(reviewed_log_query)
+
     parent_user_ids: list[int] = []
     candidates: list[RecoveryCandidate] = []
     for student in students:
@@ -766,81 +827,43 @@ def _load_candidates(
             and log.target_id == targets[PARENT_TRIGGER]
         ]
         if mode == "student_only":
-            exact_outboxes: dict[str, ScheduledNotification] = {}
-            for trigger, target_id in targets.items():
-                rows = matched[trigger]
-                if len(rows) != 1 or not _is_exact_system_account_outbox(
-                    rows[0],
+            if (
+                {row.id for row in reviewed_student_outboxes}
+                != REVIEWED_STUDENT_ONLY_OUTBOX_IDS
+            ):
+                raise CommandError(
+                    f"reviewed_student_outbox_set_drift:student_id={student.id}"
+                )
+            if (
+                {log.id for log in reviewed_student_logs}
+                != REVIEWED_STUDENT_ONLY_LOG_IDS
+            ):
+                raise CommandError(
+                    f"reviewed_student_log_set_drift:student_id={student.id}"
+                )
+
+            outboxes_by_id = {row.id: row for row in reviewed_student_outboxes}
+            logs_by_id = {log.id: log for log in reviewed_student_logs}
+            for pair in REVIEWED_STUDENT_ONLY_HISTORY:
+                if not _is_exact_reviewed_outbox(
+                    outboxes_by_id[pair.outbox_id],
                     tenant_id=tenant.id,
-                    trigger=trigger,
-                    target_id=target_id,
+                    pair=pair,
                 ):
                     raise CommandError(
-                        f"reviewed_system_account_outbox_drift:student_id={student.id}:"
-                        f"trigger={trigger}"
+                        "reviewed_student_outbox_pair_drift:"
+                        f"student_id={student.id}:outbox_id={pair.outbox_id}"
                     )
-                exact_outboxes[trigger] = rows[0]
-            student_outbox_key = exact_outboxes[
-                STUDENT_TRIGGER
-            ].business_idempotency_key
-            if any(
-                _has_provider_acceptance_evidence(log)
-                and not _is_exact_balance_rejection(
-                    log,
+                if not _is_exact_reviewed_log(
+                    logs_by_id[pair.log_id],
                     owner_tenant_id=owner_id,
                     tenant_id=tenant.id,
-                    target_id=targets[STUDENT_TRIGGER],
-                    business_idempotency_key=student_outbox_key,
-                )
-                for log in student_logs
-            ):
-                raise CommandError(
-                    f"provider_acceptance_evidence_exists:student_id={student.id}:"
-                    f"trigger={STUDENT_TRIGGER}"
-                )
-            if not student_logs or any(
-                not _is_exact_balance_rejection(
-                    log,
-                    owner_tenant_id=owner_id,
-                    tenant_id=tenant.id,
-                    target_id=targets[STUDENT_TRIGGER],
-                    business_idempotency_key=student_outbox_key,
-                )
-                for log in student_logs
-            ):
-                raise CommandError(
-                    f"reviewed_student_balance_rejection_required:student_id={student.id}"
-                )
-            parent_outbox_key = exact_outboxes[
-                PARENT_TRIGGER
-            ].business_idempotency_key
-            canonical_parent_sent = [
-                log
-                for log in parent_logs
-                if _is_exact_parent_success(
-                    log,
-                    owner_tenant_id=owner_id,
-                    tenant_id=tenant.id,
-                    target_id=targets[PARENT_TRIGGER],
-                    business_idempotency_key=parent_outbox_key,
-                )
-            ]
-            if len(canonical_parent_sent) != 1:
-                raise CommandError(f"reviewed_parent_success_required:student_id={student.id}")
-            canonical_parent_sent_id = canonical_parent_sent[0].id
-            if any(
-                log.id != canonical_parent_sent_id
-                and not _is_allowed_parent_ambiguous_history(
-                    log,
-                    owner_tenant_id=owner_id,
-                    tenant_id=tenant.id,
-                    target_id=targets[PARENT_TRIGGER],
-                )
-                for log in parent_logs
-            ):
-                raise CommandError(
-                    f"reviewed_parent_history_drift:student_id={student.id}"
-                )
+                    pair=pair,
+                ):
+                    raise CommandError(
+                        "reviewed_student_log_pair_drift:"
+                        f"student_id={student.id}:log_id={pair.log_id}"
+                    )
         else:
             for trigger, rows in matched.items():
                 if len(rows) != 1:
@@ -896,8 +919,11 @@ def _historical_state(
         .order_by("id")
         .values_list(
             "id",
+            "tenant_id",
+            "trigger",
             "status",
             "error_message",
+            "dispatch_key",
             "business_idempotency_key",
             "origin_type",
             "origin_id",
@@ -909,6 +935,8 @@ def _historical_state(
         .order_by("id")
         .values_list(
             "id",
+            "tenant_id",
+            "source_tenant_id",
             "status",
             "success",
             "provider_message_id",
@@ -917,7 +945,10 @@ def _historical_state(
             "business_idempotency_key",
             "message_mode",
             "notification_type",
+            "target_type",
             "target_id",
+            "origin_type",
+            "origin_id",
         )
     )
     return outboxes, logs
