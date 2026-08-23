@@ -7576,6 +7576,14 @@
             "maxLength": 20,
             "type": "string"
           },
+          "position": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PositionEnum"
+              }
+            ],
+            "description": "조직에서 사용하는 표시 직위. 계정 역할·관리 권한과 별개입니다.\n\n* `DIRECTOR` - 실장\n* `INSTRUCTOR` - 강사\n* `ASSISTANT` - 조교\n* `STAFF` - 직원"
+          },
           "role": {
             "allOf": [
               {
@@ -8101,6 +8109,16 @@
           "year"
         ],
         "type": "object"
+      },
+      "PositionEnum": {
+        "description": "* `DIRECTOR` - 실장\n* `INSTRUCTOR` - 강사\n* `ASSISTANT` - 조교\n* `STAFF` - 직원",
+        "enum": [
+          "DIRECTOR",
+          "INSTRUCTOR",
+          "ASSISTANT",
+          "STAFF"
+        ],
+        "type": "string"
       },
       "PostAttachment": {
         "properties": {
@@ -11444,6 +11462,14 @@
       },
       "StaffDetail": {
         "properties": {
+          "account_role": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "can_manage_staff": {
+            "readOnly": true,
+            "type": "boolean"
+          },
           "created_at": {
             "format": "date-time",
             "readOnly": true,
@@ -11469,6 +11495,18 @@
           "phone": {
             "description": "정규화된 전화번호 (하이픈 제거, 예: 01012345678)",
             "maxLength": 20,
+            "type": "string"
+          },
+          "position": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PositionEnum"
+              }
+            ],
+            "description": "조직에서 사용하는 표시 직위. 계정 역할·관리 권한과 별개입니다.\n\n* `DIRECTOR` - 실장\n* `INSTRUCTOR` - 강사\n* `ASSISTANT` - 조교\n* `STAFF` - 직원"
+          },
+          "position_label": {
+            "readOnly": true,
             "type": "string"
           },
           "profile_photo_url": {
@@ -11505,9 +11543,12 @@
           }
         },
         "required": [
+          "account_role",
+          "can_manage_staff",
           "created_at",
           "id",
           "name",
+          "position_label",
           "profile_photo_url",
           "role",
           "staff_work_types",
@@ -11637,6 +11678,14 @@
       },
       "StaffList": {
         "properties": {
+          "account_role": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "can_manage_staff": {
+            "readOnly": true,
+            "type": "boolean"
+          },
           "created_at": {
             "format": "date-time",
             "readOnly": true,
@@ -11664,6 +11713,18 @@
             "maxLength": 20,
             "type": "string"
           },
+          "position": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PositionEnum"
+              }
+            ],
+            "description": "조직에서 사용하는 표시 직위. 계정 역할·관리 권한과 별개입니다.\n\n* `DIRECTOR` - 실장\n* `INSTRUCTOR` - 강사\n* `ASSISTANT` - 조교\n* `STAFF` - 직원"
+          },
+          "position_label": {
+            "readOnly": true,
+            "type": "string"
+          },
           "profile_photo_url": {
             "readOnly": true,
             "type": "string"
@@ -11686,9 +11747,12 @@
           }
         },
         "required": [
+          "account_role",
+          "can_manage_staff",
           "created_at",
           "id",
           "name",
+          "position_label",
           "profile_photo_url",
           "role",
           "staff_work_types",
@@ -12134,6 +12198,14 @@
             "maxLength": 20,
             "type": "string"
           },
+          "position": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PositionEnum"
+              }
+            ],
+            "description": "조직에서 사용하는 표시 직위. 계정 역할·관리 권한과 별개입니다.\n\n* `DIRECTOR` - 실장\n* `INSTRUCTOR` - 강사\n* `ASSISTANT` - 조교\n* `STAFF` - 직원"
+          },
           "user": {
             "nullable": true,
             "readOnly": true,
@@ -12172,6 +12244,14 @@
             "description": "정규화된 전화번호 (하이픈 제거, 예: 01012345678)",
             "maxLength": 20,
             "type": "string"
+          },
+          "position": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PositionEnum"
+              }
+            ],
+            "description": "조직에서 사용하는 표시 직위. 계정 역할·관리 권한과 별개입니다.\n\n* `DIRECTOR` - 실장\n* `INSTRUCTOR` - 강사\n* `ASSISTANT` - 조교\n* `STAFF` - 직원"
           },
           "role": {
             "allOf": [
@@ -38903,6 +38983,35 @@
     "/api/v1/staffs/me/": {
       "get": {
         "operationId": "staffs_me_retrieve",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffWrite"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "staffs"
+        ]
+      }
+    },
+    "/api/v1/staffs/payroll-overview/": {
+      "get": {
+        "description": "전 직원 월 정산 현황. 금액·블로커·마감 상태를 한 번에 반환한다.",
+        "operationId": "staffs_payroll_overview_retrieve",
         "responses": {
           "200": {
             "content": {

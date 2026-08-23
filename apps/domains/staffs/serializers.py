@@ -72,6 +72,11 @@ class StaffWorkSummarySerializer(serializers.Serializer):
     total_amount = serializers.IntegerField()
 
 
+class StaffPayrollOverviewQuerySerializer(serializers.Serializer):
+    year = serializers.IntegerField(min_value=2020, max_value=2100)
+    month = serializers.IntegerField(min_value=1, max_value=12)
+
+
 # ---------------------------
 # WorkType
 # ---------------------------
@@ -142,6 +147,12 @@ class StaffWorkTypeSerializer(serializers.ModelSerializer):
 class StaffListSerializer(serializers.ModelSerializer):
     staff_work_types = StaffWorkTypeSerializer(many=True, read_only=True)
     role = serializers.SerializerMethodField()
+    account_role = serializers.SerializerMethodField()
+    position_label = serializers.CharField(
+        source="get_position_display",
+        read_only=True,
+    )
+    can_manage_staff = serializers.SerializerMethodField()
     profile_photo_url = serializers.SerializerMethodField()
 
     class Meta:
@@ -153,8 +164,12 @@ class StaffListSerializer(serializers.ModelSerializer):
             "profile_photo_url",
             "is_active",
             "is_manager",
+            "can_manage_staff",
             "pay_type",
+            "position",
+            "position_label",
             "role",
+            "account_role",
             "staff_work_types",
             "created_at",
             "updated_at",
@@ -194,10 +209,46 @@ class StaffListSerializer(serializers.ModelSerializer):
             return "TEACHER"
         return "ASSISTANT"
 
+    def get_account_role(self, obj) -> str:
+        cached = getattr(obj, "_staff_account_role_code", None)
+        if cached is not None:
+            return cached
+        membership_roles = self.context.get("membership_roles")
+        membership_role = (
+            membership_roles.get(obj.user_id)
+            if membership_roles is not None and getattr(obj, "user_id", None)
+            else None
+        )
+        if membership_role is None and getattr(obj, "user_id", None):
+            membership = core_repo.membership_get(obj.tenant, obj.user)
+            membership_role = membership.role if membership else None
+        account_role = {
+            "owner": "OWNER",
+            "admin": "ADMIN",
+            "teacher": "TEACHER",
+            "staff": "STAFF",
+        }.get(membership_role, "NONE")
+        obj._staff_account_role_code = account_role
+        return account_role
+
+    def get_can_manage_staff(self, obj) -> bool:
+        account_role = self.get_account_role(obj)
+        return account_role in ("OWNER", "ADMIN") or bool(
+            obj.is_active
+            and account_role in ("TEACHER", "STAFF")
+            and obj.is_manager
+        )
+
 
 class StaffDetailSerializer(serializers.ModelSerializer):
     staff_work_types = StaffWorkTypeSerializer(many=True, read_only=True)
     role = serializers.SerializerMethodField()
+    account_role = serializers.SerializerMethodField()
+    position_label = serializers.CharField(
+        source="get_position_display",
+        read_only=True,
+    )
+    can_manage_staff = serializers.SerializerMethodField()
     profile_photo_url = serializers.SerializerMethodField()
 
     user_username = serializers.SerializerMethodField()
@@ -224,8 +275,12 @@ class StaffDetailSerializer(serializers.ModelSerializer):
             "profile_photo_url",
             "is_active",
             "is_manager",
+            "can_manage_staff",
             "pay_type",
+            "position",
+            "position_label",
             "role",
+            "account_role",
             "staff_work_types",
             "created_at",
             "updated_at",
@@ -252,6 +307,32 @@ class StaffDetailSerializer(serializers.ModelSerializer):
         if teacher_repo.teacher_exists_tenant_name_phone(obj.tenant, obj.name, obj.phone or ""):
             return "TEACHER"
         return "ASSISTANT"
+
+    def get_account_role(self, obj) -> str:
+        cached = getattr(obj, "_staff_account_role_code", None)
+        if cached is not None:
+            return cached
+        membership = (
+            core_repo.membership_get(obj.tenant, obj.user)
+            if getattr(obj, "user_id", None)
+            else None
+        )
+        account_role = {
+            "owner": "OWNER",
+            "admin": "ADMIN",
+            "teacher": "TEACHER",
+            "staff": "STAFF",
+        }.get(membership.role if membership else None, "NONE")
+        obj._staff_account_role_code = account_role
+        return account_role
+
+    def get_can_manage_staff(self, obj) -> bool:
+        account_role = self.get_account_role(obj)
+        return account_role in ("OWNER", "ADMIN") or bool(
+            obj.is_active
+            and account_role in ("TEACHER", "STAFF")
+            and obj.is_manager
+        )
 
 
 # ======================================================
@@ -295,6 +376,7 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
             "is_active",
             "is_manager",
             "pay_type",
+            "position",
             "role",
         ]
         read_only_fields = ["id", "user"]
@@ -329,6 +411,12 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
                         "현재는 시급 정산만 지원합니다."
                     )
                 }
+            )
+        if self.instance is None and "position" not in attrs:
+            attrs["position"] = (
+                "INSTRUCTOR"
+                if attrs.get("role") == "TEACHER"
+                else "ASSISTANT"
             )
         return attrs
 
@@ -459,6 +547,20 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
                             "is_active": (
                                 "대표/관리자 계정은 직원 화면에서 비활성화하거나 "
                                 "재활성화할 수 없습니다."
+                            )
+                        }
+                    )
+                if (
+                    membership
+                    and membership.role in ("owner", "admin")
+                    and "is_manager" in validated_data
+                    and validated_data["is_manager"] != instance.is_manager
+                ):
+                    raise serializers.ValidationError(
+                        {
+                            "is_manager": (
+                                "대표/관리자 계정의 직원관리 권한은 "
+                                "직원 화면에서 변경할 수 없습니다."
                             )
                         }
                     )
