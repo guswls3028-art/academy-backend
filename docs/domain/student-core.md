@@ -117,6 +117,22 @@ login ID, password, token version, or pending account notice. A parent phone is
 required but may be shared by siblings or twins; the student phone is optional.
 The worker result must expose every source row as created, duplicate, restored,
 or failed so a partial result cannot look like silent omission.
+`created` remains the backward-compatible count, while `created_rows`,
+`duplicates`, `restored`, and `failed` carry the Excel row and opaque student
+name for the staff result dialog. Created/duplicate/restored rows may also carry
+the same-tenant student ID for internal navigation, but the browser's persisted
+result projection omits IDs, phones, and credentials. Known validation failures
+include an allowlisted `reason_code` and user-safe message. Unexpected exceptions
+are logged with their internal detail but return only the generic
+`processing_error` reason; raw exception text must never enter the job result.
+
+Student list search keeps its queryset tenant-scoped before applying filters.
+A complete `010` mobile number in the general search or explicit student/parent
+phone filter is compared exactly after removing presentation separators from
+both the query and stored fields. Thus hyphenated and digit-only forms are
+equivalent without introducing a normalized substring or cross-tenant fallback.
+Non-phone general search continues to use the existing name, PS/OMR, school,
+and major text fields.
 
 Student and enrollment Excel uploads accept only the `.xlsx` extension. The
 API validates a non-empty bounded upload, a supported browser MIME (including
