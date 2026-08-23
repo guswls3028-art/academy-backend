@@ -10,6 +10,7 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
 from apps.core.models.user import user_internal_username
+from apps.core.models.user import user_display_username
 from apps.core.permissions import IsStudent
 from apps.domains.students.models import Student
 from apps.domains.students.selectors import students_for_tenant
@@ -111,6 +112,88 @@ class StudentProfileCanonicalizationTests(TestCase):
             send_mock.call_args.kwargs["replacements"]["학생비밀번호"],
             "변경되지 않음",
         )
+
+    @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=True)
+    def test_admin_adds_first_real_phone_and_moves_identifier_account_to_phone(self, send_mock):
+        no_phone_student = make_student(self.tenant, ps_number="S-NOPHONE-ID", phone=None)
+        no_phone_student.uses_identifier = True
+        no_phone_student.save(update_fields=["uses_identifier"])
+        request = self.factory.patch(
+            f"/api/v1/students/{no_phone_student.id}/",
+            data={"phone": "01099997777"},
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+
+        response = StudentViewSet.as_view({"patch": "partial_update"})(
+            request,
+            pk=no_phone_student.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        no_phone_student.refresh_from_db()
+        no_phone_student.user.refresh_from_db()
+        self.assertEqual(no_phone_student.phone, "01099997777")
+        self.assertEqual(no_phone_student.user.phone, "01099997777")
+        self.assertEqual(no_phone_student.ps_number, "01099997777")
+        self.assertEqual(user_display_username(no_phone_student.user), "01099997777")
+        self.assertEqual(no_phone_student.omr_code, "99997777")
+        self.assertFalse(no_phone_student.uses_identifier)
+        self.assertEqual(
+            send_mock.call_args.kwargs["replacements"]["학생아이디"],
+            "01099997777",
+        )
+
+    @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=False)
+    def test_first_real_phone_account_transition_rolls_back_when_notice_fails(self, _send_mock):
+        no_phone_student = make_student(self.tenant, ps_number="S-NOPHONE-ROLLBACK", phone=None)
+        no_phone_student.uses_identifier = True
+        no_phone_student.save(update_fields=["uses_identifier"])
+        original_username = no_phone_student.user.username
+        request = self.factory.patch(
+            f"/api/v1/students/{no_phone_student.id}/",
+            data={"phone": "01099996666"},
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+
+        response = StudentViewSet.as_view({"patch": "partial_update"})(
+            request,
+            pk=no_phone_student.id,
+        )
+
+        self.assertEqual(response.status_code, 503)
+        no_phone_student.refresh_from_db()
+        no_phone_student.user.refresh_from_db()
+        self.assertIsNone(no_phone_student.phone)
+        self.assertFalse(no_phone_student.user.phone)
+        self.assertEqual(no_phone_student.ps_number, "S-NOPHONE-ROLLBACK")
+        self.assertEqual(no_phone_student.user.username, original_username)
+        self.assertTrue(no_phone_student.uses_identifier)
+
+    def test_admin_matching_contact_is_stored_as_parent_only(self):
+        request = self.factory.patch(
+            f"/api/v1/students/{self.student.id}/",
+            data={"phone": self.student.parent_phone},
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+
+        response = StudentViewSet.as_view({"patch": "partial_update"})(
+            request,
+            pk=self.student.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.student.refresh_from_db()
+        self.student.user.refresh_from_db()
+        self.assertIsNone(self.student.phone)
+        self.assertIsNone(self.student.user.phone)
+        self.assertTrue(self.student.uses_identifier)
+        self.assertEqual(self.student.omr_code, "11112222")
 
     @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=True)
     def test_admin_student_id_change_sends_student_account_notice(self, send_mock):

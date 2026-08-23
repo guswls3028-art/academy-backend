@@ -19,6 +19,7 @@ from apps.core.models.user import user_display_username, user_internal_username
 from apps.domains.students.models import Student
 from apps.domains.students.services.identity import (
     StudentIdentityError,
+    canonical_student_phone,
     derive_student_omr_code,
     normalize_student_phone,
 )
@@ -195,13 +196,30 @@ def update_student_profile(
         raise StudentProfileUpdateError({"detail": "학생이 현재 테넌트에 속하지 않습니다."})
 
     changed: list[str] = []
+    data = dict(data)
+    old_phone = student.phone or ""
     old_parent_phone = student.parent_phone or ""
+    old_ps_number = student.ps_number or ""
+    old_uses_identifier = bool(student.uses_identifier)
+
+    if any(field in data for field in PHONE_FIELDS):
+        try:
+            data["phone"] = canonical_student_phone(
+                phone=data.get("phone", student.phone),
+                parent_phone=data.get("parent_phone", student.parent_phone),
+            )
+        except StudentIdentityError as exc:
+            raise StudentProfileUpdateError(exc.detail) from exc
+        data["uses_identifier"] = not bool(data["phone"])
+
+    requested_identity_changed = False
 
     if identity_field and identity_field in data:
         new_username = _validate_identity(student, tenant, data.get(identity_field))
         if new_username and student.user_id and new_username != user_display_username(student.user):
             student.ps_number = new_username
             _append_unique(changed, ["ps_number"])
+            requested_identity_changed = True
 
     for field in PROFILE_FIELDS:
         if field not in data:
@@ -245,6 +263,20 @@ def update_student_profile(
         if getattr(student, field) != value:
             setattr(student, field, value)
             changed.append(field)
+
+    phone_identity_owned = old_uses_identifier or bool(
+        old_phone and old_ps_number == old_phone
+    )
+    if (
+        identity_field
+        and "phone" in data
+        and student.phone
+        and student.phone != old_phone
+        and phone_identity_owned
+        and not requested_identity_changed
+    ):
+        student.ps_number = _validate_identity(student, tenant, student.phone)
+        _append_unique(changed, ["ps_number"])
 
     if any(field in data for field in PHONE_FIELDS):
         new_omr = derive_omr_code(

@@ -50,6 +50,12 @@
 재사용하지 않고 전화번호 뒤 4자리 fallback을 적용한다. 기존 학부모 계정의
 비밀번호는 새 자녀를 등록해도 변경하지 않는다.
 
+학생 전화번호가 학부모 전화번호와 정확히 같으면 그 값은 학부모 연락처로만
+취급한다. 학생 계정 그래프는 별도 `ps_number`로 유지하되 `Student.phone`과
+`User.phone`은 비우므로, 학부모 번호가 학생 수신처나 학생 전화 로그인 ID로
+중복 등록되지 않는다. 이후 직원이 실제 학생 번호를 입력하는 전환 규칙과 legacy
+교정 명령은 [student-core.md](student-core.md)가 정본이다.
+
 동일 테넌트에서 같은 학부모 번호를 가진 학생 둘을 동시에 등록할 수 있다.
 서비스는 Parent row를 잠그고, 신규 row 경합은 DB의 User username 및
 `uniq_parent_phone_per_tenant` 유일 제약 충돌 후 한 번 재조회한다. 두 요청은

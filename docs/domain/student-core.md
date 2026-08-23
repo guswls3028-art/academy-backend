@@ -81,6 +81,11 @@ Required invariants:
   tenant fails closed. Username collisions roll back every identity copy.
 - student phone is optional; parent phone is required on creation/import/signup.
 - phone fields are normalized to numeric `010XXXXXXXX` 11-digit strings.
+- an exact student-phone/parent-phone match means the student has no phone. The
+  Excel parser, JSON import, signup approval, single create, and profile write
+  store that value only as `parent_phone`; `Student.phone` and `User.phone` are
+  empty and `uses_identifier=True`. The parent account remains the sole owner
+  of the shared recipient number.
 - `User.phone` mirrors `Student.phone`; profile changes update or clear both so
   account and notification paths cannot retain a stale student recipient.
 - malformed student phone is rejected. Do not silently convert it to identifier mode.
@@ -88,6 +93,12 @@ Required invariants:
 - if student phone is absent, `omr_code` is the last 8 digits of parent phone.
 - no fake student phone is created only to satisfy downstream code.
 - `uses_identifier=True` means the student has no student phone and is identified by the account/OMR identifier flow.
+- when staff first records a distinct real student phone for an identifier-mode
+  account, the same transaction updates `Student.phone`, `User.phone`,
+  `omr_code`, `uses_identifier`, `Student.ps_number`, and the internal username.
+  A phone-owned login ID also follows a later phone change; an explicitly
+  custom login ID remains unchanged. Passwords are never reset by this update,
+  and the existing SYSTEM_AUTO account notice reports `변경되지 않음`.
 
 Current canonical entry points:
 
@@ -139,6 +150,17 @@ both the query and stored fields. Thus hyphenated and digit-only forms are
 equivalent without introducing a normalized substring or cross-tenant fallback.
 Non-phone general search continues to use the existing name, PS/OMR, school,
 and major text fields.
+
+Legacy active rows whose student phone exactly equals the parent phone are
+audited and repaired with the dry-run-first command below. Execution requires
+the complete current candidate ID set and a tenant/count confirmation, fails
+closed for pending account notices or active account outboxes, and changes no
+login ID, password, parent account, enrollment, or notification:
+
+```powershell
+python manage.py repair_shared_student_parent_phones --tenant <tenant-code>
+python manage.py repair_shared_student_parent_phones --tenant <tenant-code> --student-ids <id,id> --execute --confirm <tenant-code>:<count>
+```
 
 Student and enrollment Excel uploads accept only the `.xlsx` extension. The
 API validates a non-empty bounded upload, a supported browser MIME (including

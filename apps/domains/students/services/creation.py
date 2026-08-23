@@ -11,6 +11,12 @@ from apps.core.models import TenantMembership
 from apps.support.students.lifecycle_dependencies import ensure_parent_account_for_student
 
 from .account_notice import stage_pending_account_notice
+from .identity import (
+    canonical_student_phone,
+    derive_student_omr_code,
+    phone_digits,
+    resolve_student_login_id,
+)
 
 
 @dataclass(frozen=True)
@@ -61,6 +67,24 @@ def create_student_account(
     if not ps_number:
         raise ValueError("ps_number is required")
 
+    original_phone = phone_digits(data.get("phone"))
+    student_phone = canonical_student_phone(
+        phone=data.get("phone"),
+        parent_phone=parent_phone,
+    )
+    shared_parent_phone = bool(original_phone and student_phone is None)
+    data["phone"] = student_phone
+    if shared_parent_phone:
+        data["uses_identifier"] = True
+        if ps_number == original_phone:
+            ps_number = resolve_student_login_id(tenant=tenant)
+            data["ps_number"] = ps_number
+    data["omr_code"] = derive_student_omr_code(
+        phone=student_phone,
+        parent_phone=parent_phone,
+        current=data.get("omr_code"),
+    )
+
     with transaction.atomic():
         parent = None
         parent_password_for_notice = ""
@@ -79,7 +103,7 @@ def create_student_account(
         user = student_repo.user_create_user(
             username=ps_number,
             tenant=tenant,
-            phone=data.get("phone") or "",
+            phone=student_phone or "",
             name=name,
         )
         if password_hash is not None:

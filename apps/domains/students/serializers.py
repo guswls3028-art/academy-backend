@@ -18,6 +18,7 @@ from apps.domains.students.services.custom_fields import (
 )
 from apps.domains.students.services.identity import (
     StudentIdentityError,
+    canonical_student_phone,
     derive_student_omr_code,
     normalize_student_phone,
     resolve_student_login_id,
@@ -406,7 +407,7 @@ class StudentCreateSerializer(serializers.ModelSerializer):
     def validate_phone(self, value):
         # 학생 전화번호는 선택사항 (없으면 None)
         try:
-            phone = normalize_student_phone(
+            return normalize_student_phone(
                 value,
                 required=False,
                 field_name="phone",
@@ -414,19 +415,6 @@ class StudentCreateSerializer(serializers.ModelSerializer):
             )
         except StudentIdentityError as exc:
             raise serializers.ValidationError(exc.detail.get("phone", str(exc.detail))) from exc
-        if not phone:
-            return None
-
-        request = self.context.get("request")
-        tenant = getattr(request, "tenant", None) if request else None
-        if tenant is None:
-            raise serializers.ValidationError("Tenant가 resolve되지 않았습니다.")
-
-        from academy.adapters.db.django import repositories_students as student_repo
-        if student_repo.user_filter_phone_exists(phone, tenant=tenant):
-            raise serializers.ValidationError("이미 사용 중인 전화번호입니다.")
-
-        return phone
 
     # omr_code는 validate에서 자동 설정되므로 별도 validate 불필요
 
@@ -436,20 +424,31 @@ class StudentCreateSerializer(serializers.ModelSerializer):
         if tenant is None:
             raise serializers.ValidationError("Tenant가 resolve되지 않았습니다.")
 
+        parent_phone = str(self._require(attrs, "parent_phone")).strip()
+        name = str(self._require(attrs, "name")).strip()
+        try:
+            phone_str = canonical_student_phone(
+                phone=attrs.get("phone"),
+                parent_phone=parent_phone,
+            )
+        except StudentIdentityError as exc:
+            raise serializers.ValidationError(exc.detail) from exc
+
+        if phone_str:
+            from academy.adapters.db.django import repositories_students as student_repo
+            if student_repo.user_filter_phone_exists(phone_str, tenant=tenant):
+                raise serializers.ValidationError({"phone": "이미 사용 중인 전화번호입니다."})
+
         ps_number_raw = attrs.get("ps_number") or ""
         try:
             ps_number = resolve_student_login_id(
                 tenant=tenant,
                 requested_id=ps_number_raw,
-                phone=attrs.get("phone"),
+                phone=phone_str,
                 requested_conflict="error",
             )
         except StudentIdentityError as exc:
             raise serializers.ValidationError(exc.detail) from exc
-        parent_phone = str(self._require(attrs, "parent_phone")).strip()
-        name = str(self._require(attrs, "name")).strip()
-        phone = attrs.get("phone")
-        phone_str = str(phone).strip() if phone else None
 
         try:
             omr_code = derive_student_omr_code(

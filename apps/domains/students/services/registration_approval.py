@@ -102,10 +102,11 @@ def approve_registration_request(
         reg.initial_password_plain = ""
         reg.save(update_fields=["status", "student", "initial_password_plain", "updated_at"])
 
+    created_student = result.student
     notice = RegistrationApprovalNotice(
         student_name=reg.name,
-        student_phone=student_phone or "",
-        student_id=ps_number,
+        student_phone=created_student.phone or "",
+        student_id=created_student.ps_number,
         student_password="가입 신청 시 입력한 비밀번호",
         parent_phone=parent_phone,
         parent_password=result.parent_password_for_notice or "변경되지 않음",

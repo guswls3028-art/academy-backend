@@ -705,6 +705,9 @@ def parse_student_excel_file(
             uses_identifier = True
 
         parent_final = parent_phone_raw
+        if student_phone and student_phone == parent_final:
+            student_phone = ""
+            uses_identifier = True
 
         school_cell = _cell_str(row, school_col)
         grade_cell = _cell_str(row, grade_col)

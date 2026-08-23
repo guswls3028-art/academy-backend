@@ -29,6 +29,7 @@ from .custom_fields import (
 )
 from .identity import (
     StudentIdentityError,
+    canonical_student_phone,
     derive_student_omr_code,
     normalize_student_phone,
     phone_digits,
@@ -153,6 +154,7 @@ def _normalize_import_row(
 
     parent_phone = _valid_parent_phone(raw.get("parent_phone") or raw.get("parentPhone"))
     phone = _valid_student_phone(raw.get("phone") or raw.get("studentPhone"))
+    phone = canonical_student_phone(phone=phone, parent_phone=parent_phone)
 
     school_val = str(raw.get("school") or "").strip() or None
     school_type, elementary_school, high_school, middle_school = normalize_school_from_name(

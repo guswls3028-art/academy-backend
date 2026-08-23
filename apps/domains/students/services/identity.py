@@ -36,6 +36,25 @@ def normalize_student_phone(
     return digits
 
 
+def canonical_student_phone(*, phone: Any, parent_phone: Any) -> str | None:
+    """Return the real student phone, treating an exact parent match as absent."""
+    student_phone = normalize_student_phone(
+        phone,
+        required=False,
+        field_name="phone",
+        field_label="학생 전화번호",
+    )
+    normalized_parent_phone = normalize_student_phone(
+        parent_phone,
+        required=False,
+        field_name="parent_phone",
+        field_label="학부모 전화번호",
+    )
+    if student_phone and student_phone == normalized_parent_phone:
+        return None
+    return student_phone
+
+
 def derive_student_omr_code(
     *,
     phone: Any,
