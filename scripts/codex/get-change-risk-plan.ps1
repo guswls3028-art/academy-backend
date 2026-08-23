@@ -50,7 +50,7 @@ function Get-ChangedPaths {
     )) {
         $output = @(& git -C $Root @gitArgs 2>&1)
         if ($LASTEXITCODE -ne 0) { throw "git $($gitArgs -join ' ') failed: $($output -join [Environment]::NewLine)" }
-        foreach ($path in $output) {
+        foreach ($path in (Get-AcademyGitPathLines -Lines $output)) {
             if ($path -and -not $paths.Contains([string]$path)) { [void]$paths.Add([string]$path) }
         }
     }

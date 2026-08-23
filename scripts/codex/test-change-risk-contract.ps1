@@ -13,6 +13,15 @@ function Assert-Contains {
     }
 }
 
+$gitPathLines = @(Get-AcademyGitPathLines -Lines @(
+    "warning: in the working copy of 'scripts/codex/stability-contract.ps1', LF will be replaced by CRLF",
+    "hint: use a narrower diff",
+    "scripts/codex/stability-contract.ps1",
+    "docs/README.md"
+))
+Assert-True ($gitPathLines.Count -eq 2) "git warning and hint lines must not become changed paths"
+Assert-Contains $gitPathLines "scripts/codex/stability-contract.ps1" "real git path output must be preserved"
+
 $docsOnly = Get-AcademyChangeRiskPlan `
     -BackendPaths @("docs/operations/github-governance.md") `
     -FrontendPaths @()

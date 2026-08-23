@@ -25,6 +25,13 @@ function Test-AnyPath {
     return [bool](@($Paths | Where-Object { $_ -match $Pattern }).Count)
 }
 
+function Get-AcademyGitPathLines {
+    param([AllowEmptyCollection()][string[]]$Lines = @())
+    return @($Lines | Where-Object {
+        $_ -and $_ -notmatch '^(warning|hint):\s'
+    })
+}
+
 function Get-AcademyChangeRiskPlan {
     [CmdletBinding()]
     param(
@@ -114,6 +121,38 @@ function Get-AcademyChangeRiskPlan {
 function Assert-ReleaseBundleCondition {
     param([bool]$Condition, [Parameter(Mandatory = $true)][string]$Message)
     if (-not $Condition) { throw "Production release bundle rejected: $Message" }
+}
+
+function Get-AcademyDeploymentLockState {
+    [CmdletBinding()]
+    param(
+        [Parameter()][AllowNull()][object]$LockReadback,
+        [long]$Now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    )
+
+    $lockItem = $null
+    if ($null -ne $LockReadback) {
+        $readbackProperties = @($LockReadback.PSObject.Properties.Name)
+        if ("Item" -in $readbackProperties) { $lockItem = $LockReadback.Item }
+    }
+
+    $lockOwner = ""
+    $lockTtl = 0L
+    if ($null -ne $lockItem) {
+        $itemProperties = @($lockItem.PSObject.Properties.Name)
+        if ("owner" -in $itemProperties -and $lockItem.owner.S) {
+            $lockOwner = [string]$lockItem.owner.S
+        }
+        if ("ttl" -in $itemProperties -and $lockItem.ttl.N) {
+            $lockTtl = [long]$lockItem.ttl.N
+        }
+    }
+
+    return [pscustomobject]@{
+        Active = [bool]($lockOwner -and $lockTtl -ge $Now)
+        Owner = if ($lockOwner) { $lockOwner } else { $null }
+        ExpiresAt = $lockTtl
+    }
 }
 
 function Assert-ReleaseRun {

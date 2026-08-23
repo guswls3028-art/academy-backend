@@ -84,19 +84,7 @@ $lockArgs = @(
 )
 if ($AwsProfile) { $lockArgs += @("--profile", $AwsProfile) }
 $lockReadback = Invoke-ExternalJson "aws" $lockArgs
-$lockItem = if ($lockReadback.PSObject.Properties.Name -contains "Item") { $lockReadback.Item } else { $null }
-$lockOwner = if ($lockItem -and $lockItem.PSObject.Properties.Name -contains "owner") {
-    [string]$lockItem.owner.S
-} else { "" }
-$lockTtl = if ($lockItem -and $lockItem.PSObject.Properties.Name -contains "ttl" -and $lockItem.ttl.N) {
-    [long]$lockItem.ttl.N
-} else { 0 }
-$now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-$lock = [pscustomobject]@{
-    Active = [bool]($lockOwner -and $lockTtl -ge $now)
-    Owner = if ($lockOwner) { $lockOwner } else { $null }
-    ExpiresAt = $lockTtl
-}
+$lock = Get-AcademyDeploymentLockState -LockReadback $lockReadback
 
 $liveVersions = foreach ($url in $FrontendVersionUrls) {
     $separator = if ($url.Contains("?")) { "&" } else { "?" }

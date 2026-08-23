@@ -14,6 +14,22 @@ function Assert-Throws {
     throw "Expected release-bundle validation to fail: $ExpectedText"
 }
 
+$noLock = Get-AcademyDeploymentLockState -LockReadback $null -Now 100
+if ($noLock.Active -or $noLock.Owner -or $noLock.ExpiresAt -ne 0) {
+    throw "an empty DynamoDB get-item response must mean no active lock"
+}
+
+$activeLockReadback = [pscustomobject]@{
+    Item = [pscustomobject]@{
+        owner = [pscustomobject]@{ S = "ci-deploy:123:1" }
+        ttl = [pscustomobject]@{ N = "101" }
+    }
+}
+$parsedActiveLock = Get-AcademyDeploymentLockState -LockReadback $activeLockReadback -Now 100
+if (-not $parsedActiveLock.Active -or $parsedActiveLock.Owner -ne "ci-deploy:123:1") {
+    throw "an unexpired DynamoDB lock item must remain active"
+}
+
 $backendSha = "1111111111111111111111111111111111111111"
 $frontendSha = "2222222222222222222222222222222222222222"
 $evidence = [pscustomobject]@{
