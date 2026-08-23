@@ -163,7 +163,11 @@ def _active_running_ai_jobs_exist() -> bool:
 
 
 def _try_idle_scale_in(queue: SQSAIQueueAdapter, tier: str) -> bool:
-    counts = _combined_queue_counts_for_scale_in(queue, current_tier=tier)
+    try:
+        counts = _combined_queue_counts_for_scale_in(queue, current_tier=tier)
+    except QueueUnavailableError:
+        logger.warning("AI_IDLE_SCALE_IN_QUEUE_HEALTH_UNAVAILABLE", exc_info=True)
+        return False
     if not _queue_counts_are_idle(counts):
         logger.info("AI_IDLE_SCALE_IN_SKIP | counts=%s", counts)
         return False
@@ -174,7 +178,14 @@ def _try_idle_scale_in(queue: SQSAIQueueAdapter, tier: str) -> bool:
         time.sleep(IDLE_SCALE_IN_CONFIRM_SECONDS)
     if _shutdown:
         return False
-    confirmed_counts = _combined_queue_counts_for_scale_in(queue, current_tier=tier)
+    try:
+        confirmed_counts = _combined_queue_counts_for_scale_in(queue, current_tier=tier)
+    except QueueUnavailableError:
+        logger.warning(
+            "AI_IDLE_SCALE_IN_CONFIRM_QUEUE_HEALTH_UNAVAILABLE",
+            exc_info=True,
+        )
+        return False
     if not _queue_counts_are_idle(confirmed_counts):
         logger.info(
             "AI_IDLE_SCALE_IN_SKIP_AFTER_CONFIRM | before=%s | after=%s",

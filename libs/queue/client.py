@@ -226,7 +226,10 @@ class SQSQueueClient(QueueClient):
             raise
         except Exception as e:
             logger.error("Failed to get queue counts for %s: %s", queue_name, e)
-            return {"visible": 1, "not_visible": 1, "delayed": 0}
+            raise QueueUnavailableError(
+                "Queue counts unavailable",
+                cause=e,
+            ) from e
 
 
 def get_queue_client(

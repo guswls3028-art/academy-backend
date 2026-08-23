@@ -41,6 +41,13 @@ EC2_CLOUDWATCH_LOGS_POLICY = (
     REPO_ROOT / "scripts" / "v1" / "templates" / "iam"
     / "policy_ec2_cloudwatch_logs.json"
 )
+WORKERS_SQS_POLICY = (
+    REPO_ROOT / "scripts" / "v1" / "templates" / "iam"
+    / "policy_workers_sqs.json"
+)
+CONVERGE_WORKERS_SQS_IAM = (
+    REPO_ROOT / "scripts" / "v1" / "converge-runtime-worker-sqs-iam.ps1"
+)
 ECR_RESOURCE = REPO_ROOT / "scripts" / "v1" / "resources" / "ecr.ps1"
 DYNAMODB_RESOURCE = REPO_ROOT / "scripts" / "v1" / "resources" / "dynamodb.ps1"
 ECR_CLEANUP = REPO_ROOT / "scripts" / "v1" / "ecr-cleanup.py"
@@ -1491,6 +1498,9 @@ def test_workflow_checks_release_freshness_under_lock_and_always_releases() -> N
     assert "iam get-role-policy" in iam_block
     assert "iam put-role-policy" not in iam_block
     assert "runtime worker-scale IAM readback mismatch" in iam_block
+    assert "policy_workers_sqs.json" in iam_block
+    assert "academy-workers-sqs" in iam_block
+    assert "runtime worker SQS IAM readback mismatch" in iam_block
     assert "policy_ec2_cloudwatch_logs.json" in iam_block
     assert "academy-ec2-cloudwatch-logs" in iam_block
     assert "runtime logging IAM readback mismatch" in iam_block
@@ -1502,6 +1512,64 @@ def test_workflow_checks_release_freshness_under_lock_and_always_releases() -> N
     assert "verify-runtime-iam" in release_block
     assert "verify-release-freshness" in release_block
     assert "if: always() && needs.acquire-production-lock.result == 'success'" in release_block
+
+
+def test_runtime_worker_sqs_policy_grants_only_exact_dlq_readback() -> None:
+    policy = json.loads(WORKERS_SQS_POLICY.read_text(encoding="utf-8"))
+    by_sid = {statement["Sid"]: statement for statement in policy["Statement"]}
+
+    assert set(by_sid) == {"SQSQueueAccess", "MessagingDlqReadback"}
+    assert set(by_sid["SQSQueueAccess"]["Resource"]) == {
+        "arn:aws:sqs:ap-northeast-2:809466760795:academy-v1-messaging-queue",
+        "arn:aws:sqs:ap-northeast-2:809466760795:academy-v1-ai-queue",
+        "arn:aws:sqs:ap-northeast-2:809466760795:academy-v1-tools-queue",
+    }
+    assert set(by_sid["SQSQueueAccess"]["Action"]) == {
+        "sqs:SendMessage",
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:ChangeMessageVisibility",
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl",
+    }
+    assert all(not arn.endswith("-dlq") for arn in by_sid["SQSQueueAccess"]["Resource"])
+    assert by_sid["MessagingDlqReadback"] == {
+        "Sid": "MessagingDlqReadback",
+        "Effect": "Allow",
+        "Action": ["sqs:GetQueueAttributes", "sqs:GetQueueUrl"],
+        "Resource": (
+            "arn:aws:sqs:ap-northeast-2:809466760795:"
+            "academy-v1-messaging-queue-dlq"
+        ),
+    }
+    iam_source = IAM_RESOURCE.read_text(encoding="utf-8-sig")
+    assert 'Join-Path $TemplatesPath "policy_workers_sqs.json"' in iam_source
+    assert '$inlineName = "academy-workers-sqs"' in iam_source
+    assert '"put-role-policy"' in iam_source
+
+
+def test_runtime_worker_sqs_iam_converger_is_locked_and_readback_only_beyond_policy() -> None:
+    source = CONVERGE_WORKERS_SQS_IAM.read_text(encoding="utf-8-sig")
+
+    assert "assert-production-source-freshness.ps1" in source
+    assert "Acquire-DeployLock" in source
+    assert "Assert-DeployLockAcquired" in source
+    assert "Release-DeployLock" in source
+    assert '"put-role-policy"' in source
+    assert source.count('"put-role-policy"') == 1
+    assert '"get-role-policy"' in source
+    assert source.count("Get-WorkerSqsPolicyReadback") >= 4
+    current_read = source.index("$current = Get-WorkerSqsPolicyReadback")
+    mismatch_branch = source.index("if ($currentJson -ne $expectedJson)", current_read)
+    pre_write_assert = source.index("Assert-DeployLockAcquired", mismatch_branch)
+    policy_write = source.index('"put-role-policy"', pre_write_assert)
+    post_write_assert = source.index("Assert-DeployLockAcquired", policy_write)
+    readback = source.index("$readback = Get-WorkerSqsPolicyReadback", post_write_assert)
+    assert current_read < pre_write_assert < policy_write < post_write_assert < readback
+    assert "RUNTIME_WORKER_SQS_IAM_RECONCILED" in source
+    assert "start-instance-refresh" not in source
+    assert "update-auto-scaling-group" not in source
+    assert "register-job-definition" not in source
 
 
 def test_dev_alerts_cron_reconciles_failed_wrong_note_pdf_objects_safely() -> None:

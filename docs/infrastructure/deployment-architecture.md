@@ -214,13 +214,20 @@ untraceable. The shared instance role can write only the exact API/AI/Tools
 log groups; it cannot create arbitrary groups.
 
 Before a release builds or refreshes any runtime, `verify-runtime-iam` compares
-the live `academy-ec2-role` worker-scale and container-log inline policies with
-the checked-in exact JSON policies. It also requires `/academy/api`,
+the live `academy-ec2-role` worker-scale, worker-SQS, and container-log inline
+policies with the checked-in exact JSON policies. The worker-SQS policy keeps
+consume/send permissions on the three main queues and grants only
+`GetQueueUrl`/`GetQueueAttributes` on the Messaging DLQ so fail-closed account
+recovery can prove both queues are empty without receiving, deleting, or
+redriving a parked message. It also requires `/academy/api`,
 `/academy/ai-worker`, and `/academy/tools-worker` to exist with 30-day
 retention. The deploy OIDC role remains read-only for runtime IAM; an operator
-must run the owning infrastructure convergence path when this preflight finds
-drift. This keeps a stale log policy or missing log group from being discovered
-only after a replacement instance has already started.
+must run `converge-runtime-worker-sqs-iam.ps1 -Apply` from an exact fresh main
+checkout when that single policy drifts; the command holds the shared mutation
+lock and performs exact post-write readback without refreshing a runtime or
+building an image. Other IAM drift uses its owning infrastructure convergence
+path. This keeps a stale policy or missing log group from being discovered only
+after a replacement instance has already started.
 
 ## 6. Worker Deployment Strategy
 
