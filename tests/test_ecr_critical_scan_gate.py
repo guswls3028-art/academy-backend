@@ -192,7 +192,8 @@ def test_current_high_acceptances_are_exact_and_time_bounded() -> None:
     }
     assert {entry["expiresOn"] for entry in accepted} == {"2026-09-19"}
     assert all(
-        entry["repositories"] == ["academy-api", "academy-ai-worker-cpu"]
+        entry["repositories"]
+        == ["academy-api", "academy-ai-worker-cpu", "academy-tools-worker"]
         for entry in libssh2
     )
     assert all(
@@ -236,6 +237,22 @@ def test_current_high_acceptances_are_exact_and_time_bounded() -> None:
         )
     )
     assert gate.evaluate_high_budget("academy-api", api_findings, baselines, known) == 20
+    tools_findings = _scan(
+        *(
+            _finding(cve, package, version, "HIGH")
+            for repository, cve, package, version in sorted(known)
+            if repository == "academy-tools-worker"
+        )
+    )
+    assert (
+        gate.evaluate_high_budget(
+            "academy-tools-worker",
+            tools_findings,
+            baselines,
+            known,
+        )
+        == 20
+    )
 
 
 def test_expired_high_acceptance_blocks_before_scanning() -> None:

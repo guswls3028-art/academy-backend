@@ -171,6 +171,19 @@ Debian stable fix나 API·AI ECR identity 변화가 먼저 나오면 acceptance�
 run `32614790812`는 이 판정 전에 실패하여 development/preprod/production runtime을
 변경하지 않았고 shared lock을 반환했다.
 
+같은 날 후속 후보 `sha-2cd2ed8e...-run-32626283905-1`의 새 Tools digest
+`sha256:f06386b6...` 완료 scan도 동일한 Debian trixie `libssh2`
+`1.11.1-1+deb13u1` 여섯 High를 정확히 반환했다. 공통 8건, GLib 6건,
+libssh2 6건인 총 20건이며 그 밖의 CVE, package, version 변화는 없다. Debian
+tracker JSON은 여섯 건 모두 trixie에서 open이고 fixed version이 없음을 다시
+확인했다. Tools Dockerfile은 API와 같은 Tesseract 전이 의존성으로 libssh2를
+포함하지만 저장소의 Tools entrypoint, 앱, requirements에는 SSH, SFTP, SCP,
+Paramiko 또는 libssh2 호출이 없다. 따라서 기존 2026-09-19 만료와 rationale을
+그대로 적용해 여섯 exact identity의 repository 범위에 Tools만 추가하고 상한을
+20으로 맞춘다. run `32626283905`는 이 scan gate에서 실패해
+development/preprod/production runtime을 변경하지 않았고 shared lock을 반환했다.
+다른 Tools finding이나 package version은 이 검토로 허용되지 않는다.
+
 현재 Critical 한시 항목은 Debian stable에 수정본이 아직 없거나 Debian이
 `no-dsa`/minor로 분류한 glibc·GLib·Perl finding이다. GLib의
 `g_dbus_node_info_new_for_xml` malformed introspection-XML 경로는 OCR CLI와

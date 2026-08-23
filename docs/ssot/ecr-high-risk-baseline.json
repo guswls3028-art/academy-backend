@@ -6,7 +6,7 @@
     "academy-video-worker": 8,
     "academy-messaging-worker": 8,
     "academy-ai-worker-cpu": 20,
-    "academy-tools-worker": 14
+    "academy-tools-worker": 20
   },
   "acceptedHighFindings": [
     {
@@ -221,7 +221,8 @@
       "packageVersion": "1.11.1-1+deb13u1",
       "repositories": [
         "academy-api",
-        "academy-ai-worker-cpu"
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
       ],
       "expiresOn": "2026-09-19",
       "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-58050",
@@ -233,7 +234,8 @@
       "packageVersion": "1.11.1-1+deb13u1",
       "repositories": [
         "academy-api",
-        "academy-ai-worker-cpu"
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
       ],
       "expiresOn": "2026-09-19",
       "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-58051",
@@ -245,11 +247,12 @@
       "packageVersion": "1.11.1-1+deb13u1",
       "repositories": [
         "academy-api",
-        "academy-ai-worker-cpu"
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
       ],
       "expiresOn": "2026-09-19",
       "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-66032",
-      "rationale": "Debian trixie remains vulnerable in the SFTP open response path. Academy API and AI entrypoints do not open SSH or SFTP sessions, and production remote administration is owned by host-side AWS SSM rather than container libssh2."
+      "rationale": "Debian trixie remains vulnerable in the SFTP open response path. Academy API, AI, and Tools entrypoints do not open SSH or SFTP sessions, and production remote administration is owned by host-side AWS SSM rather than container libssh2."
     },
     {
       "cve": "CVE-2026-66033",
@@ -257,7 +260,8 @@
       "packageVersion": "1.11.1-1+deb13u1",
       "repositories": [
         "academy-api",
-        "academy-ai-worker-cpu"
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
       ],
       "expiresOn": "2026-09-19",
       "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-66033",
@@ -269,7 +273,8 @@
       "packageVersion": "1.11.1-1+deb13u1",
       "repositories": [
         "academy-api",
-        "academy-ai-worker-cpu"
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
       ],
       "expiresOn": "2026-09-19",
       "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-66034",
@@ -281,7 +286,8 @@
       "packageVersion": "1.11.1-1+deb13u1",
       "repositories": [
         "academy-api",
-        "academy-ai-worker-cpu"
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
       ],
       "expiresOn": "2026-09-19",
       "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-66035",
