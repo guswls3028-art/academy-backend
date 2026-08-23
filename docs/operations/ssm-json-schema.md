@@ -25,6 +25,37 @@ The production-approved product-usage pilot control may update only the three
 role has `ssm:PutParameter` only on the exact `/academy/api/env` ARN; it does not
 grant a wildcard SSM write.
 
+### Common Solapi runtime identity
+
+`SOLAPI_API_KEY`, `SOLAPI_API_SECRET`, and `SOLAPI_SENDER` must be present and
+exactly equal in the plain-JSON API parameter and base64(JSON) worker
+parameter. Equality between the two documents is not enough: the configured
+sender must equal the single normalized sender returned by the provider's
+ACTIVE sender endpoint for those exact credentials. Raw credentials, sender
+numbers, and decrypted parameter documents are never written to local backup
+files or operator output.
+
+`scripts/v1/reconcile_common_alimtalk_sender.py` is the only sender drift
+repair path. It changes only `SOLAPI_SENDER`, preserves the decoded key sets and
+every other value, and refreshes only Messaging and API under the shared
+production mutation lock. A failure before runtime refresh restores the exact
+original parameter values. Every write must advance the observed SSM version by
+exactly one and preserve the exact KMS KeyId; a concurrent version, raw value,
+or KMS drift retains the lock instead of claiming success or overwriting again.
+A failure after refresh starts keeps the target configuration and lock for
+forward convergence.
+
+Every supported standalone writer for `/academy/api/env` or
+`/academy/workers/env` must hold the same shared production mutation lock for
+its complete read-transform-write boundary. Deploy-owned bootstrap/sync writers
+assert the deploy lock immediately before publication and rollback; delegated
+worker restart inherits one owner instead of acquiring a nested lock. The
+generic `core/ssm-safe-update.ps1` refuses protected runtime writes unless the
+runtime-env lock is already held. Its decrypted source and transformed payload
+exist only in a process-owned temporary directory that is deleted on both
+success and failure. Direct `aws ssm put-parameter` runbook recipes are not a
+supported mutation path.
+
 ## Preprod API parameter: `/academy/api/preprod/env`
 
 This is a release-bound Advanced SecureString version, never a mutable alias for

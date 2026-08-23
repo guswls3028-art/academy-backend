@@ -21,6 +21,11 @@ if (-not $paramName) {
     exit 1
 }
 
+. (Join-Path $PSScriptRoot "core\runtime-env-lock.ps1")
+Enter-AcademyRuntimeEnvMutationLock `
+    -Region $script:Region `
+    -OwnerPrefix "workers-env-sqs"
+try {
 $existing = $null
 try {
     $existing = Invoke-AwsJson @("ssm", "get-parameter", "--name", $paramName, "--with-decryption", "--region", $script:Region, "--output", "json")
@@ -70,6 +75,7 @@ $newJson = $obj | ConvertTo-Json -Compress -Depth 10
 $newBytes = [System.Text.Encoding]::UTF8.GetBytes($newJson)
 $newB64 = [Convert]::ToBase64String($newBytes)
 
+Assert-AcademyRuntimeEnvMutationLock -Region $script:Region
 Invoke-Aws @("ssm", "put-parameter", "--name", $paramName, "--type", "SecureString", "--value", $newB64, "--overwrite", "--region", $script:Region) -ErrorMessage "put-parameter workers env" | Out-Null
 
 Write-Host "SSM $paramName updated with SQS queue names:" -ForegroundColor Green
@@ -77,3 +83,6 @@ Write-Host "  MESSAGING_SQS_QUEUE_NAME=$($script:MessagingSqsQueueName)" -Foregr
 Write-Host "  AI_SQS_QUEUE_NAME_*= $($script:AiSqsQueueName)" -ForegroundColor Gray
 Write-Host "  TOOLS_SQS_QUEUE_NAME=$($script:ToolsSqsQueueName)" -ForegroundColor Gray
 Write-Host "`nMessaging/AI 워커 인스턴스 재시작(instance-refresh) 후 적용됨." -ForegroundColor Cyan
+} finally {
+    Exit-AcademyRuntimeEnvMutationLock -Region $script:Region
+}

@@ -24,6 +24,11 @@ if (-not $paramName) {
     exit 1
 }
 
+. (Join-Path $PSScriptRoot "core\runtime-env-lock.ps1")
+Enter-AcademyRuntimeEnvMutationLock `
+    -Region $script:Region `
+    -OwnerPrefix "api-env-sqs"
+try {
 $existing = $null
 try {
     $existing = Invoke-AwsJson @("ssm", "get-parameter", "--name", $paramName, "--with-decryption", "--region", $script:Region, "--output", "json")
@@ -64,6 +69,7 @@ if ($valueRaw -match '^[A-Za-z0-9+/]+=*$') {
     $newValue = [Convert]::ToBase64String($newBytes)
 }
 
+Assert-AcademyRuntimeEnvMutationLock -Region $script:Region
 Invoke-Aws @("ssm", "put-parameter", "--name", $paramName, "--type", "SecureString", "--value", $newValue, "--overwrite", "--region", $script:Region) -ErrorMessage "put-parameter api env" | Out-Null
 
 Write-Host "SSM $paramName updated:" -ForegroundColor Green
@@ -73,3 +79,6 @@ Write-Host "  Video Batch: VIDEO_BATCH_JOB_QUEUE=$($script:VideoQueueName)" -For
 Write-Host "  Video Batch: VIDEO_BATCH_JOB_DEFINITION=$($script:VideoJobDefName)" -ForegroundColor Gray
 Write-Host "`nAPI 인스턴스 refresh-api-env.ps1 실행 또는 instance-refresh 후 적용됨." -ForegroundColor Cyan
 Write-Host "연결 참조 대조: docs/reports/API-VIDEO-BATCH-REDIS-CONNECTION-REFERENCE.md" -ForegroundColor Cyan
+} finally {
+    Exit-AcademyRuntimeEnvMutationLock -Region $script:Region
+}

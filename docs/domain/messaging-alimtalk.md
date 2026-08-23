@@ -393,7 +393,7 @@ signup 카테고리만 자체 Solapi 템플릿을 유지. 나머지 매핑 카�
 
 - HMAC 키 SSOT는 API·worker SSM env에 동일하게 저장한 전용 `MESSAGING_TENANT_BINDING_KEY`다. Django `SECRET_KEY`나 공급사 키를 재사용하지 않는다.
 - `MESSAGING_TENANT_BINDING_ENFORCED`의 코드 기본값은 `true`다. 기존 unsigned backlog가 있는 최초 도입 때만 명시적으로 `false`를 사용한다.
-- 도입 순서: 전용 키를 두 env에 동기화 → enforcement=false로 signer API와 검증 worker 배포 → 모든 API producer가 새 이미지인지 확인하고 unsigned SQS backlog가 0이 될 때까지 drain → `scripts/v1/set-messaging-tenant-binding-enforcement.ps1 -Enabled true -RefreshMessagingWorker` → unsigned 거부 로그와 정상 signed canary 확인.
+- 도입 순서: 전용 키를 두 env에 동기화 → enforcement=false로 signer API와 검증 worker 배포 → 모든 API producer가 새 이미지인지 확인하고 unsigned SQS backlog가 0이 될 때까지 drain → `scripts/v1/set-messaging-tenant-binding-enforcement.ps1 -Enabled true -RefreshMessagingWorker` → unsigned 거부 로그와 정상 signed canary 확인. 이 entrypoint는 shared production mutation lock 아래 exact worker refresh가 terminal `Successful`일 때까지 기다리며, 실패·취소·timeout이면 lock을 남겨 forward-convergence 전 다른 release를 차단한다.
 - `false` 상태를 일반 운영 모드로 두지 않는다. release seal과 배포 검증은 최종 worker runtime 값이 `true`임을 확인한다.
 - 키 순환은 새 키를 fallback으로 먼저 worker fleet에 배포하고, signer primary 전환 후 구 API/queue backlog를 drain한 다음 구 키를 제거하는 양방향 호환 순서로 수행한다. 검증 중에는 `MESSAGING_TENANT_BINDING_FALLBACK_KEYS`를 사용한다.
 - 서명 누락(강제 모드) 또는 불일치 payload는 공급사 호출·과금 전에 terminal delete하며, owner `NotificationLog.failure_reason`에 `missing_tenant_binding_signature` 또는 `invalid_tenant_binding_signature`를 남긴다. 로그에는 수신번호·본문을 저장하지 않는다.

@@ -24,10 +24,10 @@ StepScaling.
 
 ## 사전 조건
 
-1. **SSM Parameter**: `.env` 내용을 `/academy/workers/env` (SecureString)에 저장.
-   ```powershell
-   aws ssm put-parameter --name /academy/workers/env --type SecureString --value file://.env --overwrite --region ap-northeast-2
-   ```
+1. **SSM Parameter**: `/academy/workers/env`는 정식 `scripts/v1/deploy.ps1`의
+   bootstrap/sync 또는 shared production mutation lock을 사용하는
+   `scripts/v1/update-workers-env-sqs.ps1`로만 갱신한다. 로컬 `.env`나 전체 JSON을
+   `aws ssm put-parameter`로 직접 덮어쓰지 않는다.
 2. **Historical Lambda 역할** (`academy-lambda`): queue_depth_lambda를 되살릴 때만 CloudWatch PutMetricData 권한 필요.
    - `infra/worker_asg/iam_policy_queue_depth_lambda.json` 참고해 인라인 정책 추가 또는 기존 정책에 Statement 추가.
 3. **EC2 IAM 역할** (인스턴스 프로필): `ssm:GetParameter` (/academy/workers/env), ECR pull, 기존 워커용 권한.

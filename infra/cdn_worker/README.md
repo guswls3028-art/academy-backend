@@ -63,30 +63,22 @@ curl -I "https://academy-cdn-video.<account>.workers.dev/tenants/1/video/hls/284
 
 DNS 가 이미 Cloudflare 통과 중이므로 (`104.21.x.x` 확인됨) 별도 CNAME 불필요. Route 추가만으로 발효.
 
-### 6. SECRET_KEY 회전 (선택 — 추천)
-백엔드 + Worker 동시 갱신:
-```bash
-# 1) 새 64-char SECRET 생성
-NEW_CDN_SK=$(openssl rand -hex 32)
+### 6. SECRET_KEY 회전
 
-# 2) 백엔드 SSM 업데이트 (scripts/v1/core/ssm-safe-update.ps1 helper 사용)
-pwsh -c ". scripts/v1/core/ssm-safe-update.ps1; Update-AcademySSMParameter -Name '/academy/api/env' -KeyUpdates @{ CDN_HLS_SIGNING_SECRET = '$NEW_CDN_SK' } -ExpectMinKeys 50 -Wrapping plain"
-
-# 3) Worker secret 갱신 (즉시 반영)
-echo $NEW_CDN_SK | wrangler secret put CDN_HLS_SIGNING_SECRET
-
-# 4) API 컨테이너 docker stop+rm+run --env-file 으로 reload (양쪽 API EC2)
-```
+이 문서의 과거 복붙 절차는 API SSM, Cloudflare Worker secret, API runtime 사이에
+불일치 창을 만들 수 있어 지원하지 않는다. 회전은 별도 변경 task에서 shared
+production mutation lock을 잡고 API SSM→Worker secret→API guarded refresh→양쪽
+서명/재생 readback을 한 owner가 끝까지 수행해야 한다. 전용 entrypoint와 회귀
+계약 없이 `ssm-safe-update.ps1` 또는 `wrangler secret put`만 단독 실행하지 않는다.
 
 ### 7. 백엔드 CDN_HLS_BASE_URL 전환 (단계적)
 **현재**: `pub-54ae...r2.dev` (public R2)
 **목표**: `https://cdn.hakwonplus.com` (signed Worker)
 
-```bash
-# tenant 1 만 먼저: 백엔드에 tenant-scoped feature flag 또는 SSM 직접 단일 전환
-pwsh -c ". scripts/v1/core/ssm-safe-update.ps1; Update-AcademySSMParameter -Name '/academy/api/env' -KeyUpdates @{ CDN_HLS_BASE_URL = 'https://cdn.hakwonplus.com' } -ExpectMinKeys 50 -Wrapping plain"
-# API 컨테이너 reload (stop+rm+run)
-```
+현재 base URL은 deploy SSOT와 candidate/preprod/playback gate가 소유한다. SSM을
+단독 수정하거나 컨테이너를 수동 reload하지 않는다. 변경 시에는 정식 backend
+release가 candidate env, preprod CDN playback, API rolling refresh와 production
+playback readback을 통과해야 한다.
 
 ### 8. R2 bucket public 차단 (마지막 단계 — 비가역 아님, 즉시 복구 가능)
 **Cloudflare Dashboard**:

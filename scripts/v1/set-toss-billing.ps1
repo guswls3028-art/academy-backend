@@ -60,12 +60,18 @@ if (-not $secretKey.StartsWith($expectedSecretPrefix)) {
 $env:AWS_ACCESS_KEY_ID = $null
 $env:AWS_SECRET_ACCESS_KEY = $null
 $env:AWS_SESSION_TOKEN = $null
+if ($AwsProfile) { $env:AWS_PROFILE = $AwsProfile }
 
 $awsArgs = @()
 if ($AwsProfile) {
     $awsArgs = @("--profile", $AwsProfile)
 }
 
+. (Join-Path $PSScriptRoot "core\runtime-env-lock.ps1")
+Enter-AcademyRuntimeEnvMutationLock `
+    -Region $Region `
+    -OwnerPrefix "toss-billing"
+try {
 $valueRaw = & aws ssm get-parameter `
     --name $SsmApiEnv `
     --with-decryption `
@@ -139,6 +145,7 @@ try {
         [System.Text.UTF8Encoding]::new($false)
     )
 
+    Assert-AcademyRuntimeEnvMutationLock -Region $Region
     & aws ssm put-parameter `
         --cli-input-json "file://$tempPayloadPath" `
         --region $Region `
@@ -158,17 +165,17 @@ Write-Host (
 ) -ForegroundColor Green
 
 if ($RefreshInstances) {
-    $refreshId = & aws autoscaling start-instance-refresh `
-        --auto-scaling-group-name $ApiAsgName `
-        --preferences MinHealthyPercentage=100,InstanceWarmup=120 `
-        --region $Region `
-        @awsArgs `
-        --query InstanceRefreshId `
-        --output text
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($refreshId)) {
-        throw "SSM was updated, but the API instance refresh could not be started."
-    }
+    $refreshId = Start-AcademyInstanceRefresh `
+        -AutoScalingGroupName $ApiAsgName `
+        -Region $Region
     Write-Host "API instance refresh started: $refreshId" -ForegroundColor Cyan
+    Wait-AcademyInstanceRefresh `
+        -AutoScalingGroupName $ApiAsgName `
+        -InstanceRefreshId $refreshId `
+        -Region $Region
+    Assert-AcademyPublicApiHealth
+    Complete-AcademyRuntimeRefreshBoundary -Region $Region
+    Write-Host "API instance refresh and public health readback passed." -ForegroundColor Green
 } else {
     Write-Host (
         "API instances were not refreshed; the new settings are not active yet."
@@ -176,3 +183,6 @@ if ($RefreshInstances) {
 }
 
 Write-Host "Delete the local key files after rollout verification." -ForegroundColor Yellow
+} finally {
+    Exit-AcademyRuntimeEnvMutationLock -Region $Region
+}
