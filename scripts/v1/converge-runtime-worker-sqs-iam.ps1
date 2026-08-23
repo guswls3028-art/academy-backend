@@ -87,6 +87,7 @@ try {
         ""
     }
     if ($currentJson -ne $expectedJson) {
+        Assert-DeployLockAcquired -Reg $script:Region
         Invoke-Aws @(
             "iam", "put-role-policy",
             "--role-name", $RoleName,

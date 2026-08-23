@@ -8,6 +8,7 @@ from django.utils import timezone
 
 from academy.framework.workers import ai_sqs_worker
 from apps.domains.ai.models import AIJobModel
+from libs.queue import QueueUnavailableError
 
 
 class _Queue:
@@ -19,14 +20,17 @@ class _Queue:
 
 
 class _SequenceQueue:
-    def __init__(self, counts_sequence: list[dict[str, int]]) -> None:
+    def __init__(self, counts_sequence: list[dict[str, int] | Exception]) -> None:
         self.counts_sequence = counts_sequence
         self.calls = 0
 
     def get_counts(self, tier: str = "basic") -> dict[str, int]:
         idx = min(self.calls, len(self.counts_sequence) - 1)
         self.calls += 1
-        return self.counts_sequence[idx]
+        result = self.counts_sequence[idx]
+        if isinstance(result, Exception):
+            raise result
+        return result
 
 
 class _TierQueue:
@@ -86,6 +90,35 @@ class AIWorkerIdleScaleInTests(SimpleTestCase):
             [
                 {"visible": 0, "not_visible": 0, "delayed": 0},
                 {"visible": 0, "not_visible": 1, "delayed": 0},
+            ]
+        )
+
+        with (
+            patch.object(ai_sqs_worker, "IDLE_SCALE_IN_COUNT_TIERS", ("basic",)),
+            patch.object(ai_sqs_worker, "IDLE_SCALE_IN_CONFIRM_SECONDS", 0),
+            patch.object(ai_sqs_worker, "_active_running_ai_jobs_exist", return_value=False),
+            patch.object(ai_sqs_worker, "scale_down_ai_worker_asg_to_baseline_if_idle") as scale_down,
+        ):
+            self.assertFalse(ai_sqs_worker._try_idle_scale_in(queue, "basic"))
+
+        scale_down.assert_not_called()
+
+    def test_idle_scale_in_skips_when_initial_queue_health_is_unavailable(self):
+        queue = _SequenceQueue([QueueUnavailableError("queue unavailable")])
+
+        with (
+            patch.object(ai_sqs_worker, "IDLE_SCALE_IN_COUNT_TIERS", ("basic",)),
+            patch.object(ai_sqs_worker, "scale_down_ai_worker_asg_to_baseline_if_idle") as scale_down,
+        ):
+            self.assertFalse(ai_sqs_worker._try_idle_scale_in(queue, "basic"))
+
+        scale_down.assert_not_called()
+
+    def test_idle_scale_in_skips_when_confirm_queue_health_is_unavailable(self):
+        queue = _SequenceQueue(
+            [
+                {"visible": 0, "not_visible": 0, "delayed": 0},
+                QueueUnavailableError("confirm queue unavailable"),
             ]
         )
 

@@ -1559,6 +1559,13 @@ def test_runtime_worker_sqs_iam_converger_is_locked_and_readback_only_beyond_pol
     assert source.count('"put-role-policy"') == 1
     assert '"get-role-policy"' in source
     assert source.count("Get-WorkerSqsPolicyReadback") >= 4
+    current_read = source.index("$current = Get-WorkerSqsPolicyReadback")
+    mismatch_branch = source.index("if ($currentJson -ne $expectedJson)", current_read)
+    pre_write_assert = source.index("Assert-DeployLockAcquired", mismatch_branch)
+    policy_write = source.index('"put-role-policy"', pre_write_assert)
+    post_write_assert = source.index("Assert-DeployLockAcquired", policy_write)
+    readback = source.index("$readback = Get-WorkerSqsPolicyReadback", post_write_assert)
+    assert current_read < pre_write_assert < policy_write < post_write_assert < readback
     assert "RUNTIME_WORKER_SQS_IAM_RECONCILED" in source
     assert "start-instance-refresh" not in source
     assert "update-auto-scaling-group" not in source
