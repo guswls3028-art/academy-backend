@@ -13,6 +13,11 @@
 은 요청 테넌트의 활성 학생과 `TenantResolvedAndStaff` 권한이 모두 확인된 경우에만
 대리보기 세션을 만든다. 다른 테넌트 학생을 추정하거나 찾는 fallback은 없다.
 
+관리자 영상 상세의 학생 시청 현황도 같은 지원 세션을 재사용한다. 영상 통계
+`GET /api/v1/media/videos/<video_id>/stats/`는 각 tenant-scoped 수강 행에
+`student_id`를 함께 반환하고, 프런트는 이 값으로만 학생 화면 보기를 연다. 이름,
+전화번호 또는 수강 ID를 학생 ID로 추정하거나 별도 학생 검색으로 보정하지 않는다.
+
 대리보기 토큰은 다음 경계를 가진다.
 
 - 15분짜리 access token만 발급하며 refresh token은 만들지 않는다.
