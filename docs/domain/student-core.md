@@ -1,7 +1,7 @@
 # Student Domain Core SSOT
 
 **Status:** Active
-**Last checked:** 2026-07-29 KST
+**Last checked:** 2026-08-23 KST
 **Truth basis:** code inspection of `apps/domains/students/`, `apps/core/views/account_recovery.py`, `apps/core/services/password.py`, `apps/domains/results/services/submission_scope_guard.py`, `apps/domains/results/services/student_result_service.py`, and frontend shared student contracts.
 
 This document is the integration SSOT for the student domain. More specific
@@ -94,6 +94,15 @@ Current canonical entry points:
 | signup approval | `approve_registration_request()` -> `create_student_account(password_hash=...)` |
 | admin/student profile write | `update_student_profile()` |
 | deleted conflict restore/delete | `restore_student()` / `permanently_delete_students()` through import conflict resolver |
+
+Student and enrollment Excel uploads accept only the `.xlsx` extension. The
+API validates a non-empty bounded upload, a supported browser MIME (including
+Windows Hancom HCell's `application/haansoftxlsx`, empty MIME, and generic
+`application/octet-stream`), the ZIP signature, `[Content_Types].xml`, and
+`xl/workbook.xml` before R2 upload. MIME is client metadata and never replaces
+the file-content checks. A renamed file, unrelated MIME, disguised ZIP, or
+corrupt workbook fails closed, and the worker parser remains the final workbook
+and row-validation boundary.
 
 Student app profile photos use only the tenant-scoped R2 key returned by
 `profile_photo_key(tenant_id, student_id, unique_id, ext)` as the readable
