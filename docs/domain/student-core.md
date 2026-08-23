@@ -95,6 +95,29 @@ Current canonical entry points:
 | admin/student profile write | `update_student_profile()` |
 | deleted conflict restore/delete | `restore_student()` / `permanently_delete_students()` through import conflict resolver |
 
+New-student JSON/Excel import resolves each row inside the requested tenant in
+this order:
+
+1. A non-empty normalized student phone that matches exactly one active
+   `Student` resolves that existing student.
+2. Otherwise, an exact name plus normalized parent phone that matches exactly
+   one active `Student` resolves that existing student. The name is opaque:
+   suffixes and markers such as `김지우a`, `김지우b`, `김지우1`, `김지우2`,
+   or parentheses are ordinary name text and are neither stripped nor folded.
+3. The existing deleted-student name-plus-parent restore policy applies only
+   to a unique deleted candidate. A deleted phone collision that is not that
+   restore candidate remains an explicit conflict.
+4. Only when those same-tenant candidates are absent is a new account graph
+   created.
+
+Multiple candidates at any lookup boundary fail the row closed instead of
+choosing the first record. No cross-tenant fallback exists. Resolving an active
+duplicate never rewrites the existing student's name, phone, parent phone,
+login ID, password, token version, or pending account notice. A parent phone is
+required but may be shared by siblings or twins; the student phone is optional.
+The worker result must expose every source row as created, duplicate, restored,
+or failed so a partial result cannot look like silent omission.
+
 Student and enrollment Excel uploads accept only the `.xlsx` extension. The
 API validates a non-empty bounded upload, a supported browser MIME (including
 Windows Hancom HCell's `application/haansoftxlsx`, empty MIME, and generic

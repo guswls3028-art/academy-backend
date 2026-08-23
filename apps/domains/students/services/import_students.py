@@ -2,8 +2,9 @@
 """Canonical student import row orchestration.
 
 Excel/student import and lecture-enrollment import both need the same student
-identity policy: resolve by tenant + name + parent phone, restore matching
-deleted students, or create the account graph through create_student_account().
+identity policy: resolve a unique same-tenant student phone first, then an
+exact opaque name + parent phone, restore matching deleted students, or create
+the account graph through create_student_account().
 HTTP views and workers keep their own transport contracts; this module owns the
 row-level student decision.
 """
@@ -239,6 +240,13 @@ def _choose_ps_number(
         raise StudentImportRowError(detail) from exc
 
 
+def _unique_import_candidate(queryset, *, ambiguous_detail: str):
+    candidates = list(queryset.order_by("id")[:2])
+    if len(candidates) > 1:
+        raise StudentImportRowError(ambiguous_detail)
+    return candidates[0] if candidates else None
+
+
 def resolve_student_import_row(
     tenant,
     row: dict[str, Any],
@@ -261,10 +269,40 @@ def resolve_student_import_row(
         custom_field_definitions=custom_field_definitions,
     )
 
-    existing = student_repo.student_filter_tenant_name_parent_phone_active(
-        tenant,
-        normalized.name,
-        normalized.parent_phone,
+    tenant_students = student_repo.student_filter_tenant(tenant)
+
+    existing = None
+    if normalized.phone:
+        existing = _unique_import_candidate(
+            tenant_students.filter(
+                deleted_at__isnull=True,
+                phone=normalized.phone,
+            ),
+            ambiguous_detail=(
+                "학생 전화번호가 같은 활성 학생이 여러 명입니다. "
+                "학생 목록에서 중복을 정리한 뒤 다시 등록해 주세요."
+            ),
+        )
+    if existing:
+        return StudentImportRowResolution(
+            student=existing,
+            created=False,
+            restored=False,
+            duplicate=True,
+            parent_phone=normalized.parent_phone,
+            parent_password_for_notice="",
+        )
+
+    existing = _unique_import_candidate(
+        tenant_students.filter(
+            deleted_at__isnull=True,
+            name=normalized.name,
+            parent_phone=normalized.parent_phone,
+        ),
+        ambiguous_detail=(
+            "이름과 학부모 전화번호가 같은 활성 학생이 여러 명입니다. "
+            "학생 목록에서 중복을 정리한 뒤 다시 등록해 주세요."
+        ),
     )
     if existing:
         return StudentImportRowResolution(
@@ -276,10 +314,16 @@ def resolve_student_import_row(
             parent_password_for_notice="",
         )
 
-    deleted_student = student_repo.student_filter_tenant_name_parent_phone_deleted(
-        tenant,
-        normalized.name,
-        normalized.parent_phone,
+    deleted_student = _unique_import_candidate(
+        tenant_students.filter(
+            deleted_at__isnull=False,
+            name=normalized.name,
+            parent_phone=normalized.parent_phone,
+        ),
+        ambiguous_detail=(
+            "이름과 학부모 전화번호가 같은 삭제 학생이 여러 명입니다. "
+            "삭제된 학생 목록에서 중복을 정리한 뒤 다시 등록해 주세요."
+        ),
     )
     if deleted_student:
         restored_result = restore_student(
@@ -317,18 +361,20 @@ def resolve_student_import_row(
 
     with transaction.atomic():
         if normalized.phone:
-            conflict_deleted = (
-                student_repo.student_filter_tenant_phone_deleted(
-                    tenant,
-                    normalized.phone,
-                )
-                .values_list("id", flat=True)
-                .first()
+            conflict_deleted = _unique_import_candidate(
+                tenant_students.filter(
+                    deleted_at__isnull=False,
+                    phone=normalized.phone,
+                ),
+                ambiguous_detail=(
+                    "학생 전화번호가 같은 삭제 학생이 여러 명입니다. "
+                    "삭제된 학생 목록에서 중복을 정리한 뒤 다시 등록해 주세요."
+                ),
             )
             if conflict_deleted:
                 raise StudentImportRowError(
                     "삭제된 학생과 전화번호 충돌. 복원 또는 삭제 후 재등록을 선택하세요.",
-                    conflict_student_id=conflict_deleted,
+                    conflict_student_id=conflict_deleted.id,
                 )
             if student_repo.user_filter_phone_active(normalized.phone, tenant=tenant).exists():
                 raise StudentImportRowError("이미 사용 중인 전화번호입니다.")
