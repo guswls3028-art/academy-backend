@@ -44,24 +44,55 @@ function Get-AcademyChangeRiskPlan {
     $all = @($backend) + @($frontend)
     if (-not $all.Count) { throw "At least one changed backend or frontend path is required." }
 
-    $docsPattern = '^(docs/|agents\.md$|readme\.md$)'
+    $docsPattern = '^(docs/|agents\.md$)|(^|/)readme\.md$'
+    $backendTestPattern = '(^|/)__tests__(/|$)|(^|/)tests?(/|\.py$)|(^|/)test_[^/]+\.py$|_test\.py$'
+    $frontendTestPattern = '^e2e/|(^|/)(__tests__|tests?)(/|$)|\.(spec|test)\.[^/]+$|(^|/)test\.[^/]+$'
+    $backendProductPattern = '^(apps/|academy/|manage\.py$)'
+    $backendRuntimeBuildPattern = '^(libs/|docker/|requirements/)'
+    $frontendRuntimePattern = '^(src/|public/|functions/)'
+    $frontendRuntimeBuildPattern = '^(package\.json$|pnpm-lock\.yaml$|vite\.config\.[^/]+$|index\.html$)'
+    $backendGovernancePattern = '^((\.github/workflows/)|(scripts/(v1|codex)/)|(docs/(operations|infrastructure)/))'
+    $frontendGovernancePattern = '^((\.github/workflows/)|(scripts/guard-deployment-governance\.mjs$)|(scripts/guard-runtime)|(scripts/tests/(visual-audit-workflow|workspace-deployment-contract))|(docs/deployment-operations\.md$))'
     $docsOnly = -not [bool](@($all | Where-Object { $_ -notmatch $docsPattern }).Count)
-    $backendProduct = Test-AnyPath $backend '^(apps/|academy/|manage\.py$)'
+    $backendProduct = Test-AnyPath $backend $backendProductPattern
+    $backendRuntimeBuild = Test-AnyPath $backend $backendRuntimeBuildPattern
     $backendRuntime = [bool](@($backend | Where-Object {
-        $_ -match '^(apps/|academy/)' -and
-        $_ -notmatch '(^|/)(tests?(/|\.py$)|test_[^/]+\.py$)'
-    }).Count)
+        (
+            $_ -match $backendRuntimeBuildPattern -or
+            $_ -match '^(apps/|academy/)'
+        ) -and $_ -notmatch $backendTestPattern
+    }).Count) -or $backendRuntimeBuild
+    $frontendRuntimeBuild = Test-AnyPath $frontend $frontendRuntimeBuildPattern
     $frontendRuntime = [bool](@($frontend | Where-Object {
-        $_ -match '^(src/|public/|functions/)' -and
-        $_ -notmatch '(^|/)(__tests__|tests?)(/|$)' -and
-        $_ -notmatch '\.(spec|test)\.[^/]+$'
-    }).Count)
+        $_ -match $frontendRuntimePattern -and
+        $_ -notmatch $frontendTestPattern
+    }).Count) -or $frontendRuntimeBuild
     $frontendE2e = Test-AnyPath $frontend '^e2e/'
     $backendMigration = Test-AnyPath $backend '(^|/)migrations/'
-    $asyncWorker = Test-AnyPath $backend '^(apps/|academy/).*(messaging|video|ai|tools|queue|worker)'
-    $backendGovernance = Test-AnyPath $backend '^((\.github/workflows/)|(scripts/(v1|codex)/)|(docs/(operations|infrastructure)/))'
-    $frontendGovernance = Test-AnyPath $frontend '^((\.github/workflows/)|(scripts/guard-deployment-governance\.mjs$)|(scripts/guard-runtime)|(scripts/tests/(visual-audit-workflow|workspace-deployment-contract))|(docs/deployment-operations\.md$))'
+    $asyncWorker = Test-AnyPath $backend '^(apps/|academy/|libs/|docker/|requirements/).*(messaging|video|ai|tools|queue|worker)'
+    $backendGovernance = Test-AnyPath $backend $backendGovernancePattern
+    $frontendGovernance = Test-AnyPath $frontend $frontendGovernancePattern
     $crossRepositoryProduct = $backendRuntime -and $frontendRuntime
+
+    $unknownBackend = @($backend | Where-Object {
+        $_ -notmatch $docsPattern -and
+        $_ -notmatch $backendTestPattern -and
+        $_ -notmatch $backendProductPattern -and
+        $_ -notmatch $backendRuntimeBuildPattern -and
+        $_ -notmatch $backendGovernancePattern
+    })
+    $unknownFrontend = @($frontend | Where-Object {
+        $_ -notmatch $docsPattern -and
+        $_ -notmatch $frontendTestPattern -and
+        $_ -notmatch $frontendRuntimePattern -and
+        $_ -notmatch $frontendRuntimeBuildPattern -and
+        $_ -notmatch $frontendGovernancePattern
+    })
+    if ($unknownBackend.Count -or $unknownFrontend.Count) {
+        $unknownPaths = @($unknownBackend | ForEach-Object { "backend:$_" }) +
+            @($unknownFrontend | ForEach-Object { "frontend:$_" })
+        throw "Unclassified non-documentation path(s): $($unknownPaths -join ', ')"
+    }
 
     $risks = [Collections.Generic.List[string]]::new()
     $requirements = [Collections.Generic.List[string]]::new()
@@ -77,6 +108,13 @@ function Get-AcademyChangeRiskPlan {
         Add-UniqueValue $requirements "postgresql-tenant-ci"
         Add-UniqueValue $gates "backend-core"
     }
+    if ($backendRuntimeBuild) {
+        Add-UniqueValue $risks "backend-runtime-build"
+        Add-UniqueValue $requirements "failure-first-regression"
+        Add-UniqueValue $requirements "postgresql-tenant-ci"
+        Add-UniqueValue $gates "backend-core"
+        Add-UniqueValue $gates "backend-deployment-contracts"
+    }
     if ($backendMigration) {
         Add-UniqueValue $risks "migration-compatibility"
         Add-UniqueValue $requirements "expand-contract-migration"
@@ -90,6 +128,10 @@ function Get-AcademyChangeRiskPlan {
         Add-UniqueValue $requirements "failure-first-regression"
         Add-UniqueValue $requirements "desktop-390-live-readback"
         Add-UniqueValue $gates "frontend-core"
+    }
+    if ($frontendRuntimeBuild) {
+        Add-UniqueValue $risks "frontend-runtime-build"
+        Add-UniqueValue $gates "frontend-deployment-contracts"
     }
     if ($frontendRuntime -or $frontendE2e) {
         Add-UniqueValue $gates "frontend-e2e"
@@ -130,27 +172,48 @@ function Get-AcademyDeploymentLockState {
         [long]$Now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
     )
 
-    $lockItem = $null
-    if ($null -ne $LockReadback) {
-        $readbackProperties = @($LockReadback.PSObject.Properties.Name)
-        if ("Item" -in $readbackProperties) { $lockItem = $LockReadback.Item }
+    if ($null -eq $LockReadback) {
+        return [pscustomobject]@{ Active = $false; Owner = $null; ExpiresAt = 0L }
+    }
+    if ($LockReadback -isnot [pscustomobject]) {
+        throw "Deployment lock readback rejected: malformed DynamoDB lock readback"
+    }
+    $itemProperty = $LockReadback.PSObject.Properties['Item']
+    if ($null -eq $itemProperty) {
+        return [pscustomobject]@{ Active = $false; Owner = $null; ExpiresAt = 0L }
     }
 
-    $lockOwner = ""
+    $lockItem = $itemProperty.Value
+    if ($null -eq $lockItem -or $lockItem -isnot [pscustomobject]) {
+        throw "Deployment lock readback rejected: malformed DynamoDB lock Item"
+    }
+    $ownerProperty = $lockItem.PSObject.Properties['owner']
+    $ttlProperty = $lockItem.PSObject.Properties['ttl']
+    if ($null -eq $ownerProperty -or $null -eq $ttlProperty) {
+        throw "Deployment lock readback rejected: malformed DynamoDB lock Item"
+    }
+    $ownerAttribute = $ownerProperty.Value
+    $ttlAttribute = $ttlProperty.Value
+    if ($null -eq $ownerAttribute -or $ownerAttribute -isnot [pscustomobject] -or
+        $null -eq $ttlAttribute -or $ttlAttribute -isnot [pscustomobject]) {
+        throw "Deployment lock readback rejected: malformed DynamoDB lock Item"
+    }
+    $ownerSProperty = $ownerAttribute.PSObject.Properties['S']
+    $ttlNProperty = $ttlAttribute.PSObject.Properties['N']
+    if ($null -eq $ownerSProperty -or $ownerSProperty.Value -isnot [string] -or
+        [string]::IsNullOrWhiteSpace([string]$ownerSProperty.Value) -or
+        $null -eq $ttlNProperty -or $ttlNProperty.Value -isnot [string] -or
+        [string]$ttlNProperty.Value -notmatch '^[0-9]+$') {
+        throw "Deployment lock readback rejected: malformed DynamoDB lock Item"
+    }
     $lockTtl = 0L
-    if ($null -ne $lockItem) {
-        $itemProperties = @($lockItem.PSObject.Properties.Name)
-        if ("owner" -in $itemProperties -and $lockItem.owner.S) {
-            $lockOwner = [string]$lockItem.owner.S
-        }
-        if ("ttl" -in $itemProperties -and $lockItem.ttl.N) {
-            $lockTtl = [long]$lockItem.ttl.N
-        }
+    if (-not [long]::TryParse([string]$ttlNProperty.Value, [ref]$lockTtl)) {
+        throw "Deployment lock readback rejected: malformed DynamoDB lock Item"
     }
-
+    $lockOwner = [string]$ownerSProperty.Value
     return [pscustomobject]@{
         Active = [bool]($lockOwner -and $lockTtl -ge $Now)
-        Owner = if ($lockOwner) { $lockOwner } else { $null }
+        Owner = $lockOwner
         ExpiresAt = $lockTtl
     }
 }
@@ -216,7 +279,12 @@ function Assert-AcademyProductionReleaseBundle {
     $manifest = $backend.Manifest
     Assert-ReleaseBundleCondition ([int]$manifest.schemaVersion -eq 1) "backend manifest schemaVersion must be 1"
     Assert-ReleaseBundleCondition ([string]$manifest.status -eq "successful") "backend manifest status is not successful"
-    Assert-ReleaseBundleCondition ([bool]$manifest.complete) "backend manifest is not complete"
+    $manifestCompleteProperty = $manifest.PSObject.Properties['complete']
+    Assert-ReleaseBundleCondition (
+        $null -ne $manifestCompleteProperty -and
+        $manifestCompleteProperty.Value -is [bool] -and
+        $manifestCompleteProperty.Value -eq $true
+    ) "backend manifest complete must be the Boolean true"
     Assert-ReleaseBundleCondition ([string]$manifest.gitSha -match '^[0-9a-f]{40}$') "backend manifest SHA is not a full lowercase commit SHA"
     Assert-ReleaseBundleCondition ([bool]$backend.ManifestShaIsAncestorOfOriginMain) "backend manifest SHA is not contained in current origin/main"
     Assert-ReleaseBundleCondition ([bool]$backend.ManifestContainsExpectedSha) "backend manifest SHA does not contain the expected SHA"

@@ -118,7 +118,7 @@ if ("frontend-core" -in $plan.Gates) {
 if ("frontend-e2e" -in $plan.Gates) {
     Add-GateCommand $commands "frontend-e2e" "frontend" "pnpm" @("test:e2e:gate")
 }
-if ("frontend-deployment-contracts" -in $plan.Gates -and "frontend-core" -notin $plan.Gates) {
+if ("frontend-deployment-contracts" -in $plan.Gates) {
     Add-GateCommand $commands "frontend-deployment-contracts" "frontend" "pnpm" @("guard:deployment-governance")
     Add-GateCommand $commands "frontend-deployment-contracts" "frontend" "pnpm" @("guard:runtime-recovery")
 }

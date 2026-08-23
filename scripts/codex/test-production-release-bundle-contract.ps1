@@ -19,6 +19,26 @@ if ($noLock.Active -or $noLock.Owner -or $noLock.ExpiresAt -ne 0) {
     throw "an empty DynamoDB get-item response must mean no active lock"
 }
 
+$noLockItem = Get-AcademyDeploymentLockState -LockReadback ([pscustomobject]@{}) -Now 100
+if ($noLockItem.Active -or $noLockItem.Owner -or $noLockItem.ExpiresAt -ne 0) {
+    throw "a DynamoDB get-item response without Item must mean no active lock"
+}
+
+$malformedLockReadbacks = @(
+    [pscustomobject]@{ Item = [pscustomobject]@{ ttl = [pscustomobject]@{ N = "101" } } },
+    [pscustomobject]@{ Item = [pscustomobject]@{ owner = [pscustomobject]@{ S = " " }; ttl = [pscustomobject]@{ N = "101" } } },
+    [pscustomobject]@{ Item = [pscustomobject]@{ owner = [pscustomobject]@{ N = "wrong-type" }; ttl = [pscustomobject]@{ N = "101" } } },
+    [pscustomobject]@{ Item = [pscustomobject]@{ owner = [pscustomobject]@{ S = "ci-deploy:123:1" } } },
+    [pscustomobject]@{ Item = [pscustomobject]@{ owner = [pscustomobject]@{ S = "ci-deploy:123:1" }; ttl = [pscustomobject]@{ N = "" } } },
+    [pscustomobject]@{ Item = [pscustomobject]@{ owner = [pscustomobject]@{ S = "ci-deploy:123:1" }; ttl = [pscustomobject]@{ N = "not-an-integer" } } },
+    [pscustomobject]@{ Item = [pscustomobject]@{ owner = [pscustomobject]@{ S = "ci-deploy:123:1" }; ttl = [pscustomobject]@{ N = 101 } } }
+)
+foreach ($malformedLockReadback in $malformedLockReadbacks) {
+    Assert-Throws {
+        Get-AcademyDeploymentLockState -LockReadback $malformedLockReadback -Now 100
+    } "malformed DynamoDB lock Item"
+}
+
 $activeLockReadback = [pscustomobject]@{
     Item = [pscustomobject]@{
         owner = [pscustomobject]@{ S = "ci-deploy:123:1" }
@@ -96,6 +116,12 @@ $badManifest = $evidence | ConvertTo-Json -Depth 12 | ConvertFrom-Json
 $badManifest.Backend.Manifest.gitSha = "3333333333333333333333333333333333333333"
 $badManifest.Backend.ManifestContainsExpectedSha = $false
 Assert-Throws { Assert-AcademyProductionReleaseBundle -Evidence $badManifest } "backend manifest SHA"
+
+foreach ($invalidComplete in @("false", "true", 1, $null)) {
+    $badComplete = $evidence | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    $badComplete.Backend.Manifest.complete = $invalidComplete
+    Assert-Throws { Assert-AcademyProductionReleaseBundle -Evidence $badComplete } "backend manifest complete must be the Boolean true"
+}
 
 $pendingApproval = $evidence | ConvertTo-Json -Depth 12 | ConvertFrom-Json
 $pendingApproval.Frontend.PendingDeploymentsCount = 1

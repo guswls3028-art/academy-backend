@@ -13,6 +13,19 @@ function Assert-Contains {
     }
 }
 
+function Assert-Throws {
+    param([scriptblock]$Action, [string]$ExpectedText)
+    try {
+        & $Action
+    } catch {
+        if ($_.Exception.Message -notmatch [regex]::Escape($ExpectedText)) {
+            throw "Expected failure containing '$ExpectedText', got: $($_.Exception.Message)"
+        }
+        return
+    }
+    throw "Expected change-risk planning to fail: $ExpectedText"
+}
+
 $gitPathLines = @(Get-AcademyGitPathLines -Lines @(
     "warning: in the working copy of 'scripts/codex/stability-contract.ps1', LF will be replaced by CRLF",
     "hint: use a narrower diff",
@@ -23,7 +36,10 @@ Assert-True ($gitPathLines.Count -eq 2) "git warning and hint lines must not bec
 Assert-Contains $gitPathLines "scripts/codex/stability-contract.ps1" "real git path output must be preserved"
 
 $docsOnly = Get-AcademyChangeRiskPlan `
-    -BackendPaths @("docs/operations/github-governance.md") `
+    -BackendPaths @(
+        "docs/operations/github-governance.md",
+        "scripts/README.md"
+    ) `
     -FrontendPaths @()
 Assert-True $docsOnly.DocsOnly "docs-only changes must remain docs-only"
 Assert-Contains $docsOnly.Requirements "owning-docs-current" "docs-only plan must keep owning documentation current"
@@ -62,12 +78,52 @@ Assert-True $crossRepository.RequiresProductionReleaseBundle "paired product cha
 Assert-Contains $crossRepository.Requirements "backward-compatible-api-window" "paired product changes must preserve a deployment compatibility window"
 
 $testsOnlyPair = Get-AcademyChangeRiskPlan `
-    -BackendPaths @("apps/domains/results/tests/test_session_scores_roster_scope.py") `
+    -BackendPaths @(
+        "apps/domains/results/tests/test_session_scores_roster_scope.py",
+        "apps/domains/results/tests.py"
+    ) `
     -FrontendPaths @(
         "src/app_admin/domains/results/api.test.ts",
         "e2e/admin/results.mock.spec.ts"
     )
 Assert-True (-not $testsOnlyPair.RequiresProductionReleaseBundle) "tests-only paired changes must not pretend to be a production release bundle"
+Assert-True ("unknown-non-doc" -notin $testsOnlyPair.Risks) "explicit tests-only changes must not be classified as unknown"
+
+$backendBuild = Get-AcademyChangeRiskPlan `
+    -BackendPaths @(
+        "libs/queue/client.py",
+        "docker/api/Dockerfile",
+        "requirements/base.txt"
+    ) `
+    -FrontendPaths @()
+Assert-Contains $backendBuild.Risks "backend-runtime-build" "backend runtime/build paths must not remain diff-only"
+Assert-Contains $backendBuild.Risks "async-worker" "backend queue clients must retain worker/queue verification"
+Assert-Contains $backendBuild.Gates "backend-core" "backend runtime/build paths must include core gates"
+Assert-Contains $backendBuild.Gates "backend-deployment-contracts" "backend runtime/build paths must include deployment contracts"
+Assert-True (-not $backendBuild.RequiresProductionReleaseBundle) "single-repository backend build changes must not invent a frontend release"
+
+$frontendBuild = Get-AcademyChangeRiskPlan `
+    -BackendPaths @() `
+    -FrontendPaths @(
+        "package.json",
+        "pnpm-lock.yaml",
+        "vite.config.ts",
+        "index.html"
+    )
+Assert-Contains $frontendBuild.Risks "frontend-runtime-build" "frontend runtime/build paths must not remain diff-only"
+Assert-Contains $frontendBuild.Gates "frontend-core" "frontend runtime/build paths must include core gates"
+Assert-Contains $frontendBuild.Gates "frontend-e2e" "frontend runtime/build paths must include E2E gates"
+Assert-Contains $frontendBuild.Gates "frontend-deployment-contracts" "frontend runtime/build paths must include deployment contracts"
+Assert-True (-not $frontendBuild.RequiresProductionReleaseBundle) "single-repository frontend build changes must not invent a backend release"
+
+$crossRepositoryBuild = Get-AcademyChangeRiskPlan `
+    -BackendPaths @("requirements/base.txt") `
+    -FrontendPaths @("package.json")
+Assert-True $crossRepositoryBuild.RequiresProductionReleaseBundle "paired runtime/build changes must require final release-bundle readback"
+
+Assert-Throws {
+    Get-AcademyChangeRiskPlan -BackendPaths @("unowned/runtime-switch.conf") -FrontendPaths @()
+} "Unclassified non-documentation path"
 
 $governance = Get-AcademyChangeRiskPlan `
     -BackendPaths @(

@@ -42,6 +42,7 @@ pwsh scripts/codex/get-change-risk-plan.ps1 `
 |-----------|-----------|
 | 문서만 변경 | owning 문서 정합성, 링크/경로, `git diff --check` |
 | backend 제품 코드 | 실패 재현 회귀, Django/core gates, PostgreSQL tenant CI |
+| backend/frontend runtime·build 설정 | 각 저장소 core·배포 계약, 양쪽 변경 시 production release bundle |
 | migration | expand/contract guard와 구·신 runtime 공존 설명 |
 | worker/queue | producer→outbox/queue→worker→최종 상태·DLQ readback |
 | frontend 사용자 화면 | type/lint/build, PR E2E, desktop·390px live readback |
@@ -52,6 +53,10 @@ pwsh scripts/codex/get-change-risk-plan.ps1 `
 먼저 재현하는 focused regression을 추가하고, 라우터는 공통·운영 게이트의 누락을
 막는다. 테스트 개수나 mock E2E 성공만으로 PostgreSQL, tenant, worker, 운영 UI
 증거를 대체하지 않는다.
+
+문서와 명시적 테스트 경로 외의 변경은 알려진 제품/runtime/build/governance
+범주에 반드시 속해야 한다. 새 비문서 경로가 어느 범주에도 속하지 않으면
+diff-check만으로 통과시키지 않고 계획 생성을 거부한다.
 
 ## 3. 작업 범위 계약
 
@@ -89,9 +94,12 @@ pwsh scripts/codex/assert-production-release-bundle.ps1 `
 2. backend run은 `V1 Build and Push latest (OIDC)`의 `main` production run이고
    `Verify deployment`, `Release shared production mutation lock`이 성공했다.
 3. backend run의 `pending_deployments`가 0이며, `origin/main`의
-   `release-manifest.latest.json`이 complete/successful이고 exact backend SHA를
-   포함하는 현재 `origin/main` descendant를 가리킨다.
-4. DynamoDB `__deployment_control_v2__` lock이 없거나 만료됐다.
+   `release-manifest.latest.json`이 `complete: true` 실제 Boolean과
+   `status: successful`을 갖고 exact backend SHA를 포함하는 현재
+   `origin/main` descendant를 가리킨다.
+4. DynamoDB `__deployment_control_v2__` lock readback은 Item이 없거나,
+   nonblank `owner.S`와 정수 `ttl.N`을 정확히 갖는다. malformed Item은 inactive로
+   간주하지 않고 거부하며, 정상 Item은 만료된 경우에만 통과한다.
 5. frontend run은 `Frontend Quality Gate`의 `main` push run이고
    `Deploy to Cloudflare Pages`, `E2E 왕복 테스트 + tenant availability`가
    성공했다.
