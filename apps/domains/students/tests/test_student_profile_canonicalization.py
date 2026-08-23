@@ -196,6 +196,42 @@ class StudentProfileCanonicalizationTests(TestCase):
         self.assertEqual(self.student.omr_code, "11112222")
 
     @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=True)
+    def test_admin_phone_change_preserves_custom_id_when_legacy_flag_is_stale(self, send_mock):
+        custom_student = make_student(
+            self.tenant,
+            ps_number="S-CUSTOM-PHONE",
+            phone="01099994444",
+        )
+        custom_student.uses_identifier = True
+        custom_student.save(update_fields=["uses_identifier"])
+        original_ps_number = custom_student.ps_number
+        original_username = custom_student.user.username
+        request = self.factory.patch(
+            f"/api/v1/students/{custom_student.id}/",
+            data={"phone": "01099995555"},
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+
+        response = StudentViewSet.as_view({"patch": "partial_update"})(
+            request,
+            pk=custom_student.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        custom_student.refresh_from_db()
+        custom_student.user.refresh_from_db()
+        self.assertEqual(custom_student.phone, "01099995555")
+        self.assertEqual(custom_student.ps_number, original_ps_number)
+        self.assertEqual(custom_student.user.username, original_username)
+        self.assertFalse(custom_student.uses_identifier)
+        self.assertEqual(
+            send_mock.call_args.kwargs["replacements"]["학생아이디"],
+            original_ps_number,
+        )
+
+    @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=True)
     def test_admin_student_id_change_sends_student_account_notice(self, send_mock):
         request = self.factory.patch(
             f"/api/v1/students/{self.student.id}/",

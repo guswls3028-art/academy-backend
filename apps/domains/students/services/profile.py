@@ -264,8 +264,9 @@ def update_student_profile(
             setattr(student, field, value)
             changed.append(field)
 
-    phone_identity_owned = old_uses_identifier or bool(
-        old_phone and old_ps_number == old_phone
+    phone_identity_owned = bool(
+        (old_uses_identifier and not old_phone)
+        or (old_phone and old_ps_number == old_phone)
     )
     if (
         identity_field
