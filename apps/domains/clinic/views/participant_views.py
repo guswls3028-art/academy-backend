@@ -19,7 +19,7 @@ from ..serializers import (
     ClinicSessionParticipantSerializer,
     ClinicSessionParticipantCreateSerializer,
 )
-from ..filters import ParticipantFilter
+from ..filters import ONSITE_PARTICIPANT_ORDERING, ParticipantFilter
 from ..services import (
     change_participant_booking,
     change_participant_status,
@@ -139,6 +139,32 @@ class ParticipantViewSet(viewsets.ModelViewSet):
     search_fields = ["student__name", "session__location"]
     ordering_fields = ["created_at", "updated_at", "session__date", "id"]
     ordering = ["-created_at", "-id"]
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name="onsite_date",
+                type=OpenApiTypes.DATE,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description=(
+                    "현장 운영 날짜(YYYY-MM-DD). 현재 tenant에서 session.date가 같은 "
+                    "attended + checked_in_at 존재 + checked_out_at 미존재 참가자만 "
+                    "checked_in_at, session.start_time, id 오름차순으로 pagination 전에 "
+                    "정렬합니다. is_late, completed_at, ClinicLink와 today-plan은 포함 "
+                    "판정에 영향을 주지 않습니다."
+                ),
+            )
+        ]
+    )
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
+
+    def filter_queryset(self, queryset):
+        queryset = super().filter_queryset(queryset)
+        if "onsite_date" in self.request.query_params:
+            return queryset.order_by(*ONSITE_PARTICIPANT_ORDERING)
+        return queryset
 
     def get_permissions(self):
         if self.action in (

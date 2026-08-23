@@ -481,6 +481,26 @@ COMPLETE_ALLOWED_STATUSES = {"attended"}
 검증한다. 등원·결석·하원 시 해당 참가자의 미래 수동 재촉을 취소하고 payload의
 수신번호·본문을 제거한다.
 
+#### 현장 등원 중 목록
+
+`GET /clinic/participants/?onsite_date=YYYY-MM-DD`는 현재 테넌트에서 지정 날짜의
+등원 후 미하원 참가자를 기존 page/page_size 응답으로 반환한다. 필터는 pagination
+전에 전체 queryset에 적용하며 정렬은 `checked_in_at ASC`, 클리닉 세션
+`start_time ASC`, 참가자 `id ASC`로 고정한다. `ordering` query가 함께 와도 현장
+운영 순서를 바꾸지 않는다.
+
+- participant, session, student가 모두 현재 tenant에 속하고 `session.date`가
+  요청 날짜와 정확히 같아야 한다.
+- `status=attended`, `checked_in_at IS NOT NULL`, `checked_out_at IS NULL`을 모두
+  만족해야 한다. 세션이 없거나, 등원 시각이 없거나, 이미 하원했거나, tenant 관계가
+  깨진 stale/corrupt 행은 노출하지 않는다.
+- `is_late`, `completed_at`, ClinicLink, `planned_clinic_link_ids`는 현장 포함 판정에
+  영향을 주지 않는다. 현장 상태, 학습 완료, 보충 품목, today-plan은 독립 계약이다.
+- `onsite_date`가 비었거나 YYYY-MM-DD 유효 날짜가 아니면 400으로 실패 폐쇄한다.
+
+집중 회귀는 `tests/test_clinic_participant_onsite_filter_api.py`가 tenant/corrupt 행
+배제, 고정 정렬, 20건을 넘는 결과의 pagination 경계와 상태 독립성을 검증한다.
+
 #### 오늘 할 범위 계획
 
 `SessionParticipantPlanItem`은 한 클리닉 참가자에게서 오늘 처리할 미해결

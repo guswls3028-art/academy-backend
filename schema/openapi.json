@@ -16455,6 +16455,15 @@
         "operationId": "clinic_participants_list",
         "parameters": [
           {
+            "description": "현장 운영 날짜(YYYY-MM-DD). 현재 tenant에서 session.date가 같은 attended + checked_in_at 존재 + checked_out_at 미존재 참가자만 checked_in_at, session.start_time, id 오름차순으로 pagination 전에 정렬합니다. is_late, completed_at, ClinicLink와 today-plan은 포함 판정에 영향을 주지 않습니다.",
+            "in": "query",
+            "name": "onsite_date",
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          },
+          {
             "description": "결과 정렬 시 사용할 필드.",
             "in": "query",
             "name": "ordering",
@@ -36620,6 +36629,15 @@
         "description": "✅ 클리닉 예약 / 출석 / 미이행 / 취소 관리\n- 운영 핵심 엔드포인트",
         "operationId": "results_admin_clinic_bookings_list",
         "parameters": [
+          {
+            "description": "현장 운영 날짜(YYYY-MM-DD). 현재 tenant에서 session.date가 같은 attended + checked_in_at 존재 + checked_out_at 미존재 참가자만 checked_in_at, session.start_time, id 오름차순으로 pagination 전에 정렬합니다. is_late, completed_at, ClinicLink와 today-plan은 포함 판정에 영향을 주지 않습니다.",
+            "in": "query",
+            "name": "onsite_date",
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          },
           {
             "description": "결과 정렬 시 사용할 필드.",
             "in": "query",
