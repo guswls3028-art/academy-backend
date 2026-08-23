@@ -4,15 +4,6 @@ from dataclasses import dataclass
 
 
 ALLOWED_OBSERVER_ROLES = frozenset({"owner", "admin", "staff"})
-OBSERVER_BLOCKED_TRIGGERS = frozenset(
-    {
-        "registration_approved_student",
-        "registration_approved_parent",
-        "password_find_otp",
-        "password_reset_student",
-        "password_reset_parent",
-    }
-)
 
 
 def _normalize_phone(value: str | None) -> str:
@@ -65,7 +56,12 @@ def build_messaging_observer_payloads(
     recipients: list[MessagingObserverRecipient],
 ) -> list[dict]:
     """Clone one durable payload for observers without changing the original target."""
-    if original_outbox.trigger in OBSERVER_BLOCKED_TRIGGERS:
+    from apps.domains.messaging.security import is_sensitive_notification
+
+    if is_sensitive_notification(
+        trigger=original_outbox.trigger,
+        payload=original_outbox.payload,
+    ):
         return []
 
     original_payload = dict(original_outbox.payload)

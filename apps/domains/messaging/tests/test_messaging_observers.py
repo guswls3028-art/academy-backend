@@ -37,7 +37,13 @@ class MessagingObserverOutboxTests(TestCase):
         )
         MessagingObserver.objects.create(tenant=self.tenant, user=self.observer)
 
-    def _create(self, *, to="01011112222", trigger="clinic_reminder"):
+    def _create(
+        self,
+        *,
+        to="01011112222",
+        trigger="clinic_reminder",
+        event_type=None,
+    ):
         return create_notification_outboxes(
             tenant_id=self.tenant.id,
             notifications=[
@@ -49,7 +55,7 @@ class MessagingObserverOutboxTests(TestCase):
                         "to": to,
                         "text": "sensitive original body",
                         "message_mode": "alimtalk",
-                        "event_type": trigger,
+                        "event_type": event_type or trigger,
                         "target_type": "student",
                         "target_id": "student:42",
                         "origin_type": "clinic_session",
@@ -101,6 +107,15 @@ class MessagingObserverOutboxTests(TestCase):
 
                 self.assertEqual(len(originals), 1)
                 self.assertEqual(ScheduledNotification.objects.count(), 1)
+
+    def test_sensitive_payload_event_type_suppresses_copy_when_trigger_mismatches(self):
+        originals = self._create(
+            trigger="clinic_reminder",
+            event_type="password_reset_student",
+        )
+
+        self.assertEqual(len(originals), 1)
+        self.assertEqual(ScheduledNotification.objects.count(), 1)
 
     def test_inactive_membership_suppresses_observer_copy(self):
         self.membership.is_active = False
