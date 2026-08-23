@@ -14,6 +14,7 @@ from apps.domains.staffs.models import (
     PayrollSnapshot,
     Staff,
     StaffWorkType,
+    WorkMonthLock,
     WorkRecord,
     WorkType,
 )
@@ -817,3 +818,226 @@ class StaffOperationsContractTests(TestCase):
         self.assertEqual(payload["snapshot_ids"], [snapshot.id])
         self.assertTrue(payload["revision"])
         self.assertNotEqual(worked_staff.id, later_hire.id)
+
+    def test_position_is_independent_from_account_role_and_management_access(self):
+        serializer = StaffCreateUpdateSerializer(
+            data={
+                "username": "academy-director",
+                "password": "1234",
+                "name": "운영 실장",
+                "position": "DIRECTOR",
+                "role": "ASSISTANT",
+                "is_manager": True,
+            },
+            context={
+                "request": SimpleNamespace(
+                    tenant=self.tenant,
+                    user=self.owner,
+                )
+            },
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        staff = serializer.save()
+        membership = TenantMembership.objects.get(
+            tenant=self.tenant,
+            user=staff.user,
+        )
+
+        self.assertEqual(staff.position, "DIRECTOR")
+        self.assertTrue(staff.is_manager)
+        self.assertEqual(membership.role, "staff")
+
+        response = StaffViewSet.as_view({"get": "list"})(
+            self._request("get", "/staffs/")
+        )
+        row = next(
+            item
+            for item in response.data["results"]
+            if item["id"] == staff.id
+        )
+        self.assertEqual(row["position"], "DIRECTOR")
+        self.assertEqual(row["position_label"], "실장")
+        self.assertEqual(row["account_role"], "STAFF")
+        self.assertTrue(row["can_manage_staff"])
+
+    def test_admin_account_reports_effective_management_and_cannot_be_toggled(self):
+        admin_user = User.objects.create_user(
+            username="staff-admin-account",
+            password="1234",
+        )
+        admin_membership = TenantMembership.objects.create(
+            tenant=self.tenant,
+            user=admin_user,
+            role="admin",
+            is_active=True,
+        )
+        staff = Staff.objects.create(
+            tenant=self.tenant,
+            user=admin_user,
+            name="관리자 실장",
+            position="DIRECTOR",
+            is_manager=False,
+        )
+
+        list_response = StaffViewSet.as_view({"get": "list"})(
+            self._request("get", "/staffs/")
+        )
+        row = next(
+            item
+            for item in list_response.data["results"]
+            if item["id"] == staff.id
+        )
+        self.assertEqual(row["account_role"], "ADMIN")
+        self.assertTrue(row["can_manage_staff"])
+
+        patch_response = StaffViewSet.as_view(
+            {"patch": "partial_update"}
+        )(
+            self._request(
+                "patch",
+                f"/staffs/{staff.id}/",
+                {"is_manager": True},
+            ),
+            pk=staff.id,
+        )
+        self.assertEqual(patch_response.status_code, 400)
+        staff.refresh_from_db()
+        self.assertFalse(staff.is_manager)
+
+        Staff.objects.filter(pk=staff.pk).update(is_manager=True)
+        admin_membership.is_active = False
+        admin_membership.save(update_fields=["is_active"])
+        inactive_detail = StaffViewSet.as_view({"get": "retrieve"})(
+            self._request("get", f"/staffs/{staff.id}/"),
+            pk=staff.id,
+        )
+        self.assertEqual(inactive_detail.data["account_role"], "NONE")
+        self.assertFalse(inactive_detail.data["can_manage_staff"])
+
+    def test_payroll_overview_is_tenant_scoped_and_surfaces_close_blockers(self):
+        ready = Staff.objects.create(
+            tenant=self.tenant,
+            name="정산 가능 실장",
+            position="DIRECTOR",
+        )
+        StaffWorkType.objects.create(
+            tenant=self.tenant,
+            staff=ready,
+            work_type=self.work_type,
+        )
+        WorkRecord.objects.create(
+            tenant=self.tenant,
+            staff=ready,
+            work_type=self.work_type,
+            date=date(2026, 8, 3),
+            start_time=time(9, 0),
+            end_time=time(10, 0),
+        )
+        ExpenseRecord.objects.create(
+            tenant=self.tenant,
+            staff=ready,
+            date=date(2026, 8, 4),
+            title="교재 선결제",
+            amount=3_000,
+            status="APPROVED",
+        )
+
+        review = Staff.objects.create(
+            tenant=self.tenant,
+            name="확인 필요 조교",
+            position="ASSISTANT",
+        )
+        ExpenseRecord.objects.create(
+            tenant=self.tenant,
+            staff=review,
+            date=date(2026, 8, 5),
+            title="대기 비용",
+            amount=2_000,
+            status="PENDING",
+        )
+
+        other_tenant = Tenant.objects.create(
+            name="다른 학원",
+            code="staff-overview-other",
+        )
+        Staff.objects.create(
+            tenant=other_tenant,
+            name="다른 학원 직원",
+            position="DIRECTOR",
+        )
+
+        response = StaffViewSet.as_view(
+            {"get": "payroll_overview"}
+        )(
+            self._request(
+                "get",
+                "/staffs/payroll-overview/?year=2026&month=8",
+            )
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        rows = {row["staff_id"]: row for row in response.data["rows"]}
+        self.assertEqual(set(rows), {ready.id, review.id})
+        self.assertEqual(rows[ready.id]["work_hours"], 1.0)
+        self.assertEqual(rows[ready.id]["work_amount"], 12_000)
+        self.assertEqual(rows[ready.id]["approved_expense_amount"], 3_000)
+        self.assertEqual(rows[ready.id]["total_amount"], 15_000)
+        self.assertEqual(rows[ready.id]["settlement_status"], "OPEN")
+        self.assertTrue(rows[ready.id]["can_close"])
+        self.assertEqual(rows[review.id]["pending_expense_count"], 1)
+        self.assertEqual(rows[review.id]["pending_expense_amount"], 2_000)
+        self.assertEqual(rows[review.id]["settlement_status"], "NEEDS_REVIEW")
+        self.assertFalse(rows[review.id]["can_close"])
+        self.assertEqual(response.data["totals"]["total_amount"], 15_000)
+        self.assertEqual(response.data["totals"]["needs_review_count"], 1)
+
+        WorkMonthLock.objects.create(
+            tenant=self.tenant,
+            staff=ready,
+            year=2026,
+            month=8,
+        )
+        PayrollSnapshot.objects.create(
+            tenant=self.tenant,
+            staff=ready,
+            year=2026,
+            month=8,
+            work_hours=1,
+            work_amount=12_000,
+            approved_expense_amount=3_000,
+            total_amount=15_000,
+        )
+        StaffWorkType.objects.filter(staff=ready).delete()
+
+        closed_response = StaffViewSet.as_view(
+            {"get": "payroll_overview"}
+        )(
+            self._request(
+                "get",
+                "/staffs/payroll-overview/?year=2026&month=8",
+            )
+        )
+        closed_rows = {
+            row["staff_id"]: row for row in closed_response.data["rows"]
+        }
+        self.assertEqual(
+            closed_rows[ready.id]["settlement_status"],
+            "CLOSED",
+        )
+        self.assertEqual(
+            closed_response.data["totals"]["needs_review_count"],
+            1,
+        )
+
+    def test_payroll_overview_rejects_invalid_month(self):
+        response = StaffViewSet.as_view(
+            {"get": "payroll_overview"}
+        )(
+            self._request(
+                "get",
+                "/staffs/payroll-overview/?year=2026&month=13",
+            )
+        )
+
+        self.assertEqual(response.status_code, 400)

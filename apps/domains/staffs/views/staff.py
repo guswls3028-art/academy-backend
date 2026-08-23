@@ -1,9 +1,10 @@
 # PATH: apps/domains/staffs/views/staff.py
 
-from datetime import datetime
+from calendar import monthrange
+from datetime import date, datetime
 
 from django.db import transaction
-from django.db.models import Count
+from django.db.models import Count, Q, Sum
 from django.utils import timezone
 
 from django_filters.rest_framework import DjangoFilterBackend
@@ -27,7 +28,15 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
-from ..models import Staff, WorkRecord, ExpenseRecord, WorkType
+from ..models import (
+    ExpenseRecord,
+    PayrollSnapshot,
+    Staff,
+    StaffWorkType,
+    WorkMonthLock,
+    WorkRecord,
+    WorkType,
+)
 from ..serializers import (
     StaffListSerializer,
     StaffDetailSerializer,
@@ -37,6 +46,7 @@ from ..serializers import (
     StaffWorkRangeQuerySerializer,
     StaffWorkStartRequestSerializer,
     StaffWorkSummarySerializer,
+    StaffPayrollOverviewQuerySerializer,
     WorkRecordSerializer,
 )
 from ..services import start_work_record
@@ -113,7 +123,10 @@ class StaffViewSet(viewsets.ModelViewSet):
             tenant = getattr(self.request, "tenant", None)
             if tenant:
                 ctx["membership_roles"] = dict(
-                    TenantMembership.objects.filter(tenant=tenant)
+                    TenantMembership.objects.filter(
+                        tenant=tenant,
+                        is_active=True,
+                    )
                     .values_list("user_id", "role")
                 )
                 ctx["teacher_keys"] = self._unambiguous_legacy_teacher_keys(
@@ -146,6 +159,244 @@ class StaffViewSet(viewsets.ModelViewSet):
         else:
             response.data["owner"] = owner
         return response
+
+    @action(detail=False, methods=["get"], url_path="payroll-overview")
+    def payroll_overview(self, request):
+        """전 직원 월 정산 현황. 금액·블로커·마감 상태를 한 번에 반환한다."""
+        query = StaffPayrollOverviewQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        year = query.validated_data["year"]
+        month = query.validated_data["month"]
+        date_from = date(year, month, 1)
+        date_to = date(year, month, monthrange(year, month)[1])
+        tenant = request.tenant
+
+        staffs = list(
+            Staff.objects.filter(tenant=tenant)
+            .filter(
+                Q(is_active=True)
+                | Q(work_records__date__range=(date_from, date_to))
+                | Q(expense_records__date__range=(date_from, date_to))
+                | Q(payroll_snapshots__year=year, payroll_snapshots__month=month)
+            )
+            .select_related("user")
+            .distinct()
+        )
+        staff_ids = [staff.id for staff in staffs]
+        user_ids = [staff.user_id for staff in staffs if staff.user_id]
+        membership_roles = dict(
+            TenantMembership.objects.filter(
+                tenant=tenant,
+                user_id__in=user_ids,
+                is_active=True,
+            ).values_list("user_id", "role")
+        )
+
+        work_by_staff = {
+            row["staff_id"]: row
+            for row in (
+                WorkRecord.objects.filter(
+                    tenant=tenant,
+                    staff_id__in=staff_ids,
+                    date__range=(date_from, date_to),
+                )
+                .values("staff_id")
+                .annotate(
+                    work_hours_total=Sum("work_hours"),
+                    work_amount_total=Sum("amount"),
+                    open_work_record_count=Count(
+                        "id",
+                        filter=Q(end_time__isnull=True),
+                    ),
+                    incomplete_work_record_count=Count(
+                        "id",
+                        filter=(
+                            Q(end_time__isnull=False)
+                            & (Q(work_hours__isnull=True) | Q(amount__isnull=True))
+                        ),
+                    ),
+                )
+            )
+        }
+        expense_by_staff = {
+            row["staff_id"]: row
+            for row in (
+                ExpenseRecord.objects.filter(
+                    tenant=tenant,
+                    staff_id__in=staff_ids,
+                    date__range=(date_from, date_to),
+                )
+                .values("staff_id")
+                .annotate(
+                    approved_expense_amount=Sum(
+                        "amount",
+                        filter=Q(status="APPROVED"),
+                    ),
+                    pending_expense_amount=Sum(
+                        "amount",
+                        filter=Q(status="PENDING"),
+                    ),
+                    pending_expense_count=Count(
+                        "id",
+                        filter=Q(status="PENDING"),
+                    ),
+                )
+            )
+        }
+        assigned_work_type_counts = dict(
+            StaffWorkType.objects.filter(
+                tenant=tenant,
+                staff_id__in=staff_ids,
+                work_type__is_active=True,
+            )
+            .values("staff_id")
+            .annotate(row_count=Count("id"))
+            .values_list("staff_id", "row_count")
+        )
+        locked_staff_ids = set(
+            WorkMonthLock.objects.filter(
+                tenant=tenant,
+                staff_id__in=staff_ids,
+                year=year,
+                month=month,
+                is_locked=True,
+            ).values_list("staff_id", flat=True)
+        )
+        snapshot_staff_ids = set(
+            PayrollSnapshot.objects.filter(
+                tenant=tenant,
+                staff_id__in=staff_ids,
+                year=year,
+                month=month,
+            ).values_list("staff_id", flat=True)
+        )
+
+        account_role_codes = {
+            "owner": "OWNER",
+            "admin": "ADMIN",
+            "teacher": "TEACHER",
+            "staff": "STAFF",
+        }
+        rows = []
+        totals = {
+            "staff_count": len(staffs),
+            "work_hours": 0.0,
+            "work_amount": 0,
+            "approved_expense_amount": 0,
+            "pending_expense_amount": 0,
+            "total_amount": 0,
+            "needs_review_count": 0,
+            "closed_count": 0,
+        }
+        for staff in staffs:
+            work = work_by_staff.get(staff.id, {})
+            expenses = expense_by_staff.get(staff.id, {})
+            work_hours = float(work.get("work_hours_total") or 0)
+            work_amount = int(work.get("work_amount_total") or 0)
+            approved_expense_amount = int(
+                expenses.get("approved_expense_amount") or 0
+            )
+            pending_expense_amount = int(
+                expenses.get("pending_expense_amount") or 0
+            )
+            pending_expense_count = int(
+                expenses.get("pending_expense_count") or 0
+            )
+            open_work_record_count = int(
+                work.get("open_work_record_count") or 0
+            )
+            incomplete_work_record_count = int(
+                work.get("incomplete_work_record_count") or 0
+            )
+            assigned_work_type_count = int(
+                assigned_work_type_counts.get(staff.id, 0)
+            )
+            locked = staff.id in locked_staff_ids
+            snapshot_exists = staff.id in snapshot_staff_ids
+            reconciliation_required = locked != snapshot_exists
+            if reconciliation_required:
+                needs_review = True
+                settlement_status = "RECONCILIATION_REQUIRED"
+            elif locked:
+                # A complete lock/snapshot pair is immutable historical truth.
+                # Current work-type assignments must not retroactively turn a
+                # closed month into a review item.
+                needs_review = False
+                settlement_status = "CLOSED"
+            else:
+                needs_review = bool(
+                    open_work_record_count
+                    or incomplete_work_record_count
+                    or pending_expense_count
+                    or (staff.is_active and assigned_work_type_count == 0)
+                    or staff.pay_type == "MONTHLY"
+                )
+                settlement_status = "NEEDS_REVIEW" if needs_review else "OPEN"
+
+            membership_role = membership_roles.get(staff.user_id)
+            account_role = account_role_codes.get(membership_role, "NONE")
+            total_amount = work_amount + approved_expense_amount
+            row = {
+                "staff_id": staff.id,
+                "name": staff.name,
+                "position": staff.position,
+                "position_label": staff.get_position_display(),
+                "account_role": account_role,
+                "is_active": staff.is_active,
+                "can_manage_staff": (
+                    account_role in ("OWNER", "ADMIN")
+                    or bool(
+                        staff.is_active
+                        and account_role in ("TEACHER", "STAFF")
+                        and staff.is_manager
+                    )
+                ),
+                "pay_type": staff.pay_type,
+                "work_hours": work_hours,
+                "work_amount": work_amount,
+                "approved_expense_amount": approved_expense_amount,
+                "pending_expense_amount": pending_expense_amount,
+                "pending_expense_count": pending_expense_count,
+                "total_amount": total_amount,
+                "open_work_record_count": open_work_record_count,
+                "incomplete_work_record_count": incomplete_work_record_count,
+                "assigned_work_type_count": assigned_work_type_count,
+                "settlement_status": settlement_status,
+                "can_close": not needs_review and not locked,
+            }
+            rows.append(row)
+            totals["work_hours"] += work_hours
+            totals["work_amount"] += work_amount
+            totals["approved_expense_amount"] += approved_expense_amount
+            totals["pending_expense_amount"] += pending_expense_amount
+            totals["total_amount"] += total_amount
+            totals["needs_review_count"] += int(needs_review)
+            totals["closed_count"] += int(locked and snapshot_exists)
+
+        position_order = {
+            "DIRECTOR": 0,
+            "INSTRUCTOR": 1,
+            "ASSISTANT": 2,
+            "STAFF": 3,
+        }
+        rows.sort(
+            key=lambda row: (
+                position_order.get(row["position"], 9),
+                row["name"],
+            )
+        )
+        totals["work_hours"] = round(totals["work_hours"], 2)
+
+        return Response(
+            {
+                "year": year,
+                "month": month,
+                "date_from": date_from,
+                "date_to": date_to,
+                "totals": totals,
+                "rows": rows,
+            }
+        )
 
     def perform_create(self, serializer):
         staff = serializer.save(tenant=self.request.tenant)
@@ -388,7 +639,7 @@ class StaffViewSet(viewsets.ModelViewSet):
                 else None
             )
             if membership_roles is None:
-                membership = core_repo.membership_get_full(tenant, staff.user)
+                membership = core_repo.membership_get(tenant, staff.user)
                 membership_role = membership.role if membership else None
             if membership_role == "owner":
                 return "owner"
@@ -442,6 +693,7 @@ class StaffViewSet(viewsets.ModelViewSet):
             TenantMembership.objects.filter(
                 tenant=tenant,
                 user_id__in=user_ids,
+                is_active=True,
             ).values_list("user_id", "role")
         )
         teacher_keys = self._unambiguous_legacy_teacher_keys(tenant)

@@ -105,6 +105,20 @@ class Staff(TimestampModel):
     is_active = models.BooleanField(default=True)
     is_manager = models.BooleanField(default=False)
 
+    POSITION_CHOICES = (
+        ("DIRECTOR", "실장"),
+        ("INSTRUCTOR", "강사"),
+        ("ASSISTANT", "조교"),
+        ("STAFF", "직원"),
+    )
+    position = models.CharField(
+        max_length=20,
+        choices=POSITION_CHOICES,
+        default="ASSISTANT",
+        db_default="ASSISTANT",
+        help_text="조직에서 사용하는 표시 직위. 계정 역할·관리 권한과 별개입니다.",
+    )
+
     PAY_TYPE_CHOICES = (
         ("HOURLY", "시급"),
         ("MONTHLY", "월급"),
