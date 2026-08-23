@@ -83,13 +83,19 @@ def test_python_and_workflow_direct_runtime_writers_are_explicit() -> None:
     python_writers = {
         path.relative_to(ROOT).as_posix()
         for path in SCRIPTS.rglob("*.py")
-        if "put_parameter" in _text(path)
+        if (
+            "put_parameter" in _text(path)
+            or "runtime.put_environment(" in _text(path)
+        )
         and (
             "/academy/api/env" in _text(path)
             or "/academy/workers/env" in _text(path)
         )
     }
-    assert python_writers == {"scripts/v1/reconcile_common_alimtalk_sender.py"}
+    assert python_writers == {
+        "scripts/v1/reconcile_common_alimtalk_owner_tenant.py",
+        "scripts/v1/reconcile_common_alimtalk_sender.py",
+    }
 
     for pattern in ("*.yml", "*.yaml"):
         for path in (ROOT / ".github" / "workflows").glob(pattern):
@@ -331,6 +337,26 @@ def test_sender_reconcile_renews_and_conditionally_releases_shared_lock() -> Non
     success_output = content.index("output(success_message)", release)
     assert final_snapshot < assert_owned < release < success_output
     assert 'ConditionExpression="#owner = :owner AND #ttl >= :now"' in content
+
+
+def test_owner_reconcile_preserves_one_lock_through_final_runtime_readback() -> None:
+    content = _text(SCRIPTS / "reconcile_common_alimtalk_owner_tenant.py")
+
+    assert 'EXPECTED_OWNER_TENANT_ID = "1"' in content
+    assert "_assert_only_owner_changed" in content
+    assert "_assert_source_freshness" in content
+    assert content.count("runtime.renew_lock(owner)") >= 6
+    messaging_refresh = content.index("runtime.refresh_service(MESSAGING_ASG)")
+    api_refresh = content.index("runtime.refresh_service(API_ASG)", messaging_refresh)
+    final_snapshot = content.index("final_snapshot = runtime.read_snapshot()", api_refresh)
+    runtime_readback = content.index("_runtime_owner_evidence(", api_refresh)
+    assert_owned = content.index("runtime.assert_lock_owned(owner)", final_snapshot)
+    release = content.index("runtime.release_lock(owner)", assert_owned)
+    assert messaging_refresh < api_refresh < runtime_readback < final_snapshot
+    assert final_snapshot < assert_owned < release
+    assert "runtime.runtime_owner_digests(" in content
+    assert "runtime_environment_rollback_failed_lock_retained" in content
+    assert "forward_convergence_required_lock_retained" in content
 
 
 def test_runbooks_do_not_publish_direct_runtime_parameter_overwrites() -> None:

@@ -45,6 +45,26 @@ or KMS drift retains the lock instead of claiming success or overwriting again.
 A failure after refresh starts keeps the target configuration and lock for
 forward convergence.
 
+`OWNER_TENANT_ID` has a compatibility runtime default of tenant 1, but the two
+production parameters must make that same fixed value explicit. The only
+supported repair is `scripts/v1/reconcile_common_alimtalk_owner_tenant.py`; it
+does not accept an owner argument and permits only an absent key or the exact
+string value already represented by the runtime default. It preserves every
+other key and value, including the three common Solapi keys. Apply writes only
+the missing owner key, validates exact version/raw/KMS state, and refreshes
+Messaging then API. When both SSM documents are already explicit, apply still
+requires InService HMAC, API health, and post-read queue evidence; a stale or
+missing runtime owner is forward-converged through the same Messaging then API
+refresh. Runtime readback exposes only boolean/HMAC evidence. A
+pre-refresh partial failure restores the exact original documents; a refresh,
+readback, concurrency, or rollback ambiguity retains the shared lock for
+forward convergence. Rollback reasserts exact shared-lock ownership before any
+compensating write, and lock loss after a write retains the lock record without
+attempting an unowned rollback. `check-workers-sender-queue.ps1` reports separate
+API/worker configured, equality, and expected-value booleans without printing
+the owner value; only JSON string `1` is accepted, never a numeric, null, or
+string-coerced value.
+
 Every supported standalone writer for `/academy/api/env` or
 `/academy/workers/env` must hold the same shared production mutation lock for
 its complete read-transform-write boundary. Deploy-owned bootstrap/sync writers

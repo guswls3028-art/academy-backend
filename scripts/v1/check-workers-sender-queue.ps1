@@ -26,4 +26,21 @@ foreach ($key in $keys) {
 Write-Host "SOLAPI_COMMON_CONFIG_PRESENT=$($present.ToString().ToLowerInvariant())"
 Write-Host "SOLAPI_API_WORKER_EQUAL=$($equal.ToString().ToLowerInvariant())"
 Write-Host "MESSAGING_QUEUE_CONFIGURED=$([bool]([string]$worker.MESSAGING_SQS_QUEUE_NAME))"
-Write-Host "OWNER_TENANT_CONFIGURED=$([bool]([string]$worker.OWNER_TENANT_ID))"
+$apiOwnerProperty = $api.PSObject.Properties["OWNER_TENANT_ID"]
+$workerOwnerProperty = $worker.PSObject.Properties["OWNER_TENANT_ID"]
+$apiOwnerConfigured = (
+    $null -ne $apiOwnerProperty -and
+    $apiOwnerProperty.Value -is [string] -and
+    $apiOwnerProperty.Value -ceq "1"
+)
+$workerOwnerConfigured = (
+    $null -ne $workerOwnerProperty -and
+    $workerOwnerProperty.Value -is [string] -and
+    $workerOwnerProperty.Value -ceq "1"
+)
+$ownerEqual = $apiOwnerConfigured -and $workerOwnerConfigured
+$ownerExpected = $ownerEqual
+Write-Host "OWNER_API_CONFIGURED=$($apiOwnerConfigured.ToString().ToLowerInvariant())"
+Write-Host "OWNER_WORKER_CONFIGURED=$($workerOwnerConfigured.ToString().ToLowerInvariant())"
+Write-Host "OWNER_API_WORKER_EQUAL=$($ownerEqual.ToString().ToLowerInvariant())"
+Write-Host "OWNER_TENANT_EXPECTED=$($ownerExpected.ToString().ToLowerInvariant())"
