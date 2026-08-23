@@ -39,6 +39,36 @@ def _scan(*findings: dict) -> dict:
     }
 
 
+def _high_policy_entry(**overrides: object) -> dict[str, object]:
+    entry: dict[str, object] = {
+        "cve": "CVE-2099-9999",
+        "packageName": "demo",
+        "packageVersion": "1",
+        "repositories": ["academy-api"],
+        "expiresOn": "2099-12-31",
+        "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2099-9999",
+        "rationale": (
+            "This test-only finding has a reviewed non-reachable runtime path and "
+            "a bounded acceptance used solely to exercise the fail-closed schema."
+        ),
+    }
+    entry.update(overrides)
+    return entry
+
+
+def _high_policy_document(*entries: dict[str, object]) -> dict[str, object]:
+    return {
+        "schemaVersion": 3,
+        "maximumHighFindings": {
+            repository: sum(
+                repository in entry.get("repositories", []) for entry in entries
+            )
+            for repository in gate.REPOSITORIES
+        },
+        "acceptedHighFindings": list(entries),
+    }
+
+
 def test_current_acceptance_is_exact_and_time_bounded() -> None:
     acceptances = gate.load_acceptances(
         Path(__file__).parents[1] / "docs" / "ssot" / "ecr-critical-risk-acceptance.json",
@@ -131,7 +161,8 @@ def test_high_finding_does_not_consume_critical_acceptance() -> None:
 
 def test_high_baseline_is_exact_and_allows_non_increase() -> None:
     baselines, known = gate.load_high_baselines(
-        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json"
+        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json",
+        date(2026, 8, 23),
     )
     findings = _scan(
         *(
@@ -142,6 +173,89 @@ def test_high_baseline_is_exact_and_allows_non_increase() -> None:
     )
 
     assert gate.evaluate_high_budget("academy-base", findings, baselines, known) == 8
+
+
+def test_current_high_acceptances_are_exact_and_time_bounded() -> None:
+    path = Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    accepted = document["acceptedHighFindings"]
+
+    libssh2 = [entry for entry in accepted if entry["packageName"] == "libssh2"]
+    assert len(accepted) == 20
+    assert {entry["cve"] for entry in libssh2} == {
+        "CVE-2026-58050",
+        "CVE-2026-58051",
+        "CVE-2026-66032",
+        "CVE-2026-66033",
+        "CVE-2026-66034",
+        "CVE-2026-66035",
+    }
+    assert {entry["expiresOn"] for entry in accepted} == {"2026-09-19"}
+    assert all(
+        entry["repositories"] == ["academy-api", "academy-ai-worker-cpu"]
+        for entry in libssh2
+    )
+    assert all(
+        entry["vendorTracker"]
+        == f"https://security-tracker.debian.org/tracker/{entry['cve']}"
+        and len(entry["rationale"].strip()) >= 40
+        for entry in accepted
+    )
+    assert {
+        (entry["cve"], entry["packageName"], entry["packageVersion"])
+        for entry in accepted
+    } == {
+        ("CVE-2026-11822", "sqlite3", "3.46.1-7+deb13u1"),
+        ("CVE-2026-11824", "sqlite3", "3.46.1-7+deb13u1"),
+        ("CVE-2026-48959", "perl", "5.40.1-6"),
+        ("CVE-2026-48961", "perl", "5.40.1-6"),
+        ("CVE-2026-48962", "perl", "5.40.1-6"),
+        ("CVE-2026-57432", "perl", "5.40.1-6"),
+        ("CVE-2026-7017", "perl", "5.40.1-6"),
+        ("CVE-2026-5928", "glibc", "2.41-12+deb13u3"),
+        ("CVE-2026-58010", "glib2.0", "2.84.4-3~deb13u3"),
+        ("CVE-2026-58011", "glib2.0", "2.84.4-3~deb13u3"),
+        ("CVE-2026-58012", "glib2.0", "2.84.4-3~deb13u3"),
+        ("CVE-2026-58013", "glib2.0", "2.84.4-3~deb13u3"),
+        ("CVE-2026-58014", "glib2.0", "2.84.4-3~deb13u3"),
+        ("CVE-2026-58015", "glib2.0", "2.84.4-3~deb13u3"),
+        ("CVE-2026-58050", "libssh2", "1.11.1-1+deb13u1"),
+        ("CVE-2026-58051", "libssh2", "1.11.1-1+deb13u1"),
+        ("CVE-2026-66032", "libssh2", "1.11.1-1+deb13u1"),
+        ("CVE-2026-66033", "libssh2", "1.11.1-1+deb13u1"),
+        ("CVE-2026-66034", "libssh2", "1.11.1-1+deb13u1"),
+        ("CVE-2026-66035", "libssh2", "1.11.1-1+deb13u1"),
+    }
+
+    baselines, known = gate.load_high_baselines(path, date(2026, 8, 23))
+    api_findings = _scan(
+        *(
+            _finding(cve, package, version, "HIGH")
+            for repository, cve, package, version in sorted(known)
+            if repository == "academy-api"
+        )
+    )
+    assert gate.evaluate_high_budget("academy-api", api_findings, baselines, known) == 20
+
+
+def test_expired_high_acceptance_blocks_before_scanning() -> None:
+    with pytest.raises(gate.GateError, match="High risk acceptance expired"):
+        gate.load_high_baselines(
+            Path(__file__).parents[1]
+            / "docs"
+            / "ssot"
+            / "ecr-high-risk-baseline.json",
+            date(2026, 9, 20),
+        )
+
+
+def test_high_acceptance_remains_valid_through_expiry_day() -> None:
+    baselines, reviewed = gate.load_high_baselines(
+        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json",
+        date(2026, 9, 19),
+    )
+    assert baselines["academy-api"] == 20
+    assert len([key for key in reviewed if key[0] == "academy-api"]) == 20
 
 
 def test_high_finding_regression_fails_closed() -> None:
@@ -160,8 +274,8 @@ def test_high_finding_regression_fails_closed() -> None:
 def test_high_baseline_requires_all_governed_repositories(tmp_path: Path) -> None:
     baseline = tmp_path / "baseline.json"
     baseline.write_text(
-        '{"schemaVersion": 2, "maximumHighFindings": {"academy-api": 1}, '
-        '"knownHighFindings": []}',
+        '{"schemaVersion": 3, "maximumHighFindings": {"academy-api": 1}, '
+        '"acceptedHighFindings": []}',
         encoding="utf-8",
     )
 
@@ -236,21 +350,81 @@ def test_high_finding_without_exact_identity_fails_closed() -> None:
 def test_high_baseline_identity_count_must_match_budget(tmp_path: Path) -> None:
     baseline = tmp_path / "baseline.json"
     document = {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "maximumHighFindings": {repository: 0 for repository in gate.REPOSITORIES},
-        "knownHighFindings": [
-            {
-                "cve": "CVE-2099-9999",
-                "packageName": "demo",
-                "packageVersion": "1",
-                "repositories": ["academy-api"],
-            }
-        ],
+        "acceptedHighFindings": [_high_policy_entry()],
     }
     baseline.write_text(json.dumps(document), encoding="utf-8")
 
     with pytest.raises(gate.GateError, match="identity baseline count mismatch"):
         gate.load_high_baselines(baseline)
+
+
+def test_temporary_high_acceptance_requires_exact_review_metadata(
+    tmp_path: Path,
+) -> None:
+    baseline = tmp_path / "baseline.json"
+    document = _high_policy_document(_high_policy_entry(rationale="short"))
+    baseline.write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(gate.GateError, match="needs a durable rationale"):
+        gate.load_high_baselines(baseline, date(2026, 8, 23))
+
+
+@pytest.mark.parametrize("expires_on", [None, "not-a-date"])
+def test_high_acceptance_requires_valid_expiry(
+    tmp_path: Path,
+    expires_on: object,
+) -> None:
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(
+        json.dumps(_high_policy_document(_high_policy_entry(expiresOn=expires_on))),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(gate.GateError, match="invalid expiresOn"):
+        gate.load_high_baselines(baseline, date(2026, 8, 23))
+
+
+def test_high_acceptance_requires_exact_cve_tracker(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(
+        json.dumps(
+            _high_policy_document(
+                _high_policy_entry(
+                    vendorTracker=(
+                        "https://security-tracker.debian.org/tracker/CVE-2099-9998"
+                    )
+                )
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(gate.GateError, match="exact Debian tracker URL"):
+        gate.load_high_baselines(baseline, date(2026, 8, 23))
+
+
+def test_high_acceptance_rejects_duplicate_identity(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline.json"
+    entry = _high_policy_entry()
+    baseline.write_text(
+        json.dumps(_high_policy_document(entry, dict(entry))),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(gate.GateError, match="duplicate High finding policy entry"):
+        gate.load_high_baselines(baseline, date(2026, 8, 23))
+
+
+def test_schema_three_rejects_metadata_free_known_findings(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline.json"
+    document = _high_policy_document(_high_policy_entry())
+    document["knownHighFindings"] = []
+    baseline.write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(gate.GateError, match="knownHighFindings is not allowed"):
+        gate.load_high_baselines(baseline, date(2026, 8, 23))
 
 
 def test_runtime_base_is_digest_pinned_without_unused_postgres_client() -> None:

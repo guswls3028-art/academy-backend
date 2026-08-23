@@ -90,10 +90,12 @@ def load_acceptances(path: Path, today: date) -> dict[tuple[str, str, str, str],
 
 def load_high_baselines(
     path: Path,
+    today: date | None = None,
 ) -> tuple[dict[str, int], set[tuple[str, str, str, str]]]:
     document = _read_json(path)
-    if document.get("schemaVersion") != 2:
-        raise GateError("high risk baseline schemaVersion must be 2")
+    if document.get("schemaVersion") != 3:
+        raise GateError("high risk baseline schemaVersion must be 3")
+    today = today or datetime.now(timezone.utc).date()
     baselines = document.get("maximumHighFindings")
     if not isinstance(baselines, dict) or set(baselines) != REPOSITORIES:
         raise GateError(
@@ -103,33 +105,54 @@ def load_high_baselines(
         if isinstance(count, bool) or not isinstance(count, int) or count < 0:
             raise GateError(f"invalid High finding baseline for {repository}")
 
-    entries = document.get("knownHighFindings")
-    if not isinstance(entries, list):
-        raise GateError("knownHighFindings must be an array")
+    accepted_entries = document.get("acceptedHighFindings")
+    if not isinstance(accepted_entries, list):
+        raise GateError("acceptedHighFindings must be an array")
+    if "knownHighFindings" in document:
+        raise GateError(
+            "knownHighFindings is not allowed in schemaVersion 3; "
+            "every High finding needs reviewed acceptance metadata"
+        )
+
     known: set[tuple[str, str, str, str]] = set()
-    for index, entry in enumerate(entries):
+    for index, entry in enumerate(accepted_entries):
+        label = "acceptedHighFindings"
         if not isinstance(entry, dict):
-            raise GateError(f"knownHighFindings[{index}] must be an object")
+            raise GateError(f"{label}[{index}] must be an object")
         cve = entry.get("cve")
         package = entry.get("packageName")
         version = entry.get("packageVersion")
         repositories = entry.get("repositories")
+        rationale = entry.get("rationale")
+        tracker = entry.get("vendorTracker")
+        expires_raw = entry.get("expiresOn")
         if not isinstance(cve, str) or not re.fullmatch(r"CVE-\d{4}-\d{4,}", cve):
-            raise GateError(f"knownHighFindings[{index}] has an invalid CVE")
+            raise GateError(f"{label}[{index}] has an invalid CVE")
         if not isinstance(package, str) or not package:
-            raise GateError(f"knownHighFindings[{index}] has an invalid packageName")
+            raise GateError(f"{label}[{index}] has an invalid packageName")
         if not isinstance(version, str) or not version:
-            raise GateError(f"knownHighFindings[{index}] has an invalid packageVersion")
+            raise GateError(f"{label}[{index}] has an invalid packageVersion")
         if not isinstance(repositories, list) or not repositories:
-            raise GateError(f"knownHighFindings[{index}] must name repositories")
+            raise GateError(f"{label}[{index}] must name repositories")
+        if not isinstance(rationale, str) or len(rationale.strip()) < 40:
+            raise GateError(f"{label}[{index}] needs a durable rationale")
+        if not isinstance(tracker, str) or tracker != (
+            f"https://security-tracker.debian.org/tracker/{cve}"
+        ):
+            raise GateError(f"{label}[{index}] needs the exact Debian tracker URL")
+        try:
+            expires_on = date.fromisoformat(expires_raw)
+        except (TypeError, ValueError) as exc:
+            raise GateError(f"{label}[{index}] has an invalid expiresOn") from exc
+        if today > expires_on:
+            raise GateError(f"High risk acceptance expired: {cve} expired {expires_on}")
+
         for repository in repositories:
             if not isinstance(repository, str) or repository not in REPOSITORIES:
-                raise GateError(
-                    f"knownHighFindings[{index}] names unknown repository {repository}"
-                )
+                raise GateError(f"{label}[{index}] names unknown repository {repository}")
             key = (repository, cve, package, version)
             if key in known:
-                raise GateError(f"duplicate High finding baseline: {key}")
+                raise GateError(f"duplicate High finding policy entry: {key}")
             known.add(key)
 
     for repository, maximum in baselines.items():
@@ -365,7 +388,10 @@ def main() -> int:
         raise GateError("release candidate must contain exactly the six governed repositories")
     today = datetime.now(timezone.utc).date()
     acceptances = load_acceptances(args.acceptances, today)
-    high_baselines, known_high_findings = load_high_baselines(args.high_baseline)
+    high_baselines, known_high_findings = load_high_baselines(
+        args.high_baseline,
+        today,
+    )
 
     for repository in sorted(REPOSITORIES):
         image = images[repository]

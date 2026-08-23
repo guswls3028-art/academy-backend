@@ -76,13 +76,15 @@
    즉시 실패한다.
 5. 만료일 다음 날부터는 scan 전에 전체 게이트가 실패한다. 만료 연장은 새
    vendor 상태와 실제 사용 경로를 다시 검토한 PR로만 가능하다.
-6. High는 `docs/ssot/ecr-high-risk-baseline.json` schema 2의 repository별 상한과
-   `knownHighFindings` exact identity 집합을 모두 비교한다. 수가 같아도 CVE, package,
-   version 중 하나가 바뀌거나 다른 High가 기존 항목을 대체하면 실패한다. 반대로
-   패키지 제거 또는 vendor 수정으로 기존 항목이 사라져도 기준선이 stale하다고
-   실패하므로, 운영 scan readback을 근거로 identity와 상한을 같은 PR에서 내려야
-   한다. 알 수 없는 항목, 누락된 기존 항목, identity/count 불일치 중 어느 것도
-   development/preprod로 진행할 수 없다.
+6. High는 `docs/ssot/ecr-high-risk-baseline.json` schema 3의 repository별 상한과
+   `acceptedHighFindings` exact identity를 모두 비교한다. metadata 없는 별도 known
+   목록은 허용하지 않는다. 모든 High 항목은 exact Debian tracker, 실제 런타임의
+   도달 가능성 근거와 hard expiration을 가져야 하며, 만료 다음 날에는 scan 전에
+   실패한다. 수가 같아도 CVE, package, version 중 하나가 바뀌거나 다른 High가 기존
+   항목을 대체하면 실패한다. 반대로 패키지 제거 또는 vendor 수정으로 기존 항목이
+   사라져도 기준선이 stale하다고 실패하므로, 운영 scan readback을 근거로 identity와
+   상한을 같은 PR에서 내려야 한다. 알 수 없는 항목, 누락된 기존 항목,
+   identity/count 불일치 중 어느 것도 development/preprod로 진행할 수 없다.
 
 2026-08-20 후보 `sha-31d3845d9...-run-32316780655-1`의 완료된 ECR scan을
 재검토했다. Base·Video·Messaging은 glibc 1건과 Perl 3건으로 Critical 4건,
@@ -152,6 +154,22 @@ identity와 package version은 변하지 않았다. 따라서 세 저장소 상�
 낮추고 마지막 libssh2 identity를 제거한다. 해당 후보는 stale 기준선 때문에
 development 진입 전에 실패했고 production을 변경하지 않았으며, 이 축소를 포함한
 다음 후보가 전체 release gate를 다시 통과해야 한다.
+
+2026-08-23 sender/runtime 후보 `sha-43e9946e...-run-32614790812-1`의 새 API
+`sha256:ebf04e84...`와 AI `sha256:d5cf49af...` 완료 scan은 같은 Debian trixie
+`libssh2` `1.11.1-1+deb13u1`에서 앞서 사라졌던 여섯 High를 모두 다시 반환했다.
+두 digest 모두 공통 8건, GLib 6건, libssh2 6건인 exact 20건이며 package version은
+변하지 않았다. Debian tracker에서 trixie는 여섯 건 모두 vulnerable이고 stable
+수정 패키지가 없다. 저장소와 두 runtime entrypoint에
+SSH, SFTP, SCP, Paramiko 또는 libssh2 client 경로가 없고, 이 패키지는 API·AI의
+Tesseract/libcurl 전이 의존으로만 존재한다. 따라서 다른 Debian suite 패키지를
+혼합하지 않고 여섯 exact identity만 `acceptedHighFindings`에서 2026-09-19까지
+한시 수용한다. 운영 Tools digest의 11:05 KST 완료 scan은 여전히 14건이고 동일 digest
+재scan은 ECR quota로 거부됐으므로 Tools를 추론으로 승인하지 않고 상한 14를 유지한다.
+새 Tools digest가 같은 finding을 실제 반환하면 그 exact 후보에서 별도 검토한다.
+Debian stable fix나 API·AI ECR identity 변화가 먼저 나오면 acceptance를 즉시 제거한다.
+run `32614790812`는 이 판정 전에 실패하여 development/preprod/production runtime을
+변경하지 않았고 shared lock을 반환했다.
 
 현재 Critical 한시 항목은 Debian stable에 수정본이 아직 없거나 Debian이
 `no-dsa`/minor로 분류한 glibc·GLib·Perl finding이다. GLib의

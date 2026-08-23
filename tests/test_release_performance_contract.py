@@ -69,17 +69,25 @@ def test_reviewed_runtime_images_own_exact_high_budgets() -> None:
     )
     baseline = document["maximumHighFindings"]
 
-    assert document["schemaVersion"] == 2
+    assert document["schemaVersion"] == 3
     assert baseline == {
         "academy-base": 8,
-        "academy-api": 14,
+        "academy-api": 20,
         "academy-video-worker": 8,
         "academy-messaging-worker": 8,
-        "academy-ai-worker-cpu": 14,
+        "academy-ai-worker-cpu": 20,
         "academy-tools-worker": 14,
     }
     exact_counts = {repository: 0 for repository in baseline}
-    for finding in document["knownHighFindings"]:
+    assert "knownHighFindings" not in document
+    assert all(
+        finding["vendorTracker"]
+        == f"https://security-tracker.debian.org/tracker/{finding['cve']}"
+        and finding["expiresOn"]
+        and len(finding["rationale"].strip()) >= 40
+        for finding in document["acceptedHighFindings"]
+    )
+    for finding in document["acceptedHighFindings"]:
         for repository in finding["repositories"]:
             exact_counts[repository] += 1
     assert exact_counts == baseline
