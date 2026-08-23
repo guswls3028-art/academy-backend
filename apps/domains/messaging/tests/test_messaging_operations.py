@@ -139,6 +139,42 @@ class SendMessagePreflightViewTests(MessagingOperationsBase):
         self.assertFalse(response.data["ok"])
         self.assertTrue(any(item["code"] == "template_not_ready" for item in response.data["blockers"]))
 
+    def test_preflight_keeps_score_envelope_when_reusing_clinic_copy(self):
+        student = self._student("010")
+        clinic_copy = MessageTemplate.objects.create(
+            tenant=self.tenant,
+            category="clinic",
+            name="클리닉에서 저장한 문구",
+            subject="",
+            body="이번 수업 결과를 안내드립니다.",
+        )
+
+        response = SendMessagePreflightView.as_view()(
+            self._request(
+                "post",
+                "/api/v1/messaging/send/preflight/",
+                {
+                    "send_to": "parent",
+                    "student_ids": [student.id],
+                    "template_id": clinic_copy.id,
+                    "raw_body": "이번 수업 결과를 안내드립니다.",
+                    "block_category": "grades",
+                    "alimtalk_extra_vars": {
+                        "강의명": "중2 수학",
+                        "차시명": "1차시",
+                    },
+                },
+            )
+        )
+
+        self.assertTrue(response.data["ok"], response.data)
+        self.assertEqual(response.data["template"]["template_type"], "score")
+        preview = response.data["preview_recipients"][0]["full_message_body"]
+        self.assertIn("성적표 안내", preview)
+        self.assertIn("중2 수학", preview)
+        self.assertIn("1차시", preview)
+        self.assertNotIn("장소\n-", preview)
+
     def test_preflight_fail_closes_payment_when_provider_sid_is_missing(self):
         student = self._student("006")
         template = MessageTemplate.objects.create(

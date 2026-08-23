@@ -180,6 +180,7 @@ CATEGORY_TO_TEMPLATE_TYPE: dict[str, str] = {
 
 # 시스템 기본양식 — 통합 승인 봉투 대신 자체 Solapi 템플릿 유지
 SYSTEM_TEMPLATE_CATEGORIES = frozenset({"signup"})
+MANUAL_ENVELOPE_TEMPLATE_CATEGORIES = SYSTEM_TEMPLATE_CATEGORIES | {"payment"}
 
 
 def get_unified_for_category(
@@ -231,6 +232,26 @@ def get_unified_for_category(
     if tt:
         return tt, TEMPLATE_TYPE_TO_SOLAPI_ID.get(tt)
     return None, None
+
+
+def get_unified_for_manual_send(
+    block_category: str,
+    template_category: str,
+    template_name: str = "",
+    extra_vars: dict | None = None,
+) -> tuple[str | None, str | None]:
+    """Resolve a manual-send envelope from the entry point before saved copy metadata."""
+    if template_category in MANUAL_ENVELOPE_TEMPLATE_CATEGORIES:
+        return get_unified_for_category(template_category, template_name, extra_vars)
+
+    entry_type, entry_sid = get_unified_for_category(
+        block_category,
+        template_name,
+        extra_vars,
+    )
+    if entry_type:
+        return entry_type, entry_sid
+    return get_unified_for_category(template_category, template_name, extra_vars)
 
 
 def build_manual_replacements(

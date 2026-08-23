@@ -238,6 +238,49 @@ class SendMessageViewTests(TestCase):
         self.assertEqual(kwargs["target_type"], "parent")
         self.assertEqual(kwargs["target_id"], self.student.id)
 
+    def test_score_entry_category_overrides_reused_clinic_copy_envelope(self):
+        clinic_copy = MessageTemplate.objects.create(
+            tenant=self.tenant,
+            category="clinic",
+            name="클리닉에서 저장한 문구",
+            subject="",
+            body="이번 수업 결과를 안내드립니다.",
+        )
+        request = self.factory.post(
+            "/api/v1/messaging/send/",
+            data={
+                "send_to": "parent",
+                "student_ids": [self.student.id],
+                "template_id": clinic_copy.id,
+                "raw_body": "이번 수업 결과를 안내드립니다.",
+                "block_category": "grades",
+                "alimtalk_extra_vars": {
+                    "강의명": "중2 수학",
+                    "차시명": "1차시",
+                },
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+        request.user = self.admin
+        request.tenant = self.tenant
+
+        with (
+            patch("apps.domains.messaging.services.get_tenant_site_url", return_value="https://example.test"),
+            patch("apps.domains.messaging.services.enqueue_alimtalk", return_value=True) as enqueue_alimtalk,
+        ):
+            response = self._send(request)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        kwargs = enqueue_alimtalk.call_args.kwargs
+        self.assertEqual(kwargs["template_id"], "KA01TP260406105458211774JKJ3OU55")
+        replacements = {item["key"]: item["value"] for item in kwargs["alimtalk_replacements"]}
+        self.assertEqual(replacements["강의명"], "중2 수학")
+        self.assertEqual(replacements["차시명"], "1차시")
+        self.assertNotIn("클리닉장소", replacements)
+        self.assertNotIn("클리닉날짜", replacements)
+        self.assertNotIn("클리닉시간", replacements)
+
     def test_manual_send_can_be_scheduled_without_immediate_enqueue(self):
         send_at = timezone.now() + timedelta(hours=1)
         request = self.factory.post(

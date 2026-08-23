@@ -165,12 +165,18 @@ class SendMessageView(APIView):
 
         if message_mode == "alimtalk":
             from apps.domains.messaging.alimtalk_content_builders import (
-                get_unified_for_category,
                 build_manual_replacements,
+                get_unified_for_manual_send,
             )
             category = (t.category if t else "") or ""
             tpl_name = (t.name if t else "") or ""
-            unified_tt, unified_sid = get_unified_for_category(category, tpl_name, alimtalk_extra_vars)
+            block_category = (data.get("block_category") or "").strip()
+            unified_tt, unified_sid = get_unified_for_manual_send(
+                block_category,
+                category,
+                tpl_name,
+                alimtalk_extra_vars,
+            )
 
             if unified_tt and not unified_sid:
                 return Response(
@@ -190,18 +196,6 @@ class SendMessageView(APIView):
                 unified_template_type = unified_tt
                 solapi_template_id = unified_sid
             else:
-                # SSOT (2026-05-14, domain-policy §5): 학원장이 본문 어떻게 수정해도 봉투
-                # (검수 양식)는 유지되어 발송. t.category 매핑 없거나 t=None 일 때
-                # frontend가 보낸 block_category로 unified 매칭 재시도.
-                # 학원장 limglish 보고 "테스트1 후 테스트2 발송 검수 에러"의 root cause:
-                # frontend race / 양식 변경으로 template_id 누락 시 검수 에러 차단.
-                block_category = (data.get("block_category") or "").strip()
-                if block_category:
-                    fb_tt, fb_sid = get_unified_for_category(block_category, tpl_name, alimtalk_extra_vars)
-                    if fb_tt and fb_sid:
-                        use_unified = True
-                        unified_template_type = fb_tt
-                        solapi_template_id = fb_sid
                 if not solapi_template_id:
                     use_unified = False
 

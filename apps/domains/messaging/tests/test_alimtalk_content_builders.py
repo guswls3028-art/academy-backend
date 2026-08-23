@@ -6,6 +6,7 @@ from apps.domains.messaging.alimtalk_content_builders import (
     get_solapi_template_id,
     get_template_type,
     get_unified_for_category,
+    get_unified_for_manual_send,
     render_alimtalk_preview_text,
     TYPE_ATTENDANCE,
     TYPE_CLINIC_INFO,
@@ -50,6 +51,41 @@ class TestUnifiedCategoryClinicRouting(TestCase):
         )
         self.assertEqual(tt, "clinic_change")
         self.assertTrue(bool(sid))
+
+
+class TestManualSendEnvelopeRouting(TestCase):
+    def test_entry_category_wins_over_saved_template_category(self):
+        template_type, template_id = get_unified_for_manual_send(
+            "grades",
+            "clinic",
+            "클리닉 안내 문구",
+            {},
+        )
+
+        self.assertEqual(template_type, TYPE_SCORE)
+        self.assertEqual(template_id, get_solapi_template_id("exam_score_published"))
+
+    def test_saved_template_category_is_fallback_for_unmapped_entry(self):
+        template_type, template_id = get_unified_for_manual_send(
+            "default",
+            "clinic",
+            "클리닉 안내 문구",
+            {},
+        )
+
+        self.assertEqual(template_type, TYPE_CLINIC_INFO)
+        self.assertTrue(bool(template_id))
+
+    def test_fixed_payment_template_cannot_fall_back_to_entry_envelope(self):
+        template_type, template_id = get_unified_for_manual_send(
+            "attendance",
+            "payment",
+            "결제 안내",
+            {},
+        )
+
+        self.assertEqual(template_type, TYPE_NOTICE_PAYMENT)
+        self.assertFalse(template_id)
 
 
 class TestCommunityTriggers(TestCase):
