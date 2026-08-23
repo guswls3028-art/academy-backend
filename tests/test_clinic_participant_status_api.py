@@ -37,7 +37,7 @@ class ParticipantPendingStatusTransitionAPITest(APITestCase, ClinicAPITestMixin)
         self.assertEqual(participant.status, "booked")
         self.assertEqual(participant.status_changed_by_id, self.admin.id)
 
-    def test_staff_can_correct_no_show_to_attended_and_stale_completion_is_cleared(self):
+    def test_staff_can_correct_no_show_to_attended_and_preserve_study_completion(self):
         self.client.force_authenticate(user=self.admin)
         participant = self.make_participant(
             self.tenant,
@@ -59,8 +59,8 @@ class ParticipantPendingStatusTransitionAPITest(APITestCase, ClinicAPITestMixin)
         self.assertEqual(resp.status_code, 200, resp.data)
         participant.refresh_from_db()
         self.assertEqual(participant.status, "attended")
-        self.assertIsNone(participant.completed_at)
-        self.assertIsNone(participant.completed_by_id)
+        self.assertIsNotNone(participant.completed_at)
+        self.assertEqual(participant.completed_by_id, self.admin.id)
 
     @patch(
         "apps.domains.clinic.views.participant_views.send_clinic_reminder_for_participant",

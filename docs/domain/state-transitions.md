@@ -401,9 +401,9 @@ FINAL → {} (종단, 절대 불변)
 | 상태 | 의미 | 진입 조건 | 이탈 조건 |
 |------|------|----------|----------|
 | `pending` | 예약 대기 | 학생 신청 | 승인/거절 |
-| `booked` | 예약 확정 | 관리자 승인 / 직접 등록 | 출석/미출석/취소 |
-| `attended` | 출석 완료 | 체크인 | 종단 상태 |
-| `no_show` | 미출석 | 세션 종료 후 판정 | 종단 상태 |
+| `booked` | 예약 확정·미등원 | 관리자 승인 / 직접 등록 | 등원/결석/취소 |
+| `attended` | 등원 완료 | 체크인 또는 결석 정정 | 하원 또는 스태프 상태 정정 |
+| `no_show` | 결석 | 사전 연락 또는 현장 확인 | 지각 등원/일반 등원 정정, 보충 일정 생성 |
 | `cancelled` | 취소됨 | 학생/관리자 취소 | 종단 상태 |
 | `rejected` | 거절됨 | 관리자 거절 | 종단 상태 |
 
@@ -430,7 +430,7 @@ STUDENT_STATUS_TRANSITIONS = {
 }
 ```
 
-완료 처리는 출석 전이와 분리된 별도 use-case다.
+등원, 하원, 자율학습 완료는 서로 분리된 use-case다.
 
 ```python
 COMPLETE_ALLOWED_STATUSES = {"attended"}
@@ -438,8 +438,11 @@ COMPLETE_ALLOWED_STATUSES = {"attended"}
 
 `complete`는 이미 `attended`인 참가자에게만 `completed_at`을 기록한다. 따라서
 `pending`, `booked`, `no_show`, `cancelled`, `rejected` 참가자는 완료 처리할 수 없다.
-`uncomplete`는 완료 시각만 취소하고 출석 상태는 유지한다. 출석 상태를 정정하면 이전
-`completed_at`/`completed_by`도 함께 비워 모순된 `no_show + 완료` 기록을 남기지 않는다.
+`uncomplete`는 완료 시각만 취소하고 출석 상태는 유지한다. `checked_in_at`은 실제
+등원 시각, `is_late`는 지각 여부, `checked_out_at`은 실제 하원 시각이다. 하원은
+`attended + checked_in_at`에서만 한 번 허용하며 하원 후 상태 정정은 실패 폐쇄한다.
+`completed_at`/`completed_by`는 시험·과제 보충 및 자율학습 완료 이력이므로 출석
+정정이나 하원에서 지우거나 하원 시각으로 재사용하지 않는다.
 
 #### 금지 전이
 
@@ -448,25 +451,64 @@ COMPLETE_ALLOWED_STATUSES = {"attended"}
 - `booked → pending` (승인 취소 없음)
 - `booked → rejected` (승인된 예약 거절 없음)
 - `cancelled/rejected → *` (상태 전이 종단)
+- `booked/no_show → checkout` (등원 시각 없음)
+- `checked_out_at != null → 상태 정정/중복 checkout`
 
 #### UI 허용 액션
 
 | 상태 | Admin | Student |
 |------|-------|---------|
 | pending | 승인(→booked), 거절(→rejected), 취소(→cancelled) | 취소(→cancelled) |
-| booked | 참석(→attended), 재촉 알림톡, 취소(→cancelled) | (변경 불가, "확정" 표시) |
-| attended | UI는 이력 표시; 호환 API는 →booked/→no_show | (미노출) |
-| no_show | 기존 기록에서 참석으로 정정(→attended); 호환 API는 →booked | (미노출) |
+| booked | 등원/지각 등원(→attended), 재촉, 결석 확인(→no_show), 하원 비활성 | (변경 불가, "확정" 표시) |
+| attended | 하원(`checked_out_at`), 자율학습 완료(`completed_at`)를 별도 처리 | (미노출) |
+| no_show | 등원/지각 등원 정정(→attended), 기존 일정 이동 또는 새 일정 생성 | (미노출) |
 | cancelled | 종단 | (미노출) |
 | rejected | 종단 | (미노출) |
 
-`no_show` 상태와 서버 전이는 기존 이력·호환을 위해 유지하지만 신규 운영 화면에는
-불참 입력을 노출하지 않는다. 단일 `booked` 참가자 재촉은
+결석은 학생이 사전 연락했거나 당일 불참이 확정된 경우에 사용한다. 화면은 Enter로
+확정하고 Esc로 취소할 수 있는 확인 단계를 거친 뒤 1회 알림톡을 요청하고, 결석
+기록을 보존한 채 기존 세션으로 이동하거나 새 클리닉 일정을 만들 수 있게 한다.
+30분 뒤 도착한 학생처럼 결석 판정을 정정하는 경우 `no_show → attended`와
+`is_late=true`를 함께 기록한다.
+
+단일 `booked` 참가자 재촉은
 `POST /clinic/participants/{id}/remind/`가 소유하며, 현재 테넌트의 해당 학생에게
 승인된 공용 `clinic_reminder` 알림톡만 발송한다. 비활성 설정·누락 템플릿·유효하지
 않은 학생 전화번호는 실패 폐쇄하고 성공으로 표시하지 않는다. 운영자가 같은
 참가자에게 재촉을 다시 누른 경우는 각각 별도의 수동 요청으로 기록·큐잉하며,
-분 단위 중복 제거로 두 번째 요청을 삼키지 않는다.
+분 단위 중복 제거로 두 번째 요청을 삼키지 않는다. 반복 재촉은 10분 이상 사용자
+간격, 같은 날짜의 종료 시각, 최대 22:00, 최대 12개 미래 occurrence를 서버에서
+검증한다. 등원·결석·하원 시 해당 참가자의 미래 수동 재촉을 취소하고 payload의
+수신번호·본문을 제거한다.
+
+#### 오늘 할 범위 계획
+
+`SessionParticipantPlanItem`은 한 클리닉 참가자에게서 오늘 처리할 미해결
+`ClinicLink` 선택을 저장한다. `PUT
+/clinic/participants/{id}/planned-clinic-links/`는 staff-only 전체 교체이며 요청은
+`{"planned_clinic_link_ids": [1, 2]}`다. 응답과 참가자 projection은 현재 유효한
+ID를 오름차순 `planned_clinic_link_ids`로 돌려준다.
+
+- 같은 테넌트·같은 학생의 활성 수강에 속하고, 원 수업 차시와 수강 강의가
+  일치하며, `is_auto=true`, `resolved_at=null`인 링크만 허용한다.
+- 클리닉 세션에 `target_lectures`가 있으면 그 강의의 링크만 허용한다. 중복,
+  다른 학생/테넌트, 비활성 수강, 해소된 링크, 세션 범위 밖 링크가 하나라도 있으면
+  전체 요청을 400으로 거부하고 기존 선택을 유지한다.
+- 참가자 행을 `SELECT FOR UPDATE`한 뒤 링크를 ID 순으로 잠그고 전체 교체한다.
+  PostgreSQL 동시 교체도 활성 중복 없이 직렬화하며, 활성 행에는 부분 unique
+  constraint를 둔다.
+- 선택과 제거는 생성 시각·선택 직원·제거 시각·제거 직원·사유를 남긴다. staff
+  교체는 빠진 행을 `staff_replace`로 종료하고 새 선택을 추가한다. 물리 삭제로
+  이력을 덮어쓰지 않는다.
+- ClinicLink가 시험/과제 통과, 수동 해소, 면제, 원본 제거, 다음 차수 이월로
+  닫히면 활성 계획 행도 `clinic_link_resolved:<resolution_type>`로 감사 종료한다.
+  따라서 projection에 stale ID가 보이지 않고, unresolve가 과거 선택을 임의로
+  되살리지 않는다.
+- 등원·지각·결석·하원, `completed_at` 자율학습 완료는 계획을 해소하거나 지우지
+  않는다. 계획 선택, 현장 상태, 학습 완료, ClinicLink 해소는 네 개의 독립 계약이다.
+
+집중 검증은 `tests/test_clinic_participant_plan_api.py`가 API 유효성·전체 롤백·
+감사 종료·상태 독립성 및 PostgreSQL 동시 교체를 확인한다.
 
 ---
 

@@ -42,6 +42,7 @@ def send_event_notification(
     student,
     send_to: str = "parent",  # "parent" | "student"
     context: dict = None,
+    send_at=None,
 ) -> bool:
     """
     이벤트 기반 자동 알림톡 발송.
@@ -277,6 +278,26 @@ def send_event_notification(
         "domain_object_id": domain_object_id,
         "actor_id": actor_id,
     }
+
+    if send_at is not None:
+        try:
+            from apps.domains.messaging.scheduled import schedule_notification_at
+
+            schedule_notification_at(
+                tenant_id=tenant.id,
+                trigger=trigger,
+                send_at=send_at,
+                payload=payload,
+            )
+            return True
+        except Exception as exc:
+            logger.exception(
+                "send_event_notification exact scheduling failed: trigger=%s tenant=%s error=%s",
+                trigger,
+                tenant.id,
+                exc,
+            )
+            return False
 
     delay_mode = (getattr(config, "delay_mode", "immediate") or "immediate").strip().lower()
     delay_value = getattr(config, "delay_value", None)

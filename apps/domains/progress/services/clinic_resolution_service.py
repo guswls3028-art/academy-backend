@@ -23,6 +23,9 @@ from django.db.models import Q
 from django.utils import timezone
 
 from apps.domains.progress.models import ClinicLink
+from apps.support.clinic.session_dependencies import (
+    deactivate_resolved_clinic_link_plan_items,
+)
 from apps.support.progress.clinic_resolution_notification_dependencies import (
     send_clinic_resolution_notification,
 )
@@ -45,6 +48,16 @@ def _append_history(link, *, action: str, at=None) -> None:
         "prev_evidence": link.resolution_evidence,
     })
     link.resolution_history = history
+
+
+def _deactivate_today_plan(link: ClinicLink) -> None:
+    if link.resolved_at is None:
+        return
+    deactivate_resolved_clinic_link_plan_items(
+        clinic_link_ids=[link.id],
+        resolution_type=link.resolution_type or "RESOLVED",
+        removed_at=link.resolved_at,
+    )
 
 
 def _dispatch_progress_for_link(link: ClinicLink) -> None:
@@ -326,6 +339,7 @@ class ClinicResolutionService:
                 "updated_at",
             ]
         )
+        _deactivate_today_plan(link)
         _dispatch_progress_for_link(link)
         if not was_teacher_resolved:
             _eid, _sid = enrollment_id, session_id
@@ -410,6 +424,7 @@ class ClinicResolutionService:
                 "resolved_at", "resolution_type", "resolution_evidence",
                 "resolution_history", "updated_at",
             ])
+            _deactivate_today_plan(link)
             if link.enrollment_id and link.session_id:
                 affected_pairs.add((int(link.enrollment_id), int(link.session_id)))
             count += 1
@@ -476,6 +491,7 @@ class ClinicResolutionService:
                 "resolved_at", "resolution_type", "resolution_evidence",
                 "resolution_history", "updated_at",
             ])
+            _deactivate_today_plan(link)
             count += 1
 
         # update_kwargs는 legacy fallback에서 재사용 (기존 의미 유지)
@@ -503,6 +519,7 @@ class ClinicResolutionService:
                 legacy_link.save(update_fields=list(update_kwargs.keys()) + [
                     "resolution_history", "updated_at",
                 ])
+                _deactivate_today_plan(legacy_link)
                 count = 1
             else:
                 # meta.exam_id 매칭 실패 — 불명확한 legacy 링크는 건드리지 않음
@@ -572,6 +589,7 @@ class ClinicResolutionService:
                 "resolved_at", "resolution_type", "resolution_evidence",
                 "resolution_history", "updated_at",
             ])
+            _deactivate_today_plan(link)
             count += 1
 
         update_kwargs = dict(
@@ -597,6 +615,7 @@ class ClinicResolutionService:
                 legacy_link.save(update_fields=list(update_kwargs.keys()) + [
                     "resolution_history", "updated_at",
                 ])
+                _deactivate_today_plan(legacy_link)
                 count = 1
             else:
                 ambiguous = ClinicLink.objects.filter(
@@ -654,6 +673,7 @@ class ClinicResolutionService:
             "resolved_at", "resolution_type", "resolution_evidence",
             "resolution_history", "memo", "updated_at",
         ])
+        _deactivate_today_plan(link)
 
         logger.info("clinic_resolution: MANUAL_OVERRIDE (link=%s, user=%s)", clinic_link_id, user_id)
         _eid, _sid = link.enrollment_id, link.session_id
@@ -693,6 +713,7 @@ class ClinicResolutionService:
             "resolved_at", "resolution_type", "resolution_evidence",
             "resolution_history", "memo", "updated_at",
         ])
+        _deactivate_today_plan(link)
 
         logger.info("clinic_resolution: WAIVED (link=%s, user=%s)", clinic_link_id, user_id)
         _eid, _sid = link.enrollment_id, link.session_id
@@ -763,6 +784,7 @@ class ClinicResolutionService:
             "resolved_at", "resolution_type", "resolution_evidence",
             "resolution_history", "updated_at",
         ])
+        _deactivate_today_plan(link)
 
         # Create next cycle (source + tenant 전파)
         new_link = ClinicLink.objects.create(

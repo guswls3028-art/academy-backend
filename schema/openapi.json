@@ -705,6 +705,22 @@
         ],
         "type": "string"
       },
+      "ClinicPlanReplaceRequest": {
+        "properties": {
+          "planned_clinic_link_ids": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "maxItems": 200,
+            "type": "array"
+          }
+        },
+        "required": [
+          "planned_clinic_link_ids"
+        ],
+        "type": "object"
+      },
       "ClinicReasonEnum": {
         "description": "* `exam` - Exam\n* `homework` - Homework\n* `both` - Both",
         "enum": [
@@ -713,6 +729,67 @@
           "both"
         ],
         "type": "string"
+      },
+      "ClinicRecipientActionRequest": {
+        "properties": {
+          "send_to": {
+            "$ref": "#/components/schemas/SendToEnum"
+          }
+        },
+        "required": [
+          "send_to"
+        ],
+        "type": "object"
+      },
+      "ClinicReminderRequestRequest": {
+        "properties": {
+          "interval_minutes": {
+            "minimum": 10,
+            "type": "integer"
+          },
+          "mode": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ModeEnum"
+              }
+            ],
+            "default": "once"
+          },
+          "repeat_until": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "send_to": {
+            "$ref": "#/components/schemas/SendToEnum"
+          }
+        },
+        "required": [
+          "send_to"
+        ],
+        "type": "object"
+      },
+      "ClinicReminderResponse": {
+        "properties": {
+          "detail": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "scheduled": {
+            "type": "integer"
+          },
+          "sent": {
+            "type": "integer"
+          },
+          "skipped": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "type": "object"
       },
       "ClinicSession": {
         "properties": {
@@ -886,6 +963,20 @@
             "nullable": true,
             "type": "string"
           },
+          "checked_out_at": {
+            "description": "클리닉 하원 처리 시각",
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "checked_out_by": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "checked_out_by_name": {
+            "readOnly": true,
+            "type": "string"
+          },
           "clinic_reason": {
             "nullable": true,
             "oneOf": [
@@ -952,6 +1043,13 @@
           },
           "participant_role": {
             "$ref": "#/components/schemas/ParticipantRoleEnum"
+          },
+          "planned_clinic_link_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "readOnly": true,
+            "type": "array"
           },
           "profile_photo_url": {
             "readOnly": true,
@@ -1036,6 +1134,7 @@
           }
         },
         "required": [
+          "checked_out_by_name",
           "completed_by_name",
           "created_at",
           "enrollment_id",
@@ -1044,6 +1143,7 @@
           "lecture_color",
           "lecture_title",
           "name_highlight_clinic_target",
+          "planned_clinic_link_ids",
           "profile_photo_url",
           "session_date",
           "session_duration_minutes",
@@ -1173,6 +1273,16 @@
             "format": "date-time",
             "nullable": true,
             "type": "string"
+          },
+          "checked_out_at": {
+            "description": "클리닉 하원 처리 시각",
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "checked_out_by": {
+            "nullable": true,
+            "type": "integer"
           },
           "clinic_reason": {
             "nullable": true,
@@ -4301,6 +4411,14 @@
         ],
         "type": "string"
       },
+      "ModeEnum": {
+        "description": "* `once` - once\n* `repeat` - repeat",
+        "enum": [
+          "once",
+          "repeat"
+        ],
+        "type": "string"
+      },
       "NullEnum": {
         "enum": [
           null
@@ -5970,6 +6088,16 @@
             "format": "date-time",
             "nullable": true,
             "type": "string"
+          },
+          "checked_out_at": {
+            "description": "클리닉 하원 처리 시각",
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "checked_out_by": {
+            "nullable": true,
+            "type": "integer"
           },
           "clinic_reason": {
             "nullable": true,
@@ -11143,6 +11271,15 @@
           "ready",
           "failed",
           "conversion_required"
+        ],
+        "type": "string"
+      },
+      "SendToEnum": {
+        "description": "* `student` - student\n* `parent` - parent\n* `both` - both",
+        "enum": [
+          "student",
+          "parent",
+          "both"
         ],
         "type": "string"
       },
@@ -16695,9 +16832,79 @@
         ]
       }
     },
+    "/api/v1/clinic/participants/{id}/checkout/": {
+      "post": {
+        "description": "Record departure independently from self-study completion.",
+        "operationId": "clinic_participants_checkout_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClinicRecipientActionRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/ClinicRecipientActionRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/ClinicRecipientActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClinicSessionParticipant"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {},
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "clinic"
+        ]
+      }
+    },
     "/api/v1/clinic/participants/{id}/complete/": {
       "post": {
-        "description": "POST /clinic/participants/{id}/complete/\n자율학습 완료 처리 — 이력 기록 + 알림톡 트리거\n\n상태 전이: PENDING/BOOKED → ATTENDED (complete 전용 전이)\n이미 ATTENDED/NO_SHOW/CANCELLED/REJECTED인 경우 상태는 변경하지 않고\ncompleted_at만 기록한다.",
+        "description": "POST /clinic/participants/{id}/complete/\n자율학습 완료 처리 — 이력 기록 + 알림톡 트리거\n\nATTENDED 상태에서만 completed_at을 기록한다.\n참석 처리 전 상태에서는 완료 처리할 수 없으며, 완료 취소도 참석 상태를 유지한다.",
         "operationId": "clinic_participants_complete_create",
         "parameters": [
           {
@@ -16735,6 +16942,165 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ClinicSessionParticipant"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "clinic"
+        ]
+      }
+    },
+    "/api/v1/clinic/participants/{id}/planned-clinic-links/": {
+      "put": {
+        "description": "Replace the staff-authored, session-scoped set of today's ClinicLinks.",
+        "operationId": "clinic_participants_planned_clinic_links_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClinicPlanReplaceRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/ClinicPlanReplaceRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/ClinicPlanReplaceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClinicSessionParticipant"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {},
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "clinic"
+        ]
+      }
+    },
+    "/api/v1/clinic/participants/{id}/remind/": {
+      "post": {
+        "description": "POST /clinic/participants/{id}/remind/\n승인된 단일 예약 학생에게 클리닉 재촉 알림톡을 발송한다.",
+        "operationId": "clinic_participants_remind_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClinicReminderRequestRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/ClinicReminderRequestRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/ClinicReminderRequestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClinicReminderResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClinicReminderResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClinicReminderResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClinicReminderResponse"
                 }
               }
             },
@@ -36632,9 +36998,79 @@
         ]
       }
     },
+    "/api/v1/results/admin/clinic-bookings/{id}/checkout/": {
+      "post": {
+        "description": "Record departure independently from self-study completion.",
+        "operationId": "results_admin_clinic_bookings_checkout_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClinicRecipientActionRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/ClinicRecipientActionRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/ClinicRecipientActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClinicSessionParticipant"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {},
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
     "/api/v1/results/admin/clinic-bookings/{id}/complete/": {
       "post": {
-        "description": "POST /clinic/participants/{id}/complete/\n자율학습 완료 처리 — 이력 기록 + 알림톡 트리거\n\n상태 전이: PENDING/BOOKED → ATTENDED (complete 전용 전이)\n이미 ATTENDED/NO_SHOW/CANCELLED/REJECTED인 경우 상태는 변경하지 않고\ncompleted_at만 기록한다.",
+        "description": "POST /clinic/participants/{id}/complete/\n자율학습 완료 처리 — 이력 기록 + 알림톡 트리거\n\nATTENDED 상태에서만 completed_at을 기록한다.\n참석 처리 전 상태에서는 완료 처리할 수 없으며, 완료 취소도 참석 상태를 유지한다.",
         "operationId": "results_admin_clinic_bookings_complete_create",
         "parameters": [
           {
@@ -36672,6 +37108,165 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ClinicSessionParticipant"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/api/v1/results/admin/clinic-bookings/{id}/planned-clinic-links/": {
+      "put": {
+        "description": "Replace the staff-authored, session-scoped set of today's ClinicLinks.",
+        "operationId": "results_admin_clinic_bookings_planned_clinic_links_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClinicPlanReplaceRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/ClinicPlanReplaceRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/ClinicPlanReplaceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClinicSessionParticipant"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {},
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/api/v1/results/admin/clinic-bookings/{id}/remind/": {
+      "post": {
+        "description": "POST /clinic/participants/{id}/remind/\n승인된 단일 예약 학생에게 클리닉 재촉 알림톡을 발송한다.",
+        "operationId": "results_admin_clinic_bookings_remind_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClinicReminderRequestRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/ClinicReminderRequestRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/ClinicReminderRequestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClinicReminderResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClinicReminderResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClinicReminderResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClinicReminderResponse"
                 }
               }
             },

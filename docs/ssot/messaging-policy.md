@@ -1,4 +1,4 @@
-# 메시징/알림톡 운영 정책 SSOT (2026-08-22 갱신)
+# 메시징/알림톡 운영 정책 SSOT (2026-08-23 갱신)
 
 ## 정책 분류 체계
 
@@ -19,10 +19,11 @@
 | clinic_reservation_created | 클리닉 예약 완료 | 학부모 | 예약 생성(booked/pending) 시 |
 | clinic_reservation_changed | 클리닉 예약 변경 | 학부모 | 예약 변경 시 |
 | clinic_cancelled | 클리닉 예약 취소 | 학부모 | 상태 → cancelled |
-| clinic_check_in | 클리닉 입실 | 학부모 | 상태 → attended |
-| clinic_absent | 클리닉 결석 | 학부모 | 상태 → no_show |
-| clinic_reminder | 클리닉 시작 N분 전 또는 스태프 재촉 | 학생 | EventBridge `academy-v1-send-clinic-reminders` → `send_clinic_reminders`; 단일 승인 예약은 `POST /clinic/participants/{id}/remind/`. 스태프의 명시적 재클릭은 매번 독립 요청으로 기록·큐잉 |
-| clinic_self_study_completed | 클리닉 자율학습 완료(퇴실) | 학부모 | 자율학습 완료(complete) 시 |
+| clinic_check_in | 클리닉 등원/지각 등원 | 직원 선택(학생/학부모/둘 다) | 상태 → attended, 실제 `checked_in_at` 기록 시 |
+| clinic_check_out | 클리닉 하원 | 직원 선택(학생/학부모/둘 다) | 등원한 학생의 별도 `checked_out_at` 기록 시. 승인된 exact 하원 템플릿이 없으면 발송 0 |
+| clinic_absent | 클리닉 결석 | 직원 선택(학생/학부모/둘 다) | 확인 팝업 승인 후 상태 → no_show, 1회만 요청 |
+| clinic_reminder | 클리닉 시작 N분 전 또는 스태프 재촉 | 자동은 학생, 수동은 직원 선택(학생/학부모/둘 다) | EventBridge `academy-v1-send-clinic-reminders` → `send_clinic_reminders`; 수동은 1회 또는 사용자 간격 반복, 같은 날 최대 22:00. 명시적 재클릭은 매번 독립 occurrence |
+| clinic_self_study_completed | 클리닉 자율학습 완료 | 학부모 | 자율학습 완료(`completed_at`) 시. 하원과 별도 이벤트 |
 | clinic_result_notification | 클리닉 결과 알림 | 학부모 | 클리닉 결과 확정 시 |
 | counseling_reservation_created | 상담 예약 완료 | 학부모 | 상담 예약 시 |
 | video_encoding_complete | 영상 인코딩 완료 | 스태프(업로더) | 인코딩 완료 시 |
@@ -61,6 +62,7 @@
 5. **공용 알림톡 only.** 제품·고객·운영 경로 모두 SMS/LMS를 실발송하지 않는다. tenant별 PFID/provider도 사용하지 않으며, 운영 오류 알림은 Slack webhook만 사용한다.
 6. **fallback 금지.** exact trigger의 공용 승인 템플릿 또는 명시 unified category 템플릿이 없으면 발송하지 않는다.
 7. **비알림톡 입력 실패 폐쇄.** SMS/LMS와 알 수 없는 `message_mode`를 알림톡으로 보정하지 않는다. 신규 코드에는 SMS 발송·enqueue 호환 callable이나 `sms_allowed` capability를 만들지 않는다.
+8. **클리닉 하원과 학습 완료 분리.** `clinic_check_out`은 `checked_out_at`, `clinic_self_study_completed`는 `completed_at`을 소유한다. 하원 trigger는 exact 승인 템플릿이 준비되기 전 통합 봉투에 임의 매핑하거나 다른 클리닉 trigger로 대체하지 않는다.
 
 ## 공용 알림톡 정책
 
@@ -119,6 +121,7 @@
 - 2026-08-22: 숨은 테넌트별 코드 차단을 제거하고 대표·관리자가 직접 바꾸는 전체 알림톡 설정을 발송 정책에 연결했다. 환경변수 hold는 긴급 사고 전용으로 분리해 화면에 명시하며, 공급자 quota/잔액 접수 전 거절은 확정 실패로 종결한다.
 - 2026-08-22: Solapi `NotEnoughBalance` 확정 거부를 미확정 결과와 분리하고, 5분 주기 저잔액/거절 Slack 경보를 추가했다.
 - 2026-08-22: 운영 중지 중 첫 수강 계정 안내는 terminal 삭제하지 않고 outbox/SQS에 보류한다. 과거 유실 복구는 tenant 11의 reviewed 5명만 대상으로 공유 학부모 1명 불변, 학생 5+비공유 학부모 4 회전, Alimtalk outbox 9건을 한 transaction에서 보장하는 audited dry-run 명령으로 제한했다.
+- 2026-08-23: 클리닉 등원·지각·결석·하원을 분리하고 직원별 수신자 선택, 1회/반복 재촉의 22시 상한, 하원 exact-template fail-closed 계약을 고정했다. `completed_at`은 자율학습 완료로 보존한다.
 - 2026-08-22: 클리닉 T-30은 세션+학생별 durable outbox로 반복 scheduler tick을 제거하고, 확정 잔액 거절의 같은 로그 회복과 provider id 완료 증거를 고정했다.
 - 2026-08-21: `enqueue_sms`/`send_sms`/provider SMS 호환 callable, `sms_allowed` API 필드, SMS 이름의 계정 알림 throttle을 제거했다. 명시된 비알림톡 `message_mode`는 API·outbox·SQS·worker 경계에서 알림톡으로 보정하지 않고 terminal fail-closed하도록 고정했다. 기존 로그·테넌트 설정 데이터는 이력으로 보존한다.
 - 2026-08-20: 플랫폼 운영자 장애 SMS 예외와 활성화 스크립트·워크플로 입력·provider 호출 코드를 제거했다. 운영 오류는 Slack으로만 알리고, 기존 SMS audit action은 이력 조회와 짧은 중복 억제 기간에만 읽는다.
@@ -132,7 +135,7 @@
 - 2026-05-25: `clinic_reminder` 운영 EventBridge 연결. `process_scheduled_notifications` 운영 스케줄 추가. 운영 스케줄이 없는 `assignment_not_submitted`는 자동발화 구현상태에서 제외해 원장 화면 혼선 방지.
 - 2026-05-23: 학생 등록 welcome/가입 승인 알림도 `registration_approved_student|parent` event metadata를 큐에 싣도록 정렬. 계정성 알림 로그 마스킹 기준을 문서화.
 - 2026-05-21: 공개 로그인 화면 계정복구 SSOT를 `/api/v1/auth/account-recovery/dispatch/`로 정리. `password_find_otp`는 legacy OTP 경로로 명시.
-- 2026-04-10: 코드 기반 전면 갱신 — clinic_check_out 제거(clinic_self_study_completed로 통합), 누락 트리거 13개 추가
+- 2026-04-10: 당시 코드 기준 `clinic_check_out`을 `clinic_self_study_completed`로 통합했으나, 2026-08-23 실제 하원과 학습 완료의 의미 분리로 폐기된 결정이다.
 - 2026-03-28: 정책 확정 — 4분류 체계 (SYSTEM_AUTO/AUTO_DEFAULT/MANUAL_DEFAULT/DISABLED)
 - 2026-03-28: 클리닉 트리거 세분화 (cancelled, check_in, check_out, absent)
 - 2026-03-28: 설정 콘솔 재정렬 (정책 배지, 템플릿 읽기 전용, DISABLED 숨김)
