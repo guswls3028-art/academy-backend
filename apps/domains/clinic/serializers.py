@@ -125,6 +125,7 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
     session_start_time = serializers.SerializerMethodField()
     session_location = serializers.SerializerMethodField()
     session_title = serializers.SerializerMethodField()
+    planned_clinic_link_ids = serializers.SerializerMethodField()
 
     # ✅ 파생 노출
     session_duration_minutes = serializers.SerializerMethodField()
@@ -154,6 +155,11 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
         read_only=True,
         default=None,
     )
+    checked_out_by_name = serializers.CharField(
+        source="checked_out_by.username",
+        read_only=True,
+        default=None,
+    )
 
     class Meta:
         model = SessionParticipant
@@ -177,6 +183,11 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
     def get_session_title(self, obj):
         """session이 있으면 학생/관리자 일정에 표시할 제목"""
         return obj.session.title if obj.session else ""
+
+    def get_planned_clinic_link_ids(self, obj) -> list[int]:
+        from .services.lifecycle import planned_clinic_link_ids_for_participant
+
+        return planned_clinic_link_ids_for_participant(obj)
     
     def get_session_duration_minutes(self, obj):
         """session이 있으면 duration_minutes, 없으면 None"""

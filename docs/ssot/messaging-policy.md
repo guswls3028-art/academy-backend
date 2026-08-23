@@ -1,4 +1,4 @@
-# 메시징/알림톡 운영 정책 SSOT (2026-08-22 갱신)
+# 메시징/알림톡 운영 정책 SSOT (2026-08-23 갱신)
 
 ## 정책 분류 체계
 
@@ -19,10 +19,11 @@
 | clinic_reservation_created | 클리닉 예약 완료 | 학부모 | 예약 생성(booked/pending) 시 |
 | clinic_reservation_changed | 클리닉 예약 변경 | 학부모 | 예약 변경 시 |
 | clinic_cancelled | 클리닉 예약 취소 | 학부모 | 상태 → cancelled |
-| clinic_check_in | 클리닉 입실 | 학부모 | 상태 → attended |
-| clinic_absent | 클리닉 결석 | 학부모 | 상태 → no_show |
-| clinic_reminder | 클리닉 시작 N분 전 | 학생 | EventBridge `academy-v1-send-clinic-reminders` → `send_clinic_reminders` |
-| clinic_self_study_completed | 클리닉 자율학습 완료(퇴실) | 학부모 | 자율학습 완료(complete) 시 |
+| clinic_check_in | 클리닉 등원/지각 등원 | 직원 선택(학생/학부모/둘 다) | 상태 → attended, 실제 `checked_in_at` 기록 시 |
+| clinic_check_out | 클리닉 하원 | 직원 선택(학생/학부모/둘 다) | 등원한 학생의 별도 `checked_out_at` 기록 시. 승인된 exact 하원 템플릿이 없으면 발송 0 |
+| clinic_absent | 클리닉 결석 | 직원 선택(학생/학부모/둘 다) | 확인 팝업 승인 후 상태 → no_show, 1회만 요청 |
+| clinic_reminder | 클리닉 시작 N분 전 또는 스태프 재촉 | 자동은 학생, 수동은 직원 선택(학생/학부모/둘 다) | EventBridge `academy-v1-send-clinic-reminders` → `send_clinic_reminders`; 수동은 1회 또는 사용자 간격 반복, 같은 날 최대 22:00. 명시적 재클릭은 매번 독립 occurrence |
+| clinic_self_study_completed | 클리닉 자율학습 완료 | 학부모 | 자율학습 완료(`completed_at`) 시. 하원과 별도 이벤트 |
 | clinic_result_notification | 클리닉 결과 알림 | 학부모 | 클리닉 결과 확정 시 |
 | counseling_reservation_created | 상담 예약 완료 | 학부모 | 상담 예약 시 |
 | video_encoding_complete | 영상 인코딩 완료 | 스태프(업로더) | 인코딩 완료 시 |
@@ -61,6 +62,7 @@
 5. **공용 알림톡 only.** 제품·고객·운영 경로 모두 SMS/LMS를 실발송하지 않는다. tenant별 PFID/provider도 사용하지 않으며, 운영 오류 알림은 Slack webhook만 사용한다.
 6. **fallback 금지.** exact trigger의 공용 승인 템플릿 또는 명시 unified category 템플릿이 없으면 발송하지 않는다.
 7. **비알림톡 입력 실패 폐쇄.** SMS/LMS와 알 수 없는 `message_mode`를 알림톡으로 보정하지 않는다. 신규 코드에는 SMS 발송·enqueue 호환 callable이나 `sms_allowed` capability를 만들지 않는다.
+8. **클리닉 하원과 학습 완료 분리.** `clinic_check_out`은 `checked_out_at`, `clinic_self_study_completed`는 `completed_at`을 소유한다. 하원 trigger는 exact 승인 템플릿이 준비되기 전 통합 봉투에 임의 매핑하거나 다른 클리닉 trigger로 대체하지 않는다.
 
 ## 공용 알림톡 정책
 
@@ -102,7 +104,7 @@
 25. **공용 발신번호 런타임 동치** — `/academy/api/env`와 `/academy/workers/env`의 `SOLAPI_API_KEY`, `SOLAPI_API_SECRET`, `SOLAPI_SENDER`는 서로 exact여야 하며 sender는 같은 자격으로 조회한 공급자의 유일한 ACTIVE 번호여야 한다. `reconcile_common_alimtalk_sender.py`는 번호를 입력·출력하지 않는 dry-run 기본 운영 도구다. apply는 clean latest main과 성공 manifest를 요구하고 shared production lock을 얻은 뒤 두 SSM 문서의 sender 한 key만 메모리에서 변경한다. Messaging과 API만 launch-before-terminate로 갱신하고 모든 InService 컨테이너의 sender를 일회성 HMAC으로 확인하며, main queue·DLQ 0과 API health까지 확인한 뒤에만 lock을 반환한다. refresh 전 부분 실패는 원문 파일 백업 없이 메모리의 exact SSM 값으로 rollback하고, refresh 시작 뒤 실패는 inactive 값으로 되돌리지 않고 lock을 유지해 forward-converge한다.
 26. **공용 owner 런타임 명시성** — 코드의 호환 기본값은 owner tenant 1이지만 production `/academy/api/env`와 `/academy/workers/env`에는 `OWNER_TENANT_ID`가 같은 고정 JSON 문자열로 명시되어야 한다. 숫자·null·문자열 강제 변환은 명시 상태로 인정하지 않는다. `reconcile_common_alimtalk_owner_tenant.py`는 owner 값을 입력·출력하지 않는 dry-run 기본 운영 도구이며 absent 또는 exact 기본값만 허용한다. apply는 shared production lock 아래 누락된 owner key만 worker→API 순서로 추가하고 SOLAPI sender를 포함한 다른 key/value를 exact 보존한다. 이미 SSM이 명시돼도 InService runtime HMAC, API health, main queue·DLQ 0을 확인하며 runtime 값이 stale 또는 missing이면 같은 Messaging→API terminal refresh로 forward-converge한다. SSM version/raw/KMS와 최종 lock ownership까지 확인한 뒤에만 lock을 반환한다. refresh 전 부분 실패는 lock ownership을 다시 증명한 뒤 exact 원문으로 rollback하고, write 뒤 lock loss에서는 unowned 보상 write를 하지 않는다. refresh·readback·concurrency·rollback 불확실성은 lock을 유지한다. 이 도구는 sender-only 정합화 도구를 대체하거나 확장하지 않는다.
 27. **클리닉 T-30 정확히 한 번** — `clinic_reminder`는 enabled tenant의 `minutes_before`(기본 30분) 시점에 `booked` 학생만 대상으로 한다. EventBridge가 5분 보정 창에서 매분 실행되어도 `clinic_session:<session_id>:reminder` origin과 학생 target이 이미 durable `ScheduledNotification`에 있으면 새 outbox를 만들지 않는다. 공급사 잔액의 확정 미접수 거절은 audited retry에서도 같은 business key와 단일 `NotificationLog`만 사용하며, 성공 완료는 `message_mode=alimtalk`과 `provider_message_id`가 모두 있어야 한다. 수동 `clinic.manual_reminder`는 별도 occurrence이므로 자동 T-30 dedup과 섞이지 않는다.
-28. **테넌트별 참관 수신자** — 명시적으로 설정된 `MessagingObserver`는 해당 업무 tenant에서 새로 생성되는 모든 알림톡의 동일 본문·승인 봉투 사본을 별도 outbox로 받는다. 원 수신자 outbox와 UI 접수 건수는 바꾸지 않고, 사본은 `target_type=messaging_observer`, `origin_type=messaging_observer`, `origin_id=outbox:<원본 ID>`로 추적한다. 원 수신번호와 같은 참관 번호 및 참관자 간 중복 번호는 한 번만 발송한다. 발송 순간에도 활성 사용자, 활성 `owner/admin/staff` tenant membership, `010` 11자리 전화번호를 모두 요구한다. 즉시 발송의 참관 사본은 원본과 같은 commit 후 처리 묶음에 포함한다. 계정 비밀번호를 포함한 민감 본문까지 동일하게 전달되므로 owner의 명시적 승인 아래 `python manage.py set_messaging_observers --tenant-id <id> --user-id <id> ... --apply --ack-sensitive-content`로만 전체 집합을 교체한다. 중단은 `--clear --apply`로 즉시 적용하며 기존 로그와 outbox는 감사 이력으로 보존한다.
+28. **테넌트별 참관 수신자** — 명시적으로 설정된 `MessagingObserver`는 해당 업무 tenant에서 새로 생성되는 비계정 알림톡의 동일 본문·승인 봉투 사본을 별도 outbox로 받는다. durable outbox의 `trigger` 또는 payload `event_type`이 `registration_approved_student`, `registration_approved_parent`, `password_find_otp`, `password_reset_student`, `password_reset_parent` 중 하나이면 아이디·비밀번호·OTP를 포함할 수 있으므로 참관 사본을 무조건 만들지 않는다. 두 값이 어긋나는 legacy/malformed producer도 중앙 `is_sensitive_notification()` 판정으로 fail-closed한다. 원 수신자 outbox와 UI 접수 건수는 바꾸지 않고, 허용된 사본은 `target_type=messaging_observer`, `origin_type=messaging_observer`, `origin_id=outbox:<원본 ID>`로 추적한다. 원 수신번호와 같은 참관 번호 및 참관자 간 중복 번호는 한 번만 발송한다. 발송 순간에도 활성 사용자, 활성 `owner/admin/staff` tenant membership, `010` 11자리 전화번호를 모두 요구한다. 즉시 발송의 참관 사본은 원본과 같은 commit 후 처리 묶음에 포함한다. 참관 사본에는 학생 이름·출결 등 개인정보가 포함될 수 있으므로 owner의 명시적 승인 아래 `python manage.py set_messaging_observers --tenant-id <id> --user-id <id> ... --apply --ack-sensitive-content`로만 전체 집합을 교체한다. 중단은 `--clear --apply`로 즉시 적용하며 기존 로그와 outbox는 감사 이력으로 보존한다.
 
 ## 운영 검증
 
@@ -114,11 +116,13 @@
 - 잔액 충전/자동충전 뒤 audited recovery가 기존 이력을 보존하며 `sent`와 provider id까지 닫혔는지 확인한다. `ambiguous`는 접수 여부가 불명확하므로 자동 재발송하지 않고 공급자 대사 후 수동 조치한다.
 
 ## 변경 이력
+- 2026-08-23: 참관 사본에서 계정 아이디·비밀번호·OTP를 포함할 수 있는 5개 계정 트리거를 fail-closed로 제외했다. durable trigger와 payload event type을 중앙 민감도 판정으로 함께 검사해 legacy mismatch도 차단하며, 기존 감사 로그와 outbox는 보존한다.
 - 2026-08-23: tenant membership으로 재검증되는 명시적 참관 수신자를 추가했다. 참관 사본은 원본과 분리된 outbox/provider 로그로 추적하며 동일 번호를 중복 발송하지 않는다.
 - 2026-08-23: API와 Messaging worker의 공용 Solapi 설정이 서로 같아도 공급자의 유일 ACTIVE sender와 다르면 발송 전 fail-closed하도록 운영 정합화 경계를 추가했다. sender-only 교정은 shared lock, 두 SSM exact 보존, API+Messaging 제한 refresh, HMAC runtime readback을 모두 통과해야 한다.
 - 2026-08-22: 숨은 테넌트별 코드 차단을 제거하고 대표·관리자가 직접 바꾸는 전체 알림톡 설정을 발송 정책에 연결했다. 환경변수 hold는 긴급 사고 전용으로 분리해 화면에 명시하며, 공급자 quota/잔액 접수 전 거절은 확정 실패로 종결한다.
 - 2026-08-22: Solapi `NotEnoughBalance` 확정 거부를 미확정 결과와 분리하고, 5분 주기 저잔액/거절 Slack 경보를 추가했다.
 - 2026-08-22: 운영 중지 중 첫 수강 계정 안내는 terminal 삭제하지 않고 outbox/SQS에 보류한다. 과거 유실 복구는 tenant 11의 reviewed 5명만 대상으로 공유 학부모 1명 불변, 학생 5+비공유 학부모 4 회전, Alimtalk outbox 9건을 한 transaction에서 보장하는 audited dry-run 명령으로 제한했다.
+- 2026-08-23: 클리닉 등원·지각·결석·하원을 분리하고 직원별 수신자 선택, 1회/반복 재촉의 22시 상한, 하원 exact-template fail-closed 계약을 고정했다. `completed_at`은 자율학습 완료로 보존한다.
 - 2026-08-22: 클리닉 T-30은 세션+학생별 durable outbox로 반복 scheduler tick을 제거하고, 확정 잔액 거절의 같은 로그 회복과 provider id 완료 증거를 고정했다.
 - 2026-08-21: `enqueue_sms`/`send_sms`/provider SMS 호환 callable, `sms_allowed` API 필드, SMS 이름의 계정 알림 throttle을 제거했다. 명시된 비알림톡 `message_mode`는 API·outbox·SQS·worker 경계에서 알림톡으로 보정하지 않고 terminal fail-closed하도록 고정했다. 기존 로그·테넌트 설정 데이터는 이력으로 보존한다.
 - 2026-08-20: 플랫폼 운영자 장애 SMS 예외와 활성화 스크립트·워크플로 입력·provider 호출 코드를 제거했다. 운영 오류는 Slack으로만 알리고, 기존 SMS audit action은 이력 조회와 짧은 중복 억제 기간에만 읽는다.
@@ -132,7 +136,7 @@
 - 2026-05-25: `clinic_reminder` 운영 EventBridge 연결. `process_scheduled_notifications` 운영 스케줄 추가. 운영 스케줄이 없는 `assignment_not_submitted`는 자동발화 구현상태에서 제외해 원장 화면 혼선 방지.
 - 2026-05-23: 학생 등록 welcome/가입 승인 알림도 `registration_approved_student|parent` event metadata를 큐에 싣도록 정렬. 계정성 알림 로그 마스킹 기준을 문서화.
 - 2026-05-21: 공개 로그인 화면 계정복구 SSOT를 `/api/v1/auth/account-recovery/dispatch/`로 정리. `password_find_otp`는 legacy OTP 경로로 명시.
-- 2026-04-10: 코드 기반 전면 갱신 — clinic_check_out 제거(clinic_self_study_completed로 통합), 누락 트리거 13개 추가
+- 2026-04-10: 당시 코드 기준 `clinic_check_out`을 `clinic_self_study_completed`로 통합했으나, 2026-08-23 실제 하원과 학습 완료의 의미 분리로 폐기된 결정이다.
 - 2026-03-28: 정책 확정 — 4분류 체계 (SYSTEM_AUTO/AUTO_DEFAULT/MANUAL_DEFAULT/DISABLED)
 - 2026-03-28: 클리닉 트리거 세분화 (cancelled, check_in, check_out, absent)
 - 2026-03-28: 설정 콘솔 재정렬 (정책 배지, 템플릿 읽기 전용, DISABLED 숨김)

@@ -36,7 +36,7 @@ TRIGGER_POLICY = {
     "clinic_reservation_changed": "AUTO_DEFAULT",
     "clinic_cancelled": "AUTO_DEFAULT",
     "clinic_check_in": "AUTO_DEFAULT",
-    # clinic_check_out: clinic_self_study_completed로 통합 (SSOT). 발송 코드 제거됨.
+    "clinic_check_out": "AUTO_DEFAULT",
     "clinic_absent": "AUTO_DEFAULT",
     "clinic_reminder": "AUTO_DEFAULT",
     "clinic_self_study_completed": "AUTO_DEFAULT",
@@ -92,6 +92,7 @@ TENANT_OPT_IN_AUTO_TRIGGERS: frozenset = frozenset([
 
 
 TEMPLATE_READY_OPT_IN_AUTO_TRIGGERS: frozenset = frozenset([
+    "clinic_check_out",
     "video_encoding_complete",
     "matchup_report_submitted",
     "qna_answered",
@@ -140,6 +141,7 @@ IMPLEMENTED_AUTO_TRIGGERS: frozenset = frozenset([
     "clinic_reservation_changed",
     "clinic_cancelled",
     "clinic_check_in",
+    "clinic_check_out",
     "clinic_absent",
     "clinic_reminder",  # management command: send_clinic_reminders
     "clinic_self_study_completed",

@@ -55,6 +55,20 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
         return float(default)
 
 
+def _newest_first_key(row: Dict[str, Any]) -> tuple[str, int, int]:
+    created_at = row.get("created_at")
+    created_text = (
+        created_at.isoformat()
+        if hasattr(created_at, "isoformat")
+        else str(created_at or "")
+    )
+    return (
+        created_text,
+        int(row.get("clinic_link_id") or 0),
+        int(row.get("source_id") or 0),
+    )
+
+
 def _get_student_photo_url(student: Any) -> Optional[str]:
     """R2 presigned URL 생성 (StudentListSerializer.get_profile_photo_url과 동일 로직)"""
     if not student:
@@ -287,6 +301,7 @@ class ClinicTargetService:
                 "session_title": _get_session_title(session),
                 "source_type": source_type,
                 "source_id": getattr(link, "source_id", None),
+                "source_scope": None,
                 "created_at": getattr(link, "created_at", None),
                 "name_highlight_clinic_target": highlight_map.get(enrollment_id, False),
                 "parent_phone": parent_phone or "",
@@ -527,6 +542,7 @@ class ClinicTargetService:
                 "source_type": "exam",
                 "source_id": int(exam.id),
                 "source_title": _safe_str(exam.title, "-"),
+                "source_scope": None,
                 "lecture_title": _safe_str(lecture.title, ""),
                 "lecture_color": getattr(lecture, "color", None),
                 "lecture_chip_label": getattr(lecture, "chip_label", None),
@@ -543,4 +559,4 @@ class ClinicTargetService:
                 "created_at": getattr(result.attempt, "created_at", None),
             })
 
-        return out
+        return sorted(out, key=_newest_first_key, reverse=True)

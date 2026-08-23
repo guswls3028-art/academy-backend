@@ -56,6 +56,14 @@ def build_messaging_observer_payloads(
     recipients: list[MessagingObserverRecipient],
 ) -> list[dict]:
     """Clone one durable payload for observers without changing the original target."""
+    from apps.domains.messaging.security import is_sensitive_notification
+
+    if is_sensitive_notification(
+        trigger=original_outbox.trigger,
+        payload=original_outbox.payload,
+    ):
+        return []
+
     original_payload = dict(original_outbox.payload)
     if (
         original_payload.get("target_type") == "messaging_observer"

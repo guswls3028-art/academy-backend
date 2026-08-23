@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -8,11 +9,17 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 from rest_framework.exceptions import APIException, NotFound, PermissionDenied, ValidationError
 
-from apps.domains.clinic.models import Session, SessionParticipant
+from apps.domains.clinic.models import (
+    Session,
+    SessionParticipant,
+    SessionParticipantPlanItem,
+)
 from apps.support.clinic.session_dependencies import (
     active_enrolled_lecture_ids_for_student,
+    cancel_pending_clinic_participant_reminders,
     clinic_enrollment_for_tenant,
     clinic_reason_for_unresolved_auto_links,
+    locked_clinic_links_for_participant_plan,
     preferred_active_enrollment_id_for_student_session,
 )
 
@@ -84,10 +91,13 @@ STUDENT_STATUS_TRANSITIONS = {
     SessionParticipant.Status.CANCELLED: set(),
 }
 
-COMPLETE_ALLOWED_TRANSITIONS = {
-    SessionParticipant.Status.PENDING,
-    SessionParticipant.Status.BOOKED,
+COMPLETE_ALLOWED_STATUSES = {
+    SessionParticipant.Status.ATTENDED,
 }
+
+CLINIC_REMINDER_MIN_INTERVAL_MINUTES = 10
+CLINIC_REMINDER_MAX_OCCURRENCES = 12
+CLINIC_REMINDER_LATEST_TIME = datetime.time(22, 0)
 
 SESSION_CHANGE_NOTICE_STATUSES = (
     SessionParticipant.Status.PENDING,
@@ -109,6 +119,148 @@ def _locked_participant(*, tenant, participant_id: int) -> SessionParticipant:
         )
     except SessionParticipant.DoesNotExist as exc:
         raise NotFound("예약을 찾을 수 없습니다.") from exc
+
+
+def _plan_link_is_valid_for_participant(*, participant, clinic_link, target_lecture_ids) -> bool:
+    enrollment = clinic_link.enrollment
+    lecture_session = clinic_link.session
+    return bool(
+        participant.session_id
+        and clinic_link.tenant_id == participant.tenant_id
+        and clinic_link.is_auto
+        and clinic_link.resolved_at is None
+        and enrollment.tenant_id == participant.tenant_id
+        and enrollment.student_id == participant.student_id
+        and enrollment.status == "ACTIVE"
+        and lecture_session.lecture_id == enrollment.lecture_id
+        and (
+            not target_lecture_ids
+            or enrollment.lecture_id in target_lecture_ids
+        )
+    )
+
+
+def planned_clinic_link_ids_for_participant(participant: SessionParticipant) -> list[int]:
+    """Project only still-valid active plan rows; retain invalid rows for audit."""
+    if not participant.session_id:
+        return []
+    target_lecture_ids = {
+        int(lecture.id) for lecture in participant.session.target_lectures.all()
+    }
+    items = getattr(participant, "_active_plan_items", None)
+    if items is None:
+        items = list(
+            SessionParticipantPlanItem.objects.filter(
+                participant=participant,
+                removed_at__isnull=True,
+            ).select_related(
+                "clinic_link__enrollment",
+                "clinic_link__session",
+            )
+        )
+    return sorted(
+        {
+            int(item.clinic_link_id)
+            for item in items
+            if _plan_link_is_valid_for_participant(
+                participant=participant,
+                clinic_link=item.clinic_link,
+                target_lecture_ids=target_lecture_ids,
+            )
+        }
+    )
+
+
+@transaction.atomic
+def replace_participant_clinic_plan(
+    *,
+    tenant,
+    participant_id: int,
+    clinic_link_ids,
+    actor,
+) -> SessionParticipant:
+    """Replace the exact participant-scoped plan while retaining removal history."""
+    try:
+        normalized_ids = [int(link_id) for link_id in clinic_link_ids]
+    except (TypeError, ValueError) as exc:
+        raise ValidationError(
+            {"planned_clinic_link_ids": "ClinicLink ID는 양의 정수여야 합니다."}
+        ) from exc
+    if any(link_id <= 0 for link_id in normalized_ids):
+        raise ValidationError(
+            {"planned_clinic_link_ids": "ClinicLink ID는 양의 정수여야 합니다."}
+        )
+    if len(normalized_ids) != len(set(normalized_ids)):
+        raise ValidationError(
+            {"planned_clinic_link_ids": "중복 ClinicLink ID를 저장할 수 없습니다."}
+        )
+    normalized_ids = sorted(normalized_ids)
+
+    participant = _locked_participant(tenant=tenant, participant_id=participant_id)
+    if not participant.session_id:
+        raise ValidationError(
+            {"planned_clinic_link_ids": "확정된 클리닉 세션 참가자만 오늘 할 범위를 저장할 수 있습니다."}
+        )
+    participant.session = (
+        Session.objects.filter(id=participant.session_id, tenant=tenant)
+        .prefetch_related("target_lectures")
+        .get()
+    )
+    target_lecture_ids = {
+        int(lecture.id) for lecture in participant.session.target_lectures.all()
+    }
+
+    links = locked_clinic_links_for_participant_plan(
+        clinic_link_ids=normalized_ids,
+    )
+    valid_ids = {
+        int(link.id)
+        for link in links
+        if _plan_link_is_valid_for_participant(
+            participant=participant,
+            clinic_link=link,
+            target_lecture_ids=target_lecture_ids,
+        )
+    }
+    if valid_ids != set(normalized_ids):
+        raise ValidationError(
+            {
+                "planned_clinic_link_ids": (
+                    "현재 학생·테넌트·클리닉 세션에 유효한 미해결 항목만 저장할 수 있습니다."
+                )
+            }
+        )
+
+    current_items = list(
+        SessionParticipantPlanItem.objects.select_for_update()
+        .filter(participant=participant, removed_at__isnull=True)
+        .order_by("clinic_link_id", "id")
+    )
+    current_by_link_id = {int(item.clinic_link_id): item for item in current_items}
+    removed_ids = sorted(set(current_by_link_id) - valid_ids)
+    if removed_ids:
+        SessionParticipantPlanItem.objects.filter(
+            id__in=[current_by_link_id[link_id].id for link_id in removed_ids]
+        ).update(
+            removed_at=timezone.now(),
+            removed_by=actor,
+            removal_reason="staff_replace",
+        )
+
+    SessionParticipantPlanItem.objects.bulk_create(
+        [
+            SessionParticipantPlanItem(
+                participant=participant,
+                clinic_link_id=link_id,
+                selected_by=actor,
+            )
+            for link_id in normalized_ids
+            if link_id not in current_by_link_id
+        ]
+    )
+    if hasattr(participant, "_active_plan_items"):
+        delattr(participant, "_active_plan_items")
+    return participant
 
 
 def _actor_label(actor) -> str:
@@ -262,6 +414,8 @@ def _status_notification(
         now_hm = timezone.now().strftime("%H:%M")
         context["도착시간"] = now_hm
         context["_actual_time"] = now_hm
+    if next_status == SessionParticipant.Status.ATTENDED:
+        context["등원구분"] = "지각" if participant.is_late else "정상"
     return ClinicNotificationEvent(
         trigger=trigger,
         student=participant.student,
@@ -285,6 +439,27 @@ def _complete_notification(participant: SessionParticipant) -> ClinicNotificatio
     )
 
 
+def _checkout_notification(participant: SessionParticipant) -> ClinicNotificationEvent:
+    session = participant.session
+    checked_out_at = participant.checked_out_at or timezone.now()
+    return ClinicNotificationEvent(
+        trigger="clinic_check_out",
+        student=participant.student,
+        context={
+            "클리닉명": getattr(session, "title", "") if session else "",
+            "장소": getattr(session, "location", "") if session else "",
+            "날짜": (
+                str(session.date)
+                if session and session.date
+                else checked_out_at.strftime("%Y-%m-%d")
+            ),
+            "시간": checked_out_at.strftime("%H:%M"),
+            "_actual_time": checked_out_at.strftime("%H:%M"),
+            "_domain_object_id": f"participant_{participant.pk}_checkout",
+        },
+    )
+
+
 @transaction.atomic
 def change_participant_status(
     *,
@@ -294,12 +469,15 @@ def change_participant_status(
     actor,
     request_student=None,
     memo=None,
+    is_late: bool = False,
 ) -> ParticipantTransitionResult:
     allowed_statuses = {choice[0] for choice in SessionParticipant.Status.choices}
     if next_status not in allowed_statuses:
         raise ValidationError({"detail": f"Invalid status: {next_status}"})
 
     participant = _locked_participant(tenant=tenant, participant_id=participant_id)
+    if participant.checked_out_at is not None:
+        raise ValidationError({"detail": "하원 처리된 참가자의 등원 상태는 변경할 수 없습니다."})
     transitions = STUDENT_STATUS_TRANSITIONS if request_student else STAFF_STATUS_TRANSITIONS
     valid_next = transitions.get(participant.status, set())
     if next_status not in valid_next:
@@ -315,20 +493,40 @@ def change_participant_status(
         if next_status != SessionParticipant.Status.CANCELLED:
             raise PermissionDenied("학생은 예약 취소만 가능합니다.")
 
+    changed_at = timezone.now()
     participant.status = next_status
-    participant.status_changed_at = timezone.now()
+    participant.status_changed_at = changed_at
     participant.status_changed_by = actor
+    # Attendance corrections and study completion are separate facts.
+    # Never erase the teacher-confirmed self-study result while correcting arrival.
+    if next_status == SessionParticipant.Status.ATTENDED:
+        participant.checked_in_at = changed_at
+        participant.is_late = bool(is_late)
+    else:
+        participant.checked_in_at = None
+        participant.is_late = False
     if memo is not None:
         participant.memo = memo
-    participant.save(
-        update_fields=[
-            "status",
-            "memo",
-            "status_changed_at",
-            "status_changed_by",
-            "updated_at",
-        ]
-    )
+    update_fields = [
+        "status",
+        "memo",
+        "status_changed_at",
+        "status_changed_by",
+        "checked_in_at",
+        "is_late",
+        "updated_at",
+    ]
+    participant.save(update_fields=update_fields)
+    if next_status in (
+        SessionParticipant.Status.ATTENDED,
+        SessionParticipant.Status.NO_SHOW,
+        SessionParticipant.Status.CANCELLED,
+        SessionParticipant.Status.REJECTED,
+    ):
+        cancel_pending_clinic_participant_reminders(
+            tenant_id=tenant.id,
+            participant_id=participant.id,
+        )
     return ParticipantTransitionResult(
         participant=participant,
         notification=_status_notification(participant, next_status, actor=actor),
@@ -340,33 +538,51 @@ def complete_participant(*, tenant, participant_id: int, actor) -> ParticipantTr
     participant = _locked_participant(tenant=tenant, participant_id=participant_id)
     if participant.completed_at:
         raise ValidationError({"detail": "이미 완료 처리된 참가자입니다."})
-    if participant.status in (
-        SessionParticipant.Status.CANCELLED,
-        SessionParticipant.Status.REJECTED,
-    ):
+    if participant.status not in COMPLETE_ALLOWED_STATUSES:
         raise ValidationError(
             {"detail": f"'{participant.get_status_display()}' 상태의 참가자는 완료 처리할 수 없습니다."}
         )
 
     participant.completed_at = timezone.now()
     participant.completed_by = actor
-    if participant.status in COMPLETE_ALLOWED_TRANSITIONS:
-        participant.status = SessionParticipant.Status.ATTENDED
-        participant.status_changed_at = timezone.now()
-        participant.status_changed_by = actor
     participant.save(
         update_fields=[
             "completed_at",
             "completed_by",
-            "status",
-            "status_changed_at",
-            "status_changed_by",
             "updated_at",
         ]
+    )
+    cancel_pending_clinic_participant_reminders(
+        tenant_id=tenant.id,
+        participant_id=participant.id,
     )
     return ParticipantTransitionResult(
         participant=participant,
         notification=_complete_notification(participant),
+    )
+
+
+@transaction.atomic
+def checkout_participant(*, tenant, participant_id: int, actor) -> ParticipantTransitionResult:
+    participant = _locked_participant(tenant=tenant, participant_id=participant_id)
+    if participant.checked_out_at is not None:
+        raise ValidationError({"detail": "이미 하원 처리된 참가자입니다."})
+    if (
+        participant.status != SessionParticipant.Status.ATTENDED
+        or participant.checked_in_at is None
+    ):
+        raise ValidationError({"detail": "등원 처리된 참가자만 하원 처리할 수 있습니다."})
+
+    participant.checked_out_at = timezone.now()
+    participant.checked_out_by = actor
+    participant.save(update_fields=["checked_out_at", "checked_out_by", "updated_at"])
+    cancel_pending_clinic_participant_reminders(
+        tenant_id=tenant.id,
+        participant_id=participant.id,
+    )
+    return ParticipantTransitionResult(
+        participant=participant,
+        notification=_checkout_notification(participant),
     )
 
 
@@ -378,13 +594,50 @@ def uncomplete_participant(*, tenant, participant_id: int) -> ParticipantTransit
 
     participant.completed_at = None
     participant.completed_by = None
-    if participant.status == SessionParticipant.Status.ATTENDED:
-        participant.status = SessionParticipant.Status.BOOKED
-        update_fields = ["completed_at", "completed_by", "status", "updated_at"]
-    else:
-        update_fields = ["completed_at", "completed_by", "updated_at"]
-    participant.save(update_fields=update_fields)
+    participant.save(update_fields=["completed_at", "completed_by", "updated_at"])
     return ParticipantTransitionResult(participant=participant)
+
+
+def build_clinic_reminder_send_times(
+    *,
+    now: datetime.datetime,
+    interval_minutes: int,
+    repeat_until: datetime.datetime,
+) -> list[datetime.datetime]:
+    """Build bounded same-day repeat times for one manual reminder plan."""
+    if timezone.is_naive(now) or timezone.is_naive(repeat_until):
+        raise ValidationError({"detail": "재촉 시작/종료 시각에는 시간대 정보가 필요합니다."})
+    try:
+        interval_minutes = int(interval_minutes)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError({"detail": "반복 간격은 분 단위 숫자여야 합니다."}) from exc
+    if interval_minutes < CLINIC_REMINDER_MIN_INTERVAL_MINUTES:
+        raise ValidationError(
+            {"detail": f"반복 간격은 최소 {CLINIC_REMINDER_MIN_INTERVAL_MINUTES}분입니다."}
+        )
+
+    local_tz = timezone.get_current_timezone()
+    current = now.astimezone(local_tz)
+    until = repeat_until.astimezone(local_tz)
+    if until.date() != current.date():
+        raise ValidationError({"detail": "반복 재촉은 시작한 날짜 안에서만 설정할 수 있습니다."})
+    if until.timetz().replace(tzinfo=None) > CLINIC_REMINDER_LATEST_TIME:
+        raise ValidationError({"detail": "반복 재촉 종료는 밤 10시를 넘길 수 없습니다."})
+    if until <= current:
+        raise ValidationError({"detail": "반복 재촉 종료 시각은 현재보다 늦어야 합니다."})
+
+    result: list[datetime.datetime] = []
+    next_send = current + datetime.timedelta(minutes=interval_minutes)
+    while next_send <= until:
+        result.append(next_send)
+        if len(result) > CLINIC_REMINDER_MAX_OCCURRENCES:
+            raise ValidationError(
+                {"detail": f"반복 재촉은 즉시 발송을 제외하고 최대 {CLINIC_REMINDER_MAX_OCCURRENCES}회까지 설정할 수 있습니다."}
+            )
+        next_send += datetime.timedelta(minutes=interval_minutes)
+    if not result:
+        raise ValidationError({"detail": "종료 전 발송할 반복 재촉 시각이 없습니다."})
+    return result
 
 
 def _ensure_active_student_for_tenant(*, tenant, student) -> None:
@@ -622,10 +875,6 @@ def change_participant_booking(
         new_session_id = int(new_session_id)
     except (TypeError, ValueError) as exc:
         raise ValidationError({"detail": "new_session_id는 숫자여야 합니다."}) from exc
-    if not request_student:
-        raise PermissionDenied("학생만 일정 변경을 신청할 수 있습니다.")
-    _ensure_active_student_for_tenant(tenant=tenant, student=request_student)
-
     try:
         old_booking = (
             SessionParticipant.objects
@@ -635,10 +884,20 @@ def change_participant_booking(
     except SessionParticipant.DoesNotExist as exc:
         raise NotFound("예약을 찾을 수 없습니다.") from exc
 
-    if old_booking.student_id != request_student.id:
-        raise PermissionDenied("다른 학생의 예약을 변경할 수 없습니다.")
-    if old_booking.status != SessionParticipant.Status.PENDING:
-        raise PermissionDenied("승인 대기 중인 예약만 변경할 수 있습니다.")
+    is_staff_change = request_student is None
+    booking_student = old_booking.student if is_staff_change else request_student
+    _ensure_active_student_for_tenant(tenant=tenant, student=booking_student)
+    if not is_staff_change:
+        if old_booking.student_id != request_student.id:
+            raise PermissionDenied("다른 학생의 예약을 변경할 수 없습니다.")
+        if old_booking.status != SessionParticipant.Status.PENDING:
+            raise PermissionDenied("승인 대기 중인 예약만 변경할 수 있습니다.")
+    elif old_booking.status not in (
+        SessionParticipant.Status.PENDING,
+        SessionParticipant.Status.BOOKED,
+        SessionParticipant.Status.NO_SHOW,
+    ):
+        raise ValidationError({"detail": "대기·예약·결석 상태에서만 보충 일정을 만들 수 있습니다."})
     if old_booking.session_id == new_session_id:
         raise ValidationError({"detail": "같은 세션으로는 변경할 수 없습니다."})
 
@@ -652,17 +911,17 @@ def change_participant_booking(
     except Session.DoesNotExist as exc:
         raise NotFound("변경할 세션을 찾을 수 없습니다.") from exc
 
-    _validate_student_session_eligibility(tenant=tenant, student=request_student, session=new_session)
+    _validate_student_session_eligibility(tenant=tenant, student=booking_student, session=new_session)
     _assert_session_capacity(tenant=tenant, session=new_session)
-    _assert_no_active_duplicate(tenant=tenant, student=request_student, session=new_session)
+    _assert_no_active_duplicate(tenant=tenant, student=booking_student, session=new_session)
 
-    new_status = SessionParticipant.Status.PENDING
-    if getattr(tenant, "clinic_auto_approve_booking", False):
+    new_status = SessionParticipant.Status.BOOKED if is_staff_change else SessionParticipant.Status.PENDING
+    if not is_staff_change and getattr(tenant, "clinic_auto_approve_booking", False):
         new_status = SessionParticipant.Status.BOOKED
 
     enrollment_id = _preferred_active_enrollment_id(
         tenant=tenant,
-        student=request_student,
+        student=booking_student,
         session=new_session,
         preferred_enrollment_id=old_booking.enrollment_id,
     )
@@ -671,9 +930,13 @@ def change_participant_booking(
         new_booking = SessionParticipant.objects.create(
             tenant=tenant,
             session=new_session,
-            student=request_student,
+            student=booking_student,
             status=new_status,
-            source=SessionParticipant.Source.STUDENT_REQUEST,
+            source=(
+                SessionParticipant.Source.MANUAL
+                if is_staff_change
+                else SessionParticipant.Source.STUDENT_REQUEST
+            ),
             enrollment_id=enrollment_id,
             participant_role="manual",
             memo=memo or "",
@@ -681,21 +944,14 @@ def change_participant_booking(
     except IntegrityError as exc:
         raise Conflict("이미 해당 세션에 예약된 학생입니다.") from exc
 
-    cancel_allowed_from = {
-        SessionParticipant.Status.PENDING,
-        SessionParticipant.Status.BOOKED,
-    }
-    if old_booking.status not in cancel_allowed_from:
-        raise ValidationError(
-            {"detail": f"'{old_booking.get_status_display()}' 상태의 예약은 변경할 수 없습니다."}
-        )
     old_session = old_booking.session
-    old_booking.status = SessionParticipant.Status.CANCELLED
-    old_booking.status_changed_at = timezone.now()
-    old_booking.status_changed_by = actor
-    old_booking.save(
-        update_fields=["status", "status_changed_at", "status_changed_by", "updated_at"]
-    )
+    if old_booking.status != SessionParticipant.Status.NO_SHOW:
+        old_booking.status = SessionParticipant.Status.CANCELLED
+        old_booking.status_changed_at = timezone.now()
+        old_booking.status_changed_by = actor
+        old_booking.save(
+            update_fields=["status", "status_changed_at", "status_changed_by", "updated_at"]
+        )
 
     return ParticipantWriteResult(
         participant=new_booking,

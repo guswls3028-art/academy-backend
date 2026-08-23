@@ -260,6 +260,40 @@ class MultiTenantIsolationTest(TestCase, ClinicTestMixin):
         # 교차 오염 없음
         self.assertTrue(enrollment_ids_a.isdisjoint(enrollment_ids_b))
 
+    def test_admin_clinic_targets_are_newest_first_with_source_semantics(self):
+        from apps.domains.results.services.clinic_target_service import ClinicTargetService
+
+        newer_exam = Exam.objects.create(
+            tenant=self.a["tenant"],
+            title="신년 모의고사 분자의 구조",
+            exam_type=Exam.ExamType.REGULAR,
+            is_active=True,
+        )
+        newer_exam.sessions.add(self.a["lec_session"])
+        newer_link = self.make_clinic_link(
+            self.a["enrollments"][1],
+            self.a["lec_session"],
+            source_type="exam",
+            source_id=newer_exam.id,
+        )
+        older_at = timezone.now() - datetime.timedelta(hours=2)
+        newer_at = timezone.now() - datetime.timedelta(hours=1)
+        ClinicLink.objects.filter(id=self.link_a.id).update(created_at=older_at)
+        ClinicLink.objects.filter(id=newer_link.id).update(created_at=newer_at)
+
+        rows = ClinicTargetService.list_admin_targets(tenant=self.a["tenant"])
+        source_rows = [
+            row for row in rows
+            if row.get("clinic_link_id") in {self.link_a.id, newer_link.id}
+        ]
+
+        self.assertEqual(
+            [row["clinic_link_id"] for row in source_rows],
+            [newer_link.id, self.link_a.id],
+        )
+        self.assertEqual(source_rows[0]["source_title"], newer_exam.title)
+        self.assertIsNone(source_rows[0]["source_scope"])
+
     def test_clinic_target_service_rejects_mismatched_link_relations(self):
         """링크의 tenant만 맞고 수강생 tenant가 다른 손상 데이터는 노출하지 않음."""
         from apps.domains.results.utils.clinic import (
@@ -370,36 +404,26 @@ class StatusTransitionDBTest(TestCase, ClinicTestMixin):
         p.refresh_from_db()
         self.assertEqual(p.status, "cancelled")
 
-    def test_complete_transitions_pending_to_attended(self):
-        """complete()는 pending → attended 전환"""
-        p = self._create_participant(status="pending")
-        self.assertIsNone(p.completed_at)
+    def test_complete_requires_attended_status(self):
+        """complete()는 참석 상태와 완료 상태를 합치지 않는다."""
+        from apps.domains.clinic.services import COMPLETE_ALLOWED_STATUSES
 
-        # complete 로직 시뮬레이션 (service SSOT 핵심 로직)
-        from apps.domains.clinic.services import COMPLETE_ALLOWED_TRANSITIONS
-        if p.status in COMPLETE_ALLOWED_TRANSITIONS:
-            p.status = "attended"
-        p.completed_at = timezone.now()
-        p.save()
-        p.refresh_from_db()
-
-        self.assertEqual(p.status, "attended")
-        self.assertIsNotNone(p.completed_at)
+        self.assertEqual(COMPLETE_ALLOWED_STATUSES, {SessionParticipant.Status.ATTENDED})
 
     def test_complete_blocked_for_cancelled(self):
         """cancelled 상태에서 complete 불가"""
         p = self._create_participant(status="cancelled")
-        from apps.domains.clinic.services import COMPLETE_ALLOWED_TRANSITIONS
+        from apps.domains.clinic.services import COMPLETE_ALLOWED_STATUSES
         terminal = {SessionParticipant.Status.CANCELLED, SessionParticipant.Status.REJECTED}
         self.assertIn(p.status, terminal)
         # complete 시 상태 변경하지 않아야 함
-        self.assertNotIn(p.status, COMPLETE_ALLOWED_TRANSITIONS)
+        self.assertNotIn(p.status, COMPLETE_ALLOWED_STATUSES)
 
     def test_complete_blocked_for_rejected(self):
         """rejected 상태에서 complete 불가"""
         p = self._create_participant(status="rejected")
-        from apps.domains.clinic.services import COMPLETE_ALLOWED_TRANSITIONS
-        self.assertNotIn(p.status, COMPLETE_ALLOWED_TRANSITIONS)
+        from apps.domains.clinic.services import COMPLETE_ALLOWED_STATUSES
+        self.assertNotIn(p.status, COMPLETE_ALLOWED_STATUSES)
 
 
 # ═══════════════════════════════════════════════════
@@ -1290,7 +1314,7 @@ class ParticipantCreateServiceAPITest(APITestCase, ClinicAPITestMixin):
 
 
 class CompleteBlockedAPITest(APITestCase, ClinicAPITestMixin):
-    """cancelled/rejected 참가자에 대한 complete API → 400."""
+    """참석 전·불참·취소·거절 참가자에 대한 complete API → 400."""
 
     def setUp(self):
         self.data = self.setup_api_tenant("comp_api", student_count=2)
@@ -1321,8 +1345,21 @@ class CompleteBlockedAPITest(APITestCase, ClinicAPITestMixin):
         )
         self.assertEqual(resp.status_code, 400)
 
-    def test_complete_booked_returns_200(self):
-        """booked 상태 참가자 complete → 200 (정상 전이)."""
+    def test_complete_no_show_returns_400_without_completion_timestamp(self):
+        p = self.make_participant(
+            self.tenant, self.data["clinic_session"],
+            self.data["students"][0], status="no_show",
+        )
+        resp = self.client.post(
+            f"/api/v1/clinic/participants/{p.id}/complete/",
+            **self._headers(self.tenant),
+        )
+        self.assertEqual(resp.status_code, 400)
+        p.refresh_from_db()
+        self.assertIsNone(p.completed_at)
+
+    def test_complete_booked_returns_400_without_changing_attendance(self):
+        """booked 상태 참가자는 참석 처리 전 완료할 수 없다."""
         p = self.make_participant(
             self.tenant, self.data["clinic_session"],
             self.data["students"][0], status="booked",
@@ -1331,10 +1368,30 @@ class CompleteBlockedAPITest(APITestCase, ClinicAPITestMixin):
             f"/api/v1/clinic/participants/{p.id}/complete/",
             **self._headers(self.tenant),
         )
-        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.status_code, 400)
+        p.refresh_from_db()
+        self.assertEqual(p.status, "booked")
+        self.assertIsNone(p.completed_at)
+
+    def test_complete_and_uncomplete_preserve_attendance(self):
+        p = self.make_participant(
+            self.tenant, self.data["clinic_session"],
+            self.data["students"][0], status="attended",
+        )
+        complete_resp = self.client.post(
+            f"/api/v1/clinic/participants/{p.id}/complete/",
+            **self._headers(self.tenant),
+        )
+        self.assertEqual(complete_resp.status_code, 200)
+
+        uncomplete_resp = self.client.post(
+            f"/api/v1/clinic/participants/{p.id}/uncomplete/",
+            **self._headers(self.tenant),
+        )
+        self.assertEqual(uncomplete_resp.status_code, 200)
         p.refresh_from_db()
         self.assertEqual(p.status, "attended")
-        self.assertIsNotNone(p.completed_at)
+        self.assertIsNone(p.completed_at)
 
 
 class ParticipantStatusTransitionAPITest(APITestCase, ClinicAPITestMixin):
@@ -1624,6 +1681,89 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
                 and history["clinic_required"] is False
                 for history in resp.data["histories"]
             )
+        )
+
+    def test_idcard_projects_all_sources_newest_first_across_active_enrollments(self):
+        from django.apps import apps as django_apps
+
+        first_enrollment = self.data["enrollments"][0]
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="신년 모의고사 가역반응, 화학평형",
+            exam_type=Exam.ExamType.REGULAR,
+            is_active=True,
+        )
+        exam.sessions.add(self.data["lec_session"])
+        older_link = self.make_clinic_link(
+            first_enrollment,
+            self.data["lec_session"],
+            tenant=self.tenant,
+            source_type="exam",
+            source_id=exam.id,
+        )
+
+        second_lecture = self.make_lecture(
+            self.tenant,
+            title="화학평형특강",
+            name="화학평형반",
+            subject="chemistry",
+        )
+        second_session = self.make_lecture_session(
+            second_lecture,
+            order=3,
+            title="평형상수 3차시",
+        )
+        second_enrollment = self.make_enrollment(
+            self.tenant,
+            self.student,
+            second_lecture,
+        )
+        homework_model = django_apps.get_model("homework_results", "Homework")
+        homework = homework_model.objects.create(
+            tenant=self.tenant,
+            session=second_session,
+            title="부교재 화학평형",
+        )
+        newer_link = self.make_clinic_link(
+            second_enrollment,
+            second_session,
+            tenant=self.tenant,
+            source_type="homework",
+            source_id=homework.id,
+        )
+        older_at = timezone.now() - datetime.timedelta(hours=2)
+        newer_at = timezone.now() - datetime.timedelta(hours=1)
+        ClinicLink.objects.filter(id=older_link.id).update(created_at=older_at)
+        ClinicLink.objects.filter(id=newer_link.id).update(created_at=newer_at)
+
+        resp = self.client.get(
+            "/api/v1/clinic/idcard/",
+            **self._headers(self.tenant),
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(
+            [target["clinic_link_id"] for target in resp.data["current_targets"]],
+            [newer_link.id, older_link.id],
+        )
+        self.assertEqual(
+            [target["source_type"] for target in resp.data["current_targets"]],
+            ["homework", "exam"],
+        )
+        self.assertEqual(
+            [target["source_title"] for target in resp.data["current_targets"]],
+            [homework.title, exam.title],
+        )
+        self.assertEqual(
+            [target["source_scope"] for target in resp.data["current_targets"]],
+            [None, None],
+        )
+        self.assertEqual(
+            [target["session_title"] for target in resp.data["current_targets"]],
+            [second_session.title, self.data["lec_session"].title],
+        )
+        self.assertTrue(
+            all(target["created_at"] for target in resp.data["current_targets"])
         )
 
     def test_deleted_student_cannot_create_own_booking(self):

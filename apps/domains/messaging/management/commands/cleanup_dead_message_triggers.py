@@ -1,11 +1,12 @@
 """Dead 알림톡 trigger AutoSendConfig row cleanup (2026-05-12).
 
 audit 식별 결과 (`project_backlog_2026_05_12_evening.md`):
-  - `clinic_check_out` — `clinic_self_study_completed` 로 통합되며 SSOT 제거
   - `urgent_notice` — 카카오 알림톡 정책 위반으로 제거
   - `class_enrollment_complete` / `enrollment_expiring_soon` / `student_signup` — DISABLED
 
-위 5종 trigger 의 AutoSendConfig row 일괄 삭제. tenant 격리 절대.
+위 4종 trigger 의 AutoSendConfig row 일괄 삭제. tenant 격리 절대.
+
+`clinic_check_out`은 실제 하원 시각 전용 trigger이며 자율학습 완료와 분리한다.
 
 사용:
   python manage.py cleanup_dead_message_triggers --dry-run    # 미리보기
@@ -19,7 +20,6 @@ from apps.domains.messaging.models import AutoSendConfig
 
 
 DEAD_TRIGGERS = [
-    "clinic_check_out",            # → clinic_self_study_completed 통합
     "urgent_notice",                # 카카오 정책 위반 제거
     "class_enrollment_complete",    # DISABLED
     "enrollment_expiring_soon",     # DISABLED (미구현)

@@ -37,19 +37,25 @@ class MessagingObserverOutboxTests(TestCase):
         )
         MessagingObserver.objects.create(tenant=self.tenant, user=self.observer)
 
-    def _create(self, *, to="01011112222"):
+    def _create(
+        self,
+        *,
+        to="01011112222",
+        trigger="clinic_reminder",
+        event_type=None,
+    ):
         return create_notification_outboxes(
             tenant_id=self.tenant.id,
             notifications=[
                 {
-                    "trigger": "clinic_reminder",
+                    "trigger": trigger,
                     "send_at": timezone.now(),
                     "payload": {
                         "tenant_id": self.tenant.id,
                         "to": to,
                         "text": "sensitive original body",
                         "message_mode": "alimtalk",
-                        "event_type": "clinic_reminder",
+                        "event_type": event_type or trigger,
                         "target_type": "student",
                         "target_id": "student:42",
                         "origin_type": "clinic_session",
@@ -80,6 +86,33 @@ class MessagingObserverOutboxTests(TestCase):
 
     def test_does_not_duplicate_when_observer_is_original_recipient(self):
         originals = self._create(to="01022223333")
+
+        self.assertEqual(len(originals), 1)
+        self.assertEqual(ScheduledNotification.objects.count(), 1)
+
+    def test_account_credential_triggers_never_create_observer_copies(self):
+        blocked_triggers = (
+            "registration_approved_student",
+            "registration_approved_parent",
+            "password_find_otp",
+            "password_reset_student",
+            "password_reset_parent",
+        )
+
+        for trigger in blocked_triggers:
+            with self.subTest(trigger=trigger):
+                ScheduledNotification.objects.all().delete()
+
+                originals = self._create(trigger=trigger)
+
+                self.assertEqual(len(originals), 1)
+                self.assertEqual(ScheduledNotification.objects.count(), 1)
+
+    def test_sensitive_payload_event_type_suppresses_copy_when_trigger_mismatches(self):
+        originals = self._create(
+            trigger="clinic_reminder",
+            event_type="password_reset_student",
+        )
 
         self.assertEqual(len(originals), 1)
         self.assertEqual(ScheduledNotification.objects.count(), 1)

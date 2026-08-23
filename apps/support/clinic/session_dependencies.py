@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from typing import Iterable
+from uuid import uuid4
 
 
 def empty_lecture_queryset():
@@ -213,6 +214,193 @@ def _dispatched_clinic_reminder_student_ids(*, tenant_id: int, session_id: int) 
     return student_ids
 
 
+def _clinic_reminder_context(*, session, domain_object_id: str, source_use_case: str, actor_id=None) -> dict:
+    context = {
+        "클리닉명": (session.title or "클리닉").strip(),
+        "장소": session.location or "",
+        "날짜": session.date.isoformat() if session.date else "",
+        "시간": session.start_time.strftime("%H:%M") if session.start_time else "",
+        "_domain_object_id": domain_object_id,
+        "_source_domain": "clinic",
+        "_source_use_case": source_use_case,
+    }
+    if actor_id:
+        context["_actor_id"] = str(actor_id)
+    return context
+
+
+def cancel_pending_clinic_participant_reminders(*, tenant_id: int, participant_id: int) -> int:
+    """Cancel only future manual reminders for the exact clinic participant."""
+    from django.db import transaction
+
+    from apps.domains.messaging.models import ScheduledNotification
+    from apps.domains.messaging.security import redact_terminal_delivery_payload
+
+    prefix = f"clinic_participant:{int(participant_id)}:manual_reminder:"
+    with transaction.atomic():
+        rows = list(
+            ScheduledNotification.objects.select_for_update().filter(
+                tenant_id=int(tenant_id),
+                trigger="clinic_reminder",
+                status=ScheduledNotification.Status.PENDING,
+                origin_id__startswith=prefix,
+            )
+        )
+        for row in rows:
+            row.status = ScheduledNotification.Status.CANCELLED
+            row.payload = redact_terminal_delivery_payload(
+                trigger=row.trigger,
+                payload=row.payload,
+            )
+            row.error_message = "clinic_participant_closed"
+            row.save(update_fields=["status", "payload", "error_message"])
+    return len(rows)
+
+
+def deactivate_resolved_clinic_link_plan_items(
+    *,
+    clinic_link_ids,
+    resolution_type: str,
+    removed_at=None,
+) -> int:
+    """Audit-close active today-plan selections when their ClinicLink is resolved."""
+    from django.utils import timezone
+
+    from apps.domains.clinic.models import SessionParticipantPlanItem
+
+    normalized_ids = sorted({int(link_id) for link_id in clinic_link_ids})
+    if not normalized_ids:
+        return 0
+    return SessionParticipantPlanItem.objects.filter(
+        clinic_link_id__in=normalized_ids,
+        removed_at__isnull=True,
+    ).update(
+        removed_at=removed_at or timezone.now(),
+        removal_reason=f"clinic_link_resolved:{resolution_type}"[:80],
+    )
+
+
+def locked_clinic_links_for_participant_plan(*, clinic_link_ids):
+    """Return exact ClinicLinks in deterministic lock order for clinic planning."""
+    from apps.domains.progress.models import ClinicLink
+
+    return list(
+        ClinicLink.objects.select_for_update()
+        .filter(id__in=clinic_link_ids)
+        .select_related("enrollment", "session")
+        .order_by("id")
+    )
+
+
+def _clinic_recipient_targets(send_to: str) -> tuple[str, ...]:
+    if send_to == "both":
+        return ("parent", "student")
+    if send_to in ("parent", "student"):
+        return (send_to,)
+    raise ValueError(f"unsupported clinic recipient target: {send_to!r}")
+
+
+def send_clinic_reminder_for_participant(
+    *,
+    tenant_id: int,
+    participant_id: int,
+    actor_id: int | None = None,
+    send_to: str = "student",
+    repeat_interval_minutes: int | None = None,
+    repeat_until=None,
+    now=None,
+):
+    """Send one reminder now and optionally persist bounded same-day repeats."""
+    from django.utils import timezone
+
+    from apps.domains.clinic.services.lifecycle import build_clinic_reminder_send_times
+    from apps.domains.clinic.models import SessionParticipant
+    from apps.domains.messaging.services.notification_service import send_event_notification
+
+    participant = (
+        SessionParticipant.objects
+        .select_related("student", "session", "tenant")
+        .filter(
+            id=int(participant_id),
+            tenant_id=int(tenant_id),
+            student__deleted_at__isnull=True,
+        )
+        .first()
+    )
+    if not participant or not participant.session:
+        return {"status": "not_found", "sent": 0, "skipped": 1}
+    if participant.status != SessionParticipant.Status.BOOKED:
+        return {"status": "invalid_status", "sent": 0, "skipped": 1}
+
+    current = timezone.localtime(now or timezone.now())
+    targets = _clinic_recipient_targets(send_to)
+    plan_key = f"{current.strftime('%Y%m%d%H%M%S%f')}:{uuid4().hex}"
+    repeat_times = []
+    if repeat_interval_minutes is not None or repeat_until is not None:
+        if repeat_interval_minutes is None or repeat_until is None:
+            return {"status": "invalid_schedule", "sent": 0, "scheduled": 0, "skipped": len(targets)}
+        repeat_times = build_clinic_reminder_send_times(
+            now=current,
+            interval_minutes=repeat_interval_minutes,
+            repeat_until=repeat_until,
+        )
+
+    sent = 0
+    skipped = 0
+    for target in targets:
+        immediate_context = _clinic_reminder_context(
+            session=participant.session,
+            domain_object_id=(
+                f"clinic_participant:{participant.id}:manual_reminder:"
+                f"{plan_key}:now:{target}"
+            ),
+            source_use_case="clinic.manual_reminder",
+            actor_id=actor_id,
+        )
+        if send_event_notification(
+            tenant=participant.tenant,
+            trigger="clinic_reminder",
+            student=participant.student,
+            send_to=target,
+            context=immediate_context,
+        ):
+            sent += 1
+        else:
+            skipped += 1
+
+    scheduled = 0
+    for send_at in repeat_times:
+        for target in targets:
+            scheduled_context = _clinic_reminder_context(
+                session=participant.session,
+                domain_object_id=(
+                    f"clinic_participant:{participant.id}:manual_reminder:"
+                    f"{plan_key}:{send_at.strftime('%Y%m%d%H%M')}:{target}"
+                ),
+                source_use_case="clinic.manual_reminder_repeat",
+                actor_id=actor_id,
+            )
+            if send_event_notification(
+                tenant=participant.tenant,
+                trigger="clinic_reminder",
+                student=participant.student,
+                send_to=target,
+                context=scheduled_context,
+                send_at=send_at,
+            ):
+                scheduled += 1
+            else:
+                skipped += 1
+    result = {
+        "status": "ok" if sent or scheduled else "delivery_failed",
+        "sent": sent,
+        "skipped": skipped,
+    }
+    if repeat_times:
+        result["scheduled"] = scheduled
+    return result
+
+
 def send_clinic_reminder_for_students(*, session_id: int):
     """
     Send the clinic reminder Alimtalk for booked participants in one session.
@@ -242,16 +430,11 @@ def send_clinic_reminder_for_students(*, session_id: int):
         )
     )
 
-    domain_object_id = f"clinic_session:{session.id}:reminder"
-    context = {
-        "클리닉명": (session.title or "클리닉").strip(),
-        "장소": session.location or "",
-        "날짜": session.date.isoformat() if session.date else "",
-        "시간": session.start_time.strftime("%H:%M") if session.start_time else "",
-        "_domain_object_id": domain_object_id,
-        "_source_domain": "clinic",
-        "_source_use_case": "clinic.reminder",
-    }
+    context = _clinic_reminder_context(
+        session=session,
+        domain_object_id=f"clinic_session:{session.id}:reminder",
+        source_use_case="clinic.reminder",
+    )
 
     dispatched_student_ids = _dispatched_clinic_reminder_student_ids(
         tenant_id=session.tenant_id,

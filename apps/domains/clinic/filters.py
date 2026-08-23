@@ -1,7 +1,13 @@
 # PATH: apps/domains/clinic/filters.py
 
+import re
+
 import django_filters
 from .models import Session, Submission, SessionParticipant
+
+
+ONSITE_PARTICIPANT_ORDERING = ("checked_in_at", "session__start_time", "id")
+ONSITE_DATE_PATTERN = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
 
 class SessionFilter(django_filters.FilterSet):
@@ -28,6 +34,39 @@ class ParticipantFilter(django_filters.FilterSet):
     session_date = django_filters.DateFilter(field_name="session__date")
     session_date_from = django_filters.DateFilter(field_name="session__date", lookup_expr="gte")
     session_date_to = django_filters.DateFilter(field_name="session__date", lookup_expr="lte")
+    onsite_date = django_filters.DateFilter(
+        method="filter_onsite_date",
+        help_text=(
+            "현장 운영 날짜(YYYY-MM-DD). 현재 테넌트의 등원 후 미하원 참가자만 "
+            "현장 정렬로 반환합니다."
+        ),
+    )
+
+    def is_valid(self):
+        is_valid = super().is_valid()
+        if not self.is_bound or "onsite_date" not in self.data:
+            return is_valid
+        raw_value = self.data.get("onsite_date")
+        has_exact_format = bool(
+            isinstance(raw_value, str) and ONSITE_DATE_PATTERN.fullmatch(raw_value)
+        )
+        if not has_exact_format and "onsite_date" not in self.form.errors:
+            self.form.add_error("onsite_date", "YYYY-MM-DD 형식의 날짜가 필요합니다.")
+        return is_valid and has_exact_format
+
+    def filter_onsite_date(self, queryset, name, value):
+        tenant = getattr(self.request, "tenant", None)
+        if tenant is None:
+            return queryset.none()
+        return queryset.filter(
+            tenant=tenant,
+            session__tenant=tenant,
+            student__tenant=tenant,
+            session__date=value,
+            status=SessionParticipant.Status.ATTENDED,
+            checked_in_at__isnull=False,
+            checked_out_at__isnull=True,
+        ).order_by(*ONSITE_PARTICIPANT_ORDERING)
 
     class Meta:
         model = SessionParticipant

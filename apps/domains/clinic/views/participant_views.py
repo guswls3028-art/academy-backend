@@ -2,6 +2,8 @@
 import logging
 
 from django.db import transaction
+from django.db.models import Prefetch
+from drf_spectacular.utils import OpenApiParameter, OpenApiTypes, extend_schema
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
@@ -12,17 +14,19 @@ from rest_framework import serializers
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 
-from ..models import SessionParticipant
+from ..models import SessionParticipant, SessionParticipantPlanItem
 from ..serializers import (
     ClinicSessionParticipantSerializer,
     ClinicSessionParticipantCreateSerializer,
 )
-from ..filters import ParticipantFilter
+from ..filters import ONSITE_PARTICIPANT_ORDERING, ParticipantFilter
 from ..services import (
     change_participant_booking,
     change_participant_status,
+    checkout_participant,
     complete_participant,
     create_participant,
+    replace_participant_clinic_plan,
     uncomplete_participant,
 )
 
@@ -32,9 +36,48 @@ from apps.core.services.tenant_access import STAFF_ROLES, get_active_membership_
 from apps.support.clinic.session_dependencies import (
     get_student_for_clinic_request,
     send_clinic_event_notification,
+    send_clinic_reminder_for_participant,
 )
 
 logger = logging.getLogger(__name__)
+
+CLINIC_RECIPIENT_TARGETS = ("student", "parent", "both")
+
+
+class ClinicRecipientActionSerializer(serializers.Serializer):
+    send_to = serializers.ChoiceField(choices=CLINIC_RECIPIENT_TARGETS)
+
+
+class ClinicReminderRequestSerializer(ClinicRecipientActionSerializer):
+    mode = serializers.ChoiceField(choices=("once", "repeat"), default="once")
+    interval_minutes = serializers.IntegerField(min_value=10, required=False)
+    repeat_until = serializers.DateTimeField(required=False)
+
+
+class ClinicReminderResponseSerializer(serializers.Serializer):
+    ok = serializers.BooleanField(required=False)
+    status = serializers.CharField(required=False)
+    sent = serializers.IntegerField(required=False)
+    scheduled = serializers.IntegerField(required=False)
+    skipped = serializers.IntegerField(required=False)
+    detail = serializers.CharField(required=False)
+
+
+class ClinicPlanReplaceSerializer(serializers.Serializer):
+    planned_clinic_link_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        allow_empty=True,
+        max_length=200,
+    )
+
+
+def _validated_send_to(request, *, default: str) -> str:
+    value = request.data.get("send_to", default)
+    if value not in CLINIC_RECIPIENT_TARGETS:
+        raise serializers.ValidationError(
+            {"send_to": "send_to는 student, parent, both 중 하나여야 합니다."}
+        )
+    return value
 
 
 def _get_request_student_for_clinic(request):
@@ -51,22 +94,34 @@ def _get_request_student_for_clinic(request):
     return student
 
 
-def _send_clinic_notification(tenant, student, trigger, context=None):
-    """클리닉 알림 — 학생+학부모 동시 발송 (AUTO_DEFAULT 정책)."""
-    try:
-        event_context = dict(context or {})
-        event_context.setdefault("_source_domain", "clinic")
-        event_context.setdefault("_source_use_case", f"clinic.{trigger}")
-        for send_to in ("parent", "student"):
-            send_clinic_event_notification(
+def _send_clinic_notification(tenant, student, trigger, context=None, *, send_to="both"):
+    """Queue the exact approved clinic Alimtalk for selected recipients only."""
+    event_context = dict(context or {})
+    event_context.setdefault("_source_domain", "clinic")
+    event_context.setdefault("_source_use_case", f"clinic.{trigger}")
+    targets = ("parent", "student") if send_to == "both" else (send_to,)
+    requested = 0
+    failed = 0
+    for target in targets:
+        try:
+            queued = send_clinic_event_notification(
                 tenant=tenant,
                 trigger=trigger,
                 student=student,
-                send_to=send_to,
+                send_to=target,
                 context=event_context,
             )
-    except Exception:
-        logger.exception("clinic notification failed: trigger=%s student=%s", trigger, getattr(student, "id", "?"))
+            requested += int(bool(queued))
+            failed += int(not queued)
+        except Exception:
+            failed += 1
+            logger.exception(
+                "clinic notification failed: trigger=%s student=%s target=%s",
+                trigger,
+                getattr(student, "id", "?"),
+                target,
+            )
+    return {"requested": requested, "failed": failed, "send_to": send_to}
 
 
 # ============================================================
@@ -85,8 +140,43 @@ class ParticipantViewSet(viewsets.ModelViewSet):
     ordering_fields = ["created_at", "updated_at", "session__date", "id"]
     ordering = ["-created_at", "-id"]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name="onsite_date",
+                type=OpenApiTypes.DATE,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description=(
+                    "현장 운영 날짜(YYYY-MM-DD). 현재 tenant에서 session.date가 같은 "
+                    "attended + checked_in_at 존재 + checked_out_at 미존재 참가자만 "
+                    "checked_in_at, session.start_time, id 오름차순으로 pagination 전에 "
+                    "정렬합니다. is_late, completed_at, ClinicLink와 today-plan은 포함 "
+                    "판정에 영향을 주지 않습니다."
+                ),
+            )
+        ]
+    )
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
+
+    def filter_queryset(self, queryset):
+        queryset = super().filter_queryset(queryset)
+        if "onsite_date" in self.request.query_params:
+            return queryset.order_by(*ONSITE_PARTICIPANT_ORDERING)
+        return queryset
+
     def get_permissions(self):
-        if self.action in ("update", "partial_update", "destroy", "complete", "uncomplete"):
+        if self.action in (
+            "update",
+            "partial_update",
+            "destroy",
+            "complete",
+            "checkout",
+            "replace_planned_clinic_links",
+            "uncomplete",
+            "remind",
+        ):
             return [TenantResolvedAndStaff()]
         return [IsAuthenticated(), TenantResolvedAndMember()]
 
@@ -100,7 +190,29 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             SessionParticipant.objects
             .filter(tenant=tenant)
             .filter(student__deleted_at__isnull=True)  # 삭제된 학생 제외
-            .select_related("student", "session", "status_changed_by", "enrollment__lecture")
+            .select_related(
+                "student",
+                "session",
+                "status_changed_by",
+                "completed_by",
+                "checked_out_by",
+                "enrollment__lecture",
+            )
+            .prefetch_related(
+                "session__target_lectures",
+                Prefetch(
+                    "plan_items",
+                    queryset=(
+                        SessionParticipantPlanItem.objects.filter(removed_at__isnull=True)
+                        .select_related(
+                            "clinic_link__enrollment",
+                            "clinic_link__session",
+                        )
+                        .order_by("clinic_link_id", "id")
+                    ),
+                    to_attr="_active_plan_items",
+                ),
+            )
         )
 
         # 학생이 조회하는 경우: 자신의 예약 신청만 조회
@@ -165,6 +277,17 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         """
         next_status = request.data.get("status")
         memo = request.data.get("memo")
+        send_to = _validated_send_to(request, default="parent")
+        try:
+            is_late = serializers.BooleanField().run_validation(
+                request.data.get("is_late", False)
+            )
+        except serializers.ValidationError as exc:
+            raise serializers.ValidationError({"is_late": exc.detail}) from exc
+        if next_status != SessionParticipant.Status.ATTENDED and is_late:
+            raise serializers.ValidationError(
+                {"is_late": "지각 여부는 등원 처리할 때만 지정할 수 있습니다."}
+            )
 
         request_student = _get_request_student_for_clinic(request)
         if request_student is None and not TenantResolvedAndStaff().has_permission(request, self):
@@ -177,23 +300,25 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             actor=request.user,
             request_student=request_student,
             memo=memo,
+            is_late=is_late,
         )
         obj = result.participant
+        notification_result = None
         if result.notification:
-            _t = getattr(request, "tenant", None)
-            _event = result.notification
-            transaction.on_commit(
-                lambda: _send_clinic_notification(
-                    _t,
-                    _event.student,
-                    _event.trigger,
-                    _event.context,
-                )
+            notification_result = _send_clinic_notification(
+                getattr(request, "tenant", None),
+                result.notification.student,
+                result.notification.trigger,
+                result.notification.context,
+                send_to=send_to,
             )
 
         out = ClinicSessionParticipantSerializer(
             obj, context={"request": request}
         ).data
+        out["notification"] = notification_result
+        if obj.status == SessionParticipant.Status.ATTENDED:
+            out["attendance_label"] = "지각 등원" if obj.is_late else "등원"
         return Response(out)
 
     @action(detail=True, methods=["post"])
@@ -202,32 +327,148 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         POST /clinic/participants/{id}/complete/
         자율학습 완료 처리 — 이력 기록 + 알림톡 트리거
 
-        상태 전이: PENDING/BOOKED → ATTENDED (complete 전용 전이)
-        이미 ATTENDED/NO_SHOW/CANCELLED/REJECTED인 경우 상태는 변경하지 않고
-        completed_at만 기록한다.
+        ATTENDED 상태에서만 completed_at을 기록한다.
+        참석 처리 전 상태에서는 완료 처리할 수 없으며, 완료 취소도 참석 상태를 유지한다.
         """
+        send_to = _validated_send_to(request, default="parent")
         result = complete_participant(
             tenant=getattr(request, "tenant", None),
             participant_id=self.get_object().pk,
             actor=request.user,
         )
         obj = result.participant
+        notification_result = None
         if result.notification:
-            _t = getattr(request, "tenant", None)
-            _event = result.notification
-            transaction.on_commit(
-                lambda: _send_clinic_notification(
-                    _t,
-                    _event.student,
-                    _event.trigger,
-                    _event.context,
-                )
+            notification_result = _send_clinic_notification(
+                getattr(request, "tenant", None),
+                result.notification.student,
+                result.notification.trigger,
+                result.notification.context,
+                send_to=send_to,
             )
 
         out = ClinicSessionParticipantSerializer(
             obj, context={"request": request}
         ).data
+        out["notification"] = notification_result
         return Response(out)
+
+    @extend_schema(
+        request=ClinicRecipientActionSerializer,
+        parameters=[OpenApiParameter("id", OpenApiTypes.INT, OpenApiParameter.PATH)],
+        responses={200: ClinicSessionParticipantSerializer, 400: OpenApiTypes.OBJECT},
+    )
+    @action(detail=True, methods=["post"])
+    def checkout(self, request, pk=None):
+        """Record departure independently from self-study completion."""
+        send_to = _validated_send_to(request, default="parent")
+        result = checkout_participant(
+            tenant=getattr(request, "tenant", None),
+            participant_id=self.get_object().pk,
+            actor=request.user,
+        )
+        obj = result.participant
+        notification_result = None
+        if result.notification:
+            notification_result = _send_clinic_notification(
+                getattr(request, "tenant", None),
+                result.notification.student,
+                result.notification.trigger,
+                result.notification.context,
+                send_to=send_to,
+            )
+
+        out = ClinicSessionParticipantSerializer(
+            obj, context={"request": request}
+        ).data
+        out["notification"] = notification_result
+        return Response(out)
+
+    @extend_schema(
+        request=ClinicPlanReplaceSerializer,
+        parameters=[OpenApiParameter("id", OpenApiTypes.INT, OpenApiParameter.PATH)],
+        responses={200: ClinicSessionParticipantSerializer, 400: OpenApiTypes.OBJECT},
+    )
+    @action(detail=True, methods=["put"], url_path="planned-clinic-links")
+    def replace_planned_clinic_links(self, request, pk=None):
+        """Replace the staff-authored, session-scoped set of today's ClinicLinks."""
+        payload = ClinicPlanReplaceSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        participant = replace_participant_clinic_plan(
+            tenant=getattr(request, "tenant", None),
+            participant_id=self.get_object().pk,
+            clinic_link_ids=payload.validated_data["planned_clinic_link_ids"],
+            actor=request.user,
+        )
+        out = ClinicSessionParticipantSerializer(
+            participant,
+            context={"request": request},
+        ).data
+        return Response(out)
+
+    @extend_schema(
+        request=ClinicReminderRequestSerializer,
+        parameters=[OpenApiParameter("id", OpenApiTypes.INT, OpenApiParameter.PATH)],
+        responses={
+            200: ClinicReminderResponseSerializer,
+            404: ClinicReminderResponseSerializer,
+            409: ClinicReminderResponseSerializer,
+            503: ClinicReminderResponseSerializer,
+        },
+    )
+    @action(detail=True, methods=["post"])
+    def remind(self, request, pk=None):
+        """
+        POST /clinic/participants/{id}/remind/
+        승인된 단일 예약 학생에게 클리닉 재촉 알림톡을 발송한다.
+        """
+        participant = self.get_object()
+        if participant.status != SessionParticipant.Status.BOOKED:
+            return Response(
+                {"detail": "참석 전인 승인 예약만 재촉할 수 있습니다."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        send_to = _validated_send_to(request, default="student")
+        mode = request.data.get("mode", "once")
+        if mode not in ("once", "repeat"):
+            raise serializers.ValidationError({"mode": "mode는 once 또는 repeat여야 합니다."})
+        interval_minutes = None
+        repeat_until = None
+        if mode == "repeat":
+            interval_minutes = serializers.IntegerField(min_value=10).run_validation(
+                request.data.get("interval_minutes")
+            )
+            repeat_until = serializers.DateTimeField().run_validation(
+                request.data.get("repeat_until")
+            )
+
+        reminder_kwargs = {
+            "tenant_id": getattr(request, "tenant", None).id,
+            "participant_id": participant.id,
+            "actor_id": getattr(request.user, "id", None),
+        }
+        if send_to != "student":
+            reminder_kwargs["send_to"] = send_to
+        if mode == "repeat":
+            reminder_kwargs.update(
+                repeat_interval_minutes=interval_minutes,
+                repeat_until=repeat_until,
+            )
+        result = send_clinic_reminder_for_participant(**reminder_kwargs)
+        if result.get("status") == "not_found":
+            return Response(result, status=status.HTTP_404_NOT_FOUND)
+        if result.get("status") == "invalid_status":
+            return Response(result, status=status.HTTP_409_CONFLICT)
+        if not result.get("sent") and not result.get("scheduled"):
+            return Response(
+                {
+                    **result,
+                    "detail": "재촉 알림톡을 보내지 못했습니다. 알림 설정과 학생 전화번호를 확인해 주세요.",
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        return Response({"ok": True, **result})
 
     @action(detail=True, methods=["post"])
     def uncomplete(self, request, pk=None):
@@ -257,6 +498,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         """
         new_session_id = request.data.get("new_session_id")
         memo = request.data.get("memo")
+        send_to = _validated_send_to(request, default="parent")
 
         tenant = getattr(request, "tenant", None)
         if not tenant:
@@ -274,21 +516,20 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             memo=memo,
         )
         new_booking = result.participant
+        notification_result = None
         if result.notification:
-            _t = tenant
-            _event = result.notification
-            transaction.on_commit(
-                lambda: _send_clinic_notification(
-                    _t,
-                    _event.student,
-                    _event.trigger,
-                    _event.context,
-                )
+            notification_result = _send_clinic_notification(
+                tenant,
+                result.notification.student,
+                result.notification.trigger,
+                result.notification.context,
+                send_to=send_to,
             )
 
         out = ClinicSessionParticipantSerializer(
             new_booking, context={"request": request}
         ).data
+        out["notification"] = notification_result
         return Response(out, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=["get"])

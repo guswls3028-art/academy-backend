@@ -1,6 +1,6 @@
 from .lifecycle import (
     ClinicNotificationEvent,
-    COMPLETE_ALLOWED_TRANSITIONS,
+    COMPLETE_ALLOWED_STATUSES,
     ParticipantTransitionResult,
     ParticipantWriteResult,
     STAFF_STATUS_TRANSITIONS,
@@ -8,6 +8,9 @@ from .lifecycle import (
     cancel_active_participants_for_student,
     change_participant_booking,
     change_participant_status,
+    checkout_participant,
+    planned_clinic_link_ids_for_participant,
+    replace_participant_clinic_plan,
     complete_participant,
     create_participant,
     uncomplete_participant,
@@ -15,7 +18,7 @@ from .lifecycle import (
 
 __all__ = [
     "ClinicNotificationEvent",
-    "COMPLETE_ALLOWED_TRANSITIONS",
+    "COMPLETE_ALLOWED_STATUSES",
     "ParticipantTransitionResult",
     "ParticipantWriteResult",
     "STAFF_STATUS_TRANSITIONS",
@@ -23,6 +26,9 @@ __all__ = [
     "cancel_active_participants_for_student",
     "change_participant_booking",
     "change_participant_status",
+    "checkout_participant",
+    "planned_clinic_link_ids_for_participant",
+    "replace_participant_clinic_plan",
     "complete_participant",
     "create_participant",
     "uncomplete_participant",

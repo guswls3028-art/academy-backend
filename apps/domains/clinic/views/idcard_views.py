@@ -14,6 +14,7 @@ from apps.core.permissions import TenantResolved
 from apps.domains.clinic.color_utils import get_effective_clinic_colors
 from apps.support.clinic.idcard_dependencies import (
     active_enrollments_for_student,
+    clinic_link_source_projection,
     ordered_sessions_by_enrollment,
     student_for_idcard_user,
     unresolved_auto_clinic_links,
@@ -98,6 +99,10 @@ class StudentClinicIdcardView(APIView):
             tenant=tenant,
             enrollment_ids=enrollment_ids,
         )
+        source_projection = clinic_link_source_projection(
+            tenant=tenant,
+            clinic_links=clinic_links,
+        )
         unresolved_pairs = {
             (int(link.enrollment_id), int(link.session_id))
             for link in clinic_links
@@ -140,6 +145,7 @@ class StudentClinicIdcardView(APIView):
         for link in clinic_links:
             sess = link.session
             lecture = sess.lecture
+            source = source_projection.get(int(link.id), {})
             current_targets.append({
                 "clinic_link_id": int(link.id),
                 "enrollment_id": int(link.enrollment_id),
@@ -151,6 +157,9 @@ class StudentClinicIdcardView(APIView):
                 "session_order": sess.order,
                 "session_title": sess.title or "",
                 "source_type": getattr(link, "source_type", None),
+                "source_title": source.get("source_title"),
+                "source_scope": source.get("source_scope"),
+                "created_at": getattr(link, "created_at", None),
             })
 
         # 프로필 사진 URL (신원 확인용) - 기존 방식 사용

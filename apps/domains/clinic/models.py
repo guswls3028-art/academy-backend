@@ -191,6 +191,19 @@ class SessionParticipant(TimestampModel):
     checked_in_at = models.DateTimeField(null=True, blank=True)
     is_late = models.BooleanField(default=False)
 
+    checked_out_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="클리닉 하원 처리 시각",
+    )
+    checked_out_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="clinic_check_outs",
+    )
+
     completed_at = models.DateTimeField(null=True, blank=True, help_text="자율학습 완료 시각")
     completed_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -219,6 +232,51 @@ class SessionParticipant(TimestampModel):
 
     def __str__(self):
         return f"{self.student.name} in {self.session} ({self.status})"
+
+
+class SessionParticipantPlanItem(TimestampModel):
+    """Auditable selection of one unresolved ClinicLink for today's clinic work."""
+
+    participant = models.ForeignKey(
+        SessionParticipant,
+        on_delete=models.CASCADE,
+        related_name="plan_items",
+    )
+    clinic_link = models.ForeignKey(
+        "progress.ClinicLink",
+        on_delete=models.CASCADE,
+        related_name="session_participant_plan_items",
+    )
+    selected_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="selected_clinic_participant_plan_items",
+    )
+    removed_at = models.DateTimeField(null=True, blank=True)
+    removed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="removed_clinic_participant_plan_items",
+    )
+    removal_reason = models.CharField(max_length=80, blank=True, default="")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["participant", "clinic_link"],
+                condition=models.Q(removed_at__isnull=True),
+                name="uniq_active_clinic_participant_plan_item",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["participant", "removed_at"]),
+            models.Index(fields=["clinic_link", "removed_at"]),
+        ]
+        ordering = ["clinic_link_id", "id"]
 
 
 # --------------------------------------------------
