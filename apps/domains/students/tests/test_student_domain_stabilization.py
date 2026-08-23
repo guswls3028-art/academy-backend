@@ -332,6 +332,28 @@ class TestStudentExcelUploadValidation(TestCase):
 
     @patch("apps.domains.students.views.student_views.dispatch_job")
     @patch("apps.domains.students.views.student_views.upload_fileobj_to_r2_excel")
+    def test_csv_is_rejected_before_r2_upload(self, mock_upload, mock_dispatch):
+        upload = SimpleUploadedFile(
+            "students.csv",
+            "이름,학부모전화번호\n합성학생,01070001111\n".encode(),
+            content_type="text/csv",
+        )
+        request = self.factory.post(
+            "/api/v1/students/bulk_create_from_excel/",
+            data={"file": upload, "initial_password": "0000"},
+            format="multipart",
+        )
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+
+        response = StudentViewSet.as_view({"post": "bulk_create_from_excel"})(request)
+
+        self.assertEqual(response.status_code, 400, response.data)
+        mock_upload.assert_not_called()
+        mock_dispatch.assert_not_called()
+
+    @patch("apps.domains.students.views.student_views.dispatch_job")
+    @patch("apps.domains.students.views.student_views.upload_fileobj_to_r2_excel")
     def test_hancom_windows_mime_xlsx_is_dispatched(self, mock_upload, mock_dispatch):
         import io
 

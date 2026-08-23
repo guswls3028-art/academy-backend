@@ -107,6 +107,31 @@ class EnrollmentExcelUploadValidationTests(TestCase):
 
     @patch("apps.domains.enrollment.views.dispatch_job")
     @patch("apps.domains.enrollment.views.upload_fileobj_to_r2_excel")
+    def test_csv_is_rejected_before_r2_upload(self, mock_upload, mock_dispatch):
+        upload = SimpleUploadedFile(
+            "students.csv",
+            "이름,학부모전화번호\n합성학생,01070001111\n".encode(),
+            content_type="text/csv",
+        )
+        request = self.factory.post(
+            "/api/v1/enrollments/lecture_enroll_from_excel/",
+            data={
+                "file": upload,
+                "lecture_id": self.lecture.id,
+            },
+            format="multipart",
+        )
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+
+        response = EnrollmentViewSet.as_view({"post": "lecture_enroll_from_excel"})(request)
+
+        self.assertEqual(response.status_code, 400, response.data)
+        mock_upload.assert_not_called()
+        mock_dispatch.assert_not_called()
+
+    @patch("apps.domains.enrollment.views.dispatch_job")
+    @patch("apps.domains.enrollment.views.upload_fileobj_to_r2_excel")
     def test_existing_student_enrollment_does_not_require_password_configuration(
         self,
         mock_upload,
