@@ -332,6 +332,44 @@ class TestStudentExcelUploadValidation(TestCase):
 
     @patch("apps.domains.students.views.student_views.dispatch_job")
     @patch("apps.domains.students.views.student_views.upload_fileobj_to_r2_excel")
+    def test_hancom_windows_mime_xlsx_is_dispatched(self, mock_upload, mock_dispatch):
+        import io
+
+        import openpyxl
+
+        workbook = openpyxl.Workbook()
+        worksheet = workbook.active
+        worksheet.append(["이름", "학부모전화번호", "학생전화번호"])
+        worksheet.append(["학생번호없음", "01070001111", ""])
+        stream = io.BytesIO()
+        workbook.save(stream)
+        upload = SimpleUploadedFile(
+            "숙명_신민t.xlsx",
+            stream.getvalue(),
+            content_type="application/haansoftxlsx",
+        )
+        mock_dispatch.return_value = {"ok": True, "job_id": "excel-job-hancom"}
+        request = self.factory.post(
+            "/api/v1/students/bulk_create_from_excel/",
+            data={
+                "file": upload,
+                "password_mode": "fixed",
+                "initial_password": "0982",
+            },
+            format="multipart",
+        )
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+
+        response = StudentViewSet.as_view({"post": "bulk_create_from_excel"})(request)
+
+        self.assertEqual(response.status_code, 202, response.data)
+        self.assertEqual(response.data["job_id"], "excel-job-hancom")
+        mock_upload.assert_called_once()
+        mock_dispatch.assert_called_once()
+
+    @patch("apps.domains.students.views.student_views.dispatch_job")
+    @patch("apps.domains.students.views.student_views.upload_fileobj_to_r2_excel")
     def test_random_password_mode_does_not_require_fixed_password(self, mock_upload, mock_dispatch):
         import io
 
