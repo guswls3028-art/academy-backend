@@ -1066,29 +1066,38 @@ class TestEnrollmentAndWithdrawalNotifications(_DispatchThroughQueueMixin, TestC
 
     @patch(f"{_QSV}.enqueue_alimtalk")
     @patch(f"{_SEL}.get_auto_send_config")
-    @patch(f"{_POL}.is_messaging_disabled", return_value=False)
-    @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
-    def test_class_enrollment_complete(self, mock_owner, mock_disabled, mock_config, mock_enqueue):
-        """반 등록 완료 알림이 올바른 트리거/변수로 발송."""
+    @patch(f"{_POL}.get_owner_tenant_id")
+    def test_disabled_and_unknown_triggers_fail_closed_before_config_lookup(
+        self,
+        mock_owner,
+        mock_config,
+        mock_enqueue,
+    ):
+        """정책상 비활성/미등록 트리거는 설정이나 큐를 조회하지 않는다."""
         tenant = _make_tenant()
         student = _make_student()
-        config = _make_config(
-            "class_enrollment_complete",
-            body="#{학원명}입니다. #{학생이름2}님 반 등록 완료. #{사이트링크}",
-        )
-        mock_config.return_value = config
+        mock_config.return_value = _make_config("class_enrollment_complete")
         mock_enqueue.return_value = True
 
         from apps.domains.messaging.services import send_event_notification
-        result = send_event_notification(
-            tenant=tenant, trigger="class_enrollment_complete", student=student,
-            send_to="parent", context={"강의명": "수학A반"},
-        )
 
-        self.assertTrue(result)
-        reps = {r["key"]: r["value"] for r in mock_enqueue.call_args.kwargs["alimtalk_replacements"]}
-        self.assertEqual(reps["학원명"], "학원플러스")
-        self.assertEqual(reps["학생이름2"], "길동")
+        for trigger in (
+            "class_enrollment_complete",
+            "enrollment_expiring_soon",
+            "student_signup",
+            "unregistered_trigger",
+        ):
+            with self.subTest(trigger=trigger):
+                result = send_event_notification(
+                    tenant=tenant,
+                    trigger=trigger,
+                    student=student,
+                )
+                self.assertFalse(result)
+
+        mock_config.assert_not_called()
+        mock_owner.assert_not_called()
+        mock_enqueue.assert_not_called()
 
     @patch(f"{_QSV}.enqueue_alimtalk")
     @patch(f"{_SEL}.get_auto_send_config")
