@@ -1,14 +1,14 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "maximumHighFindings": {
     "academy-base": 8,
-    "academy-api": 14,
+    "academy-api": 20,
     "academy-video-worker": 8,
     "academy-messaging-worker": 8,
-    "academy-ai-worker-cpu": 14,
+    "academy-ai-worker-cpu": 20,
     "academy-tools-worker": 14
   },
-  "knownHighFindings": [
+  "acceptedHighFindings": [
     {
       "cve": "CVE-2026-11822",
       "packageName": "sqlite3",
@@ -20,7 +20,10 @@
         "academy-messaging-worker",
         "academy-ai-worker-cpu",
         "academy-tools-worker"
-      ]
+      ],
+      "expiresOn": "2026-09-19",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-11822",
+      "rationale": "Debian trixie remains vulnerable in an SQLite FTS5 MATCH path that requires a crafted SQLite database. Academy production uses PostgreSQL and neither ingests attacker-provided SQLite databases nor executes application FTS5 queries."
     },
     {
       "cve": "CVE-2026-11824",
@@ -33,7 +36,10 @@
         "academy-messaging-worker",
         "academy-ai-worker-cpu",
         "academy-tools-worker"
-      ]
+      ],
+      "expiresOn": "2026-09-19",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-11824",
+      "rationale": "Debian trixie remains vulnerable in an SQLite FTS5 MATCH path that requires a crafted SQLite database. Academy production uses PostgreSQL and neither ingests attacker-provided SQLite databases nor executes application FTS5 queries."
     },
     {
       "cve": "CVE-2026-48959",
@@ -46,7 +52,10 @@
         "academy-messaging-worker",
         "academy-ai-worker-cpu",
         "academy-tools-worker"
-      ]
+      ],
+      "expiresOn": "2026-09-19",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-48959",
+      "rationale": "The affected Perl IO::Uncompress named ZIP-entry path can consume excessive CPU. Academy runtime entrypoints do not invoke a Perl interpreter or IO::Uncompress and ZIP handling is owned by Python validators."
     },
     {
       "cve": "CVE-2026-48961",
@@ -59,7 +68,10 @@
         "academy-messaging-worker",
         "academy-ai-worker-cpu",
         "academy-tools-worker"
-      ]
+      ],
+      "expiresOn": "2026-09-19",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-48961",
+      "rationale": "The affected code is the Perl zipdetails command-line utility. Academy runtime entrypoints and operational scripts do not invoke Perl or zipdetails, so untrusted product input cannot reach this packaged utility."
     },
     {
       "cve": "CVE-2026-48962",
@@ -72,7 +84,10 @@
         "academy-messaging-worker",
         "academy-ai-worker-cpu",
         "academy-tools-worker"
-      ]
+      ],
+      "expiresOn": "2026-09-19",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-48962",
+      "rationale": "The affected Perl File::GlobMapper output-glob evaluation path is not used by Academy. Runtime entrypoints contain no Perl or File::GlobMapper invocation and product file handling uses Python code."
     },
     {
       "cve": "CVE-2026-57432",
@@ -85,7 +100,10 @@
         "academy-messaging-worker",
         "academy-ai-worker-cpu",
         "academy-tools-worker"
-      ]
+      ],
+      "expiresOn": "2026-09-19",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-57432",
+      "rationale": "The affected Perl pack and unpack path requires an untrusted template. Academy runtime entrypoints never invoke Perl and do not pass product input to Perl pack or unpack operations."
     },
     {
       "cve": "CVE-2026-7017",
@@ -98,7 +116,10 @@
         "academy-messaging-worker",
         "academy-ai-worker-cpu",
         "academy-tools-worker"
-      ]
+      ],
+      "expiresOn": "2026-09-19",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-7017",
+      "rationale": "The affected Perl HTTP::Tiny redirect path can forward credentials across origins. Academy runtime networking uses Python clients and contains no Perl HTTP::Tiny invocation or Perl network entrypoint."
     },
     {
       "cve": "CVE-2026-5928",
@@ -111,7 +132,10 @@
         "academy-messaging-worker",
         "academy-ai-worker-cpu",
         "academy-tools-worker"
-      ]
+      ],
+      "expiresOn": "2026-09-19",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-5928",
+      "rationale": "The affected glibc ungetwc path requires an exotic overlapping character encoding and does not affect standard Unicode encodings. Academy Python entrypoints use standard Unicode and do not expose native wide-character pushback to product input."
     },
     {
       "cve": "CVE-2026-58010",
@@ -121,7 +145,10 @@
         "academy-api",
         "academy-ai-worker-cpu",
         "academy-tools-worker"
-      ]
+      ],
+      "expiresOn": "2026-09-19",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-58010",
+      "rationale": "The affected GLib path requires malformed GVariant deserialization. Academy OCR entrypoints do not accept or deserialize untrusted GVariant values, and product payloads are handled by Django and Python serializers."
     },
     {
       "cve": "CVE-2026-58011",
@@ -131,7 +158,10 @@
         "academy-api",
         "academy-ai-worker-cpu",
         "academy-tools-worker"
-      ]
+      ],
+      "expiresOn": "2026-09-19",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-58011",
+      "rationale": "The affected GLib path requires constructing an invalid GDateTime value. Academy OCR entrypoints do not expose GLib date construction to product input and application dates are validated in Python."
     },
     {
       "cve": "CVE-2026-58012",
@@ -141,7 +171,10 @@
         "academy-api",
         "academy-ai-worker-cpu",
         "academy-tools-worker"
-      ]
+      ],
+      "expiresOn": "2026-09-19",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-58012",
+      "rationale": "The affected GLib regular-expression path requires G_REGEX_RAW case escaping. Academy OCR entrypoints do not compile product input through GLib regular expressions or use the G_REGEX_RAW mode."
     },
     {
       "cve": "CVE-2026-58013",
@@ -151,7 +184,10 @@
         "academy-api",
         "academy-ai-worker-cpu",
         "academy-tools-worker"
-      ]
+      ],
+      "expiresOn": "2026-09-19",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-58013",
+      "rationale": "The affected GLib path requires a multibyte GIOChannel line terminator. Academy OCR entrypoints do not expose GIOChannel parsing to product input and use Python file streams instead."
     },
     {
       "cve": "CVE-2026-58014",
@@ -161,7 +197,10 @@
         "academy-api",
         "academy-ai-worker-cpu",
         "academy-tools-worker"
-      ]
+      ],
+      "expiresOn": "2026-09-19",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-58014",
+      "rationale": "The affected GLib path requires a crafted locale key file with an empty value. Academy OCR entrypoints do not load user-provided GLib key files or expose locale key parsing to product input."
     },
     {
       "cve": "CVE-2026-58015",
@@ -171,7 +210,82 @@
         "academy-api",
         "academy-ai-worker-cpu",
         "academy-tools-worker"
-      ]
+      ],
+      "expiresOn": "2026-09-19",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-58015",
+      "rationale": "The affected GLib path requires interaction with a malicious D-Bus server. Academy OCR containers do not use D-Bus for product work and do not accept D-Bus server endpoints from users."
+    },
+    {
+      "cve": "CVE-2026-58050",
+      "packageName": "libssh2",
+      "packageVersion": "1.11.1-1+deb13u1",
+      "repositories": [
+        "academy-api",
+        "academy-ai-worker-cpu"
+      ],
+      "expiresOn": "2026-09-19",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-58050",
+      "rationale": "Debian trixie has no stable fix for this client-side publickey response overflow. Academy runtime containers are ARM64 and expose no SSH, SFTP, SCP, Paramiko, or libssh2 client path; libssh2 is present only through the Tesseract and libcurl package chain."
+    },
+    {
+      "cve": "CVE-2026-58051",
+      "packageName": "libssh2",
+      "packageVersion": "1.11.1-1+deb13u1",
+      "repositories": [
+        "academy-api",
+        "academy-ai-worker-cpu"
+      ],
+      "expiresOn": "2026-09-19",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-58051",
+      "rationale": "Debian trixie has no stable fix for this malicious SSH publickey-subsystem response path. Academy runtime entrypoints never create SSH or libssh2 client sessions; the package is a non-invoked transitive dependency of the OCR runtime."
+    },
+    {
+      "cve": "CVE-2026-66032",
+      "packageName": "libssh2",
+      "packageVersion": "1.11.1-1+deb13u1",
+      "repositories": [
+        "academy-api",
+        "academy-ai-worker-cpu"
+      ],
+      "expiresOn": "2026-09-19",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-66032",
+      "rationale": "Debian trixie remains vulnerable in the SFTP open response path. Academy API and AI entrypoints do not open SSH or SFTP sessions, and production remote administration is owned by host-side AWS SSM rather than container libssh2."
+    },
+    {
+      "cve": "CVE-2026-66033",
+      "packageName": "libssh2",
+      "packageVersion": "1.11.1-1+deb13u1",
+      "repositories": [
+        "academy-api",
+        "academy-ai-worker-cpu"
+      ],
+      "expiresOn": "2026-09-19",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-66033",
+      "rationale": "Debian trixie has no stable fix for this malicious SSH server handshake path. Academy runtime code has no outbound SSH client entrypoint, so it cannot negotiate the affected AES-GCM session through the transitive libssh2 package."
+    },
+    {
+      "cve": "CVE-2026-66034",
+      "packageName": "libssh2",
+      "packageVersion": "1.11.1-1+deb13u1",
+      "repositories": [
+        "academy-api",
+        "academy-ai-worker-cpu"
+      ],
+      "expiresOn": "2026-09-19",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-66034",
+      "rationale": "Debian trixie remains vulnerable in the SSH publickey listing parser. Academy runtime processes neither connect to SSH servers nor invoke the libssh2 publickey subsystem; the library is retained only by the stable OCR dependency chain."
+    },
+    {
+      "cve": "CVE-2026-66035",
+      "packageName": "libssh2",
+      "packageVersion": "1.11.1-1+deb13u1",
+      "repositories": [
+        "academy-api",
+        "academy-ai-worker-cpu"
+      ],
+      "expiresOn": "2026-09-19",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-66035",
+      "rationale": "Debian trixie has no stable fix for this malicious SSH server packet path. Academy runtime images are ARM64 and contain no outbound SSH client flow, while operational commands use AWS SSM outside the application containers."
     }
   ]
 }
