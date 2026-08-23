@@ -144,12 +144,30 @@ class StudentExcelImportPasswordModeTests(TestCase):
         "apps.support.students.account_notice_dependencies.send_welcome_messages",
         return_value={"status": "enqueued", "enqueued": 2},
     )
-    def test_lecture_excel_import_sends_notice_after_enrollment(self, send_welcome):
+    def test_existing_student_lecture_excel_import_sends_first_enrollment_notice(
+        self,
+        send_welcome,
+    ):
         lecture = Lecture.objects.create(
             tenant=self.tenant,
             title="비밀번호 방식 강의",
             name="비밀번호 방식 강의",
             subject="MATH",
+        )
+        import_students_from_rows(
+            tenant_id=self.tenant.id,
+            students_data=[
+                {
+                    "name": "강의등록학생",
+                    "parent_phone": "01070005555",
+                    "phone": "01090008765",
+                    "school_type": "HIGH",
+                    "grade": 1,
+                    "uses_identifier": False,
+                }
+            ],
+            initial_password="",
+            password_mode="phone_last4",
         )
 
         with self.captureOnCommitCallbacks(execute=True):
@@ -166,13 +184,11 @@ class StudentExcelImportPasswordModeTests(TestCase):
                         "uses_identifier": False,
                     }
                 ],
-                initial_password="",
-                password_mode="phone_last4",
             )
 
         student = Student.objects.get(tenant=self.tenant, name="강의등록학생")
         self.assertTrue(student.user.check_password("8765"))
-        self.assertEqual(result["created_students_count"], 1)
+        self.assertEqual(result["created_students_count"], 0)
         self.assertEqual(result["enrolled_count"], 1)
         send_welcome.assert_called_once()
         self.assertEqual(send_welcome.call_args.kwargs["student_password"], "8765")
