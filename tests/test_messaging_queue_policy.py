@@ -1,7 +1,7 @@
 import re
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -16,6 +16,7 @@ from apps.worker.messaging_worker.sqs_main import (
     _worker_tenant_binding_error,
 )
 from apps.domains.messaging.security import verify_tenant_binding_signature
+from libs.queue.client import QueueUnavailableError, SQSQueueClient
 
 
 class _FakeQueueClient:
@@ -25,6 +26,15 @@ class _FakeQueueClient:
     def send_message(self, *, queue_name: str, message: dict) -> bool:
         self.messages.append(dict(message))
         return True
+
+
+def test_sqs_queue_count_read_failure_is_unavailable_not_synthetic_depth() -> None:
+    client = SQSQueueClient.__new__(SQSQueueClient)
+    client.sqs = MagicMock()
+    client.sqs.get_queue_url.side_effect = RuntimeError("queue read denied")
+
+    with pytest.raises(QueueUnavailableError, match="Queue counts unavailable"):
+        client.get_queue_counts("academy-v1-messaging-queue-dlq")
 
 
 def test_video_encoding_complete_non_alimtalk_mode_is_blocked() -> None:

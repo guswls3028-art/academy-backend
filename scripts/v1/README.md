@@ -203,6 +203,17 @@ API/worker의 ASG wake 대상처럼 런타임 EC2 역할 inline policy가 바뀌
 CI에는 런타임 역할 정책 쓰기 권한을 주지 않으며, 정확한
 `iam:GetRolePolicy` readback이 SSOT와 다르면 이미지 빌드 전에 실패한다.
 
+`academy-workers-sqs` 단일 정책 drift는 전체 이미지 배포 대신 exact fresh
+`main`에서 아래 좁은 수렴 경로를 사용한다. 기본 실행은 read-only plan이고,
+`-Apply`만 shared production-mutation lock을 획득해 checked-in policy를 쓰고
+즉시 full-policy readback한다. 이 경로는 ASG refresh, Batch job definition,
+queue message receive/delete/redrive를 수행하지 않는다.
+
+```powershell
+pwsh scripts/v1/converge-runtime-worker-sqs-iam.ps1 -AwsProfile default
+pwsh scripts/v1/converge-runtime-worker-sqs-iam.ps1 -AwsProfile default -Apply
+```
+
 신규 환경에서는 공통 production-mutation lock table이 아직 없을 수 있다. `scripts/v1/deploy.ps1`과 `scripts/v1/converge-release-prerequisites.ps1`은 다른 mutation보다 먼저 이 테이블 하나만 조건부/idempotent 생성하고 key schema(`videoId` HASH string), PAY_PER_REQUEST, TTL을 검증한 뒤 락을 획득한다. 그 외 리소스 생성·갱신은 락 이후에만 수행한다. 운영 mutation은 strict 전체 경로만 허용하고 사후 ASG·ALB·Batch 검증 실패를 nonzero로 종료한다. `-RelaxedValidation`, purge/prune, 검증·대기 생략은 Plan 또는 비운영 진단/복구에만 사용할 수 있다.
 
 최초 전환 시 `docs/reports/release-manifest.latest.json`이 아직 없으면 수동 `scripts/v1/deploy.ps1`은 의도적으로 실패한다. 기존 운영 Launch Template 4개가 존재하는지 확인한 뒤 `pwsh scripts/v1/converge-release-prerequisites.ps1 -AwsProfile default`로 ECR latest-only mutability와 GHA IAM을 수렴·readback한다. 이 전용 스크립트는 LT/ASG/Batch 런타임을 변경하지 않는다. 이어 GitHub Actions의 `workflow_dispatch`를 한 번 실행해 6개 이미지를 모두 빌드·배포·검증하고 최초 complete/successful manifest를 생성한다. 이후부터 selective build와 수동 deploy가 그 manifest를 기준으로 동작한다.

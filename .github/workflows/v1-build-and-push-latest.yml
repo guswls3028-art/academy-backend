@@ -506,6 +506,7 @@ jobs:
           sparse-checkout: |
             scripts/v1/templates/iam/policy_api_ai_worker_scale.json
             scripts/v1/templates/iam/policy_ec2_cloudwatch_logs.json
+            scripts/v1/templates/iam/policy_workers_sqs.json
           sparse-checkout-cone-mode: false
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
@@ -526,6 +527,11 @@ jobs:
             --policy-name academy-ec2-cloudwatch-logs \
             --query PolicyDocument \
             --output json > /tmp/runtime-logging-policy.actual.json
+          aws iam get-role-policy \
+            --role-name academy-ec2-role \
+            --policy-name academy-workers-sqs \
+            --query PolicyDocument \
+            --output json > /tmp/runtime-worker-sqs-policy.actual.json
           python3 - <<'PY'
           import json
           from pathlib import Path
@@ -540,6 +546,11 @@ jobs:
                   "scripts/v1/templates/iam/policy_ec2_cloudwatch_logs.json",
                   "/tmp/runtime-logging-policy.actual.json",
                   "runtime logging IAM readback mismatch",
+              ),
+              (
+                  "scripts/v1/templates/iam/policy_workers_sqs.json",
+                  "/tmp/runtime-worker-sqs-policy.actual.json",
+                  "runtime worker SQS IAM readback mismatch",
               ),
           )
           for expected_path, actual_path, error in policies:

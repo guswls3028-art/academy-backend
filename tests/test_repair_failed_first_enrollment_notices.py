@@ -1309,6 +1309,15 @@ class RepairFailedFirstEnrollmentNoticesTests(RecoveryFixtureMixin, TestCase):
         with self.assertRaisesMessage(CommandError, "messaging_queue_not_empty"):
             call_command(*self._command_args())
 
+        self.queue_client.get_queue_counts.side_effect = RuntimeError(
+            "queue read unavailable"
+        )
+        with self.assertRaisesMessage(
+            CommandError,
+            "messaging_queue_health_unavailable",
+        ):
+            call_command(*self._command_args())
+
     def test_committed_dispatching_claim_fails_db_quiescence(self):
         baseline_outboxes = ScheduledNotification.objects.count()
         baseline_tokens = dict(
