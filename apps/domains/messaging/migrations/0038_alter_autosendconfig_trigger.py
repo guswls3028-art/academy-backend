@@ -1,6 +1,12 @@
 from django.db import migrations, models
 
 
+ACADEMY_MIGRATION_PHASE = "contract"
+ACADEMY_MIGRATION_REASON = (
+    "Restore the clinic_check_out model choice without changing the database column or existing rows."
+)
+
+
 class Migration(migrations.Migration):
     dependencies = [
         ("messaging", "0037_alter_schedulednotification_payload"),
