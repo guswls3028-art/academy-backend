@@ -281,9 +281,9 @@ def send_event_notification(
 
     if send_at is not None:
         try:
-            from apps.domains.messaging.scheduled import schedule_notification_at
+            from apps.domains.messaging.scheduled import schedule_exact_notification_at
 
-            schedule_notification_at(
+            schedule_exact_notification_at(
                 tenant_id=tenant.id,
                 trigger=trigger,
                 send_at=send_at,

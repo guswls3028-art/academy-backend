@@ -194,7 +194,9 @@ def create_immediate_notification(*, tenant_id: int, trigger: str, payload: dict
     )
 
 
-def schedule_notification_at(*, tenant_id: int, trigger: str, send_at: datetime, payload: dict):
+def schedule_exact_notification_at(
+    *, tenant_id: int, trigger: str, send_at: datetime, payload: dict
+):
     """Persist one exact aware send time without invoking an external queue."""
     if dj_tz.is_naive(send_at):
         raise ValueError("send_at must be timezone-aware")
