@@ -79,11 +79,11 @@ def create_student_account(
         if ps_number == original_phone:
             ps_number = resolve_student_login_id(tenant=tenant)
             data["ps_number"] = ps_number
-    data["omr_code"] = derive_student_omr_code(
-        phone=student_phone,
-        parent_phone=parent_phone,
-        current=data.get("omr_code"),
-    )
+        data["omr_code"] = derive_student_omr_code(
+            phone=None,
+            parent_phone=parent_phone,
+            current=data.get("omr_code"),
+        )
 
     with transaction.atomic():
         parent = None
