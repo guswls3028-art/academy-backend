@@ -1,6 +1,6 @@
 # 메시징 도메인 SSOT (공용 카카오 알림톡 발송 시스템)
 
-> 최종 갱신: 2026-08-20 (SMS 예외 제거 및 공용 알림톡 단일화)
+> 최종 갱신: 2026-08-23 (수동 발송 봉투를 현재 진입 유형으로 고정)
 > 근거: 코드 직접 확인. 추측 없음.
 
 ---
@@ -318,10 +318,10 @@
 출처: `views/send_views.py`, `services/preflight.py`
 
 1. `message_mode == "alimtalk"`이면:
-2. 템플릿의 `category`와 `name`으로 `get_unified_for_category()` 호출
-3. 통합 ITEM_LIST 4종 또는 NONE 2종 매핑이 있으면 해당 Solapi 템플릿 사용
+2. 현재 화면이 보낸 `block_category`를 `get_unified_for_manual_send()`로 먼저 매핑
+3. 통합 ITEM_LIST 4종 또는 NONE 2종 매핑이 있으면 현재 화면의 Solapi 봉투를 사용하고, 저장 문구의 과거 카테고리는 편지 내용만 재사용한다. 단, 자체 승인 양식을 쓰는 `signup`과 고정 시스템 본문인 `payment`는 저장 템플릿 카테고리를 유지한다.
 4. `signup` 카테고리면 자체 Solapi 템플릿 유지 (`SYSTEM_TEMPLATE_CATEGORIES`)
-5. 템플릿 카테고리 매핑이 없고 `block_category`가 있으면 진입점 카테고리로 한 번 더 매핑
+5. 현재 화면 카테고리에 봉투 매핑이 없을 때만 저장 템플릿의 `category`와 `name`을 fallback으로 사용
 6. 그래도 매핑이 없으면 fail-closed. 자유양식/공지형 fallback은 사용하지 않는다.
 7. 매핑된 봉투는 `build_manual_replacements()`로 실제 Solapi 등록 변수와 일치하는 replacements 세트를 빌드
 8. preflight 응답의 `preview_recipients[].full_message_body`는 같은 replacements로 승인 봉투 전체 문구를 서버에서 렌더링한다.
@@ -329,6 +329,8 @@
 ### 발송 직전 실제 문구 미리보기 계약
 
 - 최종 미리보기의 학원명, 학생명, 사이트 링크, 빈 값 `"-"`, ITEM_LIST 23자 절단은 실제 Solapi replacements와 동일한 서버 계산값을 사용한다.
+- 저장 문구가 다른 카테고리에서 만들어졌더라도 현재 발송 화면의 봉투를 바꾸지 않는다. 예를 들어 성적 화면에서 클리닉 문구를 재사용해도 preflight와 실발송은 모두 `score` 봉투를 사용한다.
+- `payment`처럼 본문과 봉투가 고정된 시스템 템플릿은 다른 진입 화면의 봉투로 fallback하지 않으며, 승인 SID가 없으면 발송을 차단한다.
 - 클라이언트가 샘플 학원명·강의명·차시·날짜를 임의로 조립하지 않는다. `preview_recipients` 또는 `full_message_body`가 없거나 수신자 수와 맞지 않으면 발송을 fail-close한다.
 - 전화번호는 마스킹해 반환하고, 유효한 학생/학부모 번호가 없는 대상은 `excluded`와 `exclude_reason`으로 구분한다.
 - 여러 학생을 선택한 경우 학생 선택은 표시할 `full_message_body`만 바꾸며, 실제 발송 대상 집합은 바꾸지 않는다.

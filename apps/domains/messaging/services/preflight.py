@@ -10,7 +10,7 @@ from django.utils import timezone
 from apps.core.models import WorkerHeartbeatModel
 from apps.domains.messaging.alimtalk_content_builders import (
     build_manual_replacements,
-    get_unified_for_category,
+    get_unified_for_manual_send,
     render_alimtalk_preview_text,
 )
 from apps.domains.messaging.effective_templates import resolve_effective_template_status
@@ -92,11 +92,12 @@ def _resolve_template_for_manual_send(tenant, data: dict[str, Any]) -> TemplateP
 
     category = (template.category if template else "") or ""
     template_name = (template.name if template else "") or ""
-    unified_type, unified_sid = get_unified_for_category(category, template_name, extra_vars)
-    # 매핑 자체가 없는 자유 문구만 사용자가 명시한 봉투를 적용한다.
-    # payment처럼 매핑은 있으나 SID가 빠진 경우 다른 봉투로 fallback하면 안 된다.
-    if not unified_type and block_category:
-        unified_type, unified_sid = get_unified_for_category(block_category, template_name, extra_vars)
+    unified_type, unified_sid = get_unified_for_manual_send(
+        block_category,
+        category,
+        template_name,
+        extra_vars,
+    )
     if unified_type and not unified_sid:
         return TemplatePlan(
             ok=False,
