@@ -17,6 +17,10 @@ from apps.domains.students.models import Student
 DeletedState = Literal["active", "deleted", "any"]
 
 
+class AmbiguousStudentImportIdentityError(LookupError):
+    """Raised when an import identity does not select one student safely."""
+
+
 def _require_tenant(tenant):
     if tenant is None:
         raise ValueError("tenant is required for student selectors")
@@ -54,3 +58,45 @@ def active_students_for_parent(tenant, parent) -> QuerySet[Student]:
 
 def active_student_by_id(tenant, student_id: int) -> Student | None:
     return students_for_tenant(tenant, deleted="active").filter(id=student_id).first()
+
+
+def active_student_by_import_identity(
+    tenant,
+    *,
+    ps_number: str = "",
+    name: str = "",
+    parent_phone: str = "",
+    for_update: bool = False,
+) -> Student | None:
+    """Prefer exact student ID, else require one normalized name/parent match."""
+    candidates = students_for_tenant(tenant, deleted="active").order_by("id")
+    ps_number = str(ps_number or "").strip()
+    if ps_number:
+        candidates = candidates.filter(ps_number=ps_number)
+        if for_update:
+            candidates = candidates.select_for_update()
+        matches = list(candidates[:2])
+    else:
+        normalized_parent_phone = "".join(
+            character for character in str(parent_phone or "") if character.isdigit()
+        )
+        candidates = candidates.filter(name=name)
+        if for_update:
+            candidates = candidates.select_for_update()
+        matches = []
+        for candidate in candidates.iterator(chunk_size=100):
+            candidate_parent_phone = "".join(
+                character
+                for character in str(candidate.parent_phone or "")
+                if character.isdigit()
+            )
+            if candidate_parent_phone != normalized_parent_phone:
+                continue
+            matches.append(candidate)
+            if len(matches) == 2:
+                break
+    if len(matches) > 1:
+        raise AmbiguousStudentImportIdentityError(
+            "동일한 학생 식별값을 가진 활성 학생이 2명 이상입니다."
+        )
+    return matches[0] if matches else None

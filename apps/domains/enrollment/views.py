@@ -28,11 +28,6 @@ from apps.core.permissions import TenantResolvedAndStaff
 from apps.support.enrollment.view_dependencies import (
     dispatch_job,
     get_excel_parsing_job_status_response,
-    protect_excel_initial_password,
-)
-from apps.support.enrollment.import_dependencies import (
-    StudentImportDependencyError,
-    student_import_password_policy,
 )
 from .selectors import enrollments_for_tenant, session_enrollments_for_tenant
 from .services.lifecycle import (
@@ -99,8 +94,9 @@ class EnrollmentViewSet(ModelViewSet):
         강의 엑셀 수강등록 — 워커 전담.
         API는 파일 수신 → R2 엑셀 버킷 업로드 → SQS EXCEL_PARSING job 등록만 수행하며,
         파싱·등록 로직은 워커에서만 실행됩니다 (구조적으로 API에서 동기 처리 불가).
-        POST: multipart/form-data — file (엑셀), lecture_id, password_mode,
-        initial_password(fixed 방식일 때)
+        POST: multipart/form-data — file (엑셀), lecture_id, session_id(선택)
+        학생 명부에 이미 등록된 학생만 학생번호 exact 우선, 학생번호가 없으면
+        exact 이름·정규화 학부모 전화번호로 매칭합니다.
         응답: { "job_id": str } → 클라이언트는 excel_job_status 로 폴링.
         """
         request_id = str(uuid.uuid4())[:8]
@@ -119,22 +115,9 @@ class EnrollmentViewSet(ModelViewSet):
                 session_id = int(session_id_raw)
             except (TypeError, ValueError):
                 session_id = None
-        initial_password = (request.data.get("initial_password") or "").strip()
-        password_mode = (request.data.get("password_mode") or "fixed").strip()
-
         if not upload_file or not lecture_id:
             return Response(
                 {"detail": "file(엑셀), lecture_id는 필수입니다."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        try:
-            password_policy = student_import_password_policy(
-                password_mode=password_mode,
-                initial_password=initial_password,
-            )
-        except (StudentImportDependencyError, ValueError) as exc:
-            return Response(
-                {"detail": str(exc)},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         validate_uploaded_file(
@@ -173,8 +156,7 @@ class EnrollmentViewSet(ModelViewSet):
             "bucket": bucket,
             "tenant_id": tenant.id,
             "lecture_id": int(lecture_id),
-            "password_mode": password_policy.mode,
-            **protect_excel_initial_password(password_policy.fixed_password),
+            "student_match_mode": "existing_only",
         }
         if session_id is not None:
             payload["session_id"] = session_id

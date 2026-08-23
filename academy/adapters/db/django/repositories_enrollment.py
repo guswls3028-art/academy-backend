@@ -139,9 +139,13 @@ def get_lecture_by_id_and_tenant_id(lecture_id, tenant_id):
     return Lecture.objects.filter(id=int(lecture_id), tenant_id=tenant_id).first()
 
 
-def student_exists(sid, tenant):
+def active_student_exists(sid, tenant):
     from apps.domains.students.models import Student
-    return Student.objects.filter(id=sid, tenant=tenant).exists()
+    return Student.objects.filter(
+        id=sid,
+        tenant=tenant,
+        deleted_at__isnull=True,
+    ).exists()
 
 
 def enrollment_get_or_create_ret(tenant, lecture, student_id, defaults):
