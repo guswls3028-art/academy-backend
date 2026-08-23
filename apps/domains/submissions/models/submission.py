@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from django.db import models
 from django.conf import settings
+from django.utils import timezone
 from apps.api.common.models import TimestampModel
 from apps.core.models import Tenant
 
@@ -18,6 +19,7 @@ class Submission(TimestampModel):
         ONLINE = "online", "Online"
         HOMEWORK_IMAGE = "homework_image", "Homework Image"
         HOMEWORK_VIDEO = "homework_video", "Homework Video"
+        HOMEWORK_MEDIA = "homework_media", "Homework Media Collection"
         AI_MATCH = "ai_match", "AI Image Match"
 
     class Status(models.TextChoices):
@@ -97,8 +99,76 @@ class Submission(TimestampModel):
                     # OMR batch upload: staff가 여러 학생 답안지를 업로드하므로
                     # 같은 user+exam에 복수 active submission 허용 필요
                     source__in=["online", "omr_manual", "homework_image",
-                                "homework_video", "ai_match"],
+                                "homework_video", "homework_media", "ai_match"],
                 ),
                 name="unique_active_submission_per_target",
+            ),
+        ]
+
+
+class SubmissionMedia(TimestampModel):
+    """Ordered, independently retryable media owned by one homework submission."""
+
+    class Kind(models.TextChoices):
+        IMAGE = "image", "Image"
+        VIDEO = "video", "Video"
+
+    class Status(models.TextChoices):
+        UPLOADING = "uploading", "Uploading"
+        UPLOADED = "uploaded", "Uploaded"
+        FAILED = "failed", "Failed"
+        REMOVED = "removed", "Removed"
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="submission_media",
+    )
+    submission = models.ForeignKey(
+        Submission,
+        on_delete=models.CASCADE,
+        related_name="media_files",
+    )
+    client_upload_id = models.UUIDField()
+    upload_batch_id = models.UUIDField()
+    fingerprint = models.CharField(max_length=64)
+    object_key = models.CharField(max_length=512)
+    original_filename = models.CharField(max_length=255)
+    media_kind = models.CharField(max_length=10, choices=Kind.choices)
+    mime_type = models.CharField(max_length=100)
+    size = models.PositiveBigIntegerField()
+    position = models.PositiveSmallIntegerField()
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.UPLOADING,
+    )
+    error_message = models.TextField(blank=True)
+    upload_started_at = models.DateTimeField(default=timezone.now)
+    uploaded_at = models.DateTimeField(null=True, blank=True)
+    failed_at = models.DateTimeField(null=True, blank=True)
+    removed_at = models.DateTimeField(null=True, blank=True)
+    removed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="removed_submission_media",
+    )
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["tenant", "submission", "status"]),
+            models.Index(fields=["submission", "position", "id"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "client_upload_id"],
+                name="uniq_submission_media_client_upload",
+            ),
+            models.UniqueConstraint(
+                fields=["submission", "position"],
+                condition=models.Q(removed_at__isnull=True),
+                name="uniq_active_submission_media_position",
             ),
         ]
