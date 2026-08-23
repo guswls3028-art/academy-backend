@@ -33,7 +33,6 @@ _ACTIVE_SUBMISSION_STATUSES = (
     Submission.Status.GRADING,
 )
 _HOMEWORK_MEDIA_SOURCES = (
-    Submission.Source.HOMEWORK_MEDIA,
     Submission.Source.HOMEWORK_IMAGE,
     Submission.Source.HOMEWORK_VIDEO,
 )
@@ -244,7 +243,9 @@ def _ensure_parent_submission(*, tenant, user, enrollment_id: int, homework_id: 
                 enrollment_id=enrollment_id,
                 target_type=Submission.TargetType.HOMEWORK,
                 target_id=homework_id,
-                source=Submission.Source.HOMEWORK_MEDIA,
+                # Keep the existing single-file source contract so the active-parent
+                # uniqueness constraint remains valid for old and new API instances.
+                source=Submission.Source.HOMEWORK_IMAGE,
                 status=Submission.Status.SUBMITTED,
             )
     except IntegrityError:

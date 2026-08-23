@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
@@ -11,8 +12,6 @@ from apps.core.permissions import (
     TenantResolvedAndMember,
     is_effective_staff,
 )
-from apps.domains.homework_results.models import HomeworkScore
-from apps.domains.progress.models import AssessmentCorrection
 from apps.domains.submissions.models import Submission, SubmissionMedia
 from apps.domains.submissions.services.homework_media import (
     homework_media_limits_payload,
@@ -24,6 +23,7 @@ from apps.domains.submissions.services.homework_media import (
 from apps.infrastructure.storage.r2 import generate_presigned_get_url
 from apps.support.submissions.dependencies import (
     enrollment_belongs_to_tenant,
+    homework_submission_is_teacher_reviewed,
     request_is_parent,
     student_owns_enrollment,
     target_enrollment_assignment_exists,
@@ -77,7 +77,6 @@ def _student_submission_parents(*, tenant, user, enrollment_id: int, homework_id
             target_type=Submission.TargetType.HOMEWORK,
             target_id=homework_id,
             source__in=[
-                Submission.Source.HOMEWORK_MEDIA,
                 Submission.Source.HOMEWORK_IMAGE,
                 Submission.Source.HOMEWORK_VIDEO,
             ],
@@ -91,6 +90,7 @@ def _student_submission_parents(*, tenant, user, enrollment_id: int, homework_id
 class HomeworkSubmissionMediaCollectionView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
+    @extend_schema(exclude=True)
     def get(self, request, homework_id: int):
         enrollment_id = _parse_positive_int(
             request.query_params.get("enrollment_id"),
@@ -123,6 +123,7 @@ class HomeworkSubmissionMediaCollectionView(APIView):
             }
         )
 
+    @extend_schema(exclude=True)
     def post(self, request, homework_id: int):
         enrollment_id = _parse_positive_int(
             request.data.get("enrollment_id"),
@@ -154,23 +155,6 @@ class HomeworkSubmissionMediaCollectionView(APIView):
         )
 
 
-def _is_teacher_reviewed(*, tenant, enrollment_id: int, homework_id: int) -> bool:
-    if HomeworkScore.objects.filter(
-        enrollment_id=enrollment_id,
-        enrollment__tenant=tenant,
-        homework_id=homework_id,
-        homework__tenant=tenant,
-    ).exists():
-        return True
-    return AssessmentCorrection.objects.filter(
-        tenant=tenant,
-        enrollment_id=enrollment_id,
-        source_type=AssessmentCorrection.SourceType.HOMEWORK,
-        source_id=homework_id,
-        completed=True,
-    ).exists()
-
-
 def _owned_submission(*, tenant, user, enrollment_id: int, homework_id: int, submission_id: int):
     return Submission.objects.filter(
         id=submission_id,
@@ -185,6 +169,7 @@ def _owned_submission(*, tenant, user, enrollment_id: int, homework_id: int, sub
 class HomeworkSubmissionMediaDetailView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
+    @extend_schema(exclude=True)
     def delete(self, request, homework_id: int, media_id: str):
         enrollment_id = _parse_positive_int(
             request.data.get("enrollment_id"),
@@ -195,7 +180,7 @@ class HomeworkSubmissionMediaDetailView(APIView):
             homework_id=int(homework_id),
             enrollment_id=enrollment_id,
         )
-        if _is_teacher_reviewed(
+        if homework_submission_is_teacher_reviewed(
             tenant=tenant,
             enrollment_id=enrollment_id,
             homework_id=int(homework_id),
@@ -296,6 +281,7 @@ def _preview_target(*, tenant, homework_id: int, media_id: str):
 class HomeworkSubmissionMediaPreviewView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
+    @extend_schema(exclude=True)
     def get(self, request, homework_id: int, media_id: str):
         tenant = getattr(request, "tenant", None)
         if not tenant:

@@ -249,9 +249,14 @@ def submitted_homework_keys_for_grades(
                 media_files__status="uploaded",
                 media_files__removed_at__isnull=True,
             )
+            | ~Q(
+                source__in=[
+                    Submission.Source.HOMEWORK_IMAGE,
+                    Submission.Source.HOMEWORK_VIDEO,
+                ]
+            )
             | (
-                ~Q(source=Submission.Source.HOMEWORK_MEDIA)
-                & Q(file_key__isnull=False)
+                Q(file_key__isnull=False)
                 & ~Q(file_key="")
                 & Q(meta__homework_media_legacy_removed_at__isnull=True)
             )

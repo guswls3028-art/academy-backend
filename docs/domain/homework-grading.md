@@ -152,6 +152,8 @@ X를 나중에 다시 맞힌 뒤에도 남기려면 O·복습으로 바꾼다. �
 - 학생 과제 하나에는 활성 `Submission`을 정확히 한 행만 유지한다. 사진·동영상은
   순서가 있는 `SubmissionMedia` 자식 행이며, 파일마다 tenant, 서버가 정한 저장
   식별자, 안전한 원본 표시명, 종류·MIME·용량·순서·상태·오류·시각을 보존한다.
+  부모는 기존 `homework_image`·`homework_video` source와 active uniqueness를 그대로
+  사용하므로 구 API 인스턴스와 겹쳐 실행돼도 두 번째 활성 부모를 만들지 않는다.
   클라이언트가 tenant·사용자·object key를 지정하거나 응답에서 bucket key를 읽는
   경로는 없다.
 - 한 과제는 활성 파일 20개, 파일당 100MB, 활성 파일 합계 500MB까지다. JPG/JPEG,
@@ -172,7 +174,8 @@ X를 나중에 다시 맞힌 뒤에도 남기려면 O·복습으로 바꾼다. �
   `removed` 상태를 기록한다. 선생님 점수 또는 완료된 교정 기록이 생긴 뒤에는
   변경을 `409 HOMEWORK_MEDIA_REVIEWED`로 막는다. soft-delete object는 감사·복구
   근거로 보존하며, 향후 정리도 tenant·행·보존기간을 확정한 별도 exact-target
-  작업에서만 수행한다. 이번 expand migration은 기존 행이나 object를 지우지 않는다.
+  작업에서만 수행한다. 이번 expand migration은 child table만 만들며 기존 행,
+  constraint, object를 바꾸거나 지우지 않는다.
 - 기존 `homework_image`·`homework_video` 단건 `Submission.file_key`는 그대로
   보존한다. 새 목록에서는 `legacy-{submission_id}`인 파일 하나로 투영하고, soft
   remove는 기존 행의 `meta`에 감사 시각을 기록한다. 구 단건 제출 생성 API도

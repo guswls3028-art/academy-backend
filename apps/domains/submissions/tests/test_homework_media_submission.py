@@ -10,11 +10,17 @@ from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.enrollment.models import Enrollment
-from apps.domains.homework.models import HomeworkAssignment
-from apps.domains.homework_results.models import Homework, HomeworkScore
-from apps.domains.lectures.models import Lecture, Session
-from apps.domains.students.models import Student
+from apps.domains.enrollment.test_support import create_enrollment_fixture
+from apps.domains.homework.test_support import create_homework_assignment_fixture
+from apps.domains.homework_results.test_support import (
+    create_homework_fixture,
+    create_homework_score_fixture,
+)
+from apps.domains.lectures.test_support import (
+    create_lecture_fixture,
+    create_session_fixture,
+)
+from apps.domains.students.test_support import create_student_fixture
 from apps.domains.submissions.models import Submission, SubmissionMedia
 from apps.domains.submissions.views.homework_submission_media_view import (
     HomeworkSubmissionMediaCollectionView,
@@ -67,7 +73,7 @@ class HomeworkSubmissionMediaTests(TestCase):
             user=self.student_user,
             role="student",
         )
-        self.student = Student.objects.create(
+        self.student = create_student_fixture(
             tenant=self.tenant,
             user=self.student_user,
             ps_number="HWM001",
@@ -87,30 +93,30 @@ class HomeworkSubmissionMediaTests(TestCase):
             user=self.teacher,
             role="teacher",
         )
-        self.lecture = Lecture.objects.create(
+        self.lecture = create_lecture_fixture(
             tenant=self.tenant,
             title="수학",
             name="수학",
             subject="MATH",
         )
-        self.session = Session.objects.create(
+        self.session = create_session_fixture(
             lecture=self.lecture,
             order=1,
             title="1회",
         )
-        self.enrollment = Enrollment.objects.create(
+        self.enrollment = create_enrollment_fixture(
             tenant=self.tenant,
             student=self.student,
             lecture=self.lecture,
             status="ACTIVE",
         )
-        self.homework = Homework.objects.create(
+        self.homework = create_homework_fixture(
             tenant=self.tenant,
             session=self.session,
             title="풀이 인증",
             meta={"default_max_score": 10},
         )
-        HomeworkAssignment.objects.create(
+        create_homework_assignment_fixture(
             tenant=self.tenant,
             homework=self.homework,
             session=self.session,
@@ -322,7 +328,7 @@ class HomeworkSubmissionMediaTests(TestCase):
             password="pw1234",
             tenant=self.tenant,
         )
-        other_student = Student.objects.create(
+        other_student = create_student_fixture(
             tenant=self.tenant,
             user=other_user,
             ps_number="HWM002",
@@ -331,7 +337,7 @@ class HomeworkSubmissionMediaTests(TestCase):
             phone="01055556666",
             parent_phone="01077778888",
         )
-        other_enrollment = Enrollment.objects.create(
+        other_enrollment = create_enrollment_fixture(
             tenant=self.tenant,
             student=other_student,
             lecture=self.lecture,
@@ -481,7 +487,7 @@ class HomeworkSubmissionMediaTests(TestCase):
             enrollment=self.enrollment,
             target_type=Submission.TargetType.HOMEWORK,
             target_id=self.homework.id,
-            source=Submission.Source.HOMEWORK_MEDIA,
+            source=Submission.Source.HOMEWORK_IMAGE,
             status=Submission.Status.SUBMITTED,
         )
         media = SubmissionMedia.objects.create(
@@ -520,7 +526,7 @@ class HomeworkSubmissionMediaTests(TestCase):
         upload_fileobj_to_r2,
     ):
         created = self._post(file=_jpeg())
-        HomeworkScore.objects.create(
+        create_homework_score_fixture(
             enrollment=self.enrollment,
             session=self.session,
             homework=self.homework,
@@ -559,7 +565,7 @@ class HomeworkSubmissionMediaTests(TestCase):
             user=other_user,
             role="student",
         )
-        other_student = Student.objects.create(
+        other_student = create_student_fixture(
             tenant=self.tenant,
             user=other_user,
             ps_number="HWM003",
@@ -568,13 +574,13 @@ class HomeworkSubmissionMediaTests(TestCase):
             phone="01088889999",
             parent_phone="01099990000",
         )
-        other_enrollment = Enrollment.objects.create(
+        other_enrollment = create_enrollment_fixture(
             tenant=self.tenant,
             student=other_student,
             lecture=self.lecture,
             status="ACTIVE",
         )
-        HomeworkAssignment.objects.create(
+        create_homework_assignment_fixture(
             tenant=self.tenant,
             homework=self.homework,
             session=self.session,
@@ -607,7 +613,7 @@ class HomeworkSubmissionMediaTests(TestCase):
             enrollment=self.enrollment,
             target_type=Submission.TargetType.HOMEWORK,
             target_id=self.homework.id,
-            source=Submission.Source.HOMEWORK_MEDIA,
+            source=Submission.Source.HOMEWORK_IMAGE,
             status=Submission.Status.SUBMITTED,
         )
         failed_media = SubmissionMedia.objects.create(
@@ -696,7 +702,7 @@ class HomeworkSubmissionMediaTests(TestCase):
             enrollment=self.enrollment,
             target_type=Submission.TargetType.HOMEWORK,
             target_id=self.homework.id,
-            source=Submission.Source.HOMEWORK_MEDIA,
+            source=Submission.Source.HOMEWORK_IMAGE,
             status=Submission.Status.SUBMITTED,
         )
         media = SubmissionMedia.objects.create(

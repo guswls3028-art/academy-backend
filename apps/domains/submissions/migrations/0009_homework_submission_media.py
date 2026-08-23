@@ -10,7 +10,6 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ("core", "0058_tenant_controls_messaging_activation"),
-        ("enrollment", "0001_initial"),
         ("submissions", "0008_submission_enrollment_fk"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
@@ -66,114 +65,55 @@ class Migration(migrations.Migration):
                 ("uploaded_at", models.DateTimeField(blank=True, null=True)),
                 ("failed_at", models.DateTimeField(blank=True, null=True)),
                 ("removed_at", models.DateTimeField(blank=True, null=True)),
-            ],
-        ),
-        migrations.RemoveConstraint(
-            model_name="submission",
-            name="unique_active_submission_per_target",
-        ),
-        migrations.AlterField(
-            model_name="submission",
-            name="source",
-            field=models.CharField(
-                choices=[
-                    ("omr_scan", "OMR Scan"),
-                    ("omr_manual", "OMR Manual Input"),
-                    ("online", "Online"),
-                    ("homework_image", "Homework Image"),
-                    ("homework_video", "Homework Video"),
-                    ("homework_media", "Homework Media Collection"),
-                    ("ai_match", "AI Image Match"),
-                ],
-                max_length=30,
-            ),
-        ),
-        migrations.AddConstraint(
-            model_name="submission",
-            constraint=models.UniqueConstraint(
-                condition=models.Q(
-                    (
-                        "source__in",
-                        [
-                            "online",
-                            "omr_manual",
-                            "homework_image",
-                            "homework_video",
-                            "homework_media",
-                            "ai_match",
-                        ],
-                    ),
-                    (
-                        "status__in",
-                        [
-                            "submitted",
-                            "dispatched",
-                            "extracting",
-                            "answers_ready",
-                            "grading",
-                        ],
+                (
+                    "removed_by",
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
+                        related_name="removed_submission_media",
+                        to=settings.AUTH_USER_MODEL,
                     ),
                 ),
-                fields=("user", "target_type", "target_id"),
-                name="unique_active_submission_per_target",
-            ),
-        ),
-        migrations.AddField(
-            model_name="submissionmedia",
-            name="removed_by",
-            field=models.ForeignKey(
-                blank=True,
-                null=True,
-                on_delete=django.db.models.deletion.SET_NULL,
-                related_name="removed_submission_media",
-                to=settings.AUTH_USER_MODEL,
-            ),
-        ),
-        migrations.AddField(
-            model_name="submissionmedia",
-            name="submission",
-            field=models.ForeignKey(
-                on_delete=django.db.models.deletion.CASCADE,
-                related_name="media_files",
-                to="submissions.submission",
-            ),
-        ),
-        migrations.AddField(
-            model_name="submissionmedia",
-            name="tenant",
-            field=models.ForeignKey(
-                on_delete=django.db.models.deletion.CASCADE,
-                related_name="submission_media",
-                to="core.tenant",
-            ),
-        ),
-        migrations.AddIndex(
-            model_name="submissionmedia",
-            index=models.Index(
-                fields=["tenant", "submission", "status"],
-                name="submissions_tenant__29123f_idx",
-            ),
-        ),
-        migrations.AddIndex(
-            model_name="submissionmedia",
-            index=models.Index(
-                fields=["submission", "position", "id"],
-                name="submissions_submiss_a33656_idx",
-            ),
-        ),
-        migrations.AddConstraint(
-            model_name="submissionmedia",
-            constraint=models.UniqueConstraint(
-                fields=("tenant", "client_upload_id"),
-                name="uniq_submission_media_client_upload",
-            ),
-        ),
-        migrations.AddConstraint(
-            model_name="submissionmedia",
-            constraint=models.UniqueConstraint(
-                condition=models.Q(("removed_at__isnull", True)),
-                fields=("submission", "position"),
-                name="uniq_active_submission_media_position",
-            ),
+                (
+                    "submission",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="media_files",
+                        to="submissions.submission",
+                    ),
+                ),
+                (
+                    "tenant",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="submission_media",
+                        to="core.tenant",
+                    ),
+                ),
+            ],
+            options={
+                "indexes": [
+                    models.Index(
+                        fields=["tenant", "submission", "status"],
+                        name="submissions_tenant__29123f_idx",
+                    ),
+                    models.Index(
+                        fields=["submission", "position", "id"],
+                        name="submissions_submiss_a33656_idx",
+                    ),
+                ],
+                "constraints": [
+                    models.UniqueConstraint(
+                        fields=("tenant", "client_upload_id"),
+                        name="uniq_submission_media_client_upload",
+                    ),
+                    models.UniqueConstraint(
+                        condition=models.Q(("removed_at__isnull", True)),
+                        fields=("submission", "position"),
+                        name="uniq_active_submission_media_position",
+                    ),
+                ],
+            },
         ),
     ]

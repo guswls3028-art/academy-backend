@@ -19,7 +19,6 @@ class Submission(TimestampModel):
         ONLINE = "online", "Online"
         HOMEWORK_IMAGE = "homework_image", "Homework Image"
         HOMEWORK_VIDEO = "homework_video", "Homework Video"
-        HOMEWORK_MEDIA = "homework_media", "Homework Media Collection"
         AI_MATCH = "ai_match", "AI Image Match"
 
     class Status(models.TextChoices):
@@ -99,7 +98,7 @@ class Submission(TimestampModel):
                     # OMR batch upload: staff가 여러 학생 답안지를 업로드하므로
                     # 같은 user+exam에 복수 active submission 허용 필요
                     source__in=["online", "omr_manual", "homework_image",
-                                "homework_video", "homework_media", "ai_match"],
+                                "homework_video", "ai_match"],
                 ),
                 name="unique_active_submission_per_target",
             ),
