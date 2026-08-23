@@ -131,3 +131,7 @@ git status --short
 Final reporting lists canonical backend/frontend SHAs, the deployed revision or
 digest when release work occurred, every remaining noncanonical worktree, and
 the owner/decision for each unmerged or dirty branch.
+Cross-repository product delivery also uses the fail-closed
+[change-risk and release-bundle contract](change-risk-and-release-bundle.md) to
+read the two official runs, pending approvals, backend manifest and lock, and
+frontend live revision without inventing a shared Git transaction.
