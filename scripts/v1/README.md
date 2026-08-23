@@ -59,6 +59,29 @@ HMAC readback, provider singleton 재조회, API health, queue 0이 끝나야 lo
 반환한다. refresh 전 실패는 exact SSM rollback, refresh 시작 뒤 실패는 lock을
 유지한 forward-convergence 상태다.
 
+### 공용 Alimtalk owner tenant 명시화
+
+API와 Messaging worker가 호환 기본값으로 해석하는 공용 owner tenant를 두 SSM
+문서에 명시하는 기본 실행은 read-only다. owner 값·credential·sender·복호화 SSM
+문서는 입력받거나 출력하지 않는다.
+
+```powershell
+python scripts/v1/reconcile_common_alimtalk_owner_tenant.py
+python scripts/v1/reconcile_common_alimtalk_owner_tenant.py --apply
+```
+
+이 도구는 고정 owner 1의 absent/exact 상태만 허용하고 누락된
+`OWNER_TENANT_ID` 한 key만 worker→API 순서로 추가한다. 다른 key/value는 모두
+exact 보존하며 sender 정합화는 별도 `reconcile_common_alimtalk_sender.py`가 계속
+소유한다. `--apply`는 source freshness, 성공 manifest, main queue·DLQ 0과 shared
+production mutation lock을 요구한다. exact version/raw/KMS readback 뒤
+Messaging→API terminal refresh, InService HMAC, API health, queue 0을 확인하고
+lock을 반환한다. 이미 두 SSM 문서가 명시돼도 runtime HMAC·health·queue를
+생략하지 않으며 stale/missing runtime은 같은 refresh로 수렴한다. 숫자·null·다른
+문자열은 명시값으로 인정하지 않는다. refresh 전 부분 실패는 lock owner를 다시
+증명한 뒤 원문을 rollback하고, write 뒤 lock loss에서는 unowned rollback을 하지
+않는다. refresh 시작 뒤 실패 또는 concurrency/rollback 불확실성은 lock을 유지한다.
+
 ### 분기별 RDS 복구훈련
 
 RDS 생성·삭제는 GitHub Actions에서 금지한다. 승인된 운영자 환경에서 최신 자동
