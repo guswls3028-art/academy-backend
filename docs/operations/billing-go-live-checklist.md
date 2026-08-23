@@ -184,81 +184,16 @@ pwsh scripts/v1/set-toss-billing.ps1 `
 암호문 writer, primary KEK가 모두 준비된 경우에만 서버가 기동된다. 테스트 키로
 전역 자동결제를 켜는 것은 부팅 단계에서 차단한다.
 
-**무엇을 하나:**
-
-```bash
-# 1) 현재 env 덤프
-aws ssm get-parameter \
-  --region ap-northeast-2 \
-  --name /academy/api/env \
-  --with-decryption \
-  --query 'Parameter.Value' \
-  --output text > /tmp/api_env_current.json
-
-# 2) Phase A: 키는 주입하되 자동결제 승인은 아직 비활성
-#    기존 BILLING_KEY_ENCRYPTION_* 값은 유지한다.
-#    (라이브 전환 시에는 test_ 접두사를 live_로 변경)
-jq '. + {
-  "TOSS_PAYMENTS_SECRET_KEY": "test_sk_XXXXXXXXXXXX",
-  "TOSS_PAYMENTS_CLIENT_KEY": "test_ck_XXXXXXXXXXXX",
-  "TOSS_AUTO_BILLING_ENABLED": "false"
-}' /tmp/api_env_current.json > /tmp/api_env_new.json
-
-# 3) SSM 업데이트
-aws ssm put-parameter \
-  --region ap-northeast-2 \
-  --name /academy/api/env \
-  --type SecureString \
-  --value "$(cat /tmp/api_env_new.json)" \
-  --overwrite
-
-# 4) ASG instance refresh (새 env 반영)
-aws autoscaling start-instance-refresh \
-  --region ap-northeast-2 \
-  --auto-scaling-group-name academy-v1-api-asg \
-  --preferences '{"MinHealthyPercentage": 100, "InstanceWarmup": 300}'
-
-# 5) Phase A 완료 후 검증 (5~10분 후)
-aws ssm send-command \
-  --region ap-northeast-2 \
-  --targets "Key=tag:Name,Values=academy-v1-api" \
-  --document-name AWS-RunShellScript \
-  --parameters 'commands=["docker exec academy-api python -c \"from django.conf import settings; print(len(settings.TOSS_PAYMENTS_SECRET_KEY), settings.TOSS_AUTO_BILLING_ENABLED, settings.BILLING_KEY_ENCRYPTION_WRITE_ENABLED, len(settings.BILLING_KEY_ENCRYPTION_PRIMARY_KEY))\""]'
-```
-
-Phase A 검증 출력이 `N(>0) False True K(>0)` 형태여야 한다. Fernet KEK는
-Toss/Django SECRET_KEY와 별개로 생성하고 비밀 저장소에서 관리한다.
-
-전 API가 호환 코드의 digest-pinned 이미지임을 검증한 뒤에만 Phase B를 실행한다.
-
-```bash
-# 6) 최신 Phase A env를 다시 읽고 writer/자동결제를 활성화
-aws ssm get-parameter \
-  --region ap-northeast-2 \
-  --name /academy/api/env \
-  --with-decryption \
-  --query 'Parameter.Value' \
-  --output text > /tmp/api_env_phase_a_live.json
-
-jq '. + {
-  "TOSS_AUTO_BILLING_ENABLED": "true"
-}' /tmp/api_env_phase_a_live.json > /tmp/api_env_phase_b.json
-
-aws ssm put-parameter \
-  --region ap-northeast-2 \
-  --name /academy/api/env \
-  --type SecureString \
-  --value "$(cat /tmp/api_env_phase_b.json)" \
-  --overwrite
-
-aws autoscaling start-instance-refresh \
-  --region ap-northeast-2 \
-  --auto-scaling-group-name academy-v1-api-asg \
-  --preferences '{"MinHealthyPercentage": 100, "InstanceWarmup": 300}'
-```
-
-Phase B refresh 후 같은 검증 명령의 출력이 `N(>0) True True K(>0)`이고
-`python manage.py audit_billing_fields --strict`가 성공해야 한다.
+`set-toss-billing.ps1`가 현재 SecureString을 메모리에서 읽어 기존
+`BILLING_KEY_ENCRYPTION_*` 값을 보존하고, 선택한 키 세트와 enable flag만
+변경한다. 이 entrypoint는 shared production mutation lock을 잡고 API refresh의
+terminal `Successful`과 public health까지 확인하므로 문서의 값을 복사해
+`aws ssm put-parameter`로 직접 덮어쓰지 않는다. refresh 실패·취소·timeout 또는
+health 실패는 lock을 남겨 forward-convergence 전 다른 release를 차단한다.
+Phase A 확인은 자동결제 disabled, 암호문 writer enabled, primary KEK non-empty를
+비밀 값 없이 검증한다. 전 API가 호환 코드의 digest-pinned 이미지임을 확인한
+뒤에만 Phase B를 실행하며, refresh 후 `python manage.py audit_billing_fields
+--strict`가 성공해야 한다.
 
 #### 빌링키 저장 암호화 상태와 향후 순환
 

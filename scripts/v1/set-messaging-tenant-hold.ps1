@@ -133,6 +133,7 @@ function Set-ParameterState {
             $wireValue,
             [Text.UTF8Encoding]::new($false)
         )
+        Assert-AcademyRuntimeEnvMutationLock -Region $Region
         $putResponse = Invoke-AwsJson -Arguments @(
             "ssm", "put-parameter",
             "--name", $Name,
@@ -158,9 +159,19 @@ function Set-ParameterState {
     )
 }
 
+$env:AWS_PROFILE = $AwsProfile
+$env:AWS_DEFAULT_REGION = $Region
+. (Join-Path $PSScriptRoot "core\runtime-env-lock.ps1")
+Enter-AcademyRuntimeEnvMutationLock `
+    -Region $Region `
+    -OwnerPrefix "messaging-tenant-hold"
+try {
 # The API producer and messaging worker consumer must share the exact same hold set.
 # Write the worker value first so a release cannot enqueue against a stale consumer.
 Set-ParameterState -Name "/academy/workers/env" -Wrapping "base64" -ExpectMinKeys 40
 Set-ParameterState -Name "/academy/api/env" -Wrapping "plain" -ExpectMinKeys 50
 
 Write-Host "NEXT_ACTION_REQUIRED refresh the API and messaging worker runtimes, then verify the exact hold set on both before relying on this change"
+} finally {
+    Exit-AcademyRuntimeEnvMutationLock -Region $Region
+}

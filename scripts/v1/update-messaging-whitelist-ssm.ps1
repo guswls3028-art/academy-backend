@@ -41,11 +41,17 @@ function Set-WhitelistInParam {
         $newBytes = [System.Text.Encoding]::UTF8.GetBytes($newJson)
         $newValue = [Convert]::ToBase64String($newBytes)
     }
+    Assert-AcademyRuntimeEnvMutationLock -Region $script:Region
     Invoke-Aws @("ssm", "put-parameter", "--name", $ParamName, "--type", "SecureString", "--value", $newValue, "--overwrite", "--region", $script:Region) -ErrorMessage "put-parameter $ParamName" | Out-Null
     Write-Host "  $ParamName -> MESSAGING_TEST_RECIPIENT_WHITELIST cleared" -ForegroundColor Green
     return $true
 }
 
+. (Join-Path $PSScriptRoot "core\runtime-env-lock.ps1")
+Enter-AcademyRuntimeEnvMutationLock `
+    -Region $script:Region `
+    -OwnerPrefix "messaging-whitelist"
+try {
 Write-Host "Clearing MESSAGING_TEST_RECIPIENT_WHITELIST in SSM (production messaging)..." -ForegroundColor Cyan
 $apiOk = Set-WhitelistInParam -ParamName $script:SsmApiEnv -Description "SSM API env"
 $workersOk = Set-WhitelistInParam -ParamName $script:SsmWorkersEnv -Description "SSM Workers env"
@@ -54,4 +60,7 @@ if ($apiOk -or $workersOk) {
     Write-Host "워커 인스턴스: instance-refresh 후 적용." -ForegroundColor Cyan
 } else {
     Write-Host "No parameter updated." -ForegroundColor Yellow
+}
+} finally {
+    Exit-AcademyRuntimeEnvMutationLock -Region $script:Region
 }

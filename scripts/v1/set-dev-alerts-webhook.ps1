@@ -23,6 +23,11 @@ if ($Url -ne "" -and -not ($Url -match '^https?://')) {
     exit 1
 }
 
+. (Join-Path $PSScriptRoot "core\runtime-env-lock.ps1")
+Enter-AcademyRuntimeEnvMutationLock `
+    -Region $Region `
+    -OwnerPrefix "dev-alerts-webhook"
+try {
 # 1) Read current SSM parameter
 Write-Host "[1/3] Reading SSM $SsmApiEnv..."
 $existing = aws ssm get-parameter --name $SsmApiEnv --with-decryption --region $Region --output json 2>&1 | ConvertFrom-Json
@@ -50,8 +55,7 @@ if ($Url -eq "") {
     }
 } else {
     $obj | Add-Member -NotePropertyName "DEV_ALERTS_WEBHOOK_URL" -NotePropertyValue $Url -Force
-    $masked = if ($Url.Length -gt 30) { $Url.Substring(0, 30) + "..." } else { $Url }
-    Write-Host "[2/3] Set DEV_ALERTS_WEBHOOK_URL=$masked (was: $(if ($prev) { '<set>' } else { '<unset>' }))"
+    Write-Host "[2/3] Set DEV_ALERTS_WEBHOOK_URL=<configured> (was: $(if ($prev) { '<set>' } else { '<unset>' }))"
 }
 
 # 3) Write back
@@ -60,30 +64,30 @@ $newValue = $newJson
 if ($isBase64) {
     $newValue = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($newJson))
 }
+Assert-AcademyRuntimeEnvMutationLock -Region $Region
 aws ssm put-parameter --name $SsmApiEnv --type SecureString --value $newValue --overwrite --region $Region | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw "SSM update failed."
+}
 Write-Host "[3/3] SSM updated."
 
-# Optional: refresh /opt/api.env on running instances (without ASG refresh)
+# Optional: guarded API ASG refresh with terminal and public-health readback.
 if ($RefreshContainers) {
-    Write-Host "`n[refresh] Refreshing /opt/api.env on InService API instances..."
-    $instancesJson = aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names $ApiAsgName --region $Region --output json | ConvertFrom-Json
-    $instances = @($instancesJson.AutoScalingGroups[0].Instances | Where-Object { $_.LifecycleState -eq "InService" } | ForEach-Object { $_.InstanceId })
-    if ($instances.Count -eq 0) {
-        Write-Host "No InService instances found." -ForegroundColor Yellow
-        exit 0
-    }
-    Write-Host "Targets: $($instances -join ', ')"
-
-    # /opt/api.env regen + container restart (refresh-api-env.sh 패턴 차용)
-    $refreshCmd = "set -e; aws ssm get-parameter --name $SsmApiEnv --with-decryption --region $Region --query Parameter.Value --output text | (head -c 4 | grep -q '{' && cat || base64 -d) > /opt/api.env.new && mv /opt/api.env.new /opt/api.env && docker restart academy-api 2>&1 | tail -1"
-    $params = @{ commands = @($refreshCmd) } | ConvertTo-Json -Compress
-
-    foreach ($id in $instances) {
-        $send = aws ssm send-command --instance-ids $id --document-name "AWS-RunShellScript" --parameters $params --region $Region --output json | ConvertFrom-Json
-        Write-Host "  $id : SSM command $($send.Command.CommandId) sent"
-    }
-    Write-Host "Refresh dispatched. Verify with: docker exec academy-api env | grep DEV_ALERTS_WEBHOOK_URL"
+    Write-Host "`n[refresh] Starting guarded API ASG instance refresh..."
+    $refreshId = Start-AcademyInstanceRefresh `
+        -AutoScalingGroupName $ApiAsgName `
+        -Region $Region
+    Wait-AcademyInstanceRefresh `
+        -AutoScalingGroupName $ApiAsgName `
+        -InstanceRefreshId $refreshId `
+        -Region $Region
+    Assert-AcademyPublicApiHealth
+    Complete-AcademyRuntimeRefreshBoundary -Region $Region
+    Write-Host "API refresh and public health readback passed." -ForegroundColor Green
 } else {
     Write-Host "`nNote: /opt/api.env on running instances NOT refreshed yet."
     Write-Host "  Either run with -RefreshContainers, or wait for next ASG refresh / deploy."
+}
+} finally {
+    Exit-AcademyRuntimeEnvMutationLock -Region $Region
 }

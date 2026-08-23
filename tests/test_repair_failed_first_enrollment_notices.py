@@ -1392,6 +1392,22 @@ class RepairFailedFirstEnrollmentNoticesTests(RecoveryFixtureMixin, TestCase):
             ):
                 call_command(*self._command_args())
 
+    def test_inactive_common_sender_fails_before_balance_without_secret_output(self):
+        baseline_outboxes = ScheduledNotification.objects.count()
+        stdout = StringIO()
+
+        with patch(
+            f"{COMMAND_MODULE}.get_active_sender_numbers",
+            return_value=["0211112222"],
+        ):
+            with self.assertRaisesMessage(CommandError, "common_sender_not_active"):
+                call_command(*self._command_args(), stdout=stdout)
+
+        self.assertEqual(ScheduledNotification.objects.count(), baseline_outboxes)
+        self.solapi_client.get_balance.assert_not_called()
+        self.assertNotIn(RECOVERY_TEST_SETTINGS["SOLAPI_SENDER"], stdout.getvalue())
+        self.assertNotIn("0211112222", stdout.getvalue())
+
     def test_apply_dispatches_only_through_post_commit_outbox_callbacks(self):
         with patch(
             "apps.domains.messaging.scheduled.process_due_notifications"

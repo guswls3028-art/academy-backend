@@ -15,7 +15,12 @@ if ($AwsProfile -and $AwsProfile.Trim()) {
 . (Join-Path $PSScriptRoot "core\aws.ps1")
 . (Join-Path $PSScriptRoot "core\ssm-safe-update.ps1")
 $null = Load-SSOT -Env "prod"
+. (Join-Path $PSScriptRoot "core\runtime-env-lock.ps1")
+Enter-AcademyRuntimeEnvMutationLock `
+    -Region $script:Region `
+    -OwnerPrefix "messaging-tenant-binding"
 
+try {
 function Get-RuntimeBindingKey {
     param([string]$Name, [ValidateSet("plain", "base64")][string]$Wrapping)
     $raw = aws ssm get-parameter --name $Name --with-decryption --query "Parameter.Value" --output text --region $script:Region 2>&1
@@ -43,19 +48,17 @@ Update-AcademySSMParameter -Name $script:SsmWorkersEnv -KeyUpdates $updates -Exp
 Write-Host "Messaging tenant-binding enforcement set to $Enabled in API and worker env." -ForegroundColor Green
 
 if ($RefreshMessagingWorker) {
-    try {
-        $refresh = Invoke-AwsJson @(
-            "autoscaling", "start-instance-refresh",
-            "--auto-scaling-group-name", $script:MessagingASGName,
-            "--region", $script:Region,
-            "--output", "json"
-        )
-        Write-Host "Messaging worker refresh started: $($refresh.InstanceRefreshId)" -ForegroundColor Green
-    } catch {
-        if ($_.Exception.Message -match "InstanceRefreshInProgress") {
-            Write-Host "Messaging worker refresh is already in progress." -ForegroundColor Yellow
-        } else {
-            throw
-        }
-    }
+    $refreshId = Start-AcademyInstanceRefresh `
+        -AutoScalingGroupName $script:MessagingASGName `
+        -Region $script:Region
+    Write-Host "Messaging worker refresh started: $refreshId" -ForegroundColor Green
+    Wait-AcademyInstanceRefresh `
+        -AutoScalingGroupName $script:MessagingASGName `
+        -InstanceRefreshId $refreshId `
+        -Region $script:Region
+    Complete-AcademyRuntimeRefreshBoundary -Region $script:Region
+    Write-Host "Messaging worker refresh completed successfully." -ForegroundColor Green
+}
+} finally {
+    Exit-AcademyRuntimeEnvMutationLock -Region $script:Region
 }

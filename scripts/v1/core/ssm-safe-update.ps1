@@ -15,12 +15,18 @@
 #   - base64 wrapped JSON (e.g. `/academy/workers/env`)
 #
 # 사용 예:
+#   . scripts/v1/core/runtime-env-lock.ps1
+#   Enter-AcademyRuntimeEnvMutationLock -Region ap-northeast-2
+#   try {
 #   . scripts/v1/core/ssm-safe-update.ps1
 #   Update-AcademySSMParameter `
 #     -Name '/academy/api/env' `
 #     -KeyUpdates @{ 'SECRET_KEY' = $newSk; 'INTERNAL_WORKER_TOKEN' = $newIwt } `
 #     -ExpectMinKeys 50 `
 #     -Wrapping 'plain'
+#   } finally {
+#     Exit-AcademyRuntimeEnvMutationLock -Region ap-northeast-2
+#   }
 #
 #   Update-AcademySSMParameter `
 #     -Name '/academy/workers/env' `
@@ -49,27 +55,36 @@ function Update-AcademySSMParameter {
 
         [string]$Region = 'ap-northeast-2',
 
-        # 백업 디렉토리 (기본: c:\academy\_artifacts)
-        [string]$BackupDir = 'C:\academy\_artifacts'
+        # Deprecated compatibility argument. Decrypted runtime values are always
+        # held only in a process-owned temporary directory and deleted on exit.
+        [string]$BackupDir = ''
     )
 
-    if (-not (Test-Path $BackupDir)) {
-        New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null
+    $runtimeLockAssertion = Get-Command Assert-AcademyRuntimeEnvMutationLock -ErrorAction SilentlyContinue
+    if (-not $runtimeLockAssertion) {
+        throw "[SSM-SAFE] Runtime environment mutation lock helper is not loaded."
     }
+    Assert-AcademyRuntimeEnvMutationLock -Region $Region
+
+    $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+        "academy-ssm-safe-update-" + [Guid]::NewGuid().ToString("N")
+    )
+    [void](New-Item -ItemType Directory -Path $tempRoot)
     $ts = Get-Date -Format 'yyyyMMdd_HHmmss'
     $safeName = ($Name -replace '[^A-Za-z0-9]', '_').Trim('_')
-    $beforePath = Join-Path $BackupDir "_ssm_${safeName}_before_${ts}.txt"
-    $afterPath  = Join-Path $BackupDir "_ssm_${safeName}_after_${ts}.json"
-    $afterB64Path = Join-Path $BackupDir "_ssm_${safeName}_after_${ts}.b64"
+    $beforePath = Join-Path $tempRoot "_ssm_${safeName}_before_${ts}.txt"
+    $afterPath  = Join-Path $tempRoot "_ssm_${safeName}_after_${ts}.json"
+    $afterB64Path = Join-Path $tempRoot "_ssm_${safeName}_after_${ts}.b64"
 
+    try {
     Write-Host "[SSM-SAFE] Pulling current value of $Name ..." -ForegroundColor Cyan
     $raw = aws ssm get-parameter --name $Name --with-decryption --query 'Parameter.Value' --output text --region $Region 2>&1
     if (-not $raw -or "$raw" -match '^An error|^usage:|ParameterNotFound') {
         throw "[SSM-SAFE] Failed to read $Name : $raw"
     }
-    # Save before (raw) for rollback evidence
+    # Keep the decrypted source only in the process-owned temporary directory.
     $raw | Out-File -Encoding ascii -NoNewline $beforePath
-    Write-Host "[SSM-SAFE]   raw size = $($raw.Length) bytes, backup -> $beforePath" -ForegroundColor Gray
+    Write-Host "[SSM-SAFE]   raw size = $($raw.Length) bytes" -ForegroundColor Gray
 
     # Build Python script to: decode (b64 or plain) -> validate dict -> apply updates -> validate min keys -> emit
     $pyScript = @'
@@ -125,11 +140,11 @@ else:
     print(f"OK keys={len(d)} json_size={len(new_json)}")
 print("APPLIED " + " | ".join(applied))
 '@
-    $pyScriptPath = Join-Path $BackupDir "_ssm_safe_update_$ts.py"
+    $pyScriptPath = Join-Path $tempRoot "_ssm_safe_update_$ts.py"
     $pyScript | Out-File -Encoding utf8 -NoNewline $pyScriptPath
 
     # Write KeyUpdates as JSON file for Python to read (avoids quoting hell)
-    $updatesPath = Join-Path $BackupDir "_ssm_updates_$ts.json"
+    $updatesPath = Join-Path $tempRoot "_ssm_updates_$ts.json"
     ($KeyUpdates | ConvertTo-Json -Compress) | Out-File -Encoding utf8 -NoNewline $updatesPath
 
     Write-Host "[SSM-SAFE] Running Python validator/transformer ..." -ForegroundColor Cyan
@@ -138,7 +153,7 @@ print("APPLIED " + " | ".join(applied))
     if ($pyExit -ne 0) {
         Write-Host "[SSM-SAFE] Python FAIL (exit $pyExit):" -ForegroundColor Red
         Write-Host $pyOut -ForegroundColor Red
-        Write-Host "[SSM-SAFE] ABORT. SSM NOT updated. Before-value preserved at $beforePath" -ForegroundColor Red
+        Write-Host "[SSM-SAFE] ABORT. SSM NOT updated." -ForegroundColor Red
         throw "[SSM-SAFE] aborted"
     }
     Write-Host "[SSM-SAFE] $pyOut" -ForegroundColor Gray
@@ -151,6 +166,11 @@ print("APPLIED " + " | ".join(applied))
     }
     Write-Host "[SSM-SAFE] OK new SSM version = $putOut" -ForegroundColor Green
     return [int]$putOut
+    } finally {
+        if (Test-Path -LiteralPath $tempRoot) {
+            [System.IO.Directory]::Delete($tempRoot, $true)
+        }
+    }
 }
 
 # Sanity smoke when sourced

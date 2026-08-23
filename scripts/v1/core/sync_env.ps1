@@ -291,6 +291,7 @@ function Publish-ApiEnvCandidate {
         Write-Ok "API env already matches SSOT: $($script:SsmApiEnv)"
         return
     }
+    Assert-DeployLockAcquired -Reg $script:Region
     $put = Invoke-RequiredAwsJson -ErrorMessage "API env promotion failed" -ArgsArray @(
         "ssm", "put-parameter",
         "--name", $script:SsmApiEnv,
@@ -312,6 +313,7 @@ function Publish-WorkersEnvCandidate {
         Write-Ok "Workers env already matches SSOT: $($script:SsmWorkersEnv)"
         return
     }
+    Assert-DeployLockAcquired -Reg $script:Region
     $put = Invoke-RequiredAwsJson -ErrorMessage "Workers env promotion failed" -ArgsArray @(
         "ssm", "put-parameter",
         "--name", $script:SsmWorkersEnv,
@@ -338,6 +340,7 @@ function Publish-RuntimeEnvCandidates {
         Write-Warn "Runtime env promotion failed; restoring prior parameter values."
         try {
             if ($script:ApiEnvChanged -and $script:OriginalApiEnvValue) {
+                Assert-DeployLockAcquired -Reg $script:Region
                 $rollback = Invoke-RequiredAwsJson -ErrorMessage "API env rollback failed" -ArgsArray @(
                     "ssm", "put-parameter",
                     "--name", $script:SsmApiEnv,
@@ -350,6 +353,7 @@ function Publish-RuntimeEnvCandidates {
                 if ($rollback -and $rollback.Version) { $script:ApiEnvVersion = [int]$rollback.Version }
             }
             if ($script:WorkersEnvChanged -and $script:OriginalWorkersEnvValue) {
+                Assert-DeployLockAcquired -Reg $script:Region
                 Invoke-RequiredAwsJson -ErrorMessage "Workers env rollback failed" -ArgsArray @(
                     "ssm", "put-parameter",
                     "--name", $script:SsmWorkersEnv,

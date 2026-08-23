@@ -21,7 +21,12 @@ $script:PlanMode = $false
 . (Join-Path $ScriptRoot "core\env.ps1")
 . (Join-Path $ScriptRoot "core\aws.ps1")
 Assert-AwsMutationIdentity | Out-Null
+. (Join-Path $ScriptRoot "core\runtime-env-lock.ps1")
+Enter-AcademyRuntimeEnvMutationLock `
+    -Region $env:AWS_DEFAULT_REGION `
+    -OwnerPrefix "product-analytics-hash-key"
 
+try {
 $current = Invoke-AwsJson @(
     "ssm", "get-parameter",
     "--name", $ParameterName,
@@ -56,6 +61,7 @@ if (-not $existing) {
 $version = [int]$current.Parameter.Version
 if ($changed) {
     $value = $environment | ConvertTo-Json -Compress -Depth 20
+    Assert-AcademyRuntimeEnvMutationLock -Region $env:AWS_DEFAULT_REGION
     $put = Invoke-AwsJson @(
         "ssm", "put-parameter",
         "--name", $ParameterName,
@@ -93,3 +99,6 @@ Write-Host (
     $version,
     $changed.ToString().ToLowerInvariant()
 ) -ForegroundColor Green
+} finally {
+    Exit-AcademyRuntimeEnvMutationLock -Region $env:AWS_DEFAULT_REGION
+}

@@ -65,6 +65,7 @@ function Invoke-BootstrapWorkersEnv {
     $json = $obj | ConvertTo-Json -Compress -Depth 10
     $jsonBytes = [System.Text.Encoding]::UTF8.GetBytes($json)
     $valueBase64 = [Convert]::ToBase64String($jsonBytes)
+    Assert-DeployLockAcquired -Reg $script:Region
     Invoke-Aws @("ssm", "put-parameter", "--name", $script:SsmWorkersEnv, "--type", "SecureString", "--value", $valueBase64, "--overwrite", "--region", $script:Region) -ErrorMessage "put-parameter workers env" | Out-Null
     Write-Ok "SSM workers env created from .env: $($script:SsmWorkersEnv)"
     $script:ChangesMade = $true

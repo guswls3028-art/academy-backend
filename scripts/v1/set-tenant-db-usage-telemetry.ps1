@@ -40,6 +40,10 @@ $readbackPath = Join-Path $tempRoot "readback.txt"
 $transformPath = Join-Path $tempRoot "transform.py"
 $verifyPath = Join-Path $tempRoot "verify.py"
 
+. (Join-Path $ScriptRoot "core\runtime-env-lock.ps1")
+Enter-AcademyRuntimeEnvMutationLock `
+    -Region $env:AWS_DEFAULT_REGION `
+    -OwnerPrefix "tenant-db-telemetry"
 try {
     $raw = & aws ssm get-parameter `
         --name $ParameterName `
@@ -79,6 +83,7 @@ print(f"TENANT_DB_TELEMETRY_TRANSFORM_PASS keys_before={before} keys_after={len(
         $SlowRequestMs.ToString()
     if ($LASTEXITCODE -ne 0) { throw "Telemetry environment transform failed." }
 
+    Assert-AcademyRuntimeEnvMutationLock -Region $env:AWS_DEFAULT_REGION
     $version = & aws ssm put-parameter `
         --name $ParameterName `
         --type SecureString `
@@ -132,7 +137,11 @@ print("TENANT_DB_TELEMETRY_READBACK_PASS configured=true")
         $SlowRequestMs
     ) -ForegroundColor Green
 } finally {
-    if (Test-Path -LiteralPath $tempRoot) {
-        [System.IO.Directory]::Delete($tempRoot, $true)
+    try {
+        if (Test-Path -LiteralPath $tempRoot) {
+            [System.IO.Directory]::Delete($tempRoot, $true)
+        }
+    } finally {
+        Exit-AcademyRuntimeEnvMutationLock -Region $env:AWS_DEFAULT_REGION
     }
 }

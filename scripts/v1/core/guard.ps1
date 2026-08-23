@@ -7,6 +7,17 @@ function Get-DeployLockAcquired {
     return $script:DeployLockAcquired -eq $true
 }
 
+function Assert-DeployLockAcquired {
+    param([string]$Reg)
+    if (-not (Get-DeployLockAcquired)) {
+        throw "Atomic deployment lock is not acquired in this process."
+    }
+    $table = if ($script:DynamoLockTableName) { $script:DynamoLockTableName } else { "academy-v1-video-job-lock" }
+    $env:AWS_DEFAULT_REGION = $Reg
+    & python (Join-Path $PSScriptRoot "..\deployment_lock.py") assert-owned --owner $script:DeployLockOwner --table-name $table
+    if ($LASTEXITCODE -ne 0) { throw "Atomic deployment lock ownership was lost." }
+}
+
 function Acquire-DeployLock {
     param([string]$Reg)
     if ($script:PlanMode) { return }

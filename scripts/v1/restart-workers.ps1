@@ -20,6 +20,19 @@ if ($AwsProfile -and $AwsProfile.Trim() -ne "") {
 . (Join-Path $PSScriptRoot "core\ssot.ps1")
 . (Join-Path $PSScriptRoot "core\aws.ps1")
 $null = Load-SSOT -Env "prod"
+. (Join-Path $PSScriptRoot "core\runtime-env-lock.ps1")
+Enter-AcademyRuntimeEnvMutationLock `
+    -Region $script:Region `
+    -OwnerPrefix "restart-workers"
+
+try {
+$asgs = @(
+    Assert-AcademyWorkerRefreshTargets -Names @(
+        $script:MessagingASGName,
+        $script:AiASGName,
+        $script:ToolsASGName
+    )
+)
 
 if ($UpdateSsm) {
     Write-Host "SSM /academy/workers/env 갱신 중..." -ForegroundColor Cyan
@@ -30,30 +43,24 @@ if ($UpdateSsm) {
     }
 }
 
-$asgs = @($script:MessagingASGName, $script:AiASGName, $script:ToolsASGName)
 foreach ($asgName in $asgs) {
-    if (-not $asgName) { continue }
     Write-Host "`nASG $asgName instance-refresh 시작..." -ForegroundColor Cyan
-    try {
-        $out = Invoke-AwsJson @("autoscaling", "start-instance-refresh",
-            "--auto-scaling-group-name", $asgName,
-            "--region", $script:Region,
-            "--output", "json") 2>&1
-        if ($out -and $out.InstanceRefreshId) {
-            Write-Host "  InstanceRefreshId: $($out.InstanceRefreshId)" -ForegroundColor Green
-        } else {
-            Write-Host "  $out" -ForegroundColor Yellow
-        }
-    } catch {
-        if ($_.Exception.Message -match "InstanceRefreshInProgress") {
-            Write-Host "  이미 instance-refresh 진행 중. 완료까지 10~15분 소요 가능 (scale-in protection)." -ForegroundColor Yellow
-        } else {
-            Write-Host "  $_" -ForegroundColor Red
-        }
-    }
+    $refreshId = Start-AcademyInstanceRefresh `
+        -AutoScalingGroupName $asgName `
+        -Region $script:Region
+    Write-Host "  InstanceRefreshId: $refreshId" -ForegroundColor Green
+    Wait-AcademyInstanceRefresh `
+        -AutoScalingGroupName $asgName `
+        -InstanceRefreshId $refreshId `
+        -Region $script:Region
+    Write-Host "  terminal status: Successful" -ForegroundColor Green
 }
+Complete-AcademyRuntimeRefreshBoundary -Region $script:Region
 
 Write-Host "`n완료 후 확인:" -ForegroundColor Cyan
 Write-Host "  1. AWS Console > EC2 > Auto Scaling Groups > 해당 ASG > Instance refresh" -ForegroundColor Gray
 Write-Host "  2. 새 인스턴스의 UserData 로그: /var/log/academy-worker-userdata.log" -ForegroundColor Gray
 Write-Host "  3. SQS 대기 메시지: academy-v1-messaging-queue / academy-v1-ai-queue / academy-v1-tools-queue" -ForegroundColor Gray
+} finally {
+    Exit-AcademyRuntimeEnvMutationLock -Region $script:Region
+}

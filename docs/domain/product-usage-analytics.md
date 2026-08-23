@@ -177,7 +177,9 @@ transaction과 운영 감사 로그로 자동 해제한다. 예상 밖의 두 �
 
 `.github/workflows/product-usage-pilot-controls.yml`은 production 승인,
 GitHub OIDC와 정확한 확인 문구 뒤 `/academy/api/env`의 DB telemetry 세
-키만 보존형으로 변경한다. 이 설정은 guarded backend release가 API를
+키만 보존형으로 변경한다. read-transform-write 전체는 다른 배포·cleanup·운영
+runtime-env writer와 같은 shared production mutation lock을 사용하며, lock
+획득 실패 시 SSM을 쓰지 않는다. 이 설정은 guarded backend release가 API를
 교체한 뒤에만 runtime에 반영된다. 로그에는 SQL, parameter, 사용자 ID와
 입력값을 넣지 않는다.
 workflow boolean/choice 입력은
@@ -186,8 +188,9 @@ workflow boolean/choice 입력은
 동일 wrapper를 recorder script로 실행하는 계약 검사가 `-Ci`, `-Disable`,
 sample rate와 slow-request threshold를 검증한다.
 OIDC deploy role의 쓰기 범위는 `ssm:PutParameter`와 정확한
-`/academy/api/env` ARN 하나로 제한되고, workflow의 production environment와
-확인 문구가 변경 권한의 외부 게이트가 된다.
+`/academy/api/env` ARN 및 shared lock table의 조건부 item 연산으로 제한되고,
+workflow의 production environment와 확인 문구가 변경 권한의 외부 게이트가
+된다.
 
 `scripts/v1/ensure-product-analytics-hash-key.ps1`은 기존 production
 SecureString JSON을 보존한 채 전용 384-bit 난수 HMAC key가 없을 때만
