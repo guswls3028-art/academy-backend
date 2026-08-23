@@ -38,7 +38,8 @@ Assert-Contains $gitPathLines "scripts/codex/stability-contract.ps1" "real git p
 $docsOnly = Get-AcademyChangeRiskPlan `
     -BackendPaths @(
         "docs/operations/github-governance.md",
-        "scripts/README.md"
+        "scripts/README.md",
+        "CONVENTIONS.md"
     ) `
     -FrontendPaths @()
 Assert-True $docsOnly.DocsOnly "docs-only changes must remain docs-only"
@@ -89,6 +90,18 @@ $testsOnlyPair = Get-AcademyChangeRiskPlan `
 Assert-True (-not $testsOnlyPair.RequiresProductionReleaseBundle) "tests-only paired changes must not pretend to be a production release bundle"
 Assert-True ("unknown-non-doc" -notin $testsOnlyPair.Risks) "explicit tests-only changes must not be classified as unknown"
 
+$excludedRuntimePaths = Get-AcademyChangeRiskPlan `
+    -BackendPaths @(
+        "libs/queue/tests/test_client.py",
+        "docker/README-build.md"
+    ) `
+    -FrontendPaths @("src/shared/ui/README.md")
+Assert-True (-not $excludedRuntimePaths.RequiresProductionReleaseBundle) "docs/tests exclusions must run before paired runtime/build classification"
+Assert-True ("backend-runtime-build" -notin $excludedRuntimePaths.Risks) "backend docs/tests must not become runtime/build risk"
+Assert-True ("frontend-runtime-build" -notin $excludedRuntimePaths.Risks) "frontend docs must not become runtime/build risk"
+Assert-True ("user-visible-ui" -notin $excludedRuntimePaths.Risks) "frontend docs must not become user-visible UI risk"
+Assert-True ("async-worker" -notin $excludedRuntimePaths.Risks) "backend queue tests must not become async-worker risk"
+
 $backendBuild = Get-AcademyChangeRiskPlan `
     -BackendPaths @(
         "libs/queue/client.py",
@@ -108,6 +121,8 @@ $frontendBuild = Get-AcademyChangeRiskPlan `
         "package.json",
         "pnpm-lock.yaml",
         "vite.config.ts",
+        "tsconfig.json",
+        "eslint.config.js",
         "index.html"
     )
 Assert-Contains $frontendBuild.Risks "frontend-runtime-build" "frontend runtime/build paths must not remain diff-only"
@@ -115,6 +130,11 @@ Assert-Contains $frontendBuild.Gates "frontend-core" "frontend runtime/build pat
 Assert-Contains $frontendBuild.Gates "frontend-e2e" "frontend runtime/build paths must include E2E gates"
 Assert-Contains $frontendBuild.Gates "frontend-deployment-contracts" "frontend runtime/build paths must include deployment contracts"
 Assert-True (-not $frontendBuild.RequiresProductionReleaseBundle) "single-repository frontend build changes must not invent a backend release"
+
+$domainPath = Get-AcademyChangeRiskPlan `
+    -BackendPaths @("apps/domains/results/service.py") `
+    -FrontendPaths @()
+Assert-True ("async-worker" -notin $domainPath.Risks) "worker keywords must match exact path segments rather than the ai substring in domains"
 
 $crossRepositoryBuild = Get-AcademyChangeRiskPlan `
     -BackendPaths @("requirements/base.txt") `

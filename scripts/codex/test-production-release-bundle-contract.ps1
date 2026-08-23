@@ -31,7 +31,11 @@ $malformedLockReadbacks = @(
     [pscustomobject]@{ Item = [pscustomobject]@{ owner = [pscustomobject]@{ S = "ci-deploy:123:1" } } },
     [pscustomobject]@{ Item = [pscustomobject]@{ owner = [pscustomobject]@{ S = "ci-deploy:123:1" }; ttl = [pscustomobject]@{ N = "" } } },
     [pscustomobject]@{ Item = [pscustomobject]@{ owner = [pscustomobject]@{ S = "ci-deploy:123:1" }; ttl = [pscustomobject]@{ N = "not-an-integer" } } },
-    [pscustomobject]@{ Item = [pscustomobject]@{ owner = [pscustomobject]@{ S = "ci-deploy:123:1" }; ttl = [pscustomobject]@{ N = 101 } } }
+    [pscustomobject]@{ Item = [pscustomobject]@{ owner = [pscustomobject]@{ S = "ci-deploy:123:1" }; ttl = [pscustomobject]@{ N = 101 } } },
+    [pscustomobject]@{ Item = [pscustomobject]@{ owner = [pscustomobject]@{ S = "ci-deploy:123:1"; N = "unexpected" }; ttl = [pscustomobject]@{ N = "101" } } },
+    [pscustomobject]@{ Item = [pscustomobject]@{ owner = [pscustomobject]@{ S = "ci-deploy:123:1" }; ttl = [pscustomobject]@{ N = "101"; S = "unexpected" } } },
+    [pscustomobject]@{ Item = [pscustomobject]@{ owner = [pscustomobject]@{ S = "ci-deploy:123:1"; extra = "unexpected" }; ttl = [pscustomobject]@{ N = "101" } } },
+    [pscustomobject]@{ Item = [pscustomobject]@{ owner = [pscustomobject]@{ S = "ci-deploy:123:1" }; ttl = [pscustomobject]@{ N = "101"; extra = "unexpected" } } }
 )
 foreach ($malformedLockReadback in $malformedLockReadbacks) {
     Assert-Throws {

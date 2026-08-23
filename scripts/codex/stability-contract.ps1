@@ -44,32 +44,40 @@ function Get-AcademyChangeRiskPlan {
     $all = @($backend) + @($frontend)
     if (-not $all.Count) { throw "At least one changed backend or frontend path is required." }
 
-    $docsPattern = '^(docs/|agents\.md$)|(^|/)readme\.md$'
+    $docsPattern = '^(docs/)|(^|/)(agents|readme(?:[-_.][^/]*)?|conventions|contributing|security|code_of_conduct|changelog|license)\.md$'
     $backendTestPattern = '(^|/)__tests__(/|$)|(^|/)tests?(/|\.py$)|(^|/)test_[^/]+\.py$|_test\.py$'
     $frontendTestPattern = '^e2e/|(^|/)(__tests__|tests?)(/|$)|\.(spec|test)\.[^/]+$|(^|/)test\.[^/]+$'
     $backendProductPattern = '^(apps/|academy/|manage\.py$)'
     $backendRuntimeBuildPattern = '^(libs/|docker/|requirements/)'
     $frontendRuntimePattern = '^(src/|public/|functions/)'
-    $frontendRuntimeBuildPattern = '^(package\.json$|pnpm-lock\.yaml$|vite\.config\.[^/]+$|index\.html$)'
+    $frontendRuntimeBuildPattern = '^(package\.json$|pnpm-lock\.yaml$|vite\.config\.[^/]+$|tsconfig(?:\.[^/]+)?\.json$|eslint\.config\.[^/]+$|index\.html$)'
     $backendGovernancePattern = '^((\.github/workflows/)|(scripts/(v1|codex)/)|(docs/(operations|infrastructure)/))'
     $frontendGovernancePattern = '^((\.github/workflows/)|(scripts/guard-deployment-governance\.mjs$)|(scripts/guard-runtime)|(scripts/tests/(visual-audit-workflow|workspace-deployment-contract))|(docs/deployment-operations\.md$))'
     $docsOnly = -not [bool](@($all | Where-Object { $_ -notmatch $docsPattern }).Count)
     $backendProduct = Test-AnyPath $backend $backendProductPattern
-    $backendRuntimeBuild = Test-AnyPath $backend $backendRuntimeBuildPattern
-    $backendRuntime = [bool](@($backend | Where-Object {
+    $backendRuntimePaths = @($backend | Where-Object {
         (
             $_ -match $backendRuntimeBuildPattern -or
             $_ -match '^(apps/|academy/)'
-        ) -and $_ -notmatch $backendTestPattern
-    }).Count) -or $backendRuntimeBuild
-    $frontendRuntimeBuild = Test-AnyPath $frontend $frontendRuntimeBuildPattern
-    $frontendRuntime = [bool](@($frontend | Where-Object {
-        $_ -match $frontendRuntimePattern -and
+        ) -and
+        $_ -notmatch $docsPattern -and
+        $_ -notmatch $backendTestPattern
+    })
+    $backendRuntimeBuild = Test-AnyPath $backendRuntimePaths $backendRuntimeBuildPattern
+    $backendRuntime = [bool]$backendRuntimePaths.Count
+    $frontendRuntimePaths = @($frontend | Where-Object {
+        (
+            $_ -match $frontendRuntimePattern -or
+            $_ -match $frontendRuntimeBuildPattern
+        ) -and
+        $_ -notmatch $docsPattern -and
         $_ -notmatch $frontendTestPattern
-    }).Count) -or $frontendRuntimeBuild
+    })
+    $frontendRuntimeBuild = Test-AnyPath $frontendRuntimePaths $frontendRuntimeBuildPattern
+    $frontendRuntime = [bool]$frontendRuntimePaths.Count
     $frontendE2e = Test-AnyPath $frontend '^e2e/'
     $backendMigration = Test-AnyPath $backend '(^|/)migrations/'
-    $asyncWorker = Test-AnyPath $backend '^(apps/|academy/|libs/|docker/|requirements/).*(messaging|video|ai|tools|queue|worker)'
+    $asyncWorker = Test-AnyPath $backendRuntimePaths '(^|/)(messaging|video|ai|tools|queues?|workers?)(/|$)'
     $backendGovernance = Test-AnyPath $backend $backendGovernancePattern
     $frontendGovernance = Test-AnyPath $frontend $frontendGovernancePattern
     $crossRepositoryProduct = $backendRuntime -and $frontendRuntime
@@ -200,7 +208,11 @@ function Get-AcademyDeploymentLockState {
     }
     $ownerSProperty = $ownerAttribute.PSObject.Properties['S']
     $ttlNProperty = $ttlAttribute.PSObject.Properties['N']
-    if ($null -eq $ownerSProperty -or $ownerSProperty.Value -isnot [string] -or
+    $ownerAttributeProperties = @($ownerAttribute.PSObject.Properties | ForEach-Object { $_.Name })
+    $ttlAttributeProperties = @($ttlAttribute.PSObject.Properties | ForEach-Object { $_.Name })
+    if ($ownerAttributeProperties.Count -ne 1 -or $ownerAttributeProperties[0] -cne 'S' -or
+        $ttlAttributeProperties.Count -ne 1 -or $ttlAttributeProperties[0] -cne 'N' -or
+        $null -eq $ownerSProperty -or $ownerSProperty.Value -isnot [string] -or
         [string]::IsNullOrWhiteSpace([string]$ownerSProperty.Value) -or
         $null -eq $ttlNProperty -or $ttlNProperty.Value -isnot [string] -or
         [string]$ttlNProperty.Value -notmatch '^[0-9]+$') {

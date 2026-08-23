@@ -54,9 +54,12 @@ pwsh scripts/codex/get-change-risk-plan.ps1 `
 막는다. 테스트 개수나 mock E2E 성공만으로 PostgreSQL, tenant, worker, 운영 UI
 증거를 대체하지 않는다.
 
-문서와 명시적 테스트 경로 외의 변경은 알려진 제품/runtime/build/governance
-범주에 반드시 속해야 한다. 새 비문서 경로가 어느 범주에도 속하지 않으면
-diff-check만으로 통과시키지 않고 계획 생성을 거부한다.
+`docs/`, `AGENTS.md`, `README*.md`, `CONVENTIONS.md` 같은 관례적 문서와 명시적
+테스트 경로는 runtime/build 판정보다 먼저 제외한다. worker 위험은 `ai`, `queue`,
+`worker` 등의 정확한 경로 segment로만 판정한다. frontend의 `tsconfig*.json`과
+`eslint.config.*`는 runtime/build 설정으로 라우팅한다. 그 밖의 변경은 알려진
+제품/runtime/build/governance 범주에 반드시 속해야 하며, 새 비문서 경로가 어느
+범주에도 속하지 않으면 diff-check만으로 통과시키지 않고 계획 생성을 거부한다.
 
 ## 3. 작업 범위 계약
 
@@ -98,8 +101,9 @@ pwsh scripts/codex/assert-production-release-bundle.ps1 `
    `status: successful`을 갖고 exact backend SHA를 포함하는 현재
    `origin/main` descendant를 가리킨다.
 4. DynamoDB `__deployment_control_v2__` lock readback은 Item이 없거나,
-   nonblank `owner.S`와 정수 `ttl.N`을 정확히 갖는다. malformed Item은 inactive로
-   간주하지 않고 거부하며, 정상 Item은 만료된 경우에만 통과한다.
+   nonblank `owner.S`와 정수 `ttl.N`을 정확히 갖는다. 각 AttributeValue의 property
+   set도 owner는 `{S}`, ttl은 `{N}`만 허용하며 다른 type이나 추가 field가 있으면
+   malformed Item으로 거부한다. 정상 Item은 만료된 경우에만 통과한다.
 5. frontend run은 `Frontend Quality Gate`의 `main` push run이고
    `Deploy to Cloudflare Pages`, `E2E 왕복 테스트 + tenant availability`가
    성공했다.
