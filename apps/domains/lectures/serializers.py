@@ -11,10 +11,10 @@ class LectureSerializer(serializers.ModelSerializer):
         fields = [
             "id", "tenant", "title", "name", "subject", "description",
             "start_date", "end_date", "lecture_time",
-            "color", "chip_label", "is_active", "is_system",
+            "color", "chip_label", "is_active", "display_order", "is_system",
             "created_at", "updated_at",
         ]
-        read_only_fields = ["tenant"]
+        read_only_fields = ["tenant", "display_order"]
         ref_name = "Lecture"
 
     def validate(self, attrs):

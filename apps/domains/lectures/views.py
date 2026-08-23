@@ -30,7 +30,7 @@ from .serializers import (
     SectionAssignmentSerializer,
 )
 
-from apps.core.models import TenantMembership
+from apps.core.models import Tenant, TenantMembership
 from apps.api.common.query_params import parse_query_bool, parse_query_int
 from rest_framework.permissions import IsAuthenticated
 from apps.core.permissions import TenantResolvedAndStaff
@@ -126,7 +126,72 @@ class LectureViewSet(ModelViewSet):
         qs = enroll_repo.lecture_filter_tenant(tenant)
         if self.action == "list":
             qs = qs.exclude(is_system=True)
-        return qs.order_by("-created_at", "-id")
+        return qs.order_by("display_order", "id")
+
+    @action(detail=False, methods=["post"], url_path="reorder")
+    def reorder(self, request):
+        """Persist one active/past lecture scope as an exact tenant-local order."""
+        scope = str(request.data.get("scope", "")).upper()
+        if scope not in {"ACTIVE", "PAST"}:
+            raise ValidationError(
+                {"scope": "ACTIVE 또는 PAST만 사용할 수 있습니다."}
+            )
+
+        ordered_ids = request.data.get("ordered_ids")
+        if not isinstance(ordered_ids, list) or any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 1
+            for value in ordered_ids
+        ):
+            raise ValidationError(
+                {"ordered_ids": "강의 ID 정수 배열이 필요합니다."}
+            )
+        if len(ordered_ids) != len(set(ordered_ids)):
+            raise ValidationError(
+                {"ordered_ids": "중복 강의 ID는 사용할 수 없습니다."}
+            )
+
+        tenant = request.tenant
+        is_active = scope == "ACTIVE"
+        with transaction.atomic():
+            Tenant.objects.select_for_update().get(pk=tenant.pk)
+            tenant_rows = list(
+                Lecture.objects.select_for_update()
+                .filter(tenant=tenant)
+                .order_by("display_order", "id")
+            )
+            scope_rows = [
+                lecture
+                for lecture in tenant_rows
+                if not lecture.is_system and lecture.is_active is is_active
+            ]
+            expected_ids = [lecture.id for lecture in scope_rows]
+            if len(ordered_ids) != len(expected_ids) or set(ordered_ids) != set(expected_ids):
+                return Response(
+                    {
+                        "code": "LECTURE_ORDER_STALE",
+                        "message": "강의 목록이 변경되었습니다. 새 목록을 불러온 뒤 다시 시도해 주세요.",
+                    },
+                    status=http_status.HTTP_409_CONFLICT,
+                )
+
+            positions = sorted(lecture.display_order for lecture in scope_rows)
+            max_order = max(
+                (lecture.display_order for lecture in tenant_rows),
+                default=0,
+            )
+            temporary_start = max_order + len(scope_rows) + 1
+            by_id = {lecture.id: lecture for lecture in scope_rows}
+
+            for offset, lecture in enumerate(scope_rows):
+                Lecture.objects.filter(pk=lecture.pk).update(
+                    display_order=temporary_start + offset
+                )
+            for lecture_id, position in zip(ordered_ids, positions, strict=True):
+                Lecture.objects.filter(pk=lecture_id).update(display_order=position)
+                by_id[lecture_id].display_order = position
+
+        ordered_rows = [by_id[lecture_id] for lecture_id in ordered_ids]
+        return Response(self.get_serializer(ordered_rows, many=True).data)
 
     def _handle_title_integrity_error(self, e):
         """UniqueConstraint(tenant, title) 위반 시 사용자 친화적 에러 메시지 반환"""
