@@ -108,7 +108,7 @@ Current canonical entry points:
 | JSON bulk create | `import_students_from_rows()` |
 | Excel/worker import | `ExcelParsingService` -> `import_students_from_rows()` |
 | lecture/enrollment Excel import | `resolve_student_import_row()` |
-| signup approval | `approve_registration_request()` -> `create_student_account(password_hash=...)` |
+| signup approval | `approve_registration_request()` -> reuse exact active identity or `create_student_account(password_hash=...)` |
 | admin/student profile write | `update_student_profile()` |
 | deleted conflict restore/delete | `restore_student()` / `permanently_delete_students()` through import conflict resolver |
 
@@ -219,6 +219,18 @@ Current rules:
   "가입 신청 시 입력한 비밀번호" instead of exposing plaintext.
 - signup approval status transition and student creation are atomic in
   `approve_registration_request()`.
+- signup approval re-resolves the request against the current tenant before
+  creating anything. One exact active student graph is reused in place: the
+  request is linked and approved without changing the existing Student,
+  Parent, User, membership, `ps_number`, password, `token_version`, or pending
+  account-notice state. The approval result reports both passwords as
+  `변경되지 않음`.
+- multiple active matches, a deleted match, or a mismatched tenant/phone/account
+  graph fails closed with 409. A phone match in another tenant is never reused
+  or treated as a same-tenant identity.
+- `godmin` and `tchul` do not use student self-registration. Public create and
+  duplicate-check APIs and direct approval all fail closed with 403; existing
+  login and account-recovery flows remain available.
 - approval Alimtalk failure does not hide an already committed approval.
 - public ID/password recovery uses `/api/v1/auth/account-recovery/dispatch/`.
 - legacy public OTP password-find endpoints are sealed with 410 Gone.
@@ -237,6 +249,12 @@ Current rules:
   - pending reset is cleared;
   - Alimtalk delivery failure rolls back the password and pending-reset state.
 - password minimum length remains 4. Do not raise it.
+
+Focused verification:
+
+```powershell
+python -m pytest apps/domains/students/tests/test_registration_approval_identity.py -v
+```
 - automatic temporary password generation is 6 numeric digits for user handling,
   not a minimum-length policy change.
 

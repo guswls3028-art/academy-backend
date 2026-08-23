@@ -24,9 +24,23 @@ from ..serializers import (
     RegistrationRequestListSerializer,
 )
 from ..services import RegistrationApprovalError, RegistrationApprovalResult, approve_registration_request
+from ..services.registration_policy import is_student_self_registration_enabled
 from .student_views import StudentListPagination
 
 logger = logging.getLogger(__name__)
+
+
+def _self_registration_disabled_response(request):
+    tenant = getattr(request, "tenant", None)
+    if tenant is not None and not is_student_self_registration_enabled(tenant):
+        return Response(
+            {
+                "code": "self_registration_disabled",
+                "detail": "이 학원은 운영정책상 학생 회원가입을 사용하지 않습니다.",
+            },
+            status=403,
+        )
+    return None
 
 
 # ======================================================
@@ -124,6 +138,9 @@ class RegistrationRequestViewSet(ModelViewSet):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"detail": "테넌트를 확인할 수 없습니다."}, status=403)
+        disabled = _self_registration_disabled_response(request)
+        if disabled is not None:
+            return disabled
 
         username = (request.data.get("username") or "").strip()
         phone = (request.data.get("phone") or "").strip().replace("-", "")
@@ -186,6 +203,9 @@ class RegistrationRequestViewSet(ModelViewSet):
                 {"detail": "테넌트를 확인할 수 없습니다. 로그인 URL(테넌트 코드 포함)로 접속했는지 확인해 주세요."},
                 status=403,
             )
+        disabled = _self_registration_disabled_response(request)
+        if disabled is not None:
+            return disabled
         serializer = self.get_serializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
 
