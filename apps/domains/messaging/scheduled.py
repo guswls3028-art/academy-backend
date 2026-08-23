@@ -141,15 +141,32 @@ def create_notification_outboxes(
     if not notifications:
         return []
     with transaction.atomic():
-        return [
-            _create_scheduled_notification_unlocked(
+        from apps.domains.messaging.observers import (
+            build_messaging_observer_payloads,
+            get_messaging_observer_recipients,
+        )
+
+        observer_recipients = get_messaging_observer_recipients(tenant_id)
+        original_outboxes = []
+        for item in notifications:
+            original_outbox = _create_scheduled_notification_unlocked(
                 tenant_id=tenant_id,
                 trigger=item["trigger"],
                 send_at=item["send_at"],
                 payload=item["payload"],
             )
-            for item in notifications
-        ]
+            original_outboxes.append(original_outbox)
+            for observer_payload in build_messaging_observer_payloads(
+                original_outbox=original_outbox,
+                recipients=observer_recipients,
+            ):
+                _create_scheduled_notification_unlocked(
+                    tenant_id=tenant_id,
+                    trigger=item["trigger"],
+                    send_at=item["send_at"],
+                    payload=observer_payload,
+                )
+        return original_outboxes
 
 
 def _create_scheduled_notification(
@@ -264,11 +281,23 @@ def dispatch_notification_now(
         trigger=trigger,
         payload=payload,
     )
+
     def _dispatch_after_commit() -> None:
         try:
+            notification_ids = list(
+                ScheduledNotification.objects.filter(
+                    Q(pk=notification.id)
+                    | Q(
+                        origin_type="messaging_observer",
+                        origin_id=f"outbox:{notification.id}",
+                    )
+                )
+                .order_by("id")
+                .values_list("id", flat=True)
+            )
             process_due_notifications(
-                batch_size=1,
-                notification_ids=[notification.id],
+                batch_size=len(notification_ids),
+                notification_ids=notification_ids,
             )
         except Exception:
             logger.exception(

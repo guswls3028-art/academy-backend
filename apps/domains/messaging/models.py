@@ -368,6 +368,32 @@ class AutoSendConfig(models.Model):
             })
 
 
+class MessagingObserver(models.Model):
+    """Tenant member who receives an audited copy of every new Alimtalk."""
+
+    tenant = models.ForeignKey(
+        "core.Tenant",
+        on_delete=models.CASCADE,
+        related_name="messaging_observers",
+    )
+    user = models.ForeignKey(
+        "core.User",
+        on_delete=models.CASCADE,
+        related_name="messaging_observer_assignments",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        app_label = "messaging"
+        ordering = ["tenant_id", "user_id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "user"],
+                name="uniq_messaging_observer_tenant_user",
+            ),
+        ]
+
+
 class ScheduledNotification(models.Model):
     """
     예약/지연 발송 대기열.
