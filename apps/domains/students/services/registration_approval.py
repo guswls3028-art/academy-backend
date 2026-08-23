@@ -165,11 +165,9 @@ def _resolve_existing_student(*, tenant, reg: StudentRegistrationRequest) -> Stu
     User = get_user_model()
     # #277 identity lifecycle contract: lock persisted User before Student.
     locked_user = User.objects.select_for_update().get(pk=candidate["user_id"])
-    student = (
-        Student.objects.select_for_update()
-        .select_related("parent__user")
-        .get(pk=candidate["id"])
-    )
+    # Keep nullable Parent/User joins out of the locking query; PostgreSQL
+    # rejects FOR UPDATE on the nullable side of an outer join.
+    student = Student.objects.select_for_update().get(pk=candidate["id"])
     if not Student.objects.filter(pk=student.pk, tenant=tenant).filter(identity_query).exists():
         raise RegistrationApprovalError(
             "기존 학생 식별정보가 승인 중 변경되었습니다. 다시 확인해 주세요.",
