@@ -134,6 +134,18 @@ class HomeworkSubmissionMediaCollectionView(APIView):
             homework_id=int(homework_id),
             enrollment_id=enrollment_id,
         )
+        if homework_submission_is_teacher_reviewed(
+            tenant=tenant,
+            enrollment_id=enrollment_id,
+            homework_id=int(homework_id),
+        ):
+            return Response(
+                {
+                    "code": "HOMEWORK_MEDIA_REVIEWED",
+                    "detail": "선생님 검수가 끝난 과제 파일은 변경할 수 없습니다.",
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
         upload_file = request.FILES.get("file")
         if not upload_file:
             raise ValidationError({"file": "파일을 선택해 주세요."})

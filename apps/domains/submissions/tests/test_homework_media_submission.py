@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from unittest.mock import patch
 
+from django.apps import apps as django_apps
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db.models.query import QuerySet
@@ -548,6 +549,75 @@ class HomeworkSubmissionMediaTests(TestCase):
 
         self.assertEqual(response.status_code, 409, response.data)
         self.assertEqual(response.data["code"], "HOMEWORK_MEDIA_REVIEWED")
+
+    @patch("apps.domains.submissions.services.homework_media.upload_fileobj_to_r2")
+    def test_student_upload_is_locked_after_teacher_score_before_object_or_row_write(
+        self,
+        upload_fileobj_to_r2,
+    ):
+        Submission.objects.create(
+            tenant=self.tenant,
+            user=self.student_user,
+            enrollment=self.enrollment,
+            target_type=Submission.TargetType.HOMEWORK,
+            target_id=self.homework.id,
+            source=Submission.Source.HOMEWORK_IMAGE,
+            status=Submission.Status.SUBMITTED,
+        )
+        create_homework_score_fixture(
+            enrollment=self.enrollment,
+            session=self.session,
+            homework=self.homework,
+            score=10,
+            max_score=10,
+            passed=True,
+            attempt_index=1,
+        )
+        submission_count = Submission.objects.count()
+        media_count = SubmissionMedia.objects.count()
+
+        response = self._post(file=_jpeg("reviewed-score.jpg"))
+
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertEqual(response.data["code"], "HOMEWORK_MEDIA_REVIEWED")
+        upload_fileobj_to_r2.assert_not_called()
+        self.assertEqual(Submission.objects.count(), submission_count)
+        self.assertEqual(SubmissionMedia.objects.count(), media_count)
+
+    @patch("apps.domains.submissions.services.homework_media.upload_fileobj_to_r2")
+    def test_student_upload_is_locked_after_completed_correction_with_historic_parent(
+        self,
+        upload_fileobj_to_r2,
+    ):
+        AssessmentCorrection = django_apps.get_model("progress", "AssessmentCorrection")
+        Submission.objects.create(
+            tenant=self.tenant,
+            user=self.student_user,
+            enrollment=self.enrollment,
+            target_type=Submission.TargetType.HOMEWORK,
+            target_id=self.homework.id,
+            source=Submission.Source.HOMEWORK_IMAGE,
+            status=Submission.Status.DONE,
+        )
+        AssessmentCorrection.objects.create(
+            tenant=self.tenant,
+            enrollment=self.enrollment,
+            session=self.session,
+            source_type=AssessmentCorrection.SourceType.HOMEWORK,
+            source_id=self.homework.id,
+            completed=True,
+            updated_by=self.teacher,
+        )
+        submission_count = Submission.objects.count()
+        media_count = SubmissionMedia.objects.count()
+
+        response = self._post(file=_jpeg("reviewed-correction.jpg"))
+
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertEqual(response.data["code"], "HOMEWORK_MEDIA_REVIEWED")
+        upload_fileobj_to_r2.assert_not_called()
+        self.assertEqual(Submission.objects.count(), submission_count)
+        self.assertEqual(SubmissionMedia.objects.count(), media_count)
 
     @patch("apps.domains.submissions.services.homework_media.upload_fileobj_to_r2")
     def test_student_cannot_remove_another_students_file(
