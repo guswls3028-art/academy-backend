@@ -245,22 +245,13 @@ def toggle_student_learning_access(
                 session=session,
             ).delete()
     elif target_type == "exam":
-        exam = (
-            Exam.objects
-            .filter(id=target_id, tenant=tenant, sessions__lecture=lecture)
-            .distinct()
-            .first()
-        )
+        exam = Exam.objects.filter(id=target_id, tenant=tenant, sessions__lecture=lecture).distinct().first()
         if exam is None:
             raise NotFound("시험을 찾을 수 없습니다")
 
         if action == "add":
             first_session_id = (
-                exam.sessions
-                .filter(lecture=lecture)
-                .order_by("order", "id")
-                .values_list("id", flat=True)
-                .first()
+                exam.sessions.filter(lecture=lecture).order_by("order", "id").values_list("id", flat=True).first()
             )
             if first_session_id:
                 SessionEnrollment.objects.get_or_create(
@@ -273,8 +264,7 @@ def toggle_student_learning_access(
             ExamEnrollment.objects.filter(exam=exam, enrollment=enrollment).delete()
     elif target_type == "homework":
         homework = (
-            Homework.objects
-            .select_related("session", "session__lecture")
+            Homework.objects.select_related("session", "session__lecture")
             .filter(id=target_id, tenant=tenant, session__lecture=lecture)
             .first()
         )

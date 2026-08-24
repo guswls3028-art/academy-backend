@@ -38,7 +38,7 @@ class TeacherOpsConfirmRowSerializer(serializers.Serializer):
     parent_phone = serializers.CharField(max_length=32, allow_blank=True, required=False)
     school = serializers.CharField(max_length=255, allow_blank=True, required=False)
     school_type = serializers.ChoiceField(
-        choices=["ELEMENTARY", "MIDDLE", "HIGH"],
+        choices=[("ELEMENTARY", "초등"), ("MIDDLE", "중등"), ("HIGH", "고등")],
         required=False,
         default="HIGH",
     )

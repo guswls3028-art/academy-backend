@@ -14,23 +14,28 @@ from django.db.models import Q
 from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
-from apps.domains.attendance.models import Attendance
-from apps.domains.attendance.services import ensure_session_roster_membership
-from apps.domains.enrollment.models import Enrollment
-from apps.domains.enrollment.services.lifecycle import (
+from apps.support.teacher_app.ops_assistant_dependencies import (
+    AccessMode,
+    Attendance,
+    Enrollment,
+    Lecture,
+    Session,
+    Student,
+    StudentIdentityError,
+    StudentProfileUpdateError,
+    Video,
+    VideoAccess,
     assess_disposable_enrollment,
     bulk_create_enrollments,
+    ensure_session_roster_membership,
     delete_disposable_enrollment,
+    get_auto_send_config,
+    get_owner_tenant_id,
+    normalize_student_phone,
+    resolve_access_mode,
+    resolve_student_import_row,
+    update_student_profile,
 )
-from apps.domains.lectures.models import Lecture, Session
-from apps.domains.messaging.policy import get_owner_tenant_id
-from apps.domains.messaging.selectors import get_auto_send_config
-from apps.domains.students.models import Student
-from apps.domains.students.services.identity import StudentIdentityError, normalize_student_phone
-from apps.domains.students.services.import_students import resolve_student_import_row
-from apps.domains.students.services.profile import StudentProfileUpdateError, update_student_profile
-from apps.domains.video.models import AccessMode, Video, VideoAccess
-from apps.domains.video.services.access_resolver import resolve_access_mode
 
 
 PROPOSAL_SALT = "teacher-ops-assistant-v2"
@@ -66,7 +71,11 @@ def _account_notice_template_issues(*, student_phone: str, parent_phone: str) ->
             missing.append(trigger)
     if not missing:
         return []
-    return [_issue("account_notice_template_missing", "승인된 학생·학부모 초기 안내 알림톡 템플릿이 없어 실행할 수 없습니다.")]
+    return [
+        _issue(
+            "account_notice_template_missing", "승인된 학생·학부모 초기 안내 알림톡 템플릿이 없어 실행할 수 없습니다."
+        )
+    ]
 
 
 def _student_school(student: Student) -> str:
@@ -80,12 +89,14 @@ def _student_school(student: Student) -> str:
 
 def _active_lecture_queryset(*, tenant):
     today = timezone.localdate()
-    return Lecture.objects.filter(
-        tenant=tenant,
-        is_active=True,
-        is_system=False,
-    ).filter(Q(start_date__isnull=True) | Q(start_date__lte=today)).filter(
-        Q(end_date__isnull=True) | Q(end_date__gte=today)
+    return (
+        Lecture.objects.filter(
+            tenant=tenant,
+            is_active=True,
+            is_system=False,
+        )
+        .filter(Q(start_date__isnull=True) | Q(start_date__lte=today))
+        .filter(Q(end_date__isnull=True) | Q(end_date__gte=today))
     )
 
 
@@ -144,15 +155,23 @@ def _student_match(*, tenant, row: dict) -> tuple[dict, list[dict], list[str]]:
     issues.extend(phone_issues)
     issues.extend(parent_issues)
     if not student_phone and not parent_phone:
-        issues.append(_issue("identity_evidence_missing", "이름만으로는 실행할 수 없습니다. 학생 또는 학부모 번호를 확인해 주세요."))
+        issues.append(
+            _issue(
+                "identity_evidence_missing", "이름만으로는 실행할 수 없습니다. 학생 또는 학부모 번호를 확인해 주세요."
+            )
+        )
 
     active = Student.objects.filter(tenant=tenant, deleted_at__isnull=True).select_related("user")
-    phone_collisions = list(
-        active.filter(Q(phone=student_phone) | Q(parent_phone=parent_phone)).order_by("id")[:3]
-    ) if student_phone or parent_phone else []
+    phone_collisions = (
+        list(active.filter(Q(phone=student_phone) | Q(parent_phone=parent_phone)).order_by("id")[:3])
+        if student_phone or parent_phone
+        else []
+    )
     different_name = [candidate for candidate in phone_collisions if candidate.name != name]
     if different_name:
-        issues.append(_issue("phone_conflict", "전화번호가 다른 이름의 기존 학생과 겹칩니다. 학생 목록에서 확인해 주세요."))
+        issues.append(
+            _issue("phone_conflict", "전화번호가 다른 이름의 기존 학생과 겹칩니다. 학생 목록에서 확인해 주세요.")
+        )
         return {"status": "conflict", "id": None, "basis": []}, issues, profile_changes
 
     exact = []
@@ -163,14 +182,18 @@ def _student_match(*, tenant, row: dict) -> tuple[dict, list[dict], list[str]]:
             exact.append(candidate)
     exact_ids = {candidate.id for candidate in exact}
     if len(exact_ids) > 1:
-        issues.append(_issue("student_ambiguous", "일치하는 기존 학생이 여러 명입니다. 학생 목록에서 중복을 정리해 주세요."))
+        issues.append(
+            _issue("student_ambiguous", "일치하는 기존 학생이 여러 명입니다. 학생 목록에서 중복을 정리해 주세요.")
+        )
         return {"status": "ambiguous", "id": None, "basis": []}, issues, profile_changes
     if exact:
         student = exact[0]
         requested_school = _normalized_search(str(row.get("school") or ""))
         stored_school = _normalized_search(_student_school(student))
         if requested_school and stored_school and requested_school != stored_school:
-            issues.append(_issue("school_conflict", "사진의 학교와 기존 학생의 학교가 다릅니다. 학생 목록에서 확인해 주세요."))
+            issues.append(
+                _issue("school_conflict", "사진의 학교와 기존 학생의 학교가 다릅니다. 학생 목록에서 확인해 주세요.")
+            )
         if student.phone and student_phone and student.phone != student_phone:
             issues.append(_issue("student_phone_conflict", "기존 학생 전화번호와 사진의 번호가 다릅니다."))
         if student.parent_phone and parent_phone and student.parent_phone != parent_phone:
@@ -197,7 +220,9 @@ def _student_match(*, tenant, row: dict) -> tuple[dict, list[dict], list[str]]:
         deleted = deleted.none()
     deleted_matches = list(deleted.order_by("id")[:2])
     if len(deleted_matches) > 1:
-        issues.append(_issue("deleted_student_ambiguous", "일치하는 삭제 학생이 여러 명입니다. 학생 목록에서 복원해 주세요."))
+        issues.append(
+            _issue("deleted_student_ambiguous", "일치하는 삭제 학생이 여러 명입니다. 학생 목록에서 복원해 주세요.")
+        )
         return {"status": "ambiguous", "id": None, "basis": []}, issues, profile_changes
     if deleted_matches:
         return {"status": "restore", "id": deleted_matches[0].id, "basis": ["name", "phone"]}, issues, profile_changes
@@ -209,7 +234,9 @@ def _student_match(*, tenant, row: dict) -> tuple[dict, list[dict], list[str]]:
     return {"status": "new", "id": None, "basis": ["no_existing_match"]}, issues, profile_changes
 
 
-def _session_target(*, tenant, lecture_id: int | None, session_order: int | None) -> tuple[dict | None, list[dict], list[dict]]:
+def _session_target(
+    *, tenant, lecture_id: int | None, session_order: int | None
+) -> tuple[dict | None, list[dict], list[dict]]:
     if not lecture_id or not session_order:
         return None, [], []
     sessions = list(
@@ -221,9 +248,15 @@ def _session_target(*, tenant, lecture_id: int | None, session_order: int | None
         ).select_related("section", "lecture")
     )
     if len(sessions) != 1:
-        return None, [], [_issue("session_ambiguous", "해당 회차가 없거나 반별 차시가 여러 개입니다. 정확한 차시를 선택해 주세요.")]
+        return (
+            None,
+            [],
+            [_issue("session_ambiguous", "해당 회차가 없거나 반별 차시가 여러 개입니다. 정확한 차시를 선택해 주세요.")],
+        )
     session = sessions[0]
-    videos = list(Video.objects.filter(tenant=tenant, session=session, status=Video.Status.READY).order_by("order", "id"))
+    videos = list(
+        Video.objects.filter(tenant=tenant, session=session, status=Video.Status.READY).order_by("order", "id")
+    )
     return (
         {"id": session.id, "label": session.display_label},
         [{"id": video.id, "title": video.title} for video in videos],
@@ -235,9 +268,11 @@ def _correction_options(*, tenant, student_id: int | None, selected_lecture_id: 
     if not student_id:
         return []
     options = []
-    enrollments = Enrollment.objects.filter(
-        tenant=tenant, student_id=student_id, status="ACTIVE"
-    ).exclude(lecture_id=selected_lecture_id).select_related("lecture")
+    enrollments = (
+        Enrollment.objects.filter(tenant=tenant, student_id=student_id, status="ACTIVE")
+        .exclude(lecture_id=selected_lecture_id)
+        .select_related("lecture")
+    )
     for enrollment in enrollments.order_by("lecture__title", "id"):
         impact = assess_disposable_enrollment(tenant=tenant, enrollment=enrollment).as_dict()
         options.append({"enrollment_id": enrollment.id, "lecture_title": enrollment.lecture.title, "impact": impact})
@@ -305,7 +340,11 @@ def build_preview_row(*, tenant, source_row: dict, override: dict | None = None)
             if selected_correction is None:
                 issues.append(_issue("correction_out_of_scope", "교정할 수강이 현재 학생의 다른 활성 수강이 아닙니다."))
             elif not selected_correction["impact"]["can_remove"]:
-                issues.append(_issue("correction_has_protected_data", "학습·결제·사용자 입력 데이터가 있어 자동 교정할 수 없습니다."))
+                issues.append(
+                    _issue(
+                        "correction_has_protected_data", "학습·결제·사용자 입력 데이터가 있어 자동 교정할 수 없습니다."
+                    )
+                )
 
     return {
         "row_id": row["row_id"],
@@ -347,7 +386,9 @@ def _state_fingerprint(*, tenant) -> str:
             .values_list("id", "updated_at", "deleted_at", "phone", "parent_phone", "ps_number")
         ),
         "enrollments": list(
-            Enrollment.objects.filter(tenant=tenant).order_by("id").values_list("id", "updated_at", "status", "student_id", "lecture_id")
+            Enrollment.objects.filter(tenant=tenant)
+            .order_by("id")
+            .values_list("id", "updated_at", "status", "student_id", "lecture_id")
         ),
         "lectures": list(
             _active_lecture_queryset(tenant=tenant).order_by("id").values_list("id", "updated_at", "title")
@@ -407,7 +448,9 @@ def _assert_confirmed_row(*, tenant, source_row: dict, override: dict) -> dict:
     override["warnings"] = source_row.get("warnings", [])
     preview = build_preview_row(tenant=tenant, source_row=override)
     if not preview["can_confirm"]:
-        raise ValidationError({"code": "proposal_needs_review", "detail": "확인이 필요한 항목이 남아 있습니다.", "row": preview})
+        raise ValidationError(
+            {"code": "proposal_needs_review", "detail": "확인이 필요한 항목이 남아 있습니다.", "row": preview}
+        )
     return {**override, "preview": preview}
 
 
@@ -454,24 +497,27 @@ def execute_proposal(*, tenant, actor, payload: dict, overrides: list[dict]) -> 
             if row["preview"].get("session_target")
         }
         video_lock_ids = {
-            int(target["id"])
-            for row in confirmed_rows
-            for target in row["preview"].get("video_targets", [])
+            int(target["id"]) for row in confirmed_rows for target in row["preview"].get("video_targets", [])
         }
         correction_lock_ids = {
-            int(row["remove_enrollment_id"])
-            for row in confirmed_rows
-            if row.get("remove_enrollment_id")
+            int(row["remove_enrollment_id"]) for row in confirmed_rows if row.get("remove_enrollment_id")
         }
         list(Student.objects.select_for_update().filter(tenant=tenant, id__in=student_lock_ids))
-        list(Enrollment.objects.select_for_update().filter(tenant=tenant).filter(
-            Q(id__in=correction_lock_ids) | Q(student_id__in=student_lock_ids, lecture_id__in=lecture_lock_ids)
-        ))
+        list(
+            Enrollment.objects.select_for_update()
+            .filter(tenant=tenant)
+            .filter(Q(id__in=correction_lock_ids) | Q(student_id__in=student_lock_ids, lecture_id__in=lecture_lock_ids))
+        )
         list(Lecture.objects.select_for_update().filter(tenant=tenant, id__in=lecture_lock_ids))
         list(Session.objects.select_for_update().filter(lecture__tenant=tenant, id__in=session_lock_ids))
         list(Video.objects.select_for_update().filter(tenant=tenant, id__in=video_lock_ids))
         if _state_fingerprint(tenant=tenant) != payload.get("state_fingerprint"):
-            raise ValidationError({"code": "proposal_drift", "detail": "검토 후 학생·강의 상태가 바뀌었습니다. 사진을 다시 분석해 주세요."})
+            raise ValidationError(
+                {
+                    "code": "proposal_drift",
+                    "detail": "검토 후 학생·강의 상태가 바뀌었습니다. 사진을 다시 분석해 주세요.",
+                }
+            )
 
         for row in confirmed_rows:
             preview = row["preview"]
@@ -481,8 +527,10 @@ def execute_proposal(*, tenant, actor, payload: dict, overrides: list[dict]) -> 
             restored = False
             profile_changed: list[str] = []
             if match["status"] == "existing":
-                student = Student.objects.select_for_update().select_related("user").get(
-                    tenant=tenant, deleted_at__isnull=True, id=match["id"]
+                student = (
+                    Student.objects.select_for_update()
+                    .select_related("user")
+                    .get(tenant=tenant, deleted_at__isnull=True, id=match["id"])
                 )
                 get_user_model().objects.select_for_update().get(pk=student.user_id)
                 update_data: dict[str, Any] = {}
@@ -539,14 +587,15 @@ def execute_proposal(*, tenant, actor, payload: dict, overrides: list[dict]) -> 
             notice_origin_id = ""
             notice_expected = 0
             if row.get("enroll_lecture") or row.get("open_video"):
-                existing_enrollment = Enrollment.objects.select_for_update().filter(
-                    tenant=tenant, student=student, lecture_id=lecture_id
-                ).first()
+                existing_enrollment = (
+                    Enrollment.objects.select_for_update()
+                    .filter(tenant=tenant, student=student, lecture_id=lecture_id)
+                    .first()
+                )
                 enrollment_created = existing_enrollment is None or existing_enrollment.status != "ACTIVE"
                 notice_origin_id = str(student.pending_account_notice_origin_id or "")
                 notice_expected = (
-                    int(bool(student.parent_phone))
-                    + int(bool(student.phone) and student.phone != student.parent_phone)
+                    int(bool(student.parent_phone)) + int(bool(student.phone) and student.phone != student.parent_phone)
                     if student.pending_account_notice_since
                     else 0
                 )
@@ -567,18 +616,31 @@ def execute_proposal(*, tenant, actor, payload: dict, overrides: list[dict]) -> 
                 if attendance.status not in {"UNSET", "ONLINE"}:
                     raise ValidationError("이미 기록된 오프라인 출결이 있어 ONLINE으로 자동 변경할 수 없습니다.")
                 if attendance.status == "UNSET" and any(
-                    (attendance.memo, attendance.planned_arrival_date, attendance.planned_arrival_time, attendance.attended_section_id)
+                    (
+                        attendance.memo,
+                        attendance.planned_arrival_date,
+                        attendance.planned_arrival_time,
+                        attendance.attended_section_id,
+                    )
                 ):
                     raise ValidationError("출결에 사용자 입력이 있어 ONLINE으로 자동 변경할 수 없습니다.")
                 if attendance.status != "ONLINE":
                     attendance.status = "ONLINE"
                     attendance.save(update_fields=["status"])
                 target_ids = {target["id"] for target in preview["video_targets"]}
-                videos = list(Video.objects.select_for_update().filter(tenant=tenant, id__in=target_ids, session=session, status=Video.Status.READY))
+                videos = list(
+                    Video.objects.select_for_update().filter(
+                        tenant=tenant, id__in=target_ids, session=session, status=Video.Status.READY
+                    )
+                )
                 if {video.id for video in videos} != target_ids:
                     raise ValidationError("영상 상태가 바뀌었습니다. 사진을 다시 분석해 주세요.")
                 for video in videos:
-                    blocked = VideoAccess.objects.select_for_update().filter(video=video, enrollment=enrollment, access_mode=AccessMode.BLOCKED).first()
+                    blocked = (
+                        VideoAccess.objects.select_for_update()
+                        .filter(video=video, enrollment=enrollment, access_mode=AccessMode.BLOCKED)
+                        .first()
+                    )
                     if blocked:
                         blocked.access_mode = AccessMode.PROCTORED_CLASS
                         blocked.rule = "once"
@@ -589,7 +651,11 @@ def execute_proposal(*, tenant, actor, payload: dict, overrides: list[dict]) -> 
                         raise ValidationError("ONLINE 출결과 영상 수업 권한이 일치하지 않습니다.")
                     videos_evidence.append({"video_id": video.id, "access_mode": mode, "monitoring": True})
                     video_ids.append(video.id)
-                attendance_evidence = {"attendance_id": attendance.id, "status": attendance.status, "session_id": session.id}
+                attendance_evidence = {
+                    "attendance_id": attendance.id,
+                    "status": attendance.status,
+                    "session_id": session.id,
+                }
 
             account_notice = {
                 "requested": bool(row.get("send_account_notice")),
@@ -599,21 +665,34 @@ def execute_proposal(*, tenant, actor, payload: dict, overrides: list[dict]) -> 
             }
             if row.get("send_account_notice"):
                 if notice_expected:
-                    account_notice.update(state="queued", origin_id=notice_origin_id, expected_recipients=notice_expected)
+                    account_notice.update(
+                        state="queued", origin_id=notice_origin_id, expected_recipients=notice_expected
+                    )
                 else:
                     account_notice["state"] = "unavailable_without_pending_credentials"
 
-            active_correct = Enrollment.objects.filter(
-                tenant=tenant, student=student, lecture_id=lecture_id, status="ACTIVE"
-            ).count() if lecture_id else 0
+            active_correct = (
+                Enrollment.objects.filter(
+                    tenant=tenant, student=student, lecture_id=lecture_id, status="ACTIVE"
+                ).count()
+                if lecture_id
+                else 0
+            )
             results.append(
                 {
                     "row_id": row["row_id"],
                     "student_ref": student.id,
                     "account_creation": "created" if created else "not_created",
                     "account_restored": restored,
-                    "profile_link": {"state": "updated" if profile_changed else "unchanged", "changed_fields": profile_changed},
-                    "enrollment": {"state": "created" if enrollment_created else "already_active", "correct_active_count": active_correct, "wrong_active_removed": bool(correction)},
+                    "profile_link": {
+                        "state": "updated" if profile_changed else "unchanged",
+                        "changed_fields": profile_changed,
+                    },
+                    "enrollment": {
+                        "state": "created" if enrollment_created else "already_active",
+                        "correct_active_count": active_correct,
+                        "wrong_active_removed": bool(correction),
+                    },
                     "correction": correction,
                     "attendance": attendance_evidence,
                     "video_access": videos_evidence,

@@ -144,13 +144,15 @@ def parse_teacher_ops_text(*, ocr_text: str, message: str) -> ExtractedTeacherOp
     session_match = _SESSION_RE.search(combined)
     session_order = int(session_match.group(1)) if session_match else None
     register_student = any(word in combined for word in ("학생등록", "학생 등록", "신규", "등록", "입반"))
-    open_video = "영상" in combined and any(
-        word in combined for word in ("권한", "열어", "신청", "시청", "영상")
+    open_video = "영상" in combined and any(word in combined for word in ("권한", "열어", "신청", "시청", "영상"))
+    enroll_lecture = (
+        any(word in combined for word in ("입반", "수강", "강의 등록"))
+        or (register_student and bool(lecture_hint))
+        or open_video
     )
-    enroll_lecture = any(word in combined for word in ("입반", "수강", "강의 등록")) or (
-        register_student and bool(lecture_hint)
-    ) or open_video
-    send_account_notice = any(word in combined for word in ("초기 안내", "계정 안내", "아이디", "비밀번호", "로그인 안내"))
+    send_account_notice = any(
+        word in combined for word in ("초기 안내", "계정 안내", "아이디", "비밀번호", "로그인 안내")
+    )
     # 삭제·교정 의도는 사진 문구가 아니라 로그인한 교사의 현재 요청에서만 읽는다.
     correct_enrollment = any(word in str(message or "") for word in ("잘못", "교정", "옮겨", "수강 취소", "등록 취소"))
     school, school_type, grade = _school_fields(lecture_hint)
@@ -183,7 +185,9 @@ def parse_teacher_ops_text(*, ocr_text: str, message: str) -> ExtractedTeacherOp
     )
 
 
-def inherit_previous_intent(*, row: ExtractedTeacherOpsRow, message: str, previous_row: dict | None) -> ExtractedTeacherOpsRow:
+def inherit_previous_intent(
+    *, row: ExtractedTeacherOpsRow, message: str, previous_row: dict | None
+) -> ExtractedTeacherOpsRow:
     """Copy only the prior operation intent for phrases such as '이 친구도'."""
     compact = re.sub(r"\s+", "", str(message or ""))
     if previous_row is None or not any(word in compact for word in ("이친구도", "얘도", "이학생도", "같이")):

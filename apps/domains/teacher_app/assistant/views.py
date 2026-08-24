@@ -6,6 +6,7 @@ import uuid
 
 from django.db import transaction
 from django.utils import timezone
+from drf_spectacular.utils import OpenApiParameter, OpenApiTypes, extend_schema
 from rest_framework import status
 from rest_framework.exceptions import APIException, ValidationError
 from rest_framework.parsers import FormParser, MultiPartParser
@@ -16,7 +17,7 @@ from rest_framework.views import APIView
 from apps.core.models import OpsAuditLog
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.teacher_app.models import TeacherOpsExecution
-from apps.domains.messaging.models import NotificationLog, ScheduledNotification
+from apps.support.teacher_app.ops_assistant_dependencies import NotificationLog, ScheduledNotification
 
 from .extraction import inherit_previous_intent, ocr_teacher_ops_image, parse_teacher_ops_text
 from .serializers import TeacherOpsAnalyzeSerializer, TeacherOpsConfirmSerializer
@@ -55,6 +56,7 @@ class TeacherOpsAnalyzeView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
     parser_classes = [MultiPartParser, FormParser]
 
+    @extend_schema(request=TeacherOpsAnalyzeSerializer, responses={200: OpenApiTypes.OBJECT})
     def post(self, request):
         serializer = TeacherOpsAnalyzeSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -91,10 +93,7 @@ class TeacherOpsAnalyzeView(APIView):
                 image_sha256=image_sha256,
                 source_rows=source_rows,
             )
-            preview_rows = [
-                build_preview_row(tenant=request.tenant, source_row=row)
-                for row in source_rows
-            ]
+            preview_rows = [build_preview_row(tenant=request.tenant, source_row=row) for row in source_rows]
             OpsAuditLog.objects.create(
                 **_audit_context(request),
                 action="teacher_ops_assistant.analyze",
@@ -133,6 +132,7 @@ class TeacherOpsAnalyzeView(APIView):
 class TeacherOpsConfirmView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
+    @extend_schema(request=TeacherOpsConfirmSerializer, responses={200: OpenApiTypes.OBJECT})
     def post(self, request):
         serializer = TeacherOpsConfirmSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -179,9 +179,7 @@ class TeacherOpsConfirmView(APIView):
                 receipt.error_code = ""
                 receipt.result = {}
                 receipt.completed_at = None
-                receipt.save(
-                    update_fields=["status", "error_code", "result", "completed_at", "updated_at"]
-                )
+                receipt.save(update_fields=["status", "error_code", "result", "completed_at", "updated_at"])
 
         try:
             result = execute_proposal(
@@ -228,6 +226,16 @@ class TeacherOpsConfirmView(APIView):
 class TeacherOpsExecutionStatusView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                "execution_id",
+                OpenApiTypes.UUID,
+                OpenApiParameter.PATH,
+            )
+        ],
+        responses={200: OpenApiTypes.OBJECT},
+    )
     def get(self, request, execution_id):
         receipt = TeacherOpsExecution.objects.filter(
             id=execution_id,

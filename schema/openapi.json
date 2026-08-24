@@ -14904,6 +14904,116 @@
         ],
         "type": "object"
       },
+      "TeacherOpsAnalyzeRequest": {
+        "properties": {
+          "images": {
+            "items": {
+              "format": "binary",
+              "type": "string"
+            },
+            "maxItems": 5,
+            "minItems": 1,
+            "type": "array"
+          },
+          "message": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "previous_proposal_token": {
+            "maxLength": 20000,
+            "type": "string"
+          }
+        },
+        "required": [
+          "images",
+          "message"
+        ],
+        "type": "object"
+      },
+      "TeacherOpsConfirmRequest": {
+        "properties": {
+          "proposal_token": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/TeacherOpsConfirmRowRequest"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "proposal_token",
+          "rows"
+        ],
+        "type": "object"
+      },
+      "TeacherOpsConfirmRowRequest": {
+        "properties": {
+          "enabled": {
+            "default": true,
+            "type": "boolean"
+          },
+          "grade": {
+            "maxLength": 20,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          },
+          "parent_phone": {
+            "maxLength": 32,
+            "type": "string"
+          },
+          "remove_enrollment_id": {
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          },
+          "row_id": {
+            "maxLength": 36,
+            "minLength": 1,
+            "type": "string"
+          },
+          "school": {
+            "maxLength": 255,
+            "type": "string"
+          },
+          "school_type": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SchoolTypeEnum"
+              }
+            ],
+            "default": "HIGH"
+          },
+          "selected_lecture_id": {
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          },
+          "session_order": {
+            "maximum": 500,
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          },
+          "student_phone": {
+            "maxLength": 32,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "row_id"
+        ],
+        "type": "object"
+      },
       "TeacherRequest": {
         "properties": {
           "email": {
@@ -45813,6 +45923,139 @@
         "responses": {
           "200": {
             "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "teacher-app"
+        ]
+      }
+    },
+    "/api/v1/teacher-app/ops-assistant/analyze/": {
+      "post": {
+        "operationId": "teacher_app_ops_assistant_analyze_create",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/TeacherOpsAnalyzeRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/TeacherOpsAnalyzeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {},
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "teacher-app"
+        ]
+      }
+    },
+    "/api/v1/teacher-app/ops-assistant/confirm/": {
+      "post": {
+        "operationId": "teacher_app_ops_assistant_confirm_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeacherOpsConfirmRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/TeacherOpsConfirmRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/TeacherOpsConfirmRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {},
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "teacher-app"
+        ]
+      }
+    },
+    "/api/v1/teacher-app/ops-assistant/executions/{execution_id}/": {
+      "get": {
+        "operationId": "teacher_app_ops_assistant_executions_retrieve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "execution_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {},
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [

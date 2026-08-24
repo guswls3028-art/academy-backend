@@ -10,17 +10,24 @@ from PIL import Image
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import OpsAuditLog, Tenant, TenantMembership
-from apps.domains.attendance.models import Attendance
-from apps.domains.enrollment.models import Enrollment, SessionEnrollment
-from apps.domains.enrollment.services.lifecycle import assess_disposable_enrollment, delete_disposable_enrollment
-from apps.domains.lectures.models import Lecture, Session
-from apps.domains.students.models import Student
-from apps.domains.students.services.creation import create_student_account
 from apps.domains.teacher_app.assistant.extraction import parse_teacher_ops_text
 from apps.domains.teacher_app.assistant.views import TeacherOpsAnalyzeView, TeacherOpsConfirmView
 from apps.domains.teacher_app.models import TeacherOpsExecution
-from apps.domains.video.models import AccessMode, Video, VideoAccess
-from apps.domains.video.services.access_resolver import resolve_access_mode
+from apps.support.teacher_app.ops_assistant_dependencies import (
+    AccessMode,
+    Attendance,
+    Enrollment,
+    Lecture,
+    Session,
+    SessionEnrollment,
+    Student,
+    Video,
+    VideoAccess,
+    assess_disposable_enrollment,
+    create_student_account,
+    delete_disposable_enrollment,
+    resolve_access_mode,
+)
 
 
 User = get_user_model()
@@ -82,9 +89,7 @@ class TeacherOpsAssistantApiTests(TestCase):
             subject="과학",
             is_active=True,
         )
-        self.session = Session.objects.create(
-            lecture=self.lecture, order=1, regular_order=1, title="1회차"
-        )
+        self.session = Session.objects.create(lecture=self.lecture, order=1, regular_order=1, title="1회차")
         self.video = Video.objects.create(
             tenant=self.tenant,
             session=self.session,
@@ -239,9 +244,7 @@ class TeacherOpsAssistantApiTests(TestCase):
         wrong_lecture = Lecture.objects.create(
             tenant=self.tenant, title="다른 학교 과학반", name="다른 학교 과학반", subject="과학"
         )
-        wrong_session = Session.objects.create(
-            lecture=wrong_lecture, order=1, regular_order=1, title="1회차"
-        )
+        wrong_session = Session.objects.create(lecture=wrong_lecture, order=1, regular_order=1, title="1회차")
         wrong = Enrollment.objects.create(tenant=self.tenant, student=student, lecture=wrong_lecture)
         SessionEnrollment.objects.create(tenant=self.tenant, enrollment=wrong, session=wrong_session)
         Attendance.objects.create(tenant=self.tenant, enrollment=wrong, session=wrong_session, status="UNSET")
@@ -259,9 +262,7 @@ class TeacherOpsAssistantApiTests(TestCase):
         wrong_lecture = Lecture.objects.create(
             tenant=self.tenant, title="보호 데이터 과학반", name="보호 데이터 과학반", subject="과학"
         )
-        wrong_session = Session.objects.create(
-            lecture=wrong_lecture, order=1, regular_order=1, title="1회차"
-        )
+        wrong_session = Session.objects.create(lecture=wrong_lecture, order=1, regular_order=1, title="1회차")
         wrong = Enrollment.objects.create(tenant=self.tenant, student=student, lecture=wrong_lecture)
         Attendance.objects.create(
             tenant=self.tenant, enrollment=wrong, session=wrong_session, status="UNSET", memo="교사 기록"
