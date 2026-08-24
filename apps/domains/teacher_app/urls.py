@@ -10,10 +10,14 @@ from .push.views import (
     VapidPublicKeyView,
 )
 from .views import NotificationSummaryView
+from .assistant.views import TeacherOpsAnalyzeView, TeacherOpsConfirmView, TeacherOpsExecutionStatusView
 
 urlpatterns = [
     # BFF
     path("notifications/summary/", NotificationSummaryView.as_view(), name="teacher-notification-summary"),
+    path("ops-assistant/analyze/", TeacherOpsAnalyzeView.as_view(), name="teacher-ops-assistant-analyze"),
+    path("ops-assistant/confirm/", TeacherOpsConfirmView.as_view(), name="teacher-ops-assistant-confirm"),
+    path("ops-assistant/executions/<uuid:execution_id>/", TeacherOpsExecutionStatusView.as_view(), name="teacher-ops-assistant-status"),
 
     # Push
     path("push/subscribe/", PushSubscribeView.as_view(), name="teacher-push-subscribe"),
