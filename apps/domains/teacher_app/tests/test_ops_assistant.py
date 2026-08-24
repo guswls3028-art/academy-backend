@@ -209,7 +209,7 @@ class TeacherOpsAssistantApiTests(TestCase):
         self.assertEqual(Student.objects.filter(tenant=self.tenant, name="가온별").count(), 1)
         self.assertEqual(confirmed.data["rows"][0]["account_creation"], "not_created")
 
-    def test_parent_phone_match_ignores_other_students_with_blank_phone(self):
+    def test_parent_phone_match_allows_sibling_with_same_parent_and_blank_phone(self):
         target = create_student_account(
             tenant=self.tenant,
             password="safe-pass",
@@ -231,9 +231,9 @@ class TeacherOpsAssistantApiTests(TestCase):
             student_data={
                 "name": "다른학생",
                 "phone": None,
-                "parent_phone": "01077778888",
+                "parent_phone": "01011112222",
                 "ps_number": "SYNTHETIC-OTHER",
-                "omr_code": "77778888",
+                "omr_code": "11112223",
                 "uses_identifier": True,
                 "school_type": "HIGH",
                 "high_school": "다른고",

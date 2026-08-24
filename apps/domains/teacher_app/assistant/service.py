@@ -169,8 +169,12 @@ def _student_match(*, tenant, row: dict) -> tuple[dict, list[dict], list[str]]:
     if parent_phone:
         phone_query |= Q(parent_phone=parent_phone)
     phone_collisions = list(active.filter(phone_query).order_by("id")[:3]) if has_phone_evidence else []
-    different_name = [candidate for candidate in phone_collisions if candidate.name != name]
-    if different_name:
+    student_phone_conflicts = [
+        candidate
+        for candidate in phone_collisions
+        if student_phone and candidate.phone == student_phone and candidate.name != name
+    ]
+    if student_phone_conflicts:
         issues.append(
             _issue("phone_conflict", "전화번호가 다른 이름의 기존 학생과 겹칩니다. 학생 목록에서 확인해 주세요.")
         )
