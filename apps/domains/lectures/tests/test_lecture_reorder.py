@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+from django.db.models import Max
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
@@ -162,4 +163,56 @@ class LectureReorderApiTests(TestCase):
                 .values_list("id", flat=True)
             ),
             before,
+        )
+
+    def test_reorder_canonicalizes_legacy_null_order_before_persisting(self):
+        legacy = Lecture(
+            tenant=self.tenant,
+            title="Rolling deploy legacy lecture",
+            name="Teacher",
+            subject="science",
+            display_order=None,
+        )
+        # bulk_create deliberately bypasses the new model save hook and models
+        # an old API process that omits the expand-phase column.
+        Lecture.objects.bulk_create([legacy])
+        legacy.refresh_from_db()
+        self.assertIsNone(legacy.display_order)
+
+        response = self._request(
+            {
+                "scope": "ACTIVE",
+                "ordered_ids": [
+                    legacy.id,
+                    self.third.id,
+                    self.first.id,
+                    self.second.id,
+                ],
+            }
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        persisted = list(
+            Lecture.objects.filter(tenant=self.tenant)
+            .order_by("display_order", "id")
+            .values_list("display_order", flat=True)
+        )
+        self.assertTrue(all(order is not None and order > 0 for order in persisted))
+        self.assertEqual(len(persisted), len(set(persisted)))
+
+    def test_new_lecture_order_is_server_owned_even_if_caller_supplies_one(self):
+        supplied = Lecture.objects.create(
+            tenant=self.tenant,
+            title="Caller supplied order",
+            name="Teacher",
+            subject="science",
+            display_order=self.first.display_order,
+        )
+
+        self.assertNotEqual(supplied.display_order, self.first.display_order)
+        self.assertEqual(
+            supplied.display_order,
+            Lecture.objects.filter(tenant=self.tenant).aggregate(
+                max_order=Max("display_order")
+            )["max_order"],
         )

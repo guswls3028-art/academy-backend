@@ -1,7 +1,7 @@
 # PATH: apps/domains/lectures/views.py
 
 from django.db import transaction, IntegrityError
-from django.db.models import Case, Count, IntegerField, Max, OuterRef, Q, Subquery, Value, When
+from django.db.models import Case, Count, F, IntegerField, Max, OuterRef, Q, Subquery, Value, When
 from django.db.models.functions import Coalesce
 from django.utils.dateparse import parse_date
 
@@ -126,7 +126,7 @@ class LectureViewSet(ModelViewSet):
         qs = enroll_repo.lecture_filter_tenant(tenant)
         if self.action == "list":
             qs = qs.exclude(is_system=True)
-        return qs.order_by("display_order", "id")
+        return qs.order_by(F("display_order").asc(nulls_last=True), "id")
 
     @action(detail=False, methods=["post"], url_path="reorder")
     def reorder(self, request):
@@ -157,8 +157,25 @@ class LectureViewSet(ModelViewSet):
             tenant_rows = list(
                 Lecture.objects.select_for_update()
                 .filter(tenant=tenant)
-                .order_by("display_order", "id")
+                .order_by(F("display_order").asc(nulls_last=True), "id")
             )
+            # During a rolling deployment, an old API process does not know this
+            # expand-phase field and can still insert a NULL order. Canonicalize
+            # those rows only after the tenant lock is held, before validating or
+            # moving either visible scope.
+            next_order = max(
+                (lecture.display_order or 0 for lecture in tenant_rows),
+                default=0,
+            )
+            for lecture in tenant_rows:
+                if lecture.display_order:
+                    continue
+                next_order += 1
+                Lecture.objects.filter(pk=lecture.pk).update(
+                    display_order=next_order
+                )
+                lecture.display_order = next_order
+            tenant_rows.sort(key=lambda lecture: (lecture.display_order or 0, lecture.id))
             scope_rows = [
                 lecture
                 for lecture in tenant_rows

@@ -30,20 +30,14 @@ class Migration(migrations.Migration):
             model_name="lecture",
             name="display_order",
             field=models.PositiveIntegerField(
-                default=0,
+                blank=True,
                 editable=False,
                 help_text="학원 내 강의 목록의 영구 수동 순서",
+                null=True,
             ),
         ),
         migrations.RunPython(
             backfill_lecture_display_order,
             migrations.RunPython.noop,
-        ),
-        migrations.AddConstraint(
-            model_name="lecture",
-            constraint=models.UniqueConstraint(
-                fields=("tenant", "display_order"),
-                name="uniq_lecture_display_order_per_tenant",
-            ),
         ),
     ]
