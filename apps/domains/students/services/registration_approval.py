@@ -3,11 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from django.contrib.auth import get_user_model
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import Q
 
+from apps.core.models import TenantMembership
 from apps.core.models.user import user_internal_username
-from apps.support.students.lifecycle_dependencies import parent_account_by_phone_for_registration
+from apps.support.students.lifecycle_dependencies import (
+    locked_parent_account_by_phone_for_registration,
+    locked_parent_account_for_registration,
+)
 
 from ..models import Student, StudentRegistrationRequest
 from .creation import create_student_account
@@ -72,7 +76,90 @@ def _registration_identity_query(tenant, reg: StudentRegistrationRequest) -> Q:
     return query
 
 
-def _validate_existing_student_graph(*, tenant, reg, student, locked_user) -> None:
+def _registration_identity_lock_keys(tenant, reg: StudentRegistrationRequest) -> tuple[str, ...]:
+    prefix = f"student-registration-approval:{tenant.id}:"
+    name = str(reg.name or "").strip()
+    parent_phone = phone_digits(reg.parent_phone)
+    student_phone = phone_digits(reg.phone)
+    requested_id = str(reg.username or "").strip()
+    keys = {f"{prefix}name-parent:{name}:{parent_phone}"}
+    if student_phone:
+        keys.add(f"{prefix}identity-value:{student_phone}")
+    if requested_id:
+        keys.add(f"{prefix}identity-value:{requested_id}")
+    return tuple(sorted(keys))
+
+
+def _acquire_registration_identity_locks(tenant, reg: StudentRegistrationRequest) -> None:
+    if connection.vendor != "postgresql":
+        return
+    with connection.cursor() as cursor:
+        for key in _registration_identity_lock_keys(tenant, reg):
+            cursor.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                [key],
+            )
+
+
+def _validate_active_membership(*, tenant, user, role: str, label: str) -> None:
+    membership = (
+        TenantMembership.objects.select_for_update()
+        .filter(tenant=tenant, user_id=user.id)
+        .first()
+    )
+    if membership is None or membership.role != role or not membership.is_active:
+        raise RegistrationApprovalError(
+            f"기존 {label} 계정의 활성 멤버십 연결이 일치하지 않습니다.",
+            status_code=409,
+        )
+
+
+def _validate_active_login_user(
+    *,
+    tenant,
+    user,
+    expected_username: str,
+    expected_phone: str,
+    role: str,
+    label: str,
+) -> None:
+    if user.tenant_id != tenant.id:
+        raise RegistrationApprovalError(
+            f"기존 {label} 로그인 계정의 테넌트 연결이 일치하지 않습니다.",
+            status_code=409,
+        )
+    if user.username != expected_username:
+        raise RegistrationApprovalError(
+            f"기존 {label} 로그인 ID 연결이 일치하지 않습니다.",
+            status_code=409,
+        )
+    if phone_digits(user.phone) != expected_phone:
+        raise RegistrationApprovalError(
+            f"기존 {label} 로그인 계정의 연락처 연결이 일치하지 않습니다.",
+            status_code=409,
+        )
+    if not user.is_active:
+        raise RegistrationApprovalError(
+            f"기존 {label} 로그인 계정이 비활성 상태입니다.",
+            status_code=409,
+        )
+    _validate_active_membership(
+        tenant=tenant,
+        user=user,
+        role=role,
+        label=label,
+    )
+
+
+def _validate_existing_student_graph(
+    *,
+    tenant,
+    reg,
+    student,
+    locked_user,
+    parent,
+    locked_parent_user,
+) -> None:
     if student.tenant_id != tenant.id or locked_user.tenant_id != tenant.id:
         raise RegistrationApprovalError(
             "기존 학생 계정의 테넌트 연결이 일치하지 않습니다.",
@@ -101,8 +188,7 @@ def _validate_existing_student_graph(*, tenant, reg, student, locked_user) -> No
             status_code=409,
         )
 
-    parent = student.parent
-    if parent is None:
+    if parent is None or student.parent_id != parent.id:
         raise RegistrationApprovalError(
             "기존 학생의 학부모 계정 연결을 먼저 확인해 주세요.",
             status_code=409,
@@ -112,12 +198,11 @@ def _validate_existing_student_graph(*, tenant, reg, student, locked_user) -> No
             "기존 학부모 계정 연결이 가입 신청 정보와 일치하지 않습니다.",
             status_code=409,
         )
-    if parent.user_id:
-        if parent.user.tenant_id != tenant.id or phone_digits(parent.user.phone) != registration_parent_phone:
-            raise RegistrationApprovalError(
-                "기존 학부모 로그인 계정의 테넌트 또는 연락처가 일치하지 않습니다.",
-                status_code=409,
-            )
+    if locked_parent_user is None or parent.user_id != locked_parent_user.id:
+        raise RegistrationApprovalError(
+            "기존 학생의 학부모 로그인 계정 연결을 먼저 확인해 주세요.",
+            status_code=409,
+        )
 
     stored_student_phone = phone_digits(student.phone)
     stored_user_phone = phone_digits(locked_user.phone)
@@ -126,6 +211,22 @@ def _validate_existing_student_graph(*, tenant, reg, student, locked_user) -> No
             "기존 학생과 로그인 계정의 연락처 연결이 일치하지 않습니다.",
             status_code=409,
         )
+    _validate_active_login_user(
+        tenant=tenant,
+        user=locked_user,
+        expected_username=user_internal_username(tenant, student.ps_number),
+        expected_phone=stored_student_phone,
+        role="student",
+        label="학생",
+    )
+    _validate_active_login_user(
+        tenant=tenant,
+        user=locked_parent_user,
+        expected_username=f"p_{tenant.id}_{registration_parent_phone}",
+        expected_phone=registration_parent_phone,
+        role="parent",
+        label="학부모",
+    )
     registration_student_phone = phone_digits(reg.phone)
     existing_identity_phones = {
         value
@@ -144,7 +245,7 @@ def _resolve_existing_student(*, tenant, reg: StudentRegistrationRequest) -> Stu
     candidates = list(
         Student.objects.filter(tenant=tenant)
         .filter(identity_query)
-        .values("id", "user_id", "deleted_at")
+        .values("id", "user_id", "parent_id", "deleted_at")
         .order_by("id")[:3]
     )
     deleted = [candidate for candidate in candidates if candidate["deleted_at"] is not None]
@@ -163,8 +264,30 @@ def _resolve_existing_student(*, tenant, reg: StudentRegistrationRequest) -> Stu
 
     candidate = candidates[0]
     User = get_user_model()
-    # #277 identity lifecycle contract: lock persisted User before Student.
-    locked_user = User.objects.select_for_update().get(pk=candidate["user_id"])
+    # Global graph lock order is Parent -> related Users by id -> Student.
+    # Parent account ensure uses Parent -> User, while #277 requires every
+    # persisted student User to be locked before its Student row.
+    parent = None
+    if candidate["parent_id"]:
+        parent = locked_parent_account_for_registration(
+            tenant_id=tenant.id,
+            parent_id=candidate["parent_id"],
+        )
+    user_ids = {candidate["user_id"]}
+    if parent is not None and parent.user_id:
+        user_ids.add(parent.user_id)
+    locked_users = {
+        user.id: user
+        for user in User.objects.select_for_update()
+        .filter(pk__in=[user_id for user_id in user_ids if user_id])
+        .order_by("id")
+    }
+    locked_user = locked_users.get(candidate["user_id"])
+    if locked_user is None:
+        raise RegistrationApprovalError(
+            "기존 학생 로그인 계정 연결을 먼저 확인해 주세요.",
+            status_code=409,
+        )
     # Keep nullable Parent/User joins out of the locking query; PostgreSQL
     # rejects FOR UPDATE on the nullable side of an outer join.
     student = Student.objects.select_for_update().get(pk=candidate["id"])
@@ -173,11 +296,14 @@ def _resolve_existing_student(*, tenant, reg: StudentRegistrationRequest) -> Stu
             "기존 학생 식별정보가 승인 중 변경되었습니다. 다시 확인해 주세요.",
             status_code=409,
         )
+    locked_parent_user = locked_users.get(parent.user_id) if parent is not None else None
     _validate_existing_student_graph(
         tenant=tenant,
         reg=reg,
         student=student,
         locked_user=locked_user,
+        parent=parent,
+        locked_parent_user=locked_parent_user,
     )
     if StudentRegistrationRequest.objects.filter(student=student).exclude(pk=reg.pk).exists():
         raise RegistrationApprovalError(
@@ -189,31 +315,48 @@ def _resolve_existing_student(*, tenant, reg: StudentRegistrationRequest) -> Stu
 
 def _validate_unlinked_account_graph(*, tenant, reg: StudentRegistrationRequest) -> None:
     registration_parent_phone = phone_digits(reg.parent_phone)
-    parent = parent_account_by_phone_for_registration(
+    parent = locked_parent_account_by_phone_for_registration(
         tenant_id=tenant.id,
         phone=registration_parent_phone,
     )
-    if parent and parent.user_id and parent.user.tenant_id != tenant.id:
-        raise RegistrationApprovalError(
-            "기존 학부모 계정의 테넌트 연결이 일치하지 않습니다.",
-            status_code=409,
+    student_phone = phone_digits(reg.phone)
+    same_phone_user_ids = []
+    if student_phone:
+        same_phone_user_ids = list(
+            get_user_model().objects.filter(tenant=tenant, phone=student_phone)
+            .order_by("id")
+            .values_list("id", flat=True)[:3]
+        )
+    user_ids = set(same_phone_user_ids)
+    if parent and parent.user_id:
+        user_ids.add(parent.user_id)
+    locked_users = {
+        user.id: user
+        for user in get_user_model().objects.select_for_update()
+        .filter(pk__in=user_ids)
+        .order_by("id")
+    }
+    locked_parent_user = None
+    if parent and parent.user_id:
+        locked_parent_user = locked_users.get(parent.user_id)
+        if locked_parent_user is None:
+            raise RegistrationApprovalError(
+                "기존 학부모 로그인 계정 연결을 먼저 확인해 주세요.",
+                status_code=409,
+            )
+        _validate_active_login_user(
+            tenant=tenant,
+            user=locked_parent_user,
+            expected_username=f"p_{tenant.id}_{registration_parent_phone}",
+            expected_phone=registration_parent_phone,
+            role="parent",
+            label="학부모",
         )
 
-    student_phone = phone_digits(reg.phone)
     if not student_phone:
         return
-    users = list(
-        get_user_model().objects.filter(tenant=tenant, phone=student_phone)
-        .select_related("student_profile", "parent_profile")
-        .order_by("id")[:3]
-    )
-    for user in users:
-        parent_profile = getattr(user, "parent_profile", None)
-        if (
-            parent_profile is not None
-            and parent_profile.tenant_id == tenant.id
-            and phone_digits(parent_profile.phone) == registration_parent_phone
-        ):
+    for user_id in same_phone_user_ids:
+        if locked_parent_user is not None and user_id == locked_parent_user.id:
             continue
         raise RegistrationApprovalError(
             "같은 학생 연락처를 사용하는 기존 계정이 있습니다. 계정 연결을 먼저 확인해 주세요.",
@@ -271,6 +414,7 @@ def approve_registration_request(
         if reg.status != StudentRegistrationRequest.PENDING:
             raise RegistrationApprovalError("이미 처리된 신청입니다.", status_code=400)
 
+        _acquire_registration_identity_locks(tenant, reg)
         existing_student = _resolve_existing_student(tenant=tenant, reg=reg)
         if existing_student is not None:
             return _approve_with_existing_student(reg=reg, student=existing_student)

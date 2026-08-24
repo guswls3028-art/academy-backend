@@ -43,12 +43,22 @@ def parent_for_password_reset(*, tenant_id: int, phone: str) -> Any | None:
     return Parent.objects.filter(tenant_id=int(tenant_id), phone=phone).first()
 
 
-def parent_account_by_phone_for_registration(*, tenant_id: int, phone: str) -> Any | None:
+def locked_parent_account_by_phone_for_registration(*, tenant_id: int, phone: str) -> Any | None:
     from apps.domains.parents.models import Parent
 
     return (
-        Parent.objects.filter(tenant_id=int(tenant_id), phone=phone)
-        .select_related("user")
+        Parent.objects.select_for_update()
+        .filter(tenant_id=int(tenant_id), phone=phone)
+        .first()
+    )
+
+
+def locked_parent_account_for_registration(*, tenant_id: int, parent_id: int) -> Any | None:
+    from apps.domains.parents.models import Parent
+
+    return (
+        Parent.objects.select_for_update()
+        .filter(tenant_id=int(tenant_id), pk=int(parent_id))
         .first()
     )
 

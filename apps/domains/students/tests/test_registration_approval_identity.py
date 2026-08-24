@@ -14,6 +14,7 @@ from apps.domains.students.services.registration_approval import (
     approve_registration_request,
 )
 from apps.domains.students.views.registration_views import RegistrationRequestViewSet
+from apps.support.students.lifecycle_dependencies import ensure_parent_account_for_student
 
 
 User = get_user_model()
@@ -265,6 +266,120 @@ class RegistrationApprovalIdentityTests(TestCase):
         self.assertNotEqual(result.student.id, other_student.id)
         self.assertEqual(result.student.tenant_id, self.tenant.id)
         self.assertEqual(Student.objects.filter(phone="01070001111").count(), 2)
+
+    def test_existing_student_reuse_rejects_student_username_drift(self):
+        student = self._student()
+        student.user.username = "drifted-student-login"
+        student.user.save(update_fields=["username"])
+        registration = self._registration(username="REQUESTED-AFTER-DRIFT")
+
+        with self.assertRaises(RegistrationApprovalError) as ctx:
+            approve_registration_request(
+                tenant=self.tenant,
+                registration_id=registration.id,
+            )
+
+        self.assertEqual(ctx.exception.status_code, 409)
+        registration.refresh_from_db()
+        self.assertEqual(registration.status, StudentRegistrationRequest.PENDING)
+        self.assertIsNone(registration.student_id)
+
+    def test_existing_student_reuse_rejects_inactive_student_user(self):
+        student = self._student()
+        student.user.is_active = False
+        student.user.save(update_fields=["is_active"])
+        registration = self._registration(username="REQUESTED-INACTIVE")
+
+        with self.assertRaises(RegistrationApprovalError) as ctx:
+            approve_registration_request(
+                tenant=self.tenant,
+                registration_id=registration.id,
+            )
+
+        self.assertEqual(ctx.exception.status_code, 409)
+        registration.refresh_from_db()
+        self.assertEqual(registration.status, StudentRegistrationRequest.PENDING)
+        self.assertIsNone(registration.student_id)
+
+    def test_existing_student_reuse_rejects_missing_student_membership(self):
+        student = self._student()
+        TenantMembership.objects.filter(tenant=self.tenant, user=student.user).delete()
+        registration = self._registration(username="REQUESTED-NO-STUDENT-MEMBERSHIP")
+
+        with self.assertRaises(RegistrationApprovalError) as ctx:
+            approve_registration_request(
+                tenant=self.tenant,
+                registration_id=registration.id,
+            )
+
+        self.assertEqual(ctx.exception.status_code, 409)
+        registration.refresh_from_db()
+        self.assertEqual(registration.status, StudentRegistrationRequest.PENDING)
+        self.assertIsNone(registration.student_id)
+
+    def test_existing_student_reuse_rejects_missing_parent_user(self):
+        student = self._student()
+        parent = student.parent
+        parent.user = None
+        parent.save(update_fields=["user"])
+        registration = self._registration(username="REQUESTED-NO-PARENT-USER")
+
+        with self.assertRaises(RegistrationApprovalError) as ctx:
+            approve_registration_request(
+                tenant=self.tenant,
+                registration_id=registration.id,
+            )
+
+        self.assertEqual(ctx.exception.status_code, 409)
+        registration.refresh_from_db()
+        self.assertEqual(registration.status, StudentRegistrationRequest.PENDING)
+        self.assertIsNone(registration.student_id)
+
+    def test_existing_student_reuse_rejects_missing_parent_membership(self):
+        student = self._student()
+        TenantMembership.objects.filter(tenant=self.tenant, user=student.parent.user).delete()
+        registration = self._registration(username="REQUESTED-NO-PARENT-MEMBERSHIP")
+
+        with self.assertRaises(RegistrationApprovalError) as ctx:
+            approve_registration_request(
+                tenant=self.tenant,
+                registration_id=registration.id,
+            )
+
+        self.assertEqual(ctx.exception.status_code, 409)
+        registration.refresh_from_db()
+        self.assertEqual(registration.status, StudentRegistrationRequest.PENDING)
+        self.assertIsNone(registration.student_id)
+
+    def test_new_student_rejects_linked_parent_user_phone_and_identity_drift(self):
+        parent_result = ensure_parent_account_for_student(
+            tenant=self.tenant,
+            parent_phone="01076662222",
+            student_name="신규학생",
+            initial_password="parent-password",
+        )
+        parent_user = parent_result.parent.user
+        parent_user.username = "drifted-parent-login"
+        parent_user.phone = "01070009999"
+        parent_user.save(update_fields=["username", "phone"])
+        registration = self._registration(
+            name="신규학생",
+            username="NEW-STUDENT-AFTER-PARENT-DRIFT",
+            phone="01076661111",
+            parent_phone="01076662222",
+        )
+
+        with self.assertRaises(RegistrationApprovalError) as ctx:
+            approve_registration_request(
+                tenant=self.tenant,
+                registration_id=registration.id,
+            )
+
+        self.assertEqual(ctx.exception.status_code, 409)
+        registration.refresh_from_db()
+        self.assertEqual(registration.status, StudentRegistrationRequest.PENDING)
+        self.assertIsNone(registration.student_id)
+        self.assertFalse(Student.objects.filter(tenant=self.tenant).exists())
 
     def test_new_approval_notice_uses_persisted_shared_phone_identity(self):
         shared_phone = "01074445555"
