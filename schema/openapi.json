@@ -3752,6 +3752,12 @@
           "description": {
             "type": "string"
           },
+          "display_order": {
+            "description": "학원 내 강의 목록의 영구 수동 순서",
+            "nullable": true,
+            "readOnly": true,
+            "type": "integer"
+          },
           "end_date": {
             "format": "date",
             "nullable": true,
@@ -3802,6 +3808,7 @@
         },
         "required": [
           "created_at",
+          "display_order",
           "id",
           "name",
           "subject",
@@ -30590,6 +30597,55 @@
       "get": {
         "description": "강의 담당자 선택지: 원장(owner) + 강사(Teacher) 목록.\n원장 = TenantMembership role=owner 인 사용자(테넌트당 전체 권한). 없으면 tenant.owner_name 폴백.",
         "operationId": "lectures_lectures_instructor_options_retrieve",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Lecture"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "lectures"
+        ]
+      }
+    },
+    "/api/v1/lectures/lectures/reorder/": {
+      "post": {
+        "description": "Persist one active/past lecture scope as an exact tenant-local order.",
+        "operationId": "lectures_lectures_reorder_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LectureRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/LectureRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/LectureRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {

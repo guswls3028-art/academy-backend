@@ -1,6 +1,7 @@
 # PATH: apps/domains/lectures/models.py
 
-from django.db import models
+from django.db import models, transaction
+from django.db.models import Max
 from apps.api.common.models import TimestampModel
 from apps.core.models import Tenant
 from apps.core.db import TenantQuerySet  # ✅ 추가
@@ -44,6 +45,13 @@ class Lecture(TimestampModel):
 
     is_active = models.BooleanField(default=True)
 
+    display_order = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        editable=False,
+        help_text="학원 내 강의 목록의 영구 수동 순서",
+    )
+
     is_system = models.BooleanField(
         default=False,
         db_index=True,
@@ -82,6 +90,18 @@ class Lecture(TimestampModel):
             raise DjangoValidationError(
                 {"end_date": "종료일은 시작일보다 같거나 이후여야 합니다."}
             )
+        if self._state.adding:
+            using = kwargs.get("using") or self._state.db or "default"
+            with transaction.atomic(using=using):
+                Tenant.objects.using(using).select_for_update().get(pk=self.tenant_id)
+                current_max = (
+                    Lecture.objects.using(using)
+                    .filter(tenant_id=self.tenant_id)
+                    .aggregate(max_order=Max("display_order"))["max_order"]
+                    or 0
+                )
+                self.display_order = current_max + 1
+                return super().save(*args, **kwargs)
         super().save(*args, **kwargs)
 
     def __str__(self):

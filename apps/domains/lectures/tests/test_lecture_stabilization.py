@@ -362,7 +362,7 @@ class TestLectureListNoPagination(LectureTestBase):
         self.assertEqual(len(response.data), 26)
         self.assertEqual(
             [row["id"] for row in response.data],
-            list(reversed(created_ids)),
+            created_ids,
         )
         self.assertNotIn("System Lecture", [row["title"] for row in response.data])
 
