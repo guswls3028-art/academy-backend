@@ -1,12 +1,15 @@
 # PATH: apps/domains/submissions/views/pending_submissions_view.py
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Optional
 
 from datetime import timedelta
 
 from django.utils import timezone
 
+from drf_spectacular.utils import extend_schema
+from rest_framework import serializers
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -16,6 +19,10 @@ from academy.adapters.db.django import repositories_exams as exams_repo
 from academy.adapters.db.django import repositories_homework as homework_repo
 from academy.adapters.db.django import repositories_submissions as submissions_repo
 from apps.core.permissions import TenantResolvedAndStaff
+from apps.infrastructure.storage.r2 import generate_presigned_get_url
+
+
+logger = logging.getLogger(__name__)
 
 
 def _get_photo_url(student) -> Optional[str]:
@@ -43,6 +50,10 @@ PENDING_STATUSES = submissions_repo.pending_statuses()
 
 # Terminal statuses shown only if recent (last 24h)
 TERMINAL_STATUSES = [SUBMISSION_STATUS_DONE, SUBMISSION_STATUS_FAILED]
+
+
+class PendingSubmissionPreviewResponseSerializer(serializers.Serializer):
+    url = serializers.URLField()
 
 
 class PendingSubmissionsView(APIView):
@@ -198,7 +209,8 @@ class PendingSubmissionsView(APIView):
                     "target_resolved_reason": target_resolved_reason,
                     "is_discarded": is_discarded,
                     "discard_reason": discard_reason_value,
-                    "file_key": file_key,
+                    "has_file": bool(file_key),
+                    "file_name": file_key.rsplit("/", 1)[-1] if file_key else "",
                     "file_type": file_type or s.file_type or "",
                     "file_size": s.file_size,
                     "profile_photo_url": _get_photo_url(student),
@@ -206,3 +218,43 @@ class PendingSubmissionsView(APIView):
             )
 
         return Response(items, status=200)
+
+
+class PendingSubmissionPreviewView(APIView):
+    """Issue a short AI-bucket preview URL for one tenant-owned submission."""
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+
+    @extend_schema(responses=PendingSubmissionPreviewResponseSerializer)
+    def get(self, request, submission_id: int):
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "Submission not found"}, status=404)
+
+        submission = (
+            submissions_repo.submission_filter_tenant(tenant)
+            .only("id", "file_key")
+            .filter(id=submission_id)
+            .first()
+        )
+        file_key = str(getattr(submission, "file_key", "") or "").strip()
+        expected_prefix = f"tenants/{tenant.id}/"
+        if not submission or not file_key or not file_key.startswith(expected_prefix):
+            return Response({"detail": "Submission file not found"}, status=404)
+
+        try:
+            url = generate_presigned_get_url(key=file_key, expires_in=900)
+        except Exception:
+            logger.exception(
+                "submission_preview_presign_failed tenant_id=%s submission_id=%s",
+                tenant.id,
+                submission_id,
+            )
+            return Response(
+                {"detail": "제출 파일 미리보기를 준비하지 못했습니다."},
+                status=503,
+            )
+
+        response = Response({"url": url}, status=200)
+        response["Cache-Control"] = "no-store"
+        return response

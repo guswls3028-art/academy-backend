@@ -32,7 +32,10 @@ from apps.domains.exams.models import Exam, ExamEnrollment, ExamQuestion, Sheet
 from apps.domains.submissions.models import Submission, SubmissionAnswer
 from apps.domains.submissions.services.ai_omr_result_mapper import apply_omr_ai_result
 from apps.domains.submissions.views.submission_view import SubmissionViewSet
-from apps.domains.submissions.views.pending_submissions_view import PendingSubmissionsView
+from apps.domains.submissions.views.pending_submissions_view import (
+    PendingSubmissionPreviewView,
+    PendingSubmissionsView,
+)
 from apps.domains.submissions.views.exam_submissions_list_view import ExamSubmissionsListView
 from apps.domains.submissions.views.homework_submissions_list_view import HomeworkSubmissionsListView
 from apps.domains.submissions.views.exam_omr_submit_view import ExamOMRSubmitView
@@ -653,6 +656,129 @@ class TestC2AdminInboxesGuard(_SecurityFixtureMixin, TestCase):
                           "/api/v1/submissions/submissions/pending/",
                           user=self.teacher)
         self.assertEqual(resp.status_code, 200)
+
+    @patch(
+        "apps.domains.submissions.views.pending_submissions_view.generate_presigned_get_url",
+        return_value="https://signed.example/submission.png",
+    )
+    def test_pending_submission_preview_uses_owned_ai_object(self, presign):
+        self.peer_submission.file_key = f"tenants/{self.tenant.id}/ai/submissions/peer.png"
+        self.peer_submission.save(update_fields=["file_key"])
+        view = PendingSubmissionPreviewView.as_view()
+
+        resp = self._call(
+            lambda: view,
+            "get",
+            f"/api/v1/submissions/submissions/{self.peer_submission.id}/preview/",
+            user=self.teacher,
+            submission_id=self.peer_submission.id,
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data, {"url": "https://signed.example/submission.png"})
+        presign.assert_called_once_with(
+            key=self.peer_submission.file_key,
+            expires_in=900,
+        )
+
+    @patch(
+        "apps.domains.submissions.views.pending_submissions_view.generate_presigned_get_url",
+    )
+    def test_pending_submission_preview_student_and_cross_tenant_fail_closed(self, presign):
+        self.peer_submission.file_key = f"tenants/{self.tenant.id}/ai/submissions/peer.png"
+        self.peer_submission.save(update_fields=["file_key"])
+        view = PendingSubmissionPreviewView.as_view()
+
+        student_resp = self._call(
+            lambda: view,
+            "get",
+            f"/api/v1/submissions/submissions/{self.peer_submission.id}/preview/",
+            user=self.student_user,
+            submission_id=self.peer_submission.id,
+        )
+        other_tenant = _make_tenant("OtherAcademy", "other_sec_test")
+        other_admin = _make_admin(other_tenant, "other_sec_admin")
+        cross_tenant_resp = self._call(
+            lambda: view,
+            "get",
+            f"/api/v1/submissions/submissions/{self.peer_submission.id}/preview/",
+            user=other_admin,
+            tenant=other_tenant,
+            submission_id=self.peer_submission.id,
+        )
+
+        self.assertEqual(student_resp.status_code, 403)
+        self.assertEqual(cross_tenant_resp.status_code, 404)
+        presign.assert_not_called()
+
+    @patch(
+        "apps.domains.submissions.views.pending_submissions_view.generate_presigned_get_url",
+    )
+    def test_pending_submission_preview_rejects_missing_or_foreign_object_key(self, presign):
+        view = PendingSubmissionPreviewView.as_view()
+        self.peer_submission.file_key = ""
+        self.peer_submission.save(update_fields=["file_key"])
+        missing_resp = self._call(
+            lambda: view,
+            "get",
+            f"/api/v1/submissions/submissions/{self.peer_submission.id}/preview/",
+            user=self.teacher,
+            submission_id=self.peer_submission.id,
+        )
+
+        self.peer_submission.file_key = "tenants/999/ai/submissions/foreign.png"
+        self.peer_submission.save(update_fields=["file_key"])
+        foreign_resp = self._call(
+            lambda: view,
+            "get",
+            f"/api/v1/submissions/submissions/{self.peer_submission.id}/preview/",
+            user=self.teacher,
+            submission_id=self.peer_submission.id,
+        )
+
+        self.assertEqual(missing_resp.status_code, 404)
+        self.assertEqual(foreign_resp.status_code, 404)
+        presign.assert_not_called()
+
+    @patch(
+        "apps.domains.submissions.views.pending_submissions_view.generate_presigned_get_url",
+        side_effect=RuntimeError("signer unavailable"),
+    )
+    def test_pending_submission_preview_signer_failure_is_explicit(self, presign):
+        self.peer_submission.file_key = f"tenants/{self.tenant.id}/ai/submissions/peer.png"
+        self.peer_submission.save(update_fields=["file_key"])
+        view = PendingSubmissionPreviewView.as_view()
+
+        resp = self._call(
+            lambda: view,
+            "get",
+            f"/api/v1/submissions/submissions/{self.peer_submission.id}/preview/",
+            user=self.teacher,
+            submission_id=self.peer_submission.id,
+        )
+
+        self.assertEqual(resp.status_code, 503)
+        self.assertEqual(resp.data["detail"], "제출 파일 미리보기를 준비하지 못했습니다.")
+        presign.assert_called_once()
+
+    def test_pending_submission_list_does_not_expose_object_key(self):
+        self.peer_submission.file_key = f"tenants/{self.tenant.id}/ai/submissions/peer.png"
+        self.peer_submission.file_type = "image/png"
+        self.peer_submission.save(update_fields=["file_key", "file_type"])
+        view = PendingSubmissionsView.as_view()
+
+        resp = self._call(
+            lambda: view,
+            "get",
+            "/api/v1/submissions/submissions/pending/",
+            user=self.teacher,
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        row = next(item for item in resp.data if item["id"] == self.peer_submission.id)
+        self.assertNotIn("file_key", row)
+        self.assertTrue(row["has_file"])
+        self.assertEqual(row["file_name"], "peer.png")
 
     def test_exam_submissions_list_student_blocked(self):
         view = ExamSubmissionsListView.as_view()

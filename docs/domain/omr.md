@@ -126,6 +126,7 @@ flowchart LR
 - 후보 학생은 항상 같은 tenant, 활성 `Enrollment`, 삭제되지 않은 학생으로 제한한다. 다른 tenant나 시험이 연결되지 않은 차시의 학생으로 fallback하지 않는다.
 - 성적탭 row 모수는 차시 출석/수강 roster다. 시험 점수 셀은 `ExamEnrollment`가 없어도 차시에 붙은 시험의 OMR/수동입력 대상 학생에게 보여야 한다.
 - 오인식/미식별 스캔은 `Submission`의 수동 검토 상태와 답안 보정 API를 통해 보정한다. 원본 운영 데이터를 임의로 수정하지 않고, 검토자가 선택적으로 답안/점수를 확정한다.
+- 제출함 원본 미리보기는 같은 tenant의 교직원이 `Submission` id로 요청한다. 서버가 해당 row의 AI 버킷 객체 소유권과 `tenants/{tenant_id}/` 경계를 확인한 뒤 15분짜리 GET URL만 반환하며, 목록 응답이나 클라이언트 요청에는 원본 객체 키를 노출하지 않는다. 파일 없음·다른 tenant·잘못된 키는 404, 서명 실패는 503으로 fail-closed 한다.
 
 ## 운영 UX SSOT
 
