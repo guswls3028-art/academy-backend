@@ -266,6 +266,30 @@ class RegistrationApprovalIdentityTests(TestCase):
         self.assertEqual(result.student.tenant_id, self.tenant.id)
         self.assertEqual(Student.objects.filter(phone="01070001111").count(), 2)
 
+    def test_new_approval_notice_uses_persisted_shared_phone_identity(self):
+        shared_phone = "01074445555"
+        registration = self._registration(
+            name="공유번호신규",
+            username=shared_phone,
+            phone=shared_phone,
+            parent_phone=shared_phone,
+        )
+
+        result = approve_registration_request(
+            tenant=self.tenant,
+            registration_id=registration.id,
+        )
+
+        result.student.refresh_from_db()
+        result.student.user.refresh_from_db()
+        self.assertIsNone(result.student.phone)
+        self.assertEqual(result.student.user.phone, "")
+        self.assertTrue(result.student.uses_identifier)
+        self.assertNotEqual(result.student.ps_number, shared_phone)
+        self.assertEqual(result.notice.student_phone, "")
+        self.assertEqual(result.notice.student_id, result.student.ps_number)
+        self.assertEqual(result.notice.parent_phone, shared_phone)
+
     def test_disabled_tenants_reject_public_signup_and_pending_approval(self):
         for code in ("godmin", "tchul"):
             with self.subTest(code=code):
