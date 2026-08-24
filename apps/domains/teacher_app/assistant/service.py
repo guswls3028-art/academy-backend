@@ -162,13 +162,19 @@ def _student_match(*, tenant, row: dict) -> tuple[dict, list[dict], list[str]]:
         )
 
     active = Student.objects.filter(tenant=tenant, deleted_at__isnull=True).select_related("user")
-    phone_collisions = (
-        list(active.filter(Q(phone=student_phone) | Q(parent_phone=parent_phone)).order_by("id")[:3])
-        if student_phone or parent_phone
-        else []
-    )
-    different_name = [candidate for candidate in phone_collisions if candidate.name != name]
-    if different_name:
+    has_phone_evidence = bool(student_phone or parent_phone)
+    phone_query = Q()
+    if student_phone:
+        phone_query |= Q(phone=student_phone)
+    if parent_phone:
+        phone_query |= Q(parent_phone=parent_phone)
+    phone_collisions = list(active.filter(phone_query).order_by("id")[:3]) if has_phone_evidence else []
+    student_phone_conflicts = [
+        candidate
+        for candidate in phone_collisions
+        if student_phone and candidate.phone == student_phone and candidate.name != name
+    ]
+    if student_phone_conflicts:
         issues.append(
             _issue("phone_conflict", "전화번호가 다른 이름의 기존 학생과 겹칩니다. 학생 목록에서 확인해 주세요.")
         )
@@ -212,12 +218,7 @@ def _student_match(*, tenant, row: dict) -> tuple[dict, list[dict], list[str]]:
         return {"status": "existing", "id": student.id, "basis": basis}, issues, profile_changes
 
     deleted = Student.objects.filter(tenant=tenant, deleted_at__isnull=False, name=name)
-    if student_phone:
-        deleted = deleted.filter(Q(phone=student_phone) | Q(parent_phone=parent_phone))
-    elif parent_phone:
-        deleted = deleted.filter(parent_phone=parent_phone)
-    else:
-        deleted = deleted.none()
+    deleted = deleted.filter(phone_query) if has_phone_evidence else deleted.none()
     deleted_matches = list(deleted.order_by("id")[:2])
     if len(deleted_matches) > 1:
         issues.append(
