@@ -9,88 +9,160 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.api.common.query_params import parse_query_int
+from apps.core.services.tenant_access import get_authorized_tenant_role
 from apps.domains.messaging.models import NotificationLog
-from apps.domains.messaging.security import sanitize_notification_target_id
+from apps.domains.messaging.security import (
+    SENSITIVE_MESSAGE_PLACEHOLDER,
+    sanitize_notification_target_id,
+)
 from apps.domains.messaging.selectors import notification_logs_for_business_tenant
+
+
+_PRIVILEGED_LOG_ROLES = frozenset({"owner", "admin"})
+
+
+def _alimtalk_logs_for_business_tenant(tenant):
+    return notification_logs_for_business_tenant(tenant).filter(message_mode__in=("alimtalk", ""))
+
+
+def _masked_provider_reference(value: str) -> str:
+    """Return UI evidence without disclosing the exact provider identifier."""
+
+    provider_id = str(value or "").strip()
+    if not provider_id:
+        return ""
+    if len(provider_id) <= 6:
+        return "확인됨"
+    return f"•••• {provider_id[-6:]}"
+
+
+def _body_visibility(log: NotificationLog, *, privileged: bool) -> str:
+    body = str(log.message_body or "")
+    if not body:
+        return "not_recorded"
+    if body == SENSITIVE_MESSAGE_PLACEHOLDER:
+        return "sensitive_redacted"
+    return "available" if privileged else "restricted"
+
+
+def _safe_failure_projection(log: NotificationLog) -> tuple[str, str]:
+    """Classify a stored provider reason without returning provider/PII text."""
+
+    raw = str(log.failure_reason or "").strip().lower()
+    status_value = str(log.status or "").strip().lower()
+    if not raw:
+        if status_value == "ambiguous":
+            return (
+                "provider_unconfirmed",
+                "공급사 접수 결과를 자동 확인하지 못했습니다. 관리자 확인이 필요합니다.",
+            )
+        return "", ""
+    if any(marker in raw for marker in ("notenoughbalance", "insufficient_balance", "balance")):
+        return "insufficient_balance", "알림톡 잔액이 부족해 발송하지 못했습니다."
+    if any(marker in raw for marker in ("recipient_blocked", "denylist", "recipient_not_allowed")):
+        return "recipient_blocked", "운영 정책에 따라 이 수신자에게 발송하지 않았습니다."
+    if "template" in raw and any(marker in raw for marker in ("missing", "unapproved", "not found", "absent")):
+        return "template_unavailable", "승인된 알림톡 양식을 확인하지 못해 발송하지 않았습니다."
+    if any(marker in raw for marker in ("sms_disabled", "non_alimtalk", "channel_policy")):
+        return "policy_blocked", "알림톡 전용 발송 정책에 맞지 않아 발송하지 않았습니다."
+    if "tenant" in raw and any(marker in raw for marker in ("disabled", "hold", "inactive")):
+        return "messaging_disabled", "이 학원의 알림톡 발송이 중지되어 있습니다."
+    if any(marker in raw for marker in ("timeout", "unknown", "ambiguous")):
+        return (
+            "provider_unconfirmed",
+            "공급사 접수 결과를 자동 확인하지 못했습니다. 관리자 확인이 필요합니다.",
+        )
+    if any(marker in raw for marker in ("network", "temporary", "retry")):
+        return "temporary_failure", "일시적인 연결 문제로 발송을 완료하지 못했습니다."
+    return "failed", "알림톡 발송을 완료하지 못했습니다. 관리자에게 문의해 주세요."
+
+
+def _project_log(
+    log: NotificationLog,
+    *,
+    privileged: bool,
+    include_body: bool,
+) -> dict[str, object]:
+    body_visibility = _body_visibility(log, privileged=privileged)
+    stored_body = str(log.message_body or "")
+    visible_body = stored_body if include_body and body_visibility in {"available", "sensitive_redacted"} else ""
+    provider_id = str(log.provider_message_id or "")
+    failure_code, failure_summary = _safe_failure_projection(log)
+    return {
+        "id": log.id,
+        "sent_at": log.sent_at,
+        "success": log.success,
+        "status": log.status or ("sent" if log.success else "failed"),
+        "claimed_at": log.claimed_at,
+        "amount_deducted": log.amount_deducted,
+        "recipient_summary": log.recipient_summary or "",
+        "template_summary": log.template_summary or "",
+        "provider_message_id": provider_id if privileged else "",
+        "provider_evidence": bool(provider_id),
+        "provider_message_reference": _masked_provider_reference(provider_id),
+        "failure_code": failure_code,
+        "failure_reason": failure_summary,
+        "body_visibility": body_visibility,
+        "message_body_included": bool(visible_body),
+        "message_body": visible_body,
+        "message_mode": log.message_mode or "",
+        "notification_type": log.notification_type or "",
+        "source_tenant_id": log.source_tenant_id,
+        "target_type": log.target_type or "",
+        "target_id": sanitize_notification_target_id(log.target_id),
+        "target_name": log.target_name or "",
+    }
 
 
 class NotificationLogListView(APIView):
     """GET: 발송 로그 목록 (페이지네이션)"""
+
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def get(self, request):
         page = parse_query_int(request.query_params, "page", default=1, min_value=1)
         page_size = min(
-            parse_query_int(
-                request.query_params, "page_size", default=20, min_value=1
-            ),
+            parse_query_int(request.query_params, "page_size", default=20, min_value=1),
             50,
         )
         offset = (page - 1) * page_size
         # status 필터: success / failure / all (기본 all)
         status_filter = (request.query_params.get("status") or "").strip().lower()
-        base_qs = notification_logs_for_business_tenant(request.tenant)
+        base_qs = _alimtalk_logs_for_business_tenant(request.tenant)
         if status_filter == "success":
             base_qs = base_qs.filter(success=True)
         elif status_filter == "failure":
             base_qs = base_qs.filter(success=False).exclude(
                 status__in=["processing", "sending", "retryable_failed", "ambiguous"]
             )
-        elif status_filter in {
-            choice[0] for choice in NotificationLog._meta.get_field("status").choices
-        }:
+        elif status_filter == "active":
+            base_qs = base_qs.filter(status__in=["processing", "sending", "retryable_failed"])
+        elif status_filter == "attention":
+            base_qs = base_qs.filter(status="ambiguous")
+        elif status_filter in {choice[0] for choice in NotificationLog._meta.get_field("status").choices}:
             base_qs = base_qs.filter(status=status_filter)
         qs = base_qs.order_by("-sent_at")[offset : offset + page_size]
         count = base_qs.count()
-        items = [
-            {
-                "id": r.id,
-                "sent_at": r.sent_at,
-                "success": r.success,
-                "status": r.status or "",
-                "claimed_at": r.claimed_at,
-                "amount_deducted": r.amount_deducted,
-                "recipient_summary": r.recipient_summary or "",
-                "template_summary": r.template_summary or "",
-                "provider_message_id": r.provider_message_id or "",
-                "failure_reason": r.failure_reason or "",
-                "message_body": r.message_body or "",
-                "message_mode": r.message_mode or "",
-                "notification_type": r.notification_type or "",
-                "source_tenant_id": r.source_tenant_id,
-                "target_type": r.target_type or "",
-                "target_id": sanitize_notification_target_id(r.target_id),
-                "target_name": r.target_name or "",
-            }
-            for r in qs
-        ]
+        role = get_authorized_tenant_role(request.user, request.tenant)
+        privileged = role in _PRIVILEGED_LOG_ROLES
+        items = [_project_log(r, privileged=privileged, include_body=False) for r in qs]
         return Response({"results": items, "count": count})
 
 
 class NotificationLogDetailView(APIView):
     """GET: 발송 로그 단건 상세"""
+
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def get(self, request, pk):
-        log = notification_logs_for_business_tenant(request.tenant).filter(pk=pk).first()
+        log = _alimtalk_logs_for_business_tenant(request.tenant).filter(pk=pk).first()
         if not log:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-        return Response({
-            "id": log.id,
-            "sent_at": log.sent_at,
-            "success": log.success,
-            "status": log.status or "",
-            "claimed_at": log.claimed_at,
-            "amount_deducted": log.amount_deducted,
-            "recipient_summary": log.recipient_summary or "",
-            "template_summary": log.template_summary or "",
-            "provider_message_id": log.provider_message_id or "",
-            "failure_reason": log.failure_reason or "",
-            "message_body": log.message_body or "",
-            "message_mode": log.message_mode or "",
-            "notification_type": log.notification_type or "",
-            "source_tenant_id": log.source_tenant_id,
-            "target_type": log.target_type or "",
-            "target_id": sanitize_notification_target_id(log.target_id),
-            "target_name": log.target_name or "",
-        })
+        role = get_authorized_tenant_role(request.user, request.tenant)
+        return Response(
+            _project_log(
+                log,
+                privileged=role in _PRIVILEGED_LOG_ROLES,
+                include_body=True,
+            )
+        )

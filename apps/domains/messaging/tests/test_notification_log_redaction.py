@@ -125,6 +125,13 @@ class NotificationLogRedactionTests(TestCase):
 
         self.assertEqual(list_response.status_code, 200)
         self.assertEqual(list_response.data["results"][0]["provider_message_id"], "group-provider-proof")
+        self.assertTrue(list_response.data["results"][0]["provider_evidence"])
+        self.assertNotEqual(
+            list_response.data["results"][0]["provider_message_reference"],
+            "group-provider-proof",
+        )
+        self.assertFalse(list_response.data["results"][0]["message_body_included"])
+        self.assertEqual(list_response.data["results"][0]["message_body"], "")
 
         detail_request = self.factory.get(f"/api/v1/messaging/log/{log.id}/")
         force_authenticate(detail_request, user=self.admin)
@@ -134,6 +141,176 @@ class NotificationLogRedactionTests(TestCase):
 
         self.assertEqual(detail_response.status_code, 200)
         self.assertEqual(detail_response.data["provider_message_id"], "group-provider-proof")
+        self.assertEqual(detail_response.data["body_visibility"], "available")
+        self.assertEqual(detail_response.data["message_body"], "통제번호 실발송 검증")
+
+    def test_log_api_restricts_body_and_exact_provider_id_for_teacher(self):
+        teacher = User.objects.create_user(
+            username="redact-teacher",
+            password="test1234",
+            tenant=self.tenant,
+            is_staff=True,
+        )
+        TenantMembership.ensure_active(tenant=self.tenant, user=teacher, role="teacher")
+        create_notification_log(
+            tenant_id=self.tenant.id,
+            success=True,
+            amount_deducted=Decimal("1"),
+            recipient_summary="최정원 0109****",
+            template_summary="클리닉 예약 안내",
+            message_body="최정원 학생의 클리닉은 8월 24일입니다.",
+            message_mode="alimtalk",
+            provider_message_id="group-private-provider-proof",
+            notification_type="clinic_reservation_created",
+        )
+        log = NotificationLog.objects.get()
+
+        list_request = self.factory.get("/api/v1/messaging/log/")
+        force_authenticate(list_request, user=teacher)
+        list_request.user = teacher
+        list_request.tenant = self.tenant
+        list_response = NotificationLogListView.as_view()(list_request)
+
+        self.assertEqual(list_response.status_code, 200)
+        list_item = list_response.data["results"][0]
+        self.assertEqual(list_item["message_body"], "")
+        self.assertFalse(list_item["message_body_included"])
+        self.assertEqual(list_item["body_visibility"], "restricted")
+        self.assertEqual(list_item["provider_message_id"], "")
+        self.assertTrue(list_item["provider_evidence"])
+        self.assertNotIn("group-private-provider-proof", str(list_item))
+
+        detail_request = self.factory.get(f"/api/v1/messaging/log/{log.id}/")
+        force_authenticate(detail_request, user=teacher)
+        detail_request.user = teacher
+        detail_request.tenant = self.tenant
+        detail_response = NotificationLogDetailView.as_view()(detail_request, pk=log.id)
+
+        self.assertEqual(detail_response.status_code, 200)
+        self.assertEqual(detail_response.data["body_visibility"], "restricted")
+        self.assertEqual(detail_response.data["message_body"], "")
+        self.assertEqual(detail_response.data["provider_message_id"], "")
+        self.assertTrue(detail_response.data["provider_evidence"])
+        self.assertNotIn("group-private-provider-proof", str(detail_response.data))
+
+    def test_log_api_explains_sensitive_body_without_restoring_it(self):
+        create_notification_log(
+            tenant_id=self.tenant.id,
+            success=True,
+            amount_deducted=Decimal("0"),
+            recipient_summary="010****1234",
+            template_summary="가입 안내(학생)",
+            message_body="아이디: student / 임시 비밀번호: secret",
+            message_mode="alimtalk",
+            provider_message_id="group-sensitive-proof",
+            notification_type="registration_approved_student",
+        )
+        log = NotificationLog.objects.get()
+        detail_request = self.factory.get(f"/api/v1/messaging/log/{log.id}/")
+        force_authenticate(detail_request, user=self.admin)
+        detail_request.user = self.admin
+        detail_request.tenant = self.tenant
+
+        detail_response = NotificationLogDetailView.as_view()(detail_request, pk=log.id)
+
+        self.assertEqual(detail_response.status_code, 200)
+        self.assertEqual(detail_response.data["body_visibility"], "sensitive_redacted")
+        self.assertEqual(detail_response.data["message_body"], SENSITIVE_MESSAGE_PLACEHOLDER)
+        self.assertNotIn("아이디: student", detail_response.data["message_body"])
+        self.assertNotIn("secret", detail_response.data["message_body"])
+
+    def test_log_api_projects_provider_failure_to_safe_user_summary(self):
+        NotificationLog.objects.create(
+            tenant=self.tenant,
+            success=False,
+            status="failed",
+            message_mode="alimtalk",
+            failure_reason="provider rejected 01012345678 from 203.0.113.10",
+        )
+        list_request = self.factory.get("/api/v1/messaging/log/")
+        force_authenticate(list_request, user=self.admin)
+        list_request.user = self.admin
+        list_request.tenant = self.tenant
+
+        list_response = NotificationLogListView.as_view()(list_request)
+
+        item = list_response.data["results"][0]
+        self.assertEqual(item["failure_code"], "failed")
+        self.assertEqual(
+            item["failure_reason"],
+            "알림톡 발송을 완료하지 못했습니다. 관리자에게 문의해 주세요.",
+        )
+        self.assertNotIn("01012345678", str(item))
+        self.assertNotIn("203.0.113.10", str(item))
+
+    def test_log_api_keeps_active_attention_and_failed_filters_distinct(self):
+        for log_status, success in (
+            ("processing", False),
+            ("sending", False),
+            ("retryable_failed", False),
+            ("ambiguous", False),
+            ("failed", False),
+            ("sent", True),
+        ):
+            NotificationLog.objects.create(
+                tenant=self.tenant,
+                success=success,
+                status=log_status,
+                message_mode="alimtalk",
+            )
+
+        expected_statuses = {
+            "active": {"processing", "sending", "retryable_failed"},
+            "attention": {"ambiguous"},
+            "failure": {"failed"},
+        }
+        for status_filter, expected in expected_statuses.items():
+            with self.subTest(status_filter=status_filter):
+                request = self.factory.get(
+                    "/api/v1/messaging/log/",
+                    {"status": status_filter, "page_size": 50},
+                )
+                force_authenticate(request, user=self.admin)
+                request.user = self.admin
+                request.tenant = self.tenant
+
+                response = NotificationLogListView.as_view()(request)
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(
+                    {item["status"] for item in response.data["results"]},
+                    expected,
+                )
+
+    def test_log_api_excludes_non_alimtalk_legacy_records(self):
+        legacy = NotificationLog.objects.create(
+            tenant=self.tenant,
+            success=True,
+            status="sent",
+            message_mode="sms",
+            message_body="legacy text",
+        )
+        list_request = self.factory.get("/api/v1/messaging/log/")
+        force_authenticate(list_request, user=self.admin)
+        list_request.user = self.admin
+        list_request.tenant = self.tenant
+
+        list_response = NotificationLogListView.as_view()(list_request)
+
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(list_response.data["count"], 0)
+
+        detail_request = self.factory.get(f"/api/v1/messaging/log/{legacy.id}/")
+        force_authenticate(detail_request, user=self.admin)
+        detail_request.user = self.admin
+        detail_request.tenant = self.tenant
+
+        detail_response = NotificationLogDetailView.as_view()(
+            detail_request,
+            pk=legacy.id,
+        )
+
+        self.assertEqual(detail_response.status_code, 404)
 
     def test_log_api_includes_owner_proxy_logs_for_source_tenant(self):
         owner = Tenant.objects.create(name="Owner Sender", code="owner-sender", is_active=True)
@@ -155,9 +332,7 @@ class NotificationLogRedactionTests(TestCase):
         log = NotificationLog.objects.get(provider_message_id="group-source-tenant-proof")
         self.assertEqual(log.target_id, "parent:123")
         self.assertNotIn("01031217466", log.target_id)
-        NotificationLog.objects.filter(pk=log.pk).update(
-            target_id="parent:123:01031217466"
-        )
+        NotificationLog.objects.filter(pk=log.pk).update(target_id="parent:123:01031217466")
 
         list_request = self.factory.get("/api/v1/messaging/log/")
         force_authenticate(list_request, user=self.admin)
@@ -243,10 +418,13 @@ class NotificationLogRedactionTests(TestCase):
 
         owner_response = list_for(owner_staff, provider_owner)
         self.assertEqual(owner_response.status_code, 200)
-        self.assertEqual(
-            {item["provider_message_id"] for item in owner_response.data["results"]},
-            {"owner-native"},
-        )
+        self.assertEqual(len(owner_response.data["results"]), 1)
+        owner_item = owner_response.data["results"][0]
+        self.assertEqual(owner_item["recipient_summary"], "owner native")
+        self.assertEqual(owner_item["provider_message_id"], "")
+        self.assertTrue(owner_item["provider_evidence"])
+        self.assertNotEqual(owner_item["provider_message_reference"], "owner-native")
+        self.assertNotIn("owner-native", str(owner_item))
 
         customer_response = list_for(self.admin, self.tenant)
         self.assertEqual(customer_response.status_code, 200)
