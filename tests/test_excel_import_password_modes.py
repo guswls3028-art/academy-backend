@@ -100,6 +100,29 @@ class StudentExcelImportPasswordModeTests(TestCase):
         student = Student.objects.get(tenant=self.tenant, name="번호있는학생")
         self.assertTrue(student.user.check_password("4321"))
 
+    def test_phone_last4_treats_matching_parent_phone_as_missing_student_phone(self):
+        result = import_students_from_rows(
+            tenant_id=self.tenant.id,
+            students_data=[
+                {
+                    "name": "동일번호학생",
+                    "parent_phone": "01070003333",
+                    "phone": "01070003333",
+                    "school_type": "HIGH",
+                    "grade": 1,
+                    "uses_identifier": False,
+                }
+            ],
+            initial_password="",
+            password_mode="phone_last4",
+        )
+
+        self.assertEqual(result["created"], 0)
+        self.assertIn("학생 전화번호가 없어", result["failed"][0]["error"])
+        self.assertFalse(
+            Student.objects.filter(tenant=self.tenant, name="동일번호학생").exists()
+        )
+
     @patch("apps.domains.messaging.services.send_welcome_messages")
     @patch("apps.domains.students.services.import_passwords.secrets.randbelow", return_value=42)
     def test_random_mode_returns_download_credentials_and_sets_password(

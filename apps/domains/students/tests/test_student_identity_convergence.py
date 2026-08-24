@@ -89,6 +89,33 @@ class StudentIdentityConvergenceTests(TestCase):
         self.assertTrue(student.ps_number)
         self.assertTrue(student.user.username.startswith(f"t{self.tenant.id}_"))
 
+    def test_admin_create_matching_contacts_keeps_parent_phone_only(self):
+        request = self.factory.post(
+            "/api/v1/students/",
+            data={
+                "name": "동일번호무휴대폰학생",
+                "phone": "01088887777",
+                "parent_phone": "01088887777",
+                "initial_password": "test1234",
+                "school_type": "HIGH",
+                "grade": 1,
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+
+        response = StudentViewSet.as_view({"post": "create"})(request)
+
+        self.assertEqual(response.status_code, 201, response.data)
+        student = Student.objects.get(tenant=self.tenant, name="동일번호무휴대폰학생")
+        student.user.refresh_from_db()
+        self.assertIsNone(student.phone)
+        self.assertFalse(student.user.phone)
+        self.assertTrue(student.uses_identifier)
+        self.assertNotEqual(student.ps_number, student.parent_phone)
+        self.assertEqual(student.omr_code, "88887777")
+
     def test_admin_update_clearing_student_phone_recomputes_omr_from_parent_without_fake_phone(self):
         student = make_student(
             self.tenant,
@@ -140,6 +167,35 @@ class StudentIdentityConvergenceTests(TestCase):
         self.assertTrue(result.student.uses_identifier)
         self.assertEqual(result.student.omr_code, "77776666")
 
+    def test_registration_approval_matching_contacts_keeps_parent_phone_only(self):
+        reg = StudentRegistrationRequest.objects.create(
+            tenant=self.tenant,
+            status=StudentRegistrationRequest.PENDING,
+            initial_password=make_password("rawpw1234"),
+            initial_password_plain="",
+            name="가입동일번호학생",
+            username="",
+            parent_phone="01077776666",
+            phone="01077776666",
+            school_type="HIGH",
+            high_school="테스트고",
+            origin_middle_school="테스트중",
+            grade=1,
+            gender="M",
+            address="서울",
+        )
+
+        result = approve_registration_request(tenant=self.tenant, registration_id=reg.id)
+
+        result.student.refresh_from_db()
+        result.student.user.refresh_from_db()
+        self.assertIsNone(result.student.phone)
+        self.assertFalse(result.student.user.phone)
+        self.assertTrue(result.student.uses_identifier)
+        self.assertNotEqual(result.student.ps_number, result.student.parent_phone)
+        self.assertEqual(result.notice.student_phone, "")
+        self.assertEqual(result.notice.student_id, result.student.ps_number)
+
     def test_excel_import_without_student_phone_uses_same_parent_tail8_identity(self):
         result = resolve_student_import_row(
             self.tenant,
@@ -157,6 +213,28 @@ class StudentIdentityConvergenceTests(TestCase):
         result.student.refresh_from_db()
         self.assertIsNone(result.student.phone)
         self.assertTrue(result.student.uses_identifier)
+        self.assertEqual(result.student.omr_code, "55554444")
+
+    def test_excel_import_matching_contacts_keeps_parent_phone_only(self):
+        result = resolve_student_import_row(
+            self.tenant,
+            {
+                "name": "엑셀동일번호학생",
+                "parent_phone": "01055554444",
+                "phone": "01055554444",
+                "school_type": "HIGH",
+                "grade": 1,
+            },
+            "test1234",
+        )
+
+        self.assertTrue(result.created)
+        result.student.refresh_from_db()
+        result.student.user.refresh_from_db()
+        self.assertIsNone(result.student.phone)
+        self.assertFalse(result.student.user.phone)
+        self.assertTrue(result.student.uses_identifier)
+        self.assertNotEqual(result.student.ps_number, result.student.parent_phone)
         self.assertEqual(result.student.omr_code, "55554444")
 
     def test_excel_import_rejects_malformed_student_phone_instead_of_silent_identifier_fallback(self):

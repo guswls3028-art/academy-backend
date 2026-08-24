@@ -29,7 +29,9 @@ def _digits(value: Any) -> str:
 
 
 def _student_phone(row: dict[str, Any]) -> str:
-    return _digits(row.get("phone") or row.get("studentPhone"))
+    phone = _digits(row.get("phone") or row.get("studentPhone"))
+    parent_phone = _digits(row.get("parent_phone") or row.get("parentPhone"))
+    return "" if phone and phone == parent_phone else phone
 
 
 @dataclass(frozen=True)

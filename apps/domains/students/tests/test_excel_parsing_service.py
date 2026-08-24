@@ -55,6 +55,23 @@ def test_parse_student_excel_keeps_student_and_guardian_contacts_separate(tmp_pa
     assert rows[0]["parent_phone"] == "01087654321"
 
 
+def test_parse_student_excel_treats_matching_contacts_as_parent_only(tmp_path):
+    path = tmp_path / "shared-contact.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["학생 성명", "학생 연락처", "보호자 휴대전화"])
+    ws.append(["무휴대폰학생", "010-8765-4321", "010-8765-4321"])
+    wb.save(path)
+
+    rows, _lecture_title = parse_student_excel_file(str(path))
+
+    assert len(rows) == 1
+    assert rows[0]["phone"] is None
+    assert rows[0]["studentPhone"] is None
+    assert rows[0]["parent_phone"] == "01087654321"
+    assert rows[0]["uses_identifier"] is True
+
+
 def test_parse_student_excel_selects_data_sheet_behind_cover_sheet(tmp_path):
     path = tmp_path / "cover-and-roster.xlsx"
     wb = Workbook()
