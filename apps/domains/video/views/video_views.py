@@ -1408,6 +1408,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             students.append(
                 {
                     "enrollment": e.id,
+                    "student_id": e.student_id,
                     "student_name": e.student.name,
                     "attendance_status": attendance.get(e.id),
                     "lecture_title": lecture.title if lecture else None,

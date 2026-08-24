@@ -156,6 +156,14 @@ class VideoStatsAccessModeTests(TestCase):
 
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["total_filtered"], 3)
+        rows_by_enrollment = {
+            row["enrollment"]: row
+            for row in response.data["students"]
+        }
+        self.assertEqual(
+            rows_by_enrollment[proctored.id]["student_id"],
+            proctored.student_id,
+        )
 
         modes_by_student = {
             row["student_name"]: row["access_mode"]
