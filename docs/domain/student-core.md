@@ -73,6 +73,12 @@ Required invariants:
   same 50-character storage boundary; a valid student identity must not fail
   when it is mirrored into inventory metadata.
 - internal username mirrors `ps_number` through `user_internal_username(tenant, ps_number)`.
+- Persisting a `ps_number` change locks the account and student rows and updates
+  the internal username, inventory copies, and student row in one transaction.
+  A save whose `update_fields` excludes `ps_number` must not mutate either
+  identity mirror. The persisted `Student.user_id` selects the account lock
+  before the student row lock; an in-memory attempt to relink the account or
+  tenant fails closed. Username collisions roll back every identity copy.
 - student phone is optional; parent phone is required on creation/import/signup.
 - phone fields are normalized to numeric `010XXXXXXXX` 11-digit strings.
 - `User.phone` mirrors `Student.phone`; profile changes update or clear both so
