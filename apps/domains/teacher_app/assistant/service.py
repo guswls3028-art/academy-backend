@@ -162,12 +162,13 @@ def _student_match(*, tenant, row: dict) -> tuple[dict, list[dict], list[str]]:
         )
 
     active = Student.objects.filter(tenant=tenant, deleted_at__isnull=True).select_related("user")
+    has_phone_evidence = bool(student_phone or parent_phone)
     phone_query = Q()
     if student_phone:
         phone_query |= Q(phone=student_phone)
     if parent_phone:
         phone_query |= Q(parent_phone=parent_phone)
-    phone_collisions = list(active.filter(phone_query).order_by("id")[:3]) if phone_query.children else []
+    phone_collisions = list(active.filter(phone_query).order_by("id")[:3]) if has_phone_evidence else []
     different_name = [candidate for candidate in phone_collisions if candidate.name != name]
     if different_name:
         issues.append(
@@ -213,7 +214,7 @@ def _student_match(*, tenant, row: dict) -> tuple[dict, list[dict], list[str]]:
         return {"status": "existing", "id": student.id, "basis": basis}, issues, profile_changes
 
     deleted = Student.objects.filter(tenant=tenant, deleted_at__isnull=False, name=name)
-    deleted = deleted.filter(phone_query) if phone_query.children else deleted.none()
+    deleted = deleted.filter(phone_query) if has_phone_evidence else deleted.none()
     deleted_matches = list(deleted.order_by("id")[:2])
     if len(deleted_matches) > 1:
         issues.append(
