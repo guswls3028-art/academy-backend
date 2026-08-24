@@ -9,7 +9,10 @@ from .views.exam_omr_submit_view import ExamOMRSubmitView
 from .views.exam_submissions_list_view import ExamSubmissionsListView
 from .views.homework_submissions_list_view import HomeworkSubmissionsListView
 from .views.exam_omr_batch_upload_view import ExamOMRBatchUploadView
-from .views.pending_submissions_view import PendingSubmissionsView
+from .views.pending_submissions_view import (
+    PendingSubmissionPreviewView,
+    PendingSubmissionsView,
+)
 from .views.exam_candidates_view import ExamCandidatesView
 from .views.homework_candidates_view import HomeworkCandidatesView
 from .views.homework_submission_media_view import (
@@ -28,6 +31,11 @@ urlpatterns = [
         "submissions/pending/",
         PendingSubmissionsView.as_view(),
         name="pending-submissions",
+    ),
+    path(
+        "submissions/<int:submission_id>/preview/",
+        PendingSubmissionPreviewView.as_view(),
+        name="pending-submission-preview",
     ),
 
     # 🔥 STEP 2: 시험 OMR 전용 제출 (file_key 기반)

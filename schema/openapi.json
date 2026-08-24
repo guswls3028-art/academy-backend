@@ -8287,6 +8287,18 @@
         ],
         "type": "object"
       },
+      "PendingSubmissionPreviewResponse": {
+        "properties": {
+          "url": {
+            "format": "uri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      },
       "PositionEnum": {
         "description": "* `DIRECTOR` - 실장\n* `INSTRUCTOR` - 강사\n* `ASSISTANT` - 조교\n* `STAFF` - 직원",
         "enum": [
@@ -45897,6 +45909,45 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Submission"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "submissions"
+        ]
+      }
+    },
+    "/api/v1/submissions/submissions/{submission_id}/preview/": {
+      "get": {
+        "description": "Issue a short AI-bucket preview URL for one tenant-owned submission.",
+        "operationId": "submissions_submissions_preview_retrieve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "submission_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingSubmissionPreviewResponse"
                 }
               }
             },
