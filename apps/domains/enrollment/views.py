@@ -11,6 +11,8 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.exceptions import ValidationError, NotFound
+from rest_framework.parsers import MultiPartParser
+from drf_spectacular.utils import extend_schema
 
 from apps.api.common.upload_validation import (
     DEFAULT_MAX_EXCEL_SIZE,
@@ -19,7 +21,12 @@ from apps.api.common.upload_validation import (
     validate_uploaded_file,
 )
 from academy.adapters.db.django import repositories_enrollment as enroll_repo
-from .serializers import EnrollmentSerializer, SessionEnrollmentSerializer
+from .serializers import (
+    EnrollmentExcelUploadAcceptedSerializer,
+    EnrollmentExcelUploadRequestSerializer,
+    EnrollmentSerializer,
+    SessionEnrollmentSerializer,
+)
 from .filters import EnrollmentFilter
 from django.conf import settings
 from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_excel
@@ -88,7 +95,16 @@ class EnrollmentViewSet(ModelViewSet):
         delete_enrollment(enrollment)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
-    @action(detail=False, methods=["post"], url_path="lecture_enroll_from_excel")
+    @extend_schema(
+        request=EnrollmentExcelUploadRequestSerializer,
+        responses={202: EnrollmentExcelUploadAcceptedSerializer},
+    )
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="lecture_enroll_from_excel",
+        parser_classes=[MultiPartParser],
+    )
     def lecture_enroll_from_excel(self, request):
         """
         강의 엑셀 수강등록 — 워커 전담.

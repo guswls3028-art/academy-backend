@@ -888,6 +888,7 @@ class ExcelParsingService:
                             "row": error["row"],
                             "name": error.get("name") or "(이름 없음)",
                             "error": error["reason"],
+                            "reason_code": "invalid_row",
                             "conflict_student_id": None,
                         }
                         for error in parsing_errors

@@ -1787,6 +1787,55 @@
         ],
         "type": "object"
       },
+      "EnrollmentExcelUploadAccepted": {
+        "properties": {
+          "job_id": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EnrollmentExcelUploadAcceptedStatusEnum"
+              }
+            ],
+            "readOnly": true
+          }
+        },
+        "required": [
+          "job_id",
+          "status"
+        ],
+        "type": "object"
+      },
+      "EnrollmentExcelUploadAcceptedStatusEnum": {
+        "description": "* `PENDING` - PENDING",
+        "enum": [
+          "PENDING"
+        ],
+        "type": "string"
+      },
+      "EnrollmentExcelUploadRequestRequest": {
+        "properties": {
+          "file": {
+            "format": "binary",
+            "type": "string"
+          },
+          "lecture_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "session_id": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "file",
+          "lecture_id"
+        ],
+        "type": "object"
+      },
       "EnrollmentRequest": {
         "properties": {
           "lecture": {
@@ -22823,30 +22872,20 @@
         "operationId": "enrollments_lecture_enroll_from_excel_create",
         "requestBody": {
           "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/EnrollmentRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/EnrollmentRequest"
-              }
-            },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/EnrollmentRequest"
+                "$ref": "#/components/schemas/EnrollmentExcelUploadRequestRequest"
               }
             }
           },
           "required": true
         },
         "responses": {
-          "200": {
+          "202": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Enrollment"
+                  "$ref": "#/components/schemas/EnrollmentExcelUploadAccepted"
                 }
               }
             },

@@ -214,6 +214,7 @@ class ExcelJobAtomicCompletionTests(TestCase):
                 "row": 3,
                 "name": "오류학생",
                 "error": "학부모 전화번호가 없거나 형식이 잘못되었습니다(010 포함 11자리).",
+                "reason_code": "invalid_row",
                 "conflict_student_id": None,
             }],
         )
