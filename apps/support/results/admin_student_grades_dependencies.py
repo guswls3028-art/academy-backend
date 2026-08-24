@@ -232,6 +232,8 @@ def submitted_homework_keys_for_grades(
     homework_ids: list[int],
 ) -> set[tuple[int, int]]:
     """Return tenant-safe (enrollment, homework) keys with a submission record."""
+    from django.db.models import Q
+
     from apps.domains.submissions.models import Submission
 
     return set(
@@ -241,7 +243,26 @@ def submitted_homework_keys_for_grades(
             enrollment__tenant=tenant,
             target_type=Submission.TargetType.HOMEWORK,
             target_id__in=homework_ids,
-        ).values_list("enrollment_id", "target_id")
+        )
+        .filter(
+            Q(
+                media_files__status="uploaded",
+                media_files__removed_at__isnull=True,
+            )
+            | ~Q(
+                source__in=[
+                    Submission.Source.HOMEWORK_IMAGE,
+                    Submission.Source.HOMEWORK_VIDEO,
+                ]
+            )
+            | (
+                Q(file_key__isnull=False)
+                & ~Q(file_key="")
+                & Q(meta__homework_media_legacy_removed_at__isnull=True)
+            )
+        )
+        .values_list("enrollment_id", "target_id")
+        .distinct()
     )
 
 

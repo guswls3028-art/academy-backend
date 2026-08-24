@@ -9,6 +9,10 @@ from rest_framework.permissions import IsAuthenticated
 
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.submissions.models import Submission
+from apps.domains.submissions.services.homework_media import (
+    serialize_homework_media,
+    serialize_legacy_homework_media,
+)
 from apps.support.submissions.dependencies import (
     clinic_highlight_map_for_enrollments,
     enrollment_map_for_submission_list,
@@ -75,6 +79,7 @@ class HomeworkSubmissionsListView(APIView):
                 target_type=Submission.TargetType.HOMEWORK,
                 target_id=int(homework_id),
             )
+            .prefetch_related("media_files")
             .order_by("-id")[:200]
         )
 
@@ -112,12 +117,31 @@ class HomeworkSubmissionsListView(APIView):
             lecture_info = _lecture_info_from_enrollment(enrollment)
 
             source = getattr(s, "source", "")
-            file_key = getattr(s, "file_key", None) or ""
-            file_type = ""
-            file_size = getattr(s, "file_size", None)
-            if file_key:
-                ext = file_key.rsplit(".", 1)[-1].lower() if "." in file_key else ""
-                file_type = ext
+            files = []
+            if getattr(s, "file_key", None):
+                files.append(serialize_legacy_homework_media(s))
+            files.extend(serialize_homework_media(media) for media in s.media_files.all())
+            files.sort(
+                key=lambda item: (
+                    int(item["position"]),
+                    str(item["created_at"] or ""),
+                    str(item["id"]),
+                )
+            )
+            primary_file = next(
+                (item for item in files if not item.get("removed_at")),
+                files[0] if files else None,
+            )
+            primary_name = (
+                str(primary_file.get("original_filename") or "")
+                if primary_file
+                else ""
+            )
+            compat_file_type = (
+                primary_name.rsplit(".", 1)[-1].lower()
+                if "." in primary_name
+                else None
+            )
 
             student_id = int(getattr(student, "id", 0)) if student else 0
             student_phone_v = getattr(student, "phone", "") if student else ""
@@ -133,9 +157,11 @@ class HomeworkSubmissionsListView(APIView):
                     "parent_phone": parent_phone_v or None,
                     "status": str(getattr(s, "status", "")),
                     "source": str(source),
-                    "file_key": file_key,
-                    "file_type": file_type,
-                    "file_size": file_size,
+                    # 기존 단건 소비자가 파일 유무·형식·크기를 읽는 호환 필드.
+                    # 버킷 object key는 더 이상 클라이언트에 노출하지 않는다.
+                    "file_type": compat_file_type,
+                    "file_size": primary_file.get("file_size") if primary_file else None,
+                    "files": files,
                     "created_at": s.created_at.isoformat() if hasattr(s, "created_at") and s.created_at else None,
                     "profile_photo_url": _get_photo_url(student),
                     "name_highlight_clinic_target": highlight_map.get(int(enrollment_id), False) if enrollment_id else False,

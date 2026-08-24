@@ -350,6 +350,34 @@ def target_enrollment_assignment_exists(
     return False
 
 
+def homework_submission_is_teacher_reviewed(
+    *,
+    tenant,
+    enrollment_id: int,
+    homework_id: int,
+) -> bool:
+    """Return whether teacher-owned scoring/correction now locks media changes."""
+    from apps.domains.homework_results.models import HomeworkScore
+
+    if HomeworkScore.objects.filter(
+        enrollment_id=enrollment_id,
+        enrollment__tenant=tenant,
+        homework_id=homework_id,
+        homework__tenant=tenant,
+    ).exists():
+        return True
+
+    from apps.domains.progress.models import AssessmentCorrection
+
+    return AssessmentCorrection.objects.filter(
+        tenant=tenant,
+        enrollment_id=enrollment_id,
+        source_type=AssessmentCorrection.SourceType.HOMEWORK,
+        source_id=homework_id,
+        completed=True,
+    ).exists()
+
+
 def validate_exam_enrollment_candidate(
     *,
     tenant,

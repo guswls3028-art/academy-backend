@@ -147,6 +147,51 @@ X를 나중에 다시 맞힌 뒤에도 남기려면 O·복습으로 바꾼다. �
 
 ## API와 호환 경계
 
+### 학생 사진·동영상 다건 제출
+
+- 학생 과제 하나에는 활성 `Submission`을 정확히 한 행만 유지한다. 사진·동영상은
+  순서가 있는 `SubmissionMedia` 자식 행이며, 파일마다 tenant, 서버가 정한 저장
+  식별자, 안전한 원본 표시명, 종류·MIME·용량·순서·상태·오류·시각을 보존한다.
+  부모는 기존 `homework_image`·`homework_video` source와 active uniqueness를 그대로
+  사용하므로 구 API 인스턴스와 겹쳐 실행돼도 두 번째 활성 부모를 만들지 않는다.
+  클라이언트가 tenant·사용자·object key를 지정하거나 응답에서 bucket key를 읽는
+  경로는 없다.
+- 한 과제는 활성 파일 20개, 파일당 100MB, 활성 파일 합계 500MB까지다. JPG/JPEG,
+  PNG, GIF, WebP, HEIC/HEIF, AVIF, MP4/M4V/MOV, WebM만 허용하고 확장자·선언 MIME·
+  실제 signature가 일치해야 한다. tenant의 활성 학생, 본인 활성 수강, 현재 과제
+  배정이 모두 맞아야 목록·업로드·삭제할 수 있다. 학부모는 변경할 수 없다.
+- 브라우저가 만든 `client_file_id`는 tenant 안에서 유일하며 같은 fingerprint로
+  재시도할 때 같은 자식 행과 저장 키를 쓴다. 이미 성공한 동일 fingerprint는 새
+  행으로 복제하지 않는다. 한 파일의 object-store 저장이 실패하면 그 행만
+  `failed`와 오류 시각을 기록하고 `503`을 반환한다. 같은 묶음의 앞서 성공한
+  파일·행은 rollback하지 않는다.
+- object 저장 뒤 최종 DB 상태 갱신이 실패해도 object를 추측 삭제하지 않는다. 이미
+  커밋된 자식 행의 deterministic 저장 키에 남겨 같은 `client_file_id` 재시도가
+  동일 키를 덮어쓰고 상태를 복구하게 한다. 실패 상태 기록도 best-effort로 시도하고
+  API는 성공으로 응답하지 않는다. 따라서 DB 장애 중 이름 없는 orphan을 새로 만들지
+  않으며 감사 행과 object identity의 연결이 유지된다.
+- 학생 삭제는 행과 object를 즉시 없애지 않고 `removed_at`, `removed_by`,
+  `removed` 상태를 기록한다. 선생님 점수 또는 완료된 교정 기록이 생긴 뒤에는
+  변경을 `409 HOMEWORK_MEDIA_REVIEWED`로 막는다. soft-delete object는 감사·복구
+  근거로 보존하며, 향후 정리도 tenant·행·보존기간을 확정한 별도 exact-target
+  작업에서만 수행한다. 이번 expand migration은 child table만 만들며 기존 행,
+  constraint, object를 바꾸거나 지우지 않는다.
+- 기존 `homework_image`·`homework_video` 단건 `Submission.file_key`는 그대로
+  보존한다. 새 목록에서는 `legacy-{submission_id}`인 파일 하나로 투영하고, soft
+  remove는 기존 행의 `meta`에 감사 시각을 기록한다. 구 단건 제출 생성 API도
+  계속 동작한다. 새 child가 하나도 성공하지 않았거나 마지막 활성 child가 제거된
+  다건 부모는 성적 화면에서 `제출`로 계산하지 않는다.
+- 교직원 제출 목록은 자식 파일별 상태·오류를 반환하되 저장 키는 반환하지 않는다.
+  미리보기는 같은 tenant의 교직원 또는 소유 학생만 서버가 10분짜리 서명 URL을
+  발급하며, 실패·업로드 중·삭제 파일은 준비되지 않은 것으로 거부한다.
+
+| Method | Path | 역할 |
+|--------|------|------|
+| GET/POST | `/submissions/submissions/homework/{homework_id}/media/` | 본인 파일 목록·파일 하나 업로드. 여러 파일은 독립 요청으로 부분 성공을 보존 |
+| DELETE | `/submissions/submissions/homework/{homework_id}/media/{media_id}/` | 검수 전 본인 파일 soft remove |
+| GET | `/submissions/submissions/homework/{homework_id}/media/{media_id}/preview/` | 권한 확인 뒤 짧은 미리보기 URL 발급 |
+| GET | `/submissions/submissions/homework/{homework_id}/` | 교직원 학생별 제출과 ordered `files` 검수 목록 |
+
 | Method | Path | 역할 |
 |--------|------|------|
 | GET/POST | `/homeworks/` | 차시 과제 목록·생성, `max_score` 반환·입력 |
@@ -204,6 +249,10 @@ X를 나중에 다시 맞힌 뒤에도 남기려면 O·복습으로 바꾼다. �
 - 학생·학부모 성적 요약: `apps/support/student_app/results_summary.py`
 - 워크북 원본·채점표: `views/homework_view.py`,
   `tests/test_workbook_source_and_grading.py`
+- 학생 제출 media 모델·검증·재시도: `apps/domains/submissions/models/submission.py`,
+  `services/homework_media.py`, `views/homework_submission_media_view.py`
+- 다건·부분 실패·권한 회귀:
+  `apps/domains/submissions/tests/test_homework_media_submission.py`
 - Ymath 시험·워크북 통합 실자료 UAT:
   `../operations/runbooks/ymath-real-source-qa.md`,
   `scripts/ymath_realuse_scenario.py`

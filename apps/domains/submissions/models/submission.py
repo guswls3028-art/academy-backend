@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from django.db import models
 from django.conf import settings
+from django.utils import timezone
 from apps.api.common.models import TimestampModel
 from apps.core.models import Tenant
 
@@ -100,5 +101,73 @@ class Submission(TimestampModel):
                                 "homework_video", "ai_match"],
                 ),
                 name="unique_active_submission_per_target",
+            ),
+        ]
+
+
+class SubmissionMedia(TimestampModel):
+    """Ordered, independently retryable media owned by one homework submission."""
+
+    class Kind(models.TextChoices):
+        IMAGE = "image", "Image"
+        VIDEO = "video", "Video"
+
+    class Status(models.TextChoices):
+        UPLOADING = "uploading", "Uploading"
+        UPLOADED = "uploaded", "Uploaded"
+        FAILED = "failed", "Failed"
+        REMOVED = "removed", "Removed"
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="submission_media",
+    )
+    submission = models.ForeignKey(
+        Submission,
+        on_delete=models.CASCADE,
+        related_name="media_files",
+    )
+    client_upload_id = models.UUIDField()
+    upload_batch_id = models.UUIDField()
+    fingerprint = models.CharField(max_length=64)
+    object_key = models.CharField(max_length=512)
+    original_filename = models.CharField(max_length=255)
+    media_kind = models.CharField(max_length=10, choices=Kind.choices)
+    mime_type = models.CharField(max_length=100)
+    size = models.PositiveBigIntegerField()
+    position = models.PositiveSmallIntegerField()
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.UPLOADING,
+    )
+    error_message = models.TextField(blank=True)
+    upload_started_at = models.DateTimeField(default=timezone.now)
+    uploaded_at = models.DateTimeField(null=True, blank=True)
+    failed_at = models.DateTimeField(null=True, blank=True)
+    removed_at = models.DateTimeField(null=True, blank=True)
+    removed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="removed_submission_media",
+    )
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["tenant", "submission", "status"]),
+            models.Index(fields=["submission", "position", "id"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "client_upload_id"],
+                name="uniq_submission_media_client_upload",
+            ),
+            models.UniqueConstraint(
+                fields=["submission", "position"],
+                condition=models.Q(removed_at__isnull=True),
+                name="uniq_active_submission_media_position",
             ),
         ]

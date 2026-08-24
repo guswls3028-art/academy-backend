@@ -12,6 +12,11 @@ from .views.exam_omr_batch_upload_view import ExamOMRBatchUploadView
 from .views.pending_submissions_view import PendingSubmissionsView
 from .views.exam_candidates_view import ExamCandidatesView
 from .views.homework_candidates_view import HomeworkCandidatesView
+from .views.homework_submission_media_view import (
+    HomeworkSubmissionMediaCollectionView,
+    HomeworkSubmissionMediaDetailView,
+    HomeworkSubmissionMediaPreviewView,
+)
 
 router = DefaultRouter()
 router.register("submissions", SubmissionViewSet, basename="submissions")
@@ -44,6 +49,21 @@ urlpatterns = [
         "submissions/homework/<int:homework_id>/",
         HomeworkSubmissionsListView.as_view(),
         name="homework-submissions-list",
+    ),
+    path(
+        "submissions/homework/<int:homework_id>/media/",
+        HomeworkSubmissionMediaCollectionView.as_view(),
+        name="homework-submission-media-collection",
+    ),
+    path(
+        "submissions/homework/<int:homework_id>/media/<str:media_id>/",
+        HomeworkSubmissionMediaDetailView.as_view(),
+        name="homework-submission-media-detail",
+    ),
+    path(
+        "submissions/homework/<int:homework_id>/media/<str:media_id>/preview/",
+        HomeworkSubmissionMediaPreviewView.as_view(),
+        name="homework-submission-media-preview",
     ),
 
     # ✅ 다건 업로드: POST /submissions/exams/{examId}/omr/batch/
