@@ -209,6 +209,51 @@ class TeacherOpsAssistantApiTests(TestCase):
         self.assertEqual(Student.objects.filter(tenant=self.tenant, name="가온별").count(), 1)
         self.assertEqual(confirmed.data["rows"][0]["account_creation"], "not_created")
 
+    def test_parent_phone_match_ignores_other_students_with_blank_phone(self):
+        target = create_student_account(
+            tenant=self.tenant,
+            password="safe-pass",
+            student_data={
+                "name": "가온별",
+                "phone": None,
+                "parent_phone": "01011112222",
+                "ps_number": "SYNTHETIC-TARGET",
+                "omr_code": "11112222",
+                "uses_identifier": True,
+                "school_type": "HIGH",
+                "high_school": "해솔고",
+                "grade": 1,
+            },
+        )
+        create_student_account(
+            tenant=self.tenant,
+            password="safe-pass",
+            student_data={
+                "name": "다른학생",
+                "phone": None,
+                "parent_phone": "01077778888",
+                "ps_number": "SYNTHETIC-OTHER",
+                "omr_code": "77778888",
+                "uses_identifier": True,
+                "school_type": "HIGH",
+                "high_school": "다른고",
+                "grade": 1,
+            },
+        )
+        parent_only_ocr = """가온별/해솔고1
+010-1111-2222(모)
+해솔고1 과학반, 기존 학생입니다
+1회차 영상신청함
+"""
+
+        response = self._analyze(ocr=parent_only_ocr)
+
+        self.assertEqual(response.status_code, 200)
+        row = response.data["rows"][0]
+        self.assertEqual(row["student_match"]["status"], "existing")
+        self.assertEqual(row["student_match"]["id"], target.student.id)
+        self.assertFalse(any(issue["code"] == "phone_conflict" for issue in row["issues"]))
+
     def test_token_cannot_cross_tenant_or_actor_boundary(self):
         analyze_response = self._analyze()
         other_tenant = Tenant.objects.create(name="Other", code="teacher_ops_other", is_active=True)
