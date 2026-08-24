@@ -18,7 +18,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.exceptions import APIException, NotFound, ValidationError
 
 from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework.filters import SearchFilter, OrderingFilter
+from rest_framework.filters import OrderingFilter
 
 from apps.core.parsing import parse_bool
 from apps.api.common.query_params import parse_query_bool
@@ -41,7 +41,7 @@ from apps.support.students.view_dependencies import (
 
 from academy.adapters.db.django import repositories_students as student_repo
 from ..models import Student
-from ..filters import StudentFilter
+from ..filters import StudentFilter, StudentSearchFilter
 from ..selectors import student_for_tenant_user, students_for_tenant
 from ..services import (
     StudentLifecycleError,
@@ -317,7 +317,7 @@ class StudentViewSet(ModelViewSet):
     # ------------------------------
     filter_backends = [
         DjangoFilterBackend,
-        SearchFilter,
+        StudentSearchFilter,
         OrderingFilter,
     ]
     filterset_class = StudentFilter

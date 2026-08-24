@@ -1787,6 +1787,55 @@
         ],
         "type": "object"
       },
+      "EnrollmentExcelUploadAccepted": {
+        "properties": {
+          "job_id": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EnrollmentExcelUploadAcceptedStatusEnum"
+              }
+            ],
+            "readOnly": true
+          }
+        },
+        "required": [
+          "job_id",
+          "status"
+        ],
+        "type": "object"
+      },
+      "EnrollmentExcelUploadAcceptedStatusEnum": {
+        "description": "* `PENDING` - PENDING",
+        "enum": [
+          "PENDING"
+        ],
+        "type": "string"
+      },
+      "EnrollmentExcelUploadRequestRequest": {
+        "properties": {
+          "file": {
+            "format": "binary",
+            "type": "string"
+          },
+          "lecture_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "session_id": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "file",
+          "lecture_id"
+        ],
+        "type": "object"
+      },
       "EnrollmentRequest": {
         "properties": {
           "lecture": {
@@ -22819,34 +22868,24 @@
     },
     "/api/v1/enrollments/lecture_enroll_from_excel/": {
       "post": {
-        "description": "강의 엑셀 수강등록 — 워커 전담.\nAPI는 파일 수신 → R2 엑셀 버킷 업로드 → SQS EXCEL_PARSING job 등록만 수행하며,\n파싱·등록 로직은 워커에서만 실행됩니다 (구조적으로 API에서 동기 처리 불가).\nPOST: multipart/form-data — file (엑셀), lecture_id, password_mode,\ninitial_password(fixed 방식일 때)\n응답: { \"job_id\": str } → 클라이언트는 excel_job_status 로 폴링.",
+        "description": "강의 엑셀 수강등록 — 워커 전담.\nAPI는 파일 수신 → R2 엑셀 버킷 업로드 → SQS EXCEL_PARSING job 등록만 수행하며,\n파싱·등록 로직은 워커에서만 실행됩니다 (구조적으로 API에서 동기 처리 불가).\nPOST: multipart/form-data — file (엑셀), lecture_id, session_id(선택)\n학생 명부에 이미 등록된 학생만 학생번호 exact 우선, 학생번호가 없으면\nexact 이름·정규화 학부모 전화번호로 매칭합니다.\n응답: { \"job_id\": str } → 클라이언트는 excel_job_status 로 폴링.",
         "operationId": "enrollments_lecture_enroll_from_excel_create",
         "requestBody": {
           "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/EnrollmentRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/EnrollmentRequest"
-              }
-            },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/EnrollmentRequest"
+                "$ref": "#/components/schemas/EnrollmentExcelUploadRequestRequest"
               }
             }
           },
           "required": true
         },
         "responses": {
-          "200": {
+          "202": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Enrollment"
+                  "$ref": "#/components/schemas/EnrollmentExcelUploadAccepted"
                 }
               }
             },

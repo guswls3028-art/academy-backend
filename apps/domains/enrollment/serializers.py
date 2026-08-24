@@ -24,6 +24,17 @@ class StudentShortSerializer(serializers.Serializer):
     parent_phone = serializers.CharField(read_only=True, allow_null=True)
 
 
+class EnrollmentExcelUploadRequestSerializer(serializers.Serializer):
+    file = serializers.FileField()
+    lecture_id = serializers.IntegerField(min_value=1)
+    session_id = serializers.IntegerField(min_value=1, required=False)
+
+
+class EnrollmentExcelUploadAcceptedSerializer(serializers.Serializer):
+    job_id = serializers.CharField(read_only=True)
+    status = serializers.ChoiceField(choices=("PENDING",), read_only=True)
+
+
 class EnrollmentSerializer(serializers.ModelSerializer):
     student = StudentShortSerializer(read_only=True)
     tenant = serializers.PrimaryKeyRelatedField(read_only=True)

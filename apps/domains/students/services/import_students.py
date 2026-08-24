@@ -416,6 +416,7 @@ def import_students_from_rows(
     Returns the existing worker contract:
     {
       "created": int,
+      "created_rows": [{"row", "name", "student_id"}],
       "failed": [{"row", "name", "error", "conflict_student_id"?}],
       "duplicates": [{"row", "name", "student_id"}],
       "restored": [{"row", "name", "student_id"}],
@@ -432,6 +433,7 @@ def import_students_from_rows(
         initial_password=initial_password,
     )
     created_students: list[Any] = []
+    created_rows: list[dict[str, Any]] = []
     random_credentials: list[dict[str, str]] = []
     failed: list[dict[str, Any]] = []
     duplicates: list[dict[str, Any]] = []
@@ -467,10 +469,17 @@ def import_students_from_rows(
                 source_job_id=source_job_id,
             )
         except (StudentImportRowError, StudentImportPasswordError) as exc:
+            error_detail = exc.detail if isinstance(exc, StudentImportRowError) else str(exc)
+            reason_code = "password_policy" if isinstance(exc, StudentImportPasswordError) else "invalid_row"
+            if error_detail == "이미 사용 중인 전화번호입니다.":
+                reason_code = "phone_in_use"
+            elif error_detail == "이미 사용 중인 PS 번호입니다.":
+                reason_code = "ps_number_in_use"
             failed.append({
                 "row": display_row,
                 "name": display_name,
-                "error": exc.detail if isinstance(exc, StudentImportRowError) else str(exc),
+                "error": error_detail,
+                "reason_code": reason_code,
                 "conflict_student_id": (
                     exc.conflict_student_id if isinstance(exc, StudentImportRowError) else None
                 ),
@@ -487,13 +496,19 @@ def import_students_from_rows(
             failed.append({
                 "row": display_row,
                 "name": display_name,
-                "error": str(exc)[:500],
+                "error": "처리 중 오류가 발생했습니다. 입력값을 확인한 뒤 다시 시도해 주세요.",
+                "reason_code": "processing_error",
                 "conflict_student_id": None,
             })
             continue
 
         if resolved.created:
             created_students.append(resolved.student)
+            created_rows.append({
+                "row": display_row,
+                "name": display_name,
+                "student_id": resolved.student.id,
+            })
             if password_policy.mode == "random":
                 random_credentials.append({
                     "name": resolved.student.name or display_name,
@@ -527,6 +542,7 @@ def import_students_from_rows(
 
     result = {
         "created": len(created_students),
+        "created_rows": created_rows,
         "failed": failed,
         "duplicates": duplicates,
         "restored": restored,

@@ -107,15 +107,42 @@ class EnrollmentExcelUploadValidationTests(TestCase):
 
     @patch("apps.domains.enrollment.views.dispatch_job")
     @patch("apps.domains.enrollment.views.upload_fileobj_to_r2_excel")
-    def test_phone_last4_mode_does_not_require_fixed_password(self, mock_upload, mock_dispatch):
+    def test_csv_is_rejected_before_r2_upload(self, mock_upload, mock_dispatch):
+        upload = SimpleUploadedFile(
+            "students.csv",
+            "이름,학부모전화번호\n합성학생,01070001111\n".encode(),
+            content_type="text/csv",
+        )
+        request = self.factory.post(
+            "/api/v1/enrollments/lecture_enroll_from_excel/",
+            data={
+                "file": upload,
+                "lecture_id": self.lecture.id,
+            },
+            format="multipart",
+        )
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+
+        response = EnrollmentViewSet.as_view({"post": "lecture_enroll_from_excel"})(request)
+
+        self.assertEqual(response.status_code, 400, response.data)
+        mock_upload.assert_not_called()
+        mock_dispatch.assert_not_called()
+
+    @patch("apps.domains.enrollment.views.dispatch_job")
+    @patch("apps.domains.enrollment.views.upload_fileobj_to_r2_excel")
+    def test_existing_student_enrollment_does_not_require_password_configuration(
+        self,
+        mock_upload,
+        mock_dispatch,
+    ):
         mock_dispatch.return_value = {"ok": True, "job_id": "excel-job-1"}
         request = self.factory.post(
             "/api/v1/enrollments/lecture_enroll_from_excel/",
             data={
                 "file": _valid_xlsx_upload(),
                 "lecture_id": self.lecture.id,
-                "password_mode": "phone_last4",
-                "initial_password": "",
             },
             format="multipart",
         )
@@ -126,14 +153,15 @@ class EnrollmentExcelUploadValidationTests(TestCase):
 
         self.assertEqual(response.status_code, 202, response.data)
         payload = mock_dispatch.call_args.kwargs["payload"]
-        self.assertEqual(payload["password_mode"], "phone_last4")
+        self.assertEqual(payload["student_match_mode"], "existing_only")
+        self.assertNotIn("password_mode", payload)
         self.assertNotIn("initial_password", payload)
         self.assertNotIn("initial_password_secret", payload)
         mock_upload.assert_called_once()
 
     @patch("apps.domains.enrollment.views.dispatch_job")
     @patch("apps.domains.enrollment.views.upload_fileobj_to_r2_excel")
-    def test_fixed_password_is_encrypted_before_job_dispatch(
+    def test_legacy_password_fields_are_not_dispatched_for_enrollment(
         self,
         mock_upload,
         mock_dispatch,
@@ -158,8 +186,8 @@ class EnrollmentExcelUploadValidationTests(TestCase):
 
         self.assertEqual(response.status_code, 202, response.data)
         payload = mock_dispatch.call_args.kwargs["payload"]
+        self.assertEqual(payload["student_match_mode"], "existing_only")
+        self.assertNotIn("password_mode", payload)
         self.assertNotIn("initial_password", payload)
-        self.assertNotIn("fixed-secret-1234", payload["initial_password_secret"])
-        self.assertTrue(
-            payload["initial_password_secret"].startswith("excel:v1:"),
-        )
+        self.assertNotIn("initial_password_secret", payload)
+        self.assertNotIn("fixed-secret-1234", str(payload))

@@ -61,6 +61,7 @@ def send_event_notification(
     from apps.domains.messaging.selectors import get_auto_send_config
     from apps.domains.messaging.policy import (
         get_owner_tenant_id,
+        get_trigger_policy,
         is_messaging_disabled,
         MessagingPolicyError,
         is_event_dry_run,
@@ -71,6 +72,13 @@ def send_event_notification(
         build_unified_replacements,
     )
     from .url_helpers import get_tenant_site_url
+
+    if get_trigger_policy(trigger) == "DISABLED":
+        logger.info(
+            "send_event_notification skipped: trigger=%s policy disabled",
+            trigger,
+        )
+        return False
 
     if is_messaging_disabled(tenant.id):
         logger.info("send_event_notification skipped: tenant_id=%s messaging disabled", tenant.id)
