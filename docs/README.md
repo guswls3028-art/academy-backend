@@ -75,6 +75,7 @@ backend/docs/
 | 제품 사용 분석 | [domain/product-usage-analytics.md](domain/product-usage-analytics.md) |
 | DB 확장·테넌트 분리 판단 | [infrastructure/database-scaling-and-tenant-isolation.md](infrastructure/database-scaling-and-tenant-isolation.md) |
 | 강사 AI 문제 풀이 (Beta) | [domain/teacher-problem-solver.md](domain/teacher-problem-solver.md) |
+| 선생앱 학생 업무 도우미 (Beta) | [domain/teacher-ops-assistant.md](domain/teacher-ops-assistant.md) |
 | 문제 리뷰 리포트 작성·PDF/PPTX 출력 | [domain/problem-review-report.md](domain/problem-review-report.md) |
 | 교사 제공 참고자료 인벤토리·보안·품질 경계 | [domain/teacher-provided-source-materials.md](domain/teacher-provided-source-materials.md) |
 | 운영 runbook | [operations/runbooks/](operations/runbooks/) |

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict, dataclass
+
+from django.core.exceptions import ObjectDoesNotExist
 from rest_framework.exceptions import NotFound, ValidationError
 
 from academy.adapters.db.django import repositories_enrollment as enroll_repo
@@ -21,6 +24,89 @@ from apps.support.enrollment.lifecycle_dependencies import (
     get_homework_learning_access_models,
     schedule_pending_account_notice,
 )
+
+
+@dataclass(frozen=True)
+class DisposableEnrollmentImpact:
+    enrollment_id: int
+    session_enrollments: int
+    removable_unset_attendances: int
+    protected_attendances: int
+    protected_dependencies: dict[str, int]
+
+    @property
+    def can_remove(self) -> bool:
+        return self.protected_attendances == 0 and not self.protected_dependencies
+
+    def as_dict(self) -> dict:
+        return {**asdict(self), "can_remove": self.can_remove}
+
+
+def assess_disposable_enrollment(*, tenant, enrollment) -> DisposableEnrollmentImpact:
+    """Count every cascade boundary before an assistant may undo a wrong enrollment."""
+    tenant = require_tenant(tenant)
+    if enrollment.tenant_id != tenant.id:
+        raise ValidationError({"detail": "다른 학원의 수강 등록입니다."})
+
+    attendances = enrollment.attendances.all()
+    removable_attendances = attendances.filter(
+        status="UNSET",
+        memo="",
+        planned_arrival_date__isnull=True,
+        planned_arrival_time__isnull=True,
+        attended_section__isnull=True,
+    ).count()
+    protected_attendances = attendances.count() - removable_attendances
+
+    protected_dependencies: dict[str, int] = {}
+    allowed_accessors = {"attendances", "session_enrollments"}
+    for relation in Enrollment._meta.related_objects:
+        accessor = relation.get_accessor_name()
+        if not accessor or accessor.endswith("+"):
+            continue
+        if accessor in allowed_accessors:
+            continue
+        try:
+            related = getattr(enrollment, accessor)
+        except (AttributeError, ObjectDoesNotExist):
+            continue
+        count = related.count() if hasattr(related, "count") else int(related is not None)
+        if count:
+            protected_dependencies[relation.related_model._meta.label_lower] = count
+
+    return DisposableEnrollmentImpact(
+        enrollment_id=enrollment.id,
+        session_enrollments=enrollment.session_enrollments.count(),
+        removable_unset_attendances=removable_attendances,
+        protected_attendances=protected_attendances,
+        protected_dependencies=protected_dependencies,
+    )
+
+
+def delete_disposable_enrollment(*, tenant, enrollment_id: int, student_id: int) -> DisposableEnrollmentImpact:
+    """Delete only an exact locked enrollment whose whole impact is disposable."""
+    tenant = require_tenant(tenant)
+    enrollment = (
+        Enrollment.objects.select_for_update()
+        .filter(
+            tenant=tenant,
+            id=enrollment_id,
+            student_id=student_id,
+        )
+        .first()
+    )
+    if enrollment is None:
+        raise ValidationError({"detail": "교정할 수강 등록을 찾지 못했습니다."})
+    impact = assess_disposable_enrollment(tenant=tenant, enrollment=enrollment)
+    if not impact.can_remove:
+        raise ValidationError(
+            {
+                "detail": "사용자 입력 또는 학습·결제 데이터가 있어 수강 등록을 자동으로 삭제할 수 없습니다.",
+                "impact": impact.as_dict(),
+            }
+        )
+    delete_enrollment(enrollment)
+    return impact
 
 
 def _validate_id_list(value, *, field_name: str, allow_empty: bool = False) -> list[int]:
@@ -159,22 +245,13 @@ def toggle_student_learning_access(
                 session=session,
             ).delete()
     elif target_type == "exam":
-        exam = (
-            Exam.objects
-            .filter(id=target_id, tenant=tenant, sessions__lecture=lecture)
-            .distinct()
-            .first()
-        )
+        exam = Exam.objects.filter(id=target_id, tenant=tenant, sessions__lecture=lecture).distinct().first()
         if exam is None:
             raise NotFound("시험을 찾을 수 없습니다")
 
         if action == "add":
             first_session_id = (
-                exam.sessions
-                .filter(lecture=lecture)
-                .order_by("order", "id")
-                .values_list("id", flat=True)
-                .first()
+                exam.sessions.filter(lecture=lecture).order_by("order", "id").values_list("id", flat=True).first()
             )
             if first_session_id:
                 SessionEnrollment.objects.get_or_create(
@@ -187,8 +264,7 @@ def toggle_student_learning_access(
             ExamEnrollment.objects.filter(exam=exam, enrollment=enrollment).delete()
     elif target_type == "homework":
         homework = (
-            Homework.objects
-            .select_related("session", "session__lecture")
+            Homework.objects.select_related("session", "session__lecture")
             .filter(id=target_id, tenant=tenant, session__lecture=lecture)
             .first()
         )
