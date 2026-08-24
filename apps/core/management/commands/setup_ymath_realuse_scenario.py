@@ -2,17 +2,21 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from collections import defaultdict
 from datetime import date, timedelta
 
 from django.apps import apps
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
-from django.db import transaction
+from django.db import connection, transaction
 from django.utils import timezone
 
 from apps.core.models import Program, Tenant, TenantMembership
-from apps.core.models.user import user_internal_username
+from apps.core.models.user import user_display_username, user_internal_username
+from apps.core.services.password import change_password
+from apps.domains.parents.services import ensure_parent_account_for_student
 from apps.core.services.student_grade_report_layout import (
     STUDENT_GRADE_REPORT_LAYOUT_KEY,
     ymath_student_grade_report_layout,
@@ -24,14 +28,27 @@ from apps.core.management.commands.setup_three_tenants import (
 
 
 SCENARIO_CODE_PREFIX = "qa-ymath-realuse-"
+SCENARIO_CODE_RE = re.compile(r"^qa-ymath-realuse-[a-z0-9-]+$")
 DEFAULT_SCENARIO_CODE = "qa-ymath-realuse-20260805"
 PASSWORD_ENV = "YMATH_REALUSE_SCENARIO_PASSWORD"
+LOGIN_UAT_ACCOUNT_COUNT_PER_ROLE = 10
+DEVELOPMENT_SETTINGS_MODULE = "apps.api.config.settings.development"
+DEVELOPMENT_DATABASE_NAME = "academy_api_development"
+DEVELOPMENT_DATABASE_USER = "academy_api_development_app"
+DEVELOPMENT_R2_BUCKET = "academy-development-artifacts"
+LOGIN_UAT_RESERVED_USERNAME_PREFIXES = (
+    "ymath-qa-student-",
+    "ymath-qa-staff-",
+    "staff-",
+)
 
 
 def assert_isolated_runtime() -> None:
     database = settings.DATABASES.get("default", {})
     database_name = str(database.get("NAME") or "")
+    database_user = str(database.get("USER") or "")
     database_engine = str(database.get("ENGINE") or "")
+    settings_module = str(os.environ.get("DJANGO_SETTINGS_MODULE") or "")
     buckets = {
         str(getattr(settings, name, "") or "")
         for name in (
@@ -39,18 +56,28 @@ def assert_isolated_runtime() -> None:
             "R2_STORAGE_BUCKET",
             "R2_EXCEL_BUCKET",
             "R2_ADMIN_BUCKET",
+            "R2_VIDEO_BUCKET",
         )
     }
     development_runtime = (
-        database_name.startswith("academy_api_development")
-        and buckets
-        and all(name.startswith("academy-development-") for name in buckets)
+        settings_module == DEVELOPMENT_SETTINGS_MODULE
+        and database_name == DEVELOPMENT_DATABASE_NAME
+        and database_user == DEVELOPMENT_DATABASE_USER
+        and buckets == {DEVELOPMENT_R2_BUCKET}
     )
     test_runtime = (
         (database_engine.endswith("sqlite3") or database_name == ":memory:" or "test" in database_name.lower())
         and buckets
         and all(name.startswith("test-") for name in buckets)
     )
+    if development_runtime:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT current_database(), current_user")
+            current_database, current_user = cursor.fetchone()
+        development_runtime = (
+            current_database == DEVELOPMENT_DATABASE_NAME
+            and current_user == DEVELOPMENT_DATABASE_USER
+        )
     if not (development_runtime or test_runtime):
         raise CommandError(
             "Ymath real-use scenario is allowed only in the isolated development "
@@ -86,18 +113,48 @@ class Command(BaseCommand):
         parser.add_argument("--teacher-username", default="ymath-qa-teacher")
         parser.add_argument("--student-count", type=int, default=6)
         parser.add_argument("--session-count", type=int, default=24)
+        parser.add_argument(
+            "--login-uat",
+            action="store_true",
+            help="Create a secret-free 10 student + 10 parent + 10 staff login manifest.",
+        )
         lifecycle = parser.add_mutually_exclusive_group()
         lifecycle.add_argument("--reset", action="store_true")
         lifecycle.add_argument("--destroy", action="store_true")
 
     def handle(self, *args, **options):
         tenant_code = str(options["tenant_code"] or "").strip().lower()
-        if not tenant_code.startswith(SCENARIO_CODE_PREFIX):
-            raise CommandError(f"tenant-code must start with {SCENARIO_CODE_PREFIX!r}.")
+        if not SCENARIO_CODE_RE.fullmatch(tenant_code):
+            raise CommandError("tenant-code must match ^qa-ymath-realuse-[a-z0-9-]+$.")
+        teacher_username = str(options["teacher_username"] or "").strip()
+        normalized_teacher_username = teacher_username.lower()
+        if not teacher_username:
+            raise CommandError("teacher-username must not be empty.")
+        if normalized_teacher_username.startswith(LOGIN_UAT_RESERVED_USERNAME_PREFIXES):
+            raise CommandError("teacher-username conflicts with a reserved login UAT username.")
+
         assert_isolated_runtime()
-        existing = Tenant.objects.filter(code=tenant_code).first()
         if options["destroy"]:
-            if existing is None:
+            deleted = None
+            with transaction.atomic():
+                self._lock_tenant_code(tenant_code)
+                existing = self._exact_tenant_or_fail_on_case_variant(tenant_code)
+                if existing is not None:
+                    deleted = {
+                        "tenant_id": existing.id,
+                        "counts": self._tenant_counts(existing),
+                        "users": existing.users.count(),
+                    }
+                    existing.delete()
+
+            remaining = self._remaining_for_code(tenant_code)
+            if any(remaining.values()):
+                raise CommandError(
+                    "Isolated scenario cleanup found a same-code tenant or user residue: "
+                    + json.dumps(remaining, ensure_ascii=False, sort_keys=True)
+                )
+
+            if deleted is None:
                 self.stdout.write(
                     json.dumps(
                         {
@@ -111,27 +168,13 @@ class Command(BaseCommand):
                 )
                 return
 
-            tenant_id = existing.id
-            counts = self._tenant_counts(existing)
-            user_count = existing.users.count()
-            with transaction.atomic():
-                existing.delete()
-            remaining = {
-                "tenants": Tenant.objects.filter(id=tenant_id).count(),
-                "users": get_user_model().objects.filter(tenant_id=tenant_id).count(),
-            }
-            if any(remaining.values()):
-                raise CommandError(
-                    "Isolated scenario cleanup left database residue: "
-                    + json.dumps(remaining, ensure_ascii=False, sort_keys=True)
-                )
             self.stdout.write(
                 json.dumps(
                     {
                         "status": "YMATH_REALUSE_SCENARIO_DESTROYED",
                         "tenant_code": tenant_code,
-                        "tenant_id": tenant_id,
-                        "deleted": {**counts, "users": user_count},
+                        "tenant_id": deleted["tenant_id"],
+                        "deleted": {**deleted["counts"], "users": deleted["users"]},
                         "remaining": remaining,
                     },
                     ensure_ascii=False,
@@ -140,7 +183,8 @@ class Command(BaseCommand):
             )
             return
 
-        student_count = int(options["student_count"])
+        login_uat = bool(options["login_uat"])
+        student_count = LOGIN_UAT_ACCOUNT_COUNT_PER_ROLE if login_uat else int(options["student_count"])
         session_count = int(options["session_count"])
         if not 1 <= student_count <= 30:
             raise CommandError("student-count must be between 1 and 30.")
@@ -150,18 +194,24 @@ class Command(BaseCommand):
         password = str(os.environ.get(PASSWORD_ENV) or "")
         if not password:
             raise CommandError(f"{PASSWORD_ENV} must be set.")
+        if login_uat:
+            parent_login_ids = {
+                f"01099{index:06d}"
+                for index in range(1, LOGIN_UAT_ACCOUNT_COUNT_PER_ROLE + 1)
+            }
+            if teacher_username in parent_login_ids:
+                raise CommandError("teacher-username conflicts with a generated parent login identifier.")
 
-        if existing and options["reset"]:
-            counts = self._tenant_counts(existing)
-            existing.delete()
-            self.stdout.write(
-                self.style.WARNING(
-                    "Deleted isolated scenario tenant before rebuild: "
-                    + json.dumps(counts, ensure_ascii=False, sort_keys=True)
-                )
-            )
-
+        reset_counts = None
         with transaction.atomic():
+            self._lock_tenant_code(tenant_code)
+            existing = self._exact_tenant_or_fail_on_case_variant(tenant_code)
+            if login_uat and existing is not None and not options["reset"]:
+                raise CommandError("--login-uat requires --reset when the tenant already exists.")
+            reset_counts = self._tenant_counts(existing) if existing and options["reset"] else None
+            if existing and options["reset"]:
+                existing.delete()
+
             tenant, _ = Tenant.objects.get_or_create(
                 code=tenant_code,
                 defaults={
@@ -191,7 +241,7 @@ class Command(BaseCommand):
 
             teacher = self._ensure_user(
                 tenant=tenant,
-                login_username=str(options["teacher_username"]),
+                login_username=teacher_username,
                 password=password,
                 name="Ymath QA 선생님",
                 is_staff=True,
@@ -207,6 +257,7 @@ class Command(BaseCommand):
             Enrollment = apps.get_model("enrollment", "Enrollment")
             SessionEnrollment = apps.get_model("enrollment", "SessionEnrollment")
             Student = apps.get_model("students", "Student")
+            Staff = apps.get_model("staffs", "Staff")
 
             lecture_specs = (
                 ("공통수학2 정규반", "공수", "#3158d4"),
@@ -245,6 +296,7 @@ class Command(BaseCommand):
                     sessions.append(session)
 
             students = []
+            parents = []
             for index in range(1, student_count + 1):
                 student_user = self._ensure_user(
                     tenant=tenant,
@@ -258,20 +310,33 @@ class Command(BaseCommand):
                     user=student_user,
                     role="student",
                 )
+                parent = None
+                if login_uat:
+                    parent_result = ensure_parent_account_for_student(
+                        tenant=tenant,
+                        parent_phone=f"01099{index:06d}",
+                        student_name=f"검증학생 {index:02d}",
+                    )
+                    parent = parent_result.parent
+                    change_password(parent.user, password)
+                    parents.append(parent)
+                student_defaults = {
+                    "name": f"검증학생 {index:02d}",
+                    "ps_number": f"QA-{index:04d}",
+                    "omr_code": f"98{index:06d}",
+                    "phone": f"01098{index:06d}",
+                    "parent_phone": f"01099{index:06d}",
+                    "grade": 1 + ((index - 1) % 3),
+                    "school_type": "HIGH",
+                    "high_school": "검증고등학교",
+                    "memo": "격리 개발환경 실사용 시나리오 학생",
+                }
+                if parent is not None:
+                    student_defaults["parent"] = parent
                 student, _ = Student.objects.update_or_create(
                     tenant=tenant,
                     user=student_user,
-                    defaults={
-                        "name": f"검증학생 {index:02d}",
-                        "ps_number": f"QA-{index:04d}",
-                        "omr_code": f"98{index:06d}",
-                        "phone": f"01098{index:06d}",
-                        "parent_phone": f"01099{index:06d}",
-                        "grade": 1 + ((index - 1) % 3),
-                        "school_type": "HIGH",
-                        "high_school": "검증고등학교",
-                        "memo": "격리 개발환경 실사용 시나리오 학생",
-                    },
+                    defaults=student_defaults,
                 )
                 students.append(student)
                 for lecture in lectures:
@@ -289,11 +354,61 @@ class Command(BaseCommand):
                             session=session,
                         )
 
+            login_staff = []
+            if login_uat:
+                for index in range(1, LOGIN_UAT_ACCOUNT_COUNT_PER_ROLE + 1):
+                    staff_user = self._ensure_user(
+                        tenant=tenant,
+                        login_username=f"ymath-qa-staff-{index:02d}",
+                        password=password,
+                        name=f"로그인 검증 직원 {index:02d}",
+                        is_staff=True,
+                    )
+                    TenantMembership.ensure_active(
+                        tenant=tenant,
+                        user=staff_user,
+                        role="staff",
+                    )
+                    staff, _ = Staff.objects.update_or_create(
+                        tenant=tenant,
+                        user=staff_user,
+                        defaults={
+                            "name": f"로그인 검증 직원 {index:02d}",
+                            "phone": f"01097{index:06d}",
+                            "is_active": True,
+                        },
+                    )
+                    login_staff.append(staff)
+
+            if login_uat:
+                self._validate_login_uat_contract(
+                    tenant=tenant,
+                    teacher=teacher,
+                    students=students,
+                    parents=parents,
+                    staffs=login_staff,
+                )
+                self._validate_active_login_identifiers(
+                    tenant=tenant,
+                    teacher=teacher,
+                    students=students,
+                    parents=parents,
+                    staffs=login_staff,
+                )
+
+        if reset_counts is not None:
+            self.stdout.write(
+                self.style.WARNING(
+                    "Deleted isolated scenario tenant before rebuild: "
+                    + json.dumps(reset_counts, ensure_ascii=False, sort_keys=True)
+                )
+            )
+
         payload = {
             "status": "YMATH_REALUSE_SCENARIO_READY",
             "tenant_code": tenant.code,
             "tenant_id": tenant.id,
-            "teacher_username": str(options["teacher_username"]),
+            "teacher_username": teacher_username,
             "teacher_user_id": teacher.id,
             "subscription_expires_at": program.subscription_expires_at.isoformat(),
             "student_ids": [student.id for student in students],
@@ -301,7 +416,65 @@ class Command(BaseCommand):
             "session_ids": [session.id for session in sessions],
             "counts": self._tenant_counts(tenant),
         }
+        if login_uat:
+            accounts = [
+                {
+                    "role": "student",
+                    "username": user_display_username(student.user),
+                    "landing_path": "/student",
+                }
+                for student in students
+            ]
+            accounts.extend(
+                {
+                    "role": "parent",
+                    "username": user_display_username(parent.user),
+                    "landing_path": "/student",
+                }
+                for parent in parents
+            )
+            accounts.extend(
+                {
+                    "role": "staff",
+                    "username": user_display_username(staff.user),
+                    "landing_path": "/workspace/mobile",
+                }
+                for staff in login_staff
+            )
+            payload["login_manifest"] = {
+                "schema_version": 1,
+                "tenant_code": tenant.code,
+                "account_count": len(accounts),
+                "accounts": accounts,
+            }
         self.stdout.write(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+
+    @staticmethod
+    def _lock_tenant_code(tenant_code: str) -> None:
+        if connection.vendor != "postgresql":
+            return
+        if not connection.in_atomic_block:
+            raise RuntimeError("tenant-code advisory lock requires transaction.atomic().")
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                [f"ymath-realuse:{tenant_code}"],
+            )
+
+    @staticmethod
+    def _exact_tenant_or_fail_on_case_variant(tenant_code: str):
+        matches = list(
+            Tenant.objects.select_for_update()
+            .filter(code__iexact=tenant_code)
+            .only("id", "code")
+            .order_by("id")
+        )
+        variants = [tenant.code for tenant in matches if tenant.code != tenant_code]
+        if variants:
+            raise CommandError(
+                "A case-variant tenant code already exists; refusing setup or destroy."
+            )
+        return next((tenant for tenant in matches if tenant.code == tenant_code), None)
 
     @staticmethod
     def _ensure_user(*, tenant, login_username, password, name, is_staff):
@@ -320,14 +493,121 @@ class Command(BaseCommand):
         user.name = name
         user.is_active = True
         user.is_staff = is_staff
-        user.set_password(password)
-        user.save()
+        user.save(update_fields=["tenant", "name", "is_active", "is_staff"])
+        change_password(user, password)
         return user
+
+    @staticmethod
+    def _remaining_for_code(tenant_code: str) -> dict[str, int]:
+        return {
+            "tenants": Tenant.objects.filter(code__iexact=tenant_code).count(),
+            "users": get_user_model().objects.filter(tenant__code__iexact=tenant_code).count(),
+        }
+
+    @staticmethod
+    def _validate_login_uat_contract(*, tenant, teacher, students, parents, staffs) -> None:
+        Student = apps.get_model("students", "Student")
+        Parent = apps.get_model("parents", "Parent")
+        Staff = apps.get_model("staffs", "Staff")
+        memberships = TenantMembership.objects.filter(tenant=tenant, is_active=True)
+        role_counts = {role: memberships.filter(role=role).count() for role in ("student", "parent", "staff", "admin")}
+        model_counts = {
+            "student": Student.objects.filter(tenant=tenant).count(),
+            "parent": Parent.objects.filter(tenant=tenant).count(),
+            "staff": Staff.objects.filter(tenant=tenant).count(),
+        }
+        account_user_ids = [student.user_id for student in students]
+        account_user_ids.extend(parent.user_id for parent in parents)
+        account_user_ids.extend(staff.user_id for staff in staffs)
+        expected = LOGIN_UAT_ACCOUNT_COUNT_PER_ROLE
+        valid = (
+            model_counts == {"student": expected, "parent": expected, "staff": expected}
+            and role_counts == {"student": expected, "parent": expected, "staff": expected, "admin": 1}
+            and len(account_user_ids) == expected * 3
+            and len(set(account_user_ids)) == expected * 3
+            and memberships.filter(role="admin", user=teacher).count() == 1
+        )
+        if not valid:
+            raise CommandError(
+                "Login UAT database contract mismatch: "
+                + json.dumps(
+                    {
+                        "model_counts": model_counts,
+                        "role_counts": role_counts,
+                        "distinct_manifest_users": len(set(account_user_ids)),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+            )
+
+    @staticmethod
+    def _validate_active_login_identifiers(*, tenant, teacher, students, parents, staffs) -> None:
+        identifiers: dict[str, set[int]] = defaultdict(set)
+        memberships = (
+            TenantMembership.objects
+            .filter(tenant=tenant, is_active=True, user__is_active=True)
+            .select_related("user")
+        )
+        for membership in memberships:
+            identifier = user_display_username(membership.user).strip()
+            if identifier:
+                identifiers[identifier].add(membership.user_id)
+
+        Parent = apps.get_model("parents", "Parent")
+        for parent in (
+            Parent.objects
+            .filter(
+                tenant=tenant,
+                user__is_active=True,
+                user__tenant_memberships__tenant=tenant,
+                user__tenant_memberships__role="parent",
+                user__tenant_memberships__is_active=True,
+            )
+            .select_related("user")
+            .distinct()
+        ):
+            identifier = str(parent.phone or "").strip()
+            if identifier:
+                identifiers[identifier].add(parent.user_id)
+
+        expected_identifiers = {user_display_username(teacher): teacher.id}
+        expected_identifiers.update(
+            {user_display_username(student.user): student.user_id for student in students}
+        )
+        expected_identifiers.update({str(parent.phone): parent.user_id for parent in parents})
+        expected_identifiers.update(
+            {user_display_username(staff.user): staff.user_id for staff in staffs}
+        )
+        ambiguous = {
+            identifier: sorted(user_ids)
+            for identifier, user_ids in identifiers.items()
+            if len(user_ids) != 1
+        }
+        unresolved = {
+            identifier: {
+                "expected_user_id": expected_user_id,
+                "resolved_user_ids": sorted(identifiers.get(identifier, set())),
+            }
+            for identifier, expected_user_id in expected_identifiers.items()
+            if identifiers.get(identifier) != {expected_user_id}
+        }
+        if ambiguous or unresolved:
+            raise CommandError(
+                "Login UAT display identifier contract mismatch: "
+                + json.dumps(
+                    {"ambiguous": ambiguous, "unresolved": unresolved},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+            )
 
     @staticmethod
     def _tenant_counts(tenant) -> dict[str, int]:
         model_names = {
             "students": ("students", "Student"),
+            "parents": ("parents", "Parent"),
+            "staffs": ("staffs", "Staff"),
             "lectures": ("lectures", "Lecture"),
             "sessions": ("lectures", "Session"),
             "enrollments": ("enrollment", "Enrollment"),

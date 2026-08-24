@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 import re
+import subprocess
 
 import yaml
 
@@ -17,6 +18,12 @@ PREREQUISITES = (
 PUBLISH = REPO_ROOT / "scripts" / "v1" / "publish-api-development-env.ps1"
 INITIALIZE = REPO_ROOT / "scripts" / "v1" / "initialize-api-development.ps1"
 REAL_USE_SMOKE = REPO_ROOT / "scripts" / "v1" / "run-api-development-smoke.ps1"
+LOGIN_UAT_CLEANUP = (
+    REPO_ROOT / "scripts" / "v1" / "destroy-ymath-login-uat-development.ps1"
+)
+LOGIN_UAT_CLEANUP_CONTRACT = (
+    REPO_ROOT / "scripts" / "v1" / "core" / "ymath_login_uat.ps1"
+)
 SETTINGS = REPO_ROOT / "apps" / "api" / "config" / "settings" / "development.py"
 WORKER_SETTINGS = REPO_ROOT / "apps" / "api" / "config" / "settings" / "worker.py"
 IAM = REPO_ROOT / "scripts" / "v1" / "resources" / "iam.ps1"
@@ -88,6 +95,66 @@ def test_development_gate_runs_synthetic_excel_ppt_and_r2_review() -> None:
     assert "worker_r2_output" in smoke
     assert "academy-api-asg" not in smoke
     assert "/academy/api/env" not in smoke
+
+
+def test_login_uat_cleanup_reuses_exact_owned_development_instance_and_requires_zero_residue() -> None:
+    source = LOGIN_UAT_CLEANUP.read_text(encoding="utf-8-sig")
+    contract = LOGIN_UAT_CLEANUP_CONTRACT.read_text(encoding="utf-8-sig")
+
+    assert "^qa-ymath-realuse-[a-z0-9-]+$" in source
+    assert "ApiDevelopmentInstanceName" in source
+    assert "ApiDevelopmentManagedByTag" in source
+    assert '"--instance-ids", $InstanceId' in source
+    assert '$tags["Lifecycle"] -ne "active"' in source
+    assert '$tags["Environment"] -ne "development"' in source
+    assert "setup_ymath_realuse_scenario --tenant-code '$TenantCode' --destroy" in source
+    assert "YMATH_REALUSE_SCENARIO_DESTROYED" in contract
+    assert "YMATH_REALUSE_SCENARIO_ABSENT" in contract
+    assert "core\\ymath_login_uat.ps1" in source
+    assert "Assert-YmathLoginUatCleanupPayload" in source
+    assert "[int]$payload.remaining" not in source
+    assert "Get-APIASGInstanceIds" not in source
+
+
+def _run_cleanup_payload_contract(payload: dict) -> subprocess.CompletedProcess[str]:
+    helper = str(LOGIN_UAT_CLEANUP_CONTRACT).replace("'", "''")
+    command = (
+        f". '{helper}'; "
+        "$payload = [Console]::In.ReadToEnd() | ConvertFrom-Json; "
+        "Assert-YmathLoginUatCleanupPayload "
+        "-Payload $payload -TenantCode 'qa-ymath-realuse-contract' | Out-Null"
+    )
+    return subprocess.run(
+        ["pwsh", "-NoProfile", "-NonInteractive", "-Command", command],
+        input=json.dumps(payload),
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+        check=False,
+    )
+
+
+def test_login_uat_cleanup_payload_rejects_missing_null_and_non_numeric_remaining() -> None:
+    base = {
+        "status": "YMATH_REALUSE_SCENARIO_ABSENT",
+        "tenant_code": "qa-ymath-realuse-contract",
+        "remaining": {"tenants": 0, "users": 0},
+    }
+    valid = _run_cleanup_payload_contract(base)
+    assert valid.returncode == 0, valid.stderr
+
+    invalid_payloads = (
+        {key: value for key, value in base.items() if key != "remaining"},
+        {**base, "remaining": {}},
+        {**base, "remaining": None},
+        {**base, "remaining": {"tenants": None, "users": 0}},
+        {**base, "remaining": {"tenants": 0, "users": None}},
+        {**base, "remaining": {"tenants": "0", "users": 0}},
+        {**base, "remaining": {"tenants": 0, "users": "not-a-number"}},
+    )
+    for payload in invalid_payloads:
+        rejected = _run_cleanup_payload_contract(payload)
+        assert rejected.returncode != 0, payload
 
 
 def test_development_ssot_is_isolated_and_matches_production_compute() -> None:
