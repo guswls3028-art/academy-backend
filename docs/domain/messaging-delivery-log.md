@@ -60,7 +60,7 @@
 - `provider_evidence`: 공급자 식별자가 기록됐는지를 나타내는 boolean
 - `provider_message_reference`: 모든 허용 역할에 제공 가능한 마스킹 참조
 - `provider_message_id`: `owner`, `admin`에게만 제공하는 정확한 증거
-- `failure_code`, `failure_summary`: 개인정보가 제거된 실패 안내
+- `failure_code`, `failure_reason`: 개인정보가 제거된 실패 안내
 
 `message_body`가 비어 있으면 원문을 추정하거나 템플릿에서 재구성하지 않는다.
 
