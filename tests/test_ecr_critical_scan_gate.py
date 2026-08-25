@@ -172,7 +172,7 @@ def test_high_baseline_is_exact_and_allows_non_increase() -> None:
         )
     )
 
-    assert gate.evaluate_high_budget("academy-base", findings, baselines, known) == 8
+    assert gate.evaluate_high_budget("academy-base", findings, baselines, known) == 14
 
 
 def test_current_high_acceptances_are_exact_and_time_bounded() -> None:
@@ -181,7 +181,8 @@ def test_current_high_acceptances_are_exact_and_time_bounded() -> None:
     accepted = document["acceptedHighFindings"]
 
     libssh2 = [entry for entry in accepted if entry["packageName"] == "libssh2"]
-    assert len(accepted) == 20
+    openssl = [entry for entry in accepted if entry["packageName"] == "openssl"]
+    assert len(accepted) == 26
     assert {entry["cve"] for entry in libssh2} == {
         "CVE-2026-58050",
         "CVE-2026-58051",
@@ -196,6 +197,15 @@ def test_current_high_acceptances_are_exact_and_time_bounded() -> None:
         == ["academy-api", "academy-ai-worker-cpu", "academy-tools-worker"]
         for entry in libssh2
     )
+    assert {entry["cve"] for entry in openssl} == {
+        "CVE-2026-14457",
+        "CVE-2026-18798",
+        "CVE-2026-54874",
+        "CVE-2026-63072",
+        "CVE-2026-63075",
+        "CVE-2026-63076",
+    }
+    assert all(set(entry["repositories"]) == gate.REPOSITORIES for entry in openssl)
     assert all(
         entry["vendorTracker"]
         == f"https://security-tracker.debian.org/tracker/{entry['cve']}"
@@ -226,6 +236,12 @@ def test_current_high_acceptances_are_exact_and_time_bounded() -> None:
         ("CVE-2026-66033", "libssh2", "1.11.1-1+deb13u1"),
         ("CVE-2026-66034", "libssh2", "1.11.1-1+deb13u1"),
         ("CVE-2026-66035", "libssh2", "1.11.1-1+deb13u1"),
+        ("CVE-2026-14457", "openssl", "3.5.6-1~deb13u2"),
+        ("CVE-2026-18798", "openssl", "3.5.6-1~deb13u2"),
+        ("CVE-2026-54874", "openssl", "3.5.6-1~deb13u2"),
+        ("CVE-2026-63072", "openssl", "3.5.6-1~deb13u2"),
+        ("CVE-2026-63075", "openssl", "3.5.6-1~deb13u2"),
+        ("CVE-2026-63076", "openssl", "3.5.6-1~deb13u2"),
     }
 
     baselines, known = gate.load_high_baselines(path, date(2026, 8, 23))
@@ -236,7 +252,7 @@ def test_current_high_acceptances_are_exact_and_time_bounded() -> None:
             if repository == "academy-api"
         )
     )
-    assert gate.evaluate_high_budget("academy-api", api_findings, baselines, known) == 20
+    assert gate.evaluate_high_budget("academy-api", api_findings, baselines, known) == 26
     tools_findings = _scan(
         *(
             _finding(cve, package, version, "HIGH")
@@ -251,7 +267,7 @@ def test_current_high_acceptances_are_exact_and_time_bounded() -> None:
             baselines,
             known,
         )
-        == 20
+        == 26
     )
 
 
@@ -271,8 +287,8 @@ def test_high_acceptance_remains_valid_through_expiry_day() -> None:
         Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json",
         date(2026, 9, 19),
     )
-    assert baselines["academy-api"] == 20
-    assert len([key for key in reviewed if key[0] == "academy-api"]) == 20
+    assert baselines["academy-api"] == 26
+    assert len([key for key in reviewed if key[0] == "academy-api"]) == 26
 
 
 def test_high_finding_regression_fails_closed() -> None:
