@@ -131,8 +131,9 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         force_authenticate(request, user=user or self.user)
         return StudentVideoForwardSkipView.as_view()(request, video_id=self.video.id)
 
-    def _get_playback(self, *, user=None, enrollment_id=None, selected_student_id=None):
-        path = f"/api/v1/student/video/videos/{self.video.id}/playback/"
+    def _get_playback(self, *, user=None, enrollment_id=None, selected_student_id=None, video=None):
+        target_video = video or self.video
+        path = f"/api/v1/student/video/videos/{target_video.id}/playback/"
         if enrollment_id is not None:
             path += f"?enrollment={enrollment_id}"
         request = self.factory.get(path)
@@ -140,7 +141,7 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
             request.META["HTTP_X_STUDENT_ID"] = str(selected_student_id)
         request.tenant = self.tenant
         force_authenticate(request, user=user or self.user)
-        return StudentVideoPlaybackView.as_view()(request, video_id=self.video.id)
+        return StudentVideoPlaybackView.as_view()(request, video_id=target_video.id)
 
     def _get_me_stats(self, *, user=None, selected_student_id=None):
         request = self.factory.get("/api/v1/student/video/me/stats/")
@@ -432,6 +433,25 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         self.assertEqual(stats_response.status_code, 200, stats_response.data)
         self.assertEqual(stats_response.data["total_videos"], 2)
         self.assertEqual(stats_response.data["completed_videos"], 1)
+
+    @override_settings(CDN_HLS_BASE_URL="https://cdn.example.test", CDN_HLS_SIGNING_SECRET="")
+    def test_public_video_playback_uses_free_review_policy(self):
+        public_video = Video.objects.create(
+            tenant=self.tenant,
+            session=None,
+            title="Public Playback Video",
+            status=Video.Status.READY,
+            visibility=Video.Visibility.PUBLIC,
+            duration=100,
+        )
+
+        response = self._get_playback(video=public_video)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertIsNone(response.data["video"]["access_mode"])
+        self.assertEqual(response.data["policy"]["access_mode"], AccessMode.FREE_REVIEW.value)
+        self.assertFalse(response.data["policy"]["monitoring_enabled"])
+        self.assertEqual(response.data["policy"]["seek"]["mode"], "budgeted_forward")
 
     def test_student_stats_uses_domain_completion_threshold(self):
         VideoProgress.objects.create(

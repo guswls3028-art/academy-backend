@@ -9,11 +9,16 @@ from apps.domains.video.policy import video_forward_skip_budget
 def build_effective_playback_policy(
     *,
     video,
-    access_mode: AccessMode | str,
+    access_mode: AccessMode | str | None,
     permission=None,
     progress=None,
 ) -> dict:
-    mode = access_mode if isinstance(access_mode, AccessMode) else AccessMode(access_mode)
+    # Tenant-wide public-library videos intentionally have no enrollment-specific
+    # access mode. Preserve their historical non-proctored behavior by applying
+    # the same effective controls as FREE_REVIEW.
+    mode = AccessMode.FREE_REVIEW if access_mode is None else (
+        access_mode if isinstance(access_mode, AccessMode) else AccessMode(access_mode)
+    )
     allow_seek = bool(video.allow_skip)
     max_rate = float(video.max_speed or 1.0)
     watermark_enabled = bool(video.show_watermark)
