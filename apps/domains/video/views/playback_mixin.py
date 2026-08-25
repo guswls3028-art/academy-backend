@@ -9,6 +9,7 @@ from ..models import Video, AccessMode
 from academy.adapters.db.django import repositories_video as video_repo
 from ..serializers import VideoSerializer
 from ..services.access_resolver import resolve_access_mode, get_effective_access_mode
+from ..services.playback_policy import build_effective_playback_policy
 
 # ✅ 추가: Cloudflare signed url (있으면 사용, 없으면 기존 public)
 from ..cdn.cloudflare_signing import CloudflareSignedURL
@@ -67,88 +68,16 @@ class VideoPlaybackMixin:
         - PROCTORED_CLASS: allow_seek=False or bounded_forward, max_speed=1.0, watermark enabled
         - FREE_REVIEW: monitoring/session writes disabled; video-level playback controls preserved
         """
-        # Resolve access mode using SSOT
         access_mode = get_effective_access_mode(video=video, enrollment=enrollment)
-        
-        # Base policy from video defaults
-        allow_seek = bool(video.allow_skip)
-        max_rate = float(video.max_speed or 1.0)
-        watermark_enabled = bool(video.show_watermark)
-        ui_speed_control = True
-
-        seek_policy = {
-            "mode": "free",
-            "forward_limit": None,
-            "grace_seconds": 3,
-        }
-
-        # Apply permission overrides
-        if perm:
-            if perm.allow_skip_override is not None:
-                allow_seek = bool(perm.allow_skip_override)
-
-            if perm.max_speed_override is not None:
-                max_rate = float(perm.max_speed_override)
-
-            if perm.show_watermark_override is not None:
-                watermark_enabled = bool(perm.show_watermark_override)
-
-            if perm.block_seek:
-                allow_seek = False
-                seek_policy = {"mode": "blocked"}
-
-            if perm.block_speed_control:
-                ui_speed_control = False
-                max_rate = 1.0
-
-        # Apply access mode restrictions
-        if access_mode == AccessMode.PROCTORED_CLASS:
-            # PROCTORED_CLASS: restrictions apply
-            if not perm or not perm.block_seek:
-                # If not explicitly blocked, use bounded forward
-                progress = video_repo.video_progress_get(video, enrollment)
-                
-                if not progress or not progress.completed:
-                    seek_policy = {
-                        "mode": "bounded_forward",
-                        "forward_limit": "max_watched",
-                        "grace_seconds": 3,
-                    }
-            
-            # PROCTORED_CLASS: 관리자가 Video.max_speed를 명시 설정한 경우 존중,
-            # 미설정(1.0 이하)이면 1.0x 강제
-            if not perm or perm.max_speed_override is None:
-                video_max = float(video.max_speed or 1.0)
-                max_rate = video_max if video_max > 1.0 else 1.0
-                ui_speed_control = True
-            
-            # Watermark enabled for proctored class
-            if not perm or perm.show_watermark_override is None:
-                watermark_enabled = True
-        elif access_mode == AccessMode.FREE_REVIEW:
-            # 복습은 모니터링만 해제하고 강사/학생별 재생 설정은 유지한다.
-            seek_policy = {
-                "mode": "free" if allow_seek else "blocked",
-                "forward_limit": None,
-                "grace_seconds": 3,
-            }
-
-        return {
-            "access_mode": access_mode.value,
-            "monitoring_enabled": (access_mode == AccessMode.PROCTORED_CLASS),
-            "allow_seek": allow_seek,
-            "seek": seek_policy,
-            "playback_rate": {
-                "max": max_rate,
-                "ui_control": ui_speed_control,
-            },
-            "watermark": {
-                "enabled": watermark_enabled,
-                "mode": "overlay",
-                "fields": ["user_id"],
-            },
-            "concurrency": self._concurrency_for_video(video),
-        }
+        progress = video_repo.video_progress_get(video, enrollment)
+        policy = build_effective_playback_policy(
+            video=video,
+            access_mode=access_mode,
+            permission=perm,
+            progress=progress,
+        )
+        policy["concurrency"] = self._concurrency_for_video(video)
+        return policy
 
     def _concurrency_for_video(self, video):
         """테넌트 정책 우선, 미설정 시 settings fallback."""

@@ -62,3 +62,20 @@ class StudentVideoPlaybackSerializer(serializers.Serializer):
     playback_expires_at = serializers.IntegerField(allow_null=True, required=False)
 
     policy = serializers.DictField()
+
+
+class StudentVideoForwardSkipRequestSerializer(serializers.Serializer):
+    enrollment_id = serializers.IntegerField(min_value=1, required=False)
+    enrollment = serializers.IntegerField(min_value=1, required=False)
+
+
+class StudentVideoForwardSkipResponseSerializer(serializers.Serializer):
+    enabled = serializers.BooleanField()
+    step_seconds = serializers.IntegerField(min_value=0)
+    ratio_percent = serializers.IntegerField(min_value=0, max_value=100)
+    max_seconds = serializers.IntegerField(min_value=0)
+    limit_seconds = serializers.IntegerField(min_value=0)
+    used_seconds = serializers.IntegerField(min_value=0)
+    remaining_seconds = serializers.IntegerField(min_value=0)
+    unavailable_reason = serializers.CharField(allow_blank=True)
+    granted_seconds = serializers.IntegerField(min_value=0)

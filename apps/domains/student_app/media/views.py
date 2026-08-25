@@ -1,7 +1,9 @@
+import logging
 from typing import Any, Dict, Optional
 
 from django.db.models import Prefetch, Q
 from django.http import Http404
+from drf_spectacular.utils import extend_schema
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -24,7 +26,12 @@ from apps.support.student_app.video_media import (
     issue_proctored_playback_session,
     pick_video_urls,
 )
-from apps.domains.video.contracts import sort_videos_for_playlist, youtube_embed_url
+from apps.domains.video.contracts import (
+    build_effective_playback_policy,
+    consume_video_forward_skip,
+    sort_videos_for_playlist,
+    youtube_embed_url,
+)
 from academy.application.use_cases.student_video_access_context import (
     StudentVideoAccessError,
     ensure_student_video_watch_allowed,
@@ -36,9 +43,14 @@ from academy.application.use_cases.student_video_access_context import (
 )
 from apps.domains.enrollment.selectors import learning_history_enrollments_for_student
 from .serializers import (
+    StudentVideoForwardSkipRequestSerializer,
+    StudentVideoForwardSkipResponseSerializer,
     StudentVideoListItemSerializer,
     StudentVideoPlaybackSerializer,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 # ======================================================
@@ -786,9 +798,6 @@ class StudentVideoPlaybackView(APIView):
             raise PermissionDenied("이 영상은 시청이 제한되었습니다.")
 
         # 비디오 상태 확인 및 로깅
-        import logging
-        logger = logging.getLogger(__name__)
-        
         video_status = getattr(video, "status", None)
         hls_path = getattr(video, "hls_path", None)
         file_key = getattr(video, "file_key", None)
@@ -878,17 +887,18 @@ class StudentVideoPlaybackView(APIView):
             f"play_url={play_url[:100] if play_url else None}..."
         )
 
-        # FREE_REVIEW는 모니터링만 해제한다. 강사가 영상에 저장한
-        # 탐색/배속/워터마크 설정은 복습에서도 그대로 적용한다.
         is_proctored = access_mode_value == "PROCTORED_CLASS"
-        allow_seek = False if is_proctored else bool(getattr(video, "allow_skip", False))
-        max_speed = 1.0 if is_proctored else float(getattr(video, "max_speed", 1.0) or 1.0)
-        watermark_enabled = True if is_proctored else bool(getattr(video, "show_watermark", True))
-        seek_policy = {
-            "mode": "bounded_forward" if is_proctored else ("free" if allow_seek else "blocked"),
-            "forward_limit": "max_watched" if is_proctored else None,
-            "grace_seconds": 3,
-        }
+        progress_obj = None
+        if enrollment_obj:
+            from academy.adapters.db.django import repositories_video as video_repo
+
+            progress_obj = video_repo.video_progress_get(video, enrollment_obj)
+        playback_policy = build_effective_playback_policy(
+            video=video,
+            access_mode=access_mode_value,
+            permission=perm_obj,
+            progress=progress_obj,
+        )
 
         # PROCTORED_CLASS: 서버 측 세션 + token 발급 (PlaybackStartView 인프라 인라인 호출).
         # 클라가 별도 PlaybackStartView를 호출하지 않아도 세션이 생성되어 만료/revoke 메커니즘이 적용됨.
@@ -934,11 +944,6 @@ class StudentVideoPlaybackView(APIView):
                     tenant_id=video_tenant_id,
                 )
 
-        progress_obj = None
-        if enrollment_obj:
-            from academy.adapters.db.django import repositories_video as video_repo
-
-            progress_obj = video_repo.video_progress_get(video, enrollment_obj)
         progress_percent = (
             round(normalize_video_progress(getattr(progress_obj, "progress", 0)) * 100, 1)
             if progress_obj
@@ -982,18 +987,7 @@ class StudentVideoPlaybackView(APIView):
             "playback_session_id": playback_session_id,
             "playback_expires_at": playback_expires_at,
             "policy": {
-                "access_mode": access_mode_value,
-                "monitoring_enabled": is_proctored,
-                "allow_seek": allow_seek,
-                "seek": seek_policy,
-                "playback_rate": {
-                    "max": max_speed,
-                    "ui_control": True,
-                },
-                "watermark": {
-                    "enabled": watermark_enabled,
-                    "mode": "overlay",
-                },
+                **playback_policy,
                 "source": {
                     "type": _source_type_from_video(video),
                     "provider": "youtube" if is_youtube else "uploaded",
@@ -1008,6 +1002,81 @@ class StudentVideoPlaybackView(APIView):
             StudentVideoPlaybackSerializer(payload).data,
             status=status.HTTP_200_OK,
         )
+
+
+class StudentVideoForwardSkipView(APIView):
+    """Grant one server-counted forward skip step for a limited student watch."""
+
+    permission_classes = [IsAuthenticated, IsStudentOrParent]
+
+    @extend_schema(
+        request=StudentVideoForwardSkipRequestSerializer,
+        responses={200: StudentVideoForwardSkipResponseSerializer},
+    )
+    def post(self, request, video_id: int):
+        Video, _VideoPermission = _import_media_models()
+        explicit_enrollment_id = _get_explicit_enrollment_id(request, include_body=True)
+
+        try:
+            video_qs = Video.objects.select_related("tenant", "session__lecture")
+            tenant = getattr(request, "tenant", None)
+            if tenant is not None:
+                video_qs = video_qs.filter(tenant=tenant)
+            video = video_qs.get(id=video_id)
+        except Video.DoesNotExist:
+            raise Http404
+
+        try:
+            access_context = resolve_student_video_access_context(
+                request,
+                video,
+                explicit_enrollment_id=explicit_enrollment_id,
+            )
+            ensure_student_video_watch_allowed(access_context)
+        except StudentVideoAccessError as e:
+            return Response({"detail": e.detail}, status=e.status_code)
+
+        enrollment = access_context.enrollment
+        if enrollment is None:
+            return Response(
+                {"detail": "수강 정보가 있는 영상에서만 사용할 수 있습니다.", "code": "enrollment_required"},
+                status=status.HTTP_409_CONFLICT,
+            )
+        if getattr(request.user, "parent_profile", None) is not None:
+            return Response(
+                {"detail": "앞으로 건너뛰기는 학생 계정에서 사용할 수 있습니다.", "code": "student_only"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        progress = get_video_progress_model().objects.filter(
+            video=video,
+            enrollment=enrollment,
+        ).first()
+        permission = _VideoPermission.objects.filter(
+            video=video,
+            enrollment=enrollment,
+        ).first() if _VideoPermission else None
+        policy = build_effective_playback_policy(
+            video=video,
+            access_mode=access_context.access_mode_value,
+            permission=permission,
+            progress=progress,
+        )
+        if (policy.get("seek") or {}).get("mode") != "budgeted_forward":
+            return Response(
+                {"detail": "이 영상에는 제한형 건너뛰기가 적용되지 않습니다.", "code": "skip_budget_not_applicable"},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        budget = consume_video_forward_skip(video=video, enrollment=enrollment)
+        logger.info(
+            "student_video_forward_skip video_id=%s enrollment_id=%s granted_seconds=%s used_seconds=%s limit_seconds=%s",
+            video.id,
+            enrollment.id,
+            budget["granted_seconds"],
+            budget["used_seconds"],
+            budget["limit_seconds"],
+        )
+        return Response(budget, status=status.HTTP_200_OK)
 
 
 class StudentVideoProgressView(APIView):
