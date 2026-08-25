@@ -184,6 +184,21 @@ Paramiko 또는 libssh2 호출이 없다. 따라서 기존 2026-09-19 만료와 
 development/preprod/production runtime을 변경하지 않았고 shared lock을 반환했다.
 다른 Tools finding이나 package version은 이 검토로 허용되지 않는다.
 
+2026-08-26 후보 `sha-ff7e45a0...-run-32908570937-1`의 여섯 완료 scan은
+Debian trixie `openssl` `3.5.6-1~deb13u2`에 새 High 여섯 건을 동일하게
+반환했다. Base·Video·Messaging은 14건, API·AI·Tools는 26건이며 기존 exact
+identity에는 변화가 없었다. `CVE-2026-14457`의 RPK key-only 설정,
+`CVE-2026-18798`·`CVE-2026-63075`의 QUIC, `CVE-2026-54874`의 DTLS,
+`CVE-2026-63072`의 CMS decrypt, `CVE-2026-63076`의 CMP/PBM 경로는 Academy
+런타임에서 사용하지 않는다. 외부 HTTPS는 ALB에서 일반 인증서 TLS로 종료되고
+컨테이너는 Gunicorn HTTP를 제공하며 QUIC·DTLS·CMS·CMP·raw-public-key
+entrypoint가 없다. 따라서 exact package/version/CVE와 repository 여섯 개만
+`2026-09-19`까지 한시 수용하고 상한을 완료 scan 수치로 맞춘다. vendor 수정
+Debian 패키지가 나오거나 identity가 달라지면 예외를 제거하고 여섯 이미지를 다시
+빌드·스캔한다. 이 후보는 scan gate에서 development 진입 전에 실패했고 shared
+lock을 반환했으므로, 다음 후보가 persistent development부터 production mechanical
+playback까지 전체 release gate를 새로 통과해야 한다.
+
 현재 Critical 한시 항목은 Debian stable에 수정본이 아직 없거나 Debian이
 `no-dsa`/minor로 분류한 glibc·GLib·Perl finding이다. GLib의
 `g_dbus_node_info_new_for_xml` malformed introspection-XML 경로는 OCR CLI와
