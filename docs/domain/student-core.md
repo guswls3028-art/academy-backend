@@ -439,6 +439,11 @@ The student player must consume the nested `policy` returned by
 `GET /api/v1/student/video/videos/{video_id}/playback/`; the flat video fields
 are display metadata, not a second policy source.
 
+Tenant-wide public-library videos intentionally have no enrollment-specific
+`access_mode`. Their effective playback policy is therefore resolved as
+`FREE_REVIEW`; the response keeps the public video's flat `access_mode=null`
+compatibility field while the nested policy remains complete and executable.
+
 If playback policy cannot be resolved for the selected active enrollment, the
 request fails closed rather than choosing another enrollment or tenant.
 
