@@ -6,15 +6,18 @@ from apps.support.lectures.filter_dependencies import active_enrollment_count_fo
 
 
 class LectureSerializer(serializers.ModelSerializer):
+    active_enrollment_count = serializers.IntegerField(read_only=True)
+
     class Meta:
         model = Lecture
         fields = [
             "id", "tenant", "title", "name", "subject", "description",
             "start_date", "end_date", "lecture_time",
             "color", "chip_label", "is_active", "display_order", "is_system",
+            "active_enrollment_count",
             "created_at", "updated_at",
         ]
-        read_only_fields = ["tenant", "display_order"]
+        read_only_fields = ["tenant", "display_order", "active_enrollment_count"]
         ref_name = "Lecture"
 
     def validate(self, attrs):

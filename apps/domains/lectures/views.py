@@ -126,7 +126,16 @@ class LectureViewSet(ModelViewSet):
         qs = enroll_repo.lecture_filter_tenant(tenant)
         if self.action == "list":
             qs = qs.exclude(is_system=True)
-        return qs.order_by(F("display_order").asc(nulls_last=True), "id")
+        active_enrollment_total = active_enrollment_total_by_lecture_ref(
+            OuterRef("pk")
+        )
+        return qs.annotate(
+            active_enrollment_count=Coalesce(
+                Subquery(active_enrollment_total),
+                Value(0),
+                output_field=IntegerField(),
+            )
+        ).order_by(F("display_order").asc(nulls_last=True), "id")
 
     @action(detail=False, methods=["post"], url_path="reorder")
     def reorder(self, request):
@@ -197,7 +206,6 @@ class LectureViewSet(ModelViewSet):
                 default=0,
             )
             temporary_start = max_order + len(scope_rows) + 1
-            by_id = {lecture.id: lecture for lecture in scope_rows}
 
             for offset, lecture in enumerate(scope_rows):
                 Lecture.objects.filter(pk=lecture.pk).update(
@@ -205,9 +213,12 @@ class LectureViewSet(ModelViewSet):
                 )
             for lecture_id, position in zip(ordered_ids, positions, strict=True):
                 Lecture.objects.filter(pk=lecture_id).update(display_order=position)
-                by_id[lecture_id].display_order = position
 
-        ordered_rows = [by_id[lecture_id] for lecture_id in ordered_ids]
+        refreshed_by_id = {
+            lecture.id: lecture
+            for lecture in self.get_queryset().filter(id__in=ordered_ids)
+        }
+        ordered_rows = [refreshed_by_id[lecture_id] for lecture_id in ordered_ids]
         return Response(self.get_serializer(ordered_rows, many=True).data)
 
     def _handle_title_integrity_error(self, e):
@@ -222,7 +233,8 @@ class LectureViewSet(ModelViewSet):
     def perform_create(self, serializer):
         """🔐 Lecture 생성 시 tenant 강제 주입"""
         try:
-            serializer.save(tenant=self.request.tenant)
+            lecture = serializer.save(tenant=self.request.tenant)
+            lecture.active_enrollment_count = 0
         except IntegrityError as e:
             self._handle_title_integrity_error(e)
 

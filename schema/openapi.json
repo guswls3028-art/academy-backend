@@ -3734,6 +3734,10 @@
       },
       "Lecture": {
         "properties": {
+          "active_enrollment_count": {
+            "readOnly": true,
+            "type": "integer"
+          },
           "chip_label": {
             "description": "강의딱지 2글자 (미입력 시 제목 앞 2자 사용)",
             "maxLength": 2,
@@ -3807,6 +3811,7 @@
           }
         },
         "required": [
+          "active_enrollment_count",
           "created_at",
           "display_order",
           "id",

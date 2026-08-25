@@ -6,8 +6,10 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 from apps.core.models.program import Program
 from apps.core.models.tenant import Tenant
 from apps.core.models.tenant_membership import TenantMembership
+from apps.domains.enrollment.test_support import create_enrollment_fixture
 from apps.domains.lectures.models import Lecture
 from apps.domains.lectures.views import LectureViewSet
+from apps.domains.students.test_support import create_student_fixture
 
 
 User = get_user_model()
@@ -104,6 +106,46 @@ class LectureReorderApiTests(TestCase):
         )
         self.past.refresh_from_db()
         self.assertGreater(self.past.display_order, 0)
+
+    def test_list_returns_active_enrollment_count_per_tenant_lecture(self):
+        for index, status in enumerate(("ACTIVE", "ACTIVE", "INACTIVE"), start=1):
+            user = User.objects.create_user(
+                username=f"lecture_count_student_{index}",
+                password="test1234",
+                tenant=self.tenant,
+                name=f"Student {index}",
+            )
+            student = create_student_fixture(
+                tenant=self.tenant,
+                user=user,
+                ps_number=f"LC{index:03d}",
+                name=f"Student {index}",
+                phone=f"0105511{index:04d}",
+                parent_phone=f"0106611{index:04d}",
+                omr_code=f"5511{index:04d}",
+            )
+            create_enrollment_fixture(
+                tenant=self.tenant,
+                student=student,
+                lecture=self.first if index != 2 else self.second,
+                status=status,
+            )
+
+        request = self.factory.get("/api/v1/lectures/lectures/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        response = LectureViewSet.as_view({"get": "list"})(request)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        counts = {
+            row["id"]: row["active_enrollment_count"]
+            for row in response.data
+        }
+        self.assertEqual(counts[self.first.id], 1)
+        self.assertEqual(counts[self.second.id], 1)
+        self.assertEqual(counts[self.third.id], 0)
+        self.assertEqual(counts[self.past.id], 0)
+        self.assertNotIn(self.foreign.id, counts)
 
     def test_stale_or_foreign_payload_rolls_back_without_partial_updates(self):
         before = dict(
