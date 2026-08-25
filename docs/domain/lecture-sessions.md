@@ -27,6 +27,11 @@
 신버전의 생성 경로는 caller가 보낸 순서를 사용하지 않고 tenant 잠금 아래 마지막
 값을 계산하므로 같은 tenant의 동시 생성도 서로 다른 순서를 받는다.
 
+강의 목록의 `active_enrollment_count`는 해당 강의에 연결된 `ACTIVE`
+`Enrollment` 행의 수다. 학생 계정 전체 수나 tenant 전체의 중복 제거 학생 수가
+아니며, 목록 queryset의 tenant 범위를 유지한 상관 subquery로 한 번에 계산한다.
+따라서 다른 tenant의 등록이나 `INACTIVE`·`PENDING` 등록은 포함하지 않는다.
+
 관리자 목록의 drag·키보드·touch 조작과 검색/정렬·rollback UI 계약은
 [frontend/docs/LECTURE-SESSION-SCOPES.md](https://github.com/guswls3028-art/academy-frontend/blob/main/docs/LECTURE-SESSION-SCOPES.md)가
 소유한다.
@@ -51,6 +56,7 @@
 - `GET /lectures/lectures/`는 요청 tenant의 시스템 강의를 제외한 전체 강의를
   `display_order`, `id` 순서로 안정되게 반환한다. 전역 20건 페이지 제한을 적용하지 않아
   강의가 많은 학원에서도 시험·채점·오답노트 선택기가 같은 전체 목록을 사용한다.
+  각 행은 현재 수강등록 요약인 read-only `active_enrollment_count`를 함께 반환한다.
 - `POST /lectures/lectures/reorder/`는 staff 권한과 요청 tenant를 그대로 적용한다.
   요청은 `{"scope":"ACTIVE|PAST","ordered_ids":[...]}`이며, 해당 scope의
   시스템 강의를 제외한 ID 전체를 중복 없이 정확히 보내야 한다. 서버는 tenant와
