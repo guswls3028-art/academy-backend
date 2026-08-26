@@ -259,9 +259,12 @@ Current rules:
   `StudentRegistrationRequest.student` is a nullable non-unique ForeignKey with
   plural reverse relation `Student.registration_requests`; the expand-only
   migration preserves every existing link and permits the new recovery request
-  to reference the same Student. Enrollment rows and their post-deletion state
-  remain unchanged, and this recovery endpoint does not enqueue an account
-  notice or message.
+  to reference the same Student. Enrollment rows and links remain unchanged;
+  their statuses are restored only by the canonical student lifecycle from the
+  deletion snapshot. Original `ACTIVE`/`PENDING`/`INACTIVE` states return when
+  the lecture still accepts restoration, ended or inactive lectures stay
+  `INACTIVE`, and the internal marker is consumed and cleared. This recovery
+  endpoint does not enqueue an account notice or message.
 - active reuse also requires active Student and Parent
   login users with canonical internal usernames and phone mirrors plus active
   same-tenant `student` and `parent` memberships. A reused Student must already

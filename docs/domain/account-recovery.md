@@ -60,8 +60,11 @@ Django hash 하나만 가입신청에 저장한다.
 성공 시 새 Student/User를 만들지 않고 선택한 기존 계정을 복원해 이번 신청의
 로그인 ID와 저장된 가입 hash를 채택하고 기존 토큰을 폐기한다. 과거와 현재의 모든
 `StudentRegistrationRequest.student` 연결은 같은 Student에 그대로 남고 Enrollment
-행·삭제 후 상태도 보존된다. 이 명시적 복구 자체는 알림톡, notification/outbox,
-provider send/retry/requeue를 생성하지 않는다.
+행과 연결 이력도 그대로 남는다. Enrollment 상태 복원은 별도 구현하지 않고 학생
+lifecycle 정본을 따른다. 삭제 전 `ACTIVE`/`PENDING`/`INACTIVE` snapshot을 복원하되,
+종료되거나 비활성인 강의는 `INACTIVE`로 닫고 내부 snapshot marker는 한 번 사용한 뒤
+비운다. 이 명시적 복구 자체는 알림톡, notification/outbox, provider
+send/retry/requeue를 생성하지 않는다.
 
 ### 학생 대상
 

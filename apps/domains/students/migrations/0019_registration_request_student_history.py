@@ -2,6 +2,13 @@ import django.db.models.deletion
 from django.db import migrations, models
 
 
+ACADEMY_MIGRATION_PHASE = "contract"
+ACADEMY_MIGRATION_REASON = (
+    "Drop only the registration-to-student uniqueness constraint so rolling old and new "
+    "runtimes preserve existing links while explicit recovery adds another audit link."
+)
+
+
 class Migration(migrations.Migration):
     dependencies = [
         ("students", "0018_student_support_session"),

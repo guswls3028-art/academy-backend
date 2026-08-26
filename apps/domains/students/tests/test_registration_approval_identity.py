@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import make_password
@@ -271,6 +273,53 @@ class RegistrationApprovalIdentityTests(TestCase):
             lecture=lecture,
             status="ACTIVE",
         )
+        pending_lecture = create_lecture_fixture(
+            tenant=self.tenant,
+            title="복구 대기 강의",
+            name="복구 대기 강의",
+            subject="테스트",
+        )
+        pending_enrollment = create_enrollment_fixture(
+            tenant=self.tenant,
+            student=selected,
+            lecture=pending_lecture,
+            status="PENDING",
+        )
+        inactive_lecture = create_lecture_fixture(
+            tenant=self.tenant,
+            title="복구 비활성 강의",
+            name="복구 비활성 강의",
+            subject="테스트",
+        )
+        inactive_enrollment = create_enrollment_fixture(
+            tenant=self.tenant,
+            student=selected,
+            lecture=inactive_lecture,
+            status="INACTIVE",
+        )
+        ended_lecture = create_lecture_fixture(
+            tenant=self.tenant,
+            title="복구 중 종료 강의",
+            name="복구 중 종료 강의",
+            subject="테스트",
+            end_date=timezone.localdate() + timedelta(days=1),
+        )
+        ended_enrollment = create_enrollment_fixture(
+            tenant=self.tenant,
+            student=selected,
+            lecture=ended_lecture,
+            status="ACTIVE",
+        )
+        enrollment_expectations = (
+            (enrollment, "ACTIVE", "ACTIVE"),
+            (pending_enrollment, "PENDING", "PENDING"),
+            (inactive_enrollment, "INACTIVE", "INACTIVE"),
+            (ended_enrollment, "ACTIVE", "INACTIVE"),
+        )
+        enrollment_links = {
+            row.id: (row.student_id, row.lecture_id)
+            for row, _original, _restored in enrollment_expectations
+        }
         previous_registration = self._registration(username="OLD-SELECTED")
         previous_registration.status = StudentRegistrationRequest.APPROVED
         previous_registration.student = selected
@@ -285,8 +334,12 @@ class RegistrationApprovalIdentityTests(TestCase):
         )
         original_token_version = selected.user.token_version
         soft_delete_student(selected, tenant=self.tenant)
-        enrollment.refresh_from_db()
-        enrollment_snapshot = (enrollment.id, enrollment.student_id, enrollment.status)
+        for row, original_status, _restored_status in enrollment_expectations:
+            row.refresh_from_db()
+            self.assertEqual(row.status, "INACTIVE")
+            self.assertEqual(row.status_before_student_deletion, original_status)
+        ended_lecture.end_date = timezone.localdate() - timedelta(days=1)
+        ended_lecture.save(update_fields=["end_date"])
 
         duplicate = self._student(ps_number="OLD-DUPLICATE", phone="01070003333")
         soft_delete_student(duplicate, tenant=self.tenant)
@@ -348,11 +401,15 @@ class RegistrationApprovalIdentityTests(TestCase):
             ),
             {registration.id, previous_registration.id},
         )
-        enrollment.refresh_from_db()
-        self.assertEqual(
-            (enrollment.id, enrollment.student_id, enrollment.status),
-            enrollment_snapshot,
-        )
+        for row, _original_status, restored_status in enrollment_expectations:
+            row.refresh_from_db()
+            self.assertEqual((row.student_id, row.lecture_id), enrollment_links[row.id])
+            self.assertEqual(row.status, restored_status)
+            self.assertIsNone(row.status_before_student_deletion)
+        restored_enrollment_state = {
+            row.id: (row.status, row.status_before_student_deletion)
+            for row, _original_status, _restored_status in enrollment_expectations
+        }
 
         password_hash = selected.user.password
         token_version = selected.user.token_version
@@ -370,6 +427,12 @@ class RegistrationApprovalIdentityTests(TestCase):
             StudentRegistrationRequest.objects.filter(student=selected).count(),
             2,
         )
+        for row, _original_status, _restored_status in enrollment_expectations:
+            row.refresh_from_db()
+            self.assertEqual(
+                (row.status, row.status_before_student_deletion),
+                restored_enrollment_state[row.id],
+            )
         self.assertEqual(
             {
                 "students": Student.objects.filter(tenant=self.tenant).count(),
