@@ -1,12 +1,12 @@
 {
   "schemaVersion": 3,
   "maximumHighFindings": {
-    "academy-base": 14,
-    "academy-api": 26,
-    "academy-video-worker": 14,
-    "academy-messaging-worker": 14,
-    "academy-ai-worker-cpu": 26,
-    "academy-tools-worker": 26
+    "academy-base": 8,
+    "academy-api": 21,
+    "academy-video-worker": 8,
+    "academy-messaging-worker": 8,
+    "academy-ai-worker-cpu": 21,
+    "academy-tools-worker": 21
   },
   "acceptedHighFindings": [
     {
@@ -294,100 +294,17 @@
       "rationale": "Debian trixie has no stable fix for this malicious SSH server packet path. Academy runtime images are ARM64 and contain no outbound SSH client flow, while operational commands use AWS SSM outside the application containers."
     },
     {
-      "cve": "CVE-2026-14457",
-      "packageName": "openssl",
-      "packageVersion": "3.5.6-1~deb13u2",
+      "cve": "CVE-2026-16118",
+      "packageName": "glib2.0",
+      "packageVersion": "2.84.4-3~deb13u3",
       "repositories": [
-        "academy-base",
         "academy-api",
-        "academy-video-worker",
-        "academy-messaging-worker",
         "academy-ai-worker-cpu",
         "academy-tools-worker"
       ],
       "expiresOn": "2026-09-19",
-      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-14457",
-      "rationale": "The affected OpenSSL RPK key-only TLS configuration can dereference a missing signature_algorithms_cert value. Academy uses ordinary certificate TLS at the ALB and has no raw-public-key or key-only TLS configuration in any runtime container."
-    },
-    {
-      "cve": "CVE-2026-18798",
-      "packageName": "openssl",
-      "packageVersion": "3.5.6-1~deb13u2",
-      "repositories": [
-        "academy-base",
-        "academy-api",
-        "academy-video-worker",
-        "academy-messaging-worker",
-        "academy-ai-worker-cpu",
-        "academy-tools-worker"
-      ],
-      "expiresOn": "2026-09-19",
-      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-18798",
-      "rationale": "The affected OpenSSL QUIC server path double-frees malformed Initial packet state. Academy containers expose Gunicorn HTTP behind an ALB and run no OpenSSL QUIC listener or QUIC server, so product input cannot reach this parser."
-    },
-    {
-      "cve": "CVE-2026-54874",
-      "packageName": "openssl",
-      "packageVersion": "3.5.6-1~deb13u2",
-      "repositories": [
-        "academy-base",
-        "academy-api",
-        "academy-video-worker",
-        "academy-messaging-worker",
-        "academy-ai-worker-cpu",
-        "academy-tools-worker"
-      ],
-      "expiresOn": "2026-09-19",
-      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-54874",
-      "rationale": "The affected OpenSSL DTLS future-epoch record path can amplify memory usage. Academy exposes no UDP or DTLS endpoint and application networking uses ALB-terminated HTTPS and outbound TCP TLS, not DTLS record processing."
-    },
-    {
-      "cve": "CVE-2026-63072",
-      "packageName": "openssl",
-      "packageVersion": "3.5.6-1~deb13u2",
-      "repositories": [
-        "academy-base",
-        "academy-api",
-        "academy-video-worker",
-        "academy-messaging-worker",
-        "academy-ai-worker-cpu",
-        "academy-tools-worker"
-      ],
-      "expiresOn": "2026-09-19",
-      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-63072",
-      "rationale": "The affected OpenSSL CMS decrypt path can write out of bounds while processing AES-WRAP-PAD content. Academy has no S/MIME or CMS decrypt product flow and never passes uploaded content to the OpenSSL CMS command or API."
-    },
-    {
-      "cve": "CVE-2026-63075",
-      "packageName": "openssl",
-      "packageVersion": "3.5.6-1~deb13u2",
-      "repositories": [
-        "academy-base",
-        "academy-api",
-        "academy-video-worker",
-        "academy-messaging-worker",
-        "academy-ai-worker-cpu",
-        "academy-tools-worker"
-      ],
-      "expiresOn": "2026-09-19",
-      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-63075",
-      "rationale": "The affected OpenSSL QUIC ACK-only metadata path can grow memory without bound. Academy runtime entrypoints create neither QUIC clients nor QUIC servers; HTTP traffic is conventional ALB-terminated TLS and container HTTP."
-    },
-    {
-      "cve": "CVE-2026-63076",
-      "packageName": "openssl",
-      "packageVersion": "3.5.6-1~deb13u2",
-      "repositories": [
-        "academy-base",
-        "academy-api",
-        "academy-video-worker",
-        "academy-messaging-worker",
-        "academy-ai-worker-cpu",
-        "academy-tools-worker"
-      ],
-      "expiresOn": "2026-09-19",
-      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-63076",
-      "rationale": "The affected OpenSSL CMP PBM parameter parser can hit a type confusion or null dereference. Academy has no CMP client, CMP server, or PBM-protected message parsing path in its application or worker entrypoints."
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-16118",
+      "rationale": "The affected xdgmime parser requires an attacker-controlled MIME magic database in a user-writable XDG data directory and a GLib content-type guess call. Academy API, AI, and Tools containers expose no local user session, never load product files as an XDG MIME database, and use Python validators rather than GLib MIME detection. Debian trixie has no stable fix, so this exact identity is accepted only until the stated expiry."
     }
   ]
 }
