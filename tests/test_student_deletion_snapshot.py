@@ -197,7 +197,7 @@ class StudentDeletionSnapshotPostgresTests(TestCase):
         self.assertIn("BEFORE UPDATE OF status", trigger_definitions[0])
         self.assertEqual(len(function_definitions), 1)
         self.assertIn(
-            "new.status_before_student_deletion IS NULL",
+            "new.status_before_student_deletion is null",
             function_definitions[0].lower(),
         )
 
