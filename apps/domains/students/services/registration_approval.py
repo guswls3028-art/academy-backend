@@ -207,6 +207,11 @@ def _lock_deleted_recovery_graph(
             "다른 학원에도 연결된 로그인 계정은 이 경로에서 복구할 수 없습니다.",
             status_code=409,
         )
+    if student_user.tenant_id not in (None, tenant.id):
+        raise RegistrationApprovalError(
+            "선택한 학생 로그인 계정의 테넌트 연결이 일치하지 않습니다.",
+            status_code=409,
+        )
     if student_user.is_active:
         raise RegistrationApprovalError(
             "선택한 삭제 학생의 로그인 계정 상태가 예상과 다릅니다.",

@@ -565,6 +565,141 @@ class RegistrationApprovalIdentityTests(TestCase):
         self.assertIsNone(registration.student_id)
         self.assertIsNotNone(selected.deleted_at)
 
+    def test_deleted_resolution_rejects_foreign_user_tenant_pointer_without_mutation(self):
+        selected = self._student(ps_number="DRIFTED-USER-TENANT")
+        lecture = create_lecture_fixture(
+            tenant=self.tenant,
+            title="계정 테넌트 오염 강의",
+            name="계정 테넌트 오염 강의",
+            subject="테스트",
+        )
+        enrollment = create_enrollment_fixture(
+            tenant=self.tenant,
+            student=selected,
+            lecture=lecture,
+            status="ACTIVE",
+        )
+        previous_registration = self._registration(username="DRIFTED-USER-HISTORY")
+        previous_registration.status = StudentRegistrationRequest.APPROVED
+        previous_registration.student = selected
+        previous_registration.save(update_fields=["status", "student", "updated_at"])
+        soft_delete_student(selected, tenant=self.tenant)
+
+        foreign_tenant = Tenant.objects.create(
+            name="오염된 계정 포인터 학원",
+            code="drifted-user-pointer",
+            is_active=True,
+        )
+        User.objects.filter(pk=selected.user_id).update(tenant=foreign_tenant)
+        registration = self._registration(username="RECOVERY-DRIFTED-USER")
+
+        selected.refresh_from_db()
+        selected.user.refresh_from_db()
+        enrollment.refresh_from_db()
+        membership = TenantMembership.objects.get(tenant=self.tenant, user=selected.user)
+        original = {
+            "student": (
+                selected.deleted_at,
+                selected.ps_number,
+                selected.name,
+                selected.phone,
+                selected.parent_phone,
+                selected.parent_id,
+            ),
+            "user": (
+                selected.user.tenant_id,
+                selected.user.username,
+                selected.user.phone,
+                selected.user.password,
+                selected.user.token_version,
+                selected.user.is_active,
+                selected.user.must_change_password,
+            ),
+            "membership": (membership.role, membership.is_active),
+            "enrollment": (
+                enrollment.student_id,
+                enrollment.lecture_id,
+                enrollment.status,
+                enrollment.status_before_student_deletion,
+            ),
+            "history": list(
+                StudentRegistrationRequest.objects.order_by("id").values_list(
+                    "id", "status", "student_id"
+                )
+            ),
+            "notifications": apps.get_model("messaging", "NotificationLog").objects.count(),
+            "scheduled": apps.get_model(
+                "messaging", "ScheduledNotification"
+            ).objects.count(),
+        }
+
+        with self.assertRaisesMessage(RegistrationApprovalError, "테넌트") as ctx:
+            resolve_deleted_registration_request(
+                tenant=self.tenant,
+                registration_id=registration.id,
+                student_id=selected.id,
+            )
+
+        self.assertEqual(ctx.exception.status_code, 409)
+        selected.refresh_from_db()
+        selected.user.refresh_from_db()
+        enrollment.refresh_from_db()
+        membership.refresh_from_db()
+        registration.refresh_from_db()
+        previous_registration.refresh_from_db()
+        self.assertEqual(registration.status, StudentRegistrationRequest.PENDING)
+        self.assertIsNone(registration.student_id)
+        self.assertEqual(
+            (
+                selected.deleted_at,
+                selected.ps_number,
+                selected.name,
+                selected.phone,
+                selected.parent_phone,
+                selected.parent_id,
+            ),
+            original["student"],
+        )
+        self.assertEqual(
+            (
+                selected.user.tenant_id,
+                selected.user.username,
+                selected.user.phone,
+                selected.user.password,
+                selected.user.token_version,
+                selected.user.is_active,
+                selected.user.must_change_password,
+            ),
+            original["user"],
+        )
+        self.assertEqual((membership.role, membership.is_active), original["membership"])
+        self.assertEqual(
+            (
+                enrollment.student_id,
+                enrollment.lecture_id,
+                enrollment.status,
+                enrollment.status_before_student_deletion,
+            ),
+            original["enrollment"],
+        )
+        self.assertEqual(
+            list(
+                StudentRegistrationRequest.objects.order_by("id").values_list(
+                    "id", "status", "student_id"
+                )
+            ),
+            original["history"],
+        )
+        self.assertEqual(previous_registration.student_id, selected.id)
+        self.assertEqual(
+            apps.get_model("messaging", "NotificationLog").objects.count(),
+            original["notifications"],
+        )
+        self.assertEqual(
+            apps.get_model("messaging", "ScheduledNotification").objects.count(),
+            original["scheduled"],
+        )
+
     def test_approval_fails_closed_for_cross_tenant_user_link_drift(self):
         other_tenant = Tenant.objects.create(name="다른 학원", code="other-registration", is_active=True)
         foreign_user = User.objects.create_user(
