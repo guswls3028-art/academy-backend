@@ -7,7 +7,7 @@ from django.db import transaction
 from django.utils import timezone
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.db.models import F, Value
+from django.db.models import Exists, F, OuterRef, Value
 from django.db.models.functions import NullIf, Trim
 
 from rest_framework.viewsets import ModelViewSet
@@ -29,6 +29,7 @@ from apps.api.common.upload_validation import (
     validate_uploaded_file,
 )
 from apps.core.permissions import IsStudent, TenantResolvedAndStaff
+from apps.core.models import TenantMembership
 from apps.core.models.user import user_display_username
 
 from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_excel
@@ -126,6 +127,17 @@ class StudentViewSet(ModelViewSet):
         - list: ?deleted=true 시 삭제된 학생만, 기본은 활성 학생만
         """
         qs = students_for_tenant(self.request.tenant, deleted="any")
+        qs = qs.select_related("user").annotate(
+            _account_access_active=Exists(
+                TenantMembership.objects.filter(
+                    tenant=self.request.tenant,
+                    user_id=OuterRef("user_id"),
+                    role="student",
+                    is_active=True,
+                    user__is_active=True,
+                )
+            )
+        )
 
         if self.action == "list":
             show_deleted = parse_query_bool(

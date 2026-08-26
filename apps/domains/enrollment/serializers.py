@@ -65,6 +65,16 @@ class EnrollmentSerializer(serializers.ModelSerializer):
                 {"lecture": "현재 학원의 강의만 사용할 수 있습니다."}
             )
 
+        target_status = attrs.get("status", getattr(instance, "status", None))
+        if (
+            instance is not None
+            and target_status in {"ACTIVE", "PENDING"}
+            and instance.student.deleted_at is not None
+        ):
+            raise serializers.ValidationError(
+                {"status": "삭제된 학생의 수강 상태는 활성 또는 대기로 변경할 수 없습니다."}
+            )
+
         return attrs
 
 
@@ -129,6 +139,14 @@ class SessionEnrollmentSerializer(serializers.ModelSerializer):
             if enrollment.lecture_id != session.lecture_id:
                 raise serializers.ValidationError(
                     {"enrollment": "해당 차시의 강의에 등록된 수강생만 추가할 수 있습니다."}
+                )
+            if enrollment.student.deleted_at is not None:
+                raise serializers.ValidationError(
+                    {"enrollment": "삭제된 학생은 차시 수강 명단에 추가할 수 없습니다."}
+                )
+            if enrollment.status != "ACTIVE":
+                raise serializers.ValidationError(
+                    {"enrollment": "활성 수강 등록만 차시 수강 명단에 추가할 수 있습니다."}
                 )
 
         return attrs

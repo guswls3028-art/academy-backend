@@ -10,6 +10,16 @@
         ],
         "type": "string"
       },
+      "AccountStateEnum": {
+        "description": "* `ACTIVE` - ACTIVE\n* `INACTIVE` - INACTIVE\n* `DELETED` - DELETED\n* `UNLINKED` - UNLINKED",
+        "enum": [
+          "ACTIVE",
+          "INACTIVE",
+          "DELETED",
+          "UNLINKED"
+        ],
+        "type": "string"
+      },
       "ActorModeEnum": {
         "description": "* `student` - student\n* `support` - support",
         "enum": [
@@ -13199,6 +13209,14 @@
       },
       "StudentDetail": {
         "properties": {
+          "account_state": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AccountStateEnum"
+              }
+            ],
+            "readOnly": true
+          },
           "address": {
             "description": "주소 (선택)",
             "maxLength": 255,
@@ -13351,6 +13369,7 @@
           }
         },
         "required": [
+          "account_state",
           "created_at",
           "enrollments",
           "id",
@@ -14043,6 +14062,14 @@
       },
       "StudentList": {
         "properties": {
+          "account_state": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AccountStateEnum"
+              }
+            ],
+            "readOnly": true
+          },
           "address": {
             "description": "주소 (선택)",
             "maxLength": 255,
@@ -14199,6 +14226,7 @@
           }
         },
         "required": [
+          "account_state",
           "created_at",
           "enrollments",
           "id",

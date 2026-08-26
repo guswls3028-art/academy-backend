@@ -14,7 +14,14 @@ def _tenant_filtered_qs(modeladmin, request, qs, tenant_path):
 
 @admin.register(Enrollment)
 class EnrollmentAdmin(admin.ModelAdmin):
-    list_display = ("id", "student", "lecture", "status", "enrolled_at")
+    list_display = (
+        "id",
+        "student",
+        "lecture",
+        "status",
+        "status_before_student_deletion",
+        "enrolled_at",
+    )
     list_display_links = ("id", "student")
     list_filter = ("status", "lecture")
     search_fields = ("student__name", "lecture__title")

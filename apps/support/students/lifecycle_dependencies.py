@@ -69,6 +69,14 @@ def deactivate_enrollments_for_student(*, tenant: Any, student: Any) -> int:
     return _deactivate(tenant=tenant, student=student)
 
 
+def restore_enrollments_after_student_restore(*, tenant: Any, student: Any):
+    from apps.domains.enrollment.services.lifecycle import (
+        restore_enrollments_after_student_restore as _restore,
+    )
+
+    return _restore(tenant=tenant, student=student)
+
+
 def cancel_active_participants_for_student(
     *,
     tenant: Any,

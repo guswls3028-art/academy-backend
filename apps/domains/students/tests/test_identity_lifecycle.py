@@ -6,6 +6,7 @@ Covers: ps_number/username sync, deletion semantics, restore flow, ghost data fi
 from importlib import import_module
 import threading
 import unittest
+from datetime import timedelta
 
 from django.apps import apps
 from django.contrib.auth import get_user_model
@@ -19,6 +20,7 @@ from apps.core.models.tenant import Tenant
 from apps.core.models.tenant_membership import TenantMembership
 from apps.core.models.user import user_internal_username, user_display_username
 from apps.domains.students.models import Student
+from apps.domains.students.serializers import StudentDetailSerializer
 from apps.domains.students.services import StudentLifecycleError, restore_student, soft_delete_student
 from apps.domains.students.views import StudentViewSet
 
@@ -348,6 +350,7 @@ class TestSoftDeleteLifecycleService(TestCase):
             TenantMembership.objects.get(tenant=self.tenant, user=self.student.user).is_active
         )
         self.assertEqual(self.enrollment.status, "INACTIVE")
+        self.assertEqual(self.enrollment.status_before_student_deletion, "ACTIVE")
         self.assertEqual(self.booked.status, SessionParticipant.Status.CANCELLED)
         self.assertEqual(self.pending.status, SessionParticipant.Status.CANCELLED)
         self.assertEqual(self.attended.status, SessionParticipant.Status.ATTENDED)
@@ -359,6 +362,98 @@ class TestSoftDeleteLifecycleService(TestCase):
             soft_delete_student(self.student, tenant=self.tenant)
 
         self.assertEqual(ctx.exception.code, "already_deleted")
+
+    def test_management_flag_is_distinct_from_account_and_deletion_state(self):
+        self.student.is_managed = False
+        self.student.save(update_fields=["is_managed"])
+
+        active_data = StudentDetailSerializer(self.student).data
+
+        self.assertFalse(active_data["is_managed"])
+        self.assertEqual(active_data["account_state"], "ACTIVE")
+
+        soft_delete_student(self.student, tenant=self.tenant)
+        self.student.refresh_from_db()
+        deleted_data = StudentDetailSerializer(self.student).data
+
+        self.assertFalse(deleted_data["is_managed"])
+        self.assertEqual(deleted_data["account_state"], "DELETED")
+
+    @patch("apps.domains.enrollment.services.lifecycle.schedule_pending_account_notice")
+    def test_restore_recovers_only_pre_delete_status_on_open_lectures(self, notice_mock):
+        inactive_lecture = Lecture.objects.create(
+            tenant=self.tenant,
+            title="기존 비활성 강의",
+            name="기존 비활성 강의",
+            subject="테스트",
+        )
+        inactive_enrollment = Enrollment.objects.create(
+            tenant=self.tenant,
+            student=self.student,
+            lecture=inactive_lecture,
+            status="INACTIVE",
+        )
+        pending_lecture = Lecture.objects.create(
+            tenant=self.tenant,
+            title="대기 강의",
+            name="대기 강의",
+            subject="테스트",
+        )
+        pending_enrollment = Enrollment.objects.create(
+            tenant=self.tenant,
+            student=self.student,
+            lecture=pending_lecture,
+            status="PENDING",
+        )
+        ended_lecture = Lecture.objects.create(
+            tenant=self.tenant,
+            title="삭제 중 종료 강의",
+            name="삭제 중 종료 강의",
+            subject="테스트",
+            end_date=timezone.localdate() + timedelta(days=1),
+        )
+        ended_enrollment = Enrollment.objects.create(
+            tenant=self.tenant,
+            student=self.student,
+            lecture=ended_lecture,
+            status="ACTIVE",
+        )
+
+        soft_delete_student(self.student, tenant=self.tenant)
+
+        for enrollment, original_status in (
+            (self.enrollment, "ACTIVE"),
+            (inactive_enrollment, "INACTIVE"),
+            (pending_enrollment, "PENDING"),
+            (ended_enrollment, "ACTIVE"),
+        ):
+            enrollment.refresh_from_db()
+            self.assertEqual(enrollment.status, "INACTIVE")
+            self.assertEqual(enrollment.status_before_student_deletion, original_status)
+
+        ended_lecture.end_date = timezone.localdate() - timedelta(days=1)
+        ended_lecture.save(update_fields=["end_date"])
+        result = restore_student(self.student, tenant=self.tenant)
+
+        self.enrollment.refresh_from_db()
+        inactive_enrollment.refresh_from_db()
+        pending_enrollment.refresh_from_db()
+        ended_enrollment.refresh_from_db()
+        self.assertEqual(self.enrollment.status, "ACTIVE")
+        self.assertEqual(inactive_enrollment.status, "INACTIVE")
+        self.assertEqual(pending_enrollment.status, "PENDING")
+        self.assertEqual(ended_enrollment.status, "INACTIVE")
+        self.assertEqual(result.enrollment_count, 4)
+        self.assertEqual(result.active_enrollment_count, 1)
+        self.assertEqual(result.pending_enrollment_count, 1)
+        self.assertEqual(result.inactive_enrollment_count, 2)
+        self.assertFalse(
+            Enrollment.objects.filter(
+                student=self.student,
+                status_before_student_deletion__isnull=False,
+            ).exists()
+        )
+        notice_mock.assert_not_called()
 
 
 class TestSoftDeleteViewRouting(TestCase):
