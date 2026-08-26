@@ -47,6 +47,9 @@ RUN test -n "${APT_REFRESH_TOKEN}" \
     libpq5 \
     ca-certificates \
     fonts-nanum \
+    openssl \
+    && openssl_version="$(dpkg-query -W -f='${Version}' openssl)" \
+    && dpkg --compare-versions "$openssl_version" ge "3.5.7-1~deb13u2" \
     && rm -rf /var/lib/apt/lists/*
 
 # non-root 사용자 (보안·감사 대비, CMD/경로 규칙 유지)

@@ -172,7 +172,7 @@ def test_high_baseline_is_exact_and_allows_non_increase() -> None:
         )
     )
 
-    assert gate.evaluate_high_budget("academy-base", findings, baselines, known) == 14
+    assert gate.evaluate_high_budget("academy-base", findings, baselines, known) == 8
 
 
 def test_current_high_acceptances_are_exact_and_time_bounded() -> None:
@@ -181,8 +181,9 @@ def test_current_high_acceptances_are_exact_and_time_bounded() -> None:
     accepted = document["acceptedHighFindings"]
 
     libssh2 = [entry for entry in accepted if entry["packageName"] == "libssh2"]
+    glib = [entry for entry in accepted if entry["packageName"] == "glib2.0"]
     openssl = [entry for entry in accepted if entry["packageName"] == "openssl"]
-    assert len(accepted) == 26
+    assert len(accepted) == 21
     assert {entry["cve"] for entry in libssh2} == {
         "CVE-2026-58050",
         "CVE-2026-58051",
@@ -197,15 +198,21 @@ def test_current_high_acceptances_are_exact_and_time_bounded() -> None:
         == ["academy-api", "academy-ai-worker-cpu", "academy-tools-worker"]
         for entry in libssh2
     )
-    assert {entry["cve"] for entry in openssl} == {
-        "CVE-2026-14457",
-        "CVE-2026-18798",
-        "CVE-2026-54874",
-        "CVE-2026-63072",
-        "CVE-2026-63075",
-        "CVE-2026-63076",
+    assert {entry["cve"] for entry in glib} == {
+        "CVE-2026-16118",
+        "CVE-2026-58010",
+        "CVE-2026-58011",
+        "CVE-2026-58012",
+        "CVE-2026-58013",
+        "CVE-2026-58014",
+        "CVE-2026-58015",
     }
-    assert all(set(entry["repositories"]) == gate.REPOSITORIES for entry in openssl)
+    assert all(
+        entry["repositories"]
+        == ["academy-api", "academy-ai-worker-cpu", "academy-tools-worker"]
+        for entry in glib
+    )
+    assert openssl == []
     assert all(
         entry["vendorTracker"]
         == f"https://security-tracker.debian.org/tracker/{entry['cve']}"
@@ -230,18 +237,13 @@ def test_current_high_acceptances_are_exact_and_time_bounded() -> None:
         ("CVE-2026-58013", "glib2.0", "2.84.4-3~deb13u3"),
         ("CVE-2026-58014", "glib2.0", "2.84.4-3~deb13u3"),
         ("CVE-2026-58015", "glib2.0", "2.84.4-3~deb13u3"),
+        ("CVE-2026-16118", "glib2.0", "2.84.4-3~deb13u3"),
         ("CVE-2026-58050", "libssh2", "1.11.1-1+deb13u1"),
         ("CVE-2026-58051", "libssh2", "1.11.1-1+deb13u1"),
         ("CVE-2026-66032", "libssh2", "1.11.1-1+deb13u1"),
         ("CVE-2026-66033", "libssh2", "1.11.1-1+deb13u1"),
         ("CVE-2026-66034", "libssh2", "1.11.1-1+deb13u1"),
         ("CVE-2026-66035", "libssh2", "1.11.1-1+deb13u1"),
-        ("CVE-2026-14457", "openssl", "3.5.6-1~deb13u2"),
-        ("CVE-2026-18798", "openssl", "3.5.6-1~deb13u2"),
-        ("CVE-2026-54874", "openssl", "3.5.6-1~deb13u2"),
-        ("CVE-2026-63072", "openssl", "3.5.6-1~deb13u2"),
-        ("CVE-2026-63075", "openssl", "3.5.6-1~deb13u2"),
-        ("CVE-2026-63076", "openssl", "3.5.6-1~deb13u2"),
     }
 
     baselines, known = gate.load_high_baselines(path, date(2026, 8, 23))
@@ -252,7 +254,7 @@ def test_current_high_acceptances_are_exact_and_time_bounded() -> None:
             if repository == "academy-api"
         )
     )
-    assert gate.evaluate_high_budget("academy-api", api_findings, baselines, known) == 26
+    assert gate.evaluate_high_budget("academy-api", api_findings, baselines, known) == 21
     tools_findings = _scan(
         *(
             _finding(cve, package, version, "HIGH")
@@ -267,7 +269,7 @@ def test_current_high_acceptances_are_exact_and_time_bounded() -> None:
             baselines,
             known,
         )
-        == 26
+        == 21
     )
 
 
@@ -287,8 +289,17 @@ def test_high_acceptance_remains_valid_through_expiry_day() -> None:
         Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json",
         date(2026, 9, 19),
     )
-    assert baselines["academy-api"] == 26
-    assert len([key for key in reviewed if key[0] == "academy-api"]) == 26
+    assert baselines["academy-api"] == 21
+    assert len([key for key in reviewed if key[0] == "academy-api"]) == 21
+
+
+def test_base_image_requires_security_fixed_openssl() -> None:
+    dockerfile = (
+        Path(__file__).parents[1] / "docker" / "Dockerfile.base"
+    ).read_text(encoding="utf-8")
+
+    assert "openssl \\" in dockerfile
+    assert 'dpkg --compare-versions "$openssl_version" ge "3.5.7-1~deb13u2"' in dockerfile
 
 
 def test_high_finding_regression_fails_closed() -> None:

@@ -199,6 +199,21 @@ Debian 패키지가 나오거나 identity가 달라지면 예외를 제거하고
 lock을 반환했으므로, 다음 후보가 persistent development부터 production mechanical
 playback까지 전체 release gate를 새로 통과해야 한다.
 
+같은 날 change-risk 계약 merge `11bc01f15...`의 후보 run `32933546410`은
+AI digest `sha256:0c2f7416...` scan에서 기존 기준선 외 `CVE-2026-14456`
+(`openssl` `3.5.6-1~deb13u2`)과 `CVE-2026-16118` (`glib2.0`
+`2.84.4-3~deb13u3`)을 각각 한 건 발견하고 development 진입 전에 실패 폐쇄했다.
+Debian trixie security에는 OpenSSL 수정판 `3.5.7-1~deb13u2`가 있으므로 공통
+base가 `openssl`을 명시적으로 갱신하고 그 최소 버전을 빌드 중 검사한다. 이에 따라
+이전 OpenSSL High 여섯 건의 한시 승인도 제거하고 여섯 image 상한을 함께 낮춘다.
+GLib 건은 Debian stable 수정판이 아직 없고, 공격자가 로컬 사용자 쓰기 가능한
+`XDG_DATA_HOME/mime/magic`을 만든 뒤 GLib content-type guess를 호출해야 한다.
+API·AI·Tools는 로컬 사용자 세션과 사용자 제공 XDG MIME database를 노출하지 않고
+Python validator를 사용하므로 exact 세 repository/package/CVE만 `2026-09-19`까지
+한시 수용한다. 다음 후보는 공통 base와 여섯 runtime image를 모두 새 digest로
+빌드·scan해 OpenSSL 제거와 GLib exact identity를 실측해야 하며, 그 전에는 어떤
+development/preprod/production runtime도 변경하지 않는다.
+
 현재 Critical 한시 항목은 Debian stable에 수정본이 아직 없거나 Debian이
 `no-dsa`/minor로 분류한 glibc·GLib·Perl finding이다. GLib의
 `g_dbus_node_info_new_for_xml` malformed introspection-XML 경로는 OCR CLI와
