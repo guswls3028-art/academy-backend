@@ -1,17 +1,23 @@
 from __future__ import annotations
 
+from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import make_password
 from django.test import TestCase
 from django.utils import timezone
-from rest_framework.test import APIRequestFactory
+from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
+from apps.core.models.user import user_internal_username
+from apps.domains.enrollment.test_support import create_enrollment_fixture
+from apps.domains.lectures.test_support import create_lecture_fixture
 from apps.domains.students.models import Student, StudentRegistrationRequest
 from apps.domains.students.services.creation import create_student_account
+from apps.domains.students.services.lifecycle import soft_delete_student
 from apps.domains.students.services.registration_approval import (
     RegistrationApprovalError,
     approve_registration_request,
+    resolve_deleted_registration_request,
 )
 from apps.domains.students.views.registration_views import RegistrationRequestViewSet
 from apps.support.students.lifecycle_dependencies import ensure_parent_account_for_student
@@ -83,6 +89,7 @@ class RegistrationApprovalIdentityTests(TestCase):
             "name": "가입학생",
             "username": "SIGNUP-001",
             "initial_password": "signup-password",
+            "password_confirmation": "signup-password",
             "parent_phone": "01071112222",
             "phone": "01073334444",
             "school_type": "HIGH",
@@ -213,6 +220,287 @@ class RegistrationApprovalIdentityTests(TestCase):
             (Student.objects.count(), User.objects.count(), self._parent_count()),
             original_counts,
         )
+
+    def test_deleted_conflict_exposes_staff_resolution_candidates(self):
+        student = self._student()
+        soft_delete_student(student, tenant=self.tenant)
+        registration = self._registration()
+        staff = User.objects.create_user(
+            username="registration-recovery-staff",
+            password="staff-password",
+            tenant=self.tenant,
+            is_staff=True,
+        )
+        TenantMembership.ensure_active(tenant=self.tenant, user=staff, role="teacher")
+        request = self.factory.post(
+            f"/api/v1/students/registration_requests/{registration.id}/approve/"
+        )
+        force_authenticate(request, user=staff)
+        request.tenant = self.tenant
+
+        response = RegistrationRequestViewSet.as_view({"post": "approve"})(
+            request,
+            pk=registration.id,
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data["code"], "deleted_student_conflict")
+        self.assertEqual(
+            response.data["candidates"],
+            [
+                {
+                    "student_id": student.id,
+                    "created_at": student.created_at,
+                    "deleted_at": Student.objects.get(pk=student.id).deleted_at,
+                    "enrollment_count": 0,
+                }
+            ],
+        )
+
+    def test_explicit_deleted_resolution_restores_selected_history_and_adopts_signup_login(self):
+        selected = self._student(ps_number="OLD-SELECTED", phone="01070001111")
+        lecture = create_lecture_fixture(
+            tenant=self.tenant,
+            title="복구 이력 강의",
+            name="복구 이력 강의",
+            subject="테스트",
+        )
+        enrollment = create_enrollment_fixture(
+            tenant=self.tenant,
+            student=selected,
+            lecture=lecture,
+            status="ACTIVE",
+        )
+        previous_registration = self._registration(username="OLD-SELECTED")
+        previous_registration.status = StudentRegistrationRequest.APPROVED
+        previous_registration.student = selected
+        previous_registration.save(update_fields=["status", "student", "updated_at"])
+        parent_model = Student._meta.get_field("parent").remote_field.model
+        parent = parent_model.objects.select_related("user").get(pk=selected.parent_id)
+        parent_snapshot = (
+            parent.id,
+            parent.user_id,
+            parent.user.password,
+            parent.user.token_version,
+        )
+        original_token_version = selected.user.token_version
+        soft_delete_student(selected, tenant=self.tenant)
+        enrollment.refresh_from_db()
+        enrollment_snapshot = (enrollment.id, enrollment.student_id, enrollment.status)
+
+        duplicate = self._student(ps_number="OLD-DUPLICATE", phone="01070003333")
+        soft_delete_student(duplicate, tenant=self.tenant)
+        registration = self._registration(username="RECOVERED-LOGIN")
+        graph_counts = {
+            "students": Student.objects.filter(tenant=self.tenant).count(),
+            "users": User.objects.filter(tenant_memberships__tenant=self.tenant).distinct().count(),
+            "memberships": TenantMembership.objects.filter(tenant=self.tenant).count(),
+            "enrollments": apps.get_model("enrollment", "Enrollment").objects.filter(
+                tenant=self.tenant
+            ).count(),
+            "notifications": apps.get_model("messaging", "NotificationLog").objects.count(),
+            "scheduled": apps.get_model(
+                "messaging", "ScheduledNotification"
+            ).objects.count(),
+        }
+
+        result = resolve_deleted_registration_request(
+            tenant=self.tenant,
+            registration_id=registration.id,
+            student_id=selected.id,
+        )
+
+        selected.refresh_from_db()
+        selected.user.refresh_from_db()
+        duplicate.refresh_from_db()
+        registration.refresh_from_db()
+        previous_registration.refresh_from_db()
+        self.assertEqual(result.student.id, selected.id)
+        self.assertIsNone(selected.deleted_at)
+        self.assertIsNotNone(duplicate.deleted_at)
+        self.assertEqual(selected.ps_number, "RECOVERED-LOGIN")
+        self.assertEqual(
+            selected.user.username,
+            user_internal_username(self.tenant, "RECOVERED-LOGIN"),
+        )
+        self.assertTrue(selected.user.check_password("signup-password"))
+        self.assertGreater(selected.user.token_version, original_token_version)
+        self.assertFalse(selected.user.must_change_password)
+        self.assertTrue(
+            TenantMembership.objects.get(
+                tenant=self.tenant,
+                user=selected.user,
+            ).is_active
+        )
+        self.assertEqual(registration.status, StudentRegistrationRequest.APPROVED)
+        self.assertEqual(registration.student_id, selected.id)
+        self.assertEqual(previous_registration.student_id, selected.id)
+        parent = parent_model.objects.select_related("user").get(pk=parent.id)
+        self.assertEqual(
+            (parent.id, parent.user_id, parent.user.password, parent.user.token_version),
+            parent_snapshot,
+        )
+        self.assertEqual(
+            set(
+                StudentRegistrationRequest.objects.filter(student=selected).values_list(
+                    "id", flat=True
+                )
+            ),
+            {registration.id, previous_registration.id},
+        )
+        enrollment.refresh_from_db()
+        self.assertEqual(
+            (enrollment.id, enrollment.student_id, enrollment.status),
+            enrollment_snapshot,
+        )
+
+        password_hash = selected.user.password
+        token_version = selected.user.token_version
+        with self.assertRaises(RegistrationApprovalError) as retry:
+            resolve_deleted_registration_request(
+                tenant=self.tenant,
+                registration_id=registration.id,
+                student_id=selected.id,
+            )
+        selected.user.refresh_from_db()
+        self.assertEqual(retry.exception.status_code, 409)
+        self.assertEqual(selected.user.password, password_hash)
+        self.assertEqual(selected.user.token_version, token_version)
+        self.assertEqual(
+            StudentRegistrationRequest.objects.filter(student=selected).count(),
+            2,
+        )
+        self.assertEqual(
+            {
+                "students": Student.objects.filter(tenant=self.tenant).count(),
+                "users": User.objects.filter(tenant_memberships__tenant=self.tenant)
+                .distinct()
+                .count(),
+                "memberships": TenantMembership.objects.filter(tenant=self.tenant).count(),
+                "enrollments": apps.get_model("enrollment", "Enrollment").objects.filter(
+                    tenant=self.tenant
+                ).count(),
+                "notifications": apps.get_model(
+                    "messaging", "NotificationLog"
+                ).objects.count(),
+                "scheduled": apps.get_model(
+                    "messaging", "ScheduledNotification"
+                ).objects.count(),
+            },
+            graph_counts,
+        )
+
+    def test_registration_history_relation_is_plural_and_non_unique(self):
+        field = StudentRegistrationRequest._meta.get_field("student")
+
+        self.assertTrue(field.many_to_one)
+        self.assertFalse(field.unique)
+        self.assertEqual(field.remote_field.related_name, "registration_requests")
+
+    def test_deleted_resolution_rejects_foreign_or_nonmatching_candidate(self):
+        selected = self._student()
+        soft_delete_student(selected, tenant=self.tenant)
+        other_tenant = Tenant.objects.create(
+            name="다른 복구 학원",
+            code="other-recovery",
+            is_active=True,
+        )
+        self.tenant, original_tenant = other_tenant, self.tenant
+        foreign = self._student()
+        soft_delete_student(foreign, tenant=other_tenant)
+        self.tenant = original_tenant
+        registration = self._registration()
+
+        with self.assertRaisesMessage(RegistrationApprovalError, "일치하지 않습니다"):
+            resolve_deleted_registration_request(
+                tenant=self.tenant,
+                registration_id=registration.id,
+                student_id=foreign.id,
+            )
+
+        registration.refresh_from_db()
+        selected.refresh_from_db()
+        foreign.refresh_from_db()
+        self.assertEqual(registration.status, StudentRegistrationRequest.PENDING)
+        self.assertIsNotNone(selected.deleted_at)
+        self.assertIsNotNone(foreign.deleted_at)
+
+    def test_deleted_resolution_rejects_candidate_that_is_now_active_without_mutation(self):
+        selected = self._student(ps_number="ACTIVE-CANDIDATE")
+        registration = self._registration(username="RECOVERY-STALE")
+        original_password = selected.user.password
+        original_token_version = selected.user.token_version
+
+        with self.assertRaises(RegistrationApprovalError) as stale:
+            resolve_deleted_registration_request(
+                tenant=self.tenant,
+                registration_id=registration.id,
+                student_id=selected.id,
+            )
+
+        self.assertEqual(stale.exception.status_code, 409)
+        registration.refresh_from_db()
+        selected.refresh_from_db()
+        selected.user.refresh_from_db()
+        self.assertEqual(registration.status, StudentRegistrationRequest.PENDING)
+        self.assertIsNone(registration.student_id)
+        self.assertIsNone(selected.deleted_at)
+        self.assertEqual(selected.user.password, original_password)
+        self.assertEqual(selected.user.token_version, original_token_version)
+
+    def test_ambiguous_deleted_matches_require_explicit_selection_without_mutation(self):
+        first = self._student(ps_number="DELETED-FIRST")
+        second = self._student(ps_number="DELETED-SECOND")
+        soft_delete_student(first, tenant=self.tenant)
+        soft_delete_student(second, tenant=self.tenant)
+        registration = self._registration(username="RECOVERY-AMBIGUOUS")
+
+        with self.assertRaises(RegistrationApprovalError) as ctx:
+            approve_registration_request(
+                tenant=self.tenant,
+                registration_id=registration.id,
+            )
+
+        self.assertEqual(ctx.exception.code, "deleted_student_conflict")
+        self.assertEqual(
+            {item["student_id"] for item in ctx.exception.context["candidates"]},
+            {first.id, second.id},
+        )
+        registration.refresh_from_db()
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(registration.status, StudentRegistrationRequest.PENDING)
+        self.assertIsNone(registration.student_id)
+        self.assertIsNotNone(first.deleted_at)
+        self.assertIsNotNone(second.deleted_at)
+
+    def test_deleted_resolution_rejects_cross_tenant_membership_without_mutation(self):
+        selected = self._student()
+        other_tenant = Tenant.objects.create(
+            name="다른 멤버십 학원",
+            code="other-recovery-membership",
+            is_active=True,
+        )
+        TenantMembership.ensure_active(
+            tenant=other_tenant,
+            user=selected.user,
+            role="student",
+        )
+        soft_delete_student(selected, tenant=self.tenant)
+        registration = self._registration(username="RECOVERY-CROSS-MEMBERSHIP")
+
+        with self.assertRaisesMessage(RegistrationApprovalError, "다른 학원"):
+            resolve_deleted_registration_request(
+                tenant=self.tenant,
+                registration_id=registration.id,
+                student_id=selected.id,
+            )
+
+        registration.refresh_from_db()
+        selected.refresh_from_db()
+        self.assertEqual(registration.status, StudentRegistrationRequest.PENDING)
+        self.assertIsNone(registration.student_id)
+        self.assertIsNotNone(selected.deleted_at)
 
     def test_approval_fails_closed_for_cross_tenant_user_link_drift(self):
         other_tenant = Tenant.objects.create(name="다른 학원", code="other-registration", is_active=True)

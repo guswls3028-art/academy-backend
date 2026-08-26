@@ -648,7 +648,18 @@ class RegistrationRequestCreateSerializer(serializers.Serializer):
         default="",
         trim_whitespace=True,
     )
-    initial_password = serializers.CharField(min_length=4, max_length=128, write_only=True)
+    initial_password = serializers.CharField(
+        min_length=4,
+        max_length=128,
+        write_only=True,
+        trim_whitespace=False,
+    )
+    password_confirmation = serializers.CharField(
+        min_length=4,
+        max_length=128,
+        write_only=True,
+        trim_whitespace=False,
+    )
     parent_phone = serializers.CharField(max_length=20)
     phone = serializers.CharField(max_length=20, required=False, allow_blank=True, allow_null=True, default="")
     school_type = serializers.ChoiceField(
@@ -691,6 +702,11 @@ class RegistrationRequestCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError(exc.detail.get("phone", str(exc.detail))) from exc
 
     def validate(self, attrs):
+        if attrs.get("initial_password") != attrs.get("password_confirmation"):
+            raise serializers.ValidationError(
+                {"password_confirmation": "비밀번호가 일치하지 않습니다."}
+            )
+        attrs.pop("password_confirmation", None)
         attrs["parent_phone"] = attrs["parent_phone"]
         attrs["phone"] = attrs.get("phone") or None
         # null → 빈 문자열로 통일 (모델은 null 허용이지만 저장 시 빈 문자열도 허용)
@@ -760,3 +776,20 @@ class RegistrationRequestListSerializer(serializers.ModelSerializer):
     class Meta:
         model = StudentRegistrationRequest
         exclude = ("initial_password", "initial_password_plain")
+
+
+class DeletedRegistrationCandidateSerializer(serializers.Serializer):
+    student_id = serializers.IntegerField(min_value=1)
+    created_at = serializers.DateTimeField()
+    deleted_at = serializers.DateTimeField()
+    enrollment_count = serializers.IntegerField(min_value=0)
+
+
+class DeletedRegistrationConflictSerializer(serializers.Serializer):
+    code = serializers.CharField(default="deleted_student_conflict")
+    detail = serializers.CharField()
+    candidates = DeletedRegistrationCandidateSerializer(many=True)
+
+
+class DeletedRegistrationResolveSerializer(serializers.Serializer):
+    student_id = serializers.IntegerField(min_value=1)

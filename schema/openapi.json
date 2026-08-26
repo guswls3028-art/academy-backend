@@ -1737,6 +1737,67 @@
         ],
         "type": "integer"
       },
+      "DeletedRegistrationCandidate": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "deleted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "enrollment_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "student_id": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "created_at",
+          "deleted_at",
+          "enrollment_count",
+          "student_id"
+        ],
+        "type": "object"
+      },
+      "DeletedRegistrationConflict": {
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/DeletedRegistrationCandidate"
+            },
+            "type": "array"
+          },
+          "code": {
+            "default": "deleted_student_conflict",
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidates",
+          "detail"
+        ],
+        "type": "object"
+      },
+      "DeletedRegistrationResolveRequest": {
+        "properties": {
+          "student_id": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "student_id"
+        ],
+        "type": "object"
+      },
       "DeviceClassEnum": {
         "description": "* `mobile` - mobile\n* `tablet` - tablet\n* `desktop` - desktop",
         "enum": [
@@ -10280,6 +10341,12 @@
             "minLength": 1,
             "type": "string"
           },
+          "password_confirmation": {
+            "maxLength": 128,
+            "minLength": 4,
+            "type": "string",
+            "writeOnly": true
+          },
           "phone": {
             "default": "",
             "maxLength": 20,
@@ -10304,7 +10371,8 @@
         "required": [
           "initial_password",
           "name",
-          "parent_phone"
+          "parent_phone",
+          "password_confirmation"
         ],
         "type": "object"
       },
@@ -44240,36 +44308,26 @@
             "name": "id",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "integer"
             }
           }
         ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RegistrationRequestListRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/RegistrationRequestListRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/RegistrationRequestListRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RegistrationRequestList"
+                  "$ref": "#/components/schemas/StudentDetail"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletedRegistrationConflict"
                 }
               }
             },
@@ -44329,6 +44387,65 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RegistrationRequestList"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      }
+    },
+    "/api/v1/students/registration_requests/{id}/resolve_deleted/": {
+      "post": {
+        "description": "선생님이 선택한 동일인 삭제 계정을 복구한 뒤 가입 승인.",
+        "operationId": "students_registration_requests_resolve_deleted_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeletedRegistrationResolveRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/DeletedRegistrationResolveRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/DeletedRegistrationResolveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentDetail"
                 }
               }
             },

@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Callable
 
-from django.contrib.auth.hashers import check_password, make_password
+from django.contrib.auth.hashers import check_password, identify_hasher, make_password
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.utils import timezone
@@ -102,6 +102,30 @@ def force_reset_password(user, new_password: str) -> None:
     locked_user.set_password(new_password)
     locked_user.token_version = (getattr(locked_user, "token_version", 0) or 0) + 1
     locked_user.must_change_password = True
+    locked_user.save(update_fields=["password", "token_version", "must_change_password"])
+    clear_pending_password_reset(locked_user)
+    for field in ("password", "token_version", "must_change_password"):
+        setattr(user, field, getattr(locked_user, field))
+
+
+@transaction.atomic
+def adopt_password_hash(
+    user,
+    password_hash: str,
+    *,
+    must_change_password: bool = False,
+) -> None:
+    """Adopt one already-validated Django password hash and invalidate tokens.
+
+    Signup stores only a hash before a User exists. Explicit account-recovery
+    approval uses this path so the selected historic account can adopt that
+    credential without ever recovering or persisting plaintext.
+    """
+    identify_hasher(password_hash)
+    locked_user = get_user_model().objects.select_for_update().get(pk=user.pk)
+    locked_user.password = password_hash
+    locked_user.token_version = (getattr(locked_user, "token_version", 0) or 0) + 1
+    locked_user.must_change_password = must_change_password
     locked_user.save(update_fields=["password", "token_version", "must_change_password"])
     clear_pending_password_reset(locked_user)
     for field in ("password", "token_version", "must_change_password"):

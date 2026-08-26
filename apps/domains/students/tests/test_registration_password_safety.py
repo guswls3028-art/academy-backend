@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from django.contrib.auth.hashers import make_password
+from django.contrib.auth.hashers import check_password, identify_hasher, make_password
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
@@ -39,6 +39,7 @@ class RegistrationPasswordSafetyTests(TestCase):
             "name": "가입학생",
             "username": "REGSAFE01",
             "initial_password": "rawpw1234",
+            "password_confirmation": "rawpw1234",
             "parent_phone": "01055556666",
             "phone": "01077778888",
             "school_type": "HIGH",
@@ -76,6 +77,33 @@ class RegistrationPasswordSafetyTests(TestCase):
         reg = StudentRegistrationRequest.objects.get()
         self.assertEqual(reg.initial_password_plain, "")
         self.assertNotEqual(reg.initial_password, "rawpw1234")
+        identify_hasher(reg.initial_password)
+        self.assertTrue(check_password("rawpw1234", reg.initial_password))
+        self.assertNotIn("password_confirmation", {field.name for field in reg._meta.fields})
+
+    def test_registration_password_confirmation_mismatch_creates_no_request(self):
+        original_user_count = User.objects.filter(tenant=self.tenant).count()
+        original_student_count = Student.objects.filter(tenant=self.tenant).count()
+        request = self.factory.post(
+            "/api/v1/students/registration-requests/",
+            {
+                **self._registration_payload(),
+                "password_confirmation": "typo-password",
+            },
+            format="json",
+        )
+        request.tenant = self.tenant
+
+        response = RegistrationRequestViewSet.as_view({"post": "create"})(request)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("password_confirmation", response.data)
+        self.assertFalse(StudentRegistrationRequest.objects.filter(tenant=self.tenant).exists())
+        self.assertEqual(User.objects.filter(tenant=self.tenant).count(), original_user_count)
+        self.assertEqual(
+            Student.objects.filter(tenant=self.tenant).count(),
+            original_student_count,
+        )
 
     def test_approval_stages_non_secret_password_phrase_until_enrollment(self):
         reg = StudentRegistrationRequest.objects.create(

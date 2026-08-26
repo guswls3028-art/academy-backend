@@ -16,6 +16,7 @@ from .registration_approval import (
     RegistrationApprovalNotice,
     RegistrationApprovalResult,
     approve_registration_request,
+    resolve_deleted_registration_request,
 )
 from .import_students import (
     StudentImportRowError,
@@ -74,6 +75,7 @@ __all__ = [
     "RegistrationApprovalNotice",
     "RegistrationApprovalResult",
     "approve_registration_request",
+    "resolve_deleted_registration_request",
     "StudentImportRowError",
     "StudentImportRowResolution",
     "import_students_from_rows",

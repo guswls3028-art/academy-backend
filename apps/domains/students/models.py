@@ -497,12 +497,12 @@ class StudentRegistrationRequest(TimestampModel):
     )
 
     # 승인 시 생성된 학생 (승인 후에만 설정)
-    student = models.OneToOneField(
+    student = models.ForeignKey(
         Student,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name="registration_request",
+        related_name="registration_requests",
     )
 
     class Meta:

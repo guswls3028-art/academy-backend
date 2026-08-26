@@ -4,10 +4,11 @@ from dataclasses import dataclass
 
 from django.contrib.auth import get_user_model
 from django.db import connection, transaction
-from django.db.models import Q
+from django.db.models import Count, Q
 
 from apps.core.models import TenantMembership
 from apps.core.models.user import user_internal_username
+from apps.core.services.password import adopt_password_hash
 from apps.support.students.lifecycle_dependencies import (
     locked_parent_account_by_phone_for_registration,
     locked_parent_account_for_registration,
@@ -21,14 +22,25 @@ from .identity import (
     phone_digits,
     resolve_student_login_id,
 )
+from .lifecycle import StudentLifecycleError, restore_student
+from .profile import StudentProfileUpdateError, update_student_profile
 from .registration_policy import is_student_self_registration_enabled
 
 
 class RegistrationApprovalError(ValueError):
-    def __init__(self, detail: str, *, status_code: int = 400) -> None:
+    def __init__(
+        self,
+        detail: str,
+        *,
+        status_code: int = 400,
+        code: str = "",
+        context: dict[str, object] | None = None,
+    ) -> None:
         super().__init__(detail)
         self.detail = detail
         self.status_code = status_code
+        self.code = code
+        self.context = context or {}
 
 
 @dataclass(frozen=True)
@@ -48,13 +60,21 @@ class RegistrationApprovalResult:
     notice: RegistrationApprovalNotice
 
 
-def _resolve_login_id(tenant, reg: StudentRegistrationRequest) -> str:
+def _resolve_login_id(
+    tenant,
+    reg: StudentRegistrationRequest,
+    *,
+    exclude_student_id: int | None = None,
+    exclude_user_id: int | None = None,
+) -> str:
     try:
         return resolve_student_login_id(
             tenant=tenant,
             requested_id=reg.username,
             phone=reg.phone,
             requested_conflict="error",
+            exclude_student_id=exclude_student_id,
+            exclude_user_id=exclude_user_id,
         )
     except StudentIdentityError as exc:
         raise RegistrationApprovalError(str(exc.detail), status_code=400) from exc
@@ -74,6 +94,134 @@ def _registration_identity_query(tenant, reg: StudentRegistrationRequest) -> Q:
             user__username=user_internal_username(tenant, requested_id)
         )
     return query
+
+
+def _deleted_recovery_identity_query(reg: StudentRegistrationRequest) -> Q:
+    """Exact profile identity required before staff may select a deleted row."""
+    query = Q(
+        name=str(reg.name or "").strip(),
+        parent_phone=phone_digits(reg.parent_phone),
+    )
+    student_phone = phone_digits(reg.phone)
+    parent_phone = phone_digits(reg.parent_phone)
+    if student_phone and student_phone != parent_phone:
+        query &= Q(phone=student_phone) | Q(user__phone=student_phone)
+    return query
+
+
+def _lock_deleted_recovery_graph(
+    *,
+    tenant,
+    reg: StudentRegistrationRequest,
+    student_id: int,
+) -> Student:
+    """Lock and revalidate the exact historic graph before any restore write."""
+    candidate = (
+        Student.objects.filter(
+            pk=student_id,
+            tenant=tenant,
+            deleted_at__isnull=False,
+        )
+        .filter(_deleted_recovery_identity_query(reg))
+        .values("id", "user_id")
+        .first()
+    )
+    if candidate is None:
+        raise RegistrationApprovalError(
+            "선택한 삭제 학생이 이 가입 신청과 일치하지 않습니다. 목록을 새로 확인해 주세요.",
+            status_code=409,
+        )
+    if candidate["user_id"] is None:
+        raise RegistrationApprovalError(
+            "선택한 학생의 로그인 계정 연결을 먼저 확인해 주세요.",
+            status_code=409,
+        )
+
+    parent_phone = phone_digits(reg.parent_phone)
+    parent = locked_parent_account_by_phone_for_registration(
+        tenant_id=tenant.id,
+        phone=parent_phone,
+    )
+    if parent is None or parent.user_id is None:
+        raise RegistrationApprovalError(
+            "선택한 학생의 기존 학부모 계정 연결을 먼저 확인해 주세요.",
+            status_code=409,
+        )
+
+    User = get_user_model()
+    user_ids = sorted({candidate["user_id"], parent.user_id})
+    locked_users = {
+        user.id: user
+        for user in User.objects.select_for_update().filter(pk__in=user_ids).order_by("id")
+    }
+    student_user = locked_users.get(candidate["user_id"])
+    parent_user = locked_users.get(parent.user_id)
+    if student_user is None or parent_user is None:
+        raise RegistrationApprovalError(
+            "선택한 학생·학부모 로그인 계정 연결을 먼저 확인해 주세요.",
+            status_code=409,
+        )
+
+    student = Student.objects.select_for_update().get(pk=student_id)
+    if not (
+        Student.objects.filter(
+            pk=student.pk,
+            tenant=tenant,
+            deleted_at__isnull=False,
+            user_id=student_user.id,
+        )
+        .filter(_deleted_recovery_identity_query(reg))
+        .exists()
+    ):
+        raise RegistrationApprovalError(
+            "선택한 삭제 학생 정보가 승인 중 변경되었습니다. 목록을 새로 확인해 주세요.",
+            status_code=409,
+        )
+    if student.parent_id not in (None, parent.id):
+        raise RegistrationApprovalError(
+            "선택한 학생의 학부모 연결이 가입 신청과 일치하지 않습니다.",
+            status_code=409,
+        )
+    if Student.objects.filter(user_id=student_user.id).exclude(pk=student.pk).exists():
+        raise RegistrationApprovalError(
+            "선택한 로그인 계정이 다른 학생과도 연결되어 있습니다.",
+            status_code=409,
+        )
+
+    memberships = {
+        membership.user_id: membership
+        for membership in (
+            TenantMembership.objects.select_for_update()
+            .filter(tenant=tenant, user_id__in=user_ids)
+            .order_by("user_id")
+        )
+    }
+    membership = memberships.get(student_user.id)
+    if membership is None or membership.role != "student" or membership.is_active:
+        raise RegistrationApprovalError(
+            "선택한 삭제 학생의 멤버십 이력이 일치하지 않습니다.",
+            status_code=409,
+        )
+    if TenantMembership.objects.filter(user_id=student_user.id).exclude(tenant=tenant).exists():
+        raise RegistrationApprovalError(
+            "다른 학원에도 연결된 로그인 계정은 이 경로에서 복구할 수 없습니다.",
+            status_code=409,
+        )
+    if student_user.is_active:
+        raise RegistrationApprovalError(
+            "선택한 삭제 학생의 로그인 계정 상태가 예상과 다릅니다.",
+            status_code=409,
+        )
+    _validate_active_login_user(
+        tenant=tenant,
+        user=parent_user,
+        expected_username=f"p_{tenant.id}_{parent_phone}",
+        expected_phone=parent_phone,
+        role="parent",
+        label="학부모",
+    )
+    student.user = student_user
+    return student
 
 
 def _registration_identity_lock_keys(tenant, reg: StudentRegistrationRequest) -> tuple[str, ...]:
@@ -250,9 +398,28 @@ def _resolve_existing_student(*, tenant, reg: StudentRegistrationRequest) -> Stu
     )
     deleted = [candidate for candidate in candidates if candidate["deleted_at"] is not None]
     if deleted:
+        deleted_candidates = list(
+            Student.objects.filter(tenant=tenant, deleted_at__isnull=False)
+            .filter(_deleted_recovery_identity_query(reg))
+            .annotate(enrollment_count=Count("enrollments", distinct=True))
+            .values("id", "created_at", "deleted_at", "enrollment_count")
+            .order_by("-created_at", "-id")[:10]
+        )
         raise RegistrationApprovalError(
-            "같은 식별값의 삭제 학생이 있습니다. 새 계정을 만들지 말고 기존 학생을 확인해 주세요.",
+            "같은 학생으로 보이는 삭제 이력이 있습니다. 복구할 과거 계정을 직접 선택해 주세요.",
             status_code=409,
+            code="deleted_student_conflict",
+            context={
+                "candidates": [
+                    {
+                        "student_id": candidate["id"],
+                        "created_at": candidate["created_at"],
+                        "deleted_at": candidate["deleted_at"],
+                        "enrollment_count": candidate["enrollment_count"],
+                    }
+                    for candidate in deleted_candidates
+                ]
+            },
         )
     if len(candidates) > 1:
         raise RegistrationApprovalError(
@@ -471,3 +638,108 @@ def approve_registration_request(
         student=result.student,
         notice=notice,
     )
+
+
+def resolve_deleted_registration_request(
+    *,
+    tenant,
+    registration_id: int,
+    student_id: int,
+) -> RegistrationApprovalResult:
+    """Explicitly restore one selected deleted identity and approve signup.
+
+    The ordinary approval remains fail-closed. This path requires the staff
+    caller to select an exact same-tenant deleted candidate returned by the
+    conflict response; no automatic winner is inferred when duplicates exist.
+    """
+    with transaction.atomic():
+        if not is_student_self_registration_enabled(tenant):
+            raise RegistrationApprovalError(
+                "이 학원은 운영정책상 학생 회원가입을 사용하지 않습니다.",
+                status_code=403,
+            )
+        reg = StudentRegistrationRequest.objects.select_for_update().get(
+            pk=registration_id,
+            tenant=tenant,
+        )
+        if reg.status != StudentRegistrationRequest.PENDING:
+            raise RegistrationApprovalError("이미 처리된 신청입니다.", status_code=409)
+
+        _acquire_registration_identity_locks(tenant, reg)
+        identity_query = _registration_identity_query(tenant, reg)
+        candidate = _lock_deleted_recovery_graph(
+            tenant=tenant,
+            reg=reg,
+            student_id=student_id,
+        )
+        if (
+            Student.objects.filter(tenant=tenant, deleted_at__isnull=True)
+            .filter(identity_query)
+            .exists()
+        ):
+            raise RegistrationApprovalError(
+                "같은 식별값의 활성 학생이 있습니다. 학생 정보를 먼저 확인해 주세요.",
+                status_code=409,
+            )
+
+        login_id = _resolve_login_id(
+            tenant,
+            reg,
+            exclude_student_id=candidate.id,
+            exclude_user_id=candidate.user_id,
+        )
+        profile_data = {
+            "name": reg.name,
+            "phone": reg.phone,
+            "parent_phone": reg.parent_phone,
+            "school_type": reg.school_type,
+            "elementary_school": reg.elementary_school,
+            "high_school": reg.high_school,
+            "middle_school": reg.middle_school,
+            "high_school_class": reg.high_school_class,
+            "major": reg.major,
+            "grade": reg.grade,
+            "gender": reg.gender,
+            "memo": reg.memo,
+            "address": reg.address,
+            "origin_middle_school": reg.origin_middle_school,
+            "ps_number": login_id,
+        }
+        try:
+            restored = restore_student(candidate, tenant=tenant)
+            profile_result = update_student_profile(
+                student=restored.student,
+                tenant=tenant,
+                data=profile_data,
+                identity_field="ps_number",
+            )
+        except (StudentLifecycleError, StudentProfileUpdateError) as exc:
+            detail = getattr(exc, "detail", str(exc))
+            raise RegistrationApprovalError(str(detail), status_code=409) from exc
+
+        student = profile_result.student
+        user = get_user_model().objects.select_for_update().get(pk=student.user_id)
+        if user.tenant_id != tenant.id:
+            raise RegistrationApprovalError(
+                "선택한 학생 로그인 계정의 테넌트 연결이 일치하지 않습니다.",
+                status_code=409,
+            )
+        user.username = user_internal_username(tenant, login_id)
+        user.phone = student.phone or ""
+        user.save(update_fields=["username", "phone"])
+        adopt_password_hash(user, reg.initial_password, must_change_password=False)
+
+        reg.status = StudentRegistrationRequest.APPROVED
+        reg.student = student
+        reg.initial_password_plain = ""
+        reg.save(update_fields=["status", "student", "initial_password_plain", "updated_at"])
+
+    notice = RegistrationApprovalNotice(
+        student_name=student.name,
+        student_phone=student.phone or "",
+        student_id=student.ps_number,
+        student_password="가입 신청 시 입력한 비밀번호",
+        parent_phone=student.parent_phone,
+        parent_password="변경되지 않음",
+    )
+    return RegistrationApprovalResult(registration=reg, student=student, notice=notice)
