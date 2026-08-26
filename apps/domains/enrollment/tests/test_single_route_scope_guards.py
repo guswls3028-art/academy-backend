@@ -1,6 +1,8 @@
 from datetime import date
 
 from django.contrib.auth import get_user_model
+from django.utils import timezone
+from rest_framework.exceptions import ValidationError
 from rest_framework.test import APITestCase
 
 from apps.core.models import Tenant, TenantMembership
@@ -10,6 +12,9 @@ from apps.domains.fees.models import FeeTemplate, StudentFee, StudentInvoice
 from apps.domains.fees.services import generate_monthly_invoices
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.students.models import Student
+from apps.support.enrollment.lifecycle_dependencies import (
+    ensure_session_roster_membership,
+)
 
 
 User = get_user_model()
@@ -155,6 +160,77 @@ class EnrollmentAttendanceSingleRouteScopeGuardTests(APITestCase):
         self.assertEqual(resp.status_code, 400, resp.data)
         self.enrollment.refresh_from_db()
         self.assertEqual(self.enrollment.lecture_id, self.lecture.id)
+
+    def test_deleted_student_enrollment_cannot_be_reactivated(self):
+        self.student.deleted_at = timezone.now()
+        self.student.save(update_fields=["deleted_at"])
+        self.enrollment.status = "INACTIVE"
+        self.enrollment.save(update_fields=["status"])
+
+        resp = self.client.patch(
+            f"/api/v1/enrollments/{self.enrollment.id}/",
+            {"status": "ACTIVE"},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(resp.status_code, 404, resp.data)
+        self.enrollment.refresh_from_db()
+        self.assertEqual(self.enrollment.status, "INACTIVE")
+
+    def test_deleted_student_cannot_be_bulk_enrolled(self):
+        self.student.deleted_at = timezone.now()
+        self.student.save(update_fields=["deleted_at"])
+
+        resp = self.client.post(
+            "/api/v1/enrollments/bulk_create/",
+            {"lecture": self.other_lecture.id, "students": [self.student.id]},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(resp.status_code, 400, resp.data)
+        self.assertFalse(
+            Enrollment.objects.filter(
+                tenant=self.tenant,
+                lecture=self.other_lecture,
+                student=self.student,
+            ).exists()
+        )
+
+    def test_stale_active_enrollment_cannot_create_roster_after_deactivation(self):
+        enrollment = Enrollment.objects.create(
+            tenant=self.tenant,
+            lecture=self.other_lecture,
+            student=self.student,
+            status="ACTIVE",
+        )
+        stale_enrollment = Enrollment.objects.select_related("student").get(
+            pk=enrollment.pk
+        )
+        Enrollment.objects.filter(pk=enrollment.pk).update(status="INACTIVE")
+
+        with self.assertRaises(ValidationError):
+            ensure_session_roster_membership(
+                tenant=self.tenant,
+                session=self.other_session,
+                enrollment=stale_enrollment,
+            )
+
+        self.assertFalse(
+            SessionEnrollment.objects.filter(
+                tenant=self.tenant,
+                session=self.other_session,
+                enrollment=enrollment,
+            ).exists()
+        )
+        self.assertFalse(
+            Attendance.objects.filter(
+                tenant=self.tenant,
+                session=self.other_session,
+                enrollment=enrollment,
+            ).exists()
+        )
 
     def test_enrollment_inactive_deactivates_auto_assigned_fees(self):
         template = FeeTemplate.objects.create(

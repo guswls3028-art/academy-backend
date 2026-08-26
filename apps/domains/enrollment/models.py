@@ -49,6 +49,22 @@ class Enrollment(TimestampModel):
         default="ACTIVE",
     )
 
+    status_before_student_deletion = models.CharField(
+        max_length=20,
+        choices=[
+            ("ACTIVE", "활성"),
+            ("INACTIVE", "비활성"),
+            ("PENDING", "대기"),
+        ],
+        null=True,
+        blank=True,
+        editable=False,
+        help_text=(
+            "학생 소프트 삭제 직전 수강 상태. 학생 복원 시 한 번 사용하고 "
+            "다시 비웁니다."
+        ),
+    )
+
     enrolled_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

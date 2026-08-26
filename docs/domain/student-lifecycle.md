@@ -1,8 +1,8 @@
 # 학생 생명주기 SSOT
 
 **상태:** Active
-**최종 점검:** 2026-05-23
-**코드 기준:** `apps/domains/students/services/lifecycle.py`, `apps/domains/students/views/student_views.py`
+**최종 점검:** 2026-08-27
+**코드 기준:** `apps/domains/students/services/lifecycle.py`, `apps/domains/enrollment/services/lifecycle.py`, `apps/domains/students/views/student_views.py`
 
 ## 1. 상태
 
@@ -16,6 +16,15 @@
 학생 삭제/복원/영구삭제 신규 코드는 view나 management command에 직접 구현하지 않는다.
 HTTP와 운영 명령은 생명주기 서비스를 호출하는 compatibility facade다.
 
+서로 혼동하면 안 되는 상태 축은 다음과 같다.
+
+| 축 | 저장값 | 의미 |
+|---|---|---|
+| 학생 삭제 | `Student.deleted_at` | 30일 복구 가능한 학생 계정·업무 접근 정지 |
+| 계정 접근 | `User.is_active` + 현재 tenant의 `TenantMembership.is_active` | 현재 tenant 로그인 가능 여부 |
+| 관리 대상 | `Student.is_managed` | 교직원 목록/업무 분류이며 로그인·수강 권한을 바꾸지 않음 |
+| 강의 수강 | `Enrollment.status` | 강의별 `ACTIVE`/`PENDING`/`INACTIVE` 권한 |
+
 ## 2. Soft Delete
 
 SSOT: `soft_delete_student(student, tenant=...)`
@@ -24,7 +33,15 @@ SSOT: `soft_delete_student(student, tenant=...)`
 - `Parent` 직접 연결을 끊는다.
 - 순수 학생 계정이면 해당 테넌트의 `student` 멤버십을 비활성화하고, 남은 활성 멤버십이 없을 때만 `User.is_active=False`로 둔다.
 - 같은 사용자에게 다른 테넌트 멤버십이나 같은 테넌트의 staff/teacher/admin/owner/parent 역할이 남아 있으면 전역 계정을 잠그지 않는다.
-- enrollment 비활성화와 clinic 예약 취소는 각 도메인 lifecycle hook을 통해 수행한다.
+- 각 enrollment의 현재 상태를 `status_before_student_deletion`에 먼저 기록한 뒤
+  `INACTIVE`로 일시 정지한다. enrollment, 차시 명단, 출결, 성적, 과제, 영상 진도
+  행을 이동·복제·삭제하지 않는다.
+- `status_before_student_deletion`은 lifecycle 내부의 일회성 DB marker이며 학생·수강
+  API 응답이나 OpenAPI 계약에 노출하지 않는다.
+- 자동 배정 수강료는 enrollment 비활성화와 같은 트랜잭션에서 비활성화한다.
+- clinic 예약 취소는 clinic lifecycle hook을 통해 수행한다.
+- 삭제된 학생은 수강 bulk 등록, enrollment 활성/대기 전환, 차시 명단 추가 경로에서
+  fail-closed로 거절한다.
 
 ## 3. Restore
 
@@ -33,7 +50,31 @@ SSOT: `restore_student(student, tenant=..., profile_data=None)`
 - `_del_` 접두사에서 원래 `ps_number`를 복원한다.
 - 같은 테넌트 활성 학생과 아이디 충돌이 있으면 실패한다.
 - `User.is_active`, 학생 전화번호, 테넌트 멤버십, Parent 연결을 복원한다.
+- `status_before_student_deletion`이 있는 enrollment만 삭제 전 상태로 복원하고 marker를
+  비운다. 원래 `INACTIVE`였던 수강은 계속 `INACTIVE`, 원래 `PENDING`은 계속
+  `PENDING`이다.
+- 복원 시점에 `Lecture.is_active=False`이거나 `end_date`가 지난 강의는 삭제 전 상태가
+  `ACTIVE`/`PENDING`이어도 `INACTIVE`로 유지한다.
+- 활성으로 돌아온 enrollment의 수강료 연결은 다시 계산하지만, 기존 enrollment를
+  복원하는 동작만으로 첫 계정 안내를 재발송하지 않는다.
 - 복원은 비밀번호를 재발급하지 않는다. 가입 안내 알림톡도 새 비밀번호처럼 보내지 않는다.
+
+`enrollment.0002_student_deletion_status_snapshot` 적용 전에 이미 삭제되어 있던 학생의
+원래 수강 상태는 과거 `INACTIVE` 덮어쓰기로 복원할 수 없다. 마이그레이션은 이를
+추측하지 않고 현재 수강을 `INACTIVE`, 삭제 전 상태 snapshot도 `INACTIVE`로 기록한다.
+따라서 legacy 삭제 학생 복원은 계정과 데이터 연결을 복구하되 수강을 임의로 열지
+않으며, 필요한 강의만 교직원이 명시적으로 재등록한다.
+
+무중단 롤링 교체 중에는 마이그레이션이 설치한 PostgreSQL trigger가 구 런타임의
+`QuerySet.update(status="INACTIVE")`도 보완한다. 학생이 이미 soft-deleted이고 기존
+수강 상태가 `ACTIVE`/`PENDING`이며 marker가 비어 있을 때만 `OLD.status`를 marker에
+원자 기록한다. 신 런타임의 명시적 dual-write가 있으면 trigger는 개입하지 않는다.
+reverse migration은 같은 이름의 trigger와 function만 정확히 제거한다.
+
+수강·차시 명단 batch write는 요청 순서와 무관하게 중복 제거한 Student ID 오름차순으로
+먼저 잠근다. 차시 명단은 Student 행을 선점한 뒤 Enrollment 행도 오름차순으로 잠그고,
+DB에서 다시 읽은 tenant/lecture/status만으로 등록 여부를 결정한다. API가 전달한 오래된
+Enrollment 인스턴스의 상태는 권한 판정에 사용하지 않는다.
 
 ## 4. Permanent Delete
 
@@ -81,6 +122,10 @@ python manage.py purge_deleted_students
 ## 6. 검증 기준
 
 - soft delete, restore, permanent delete는 학생 생명주기 테스트에 포함되어야 한다.
+- soft delete/restore 변경 시 `ACTIVE`/`PENDING`/`INACTIVE` 보존, 삭제 중 종료된 강의
+  비활성 유지, 계정 안내 미발송, 삭제 학생 수강/차시 등록 차단을 함께 검증한다.
+- PostgreSQL에서는 구 런타임 형태의 상태 일괄갱신→신 런타임 복원과, 역순으로 겹치는
+  수강/차시 batch write가 교착 없이 끝나는지 함께 검증한다.
 - permanent delete 변경 시 최소 검증:
   - tenant isolation
   - cross-tenant User 보존 및 재활성화

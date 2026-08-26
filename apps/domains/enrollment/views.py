@@ -86,6 +86,15 @@ class EnrollmentViewSet(ModelViewSet):
 
     @transaction.atomic
     def perform_update(self, serializer):
+        target_status = serializer.validated_data.get("status", serializer.instance.status)
+        if target_status in {"ACTIVE", "PENDING"} and not enroll_repo.student_exists_for_tenant(
+            serializer.instance.student_id,
+            self.request.tenant,
+            for_update=True,
+        ):
+            raise ValidationError(
+                {"status": "삭제된 학생의 수강 상태는 활성 또는 대기로 변경할 수 없습니다."}
+            )
         enrollment = serializer.save()
         sync_enrollment_status_side_effects(enrollment)
 

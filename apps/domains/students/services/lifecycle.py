@@ -15,8 +15,9 @@ from apps.support.students.lifecycle_dependencies import (
     active_wrong_note_pdf_exists_for_students,
     cancel_active_participants_for_student,
     deactivate_enrollments_for_student,
-    ensure_parent_for_student,
     delete_wrong_note_pdf_storage_or_raise,
+    ensure_parent_for_student,
+    restore_enrollments_after_student_restore,
 )
 
 
@@ -42,6 +43,10 @@ class StudentRestoreResult:
     changed_fields: tuple[str, ...]
     user_reactivated: bool
     parent_relinked: bool
+    enrollment_count: int
+    active_enrollment_count: int
+    pending_enrollment_count: int
+    inactive_enrollment_count: int
 
 
 @dataclass(frozen=True)
@@ -335,12 +340,21 @@ def restore_student(
                 student.save(update_fields=["parent"])
                 parent_relinked = True
 
+        enrollment_restore = restore_enrollments_after_student_restore(
+            tenant=tenant,
+            student=student,
+        )
+
         return StudentRestoreResult(
             student=student,
             restored_ps_number=restored_ps_number,
             changed_fields=tuple(changed),
             user_reactivated=user_reactivated,
             parent_relinked=parent_relinked,
+            enrollment_count=enrollment_restore.processed_count,
+            active_enrollment_count=enrollment_restore.active_count,
+            pending_enrollment_count=enrollment_restore.pending_count,
+            inactive_enrollment_count=enrollment_restore.inactive_count,
         )
 
 

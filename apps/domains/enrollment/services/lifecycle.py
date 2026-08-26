@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 
 from django.core.exceptions import ObjectDoesNotExist
+from django.db import transaction
+from django.utils import timezone
 from rest_framework.exceptions import NotFound, ValidationError
 
 from academy.adapters.db.django import repositories_enrollment as enroll_repo
@@ -40,6 +42,14 @@ class DisposableEnrollmentImpact:
 
     def as_dict(self) -> dict:
         return {**asdict(self), "can_remove": self.can_remove}
+
+
+@dataclass(frozen=True)
+class StudentEnrollmentRestoreResult:
+    processed_count: int
+    active_count: int
+    pending_count: int
+    inactive_count: int
 
 
 def assess_disposable_enrollment(*, tenant, enrollment) -> DisposableEnrollmentImpact:
@@ -120,7 +130,11 @@ def _validate_id_list(value, *, field_name: str, allow_empty: bool = False) -> l
         raise ValidationError({"detail": f"{field_name} 값이 잘못되었습니다."}) from exc
 
 
-def sync_enrollment_status_side_effects(enrollment: Enrollment) -> None:
+def sync_enrollment_status_side_effects(
+    enrollment: Enrollment,
+    *,
+    schedule_account_notice: bool = True,
+) -> None:
     if enrollment.status != "ACTIVE":
         deactivate_fees_for_enrollment(enrollment)
         return
@@ -130,7 +144,8 @@ def sync_enrollment_status_side_effects(enrollment: Enrollment) -> None:
         enrollment.lecture,
         enrollment,
     )
-    schedule_pending_account_notice(student_id=enrollment.student_id)
+    if schedule_account_notice:
+        schedule_pending_account_notice(student_id=enrollment.student_id)
 
 
 def delete_enrollment(enrollment: Enrollment) -> None:
@@ -140,9 +155,75 @@ def delete_enrollment(enrollment: Enrollment) -> None:
 
 
 def deactivate_enrollments_for_student(*, tenant, student) -> int:
-    return Enrollment.objects.filter(student=student, tenant=tenant).update(status="INACTIVE")
+    enrollments = list(
+        Enrollment.objects.select_for_update()
+        .filter(student=student, tenant=tenant)
+        .order_by("id")
+    )
+    for enrollment in enrollments:
+        enrollment.status_before_student_deletion = enrollment.status
+        enrollment.status = "INACTIVE"
+        enrollment.save(
+            update_fields=[
+                "status",
+                "status_before_student_deletion",
+                "updated_at",
+            ]
+        )
+        deactivate_fees_for_enrollment(enrollment)
+    return len(enrollments)
 
 
+def restore_enrollments_after_student_restore(*, tenant, student) -> StudentEnrollmentRestoreResult:
+    """Restore only enrollment status changes made by the student's soft deletion."""
+    enrollments = list(
+        Enrollment.objects.select_for_update()
+        .select_related("lecture")
+        .filter(
+            student=student,
+            tenant=tenant,
+            status_before_student_deletion__isnull=False,
+        )
+        .order_by("id")
+    )
+    today = timezone.localdate()
+    counts = {"ACTIVE": 0, "PENDING": 0, "INACTIVE": 0}
+
+    for enrollment in enrollments:
+        target_status = enrollment.status_before_student_deletion or "INACTIVE"
+        if target_status not in counts:
+            target_status = "INACTIVE"
+        lecture = enrollment.lecture
+        lecture_accepts_restore = bool(lecture.is_active) and (
+            lecture.end_date is None or lecture.end_date >= today
+        )
+        if target_status in {"ACTIVE", "PENDING"} and not lecture_accepts_restore:
+            target_status = "INACTIVE"
+
+        enrollment.status = target_status
+        enrollment.status_before_student_deletion = None
+        enrollment.save(
+            update_fields=[
+                "status",
+                "status_before_student_deletion",
+                "updated_at",
+            ]
+        )
+        sync_enrollment_status_side_effects(
+            enrollment,
+            schedule_account_notice=False,
+        )
+        counts[target_status] += 1
+
+    return StudentEnrollmentRestoreResult(
+        processed_count=len(enrollments),
+        active_count=counts["ACTIVE"],
+        pending_count=counts["PENDING"],
+        inactive_count=counts["INACTIVE"],
+    )
+
+
+@transaction.atomic
 def bulk_create_enrollments(*, tenant, lecture_id, student_ids) -> list[Enrollment]:
     tenant = require_tenant(tenant)
     if not lecture_id:
@@ -153,11 +234,20 @@ def bulk_create_enrollments(*, tenant, lecture_id, student_ids) -> list[Enrollme
     if not lecture:
         raise ValidationError({"detail": "해당 학원의 강의가 아닙니다."})
 
+    locked_student_ids = set(
+        enroll_repo.lock_active_student_ids_for_tenant(student_ids, tenant)
+    )
+    invalid_student_id = next(
+        (student_id for student_id in student_ids if student_id not in locked_student_ids),
+        None,
+    )
+    if invalid_student_id is not None:
+        raise ValidationError(
+            {"detail": f"학생(id={invalid_student_id})은 현재 학원 소속이 아닙니다."}
+        )
+
     created: list[Enrollment] = []
     for sid in student_ids:
-        if not enroll_repo.student_exists_for_tenant(sid, tenant):
-            raise ValidationError({"detail": f"학생(id={sid})은 현재 학원 소속이 아닙니다."})
-
         obj, created_new = enroll_repo.enrollment_get_or_create(
             tenant=tenant,
             lecture=lecture,
@@ -177,6 +267,7 @@ def bulk_create_enrollments(*, tenant, lecture_id, student_ids) -> list[Enrollme
     return created
 
 
+@transaction.atomic
 def bulk_create_session_enrollments(*, tenant, session_id, enrollment_ids) -> list[SessionEnrollment]:
     tenant = require_tenant(tenant)
     if not session_id:
@@ -189,9 +280,45 @@ def bulk_create_session_enrollments(*, tenant, session_id, enrollment_ids) -> li
     if session.lecture.tenant_id != tenant.id:
         raise ValidationError({"detail": "다른 학원의 세션입니다."})
 
+    candidate_enrollments = enroll_repo.get_enrollments_by_ids_with_lecture(
+        enrollment_ids,
+        tenant,
+    )
+    candidate_by_id = {enrollment.id: enrollment for enrollment in candidate_enrollments}
+    missing_enrollment_id = next(
+        (enrollment_id for enrollment_id in enrollment_ids if enrollment_id not in candidate_by_id),
+        None,
+    )
+    if missing_enrollment_id is not None:
+        raise ValidationError(
+            {"detail": f"수강 등록을 찾을 수 없습니다: {missing_enrollment_id}"}
+        )
+
+    student_ids = [enrollment.student_id for enrollment in candidate_enrollments]
+    locked_student_ids = set(
+        enroll_repo.lock_active_student_ids_for_tenant(student_ids, tenant)
+    )
+    invalid_student_id = next(
+        (student_id for student_id in student_ids if student_id not in locked_student_ids),
+        None,
+    )
+    if invalid_student_id is not None:
+        raise ValidationError({"detail": "삭제된 학생은 차시 수강 명단에 추가할 수 없습니다."})
+
+    locked_enrollments = enroll_repo.lock_enrollments_by_ids_with_lecture(
+        enrollment_ids,
+        tenant,
+    )
+    locked_by_id = {enrollment.id: enrollment for enrollment in locked_enrollments}
+    if any(
+        enrollment.student_id not in locked_student_ids
+        for enrollment in locked_enrollments
+    ):
+        raise ValidationError({"detail": "수강 등록의 학생 정보가 변경되었습니다."})
+
     created: list[SessionEnrollment] = []
     for eid in enrollment_ids:
-        enrollment = enroll_repo.get_enrollment_by_id_with_lecture(eid, tenant)
+        enrollment = locked_by_id.get(eid)
         if enrollment is None:
             raise ValidationError({"detail": f"수강 등록을 찾을 수 없습니다: {eid}"})
         if enrollment.lecture_id != session.lecture_id:

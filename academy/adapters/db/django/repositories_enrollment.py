@@ -60,9 +60,35 @@ def get_attendances_for_lecture_by_lecture(lecture, enrollments):
     )
 
 
-def student_exists_for_tenant(student_id, tenant):
+def student_exists_for_tenant(student_id, tenant, *, for_update=False):
     from apps.domains.students.models import Student
-    return Student.objects.filter(id=student_id, tenant=tenant).exists()
+    queryset = Student.objects.filter(
+        id=student_id,
+        tenant=tenant,
+        deleted_at__isnull=True,
+    )
+    if for_update:
+        queryset = queryset.select_for_update()
+    return queryset.exists()
+
+
+def lock_active_student_ids_for_tenant(student_ids, tenant) -> tuple[int, ...]:
+    """Lock active students in one stable order for overlapping batch writes."""
+    from apps.domains.students.models import Student
+
+    normalized_ids = sorted({int(student_id) for student_id in student_ids})
+    if not normalized_ids:
+        return ()
+    return tuple(
+        Student.objects.select_for_update()
+        .filter(
+            id__in=normalized_ids,
+            tenant=tenant,
+            deleted_at__isnull=True,
+        )
+        .order_by("id")
+        .values_list("id", flat=True)
+    )
 
 
 def enrollment_get_or_create(tenant, lecture, student_id, defaults):
@@ -101,6 +127,37 @@ def get_session_by_id_with_lecture(session_id):
 def get_enrollment_by_id_with_lecture(enrollment_id, tenant):
     from apps.domains.enrollment.models import Enrollment
     return Enrollment.objects.select_related("lecture").filter(id=enrollment_id, tenant=tenant).first()
+
+
+def get_enrollments_by_ids_with_lecture(enrollment_ids, tenant):
+    from apps.domains.enrollment.models import Enrollment
+
+    normalized_ids = sorted({int(enrollment_id) for enrollment_id in enrollment_ids})
+    return list(
+        Enrollment.objects.select_related("lecture", "student")
+        .filter(id__in=normalized_ids, tenant=tenant)
+        .order_by("id")
+    )
+
+
+def lock_enrollments_by_ids_with_lecture(enrollment_ids, tenant):
+    """Lock enrollment rows after their Student rows have been locked."""
+    from apps.domains.enrollment.models import Enrollment
+
+    normalized_ids = sorted({int(enrollment_id) for enrollment_id in enrollment_ids})
+    if not normalized_ids:
+        return []
+    return list(
+        Enrollment.objects.select_for_update(of=("self",))
+        .select_related("lecture", "student")
+        .filter(id__in=normalized_ids, tenant=tenant)
+        .order_by("id")
+    )
+
+
+def lock_enrollment_by_id_with_lecture(enrollment_id, tenant):
+    rows = lock_enrollments_by_ids_with_lecture([enrollment_id], tenant)
+    return rows[0] if rows else None
 
 
 def session_enrollment_get_or_create(session, enrollment, defaults):

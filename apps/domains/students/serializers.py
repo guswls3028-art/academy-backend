@@ -1,7 +1,9 @@
 # PATH: apps/domains/students/serializers.py
 
 from rest_framework import serializers
+from drf_spectacular.utils import extend_schema_field
 
+from apps.core.models import TenantMembership
 from apps.domains.students.models import (
     Student,
     StudentCustomFieldDefinition,
@@ -30,6 +32,28 @@ from apps.support.students.serializer_dependencies import (
 )
 
 Enrollment = get_enrollment_model()
+
+
+def _student_account_state(student: Student) -> str:
+    if student.deleted_at is not None:
+        return "DELETED"
+    if student.user_id is None:
+        return "UNLINKED"
+
+    annotated_access = getattr(student, "_account_access_active", None)
+    if annotated_access is not None:
+        return "ACTIVE" if annotated_access else "INACTIVE"
+
+    user = student.user
+    if not user.is_active:
+        return "INACTIVE"
+    has_access = TenantMembership.objects.filter(
+        tenant_id=student.tenant_id,
+        user_id=student.user_id,
+        role="student",
+        is_active=True,
+    ).exists()
+    return "ACTIVE" if has_access else "INACTIVE"
 
 
 def _request_tenant(serializer):
@@ -159,6 +183,7 @@ class StudentListSerializer(serializers.ModelSerializer):
     enrollments = EnrollmentSerializer(many=True, read_only=True)
     is_enrolled = serializers.SerializerMethodField()
     profile_photo_url = serializers.SerializerMethodField()
+    account_state = serializers.SerializerMethodField()
 
     class Meta:
         model = Student
@@ -171,7 +196,7 @@ class StudentListSerializer(serializers.ModelSerializer):
             "memo", "address", "custom_fields", "is_managed", "deleted_at",
             "created_at", "updated_at",
             # computed
-            "tags", "enrollments", "is_enrolled", "profile_photo_url",
+            "tags", "enrollments", "is_enrolled", "profile_photo_url", "account_state",
         ]
         ref_name = "StudentList"
 
@@ -186,6 +211,12 @@ class StudentListSerializer(serializers.ModelSerializer):
             except Exception:
                 pass
         return None
+
+    @extend_schema_field(
+        serializers.ChoiceField(choices=("ACTIVE", "INACTIVE", "DELETED", "UNLINKED"))
+    )
+    def get_account_state(self, obj):
+        return _student_account_state(obj)
 
     def _get_clinic_highlight_map(self):
         """클리닉 하이라이트 맵을 context에서 가져오거나 lazy 계산"""
@@ -258,6 +289,7 @@ class StudentDetailSerializer(serializers.ModelSerializer):
     tags = TagSerializer(many=True, read_only=True)
     enrollments = EnrollmentSerializer(many=True, read_only=True)
     profile_photo_url = serializers.SerializerMethodField()
+    account_state = serializers.SerializerMethodField()
 
     class Meta:
         model = Student
@@ -270,7 +302,7 @@ class StudentDetailSerializer(serializers.ModelSerializer):
             "memo", "address", "custom_fields", "is_managed", "deleted_at",
             "created_at", "updated_at",
             # computed
-            "tags", "enrollments", "profile_photo_url",
+            "tags", "enrollments", "profile_photo_url", "account_state",
         ]
         ref_name = "StudentDetail"
 
@@ -284,6 +316,12 @@ class StudentDetailSerializer(serializers.ModelSerializer):
             except Exception:
                 pass
         return None
+
+    @extend_schema_field(
+        serializers.ChoiceField(choices=("ACTIVE", "INACTIVE", "DELETED", "UNLINKED"))
+    )
+    def get_account_state(self, obj):
+        return _student_account_state(obj)
 
     def to_representation(self, obj):
         data = super().to_representation(obj)

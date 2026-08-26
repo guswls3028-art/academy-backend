@@ -25,6 +25,12 @@ Broad promotion or expansion launch must not proceed on a "screen loads" signal
 alone. The release gate must prove the chain from student identity to the
 consumer role that sees the final state.
 
+Student state is not one boolean. `deleted_at`, tenant account access,
+`is_managed`, and each `Enrollment.status` are independent axes. `is_managed`
+only controls staff management classification and must never be described or
+implemented as login suspension. Deletion/restore and enrollment state transfer
+are owned by `student-lifecycle.md`.
+
 ## 1. Canonical Student Graph
 
 The durable student graph is:

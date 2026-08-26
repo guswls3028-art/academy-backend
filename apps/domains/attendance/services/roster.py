@@ -11,7 +11,6 @@ from rest_framework.exceptions import NotFound, ValidationError
 from academy.adapters.db.django import repositories_enrollment as enroll_repo
 from apps.domains.attendance.models import Attendance
 from apps.support.attendance.roster_dependencies import (
-    active_student_ids_for_tenant,
     auto_assign_roster_fees,
     require_attendance_tenant,
 )
@@ -41,6 +40,7 @@ def _normalize_session_id(value) -> int:
         raise ValidationError({"detail": "session 값이 잘못되었습니다."}) from exc
 
 
+@transaction.atomic
 def ensure_session_roster_membership(*, tenant, session, enrollment) -> SessionRosterMembership:
     """
     Ensure one enrollment is active on one session roster and has attendance.
@@ -53,11 +53,26 @@ def ensure_session_roster_membership(*, tenant, session, enrollment) -> SessionR
 
     if getattr(session.lecture, "tenant_id", None) != tenant.id:
         raise ValidationError({"detail": "다른 학원의 세션입니다."})
-    if enrollment.tenant_id != tenant.id:
+
+    locked_student_ids = enroll_repo.lock_active_student_ids_for_tenant(
+        [enrollment.student_id],
+        tenant,
+    )
+    if locked_student_ids != (enrollment.student_id,):
+        raise ValidationError({"detail": "삭제된 학생은 출결 명단에 추가할 수 없습니다."})
+
+    current_enrollment = enroll_repo.lock_enrollment_by_id_with_lecture(
+        enrollment.id,
+        tenant,
+    )
+    if current_enrollment is None:
         raise ValidationError({"detail": "수강 등록을 찾을 수 없습니다."})
-    if enrollment.lecture_id != session.lecture_id:
+    if current_enrollment.student_id != enrollment.student_id:
+        raise ValidationError({"detail": "수강 등록의 학생 정보가 변경되었습니다."})
+    if current_enrollment.lecture_id != session.lecture_id:
         raise ValidationError({"detail": "다른 강의 수강자는 이 세션에 추가할 수 없습니다."})
 
+    enrollment = current_enrollment
     if enrollment.status != "ACTIVE":
         raise ValidationError(
             {
@@ -103,12 +118,14 @@ def create_attendance_roster(*, tenant, session_id, student_ids) -> list[Attenda
     if not session or session.lecture.tenant_id != tenant.id:
         raise NotFound("세션을 찾을 수 없습니다.")
 
-    valid_student_ids = active_student_ids_for_tenant(
-        tenant=tenant,
-        student_ids=normalized_student_ids,
+    locked_student_ids = set(
+        enroll_repo.lock_active_student_ids_for_tenant(
+            normalized_student_ids,
+            tenant,
+        )
     )
     invalid_student_ids = [
-        sid for sid in normalized_student_ids if sid not in valid_student_ids
+        sid for sid in normalized_student_ids if sid not in locked_student_ids
     ]
     if invalid_student_ids:
         raise ValidationError(
