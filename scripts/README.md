@@ -36,6 +36,14 @@
 `origin/main`에 미병합된 worktree를 자동 삭제하지 않는다. 계약 테스트는
 `pwsh scripts/codex/test-session-worktree.ps1`이다.
 
+변경 경로별 기존 검증 누락은
+`pwsh scripts/codex/get-change-risk-plan.ps1 [-RunLocalGates]`로 확인한다.
+backend/frontend 제품 변경의 최종 운영 증거는 release owner가
+`scripts/codex/assert-production-release-bundle.ps1`로 각 exact SHA, 공식
+GitHub run, pending approval, backend manifest·Dynamo lock, frontend live
+version을 fail-closed 검증한다. 이 readback은 별도 작업 큐나 릴리스 SSOT를
+만들지 않는다.
+
 legacy hot/rapid deploy 스크립트는 live tree에서 제거했다. 운영 반영은 CI workflow 또는
 `scripts/v1/deploy.ps1` 기준으로만 판단한다.
 
