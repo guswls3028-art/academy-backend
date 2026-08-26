@@ -1,7 +1,7 @@
 # 계정 복구 SSOT
 
 **상태:** Active
-**최종 점검:** 2026-08-22
+**최종 점검:** 2026-08-27
 **코드 기준:** `apps/core/views/account_recovery.py`, `apps/domains/students/services/account_recovery.py`, `apps/domains/students/views/account_notification_views.py`, `apps/core/services/password.py`, `apps/api/common/auth_jwt.py`, `apps/domains/students/views/password_views.py`
 
 ## 1. 정본 경로
@@ -41,6 +41,30 @@ POST /api/v1/auth/account-recovery/dispatch/
 - 공개 요청의 알림톡 예약 실패는 전화번호/이름을 남기지 않는 서버 warning과 메시징 운영 로그로 추적한다. 공개 API에서 503이나 내부 실패 원인을 반환하지 않는다. 인증된 staff reset/계정 안내는 운영자가 재시도 판단을 해야 하므로 400/503을 유지한다.
 
 ## 3. 매칭 규칙
+
+### 가입 신청의 삭제 이력 복구
+
+학생 셀프 회원가입은 `initial_password`와 write-only
+`password_confirmation`의 exact 일치를 서버에서 먼저 검증한다. 불일치하면
+가입신청을 포함해 Student/User/membership 쓰기가 0건이며, 확인값 원문·별도 해시는
+저장하거나 로그로 남기지 않는다. 일치하면 기존처럼 `initial_password`의 강한
+Django hash 하나만 가입신청에 저장한다.
+
+일반 승인은 삭제 학생을 자동 선택하지 않는다. 현재 테넌트에서 exact 복원
+식별값이 맞는 삭제 후보를 인증된 staff에게만 제시하고, staff가 한 후보를 명시해
+`POST /api/v1/students/registration_requests/{id}/resolve_deleted/`에
+`student_id`를 보낸다. 서비스는 Parent → Users(sorted) → Student → membership
+순서로 잠근 뒤 후보와 요청을 다시 비교한다. active/cross-tenant/변경·누락 graph와
+이미 처리된 재시도는 409로 닫힌다.
+
+성공 시 새 Student/User를 만들지 않고 선택한 기존 계정을 복원해 이번 신청의
+로그인 ID와 저장된 가입 hash를 채택하고 기존 토큰을 폐기한다. 과거와 현재의 모든
+`StudentRegistrationRequest.student` 연결은 같은 Student에 그대로 남고 Enrollment
+행과 연결 이력도 그대로 남는다. Enrollment 상태 복원은 별도 구현하지 않고 학생
+lifecycle 정본을 따른다. 삭제 전 `ACTIVE`/`PENDING`/`INACTIVE` snapshot을 복원하되,
+종료되거나 비활성인 강의는 `INACTIVE`로 닫고 내부 snapshot marker는 한 번 사용한 뒤
+비운다. 이 명시적 복구 자체는 알림톡, notification/outbox, provider
+send/retry/requeue를 생성하지 않는다.
 
 ### 학생 대상
 

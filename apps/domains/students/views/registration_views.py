@@ -11,6 +11,7 @@ from rest_framework.viewsets import ModelViewSet
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 
 from apps.core.parsing import parse_bool
 from apps.core.permissions import TenantResolvedAndStaff, TenantResolved
@@ -19,11 +20,18 @@ from apps.api.common.throttles import AlimtalkEndpointThrottle, SignupCheckThrot
 from academy.adapters.db.django import repositories_students as student_repo
 from ..models import Student, StudentRegistrationRequest
 from ..serializers import (
+    DeletedRegistrationConflictSerializer,
+    DeletedRegistrationResolveSerializer,
     StudentDetailSerializer,
     RegistrationRequestCreateSerializer,
     RegistrationRequestListSerializer,
 )
-from ..services import RegistrationApprovalError, RegistrationApprovalResult, approve_registration_request
+from ..services import (
+    RegistrationApprovalError,
+    RegistrationApprovalResult,
+    approve_registration_request,
+    resolve_deleted_registration_request,
+)
 from ..services.registration_policy import is_student_self_registration_enabled
 from .student_views import StudentListPagination
 
@@ -65,7 +73,12 @@ def _approve_registration_request_with_result(request, reg):
         _copy_approval_result_to_instance(reg, result)
         return None, result
     except RegistrationApprovalError as e:
-        return Response({"detail": e.detail}, status=e.status_code), None
+        payload = {"detail": e.detail}
+        if getattr(getattr(request, "user", None), "is_authenticated", False):
+            if e.code:
+                payload["code"] = e.code
+            payload.update(e.context)
+        return Response(payload, status=e.status_code), None
     except Exception as e:
         logger.exception("_approve_registration_request error: %s", e)
         return Response(
@@ -389,6 +402,11 @@ class RegistrationRequestViewSet(ModelViewSet):
             })
         return Response({"detail": "Method not allowed."}, status=405)
 
+    @extend_schema(
+        request=None,
+        parameters=[OpenApiParameter("id", int, OpenApiParameter.PATH)],
+        responses={200: StudentDetailSerializer, 409: DeletedRegistrationConflictSerializer},
+    )
     @action(detail=True, methods=["post"])
     def approve(self, request, pk=None):
         """승인 시 Student + User + TenantMembership 생성 후 status=approved."""
@@ -401,6 +419,30 @@ class RegistrationRequestViewSet(ModelViewSet):
         err, result = _approve_registration_request_with_result(request, reg)
         if err is not None:
             return err
+        out = StudentDetailSerializer(result.student, context={"request": request})
+        return Response(out.data, status=200)
+
+    @extend_schema(
+        request=DeletedRegistrationResolveSerializer,
+        parameters=[OpenApiParameter("id", int, OpenApiParameter.PATH)],
+        responses={200: StudentDetailSerializer},
+    )
+    @action(detail=True, methods=["post"], url_path="resolve_deleted")
+    def resolve_deleted(self, request, pk=None):
+        """선생님이 선택한 동일인 삭제 계정을 복구한 뒤 가입 승인."""
+        serializer = DeletedRegistrationResolveSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({"detail": "복구할 과거 계정을 선택해 주세요."}, status=400)
+        try:
+            result = resolve_deleted_registration_request(
+                tenant=request.tenant,
+                registration_id=int(pk),
+                student_id=serializer.validated_data["student_id"],
+            )
+        except StudentRegistrationRequest.DoesNotExist:
+            return Response({"detail": "가입 신청을 찾을 수 없습니다."}, status=404)
+        except RegistrationApprovalError as exc:
+            return Response({"detail": exc.detail}, status=exc.status_code)
         out = StudentDetailSerializer(result.student, context={"request": request})
         return Response(out.data, status=200)
 

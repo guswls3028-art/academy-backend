@@ -1,7 +1,7 @@
 # Student Domain Core SSOT
 
 **Status:** Active
-**Last checked:** 2026-08-24 KST
+**Last checked:** 2026-08-27 KST
 **Truth basis:** code inspection of `apps/domains/students/`, `apps/core/views/account_recovery.py`, `apps/core/services/password.py`, `apps/domains/results/services/submission_scope_guard.py`, `apps/domains/results/services/student_result_service.py`, and frontend shared student contracts.
 
 This document is the integration SSOT for the student domain. More specific
@@ -220,7 +220,13 @@ Detailed SSOT: `account-recovery.md` and `student-creation.md`.
 
 Current rules:
 
-- signup request stores password hash only; `initial_password_plain` must remain empty.
+- signup create requires write-only `initial_password` and
+  `password_confirmation`. The serializer compares the exact untrimmed values
+  before any request, Student, User, or membership write. A mismatch is a
+  field-keyed 400 and creates nothing. Confirmation is not a model field and
+  neither its plaintext nor a second hash is persisted or logged.
+- a matching signup request stores one Django password hash only;
+  `initial_password_plain` must remain empty.
 - signup approval uses the original password hash and tells the student
   "가입 신청 시 입력한 비밀번호" instead of exposing plaintext.
 - signup approval status transition and student creation are atomic in
@@ -235,8 +241,31 @@ Current rules:
   Parent, User, membership, `ps_number`, password, `token_version`, or pending
   account-notice state. The approval result reports both passwords as
   `변경되지 않음`.
-- multiple active matches, a deleted match, or a mismatched tenant/phone/account
-  graph fails closed with 409. Reuse also requires active Student and Parent
+- multiple active matches or a mismatched tenant/phone/account graph fails
+  closed with 409. A deleted match is never restored automatically: the staff
+  approval response returns only same-tenant candidates whose exact recovery
+  identity matches, and staff must select one candidate through
+  `POST /students/registration_requests/{id}/resolve_deleted/`.
+- explicit deleted recovery locks Parent, related Users in ID order, Student,
+  then memberships, rechecks the selected same-tenant deleted graph, and
+  restores that exact Student/User. It applies the confirmed signup login ID
+  and the already stored signup password hash, invalidates old tokens, and
+  reactivates the existing student membership. An active collision, foreign
+  tenant or membership, changed candidate, missing graph edge, or processed
+  request returns 409 with no recovery write. Repeating a successful request
+  also returns 409 and does not reapply password, token, profile, or history
+  changes.
+- recovery never clears or repoints an earlier registration audit link.
+  `StudentRegistrationRequest.student` is a nullable non-unique ForeignKey with
+  plural reverse relation `Student.registration_requests`; the expand-only
+  migration preserves every existing link and permits the new recovery request
+  to reference the same Student. Enrollment rows and links remain unchanged;
+  their statuses are restored only by the canonical student lifecycle from the
+  deletion snapshot. Original `ACTIVE`/`PENDING`/`INACTIVE` states return when
+  the lecture still accepts restoration, ended or inactive lectures stay
+  `INACTIVE`, and the internal marker is consumed and cleared. This recovery
+  endpoint does not enqueue an account notice or message.
+- active reuse also requires active Student and Parent
   login users with canonical internal usernames and phone mirrors plus active
   same-tenant `student` and `parent` memberships. A reused Student must already
   have a linked Parent User; only the new-student path may let the existing
@@ -268,6 +297,7 @@ Focused verification:
 
 ```powershell
 python -m pytest apps/domains/students/tests/test_registration_approval_identity.py -v
+python -m pytest apps/domains/students/tests/test_registration_request_history_migration.py -v
 $env:DJANGO_SETTINGS_MODULE='apps.api.config.settings.test_pg'
 python -m pytest apps/domains/students/tests/test_registration_approval_concurrency_pg.py -v
 ```

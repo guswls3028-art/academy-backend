@@ -109,16 +109,28 @@ def resolve_student_login_id(
     requested_id: Any = "",
     phone: Any = "",
     requested_conflict: RequestedConflictPolicy = "error",
+    exclude_student_id: int | None = None,
+    exclude_user_id: int | None = None,
 ) -> str:
     requested = str(requested_id or "").strip()
     if requested:
-        if not student_login_id_taken(tenant=tenant, display_username=requested):
+        if not student_login_id_taken(
+            tenant=tenant,
+            display_username=requested,
+            exclude_student_id=exclude_student_id,
+            exclude_user_id=exclude_user_id,
+        ):
             return requested
         if requested_conflict == "error":
             raise StudentIdentityError({"ps_number": "이미 사용 중인 아이디입니다."})
 
     phone_id = normalize_student_phone(phone, required=False, field_name="phone", field_label="학생 전화번호")
-    if phone_id and not student_login_id_taken(tenant=tenant, display_username=phone_id):
+    if phone_id and not student_login_id_taken(
+        tenant=tenant,
+        display_username=phone_id,
+        exclude_student_id=exclude_student_id,
+        exclude_user_id=exclude_user_id,
+    ):
         return phone_id
 
     try:
