@@ -189,7 +189,7 @@ WORKERS_ENV_B64="$(aws ssm get-parameter \
   --output text \
   --region "__REGION__" 2>>"$LOG")"
 printf '%s' "$WORKERS_ENV_B64" | base64 -d | python3 -c \
-  "import sys,json; d=json.load(sys.stdin); assert d.get('DJANGO_SETTINGS_MODULE') == 'apps.api.config.settings.worker'; assert d.get('ACADEMY_RUNTIME_ENV') == 'development'; assert d.get('ACADEMY_DEVELOPMENT_RELEASE_ID') == '__RELEASE_ID__'; assert d.get('DB_NAME') == '__DATABASE__'; assert d.get('TOOLS_SQS_QUEUE_NAME') == '__TOOLS_QUEUE__'; assert d.get('AI_SQS_QUEUE_NAME_LITE') == '__AI_QUEUE__'; assert d.get('AI_SQS_QUEUE_NAME_BASIC') == '__AI_QUEUE__'; assert d.get('AI_SQS_QUEUE_NAME_PREMIUM') == '__AI_QUEUE__'; [print(k+'='+str(v)) for k,v in d.items()]" \
+  "import sys,json; d=json.load(sys.stdin); assert d.get('DJANGO_SETTINGS_MODULE') == 'apps.api.config.settings.worker'; assert d.get('ACADEMY_RUNTIME_ENV') == 'development'; assert d.get('ACADEMY_DEVELOPMENT_RELEASE_ID') == '__RELEASE_ID__'; assert d.get('DB_NAME') == '__DATABASE__'; assert d.get('TOOLS_SQS_QUEUE_NAME') == '__TOOLS_QUEUE__'; assert d.get('AI_SQS_QUEUE_NAME_LITE') == '__AI_QUEUE__'; assert d.get('AI_SQS_QUEUE_NAME_BASIC') == '__AI_QUEUE__'; assert d.get('AI_SQS_QUEUE_NAME_PREMIUM') == '__AI_QUEUE__'; assert d.get('VIDEO_BATCH_JOB_QUEUE') == ''; assert d.get('VIDEO_BATCH_JOB_DEFINITION') == ''; [print(k+'='+str(v)) for k,v in d.items()]" \
   > /opt/workers-development.env
 test -s /opt/workers-development.env
 docker stop academy-tools-development 2>/dev/null || true
@@ -340,6 +340,8 @@ assert settings.MESSAGING_SQS_QUEUE_NAME == "__MESSAGING_QUEUE__"
 assert settings.R2_STORAGE_BUCKET == "__BUCKET__"
 assert settings.R2_ENDPOINT.endswith(".r2.cloudflarestorage.com")
 assert settings.R2_ACCESS_KEY and settings.R2_SECRET_KEY
+assert not settings.VIDEO_BATCH_JOB_QUEUE
+assert not settings.VIDEO_BATCH_JOB_DEFINITION
 
 connection.ensure_connection()
 with connection.cursor() as cursor:

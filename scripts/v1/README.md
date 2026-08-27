@@ -134,6 +134,10 @@ pwsh scripts/v1/disable-legacy-deploy-crons.ps1 -Action Off -AwsProfile default
   라우팅한다. 운영 Tools ASG도 `t4g.small` min/desired=1 warm baseline을
   유지하고, persistent development host는 운영과 격리된 별도 Tools
   container/process로 Excel/PPT/R2 실사용 smoke를 검증한다.
+- **Video development fail-closed**: 전용 development Batch queue/job definition,
+  job role, Batch 접근 가능 Redis가 아직 없으므로 development API·worker env의
+  `VIDEO_BATCH_JOB_QUEUE`와 `VIDEO_BATCH_JOB_DEFINITION`은 빈 값이다. 운영 Batch를
+  개발 대체재로 쓰지 않는다.
 - **AI/Tools production warm path**: release는
   `converge-worker-warm-baseline.ps1`로 기존 안정 digest의 healthy worker를
   최소 1대 확보한 뒤 새 digest를 pin한다. refresh는

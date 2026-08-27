@@ -2,7 +2,10 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import runpy
 
+from django.core.exceptions import ImproperlyConfigured
+import pytest
 import yaml
 
 
@@ -217,7 +220,9 @@ def test_mutation_entrypoints_warn_on_explicitly_authorized_account_root() -> No
 
 def test_development_settings_fail_closed_on_external_write_targets() -> None:
     settings = SETTINGS.read_text(encoding="utf-8")
+    worker_settings = WORKER_SETTINGS.read_text(encoding="utf-8-sig")
     publish = PUBLISH.read_text(encoding="utf-8-sig")
+    deploy = DEPLOY.read_text(encoding="utf-8-sig")
 
     for token in (
         "ACADEMY_RUNTIME_ENV",
@@ -242,8 +247,22 @@ def test_development_settings_fail_closed_on_external_write_targets() -> None:
         "R2_ENDPOINT = $r2Endpoint",
         'SOLAPI_MOCK = "true"',
         'TOSS_AUTO_BILLING_ENABLED = "false"',
+        'VIDEO_BATCH_JOB_QUEUE = ""',
+        'VIDEO_BATCH_JOB_DEFINITION = ""',
     ):
         assert token in publish
+    assert "if VIDEO_BATCH_JOB_QUEUE or VIDEO_BATCH_JOB_DEFINITION" in settings
+    assert (
+        'os.getenv("ACADEMY_RUNTIME_ENV", "").strip().lower() == "development"'
+        in worker_settings
+    )
+    assert "Development video workers must not resolve production Batch resources" in (
+        worker_settings
+    )
+    assert "assert not settings.VIDEO_BATCH_JOB_QUEUE" in deploy
+    assert "assert not settings.VIDEO_BATCH_JOB_DEFINITION" in deploy
+    assert "d.get('VIDEO_BATCH_JOB_QUEUE') == ''" in deploy
+    assert "d.get('VIDEO_BATCH_JOB_DEFINITION') == ''" in deploy
     assert "ApiPreprod" not in publish
     assert "amazonaws.com" not in publish
     assert "s3api" not in PREREQUISITES.read_text(encoding="utf-8-sig")
@@ -255,6 +274,24 @@ def test_worker_settings_use_development_storage_bucket_from_env() -> None:
     assert 'R2_REGION = os.getenv("R2_REGION", "auto")' in worker
     assert 'R2_STORAGE_BUCKET = os.getenv("R2_STORAGE_BUCKET", "academy-storage")' in worker
     assert 'R2_ADMIN_BUCKET = os.getenv("R2_ADMIN_BUCKET", "academy-admin")' in worker
+
+
+def test_worker_development_batch_boundary_executes_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ACADEMY_RUNTIME_ENV", "development")
+    monkeypatch.setenv("VIDEO_BATCH_JOB_QUEUE", "")
+    monkeypatch.setenv("VIDEO_BATCH_JOB_DEFINITION", "")
+    values = runpy.run_path(str(WORKER_SETTINGS))
+    assert values["VIDEO_BATCH_JOB_QUEUE"] == ""
+    assert values["VIDEO_BATCH_JOB_DEFINITION"] == ""
+
+    monkeypatch.setenv("VIDEO_BATCH_JOB_QUEUE", "academy-v1-video-batch-queue")
+    with pytest.raises(
+        ImproperlyConfigured,
+        match="must not resolve production Batch resources",
+    ):
+        runpy.run_path(str(WORKER_SETTINGS))
 
 
 def test_development_role_cannot_read_production_env_or_touch_prod_queues() -> None:

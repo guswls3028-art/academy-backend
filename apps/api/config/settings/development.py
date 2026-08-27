@@ -77,6 +77,11 @@ if any(not name.startswith(_required_queue_prefix) for name in _queue_names):
     raise ImproperlyConfigured("Development API queues must use the development prefix.")
 if any(not name.startswith(_required_bucket_prefix) for name in _bucket_names):
     raise ImproperlyConfigured("Development API buckets must use the development prefix.")
+if VIDEO_BATCH_JOB_QUEUE or VIDEO_BATCH_JOB_DEFINITION:  # noqa: F405
+    raise ImproperlyConfigured(
+        "Development API video submission stays disabled until dedicated "
+        "development Batch resources are configured."
+    )
 if not os.getenv("R2_ENDPOINT", "").startswith("https://") or not os.getenv(
     "R2_ENDPOINT", ""
 ).endswith(".r2.cloudflarestorage.com"):

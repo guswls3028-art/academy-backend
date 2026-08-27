@@ -207,6 +207,15 @@ def test_api_runtime_sync_and_refresh_fail_closed() -> None:
     assert "API_ENV_REFRESH_ROLLBACK_PASS previous container restored" in refresh
     assert "API_ENV_REFRESH_ROLLBACK_FAILED" in refresh
     assert "API_ENV_REFRESH_PASS healthz=200 health=200" in refresh
+    assert 'ENV_FILE="${ACADEMY_API_ENV_FILE:-/opt/api.env}"' in refresh
+    assert 'mv "${ENV_PREVIOUS}.next" "$ENV_PREVIOUS"' in refresh
+    assert 'mv "$ENV_PREVIOUS" "$ENV_FILE"' in refresh
+    restore = refresh.split("restore_previous() {", maxsplit=1)[1].split(
+        "on_exit() {", maxsplit=1
+    )[0]
+    assert restore.index('mv "$ENV_PREVIOUS" "$ENV_FILE"') < restore.index(
+        'docker start "$container"'
+    )
     assert "exit 1" in refresh
     assert "API env refresh failed for:" in refresh_ps1
     assert "API env refresh failed closed:" in api_resource

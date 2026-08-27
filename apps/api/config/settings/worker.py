@@ -17,6 +17,8 @@ Worker 전용 Django 설정 (API 의존성 없음)
 from pathlib import Path
 import os
 
+from django.core.exceptions import ImproperlyConfigured
+
 BASE_DIR = Path(__file__).resolve().parents[3]
 
 SECRET_KEY = os.getenv("SECRET_KEY", "worker-dev-secret")
@@ -149,6 +151,12 @@ R2_ADMIN_PUBLIC_BASE_URL = os.getenv("R2_ADMIN_PUBLIC_BASE_URL", "")
 VIDEO_BATCH_JOB_QUEUE = os.getenv("VIDEO_BATCH_JOB_QUEUE", "academy-v1-video-batch-queue")
 VIDEO_BATCH_JOB_DEFINITION = os.getenv("VIDEO_BATCH_JOB_DEFINITION", "academy-v1-video-batch-jobdef")
 VIDEO_BATCH_COMPUTE_ENV_NAME = os.getenv("VIDEO_BATCH_COMPUTE_ENV_NAME", "academy-v1-video-batch-ce-200gb")
+if os.getenv("ACADEMY_RUNTIME_ENV", "").strip().lower() == "development" and (
+    VIDEO_BATCH_JOB_QUEUE or VIDEO_BATCH_JOB_DEFINITION
+):
+    raise ImproperlyConfigured(
+        "Development video workers must not resolve production Batch resources."
+    )
 VIDEO_TENANT_MAX_CONCURRENT = int(os.getenv("VIDEO_TENANT_MAX_CONCURRENT", "9999"))
 VIDEO_GLOBAL_MAX_CONCURRENT = int(os.getenv("VIDEO_GLOBAL_MAX_CONCURRENT", "9999"))
 VIDEO_JOB_LOCK_TABLE_NAME = os.getenv("VIDEO_JOB_LOCK_TABLE_NAME", "academy-v1-video-job-lock")

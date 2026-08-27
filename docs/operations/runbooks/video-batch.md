@@ -82,7 +82,21 @@ General post-deploy verification entrypoint:
 pwsh scripts/v1/run-deploy-verification.ps1 -AwsProfile default
 ```
 
-### 5.1 Thumbnail Not Visible Triage
+### 5.1 Persistent development boundary
+
+Production Video Batch는 현재 상시 API development 런타임에 공유되지 않는다.
+`publish-api-development-env.ps1`은 API·worker env의 queue/job definition을 빈 값으로
+덮어쓰며 `development.py`, `worker.py`, `deploy-api-development.ps1`이 이를 재검증한다.
+따라서 상시 development smoke가 green이어도 업로드→Batch→HLS 실사용 체인이 검증됐다고
+해석하지 않는다.
+
+향후 canary 구현은 상시 development API role 안에서 SubmitJob을 호출하고, job 내부에서
+versioned worker SSM env, development DB/role, Redis, development R2 round-trip을
+확인한 뒤 `SUCCEEDED`와 R2 잔여 0을 강제해야 한다. 현재 구현 및 production workflow
+연결은 없으며 구체 entrypoint/필수 인자 계약은
+`persistent-development-runtime.md`의 `[PROPOSED]` 절을 따른다.
+
+### 5.2 Thumbnail Not Visible Triage
 
 Do not infer a worker failure from a play-icon placeholder. Verify the chain in
 order and stop at the first broken boundary:
