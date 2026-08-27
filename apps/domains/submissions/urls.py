@@ -8,7 +8,14 @@ from .views.exam_omr_submit_view import ExamOMRSubmitView
 # ✅ 추가
 from .views.exam_submissions_list_view import ExamSubmissionsListView
 from .views.homework_submissions_list_view import HomeworkSubmissionsListView
-from .views.exam_omr_batch_upload_view import ExamOMRBatchUploadView
+from .views.exam_omr_batch_upload_view import (
+    ExamOMRBatchInitializeView,
+    ExamOMRBatchUploadView,
+    OmrUploadBatchCompletionClaimView,
+    OmrUploadBatchDetailView,
+    OmrUploadBatchListView,
+    OmrUploadBatchRetryView,
+)
 from .views.pending_submissions_view import (
     PendingSubmissionPreviewView,
     PendingSubmissionsView,
@@ -79,6 +86,31 @@ urlpatterns = [
         "submissions/exams/<int:exam_id>/omr/batch/",
         ExamOMRBatchUploadView.as_view(),
         name="exam-omr-batch-upload",
+    ),
+    path(
+        "submissions/exams/<int:exam_id>/omr/batches/",
+        ExamOMRBatchInitializeView.as_view(),
+        name="exam-omr-batch-initialize",
+    ),
+    path(
+        "submissions/omr/batches/",
+        OmrUploadBatchListView.as_view(),
+        name="omr-upload-batch-list",
+    ),
+    path(
+        "submissions/omr/batches/<uuid:batch_id>/",
+        OmrUploadBatchDetailView.as_view(),
+        name="omr-upload-batch-detail",
+    ),
+    path(
+        "submissions/omr/batches/<uuid:batch_id>/retry/",
+        OmrUploadBatchRetryView.as_view(),
+        name="omr-upload-batch-retry",
+    ),
+    path(
+        "submissions/omr/batches/<uuid:batch_id>/claim-completion/",
+        OmrUploadBatchCompletionClaimView.as_view(),
+        name="omr-upload-batch-claim-completion",
     ),
 
     # ✅ OMR 검토 학생 picker: GET /submissions/exams/{examId}/candidates/?q=검색어
