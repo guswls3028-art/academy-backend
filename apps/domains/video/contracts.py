@@ -31,7 +31,18 @@ def build_effective_playback_policy(*, video, access_mode, permission=None, prog
     )
 
 
-def consume_video_forward_skip(*, video, enrollment) -> dict:
+def consume_video_forward_skip(
+    *,
+    video,
+    enrollment,
+    require_inactive_entitlement: bool = False,
+    expected_policy_version: int | None = None,
+) -> dict:
     from .services.skip_budget import consume_video_forward_skip as _impl
 
-    return _impl(video=video, enrollment=enrollment)
+    return _impl(
+        video=video,
+        enrollment=enrollment,
+        require_inactive_entitlement=require_inactive_entitlement,
+        expected_policy_version=expected_policy_version,
+    )

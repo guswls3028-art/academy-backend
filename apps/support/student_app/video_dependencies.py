@@ -39,6 +39,44 @@ def get_video_progress_model():
     return VideoProgress
 
 
+def get_video_access_mode():
+    from apps.domains.video.models import AccessMode
+
+    return AccessMode
+
+
+def get_inactive_video_entitlement_error_type():
+    from apps.domains.video.services.inactive_entitlements import (
+        InactiveVideoEntitlementError,
+    )
+
+    return InactiveVideoEntitlementError
+
+
+def active_inactive_video_entitlements_for_student(**kwargs):
+    from apps.domains.video.services.inactive_entitlements import (
+        active_entitlements_for_student,
+    )
+
+    return active_entitlements_for_student(**kwargs)
+
+
+def resolve_active_inactive_video_entitlement(**kwargs):
+    from apps.domains.video.services.inactive_entitlements import (
+        get_active_inactive_video_entitlement,
+    )
+
+    return get_active_inactive_video_entitlement(**kwargs)
+
+
+def update_inactive_entitled_video_progress(**kwargs):
+    from apps.domains.video.services.inactive_entitlements import (
+        update_inactive_entitled_video_progress as update,
+    )
+
+    return update(**kwargs)
+
+
 def get_video_like_models():
     from apps.domains.video.models import Video, VideoLike
 

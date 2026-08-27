@@ -24,6 +24,11 @@ from apps.domains.video.models import VideoPlaybackSession
 # DB-based Session Management (Redis 제거됨)
 # =======================================================
 
+
+def _session_now():
+    return timezone.now()
+
+
 def _cleanup_expired_sessions(student_id: int) -> None:
     video_repo.playback_session_cleanup_expired(student_id)
 
@@ -52,6 +57,7 @@ def issue_session(
     ttl_seconds: int,
     max_sessions: int,
     max_devices: int,
+    expires_at: int | None = None,
 ) -> Tuple[bool, Dict[str, Any] | None, str | None]:
     """
     DB 기반 재생 세션 발급
@@ -61,8 +67,15 @@ def issue_session(
 
     _cleanup_expired_sessions(student_id)
 
-    now = timezone.now()
-    expires_at = now + timedelta(seconds=ttl_seconds)
+    now = _session_now()
+    if expires_at is None:
+        expires_at_timestamp = int(
+            (now + timedelta(seconds=ttl_seconds)).timestamp()
+        )
+    else:
+        expires_at_timestamp = int(expires_at)
+        if expires_at_timestamp <= int(now.timestamp()):
+            return False, None, "access_expired"
 
     qs_active = video_repo.playback_session_filter_active(student_id, now, now)
     active_devices = qs_active.values_list("device_id", flat=True).distinct()
@@ -77,7 +90,7 @@ def issue_session(
 
     session_id = str(uuid.uuid4())
 
-    return True, {"session_id": session_id, "expires_at": int(expires_at.timestamp())}, None
+    return True, {"session_id": session_id, "expires_at": expires_at_timestamp}, None
 
 
 def heartbeat_session(*, student_id: int, session_id: str, ttl_seconds: int) -> bool:
@@ -121,11 +134,17 @@ def end_session(*, student_id: int, session_id: str) -> None:
     if is_redis_available():
         stats = get_session_violation_stats_redis(session_id)
         if stats is not None:
-            video_repo.playback_session_filter_update_active(
+            # Persist final counters for both ACTIVE and already-REVOKED rows.
+            # The status transition remains ACTIVE-only so disposal cannot
+            # downgrade a server revocation to ENDED.
+            video_repo.playback_session_filter_update_any(
                 session_id, student_id,
                 last_seen=now,
                 violated_count=stats.get("violated", 0),
                 total_count=stats.get("total", 0),
+            )
+            video_repo.playback_session_filter_update_active(
+                session_id, student_id,
                 status=VideoPlaybackSession.Status.ENDED,
                 ended_at=now,
             )

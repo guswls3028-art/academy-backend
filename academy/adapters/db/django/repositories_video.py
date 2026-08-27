@@ -447,6 +447,19 @@ def playback_session_filter_update_any(session_id, student_id, **update_kwargs):
     ).update(**update_kwargs)
 
 
+def playback_session_revoke_active_for_lecture(lecture_id, *, ended_at):
+    from apps.domains.video.models import VideoPlaybackSession
+
+    return VideoPlaybackSession.objects.filter(
+        video__session__lecture_id=lecture_id,
+        status=VideoPlaybackSession.Status.ACTIVE,
+    ).update(
+        status=VideoPlaybackSession.Status.REVOKED,
+        is_revoked=True,
+        ended_at=ended_at,
+    )
+
+
 def playback_session_update_expired(now):
     from apps.domains.video.models import VideoPlaybackSession
     return VideoPlaybackSession.objects.filter(

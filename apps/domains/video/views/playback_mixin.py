@@ -8,7 +8,7 @@ from apps.api.common.query_params import parse_query_int
 from ..models import Video, AccessMode
 from academy.adapters.db.django import repositories_video as video_repo
 from ..serializers import VideoSerializer
-from ..services.access_resolver import resolve_access_mode, get_effective_access_mode
+from ..services.access_resolver import get_effective_access_mode
 from ..services.playback_policy import build_effective_playback_policy
 
 # ✅ 추가: Cloudflare signed url (있으면 사용, 없으면 기존 public)
@@ -43,7 +43,7 @@ class VideoPlaybackMixin:
             return False, "no_session_access"
 
         # Use SSOT access resolver
-        access_mode = resolve_access_mode(video=video, enrollment=enrollment)
+        access_mode = get_effective_access_mode(video=video, enrollment=enrollment)
 
         if access_mode == AccessMode.BLOCKED:
             return False, "blocked"

@@ -1,6 +1,5 @@
 
 import uuid
-from datetime import timezone as datetime_timezone
 
 from django.conf import settings
 from django.utils import timezone
@@ -12,6 +11,7 @@ from rest_framework.response import Response
 from rest_framework import status
 
 from apps.core.permissions import IsStudent
+from apps.support.student_app.video_media import issue_playback_access_grant
 from academy.application.use_cases.student_video_access_context import (
     StudentVideoAccessError,
     resolve_student_video_access_context,
@@ -33,9 +33,8 @@ from ..serializers import (
     PlaybackEventBatchRequestSerializer,
     PlaybackEventBatchResponseSerializer,
 )
-from ..drm import create_playback_token, verify_playback_token
+from ..drm import verify_playback_token
 from ..services.playback_session import (
-    issue_session,
     heartbeat_session,
     end_session,
     is_session_active,
@@ -44,7 +43,6 @@ from ..services.playback_session import (
     get_session_violation_stats,
     should_revoke_by_stats,
 )
-from ..services.playback_session import init_session_redis  # Redis 세션 초기화 (선택적)
 from .playback_mixin import VideoPlaybackMixin
 
 
@@ -75,10 +73,17 @@ def _is_policy_token_valid(payload: dict) -> bool:
     except Exception:
         return False
 
-    # NOTE: migrations 적용 전에는 policy_version 컬럼이 없으면 SELECT에서 터질 수 있음.
-    # 실서비스는 migration 이후를 전제로 한다.
-    v = video_repo.video_get_by_id_only_policy(video_id)
-    if not v:
+    try:
+        v = video_repo.video_get_by_id_with_relations(video_id)
+    except Exception:
+        return False
+    lecture = getattr(getattr(v, "session", None), "lecture", None)
+    if getattr(v, "deleted_at", None) is not None:
+        return False
+    if not lecture or not (
+        getattr(lecture, "is_active", False)
+        or getattr(lecture, "is_system", False)
+    ):
         return False
 
     current = _policy_version_of(v)
@@ -94,16 +99,17 @@ def _is_policy_token_valid(payload: dict) -> bool:
     try:
         from ..services.access_resolver import get_effective_access_mode
 
-        enrollment = video_repo.enrollment_get_by_id(enrollment_id)
-        if enrollment:
-            current_access_mode = get_effective_access_mode(video=v, enrollment=enrollment)
-            token_access_mode = payload.get("access_mode")
-            
-            if token_access_mode and token_access_mode != current_access_mode.value:
-                return False
+        enrollment = video_repo.enrollment_get_by_id_with_relations(enrollment_id)
+        if enrollment.lecture_id != getattr(v.session, "lecture_id", None):
+            return False
+        current_access_mode = get_effective_access_mode(video=v, enrollment=enrollment)
+        if current_access_mode == AccessMode.BLOCKED:
+            return False
+        token_access_mode = payload.get("access_mode")
+        if token_access_mode and token_access_mode != current_access_mode.value:
+            return False
     except Exception:
-        # If access_mode validation fails, still allow (backward compatibility)
-        pass
+        return False
 
     return True
 
@@ -237,87 +243,38 @@ class PlaybackStartView(VideoPlaybackMixin, APIView):
         if not ok:
             return _deny(reason, code=403)
 
-        ttl = int(getattr(settings, "VIDEO_PLAYBACK_TTL_SECONDS", 600))
-
-        # Resolve access mode BEFORE creating session
-        from ..services.access_resolver import get_effective_access_mode
-        access_mode = get_effective_access_mode(video=video, enrollment=enrollment)
-        
-        # Determine if monitoring is required
-        monitoring_enabled = (access_mode == AccessMode.PROCTORED_CLASS)
-        
-        session_id = None
-        expires_at = None
-        
-        # Only create DB session for PROCTORED_CLASS
-        student_id = enrollment.student_id
-        if monitoring_enabled:
-            from ..services.playback_session import get_tenant_session_limits
-            max_sessions, max_devices = get_tenant_session_limits(getattr(request, "tenant", None))
-            ok, sess, err = issue_session(
-                student_id=student_id,
-                device_id=device_id,
-                ttl_seconds=ttl,
-                max_sessions=max_sessions,
-                max_devices=max_devices,
+        grant = issue_playback_access_grant(
+            video=video,
+            enrollment=enrollment,
+            user=request.user,
+            device_id=device_id,
+            request_id=request_id,
+        )
+        if not grant.token or not grant.access_mode:
+            return _deny(
+                grant.error or "access_denied",
+                code=grant.status_code,
             )
 
-            if not ok:
-                return Response({"detail": err}, status=409)
-
-            session_id = sess["session_id"]
-            expires_at_timestamp = int(sess["expires_at"])
-            expires_at = timezone.datetime.fromtimestamp(expires_at_timestamp, tz=datetime_timezone.utc)
-
-            video_repo.playback_session_create(
-                video=video,
-                enrollment=enrollment,
-                session_id=session_id,
-                device_id=device_id,
-                status=VideoPlaybackSession.Status.ACTIVE,
-                started_at=timezone.now(),
-                expires_at=expires_at,
-                last_seen=timezone.now(),
-                violated_count=0,
-                total_count=0,
-                is_revoked=False,
-            )
-            init_session_redis(session_id=session_id, ttl_seconds=ttl)
-        else:
-            # FREE_REVIEW: No DB session, calculate expires_at for token only
-            expires_at = timezone.now() + timezone.timedelta(seconds=ttl)
+        access_mode = AccessMode(grant.access_mode)
+        monitoring_enabled = grant.monitoring_enabled
+        session_id = grant.session_id
+        expires_at = grant.expires_at
 
         perm = self._load_permission(video=video, enrollment=enrollment)
         policy = self._effective_policy(video=video, enrollment=enrollment, perm=perm)
 
-        # ✅ token에 pv, access_mode, monitoring_enabled, student_id 포함
-        token = create_playback_token(
-            payload={
-                "video_id": video.id,
-                "enrollment_id": enrollment.id,
-                "session_id": session_id,  # None for FREE_REVIEW
-                "user_id": request.user.id,
-                "tenant_id": request.tenant.id,
-                "student_id": student_id,
-                "access_mode": access_mode.value,
-                "monitoring_enabled": monitoring_enabled,
-                "pv": _policy_version_of(video),
-                "rid": request_id,
-            },
-            ttl_seconds=ttl,
-        )
-
         play_url = self._public_play_url(
             video=video,
-            expires_at=int(expires_at.timestamp()) if expires_at else int(timezone.now().timestamp()) + ttl,
+            expires_at=expires_at,
             user_id=request.user.id,
         )
 
         resp = Response(
             PlaybackResponseSerializer({
-                "token": token,
+                "token": grant.token,
                 "session_id": session_id,
-                "expires_at": int(expires_at.timestamp()) if expires_at else None,
+                "expires_at": expires_at,
                 "access_mode": access_mode.value,
                 "monitoring_enabled": monitoring_enabled,
                 "policy": policy,
@@ -328,7 +285,7 @@ class PlaybackStartView(VideoPlaybackMixin, APIView):
 
         # Set signed cookies only if we have expires_at
         if expires_at:
-            self._set_signed_cookies(resp, video_id=video.id, expires_at=int(expires_at.timestamp()))
+            self._set_signed_cookies(resp, video_id=video.id, expires_at=expires_at)
         return resp
 
 
@@ -452,8 +409,6 @@ class PlaybackEndView(APIView):
                     student_id=student_id,
                     session_id=session_id,
                 )
-
-                video_repo.playback_session_end_by_session_id(session_id)
 
         return Response({"ok": True})
 

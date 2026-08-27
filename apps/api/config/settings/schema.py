@@ -22,6 +22,17 @@ SPECTACULAR_SETTINGS = {
     "ENUM_NAME_OVERRIDES": {
         "ExamGradingMode": "apps.domains.exams.models.Exam.GradingMode",
         "HomeworkGradingMode": "apps.domains.homework_results.models.Homework.GradingMode",
+        "InactiveVideoEntitlementAccessMode": [
+            ("FREE_REVIEW", "복습"),
+            ("PROCTORED_CLASS", "온라인 수업 대체"),
+        ],
+        "StudentVideoEffectiveAccessMode": [
+            "FREE_REVIEW",
+            "PROCTORED_CLASS",
+        ],
+        "InactiveVideoEntitlementSource": [
+            ("STAFF_AUTHORIZATION", "교직원 명시 승인"),
+        ],
     },
 }
 

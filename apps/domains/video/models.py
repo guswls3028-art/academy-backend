@@ -469,6 +469,123 @@ class VideoAccess(models.Model):
 VideoPermission = VideoAccess
 
 
+class InactiveVideoEntitlement(TimestampModel):
+    """Explicit, auditable access to one video on an inactive enrollment."""
+
+    class Source(models.TextChoices):
+        STAFF_AUTHORIZATION = "STAFF_AUTHORIZATION", "교직원 명시 승인"
+
+    tenant = models.ForeignKey(
+        "core.Tenant",
+        on_delete=models.CASCADE,
+        related_name="inactive_video_entitlements",
+    )
+    student = models.ForeignKey(
+        "students.Student",
+        on_delete=models.CASCADE,
+        related_name="inactive_video_entitlements",
+    )
+    enrollment = models.ForeignKey(
+        "enrollment.Enrollment",
+        on_delete=models.CASCADE,
+        related_name="inactive_video_entitlements",
+    )
+    video = models.ForeignKey(
+        Video,
+        on_delete=models.CASCADE,
+        related_name="inactive_enrollment_entitlements",
+    )
+    access_mode = models.CharField(
+        max_length=20,
+        choices=(
+            (AccessMode.FREE_REVIEW, AccessMode.FREE_REVIEW.label),
+            (AccessMode.PROCTORED_CLASS, AccessMode.PROCTORED_CLASS.label),
+        ),
+    )
+    source = models.CharField(max_length=32, choices=Source.choices)
+    source_reference = models.CharField(max_length=128)
+    reason = models.TextField()
+    granted_by = models.ForeignKey(
+        "core.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="granted_inactive_video_entitlements",
+    )
+    granted_by_reference = models.CharField(max_length=128)
+    granted_at = models.DateTimeField(default=timezone.now)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    revoked_by = models.ForeignKey(
+        "core.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="revoked_inactive_video_entitlements",
+    )
+    revoked_by_reference = models.CharField(max_length=128, blank=True, default="")
+    revoke_reason = models.TextField(blank=True, default="")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "enrollment", "video"],
+                condition=Q(revoked_at__isnull=True),
+                name="uniq_current_inactive_video_entitlement",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(access_mode=AccessMode.FREE_REVIEW)
+                    | Q(access_mode=AccessMode.PROCTORED_CLASS)
+                ),
+                name="inactive_video_entitlement_mode_valid",
+            ),
+            models.CheckConstraint(
+                condition=Q(source="STAFF_AUTHORIZATION"),
+                name="inactive_video_entitlement_source_valid",
+            ),
+            models.CheckConstraint(
+                condition=Q(expires_at__isnull=True) | Q(expires_at__gt=models.F("granted_at")),
+                name="inactive_video_entitlement_expiry_valid",
+            ),
+            models.CheckConstraint(
+                condition=~Q(source_reference=""),
+                name="inactive_video_entitlement_source_ref_present",
+            ),
+            models.CheckConstraint(
+                condition=~Q(reason=""),
+                name="inactive_video_entitlement_reason_present",
+            ),
+            models.CheckConstraint(
+                condition=~Q(granted_by_reference=""),
+                name="inactive_video_entitlement_grant_ref_present",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        revoked_at__isnull=True,
+                        revoked_by_reference="",
+                        revoke_reason="",
+                    )
+                    | (
+                        Q(revoked_at__isnull=False)
+                        & ~Q(revoked_by_reference="")
+                        & ~Q(revoke_reason="")
+                    )
+                ),
+                name="inactive_video_entitlement_revoke_meta_present",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["tenant", "student", "revoked_at"]),
+            models.Index(fields=["enrollment", "video"]),
+            models.Index(fields=["expires_at"]),
+        ]
+
+    def __str__(self):
+        return f"inactive-entitlement enrollment={self.enrollment_id} video={self.video_id}"
+
+
 # ========================================================
 # Video Progress
 # ========================================================
