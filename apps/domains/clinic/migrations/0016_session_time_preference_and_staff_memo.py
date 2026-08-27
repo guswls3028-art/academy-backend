@@ -11,6 +11,7 @@ class Migration(migrations.Migration):
             model_name="session",
             name="allow_time_preference",
             field=models.BooleanField(
+                db_default=False,
                 default=False,
                 help_text="학생이 세션 범위 안의 희망 시작·종료 시각을 요청할 수 있으면 True.",
             ),
@@ -38,17 +39,9 @@ class Migration(migrations.Migration):
             name="staff_memo",
             field=models.TextField(
                 blank=True,
+                db_default="",
                 default="",
                 help_text="학생·학부모에게 노출하지 않는 교직원 인수인계 메모",
-            ),
-        ),
-        migrations.AlterField(
-            model_name="sessionparticipant",
-            name="memo",
-            field=models.TextField(
-                blank=True,
-                help_text="학생·학부모 요청 또는 수동 배정 시 전달사항",
-                null=True,
             ),
         ),
     ]

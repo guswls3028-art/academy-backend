@@ -331,6 +331,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
 
     @extend_schema(
         request=ClinicStaffMemoSerializer,
+        parameters=[OpenApiParameter("id", OpenApiTypes.INT, OpenApiParameter.PATH)],
         responses={200: ClinicSessionParticipantSerializer},
     )
     @action(detail=True, methods=["patch"], url_path="staff-memo")
