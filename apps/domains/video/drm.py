@@ -7,11 +7,28 @@ from django.core import signing
 _SALT = "media.playback.token.v1"
 
 
-def create_playback_token(*, payload: Dict[str, Any], ttl_seconds: int) -> str:
-    now = int(time.time())
+def _token_now() -> int:
+    return int(time.time())
+
+
+def create_playback_token(
+    *,
+    payload: Dict[str, Any],
+    ttl_seconds: int | None = None,
+    expires_at: int | None = None,
+) -> str:
+    if (ttl_seconds is None) == (expires_at is None):
+        raise ValueError("exactly one playback token expiry is required")
+    now = _token_now()
     data = dict(payload or {})
     data["iat"] = now
-    data["exp"] = now + int(ttl_seconds)
+    data["exp"] = (
+        int(expires_at)
+        if expires_at is not None
+        else now + int(ttl_seconds)
+    )
+    if data["exp"] <= now:
+        raise ValueError("playback token expiry must be in the future")
     return signing.dumps(data, salt=_SALT, compress=True)
 
 

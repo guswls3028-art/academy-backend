@@ -527,8 +527,11 @@ For inactive entitlements only, the playback token, HLS URL, and thumbnail URL
 expire at the earliest of the current access TTL (600 seconds by default) and
 `expires_at`; configuration drift above 600 seconds is clamped back to 600 for
 this inactive-only path. The locked playback grant is authoritative: HLS and
-thumbnail signatures are rebuilt after that grant using its exact expiry, so a
-concurrent replacement with a shorter entitlement cannot return a longer URL. CDN workers
+thumbnail signatures are rebuilt after that grant using its exact expiry. A
+single absolute expiry from the locked clock is reused for the monitored session,
+playback token, response, HLS URL, and thumbnail URL. A scheduler delay or a
+concurrent replacement with a shorter entitlement cannot extend any one of
+those artifacts. CDN workers
 validate only the URL expiry and HMAC; they have no entitlement callback.
 Therefore revoke immediately blocks new access checks, playback grants, and
 token validation, while an already issued CDN URL can remain usable until its

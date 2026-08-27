@@ -14,6 +14,10 @@ from django.utils import timezone
 logger = logging.getLogger(__name__)
 
 
+def _playback_access_now():
+    return timezone.now()
+
+
 @dataclass(frozen=True)
 class PlaybackAccessGrant:
     token: str | None = None
@@ -277,6 +281,7 @@ def issue_playback_access_grant(
             return PlaybackAccessGrant(error="access_blocked")
 
         ttl = int(getattr(settings, "VIDEO_PLAYBACK_TTL_SECONDS", 600))
+        inactive_expires_at = None
         if locked_enrollment.status == "INACTIVE":
             from apps.domains.video.services.inactive_entitlements import (
                 get_active_inactive_video_entitlement,
@@ -288,14 +293,22 @@ def issue_playback_access_grant(
             )
             if entitlement is None:
                 return PlaybackAccessGrant(error="access_blocked")
-            now_timestamp = int(timezone.now().timestamp())
-            entitlement_expiry = bounded_inactive_media_expiry(entitlement)
-            ttl = min(ttl, entitlement_expiry - now_timestamp)
+            access_now = _playback_access_now()
+            now_timestamp = int(access_now.timestamp())
+            inactive_expires_at = bounded_inactive_media_expiry(
+                entitlement,
+                now=access_now,
+            )
+            ttl = inactive_expires_at - now_timestamp
             if ttl <= 0:
                 return PlaybackAccessGrant(error="access_expired")
         monitoring_enabled = access_mode == AccessMode.PROCTORED_CLASS
         playback_session_id = None
-        expires_at = int(timezone.now().timestamp()) + ttl
+        expires_at = (
+            inactive_expires_at
+            if inactive_expires_at is not None
+            else int(timezone.now().timestamp()) + ttl
+        )
         if monitoring_enabled:
             max_sessions, max_devices = get_tenant_session_limits(lecture.tenant)
             ok, session_payload, error = issue_session(
@@ -304,6 +317,7 @@ def issue_playback_access_grant(
                 ttl_seconds=ttl,
                 max_sessions=max_sessions,
                 max_devices=max_devices,
+                expires_at=inactive_expires_at,
             )
             if not ok or not session_payload:
                 return PlaybackAccessGrant(
@@ -335,8 +349,6 @@ def issue_playback_access_grant(
                 total_count=0,
                 is_revoked=False,
             )
-            init_session_redis(session_id=playback_session_id, ttl_seconds=ttl)
-
         token_payload = {
             "video_id": current_video.id,
             "enrollment_id": locked_enrollment.id,
@@ -350,7 +362,32 @@ def issue_playback_access_grant(
         }
         if request_id:
             token_payload["rid"] = request_id
-        token = create_playback_token(payload=token_payload, ttl_seconds=ttl)
+        try:
+            token = (
+                create_playback_token(
+                    payload=token_payload,
+                    expires_at=inactive_expires_at,
+                )
+                if inactive_expires_at is not None
+                else create_playback_token(
+                    payload=token_payload,
+                    ttl_seconds=ttl,
+                )
+            )
+        except ValueError:
+            transaction.set_rollback(True)
+            return PlaybackAccessGrant(error="access_expired")
+        if playback_session_id:
+            redis_ttl = ttl
+            if inactive_expires_at is not None:
+                redis_ttl = inactive_expires_at - int(timezone.now().timestamp())
+                if redis_ttl <= 0:
+                    transaction.set_rollback(True)
+                    return PlaybackAccessGrant(error="access_expired")
+            init_session_redis(
+                session_id=playback_session_id,
+                ttl_seconds=redis_ttl,
+            )
         return PlaybackAccessGrant(
             token=token,
             session_id=playback_session_id,

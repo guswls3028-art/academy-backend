@@ -46,7 +46,11 @@ from apps.domains.video.views.playback_views import (
     _is_policy_token_valid,
 )
 from apps.domains.video.views.permission_views import InactiveVideoEntitlementViewSet
-from apps.support.student_app.video_media import pick_video_urls
+from apps.support.student_app.video_media import (
+    build_thumbnail_url,
+    issue_playback_access_grant,
+    pick_video_urls,
+)
 
 
 @override_settings(PASSWORD_HASHERS=["django.contrib.auth.hashers.MD5PasswordHasher"])
@@ -885,6 +889,153 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         # URLs remain usable only until their bounded exp values above.
         self.assertGreater(hls_expiry, now_timestamp)
         self.assertGreater(thumbnail_expiry, now_timestamp)
+
+    @override_settings(
+        CDN_HLS_BASE_URL="https://cdn.example.test",
+        CDN_HLS_SIGNING_SECRET="inactive-entitlement-absolute-expiry-secret",
+        VIDEO_PLAYBACK_TTL_SECONDS=3600,
+    )
+    def test_inactive_grant_uses_one_absolute_expiry_across_clock_steps(self):
+        staff = User.objects.create_user(
+            username="student-video-entitlement-absolute-expiry-staff",
+            password="testpass123",
+            tenant=self.tenant,
+            is_staff=True,
+        )
+        SessionEnrollment.objects.create(
+            tenant=self.tenant,
+            session=self.target_session,
+            enrollment=self.target_enrollment,
+        )
+        self.target_enrollment.status = "INACTIVE"
+        self.target_enrollment.save(update_fields=["status"])
+        InactiveVideoEntitlement.objects.create(
+            tenant=self.tenant,
+            student=self.student,
+            enrollment=self.target_enrollment,
+            video=self.video,
+            access_mode=AccessMode.PROCTORED_CLASS,
+            source=InactiveVideoEntitlement.Source.STAFF_AUTHORIZATION,
+            source_reference="test:absolute-expiry",
+            reason="Use one absolute expiry across a stepped clock",
+            granted_by=staff,
+            granted_by_reference=f"user:{staff.id}",
+            expires_at=timezone.now() + timedelta(hours=2),
+        )
+        request = self.factory.get(
+            f"/api/v1/student/video/videos/{self.video.id}/playback/"
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.user)
+        base = timezone.now().replace(microsecond=100_000)
+        later = base + timedelta(seconds=1, microseconds=200_000)
+
+        with (
+            patch(
+                "apps.support.student_app.video_media._playback_access_now",
+                return_value=base,
+            ),
+            patch(
+                "apps.domains.video.services.playback_session._session_now",
+                return_value=later,
+            ),
+            patch(
+                "apps.domains.video.services.playback_session.init_session_redis",
+                return_value=False,
+            ),
+            patch(
+                "apps.domains.video.drm._token_now",
+                return_value=int(later.timestamp()),
+            ),
+        ):
+            grant = issue_playback_access_grant(
+                video=self.video,
+                enrollment=self.target_enrollment,
+                user=self.user,
+                device_id="absolute-expiry-device",
+            )
+
+        self.assertIsNone(grant.error)
+        self.assertIsNotNone(grant.token)
+        expected_expiry = int(base.timestamp()) + 600
+        valid, token_payload, token_error = verify_playback_token(grant.token)
+        self.assertTrue(valid, token_error)
+        session = VideoPlaybackSession.objects.get(session_id=grant.session_id)
+        hls_url, _ = pick_video_urls(
+            self.video,
+            request=request,
+            expires_at=grant.expires_at,
+        )
+        thumbnail_url = build_thumbnail_url(
+            self.video,
+            expires_at=grant.expires_at,
+        )
+
+        self.assertEqual(grant.expires_at, expected_expiry)
+        self.assertEqual(int(token_payload["exp"]), expected_expiry)
+        self.assertEqual(int(session.expires_at.timestamp()), expected_expiry)
+        self.assertEqual(
+            int(parse_qs(urlparse(hls_url).query)["exp"][0]),
+            expected_expiry,
+        )
+        self.assertEqual(
+            int(parse_qs(urlparse(thumbnail_url).query)["exp"][0]),
+            expected_expiry,
+        )
+
+    @override_settings(VIDEO_PLAYBACK_TTL_SECONDS=3600)
+    def test_inactive_grant_fails_if_entitlement_expires_during_issue(self):
+        staff = User.objects.create_user(
+            username="student-video-entitlement-imminent-expiry-staff",
+            password="testpass123",
+            tenant=self.tenant,
+            is_staff=True,
+        )
+        SessionEnrollment.objects.create(
+            tenant=self.tenant,
+            session=self.target_session,
+            enrollment=self.target_enrollment,
+        )
+        self.target_enrollment.status = "INACTIVE"
+        self.target_enrollment.save(update_fields=["status"])
+        base = timezone.now().replace(microsecond=100_000)
+        InactiveVideoEntitlement.objects.create(
+            tenant=self.tenant,
+            student=self.student,
+            enrollment=self.target_enrollment,
+            video=self.video,
+            access_mode=AccessMode.PROCTORED_CLASS,
+            source=InactiveVideoEntitlement.Source.STAFF_AUTHORIZATION,
+            source_reference="test:imminent-expiry",
+            reason="Fail closed when entitlement expires during issue",
+            granted_by=staff,
+            granted_by_reference=f"user:{staff.id}",
+            expires_at=base + timedelta(seconds=60),
+        )
+        after_entitlement_expiry = base + timedelta(
+            seconds=60,
+            microseconds=200_000,
+        )
+        with (
+            patch(
+                "apps.support.student_app.video_media._playback_access_now",
+                return_value=base,
+            ),
+            patch(
+                "apps.domains.video.services.playback_session._session_now",
+                return_value=after_entitlement_expiry,
+            ),
+        ):
+            expired_grant = issue_playback_access_grant(
+                video=self.video,
+                enrollment=self.target_enrollment,
+                user=self.user,
+                device_id="absolute-expiry-device",
+            )
+
+        self.assertEqual(expired_grant.error, "access_expired")
+        self.assertIsNone(expired_grant.token)
+        self.assertFalse(VideoPlaybackSession.objects.exists())
 
     @override_settings(
         CDN_HLS_BASE_URL="https://cdn.example.test",
