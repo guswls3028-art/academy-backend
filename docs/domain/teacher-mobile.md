@@ -130,7 +130,9 @@ app_student/
   활성 테넌트도 승인·거절·복구 전용 액션으로만 상태를 바꾼다. 목록·상세 응답의
   `tenant`·`status`·`student`를 포함한 필드는 읽기 전용이고 초기 비밀번호는 응답하지
   않는다. OpenAPI는 일반 변형 작업을 노출하지 않고, 정책 차단 가능 작업마다
-  `self_registration_disabled` 403 응답 스키마를 명시한다.
+  `self_registration_disabled` 403 응답 스키마를 명시한다. OpenAPI 목록 계약은
+  `status=approved|pending|rejected` 쿼리 enum을 공개하며, 이 403은 자가 가입 비활성
+  학원의 `status=pending` 조회에만 조건부로 발생한다고 설명한다.
 - 교사 Today·알림센터의 가입 신청 건수는 위 403을 의도적인 비활성 0건으로만
   해석한다. 일반 401·403·5xx·네트워크 오류는 0건으로 합성하지 않는다.
 - 직접 가입신청 화면을 열면 과거 요청이 보존된다는 정책 안내만 표시하고 처리

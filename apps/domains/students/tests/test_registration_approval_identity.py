@@ -1089,8 +1089,69 @@ class RegistrationApprovalIdentityTests(TestCase):
         self.assertEqual(registration.status, StudentRegistrationRequest.PENDING)
         self.assertIsNone(registration.student_id)
 
+    def test_disabled_tenant_resolve_deleted_preserves_history_and_deleted_student(self):
+        tenant = Tenant.objects.create(name="비활성 가입 복구 학원", code="godmin", is_active=True)
+        deleted_student = create_student_account(
+            tenant=tenant,
+            password="teacher-password",
+            student_data={
+                "name": "과거학생",
+                "ps_number": "DISABLED-RESOLVE-DELETED",
+                "phone": "01079996001",
+                "parent_phone": "01079996002",
+                "omr_code": "996001",
+                "uses_identifier": False,
+                "school_type": "HIGH",
+                "grade": 1,
+            },
+        ).student
+        soft_delete_student(deleted_student, tenant=tenant)
+        deleted_student.refresh_from_db()
+        deleted_at = deleted_student.deleted_at
+        registration = self._registration(
+            tenant=tenant,
+            name=deleted_student.name,
+            username="disabled-resolve-request",
+            phone="01079996001",
+            parent_phone="01079996002",
+        )
+        staff = User.objects.create_user(
+            username="disabled-registration-resolve-staff",
+            password="staff-password",
+            tenant=tenant,
+            is_staff=True,
+        )
+        TenantMembership.ensure_active(tenant=tenant, user=staff, role="teacher")
+        request = self.factory.post(
+            f"/api/v1/students/registration_requests/{registration.id}/resolve_deleted/",
+            {"student_id": deleted_student.id},
+            format="json",
+        )
+        force_authenticate(request, user=staff)
+        request.tenant = tenant
+
+        response = RegistrationRequestViewSet.as_view({"post": "resolve_deleted"})(
+            request,
+            pk=registration.id,
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["code"], "self_registration_disabled")
+        registration.refresh_from_db()
+        deleted_student.refresh_from_db()
+        self.assertEqual(registration.tenant_id, tenant.id)
+        self.assertEqual(registration.status, StudentRegistrationRequest.PENDING)
+        self.assertIsNone(registration.student_id)
+        self.assertEqual(deleted_student.deleted_at, deleted_at)
+
     def test_enabled_tenant_generic_mutations_are_read_only(self):
         registration = self._registration(username="enabled-read-only")
+        other_tenant = Tenant.objects.create(
+            name="다른 가입 학원",
+            code="registration-put-other-tenant",
+            is_active=True,
+        )
+        other_student = self._student(ps_number="PUT-OTHER-STUDENT")
         staff = User.objects.create_user(
             username="enabled-registration-read-only-staff",
             password="staff-password",
@@ -1104,6 +1165,15 @@ class RegistrationApprovalIdentityTests(TestCase):
                 "patch",
                 "partial_update",
                 {"status": StudentRegistrationRequest.APPROVED},
+            ),
+            (
+                "put",
+                "update",
+                {
+                    "tenant": other_tenant.id,
+                    "student": other_student.id,
+                    "status": StudentRegistrationRequest.APPROVED,
+                },
             ),
             ("delete", "destroy", None),
         )
@@ -1157,6 +1227,22 @@ class RegistrationApprovalIdentityTests(TestCase):
                     response_schema["$ref"],
                     "#/components/schemas/SelfRegistrationDisabledError",
                 )
+
+        list_operation = paths["/api/v1/students/registration_requests/"]["get"]
+        status_parameters = [
+            parameter
+            for parameter in list_operation["parameters"]
+            if parameter["in"] == "query" and parameter["name"] == "status"
+        ]
+        self.assertEqual(len(status_parameters), 1)
+        self.assertEqual(
+            status_parameters[0]["schema"]["enum"],
+            ["approved", "pending", "rejected"],
+        )
+        self.assertIn(
+            "status=pending",
+            list_operation["responses"]["403"]["description"],
+        )
 
         error_schema = schema["components"]["schemas"]["SelfRegistrationDisabledError"]
         code_ref = error_schema["properties"]["code"]["$ref"]

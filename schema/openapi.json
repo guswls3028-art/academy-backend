@@ -45098,6 +45098,19 @@
             "schema": {
               "type": "integer"
             }
+          },
+          {
+            "description": "가입 신청 상태 필터. 자가 가입 비활성 학원에서 `status=pending` 조회는 감사 이력을 업무로 노출하지 않고 403을 반환합니다.",
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "enum": [
+                "approved",
+                "pending",
+                "rejected"
+              ],
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -45119,7 +45132,7 @@
                 }
               }
             },
-            "description": ""
+            "description": "자가 가입 비활성 학원에서 `status=pending`으로 조회한 경우에만 반환합니다."
           }
         },
         "security": [

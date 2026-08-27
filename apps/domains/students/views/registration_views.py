@@ -11,7 +11,7 @@ from rest_framework.viewsets import ModelViewSet
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
-from drf_spectacular.utils import OpenApiParameter, extend_schema
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 
 from apps.core.parsing import parse_bool
 from apps.core.permissions import TenantResolvedAndStaff, TenantResolved
@@ -150,9 +150,30 @@ class RegistrationRequestViewSet(ModelViewSet):
         return RegistrationRequestListSerializer
 
     @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name="status",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                enum=[
+                    StudentRegistrationRequest.APPROVED,
+                    StudentRegistrationRequest.PENDING,
+                    StudentRegistrationRequest.REJECTED,
+                ],
+                description=(
+                    "가입 신청 상태 필터. 자가 가입 비활성 학원에서 "
+                    "`status=pending` 조회는 감사 이력을 업무로 노출하지 않고 403을 반환합니다."
+                ),
+            ),
+        ],
         responses={
             200: RegistrationRequestListSerializer(many=True),
-            403: SelfRegistrationDisabledErrorSerializer,
+            403: OpenApiResponse(
+                response=SelfRegistrationDisabledErrorSerializer,
+                description=(
+                    "자가 가입 비활성 학원에서 `status=pending`으로 조회한 경우에만 반환합니다."
+                ),
+            ),
         },
     )
     def list(self, request, *args, **kwargs):
