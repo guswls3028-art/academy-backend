@@ -481,6 +481,11 @@ Tenant-wide public-library videos intentionally have no enrollment-specific
 `FREE_REVIEW`; the response keeps the public video's flat `access_mode=null`
 compatibility field while the nested policy remains complete and executable.
 
+For active enrollments, lightweight `?access_check=true` uses the same effective
+access-mode resolver as playback issuance. Explicit offline `PROCTORED_CLASS`
+and online `FREE_REVIEW` overrides therefore return the exact mode and
+monitoring flag that playback enforces, while `BLOCKED` remains a 403.
+
 ### Exact video access after enrollment deactivation
 
 An inactive enrollment does not inherit video access from a fee, invoice,
