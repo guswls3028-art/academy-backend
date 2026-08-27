@@ -216,8 +216,10 @@ item 전환도 row lock 아래에서 현재 상태를 다시 확인하며, 이�
 연결이 확정된 item은 지우지 않는다. Legacy multipart는 sheet/session 해석까지 성공한
 뒤에만 implicit batch를 만들므로 잘못된 sheet 요청이 pending batch를 남기지 않는다.
 
-업로드 OpenAPI는 multipart를 legacy와 durable 두 대안으로 명시한다. 둘 모두 `file` 또는
-`files` 중 하나가 필수이며, durable 대안은 `batch_id`와 `item_ordinals`도 필수다.
+업로드 OpenAPI는 multipart의 legacy/durable 및 단일/다중 파일 형태를 `anyOf` 대안으로
+명시한다. 둘 모두 `file` 또는 `files` 중 하나가 필수이며, durable 대안은 `batch_id`와
+`item_ordinals`도 필수다. 각 대안은 미선언 필드를 거부하므로 durable 식별자 중 한쪽만
+섞인 payload가 legacy 요청으로 오인되어 schema 검증을 통과하지 않는다.
 
 목록과 상세 GET은 같은 tenant의 batch 생성 직원에게만 열리고 최근 7일 작업만 목록으로
 복구한다. 이 GET들은 `completion_notice_claimed_at`을 포함해 어떤 값도 쓰지 않는다.

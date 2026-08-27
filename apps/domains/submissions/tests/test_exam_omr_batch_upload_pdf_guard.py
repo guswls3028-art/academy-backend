@@ -12,6 +12,7 @@ from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import close_old_connections, connection, transaction
 from django.test import TestCase, TransactionTestCase
+from jsonschema import Draft4Validator
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from academy.adapters.tools.pymupdf_renderer import create_blank_pdf_bytes
@@ -37,6 +38,68 @@ User = get_user_model()
 
 def _pdf_bytes(page_count: int) -> bytes:
     return create_blank_pdf_bytes(page_count=page_count)
+
+
+class ExamOmrMultipartOpenApiTests(unittest.TestCase):
+    def test_openapi_accepts_valid_legacy_and_durable_multipart_requests(self):
+        schema_path = Path(__file__).resolve().parents[4] / "schema" / "openapi.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        request_schema = schema["paths"][
+            "/api/v1/submissions/submissions/exams/{exam_id}/omr/batch/"
+        ]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"]
+
+        alternatives = request_schema.get("anyOf") or request_schema.get("oneOf")
+        required_sets = {
+            row["title"]: set(row["required"])
+            for row in alternatives
+        }
+        self.assertEqual(
+            required_sets,
+            {
+                "Legacy OMR single-file upload": {"file"},
+                "Legacy OMR multi-file upload": {"files"},
+                "Durable OMR batch single-file upload": {
+                    "batch_id",
+                    "item_ordinals",
+                    "file",
+                },
+                "Durable OMR batch multi-file upload": {
+                    "batch_id",
+                    "item_ordinals",
+                    "files",
+                },
+            },
+        )
+
+        validator = Draft4Validator(request_schema)
+        batch_id = "00000000-0000-4000-8000-000000000001"
+        valid_payloads = {
+            "legacy single": {"file": "binary"},
+            "legacy multi": {"files": ["binary-1", "binary-2"]},
+            "durable single": {
+                "batch_id": batch_id,
+                "item_ordinals": [1],
+                "file": "binary",
+            },
+            "durable multi": {
+                "batch_id": batch_id,
+                "item_ordinals": [1, 2],
+                "files": ["binary-1", "binary-2"],
+            },
+        }
+        for label, payload in valid_payloads.items():
+            with self.subTest(payload=label):
+                self.assertEqual(list(validator.iter_errors(payload)), [])
+
+        malformed_payloads = {
+            "missing upload": {},
+            "durable missing ordinals": {"batch_id": batch_id, "file": "binary"},
+            "durable missing batch": {"item_ordinals": [1], "file": "binary"},
+            "durable missing file": {"batch_id": batch_id, "item_ordinals": [1]},
+        }
+        for label, payload in malformed_payloads.items():
+            with self.subTest(payload=label):
+                self.assertNotEqual(list(validator.iter_errors(payload)), [])
 
 
 class ExamOMRBatchUploadPdfGuardTests(TestCase):
@@ -440,35 +503,6 @@ class ExamOMRBatchUploadPdfGuardTests(TestCase):
         self.assertEqual(response.data["skipped_ordinals"], [1])
         retry_failed_submission.assert_called_once()
         dispatch_submission.assert_not_called()
-
-    def test_openapi_distinguishes_legacy_and_durable_multipart_requests(self):
-        schema_path = Path(__file__).resolve().parents[4] / "schema" / "openapi.json"
-        schema = json.loads(schema_path.read_text(encoding="utf-8"))
-        request_schema = schema["paths"][
-            "/api/v1/submissions/submissions/exams/{exam_id}/omr/batch/"
-        ]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"]
-
-        required_sets = {
-            row["title"]: set(row["required"])
-            for row in request_schema["oneOf"]
-        }
-        self.assertEqual(
-            required_sets,
-            {
-                "Legacy OMR single-file upload": {"file"},
-                "Legacy OMR multi-file upload": {"files"},
-                "Durable OMR batch single-file upload": {
-                    "batch_id",
-                    "item_ordinals",
-                    "file",
-                },
-                "Durable OMR batch multi-file upload": {
-                    "batch_id",
-                    "item_ordinals",
-                    "files",
-                },
-            },
-        )
 
     def test_terminal_completion_claim_is_explicit_and_exactly_once(self):
         batch_id = self._initialize(1).data["id"]

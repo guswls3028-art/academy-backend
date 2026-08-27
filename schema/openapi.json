@@ -46041,8 +46041,9 @@
           "content": {
             "multipart/form-data": {
               "schema": {
-                "oneOf": [
+                "anyOf": [
                   {
+                    "additionalProperties": false,
                     "properties": {
                       "file": {
                         "format": "binary",
@@ -46072,6 +46073,7 @@
                     "type": "object"
                   },
                   {
+                    "additionalProperties": false,
                     "properties": {
                       "file": {
                         "format": "binary",
@@ -46101,6 +46103,7 @@
                     "type": "object"
                   },
                   {
+                    "additionalProperties": false,
                     "properties": {
                       "batch_id": {
                         "format": "uuid",
@@ -46146,6 +46149,7 @@
                     "type": "object"
                   },
                   {
+                    "additionalProperties": false,
                     "properties": {
                       "batch_id": {
                         "format": "uuid",

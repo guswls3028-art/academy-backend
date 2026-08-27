@@ -53,18 +53,20 @@ OMR_UPLOAD_FILE_PROPERTIES = {
     "session_id": {"type": "integer", "minimum": 1},
 }
 OMR_UPLOAD_REQUEST_SCHEMA = {
-    "oneOf": [
+    "anyOf": [
         {
             "title": "Legacy OMR single-file upload",
             "type": "object",
             "properties": OMR_UPLOAD_FILE_PROPERTIES,
             "required": ["file"],
+            "additionalProperties": False,
         },
         {
             "title": "Legacy OMR multi-file upload",
             "type": "object",
             "properties": OMR_UPLOAD_FILE_PROPERTIES,
             "required": ["files"],
+            "additionalProperties": False,
         },
         {
             "title": "Durable OMR batch single-file upload",
@@ -80,6 +82,7 @@ OMR_UPLOAD_REQUEST_SCHEMA = {
                 },
             },
             "required": ["batch_id", "item_ordinals", "file"],
+            "additionalProperties": False,
         },
         {
             "title": "Durable OMR batch multi-file upload",
@@ -95,6 +98,7 @@ OMR_UPLOAD_REQUEST_SCHEMA = {
                 },
             },
             "required": ["batch_id", "item_ordinals", "files"],
+            "additionalProperties": False,
         },
     ]
 }
