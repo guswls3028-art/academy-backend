@@ -141,6 +141,13 @@ class RegistrationRequestViewSet(ModelViewSet):
             return RegistrationRequestCreateSerializer
         return RegistrationRequestListSerializer
 
+    def list(self, request, *args, **kwargs):
+        if request.query_params.get("status") == StudentRegistrationRequest.PENDING:
+            disabled = _self_registration_disabled_response(request)
+            if disabled is not None:
+                return disabled
+        return super().list(request, *args, **kwargs)
+
     @action(detail=False, methods=["post"], url_path="check_duplicate")
     def check_duplicate(self, request):
         """
@@ -335,6 +342,10 @@ class RegistrationRequestViewSet(ModelViewSet):
         POST body: { "ids": [1, 2, 3, ...] }
         응답: { "approved": int, "failed": [ {"id": int, "detail": str}, ... ] }
         """
+        disabled = _self_registration_disabled_response(request)
+        if disabled is not None:
+            return disabled
+
         ids = request.data.get("ids") or []
         if not isinstance(ids, (list, tuple)):
             return Response({"detail": "ids는 배열이어야 합니다."}, status=400)
@@ -410,6 +421,9 @@ class RegistrationRequestViewSet(ModelViewSet):
     @action(detail=True, methods=["post"])
     def approve(self, request, pk=None):
         """승인 시 Student + User + TenantMembership 생성 후 status=approved."""
+        disabled = _self_registration_disabled_response(request)
+        if disabled is not None:
+            return disabled
         reg = self.get_object()
         if reg.status != StudentRegistrationRequest.PENDING:
             return Response(
@@ -430,6 +444,9 @@ class RegistrationRequestViewSet(ModelViewSet):
     @action(detail=True, methods=["post"], url_path="resolve_deleted")
     def resolve_deleted(self, request, pk=None):
         """선생님이 선택한 동일인 삭제 계정을 복구한 뒤 가입 승인."""
+        disabled = _self_registration_disabled_response(request)
+        if disabled is not None:
+            return disabled
         serializer = DeletedRegistrationResolveSerializer(data=request.data)
         if not serializer.is_valid():
             return Response({"detail": "복구할 과거 계정을 선택해 주세요."}, status=400)
@@ -449,6 +466,9 @@ class RegistrationRequestViewSet(ModelViewSet):
     @action(detail=True, methods=["post"])
     def reject(self, request, pk=None):
         """가입 신청 거절 → status=rejected."""
+        disabled = _self_registration_disabled_response(request)
+        if disabled is not None:
+            return disabled
         reg = self.get_object()
         if reg.status != StudentRegistrationRequest.PENDING:
             return Response(
@@ -473,6 +493,10 @@ class RegistrationRequestViewSet(ModelViewSet):
         선택한 가입 신청 일괄 거절.
         POST body: { "ids": [1, 2, 3, ...] }
         """
+        disabled = _self_registration_disabled_response(request)
+        if disabled is not None:
+            return disabled
+
         ids = request.data.get("ids") or []
         if not isinstance(ids, (list, tuple)):
             return Response({"detail": "ids는 배열이어야 합니다."}, status=400)

@@ -117,6 +117,26 @@ app_student/
 
 ## 3. 설계 원칙
 
+### 3.0 학생 자가 가입 정책과 과거 요청
+
+- 학생 자가 가입 가능 여부는 `students.services.registration_policy`가 테넌트별로
+  판정한다. `godmin`, `tchul`은 명부 기반 직접 등록만 사용하며 공개 가입 신청을
+  받지 않는다.
+- 정책을 끈 뒤 남은 `StudentRegistrationRequest(status=pending)`는 삭제하거나
+  승인·거절하지 않고 감사 이력으로 보존한다. 직원용 `status=pending` 목록과
+  승인·복구 승인·거절·일괄 처리 API는 `self_registration_disabled` 403으로
+  실패 폐쇄한다. 상태 없는 이력 조회는 테넌트 범위 안에서 기존 계약을 유지한다.
+- 교사 Today·알림센터의 가입 신청 건수는 위 403을 의도적인 비활성 0건으로만
+  해석한다. 일반 401·403·5xx·네트워크 오류는 0건으로 합성하지 않는다.
+- 직접 가입신청 화면을 열면 과거 요청이 보존된다는 정책 안내만 표시하고 처리
+  버튼을 만들지 않는다. 자가 가입 사용 테넌트는 기존 목록·상세·승인·거절 흐름과
+  `/workspace/mobile/comms?tab=requests` 처리 경로를 그대로 사용한다.
+
+회귀 기준은
+`apps/domains/students/tests/test_registration_approval_identity.py`와 프런트엔드
+`e2e/teacher/comms-reply-mobile.mock.spec.ts`다. 두 테스트는 비활성 이력 무변경,
+활성 테넌트 호환, 390px/데스크톱 처리 경로, API mutation 0을 함께 검증한다.
+
 ### 3.1 핵심 원칙
 
 1. **수업 중심 (Class-First)**
