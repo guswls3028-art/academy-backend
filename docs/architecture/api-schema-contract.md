@@ -35,12 +35,17 @@ not inherit test, development, worker, or production settings. Check mode fails 
 - the number of documented paths or schemas falls below the reviewed baseline;
 - the schema is not valid OpenAPI 3.
 
-The current reviewed baseline covers 578 paths and 383 schema components.
-Legacy APIView and serializer inference gaps are recorded as 1,372 generator
-errors (277 unique) and 348 warnings (138 unique). They are an explicit
+The current reviewed baseline covers 588 paths and 412 schema components.
+Legacy APIView and serializer inference gaps are recorded as 1,364 generator
+errors (275 unique) and 342 warnings (138 unique). They are an explicit
 no-regression ceiling, not a claim of complete endpoint typing. When an
 endpoint is touched, add its serializer/schema metadata and lower the baseline
 after regenerating; never raise the baseline merely to make CI pass.
+
+Generic `ExamAttempt` and derived progress resources publish read-only GET
+operations. Question and Sheet creation use dedicated request components so
+`Question.sheet` and `Sheet.exam` remain required writable IDs on POST while
+ordinary PATCH components cannot advertise parent re-assignment.
 
 Academy JWT and tenant-aware session authentication are represented through
 `apps.api.schema_extensions`. Schema generation contains no credentials and

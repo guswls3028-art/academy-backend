@@ -20,6 +20,14 @@
 페이지 수와 목록으로 노출하지 않고 요청 tenant 범위의 연결 존재 여부로 판정한다.
 잘못된 cross-tenant 차시 연결은 강의 필터 일치로 인정하지 않는다.
 
+출제 소유 관계는 URL과 요청 tenant에서 정본을 찾는다. `Question.sheet`와
+`Sheet.exam`은 조회 응답에 포함되고 create payload에서는 필수 writable ID이지만,
+일반 update payload로 기존 문항이나 sheet를 다른 부모에 옮길 수 없다. 문항 생성은
+요청 tenant의 실제 Sheet를 서버가 다시 조회하고, Sheet 생성도 요청 tenant의 실제
+template Exam을 다시 조회한다. 응시 이력 `ExamAttempt`는 제출·수동채점 서비스가
+만드는 append-only 감사/결과 기록이므로 generic API는 조회만 제공하고
+POST/PATCH/DELETE를 허용하지 않는다.
+
 ## 시험 채점 계약
 
 `Exam`이 시험 생성 시 아래 계약을 소유한다.

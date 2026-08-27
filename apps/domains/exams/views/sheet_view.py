@@ -8,7 +8,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.exams.models import Sheet, Exam
-from apps.domains.exams.serializers.sheet import SheetSerializer
+from apps.domains.exams.serializers.sheet import SheetCreateSerializer, SheetSerializer
 from apps.domains.exams.services.template_resolver import assert_template_editable
 
 from apps.support.exams.view_dependencies import IsTeacherOrAdmin
@@ -16,6 +16,11 @@ from apps.support.exams.view_dependencies import IsTeacherOrAdmin
 
 class SheetViewSet(ModelViewSet):
     serializer_class = SheetSerializer
+
+    def get_serializer_class(self):
+        if self.action == "create":
+            return SheetCreateSerializer
+        return SheetSerializer
 
     def get_permissions(self):
         # 조회는 로그인만
@@ -34,7 +39,7 @@ class SheetViewSet(ModelViewSet):
             | Q(exam__tenant=tenant)
         ).select_related("exam").distinct()
 
-    def _assert_exam_is_template(self, exam_id: int) -> Exam:
+    def _assert_exam_is_template(self, exam_id: object) -> Exam:
         tenant = getattr(self.request, "tenant", None)
         try:
             tenant_filter = Q(
@@ -45,7 +50,7 @@ class SheetViewSet(ModelViewSet):
                 tenant=tenant
             ) if tenant else Q()
             exam = Exam.objects.filter(tenant_filter).distinct().get(id=int(exam_id))
-        except Exam.DoesNotExist:
+        except (Exam.DoesNotExist, TypeError, ValueError):
             raise ValidationError({"exam": "invalid exam id"})
 
         if exam.exam_type != Exam.ExamType.TEMPLATE:
@@ -59,7 +64,7 @@ class SheetViewSet(ModelViewSet):
         exam_id = self.request.data.get("exam")
         if not exam_id:
             raise ValidationError({"exam": "exam is required"})
-        exam = self._assert_exam_is_template(int(exam_id))
+        exam = self._assert_exam_is_template(exam_id)
 
         # 1:1 강제
         if hasattr(exam, "sheet") and getattr(exam, "sheet", None) is not None:
@@ -72,6 +77,14 @@ class SheetViewSet(ModelViewSet):
         if obj.exam.exam_type != Exam.ExamType.TEMPLATE:
             raise PermissionDenied("Sheet can be updated only for template exams.")
         assert_template_editable(obj.exam)
+        requested_exam = self.request.data.get("exam")
+        if requested_exam is not None:
+            try:
+                same_exam = int(requested_exam) == obj.exam_id
+            except (TypeError, ValueError):
+                same_exam = False
+            if not same_exam:
+                raise ValidationError({"exam": "exam cannot be changed"})
         serializer.save()
 
     def perform_destroy(self, instance):

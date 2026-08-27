@@ -27,7 +27,10 @@
 - **Tenants (dev_app 전용)**: GET tenants/, GET tenants/<id>/, PATCH tenants/<id>/, POST tenants/create/. 목록/상세/생성.
 - **Tenant Owner (dev_app 전용)**: POST tenants/<id>/owner/ (username 필수, password/name/phone), GET tenants/<id>/owners/, PATCH/DELETE tenants/<id>/owners/<user_id>/, POST tenants/<id>/owners/<user_id>/password/ (활성 owner 임시 비밀번호 재설정·기존 세션 폐기).
 - **Staff (staffs 도메인)**: 기준 URL은 `apps/domains/staffs/urls.py`. 주요 리소스는 work-types, staff-work-types, work-records, expense-records, work-month-locks, payroll-snapshots, staff 루트.
-- 기타: profile/, job_progress/, messaging(/api/v1/messaging/).
+- 기타: profile/, job_progress/, messaging(/api/v1/messaging/). AI/Tools/Excel/PPT 등
+  worker job의 status/result/progress payload는 활성 tenant staff만 읽을 수 있다.
+  현재 목록에 없는 새 job type도 member 공개로 추정하지 않고 staff-only로 실패
+  폐쇄하며, canonical `/jobs/...`와 legacy `/core/job_progress/...`가 같은 판정을 쓴다.
 
 ---
 

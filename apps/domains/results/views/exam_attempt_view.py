@@ -10,7 +10,7 @@ ExamAttemptViewSet
 - 학생 본인 attempt만 조회하는 별도 View를 /me/* 로 따로 만들 것
 """
 
-from rest_framework.viewsets import ModelViewSet
+from rest_framework.viewsets import ReadOnlyModelViewSet
 from rest_framework.permissions import IsAuthenticated
 
 from apps.domains.results.models import ExamAttempt
@@ -19,9 +19,12 @@ from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.support.results.admin_exam_dependencies import regular_active_exam_ids_for_tenant
 
 
-class ExamAttemptViewSet(ModelViewSet):
+class ExamAttemptViewSet(ReadOnlyModelViewSet):
     """
-    시험 시도(Attempt) 관리 API (관리자/교사용)
+    시험 시도(Attempt) 조회 API (관리자/교사용).
+
+    Attempt는 append-only이며 생성·대표 변경·채점 상태 전이는 각각의
+    명시적 도메인 서비스가 소유한다. Generic CRUD로 이 이력을 수정하지 않는다.
     """
 
     serializer_class = ExamAttemptSerializer

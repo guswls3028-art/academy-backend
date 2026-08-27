@@ -5,6 +5,7 @@ from rest_framework.response import Response
 
 from academy.adapters.db.django import repositories_ai as ai_repo
 from apps.core.permissions import TenantResolvedAndMember
+from apps.domains.ai.services.job_access import user_can_read_job
 
 
 # --------------------------------------------------
@@ -27,6 +28,12 @@ class JobProgressView(APIView):
             return Response({"detail": "tenant가 필요합니다."}, status=400)
         job = ai_repo.get_job_model_for_status(job_id, str(tenant.id))
         if not job:
+            return Response({"detail": "해당 작업을 찾을 수 없습니다."}, status=404)
+        if not user_can_read_job(
+            user=request.user,
+            tenant=tenant,
+            job_type=job.job_type,
+        ):
             return Response({"detail": "해당 작업을 찾을 수 없습니다."}, status=404)
         # ✅ tenant_id 전달 필수 (tenant namespace 키 사용)
         progress = RedisProgressAdapter().get_progress(job_id, tenant_id=str(tenant.id))

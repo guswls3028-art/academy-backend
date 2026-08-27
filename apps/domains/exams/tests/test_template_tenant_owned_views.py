@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework import status
@@ -122,6 +125,100 @@ class TenantOwnedTemplateViewTests(TestCase):
             list(ExamQuestion.objects.filter(sheet=sheet).order_by("number").values_list("number", flat=True)),
             [1, 2],
         )
+
+    def test_sheet_create_rejects_malformed_exam_id_without_server_error(self):
+        request = self._auth(
+            self.factory.post(
+                "/api/v1/exams/sheets/",
+                {"exam": "not-an-id", "name": "MAIN", "total_questions": 0},
+                format="json",
+            ),
+            tenant=self.tenant,
+        )
+
+        response = SheetViewSet.as_view({"post": "create"})(request)
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, response.data)
+        self.assertFalse(Sheet.objects.exists())
+
+    def test_sheet_update_cannot_move_owner_exam(self):
+        template = self._template()
+        sheet = Sheet.objects.create(
+            exam=template,
+            name="MAIN",
+            total_questions=0,
+        )
+        other_tenant = Tenant.objects.create(
+            name="Other Template Tenant",
+            code="other-template-tenant",
+            is_active=True,
+        )
+        other_template = Exam.objects.create(
+            tenant=other_tenant,
+            title="Other Template",
+            exam_type=Exam.ExamType.TEMPLATE,
+        )
+        request = self._auth(
+            self.factory.patch(
+                f"/api/v1/exams/sheets/{sheet.id}/",
+                {"exam": other_template.id, "name": "Moved"},
+                format="json",
+            ),
+            tenant=self.tenant,
+        )
+
+        response = SheetViewSet.as_view({"patch": "partial_update"})(
+            request,
+            pk=sheet.id,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, response.data)
+        sheet.refresh_from_db()
+        self.assertEqual(sheet.exam_id, template.id)
+        self.assertEqual(sheet.name, "MAIN")
+
+    def test_openapi_keeps_parent_ids_writable_only_on_create(self):
+        schema_path = Path(__file__).resolve().parents[4] / "schema" / "openapi.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+        cases = [
+            (
+                "/api/v1/exams/questions/",
+                "/api/v1/exams/questions/{id}/",
+                "QuestionCreateRequest",
+                "PatchedQuestionRequest",
+                "sheet",
+            ),
+            (
+                "/api/v1/exams/sheets/",
+                "/api/v1/exams/sheets/{id}/",
+                "SheetCreateRequest",
+                "PatchedSheetRequest",
+                "exam",
+            ),
+        ]
+
+        for create_path, detail_path, create_component, patch_component, owner in cases:
+            with self.subTest(owner=owner):
+                create_ref = schema["paths"][create_path]["post"]["requestBody"][
+                    "content"
+                ]["application/json"]["schema"]["$ref"]
+                patch_ref = schema["paths"][detail_path]["patch"]["requestBody"][
+                    "content"
+                ]["application/json"]["schema"]["$ref"]
+                self.assertEqual(
+                    create_ref,
+                    f"#/components/schemas/{create_component}",
+                )
+                self.assertEqual(
+                    patch_ref,
+                    f"#/components/schemas/{patch_component}",
+                )
+                create_schema = schema["components"]["schemas"][create_component]
+                patch_schema = schema["components"]["schemas"][patch_component]
+                self.assertIn(owner, create_schema["required"])
+                self.assertIn(owner, create_schema["properties"])
+                self.assertNotIn(owner, patch_schema["properties"])
 
     def test_tenant_scoped_read_views_reject_missing_tenant_before_body(self):
         template = self._template()

@@ -4,6 +4,7 @@ from io import BytesIO
 from unittest.mock import patch
 
 import openpyxl
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
@@ -51,6 +52,70 @@ class EnrollmentExcelUploadValidationTests(TestCase):
             title="Excel Guard Lecture",
             name="Excel Guard Lecture",
             subject="MATH",
+        )
+
+    @patch("apps.infrastructure.storage.r2._get_s3_client")
+    @patch("apps.domains.enrollment.views.dispatch_job")
+    @patch("apps.domains.enrollment.views.upload_fileobj_to_r2_excel")
+    def test_dispatch_rejection_removes_uploaded_excel(
+        self,
+        mock_upload,
+        mock_dispatch,
+        mock_get_s3_client,
+    ):
+        mock_dispatch.return_value = {"ok": False, "error": "dispatch unavailable"}
+        request = self.factory.post(
+            "/api/v1/enrollments/lecture_enroll_from_excel/",
+            data={
+                "file": _valid_xlsx_upload(),
+                "lecture_id": self.lecture.id,
+            },
+            format="multipart",
+        )
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+
+        response = EnrollmentViewSet.as_view(
+            {"post": "lecture_enroll_from_excel"}
+        )(request)
+
+        self.assertEqual(response.status_code, 400, response.data)
+        uploaded_key = mock_upload.call_args.kwargs["key"]
+        mock_get_s3_client.return_value.delete_object.assert_called_once_with(
+            Bucket=getattr(settings, "R2_EXCEL_BUCKET", "academy-excel"),
+            Key=uploaded_key,
+        )
+
+    @patch("apps.infrastructure.storage.r2._get_s3_client")
+    @patch("apps.domains.enrollment.views.dispatch_job")
+    @patch("apps.domains.enrollment.views.upload_fileobj_to_r2_excel")
+    def test_dispatch_exception_removes_uploaded_excel_before_reraising(
+        self,
+        mock_upload,
+        mock_dispatch,
+        mock_get_s3_client,
+    ):
+        mock_dispatch.side_effect = RuntimeError("dispatch exploded")
+        request = self.factory.post(
+            "/api/v1/enrollments/lecture_enroll_from_excel/",
+            data={
+                "file": _valid_xlsx_upload(),
+                "lecture_id": self.lecture.id,
+            },
+            format="multipart",
+        )
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+
+        with self.assertRaisesRegex(RuntimeError, "dispatch exploded"):
+            EnrollmentViewSet.as_view(
+                {"post": "lecture_enroll_from_excel"}
+            )(request)
+
+        uploaded_key = mock_upload.call_args.kwargs["key"]
+        mock_get_s3_client.return_value.delete_object.assert_called_once_with(
+            Bucket=getattr(settings, "R2_EXCEL_BUCKET", "academy-excel"),
+            Key=uploaded_key,
         )
 
     @patch("apps.domains.enrollment.views.dispatch_job")
