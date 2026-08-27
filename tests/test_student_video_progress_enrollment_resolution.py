@@ -467,6 +467,88 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         self.video.refresh_from_db()
         self.assertEqual(self.video.view_count, 0)
 
+    def test_access_check_matches_offline_explicit_proctored_override(self):
+        VideoAccess.objects.create(
+            video=self.video,
+            enrollment=self.target_enrollment,
+            rule="once",
+            access_mode=AccessMode.PROCTORED_CLASS,
+            is_override=True,
+        )
+
+        access_check = self._get_playback(
+            enrollment_id=self.target_enrollment.id,
+            access_check=True,
+        )
+
+        self.assertEqual(access_check.status_code, 200, access_check.data)
+        self.assertEqual(
+            access_check.data,
+            {
+                "ok": True,
+                "access_mode": AccessMode.PROCTORED_CLASS.value,
+                "monitoring_enabled": True,
+                "policy_version": self.video.policy_version,
+            },
+        )
+        self.assertFalse(VideoPlaybackSession.objects.exists())
+        self.video.refresh_from_db()
+        self.assertEqual(self.video.view_count, 0)
+
+        playback = self._get_playback(enrollment_id=self.target_enrollment.id)
+        self.assertEqual(playback.status_code, 200, playback.data)
+        self.assertEqual(playback.data["policy"]["access_mode"], access_check.data["access_mode"])
+        self.assertEqual(
+            playback.data["policy"]["monitoring_enabled"],
+            access_check.data["monitoring_enabled"],
+        )
+        self.assertEqual(playback.data["policy_version"], access_check.data["policy_version"])
+        self.assertIsNotNone(playback.data["playback_session_id"])
+
+    def test_access_check_matches_online_explicit_free_review_override(self):
+        Attendance.objects.create(
+            tenant=self.tenant,
+            session=self.target_session,
+            enrollment=self.target_enrollment,
+            status="ONLINE",
+        )
+        VideoAccess.objects.create(
+            video=self.video,
+            enrollment=self.target_enrollment,
+            rule="free",
+            access_mode=AccessMode.FREE_REVIEW,
+            is_override=True,
+        )
+
+        access_check = self._get_playback(
+            enrollment_id=self.target_enrollment.id,
+            access_check=True,
+        )
+
+        self.assertEqual(access_check.status_code, 200, access_check.data)
+        self.assertEqual(
+            access_check.data,
+            {
+                "ok": True,
+                "access_mode": AccessMode.FREE_REVIEW.value,
+                "monitoring_enabled": False,
+                "policy_version": self.video.policy_version,
+            },
+        )
+        self.assertFalse(VideoPlaybackSession.objects.exists())
+        self.video.refresh_from_db()
+        self.assertEqual(self.video.view_count, 0)
+
+        playback = self._get_playback(enrollment_id=self.target_enrollment.id)
+        self.assertEqual(playback.status_code, 200, playback.data)
+        self.assertEqual(playback.data["policy"]["access_mode"], access_check.data["access_mode"])
+        self.assertEqual(
+            playback.data["policy"]["monitoring_enabled"],
+            access_check.data["monitoring_enabled"],
+        )
+        self.assertEqual(playback.data["policy_version"], access_check.data["policy_version"])
+        self.assertIsNone(playback.data["playback_session_id"])
+
     def test_public_video_access_check_never_creates_or_reactivates_enrollment(self):
         system_lecture = Lecture.get_or_create_system_lecture(self.tenant)
         system_session = Session.objects.create(
@@ -1968,8 +2050,13 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         )
 
         response = self._get_playback(enrollment_id=self.target_enrollment.id)
+        access_check = self._get_playback(
+            enrollment_id=self.target_enrollment.id,
+            access_check=True,
+        )
 
         self.assertEqual(response.status_code, 403)
+        self.assertEqual(access_check.status_code, 403)
 
     def test_active_override_access_check_matches_playback(self):
         VideoAccess.objects.create(
