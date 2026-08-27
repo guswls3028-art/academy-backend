@@ -220,6 +220,12 @@ class SessionParticipant(TimestampModel):
     )
 
     memo = models.TextField(blank=True, null=True)
+    student_request_memo = models.TextField(
+        blank=True,
+        default="",
+        db_default="",
+        help_text="학생·학부모가 남긴 요청사항. 작성 출처가 명확한 경우에만 저장.",
+    )
     preferred_start_time = models.TimeField(
         null=True,
         blank=True,

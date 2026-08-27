@@ -797,6 +797,7 @@ def create_participant(
     source = validated_data.get("source") or SessionParticipant.Source.MANUAL
     requested_status = validated_data.get("status")
     memo = validated_data.get("memo") or ""
+    student_request_memo = validated_data.get("student_request_memo") or ""
 
     if not session and not (requested_date and requested_start_time):
         raise ValidationError({"detail": "session 또는 (requested_date + requested_start_time) 중 하나는 필수입니다."})
@@ -818,6 +819,9 @@ def create_participant(
         requested_status = SessionParticipant.Status.PENDING
         if getattr(tenant, "clinic_auto_approve_booking", False):
             requested_status = SessionParticipant.Status.BOOKED
+        if not student_request_memo:
+            student_request_memo = memo
+        memo = ""
 
     if not student and enrollment_id:
         enrollment = clinic_enrollment_for_tenant(tenant, enrollment_id)
@@ -899,6 +903,7 @@ def create_participant(
             participant_role=participant_role,
             clinic_reason=clinic_reason,
             memo=memo,
+            student_request_memo=student_request_memo,
             preferred_start_time=preferred_start_time,
             preferred_end_time=preferred_end_time,
         )
@@ -920,6 +925,7 @@ def change_participant_booking(
     request_student,
     actor,
     memo=None,
+    student_request_memo=None,
     preferred_start_time=None,
     preferred_end_time=None,
 ) -> ParticipantWriteResult:
@@ -978,6 +984,17 @@ def change_participant_booking(
     if not is_staff_change and getattr(tenant, "clinic_auto_approve_booking", False):
         new_status = SessionParticipant.Status.BOOKED
 
+    if is_staff_change:
+        next_student_request_memo = old_booking.student_request_memo
+        next_staff_memo = memo if memo is not None else old_booking.staff_memo
+    else:
+        next_student_request_memo = student_request_memo
+        if next_student_request_memo is None:
+            next_student_request_memo = memo
+        if next_student_request_memo is None:
+            next_student_request_memo = old_booking.student_request_memo
+        next_staff_memo = old_booking.staff_memo
+
     enrollment_id = _preferred_active_enrollment_id(
         tenant=tenant,
         student=booking_student,
@@ -998,7 +1015,9 @@ def change_participant_booking(
             ),
             enrollment_id=enrollment_id,
             participant_role="manual",
-            memo=memo or "",
+            memo=old_booking.memo or "",
+            student_request_memo=next_student_request_memo or "",
+            staff_memo=next_staff_memo or "",
             preferred_start_time=preferred_start_time,
             preferred_end_time=preferred_end_time,
         )

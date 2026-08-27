@@ -471,11 +471,16 @@ COMPLETE_ALLOWED_STATUSES = {"attended"}
   `preferred_start_time`과 `preferred_end_time`을 함께 요청할 수 있다. 두 시각은
   세션 운영 범위 안이고 시작이 종료보다 빨라야 한다. 이 값은 희망사항이며
   `Session.start_time`·`duration_minutes`, 참가자 상태, 출결 시각을 바꾸지 않는다.
-- `SessionParticipant.memo`는 학생·학부모의 신청 요청 또는 교직원 수동 배정 시
-  전달사항이다. 승인·거절·등원·결석 같은 상태 전이는 이를 덮어쓰지 않는다.
+- `SessionParticipant.student_request_memo`만 학생·학부모 요청으로 노출한다.
+  인증된 학생의 예약 생성·일정 변경 또는 교직원이 출처를 확인해 이 전용 필드로
+  입력한 값만 저장한다. 기존 `memo`는 작성 주체를 증명할 수 없는 레거시 운영
+  필드이므로 이 필드로 이관하지 않으며 학생·학부모 응답에서 제거한다.
 - `SessionParticipant.staff_memo`는 교직원 인수인계 전용이다. staff 응답에서만
   반환하며 학생·학부모 응답에서는 필드를 제거한다. 교직원은
   `PATCH /clinic/participants/{id}/staff-memo/`로 요청 메모와 독립적으로 저장한다.
+- 일반 참가자 `PUT/PATCH`는 `preferred_start_time`, `preferred_end_time`,
+  `student_request_memo`를 수정할 수 없고 해당 키가 들어오면 400으로 거부한다.
+  희망 시간과 학생 요청은 검증된 예약 생성·일정 변경 경로에서만 기록한다.
 - 희망 시간과 두 메모는 예약 승인, 현장 출결, `completed_at`, ClinicLink 해소,
   오늘 할 범위에 영향을 주지 않는다. 관련 값이 잘못되어도 기존 예약 시간을
   추정하거나 자동 확정하지 않고 요청 전체를 거부한다.

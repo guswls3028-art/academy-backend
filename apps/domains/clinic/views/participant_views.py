@@ -233,6 +233,22 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             return ClinicSessionParticipantCreateSerializer
         return ClinicSessionParticipantSerializer
 
+    def update(self, request, *args, **kwargs):
+        protected_fields = (
+            "preferred_start_time",
+            "preferred_end_time",
+            "student_request_memo",
+        )
+        blocked = [field for field in protected_fields if field in request.data]
+        if blocked:
+            raise serializers.ValidationError(
+                {
+                    field: "예약 생성 또는 일정 변경 API에서만 수정할 수 있습니다."
+                    for field in blocked
+                }
+            )
+        return super().update(request, *args, **kwargs)
+
     def create(self, request, *args, **kwargs):
         """
         ✅ 예약 생성
@@ -523,10 +539,11 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         Atomic booking change: secure new session first, then cancel old.
         If new booking fails, old booking is preserved (transaction rollback).
 
-        Request body: { "new_session_id": int, "memo": str (optional) }
+        Request body: { "new_session_id": int, "student_request_memo": str (optional) }
         """
         new_session_id = request.data.get("new_session_id")
         memo = request.data.get("memo")
+        student_request_memo = request.data.get("student_request_memo")
         try:
             preferred_start_time = serializers.TimeField(
                 required=False, allow_null=True
@@ -552,6 +569,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             request_student=_get_request_student_for_clinic(request),
             actor=request.user,
             memo=memo,
+            student_request_memo=student_request_memo,
             preferred_start_time=preferred_start_time,
             preferred_end_time=preferred_end_time,
         )

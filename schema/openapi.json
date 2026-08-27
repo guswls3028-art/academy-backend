@@ -1057,15 +1057,13 @@
             "type": "array"
           },
           "preferred_end_time": {
-            "description": "세션 안에서 요청한 희망 종료 시각. 실제 예약 종료 시각과 별개.",
             "format": "time",
-            "nullable": true,
+            "readOnly": true,
             "type": "string"
           },
           "preferred_start_time": {
-            "description": "세션 안에서 요청한 희망 시작 시각. 실제 예약 시작 시각과 별개.",
             "format": "time",
-            "nullable": true,
+            "readOnly": true,
             "type": "string"
           },
           "profile_photo_url": {
@@ -1145,6 +1143,10 @@
             "readOnly": true,
             "type": "string"
           },
+          "student_request_memo": {
+            "readOnly": true,
+            "type": "string"
+          },
           "tenant": {
             "type": "integer"
           },
@@ -1165,6 +1167,8 @@
           "lecture_title",
           "name_highlight_clinic_target",
           "planned_clinic_link_ids",
+          "preferred_end_time",
+          "preferred_start_time",
           "profile_photo_url",
           "session_date",
           "session_duration_minutes",
@@ -1175,6 +1179,7 @@
           "status_changed_by_name",
           "student",
           "student_name",
+          "student_request_memo",
           "tenant",
           "updated_at"
         ],
@@ -1242,6 +1247,10 @@
           },
           "student": {
             "type": "integer"
+          },
+          "student_request_memo": {
+            "description": "학생·학부모가 남긴 요청사항. 작성 출처가 명확한 경우에만 저장.",
+            "type": "string"
           }
         },
         "type": "object"
@@ -1308,6 +1317,10 @@
           },
           "student": {
             "type": "integer"
+          },
+          "student_request_memo": {
+            "description": "학생·학부모가 남긴 요청사항. 작성 출처가 명확한 경우에만 저장.",
+            "type": "string"
           }
         },
         "type": "object"
@@ -1367,18 +1380,6 @@
           },
           "participant_role": {
             "$ref": "#/components/schemas/ParticipantRoleEnum"
-          },
-          "preferred_end_time": {
-            "description": "세션 안에서 요청한 희망 종료 시각. 실제 예약 종료 시각과 별개.",
-            "format": "time",
-            "nullable": true,
-            "type": "string"
-          },
-          "preferred_start_time": {
-            "description": "세션 안에서 요청한 희망 시작 시각. 실제 예약 시작 시각과 별개.",
-            "format": "time",
-            "nullable": true,
-            "type": "string"
           },
           "requested_date": {
             "format": "date",
@@ -6906,18 +6907,6 @@
           },
           "participant_role": {
             "$ref": "#/components/schemas/ParticipantRoleEnum"
-          },
-          "preferred_end_time": {
-            "description": "세션 안에서 요청한 희망 종료 시각. 실제 예약 종료 시각과 별개.",
-            "format": "time",
-            "nullable": true,
-            "type": "string"
-          },
-          "preferred_start_time": {
-            "description": "세션 안에서 요청한 희망 시작 시각. 실제 예약 시작 시각과 별개.",
-            "format": "time",
-            "nullable": true,
-            "type": "string"
           },
           "requested_date": {
             "format": "date",
@@ -18046,7 +18035,7 @@
     },
     "/api/v1/clinic/participants/{id}/change-booking/": {
       "post": {
-        "description": "POST /clinic/participants/{id}/change-booking/\nAtomic booking change: secure new session first, then cancel old.\nIf new booking fails, old booking is preserved (transaction rollback).\n\nRequest body: { \"new_session_id\": int, \"memo\": str (optional) }",
+        "description": "POST /clinic/participants/{id}/change-booking/\nAtomic booking change: secure new session first, then cancel old.\nIf new booking fails, old booking is preserved (transaction rollback).\n\nRequest body: { \"new_session_id\": int, \"student_request_memo\": str (optional) }",
         "operationId": "clinic_participants_change_booking_create",
         "parameters": [
           {
@@ -38668,7 +38657,7 @@
     },
     "/api/v1/results/admin/clinic-bookings/{id}/change-booking/": {
       "post": {
-        "description": "POST /clinic/participants/{id}/change-booking/\nAtomic booking change: secure new session first, then cancel old.\nIf new booking fails, old booking is preserved (transaction rollback).\n\nRequest body: { \"new_session_id\": int, \"memo\": str (optional) }",
+        "description": "POST /clinic/participants/{id}/change-booking/\nAtomic booking change: secure new session first, then cancel old.\nIf new booking fails, old booking is preserved (transaction rollback).\n\nRequest body: { \"new_session_id\": int, \"student_request_memo\": str (optional) }",
         "operationId": "results_admin_clinic_bookings_change_booking_create",
         "parameters": [
           {

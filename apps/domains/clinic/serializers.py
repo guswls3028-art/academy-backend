@@ -121,6 +121,9 @@ class ClinicSessionSerializer(serializers.ModelSerializer):
 
 
 class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
+    preferred_start_time = serializers.TimeField(read_only=True)
+    preferred_end_time = serializers.TimeField(read_only=True)
+    student_request_memo = serializers.CharField(read_only=True)
     student_name = serializers.CharField(source="student.name", read_only=True)
     session_date = serializers.SerializerMethodField()  # ✅ session이 없을 수 있으므로 SerializerMethodField 사용
     session_start_time = serializers.SerializerMethodField()
@@ -177,6 +180,7 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
             getattr(request, "tenant", None),
         ):
             data.pop("staff_memo", None)
+            data.pop("memo", None)
         return data
 
     def get_session_date(self, obj):
@@ -319,6 +323,7 @@ class ClinicSessionParticipantCreateSerializer(serializers.ModelSerializer):
             "requested_start_time",  # ✅ 학생 신청 시 시간
             "preferred_start_time",
             "preferred_end_time",
+            "student_request_memo",
             "student",
             "status",
             "memo",

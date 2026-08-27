@@ -18,6 +18,16 @@ class Migration(migrations.Migration):
         ),
         migrations.AddField(
             model_name="sessionparticipant",
+            name="student_request_memo",
+            field=models.TextField(
+                blank=True,
+                db_default="",
+                default="",
+                help_text="학생·학부모가 남긴 요청사항. 작성 출처가 명확한 경우에만 저장.",
+            ),
+        ),
+        migrations.AddField(
+            model_name="sessionparticipant",
             name="preferred_start_time",
             field=models.TimeField(
                 blank=True,
