@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta
 from rest_framework import serializers
 from .models import Session, SessionParticipant, Test, Submission
+from apps.core.permissions import is_effective_staff
 from apps.support.clinic.session_dependencies import (
     active_students_for_clinic_tenant,
     empty_enrollment_queryset,
@@ -168,6 +169,16 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
             "enrollment": {"write_only": True, "required": False},
         }
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get("request")
+        if request is None or not is_effective_staff(
+            getattr(request, "user", None),
+            getattr(request, "tenant", None),
+        ):
+            data.pop("staff_memo", None)
+        return data
+
     def get_session_date(self, obj):
         """session이 있으면 session.date, 없으면 requested_date"""
         return obj.session.date if obj.session else obj.requested_date
@@ -306,6 +317,8 @@ class ClinicSessionParticipantCreateSerializer(serializers.ModelSerializer):
             "session",
             "requested_date",  # ✅ 학생 신청 시 날짜
             "requested_start_time",  # ✅ 학생 신청 시 시간
+            "preferred_start_time",
+            "preferred_end_time",
             "student",
             "status",
             "memo",

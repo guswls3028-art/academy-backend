@@ -1413,6 +1413,8 @@ class ParticipantStatusTransitionAPITest(APITestCase, ClinicAPITestMixin):
             self.student,
             status="booked",
         )
+        participant.memo = "8시까지 끝내주세요."
+        participant.save(update_fields=["memo"])
 
         resp = self.client.patch(
             f"/api/v1/clinic/participants/{participant.id}/set_status/",
@@ -1424,7 +1426,8 @@ class ParticipantStatusTransitionAPITest(APITestCase, ClinicAPITestMixin):
         self.assertEqual(resp.status_code, 200, resp.data)
         participant.refresh_from_db()
         self.assertEqual(participant.status, "no_show")
-        self.assertEqual(participant.memo, "결석")
+        self.assertEqual(participant.memo, "8시까지 끝내주세요.")
+        self.assertEqual(participant.staff_memo, "결석")
         self.assertEqual(participant.status_changed_by_id, self.admin.id)
 
     def test_staff_can_approve_pending_booking(self):

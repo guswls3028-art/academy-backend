@@ -14,6 +14,7 @@ from .lifecycle import (
     complete_participant,
     create_participant,
     uncomplete_participant,
+    update_participant_staff_memo,
 )
 
 __all__ = [
@@ -32,4 +33,5 @@ __all__ = [
     "complete_participant",
     "create_participant",
     "uncomplete_participant",
+    "update_participant_staff_memo",
 ]
