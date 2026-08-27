@@ -22,9 +22,17 @@ from ..models import Student, StudentRegistrationRequest
 from ..serializers import (
     DeletedRegistrationConflictSerializer,
     DeletedRegistrationResolveSerializer,
-    StudentDetailSerializer,
+    RegistrationRequestBulkApproveResponseSerializer,
+    RegistrationRequestBulkIdsSerializer,
+    RegistrationRequestBulkRejectResponseSerializer,
     RegistrationRequestCreateSerializer,
+    RegistrationRequestDuplicateCheckRequestSerializer,
+    RegistrationRequestDuplicateCheckResponseSerializer,
     RegistrationRequestListSerializer,
+    RegistrationRequestRejectResponseSerializer,
+    RegistrationRequestSettingsSerializer,
+    SelfRegistrationDisabledErrorSerializer,
+    StudentDetailSerializer,
 )
 from ..services import (
     RegistrationApprovalError,
@@ -141,6 +149,12 @@ class RegistrationRequestViewSet(ModelViewSet):
             return RegistrationRequestCreateSerializer
         return RegistrationRequestListSerializer
 
+    @extend_schema(
+        responses={
+            200: RegistrationRequestListSerializer(many=True),
+            403: SelfRegistrationDisabledErrorSerializer,
+        },
+    )
     def list(self, request, *args, **kwargs):
         if request.query_params.get("status") == StudentRegistrationRequest.PENDING:
             disabled = _self_registration_disabled_response(request)
@@ -148,6 +162,37 @@ class RegistrationRequestViewSet(ModelViewSet):
                 return disabled
         return super().list(request, *args, **kwargs)
 
+    def _generic_mutation_response(self, request):
+        disabled = _self_registration_disabled_response(request)
+        if disabled is not None:
+            return disabled
+        return Response(
+            {
+                "code": "registration_request_read_only",
+                "detail": "가입 신청 이력은 전용 승인·거절 작업으로만 처리할 수 있습니다.",
+            },
+            status=405,
+        )
+
+    @extend_schema(exclude=True)
+    def update(self, request, *args, **kwargs):
+        return self._generic_mutation_response(request)
+
+    @extend_schema(exclude=True)
+    def partial_update(self, request, *args, **kwargs):
+        return self._generic_mutation_response(request)
+
+    @extend_schema(exclude=True)
+    def destroy(self, request, *args, **kwargs):
+        return self._generic_mutation_response(request)
+
+    @extend_schema(
+        request=RegistrationRequestDuplicateCheckRequestSerializer,
+        responses={
+            200: RegistrationRequestDuplicateCheckResponseSerializer,
+            403: SelfRegistrationDisabledErrorSerializer,
+        },
+    )
     @action(detail=False, methods=["post"], url_path="check_duplicate")
     def check_duplicate(self, request):
         """
@@ -217,6 +262,14 @@ class RegistrationRequestViewSet(ModelViewSet):
 
         return Response(result)
 
+    @extend_schema(
+        request=RegistrationRequestCreateSerializer,
+        responses={
+            200: StudentDetailSerializer,
+            201: RegistrationRequestListSerializer,
+            403: SelfRegistrationDisabledErrorSerializer,
+        },
+    )
     def create(self, request, *args, **kwargs):
         if not getattr(request, "tenant", None):
             return Response(
@@ -335,6 +388,13 @@ class RegistrationRequestViewSet(ModelViewSet):
                 payload["error"] = str(e)
             return Response(payload, status=500)
 
+    @extend_schema(
+        request=RegistrationRequestBulkIdsSerializer,
+        responses={
+            200: RegistrationRequestBulkApproveResponseSerializer,
+            403: SelfRegistrationDisabledErrorSerializer,
+        },
+    )
     @action(detail=False, methods=["post"], url_path="bulk_approve")
     def bulk_approve(self, request):
         """
@@ -376,6 +436,16 @@ class RegistrationRequestViewSet(ModelViewSet):
 
         return Response({"approved": approved_count, "failed": failed}, status=200)
 
+    @extend_schema(
+        methods=["GET"],
+        request=None,
+        responses={200: RegistrationRequestSettingsSerializer},
+    )
+    @extend_schema(
+        methods=["PATCH"],
+        request=RegistrationRequestSettingsSerializer,
+        responses={200: RegistrationRequestSettingsSerializer},
+    )
     @action(detail=False, methods=["get", "patch"], url_path="settings")
     def registration_settings(self, request):
         """
@@ -416,7 +486,11 @@ class RegistrationRequestViewSet(ModelViewSet):
     @extend_schema(
         request=None,
         parameters=[OpenApiParameter("id", int, OpenApiParameter.PATH)],
-        responses={200: StudentDetailSerializer, 409: DeletedRegistrationConflictSerializer},
+        responses={
+            200: StudentDetailSerializer,
+            403: SelfRegistrationDisabledErrorSerializer,
+            409: DeletedRegistrationConflictSerializer,
+        },
     )
     @action(detail=True, methods=["post"])
     def approve(self, request, pk=None):
@@ -439,7 +513,10 @@ class RegistrationRequestViewSet(ModelViewSet):
     @extend_schema(
         request=DeletedRegistrationResolveSerializer,
         parameters=[OpenApiParameter("id", int, OpenApiParameter.PATH)],
-        responses={200: StudentDetailSerializer},
+        responses={
+            200: StudentDetailSerializer,
+            403: SelfRegistrationDisabledErrorSerializer,
+        },
     )
     @action(detail=True, methods=["post"], url_path="resolve_deleted")
     def resolve_deleted(self, request, pk=None):
@@ -463,6 +540,13 @@ class RegistrationRequestViewSet(ModelViewSet):
         out = StudentDetailSerializer(result.student, context={"request": request})
         return Response(out.data, status=200)
 
+    @extend_schema(
+        request=None,
+        responses={
+            200: RegistrationRequestRejectResponseSerializer,
+            403: SelfRegistrationDisabledErrorSerializer,
+        },
+    )
     @action(detail=True, methods=["post"])
     def reject(self, request, pk=None):
         """가입 신청 거절 → status=rejected."""
@@ -487,6 +571,13 @@ class RegistrationRequestViewSet(ModelViewSet):
             reg.save(update_fields=["status", "updated_at"])
         return Response({"status": "rejected", "id": reg.id}, status=200)
 
+    @extend_schema(
+        request=RegistrationRequestBulkIdsSerializer,
+        responses={
+            200: RegistrationRequestBulkRejectResponseSerializer,
+            403: SelfRegistrationDisabledErrorSerializer,
+        },
+    )
     @action(detail=False, methods=["post"], url_path="bulk_reject")
     def bulk_reject(self, request):
         """

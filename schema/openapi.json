@@ -1710,6 +1710,13 @@
         ],
         "type": "object"
       },
+      "CodeEnum": {
+        "description": "* `self_registration_disabled` - self_registration_disabled",
+        "enum": [
+          "self_registration_disabled"
+        ],
+        "type": "string"
+      },
       "CorrectionStatusEnum": {
         "description": "* `PENDING` - PENDING\n* `COMPLETED` - COMPLETED\n* `NOT_REQUIRED` - NOT_REQUIRED",
         "enum": [
@@ -7957,96 +7964,10 @@
         },
         "type": "object"
       },
-      "PatchedRegistrationRequestListRequest": {
-        "description": "스태프용 가입 신청 목록/상세 (initial_password 제외)",
+      "PatchedRegistrationRequestSettingsRequest": {
         "properties": {
-          "address": {
-            "description": "주소 (선택)",
-            "maxLength": 255,
-            "nullable": true,
-            "type": "string"
-          },
-          "elementary_school": {
-            "maxLength": 100,
-            "nullable": true,
-            "type": "string"
-          },
-          "gender": {
-            "maxLength": 1,
-            "nullable": true,
-            "type": "string"
-          },
-          "grade": {
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "nullable": true,
-            "type": "integer"
-          },
-          "high_school": {
-            "maxLength": 100,
-            "nullable": true,
-            "type": "string"
-          },
-          "high_school_class": {
-            "maxLength": 100,
-            "nullable": true,
-            "type": "string"
-          },
-          "major": {
-            "maxLength": 50,
-            "nullable": true,
-            "type": "string"
-          },
-          "memo": {
-            "nullable": true,
-            "type": "string"
-          },
-          "middle_school": {
-            "maxLength": 100,
-            "nullable": true,
-            "type": "string"
-          },
-          "name": {
-            "maxLength": 50,
-            "minLength": 1,
-            "type": "string"
-          },
-          "origin_middle_school": {
-            "description": "출신중학교 (고등학생 선택 입력)",
-            "maxLength": 100,
-            "nullable": true,
-            "type": "string"
-          },
-          "parent_phone": {
-            "maxLength": 20,
-            "minLength": 1,
-            "type": "string"
-          },
-          "phone": {
-            "maxLength": 20,
-            "nullable": true,
-            "type": "string"
-          },
-          "school_type": {
-            "maxLength": 12,
-            "minLength": 1,
-            "type": "string"
-          },
-          "status": {
-            "$ref": "#/components/schemas/RegistrationRequestListStatusEnum"
-          },
-          "student": {
-            "nullable": true,
-            "type": "integer"
-          },
-          "tenant": {
-            "type": "integer"
-          },
-          "username": {
-            "description": "희망 로그인 아이디 (비어 있으면 승인 시 자동 부여)",
-            "maxLength": 50,
-            "type": "string"
+          "auto_approve": {
+            "type": "boolean"
           }
         },
         "type": "object"
@@ -10835,93 +10756,79 @@
         ],
         "type": "string"
       },
-      "RegistrationRequestCreate": {
-        "description": "학생이 로그인 페이지에서 제출하는 가입 신청 (필수 필드만)",
+      "RegistrationRequestAvailability": {
         "properties": {
-          "address": {
-            "default": "",
-            "maxLength": 255,
-            "nullable": true,
-            "type": "string"
+          "available": {
+            "type": "boolean"
           },
-          "elementary_school": {
-            "default": "",
-            "nullable": true,
-            "type": "string"
-          },
-          "gender": {
-            "default": "",
-            "maxLength": 1,
-            "nullable": true,
-            "type": "string"
-          },
-          "grade": {
-            "nullable": true,
-            "type": "integer"
-          },
-          "high_school": {
-            "default": "",
-            "nullable": true,
-            "type": "string"
-          },
-          "high_school_class": {
-            "default": "",
-            "nullable": true,
-            "type": "string"
-          },
-          "major": {
-            "default": "",
-            "nullable": true,
-            "type": "string"
-          },
-          "memo": {
-            "default": "",
-            "nullable": true,
-            "type": "string"
-          },
-          "middle_school": {
-            "default": "",
-            "nullable": true,
-            "type": "string"
-          },
-          "name": {
-            "maxLength": 50,
-            "type": "string"
-          },
-          "origin_middle_school": {
-            "default": "",
-            "maxLength": 100,
-            "nullable": true,
-            "type": "string"
-          },
-          "parent_phone": {
-            "maxLength": 20,
-            "type": "string"
-          },
-          "phone": {
-            "default": "",
-            "maxLength": 20,
-            "nullable": true,
-            "type": "string"
-          },
-          "school_type": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/SchoolTypeEnum"
-              }
-            ],
-            "default": "HIGH"
-          },
-          "username": {
-            "default": "",
-            "maxLength": 50,
-            "nullable": true,
+          "reason": {
             "type": "string"
           }
         },
         "required": [
-          "name",
-          "parent_phone"
+          "available"
+        ],
+        "type": "object"
+      },
+      "RegistrationRequestBulkApproveResponse": {
+        "properties": {
+          "approved": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "failed": {
+            "items": {
+              "$ref": "#/components/schemas/RegistrationRequestBulkFailure"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "approved",
+          "failed"
+        ],
+        "type": "object"
+      },
+      "RegistrationRequestBulkFailure": {
+        "properties": {
+          "detail": {
+            "type": "string"
+          },
+          "id": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "detail",
+          "id"
+        ],
+        "type": "object"
+      },
+      "RegistrationRequestBulkIdsRequest": {
+        "properties": {
+          "ids": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "ids"
+        ],
+        "type": "object"
+      },
+      "RegistrationRequestBulkRejectResponse": {
+        "properties": {
+          "rejected": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rejected"
         ],
         "type": "object"
       },
@@ -11031,13 +10938,35 @@
         ],
         "type": "object"
       },
+      "RegistrationRequestDuplicateCheckRequestRequest": {
+        "properties": {
+          "phone": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "RegistrationRequestDuplicateCheckResponse": {
+        "properties": {
+          "phone": {
+            "$ref": "#/components/schemas/RegistrationRequestAvailability"
+          },
+          "username": {
+            "$ref": "#/components/schemas/RegistrationRequestAvailability"
+          }
+        },
+        "type": "object"
+      },
       "RegistrationRequestList": {
         "description": "스태프용 가입 신청 목록/상세 (initial_password 제외)",
         "properties": {
           "address": {
             "description": "주소 (선택)",
-            "maxLength": 255,
             "nullable": true,
+            "readOnly": true,
             "type": "string"
           },
           "created_at": {
@@ -11046,30 +10975,28 @@
             "type": "string"
           },
           "elementary_school": {
-            "maxLength": 100,
             "nullable": true,
+            "readOnly": true,
             "type": "string"
           },
           "gender": {
-            "maxLength": 1,
             "nullable": true,
+            "readOnly": true,
             "type": "string"
           },
           "grade": {
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
             "nullable": true,
+            "readOnly": true,
             "type": "integer"
           },
           "high_school": {
-            "maxLength": 100,
             "nullable": true,
+            "readOnly": true,
             "type": "string"
           },
           "high_school_class": {
-            "maxLength": 100,
             "nullable": true,
+            "readOnly": true,
             "type": "string"
           },
           "id": {
@@ -11077,50 +11004,58 @@
             "type": "integer"
           },
           "major": {
-            "maxLength": 50,
             "nullable": true,
+            "readOnly": true,
             "type": "string"
           },
           "memo": {
             "nullable": true,
+            "readOnly": true,
             "type": "string"
           },
           "middle_school": {
-            "maxLength": 100,
             "nullable": true,
+            "readOnly": true,
             "type": "string"
           },
           "name": {
-            "maxLength": 50,
+            "readOnly": true,
             "type": "string"
           },
           "origin_middle_school": {
             "description": "출신중학교 (고등학생 선택 입력)",
-            "maxLength": 100,
             "nullable": true,
+            "readOnly": true,
             "type": "string"
           },
           "parent_phone": {
-            "maxLength": 20,
+            "readOnly": true,
             "type": "string"
           },
           "phone": {
-            "maxLength": 20,
             "nullable": true,
+            "readOnly": true,
             "type": "string"
           },
           "school_type": {
-            "maxLength": 12,
+            "readOnly": true,
             "type": "string"
           },
           "status": {
-            "$ref": "#/components/schemas/RegistrationRequestListStatusEnum"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RegistrationRequestListStatusEnum"
+              }
+            ],
+            "readOnly": true
           },
           "student": {
             "nullable": true,
+            "readOnly": true,
             "type": "integer"
           },
           "tenant": {
+            "readOnly": true,
             "type": "integer"
           },
           "updated_at": {
@@ -11130,116 +11065,32 @@
           },
           "username": {
             "description": "희망 로그인 아이디 (비어 있으면 승인 시 자동 부여)",
-            "maxLength": 50,
+            "readOnly": true,
             "type": "string"
           }
         },
         "required": [
+          "address",
           "created_at",
+          "elementary_school",
+          "gender",
+          "grade",
+          "high_school",
+          "high_school_class",
           "id",
+          "major",
+          "memo",
+          "middle_school",
           "name",
+          "origin_middle_school",
           "parent_phone",
+          "phone",
+          "school_type",
+          "status",
+          "student",
           "tenant",
-          "updated_at"
-        ],
-        "type": "object"
-      },
-      "RegistrationRequestListRequest": {
-        "description": "스태프용 가입 신청 목록/상세 (initial_password 제외)",
-        "properties": {
-          "address": {
-            "description": "주소 (선택)",
-            "maxLength": 255,
-            "nullable": true,
-            "type": "string"
-          },
-          "elementary_school": {
-            "maxLength": 100,
-            "nullable": true,
-            "type": "string"
-          },
-          "gender": {
-            "maxLength": 1,
-            "nullable": true,
-            "type": "string"
-          },
-          "grade": {
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "nullable": true,
-            "type": "integer"
-          },
-          "high_school": {
-            "maxLength": 100,
-            "nullable": true,
-            "type": "string"
-          },
-          "high_school_class": {
-            "maxLength": 100,
-            "nullable": true,
-            "type": "string"
-          },
-          "major": {
-            "maxLength": 50,
-            "nullable": true,
-            "type": "string"
-          },
-          "memo": {
-            "nullable": true,
-            "type": "string"
-          },
-          "middle_school": {
-            "maxLength": 100,
-            "nullable": true,
-            "type": "string"
-          },
-          "name": {
-            "maxLength": 50,
-            "minLength": 1,
-            "type": "string"
-          },
-          "origin_middle_school": {
-            "description": "출신중학교 (고등학생 선택 입력)",
-            "maxLength": 100,
-            "nullable": true,
-            "type": "string"
-          },
-          "parent_phone": {
-            "maxLength": 20,
-            "minLength": 1,
-            "type": "string"
-          },
-          "phone": {
-            "maxLength": 20,
-            "nullable": true,
-            "type": "string"
-          },
-          "school_type": {
-            "maxLength": 12,
-            "minLength": 1,
-            "type": "string"
-          },
-          "status": {
-            "$ref": "#/components/schemas/RegistrationRequestListStatusEnum"
-          },
-          "student": {
-            "nullable": true,
-            "type": "integer"
-          },
-          "tenant": {
-            "type": "integer"
-          },
-          "username": {
-            "description": "희망 로그인 아이디 (비어 있으면 승인 시 자동 부여)",
-            "maxLength": 50,
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "parent_phone",
-          "tenant"
+          "updated_at",
+          "username"
         ],
         "type": "object"
       },
@@ -11251,6 +11102,40 @@
           "rejected"
         ],
         "type": "string"
+      },
+      "RegistrationRequestRejectResponse": {
+        "properties": {
+          "id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RegistrationRequestRejectResponseStatusEnum"
+          }
+        },
+        "required": [
+          "id",
+          "status"
+        ],
+        "type": "object"
+      },
+      "RegistrationRequestRejectResponseStatusEnum": {
+        "description": "* `rejected` - rejected",
+        "enum": [
+          "rejected"
+        ],
+        "type": "string"
+      },
+      "RegistrationRequestSettings": {
+        "properties": {
+          "auto_approve": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "auto_approve"
+        ],
+        "type": "object"
       },
       "ResultStatusEnum": {
         "description": "* `NOT_SUBMITTED` - NOT_SUBMITTED\n* `PROCESSING` - PROCESSING\n* `PARTIAL` - PARTIAL\n* `DONE` - DONE\n* `FAILED` - FAILED",
@@ -12109,6 +11994,21 @@
           "conversion_required"
         ],
         "type": "string"
+      },
+      "SelfRegistrationDisabledError": {
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/CodeEnum"
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "detail"
+        ],
+        "type": "object"
       },
       "SendToEnum": {
         "description": "* `student` - student\n* `parent` - parent\n* `both` - both",
@@ -45210,6 +45110,16 @@
               }
             },
             "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SelfRegistrationDisabledError"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [
@@ -45248,11 +45158,31 @@
           "required": true
         },
         "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentDetail"
+                }
+              }
+            },
+            "description": ""
+          },
           "201": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RegistrationRequestCreate"
+                  "$ref": "#/components/schemas/RegistrationRequestList"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SelfRegistrationDisabledError"
                 }
               }
             },
@@ -45275,17 +45205,17 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RegistrationRequestListRequest"
+                "$ref": "#/components/schemas/RegistrationRequestBulkIdsRequest"
               }
             },
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/RegistrationRequestListRequest"
+                "$ref": "#/components/schemas/RegistrationRequestBulkIdsRequest"
               }
             },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/RegistrationRequestListRequest"
+                "$ref": "#/components/schemas/RegistrationRequestBulkIdsRequest"
               }
             }
           },
@@ -45296,7 +45226,17 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RegistrationRequestList"
+                  "$ref": "#/components/schemas/RegistrationRequestBulkApproveResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SelfRegistrationDisabledError"
                 }
               }
             },
@@ -45324,17 +45264,17 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RegistrationRequestListRequest"
+                "$ref": "#/components/schemas/RegistrationRequestBulkIdsRequest"
               }
             },
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/RegistrationRequestListRequest"
+                "$ref": "#/components/schemas/RegistrationRequestBulkIdsRequest"
               }
             },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/RegistrationRequestListRequest"
+                "$ref": "#/components/schemas/RegistrationRequestBulkIdsRequest"
               }
             }
           },
@@ -45345,7 +45285,17 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RegistrationRequestList"
+                  "$ref": "#/components/schemas/RegistrationRequestBulkRejectResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SelfRegistrationDisabledError"
                 }
               }
             },
@@ -45373,28 +45323,37 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RegistrationRequestListRequest"
+                "$ref": "#/components/schemas/RegistrationRequestDuplicateCheckRequestRequest"
               }
             },
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/RegistrationRequestListRequest"
+                "$ref": "#/components/schemas/RegistrationRequestDuplicateCheckRequestRequest"
               }
             },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/RegistrationRequestListRequest"
+                "$ref": "#/components/schemas/RegistrationRequestDuplicateCheckRequestRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RegistrationRequestList"
+                  "$ref": "#/components/schemas/RegistrationRequestDuplicateCheckResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SelfRegistrationDisabledError"
                 }
               }
             },
@@ -45418,7 +45377,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RegistrationRequestList"
+                  "$ref": "#/components/schemas/RegistrationRequestSettings"
                 }
               }
             },
@@ -45444,17 +45403,17 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/PatchedRegistrationRequestListRequest"
+                "$ref": "#/components/schemas/PatchedRegistrationRequestSettingsRequest"
               }
             },
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/PatchedRegistrationRequestListRequest"
+                "$ref": "#/components/schemas/PatchedRegistrationRequestSettingsRequest"
               }
             },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/PatchedRegistrationRequestListRequest"
+                "$ref": "#/components/schemas/PatchedRegistrationRequestSettingsRequest"
               }
             }
           }
@@ -45464,7 +45423,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RegistrationRequestList"
+                  "$ref": "#/components/schemas/RegistrationRequestSettings"
                 }
               }
             },
@@ -45485,36 +45444,6 @@
       }
     },
     "/api/v1/students/registration_requests/{id}/": {
-      "delete": {
-        "description": "- create: AllowAny + TenantResolved (학생이 로그인 페이지에서 신청)\n- list / retrieve / approve: TenantResolvedAndStaff (선생이 가입신청 목록/승인)",
-        "operationId": "students_registration_requests_destroy",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "No response body"
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "students"
-        ]
-      },
       "get": {
         "description": "- create: AllowAny + TenantResolved (학생이 로그인 페이지에서 신청)\n- list / retrieve / approve: TenantResolvedAndStaff (선생이 가입신청 목록/승인)",
         "operationId": "students_registration_requests_retrieve",
@@ -45528,119 +45457,6 @@
             }
           }
         ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RegistrationRequestList"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "students"
-        ]
-      },
-      "patch": {
-        "description": "- create: AllowAny + TenantResolved (학생이 로그인 페이지에서 신청)\n- list / retrieve / approve: TenantResolvedAndStaff (선생이 가입신청 목록/승인)",
-        "operationId": "students_registration_requests_partial_update",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchedRegistrationRequestListRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchedRegistrationRequestListRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchedRegistrationRequestListRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RegistrationRequestList"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "students"
-        ]
-      },
-      "put": {
-        "description": "- create: AllowAny + TenantResolved (학생이 로그인 페이지에서 신청)\n- list / retrieve / approve: TenantResolvedAndStaff (선생이 가입신청 목록/승인)",
-        "operationId": "students_registration_requests_update",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RegistrationRequestListRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/RegistrationRequestListRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/RegistrationRequestListRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "content": {
@@ -45691,6 +45507,16 @@
             },
             "description": ""
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SelfRegistrationDisabledError"
+                }
+              }
+            },
+            "description": ""
+          },
           "409": {
             "content": {
               "application/json": {
@@ -45729,32 +45555,22 @@
             }
           }
         ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RegistrationRequestListRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/RegistrationRequestListRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/RegistrationRequestListRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RegistrationRequestList"
+                  "$ref": "#/components/schemas/RegistrationRequestRejectResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SelfRegistrationDisabledError"
                 }
               }
             },
@@ -45814,6 +45630,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/StudentDetail"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SelfRegistrationDisabledError"
                 }
               }
             },
