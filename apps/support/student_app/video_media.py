@@ -29,7 +29,10 @@ class PlaybackAccessGrant:
 def bounded_inactive_media_expiry(entitlement, *, now=None) -> int:
     """Bound inactive media to the access TTL and optional entitlement expiry."""
     now = now or timezone.now()
-    ttl = max(1, int(getattr(settings, "VIDEO_PLAYBACK_TTL_SECONDS", 600)))
+    ttl = min(
+        600,
+        max(1, int(getattr(settings, "VIDEO_PLAYBACK_TTL_SECONDS", 600))),
+    )
     expires_at = int(now.timestamp()) + ttl
     entitlement_expiry = getattr(entitlement, "expires_at", None)
     if entitlement_expiry is not None:

@@ -802,9 +802,9 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
     @override_settings(
         CDN_HLS_BASE_URL="https://cdn.example.test",
         CDN_HLS_SIGNING_SECRET="inactive-entitlement-test-secret",
-        VIDEO_PLAYBACK_TTL_SECONDS=600,
+        VIDEO_PLAYBACK_TTL_SECONDS=3600,
     )
-    def test_inactive_media_urls_and_token_are_bounded_and_revoke_blocks_new_grants(self):
+    def test_inactive_media_urls_and_token_clamp_config_drift_and_revoke(self):
         staff = User.objects.create_user(
             username="student-video-entitlement-bounded-media-staff",
             password="testpass123",
@@ -823,7 +823,7 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         )
         self.target_enrollment.status = "INACTIVE"
         self.target_enrollment.save(update_fields=["status"])
-        expires_at = timezone.now() + timedelta(seconds=120)
+        expires_at = timezone.now() + timedelta(hours=2)
         entitlement = InactiveVideoEntitlement.objects.create(
             tenant=self.tenant,
             student=self.student,
@@ -861,6 +861,7 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         ):
             self.assertGreater(bounded_expiry, now_timestamp)
             self.assertLessEqual(bounded_expiry, entitlement_expiry)
+            self.assertLessEqual(bounded_expiry, now_timestamp + 600)
 
         revoke_request = self.factory.post(
             f"/api/v1/media/inactive-video-entitlements/{entitlement.id}/revoke/",
