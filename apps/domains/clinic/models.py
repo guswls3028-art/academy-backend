@@ -71,6 +71,12 @@ class Session(TimestampModel):
 
     memo = models.TextField(blank=True, default="", help_text="세션 메모 (운영용)")
 
+    allow_time_preference = models.BooleanField(
+        default=False,
+        db_default=False,
+        help_text="학생이 세션 범위 안의 희망 시작·종료 시각을 요청할 수 있으면 True.",
+    )
+
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
@@ -214,6 +220,28 @@ class SessionParticipant(TimestampModel):
     )
 
     memo = models.TextField(blank=True, null=True)
+    student_request_memo = models.TextField(
+        blank=True,
+        default="",
+        db_default="",
+        help_text="학생·학부모가 남긴 요청사항. 작성 출처가 명확한 경우에만 저장.",
+    )
+    preferred_start_time = models.TimeField(
+        null=True,
+        blank=True,
+        help_text="세션 안에서 요청한 희망 시작 시각. 실제 예약 시작 시각과 별개.",
+    )
+    preferred_end_time = models.TimeField(
+        null=True,
+        blank=True,
+        help_text="세션 안에서 요청한 희망 종료 시각. 실제 예약 종료 시각과 별개.",
+    )
+    staff_memo = models.TextField(
+        blank=True,
+        default="",
+        db_default="",
+        help_text="학생·학부모에게 노출하지 않는 교직원 인수인계 메모",
+    )
 
     class Meta:
         constraints = [

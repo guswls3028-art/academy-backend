@@ -1413,6 +1413,8 @@ class ParticipantStatusTransitionAPITest(APITestCase, ClinicAPITestMixin):
             self.student,
             status="booked",
         )
+        participant.student_request_memo = "8시까지 끝내주세요."
+        participant.save(update_fields=["student_request_memo"])
 
         resp = self.client.patch(
             f"/api/v1/clinic/participants/{participant.id}/set_status/",
@@ -1424,7 +1426,8 @@ class ParticipantStatusTransitionAPITest(APITestCase, ClinicAPITestMixin):
         self.assertEqual(resp.status_code, 200, resp.data)
         participant.refresh_from_db()
         self.assertEqual(participant.status, "no_show")
-        self.assertEqual(participant.memo, "결석")
+        self.assertEqual(participant.student_request_memo, "8시까지 끝내주세요.")
+        self.assertEqual(participant.staff_memo, "결석")
         self.assertEqual(participant.status_changed_by_id, self.admin.id)
 
     def test_staff_can_approve_pending_booking(self):
@@ -1890,7 +1893,10 @@ class StudentClinicBookingChangeAPITest(APITestCase, ClinicAPITestMixin):
 
         resp = self.client.post(
             f"/api/v1/clinic/participants/{old_booking.id}/change-booking/",
-            {"new_session_id": str(new_session.id), "memo": "시간 변경"},
+            {
+                "new_session_id": str(new_session.id),
+                "student_request_memo": "시간 변경",
+            },
             format="json",
             **self._headers(self.tenant),
         )
@@ -1904,7 +1910,7 @@ class StudentClinicBookingChangeAPITest(APITestCase, ClinicAPITestMixin):
         self.assertEqual(new_booking.session_id, new_session.id)
         self.assertEqual(new_booking.student_id, self.student.id)
         self.assertEqual(new_booking.status, SessionParticipant.Status.PENDING)
-        self.assertEqual(new_booking.memo, "시간 변경")
+        self.assertEqual(new_booking.student_request_memo, "시간 변경")
 
     def test_change_booking_rejects_malformed_session_id(self):
         old_booking = self._pending_booking()
@@ -1989,7 +1995,7 @@ class ParticipantWriteServiceNotificationTest(TestCase, ClinicTestMixin):
             new_session_id=str(new_session.id),
             request_student=self.student,
             actor=self.actor,
-            memo="변경 요청",
+            student_request_memo="변경 요청",
         )
 
         self.assertEqual(result.notification.trigger, "clinic_reservation_changed")

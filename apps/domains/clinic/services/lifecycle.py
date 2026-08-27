@@ -468,7 +468,7 @@ def change_participant_status(
     next_status: str,
     actor,
     request_student=None,
-    memo=None,
+    staff_memo=None,
     is_late: bool = False,
 ) -> ParticipantTransitionResult:
     allowed_statuses = {choice[0] for choice in SessionParticipant.Status.choices}
@@ -505,11 +505,11 @@ def change_participant_status(
     else:
         participant.checked_in_at = None
         participant.is_late = False
-    if memo is not None:
-        participant.memo = memo
+    if staff_memo is not None:
+        participant.staff_memo = staff_memo
     update_fields = [
         "status",
-        "memo",
+        "staff_memo",
         "status_changed_at",
         "status_changed_by",
         "checked_in_at",
@@ -531,6 +531,14 @@ def change_participant_status(
         participant=participant,
         notification=_status_notification(participant, next_status, actor=actor),
     )
+
+
+@transaction.atomic
+def update_participant_staff_memo(*, tenant, participant_id: int, staff_memo: str):
+    participant = _locked_participant(tenant=tenant, participant_id=participant_id)
+    participant.staff_memo = staff_memo
+    participant.save(update_fields=["staff_memo", "updated_at"])
+    return participant
 
 
 @transaction.atomic
@@ -669,6 +677,42 @@ def _validate_student_session_eligibility(*, tenant, student, session) -> None:
             raise PermissionDenied("해당 클리닉은 특정 강의 수강생 대상입니다.")
 
 
+def _validated_time_preference(
+    *,
+    session: Session | None,
+    preferred_start_time,
+    preferred_end_time,
+) -> tuple[datetime.time | None, datetime.time | None]:
+    if preferred_start_time is None and preferred_end_time is None:
+        return None, None
+    if preferred_start_time is None or preferred_end_time is None:
+        raise ValidationError(
+            {"preferred_time": "희망 시작과 종료 시간을 함께 입력해 주세요."}
+        )
+    if session is None or not session.allow_time_preference:
+        raise ValidationError(
+            {"preferred_time": "이 클리닉은 희망 시간을 받지 않습니다."}
+        )
+
+    session_start = datetime.datetime.combine(session.date, session.start_time)
+    session_end = session_start + datetime.timedelta(minutes=session.duration_minutes)
+    preferred_start = datetime.datetime.combine(session.date, preferred_start_time)
+    preferred_end = datetime.datetime.combine(session.date, preferred_end_time)
+    if session_end.date() != session.date:
+        raise ValidationError(
+            {"preferred_time": "자정을 넘는 클리닉은 희망 시간 입력을 지원하지 않습니다."}
+        )
+    if not session_start <= preferred_start < preferred_end <= session_end:
+        raise ValidationError(
+            {
+                "preferred_time": (
+                    "희망 시간은 클리닉 운영 시간 안에서 시작이 종료보다 빨라야 합니다."
+                )
+            }
+        )
+    return preferred_start_time, preferred_end_time
+
+
 def _preferred_active_enrollment_id(
     *,
     tenant,
@@ -753,6 +797,7 @@ def create_participant(
     source = validated_data.get("source") or SessionParticipant.Source.MANUAL
     requested_status = validated_data.get("status")
     memo = validated_data.get("memo") or ""
+    student_request_memo = validated_data.get("student_request_memo") or ""
 
     if not session and not (requested_date and requested_start_time):
         raise ValidationError({"detail": "session 또는 (requested_date + requested_start_time) 중 하나는 필수입니다."})
@@ -774,6 +819,9 @@ def create_participant(
         requested_status = SessionParticipant.Status.PENDING
         if getattr(tenant, "clinic_auto_approve_booking", False):
             requested_status = SessionParticipant.Status.BOOKED
+        if not student_request_memo:
+            student_request_memo = memo
+        memo = ""
 
     if not student and enrollment_id:
         enrollment = clinic_enrollment_for_tenant(tenant, enrollment_id)
@@ -797,6 +845,12 @@ def create_participant(
             .get(pk=session.pk)
         )
         _assert_session_capacity(tenant=tenant, session=session)
+
+    preferred_start_time, preferred_end_time = _validated_time_preference(
+        session=session,
+        preferred_start_time=validated_data.get("preferred_start_time"),
+        preferred_end_time=validated_data.get("preferred_end_time"),
+    )
 
     _assert_no_active_duplicate(
         tenant=tenant,
@@ -849,6 +903,9 @@ def create_participant(
             participant_role=participant_role,
             clinic_reason=clinic_reason,
             memo=memo,
+            student_request_memo=student_request_memo,
+            preferred_start_time=preferred_start_time,
+            preferred_end_time=preferred_end_time,
         )
     except IntegrityError as exc:
         raise Conflict("이미 해당 세션에 예약된 학생입니다.") from exc
@@ -868,6 +925,9 @@ def change_participant_booking(
     request_student,
     actor,
     memo=None,
+    student_request_memo=None,
+    preferred_start_time=None,
+    preferred_end_time=None,
 ) -> ParticipantWriteResult:
     if not new_session_id:
         raise ValidationError({"detail": "new_session_id가 필요합니다."})
@@ -914,10 +974,26 @@ def change_participant_booking(
     _validate_student_session_eligibility(tenant=tenant, student=booking_student, session=new_session)
     _assert_session_capacity(tenant=tenant, session=new_session)
     _assert_no_active_duplicate(tenant=tenant, student=booking_student, session=new_session)
+    preferred_start_time, preferred_end_time = _validated_time_preference(
+        session=new_session,
+        preferred_start_time=preferred_start_time,
+        preferred_end_time=preferred_end_time,
+    )
 
     new_status = SessionParticipant.Status.BOOKED if is_staff_change else SessionParticipant.Status.PENDING
     if not is_staff_change and getattr(tenant, "clinic_auto_approve_booking", False):
         new_status = SessionParticipant.Status.BOOKED
+
+    if is_staff_change:
+        next_student_request_memo = old_booking.student_request_memo
+        next_staff_memo = memo if memo is not None else old_booking.staff_memo
+    else:
+        next_student_request_memo = student_request_memo
+        if next_student_request_memo is None:
+            next_student_request_memo = memo
+        if next_student_request_memo is None:
+            next_student_request_memo = old_booking.student_request_memo
+        next_staff_memo = old_booking.staff_memo
 
     enrollment_id = _preferred_active_enrollment_id(
         tenant=tenant,
@@ -939,7 +1015,11 @@ def change_participant_booking(
             ),
             enrollment_id=enrollment_id,
             participant_role="manual",
-            memo=memo or "",
+            memo=old_booking.memo or "",
+            student_request_memo=next_student_request_memo or "",
+            staff_memo=next_staff_memo or "",
+            preferred_start_time=preferred_start_time,
+            preferred_end_time=preferred_end_time,
         )
     except IntegrityError as exc:
         raise Conflict("이미 해당 세션에 예약된 학생입니다.") from exc

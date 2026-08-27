@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta
 from rest_framework import serializers
 from .models import Session, SessionParticipant, Test, Submission
+from apps.core.permissions import is_effective_staff
 from apps.support.clinic.session_dependencies import (
     active_students_for_clinic_tenant,
     empty_enrollment_queryset,
@@ -120,6 +121,9 @@ class ClinicSessionSerializer(serializers.ModelSerializer):
 
 
 class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
+    preferred_start_time = serializers.TimeField(read_only=True)
+    preferred_end_time = serializers.TimeField(read_only=True)
+    student_request_memo = serializers.CharField(read_only=True)
     student_name = serializers.CharField(source="student.name", read_only=True)
     session_date = serializers.SerializerMethodField()  # ✅ session이 없을 수 있으므로 SerializerMethodField 사용
     session_start_time = serializers.SerializerMethodField()
@@ -167,6 +171,17 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             "enrollment": {"write_only": True, "required": False},
         }
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get("request")
+        if request is None or not is_effective_staff(
+            getattr(request, "user", None),
+            getattr(request, "tenant", None),
+        ):
+            data.pop("staff_memo", None)
+            data.pop("memo", None)
+        return data
 
     def get_session_date(self, obj):
         """session이 있으면 session.date, 없으면 requested_date"""
@@ -306,6 +321,9 @@ class ClinicSessionParticipantCreateSerializer(serializers.ModelSerializer):
             "session",
             "requested_date",  # ✅ 학생 신청 시 날짜
             "requested_start_time",  # ✅ 학생 신청 시 시간
+            "preferred_start_time",
+            "preferred_end_time",
+            "student_request_memo",
             "student",
             "status",
             "memo",

@@ -28,6 +28,7 @@ from ..services import (
     create_participant,
     replace_participant_clinic_plan,
     uncomplete_participant,
+    update_participant_staff_memo,
 )
 
 from apps.core.permissions import TenantResolvedAndMember, TenantResolvedAndStaff
@@ -61,6 +62,10 @@ class ClinicReminderResponseSerializer(serializers.Serializer):
     scheduled = serializers.IntegerField(required=False)
     skipped = serializers.IntegerField(required=False)
     detail = serializers.CharField(required=False)
+
+
+class ClinicStaffMemoSerializer(serializers.Serializer):
+    staff_memo = serializers.CharField(allow_blank=True, max_length=2000)
 
 
 class ClinicPlanReplaceSerializer(serializers.Serializer):
@@ -176,6 +181,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             "replace_planned_clinic_links",
             "uncomplete",
             "remind",
+            "set_staff_memo",
         ):
             return [TenantResolvedAndStaff()]
         return [IsAuthenticated(), TenantResolvedAndMember()]
@@ -227,6 +233,22 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             return ClinicSessionParticipantCreateSerializer
         return ClinicSessionParticipantSerializer
 
+    def update(self, request, *args, **kwargs):
+        protected_fields = (
+            "preferred_start_time",
+            "preferred_end_time",
+            "student_request_memo",
+        )
+        blocked = [field for field in protected_fields if field in request.data]
+        if blocked:
+            raise serializers.ValidationError(
+                {
+                    field: "예약 생성 또는 일정 변경 API에서만 수정할 수 있습니다."
+                    for field in blocked
+                }
+            )
+        return super().update(request, *args, **kwargs)
+
     def create(self, request, *args, **kwargs):
         """
         ✅ 예약 생성
@@ -276,7 +298,6 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         - 선생: 모든 상태 변경 가능
         """
         next_status = request.data.get("status")
-        memo = request.data.get("memo")
         send_to = _validated_send_to(request, default="parent")
         try:
             is_late = serializers.BooleanField().run_validation(
@@ -292,6 +313,9 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         request_student = _get_request_student_for_clinic(request)
         if request_student is None and not TenantResolvedAndStaff().has_permission(request, self):
             raise PermissionDenied("클리닉 상태 변경은 스태프만 가능합니다.")
+        staff_memo = None
+        if request_student is None:
+            staff_memo = request.data.get("staff_memo", request.data.get("memo"))
 
         result = change_participant_status(
             tenant=getattr(request, "tenant", None),
@@ -299,7 +323,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             next_status=next_status,
             actor=request.user,
             request_student=request_student,
-            memo=memo,
+            staff_memo=staff_memo,
             is_late=is_late,
         )
         obj = result.participant
@@ -320,6 +344,27 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         if obj.status == SessionParticipant.Status.ATTENDED:
             out["attendance_label"] = "지각 등원" if obj.is_late else "등원"
         return Response(out)
+
+    @extend_schema(
+        request=ClinicStaffMemoSerializer,
+        parameters=[OpenApiParameter("id", OpenApiTypes.INT, OpenApiParameter.PATH)],
+        responses={200: ClinicSessionParticipantSerializer},
+    )
+    @action(detail=True, methods=["patch"], url_path="staff-memo")
+    def set_staff_memo(self, request, pk=None):
+        payload = ClinicStaffMemoSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        participant = update_participant_staff_memo(
+            tenant=getattr(request, "tenant", None),
+            participant_id=self.get_object().pk,
+            staff_memo=payload.validated_data["staff_memo"],
+        )
+        return Response(
+            ClinicSessionParticipantSerializer(
+                participant,
+                context={"request": request},
+            ).data
+        )
 
     @action(detail=True, methods=["post"])
     def complete(self, request, pk=None):
@@ -494,10 +539,20 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         Atomic booking change: secure new session first, then cancel old.
         If new booking fails, old booking is preserved (transaction rollback).
 
-        Request body: { "new_session_id": int, "memo": str (optional) }
+        Request body: { "new_session_id": int, "student_request_memo": str (optional) }
         """
         new_session_id = request.data.get("new_session_id")
         memo = request.data.get("memo")
+        student_request_memo = request.data.get("student_request_memo")
+        try:
+            preferred_start_time = serializers.TimeField(
+                required=False, allow_null=True
+            ).run_validation(request.data.get("preferred_start_time"))
+            preferred_end_time = serializers.TimeField(
+                required=False, allow_null=True
+            ).run_validation(request.data.get("preferred_end_time"))
+        except serializers.ValidationError as exc:
+            raise serializers.ValidationError({"preferred_time": exc.detail}) from exc
         send_to = _validated_send_to(request, default="parent")
 
         tenant = getattr(request, "tenant", None)
@@ -514,6 +569,9 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             request_student=_get_request_student_for_clinic(request),
             actor=request.user,
             memo=memo,
+            student_request_memo=student_request_memo,
+            preferred_start_time=preferred_start_time,
+            preferred_end_time=preferred_end_time,
         )
         new_booking = result.participant
         notification_result = None

@@ -794,6 +794,10 @@
       },
       "ClinicSession": {
         "properties": {
+          "allow_time_preference": {
+            "description": "학생이 세션 범위 안의 희망 시작·종료 시각을 요청할 수 있으면 True.",
+            "type": "boolean"
+          },
           "available_slots": {
             "readOnly": true,
             "type": "string"
@@ -1052,6 +1056,16 @@
             "readOnly": true,
             "type": "array"
           },
+          "preferred_end_time": {
+            "format": "time",
+            "readOnly": true,
+            "type": "string"
+          },
+          "preferred_start_time": {
+            "format": "time",
+            "readOnly": true,
+            "type": "string"
+          },
           "profile_photo_url": {
             "readOnly": true,
             "type": "string"
@@ -1097,6 +1111,10 @@
           "source": {
             "$ref": "#/components/schemas/SourceD60Enum"
           },
+          "staff_memo": {
+            "description": "학생·학부모에게 노출하지 않는 교직원 인수인계 메모",
+            "type": "string"
+          },
           "status": {
             "allOf": [
               {
@@ -1125,6 +1143,10 @@
             "readOnly": true,
             "type": "string"
           },
+          "student_request_memo": {
+            "readOnly": true,
+            "type": "string"
+          },
           "tenant": {
             "type": "integer"
           },
@@ -1145,6 +1167,8 @@
           "lecture_title",
           "name_highlight_clinic_target",
           "planned_clinic_link_ids",
+          "preferred_end_time",
+          "preferred_start_time",
           "profile_photo_url",
           "session_date",
           "session_duration_minutes",
@@ -1155,6 +1179,7 @@
           "status_changed_by_name",
           "student",
           "student_name",
+          "student_request_memo",
           "tenant",
           "updated_at"
         ],
@@ -1188,6 +1213,18 @@
           "participant_role": {
             "$ref": "#/components/schemas/ParticipantRoleEnum"
           },
+          "preferred_end_time": {
+            "description": "세션 안에서 요청한 희망 종료 시각. 실제 예약 종료 시각과 별개.",
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
+          "preferred_start_time": {
+            "description": "세션 안에서 요청한 희망 시작 시각. 실제 예약 시작 시각과 별개.",
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
           "requested_date": {
             "format": "date",
             "nullable": true,
@@ -1210,6 +1247,10 @@
           },
           "student": {
             "type": "integer"
+          },
+          "student_request_memo": {
+            "description": "학생·학부모가 남긴 요청사항. 작성 출처가 명확한 경우에만 저장.",
+            "type": "string"
           }
         },
         "type": "object"
@@ -1242,6 +1283,18 @@
           "participant_role": {
             "$ref": "#/components/schemas/ParticipantRoleEnum"
           },
+          "preferred_end_time": {
+            "description": "세션 안에서 요청한 희망 종료 시각. 실제 예약 종료 시각과 별개.",
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
+          "preferred_start_time": {
+            "description": "세션 안에서 요청한 희망 시작 시각. 실제 예약 시작 시각과 별개.",
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
           "requested_date": {
             "format": "date",
             "nullable": true,
@@ -1264,6 +1317,10 @@
           },
           "student": {
             "type": "integer"
+          },
+          "student_request_memo": {
+            "description": "학생·학부모가 남긴 요청사항. 작성 출처가 명확한 경우에만 저장.",
+            "type": "string"
           }
         },
         "type": "object"
@@ -1341,6 +1398,10 @@
           "source": {
             "$ref": "#/components/schemas/SourceD60Enum"
           },
+          "staff_memo": {
+            "description": "학생·학부모에게 노출하지 않는 교직원 인수인계 메모",
+            "type": "string"
+          },
           "status": {
             "allOf": [
               {
@@ -1373,6 +1434,10 @@
       },
       "ClinicSessionRequest": {
         "properties": {
+          "allow_time_preference": {
+            "description": "학생이 세션 범위 안의 희망 시작·종료 시각을 요청할 수 있으면 True.",
+            "type": "boolean"
+          },
           "date": {
             "format": "date",
             "type": "string"
@@ -6860,6 +6925,10 @@
           "source": {
             "$ref": "#/components/schemas/SourceD60Enum"
           },
+          "staff_memo": {
+            "description": "학생·학부모에게 노출하지 않는 교직원 인수인계 메모",
+            "type": "string"
+          },
           "status": {
             "allOf": [
               {
@@ -6888,6 +6957,10 @@
       },
       "PatchedClinicSessionRequest": {
         "properties": {
+          "allow_time_preference": {
+            "description": "학생이 세션 범위 안의 희망 시작·종료 시각을 요청할 수 있으면 True.",
+            "type": "boolean"
+          },
           "date": {
             "format": "date",
             "type": "string"
@@ -6959,6 +7032,15 @@
           },
           "title": {
             "maxLength": 255,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "PatchedClinicStaffMemoRequest": {
+        "properties": {
+          "staff_memo": {
+            "maxLength": 2000,
             "type": "string"
           }
         },
@@ -17953,7 +18035,7 @@
     },
     "/api/v1/clinic/participants/{id}/change-booking/": {
       "post": {
-        "description": "POST /clinic/participants/{id}/change-booking/\nAtomic booking change: secure new session first, then cancel old.\nIf new booking fails, old booking is preserved (transaction rollback).\n\nRequest body: { \"new_session_id\": int, \"memo\": str (optional) }",
+        "description": "POST /clinic/participants/{id}/change-booking/\nAtomic booking change: secure new session first, then cancel old.\nIf new booking fails, old booking is preserved (transaction rollback).\n\nRequest body: { \"new_session_id\": int, \"student_request_memo\": str (optional) }",
         "operationId": "clinic_participants_change_booking_create",
         "parameters": [
           {
@@ -18327,6 +18409,64 @@
             "multipart/form-data": {
               "schema": {
                 "$ref": "#/components/schemas/PatchedClinicSessionParticipantRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClinicSessionParticipant"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "clinic"
+        ]
+      }
+    },
+    "/api/v1/clinic/participants/{id}/staff-memo/": {
+      "patch": {
+        "description": "✅ 클리닉 예약 / 출석 / 미이행 / 취소 관리\n- 운영 핵심 엔드포인트",
+        "operationId": "clinic_participants_staff_memo_partial_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedClinicStaffMemoRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedClinicStaffMemoRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedClinicStaffMemoRequest"
               }
             }
           }
@@ -38517,7 +38657,7 @@
     },
     "/api/v1/results/admin/clinic-bookings/{id}/change-booking/": {
       "post": {
-        "description": "POST /clinic/participants/{id}/change-booking/\nAtomic booking change: secure new session first, then cancel old.\nIf new booking fails, old booking is preserved (transaction rollback).\n\nRequest body: { \"new_session_id\": int, \"memo\": str (optional) }",
+        "description": "POST /clinic/participants/{id}/change-booking/\nAtomic booking change: secure new session first, then cancel old.\nIf new booking fails, old booking is preserved (transaction rollback).\n\nRequest body: { \"new_session_id\": int, \"student_request_memo\": str (optional) }",
         "operationId": "results_admin_clinic_bookings_change_booking_create",
         "parameters": [
           {
@@ -38891,6 +39031,64 @@
             "multipart/form-data": {
               "schema": {
                 "$ref": "#/components/schemas/PatchedClinicSessionParticipantRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClinicSessionParticipant"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/api/v1/results/admin/clinic-bookings/{id}/staff-memo/": {
+      "patch": {
+        "description": "✅ 클리닉 예약 / 출석 / 미이행 / 취소 관리\n- 운영 핵심 엔드포인트",
+        "operationId": "results_admin_clinic_bookings_staff_memo_partial_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedClinicStaffMemoRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedClinicStaffMemoRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedClinicStaffMemoRequest"
               }
             }
           }
