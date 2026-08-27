@@ -9,10 +9,12 @@
 """
 
 import logging
+import re
 from datetime import date, timedelta
 from itertools import groupby
 from operator import attrgetter
 
+from django.apps import apps
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Sum, Q
 from django.utils import timezone
@@ -26,6 +28,26 @@ from ..models import (
 )
 
 logger = logging.getLogger(__name__)
+
+_BILLING_MONTH_PATTERN = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+
+
+def lock_student_fee_assignment_scopes(*, tenant, student_ids) -> list[int]:
+    """Lock fee assignment scopes in stable order inside an atomic transaction."""
+    ordered_ids = sorted(set(student_ids))
+    if not ordered_ids:
+        return []
+    student_model = apps.get_model("students", "Student")
+    locked_ids = list(
+        student_model.objects
+        .select_for_update()
+        .filter(tenant=tenant, id__in=ordered_ids, deleted_at__isnull=True)
+        .order_by("id")
+        .values_list("id", flat=True)
+    )
+    if locked_ids != ordered_ids:
+        raise ValueError("활성 학생 비용 잠금 범위가 현재 학원과 일치하지 않습니다.")
+    return locked_ids
 
 
 # ========================================================
@@ -94,43 +116,16 @@ def generate_monthly_invoices(
             tenant=tenant,
             is_active=True,
             fee_template__is_active=True,
+            student__deleted_at__isnull=True,
         )
         .select_related("student", "fee_template")
         .order_by("student_id")
     )
 
-    # 유효 기간 + ONE_TIME 중복 필터링
-    student_fees = []
-    # cancel된 invoice는 제외 — cancel 후 재청구 가능해야 한다.
-    one_time_already_billed = set(
-        InvoiceItem.objects
-        .filter(
-            tenant=tenant,
-            fee_template__billing_cycle=FeeTemplate.BillingCycle.ONE_TIME,
-            invoice__status__in=["PENDING", "PARTIAL", "PAID", "OVERDUE"],
-        )
-        .values_list("fee_template_id", "invoice__student_id")
-    )
-
-    one_time_dup_skipped = []  # silent skip 대신 errors로 보고할 수 있게 추적
-    for sf in all_student_fees:
-        # 유효 기간 체크
-        if sf.billing_start_month and billing_period < sf.billing_start_month:
-            continue
-        if sf.billing_end_month and billing_period > sf.billing_end_month:
-            continue
-
-        # ONE_TIME 중복 방지: 이미 청구된 적 있으면 skip + 보고
-        if sf.fee_template.billing_cycle == FeeTemplate.BillingCycle.ONE_TIME:
-            if (sf.fee_template_id, sf.student_id) in one_time_already_billed:
-                one_time_dup_skipped.append(
-                    f"{sf.student.name}: {sf.fee_template.name} (1회성, 이미 청구됨)"
-                )
-                continue
-
-        student_fees.append(sf)
-
-    result = {"created": 0, "skipped": 0, "errors": list(one_time_dup_skipped)}
+    # 이 조회는 학생별 후보 ID를 만드는 용도다. 기간, 청구 주기와 금액은
+    # StudentFee/FeeTemplate 잠금 뒤의 최신 행으로만 판단한다.
+    student_fees = list(all_student_fees)
+    result = {"created": 0, "skipped": 0, "errors": []}
 
     # 이미 청구서가 있는 학생 목록
     existing_student_ids = set(
@@ -157,7 +152,13 @@ def generate_monthly_invoices(
         for attempt in range(2):
             try:
                 with transaction.atomic():
-                    student = fees[0].student
+                    # StudentFee INSERT 자체는 기존 행 잠금으로 막을 수 없다. 모든
+                    # 배정 writer와 공유하는 학생 행을 먼저 잠근 뒤 현재 전체 배정을
+                    # 다시 읽어, 후보 스냅샷 이후 commit된 비용도 포함한다.
+                    lock_student_fee_assignment_scopes(
+                        tenant=tenant,
+                        student_ids=[student_id],
+                    )
                     exists_now = (
                         StudentInvoice.objects
                         .select_for_update()
@@ -174,7 +175,92 @@ def generate_monthly_invoices(
                         result["skipped"] += 1
                         break
 
-                    total = sum(sf.effective_amount for sf in fees)
+                    # 후보 조회 뒤 비용/할인/기간/template이 바뀔 수 있으므로,
+                    # 잠금 SELECT가 반환한 최신 행만으로 청구 자격과 금액을 다시
+                    # 계산한다. 서로 다른 청구월의 ONE_TIME 생성도 이 잠금으로
+                    # 직렬화한다.
+                    locked_fees = list(
+                        StudentFee.objects
+                        .select_for_update()
+                        .filter(tenant=tenant, student_id=student_id)
+                        .order_by("id")
+                    )
+                    template_ids = sorted({sf.fee_template_id for sf in locked_fees})
+                    locked_templates = {
+                        template.id: template
+                        for template in (
+                            FeeTemplate.objects
+                            .select_for_update()
+                            .filter(tenant=tenant, id__in=template_ids)
+                            .order_by("id")
+                        )
+                    }
+
+                    one_time_template_ids = [
+                        template.id
+                        for template in locked_templates.values()
+                        if template.billing_cycle
+                        == FeeTemplate.BillingCycle.ONE_TIME
+                    ]
+                    billed_one_time_template_ids = set()
+                    if one_time_template_ids:
+                        billed_one_time_template_ids = set(
+                            InvoiceItem.objects.filter(
+                                tenant=tenant,
+                                fee_template_id__in=one_time_template_ids,
+                                invoice__student_id=student_id,
+                                invoice__status__in=[
+                                    "PENDING", "PARTIAL", "PAID", "OVERDUE",
+                                ],
+                            ).values_list("fee_template_id", flat=True)
+                        )
+                    eligible_fees = []
+                    for sf in locked_fees:
+                        template = locked_templates.get(sf.fee_template_id)
+                        if (
+                            sf.student_id != student_id
+                            or not sf.is_active
+                            or template is None
+                            or not template.is_active
+                        ):
+                            continue
+                        invalid_months = [
+                            value
+                            for value in (sf.billing_start_month, sf.billing_end_month)
+                            if value and not _BILLING_MONTH_PATTERN.fullmatch(value)
+                        ]
+                        if invalid_months:
+                            result["errors"].append(
+                                f"{student_name}: {template.name} "
+                                f"(유효하지 않은 청구월: {', '.join(invalid_months)})"
+                            )
+                            continue
+                        if sf.billing_start_month and billing_period < sf.billing_start_month:
+                            continue
+                        if sf.billing_end_month and billing_period > sf.billing_end_month:
+                            continue
+                        if (
+                            template.billing_cycle
+                            == FeeTemplate.BillingCycle.ONE_TIME
+                            and template.id in billed_one_time_template_ids
+                        ):
+                            result["errors"].append(
+                                f"{student_name}: {template.name} (1회성, 이미 청구됨)"
+                            )
+                            continue
+                        base_amount = (
+                            sf.adjusted_amount
+                            if sf.adjusted_amount is not None
+                            else template.amount
+                        )
+                        effective_amount = max(0, base_amount - sf.discount_amount)
+                        eligible_fees.append((template, effective_amount))
+
+                    if not eligible_fees:
+                        result["skipped"] += 1
+                        break
+
+                    total = sum(amount for _template, amount in eligible_fees)
 
                     if total == 0:
                         result["skipped"] += 1
@@ -183,7 +269,7 @@ def generate_monthly_invoices(
                     inv_number = _next_invoice_number(tenant, billing_year, billing_month)
                     invoice = StudentInvoice.objects.create(
                         tenant=tenant,
-                        student=student,
+                        student_id=student_id,
                         invoice_number=inv_number,
                         billing_year=billing_year,
                         billing_month=billing_month,
@@ -193,13 +279,13 @@ def generate_monthly_invoices(
                     )
 
                     items = []
-                    for sf in fees:
+                    for template, amount in eligible_fees:
                         items.append(InvoiceItem(
                             tenant=tenant,
                             invoice=invoice,
-                            fee_template=sf.fee_template,
-                            description=sf.fee_template.name,
-                            amount=sf.effective_amount,
+                            fee_template=template,
+                            description=template.name,
+                            amount=amount,
                         ))
                     InvoiceItem.objects.bulk_create(items)
 
@@ -288,9 +374,17 @@ def record_payment(
             tenant=tenant,
             invoice=invoice,
             idempotency_key=idempotency_key,
-            status="SUCCESS",
         ).first()
         if existing:
+            if existing.status != "SUCCESS":
+                raise ValueError(
+                    "해당 idempotency_key는 이미 사용되어 취소/환불된 수납입니다. "
+                    "새 수납에는 새로운 키를 사용하세요."
+                )
+            if existing.amount != amount or existing.payment_method != payment_method:
+                raise ValueError(
+                    "동일한 idempotency_key의 기존 수납과 요청 정보가 일치하지 않습니다."
+                )
             logger.info(
                 "Duplicate payment blocked: tenant=%s invoice=%s existing_payment=%s",
                 tenant.id,
@@ -448,40 +542,45 @@ def auto_assign_fees_on_enrollment(tenant, student, lecture, enrollment):
     강의에 연결된 활성 FeeTemplate이 있으면 StudentFee를 자동 생성.
     이전 수강 종료로 비활성화된 동일 비목이 있으면 새 enrollment에 다시 연결한다.
     """
-    templates = FeeTemplate.objects.filter(
-        tenant=tenant,
-        lecture=lecture,
-        is_active=True,
-        auto_assign=True,
-    )
-
-    created_count = 0
-    for tmpl in templates:
-        student_fee, created = StudentFee.objects.get_or_create(
+    with transaction.atomic():
+        lock_student_fee_assignment_scopes(
             tenant=tenant,
-            student=student,
-            fee_template=tmpl,
-            defaults={
-                "enrollment": enrollment,
-                "is_active": True,
-            },
+            student_ids=[student.id],
         )
-        if created:
-            created_count += 1
-            continue
-        update_fields = []
-        if student_fee.enrollment_id != enrollment.id:
-            student_fee.enrollment = enrollment
-            update_fields.append("enrollment")
-        if not student_fee.is_active:
-            student_fee.is_active = True
-            update_fields.append("is_active")
-        if student_fee.billing_end_month:
-            student_fee.billing_end_month = ""
-            update_fields.append("billing_end_month")
-        if update_fields:
-            student_fee.save(update_fields=[*update_fields, "updated_at"])
-            created_count += 1
+        templates = FeeTemplate.objects.filter(
+            tenant=tenant,
+            lecture=lecture,
+            is_active=True,
+            auto_assign=True,
+        ).order_by("id")
+
+        created_count = 0
+        for tmpl in templates:
+            student_fee, created = StudentFee.objects.get_or_create(
+                tenant=tenant,
+                student=student,
+                fee_template=tmpl,
+                defaults={
+                    "enrollment": enrollment,
+                    "is_active": True,
+                },
+            )
+            if created:
+                created_count += 1
+                continue
+            update_fields = []
+            if student_fee.enrollment_id != enrollment.id:
+                student_fee.enrollment = enrollment
+                update_fields.append("enrollment")
+            if not student_fee.is_active:
+                student_fee.is_active = True
+                update_fields.append("is_active")
+            if student_fee.billing_end_month:
+                student_fee.billing_end_month = ""
+                update_fields.append("billing_end_month")
+            if update_fields:
+                student_fee.save(update_fields=[*update_fields, "updated_at"])
+                created_count += 1
 
     return created_count
 
@@ -583,13 +682,14 @@ def _recalculate_invoice(invoice: StudentInvoice):
         invoice.status = "PAID"
         if not invoice.paid_at:
             invoice.paid_at = timezone.now()
+    elif invoice.due_date < timezone.localdate():
+        invoice.status = "OVERDUE"
+        invoice.paid_at = None
     elif paid_sum > 0:
         invoice.status = "PARTIAL"
         invoice.paid_at = None
     else:
-        # 납부 없음 → 연체 상태는 유지, 아니면 PENDING
-        if invoice.status != "OVERDUE":
-            invoice.status = "PENDING"
+        invoice.status = "PENDING"
         invoice.paid_at = None
 
     invoice.save(update_fields=["paid_amount", "status", "paid_at", "updated_at"])

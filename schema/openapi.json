@@ -2790,7 +2790,7 @@
             "type": "string"
           },
           "payment_method": {
-            "$ref": "#/components/schemas/PaymentMethodEnum"
+            "$ref": "#/components/schemas/FeePaymentPaymentMethodEnum"
           },
           "payment_method_display": {
             "readOnly": true,
@@ -2839,45 +2839,15 @@
         ],
         "type": "object"
       },
-      "FeePaymentRequest": {
-        "properties": {
-          "amount": {
-            "description": "납부 금액 (원)",
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "invoice": {
-            "type": "integer"
-          },
-          "memo": {
-            "type": "string"
-          },
-          "paid_at": {
-            "description": "납부 일시",
-            "format": "date-time",
-            "type": "string"
-          },
-          "payment_method": {
-            "$ref": "#/components/schemas/PaymentMethodEnum"
-          },
-          "receipt_note": {
-            "description": "영수증 메모 / 입금자명",
-            "maxLength": 300,
-            "type": "string"
-          },
-          "status": {
-            "$ref": "#/components/schemas/FeePaymentStatusEnum"
-          }
-        },
-        "required": [
-          "amount",
-          "invoice",
-          "paid_at",
-          "payment_method"
+      "FeePaymentPaymentMethodEnum": {
+        "description": "* `CARD` - 카드\n* `BANK_TRANSFER` - 계좌이체\n* `CASH` - 현금\n* `OTHER` - 기타",
+        "enum": [
+          "CARD",
+          "BANK_TRANSFER",
+          "CASH",
+          "OTHER"
         ],
-        "type": "object"
+        "type": "string"
       },
       "FeePaymentStatusEnum": {
         "description": "* `SUCCESS` - 완료\n* `CANCELLED` - 취소\n* `REFUNDED` - 환불",
@@ -3079,6 +3049,54 @@
           "F"
         ],
         "type": "string"
+      },
+      "GenerateInvoicesRequest": {
+        "properties": {
+          "billing_month": {
+            "maximum": 12,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "billing_year": {
+            "maximum": 2100,
+            "minimum": 2020,
+            "type": "integer"
+          },
+          "due_date": {
+            "format": "date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "billing_month",
+          "billing_year",
+          "due_date"
+        ],
+        "type": "object"
+      },
+      "GenerateInvoicesResult": {
+        "properties": {
+          "created": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "errors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "skipped": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "created",
+          "errors",
+          "skipped"
+        ],
+        "type": "object"
       },
       "HandoffStatusEnum": {
         "description": "* `account_inactive` - account_inactive\n* `password_setup_required` - password_setup_required\n* `first_login_pending` - first_login_pending\n* `complete` - complete",
@@ -8872,16 +8890,6 @@
         ],
         "type": "string"
       },
-      "PaymentMethodEnum": {
-        "description": "* `CARD` - 카드\n* `BANK_TRANSFER` - 계좌이체\n* `CASH` - 현금\n* `OTHER` - 기타",
-        "enum": [
-          "CARD",
-          "BANK_TRANSFER",
-          "CASH",
-          "OTHER"
-        ],
-        "type": "string"
-      },
       "PayrollSnapshot": {
         "properties": {
           "approved_expense_amount": {
@@ -10755,6 +10763,55 @@
           "TEACHER_RECOMMEND"
         ],
         "type": "string"
+      },
+      "RecordPaymentPaymentMethodEnum": {
+        "description": "* `CARD` - CARD\n* `BANK_TRANSFER` - BANK_TRANSFER\n* `CASH` - CASH\n* `OTHER` - OTHER",
+        "enum": [
+          "CARD",
+          "BANK_TRANSFER",
+          "CASH",
+          "OTHER"
+        ],
+        "type": "string"
+      },
+      "RecordPaymentRequest": {
+        "properties": {
+          "amount": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "idempotency_key": {
+            "default": "",
+            "maxLength": 100,
+            "type": "string"
+          },
+          "invoice_id": {
+            "type": "integer"
+          },
+          "memo": {
+            "default": "",
+            "maxLength": 500,
+            "type": "string"
+          },
+          "paid_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "payment_method": {
+            "$ref": "#/components/schemas/RecordPaymentPaymentMethodEnum"
+          },
+          "receipt_note": {
+            "default": "",
+            "maxLength": 300,
+            "type": "string"
+          }
+        },
+        "required": [
+          "amount",
+          "invoice_id",
+          "payment_method"
+        ],
+        "type": "object"
       },
       "RegistrationRequestAvailability": {
         "properties": {
@@ -14327,6 +14384,48 @@
         ],
         "type": "object"
       },
+      "StudentFeeBulkAssignRequest": {
+        "properties": {
+          "fee_template_id": {
+            "type": "integer"
+          },
+          "student_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 200,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "fee_template_id",
+          "student_ids"
+        ],
+        "type": "object"
+      },
+      "StudentFeeBulkAssignResult": {
+        "properties": {
+          "created": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "skipped": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "created",
+          "skipped",
+          "total"
+        ],
+        "type": "object"
+      },
       "StudentFeeRequest": {
         "properties": {
           "adjusted_amount": {
@@ -14606,89 +14705,6 @@
           "student",
           "student_name",
           "total_amount"
-        ],
-        "type": "object"
-      },
-      "StudentInvoiceListRequest": {
-        "properties": {
-          "billing_month": {
-            "description": "청구 월 (1-12)",
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "billing_year": {
-            "description": "청구 연도",
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "due_date": {
-            "description": "납부 기한",
-            "format": "date",
-            "type": "string"
-          },
-          "invoice_number": {
-            "description": "청구번호 (예: FEE-2026-04-0001)",
-            "maxLength": 40,
-            "minLength": 1,
-            "type": "string"
-          },
-          "memo": {
-            "type": "string"
-          },
-          "paid_amount": {
-            "description": "납부 총액 (원)",
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "paid_at": {
-            "description": "완납 일시",
-            "format": "date-time",
-            "nullable": true,
-            "type": "string"
-          },
-          "status": {
-            "$ref": "#/components/schemas/Status8a1Enum"
-          },
-          "student": {
-            "type": "integer"
-          },
-          "total_amount": {
-            "description": "청구 총액 (원)",
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "billing_month",
-          "billing_year",
-          "due_date",
-          "invoice_number",
-          "student",
-          "total_amount"
-        ],
-        "type": "object"
-      },
-      "StudentInvoiceUpdate": {
-        "properties": {
-          "due_date": {
-            "description": "납부 기한",
-            "format": "date",
-            "type": "string"
-          },
-          "memo": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "due_date"
         ],
         "type": "object"
       },
@@ -26950,52 +26966,6 @@
         "tags": [
           "fees"
         ]
-      },
-      "post": {
-        "operationId": "fees_invoices_create",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/StudentInvoiceListRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/StudentInvoiceListRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/StudentInvoiceListRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/StudentInvoiceList"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "fees"
-        ]
       }
     },
     "/api/v1/fees/invoices/generate/": {
@@ -27006,17 +26976,17 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/StudentInvoiceListRequest"
+                "$ref": "#/components/schemas/GenerateInvoicesRequest"
               }
             },
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/StudentInvoiceListRequest"
+                "$ref": "#/components/schemas/GenerateInvoicesRequest"
               }
             },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/StudentInvoiceListRequest"
+                "$ref": "#/components/schemas/GenerateInvoicesRequest"
               }
             }
           },
@@ -27027,7 +26997,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/StudentInvoiceList"
+                  "$ref": "#/components/schemas/GenerateInvoicesResult"
                 }
               }
             },
@@ -27150,7 +27120,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/StudentInvoiceUpdate"
+                  "$ref": "#/components/schemas/StudentInvoiceDetail"
                 }
               }
             },
@@ -27224,17 +27194,17 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/FeePaymentRequest"
+                "$ref": "#/components/schemas/RecordPaymentRequest"
               }
             },
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/FeePaymentRequest"
+                "$ref": "#/components/schemas/RecordPaymentRequest"
               }
             },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/FeePaymentRequest"
+                "$ref": "#/components/schemas/RecordPaymentRequest"
               }
             }
           },
@@ -27317,26 +27287,6 @@
             }
           }
         ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/FeePaymentRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/FeePaymentRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/FeePaymentRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "content": {
@@ -27464,17 +27414,17 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/StudentFeeRequest"
+                "$ref": "#/components/schemas/StudentFeeBulkAssignRequest"
               }
             },
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/StudentFeeRequest"
+                "$ref": "#/components/schemas/StudentFeeBulkAssignRequest"
               }
             },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/StudentFeeRequest"
+                "$ref": "#/components/schemas/StudentFeeBulkAssignRequest"
               }
             }
           },
@@ -27485,7 +27435,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/StudentFee"
+                  "$ref": "#/components/schemas/StudentFeeBulkAssignResult"
                 }
               }
             },

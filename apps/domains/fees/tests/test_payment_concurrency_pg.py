@@ -15,24 +15,30 @@ Run:
 from __future__ import annotations
 
 import threading
+import time
 import unittest
 import uuid
 from datetime import timedelta
+from unittest.mock import patch
 
 import pytest
 from django.contrib.auth import get_user_model
-from django.db import close_old_connections, connection
+from django.db import close_old_connections, connection, transaction
 from django.test import TransactionTestCase
 from django.utils import timezone
+from rest_framework.test import APIRequestFactory, force_authenticate
 
-from apps.core.models import Tenant
+from apps.core.models import Tenant, TenantMembership
 from apps.domains.fees.models import (
     FeePayment,
     FeeTemplate,
     InvoiceItem,
+    StudentFee,
     StudentInvoice,
 )
-from apps.domains.fees.services import record_payment
+from apps.domains.fees import services
+from apps.domains.fees.services import generate_monthly_invoices, record_payment
+from apps.domains.fees.views import StudentFeeViewSet
 from apps.domains.students.models import Student
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -71,6 +77,7 @@ class FeesConcurrencyPGTest(TransactionTestCase):
             tenant=tenant, username=f"fc_stu_{suffix}", is_active=True,
         )
         student = Student.objects.create(
+            id=90_000_000,
             tenant=tenant, user=user,
             ps_number=f"PS{suffix[:6]}",
             omr_code=f"O{suffix[:7]}",
@@ -93,6 +100,123 @@ class FeesConcurrencyPGTest(TransactionTestCase):
             description="수강료", amount=total,
         )
         return tenant, invoice
+
+    def _setup_generation_fee(self):
+        tenant, invoice = self._setup_invoice(total=100_000)
+        student = invoice.student
+        invoice.delete()
+        template = FeeTemplate.objects.get(tenant=tenant)
+        student_fee = StudentFee.objects.create(
+            tenant=tenant,
+            student=student,
+            fee_template=template,
+        )
+        return tenant, student, template, student_fee
+
+    def _make_fee_admin(self, tenant):
+        suffix = uuid.uuid4().hex[:8]
+        user = User.objects.create(
+            tenant=tenant,
+            username=f"fee_admin_{suffix}",
+            is_active=True,
+            is_staff=True,
+        )
+        TenantMembership.objects.create(
+            tenant=tenant,
+            user=user,
+            role="admin",
+            is_active=True,
+        )
+        return user
+
+    def _student_fee_request(self, *, tenant, user, method, data, pk=None):
+        factory = APIRequestFactory()
+        path = "/api/v1/fees/student-fees/"
+        if pk is not None:
+            path = f"{path}{pk}/"
+        request = getattr(factory, method)(path, data=data, format="json")
+        request.tenant = tenant
+        force_authenticate(request, user=user)
+        view = StudentFeeViewSet.as_view({method: "partial_update" if method == "patch" else "create"})
+        kwargs = {"pk": pk} if pk is not None else {}
+        return view(request, **kwargs)
+
+    def _generate_while_fee_rows_are_locked(
+        self,
+        tenant,
+        student,
+        mutate_locked_rows,
+        *,
+        billing_month: int = 5,
+    ):
+        snapshot_ready = threading.Event()
+        mutation_locked = threading.Event()
+        generation_released = threading.Event()
+        original_groupby = services.groupby
+        results = []
+        errors = []
+
+        def pause_after_snapshot(*args, **kwargs):
+            snapshot_ready.set()
+            if not mutation_locked.wait(timeout=5):
+                raise AssertionError("fee mutation did not acquire its row locks")
+            generation_released.set()
+            return original_groupby(*args, **kwargs)
+
+        def generate_worker():
+            close_old_connections()
+            try:
+                results.append(generate_monthly_invoices(
+                    tenant,
+                    billing_year=2026,
+                    billing_month=billing_month,
+                    due_date=timezone.localdate() + timedelta(days=10),
+                ))
+            except Exception as exc:  # noqa: BLE001
+                errors.append(repr(exc))
+            finally:
+                close_old_connections()
+
+        with patch(
+            "apps.domains.fees.services.groupby",
+            side_effect=pause_after_snapshot,
+        ):
+            generation_thread = threading.Thread(target=generate_worker)
+            generation_thread.start()
+            self.assertTrue(snapshot_ready.wait(timeout=5), "generation snapshot was not read")
+
+            with transaction.atomic():
+                locked_fees = list(
+                    StudentFee.objects
+                    .select_for_update()
+                    .filter(tenant=tenant, student=student)
+                    .order_by("id")
+                )
+                template_ids = [fee.fee_template_id for fee in locked_fees]
+                locked_templates = {
+                    template.id: template
+                    for template in (
+                        FeeTemplate.objects
+                        .select_for_update()
+                        .filter(tenant=tenant, id__in=template_ids)
+                        .order_by("id")
+                    )
+                }
+                mutate_locked_rows(locked_fees, locked_templates)
+                mutation_locked.set()
+                self.assertTrue(
+                    generation_released.wait(timeout=5),
+                    "generation did not enter the locked section",
+                )
+                # 생성 thread가 select_for_update에서 대기하는 동안 변경을 commit한다.
+                time.sleep(0.2)
+
+            generation_thread.join(timeout=10)
+
+        self.assertFalse(generation_thread.is_alive(), "generation thread deadlocked")
+        self.assertEqual(errors, [])
+        self.assertEqual(len(results), 1)
+        return results[0]
 
     def test_two_threads_partial_payments_serialize(self):
         """A. 두 thread가 다른 idempotency_key로 30,000 + 50,000 동시 납부.
@@ -199,3 +323,459 @@ class FeesConcurrencyPGTest(TransactionTestCase):
         self.assertEqual(results["value_errors"], 1)
         invoice.refresh_from_db()
         self.assertEqual(invoice.paid_amount, 40_000)
+
+    def test_one_time_fee_different_month_generation_creates_single_item(self):
+        tenant, invoice = self._setup_invoice(total=100_000)
+        invoice.delete()
+        student = Student.objects.get(tenant=tenant)
+        template = FeeTemplate.objects.get(tenant=tenant)
+        template.billing_cycle = FeeTemplate.BillingCycle.ONE_TIME
+        template.save(update_fields=["billing_cycle", "updated_at"])
+        StudentFee.objects.create(
+            tenant=tenant,
+            student=student,
+            fee_template=template,
+        )
+
+        start_barrier = threading.Barrier(2)
+        invoice_number_barrier = threading.Barrier(2)
+        original_next_invoice_number = services._next_invoice_number
+        results = []
+        errors = []
+
+        def synchronized_next_invoice_number(*args, **kwargs):
+            try:
+                invoice_number_barrier.wait(timeout=2)
+            except threading.BrokenBarrierError:
+                pass
+            return original_next_invoice_number(*args, **kwargs)
+
+        def worker(month: int):
+            start_barrier.wait()
+            try:
+                results.append(generate_monthly_invoices(
+                    tenant,
+                    billing_year=2026,
+                    billing_month=month,
+                    due_date=timezone.localdate() + timedelta(days=10),
+                ))
+            except Exception as exc:  # noqa: BLE001
+                errors.append(repr(exc))
+            finally:
+                close_old_connections()
+
+        with patch(
+            "apps.domains.fees.services._next_invoice_number",
+            side_effect=synchronized_next_invoice_number,
+        ):
+            t1 = threading.Thread(target=worker, args=(5,))
+            t2 = threading.Thread(target=worker, args=(6,))
+            t1.start(); t2.start()
+            t1.join(timeout=10); t2.join(timeout=10)
+
+        self.assertFalse(t1.is_alive() or t2.is_alive(), "generation threads deadlocked")
+        self.assertEqual(errors, [])
+        self.assertEqual(
+            InvoiceItem.objects.filter(
+                tenant=tenant,
+                invoice__student=student,
+                fee_template=template,
+                invoice__status__in=["PENDING", "PARTIAL", "PAID", "OVERDUE"],
+            ).count(),
+            1,
+            results,
+        )
+
+    def test_fee_amounts_committed_during_generation_use_locked_fresh_values(self):
+        tenant, student, template, student_fee = self._setup_generation_fee()
+        second_template = FeeTemplate.objects.create(
+            tenant=tenant,
+            name="동시성교재비",
+            fee_type=FeeTemplate.FeeType.TEXTBOOK,
+            amount=50_000,
+        )
+        second_fee = StudentFee.objects.create(
+            tenant=tenant,
+            student=student,
+            fee_template=second_template,
+        )
+
+        def mutate(locked_fees, locked_templates):
+            fees_by_id = {fee.id: fee for fee in locked_fees}
+            first_locked = fees_by_id[student_fee.id]
+            first_template = locked_templates[template.id]
+            first_template.amount = 140_000
+            first_template.save(update_fields=["amount", "updated_at"])
+            first_locked.discount_amount = 20_000
+            first_locked.save(update_fields=["discount_amount", "updated_at"])
+
+            second_locked = fees_by_id[second_fee.id]
+            second_locked.adjusted_amount = 80_000
+            second_locked.discount_amount = 5_000
+            second_locked.save(
+                update_fields=["adjusted_amount", "discount_amount", "updated_at"],
+            )
+
+        result = self._generate_while_fee_rows_are_locked(
+            tenant,
+            student,
+            mutate,
+        )
+
+        self.assertEqual(result["created"], 1, result)
+        invoice = StudentInvoice.objects.get(
+            tenant=tenant,
+            student=student,
+            billing_year=2026,
+            billing_month=5,
+        )
+        self.assertEqual(invoice.total_amount, 195_000)
+        self.assertEqual(
+            list(invoice.items.order_by("fee_template_id").values_list("amount", flat=True)),
+            [120_000, 75_000],
+        )
+
+    def test_fee_insert_committed_after_candidate_snapshot_is_not_omitted(self):
+        tenant, student, _template, _student_fee = self._setup_generation_fee()
+        snapshot_ready = threading.Event()
+        resume_generation = threading.Event()
+        original_groupby = services.groupby
+        results = []
+        errors = []
+
+        def pause_after_snapshot(*args, **kwargs):
+            snapshot_ready.set()
+            if not resume_generation.wait(timeout=5):
+                raise AssertionError("concurrent fee insertion did not commit")
+            return original_groupby(*args, **kwargs)
+
+        def generate_worker():
+            close_old_connections()
+            try:
+                results.append(generate_monthly_invoices(
+                    tenant,
+                    billing_year=2026,
+                    billing_month=7,
+                    due_date=timezone.localdate() + timedelta(days=10),
+                ))
+            except Exception as exc:  # noqa: BLE001
+                errors.append(repr(exc))
+            finally:
+                close_old_connections()
+
+        with patch(
+            "apps.domains.fees.services.groupby",
+            side_effect=pause_after_snapshot,
+        ):
+            generation_thread = threading.Thread(target=generate_worker)
+            generation_thread.start()
+            self.assertTrue(snapshot_ready.wait(timeout=5), "generation snapshot was not read")
+
+            with transaction.atomic():
+                inserted_template = FeeTemplate.objects.create(
+                    tenant=tenant,
+                    name="스냅샷 이후 교재비",
+                    fee_type=FeeTemplate.FeeType.TEXTBOOK,
+                    amount=30_000,
+                )
+                StudentFee.objects.create(
+                    tenant=tenant,
+                    student=student,
+                    fee_template=inserted_template,
+                )
+            resume_generation.set()
+            generation_thread.join(timeout=10)
+
+        self.assertFalse(generation_thread.is_alive(), "generation thread deadlocked")
+        self.assertEqual(errors, [])
+        self.assertEqual(results, [{"created": 1, "skipped": 0, "errors": []}])
+        invoice = StudentInvoice.objects.get(
+            tenant=tenant,
+            student=student,
+            billing_year=2026,
+            billing_month=7,
+        )
+        self.assertEqual(invoice.total_amount, 130_000)
+        self.assertEqual(
+            list(invoice.items.order_by("fee_template_id").values_list("amount", flat=True)),
+            [100_000, 30_000],
+        )
+
+    def test_student_reassignment_is_rejected_during_generation_snapshot(self):
+        tenant, student, _template, student_fee = self._setup_generation_fee()
+        admin = self._make_fee_admin(tenant)
+        suffix = uuid.uuid4().hex[:8]
+        destination_user = User.objects.create(
+            tenant=tenant,
+            username=f"destination_{suffix}",
+            is_active=True,
+        )
+        destination = Student.objects.create(
+            id=90_000_001,
+            tenant=tenant,
+            user=destination_user,
+            ps_number=f"PD{suffix[:6]}",
+            omr_code=f"D{suffix[:7]}",
+            name="재배치대상학생",
+            parent_phone="010-0000-0002",
+        )
+        snapshot_ready = threading.Event()
+        resume_generation = threading.Event()
+        original_groupby = services.groupby
+        results = []
+        errors = []
+
+        def pause_after_snapshot(*args, **kwargs):
+            snapshot_ready.set()
+            if not resume_generation.wait(timeout=5):
+                raise AssertionError("student reassignment did not finish")
+            return original_groupby(*args, **kwargs)
+
+        def generate_worker():
+            close_old_connections()
+            try:
+                results.append(generate_monthly_invoices(
+                    tenant,
+                    billing_year=2026,
+                    billing_month=8,
+                    due_date=timezone.localdate() + timedelta(days=10),
+                ))
+            except Exception as exc:  # noqa: BLE001
+                errors.append(repr(exc))
+            finally:
+                close_old_connections()
+
+        with patch("apps.domains.fees.services.groupby", side_effect=pause_after_snapshot):
+            generation_thread = threading.Thread(target=generate_worker)
+            generation_thread.start()
+            self.assertTrue(snapshot_ready.wait(timeout=5), "generation snapshot was not read")
+            response = self._student_fee_request(
+                tenant=tenant,
+                user=admin,
+                method="patch",
+                pk=student_fee.id,
+                data={"student": destination.id},
+            )
+            resume_generation.set()
+            generation_thread.join(timeout=10)
+
+        self.assertFalse(generation_thread.is_alive(), "generation thread deadlocked")
+        self.assertEqual(errors, [])
+        self.assertEqual(response.status_code, 400, response.data)
+        student_fee.refresh_from_db()
+        self.assertEqual(student_fee.student_id, student.id)
+        self.assertEqual(results, [{"created": 1, "skipped": 0, "errors": []}])
+        self.assertTrue(
+            StudentInvoice.objects.filter(
+                tenant=tenant,
+                student=student,
+                billing_year=2026,
+                billing_month=8,
+                total_amount=100_000,
+            ).exists(),
+        )
+
+    def test_soft_deleted_student_rejects_assignment_and_generation_after_snapshot(self):
+        tenant, student, _template, _student_fee = self._setup_generation_fee()
+        admin = self._make_fee_admin(tenant)
+        extra_template = FeeTemplate.objects.create(
+            tenant=tenant,
+            name="삭제 경쟁 추가 비목",
+            fee_type=FeeTemplate.FeeType.TEXTBOOK,
+            amount=30_000,
+        )
+        snapshot_ready = threading.Event()
+        resume_generation = threading.Event()
+        original_groupby = services.groupby
+        results = []
+        errors = []
+
+        def pause_after_snapshot(*args, **kwargs):
+            snapshot_ready.set()
+            if not resume_generation.wait(timeout=5):
+                raise AssertionError("student soft-delete did not finish")
+            return original_groupby(*args, **kwargs)
+
+        def generate_worker():
+            close_old_connections()
+            try:
+                results.append(generate_monthly_invoices(
+                    tenant,
+                    billing_year=2026,
+                    billing_month=9,
+                    due_date=timezone.localdate() + timedelta(days=10),
+                ))
+            except Exception as exc:  # noqa: BLE001
+                errors.append(repr(exc))
+            finally:
+                close_old_connections()
+
+        with patch("apps.domains.fees.services.groupby", side_effect=pause_after_snapshot):
+            generation_thread = threading.Thread(target=generate_worker)
+            generation_thread.start()
+            self.assertTrue(snapshot_ready.wait(timeout=5), "generation snapshot was not read")
+            with transaction.atomic():
+                locked_student = Student.objects.select_for_update().get(id=student.id)
+                locked_student.deleted_at = timezone.now()
+                locked_student.save(update_fields=["deleted_at", "updated_at"])
+            response = self._student_fee_request(
+                tenant=tenant,
+                user=admin,
+                method="post",
+                data={
+                    "student": student.id,
+                    "fee_template": extra_template.id,
+                    "is_active": True,
+                },
+            )
+            resume_generation.set()
+            generation_thread.join(timeout=10)
+
+        self.assertFalse(generation_thread.is_alive(), "generation thread deadlocked")
+        self.assertEqual(errors, [])
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(results[0]["created"], 0, results)
+        self.assertFalse(
+            StudentInvoice.objects.filter(
+                tenant=tenant,
+                student=student,
+                billing_year=2026,
+                billing_month=9,
+            ).exists(),
+        )
+        self.assertFalse(
+            StudentFee.objects.filter(
+                tenant=tenant,
+                student=student,
+                fee_template=extra_template,
+            ).exists(),
+        )
+
+    def test_identical_direct_assignment_race_returns_201_and_400(self):
+        tenant, student, _template, _student_fee = self._setup_generation_fee()
+        admin = self._make_fee_admin(tenant)
+        template = FeeTemplate.objects.create(
+            tenant=tenant,
+            name="동일 직접 배정 경쟁 비목",
+            fee_type=FeeTemplate.FeeType.TEXTBOOK,
+            amount=30_000,
+        )
+        save_barrier = threading.Barrier(2)
+        responses = []
+        errors = []
+        original_perform_create = StudentFeeViewSet.perform_create
+
+        def synchronized_perform_create(view_self, serializer):
+            save_barrier.wait(timeout=5)
+            return original_perform_create(view_self, serializer)
+
+        def worker():
+            close_old_connections()
+            try:
+                responses.append(self._student_fee_request(
+                    tenant=tenant,
+                    user=admin,
+                    method="post",
+                    data={
+                        "student": student.id,
+                        "fee_template": template.id,
+                        "is_active": True,
+                    },
+                ))
+            except Exception as exc:  # noqa: BLE001
+                errors.append(repr(exc))
+            finally:
+                close_old_connections()
+
+        with patch.object(
+            StudentFeeViewSet,
+            "perform_create",
+            new=synchronized_perform_create,
+        ):
+            first = threading.Thread(target=worker)
+            second = threading.Thread(target=worker)
+            first.start(); second.start()
+            first.join(timeout=10); second.join(timeout=10)
+
+        self.assertFalse(first.is_alive() or second.is_alive(), "assignment threads deadlocked")
+        self.assertEqual(errors, [])
+        self.assertEqual(sorted(response.status_code for response in responses), [201, 400])
+        self.assertEqual(
+            StudentFee.objects.filter(
+                tenant=tenant,
+                student=student,
+                fee_template=template,
+            ).count(),
+            1,
+        )
+
+    def test_fee_state_committed_during_generation_is_rechecked_after_lock(self):
+        tenant, student, template, _student_fee = self._setup_generation_fee()
+
+        def mutate(locked_fees, locked_templates):
+            locked_fee = locked_fees[0]
+            locked_fee.is_active = False
+            locked_fee.billing_end_month = "2026-04"
+            locked_fee.save(
+                update_fields=["is_active", "billing_end_month", "updated_at"],
+            )
+            locked_template = locked_templates[template.id]
+            locked_template.is_active = False
+            locked_template.save(update_fields=["is_active", "updated_at"])
+
+        result = self._generate_while_fee_rows_are_locked(
+            tenant,
+            student,
+            mutate,
+        )
+
+        self.assertEqual(result["created"], 0, result)
+        self.assertFalse(
+            StudentInvoice.objects.filter(
+                tenant=tenant,
+                student=student,
+                billing_year=2026,
+                billing_month=5,
+            ).exists(),
+        )
+
+    def test_template_cycle_committed_during_generation_prevents_one_time_rebill(self):
+        tenant, student, template, _student_fee = self._setup_generation_fee()
+        prior_invoice = StudentInvoice.objects.create(
+            tenant=tenant,
+            student=student,
+            invoice_number=f"FEE-PRIOR-{uuid.uuid4().hex[:8]}",
+            billing_year=2026,
+            billing_month=4,
+            total_amount=template.amount,
+            due_date=timezone.localdate() + timedelta(days=10),
+        )
+        InvoiceItem.objects.create(
+            tenant=tenant,
+            invoice=prior_invoice,
+            fee_template=template,
+            description=template.name,
+            amount=template.amount,
+        )
+
+        def mutate(_locked_fees, locked_templates):
+            locked_template = locked_templates[template.id]
+            locked_template.billing_cycle = FeeTemplate.BillingCycle.ONE_TIME
+            locked_template.save(update_fields=["billing_cycle", "updated_at"])
+
+        result = self._generate_while_fee_rows_are_locked(
+            tenant,
+            student,
+            mutate,
+        )
+
+        self.assertEqual(result["created"], 0, result)
+        self.assertEqual(
+            InvoiceItem.objects.filter(
+                tenant=tenant,
+                invoice__student=student,
+                fee_template=template,
+                invoice__status__in=["PENDING", "PARTIAL", "PAID", "OVERDUE"],
+            ).count(),
+            1,
+        )

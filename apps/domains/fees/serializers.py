@@ -1,5 +1,7 @@
 # PATH: apps/domains/fees/serializers.py
 
+import re
+
 from rest_framework import serializers
 
 from .models import (
@@ -9,6 +11,9 @@ from .models import (
     InvoiceItem,
     FeePayment,
 )
+
+
+_BILLING_MONTH_PATTERN = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 
 
 # ========================================================
@@ -65,6 +70,36 @@ class StudentFeeSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
 
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        instance = self.instance
+        if (
+            instance is not None
+            and "student" in attrs
+            and attrs["student"].id != instance.student_id
+        ):
+            raise serializers.ValidationError({
+                "student": "학생 비용의 학생은 생성 후 변경할 수 없습니다.",
+            })
+        start = attrs.get(
+            "billing_start_month",
+            instance.billing_start_month if instance else "",
+        )
+        end = attrs.get(
+            "billing_end_month",
+            instance.billing_end_month if instance else "",
+        )
+        errors = {}
+        if start and not _BILLING_MONTH_PATTERN.fullmatch(start):
+            errors["billing_start_month"] = "YYYY-MM 형식의 유효한 월을 입력하세요."
+        if end and not _BILLING_MONTH_PATTERN.fullmatch(end):
+            errors["billing_end_month"] = "YYYY-MM 형식의 유효한 월을 입력하세요."
+        if not errors and start and end and start > end:
+            errors["billing_end_month"] = "청구 종료월은 시작월보다 빠를 수 없습니다."
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
+
 
 class StudentFeeBulkAssignSerializer(serializers.Serializer):
     student_ids = serializers.ListField(
@@ -73,6 +108,12 @@ class StudentFeeBulkAssignSerializer(serializers.Serializer):
         max_length=200,
     )
     fee_template_id = serializers.IntegerField()
+
+
+class StudentFeeBulkAssignResultSerializer(serializers.Serializer):
+    created = serializers.IntegerField(min_value=0)
+    skipped = serializers.IntegerField(min_value=0)
+    total = serializers.IntegerField(min_value=0)
 
 
 # ========================================================
@@ -148,6 +189,12 @@ class GenerateInvoicesSerializer(serializers.Serializer):
     due_date = serializers.DateField()
 
 
+class GenerateInvoicesResultSerializer(serializers.Serializer):
+    created = serializers.IntegerField(min_value=0)
+    skipped = serializers.IntegerField(min_value=0)
+    errors = serializers.ListField(child=serializers.CharField())
+
+
 # ========================================================
 # FeePayment
 # ========================================================
@@ -177,6 +224,6 @@ class RecordPaymentSerializer(serializers.Serializer):
     amount = serializers.IntegerField(min_value=1)
     payment_method = serializers.ChoiceField(choices=["CARD", "BANK_TRANSFER", "CASH", "OTHER"])
     paid_at = serializers.DateTimeField(required=False)
-    receipt_note = serializers.CharField(required=False, allow_blank=True, default="", max_length=500)
+    receipt_note = serializers.CharField(required=False, allow_blank=True, default="", max_length=300)
     memo = serializers.CharField(required=False, allow_blank=True, default="", max_length=500)
     idempotency_key = serializers.CharField(required=False, allow_blank=True, default="", max_length=100)
