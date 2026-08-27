@@ -20,6 +20,7 @@ from django.utils import timezone
 from rest_framework.test import APIRequestFactory, APITestCase, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
+from apps.domains.fees import services
 from apps.domains.fees.models import (
     FeePayment,
     FeeTemplate,
@@ -431,6 +432,59 @@ class IdempotencyTest(FeesTestMixin, TestCase):
             )
 
         self.assertIn("요청 정보", str(ctx.exception))
+
+
+class InvoiceGenerationSnapshotTest(FeesTestMixin, TestCase):
+    def test_generation_reloads_amount_and_discount_after_candidate_snapshot(self):
+        tenant = self.make_tenant(code="t_generation_snapshot")
+        student = self.make_student(tenant)
+        tuition_template = self.make_fee_template(tenant, amount=100_000)
+        tuition_fee = StudentFee.objects.create(
+            tenant=tenant,
+            student=student,
+            fee_template=tuition_template,
+        )
+        material_template = FeeTemplate.objects.create(
+            tenant=tenant,
+            name="교재비-snapshot",
+            fee_type=FeeTemplate.FeeType.TEXTBOOK,
+            amount=50_000,
+        )
+        material_fee = StudentFee.objects.create(
+            tenant=tenant,
+            student=student,
+            fee_template=material_template,
+        )
+        original_groupby = services.groupby
+
+        def mutate_after_snapshot(*args, **kwargs):
+            FeeTemplate.objects.filter(id=tuition_template.id).update(amount=140_000)
+            StudentFee.objects.filter(id=tuition_fee.id).update(discount_amount=20_000)
+            StudentFee.objects.filter(id=material_fee.id).update(
+                adjusted_amount=80_000,
+                discount_amount=5_000,
+            )
+            return original_groupby(*args, **kwargs)
+
+        with patch(
+            "apps.domains.fees.services.groupby",
+            side_effect=mutate_after_snapshot,
+        ):
+            result = generate_monthly_invoices(
+                tenant,
+                billing_year=2026,
+                billing_month=5,
+                due_date=timezone.localdate() + timedelta(days=10),
+            )
+
+        self.assertEqual(result["created"], 1, result)
+        invoice = StudentInvoice.objects.get(
+            tenant=tenant,
+            student=student,
+            billing_year=2026,
+            billing_month=5,
+        )
+        self.assertEqual(invoice.total_amount, 195_000)
 
 
 class InvoiceCancelGuardTest(FeesTestMixin, TestCase):

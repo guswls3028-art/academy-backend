@@ -15,6 +15,7 @@ Run:
 from __future__ import annotations
 
 import threading
+import time
 import unittest
 import uuid
 from datetime import timedelta
@@ -22,7 +23,7 @@ from unittest.mock import patch
 
 import pytest
 from django.contrib.auth import get_user_model
-from django.db import close_old_connections, connection
+from django.db import close_old_connections, connection, transaction
 from django.test import TransactionTestCase
 from django.utils import timezone
 
@@ -96,6 +97,95 @@ class FeesConcurrencyPGTest(TransactionTestCase):
             description="수강료", amount=total,
         )
         return tenant, invoice
+
+    def _setup_generation_fee(self):
+        tenant, invoice = self._setup_invoice(total=100_000)
+        student = invoice.student
+        invoice.delete()
+        template = FeeTemplate.objects.get(tenant=tenant)
+        student_fee = StudentFee.objects.create(
+            tenant=tenant,
+            student=student,
+            fee_template=template,
+        )
+        return tenant, student, template, student_fee
+
+    def _generate_while_fee_rows_are_locked(
+        self,
+        tenant,
+        student,
+        mutate_locked_rows,
+        *,
+        billing_month: int = 5,
+    ):
+        snapshot_ready = threading.Event()
+        mutation_locked = threading.Event()
+        generation_released = threading.Event()
+        original_groupby = services.groupby
+        results = []
+        errors = []
+
+        def pause_after_snapshot(*args, **kwargs):
+            snapshot_ready.set()
+            if not mutation_locked.wait(timeout=5):
+                raise AssertionError("fee mutation did not acquire its row locks")
+            generation_released.set()
+            return original_groupby(*args, **kwargs)
+
+        def generate_worker():
+            close_old_connections()
+            try:
+                results.append(generate_monthly_invoices(
+                    tenant,
+                    billing_year=2026,
+                    billing_month=billing_month,
+                    due_date=timezone.localdate() + timedelta(days=10),
+                ))
+            except Exception as exc:  # noqa: BLE001
+                errors.append(repr(exc))
+            finally:
+                close_old_connections()
+
+        with patch(
+            "apps.domains.fees.services.groupby",
+            side_effect=pause_after_snapshot,
+        ):
+            generation_thread = threading.Thread(target=generate_worker)
+            generation_thread.start()
+            self.assertTrue(snapshot_ready.wait(timeout=5), "generation snapshot was not read")
+
+            with transaction.atomic():
+                locked_fees = list(
+                    StudentFee.objects
+                    .select_for_update()
+                    .filter(tenant=tenant, student=student)
+                    .order_by("id")
+                )
+                template_ids = [fee.fee_template_id for fee in locked_fees]
+                locked_templates = {
+                    template.id: template
+                    for template in (
+                        FeeTemplate.objects
+                        .select_for_update()
+                        .filter(tenant=tenant, id__in=template_ids)
+                        .order_by("id")
+                    )
+                }
+                mutate_locked_rows(locked_fees, locked_templates)
+                mutation_locked.set()
+                self.assertTrue(
+                    generation_released.wait(timeout=5),
+                    "generation did not enter the locked section",
+                )
+                # 생성 thread가 select_for_update에서 대기하는 동안 변경을 commit한다.
+                time.sleep(0.2)
+
+            generation_thread.join(timeout=10)
+
+        self.assertFalse(generation_thread.is_alive(), "generation thread deadlocked")
+        self.assertEqual(errors, [])
+        self.assertEqual(len(results), 1)
+        return results[0]
 
     def test_two_threads_partial_payments_serialize(self):
         """A. 두 thread가 다른 idempotency_key로 30,000 + 50,000 동시 납부.
@@ -263,4 +353,124 @@ class FeesConcurrencyPGTest(TransactionTestCase):
             ).count(),
             1,
             results,
+        )
+
+    def test_fee_amounts_committed_during_generation_use_locked_fresh_values(self):
+        tenant, student, template, student_fee = self._setup_generation_fee()
+        second_template = FeeTemplate.objects.create(
+            tenant=tenant,
+            name="동시성교재비",
+            fee_type=FeeTemplate.FeeType.TEXTBOOK,
+            amount=50_000,
+        )
+        second_fee = StudentFee.objects.create(
+            tenant=tenant,
+            student=student,
+            fee_template=second_template,
+        )
+
+        def mutate(locked_fees, locked_templates):
+            fees_by_id = {fee.id: fee for fee in locked_fees}
+            first_locked = fees_by_id[student_fee.id]
+            first_template = locked_templates[template.id]
+            first_template.amount = 140_000
+            first_template.save(update_fields=["amount", "updated_at"])
+            first_locked.discount_amount = 20_000
+            first_locked.save(update_fields=["discount_amount", "updated_at"])
+
+            second_locked = fees_by_id[second_fee.id]
+            second_locked.adjusted_amount = 80_000
+            second_locked.discount_amount = 5_000
+            second_locked.save(
+                update_fields=["adjusted_amount", "discount_amount", "updated_at"],
+            )
+
+        result = self._generate_while_fee_rows_are_locked(
+            tenant,
+            student,
+            mutate,
+        )
+
+        self.assertEqual(result["created"], 1, result)
+        invoice = StudentInvoice.objects.get(
+            tenant=tenant,
+            student=student,
+            billing_year=2026,
+            billing_month=5,
+        )
+        self.assertEqual(invoice.total_amount, 195_000)
+        self.assertEqual(
+            list(invoice.items.order_by("fee_template_id").values_list("amount", flat=True)),
+            [120_000, 75_000],
+        )
+
+    def test_fee_state_committed_during_generation_is_rechecked_after_lock(self):
+        tenant, student, template, _student_fee = self._setup_generation_fee()
+
+        def mutate(locked_fees, locked_templates):
+            locked_fee = locked_fees[0]
+            locked_fee.is_active = False
+            locked_fee.billing_end_month = "2026-04"
+            locked_fee.save(
+                update_fields=["is_active", "billing_end_month", "updated_at"],
+            )
+            locked_template = locked_templates[template.id]
+            locked_template.is_active = False
+            locked_template.save(update_fields=["is_active", "updated_at"])
+
+        result = self._generate_while_fee_rows_are_locked(
+            tenant,
+            student,
+            mutate,
+        )
+
+        self.assertEqual(result["created"], 0, result)
+        self.assertFalse(
+            StudentInvoice.objects.filter(
+                tenant=tenant,
+                student=student,
+                billing_year=2026,
+                billing_month=5,
+            ).exists(),
+        )
+
+    def test_template_cycle_committed_during_generation_prevents_one_time_rebill(self):
+        tenant, student, template, _student_fee = self._setup_generation_fee()
+        prior_invoice = StudentInvoice.objects.create(
+            tenant=tenant,
+            student=student,
+            invoice_number=f"FEE-PRIOR-{uuid.uuid4().hex[:8]}",
+            billing_year=2026,
+            billing_month=4,
+            total_amount=template.amount,
+            due_date=timezone.localdate() + timedelta(days=10),
+        )
+        InvoiceItem.objects.create(
+            tenant=tenant,
+            invoice=prior_invoice,
+            fee_template=template,
+            description=template.name,
+            amount=template.amount,
+        )
+
+        def mutate(_locked_fees, locked_templates):
+            locked_template = locked_templates[template.id]
+            locked_template.billing_cycle = FeeTemplate.BillingCycle.ONE_TIME
+            locked_template.save(update_fields=["billing_cycle", "updated_at"])
+
+        result = self._generate_while_fee_rows_are_locked(
+            tenant,
+            student,
+            mutate,
+        )
+
+        self.assertEqual(result["created"], 0, result)
+        self.assertEqual(
+            InvoiceItem.objects.filter(
+                tenant=tenant,
+                invoice__student=student,
+                fee_template=template,
+                invoice__status__in=["PENDING", "PARTIAL", "PAID", "OVERDUE"],
+            ).count(),
+            1,
         )
