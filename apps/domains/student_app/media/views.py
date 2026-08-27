@@ -3,7 +3,8 @@ from typing import Any, Dict, Optional
 
 from django.db.models import Prefetch, Q
 from django.http import Http404
-from drf_spectacular.utils import extend_schema
+from django.utils import timezone
+from drf_spectacular.utils import OpenApiParameter, PolymorphicProxySerializer, extend_schema
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -11,6 +12,11 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework import status
 
 from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
+from apps.domains.video.models import AccessMode
+from apps.domains.video.services.inactive_entitlements import (
+    InactiveVideoEntitlementError,
+    update_inactive_entitled_video_progress,
+)
 from apps.support.student_app.video_dependencies import (
     active_enrollments_for_student,
     get_lecture_models,
@@ -22,8 +28,9 @@ from apps.support.student_app.video_dependencies import (
     resolve_access_modes_for_videos_prefetched,
 )
 from apps.support.student_app.video_media import (
+    bounded_inactive_media_expiry,
     build_thumbnail_url,
-    issue_proctored_playback_session,
+    issue_playback_access_grant,
     pick_video_urls,
 )
 from apps.domains.video.contracts import (
@@ -42,7 +49,9 @@ from academy.application.use_cases.student_video_access_context import (
     student_can_access_video,
 )
 from apps.domains.enrollment.selectors import learning_history_enrollments_for_student
+from apps.api.common.query_params import parse_query_bool
 from .serializers import (
+    StudentVideoAccessCheckSerializer,
     StudentVideoForwardSkipRequestSerializer,
     StudentVideoForwardSkipResponseSerializer,
     StudentVideoListItemSerializer,
@@ -51,6 +60,13 @@ from .serializers import (
 
 
 logger = logging.getLogger(__name__)
+
+
+def _student_access_error_payload(error: StudentVideoAccessError) -> dict:
+    payload = {"detail": error.detail}
+    if error.code:
+        payload["code"] = error.code
+    return payload
 
 
 # ======================================================
@@ -226,6 +242,33 @@ class StudentVideoMeView(APIView):
             .order_by("lecture__title")
         )
         enrollment_by_lecture = {e.lecture_id: e.id for e in enrollments}
+        active_lecture_ids = set(enrollment_by_lecture)
+        from apps.domains.video.services.inactive_entitlements import (
+            active_entitlements_for_student,
+            get_active_inactive_video_entitlement,
+        )
+
+        inactive_entitlements = []
+        for candidate in active_entitlements_for_student(tenant=tenant, student=student):
+            entitlement = get_active_inactive_video_entitlement(
+                video=candidate.video,
+                enrollment=candidate.enrollment,
+            )
+            if entitlement is not None and entitlement.enrollment.lecture_id not in active_lecture_ids:
+                inactive_entitlements.append(entitlement)
+        inactive_video_ids_by_lecture: dict[int, set[int]] = {}
+        inactive_session_ids_by_lecture: dict[int, set[int]] = {}
+        inactive_first_video_by_lecture = {}
+        inactive_first_entitlement_by_lecture = {}
+        for entitlement in inactive_entitlements:
+            lecture_id = entitlement.enrollment.lecture_id
+            enrollment_by_lecture[lecture_id] = entitlement.enrollment_id
+            inactive_video_ids_by_lecture.setdefault(lecture_id, set()).add(entitlement.video_id)
+            inactive_session_ids_by_lecture.setdefault(lecture_id, set()).add(
+                entitlement.video.session_id
+            )
+            inactive_first_video_by_lecture.setdefault(lecture_id, entitlement.video)
+            inactive_first_entitlement_by_lecture.setdefault(lecture_id, entitlement)
         lecture_ids = list(enrollment_by_lecture.keys())
         history_enrollments = list(
             learning_history_enrollments_for_student(
@@ -306,6 +349,9 @@ class StudentVideoMeView(APIView):
         lectures_data = []
         for lec in lectures_qs:
             sessions = sorted(lec.sessions.all(), key=lambda x: (x.order, x.id))
+            inactive_session_ids = inactive_session_ids_by_lecture.get(lec.id)
+            if inactive_session_ids is not None:
+                sessions = [s for s in sessions if s.id in inactive_session_ids]
             sessions_data = [
                 {
                     "id": s.id,
@@ -322,14 +368,40 @@ class StudentVideoMeView(APIView):
             lec_video_count = 0
             lec_total_duration = 0
             for s in sessions:
-                info = video_summary_by_session.get(s.id)
-                if info:
-                    lec_video_count += info["video_count"]
-                    lec_total_duration += info["total_duration"]
+                if lec.id in inactive_video_ids_by_lecture:
+                    entitled_ids = inactive_video_ids_by_lecture[lec.id]
+                    entitled_videos = [
+                        entitlement.video
+                        for entitlement in inactive_entitlements
+                        if entitlement.video_id in entitled_ids
+                        and entitlement.video.session_id == s.id
+                    ]
+                    lec_video_count += len(entitled_videos)
+                    lec_total_duration += sum(int(v.duration or 0) for v in entitled_videos)
+                else:
+                    info = video_summary_by_session.get(s.id)
+                    if info:
+                        lec_video_count += info["video_count"]
+                        lec_total_duration += info["total_duration"]
 
             # 썸네일 URL (student-app support helper 재사용)
-            first_vid = first_video_by_lecture.get(lec.id)
-            thumb_url = build_thumbnail_url(first_vid) if first_vid else None
+            first_vid = (
+                inactive_first_video_by_lecture.get(lec.id)
+                or first_video_by_lecture.get(lec.id)
+            )
+            first_entitlement = inactive_first_entitlement_by_lecture.get(lec.id)
+            thumb_url = (
+                build_thumbnail_url(
+                    first_vid,
+                    expires_at=(
+                        bounded_inactive_media_expiry(first_entitlement)
+                        if first_entitlement is not None
+                        else None
+                    ),
+                )
+                if first_vid
+                else None
+            )
 
             lectures_data.append({
                 "id": lec.id,
@@ -642,19 +714,22 @@ class StudentSessionVideoListView(APIView):
                 explicit_enrollment_id=explicit_enrollment_id,
             )
         except StudentVideoAccessError as e:
-            if e.status_code == status.HTTP_400_BAD_REQUEST:
-                return Response({"detail": e.detail}, status=e.status_code)
+            if e.status_code == status.HTTP_400_BAD_REQUEST or e.code:
+                return Response(_student_access_error_payload(e), status=e.status_code)
             raise PermissionDenied(e.detail)
 
         enrollment_obj = access_context.enrollment
+        inactive_entitlements = access_context.inactive_entitlements_by_video_id or {}
 
         videos = list(
             Video.objects
-            .filter(session_id=session_id)
+            .filter(session_id=session_id, deleted_at__isnull=True)
             .select_related("tenant", "session__lecture__tenant")
             .order_by("order", "title", "id")
         )
         videos = sort_videos_for_playlist(videos)
+        if inactive_entitlements:
+            videos = [v for v in videos if v.id in inactive_entitlements]
 
         # 진행률 + 권한을 일괄 조회 (N+1 방지)
         from academy.adapters.db.django import repositories_video as video_repo
@@ -686,19 +761,33 @@ class StudentSessionVideoListView(APIView):
 
         access_mode_map = {}
         if enrollment_obj and videos:
-            access_mode_map = resolve_access_modes_for_videos_prefetched(
-                videos=videos,
-                enrollment=enrollment_obj,
-                progresses_by_video_id=progress_map,
-                access_by_video_id=perm_map,
-                attendance_status=attendance_status,
-            )
+            if inactive_entitlements:
+                access_mode_map = {
+                    video_id: AccessMode(entitlement.access_mode)
+                    for video_id, entitlement in inactive_entitlements.items()
+                }
+            else:
+                access_mode_map = resolve_access_modes_for_videos_prefetched(
+                    videos=videos,
+                    enrollment=enrollment_obj,
+                    progresses_by_video_id=progress_map,
+                    access_by_video_id=perm_map,
+                    attendance_status=attendance_status,
+                )
 
         items = []
         for v in videos:
             perm_obj = perm_map.get(v.id)
 
-            thumb = build_thumbnail_url(v)
+            inactive_entitlement = inactive_entitlements.get(v.id)
+            thumb = build_thumbnail_url(
+                v,
+                expires_at=(
+                    bounded_inactive_media_expiry(inactive_entitlement)
+                    if inactive_entitlement is not None
+                    else None
+                ),
+            )
 
             access_mode_value = None
             if enrollment_obj:
@@ -757,12 +846,44 @@ class StudentVideoPlaybackView(APIView):
 
     permission_classes = [IsAuthenticated, IsStudentOrParent]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name="access_check",
+                type=bool,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description=(
+                    "Revalidate exact tenant, enrollment, video, and policy access "
+                    "without issuing playback media or recording activity."
+                ),
+            )
+        ],
+        responses={
+            200: PolymorphicProxySerializer(
+                component_name="StudentVideoPlaybackOrAccessCheck",
+                serializers=[
+                    StudentVideoPlaybackSerializer,
+                    StudentVideoAccessCheckSerializer,
+                ],
+                resource_type_field_name=None,
+            )
+        },
+    )
     def get(self, request, video_id: int):
         Video, VideoPermission = _import_media_models()
         explicit_enrollment_id = _get_explicit_enrollment_id(request)
+        access_check = parse_query_bool(
+            request.query_params,
+            "access_check",
+            default=False,
+        )
 
         try:
-            video_qs = Video.objects.select_related("tenant", "session__lecture__tenant")
+            video_qs = Video.objects.select_related(
+                "tenant",
+                "session__lecture__tenant",
+            ).filter(deleted_at__isnull=True)
             tenant = getattr(request, "tenant", None)
             if tenant is not None:
                 video_qs = video_qs.filter(tenant=tenant)
@@ -775,15 +896,29 @@ class StudentVideoPlaybackView(APIView):
                 request,
                 video,
                 explicit_enrollment_id=explicit_enrollment_id,
+                allow_public_enrollment_write=not access_check,
             )
             ensure_student_video_watch_allowed(access_context)
         except StudentVideoAccessError as e:
-            if e.status_code == status.HTTP_400_BAD_REQUEST:
-                return Response({"detail": e.detail}, status=e.status_code)
+            if e.status_code == status.HTTP_400_BAD_REQUEST or e.code:
+                return Response(_student_access_error_payload(e), status=e.status_code)
             raise PermissionDenied(e.detail)
 
         enrollment_obj = access_context.enrollment
         access_mode_value = access_context.access_mode_value
+        video_access_mode_value = access_mode_value
+        inactive_entitlement = access_context.inactive_entitlement
+        inactive_media_expires_at = None
+        if inactive_entitlement is not None:
+            if _is_youtube_video(video):
+                raise PermissionDenied(
+                    "퇴원 후 개별 영상 권한은 YouTube 영상에 적용할 수 없습니다."
+                )
+            inactive_media_expires_at = bounded_inactive_media_expiry(
+                inactive_entitlement
+            )
+            if inactive_media_expires_at <= int(timezone.now().timestamp()):
+                raise PermissionDenied("영상 권한이 만료되었습니다.")
 
         perm_obj = None
         if VideoPermission and enrollment_obj:
@@ -796,6 +931,26 @@ class StudentVideoPlaybackView(APIView):
         rule = _effective_rule(perm_obj)
         if rule == "blocked":
             raise PermissionDenied("이 영상은 시청이 제한되었습니다.")
+
+        if access_check:
+            current_policy = build_effective_playback_policy(
+                video=video,
+                access_mode=access_mode_value,
+                permission=perm_obj,
+            )
+            return Response(
+                StudentVideoAccessCheckSerializer(
+                    {
+                        "ok": True,
+                        "access_mode": current_policy["access_mode"],
+                        "monitoring_enabled": current_policy["monitoring_enabled"],
+                        "policy_version": int(
+                            getattr(video, "policy_version", 1) or 1
+                        ),
+                    }
+                ).data,
+                status=status.HTTP_200_OK,
+            )
 
         # 비디오 상태 확인 및 로깅
         video_status = getattr(video, "status", None)
@@ -840,7 +995,11 @@ class StudentVideoPlaybackView(APIView):
                 )
             play_url = youtube_embed_url(youtube_video_id)
         else:
-            hls_url, mp4_url = pick_video_urls(video, request)
+            hls_url, mp4_url = pick_video_urls(
+                video,
+                request,
+                expires_at=inactive_media_expires_at,
+            )
             play_url = hls_url or mp4_url
 
             # 재생 URL이 없으면 에러 반환
@@ -859,6 +1018,94 @@ class StudentVideoPlaybackView(APIView):
                     status=status.HTTP_503_SERVICE_UNAVAILABLE,
                 )
         
+        thumb = build_thumbnail_url(
+            video,
+            expires_at=inactive_media_expires_at,
+        )
+
+        logger.info(
+            "[StudentVideoPlaybackView] Playback media prepared video_id=%s "
+            "status=%s expires_at=%s",
+            video_id,
+            video_status,
+            inactive_media_expires_at,
+        )
+
+        progress_obj = None
+        if enrollment_obj:
+            from academy.adapters.db.django import repositories_video as video_repo
+
+            progress_obj = video_repo.video_progress_get(video, enrollment_obj)
+        playback_token = None
+        playback_session_id = None
+        playback_expires_at = None
+        playback_policy_version = int(getattr(video, "policy_version", 1) or 1)
+        if enrollment_obj:
+            try:
+                playback_grant = issue_playback_access_grant(
+                    video=video,
+                    enrollment=enrollment_obj,
+                    user=request.user,
+                    device_id=str(request.headers.get("X-Device-Id") or request.user.id),
+                )
+                playback_token = playback_grant.token
+                playback_session_id = playback_grant.session_id
+                playback_expires_at = playback_grant.expires_at
+                playback_policy_version = (
+                    playback_grant.policy_version or playback_policy_version
+                )
+                if not playback_token:
+                    return Response(
+                        {
+                            "detail": (
+                                playback_grant.error
+                                or "영상 재생 권한이 없습니다."
+                            )
+                        },
+                        status=playback_grant.status_code,
+                    )
+                access_mode_value = playback_grant.access_mode
+                if not access_context.is_public_video:
+                    video_access_mode_value = access_mode_value
+                if inactive_entitlement is not None:
+                    inactive_media_expires_at = playback_grant.expires_at
+                    hls_url, mp4_url = pick_video_urls(
+                        video,
+                        request,
+                        expires_at=inactive_media_expires_at,
+                    )
+                    play_url = hls_url or mp4_url
+                    thumb = build_thumbnail_url(
+                        video,
+                        expires_at=inactive_media_expires_at,
+                    )
+                    if not play_url:
+                        return Response(
+                            {"detail": "영상 재생 URL을 생성할 수 없습니다."},
+                            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        )
+            except Exception as _e:
+                logger.exception(
+                    "[StudentVideoPlaybackView] access grant issue failed: %s",
+                    _e,
+                )
+                return Response(
+                    {
+                        "detail": (
+                            "영상 재생 권한 확인에 실패했습니다. "
+                            "잠시 후 다시 시도해 주세요."
+                        )
+                    },
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+
+        playback_policy = build_effective_playback_policy(
+            video=video,
+            access_mode=access_mode_value,
+            permission=perm_obj,
+            progress=progress_obj,
+        )
+
         student = get_request_student(request)
         if student:
             from apps.domains.students.activity import record_student_target_open
@@ -872,58 +1119,14 @@ class StudentVideoPlaybackView(APIView):
                 target_label=video.title,
             )
 
-        thumb = build_thumbnail_url(video)
-
-        # 조회수 증가 — 동일 사용자 5분 내 중복 카운트 방지
-        from django.db.models import F as _F
+        # Record a view only after the locked grant succeeds.
         from django.core.cache import cache as _cache
+        from django.db.models import F as _F
+
         _view_key = f"video_view:{video_id}:{request.user.id}"
         if not _cache.get(_view_key):
             Video.objects.filter(id=video_id).update(view_count=_F("view_count") + 1)
-            _cache.set(_view_key, 1, 300)  # 5분 dedup
-
-        logger.info(
-            f"[StudentVideoPlaybackView] Generated playback URL for video {video_id}: "
-            f"play_url={play_url[:100] if play_url else None}..."
-        )
-
-        is_proctored = access_mode_value == "PROCTORED_CLASS"
-        progress_obj = None
-        if enrollment_obj:
-            from academy.adapters.db.django import repositories_video as video_repo
-
-            progress_obj = video_repo.video_progress_get(video, enrollment_obj)
-        playback_policy = build_effective_playback_policy(
-            video=video,
-            access_mode=access_mode_value,
-            permission=perm_obj,
-            progress=progress_obj,
-        )
-
-        # PROCTORED_CLASS: 서버 측 세션 + token 발급 (PlaybackStartView 인프라 인라인 호출).
-        # 클라가 별도 PlaybackStartView를 호출하지 않아도 세션이 생성되어 만료/revoke 메커니즘이 적용됨.
-        # heartbeat/event 검증은 클라가 token을 사용해서 호출해야 완전히 활성화.
-        playback_token = None
-        playback_session_id = None
-        playback_expires_at = None
-        if is_proctored and enrollment_obj:
-            try:
-                proctored_session = issue_proctored_playback_session(
-                    video=video,
-                    enrollment=enrollment_obj,
-                    user=request.user,
-                    device_id=str(request.headers.get("X-Device-Id") or request.user.id),
-                )
-                playback_token = proctored_session.token
-                playback_session_id = proctored_session.session_id
-                playback_expires_at = proctored_session.expires_at
-            except Exception as _e:
-                logger.exception("[StudentVideoPlaybackView] proctored session issue failed: %s", _e)
-                # 세션 발급 실패 시 PROCTORED 영상 시청 차단(데이터 무결성 우선)
-                return Response(
-                    {"detail": "수업 영상 세션 발급에 실패했습니다. 잠시 후 다시 시도해 주세요."},
-                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
-                )
+            _cache.set(_view_key, 1, 300)
 
         # 좋아요 여부 확인
         is_liked = False
@@ -978,7 +1181,7 @@ class StudentVideoPlaybackView(APIView):
                 "created_at": video.created_at.isoformat() if hasattr(video, "created_at") and video.created_at else None,
                 **_policy_from_video(video),
                 "effective_rule": rule,
-                "access_mode": access_mode_value,
+                "access_mode": video_access_mode_value,
             },
             "hls_url": hls_url,
             "mp4_url": mp4_url,
@@ -986,6 +1189,7 @@ class StudentVideoPlaybackView(APIView):
             "playback_token": playback_token,
             "playback_session_id": playback_session_id,
             "playback_expires_at": playback_expires_at,
+            "policy_version": playback_policy_version,
             "policy": {
                 **playback_policy,
                 "source": {
@@ -1034,7 +1238,7 @@ class StudentVideoForwardSkipView(APIView):
             )
             ensure_student_video_watch_allowed(access_context)
         except StudentVideoAccessError as e:
-            return Response({"detail": e.detail}, status=e.status_code)
+            return Response(_student_access_error_payload(e), status=e.status_code)
 
         enrollment = access_context.enrollment
         if enrollment is None:
@@ -1067,7 +1271,20 @@ class StudentVideoForwardSkipView(APIView):
                 status=status.HTTP_409_CONFLICT,
             )
 
-        budget = consume_video_forward_skip(video=video, enrollment=enrollment)
+        try:
+            budget = consume_video_forward_skip(
+                video=video,
+                enrollment=enrollment,
+                require_inactive_entitlement=(
+                    access_context.inactive_entitlement is not None
+                ),
+                expected_policy_version=int(video.policy_version or 1),
+            )
+        except InactiveVideoEntitlementError as exc:
+            return Response(
+                {"detail": exc.detail, "code": exc.code},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         logger.info(
             "student_video_forward_skip video_id=%s enrollment_id=%s granted_seconds=%s used_seconds=%s limit_seconds=%s",
             video.id,
@@ -1110,7 +1327,7 @@ class StudentVideoProgressView(APIView):
             )
             ensure_student_video_watch_allowed(access_context)
         except StudentVideoAccessError as e:
-            return Response({"detail": e.detail}, status=e.status_code)
+            return Response(_student_access_error_payload(e), status=e.status_code)
 
         enrollment = access_context.enrollment
         if enrollment is None:
@@ -1137,11 +1354,26 @@ class StudentVideoProgressView(APIView):
         if last_position is not None:
             defaults["last_position"] = _safe_video_position(last_position)
 
-        progress_obj, created = VideoProgress.objects.update_or_create(
-            video=video,
-            enrollment=enrollment,
-            defaults=defaults,
-        )
+        if access_context.inactive_entitlement is not None:
+            try:
+                progress_obj, created = update_inactive_entitled_video_progress(
+                    tenant_id=video.tenant_id,
+                    enrollment_id=enrollment.id,
+                    video_id=video.id,
+                    expected_policy_version=int(video.policy_version or 1),
+                    defaults=defaults,
+                )
+            except InactiveVideoEntitlementError as exc:
+                return Response(
+                    {"detail": exc.detail, "code": exc.code},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+        else:
+            progress_obj, created = VideoProgress.objects.update_or_create(
+                video=video,
+                enrollment=enrollment,
+                defaults=defaults,
+            )
 
         return Response({
             "id": progress_obj.id,

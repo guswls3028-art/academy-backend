@@ -3,6 +3,7 @@
 from django.db import transaction, IntegrityError
 from django.db.models import Case, Count, F, IntegerField, Max, OuterRef, Q, Subquery, Value, When
 from django.db.models.functions import Coalesce
+from django.utils import timezone
 from django.utils.dateparse import parse_date
 
 from rest_framework.viewsets import ModelViewSet
@@ -239,9 +240,21 @@ class LectureViewSet(ModelViewSet):
             self._handle_title_integrity_error(e)
 
     def perform_update(self, serializer):
-        """🔐 Lecture 수정 시 제목 중복 검증"""
+        """🔐 Lecture 수정과 종료 시 재생 권한 회수를 한 transaction으로 처리."""
         try:
-            serializer.save()
+            with transaction.atomic():
+                lecture = (
+                    Lecture.objects.select_for_update()
+                    .get(pk=serializer.instance.pk, tenant=self.request.tenant)
+                )
+                serializer.instance = lecture
+                was_active = lecture.is_active
+                updated = serializer.save()
+                if was_active and not updated.is_active and not updated.is_system:
+                    video_repo.playback_session_revoke_active_for_lecture(
+                        updated.id,
+                        ended_at=timezone.now(),
+                    )
         except IntegrityError as e:
             self._handle_title_integrity_error(e)
 

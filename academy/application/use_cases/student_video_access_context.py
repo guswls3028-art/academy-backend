@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Mapping, Optional
 
 from rest_framework import status
 
@@ -13,20 +13,28 @@ from apps.domains.video.policy import (
     is_video_progress_complete,
     normalize_video_progress,
 )
-from apps.domains.video.services.access_resolver import resolve_access_mode
+from apps.domains.video.services.access_resolver import get_effective_access_mode
 
 
 class StudentVideoAccessError(Exception):
-    def __init__(self, detail: str, status_code: int = status.HTTP_403_FORBIDDEN):
+    def __init__(
+        self,
+        detail: str,
+        status_code: int = status.HTTP_403_FORBIDDEN,
+        *,
+        code: str | None = None,
+    ):
         super().__init__(detail)
         self.detail = detail
         self.status_code = status_code
+        self.code = code
 
 
 @dataclass(frozen=True)
 class StudentSessionVideoContext:
     enrollment: object | None
     is_public_session: bool
+    inactive_entitlements_by_video_id: Mapping[int, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -34,6 +42,7 @@ class StudentVideoAccessContext:
     enrollment: object | None
     access_mode: AccessMode | None
     is_public_video: bool
+    inactive_entitlement: object | None = None
 
     @property
     def access_mode_value(self) -> str | None:
@@ -46,7 +55,7 @@ class StudentVideoAccessContext:
 
 def get_students_for_request(request):
     tenant = getattr(request, "tenant", None)
-    if not tenant:
+    if not tenant or not getattr(request.user, "is_active", False):
         return []
 
     student = student_for_tenant_user(tenant, request.user, deleted="active")
@@ -220,6 +229,11 @@ def _lecture_allows_student_learning(lecture) -> bool:
     )
 
 
+def lecture_allows_student_learning(lecture) -> bool:
+    """Public policy boundary shared by playback locking and access resolution."""
+    return _lecture_allows_student_learning(lecture)
+
+
 def is_public_video(video) -> bool:
     from apps.domains.video.models import Video
 
@@ -260,12 +274,26 @@ def resolve_student_session_video_context(
         )
 
     lecture_id = getattr(lecture, "id", None)
-    enrollment = find_active_enrollment_for_lecture(
-        request,
-        lecture_id,
-        explicit_enrollment_id=explicit_enrollment_id,
-    )
+    active_error = None
+    try:
+        enrollment = find_active_enrollment_for_lecture(
+            request,
+            lecture_id,
+            explicit_enrollment_id=explicit_enrollment_id,
+        )
+    except StudentVideoAccessError as exc:
+        active_error = exc
+        enrollment = None
+    inactive_entitlements = {}
+    if enrollment is None and not is_public:
+        enrollment, inactive_entitlements = _find_inactive_entitlements_for_session(
+            request,
+            session,
+            explicit_enrollment_id=explicit_enrollment_id,
+        )
     if enrollment is None and not student_can_access_session(request, session):
+        if active_error is not None and active_error.status_code == status.HTTP_400_BAD_REQUEST:
+            raise active_error
         detail = (
             "공개 영상은 해당 학원 소속 학생만 이용할 수 있습니다."
             if is_public
@@ -276,7 +304,92 @@ def resolve_student_session_video_context(
     return StudentSessionVideoContext(
         enrollment=enrollment,
         is_public_session=is_public,
+        inactive_entitlements_by_video_id=inactive_entitlements,
     )
+
+
+def _find_inactive_entitlements_for_session(
+    request,
+    session,
+    *,
+    explicit_enrollment_id: Optional[int] = None,
+):
+    from apps.domains.video.services.inactive_entitlements import (
+        active_entitlements_for_student,
+        get_active_inactive_video_entitlement,
+    )
+
+    tenant = getattr(request, "tenant", None)
+    students = get_students_for_request(request)
+    if not tenant or not students:
+        return None, {}
+
+    matches = []
+    for student in students:
+        candidates = active_entitlements_for_student(tenant=tenant, student=student).filter(
+            video__session=session,
+        )
+        if explicit_enrollment_id is not None:
+            candidates = candidates.filter(enrollment_id=explicit_enrollment_id)
+        for candidate in candidates:
+            if candidate.video.source_type == candidate.video.SourceType.YOUTUBE:
+                raise StudentVideoAccessError(
+                    "퇴원 후 개별 영상 권한은 YouTube 영상에 적용할 수 없습니다.",
+                    code="video_source_unsupported",
+                )
+            active = get_active_inactive_video_entitlement(
+                video=candidate.video,
+                enrollment=candidate.enrollment,
+            )
+            if active is not None:
+                matches.append(active)
+
+    enrollment_ids = {item.enrollment_id for item in matches}
+    if len(enrollment_ids) != 1:
+        return None, {}
+    enrollment = matches[0].enrollment
+    return enrollment, {item.video_id: item for item in matches}
+
+
+def _find_inactive_entitlement_for_video(
+    request,
+    video,
+    *,
+    explicit_enrollment_id: Optional[int] = None,
+):
+    from apps.domains.video.services.inactive_entitlements import (
+        active_entitlements_for_student,
+        get_active_inactive_video_entitlement,
+    )
+
+    tenant = getattr(request, "tenant", None)
+    students = get_students_for_request(request)
+    if not tenant or not students:
+        return None, None
+
+    matches = []
+    for student in students:
+        candidates = active_entitlements_for_student(tenant=tenant, student=student).filter(
+            video=video,
+        )
+        if explicit_enrollment_id is not None:
+            candidates = candidates.filter(enrollment_id=explicit_enrollment_id)
+        for candidate in candidates:
+            if candidate.video.source_type == candidate.video.SourceType.YOUTUBE:
+                raise StudentVideoAccessError(
+                    "퇴원 후 개별 영상 권한은 YouTube 영상에 적용할 수 없습니다.",
+                    code="video_source_unsupported",
+                )
+            active = get_active_inactive_video_entitlement(
+                video=video,
+                enrollment=candidate.enrollment,
+            )
+            if active is not None:
+                matches.append(active)
+
+    if len(matches) != 1:
+        return None, None
+    return matches[0].enrollment, matches[0]
 
 
 def resolve_student_video_access_context(
@@ -284,28 +397,53 @@ def resolve_student_video_access_context(
     video,
     *,
     explicit_enrollment_id: Optional[int] = None,
+    allow_public_enrollment_write: bool = True,
 ) -> StudentVideoAccessContext:
     if is_public_video(video):
         if not student_can_access_video(request, video):
             raise StudentVideoAccessError("공개 영상은 해당 학원 소속 학생만 이용할 수 있습니다.")
+        enrollment = (
+            ensure_public_video_enrollment(request, video)
+            if allow_public_enrollment_write
+            else find_active_enrollment_for_video(
+                request,
+                video,
+                explicit_enrollment_id=explicit_enrollment_id,
+            )
+        )
         return StudentVideoAccessContext(
-            enrollment=ensure_public_video_enrollment(request, video),
+            enrollment=enrollment,
             access_mode=None,
             is_public_video=True,
         )
 
-    enrollment = find_active_enrollment_for_video(
-        request,
-        video,
-        explicit_enrollment_id=explicit_enrollment_id,
-    )
+    active_error = None
+    try:
+        enrollment = find_active_enrollment_for_video(
+            request,
+            video,
+            explicit_enrollment_id=explicit_enrollment_id,
+        )
+    except StudentVideoAccessError as exc:
+        active_error = exc
+        enrollment = None
+    inactive_entitlement = None
+    if enrollment is None:
+        enrollment, inactive_entitlement = _find_inactive_entitlement_for_video(
+            request,
+            video,
+            explicit_enrollment_id=explicit_enrollment_id,
+        )
     if not enrollment:
+        if active_error is not None and active_error.status_code == status.HTTP_400_BAD_REQUEST:
+            raise active_error
         raise StudentVideoAccessError("이 영상을 시청하려면 해당 강의에 수강 등록이 필요합니다.")
 
     return StudentVideoAccessContext(
         enrollment=enrollment,
-        access_mode=resolve_access_mode(video=video, enrollment=enrollment),
+        access_mode=get_effective_access_mode(video=video, enrollment=enrollment),
         is_public_video=False,
+        inactive_entitlement=inactive_entitlement,
     )
 
 

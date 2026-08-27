@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from django.db.models import Q
 from rest_framework.exceptions import NotFound, ValidationError
 
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
@@ -126,12 +127,13 @@ def active_enrollments_for_students(*, tenant, students, include_system: bool = 
             status="ACTIVE",
             student__deleted_at__isnull=True,
             lecture__tenant=tenant,
-            lecture__is_active=True,
         )
         .select_related("student", "lecture")
     )
-    if not include_system:
-        qs = qs.exclude(lecture__is_system=True)
+    if include_system:
+        qs = qs.filter(Q(lecture__is_active=True) | Q(lecture__is_system=True))
+    else:
+        qs = qs.filter(lecture__is_active=True).exclude(lecture__is_system=True)
     return qs
 
 

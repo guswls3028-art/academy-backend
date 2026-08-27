@@ -1,15 +1,6 @@
 {
   "components": {
     "schemas": {
-      "AccessModeEnum": {
-        "description": "* `FREE_REVIEW` - 복습\n* `PROCTORED_CLASS` - 온라인 수업 대체\n* `BLOCKED` - 제한",
-        "enum": [
-          "FREE_REVIEW",
-          "PROCTORED_CLASS",
-          "BLOCKED"
-        ],
-        "type": "string"
-      },
       "AccountStateEnum": {
         "description": "* `ACTIVE` - ACTIVE\n* `INACTIVE` - INACTIVE\n* `DELETED` - DELETED\n* `UNLINKED` - UNLINKED",
         "enum": [
@@ -1807,6 +1798,15 @@
         ],
         "type": "string"
       },
+      "EffectiveRuleEnum": {
+        "description": "* `free` - free\n* `once` - once\n* `blocked` - blocked",
+        "enum": [
+          "free",
+          "once",
+          "blocked"
+        ],
+        "type": "string"
+      },
       "Enrollment": {
         "properties": {
           "created_at": {
@@ -3475,6 +3475,228 @@
         "enum": [
           "template",
           "regular"
+        ],
+        "type": "string"
+      },
+      "InactiveVideoEntitlement": {
+        "properties": {
+          "access_mode": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/InactiveVideoEntitlementAccessMode"
+              }
+            ],
+            "readOnly": true
+          },
+          "enrollment_id": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "nullable": true,
+            "readOnly": true,
+            "type": "string"
+          },
+          "granted_at": {
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
+          },
+          "granted_by_id": {
+            "nullable": true,
+            "readOnly": true,
+            "type": "integer"
+          },
+          "granted_by_reference": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "id": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "reason": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "revoke_reason": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "revoked_at": {
+            "format": "date-time",
+            "nullable": true,
+            "readOnly": true,
+            "type": "string"
+          },
+          "revoked_by_id": {
+            "nullable": true,
+            "readOnly": true,
+            "type": "integer"
+          },
+          "revoked_by_reference": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "source": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/InactiveVideoEntitlementSource"
+              }
+            ],
+            "readOnly": true
+          },
+          "source_reference": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "state": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "student_id": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "tenant_id": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "video_id": {
+            "readOnly": true,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "access_mode",
+          "enrollment_id",
+          "expires_at",
+          "granted_at",
+          "granted_by_id",
+          "granted_by_reference",
+          "id",
+          "reason",
+          "revoke_reason",
+          "revoked_at",
+          "revoked_by_id",
+          "revoked_by_reference",
+          "source",
+          "source_reference",
+          "state",
+          "student_id",
+          "tenant_id",
+          "video_id"
+        ],
+        "type": "object"
+      },
+      "InactiveVideoEntitlementAccessMode": {
+        "description": "* `FREE_REVIEW` - 복습\n* `PROCTORED_CLASS` - 온라인 수업 대체",
+        "enum": [
+          "FREE_REVIEW",
+          "PROCTORED_CLASS"
+        ],
+        "type": "string"
+      },
+      "InactiveVideoEntitlementError": {
+        "properties": {
+          "code": {
+            "description": "Stable machine code. YouTube grant/runtime failures use video_source_unsupported.",
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "detail"
+        ],
+        "type": "object"
+      },
+      "InactiveVideoEntitlementGrantRequest": {
+        "properties": {
+          "access_mode": {
+            "$ref": "#/components/schemas/StudentVideoEffectiveAccessMode"
+          },
+          "enrollment_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/InactiveVideoEntitlementSource"
+          },
+          "source_reference": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "student_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "video_id": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "access_mode",
+          "enrollment_id",
+          "reason",
+          "source",
+          "source_reference",
+          "student_id",
+          "video_id"
+        ],
+        "type": "object"
+      },
+      "InactiveVideoEntitlementMutation": {
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "created": {
+            "type": "boolean"
+          },
+          "entitlement": {
+            "$ref": "#/components/schemas/InactiveVideoEntitlement"
+          }
+        },
+        "required": [
+          "changed",
+          "created",
+          "entitlement"
+        ],
+        "type": "object"
+      },
+      "InactiveVideoEntitlementRevokeRequest": {
+        "properties": {
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "type": "object"
+      },
+      "InactiveVideoEntitlementSource": {
+        "description": "* `STAFF_AUTHORIZATION` - 교직원 명시 승인",
+        "enum": [
+          "STAFF_AUTHORIZATION"
         ],
         "type": "string"
       },
@@ -5401,6 +5623,37 @@
           "results": {
             "items": {
               "$ref": "#/components/schemas/HomeworkScore"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "count",
+          "results"
+        ],
+        "type": "object"
+      },
+      "PaginatedInactiveVideoEntitlementList": {
+        "properties": {
+          "count": {
+            "example": 123,
+            "type": "integer"
+          },
+          "next": {
+            "example": "http://api.example.org/accounts/?page=4",
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "previous": {
+            "example": "http://api.example.org/accounts/?page=2",
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/InactiveVideoEntitlement"
             },
             "type": "array"
           }
@@ -7747,7 +8000,7 @@
           "access_mode": {
             "allOf": [
               {
-                "$ref": "#/components/schemas/AccessModeEnum"
+                "$ref": "#/components/schemas/SealedVideoAccessAccessModeEnum"
               }
             ],
             "description": "Access mode: FREE_REVIEW, PROCTORED_CLASS, or BLOCKED\n\n* `FREE_REVIEW` - 복습\n* `PROCTORED_CLASS` - 온라인 수업 대체\n* `BLOCKED` - 제한"
@@ -11259,7 +11512,7 @@
           "access_mode": {
             "allOf": [
               {
-                "$ref": "#/components/schemas/AccessModeEnum"
+                "$ref": "#/components/schemas/SealedVideoAccessAccessModeEnum"
               }
             ],
             "description": "Access mode: FREE_REVIEW, PROCTORED_CLASS, or BLOCKED\n\n* `FREE_REVIEW` - 복습\n* `PROCTORED_CLASS` - 온라인 수업 대체\n* `BLOCKED` - 제한"
@@ -11330,13 +11583,22 @@
         ],
         "type": "object"
       },
+      "SealedVideoAccessAccessModeEnum": {
+        "description": "* `FREE_REVIEW` - 복습\n* `PROCTORED_CLASS` - 온라인 수업 대체\n* `BLOCKED` - 제한",
+        "enum": [
+          "FREE_REVIEW",
+          "PROCTORED_CLASS",
+          "BLOCKED"
+        ],
+        "type": "string"
+      },
       "SealedVideoAccessRequest": {
         "description": "API uses access_mode (SSOT). DB table kept as video_videopermission.",
         "properties": {
           "access_mode": {
             "allOf": [
               {
-                "$ref": "#/components/schemas/AccessModeEnum"
+                "$ref": "#/components/schemas/SealedVideoAccessAccessModeEnum"
               }
             ],
             "description": "Access mode: FREE_REVIEW, PROCTORED_CLASS, or BLOCKED\n\n* `FREE_REVIEW` - 복습\n* `PROCTORED_CLASS` - 온라인 수업 대체\n* `BLOCKED` - 제한"
@@ -15025,6 +15287,38 @@
         ],
         "type": "object"
       },
+      "StudentVideoAccessCheck": {
+        "properties": {
+          "access_mode": {
+            "$ref": "#/components/schemas/StudentVideoEffectiveAccessMode"
+          },
+          "monitoring_enabled": {
+            "type": "boolean"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "policy_version": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "access_mode",
+          "monitoring_enabled",
+          "ok",
+          "policy_version"
+        ],
+        "type": "object"
+      },
+      "StudentVideoEffectiveAccessMode": {
+        "description": "* `FREE_REVIEW` - FREE_REVIEW\n* `PROCTORED_CLASS` - PROCTORED_CLASS",
+        "enum": [
+          "FREE_REVIEW",
+          "PROCTORED_CLASS"
+        ],
+        "type": "string"
+      },
       "StudentVideoForwardSkipRequestRequest": {
         "properties": {
           "enrollment": {
@@ -15088,6 +15382,197 @@
           "used_seconds"
         ],
         "type": "object"
+      },
+      "StudentVideoListItem": {
+        "properties": {
+          "access_mode": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/StudentVideoListItemAccessModeEnum"
+              },
+              {
+                "$ref": "#/components/schemas/NullEnum"
+              }
+            ]
+          },
+          "allow_skip": {
+            "type": "boolean"
+          },
+          "comment_count": {
+            "default": 0,
+            "type": "integer"
+          },
+          "completed": {
+            "default": false,
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "duration": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "effective_rule": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EffectiveRuleEnum"
+              },
+              {
+                "$ref": "#/components/schemas/NullEnum"
+              }
+            ]
+          },
+          "enrollment_id": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "is_liked": {
+            "default": false,
+            "type": "boolean"
+          },
+          "last_position": {
+            "default": 0,
+            "type": "integer"
+          },
+          "like_count": {
+            "default": 0,
+            "type": "integer"
+          },
+          "max_speed": {
+            "format": "double",
+            "type": "number"
+          },
+          "order": {
+            "default": 0,
+            "type": "integer"
+          },
+          "progress": {
+            "default": 0.0,
+            "format": "double",
+            "type": "number"
+          },
+          "session_id": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "show_watermark": {
+            "type": "boolean"
+          },
+          "source_type": {
+            "default": "s3",
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "thumbnail_url": {
+            "nullable": true,
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "view_count": {
+            "default": 0,
+            "type": "integer"
+          },
+          "youtube_url": {
+            "default": "",
+            "type": "string"
+          },
+          "youtube_video_id": {
+            "default": "",
+            "type": "string"
+          }
+        },
+        "required": [
+          "allow_skip",
+          "id",
+          "max_speed",
+          "session_id",
+          "show_watermark",
+          "status",
+          "title"
+        ],
+        "type": "object"
+      },
+      "StudentVideoListItemAccessModeEnum": {
+        "description": "* `FREE_REVIEW` - FREE_REVIEW\n* `PROCTORED_CLASS` - PROCTORED_CLASS\n* `BLOCKED` - BLOCKED",
+        "enum": [
+          "FREE_REVIEW",
+          "PROCTORED_CLASS",
+          "BLOCKED"
+        ],
+        "type": "string"
+      },
+      "StudentVideoPlayback": {
+        "description": "학생 플레이어가 신뢰하는 단일 진실 payload",
+        "properties": {
+          "hls_url": {
+            "nullable": true,
+            "type": "string"
+          },
+          "mp4_url": {
+            "nullable": true,
+            "type": "string"
+          },
+          "play_url": {
+            "nullable": true,
+            "type": "string"
+          },
+          "playback_expires_at": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "playback_session_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "playback_token": {
+            "nullable": true,
+            "type": "string"
+          },
+          "policy": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "policy_version": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "video": {
+            "$ref": "#/components/schemas/StudentVideoListItem"
+          }
+        },
+        "required": [
+          "policy",
+          "policy_version",
+          "video"
+        ],
+        "type": "object"
+      },
+      "StudentVideoPlaybackOrAccessCheck": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/StudentVideoPlayback"
+          },
+          {
+            "$ref": "#/components/schemas/StudentVideoAccessCheck"
+          }
+        ]
       },
       "Submission": {
         "properties": {
@@ -32345,6 +32830,356 @@
         ]
       }
     },
+    "/api/v1/media/inactive-video-entitlements/": {
+      "get": {
+        "description": "Exact staff-authorized video access staged for inactive enrollment use.",
+        "operationId": "media_inactive_video_entitlements_list",
+        "parameters": [
+          {
+            "description": "Filter by one exact enrollment id.",
+            "in": "query",
+            "name": "enrollment_id",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "페이지네이션된 결과 집합 내의 페이지 번호.",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Filter by one exact student id.",
+            "in": "query",
+            "name": "student_id",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Filter by one exact video id.",
+            "in": "query",
+            "name": "video_id",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedInactiveVideoEntitlementList"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InactiveVideoEntitlementError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InactiveVideoEntitlementError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InactiveVideoEntitlementError"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "media"
+        ]
+      },
+      "post": {
+        "description": "Grant exact inactive-enrollment access to Academy-hosted revocable media. YouTube sources fail closed with code video_source_unsupported.",
+        "operationId": "media_inactive_video_entitlements_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InactiveVideoEntitlementGrantRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/InactiveVideoEntitlementGrantRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/InactiveVideoEntitlementGrantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InactiveVideoEntitlementMutation"
+                }
+              }
+            },
+            "description": ""
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InactiveVideoEntitlementMutation"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InactiveVideoEntitlementError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InactiveVideoEntitlementError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InactiveVideoEntitlementError"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "media"
+        ]
+      }
+    },
+    "/api/v1/media/inactive-video-entitlements/{id}/": {
+      "get": {
+        "description": "Exact staff-authorized video access staged for inactive enrollment use.",
+        "operationId": "media_inactive_video_entitlements_retrieve",
+        "parameters": [
+          {
+            "description": "inactive video entitlement을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InactiveVideoEntitlement"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InactiveVideoEntitlementError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InactiveVideoEntitlementError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InactiveVideoEntitlementError"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "media"
+        ]
+      }
+    },
+    "/api/v1/media/inactive-video-entitlements/{id}/revoke/": {
+      "post": {
+        "description": "Exact staff-authorized video access staged for inactive enrollment use.",
+        "operationId": "media_inactive_video_entitlements_revoke_create",
+        "parameters": [
+          {
+            "description": "inactive video entitlement을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InactiveVideoEntitlementRevokeRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/InactiveVideoEntitlementRevokeRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/InactiveVideoEntitlementRevokeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InactiveVideoEntitlementMutation"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InactiveVideoEntitlementError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InactiveVideoEntitlementError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InactiveVideoEntitlementError"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "media"
+        ]
+      }
+    },
     "/api/v1/media/internal/videos/{video_id}/processing-complete/": {
       "post": {
         "description": "✅ Legacy ACK endpoint (kept)\n\n기존 계약을 깨지 않기 위해 유지하되,\n\"worker queue/claim\" 같은 책임을 절대 섞지 않는다.\n\nPOST /api/v1/videos/internal/videos/<video_id>/processing-complete/\n(프로젝트의 기존 URL 연결 방식에 맞춰 유지)\n\nbody:\n  {\n    \"hls_path\": \"...\",\n    \"duration\": 123\n  }",
@@ -43034,6 +43869,14 @@
         "operationId": "student_video_videos_playback_retrieve",
         "parameters": [
           {
+            "description": "Revalidate exact tenant, enrollment, video, and policy access without issuing playback media or recording activity.",
+            "in": "query",
+            "name": "access_check",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "in": "path",
             "name": "video_id",
             "required": true,
@@ -43044,7 +43887,14 @@
         ],
         "responses": {
           "200": {
-            "description": "No response body"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentVideoPlaybackOrAccessCheck"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [

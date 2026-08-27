@@ -1,10 +1,13 @@
 
 from django.conf import settings
+from django.utils import timezone
 from rest_framework import serializers
 
 from .models import (
     Video,
+    AccessMode,
     VideoAccess,
+    InactiveVideoEntitlement,
     VideoProgress,
     VideoPlaybackEvent,
     VideoFolder,
@@ -379,6 +382,88 @@ class VideoAccessSerializer(serializers.ModelSerializer):
 
 # Backward compat alias
 VideoPermissionSerializer = VideoAccessSerializer
+
+
+class InactiveVideoEntitlementGrantSerializer(serializers.Serializer):
+    student_id = serializers.IntegerField(min_value=1)
+    enrollment_id = serializers.IntegerField(min_value=1)
+    video_id = serializers.IntegerField(min_value=1)
+    access_mode = serializers.ChoiceField(
+        choices=[AccessMode.FREE_REVIEW, AccessMode.PROCTORED_CLASS],
+    )
+    source = serializers.ChoiceField(
+        choices=InactiveVideoEntitlement.Source.choices,
+    )
+    source_reference = serializers.CharField(max_length=128, allow_blank=False)
+    reason = serializers.CharField(max_length=2000, allow_blank=False)
+    expires_at = serializers.DateTimeField(required=False, allow_null=True)
+
+
+class InactiveVideoEntitlementRevokeSerializer(serializers.Serializer):
+    reason = serializers.CharField(max_length=2000, allow_blank=False)
+
+
+class InactiveVideoEntitlementSerializer(serializers.ModelSerializer):
+    state = serializers.SerializerMethodField()
+
+    class Meta:
+        model = InactiveVideoEntitlement
+        fields = (
+            "id",
+            "tenant_id",
+            "student_id",
+            "enrollment_id",
+            "video_id",
+            "access_mode",
+            "source",
+            "source_reference",
+            "reason",
+            "granted_by_id",
+            "granted_by_reference",
+            "granted_at",
+            "expires_at",
+            "revoked_at",
+            "revoked_by_id",
+            "revoked_by_reference",
+            "revoke_reason",
+            "state",
+        )
+        read_only_fields = fields
+
+    def get_state(self, obj) -> str:
+        if obj.revoked_at is not None:
+            return "REVOKED"
+        if obj.expires_at is not None and obj.expires_at <= timezone.now():
+            return "EXPIRED"
+        if obj.source != InactiveVideoEntitlement.Source.STAFF_AUTHORIZATION:
+            return "INELIGIBLE"
+        if obj.enrollment.status != "INACTIVE":
+            return "STAGED"
+        from apps.domains.video.services.inactive_entitlements import (
+            get_active_inactive_video_entitlement,
+        )
+
+        active = get_active_inactive_video_entitlement(
+            video=obj.video,
+            enrollment=obj.enrollment,
+        )
+        return "ACTIVE" if active is not None else "INELIGIBLE"
+
+
+class InactiveVideoEntitlementMutationSerializer(serializers.Serializer):
+    entitlement = InactiveVideoEntitlementSerializer()
+    created = serializers.BooleanField()
+    changed = serializers.BooleanField()
+
+
+class InactiveVideoEntitlementErrorSerializer(serializers.Serializer):
+    code = serializers.CharField(
+        help_text=(
+            "Stable machine code. YouTube grant/runtime failures use "
+            "video_source_unsupported."
+        )
+    )
+    detail = serializers.CharField()
 
 
 class VideoProgressSerializer(serializers.ModelSerializer):

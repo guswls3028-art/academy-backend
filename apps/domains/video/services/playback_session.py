@@ -121,11 +121,17 @@ def end_session(*, student_id: int, session_id: str) -> None:
     if is_redis_available():
         stats = get_session_violation_stats_redis(session_id)
         if stats is not None:
-            video_repo.playback_session_filter_update_active(
+            # Persist final counters for both ACTIVE and already-REVOKED rows.
+            # The status transition remains ACTIVE-only so disposal cannot
+            # downgrade a server revocation to ENDED.
+            video_repo.playback_session_filter_update_any(
                 session_id, student_id,
                 last_seen=now,
                 violated_count=stats.get("violated", 0),
                 total_count=stats.get("total", 0),
+            )
+            video_repo.playback_session_filter_update_active(
+                session_id, student_id,
                 status=VideoPlaybackSession.Status.ENDED,
                 ended_at=now,
             )

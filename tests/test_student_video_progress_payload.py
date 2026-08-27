@@ -50,6 +50,7 @@ def test_student_video_playback_serializer_allows_public_video_without_session()
         "hls_url": "https://cdn.example.test/master.m3u8",
         "mp4_url": None,
         "play_url": "https://cdn.example.test/master.m3u8",
+        "policy_version": 1,
         "policy": {
             "allow_seek": True,
             "monitoring_enabled": False,

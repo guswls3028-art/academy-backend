@@ -24,7 +24,10 @@ def _resolve_access_mode_loaded(
     attendance_status: Optional[str],
     progress,
 ) -> AccessMode:
-    if perm and perm.access_mode == AccessMode.BLOCKED:
+    if perm and (
+        perm.access_mode == AccessMode.BLOCKED
+        or getattr(perm, "rule", None) == "blocked"
+    ):
         return AccessMode.BLOCKED
 
     if attendance_status != "ONLINE":
@@ -61,7 +64,10 @@ def resolve_access_mode(
     """
     perm = video_repo.video_access_get(video, enrollment)
 
-    if perm and perm.access_mode == AccessMode.BLOCKED:
+    if perm and (
+        perm.access_mode == AccessMode.BLOCKED
+        or getattr(perm, "rule", None) == "blocked"
+    ):
         return AccessMode.BLOCKED
 
     session = video.session
@@ -141,8 +147,29 @@ def get_effective_access_mode(
     """
     perm = video_repo.video_access_get(video, enrollment)
 
+    if perm and (
+        perm.access_mode == AccessMode.BLOCKED
+        or getattr(perm, "rule", None) == "blocked"
+    ):
+        return AccessMode.BLOCKED
+
+    if getattr(enrollment, "status", None) != "ACTIVE":
+        from apps.domains.video.services.inactive_entitlements import (
+            get_active_inactive_video_entitlement,
+        )
+
+        entitlement = get_active_inactive_video_entitlement(
+            video=video,
+            enrollment=enrollment,
+        )
+        return (
+            AccessMode(entitlement.access_mode)
+            if entitlement is not None
+            else AccessMode.BLOCKED
+        )
+
     if perm and perm.is_override:
-        return perm.access_mode
+        return AccessMode(perm.access_mode)
 
     return resolve_access_mode(
         video=video,

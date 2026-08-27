@@ -438,6 +438,7 @@ Add for student video/progress access changes:
 ```powershell
 cd C:\academy\backend
 python -m pytest tests\test_student_video_progress_enrollment_resolution.py -v --tb=short -x
+python -m pytest tests\test_video_access_security.py -v --tb=short -x
 python -m pytest apps\domains\students\tests\test_student_support.py -v --tb=short -x
 ```
 
@@ -480,8 +481,106 @@ Tenant-wide public-library videos intentionally have no enrollment-specific
 `FREE_REVIEW`; the response keeps the public video's flat `access_mode=null`
 compatibility field while the nested policy remains complete and executable.
 
-If playback policy cannot be resolved for the selected active enrollment, the
-request fails closed rather than choosing another enrollment or tenant.
+### Exact video access after enrollment deactivation
+
+An inactive enrollment does not inherit video access from a fee, invoice,
+payment, attendance row, or legacy `VideoAccess` override. When an operator has
+separate authorization to preserve one already-earned video, the only exception
+is an explicit `InactiveVideoEntitlement` for the same tenant, student,
+enrollment, and video. The entitlement records its access mode, source and
+source reference, nonblank reason, actor reference, grant time, optional expiry,
+and revoke actor/reason/time. Revoked grants remain as history; a partial unique
+constraint permits only one current grant for the exact enrollment and video.
+
+The exception is valid only while the student, user, and student membership are
+active; the enrollment is `INACTIVE`; the lecture remains active; the video is
+`READY`; and the enrollment still has an exact `SessionEnrollment` for the
+video's session. Tenant, student, enrollment, lecture, session, and video must
+all agree. Expired or revoked grants fail closed. An explicit `BLOCKED` video
+access row wins over the entitlement. Legacy `VideoAccess` rows never make an
+inactive enrollment eligible on their own.
+Soft-deleted videos (`deleted_at` set) are ineligible even when their retained
+foreign-key row or R2 object still exists: student home/session surfaces omit
+the video and thumbnail, playback/write resolution fails closed, and staff
+history reports the entitlement as `INELIGIBLE`.
+
+The target must be Academy-hosted revocable media. YouTube embeds cannot be
+bounded or revoked by the Academy CDN contract, so staff grant returns HTTP 400
+with `code=video_source_unsupported`, and a legacy/direct YouTube entitlement
+row still fails closed at runtime.
+
+Student video home and session-video responses expose only the exact entitled
+session and video. They do not reopen future sessions, exams, homework,
+attendance, fees, social actions, or the rest of the lecture. Playback,
+required progress and forward-skip writes, and lightweight
+`?access_check=true` revalidation use the same access context. Likes and
+comments remain active-enrollment-only and return 403 for an inactive
+enrollment even when that exact video is entitled. The access check returns
+only `ok`, effective `access_mode`,
+`monitoring_enabled`, and `policy_version`; it does not create playback
+sessions, activity records, or view counts. A full bootstrap rechecks the
+lecture, enrollment, video, and effective mode under row locks before recording
+activity or view count. Every mode receives a short-lived current-access token;
+only `PROCTORED_CLASS` creates a monitored playback session.
+
+For inactive entitlements only, the playback token, HLS URL, and thumbnail URL
+expire at the earliest of the current access TTL (600 seconds by default) and
+`expires_at`. The locked playback grant is authoritative: HLS and thumbnail
+signatures are rebuilt after that grant using its exact expiry, so a concurrent
+replacement with a shorter entitlement cannot return a longer URL. CDN workers
+validate only the URL expiry and HMAC; they have no entitlement callback.
+Therefore revoke immediately blocks new access checks, playback grants, and
+token validation, while an already issued CDN URL can remain usable until its
+bounded expiry (at most the access TTL). This contract does not claim immediate
+revocation of an already issued CDN signature. For active, system/public, and
+other ordinary playback, an HLS signature lasts at most the encoded video
+duration plus `VIDEO_PLAYBACK_TTL_SECONDS`; legacy READY rows without duration
+retain the historical 24-hour ceiling. This bounds already-issued ordinary
+media after a lecture close without changing the current-access token or
+session rules.
+Signed URL query parameters and playback tokens are bearer credentials and are
+never logged; playback logs retain only video id, safe status/path metadata,
+and expiry timestamps.
+
+Inactive-entitlement progress and forward-skip writes lock the exact lecture,
+session, enrollment, video policy version, and entitlement in the same order,
+then revalidate immediately before mutation. If revoke or another policy change
+commits after the request's initial access check, the stale write returns 403
+and creates or updates no progress or skip-budget row. Ordinary active
+enrollment write behavior remains unchanged.
+
+Staff manage this exception through tenant-resolved video administration:
+
+- `GET /api/v1/media/inactive-video-entitlements/` lists auditable grants and
+  accepts exact `student_id`, `enrollment_id`, and `video_id` filters;
+- `POST /api/v1/media/inactive-video-entitlements/` grants or idempotently
+  refreshes one exact current entitlement;
+- `POST /api/v1/media/inactive-video-entitlements/{id}/revoke/` revokes it
+  idempotently.
+
+Grant and revoke lock the scoped rows and validate the current graph again
+inside the transaction. They do not increment the video-wide
+`Video.policy_version`: exact entitlement row state and expiry are revalidated
+directly, so unrelated ACTIVE students' existing tokens and monitored sessions
+remain valid.
+An operator may stage a grant while the exact enrollment is still `ACTIVE` so a
+withdrawal transition can be completed without an access gap; the staged row is
+reported as `STAGED` and has no effect on ordinary active-enrollment policy. It
+becomes eligible only after that same enrollment is `INACTIVE` and every other
+inactive-entitlement guard passes.
+The list reports `INELIGIBLE` instead of `ACTIVE` if the enrollment is inactive
+but a current account, lecture, video, session-scope, tenant, or blocking guard
+no longer passes.
+They do not alter student, enrollment, attendance, session-enrollment, fee,
+invoice, payment, exam, or homework state and do not enqueue notifications.
+`STAFF_AUTHORIZATION` is an explicit manual source; it must not be presented as
+proof that an invoice or payment exists. Both a database CHECK constraint and
+runtime scope validation reject every other stored source, so a direct import
+cannot turn a payment-derived or unknown value into learning access.
+
+If playback policy cannot be resolved for the selected active enrollment or
+the exact inactive entitlement, the request fails closed rather than choosing
+another enrollment or tenant.
 
 An `ACTIVE` enrollment alone does not keep a paid lecture open after the
 lecture is ended. When a regular `Lecture.is_active` becomes false, student and
@@ -490,6 +589,16 @@ playback and progress writes immediately. The tenant-wide `is_system` public
 library remains available. Published exam and homework history stays readable
 from the grades contract so ending a lecture revokes learning access without
 erasing the student's record.
+
+Regular lecture deactivation locks the lecture row and changes its state in the
+same transaction that marks every ACTIVE monitored playback session for that
+lecture `REVOKED`. A concurrent playback grant uses the same lecture-first lock,
+so it either commits before close and is revoked by that close transaction, or
+observes the committed close and issues no token/session. Refresh and heartbeat
+reject existing regular-lecture tokens after close. Client disposal may still
+flush final Redis violation/total counters, but its ACTIVE-only status update
+cannot downgrade a server `REVOKED` row to `ENDED`. System-library lectures are
+excluded from this close-time revocation compatibility path.
 
 Add for frontend account/student UI changes:
 
