@@ -422,7 +422,6 @@ class ExamOMRBatchUploadView(APIView):
                 with transaction.atomic():
                     locked_item = (
                         OmrUploadBatchItem.objects.select_for_update()
-                        .select_related("submission")
                         .get(id=item.id, batch=batch)
                     )
                     if (
@@ -557,7 +556,7 @@ class OmrUploadBatchRetryView(APIView):
             items = {
                 int(item.ordinal): item
                 for item in OmrUploadBatchItem.objects.select_for_update()
-                .select_related("submission")
+                .prefetch_related("submission")
                 .filter(batch=batch, ordinal__in=ordinals)
             }
             for ordinal in ordinals:
