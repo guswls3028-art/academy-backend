@@ -11,7 +11,7 @@ from rest_framework.viewsets import ModelViewSet
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
-from drf_spectacular.utils import OpenApiParameter, extend_schema
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 
 from apps.core.parsing import parse_bool
 from apps.core.permissions import TenantResolvedAndStaff, TenantResolved
@@ -22,9 +22,17 @@ from ..models import Student, StudentRegistrationRequest
 from ..serializers import (
     DeletedRegistrationConflictSerializer,
     DeletedRegistrationResolveSerializer,
-    StudentDetailSerializer,
+    RegistrationRequestBulkApproveResponseSerializer,
+    RegistrationRequestBulkIdsSerializer,
+    RegistrationRequestBulkRejectResponseSerializer,
     RegistrationRequestCreateSerializer,
+    RegistrationRequestDuplicateCheckRequestSerializer,
+    RegistrationRequestDuplicateCheckResponseSerializer,
     RegistrationRequestListSerializer,
+    RegistrationRequestRejectResponseSerializer,
+    RegistrationRequestSettingsSerializer,
+    SelfRegistrationDisabledErrorSerializer,
+    StudentDetailSerializer,
 )
 from ..services import (
     RegistrationApprovalError,
@@ -141,6 +149,71 @@ class RegistrationRequestViewSet(ModelViewSet):
             return RegistrationRequestCreateSerializer
         return RegistrationRequestListSerializer
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name="status",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                enum=[
+                    StudentRegistrationRequest.APPROVED,
+                    StudentRegistrationRequest.PENDING,
+                    StudentRegistrationRequest.REJECTED,
+                ],
+                description=(
+                    "가입 신청 상태 필터. 자가 가입 비활성 학원에서 "
+                    "`status=pending` 조회는 감사 이력을 업무로 노출하지 않고 403을 반환합니다."
+                ),
+            ),
+        ],
+        responses={
+            200: RegistrationRequestListSerializer(many=True),
+            403: OpenApiResponse(
+                response=SelfRegistrationDisabledErrorSerializer,
+                description=(
+                    "자가 가입 비활성 학원에서 `status=pending`으로 조회한 경우에만 반환합니다."
+                ),
+            ),
+        },
+    )
+    def list(self, request, *args, **kwargs):
+        if request.query_params.get("status") == StudentRegistrationRequest.PENDING:
+            disabled = _self_registration_disabled_response(request)
+            if disabled is not None:
+                return disabled
+        return super().list(request, *args, **kwargs)
+
+    def _generic_mutation_response(self, request):
+        disabled = _self_registration_disabled_response(request)
+        if disabled is not None:
+            return disabled
+        return Response(
+            {
+                "code": "registration_request_read_only",
+                "detail": "가입 신청 이력은 전용 승인·거절 작업으로만 처리할 수 있습니다.",
+            },
+            status=405,
+        )
+
+    @extend_schema(exclude=True)
+    def update(self, request, *args, **kwargs):
+        return self._generic_mutation_response(request)
+
+    @extend_schema(exclude=True)
+    def partial_update(self, request, *args, **kwargs):
+        return self._generic_mutation_response(request)
+
+    @extend_schema(exclude=True)
+    def destroy(self, request, *args, **kwargs):
+        return self._generic_mutation_response(request)
+
+    @extend_schema(
+        request=RegistrationRequestDuplicateCheckRequestSerializer,
+        responses={
+            200: RegistrationRequestDuplicateCheckResponseSerializer,
+            403: SelfRegistrationDisabledErrorSerializer,
+        },
+    )
     @action(detail=False, methods=["post"], url_path="check_duplicate")
     def check_duplicate(self, request):
         """
@@ -210,6 +283,14 @@ class RegistrationRequestViewSet(ModelViewSet):
 
         return Response(result)
 
+    @extend_schema(
+        request=RegistrationRequestCreateSerializer,
+        responses={
+            200: StudentDetailSerializer,
+            201: RegistrationRequestListSerializer,
+            403: SelfRegistrationDisabledErrorSerializer,
+        },
+    )
     def create(self, request, *args, **kwargs):
         if not getattr(request, "tenant", None):
             return Response(
@@ -328,6 +409,13 @@ class RegistrationRequestViewSet(ModelViewSet):
                 payload["error"] = str(e)
             return Response(payload, status=500)
 
+    @extend_schema(
+        request=RegistrationRequestBulkIdsSerializer,
+        responses={
+            200: RegistrationRequestBulkApproveResponseSerializer,
+            403: SelfRegistrationDisabledErrorSerializer,
+        },
+    )
     @action(detail=False, methods=["post"], url_path="bulk_approve")
     def bulk_approve(self, request):
         """
@@ -335,6 +423,10 @@ class RegistrationRequestViewSet(ModelViewSet):
         POST body: { "ids": [1, 2, 3, ...] }
         응답: { "approved": int, "failed": [ {"id": int, "detail": str}, ... ] }
         """
+        disabled = _self_registration_disabled_response(request)
+        if disabled is not None:
+            return disabled
+
         ids = request.data.get("ids") or []
         if not isinstance(ids, (list, tuple)):
             return Response({"detail": "ids는 배열이어야 합니다."}, status=400)
@@ -365,6 +457,16 @@ class RegistrationRequestViewSet(ModelViewSet):
 
         return Response({"approved": approved_count, "failed": failed}, status=200)
 
+    @extend_schema(
+        methods=["GET"],
+        request=None,
+        responses={200: RegistrationRequestSettingsSerializer},
+    )
+    @extend_schema(
+        methods=["PATCH"],
+        request=RegistrationRequestSettingsSerializer,
+        responses={200: RegistrationRequestSettingsSerializer},
+    )
     @action(detail=False, methods=["get", "patch"], url_path="settings")
     def registration_settings(self, request):
         """
@@ -405,11 +507,18 @@ class RegistrationRequestViewSet(ModelViewSet):
     @extend_schema(
         request=None,
         parameters=[OpenApiParameter("id", int, OpenApiParameter.PATH)],
-        responses={200: StudentDetailSerializer, 409: DeletedRegistrationConflictSerializer},
+        responses={
+            200: StudentDetailSerializer,
+            403: SelfRegistrationDisabledErrorSerializer,
+            409: DeletedRegistrationConflictSerializer,
+        },
     )
     @action(detail=True, methods=["post"])
     def approve(self, request, pk=None):
         """승인 시 Student + User + TenantMembership 생성 후 status=approved."""
+        disabled = _self_registration_disabled_response(request)
+        if disabled is not None:
+            return disabled
         reg = self.get_object()
         if reg.status != StudentRegistrationRequest.PENDING:
             return Response(
@@ -425,11 +534,17 @@ class RegistrationRequestViewSet(ModelViewSet):
     @extend_schema(
         request=DeletedRegistrationResolveSerializer,
         parameters=[OpenApiParameter("id", int, OpenApiParameter.PATH)],
-        responses={200: StudentDetailSerializer},
+        responses={
+            200: StudentDetailSerializer,
+            403: SelfRegistrationDisabledErrorSerializer,
+        },
     )
     @action(detail=True, methods=["post"], url_path="resolve_deleted")
     def resolve_deleted(self, request, pk=None):
         """선생님이 선택한 동일인 삭제 계정을 복구한 뒤 가입 승인."""
+        disabled = _self_registration_disabled_response(request)
+        if disabled is not None:
+            return disabled
         serializer = DeletedRegistrationResolveSerializer(data=request.data)
         if not serializer.is_valid():
             return Response({"detail": "복구할 과거 계정을 선택해 주세요."}, status=400)
@@ -446,9 +561,19 @@ class RegistrationRequestViewSet(ModelViewSet):
         out = StudentDetailSerializer(result.student, context={"request": request})
         return Response(out.data, status=200)
 
+    @extend_schema(
+        request=None,
+        responses={
+            200: RegistrationRequestRejectResponseSerializer,
+            403: SelfRegistrationDisabledErrorSerializer,
+        },
+    )
     @action(detail=True, methods=["post"])
     def reject(self, request, pk=None):
         """가입 신청 거절 → status=rejected."""
+        disabled = _self_registration_disabled_response(request)
+        if disabled is not None:
+            return disabled
         reg = self.get_object()
         if reg.status != StudentRegistrationRequest.PENDING:
             return Response(
@@ -467,12 +592,23 @@ class RegistrationRequestViewSet(ModelViewSet):
             reg.save(update_fields=["status", "updated_at"])
         return Response({"status": "rejected", "id": reg.id}, status=200)
 
+    @extend_schema(
+        request=RegistrationRequestBulkIdsSerializer,
+        responses={
+            200: RegistrationRequestBulkRejectResponseSerializer,
+            403: SelfRegistrationDisabledErrorSerializer,
+        },
+    )
     @action(detail=False, methods=["post"], url_path="bulk_reject")
     def bulk_reject(self, request):
         """
         선택한 가입 신청 일괄 거절.
         POST body: { "ids": [1, 2, 3, ...] }
         """
+        disabled = _self_registration_disabled_response(request)
+        if disabled is not None:
+            return disabled
+
         ids = request.data.get("ids") or []
         if not isinstance(ids, (list, tuple)):
             return Response({"detail": "ids는 배열이어야 합니다."}, status=400)

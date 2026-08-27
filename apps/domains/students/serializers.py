@@ -770,12 +770,85 @@ class RegistrationRequestCreateSerializer(serializers.Serializer):
         return attrs
 
 
+_REGISTRATION_REQUEST_LIST_FIELDS = (
+    "id",
+    "tenant",
+    "status",
+    "name",
+    "username",
+    "parent_phone",
+    "phone",
+    "school_type",
+    "elementary_school",
+    "high_school",
+    "middle_school",
+    "high_school_class",
+    "major",
+    "grade",
+    "gender",
+    "memo",
+    "address",
+    "origin_middle_school",
+    "student",
+    "created_at",
+    "updated_at",
+)
+
+
 class RegistrationRequestListSerializer(serializers.ModelSerializer):
     """스태프용 가입 신청 목록/상세 (initial_password 제외)"""
 
     class Meta:
         model = StudentRegistrationRequest
-        exclude = ("initial_password", "initial_password_plain")
+        fields = _REGISTRATION_REQUEST_LIST_FIELDS
+        read_only_fields = _REGISTRATION_REQUEST_LIST_FIELDS
+
+
+class SelfRegistrationDisabledErrorSerializer(serializers.Serializer):
+    code = serializers.ChoiceField(choices=["self_registration_disabled"])
+    detail = serializers.CharField()
+
+
+class RegistrationRequestBulkIdsSerializer(serializers.Serializer):
+    ids = serializers.ListField(child=serializers.IntegerField(min_value=1), allow_empty=False)
+
+
+class RegistrationRequestBulkFailureSerializer(serializers.Serializer):
+    id = serializers.IntegerField(min_value=1)
+    detail = serializers.CharField()
+
+
+class RegistrationRequestBulkApproveResponseSerializer(serializers.Serializer):
+    approved = serializers.IntegerField(min_value=0)
+    failed = RegistrationRequestBulkFailureSerializer(many=True)
+
+
+class RegistrationRequestBulkRejectResponseSerializer(serializers.Serializer):
+    rejected = serializers.IntegerField(min_value=0)
+
+
+class RegistrationRequestRejectResponseSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=[StudentRegistrationRequest.REJECTED])
+    id = serializers.IntegerField(min_value=1)
+
+
+class RegistrationRequestAvailabilitySerializer(serializers.Serializer):
+    available = serializers.BooleanField()
+    reason = serializers.CharField(required=False)
+
+
+class RegistrationRequestDuplicateCheckRequestSerializer(serializers.Serializer):
+    username = serializers.CharField(required=False, allow_blank=True)
+    phone = serializers.CharField(required=False, allow_blank=True)
+
+
+class RegistrationRequestDuplicateCheckResponseSerializer(serializers.Serializer):
+    username = RegistrationRequestAvailabilitySerializer(required=False)
+    phone = RegistrationRequestAvailabilitySerializer(required=False)
+
+
+class RegistrationRequestSettingsSerializer(serializers.Serializer):
+    auto_approve = serializers.BooleanField()
 
 
 class DeletedRegistrationCandidateSerializer(serializers.Serializer):

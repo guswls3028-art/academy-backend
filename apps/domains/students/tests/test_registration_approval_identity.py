@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from datetime import timedelta
+from pathlib import Path
 
 from django.apps import apps
 from django.contrib.auth import get_user_model
@@ -937,3 +939,352 @@ class RegistrationApprovalIdentityTests(TestCase):
                 registration.refresh_from_db()
                 self.assertEqual(registration.status, StudentRegistrationRequest.PENDING)
                 self.assertIsNone(registration.student_id)
+
+    def test_disabled_tenant_pending_list_is_policy_history_not_actionable_work(self):
+        tenant = Tenant.objects.create(name="비활성 가입 학원", code="godmin", is_active=True)
+        registration = self._registration(
+            tenant=tenant,
+            username="historical-pending",
+            phone="01079991001",
+            parent_phone="01079991002",
+        )
+        staff = User.objects.create_user(
+            username="disabled-registration-list-staff",
+            password="staff-password",
+            tenant=tenant,
+            is_staff=True,
+        )
+        TenantMembership.ensure_active(tenant=tenant, user=staff, role="teacher")
+        request = self.factory.get(
+            "/api/v1/students/registration_requests/",
+            {"status": StudentRegistrationRequest.PENDING},
+        )
+        force_authenticate(request, user=staff)
+        request.tenant = tenant
+
+        response = RegistrationRequestViewSet.as_view({"get": "list"})(request)
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["code"], "self_registration_disabled")
+        registration.refresh_from_db()
+        self.assertEqual(registration.status, StudentRegistrationRequest.PENDING)
+
+    def test_disabled_tenant_staff_actions_preserve_pending_history(self):
+        tenant = Tenant.objects.create(name="비활성 가입 학원", code="godmin", is_active=True)
+        staff = User.objects.create_user(
+            username="disabled-registration-action-staff",
+            password="staff-password",
+            tenant=tenant,
+            is_staff=True,
+        )
+        TenantMembership.ensure_active(tenant=tenant, user=staff, role="teacher")
+
+        cases = (
+            ("approve", "approve", False),
+            ("bulk_approve", "bulk_approve", True),
+            ("reject", "reject", False),
+            ("bulk_reject", "bulk_reject", True),
+        )
+        for index, (label, action_name, is_bulk) in enumerate(cases, start=1):
+            with self.subTest(action=label):
+                registration = self._registration(
+                    tenant=tenant,
+                    username=f"historical-pending-{index}",
+                    phone=f"01079992{index:03d}",
+                    parent_phone=f"01079993{index:03d}",
+                )
+                url = (
+                    f"/api/v1/students/registration_requests/{action_name}/"
+                    if is_bulk
+                    else f"/api/v1/students/registration_requests/{registration.id}/{action_name}/"
+                )
+                data = {"ids": [registration.id]} if is_bulk else {}
+                request = self.factory.post(url, data, format="json")
+                force_authenticate(request, user=staff)
+                request.tenant = tenant
+                view = RegistrationRequestViewSet.as_view({"post": action_name})
+
+                response = view(request) if is_bulk else view(request, pk=registration.id)
+
+                self.assertEqual(response.status_code, 403)
+                self.assertEqual(response.data["code"], "self_registration_disabled")
+                registration.refresh_from_db()
+                self.assertEqual(registration.status, StudentRegistrationRequest.PENDING)
+                self.assertIsNone(registration.student_id)
+
+    def test_disabled_tenant_generic_patch_cannot_move_or_resolve_history(self):
+        tenant = Tenant.objects.create(name="비활성 가입 수정 학원", code="godmin", is_active=True)
+        other_tenant = Tenant.objects.create(
+            name="다른 가입 학원",
+            code="registration-other-tenant",
+            is_active=True,
+        )
+        registration = self._registration(
+            tenant=tenant,
+            username="historical-patch",
+            phone="01079994001",
+            parent_phone="01079994002",
+        )
+        staff = User.objects.create_user(
+            username="disabled-registration-patch-staff",
+            password="staff-password",
+            tenant=tenant,
+            is_staff=True,
+        )
+        TenantMembership.ensure_active(tenant=tenant, user=staff, role="teacher")
+        request = self.factory.patch(
+            f"/api/v1/students/registration_requests/{registration.id}/",
+            {
+                "tenant": other_tenant.id,
+                "status": StudentRegistrationRequest.APPROVED,
+            },
+            format="json",
+        )
+        force_authenticate(request, user=staff)
+        request.tenant = tenant
+
+        response = RegistrationRequestViewSet.as_view({"patch": "partial_update"})(
+            request,
+            pk=registration.id,
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["code"], "self_registration_disabled")
+        registration.refresh_from_db()
+        self.assertEqual(registration.tenant_id, tenant.id)
+        self.assertEqual(registration.status, StudentRegistrationRequest.PENDING)
+        self.assertIsNone(registration.student_id)
+
+    def test_disabled_tenant_generic_delete_preserves_history_row(self):
+        tenant = Tenant.objects.create(name="비활성 가입 삭제 학원", code="godmin", is_active=True)
+        registration = self._registration(
+            tenant=tenant,
+            username="historical-delete",
+            phone="01079995001",
+            parent_phone="01079995002",
+        )
+        staff = User.objects.create_user(
+            username="disabled-registration-delete-staff",
+            password="staff-password",
+            tenant=tenant,
+            is_staff=True,
+        )
+        TenantMembership.ensure_active(tenant=tenant, user=staff, role="teacher")
+        request = self.factory.delete(
+            f"/api/v1/students/registration_requests/{registration.id}/",
+        )
+        force_authenticate(request, user=staff)
+        request.tenant = tenant
+
+        response = RegistrationRequestViewSet.as_view({"delete": "destroy"})(
+            request,
+            pk=registration.id,
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["code"], "self_registration_disabled")
+        self.assertTrue(StudentRegistrationRequest.objects.filter(pk=registration.id).exists())
+        registration.refresh_from_db()
+        self.assertEqual(registration.tenant_id, tenant.id)
+        self.assertEqual(registration.status, StudentRegistrationRequest.PENDING)
+        self.assertIsNone(registration.student_id)
+
+    def test_disabled_tenant_resolve_deleted_preserves_history_and_deleted_student(self):
+        tenant = Tenant.objects.create(name="비활성 가입 복구 학원", code="godmin", is_active=True)
+        deleted_student = create_student_account(
+            tenant=tenant,
+            password="teacher-password",
+            student_data={
+                "name": "과거학생",
+                "ps_number": "DISABLED-RESOLVE-DELETED",
+                "phone": "01079996001",
+                "parent_phone": "01079996002",
+                "omr_code": "996001",
+                "uses_identifier": False,
+                "school_type": "HIGH",
+                "grade": 1,
+            },
+        ).student
+        soft_delete_student(deleted_student, tenant=tenant)
+        deleted_student.refresh_from_db()
+        deleted_at = deleted_student.deleted_at
+        registration = self._registration(
+            tenant=tenant,
+            name=deleted_student.name,
+            username="disabled-resolve-request",
+            phone="01079996001",
+            parent_phone="01079996002",
+        )
+        staff = User.objects.create_user(
+            username="disabled-registration-resolve-staff",
+            password="staff-password",
+            tenant=tenant,
+            is_staff=True,
+        )
+        TenantMembership.ensure_active(tenant=tenant, user=staff, role="teacher")
+        request = self.factory.post(
+            f"/api/v1/students/registration_requests/{registration.id}/resolve_deleted/",
+            {"student_id": deleted_student.id},
+            format="json",
+        )
+        force_authenticate(request, user=staff)
+        request.tenant = tenant
+
+        response = RegistrationRequestViewSet.as_view({"post": "resolve_deleted"})(
+            request,
+            pk=registration.id,
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["code"], "self_registration_disabled")
+        registration.refresh_from_db()
+        deleted_student.refresh_from_db()
+        self.assertEqual(registration.tenant_id, tenant.id)
+        self.assertEqual(registration.status, StudentRegistrationRequest.PENDING)
+        self.assertIsNone(registration.student_id)
+        self.assertEqual(deleted_student.deleted_at, deleted_at)
+
+    def test_enabled_tenant_generic_mutations_are_read_only(self):
+        registration = self._registration(username="enabled-read-only")
+        other_tenant = Tenant.objects.create(
+            name="다른 가입 학원",
+            code="registration-put-other-tenant",
+            is_active=True,
+        )
+        other_student = self._student(ps_number="PUT-OTHER-STUDENT")
+        staff = User.objects.create_user(
+            username="enabled-registration-read-only-staff",
+            password="staff-password",
+            tenant=self.tenant,
+            is_staff=True,
+        )
+        TenantMembership.ensure_active(tenant=self.tenant, user=staff, role="teacher")
+
+        cases = (
+            (
+                "patch",
+                "partial_update",
+                {"status": StudentRegistrationRequest.APPROVED},
+            ),
+            (
+                "put",
+                "update",
+                {
+                    "tenant": other_tenant.id,
+                    "student": other_student.id,
+                    "status": StudentRegistrationRequest.APPROVED,
+                },
+            ),
+            ("delete", "destroy", None),
+        )
+        for method, action_name, data in cases:
+            with self.subTest(method=method):
+                request_factory = getattr(self.factory, method)
+                request = request_factory(
+                    f"/api/v1/students/registration_requests/{registration.id}/",
+                    data=data,
+                    format="json",
+                )
+                force_authenticate(request, user=staff)
+                request.tenant = self.tenant
+
+                response = RegistrationRequestViewSet.as_view({method: action_name})(
+                    request,
+                    pk=registration.id,
+                )
+
+                self.assertEqual(response.status_code, 405)
+                self.assertEqual(response.data["code"], "registration_request_read_only")
+                registration.refresh_from_db()
+                self.assertEqual(registration.tenant_id, self.tenant.id)
+                self.assertEqual(registration.status, StudentRegistrationRequest.PENDING)
+                self.assertIsNone(registration.student_id)
+
+    def test_openapi_seals_registration_history_and_documents_disabled_policy(self):
+        schema_path = Path(__file__).resolve().parents[4] / "schema" / "openapi.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        paths = schema["paths"]
+
+        detail_operations = paths["/api/v1/students/registration_requests/{id}/"]
+        self.assertEqual(set(detail_operations), {"get"})
+
+        guarded_operations = (
+            ("/api/v1/students/registration_requests/", "get"),
+            ("/api/v1/students/registration_requests/", "post"),
+            ("/api/v1/students/registration_requests/bulk_approve/", "post"),
+            ("/api/v1/students/registration_requests/bulk_reject/", "post"),
+            ("/api/v1/students/registration_requests/check_duplicate/", "post"),
+            ("/api/v1/students/registration_requests/{id}/approve/", "post"),
+            ("/api/v1/students/registration_requests/{id}/reject/", "post"),
+            ("/api/v1/students/registration_requests/{id}/resolve_deleted/", "post"),
+        )
+        for path, method in guarded_operations:
+            with self.subTest(path=path, method=method):
+                response_schema = paths[path][method]["responses"]["403"]["content"][
+                    "application/json"
+                ]["schema"]
+                self.assertEqual(
+                    response_schema["$ref"],
+                    "#/components/schemas/SelfRegistrationDisabledError",
+                )
+
+        list_operation = paths["/api/v1/students/registration_requests/"]["get"]
+        status_parameters = [
+            parameter
+            for parameter in list_operation["parameters"]
+            if parameter["in"] == "query" and parameter["name"] == "status"
+        ]
+        self.assertEqual(len(status_parameters), 1)
+        self.assertEqual(
+            status_parameters[0]["schema"]["enum"],
+            ["approved", "pending", "rejected"],
+        )
+        self.assertIn(
+            "status=pending",
+            list_operation["responses"]["403"]["description"],
+        )
+
+        error_schema = schema["components"]["schemas"]["SelfRegistrationDisabledError"]
+        code_ref = error_schema["properties"]["code"]["$ref"]
+        code_schema = schema["components"]["schemas"][code_ref.rsplit("/", 1)[-1]]
+        self.assertEqual(
+            code_schema["enum"],
+            ["self_registration_disabled"],
+        )
+
+    def test_enabled_tenant_pending_list_and_reject_remain_available(self):
+        registration = self._registration(username="enabled-pending")
+        staff = User.objects.create_user(
+            username="enabled-registration-staff",
+            password="staff-password",
+            tenant=self.tenant,
+            is_staff=True,
+        )
+        TenantMembership.ensure_active(tenant=self.tenant, user=staff, role="teacher")
+        list_request = self.factory.get(
+            "/api/v1/students/registration_requests/",
+            {"status": StudentRegistrationRequest.PENDING},
+        )
+        force_authenticate(list_request, user=staff)
+        list_request.tenant = self.tenant
+
+        list_response = RegistrationRequestViewSet.as_view({"get": "list"})(list_request)
+
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(list_response.data["count"], 1)
+
+        reject_request = self.factory.post(
+            f"/api/v1/students/registration_requests/{registration.id}/reject/",
+            {},
+            format="json",
+        )
+        force_authenticate(reject_request, user=staff)
+        reject_request.tenant = self.tenant
+        reject_response = RegistrationRequestViewSet.as_view({"post": "reject"})(
+            reject_request,
+            pk=registration.id,
+        )
+
+        self.assertEqual(reject_response.status_code, 200)
+        registration.refresh_from_db()
+        self.assertEqual(registration.status, StudentRegistrationRequest.REJECTED)
