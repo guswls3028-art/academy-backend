@@ -14,10 +14,17 @@ from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership, User
-from apps.domains.enrollment.models import Enrollment, SessionEnrollment
-from apps.domains.lectures.models import Lecture, Session
+from apps.domains.enrollment.test_support import (
+    create_enrollment_fixture,
+    create_session_enrollment_fixture,
+    get_enrollment_fixture,
+)
+from apps.domains.lectures.test_support import (
+    create_lecture_fixture,
+    create_session_fixture,
+)
 from apps.domains.student_app.media.views import StudentVideoPlaybackView
-from apps.domains.students.models import Student
+from apps.domains.students.test_support import create_student_fixture
 from apps.domains.video.models import (
     AccessMode,
     InactiveVideoEntitlement,
@@ -67,7 +74,7 @@ class InactiveVideoEntitlementConcurrencyTests(TransactionTestCase):
             user=student_user,
             role="student",
         )
-        self.student = Student.objects.create(
+        self.student = create_student_fixture(
             tenant=self.tenant,
             user=student_user,
             name="Entitlement Student",
@@ -76,24 +83,24 @@ class InactiveVideoEntitlementConcurrencyTests(TransactionTestCase):
             parent_phone="01012345678",
             school_type="HIGH",
         )
-        lecture = Lecture.objects.create(
+        lecture = create_lecture_fixture(
             tenant=self.tenant,
             title="Entitlement Lecture",
             name="Entitlement Lecture",
             subject="MATH",
         )
-        self.enrollment = Enrollment.objects.create(
+        self.enrollment = create_enrollment_fixture(
             tenant=self.tenant,
             student=self.student,
             lecture=lecture,
             status="INACTIVE",
         )
-        session = Session.objects.create(
+        session = create_session_fixture(
             lecture=lecture,
             title="Session 1",
             order=1,
         )
-        SessionEnrollment.objects.create(
+        create_session_enrollment_fixture(
             tenant=self.tenant,
             enrollment=self.enrollment,
             session=session,
@@ -147,7 +154,7 @@ class InactiveVideoEntitlementConcurrencyTests(TransactionTestCase):
         def playback():
             close_old_connections()
             video = Video.objects.get(id=self.video.id)
-            enrollment = Enrollment.objects.get(id=self.enrollment.id)
+            enrollment = get_enrollment_fixture(id=self.enrollment.id)
             user = User.objects.get(id=self.student.user_id)
             barrier.wait(timeout=10)
             result = issue_playback_access_grant(
@@ -280,7 +287,7 @@ class InactiveVideoEntitlementConcurrencyTests(TransactionTestCase):
         def stale_progress_write():
             close_old_connections()
             video = Video.objects.get(id=self.video.id)
-            enrollment = Enrollment.objects.get(id=self.enrollment.id)
+            enrollment = get_enrollment_fixture(id=self.enrollment.id)
             self.assertIsNotNone(
                 get_active_inactive_video_entitlement(
                     video=video,
@@ -328,7 +335,7 @@ class InactiveVideoEntitlementConcurrencyTests(TransactionTestCase):
         def stale_skip_write():
             close_old_connections()
             video = Video.objects.get(id=self.video.id)
-            enrollment = Enrollment.objects.get(id=self.enrollment.id)
+            enrollment = get_enrollment_fixture(id=self.enrollment.id)
             self.assertIsNotNone(
                 get_active_inactive_video_entitlement(
                     video=video,

@@ -9,15 +9,20 @@ from django.utils import timezone
 
 from apps.core.models import TenantMembership
 from apps.core.permissions import is_effective_staff
-from apps.domains.enrollment.models import Enrollment, SessionEnrollment
-from apps.domains.lectures.models import Lecture, Session
-from apps.domains.students.models import Student
 from apps.domains.video.models import (
     AccessMode,
     InactiveVideoEntitlement,
     Video,
     VideoAccess,
     VideoProgress,
+)
+from apps.support.video.inactive_entitlement_dependencies import (
+    get_inactive_entitlement_scope_models,
+)
+
+
+Enrollment, SessionEnrollment, Lecture, Session, Student = (
+    get_inactive_entitlement_scope_models()
 )
 
 

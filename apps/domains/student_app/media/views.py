@@ -12,20 +12,20 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework import status
 
 from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
-from apps.domains.video.models import AccessMode
-from apps.domains.video.services.inactive_entitlements import (
-    InactiveVideoEntitlementError,
-    update_inactive_entitled_video_progress,
-)
 from apps.support.student_app.video_dependencies import (
+    active_inactive_video_entitlements_for_student,
     active_enrollments_for_student,
     get_lecture_models,
     get_media_models,
+    get_inactive_video_entitlement_error_type,
+    get_video_access_mode,
     get_video_comment_models,
     get_video_like_models,
     get_video_model,
     get_video_progress_model,
+    resolve_active_inactive_video_entitlement,
     resolve_access_modes_for_videos_prefetched,
+    update_inactive_entitled_video_progress,
 )
 from apps.support.student_app.video_media import (
     bounded_inactive_media_expiry,
@@ -60,6 +60,8 @@ from .serializers import (
 
 
 logger = logging.getLogger(__name__)
+AccessMode = get_video_access_mode()
+InactiveVideoEntitlementError = get_inactive_video_entitlement_error_type()
 
 
 def _student_access_error_payload(error: StudentVideoAccessError) -> dict:
@@ -243,14 +245,12 @@ class StudentVideoMeView(APIView):
         )
         enrollment_by_lecture = {e.lecture_id: e.id for e in enrollments}
         active_lecture_ids = set(enrollment_by_lecture)
-        from apps.domains.video.services.inactive_entitlements import (
-            active_entitlements_for_student,
-            get_active_inactive_video_entitlement,
-        )
-
         inactive_entitlements = []
-        for candidate in active_entitlements_for_student(tenant=tenant, student=student):
-            entitlement = get_active_inactive_video_entitlement(
+        for candidate in active_inactive_video_entitlements_for_student(
+            tenant=tenant,
+            student=student,
+        ):
+            entitlement = resolve_active_inactive_video_entitlement(
                 video=candidate.video,
                 enrollment=candidate.enrollment,
             )
