@@ -26,7 +26,11 @@ from apps.domains.submissions.services.dispatcher import (
     dispatch_submission,
     resolve_omr_sheet_for_exam,
 )
-from apps.domains.submissions.services.lifecycle import retry_failed_submission
+from apps.domains.submissions.services.lifecycle import (
+    InvalidTransitionError,
+    retry_failed_submission,
+)
+from apps.infrastructure.storage.r2 import delete_object_r2_storage
 from apps.support.submissions.dependencies import exam_belongs_to_tenant
 
 
@@ -37,6 +41,42 @@ ALLOWED_CONTENT_TYPES = {
     "image/png",
     "image/tiff",
     "application/pdf",
+}
+OMR_UPLOAD_FILE_PROPERTIES = {
+    "file": {"type": "string", "format": "binary"},
+    "files": {
+        "type": "array",
+        "items": {"type": "string", "format": "binary"},
+        "maxItems": MAX_FILES,
+    },
+    "sheet_id": {"type": "integer", "minimum": 1},
+    "session_id": {"type": "integer", "minimum": 1},
+}
+OMR_UPLOAD_REQUEST_SCHEMA = {
+    "oneOf": [
+        {
+            "title": "Legacy OMR upload",
+            "type": "object",
+            "properties": OMR_UPLOAD_FILE_PROPERTIES,
+            "anyOf": [{"required": ["file"]}, {"required": ["files"]}],
+        },
+        {
+            "title": "Durable OMR batch upload",
+            "type": "object",
+            "properties": {
+                **OMR_UPLOAD_FILE_PROPERTIES,
+                "batch_id": {"type": "string", "format": "uuid"},
+                "item_ordinals": {
+                    "type": "array",
+                    "items": {"type": "integer", "minimum": 1, "maximum": MAX_FILES},
+                    "minItems": 1,
+                    "maxItems": MAX_FILES,
+                },
+            },
+            "required": ["batch_id", "item_ordinals"],
+            "anyOf": [{"required": ["file"]}, {"required": ["files"]}],
+        },
+    ]
 }
 PROCESSING_STATUSES = {
     Submission.Status.DISPATCHED,
@@ -255,14 +295,44 @@ def _file_validation_error(upload_file) -> tuple[str, str] | None:
     return None
 
 
-def _mark_admission_failed(item_id: int, *, code: str, message: str) -> None:
-    OmrUploadBatchItem.objects.filter(id=item_id).update(
-        admission_status=OmrUploadBatchItem.AdmissionStatus.FAILED,
-        submission=None,
-        failure_code=code[:64],
-        failure_message=message[:300],
-        updated_at=timezone.now(),
-    )
+def _mark_admission_failed(item_id: int, *, code: str, message: str) -> bool:
+    with transaction.atomic():
+        item = (
+            OmrUploadBatchItem.objects.select_for_update()
+            .filter(id=item_id)
+            .first()
+        )
+        if item is None:
+            return False
+        if (
+            item.admission_status == OmrUploadBatchItem.AdmissionStatus.RECEIVED
+            and item.submission_id is not None
+        ):
+            return False
+        item.admission_status = OmrUploadBatchItem.AdmissionStatus.FAILED
+        item.submission = None
+        item.failure_code = code[:64]
+        item.failure_message = message[:300]
+        item.save(
+            update_fields=[
+                "admission_status",
+                "submission",
+                "failure_code",
+                "failure_message",
+                "updated_at",
+            ]
+        )
+        return True
+
+
+def _delete_rolled_back_upload(*, key: str, batch_id: UUID, ordinal: int) -> None:
+    try:
+        delete_object_r2_storage(key=key)
+    except Exception:
+        logger.exception(
+            "Failed to compensate rolled-back OMR upload",
+            extra={"batch_id": str(batch_id), "ordinal": int(ordinal)},
+        )
 
 
 class ExamOMRBatchInitializeView(APIView):
@@ -305,23 +375,7 @@ class ExamOMRBatchUploadView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     @extend_schema(
-        request=inline_serializer(
-            name="OmrUploadBatchUploadRequest",
-            fields={
-                "files": serializers.ListField(
-                    child=serializers.FileField(),
-                    required=False,
-                ),
-                "file": serializers.FileField(required=False),
-                "batch_id": serializers.UUIDField(required=False),
-                "item_ordinals": serializers.ListField(
-                    child=serializers.IntegerField(min_value=1, max_value=MAX_FILES),
-                    required=False,
-                ),
-                "sheet_id": serializers.IntegerField(required=False),
-                "session_id": serializers.IntegerField(required=False),
-            },
-        ),
+        request={"multipart/form-data": OMR_UPLOAD_REQUEST_SCHEMA},
         responses={201: OmrUploadBatchUploadResultSerializer},
     )
     def post(self, request, exam_id: int):
@@ -343,6 +397,14 @@ class ExamOMRBatchUploadView(APIView):
             )
         if not exam_belongs_to_tenant(exam_id=int(exam_id), tenant=tenant):
             return Response({"detail": "해당 시험을 찾을 수 없습니다."}, status=status.HTTP_400_BAD_REQUEST)
+
+        sheet_id = request.data.get("sheet_id")
+        requested_sheet_id = None
+        if sheet_id not in (None, ""):
+            try:
+                requested_sheet_id = int(sheet_id)
+            except (TypeError, ValueError):
+                return Response({"detail": "sheet_id must be integer"}, status=status.HTTP_400_BAD_REQUEST)
 
         batch_id = request.data.get("batch_id")
         explicit_batch = batch_id not in (None, "")
@@ -371,6 +433,11 @@ class ExamOMRBatchUploadView(APIView):
                     field="session_id",
                     required=False,
                 )
+                sheet = resolve_omr_sheet_for_exam(
+                    tenant=tenant,
+                    exam_id=int(exam_id),
+                    requested_sheet_id=requested_sheet_id,
+                )
                 batch = _create_batch(
                     tenant=tenant,
                     user=request.user,
@@ -387,21 +454,15 @@ class ExamOMRBatchUploadView(APIView):
         ):
             return Response({"detail": "item_ordinals 범위를 확인해 주세요."}, status=status.HTTP_400_BAD_REQUEST)
 
-        sheet_id = request.data.get("sheet_id")
-        requested_sheet_id = None
-        if sheet_id not in (None, ""):
+        if explicit_batch:
             try:
-                requested_sheet_id = int(sheet_id)
-            except (TypeError, ValueError):
-                return Response({"detail": "sheet_id must be integer"}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            sheet = resolve_omr_sheet_for_exam(
-                tenant=tenant,
-                exam_id=int(exam_id),
-                requested_sheet_id=requested_sheet_id,
-            )
-        except ValueError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+                sheet = resolve_omr_sheet_for_exam(
+                    tenant=tenant,
+                    exam_id=int(exam_id),
+                    requested_sheet_id=requested_sheet_id,
+                )
+            except ValueError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         payload = {"sheet_id": int(sheet.id)}
 
         created_ids: list[int] = []
@@ -409,15 +470,8 @@ class ExamOMRBatchUploadView(APIView):
             item = batch.items.filter(ordinal=ordinal).first()
             if item is None:
                 continue
-            validation_error = _file_validation_error(upload_file)
-            if validation_error is not None:
-                _mark_admission_failed(
-                    item.id,
-                    code=validation_error[0],
-                    message=validation_error[1],
-                )
-                continue
 
+            uploaded_key = ""
             try:
                 with transaction.atomic():
                     locked_item = (
@@ -428,6 +482,22 @@ class ExamOMRBatchUploadView(APIView):
                         locked_item.admission_status == OmrUploadBatchItem.AdmissionStatus.RECEIVED
                         and locked_item.submission_id is not None
                     ):
+                        continue
+                    validation_error = _file_validation_error(upload_file)
+                    if validation_error is not None:
+                        locked_item.admission_status = OmrUploadBatchItem.AdmissionStatus.FAILED
+                        locked_item.submission = None
+                        locked_item.failure_code = validation_error[0][:64]
+                        locked_item.failure_message = validation_error[1][:300]
+                        locked_item.save(
+                            update_fields=[
+                                "admission_status",
+                                "submission",
+                                "failure_code",
+                                "failure_message",
+                                "updated_at",
+                            ]
+                        )
                         continue
                     serializer = SubmissionCreateSerializer(
                         data={
@@ -441,6 +511,7 @@ class ExamOMRBatchUploadView(APIView):
                     )
                     serializer.is_valid(raise_exception=True)
                     submission = serializer.save(user=request.user, tenant=tenant)
+                    uploaded_key = str(submission.file_key or "")
                     locked_item.submission = submission
                     locked_item.admission_status = OmrUploadBatchItem.AdmissionStatus.RECEIVED
                     locked_item.failure_code = ""
@@ -457,6 +528,12 @@ class ExamOMRBatchUploadView(APIView):
                     dispatch_submission(submission)
                     created_ids.append(int(submission.id))
             except Exception:
+                if uploaded_key:
+                    _delete_rolled_back_upload(
+                        key=uploaded_key,
+                        batch_id=batch.id,
+                        ordinal=int(ordinal),
+                    )
                 logger.exception(
                     "OMR batch item admission failed",
                     extra={
@@ -553,25 +630,40 @@ class OmrUploadBatchRetryView(APIView):
             )
             if batch is None:
                 return Response({"detail": "OMR 등록 작업을 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
-            items = {
-                int(item.ordinal): item
-                for item in OmrUploadBatchItem.objects.select_for_update()
-                .prefetch_related("submission")
+            locked_items = list(
+                OmrUploadBatchItem.objects.select_for_update()
                 .filter(batch=batch, ordinal__in=ordinals)
+                .order_by("ordinal")
+            )
+            items = {int(item.ordinal): item for item in locked_items}
+            submission_ids = sorted(
+                item.submission_id
+                for item in locked_items
+                if item.submission_id is not None
+            )
+            submissions = {
+                int(submission.id): submission
+                for submission in Submission.objects.select_for_update()
+                .filter(id__in=submission_ids, tenant=batch.tenant)
+                .order_by("id")
             }
             for ordinal in ordinals:
                 item = items.get(int(ordinal))
                 if item is None:
                     skipped.append(int(ordinal))
                     continue
-                submission = item.submission
+                submission = submissions.get(int(item.submission_id)) if item.submission_id else None
                 if item.admission_status == OmrUploadBatchItem.AdmissionStatus.FAILED or submission is None:
                     requires_file.append(int(ordinal))
                     continue
                 if submission.status != Submission.Status.FAILED or not submission.file_key:
                     skipped.append(int(ordinal))
                     continue
-                retry_failed_submission(submission, actor="admin.omr_batch_retry")
+                try:
+                    retry_failed_submission(submission, actor="admin.omr_batch_retry")
+                except InvalidTransitionError:
+                    skipped.append(int(ordinal))
+                    continue
                 dispatch_submission(submission)
                 retried.append(int(ordinal))
 

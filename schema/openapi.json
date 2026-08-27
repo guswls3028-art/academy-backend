@@ -4785,40 +4785,6 @@
         ],
         "type": "object"
       },
-      "OmrUploadBatchUploadRequestRequest": {
-        "properties": {
-          "batch_id": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "file": {
-            "format": "binary",
-            "type": "string"
-          },
-          "files": {
-            "items": {
-              "format": "binary",
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "item_ordinals": {
-            "items": {
-              "maximum": 100,
-              "minimum": 1,
-              "type": "integer"
-            },
-            "type": "array"
-          },
-          "session_id": {
-            "type": "integer"
-          },
-          "sheet_id": {
-            "type": "integer"
-          }
-        },
-        "type": "object"
-      },
       "OmrUploadBatchUploadResult": {
         "properties": {
           "admission_failed_ordinals": {
@@ -46073,19 +46039,104 @@
         ],
         "requestBody": {
           "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/OmrUploadBatchUploadRequestRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/OmrUploadBatchUploadRequestRequest"
-              }
-            },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/OmrUploadBatchUploadRequestRequest"
+                "oneOf": [
+                  {
+                    "anyOf": [
+                      {
+                        "required": [
+                          "file"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "files"
+                        ]
+                      }
+                    ],
+                    "properties": {
+                      "file": {
+                        "format": "binary",
+                        "type": "string"
+                      },
+                      "files": {
+                        "items": {
+                          "format": "binary",
+                          "type": "string"
+                        },
+                        "maxItems": 100,
+                        "type": "array"
+                      },
+                      "session_id": {
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "sheet_id": {
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "title": "Legacy OMR upload",
+                    "type": "object"
+                  },
+                  {
+                    "anyOf": [
+                      {
+                        "required": [
+                          "file"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "files"
+                        ]
+                      }
+                    ],
+                    "properties": {
+                      "batch_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "file": {
+                        "format": "binary",
+                        "type": "string"
+                      },
+                      "files": {
+                        "items": {
+                          "format": "binary",
+                          "type": "string"
+                        },
+                        "maxItems": 100,
+                        "type": "array"
+                      },
+                      "item_ordinals": {
+                        "items": {
+                          "maximum": 100,
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        "maxItems": 100,
+                        "minItems": 1,
+                        "type": "array"
+                      },
+                      "session_id": {
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "sheet_id": {
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "batch_id",
+                      "item_ordinals"
+                    ],
+                    "title": "Durable OMR batch upload",
+                    "type": "object"
+                  }
+                ]
               }
             }
           }

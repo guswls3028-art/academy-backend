@@ -193,7 +193,9 @@ submission의 저장된 DONE 결과에 답안이 있고 기존 답안이 없으�
 2. 서버는 `1..total_count` ordinal을 원자적으로 만들고, 클라이언트는 그 batch id와
    ordinal을 붙여 파일 전체를 한 multipart 요청으로 보낸다.
 3. 각 ordinal은 별도 transaction에서 `Submission`에 연결된다. 이미 연결된 ordinal을
-   다시 보내도 새 Submission을 만들거나 워커를 중복 dispatch하지 않는다.
+   다시 보내면 서버가 item row를 먼저 잠그고 파일 검증보다 앞서 `RECEIVED`를 확인해
+   no-op 처리한다. 따라서 같은 ordinal의 늦은 잘못된 파일이나 동시 재전송이 기존
+   Submission 연결을 실패 상태로 되돌리지 않고, 워커도 중복 dispatch하지 않는다.
 4. 요청 응답이 끊겨도 detail GET의 `pending_admission_ordinals`와
    `admission_failed_ordinals`로 미접수 파일만 다시 선택한다. 이미 성공한 ordinal은
    재전송하지 않는다.
@@ -207,6 +209,16 @@ Batch와 item에는 tenant, 생성 직원, 시험/차시/강의 id, 총수, ordi
 batch API 응답에 저장·노출하지 않는다. 실제 원본과 학생 매칭은 기존 tenant-scoped
 Submission 계약을 그대로 사용한다.
 
+파일을 R2에 올린 뒤 Submission metadata 저장, item 연결, dispatch 중 하나라도 실패해
+DB transaction이 rollback되면 서버는 그 요청에서 생성한 exact object key만 즉시 보상
+삭제한다. 보상 삭제 자체가 실패하면 원래 실패를 유지한 채 구조화 로그를 남긴다. 실패
+item 전환도 row lock 아래에서 현재 상태를 다시 확인하며, 이미 `RECEIVED`와 Submission
+연결이 확정된 item은 지우지 않는다. Legacy multipart는 sheet/session 해석까지 성공한
+뒤에만 implicit batch를 만들므로 잘못된 sheet 요청이 pending batch를 남기지 않는다.
+
+업로드 OpenAPI는 multipart를 legacy와 durable 두 대안으로 명시한다. 둘 모두 `file` 또는
+`files` 중 하나가 필수이며, durable 대안은 `batch_id`와 `item_ordinals`도 필수다.
+
 목록과 상세 GET은 같은 tenant의 batch 생성 직원에게만 열리고 최근 7일 작업만 목록으로
 복구한다. 이 GET들은 `completion_notice_claimed_at`을 포함해 어떤 값도 쓰지 않는다.
 완료 알림 소유권은 별도 `claim-completion` POST가 batch row를 잠근 transaction 안에서
@@ -214,9 +226,13 @@ Submission 계약을 그대로 사용한다.
 처리 중 claim은 409로 실패한다.
 
 재시도 POST는 요청된 ordinal만 처리한다. 원본 key가 남아 있는 실패 Submission은 기존
-retry lifecycle로 다시 dispatch하고, 아직 파일을 받지 못했거나 admission 단계에서 실패한
-ordinal은 `requires_file_ordinals`로 반환해 명시적 파일 재선택을 요구한다. 다른 tenant,
-다른 생성 직원, 다른 시험 batch는 404/403으로 fail-closed 한다.
+retry lifecycle로 다시 dispatch한다. Batch item을 ordinal 순으로 잠근 뒤 연결된 Submission을
+id 순으로 함께 잠그고 최신 상태와 file key를 재확인하므로 worker callback이나 다른 admin
+retry가 만든 새 상태를 stale 객체가 덮어쓰지 않는다. 잠금 뒤 전이 조건이 달라졌거나 lifecycle
+전이가 거부되면 해당 ordinal은 `skipped_ordinals`로 반환하며 500이나 중복 dispatch를 만들지
+않는다. 아직 파일을 받지 못했거나 admission 단계에서 실패한 ordinal은
+`requires_file_ordinals`로 반환해 명시적 파일 재선택을 요구한다. 다른 tenant, 다른 생성 직원,
+다른 시험 batch는 404/403으로 fail-closed 한다.
 
 ## 문항 구성
 
