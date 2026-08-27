@@ -404,6 +404,72 @@ class FeesConcurrencyPGTest(TransactionTestCase):
             [120_000, 75_000],
         )
 
+    def test_fee_insert_committed_after_candidate_snapshot_is_not_omitted(self):
+        tenant, student, _template, _student_fee = self._setup_generation_fee()
+        snapshot_ready = threading.Event()
+        resume_generation = threading.Event()
+        original_groupby = services.groupby
+        results = []
+        errors = []
+
+        def pause_after_snapshot(*args, **kwargs):
+            snapshot_ready.set()
+            if not resume_generation.wait(timeout=5):
+                raise AssertionError("concurrent fee insertion did not commit")
+            return original_groupby(*args, **kwargs)
+
+        def generate_worker():
+            close_old_connections()
+            try:
+                results.append(generate_monthly_invoices(
+                    tenant,
+                    billing_year=2026,
+                    billing_month=7,
+                    due_date=timezone.localdate() + timedelta(days=10),
+                ))
+            except Exception as exc:  # noqa: BLE001
+                errors.append(repr(exc))
+            finally:
+                close_old_connections()
+
+        with patch(
+            "apps.domains.fees.services.groupby",
+            side_effect=pause_after_snapshot,
+        ):
+            generation_thread = threading.Thread(target=generate_worker)
+            generation_thread.start()
+            self.assertTrue(snapshot_ready.wait(timeout=5), "generation snapshot was not read")
+
+            with transaction.atomic():
+                inserted_template = FeeTemplate.objects.create(
+                    tenant=tenant,
+                    name="스냅샷 이후 교재비",
+                    fee_type=FeeTemplate.FeeType.TEXTBOOK,
+                    amount=30_000,
+                )
+                StudentFee.objects.create(
+                    tenant=tenant,
+                    student=student,
+                    fee_template=inserted_template,
+                )
+            resume_generation.set()
+            generation_thread.join(timeout=10)
+
+        self.assertFalse(generation_thread.is_alive(), "generation thread deadlocked")
+        self.assertEqual(errors, [])
+        self.assertEqual(results, [{"created": 1, "skipped": 0, "errors": []}])
+        invoice = StudentInvoice.objects.get(
+            tenant=tenant,
+            student=student,
+            billing_year=2026,
+            billing_month=7,
+        )
+        self.assertEqual(invoice.total_amount, 130_000)
+        self.assertEqual(
+            list(invoice.items.order_by("fee_template_id").values_list("amount", flat=True)),
+            [100_000, 30_000],
+        )
+
     def test_fee_state_committed_during_generation_is_rechecked_after_lock(self):
         tenant, student, template, _student_fee = self._setup_generation_fee()
 

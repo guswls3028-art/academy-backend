@@ -9,13 +9,15 @@
 - mark_overdue_invoices 정확성
 - 테넌트 격리 (cross-tenant payment 시도 차단)
 """
+import json
 from datetime import timedelta
+from pathlib import Path
 from unittest.mock import patch
 
 from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 from rest_framework.test import APIRequestFactory, APITestCase, force_authenticate
 
@@ -486,6 +488,136 @@ class InvoiceGenerationSnapshotTest(FeesTestMixin, TestCase):
         )
         self.assertEqual(invoice.total_amount, 195_000)
 
+    def test_legacy_malformed_month_does_not_block_valid_fee(self):
+        tenant = self.make_tenant(code="t_generation_legacy_month")
+        student = self.make_student(tenant)
+        valid_template = self.make_fee_template(tenant, amount=100_000)
+        StudentFee.objects.create(
+            tenant=tenant,
+            student=student,
+            fee_template=valid_template,
+        )
+        malformed_template = FeeTemplate.objects.create(
+            tenant=tenant,
+            name="레거시 월 형식 비목",
+            fee_type=FeeTemplate.FeeType.TEXTBOOK,
+            amount=30_000,
+        )
+        StudentFee.objects.create(
+            tenant=tenant,
+            student=student,
+            fee_template=malformed_template,
+            billing_start_month="2026-13",
+        )
+
+        result = generate_monthly_invoices(
+            tenant,
+            billing_year=2026,
+            billing_month=5,
+            due_date=timezone.localdate() + timedelta(days=10),
+        )
+
+        self.assertEqual(result, {"created": 1, "skipped": 0, "errors": []})
+        invoice = StudentInvoice.objects.get(
+            tenant=tenant,
+            student=student,
+            billing_year=2026,
+            billing_month=5,
+        )
+        self.assertEqual(invoice.total_amount, 100_000)
+        self.assertEqual(
+            list(invoice.items.values_list("fee_template_id", flat=True)),
+            [valid_template.id],
+        )
+
+    def test_auto_assignment_uses_student_scope_lock(self):
+        tenant = self.make_tenant(code="t_auto_assignment_lock")
+        student = self.make_student(tenant)
+        lecture = Lecture.objects.create(
+            tenant=tenant,
+            title="자동 비용 배정 강의",
+            name="자동 비용 배정 강의",
+            subject="MATH",
+        )
+        template = FeeTemplate.objects.create(
+            tenant=tenant,
+            lecture=lecture,
+            name="자동 배정 수강료",
+            fee_type=FeeTemplate.FeeType.TUITION,
+            amount=100_000,
+            auto_assign=True,
+        )
+        enrollment = Enrollment.objects.create(
+            tenant=tenant,
+            student=student,
+            lecture=lecture,
+            status="ACTIVE",
+        )
+
+        with patch(
+            "apps.domains.fees.services.lock_student_fee_assignment_scopes",
+            wraps=services.lock_student_fee_assignment_scopes,
+        ) as lock_scope:
+            created = services.auto_assign_fees_on_enrollment(
+                tenant,
+                student,
+                lecture,
+                enrollment,
+            )
+
+        self.assertEqual(created, 1)
+        lock_scope.assert_called_once_with(tenant=tenant, student_ids=[student.id])
+        self.assertTrue(
+            StudentFee.objects.filter(
+                tenant=tenant,
+                student=student,
+                fee_template=template,
+            ).exists(),
+        )
+
+
+class FeesOpenApiContractTest(SimpleTestCase):
+    def setUp(self):
+        schema_path = Path(__file__).resolve().parents[4] / "schema" / "openapi.json"
+        self.schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+    def _json_request_ref(self, path):
+        return self.schema["paths"][path]["post"]["requestBody"]["content"][
+            "application/json"
+        ]["schema"]["$ref"]
+
+    def _response_ref(self, path, status_code):
+        return self.schema["paths"][path]["post"]["responses"][status_code]["content"][
+            "application/json"
+        ]["schema"]["$ref"]
+
+    def test_fee_write_operations_publish_actual_request_and_response_contracts(self):
+        generate_path = "/api/v1/fees/invoices/generate/"
+        payment_path = "/api/v1/fees/payments/"
+        cancel_path = "/api/v1/fees/payments/{id}/cancel/"
+
+        self.assertEqual(
+            self._json_request_ref(generate_path),
+            "#/components/schemas/GenerateInvoicesRequest",
+        )
+        self.assertEqual(
+            self._response_ref(generate_path, "200"),
+            "#/components/schemas/GenerateInvoicesResult",
+        )
+        self.assertEqual(
+            self._json_request_ref(payment_path),
+            "#/components/schemas/RecordPaymentRequest",
+        )
+        self.assertEqual(
+            self._response_ref(payment_path, "201"),
+            "#/components/schemas/FeePayment",
+        )
+        self.assertNotIn("requestBody", self.schema["paths"][cancel_path]["post"])
+        self.assertEqual(
+            self._response_ref(cancel_path, "200"),
+            "#/components/schemas/FeePayment",
+        )
+
 
 class InvoiceCancelGuardTest(FeesTestMixin, TestCase):
     """청구서 취소 가드: 활성 수납 있으면 취소 불가."""
@@ -834,6 +966,30 @@ class FeesInvoiceApiHardeningTest(FeesTestMixin, APITestCase):
         self.assertEqual(student_mismatch.status_code, 400)
         self.assertEqual(lecture_mismatch.status_code, 400)
 
+    def test_student_fee_create_uses_student_scope_lock(self):
+        template = self.make_fee_template(self.tenant)
+
+        with patch(
+            "apps.domains.fees.services.lock_student_fee_assignment_scopes",
+            wraps=services.lock_student_fee_assignment_scopes,
+        ) as lock_scope:
+            response = self.client.post(
+                "/api/v1/fees/student-fees/",
+                data={
+                    "student": self.student.id,
+                    "fee_template": template.id,
+                    "is_active": True,
+                },
+                format="json",
+                **self.headers,
+            )
+
+        self.assertEqual(response.status_code, 201, response.content)
+        lock_scope.assert_called_once_with(
+            tenant=self.tenant,
+            student_ids=[self.student.id],
+        )
+
     def test_payment_create_passes_idempotency_key_and_does_not_double_increment(self):
         payload = {
             "invoice_id": self.invoice.id,
@@ -912,15 +1068,19 @@ class FeesInvoiceApiHardeningTest(FeesTestMixin, APITestCase):
             billing_end_month="2026-07",
         )
 
-        response = self.client.post(
-            "/api/v1/fees/student-fees/bulk-assign/",
-            data={
-                "student_ids": [self.student.id],
-                "fee_template_id": template.id,
-            },
-            format="json",
-            **self.headers,
-        )
+        with patch(
+            "apps.domains.fees.services.lock_student_fee_assignment_scopes",
+            wraps=services.lock_student_fee_assignment_scopes,
+        ) as lock_scope:
+            response = self.client.post(
+                "/api/v1/fees/student-fees/bulk-assign/",
+                data={
+                    "student_ids": [self.student.id],
+                    "fee_template_id": template.id,
+                },
+                format="json",
+                **self.headers,
+            )
 
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(response.data["created"], 1)
@@ -928,6 +1088,10 @@ class FeesInvoiceApiHardeningTest(FeesTestMixin, APITestCase):
         student_fee.refresh_from_db()
         self.assertTrue(student_fee.is_active)
         self.assertEqual(student_fee.billing_end_month, "")
+        lock_scope.assert_called_once_with(
+            tenant=self.tenant,
+            student_ids=[self.student.id],
+        )
 
     def test_invoice_delete_with_active_payment_returns_400_not_500(self):
         record_payment(

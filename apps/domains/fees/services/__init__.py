@@ -13,6 +13,7 @@ from datetime import date, timedelta
 from itertools import groupby
 from operator import attrgetter
 
+from django.apps import apps
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Sum, Q
 from django.utils import timezone
@@ -26,6 +27,24 @@ from ..models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def lock_student_fee_assignment_scopes(*, tenant, student_ids) -> list[int]:
+    """Lock fee assignment scopes in stable order inside an atomic transaction."""
+    ordered_ids = sorted(set(student_ids))
+    if not ordered_ids:
+        return []
+    student_model = apps.get_model("students", "Student")
+    locked_ids = list(
+        student_model.objects
+        .select_for_update()
+        .filter(tenant=tenant, id__in=ordered_ids)
+        .order_by("id")
+        .values_list("id", flat=True)
+    )
+    if locked_ids != ordered_ids:
+        raise ValueError("학생 비용 잠금 범위가 현재 학원과 일치하지 않습니다.")
+    return locked_ids
 
 
 # ========================================================
@@ -129,6 +148,13 @@ def generate_monthly_invoices(
         for attempt in range(2):
             try:
                 with transaction.atomic():
+                    # StudentFee INSERT 자체는 기존 행 잠금으로 막을 수 없다. 모든
+                    # 배정 writer와 공유하는 학생 행을 먼저 잠근 뒤 현재 전체 배정을
+                    # 다시 읽어, 후보 스냅샷 이후 commit된 비용도 포함한다.
+                    lock_student_fee_assignment_scopes(
+                        tenant=tenant,
+                        student_ids=[student_id],
+                    )
                     exists_now = (
                         StudentInvoice.objects
                         .select_for_update()
@@ -149,11 +175,10 @@ def generate_monthly_invoices(
                     # 잠금 SELECT가 반환한 최신 행만으로 청구 자격과 금액을 다시
                     # 계산한다. 서로 다른 청구월의 ONE_TIME 생성도 이 잠금으로
                     # 직렬화한다.
-                    fee_ids = [sf.id for sf in fees]
                     locked_fees = list(
                         StudentFee.objects
                         .select_for_update()
-                        .filter(tenant=tenant, id__in=fee_ids)
+                        .filter(tenant=tenant, student_id=student_id)
                         .order_by("id")
                     )
                     template_ids = sorted({sf.fee_template_id for sf in locked_fees})
@@ -502,40 +527,45 @@ def auto_assign_fees_on_enrollment(tenant, student, lecture, enrollment):
     강의에 연결된 활성 FeeTemplate이 있으면 StudentFee를 자동 생성.
     이전 수강 종료로 비활성화된 동일 비목이 있으면 새 enrollment에 다시 연결한다.
     """
-    templates = FeeTemplate.objects.filter(
-        tenant=tenant,
-        lecture=lecture,
-        is_active=True,
-        auto_assign=True,
-    )
-
-    created_count = 0
-    for tmpl in templates:
-        student_fee, created = StudentFee.objects.get_or_create(
+    with transaction.atomic():
+        lock_student_fee_assignment_scopes(
             tenant=tenant,
-            student=student,
-            fee_template=tmpl,
-            defaults={
-                "enrollment": enrollment,
-                "is_active": True,
-            },
+            student_ids=[student.id],
         )
-        if created:
-            created_count += 1
-            continue
-        update_fields = []
-        if student_fee.enrollment_id != enrollment.id:
-            student_fee.enrollment = enrollment
-            update_fields.append("enrollment")
-        if not student_fee.is_active:
-            student_fee.is_active = True
-            update_fields.append("is_active")
-        if student_fee.billing_end_month:
-            student_fee.billing_end_month = ""
-            update_fields.append("billing_end_month")
-        if update_fields:
-            student_fee.save(update_fields=[*update_fields, "updated_at"])
-            created_count += 1
+        templates = FeeTemplate.objects.filter(
+            tenant=tenant,
+            lecture=lecture,
+            is_active=True,
+            auto_assign=True,
+        ).order_by("id")
+
+        created_count = 0
+        for tmpl in templates:
+            student_fee, created = StudentFee.objects.get_or_create(
+                tenant=tenant,
+                student=student,
+                fee_template=tmpl,
+                defaults={
+                    "enrollment": enrollment,
+                    "is_active": True,
+                },
+            )
+            if created:
+                created_count += 1
+                continue
+            update_fields = []
+            if student_fee.enrollment_id != enrollment.id:
+                student_fee.enrollment = enrollment
+                update_fields.append("enrollment")
+            if not student_fee.is_active:
+                student_fee.is_active = True
+                update_fields.append("is_active")
+            if student_fee.billing_end_month:
+                student_fee.billing_end_month = ""
+                update_fields.append("billing_end_month")
+            if update_fields:
+                student_fee.save(update_fields=[*update_fields, "updated_at"])
+                created_count += 1
 
     return created_count
 

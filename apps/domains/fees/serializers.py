@@ -175,6 +175,12 @@ class GenerateInvoicesSerializer(serializers.Serializer):
     due_date = serializers.DateField()
 
 
+class GenerateInvoicesResultSerializer(serializers.Serializer):
+    created = serializers.IntegerField(min_value=0)
+    skipped = serializers.IntegerField(min_value=0)
+    errors = serializers.ListField(child=serializers.CharField())
+
+
 # ========================================================
 # FeePayment
 # ========================================================

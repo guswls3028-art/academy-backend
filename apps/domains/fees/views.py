@@ -4,6 +4,7 @@ import logging
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema
 from rest_framework import mixins
 from rest_framework.viewsets import GenericViewSet, ModelViewSet
 from rest_framework.views import APIView
@@ -38,6 +39,7 @@ from .serializers import (
     StudentInvoiceDetailSerializer,
     StudentInvoiceUpdateSerializer,
     GenerateInvoicesSerializer,
+    GenerateInvoicesResultSerializer,
     FeePaymentSerializer,
     RecordPaymentSerializer,
 )
@@ -177,7 +179,12 @@ class StudentFeeViewSet(ModelViewSet):
             fee_template=serializer.validated_data["fee_template"],
             enrollment=serializer.validated_data.get("enrollment"),
         )
-        serializer.save(tenant=self.request.tenant)
+        with transaction.atomic():
+            services.lock_student_fee_assignment_scopes(
+                tenant=self.request.tenant,
+                student_ids=[serializer.validated_data["student"].id],
+            )
+            serializer.save(tenant=self.request.tenant)
 
     def perform_update(self, serializer):
         instance = serializer.instance
@@ -205,37 +212,43 @@ class StudentFeeViewSet(ModelViewSet):
             return Response({"detail": "비목을 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
 
         # 학생 ID가 해당 테넌트 소속인지 검증 (크로스 테넌트 방지)
-        valid_student_ids = active_student_ids_for_tenant(
+        valid_student_id_set = active_student_ids_for_tenant(
             tenant=tenant,
             student_ids=student_ids,
         )
-        invalid_ids = set(student_ids) - valid_student_ids
+        invalid_ids = set(student_ids) - valid_student_id_set
         if invalid_ids:
             return Response(
                 {"detail": f"해당 학원 소속이 아닌 학생이 포함되어 있습니다: {sorted(invalid_ids)[:5]}"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        created = 0
-        skipped = 0
-        for sid in valid_student_ids:
-            student_fee, was_created = StudentFee.objects.get_or_create(
+        ordered_student_ids = list(dict.fromkeys(student_ids))
+        with transaction.atomic():
+            services.lock_student_fee_assignment_scopes(
                 tenant=tenant,
-                student_id=sid,
-                fee_template=template,
-                defaults={"is_active": True},
+                student_ids=ordered_student_ids,
             )
-            if was_created:
-                created += 1
-            elif not student_fee.is_active:
-                student_fee.is_active = True
-                student_fee.billing_end_month = ""
-                student_fee.save(
-                    update_fields=["is_active", "billing_end_month", "updated_at"],
+            created = 0
+            skipped = 0
+            for sid in ordered_student_ids:
+                student_fee, was_created = StudentFee.objects.get_or_create(
+                    tenant=tenant,
+                    student_id=sid,
+                    fee_template=template,
+                    defaults={"is_active": True},
                 )
-                created += 1
-            else:
-                skipped += 1
+                if was_created:
+                    created += 1
+                elif not student_fee.is_active:
+                    student_fee.is_active = True
+                    student_fee.billing_end_month = ""
+                    student_fee.save(
+                        update_fields=["is_active", "billing_end_month", "updated_at"],
+                    )
+                    created += 1
+                else:
+                    skipped += 1
 
         return Response({
             "created": created,
@@ -370,6 +383,10 @@ class StudentInvoiceViewSet(
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    @extend_schema(
+        request=GenerateInvoicesSerializer,
+        responses={200: GenerateInvoicesResultSerializer},
+    )
     @action(detail=False, methods=["post"])
     def generate(self, request):
         """월 청구서 일괄 생성."""
@@ -415,6 +432,10 @@ class FeePaymentViewSet(ModelViewSet):
 
         return qs.order_by("-paid_at")
 
+    @extend_schema(
+        request=RecordPaymentSerializer,
+        responses={201: FeePaymentSerializer},
+    )
     def create(self, request, *args, **kwargs):
         """수납 기록 생성."""
         ser = RecordPaymentSerializer(data=request.data)
@@ -450,6 +471,7 @@ class FeePaymentViewSet(ModelViewSet):
             status=status.HTTP_201_CREATED,
         )
 
+    @extend_schema(request=None, responses={200: FeePaymentSerializer})
     @action(detail=True, methods=["post"])
     def cancel(self, request, pk=None):
         """수납 취소."""
