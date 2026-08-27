@@ -46043,18 +46043,6 @@
               "schema": {
                 "oneOf": [
                   {
-                    "anyOf": [
-                      {
-                        "required": [
-                          "file"
-                        ]
-                      },
-                      {
-                        "required": [
-                          "files"
-                        ]
-                      }
-                    ],
                     "properties": {
                       "file": {
                         "format": "binary",
@@ -46077,22 +46065,42 @@
                         "type": "integer"
                       }
                     },
-                    "title": "Legacy OMR upload",
+                    "required": [
+                      "file"
+                    ],
+                    "title": "Legacy OMR single-file upload",
                     "type": "object"
                   },
                   {
-                    "anyOf": [
-                      {
-                        "required": [
-                          "file"
-                        ]
+                    "properties": {
+                      "file": {
+                        "format": "binary",
+                        "type": "string"
                       },
-                      {
-                        "required": [
-                          "files"
-                        ]
+                      "files": {
+                        "items": {
+                          "format": "binary",
+                          "type": "string"
+                        },
+                        "maxItems": 100,
+                        "type": "array"
+                      },
+                      "session_id": {
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "sheet_id": {
+                        "minimum": 1,
+                        "type": "integer"
                       }
+                    },
+                    "required": [
+                      "files"
                     ],
+                    "title": "Legacy OMR multi-file upload",
+                    "type": "object"
+                  },
+                  {
                     "properties": {
                       "batch_id": {
                         "format": "uuid",
@@ -46131,9 +46139,55 @@
                     },
                     "required": [
                       "batch_id",
-                      "item_ordinals"
+                      "item_ordinals",
+                      "file"
                     ],
-                    "title": "Durable OMR batch upload",
+                    "title": "Durable OMR batch single-file upload",
+                    "type": "object"
+                  },
+                  {
+                    "properties": {
+                      "batch_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "file": {
+                        "format": "binary",
+                        "type": "string"
+                      },
+                      "files": {
+                        "items": {
+                          "format": "binary",
+                          "type": "string"
+                        },
+                        "maxItems": 100,
+                        "type": "array"
+                      },
+                      "item_ordinals": {
+                        "items": {
+                          "maximum": 100,
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        "maxItems": 100,
+                        "minItems": 1,
+                        "type": "array"
+                      },
+                      "session_id": {
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "sheet_id": {
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "batch_id",
+                      "item_ordinals",
+                      "files"
+                    ],
+                    "title": "Durable OMR batch multi-file upload",
                     "type": "object"
                   }
                 ]

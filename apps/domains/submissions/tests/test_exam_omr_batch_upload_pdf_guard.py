@@ -448,18 +448,27 @@ class ExamOMRBatchUploadPdfGuardTests(TestCase):
             "/api/v1/submissions/submissions/exams/{exam_id}/omr/batch/"
         ]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"]
 
-        alternatives = {row["title"]: row for row in request_schema["oneOf"]}
-        self.assertEqual(set(alternatives), {"Legacy OMR upload", "Durable OMR batch upload"})
-        self.assertNotIn("batch_id", alternatives["Legacy OMR upload"].get("required", []))
+        required_sets = {
+            row["title"]: set(row["required"])
+            for row in request_schema["oneOf"]
+        }
         self.assertEqual(
-            set(alternatives["Durable OMR batch upload"]["required"]),
-            {"batch_id", "item_ordinals"},
+            required_sets,
+            {
+                "Legacy OMR single-file upload": {"file"},
+                "Legacy OMR multi-file upload": {"files"},
+                "Durable OMR batch single-file upload": {
+                    "batch_id",
+                    "item_ordinals",
+                    "file",
+                },
+                "Durable OMR batch multi-file upload": {
+                    "batch_id",
+                    "item_ordinals",
+                    "files",
+                },
+            },
         )
-        for alternative in alternatives.values():
-            self.assertEqual(
-                {tuple(option["required"]) for option in alternative["anyOf"]},
-                {("file",), ("files",)},
-            )
 
     def test_terminal_completion_claim_is_explicit_and_exactly_once(self):
         batch_id = self._initialize(1).data["id"]

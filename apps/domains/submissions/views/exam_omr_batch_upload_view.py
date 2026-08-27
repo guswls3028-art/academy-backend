@@ -55,13 +55,19 @@ OMR_UPLOAD_FILE_PROPERTIES = {
 OMR_UPLOAD_REQUEST_SCHEMA = {
     "oneOf": [
         {
-            "title": "Legacy OMR upload",
+            "title": "Legacy OMR single-file upload",
             "type": "object",
             "properties": OMR_UPLOAD_FILE_PROPERTIES,
-            "anyOf": [{"required": ["file"]}, {"required": ["files"]}],
+            "required": ["file"],
         },
         {
-            "title": "Durable OMR batch upload",
+            "title": "Legacy OMR multi-file upload",
+            "type": "object",
+            "properties": OMR_UPLOAD_FILE_PROPERTIES,
+            "required": ["files"],
+        },
+        {
+            "title": "Durable OMR batch single-file upload",
             "type": "object",
             "properties": {
                 **OMR_UPLOAD_FILE_PROPERTIES,
@@ -73,8 +79,22 @@ OMR_UPLOAD_REQUEST_SCHEMA = {
                     "maxItems": MAX_FILES,
                 },
             },
-            "required": ["batch_id", "item_ordinals"],
-            "anyOf": [{"required": ["file"]}, {"required": ["files"]}],
+            "required": ["batch_id", "item_ordinals", "file"],
+        },
+        {
+            "title": "Durable OMR batch multi-file upload",
+            "type": "object",
+            "properties": {
+                **OMR_UPLOAD_FILE_PROPERTIES,
+                "batch_id": {"type": "string", "format": "uuid"},
+                "item_ordinals": {
+                    "type": "array",
+                    "items": {"type": "integer", "minimum": 1, "maximum": MAX_FILES},
+                    "minItems": 1,
+                    "maxItems": MAX_FILES,
+                },
+            },
+            "required": ["batch_id", "item_ordinals", "files"],
         },
     ]
 }
