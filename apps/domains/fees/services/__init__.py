@@ -9,6 +9,7 @@
 """
 
 import logging
+import re
 from datetime import date, timedelta
 from itertools import groupby
 from operator import attrgetter
@@ -28,6 +29,8 @@ from ..models import (
 
 logger = logging.getLogger(__name__)
 
+_BILLING_MONTH_PATTERN = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+
 
 def lock_student_fee_assignment_scopes(*, tenant, student_ids) -> list[int]:
     """Lock fee assignment scopes in stable order inside an atomic transaction."""
@@ -38,12 +41,12 @@ def lock_student_fee_assignment_scopes(*, tenant, student_ids) -> list[int]:
     locked_ids = list(
         student_model.objects
         .select_for_update()
-        .filter(tenant=tenant, id__in=ordered_ids)
+        .filter(tenant=tenant, id__in=ordered_ids, deleted_at__isnull=True)
         .order_by("id")
         .values_list("id", flat=True)
     )
     if locked_ids != ordered_ids:
-        raise ValueError("학생 비용 잠금 범위가 현재 학원과 일치하지 않습니다.")
+        raise ValueError("활성 학생 비용 잠금 범위가 현재 학원과 일치하지 않습니다.")
     return locked_ids
 
 
@@ -113,6 +116,7 @@ def generate_monthly_invoices(
             tenant=tenant,
             is_active=True,
             fee_template__is_active=True,
+            student__deleted_at__isnull=True,
         )
         .select_related("student", "fee_template")
         .order_by("student_id")
@@ -219,6 +223,17 @@ def generate_monthly_invoices(
                             or template is None
                             or not template.is_active
                         ):
+                            continue
+                        invalid_months = [
+                            value
+                            for value in (sf.billing_start_month, sf.billing_end_month)
+                            if value and not _BILLING_MONTH_PATTERN.fullmatch(value)
+                        ]
+                        if invalid_months:
+                            result["errors"].append(
+                                f"{student_name}: {template.name} "
+                                f"(유효하지 않은 청구월: {', '.join(invalid_months)})"
+                            )
                             continue
                         if sf.billing_start_month and billing_period < sf.billing_start_month:
                             continue

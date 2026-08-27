@@ -73,6 +73,14 @@ class StudentFeeSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         attrs = super().validate(attrs)
         instance = self.instance
+        if (
+            instance is not None
+            and "student" in attrs
+            and attrs["student"].id != instance.student_id
+        ):
+            raise serializers.ValidationError({
+                "student": "학생 비용의 학생은 생성 후 변경할 수 없습니다.",
+            })
         start = attrs.get(
             "billing_start_month",
             instance.billing_start_month if instance else "",
@@ -100,6 +108,12 @@ class StudentFeeBulkAssignSerializer(serializers.Serializer):
         max_length=200,
     )
     fee_template_id = serializers.IntegerField()
+
+
+class StudentFeeBulkAssignResultSerializer(serializers.Serializer):
+    created = serializers.IntegerField(min_value=0)
+    skipped = serializers.IntegerField(min_value=0)
+    total = serializers.IntegerField(min_value=0)
 
 
 # ========================================================

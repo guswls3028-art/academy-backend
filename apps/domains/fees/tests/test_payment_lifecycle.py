@@ -497,17 +497,29 @@ class InvoiceGenerationSnapshotTest(FeesTestMixin, TestCase):
             student=student,
             fee_template=valid_template,
         )
-        malformed_template = FeeTemplate.objects.create(
+        malformed_start_template = FeeTemplate.objects.create(
             tenant=tenant,
-            name="레거시 월 형식 비목",
+            name="레거시 시작월 형식 비목",
             fee_type=FeeTemplate.FeeType.TEXTBOOK,
             amount=30_000,
         )
         StudentFee.objects.create(
             tenant=tenant,
             student=student,
-            fee_template=malformed_template,
-            billing_start_month="2026-13",
+            fee_template=malformed_start_template,
+            billing_start_month="2026-00",
+        )
+        malformed_end_template = FeeTemplate.objects.create(
+            tenant=tenant,
+            name="레거시 종료월 형식 비목",
+            fee_type=FeeTemplate.FeeType.TEXTBOOK,
+            amount=40_000,
+        )
+        StudentFee.objects.create(
+            tenant=tenant,
+            student=student,
+            fee_template=malformed_end_template,
+            billing_end_month="2026-99",
         )
 
         result = generate_monthly_invoices(
@@ -517,7 +529,10 @@ class InvoiceGenerationSnapshotTest(FeesTestMixin, TestCase):
             due_date=timezone.localdate() + timedelta(days=10),
         )
 
-        self.assertEqual(result, {"created": 1, "skipped": 0, "errors": []})
+        self.assertEqual(result["created"], 1, result)
+        self.assertEqual(result["skipped"], 0, result)
+        self.assertEqual(len(result["errors"]), 2, result)
+        self.assertTrue(all("유효하지 않은 청구월" in error for error in result["errors"]))
         invoice = StudentInvoice.objects.get(
             tenant=tenant,
             student=student,
@@ -581,13 +596,13 @@ class FeesOpenApiContractTest(SimpleTestCase):
         schema_path = Path(__file__).resolve().parents[4] / "schema" / "openapi.json"
         self.schema = json.loads(schema_path.read_text(encoding="utf-8"))
 
-    def _json_request_ref(self, path):
-        return self.schema["paths"][path]["post"]["requestBody"]["content"][
+    def _json_request_ref(self, path, method="post"):
+        return self.schema["paths"][path][method]["requestBody"]["content"][
             "application/json"
         ]["schema"]["$ref"]
 
-    def _response_ref(self, path, status_code):
-        return self.schema["paths"][path]["post"]["responses"][status_code]["content"][
+    def _response_ref(self, path, status_code, method="post"):
+        return self.schema["paths"][path][method]["responses"][status_code]["content"][
             "application/json"
         ]["schema"]["$ref"]
 
@@ -616,6 +631,25 @@ class FeesOpenApiContractTest(SimpleTestCase):
         self.assertEqual(
             self._response_ref(cancel_path, "200"),
             "#/components/schemas/FeePayment",
+        )
+
+        bulk_assign_path = "/api/v1/fees/student-fees/bulk-assign/"
+        invoice_detail_path = "/api/v1/fees/invoices/{id}/"
+        self.assertEqual(
+            self._json_request_ref(bulk_assign_path),
+            "#/components/schemas/StudentFeeBulkAssignRequest",
+        )
+        self.assertEqual(
+            self._response_ref(bulk_assign_path, "200"),
+            "#/components/schemas/StudentFeeBulkAssignResult",
+        )
+        self.assertEqual(
+            self._json_request_ref(invoice_detail_path, method="patch"),
+            "#/components/schemas/PatchedStudentInvoiceUpdateRequest",
+        )
+        self.assertEqual(
+            self._response_ref(invoice_detail_path, "200", method="patch"),
+            "#/components/schemas/StudentInvoiceDetail",
         )
 
 

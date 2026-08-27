@@ -26,8 +26,9 @@ from django.contrib.auth import get_user_model
 from django.db import close_old_connections, connection, transaction
 from django.test import TransactionTestCase
 from django.utils import timezone
+from rest_framework.test import APIRequestFactory, force_authenticate
 
-from apps.core.models import Tenant
+from apps.core.models import Tenant, TenantMembership
 from apps.domains.fees.models import (
     FeePayment,
     FeeTemplate,
@@ -37,6 +38,7 @@ from apps.domains.fees.models import (
 )
 from apps.domains.fees import services
 from apps.domains.fees.services import generate_monthly_invoices, record_payment
+from apps.domains.fees.views import StudentFeeViewSet
 from apps.domains.students.models import Student
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -75,6 +77,7 @@ class FeesConcurrencyPGTest(TransactionTestCase):
             tenant=tenant, username=f"fc_stu_{suffix}", is_active=True,
         )
         student = Student.objects.create(
+            id=90_000_000,
             tenant=tenant, user=user,
             ps_number=f"PS{suffix[:6]}",
             omr_code=f"O{suffix[:7]}",
@@ -109,6 +112,34 @@ class FeesConcurrencyPGTest(TransactionTestCase):
             fee_template=template,
         )
         return tenant, student, template, student_fee
+
+    def _make_fee_admin(self, tenant):
+        suffix = uuid.uuid4().hex[:8]
+        user = User.objects.create(
+            tenant=tenant,
+            username=f"fee_admin_{suffix}",
+            is_active=True,
+            is_staff=True,
+        )
+        TenantMembership.objects.create(
+            tenant=tenant,
+            user=user,
+            role="admin",
+            is_active=True,
+        )
+        return user
+
+    def _student_fee_request(self, *, tenant, user, method, data, pk=None):
+        factory = APIRequestFactory()
+        path = "/api/v1/fees/student-fees/"
+        if pk is not None:
+            path = f"{path}{pk}/"
+        request = getattr(factory, method)(path, data=data, format="json")
+        request.tenant = tenant
+        force_authenticate(request, user=user)
+        view = StudentFeeViewSet.as_view({method: "partial_update" if method == "patch" else "create"})
+        kwargs = {"pk": pk} if pk is not None else {}
+        return view(request, **kwargs)
 
     def _generate_while_fee_rows_are_locked(
         self,
@@ -468,6 +499,214 @@ class FeesConcurrencyPGTest(TransactionTestCase):
         self.assertEqual(
             list(invoice.items.order_by("fee_template_id").values_list("amount", flat=True)),
             [100_000, 30_000],
+        )
+
+    def test_student_reassignment_is_rejected_during_generation_snapshot(self):
+        tenant, student, _template, student_fee = self._setup_generation_fee()
+        admin = self._make_fee_admin(tenant)
+        suffix = uuid.uuid4().hex[:8]
+        destination_user = User.objects.create(
+            tenant=tenant,
+            username=f"destination_{suffix}",
+            is_active=True,
+        )
+        destination = Student.objects.create(
+            id=90_000_001,
+            tenant=tenant,
+            user=destination_user,
+            ps_number=f"PD{suffix[:6]}",
+            omr_code=f"D{suffix[:7]}",
+            name="재배치대상학생",
+            parent_phone="010-0000-0002",
+        )
+        snapshot_ready = threading.Event()
+        resume_generation = threading.Event()
+        original_groupby = services.groupby
+        results = []
+        errors = []
+
+        def pause_after_snapshot(*args, **kwargs):
+            snapshot_ready.set()
+            if not resume_generation.wait(timeout=5):
+                raise AssertionError("student reassignment did not finish")
+            return original_groupby(*args, **kwargs)
+
+        def generate_worker():
+            close_old_connections()
+            try:
+                results.append(generate_monthly_invoices(
+                    tenant,
+                    billing_year=2026,
+                    billing_month=8,
+                    due_date=timezone.localdate() + timedelta(days=10),
+                ))
+            except Exception as exc:  # noqa: BLE001
+                errors.append(repr(exc))
+            finally:
+                close_old_connections()
+
+        with patch("apps.domains.fees.services.groupby", side_effect=pause_after_snapshot):
+            generation_thread = threading.Thread(target=generate_worker)
+            generation_thread.start()
+            self.assertTrue(snapshot_ready.wait(timeout=5), "generation snapshot was not read")
+            response = self._student_fee_request(
+                tenant=tenant,
+                user=admin,
+                method="patch",
+                pk=student_fee.id,
+                data={"student": destination.id},
+            )
+            resume_generation.set()
+            generation_thread.join(timeout=10)
+
+        self.assertFalse(generation_thread.is_alive(), "generation thread deadlocked")
+        self.assertEqual(errors, [])
+        self.assertEqual(response.status_code, 400, response.data)
+        student_fee.refresh_from_db()
+        self.assertEqual(student_fee.student_id, student.id)
+        self.assertEqual(results, [{"created": 1, "skipped": 0, "errors": []}])
+        self.assertTrue(
+            StudentInvoice.objects.filter(
+                tenant=tenant,
+                student=student,
+                billing_year=2026,
+                billing_month=8,
+                total_amount=100_000,
+            ).exists(),
+        )
+
+    def test_soft_deleted_student_rejects_assignment_and_generation_after_snapshot(self):
+        tenant, student, _template, _student_fee = self._setup_generation_fee()
+        admin = self._make_fee_admin(tenant)
+        extra_template = FeeTemplate.objects.create(
+            tenant=tenant,
+            name="삭제 경쟁 추가 비목",
+            fee_type=FeeTemplate.FeeType.TEXTBOOK,
+            amount=30_000,
+        )
+        snapshot_ready = threading.Event()
+        resume_generation = threading.Event()
+        original_groupby = services.groupby
+        results = []
+        errors = []
+
+        def pause_after_snapshot(*args, **kwargs):
+            snapshot_ready.set()
+            if not resume_generation.wait(timeout=5):
+                raise AssertionError("student soft-delete did not finish")
+            return original_groupby(*args, **kwargs)
+
+        def generate_worker():
+            close_old_connections()
+            try:
+                results.append(generate_monthly_invoices(
+                    tenant,
+                    billing_year=2026,
+                    billing_month=9,
+                    due_date=timezone.localdate() + timedelta(days=10),
+                ))
+            except Exception as exc:  # noqa: BLE001
+                errors.append(repr(exc))
+            finally:
+                close_old_connections()
+
+        with patch("apps.domains.fees.services.groupby", side_effect=pause_after_snapshot):
+            generation_thread = threading.Thread(target=generate_worker)
+            generation_thread.start()
+            self.assertTrue(snapshot_ready.wait(timeout=5), "generation snapshot was not read")
+            with transaction.atomic():
+                locked_student = Student.objects.select_for_update().get(id=student.id)
+                locked_student.deleted_at = timezone.now()
+                locked_student.save(update_fields=["deleted_at", "updated_at"])
+            response = self._student_fee_request(
+                tenant=tenant,
+                user=admin,
+                method="post",
+                data={
+                    "student": student.id,
+                    "fee_template": extra_template.id,
+                    "is_active": True,
+                },
+            )
+            resume_generation.set()
+            generation_thread.join(timeout=10)
+
+        self.assertFalse(generation_thread.is_alive(), "generation thread deadlocked")
+        self.assertEqual(errors, [])
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(results[0]["created"], 0, results)
+        self.assertFalse(
+            StudentInvoice.objects.filter(
+                tenant=tenant,
+                student=student,
+                billing_year=2026,
+                billing_month=9,
+            ).exists(),
+        )
+        self.assertFalse(
+            StudentFee.objects.filter(
+                tenant=tenant,
+                student=student,
+                fee_template=extra_template,
+            ).exists(),
+        )
+
+    def test_identical_direct_assignment_race_returns_201_and_400(self):
+        tenant, student, _template, _student_fee = self._setup_generation_fee()
+        admin = self._make_fee_admin(tenant)
+        template = FeeTemplate.objects.create(
+            tenant=tenant,
+            name="동일 직접 배정 경쟁 비목",
+            fee_type=FeeTemplate.FeeType.TEXTBOOK,
+            amount=30_000,
+        )
+        save_barrier = threading.Barrier(2)
+        responses = []
+        errors = []
+        original_perform_create = StudentFeeViewSet.perform_create
+
+        def synchronized_perform_create(view_self, serializer):
+            save_barrier.wait(timeout=5)
+            return original_perform_create(view_self, serializer)
+
+        def worker():
+            close_old_connections()
+            try:
+                responses.append(self._student_fee_request(
+                    tenant=tenant,
+                    user=admin,
+                    method="post",
+                    data={
+                        "student": student.id,
+                        "fee_template": template.id,
+                        "is_active": True,
+                    },
+                ))
+            except Exception as exc:  # noqa: BLE001
+                errors.append(repr(exc))
+            finally:
+                close_old_connections()
+
+        with patch.object(
+            StudentFeeViewSet,
+            "perform_create",
+            new=synchronized_perform_create,
+        ):
+            first = threading.Thread(target=worker)
+            second = threading.Thread(target=worker)
+            first.start(); second.start()
+            first.join(timeout=10); second.join(timeout=10)
+
+        self.assertFalse(first.is_alive() or second.is_alive(), "assignment threads deadlocked")
+        self.assertEqual(errors, [])
+        self.assertEqual(sorted(response.status_code for response in responses), [201, 400])
+        self.assertEqual(
+            StudentFee.objects.filter(
+                tenant=tenant,
+                student=student,
+                fee_template=template,
+            ).count(),
+            1,
         )
 
     def test_fee_state_committed_during_generation_is_rechecked_after_lock(self):

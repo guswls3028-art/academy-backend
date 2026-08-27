@@ -4,7 +4,7 @@ import logging
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import mixins
 from rest_framework.viewsets import GenericViewSet, ModelViewSet
 from rest_framework.views import APIView
@@ -35,6 +35,7 @@ from .serializers import (
     FeeTemplateCreateSerializer,
     StudentFeeSerializer,
     StudentFeeBulkAssignSerializer,
+    StudentFeeBulkAssignResultSerializer,
     StudentInvoiceListSerializer,
     StudentInvoiceDetailSerializer,
     StudentInvoiceUpdateSerializer,
@@ -180,10 +181,21 @@ class StudentFeeViewSet(ModelViewSet):
             enrollment=serializer.validated_data.get("enrollment"),
         )
         with transaction.atomic():
-            services.lock_student_fee_assignment_scopes(
+            try:
+                services.lock_student_fee_assignment_scopes(
+                    tenant=self.request.tenant,
+                    student_ids=[serializer.validated_data["student"].id],
+                )
+            except ValueError as exc:
+                raise ValidationError({"student": str(exc)}) from exc
+            if StudentFee.objects.filter(
                 tenant=self.request.tenant,
-                student_ids=[serializer.validated_data["student"].id],
-            )
+                student=serializer.validated_data["student"],
+                fee_template=serializer.validated_data["fee_template"],
+            ).exists():
+                raise ValidationError({
+                    "fee_template": "이미 이 학생에게 배정된 비목입니다.",
+                })
             serializer.save(tenant=self.request.tenant)
 
     def perform_update(self, serializer):
@@ -196,6 +208,10 @@ class StudentFeeViewSet(ModelViewSet):
         )
         serializer.save()
 
+    @extend_schema(
+        request=StudentFeeBulkAssignSerializer,
+        responses={200: StudentFeeBulkAssignResultSerializer},
+    )
     @action(detail=False, methods=["post"], url_path="bulk-assign")
     def bulk_assign(self, request):
         """여러 학생에게 비목을 일괄 할당."""
@@ -225,10 +241,13 @@ class StudentFeeViewSet(ModelViewSet):
 
         ordered_student_ids = list(dict.fromkeys(student_ids))
         with transaction.atomic():
-            services.lock_student_fee_assignment_scopes(
-                tenant=tenant,
-                student_ids=ordered_student_ids,
-            )
+            try:
+                services.lock_student_fee_assignment_scopes(
+                    tenant=tenant,
+                    student_ids=ordered_student_ids,
+                )
+            except ValueError as exc:
+                raise ValidationError({"student_ids": str(exc)}) from exc
             created = 0
             skipped = 0
             for sid in ordered_student_ids:
@@ -261,6 +280,12 @@ class StudentFeeViewSet(ModelViewSet):
 # StudentInvoice (청구서)
 # ========================================================
 
+@extend_schema_view(
+    partial_update=extend_schema(
+        request=StudentInvoiceUpdateSerializer,
+        responses={200: StudentInvoiceDetailSerializer},
+    ),
+)
 class StudentInvoiceViewSet(
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,
