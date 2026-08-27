@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import logging
 import mimetypes
 import uuid
 
@@ -14,7 +15,10 @@ from apps.domains.submissions.models import Submission
 
 # ✅ API 서버 전용 R2 업로드
 from apps.core.r2_paths import ai_submission_key
-from apps.infrastructure.storage.r2 import upload_fileobj_to_r2
+from apps.infrastructure.storage.r2 import delete_object_r2_storage, upload_fileobj_to_r2
+
+
+logger = logging.getLogger(__name__)
 
 
 class SubmissionSerializer(serializers.ModelSerializer):
@@ -109,19 +113,31 @@ class SubmissionCreateSerializer(serializers.ModelSerializer):
                 unique_id=uuid.uuid4().hex,
                 ext=ext,
             )
+            uploaded = False
+            try:
+                upload_fileobj_to_r2(
+                    fileobj=upload_file,
+                    key=key,
+                    content_type=getattr(upload_file, "content_type", None),
+                )
+                uploaded = True
 
-            upload_fileobj_to_r2(
-                fileobj=upload_file,
-                key=key,
-                content_type=getattr(upload_file, "content_type", None),
-            )
-
-            submission.file_key = key
-            submission.file_type = (
-                getattr(upload_file, "content_type", None)
-                or mimetypes.guess_type(upload_file.name)[0]
-            )
-            submission.file_size = getattr(upload_file, "size", None)
-            submission.save(update_fields=["file_key", "file_type", "file_size"])
+                submission.file_key = key
+                submission.file_type = (
+                    getattr(upload_file, "content_type", None)
+                    or mimetypes.guess_type(upload_file.name)[0]
+                )
+                submission.file_size = getattr(upload_file, "size", None)
+                submission.save(update_fields=["file_key", "file_type", "file_size"])
+            except Exception:
+                if uploaded:
+                    try:
+                        delete_object_r2_storage(key=key)
+                    except Exception:
+                        logger.exception(
+                            "Failed to compensate uploaded submission object",
+                            extra={"submission_id": int(submission.id)},
+                        )
+                raise
 
         return submission

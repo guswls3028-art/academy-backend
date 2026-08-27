@@ -184,6 +184,58 @@ submission의 저장된 DONE 결과에 답안이 있고 기존 답안이 없으�
 확정한 뒤 진행도와 수업 분석을 갱신한다. 수동 검토 표시가 있는 OMR만 DRAFT를
 유지한다.
 
+## 대량 등록 작업과 진행 상태 계약
+
+100장까지의 OMR 파일 선택은 브라우저 메모리가 아니라 서버의
+`OmrUploadBatch`/`OmrUploadBatchItem`이 접수 상태의 정본이다.
+
+1. 클라이언트가 시험·차시와 총 파일 수로 batch를 먼저 생성한다.
+2. 서버는 `1..total_count` ordinal을 원자적으로 만들고, 클라이언트는 그 batch id와
+   ordinal을 붙여 파일 전체를 한 multipart 요청으로 보낸다.
+3. 각 ordinal은 별도 transaction에서 `Submission`에 연결된다. 이미 연결된 ordinal을
+   다시 보내면 서버가 item row를 먼저 잠그고 파일 검증보다 앞서 `RECEIVED`를 확인해
+   no-op 처리한다. 따라서 같은 ordinal의 늦은 잘못된 파일이나 동시 재전송이 기존
+   Submission 연결을 실패 상태로 되돌리지 않고, 워커도 중복 dispatch하지 않는다.
+4. 요청 응답이 끊겨도 detail GET의 `pending_admission_ordinals`와
+   `admission_failed_ordinals`로 미접수 파일만 다시 선택한다. 이미 성공한 ordinal은
+   재전송하지 않는다.
+5. batch 진행 상태는 기존 Submission/AI worker 상태를 집계한다. 파일 수신은
+   `received`, AI 작업 중은 `processing`, 채점 완료는 `completed`, 학생 확인 필요는
+   `needs_identification`, 처리 실패는 `failed`로 서로 구분한다. 업로드 성공을 AI 완료로
+   표시하지 않는다.
+
+Batch와 item에는 tenant, 생성 직원, 시험/차시/강의 id, 총수, ordinal, Submission 연결,
+안전한 실패 코드만 저장한다. 파일명, 학생 이름·전화번호, R2 raw key는 batch 모델이나
+batch API 응답에 저장·노출하지 않는다. 실제 원본과 학생 매칭은 기존 tenant-scoped
+Submission 계약을 그대로 사용한다.
+
+파일을 R2에 올린 뒤 Submission metadata 저장, item 연결, dispatch 중 하나라도 실패해
+DB transaction이 rollback되면 서버는 그 요청에서 생성한 exact object key만 즉시 보상
+삭제한다. 보상 삭제 자체가 실패하면 원래 실패를 유지한 채 구조화 로그를 남긴다. 실패
+item 전환도 row lock 아래에서 현재 상태를 다시 확인하며, 이미 `RECEIVED`와 Submission
+연결이 확정된 item은 지우지 않는다. Legacy multipart는 sheet/session 해석까지 성공한
+뒤에만 implicit batch를 만들므로 잘못된 sheet 요청이 pending batch를 남기지 않는다.
+
+업로드 OpenAPI는 multipart의 legacy/durable 및 단일/다중 파일 형태를 `anyOf` 대안으로
+명시한다. 둘 모두 `file` 또는 `files` 중 하나가 필수이며, durable 대안은 `batch_id`와
+`item_ordinals`도 필수다. 각 대안은 미선언 필드를 거부하므로 durable 식별자 중 한쪽만
+섞인 payload가 legacy 요청으로 오인되어 schema 검증을 통과하지 않는다.
+
+목록과 상세 GET은 같은 tenant의 batch 생성 직원에게만 열리고 최근 7일 작업만 목록으로
+복구한다. 이 GET들은 `completion_notice_claimed_at`을 포함해 어떤 값도 쓰지 않는다.
+완료 알림 소유권은 별도 `claim-completion` POST가 batch row를 잠근 transaction 안에서
+획득하며, terminal 이후 최초 호출만 `notify=true`, 이후 호출과 동시 탭은 `false`다.
+처리 중 claim은 409로 실패한다.
+
+재시도 POST는 요청된 ordinal만 처리한다. 원본 key가 남아 있는 실패 Submission은 기존
+retry lifecycle로 다시 dispatch한다. Batch item을 ordinal 순으로 잠근 뒤 연결된 Submission을
+id 순으로 함께 잠그고 최신 상태와 file key를 재확인하므로 worker callback이나 다른 admin
+retry가 만든 새 상태를 stale 객체가 덮어쓰지 않는다. 잠금 뒤 전이 조건이 달라졌거나 lifecycle
+전이가 거부되면 해당 ordinal은 `skipped_ordinals`로 반환하며 500이나 중복 dispatch를 만들지
+않는다. 아직 파일을 받지 못했거나 admission 단계에서 실패한 ordinal은
+`requires_file_ordinals`로 반환해 명시적 파일 재선택을 요구한다. 다른 tenant, 다른 생성 직원,
+다른 시험 batch는 404/403으로 fail-closed 한다.
+
 ## 문항 구성
 
 | 문항 수 | 컬럼 분할 |
@@ -246,6 +298,11 @@ HTTPS 로고를 PDF 서버가 가져오지 못하면 `renderer/logos/{tenant.cod
 | POST | `/exams/{id}/generate-omr/` | OMR 메타 + URL 반환 | ⚠️ **deprecated** |
 | GET | `/assets/omr/objective/meta/` | 좌표 메타 조회 | 현행 |
 | POST | `/submissions/exams/{id}/omr/batch/` | 스캔 파일 일괄 업로드 | 현행 |
+| POST | `/submissions/exams/{id}/omr/batches/` | 총수·차시를 고정한 durable batch/ordinal 생성 | 현행 |
+| GET | `/submissions/omr/batches/` | 로그인 직원의 최근 7일 batch 목록(완전 read-only) | 현행 |
+| GET | `/submissions/omr/batches/{batch_id}/` | batch 접수/AI 처리 집계(완전 read-only) | 현행 |
+| POST | `/submissions/omr/batches/{batch_id}/retry/` | 실패 또는 미접수 ordinal만 재시도 | 현행 |
+| POST | `/submissions/omr/batches/{batch_id}/claim-completion/` | terminal 완료 알림 1회 소유권 획득 | 현행 |
 | GET | `/results/admin/exams/{id}/result-import/template/` | 학생·문항이 채워진 결과 입력 엑셀 다운로드 | 현행 |
 | POST | `/results/admin/exams/{id}/result-import/` | 엑셀 미리검증, `apply=true`일 때 결과 반영 | 현행 |
 
@@ -253,6 +310,7 @@ HTTPS 로고를 PDF 서버가 가져오지 못하면 `renderer/logos/{tenant.cod
 
 | 버전 | 날짜 | 변경 |
 |------|------|------|
+| v17 | 2026-08-27 | 1~100장 OMR 접수를 durable batch/ordinal로 먼저 만들고 기존 Submission/AI worker 상태를 집계. 모달 종료·SPA 이동·새로고침 뒤에도 접수/처리/완료/식별필요/실패를 복구하며, 성공 ordinal 중복 생성 없이 미접수·실패 ordinal만 재시도. GET은 read-only이고 별도 row-lock POST만 완료 알림을 정확히 1회 claim. batch 계약에는 파일명·학생 PII·raw key를 저장하거나 응답하지 않음. |
 | v16.9 | 2026-08-22 | OMR 결과 콜백에서 HTTP 전용 DRF import를 지연해 AI 워커 전용 이미지에서도 답안 반영이 완료되도록 복구. 콜백 지연 중 상태 복구가 `stuck:*_timeout`으로 표시한 제출은 저장된 DONE 답안이 있고 기존 답안이 없을 때만 재개. 자동 채점이 문항별 `ResultFact`를 원자적으로 저장하고 수동 검토 불필요 OMR을 `FINAL`로 확정해 점수·문항 통계·수업 분석이 함께 보이도록 보장. DRF 없는 결과 매퍼 import를 테스트와 이미지 빌드에서 차단 게이트로 검증. |
 | v16.8 | 2026-08-22 | OMR PDF 원격 로고 조회 실패 시 godmin의 정적 테넌트 로고로 폴백해 HTML 미리보기와 다운로드 표지를 일치시킴. |
 | v16.7 | 2026-08-14 | 레거시 생성 API도 `Exam.tenant` 소유권, 명시적 0문항, 필드별 400 검증 계약을 유지하고 세션 없는 템플릿을 지원. 좌표 메타와 자산 목록의 잘못된 숫자 쿼리도 필드별 400으로 거부. |
