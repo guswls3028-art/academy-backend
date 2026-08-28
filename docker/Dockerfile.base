@@ -48,8 +48,11 @@ RUN test -n "${APT_REFRESH_TOKEN}" \
     ca-certificates \
     fonts-nanum \
     openssl \
+    util-linux \
     && openssl_version="$(dpkg-query -W -f='${Version}' openssl)" \
     && dpkg --compare-versions "$openssl_version" ge "3.5.7-1~deb13u2" \
+    && util_linux_version="$(dpkg-query -W -f='${Version}' util-linux)" \
+    && dpkg --compare-versions "$util_linux_version" ge "2.41.5-0+deb13u1" \
     && rm -rf /var/lib/apt/lists/*
 
 # non-root 사용자 (보안·감사 대비, CMD/경로 규칙 유지)

@@ -18,6 +18,11 @@
   설치 레이어를 무효화하므로 오래된 `apt-get update` 결과를 BuildKit 캐시에서
   재사용하지 않고, 당시 Debian 저장소의 최신 보안 패키지를 설치한다. base가
   선택되지 않은 일반 앱 코드 빌드는 기존 digest를 재사용한다.
+- 공통 runtime은 `openssl`과 `util-linux`를 명시적으로 설치하고 각각
+  `3.5.7-1~deb13u2`, `2.41.5-0+deb13u1` 이상인지 빌드 중 검증한다. upstream
+  slim digest에 더 낮은 essential package가 들어 있어도 단순 `apt-get update`에
+  의존하지 않으며, Debian stable 보안 수정본이 후보에 실제 포함되지 않으면
+  이미지 빌드가 실패한다.
 - pip Dependabot은 같은 호환 버전이 필요한 `boto3`/`botocore`를 한 PR로
   갱신하고, 개발 의존성 및 GitHub Actions minor/patch는 각각 묶어 중복 CI를
   줄인다. 모든 묶음은 개별 업데이트와 같은 전체 품질·이미지 scan 게이트를
@@ -213,6 +218,16 @@ Python validator를 사용하므로 exact 세 repository/package/CVE만 `2026-09
 한시 수용한다. 다음 후보는 공통 base와 여섯 runtime image를 모두 새 digest로
 빌드·scan해 OpenSSL 제거와 GLib exact identity를 실측해야 하며, 그 전에는 어떤
 development/preprod/production runtime도 변경하지 않는다.
+
+2026-08-29 문서·배포 스크립트 정리 merge `6989a7b0c...`의 후보 run
+`33210363052`는 AI digest `sha256:2af9fcd0...`의 완료 scan에서 직전 성공 AI
+digest의 High 21건 외에 `CVE-2026-53615` (`util-linux` `2.41-5`) 한 건을
+정확히 추가로 반환해 development 진입 전에 실패 폐쇄했다. Debian trixie
+security는 `2.41.5-0+deb13u1`을 수정 버전으로 제공하므로 High 상한이나 예외를
+늘리지 않는다. 공통 base가 `util-linux`를 명시적으로 갱신하고 해당 최소 버전을
+빌드 중 검사하며, 다음 후보는 여섯 runtime image의 완료 scan에서 이 finding이
+제거됐음을 실측한 뒤에만 development/preprod/production으로 진행한다. 실패한
+run은 shared lock을 반환했고 운영 runtime을 변경하지 않았다.
 
 현재 Critical 한시 항목은 Debian stable에 수정본이 아직 없거나 Debian이
 `no-dsa`/minor로 분류한 glibc·GLib·Perl finding이다. GLib의
