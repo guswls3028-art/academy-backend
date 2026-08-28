@@ -1,4 +1,4 @@
-# apps/support/messaging/policy.py
+# apps/domains/messaging/policy.py
 """
 메시징 발송 정책 및 채널 resolver — 단일 진입점.
 

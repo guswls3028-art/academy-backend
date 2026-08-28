@@ -286,6 +286,128 @@ class TestStudentExcelUploadValidation(TestCase):
         self.tenant = _make_tenant("Excel Guard Academy", "excel_guard")
         self.admin = _make_admin(self.tenant, "excel_guard_admin")
 
+    def _valid_excel_request(self):
+        import io
+
+        import openpyxl
+
+        workbook = openpyxl.Workbook()
+        worksheet = workbook.active
+        worksheet.append(["이름", "학부모전화번호", "학생전화번호"])
+        worksheet.append(["정리대상", "01070001111", "01090001234"])
+        stream = io.BytesIO()
+        workbook.save(stream)
+        request = self.factory.post(
+            "/api/v1/students/bulk_create_from_excel/",
+            data={
+                "file": SimpleUploadedFile(
+                    "students.xlsx",
+                    stream.getvalue(),
+                    content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                ),
+                "password_mode": "fixed",
+                "initial_password": "0000",
+            },
+            format="multipart",
+        )
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+        return request
+
+    @patch(
+        "apps.domains.students.views.student_views.delete_object_r2_excel",
+        create=True,
+    )
+    @patch("apps.domains.students.views.student_views.dispatch_job")
+    @patch("apps.domains.students.views.student_views.upload_fileobj_to_r2_excel")
+    def test_dispatch_rejection_removes_exact_uploaded_excel(
+        self,
+        mock_upload,
+        mock_dispatch,
+        mock_delete,
+    ):
+        mock_dispatch.return_value = {"ok": False, "error": "dispatch unavailable"}
+
+        response = StudentViewSet.as_view({"post": "bulk_create_from_excel"})(
+            self._valid_excel_request()
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(response.data, {"detail": "dispatch unavailable"})
+        uploaded_key = mock_upload.call_args.kwargs["key"]
+        mock_delete.assert_called_once_with(key=uploaded_key)
+
+    @patch(
+        "apps.domains.students.views.student_views.delete_object_r2_excel",
+        create=True,
+    )
+    @patch("apps.domains.students.views.student_views.dispatch_job")
+    @patch("apps.domains.students.views.student_views.upload_fileobj_to_r2_excel")
+    def test_dispatch_exception_removes_exact_uploaded_excel(
+        self,
+        mock_upload,
+        mock_dispatch,
+        mock_delete,
+    ):
+        mock_dispatch.side_effect = RuntimeError("dispatch exploded")
+
+        response = StudentViewSet.as_view({"post": "bulk_create_from_excel"})(
+            self._valid_excel_request()
+        )
+
+        self.assertEqual(response.status_code, 500, response.data)
+        self.assertEqual(response.data["detail"], "서버 오류가 발생했습니다.")
+        uploaded_key = mock_upload.call_args.kwargs["key"]
+        mock_delete.assert_called_once_with(key=uploaded_key)
+
+    @patch(
+        "apps.domains.students.views.student_views.delete_object_r2_excel",
+        create=True,
+        side_effect=RuntimeError("cleanup unavailable"),
+    )
+    @patch("apps.domains.students.views.student_views.dispatch_job")
+    @patch("apps.domains.students.views.student_views.upload_fileobj_to_r2_excel")
+    def test_cleanup_failure_preserves_original_dispatch_rejection(
+        self,
+        mock_upload,
+        mock_dispatch,
+        mock_delete,
+    ):
+        mock_dispatch.return_value = {"ok": False, "error": "dispatch unavailable"}
+
+        response = StudentViewSet.as_view({"post": "bulk_create_from_excel"})(
+            self._valid_excel_request()
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(response.data, {"detail": "dispatch unavailable"})
+        uploaded_key = mock_upload.call_args.kwargs["key"]
+        mock_delete.assert_called_once_with(key=uploaded_key)
+
+    @patch(
+        "apps.domains.students.views.student_views.delete_object_r2_excel",
+        create=True,
+        side_effect=RuntimeError("cleanup unavailable"),
+    )
+    @patch("apps.domains.students.views.student_views.dispatch_job")
+    @patch("apps.domains.students.views.student_views.upload_fileobj_to_r2_excel")
+    def test_cleanup_failure_preserves_original_dispatch_exception(
+        self,
+        mock_upload,
+        mock_dispatch,
+        mock_delete,
+    ):
+        mock_dispatch.side_effect = RuntimeError("dispatch exploded")
+
+        response = StudentViewSet.as_view({"post": "bulk_create_from_excel"})(
+            self._valid_excel_request()
+        )
+
+        self.assertEqual(response.status_code, 500, response.data)
+        self.assertEqual(response.data["error"], "dispatch exploded")
+        uploaded_key = mock_upload.call_args.kwargs["key"]
+        mock_delete.assert_called_once_with(key=uploaded_key)
+
     @patch("apps.domains.students.views.student_views.dispatch_job")
     @patch("apps.domains.students.views.student_views.upload_fileobj_to_r2_excel")
     def test_fake_xlsx_is_rejected_before_r2_upload(self, mock_upload, mock_dispatch):
@@ -352,9 +474,15 @@ class TestStudentExcelUploadValidation(TestCase):
         mock_upload.assert_not_called()
         mock_dispatch.assert_not_called()
 
+    @patch("apps.domains.students.views.student_views.delete_object_r2_excel")
     @patch("apps.domains.students.views.student_views.dispatch_job")
     @patch("apps.domains.students.views.student_views.upload_fileobj_to_r2_excel")
-    def test_hancom_windows_mime_xlsx_is_dispatched(self, mock_upload, mock_dispatch):
+    def test_hancom_windows_mime_xlsx_is_dispatched(
+        self,
+        mock_upload,
+        mock_dispatch,
+        mock_delete,
+    ):
         import io
 
         import openpyxl
@@ -389,6 +517,7 @@ class TestStudentExcelUploadValidation(TestCase):
         self.assertEqual(response.data["job_id"], "excel-job-hancom")
         mock_upload.assert_called_once()
         mock_dispatch.assert_called_once()
+        mock_delete.assert_not_called()
 
     @patch("apps.domains.students.views.student_views.dispatch_job")
     @patch("apps.domains.students.views.student_views.upload_fileobj_to_r2_excel")

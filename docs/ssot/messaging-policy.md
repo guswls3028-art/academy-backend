@@ -2,7 +2,7 @@
 
 ## 정책 분류 체계
 
-코드 SSOT: `apps/support/messaging/policy.py` → `TRIGGER_POLICY` dict
+코드 SSOT: `apps/domains/messaging/policy.py` → `TRIGGER_POLICY` dict
 
 ### SYSTEM_AUTO — 시스템 필수 안내 (항상 자동, 사용자가 끌 수 없음)
 | Trigger | 설명 | 수신자 | 발송 순간 |

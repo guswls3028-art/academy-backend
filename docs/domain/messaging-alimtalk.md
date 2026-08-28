@@ -743,7 +743,7 @@ DEFAULT, SIGNUP, ATTENDANCE, LECTURE, EXAM, ASSIGNMENT, GRADES, CLINIC, PAYMENT,
 | `apps/support/messaging/alimtalk_content_builders.py` | 섹션 2, 3, 5 (템플릿 ID, 매핑, 변수) |
 | `apps/support/messaging/models.py` | 섹션 4, 14 (Trigger choices, MessageTemplate) |
 | `apps/support/messaging/default_templates.py` | 섹션 12 (기본 템플릿) |
-| `apps/support/messaging/policy.py` | 섹션 4, 6, 9 (정책 분류, 공급자, dry-run) |
+| `apps/domains/messaging/policy.py` | 섹션 4, 6, 9 (정책 분류, 공급자, dry-run) |
 | `apps/support/messaging/services.py` | 섹션 1, 11 (파이프라인, 폴백) |
 | `apps/support/messaging/sqs_queue.py` | 섹션 7, 8 (메시지 구조, 멱등성) |
 | `apps/worker/messaging_worker/sqs_main.py` | 섹션 1, 6, 8 (워커, 공급자 분기, 멱등성) |
