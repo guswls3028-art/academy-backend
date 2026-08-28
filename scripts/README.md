@@ -49,20 +49,12 @@ legacy hot/rapid deploy 스크립트는 live tree에서 제거했다. 운영 반
 
 ---
 
-## 아카이브 (실행 금지, 참고용)
+## 폐기된 배포 스택
 
-구 배포 스택은 **scripts/archive/** 아래에 보관했다. **실행 금지.** deploy 시 호출
-스택에 archive 또는 archive/infra가 있으면 즉시 fail.
-
-| 하위 | 설명 |
-|------|------|
-| **archive/v4/** | 구 SSOT v4 배포·검증 스크립트 (v1로 대체됨) |
-| **archive/infra/** | 구 인프라 스크립트·JSON (v1/templates에 반영됨) |
-| **archive/legacy/** | 구 scripts 루트 .ps1/.py/.sh 등 |
-| **archive/redeploy/** | 구 redeploy 스크립트 |
-| **archive/scripts_v3/** | 구 scripts_v3 풀스택 배포 (v1로 대체됨) |
-
-상세: [scripts/archive/README.md](archive/README.md)
+v3·v4와 구 인프라 스크립트는 `scripts/v1/`에 필요한 계약이 반영된 뒤 live
+tree에서 제거했다. 과거 구현은 Git 이력에서만 조회한다. 현재 배포 코드가
+`scripts/archive/`를 호출하려 하면 `scripts/v1/core/guard.ps1`이 계속
+fail-closed 한다.
 
 ---
 
