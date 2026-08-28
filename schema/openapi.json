@@ -2227,56 +2227,6 @@
         ],
         "type": "object"
       },
-      "ExamAttemptRequest": {
-        "properties": {
-          "attempt_index": {
-            "description": "1부터 시작",
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "clinic_link": {
-            "description": "클리닉 재시험 시 연결된 ClinicLink (attempt_index>=2)",
-            "nullable": true,
-            "type": "integer"
-          },
-          "enrollment": {
-            "type": "integer"
-          },
-          "exam": {
-            "type": "integer"
-          },
-          "is_representative": {
-            "default": true,
-            "type": "boolean"
-          },
-          "is_retake": {
-            "type": "boolean"
-          },
-          "meta": {
-            "description": "Attempt 단위 메타데이터. OMR/AI 판독 정보, total_score, pass_score, 재채점 근거 등 운영/분석용 정보 저장.",
-            "nullable": true
-          },
-          "status": {
-            "$ref": "#/components/schemas/ExamAttemptStatusEnum"
-          },
-          "submission_id": {
-            "description": "이 attempt를 발생시킨 submission (클리닉 직접 입력 시 null)",
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "nullable": true,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "attempt_index",
-          "enrollment",
-          "exam"
-        ],
-        "type": "object"
-      },
       "ExamAttemptStatusEnum": {
         "description": "* `pending` - Pending\n* `grading` - Grading\n* `done` - Done\n* `failed` - Failed",
         "enum": [
@@ -4275,56 +4225,6 @@
           "id",
           "lecture",
           "updated_at"
-        ],
-        "type": "object"
-      },
-      "LectureProgressRequest": {
-        "properties": {
-          "completed_sessions": {
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "consecutive_failed_sessions": {
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "failed_sessions": {
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "last_session": {
-            "nullable": true,
-            "type": "integer"
-          },
-          "last_updated": {
-            "format": "date-time",
-            "nullable": true,
-            "type": "string"
-          },
-          "lecture": {
-            "type": "integer"
-          },
-          "meta": {
-            "nullable": true
-          },
-          "risk_level": {
-            "$ref": "#/components/schemas/LectureProgressRiskLevelEnum"
-          },
-          "total_sessions": {
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "lecture"
         ],
         "type": "object"
       },
@@ -7145,51 +7045,6 @@
         },
         "type": "object"
       },
-      "PatchedExamAttemptRequest": {
-        "properties": {
-          "attempt_index": {
-            "description": "1부터 시작",
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "clinic_link": {
-            "description": "클리닉 재시험 시 연결된 ClinicLink (attempt_index>=2)",
-            "nullable": true,
-            "type": "integer"
-          },
-          "enrollment": {
-            "type": "integer"
-          },
-          "exam": {
-            "type": "integer"
-          },
-          "is_representative": {
-            "default": true,
-            "type": "boolean"
-          },
-          "is_retake": {
-            "type": "boolean"
-          },
-          "meta": {
-            "description": "Attempt 단위 메타데이터. OMR/AI 판독 정보, total_score, pass_score, 재채점 근거 등 운영/분석용 정보 저장.",
-            "nullable": true
-          },
-          "status": {
-            "$ref": "#/components/schemas/ExamAttemptStatusEnum"
-          },
-          "submission_id": {
-            "description": "이 attempt를 발생시킨 submission (클리닉 직접 입력 시 null)",
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "nullable": true,
-            "type": "integer"
-          }
-        },
-        "type": "object"
-      },
       "PatchedExamUpdateRequest": {
         "description": "수정 전용 serializer\n- exam_type, subject 직접 변경 ❌\n- template_exam_id: regular 시험에서 시험 설정으로 템플릿 지정 가능 (한 번만)\n- 2026-05-13 학원장 결정: 시험 단위 status(OPEN/CLOSED) 폐기.\n  학생별 Achievement SSOT 가 단일 진실. status 필드는 PATCH 대상에서 제외.",
         "properties": {
@@ -7477,53 +7332,6 @@
         },
         "type": "object"
       },
-      "PatchedLectureProgressRequest": {
-        "properties": {
-          "completed_sessions": {
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "consecutive_failed_sessions": {
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "failed_sessions": {
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "last_session": {
-            "nullable": true,
-            "type": "integer"
-          },
-          "last_updated": {
-            "format": "date-time",
-            "nullable": true,
-            "type": "string"
-          },
-          "lecture": {
-            "type": "integer"
-          },
-          "meta": {
-            "nullable": true
-          },
-          "risk_level": {
-            "$ref": "#/components/schemas/LectureProgressRiskLevelEnum"
-          },
-          "total_sessions": {
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "type": "object"
-      },
       "PatchedLectureRequest": {
         "properties": {
           "chip_label": {
@@ -7788,81 +7596,6 @@
         },
         "type": "object"
       },
-      "PatchedProgressPolicyRequest": {
-        "properties": {
-          "exam_aggregate_strategy": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/ExamAggregateStrategyEnum"
-              }
-            ],
-            "description": "Session에 여러 시험이 있을 때 Result 집계 방식\n\n* `MAX` - 최고점\n* `AVG` - 평균\n* `LATEST` - 최근 제출"
-          },
-          "exam_end_session_order": {
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "exam_pass_score": {
-            "format": "double",
-            "type": "number"
-          },
-          "exam_pass_source": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/ExamPassSourceEnum"
-              }
-            ],
-            "description": "합격 기준을 정책(POLICY)으로 볼지, 시험(EXAM)마다 볼지\n\n* `POLICY` - 정책 기준\n* `EXAM` - 시험 기준"
-          },
-          "exam_start_session_order": {
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "homework_cutline_percent": {
-            "description": "Homework pass cutline (%). 예: 80",
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "homework_end_session_order": {
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "homework_pass_type": {
-            "$ref": "#/components/schemas/HomeworkPassTypeEnum"
-          },
-          "homework_round_unit": {
-            "description": "Homework percent rounding unit (%). 예: 5이면 5% 단위 반올림",
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "homework_start_session_order": {
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "lecture": {
-            "type": "integer"
-          },
-          "video_required_rate": {
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "type": "object"
-      },
       "PatchedPublicBoardPostWriteRequest": {
         "properties": {
           "category": {
@@ -7975,9 +7708,6 @@
           "score": {
             "format": "double",
             "type": "number"
-          },
-          "sheet": {
-            "type": "integer"
           }
         },
         "type": "object"
@@ -7986,31 +7716,6 @@
         "properties": {
           "auto_approve": {
             "type": "boolean"
-          }
-        },
-        "type": "object"
-      },
-      "PatchedRiskLogRequest": {
-        "properties": {
-          "enrollment": {
-            "type": "integer"
-          },
-          "meta": {
-            "nullable": true
-          },
-          "reason": {
-            "nullable": true,
-            "type": "string"
-          },
-          "risk_level": {
-            "$ref": "#/components/schemas/RiskLogRiskLevelEnum"
-          },
-          "rule": {
-            "$ref": "#/components/schemas/RiskLogRuleEnum"
-          },
-          "session": {
-            "nullable": true,
-            "type": "integer"
           }
         },
         "type": "object"
@@ -8194,67 +7899,8 @@
         },
         "type": "object"
       },
-      "PatchedSessionProgressRequest": {
-        "properties": {
-          "attendance_type": {
-            "$ref": "#/components/schemas/AttendanceTypeEnum"
-          },
-          "calculated_at": {
-            "format": "date-time",
-            "nullable": true,
-            "type": "string"
-          },
-          "completed": {
-            "type": "boolean"
-          },
-          "completed_at": {
-            "format": "date-time",
-            "nullable": true,
-            "type": "string"
-          },
-          "exam_aggregate_score": {
-            "format": "double",
-            "nullable": true,
-            "type": "number"
-          },
-          "exam_attempted": {
-            "type": "boolean"
-          },
-          "exam_meta": {
-            "nullable": true
-          },
-          "exam_passed": {
-            "type": "boolean"
-          },
-          "homework_passed": {
-            "type": "boolean"
-          },
-          "homework_submitted": {
-            "type": "boolean"
-          },
-          "meta": {
-            "nullable": true
-          },
-          "session": {
-            "type": "integer"
-          },
-          "video_completed": {
-            "type": "boolean"
-          },
-          "video_progress_rate": {
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "type": "object"
-      },
       "PatchedSheetRequest": {
         "properties": {
-          "exam": {
-            "type": "integer"
-          },
           "file": {
             "format": "binary",
             "nullable": true,
@@ -9722,84 +9368,6 @@
         ],
         "type": "object"
       },
-      "ProgressPolicyRequest": {
-        "properties": {
-          "exam_aggregate_strategy": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/ExamAggregateStrategyEnum"
-              }
-            ],
-            "description": "Session에 여러 시험이 있을 때 Result 집계 방식\n\n* `MAX` - 최고점\n* `AVG` - 평균\n* `LATEST` - 최근 제출"
-          },
-          "exam_end_session_order": {
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "exam_pass_score": {
-            "format": "double",
-            "type": "number"
-          },
-          "exam_pass_source": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/ExamPassSourceEnum"
-              }
-            ],
-            "description": "합격 기준을 정책(POLICY)으로 볼지, 시험(EXAM)마다 볼지\n\n* `POLICY` - 정책 기준\n* `EXAM` - 시험 기준"
-          },
-          "exam_start_session_order": {
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "homework_cutline_percent": {
-            "description": "Homework pass cutline (%). 예: 80",
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "homework_end_session_order": {
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "homework_pass_type": {
-            "$ref": "#/components/schemas/HomeworkPassTypeEnum"
-          },
-          "homework_round_unit": {
-            "description": "Homework percent rounding unit (%). 예: 5이면 5% 단위 반올림",
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "homework_start_session_order": {
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "lecture": {
-            "type": "integer"
-          },
-          "video_required_rate": {
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "lecture"
-        ],
-        "type": "object"
-      },
       "PublicBoardPostDetail": {
         "description": "detail — content 포함.",
         "properties": {
@@ -10693,6 +10261,7 @@
             "type": "number"
           },
           "sheet": {
+            "readOnly": true,
             "type": "integer"
           },
           "updated_at": {
@@ -10712,6 +10281,122 @@
           "question_kind",
           "sheet",
           "updated_at"
+        ],
+        "type": "object"
+      },
+      "QuestionCreate": {
+        "description": "Create keeps the parent input explicit while normal updates cannot reparent.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
+          },
+          "explanation_source": {
+            "nullable": true,
+            "readOnly": true,
+            "type": "string"
+          },
+          "explanation_text": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "id": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "image": {
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "image_key": {
+            "description": "R2에 저장된 문항 크롭 이미지 키",
+            "readOnly": true,
+            "type": "string"
+          },
+          "image_url": {
+            "nullable": true,
+            "readOnly": true,
+            "type": "string"
+          },
+          "number": {
+            "format": "int64",
+            "maximum": 9223372036854775807,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "question_kind": {
+            "description": "문항별 유형. null이면 Sheet의 기존 앞-객관식/뒤-단답형 규칙을 사용\n\n* `choice` - 객관식\n* `essay` - 단답형",
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/QuestionKindEnum"
+              },
+              {
+                "$ref": "#/components/schemas/NullEnum"
+              }
+            ],
+            "readOnly": true
+          },
+          "region_meta": {
+            "nullable": true
+          },
+          "score": {
+            "format": "double",
+            "type": "number"
+          },
+          "sheet": {
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "created_at",
+          "explanation_source",
+          "explanation_text",
+          "id",
+          "image_key",
+          "image_url",
+          "number",
+          "question_kind",
+          "sheet",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "QuestionCreateRequest": {
+        "description": "Create keeps the parent input explicit while normal updates cannot reparent.",
+        "properties": {
+          "image": {
+            "format": "binary",
+            "nullable": true,
+            "type": "string"
+          },
+          "number": {
+            "format": "int64",
+            "maximum": 9223372036854775807,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "region_meta": {
+            "nullable": true
+          },
+          "score": {
+            "format": "double",
+            "type": "number"
+          },
+          "sheet": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "number",
+          "sheet"
         ],
         "type": "object"
       },
@@ -10743,14 +10428,10 @@
           "score": {
             "format": "double",
             "type": "number"
-          },
-          "sheet": {
-            "type": "integer"
           }
         },
         "required": [
-          "number",
-          "sheet"
+          "number"
         ],
         "type": "object"
       },
@@ -11249,36 +10930,6 @@
           "risk_level",
           "rule",
           "updated_at"
-        ],
-        "type": "object"
-      },
-      "RiskLogRequest": {
-        "properties": {
-          "enrollment": {
-            "type": "integer"
-          },
-          "meta": {
-            "nullable": true
-          },
-          "reason": {
-            "nullable": true,
-            "type": "string"
-          },
-          "risk_level": {
-            "$ref": "#/components/schemas/RiskLogRiskLevelEnum"
-          },
-          "rule": {
-            "$ref": "#/components/schemas/RiskLogRuleEnum"
-          },
-          "session": {
-            "nullable": true,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "enrollment",
-          "risk_level",
-          "rule"
         ],
         "type": "object"
       },
@@ -12224,65 +11875,6 @@
         ],
         "type": "object"
       },
-      "SessionProgressRequest": {
-        "properties": {
-          "attendance_type": {
-            "$ref": "#/components/schemas/AttendanceTypeEnum"
-          },
-          "calculated_at": {
-            "format": "date-time",
-            "nullable": true,
-            "type": "string"
-          },
-          "completed": {
-            "type": "boolean"
-          },
-          "completed_at": {
-            "format": "date-time",
-            "nullable": true,
-            "type": "string"
-          },
-          "exam_aggregate_score": {
-            "format": "double",
-            "nullable": true,
-            "type": "number"
-          },
-          "exam_attempted": {
-            "type": "boolean"
-          },
-          "exam_meta": {
-            "nullable": true
-          },
-          "exam_passed": {
-            "type": "boolean"
-          },
-          "homework_passed": {
-            "type": "boolean"
-          },
-          "homework_submitted": {
-            "type": "boolean"
-          },
-          "meta": {
-            "nullable": true
-          },
-          "session": {
-            "type": "integer"
-          },
-          "video_completed": {
-            "type": "boolean"
-          },
-          "video_progress_rate": {
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "session"
-        ],
-        "type": "object"
-      },
       "SessionTypeEnum": {
         "description": "* `REGULAR` - 정규\n* `SUPPLEMENT` - 보강",
         "enum": [
@@ -12292,6 +11884,51 @@
         "type": "string"
       },
       "Sheet": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
+          },
+          "exam": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "file": {
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "name": {
+            "maxLength": 50,
+            "type": "string"
+          },
+          "total_questions": {
+            "format": "int64",
+            "maximum": 9223372036854775807,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "created_at",
+          "exam",
+          "id",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "SheetCreate": {
+        "description": "Create keeps the owner input explicit while normal updates cannot reparent.",
         "properties": {
           "created_at": {
             "format": "date-time",
@@ -12334,7 +11971,8 @@
         ],
         "type": "object"
       },
-      "SheetRequest": {
+      "SheetCreateRequest": {
+        "description": "Create keeps the owner input explicit while normal updates cannot reparent.",
         "properties": {
           "exam": {
             "type": "integer"
@@ -12359,6 +11997,27 @@
         "required": [
           "exam"
         ],
+        "type": "object"
+      },
+      "SheetRequest": {
+        "properties": {
+          "file": {
+            "format": "binary",
+            "nullable": true,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 50,
+            "minLength": 1,
+            "type": "string"
+          },
+          "total_questions": {
+            "format": "int64",
+            "maximum": 9223372036854775807,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
         "type": "object"
       },
       "SourceB3bEnum": {
@@ -25348,17 +25007,17 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/QuestionRequest"
+                "$ref": "#/components/schemas/QuestionCreateRequest"
               }
             },
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/QuestionRequest"
+                "$ref": "#/components/schemas/QuestionCreateRequest"
               }
             },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/QuestionRequest"
+                "$ref": "#/components/schemas/QuestionCreateRequest"
               }
             }
           },
@@ -25369,7 +25028,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Question"
+                  "$ref": "#/components/schemas/QuestionCreate"
                 }
               }
             },
@@ -25686,17 +25345,17 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SheetRequest"
+                "$ref": "#/components/schemas/SheetCreateRequest"
               }
             },
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/SheetRequest"
+                "$ref": "#/components/schemas/SheetCreateRequest"
               }
             },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/SheetRequest"
+                "$ref": "#/components/schemas/SheetCreateRequest"
               }
             }
           },
@@ -25707,7 +25366,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Sheet"
+                  "$ref": "#/components/schemas/SheetCreate"
                 }
               }
             },
@@ -25881,8 +25540,7 @@
                 "$ref": "#/components/schemas/SheetRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -36953,85 +36611,9 @@
         "tags": [
           "progress"
         ]
-      },
-      "post": {
-        "operationId": "progress_lecture_progress_create",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/LectureProgressRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/LectureProgressRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/LectureProgressRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LectureProgress"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "progress"
-        ]
       }
     },
     "/api/v1/progress/lecture-progress/{id}/": {
-      "delete": {
-        "operationId": "progress_lecture_progress_destroy",
-        "parameters": [
-          {
-            "description": "lecture progress을 식별하는 고유한 정수 값.",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "No response body"
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "progress"
-        ]
-      },
       "get": {
         "operationId": "progress_lecture_progress_retrieve",
         "parameters": [
@@ -37045,119 +36627,6 @@
             }
           }
         ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LectureProgress"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "progress"
-        ]
-      },
-      "patch": {
-        "operationId": "progress_lecture_progress_partial_update",
-        "parameters": [
-          {
-            "description": "lecture progress을 식별하는 고유한 정수 값.",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchedLectureProgressRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchedLectureProgressRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchedLectureProgressRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LectureProgress"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "progress"
-        ]
-      },
-      "put": {
-        "operationId": "progress_lecture_progress_update",
-        "parameters": [
-          {
-            "description": "lecture progress을 식별하는 고유한 정수 값.",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/LectureProgressRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/LectureProgressRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/LectureProgressRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "content": {
@@ -37254,85 +36723,9 @@
         "tags": [
           "progress"
         ]
-      },
-      "post": {
-        "operationId": "progress_policies_create",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ProgressPolicyRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/ProgressPolicyRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/ProgressPolicyRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProgressPolicy"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "progress"
-        ]
       }
     },
     "/api/v1/progress/policies/{id}/": {
-      "delete": {
-        "operationId": "progress_policies_destroy",
-        "parameters": [
-          {
-            "description": "progress policy을 식별하는 고유한 정수 값.",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "No response body"
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "progress"
-        ]
-      },
       "get": {
         "operationId": "progress_policies_retrieve",
         "parameters": [
@@ -37346,119 +36739,6 @@
             }
           }
         ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProgressPolicy"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "progress"
-        ]
-      },
-      "patch": {
-        "operationId": "progress_policies_partial_update",
-        "parameters": [
-          {
-            "description": "progress policy을 식별하는 고유한 정수 값.",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchedProgressPolicyRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchedProgressPolicyRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchedProgressPolicyRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProgressPolicy"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "progress"
-        ]
-      },
-      "put": {
-        "operationId": "progress_policies_update",
-        "parameters": [
-          {
-            "description": "progress policy을 식별하는 고유한 정수 값.",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ProgressPolicyRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/ProgressPolicyRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/ProgressPolicyRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "content": {
@@ -37576,85 +36856,9 @@
         "tags": [
           "progress"
         ]
-      },
-      "post": {
-        "operationId": "progress_risk_logs_create",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RiskLogRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/RiskLogRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/RiskLogRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RiskLog"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "progress"
-        ]
       }
     },
     "/api/v1/progress/risk-logs/{id}/": {
-      "delete": {
-        "operationId": "progress_risk_logs_destroy",
-        "parameters": [
-          {
-            "description": "risk log을 식별하는 고유한 정수 값.",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "No response body"
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "progress"
-        ]
-      },
       "get": {
         "operationId": "progress_risk_logs_retrieve",
         "parameters": [
@@ -37668,119 +36872,6 @@
             }
           }
         ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RiskLog"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "progress"
-        ]
-      },
-      "patch": {
-        "operationId": "progress_risk_logs_partial_update",
-        "parameters": [
-          {
-            "description": "risk log을 식별하는 고유한 정수 값.",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchedRiskLogRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchedRiskLogRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchedRiskLogRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RiskLog"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "progress"
-        ]
-      },
-      "put": {
-        "operationId": "progress_risk_logs_update",
-        "parameters": [
-          {
-            "description": "risk log을 식별하는 고유한 정수 값.",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RiskLogRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/RiskLogRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/RiskLogRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "content": {
@@ -37898,85 +36989,9 @@
         "tags": [
           "progress"
         ]
-      },
-      "post": {
-        "operationId": "progress_session_progress_create",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SessionProgressRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/SessionProgressRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/SessionProgressRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SessionProgress"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "progress"
-        ]
       }
     },
     "/api/v1/progress/session-progress/{id}/": {
-      "delete": {
-        "operationId": "progress_session_progress_destroy",
-        "parameters": [
-          {
-            "description": "session progress을 식별하는 고유한 정수 값.",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "No response body"
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "progress"
-        ]
-      },
       "get": {
         "operationId": "progress_session_progress_retrieve",
         "parameters": [
@@ -37990,119 +37005,6 @@
             }
           }
         ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SessionProgress"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "progress"
-        ]
-      },
-      "patch": {
-        "operationId": "progress_session_progress_partial_update",
-        "parameters": [
-          {
-            "description": "session progress을 식별하는 고유한 정수 값.",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchedSessionProgressRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchedSessionProgressRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchedSessionProgressRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SessionProgress"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "progress"
-        ]
-      },
-      "put": {
-        "operationId": "progress_session_progress_update",
-        "parameters": [
-          {
-            "description": "session progress을 식별하는 고유한 정수 값.",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SessionProgressRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/SessionProgressRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/SessionProgressRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "content": {
@@ -40198,7 +39100,7 @@
     },
     "/api/v1/results/exam-attempts/": {
       "get": {
-        "description": "시험 시도(Attempt) 관리 API (관리자/교사용)",
+        "description": "시험 시도(Attempt) 조회 API (관리자/교사용).\n\nAttempt는 append-only이며 생성·대표 변경·채점 상태 전이는 각각의\n명시적 도메인 서비스가 소유한다. Generic CRUD로 이 이력을 수정하지 않는다.",
         "operationId": "results_exam_attempts_list",
         "parameters": [
           {
@@ -40243,88 +39145,11 @@
         "tags": [
           "results"
         ]
-      },
-      "post": {
-        "description": "시험 시도(Attempt) 관리 API (관리자/교사용)",
-        "operationId": "results_exam_attempts_create",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ExamAttemptRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/ExamAttemptRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/ExamAttemptRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ExamAttempt"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "results"
-        ]
       }
     },
     "/api/v1/results/exam-attempts/{id}/": {
-      "delete": {
-        "description": "시험 시도(Attempt) 관리 API (관리자/교사용)",
-        "operationId": "results_exam_attempts_destroy",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "No response body"
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "results"
-        ]
-      },
       "get": {
-        "description": "시험 시도(Attempt) 관리 API (관리자/교사용)",
+        "description": "시험 시도(Attempt) 조회 API (관리자/교사용).\n\nAttempt는 append-only이며 생성·대표 변경·채점 상태 전이는 각각의\n명시적 도메인 서비스가 소유한다. Generic CRUD로 이 이력을 수정하지 않는다.",
         "operationId": "results_exam_attempts_retrieve",
         "parameters": [
           {
@@ -40336,119 +39161,6 @@
             }
           }
         ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ExamAttempt"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "results"
-        ]
-      },
-      "patch": {
-        "description": "시험 시도(Attempt) 관리 API (관리자/교사용)",
-        "operationId": "results_exam_attempts_partial_update",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchedExamAttemptRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchedExamAttemptRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchedExamAttemptRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ExamAttempt"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "results"
-        ]
-      },
-      "put": {
-        "description": "시험 시도(Attempt) 관리 API (관리자/교사용)",
-        "operationId": "results_exam_attempts_update",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ExamAttemptRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/ExamAttemptRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/ExamAttemptRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "content": {

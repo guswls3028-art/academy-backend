@@ -72,3 +72,11 @@ JOIN하지만 잠금 대상에는 넣지 않는다. 따라서 PostgreSQL의 null
 - `frontend/e2e/admin/student-score-trend.spec.ts`
   - 상단 탭 접근성, 탭별 건수, 요약·명단·상세 동시 변경, 관리자 1366/1100px
   - 390px에서는 기존 반응형 라우팅에 따라 선생 모바일 학생 상세 추이 검증
+
+## Generic progress write boundary
+
+`ProgressPolicy`, `SessionProgress`, `LectureProgress`, `RiskLog`의 일반 API는
+tenant 안의 현재 상태를 조회하는 용도다. 정책 적용·수업 진행·위험 판정은 각 owning
+서비스가 검증한 입력으로만 기록하며 generic POST/PATCH/DELETE로 FK나 상태를 만들거나
+옮기지 않는다. 따라서 member가 임의 enrollment·session·lecture ID를 보낸 쓰기는
+`405`로 실패하고, `ClinicLink`의 별도 lifecycle API는 이 조회 전용 경계와 분리한다.

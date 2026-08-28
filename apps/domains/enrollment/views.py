@@ -29,7 +29,7 @@ from .serializers import (
 )
 from .filters import EnrollmentFilter
 from django.conf import settings
-from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_excel
+from apps.infrastructure.storage.r2 import delete_object_r2_excel, upload_fileobj_to_r2_excel
 from rest_framework.permissions import IsAuthenticated
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.support.enrollment.view_dependencies import (
@@ -185,16 +185,33 @@ class EnrollmentViewSet(ModelViewSet):
         }
         if session_id is not None:
             payload["session_id"] = session_id
-        out = dispatch_job(
-            job_type="excel_parsing",
-            payload=payload,
-            tenant_id=str(tenant.id),
-            source_domain="enrollment",
-            source_id=str(lecture_id),
-            tier="basic",
-            idempotency_key=f"excel:{file_key}",
-        )
+        try:
+            out = dispatch_job(
+                job_type="excel_parsing",
+                payload=payload,
+                tenant_id=str(tenant.id),
+                source_domain="enrollment",
+                source_id=str(lecture_id),
+                tier="basic",
+                idempotency_key=f"excel:{file_key}",
+            )
+        except Exception:
+            try:
+                delete_object_r2_excel(key=file_key)
+            except Exception:
+                logger.exception(
+                    "Failed to remove errored enrollment Excel upload: key=%s",
+                    file_key,
+                )
+            raise
         if not out.get("ok"):
+            try:
+                delete_object_r2_excel(key=file_key)
+            except Exception:
+                logger.exception(
+                    "Failed to remove rejected enrollment Excel upload: key=%s",
+                    file_key,
+                )
             return Response(
                 {"detail": out.get("error", "job 등록 실패")},
                 status=status.HTTP_400_BAD_REQUEST,

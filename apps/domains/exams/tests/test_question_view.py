@@ -58,6 +58,16 @@ class QuestionViewSetStructureOwnerTests(TestCase):
         view = QuestionViewSet.as_view({"patch": "partial_update"})
         return view(request, pk=question.id)
 
+    def _create_question(self, data: dict):
+        request = self.factory.post(
+            "/api/v1/exams/questions/",
+            data,
+            format="json",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        return QuestionViewSet.as_view({"post": "create"})(request)
+
     def test_regular_without_template_can_update_own_question_score(self):
         exam = Exam.objects.create(
             tenant=self.tenant,
@@ -125,3 +135,77 @@ class QuestionViewSetStructureOwnerTests(TestCase):
         self.assertEqual(response.status_code, 404, response.data)
         other_question.refresh_from_db()
         self.assertEqual(other_question.score, 3)
+
+    def test_question_create_keeps_same_tenant_sheet_writable(self):
+        template = Exam.objects.create(
+            tenant=self.tenant,
+            title="Writable Question Template",
+            exam_type=Exam.ExamType.TEMPLATE,
+        )
+        sheet = Sheet.objects.create(
+            exam=template,
+            name="MAIN",
+            total_questions=0,
+        )
+
+        response = self._create_question(
+            {"sheet": sheet.id, "number": 1, "score": 3}
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["sheet"], sheet.id)
+        self.assertTrue(ExamQuestion.objects.filter(sheet=sheet, number=1).exists())
+
+    def test_question_create_hides_cross_tenant_sheet_existence(self):
+        other_exam = Exam.objects.create(
+            tenant=self.other_tenant,
+            title="Other Tenant Template",
+            exam_type=Exam.ExamType.TEMPLATE,
+        )
+        other_sheet = Sheet.objects.create(
+            exam=other_exam,
+            name="MAIN",
+            total_questions=0,
+        )
+
+        foreign_response = self._create_question(
+            {"sheet": other_sheet.id, "number": 1, "score": 3}
+        )
+        missing_response = self._create_question(
+            {"sheet": other_sheet.id + 1_000_000, "number": 1, "score": 3}
+        )
+
+        self.assertEqual(foreign_response.status_code, 400, foreign_response.data)
+        self.assertEqual(missing_response.status_code, 400, missing_response.data)
+        self.assertEqual(foreign_response.data, missing_response.data)
+        self.assertFalse(ExamQuestion.objects.filter(sheet=other_sheet).exists())
+
+    def test_question_update_cannot_move_owner_sheet(self):
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="Question Owner A",
+            exam_type=Exam.ExamType.REGULAR,
+        )
+        exam.sessions.add(self.session)
+        sheet = Sheet.objects.create(exam=exam, name="MAIN", total_questions=1)
+        question = ExamQuestion.objects.create(sheet=sheet, number=1, score=3)
+        other_exam = Exam.objects.create(
+            tenant=self.other_tenant,
+            title="Question Owner B",
+            exam_type=Exam.ExamType.TEMPLATE,
+        )
+        other_sheet = Sheet.objects.create(
+            exam=other_exam,
+            name="MAIN",
+            total_questions=0,
+        )
+
+        response = self._patch_question(
+            question,
+            {"sheet": other_sheet.id, "score": 4.5},
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        question.refresh_from_db()
+        self.assertEqual(question.sheet_id, sheet.id)
+        self.assertEqual(question.score, 3)

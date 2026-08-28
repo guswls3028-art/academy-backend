@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from apps.domains.exams.models import ExamQuestion
+from apps.domains.exams.models import ExamQuestion, Sheet
 from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
 
 
@@ -32,6 +32,7 @@ class QuestionSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             "id",
+            "sheet",
             "question_kind",
             "image_key",
             "image_url",
@@ -67,3 +68,32 @@ class QuestionSerializer(serializers.ModelSerializer):
             return obj.explanation.source if hasattr(obj, "explanation") else None
         except Exception:
             return None
+
+
+class QuestionCreateSerializer(QuestionSerializer):
+    """Create keeps the parent input explicit while normal updates cannot reparent."""
+
+    sheet = serializers.PrimaryKeyRelatedField(
+        queryset=Sheet.objects.none(),
+        error_messages={
+            "does_not_exist": "invalid sheet id",
+            "incorrect_type": "invalid sheet id",
+        },
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get("request")
+        tenant = self.context.get("tenant") or getattr(request, "tenant", None)
+        if tenant is not None:
+            self.fields["sheet"].queryset = Sheet.objects.filter(exam__tenant=tenant)
+
+    class Meta(QuestionSerializer.Meta):
+        read_only_fields = [
+            "id",
+            "question_kind",
+            "image_key",
+            "image_url",
+            "created_at",
+            "updated_at",
+        ]

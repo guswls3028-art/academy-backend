@@ -2,7 +2,7 @@
 from rest_framework import status as drf_status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.viewsets import ModelViewSet
+from rest_framework.viewsets import ModelViewSet, ReadOnlyModelViewSet
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.filters import SearchFilter, OrderingFilter
 from django_filters.rest_framework import DjangoFilterBackend
@@ -27,14 +27,9 @@ from .services.clinic_resolution_service import ClinicResolutionService
 from .services.clinic_remediation_service import ClinicRemediationService
 
 
-class ProgressPolicyViewSet(ModelViewSet):
+class ProgressPolicyViewSet(ReadOnlyModelViewSet):
     serializer_class = ProgressPolicySerializer
-    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
-
-    def get_permissions(self):
-        if self.action in ("list", "retrieve"):
-            return [IsAuthenticated(), TenantResolvedAndMember()]
-        return [IsAuthenticated(), TenantResolvedAndStaff()]
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = ProgressPolicyFilter
@@ -49,14 +44,9 @@ class ProgressPolicyViewSet(ModelViewSet):
         return ProgressPolicy.objects.filter(lecture__tenant=tenant).select_related("lecture")
 
 
-class SessionProgressViewSet(ModelViewSet):
+class SessionProgressViewSet(ReadOnlyModelViewSet):
     serializer_class = SessionProgressSerializer
-    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
-
-    def get_permissions(self):
-        if self.action in ("list", "retrieve"):
-            return [IsAuthenticated(), TenantResolvedAndMember()]
-        return [IsAuthenticated(), TenantResolvedAndStaff()]
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = SessionProgressFilter
@@ -71,14 +61,9 @@ class SessionProgressViewSet(ModelViewSet):
         return SessionProgress.objects.filter(session__lecture__tenant=tenant).select_related("session", "session__lecture")
 
 
-class LectureProgressViewSet(ModelViewSet):
+class LectureProgressViewSet(ReadOnlyModelViewSet):
     serializer_class = LectureProgressSerializer
-    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
-
-    def get_permissions(self):
-        if self.action in ("list", "retrieve"):
-            return [IsAuthenticated(), TenantResolvedAndMember()]
-        return [IsAuthenticated(), TenantResolvedAndStaff()]
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = LectureProgressFilter
@@ -424,14 +409,9 @@ class ClinicLinkViewSet(ModelViewSet):
         return Response(ClinicLinkSerializer(result).data)
 
 
-class RiskLogViewSet(ModelViewSet):
+class RiskLogViewSet(ReadOnlyModelViewSet):
     serializer_class = RiskLogSerializer
-    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
-
-    def get_permissions(self):
-        if self.action in ("list", "retrieve"):
-            return [IsAuthenticated(), TenantResolvedAndMember()]
-        return [IsAuthenticated(), TenantResolvedAndStaff()]
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = RiskLogFilter

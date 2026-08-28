@@ -84,6 +84,12 @@ def upload_fileobj_to_r2_excel(
     )
 
 
+def delete_object_r2_excel(*, key: str) -> None:
+    """Delete one rejected or errored Excel dispatch upload."""
+    s3 = _get_s3_client()
+    s3.delete_object(Bucket=_excel_bucket(), Key=key)
+
+
 def generate_presigned_get_url_excel(
     *,
     key: str,
