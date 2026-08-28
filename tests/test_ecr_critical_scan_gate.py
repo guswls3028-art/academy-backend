@@ -302,6 +302,18 @@ def test_base_image_requires_security_fixed_openssl() -> None:
     assert 'dpkg --compare-versions "$openssl_version" ge "3.5.7-1~deb13u2"' in dockerfile
 
 
+def test_base_image_requires_security_fixed_util_linux() -> None:
+    dockerfile = (
+        Path(__file__).parents[1] / "docker" / "Dockerfile.base"
+    ).read_text(encoding="utf-8")
+
+    assert "util-linux \\" in dockerfile
+    assert (
+        'dpkg --compare-versions "$util_linux_version" ge "2.41.5-0+deb13u1"'
+        in dockerfile
+    )
+
+
 def test_high_finding_regression_fails_closed() -> None:
     with pytest.raises(gate.GateError, match="High findings regressed"):
         gate.evaluate_high_budget(
