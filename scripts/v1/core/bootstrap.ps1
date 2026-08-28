@@ -16,7 +16,7 @@ function Invoke-BootstrapWorkersEnv {
     $repoRoot = (Get-Item $ScriptRoot).Parent.Parent.FullName
     $envPath = Join-Path $repoRoot ".env"
     if (-not (Test-Path -LiteralPath $envPath)) {
-        Write-Warn "SSM $($script:SsmWorkersEnv) missing and .env not found at $envPath. Create .env and re-run, or run scripts/archive/infra/ssm_bootstrap_video_worker.ps1 -Region $($script:Region) -Overwrite."
+        Write-Warn "SSM $($script:SsmWorkersEnv) missing and .env not found at $envPath. Create .env with the required worker settings and re-run."
         return
     }
 
@@ -39,7 +39,7 @@ function Invoke-BootstrapWorkersEnv {
     $envHash["DJANGO_SETTINGS_MODULE"] = "apps.api.config.settings.worker"
     $missing = @($requiredKeys | Where-Object { -not $envHash[$_] -or [string]$envHash[$_] -eq "" })
     if ($missing.Count -gt 0) {
-        Write-Warn "SSM $($script:SsmWorkersEnv) missing; .env missing keys: $($missing -join ', '). Run ssm_bootstrap_video_worker.ps1 or fix .env."
+        Write-Warn "SSM $($script:SsmWorkersEnv) missing; .env missing keys: $($missing -join ', '). Fix .env and re-run."
         return
     }
 
