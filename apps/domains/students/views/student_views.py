@@ -32,7 +32,7 @@ from apps.core.permissions import IsStudent, TenantResolvedAndStaff
 from apps.core.models import TenantMembership
 from apps.core.models.user import user_display_username
 
-from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_excel
+from apps.infrastructure.storage.r2 import delete_object_r2_excel, upload_fileobj_to_r2_excel
 from apps.support.students.view_dependencies import (
     dispatch_job,
     get_excel_parsing_job_status_response,
@@ -458,16 +458,33 @@ class StudentViewSet(ModelViewSet):
                 **protect_excel_initial_password(password_policy.fixed_password),
                 "send_welcome_message": send_welcome,
             }
-            out = dispatch_job(
-                job_type="excel_parsing",
-                payload=payload,
-                tenant_id=str(tenant.id),
-                source_domain="students",
-                source_id=None,
-                tier="basic",
-                idempotency_key=f"excel:{file_key}",
-            )
+            try:
+                out = dispatch_job(
+                    job_type="excel_parsing",
+                    payload=payload,
+                    tenant_id=str(tenant.id),
+                    source_domain="students",
+                    source_id=None,
+                    tier="basic",
+                    idempotency_key=f"excel:{file_key}",
+                )
+            except Exception:
+                try:
+                    delete_object_r2_excel(key=file_key)
+                except Exception:
+                    logger.exception(
+                        "Failed to remove errored student Excel upload: key=%s",
+                        file_key,
+                    )
+                raise
             if not out.get("ok"):
+                try:
+                    delete_object_r2_excel(key=file_key)
+                except Exception:
+                    logger.exception(
+                        "Failed to remove rejected student Excel upload: key=%s",
+                        file_key,
+                    )
                 return Response(
                     {"detail": out.get("error", "job 등록 실패")},
                     status=400,
