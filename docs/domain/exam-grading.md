@@ -27,6 +27,9 @@
 template Exam을 다시 조회한다. 응시 이력 `ExamAttempt`는 제출·수동채점 서비스가
 만드는 append-only 감사/결과 기록이므로 generic API는 조회만 제공하고
 POST/PATCH/DELETE를 허용하지 않는다.
+Create serializer의 부모 PK 조회도 요청 tenant 범위로 제한하여 foreign-existing ID와
+존재하지 않는 ID가 같은 validation 오류를 반환하며, 다른 tenant 객체의 존재 여부를
+API 오류 모양으로 구분할 수 없다.
 
 ## 시험 채점 계약
 

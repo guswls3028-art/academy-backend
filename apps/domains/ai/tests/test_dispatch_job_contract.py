@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, TestCase, override_settings
 
 from apps.domains.ai.gateway import _publish_after_commit, dispatch_job
 from apps.shared.contracts.ai_job import AIJob
@@ -76,3 +76,67 @@ class DispatchJobContractTests(SimpleTestCase):
 
         self.assertFalse(result["ok"])
         self.assertEqual(result["rejection_code"], "tenant_mismatch")
+
+
+@override_settings(R2_EXCEL_BUCKET="test-excel")
+class EnrollmentExcelPublishFailureCleanupTests(TestCase):
+    @patch("apps.infrastructure.storage.r2.delete_object_r2_excel")
+    @patch("apps.domains.ai.gateway.publish_job", return_value=False)
+    def test_real_publish_rejection_removes_exact_enrollment_excel_upload(
+        self,
+        _publish_job,
+        delete_excel_object,
+    ):
+        file_key = "excel/17/0123456789abcdef0123456789abcdef.xlsx"
+
+        with self.captureOnCommitCallbacks(execute=True):
+            result = dispatch_job(
+                job_type="excel_parsing",
+                payload={
+                    "file_key": file_key,
+                    "bucket": "test-excel",
+                    "tenant_id": 17,
+                    "lecture_id": 23,
+                    "student_match_mode": "existing_only",
+                },
+                tenant_id="17",
+                source_domain="enrollment",
+                source_id="23",
+                tier="basic",
+                idempotency_key=f"excel:{file_key}",
+            )
+
+        self.assertTrue(result["ok"])
+        delete_excel_object.assert_called_once_with(key=file_key)
+
+    @patch("apps.infrastructure.storage.r2.delete_object_r2_excel")
+    @patch("apps.domains.ai.gateway.ai_repo.job_save_failed")
+    @patch("apps.domains.ai.gateway.publish_job", return_value=False)
+    def test_publish_rejection_does_not_delete_unowned_excel_keys(
+        self,
+        _publish_job,
+        _job_save_failed,
+        delete_excel_object,
+    ):
+        cases = [
+            ("students", "excel/17/0123456789abcdef0123456789abcdef.xlsx"),
+            ("enrollment", "excel/18/0123456789abcdef0123456789abcdef.xlsx"),
+            ("enrollment", "excel/17/not-a-generated-upload.xlsx"),
+        ]
+
+        for source_domain, file_key in cases:
+            job = AIJob.new(
+                type="excel_parsing",
+                payload={
+                    "file_key": file_key,
+                    "bucket": "test-excel",
+                    "tenant_id": 17,
+                },
+                tenant_id="17",
+                source_domain=source_domain,
+                source_id="23",
+            )
+            with self.subTest(source_domain=source_domain, file_key=file_key):
+                _publish_after_commit(job, SimpleNamespace(job_id=job.id))
+
+        delete_excel_object.assert_not_called()

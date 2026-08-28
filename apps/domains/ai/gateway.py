@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Optional
 
 import logging
@@ -37,22 +38,56 @@ def _publish_after_commit(job: AIJob, job_model) -> None:
 
 
 def _cleanup_publish_failure_artifact(job: AIJob) -> None:
-    """Delete teacher problem photos when a job never reaches a worker."""
-    if (job.type or "").strip().lower() != "teacher_problem_explanation":
-        return
+    """Delete narrowly owned uploads when a job never reaches a worker."""
+    job_type = (job.type or "").strip().lower()
     payload = job.payload if isinstance(job.payload, dict) else {}
     tenant_id = str(job.tenant_id or "").strip()
-    source_key = str(payload.get("source_image_key") or "").strip()
-    expected_prefix = f"tenants/{tenant_id}/tools/problem-solver/tmp/"
-    if not tenant_id or not source_key.startswith(expected_prefix):
-        return
-    try:
-        from apps.infrastructure.storage.r2 import delete_object_r2_storage
 
-        delete_object_r2_storage(key=source_key)
+    if job_type == "teacher_problem_explanation":
+        source_key = str(payload.get("source_image_key") or "").strip()
+        expected_prefix = f"tenants/{tenant_id}/tools/problem-solver/tmp/"
+        if not tenant_id or not source_key.startswith(expected_prefix):
+            return
+        try:
+            from apps.infrastructure.storage.r2 import delete_object_r2_storage
+
+            delete_object_r2_storage(key=source_key)
+        except Exception:
+            logger.warning(
+                "Teacher problem source cleanup failed after publish failure: job_id=%s",
+                job.id,
+                exc_info=True,
+            )
+        return
+
+    if job_type != "excel_parsing" or job.source_domain != "enrollment":
+        return
+
+    file_key = str(payload.get("file_key") or "").strip()
+    payload_tenant_id = str(payload.get("tenant_id") or "").strip()
+    if (
+        not tenant_id.isdecimal()
+        or payload_tenant_id != tenant_id
+        or not re.fullmatch(
+            rf"excel/{re.escape(tenant_id)}/[0-9a-f]{{32}}\.xlsx",
+            file_key,
+        )
+    ):
+        return
+
+    from django.conf import settings
+
+    expected_bucket = getattr(settings, "R2_EXCEL_BUCKET", "academy-excel")
+    if str(payload.get("bucket") or "").strip() != expected_bucket:
+        return
+
+    try:
+        from apps.infrastructure.storage.r2 import delete_object_r2_excel
+
+        delete_object_r2_excel(key=file_key)
     except Exception:
         logger.warning(
-            "Teacher problem source cleanup failed after publish failure: job_id=%s",
+            "Enrollment Excel cleanup failed after publish failure: job_id=%s",
             job.id,
             exc_info=True,
         )

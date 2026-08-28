@@ -141,6 +141,45 @@ class TenantOwnedTemplateViewTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, response.data)
         self.assertFalse(Sheet.objects.exists())
 
+    def test_sheet_create_hides_cross_tenant_exam_existence(self):
+        other_tenant = Tenant.objects.create(
+            name="Hidden Template Tenant",
+            code="hidden-template-tenant",
+            is_active=True,
+        )
+        other_template = Exam.objects.create(
+            tenant=other_tenant,
+            title="Hidden Template",
+            exam_type=Exam.ExamType.TEMPLATE,
+        )
+
+        def create(exam_id: int):
+            request = self._auth(
+                self.factory.post(
+                    "/api/v1/exams/sheets/",
+                    {"exam": exam_id, "name": "MAIN", "total_questions": 0},
+                    format="json",
+                ),
+                tenant=self.tenant,
+            )
+            return SheetViewSet.as_view({"post": "create"})(request)
+
+        foreign_response = create(other_template.id)
+        missing_response = create(other_template.id + 1_000_000)
+
+        self.assertEqual(
+            foreign_response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+            foreign_response.data,
+        )
+        self.assertEqual(
+            missing_response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+            missing_response.data,
+        )
+        self.assertEqual(foreign_response.data, missing_response.data)
+        self.assertFalse(Sheet.objects.filter(exam=other_template).exists())
+
     def test_sheet_update_cannot_move_owner_exam(self):
         template = self._template()
         sheet = Sheet.objects.create(

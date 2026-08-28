@@ -73,7 +73,20 @@ class QuestionSerializer(serializers.ModelSerializer):
 class QuestionCreateSerializer(QuestionSerializer):
     """Create keeps the parent input explicit while normal updates cannot reparent."""
 
-    sheet = serializers.PrimaryKeyRelatedField(queryset=Sheet.objects.all())
+    sheet = serializers.PrimaryKeyRelatedField(
+        queryset=Sheet.objects.none(),
+        error_messages={
+            "does_not_exist": "invalid sheet id",
+            "incorrect_type": "invalid sheet id",
+        },
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get("request")
+        tenant = self.context.get("tenant") or getattr(request, "tenant", None)
+        if tenant is not None:
+            self.fields["sheet"].queryset = Sheet.objects.filter(exam__tenant=tenant)
 
     class Meta(QuestionSerializer.Meta):
         read_only_fields = [

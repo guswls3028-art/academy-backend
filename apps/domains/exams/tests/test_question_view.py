@@ -156,7 +156,7 @@ class QuestionViewSetStructureOwnerTests(TestCase):
         self.assertEqual(response.data["sheet"], sheet.id)
         self.assertTrue(ExamQuestion.objects.filter(sheet=sheet, number=1).exists())
 
-    def test_question_create_rejects_cross_tenant_sheet(self):
+    def test_question_create_hides_cross_tenant_sheet_existence(self):
         other_exam = Exam.objects.create(
             tenant=self.other_tenant,
             title="Other Tenant Template",
@@ -168,11 +168,16 @@ class QuestionViewSetStructureOwnerTests(TestCase):
             total_questions=0,
         )
 
-        response = self._create_question(
+        foreign_response = self._create_question(
             {"sheet": other_sheet.id, "number": 1, "score": 3}
         )
+        missing_response = self._create_question(
+            {"sheet": other_sheet.id + 1_000_000, "number": 1, "score": 3}
+        )
 
-        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(foreign_response.status_code, 400, foreign_response.data)
+        self.assertEqual(missing_response.status_code, 400, missing_response.data)
+        self.assertEqual(foreign_response.data, missing_response.data)
         self.assertFalse(ExamQuestion.objects.filter(sheet=other_sheet).exists())
 
     def test_question_update_cannot_move_owner_sheet(self):
