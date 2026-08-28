@@ -157,6 +157,15 @@ python manage.py setup_r2_cors --bucket academy-video
 origin인지, `Access-Control-Expose-Headers`에 `ETag`가 있는지 확인하고 임시 upload를
 abort해 잔여 객체가 없음을 확인한다.
 
+100MB 초과 영상의 제품 계약은 100MB 파트, 동시 전송 3개, 파트별 최초 시도와 최대
+3회 재시도다. 브라우저는 성공 응답의 `ETag`를 읽을 수 있어야 하며 complete 요청은
+네트워크 완료 순서와 무관하게 `PartNumber` 오름차순이어야 한다. API도 part 번호를
+1~10000의 중복 없는 목록으로 다시 검증하고 정렬한 뒤 R2에 전달한다. 실제 origin
+canary는 101MB 이상의 임시 객체로 init→presign→browser PUT→complete→HEAD 크기 확인→
+exact object delete를 실행한다. 같은 실행에서 별도 multipart upload를 abort하고,
+종료 시 두 exact key와 미완성 multipart upload가 모두 0인지 확인한다. presigned URL,
+서명 query, R2 credential은 출력하거나 증거 파일에 저장하지 않는다.
+
 DB 프로비저닝 코드는 고객별 목록에 추가하지 않는다. 배포 후 범용 명령
 `provision_tenant`를 사용한다.
 

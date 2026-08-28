@@ -851,7 +851,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         upload_id = request.data.get("upload_id")
         part_numbers = request.data.get("part_numbers", [])
 
-        if not upload_id or not part_numbers:
+        if not upload_id or not isinstance(part_numbers, list) or not part_numbers:
             return Response(
                 {"detail": "upload_id와 part_numbers 필요"},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -864,12 +864,29 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             )
 
         try:
+            normalized_part_numbers = [
+                int(part_number) if not isinstance(part_number, bool) else 0
+                for part_number in part_numbers
+            ]
+        except (TypeError, ValueError):
+            normalized_part_numbers = []
+        if (
+            len(normalized_part_numbers) != len(part_numbers)
+            or len(set(normalized_part_numbers)) != len(normalized_part_numbers)
+            or any(part_number < 1 or part_number > 10_000 for part_number in normalized_part_numbers)
+        ):
+            return Response(
+                {"detail": "part_numbers는 중복 없는 1~10000 정수여야 합니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
             urls = {}
-            for pn in part_numbers:
+            for pn in normalized_part_numbers:
                 urls[str(pn)] = create_presigned_upload_part_url(
                     key=video.file_key,
                     upload_id=upload_id,
-                    part_number=int(pn),
+                    part_number=pn,
                 )
             return Response({"urls": urls})
         except Exception as e:
@@ -911,17 +928,38 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         upload_id = request.data.get("upload_id")
         parts = request.data.get("parts", [])
 
-        if not upload_id or not parts:
+        if not upload_id or not isinstance(parts, list) or not parts:
             return Response(
                 {"detail": "upload_id와 parts 필요"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        normalized_parts = []
+        try:
+            for part in parts:
+                raw_part_number = part["PartNumber"]
+                part_number = int(raw_part_number) if not isinstance(raw_part_number, bool) else 0
+                etag = part["ETag"]
+                if not isinstance(etag, str) or not etag or part_number < 1 or part_number > 10_000:
+                    raise ValueError
+                normalized_parts.append({"ETag": etag, "PartNumber": part_number})
+        except (KeyError, TypeError, ValueError):
+            return Response(
+                {"detail": "parts는 유효한 ETag와 1~10000 PartNumber가 필요합니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if len({part["PartNumber"] for part in normalized_parts}) != len(normalized_parts):
+            return Response(
+                {"detail": "PartNumber는 중복될 수 없습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        normalized_parts.sort(key=lambda part: part["PartNumber"])
+
         try:
             complete_multipart_upload(
                 key=video.file_key,
                 upload_id=upload_id,
-                parts=parts,
+                parts=normalized_parts,
             )
         except Exception as e:
             logger.exception("MULTIPART_COMPLETE_ERROR | video_id=%s | %s", video.id, e)
