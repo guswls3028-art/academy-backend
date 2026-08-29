@@ -5,6 +5,7 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     VideoViewSet,
     VideoPermissionViewSet,
+    DirectVideoEntitlementViewSet,
     InactiveVideoEntitlementViewSet,
     VideoProgressViewSet,
     VideoProgressView,  # ✅ 추가: Redis-only progress endpoint
@@ -35,6 +36,11 @@ from .views.admin_landing_stats_view import AdminVideosLandingStatsView
 router = DefaultRouter()
 router.register(r"videos", VideoViewSet, basename="videos")
 router.register(r"video-permissions", VideoPermissionViewSet, basename="video-permissions")
+router.register(
+    r"direct-video-entitlements",
+    DirectVideoEntitlementViewSet,
+    basename="direct-video-entitlements",
+)
 router.register(
     r"inactive-video-entitlements",
     InactiveVideoEntitlementViewSet,

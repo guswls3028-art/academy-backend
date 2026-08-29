@@ -2092,6 +2092,155 @@
         ],
         "type": "string"
       },
+      "DirectVideoEntitlement": {
+        "properties": {
+          "granted_at": {
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
+          },
+          "id": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "lecture_title": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "reason": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "revoke_reason": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "revoked_at": {
+            "format": "date-time",
+            "nullable": true,
+            "readOnly": true,
+            "type": "string"
+          },
+          "state": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "student_grade": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "student_id": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "student_name": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "student_school": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "video_id": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "video_title": {
+            "readOnly": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "granted_at",
+          "id",
+          "lecture_title",
+          "reason",
+          "revoke_reason",
+          "revoked_at",
+          "state",
+          "student_grade",
+          "student_id",
+          "student_name",
+          "student_school",
+          "video_id",
+          "video_title"
+        ],
+        "type": "object"
+      },
+      "DirectVideoEntitlementError": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "detail"
+        ],
+        "type": "object"
+      },
+      "DirectVideoEntitlementGrantRequest": {
+        "properties": {
+          "confirmed_regrant": {
+            "default": false,
+            "type": "boolean"
+          },
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "student_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "video_id": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "reason",
+          "student_id",
+          "video_id"
+        ],
+        "type": "object"
+      },
+      "DirectVideoEntitlementMutation": {
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "created": {
+            "type": "boolean"
+          },
+          "entitlement": {
+            "$ref": "#/components/schemas/DirectVideoEntitlement"
+          }
+        },
+        "required": [
+          "changed",
+          "created",
+          "entitlement"
+        ],
+        "type": "object"
+      },
+      "DirectVideoEntitlementRevokeRequest": {
+        "properties": {
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "type": "object"
+      },
       "EffectiveRuleEnum": {
         "description": "* `free` - free\n* `once` - once\n* `blocked` - blocked",
         "enum": [
@@ -5639,6 +5788,37 @@
           "results": {
             "items": {
               "$ref": "#/components/schemas/ClinicTest"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "count",
+          "results"
+        ],
+        "type": "object"
+      },
+      "PaginatedDirectVideoEntitlementList": {
+        "properties": {
+          "count": {
+            "example": 123,
+            "type": "integer"
+          },
+          "next": {
+            "example": "http://api.example.org/accounts/?page=4",
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "previous": {
+            "example": "http://api.example.org/accounts/?page=2",
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/DirectVideoEntitlement"
             },
             "type": "array"
           }
@@ -32775,6 +32955,311 @@
         "responses": {
           "200": {
             "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "media"
+        ]
+      }
+    },
+    "/api/v1/media/direct-video-entitlements/": {
+      "get": {
+        "description": "Exact staff-authorized access to one video without enrollment.",
+        "operationId": "media_direct_video_entitlements_list",
+        "parameters": [
+          {
+            "description": "페이지네이션된 결과 집합 내의 페이지 번호.",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "페이지당 반환할 결과 수.",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Return history for one exact same-tenant video.",
+            "in": "query",
+            "name": "video_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedDirectVideoEntitlementList"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectVideoEntitlementError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectVideoEntitlementError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectVideoEntitlementError"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "media"
+        ]
+      },
+      "post": {
+        "description": "Exact staff-authorized access to one video without enrollment.",
+        "operationId": "media_direct_video_entitlements_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectVideoEntitlementGrantRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectVideoEntitlementGrantRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectVideoEntitlementGrantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectVideoEntitlementMutation"
+                }
+              }
+            },
+            "description": ""
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectVideoEntitlementMutation"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectVideoEntitlementError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectVideoEntitlementError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectVideoEntitlementError"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "media"
+        ]
+      }
+    },
+    "/api/v1/media/direct-video-entitlements/{id}/": {
+      "get": {
+        "description": "Exact staff-authorized access to one video without enrollment.",
+        "operationId": "media_direct_video_entitlements_retrieve",
+        "parameters": [
+          {
+            "description": "direct video entitlement을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectVideoEntitlement"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "media"
+        ]
+      }
+    },
+    "/api/v1/media/direct-video-entitlements/{id}/revoke/": {
+      "post": {
+        "description": "Exact staff-authorized access to one video without enrollment.",
+        "operationId": "media_direct_video_entitlements_revoke_create",
+        "parameters": [
+          {
+            "description": "direct video entitlement을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectVideoEntitlementRevokeRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectVideoEntitlementRevokeRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectVideoEntitlementRevokeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectVideoEntitlementMutation"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectVideoEntitlementError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectVideoEntitlementError"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectVideoEntitlementError"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [

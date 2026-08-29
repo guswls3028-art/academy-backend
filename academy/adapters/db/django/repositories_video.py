@@ -27,6 +27,62 @@ def get_video_for_update(video_id: int):
     ).filter(id=int(video_id)).first()
 
 
+def lock_direct_video_session_scope(*, tenant, session_id: int):
+    """Lock the lecture then session for one same-tenant direct-video scope."""
+    from apps.domains.lectures.models import Lecture, Session
+
+    session_ref = (
+        Session.objects.filter(id=int(session_id), lecture__tenant=tenant)
+        .values("id", "lecture_id")
+        .first()
+    )
+    if session_ref is None:
+        return None, None
+    lecture = (
+        Lecture.objects.select_for_update()
+        .filter(id=session_ref["lecture_id"], tenant=tenant)
+        .first()
+    )
+    if lecture is None:
+        return None, None
+    session = (
+        Session.objects.select_for_update()
+        .filter(id=session_ref["id"], lecture=lecture)
+        .first()
+    )
+    return lecture, session
+
+
+def lock_direct_video_student(*, tenant, student_id: int, include_deleted: bool = False):
+    """Lock one same-tenant student used by a direct-video transaction."""
+    from apps.domains.students.models import Student
+
+    queryset = (
+        Student.objects.select_for_update(of=("self",))
+        .select_related("user")
+        .filter(id=int(student_id), tenant=tenant)
+    )
+    if not include_deleted:
+        queryset = queryset.filter(deleted_at__isnull=True)
+    return queryset.first()
+
+
+def any_enrollment_exists_for_student_lecture(
+    *,
+    tenant_id: int,
+    student_id: int,
+    lecture_id: int,
+) -> bool:
+    """Return whether any enrollment status exists for the exact lecture scope."""
+    from apps.domains.enrollment.models import Enrollment
+
+    return Enrollment.objects.filter(
+        tenant_id=int(tenant_id),
+        student_id=int(student_id),
+        lecture_id=int(lecture_id),
+    ).exists()
+
+
 def get_video_queryset_with_relations():
     """VideoViewSet 기본 queryset. upload_complete enqueue 시 video.session.lecture.tenant 필요."""
     from apps.domains.video.models import Video

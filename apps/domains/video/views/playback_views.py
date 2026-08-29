@@ -67,6 +67,41 @@ def _is_policy_token_valid(payload: dict) -> bool:
     - 불일치 시 즉시 차단
     - access_mode도 검증 (정책 변경 시 토큰 무효화)
     """
+    direct_audience = payload.get("aud") == "student-video-direct"
+    direct_source = payload.get("access_source") == "DIRECT_VIDEO_ENTITLEMENT"
+    if direct_audience or direct_source:
+        if not (direct_audience and direct_source):
+            return False
+        try:
+            tenant_id = int(payload.get("tenant_id"))
+            student_id = int(payload.get("student_id"))
+            video_id = int(payload.get("video_id"))
+            entitlement_id = int(payload.get("direct_entitlement_id"))
+            pv = int(payload.get("pv") or 0)
+        except (TypeError, ValueError):
+            return False
+        if min(tenant_id, student_id, video_id, entitlement_id) <= 0:
+            return False
+        if payload.get("access_mode") != AccessMode.FREE_REVIEW.value:
+            return False
+        try:
+            from apps.core.models import Tenant
+            from apps.domains.video.services.direct_entitlements import (
+                DirectVideoEntitlementError,
+                lock_and_revalidate_direct_video_access,
+            )
+
+            tenant = Tenant.objects.get(id=tenant_id, is_active=True)
+            locked = lock_and_revalidate_direct_video_access(
+                tenant=tenant,
+                student_id=student_id,
+                video_id=video_id,
+                entitlement_id=entitlement_id,
+            )
+        except (Tenant.DoesNotExist, DirectVideoEntitlementError):
+            return False
+        return pv == _policy_version_of(locked.video)
+
     try:
         video_id = int(payload.get("video_id"))
         enrollment_id = int(payload.get("enrollment_id"))

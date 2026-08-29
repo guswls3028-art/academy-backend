@@ -44,6 +44,11 @@ def bounded_inactive_media_expiry(entitlement, *, now=None) -> int:
     return expires_at
 
 
+def bounded_direct_media_expiry(entitlement, *, now=None) -> int:
+    """Direct access is always re-signed within the same 600 second ceiling."""
+    return bounded_inactive_media_expiry(entitlement, now=now)
+
+
 def build_thumbnail_url(video, *, expires_at: int | None = None) -> str | None:
     """Build the same thumbnail URL shape used by VideoSerializer."""
     if not video:
@@ -396,3 +401,65 @@ def issue_playback_access_grant(
             monitoring_enabled=monitoring_enabled,
             policy_version=int(getattr(current_video, "policy_version", 1) or 1),
         )
+
+
+@transaction.atomic
+def issue_direct_playback_access_grant(
+    *,
+    video,
+    entitlement,
+    user,
+    request_id: str | None = None,
+) -> PlaybackAccessGrant:
+    """Issue a short-lived FREE_REVIEW token without enrollment or session writes."""
+    from apps.domains.video.drm import create_playback_token
+    from apps.domains.video.models import AccessMode
+    from apps.domains.video.services.direct_entitlements import (
+        DirectVideoEntitlementError,
+        lock_and_revalidate_direct_video_access,
+    )
+
+    tenant = getattr(entitlement, "tenant", None)
+    if tenant is None:
+        return PlaybackAccessGrant(error="access_denied")
+    try:
+        locked = lock_and_revalidate_direct_video_access(
+            tenant=tenant,
+            student_id=entitlement.student_id,
+            video_id=video.id,
+            entitlement_id=entitlement.id,
+        )
+    except DirectVideoEntitlementError as exc:
+        return PlaybackAccessGrant(error=exc.code)
+
+    access_now = _playback_access_now()
+    expires_at = bounded_direct_media_expiry(
+        locked.entitlement,
+        now=access_now,
+    )
+    payload = {
+        "aud": "student-video-direct",
+        "access_source": "DIRECT_VIDEO_ENTITLEMENT",
+        "direct_entitlement_id": locked.entitlement.id,
+        "video_id": locked.video.id,
+        "user_id": user.id,
+        "student_id": locked.student.id,
+        "tenant_id": tenant.id,
+        "access_mode": AccessMode.FREE_REVIEW,
+        "monitoring_enabled": False,
+        "pv": int(getattr(locked.video, "policy_version", 1) or 1),
+    }
+    if request_id:
+        payload["rid"] = request_id
+    try:
+        token = create_playback_token(payload=payload, expires_at=expires_at)
+    except ValueError:
+        return PlaybackAccessGrant(error="access_expired")
+    return PlaybackAccessGrant(
+        token=token,
+        session_id=None,
+        expires_at=expires_at,
+        access_mode=AccessMode.FREE_REVIEW,
+        monitoring_enabled=False,
+        policy_version=int(getattr(locked.video, "policy_version", 1) or 1),
+    )
