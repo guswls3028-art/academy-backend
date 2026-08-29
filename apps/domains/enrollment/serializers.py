@@ -92,6 +92,9 @@ class SessionEnrollmentSerializer(serializers.ModelSerializer):
     student_id = serializers.IntegerField(
         source="enrollment.student_id", read_only=True
     )
+    enrollment_status = serializers.CharField(
+        source="enrollment.status", read_only=True
+    )
     # 학원장이 "직전 차시 불러오기" 명단에서 동명이인 식별할 수 있도록 학교·학년 노출.
     # school은 school_type 기반으로 high/middle/elementary 중 하나를 합성 (frontend mapStudent와 동일 규칙).
     student_grade = serializers.IntegerField(
@@ -103,7 +106,8 @@ class SessionEnrollmentSerializer(serializers.ModelSerializer):
         model = SessionEnrollment
         fields = [
             "id", "tenant", "session", "enrollment",
-            "student_name", "student_id", "student_school", "student_grade",
+            "student_name", "student_id", "enrollment_status",
+            "student_school", "student_grade",
             "created_at",
         ]
 

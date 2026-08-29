@@ -11737,6 +11737,10 @@
           "enrollment": {
             "type": "integer"
           },
+          "enrollment_status": {
+            "readOnly": true,
+            "type": "string"
+          },
           "id": {
             "readOnly": true,
             "type": "integer"
@@ -11769,6 +11773,7 @@
         "required": [
           "created_at",
           "enrollment",
+          "enrollment_status",
           "id",
           "session",
           "student_grade",

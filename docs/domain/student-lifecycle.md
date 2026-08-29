@@ -76,6 +76,12 @@ reverse migration은 같은 이름의 trigger와 function만 정확히 제거한
 DB에서 다시 읽은 tenant/lecture/status만으로 등록 여부를 결정한다. API가 전달한 오래된
 Enrollment 인스턴스의 상태는 권한 판정에 사용하지 않는다.
 
+차시 명단 조회는 과거 명단 보존을 위해 비활성 수강 행도 반환할 수 있으며, 각 행의
+현재 수강 상태를 `enrollment_status`로 함께 제공한다. 직전 차시 복사와 시험·과제
+자동 배정처럼 현재 쓰기 대상을 만드는 소비자는 `ACTIVE` 행만 사용한다. 누락되거나
+알 수 없는 상태는 활성으로 추측하지 않고 제외하며, 최종 write는 위 잠금 가드에서
+다시 검증한다.
+
 ## 4. Permanent Delete
 
 SSOT: `permanently_delete_students(tenant=..., student_ids=[...])`

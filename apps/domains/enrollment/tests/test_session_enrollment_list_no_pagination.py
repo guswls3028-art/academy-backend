@@ -156,3 +156,20 @@ class SessionEnrollmentListNoPaginationTests(APITestCase):
             self.assertIn("student_name", row)
             self.assertIsInstance(row["student_id"], int)
             self.assertIsInstance(row["student_name"], str)
+
+    def test_each_row_exposes_current_enrollment_status_for_write_preflight(self):
+        """과거 명단 소비자가 현재 활성 대상만 선별할 수 있어야 한다."""
+        self._create_session_enrollments(2)
+        Enrollment.objects.filter(student__ps_number="T00001").update(status="INACTIVE")
+
+        resp = self._get_list()
+
+        self.assertEqual(resp.status_code, 200)
+        statuses = {
+            row["student_name"]: row["enrollment_status"]
+            for row in resp.json()
+        }
+        self.assertEqual(
+            statuses,
+            {"Student_000": "ACTIVE", "Student_001": "INACTIVE"},
+        )
