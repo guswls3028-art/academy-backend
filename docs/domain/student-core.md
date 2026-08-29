@@ -75,6 +75,12 @@ Required invariants:
 - active student means `Student.deleted_at IS NULL`.
 - `Student.user` is required.
 - `Student.ps_number` is tenant-unique and is the student login display ID.
+- A student login display ID must also be unique across every active login
+  identity in the tenant, including parent accounts. If a no-phone student's
+  requested ID equals the parent phone, creation assigns a generated student
+  ID instead; profile changes reject the collision. This prevents a shared
+  initial password from matching both the student and parent account and
+  making login ambiguous.
 - `Student.ps_number` and the inventory copies that scope student files use the
   same 50-character storage boundary; a valid student identity must not fail
   when it is mirrored into inventory metadata.
