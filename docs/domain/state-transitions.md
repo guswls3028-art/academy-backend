@@ -546,9 +546,21 @@ ID를 오름차순 `planned_clinic_link_ids`로 돌려준다.
   되살리지 않는다.
 - 등원·지각·결석·하원, `completed_at` 자율학습 완료는 계획을 해소하거나 지우지
   않는다. 계획 선택, 현장 상태, 학습 완료, ClinicLink 해소는 네 개의 독립 계약이다.
+- 교직원 `GET /results/admin/clinic-targets/`의 예약 context는 활성
+  `SessionParticipantPlanItem`을 역방향으로 따라간 결과만 사용한다. 같은 tenant와
+  같은 학생, 일치하거나 비어 있는 참가자 수강 관계를 방어적으로 재검증하며
+  이름·날짜·제목 유사성으로 연결하지 않는다. projection에는 정확한 plan item,
+  participant, clinic session 식별자와 세션 날짜·시간·장소·참가 상태,
+  `student_request_memo`, staff-only `staff_memo`, 선택 provenance가 포함된다.
+  출처 불명 legacy participant `memo`는 이 경계에서 항상 제외한다.
+- 위 조회는 tenant context가 없으면 200 빈 배열이 아니라 `403 TENANT_REQUIRED`로
+  실패 폐쇄한다. 따라서 운영 화면은 권한/tenant 오류를 “모두 처리됨”으로 표시하지
+  않고 명시적 오류와 재시도를 제공해야 한다.
 
 집중 검증은 `tests/test_clinic_participant_plan_api.py`가 API 유효성·전체 롤백·
-감사 종료·상태 독립성 및 PostgreSQL 동시 교체를 확인한다.
+감사 종료·상태 독립성 및 PostgreSQL 동시 교체를 확인하고,
+`apps/domains/results/tests/test_admin_clinic_targets_contract.py`가 역방향 read
+projection과 tenant/권한 실패 폐쇄를 확인한다.
 
 ---
 

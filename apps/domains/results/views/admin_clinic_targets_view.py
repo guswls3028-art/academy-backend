@@ -66,10 +66,19 @@ class WaiveMissingExamResponseSerializer(serializers.Serializer):
 class AdminClinicTargetsView(APIView):
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
 
+    @extend_schema(
+        responses={
+            200: AdminClinicTargetSerializer(many=True),
+            403: OpenApiResponse(description="Tenant or role denied"),
+        },
+    )
     def get(self, request):
         tenant = getattr(request, "tenant", None)
         if not tenant:
-            return Response([], status=200)
+            return Response(
+                {"detail": "Tenant required", "code": "TENANT_REQUIRED"},
+                status=drf_status.HTTP_403_FORBIDDEN,
+            )
         section_id = parse_query_int(
             request.query_params, "section_id", min_value=1
         )

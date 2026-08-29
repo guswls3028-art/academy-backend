@@ -15,6 +15,26 @@
 from rest_framework import serializers
 
 
+class LinkedClinicBookingSerializer(serializers.Serializer):
+    plan_item_id = serializers.IntegerField()
+    participant_id = serializers.IntegerField()
+    session_id = serializers.IntegerField()
+    session_date = serializers.DateField()
+    session_start_time = serializers.TimeField()
+    session_end_time = serializers.TimeField()
+    location = serializers.CharField()
+    participant_status = serializers.ChoiceField(
+        choices=["pending", "booked", "attended", "no_show", "cancelled", "rejected"]
+    )
+    preferred_start_time = serializers.TimeField(allow_null=True)
+    preferred_end_time = serializers.TimeField(allow_null=True)
+    student_request_memo = serializers.CharField(allow_blank=True)
+    staff_memo = serializers.CharField(allow_blank=True)
+    linked_at = serializers.DateTimeField()
+    linked_by_id = serializers.IntegerField(allow_null=True)
+    linkage_source = serializers.ChoiceField(choices=["participant_plan"])
+
+
 class AdminClinicTargetSerializer(serializers.Serializer):
     enrollment_id = serializers.IntegerField()
     student_id = serializers.IntegerField(required=False, allow_null=True)
@@ -23,7 +43,7 @@ class AdminClinicTargetSerializer(serializers.Serializer):
 
     reason = serializers.ChoiceField(choices=["score", "confidence", "missing"])
     clinic_reason = serializers.ChoiceField(
-        choices=["exam", "homework", "both"],
+        choices=[("exam", "Exam"), ("homework", "Homework"), ("both", "Both")],
         required=False,
         allow_null=True,
     )
@@ -49,6 +69,17 @@ class AdminClinicTargetSerializer(serializers.Serializer):
     cycle_no = serializers.IntegerField(required=False, default=1)
     resolution_type = serializers.CharField(required=False, allow_null=True)
     resolved_at = serializers.DateTimeField(required=False, allow_null=True)
+    resolution_evidence = serializers.JSONField(required=False, allow_null=True)
+    resolution_history = serializers.ListField(
+        child=serializers.DictField(),
+        required=False,
+        default=list,
+    )
+    linked_bookings = LinkedClinicBookingSerializer(
+        many=True,
+        required=False,
+        default=list,
+    )
 
     # ✅ V1.1.1 remediation: 시험/과제 페이지 직접 연결용
     session_id = serializers.IntegerField(required=False, allow_null=True)
