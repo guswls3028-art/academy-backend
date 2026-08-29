@@ -278,7 +278,7 @@ class AdminExamResultsScopeTest(TestCase):
         )
         self.assertEqual(
             [(row["rank"], row["ranking_score"], row["final_score"]) for row in rows],
-            [(1, 20.0, 19.0), (2, 19.0, 20.0)],
+            [(1, 20.0, 20.0), (2, 19.0, 19.0)],
         )
         self.assertEqual([row["result_status"] for row in rows], ["DONE", "DONE"])
         self.assertEqual(first_attempt.attempt_index, 1)

@@ -43,6 +43,10 @@ from apps.domains.results.serializers.student_exam_result import (
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.results.utils.clinic import is_clinic_required
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement
+from apps.domains.results.utils.initial_exam_score import (
+    load_initial_exam_scores,
+    project_initial_exam_score,
+)
 from apps.support.omr.score_shape import get_exam_score_shape
 
 # ✅ OMR 스캔 이미지 presigned URL
@@ -95,6 +99,9 @@ class AdminExamResultDetailView(APIView):
             .prefetch_related("items")
             .first()
         )
+        initial_state = None
+        initial_score = None
+        representative_is_initial = False
         if not result:
             enrollment_obj = get_enrollment_for_tenant(
                 enrollment_id=enrollment_id,
@@ -114,6 +121,30 @@ class AdminExamResultDetailView(APIView):
             }
         else:
             data = StudentExamResultSerializer(result).data
+            initial_state = load_initial_exam_scores(
+                exam_ids=[exam_id],
+                enrollment_ids=[enrollment_id],
+            ).get((exam_id, enrollment_id))
+            initial_score = project_initial_exam_score(
+                state=initial_state,
+                fallback_score=result.total_score,
+                fallback_max_score=result.max_score,
+                fallback_recorded_at=result.submitted_at or result.created_at,
+            )
+            representative_is_initial = bool(
+                (
+                    initial_state is not None
+                    and initial_state.attempt_id is not None
+                    and result.attempt_id == initial_state.attempt_id
+                )
+                or (initial_state is None and result.attempt_id is None)
+            )
+            if not representative_is_initial:
+                data["items"] = []
+            data["attempt_id"] = initial_score.attempt_id
+            data["total_score"] = initial_score.total_score
+            data["max_score"] = initial_score.max_score
+            data["submitted_at"] = initial_score.recorded_at
 
         # -------------------------------------------------
         # 2️⃣ passed — compute_exam_achievement(아래)에서 단일 유틸로 계산.
@@ -156,8 +187,14 @@ class AdminExamResultDetailView(APIView):
             "updated_at": None,
         }
 
-        result_attempt_id = result.attempt_id if result else None
-        result_total_score = float(result.total_score or 0.0) if result else 0.0
+        result_attempt_id = initial_score.attempt_id if initial_score else None
+        result_total_score = float(initial_score.total_score or 0.0) if initial_score else 0.0
+        if result is not None and not representative_is_initial:
+            edit_state.update({
+                "can_edit": False,
+                "is_locked": True,
+                "lock_reason": "RETAKE_REPRESENTATIVE",
+            })
         if result_attempt_id:
             attempt = ExamAttempt.objects.filter(id=int(result_attempt_id)).first()
             if attempt and attempt.status == "grading":

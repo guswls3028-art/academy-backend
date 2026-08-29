@@ -1,5 +1,5 @@
 import json
-from io import StringIO
+from io import BytesIO, StringIO
 
 from django.contrib.auth import get_user_model
 from django.apps import apps
@@ -8,16 +8,32 @@ from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
 from rest_framework.test import APIRequestFactory, force_authenticate
+from openpyxl import load_workbook
 
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.results.utils.session_exam import get_exams_for_session
 from apps.domains.results.services.session_score_summary_service import (
     SessionScoreSummaryService,
 )
+from apps.domains.results.services.exam_analysis_export import (
+    build_exam_analysis_export,
+)
+from apps.domains.results.services.clinic_target_service import ClinicTargetService
+from apps.domains.results.aggregations.lecture_results import (
+    build_lecture_results_snapshot,
+)
+from apps.domains.results.aggregations.session_results import (
+    build_session_results_snapshot,
+)
 from apps.domains.results.views.admin_session_exams_summary_view import (
     AdminSessionExamsSummaryView,
 )
+from apps.domains.results.views.admin_exam_summary_view import AdminExamSummaryView
 from apps.domains.results.views.session_scores_view import SessionScoresView
+from apps.domains.results.views.question_stats_views import (
+    _finalized_representative_scope,
+)
+from apps.domains.results.services.question_stats_service import QuestionStatsService
 
 
 User = get_user_model()
@@ -248,6 +264,198 @@ class AssessmentLifecycleSsotTests(TestCase):
 
         self.assertEqual(summary["attempt_stats"]["avg_attempts"], 1.0)
         self.assertEqual(summary["attempt_stats"]["retake_ratio"], 0.0)
+
+    def test_retake_result_never_replaces_initial_score_in_session_consumers(self):
+        SessionProgress = apps.get_model("progress", "SessionProgress")
+        ExamAttempt = apps.get_model("results", "ExamAttempt")
+        ExamQuestion = apps.get_model("exams", "ExamQuestion")
+        Result = apps.get_model("results", "Result")
+        ResultFact = apps.get_model("results", "ResultFact")
+        ResultItem = apps.get_model("results", "ResultItem")
+        Sheet = apps.get_model("exams", "Sheet")
+
+        SessionProgress.objects.create(
+            session=self.session,
+            enrollment=self.enrollment,
+            completed=False,
+            exam_passed=False,
+        )
+        exam = self.Exam.objects.create(
+            tenant=self.tenant,
+            title="원시험과 재시험 분리",
+            exam_type="regular",
+            is_active=True,
+            max_score=100,
+            pass_score=60,
+        )
+        exam.sessions.add(self.session)
+        sheet = Sheet.objects.create(exam=exam, name="MAIN", total_questions=1)
+        question = ExamQuestion.objects.create(sheet=sheet, number=1, score=100)
+        first_attempt = ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=self.enrollment,
+            attempt_index=1,
+            is_representative=False,
+            status="done",
+            meta={
+                "initial_snapshot": {
+                    "total_score": 25.0,
+                    "max_score": 100.0,
+                    "source": "test",
+                },
+                "total_score": 25.0,
+                "max_score": 100.0,
+            },
+        )
+        retake = ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=self.enrollment,
+            attempt_index=2,
+            is_retake=True,
+            is_representative=True,
+            status="done",
+            meta={"total_score": 100.0, "max_score": 100.0, "pass_score": 60.0},
+        )
+        retake_result = Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.enrollment,
+            attempt=retake,
+            total_score=100,
+            max_score=100,
+        )
+        ResultItem.objects.create(
+            result=retake_result,
+            question=question,
+            answer="재시험 답안",
+            is_correct=True,
+            score=100,
+            max_score=100,
+            source="online",
+        )
+        ResultFact.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.enrollment,
+            submission_id=0,
+            attempt=first_attempt,
+            question_id=question.id,
+            answer="1차 오답",
+            is_correct=False,
+            score=0,
+            max_score=100,
+            source="online",
+        )
+        self.ClinicLink.objects.create(
+            tenant=self.tenant,
+            enrollment=self.enrollment,
+            session=self.session,
+            reason="AUTO_FAILED",
+            source_type="exam",
+            source_id=exam.id,
+            is_auto=True,
+            meta={"kind": "EXAM_FAILED", "exam_id": exam.id},
+        )
+        ResultFact.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.enrollment,
+            submission_id=0,
+            attempt=retake,
+            question_id=question.id,
+            answer="재시험 정답",
+            is_correct=True,
+            score=100,
+            max_score=100,
+            source="online",
+        )
+
+        summary = SessionScoreSummaryService.build(session_id=self.session.id)
+        self.assertEqual(summary["avg_score"], 25.0)
+        self.assertEqual(summary["min_score"], 25.0)
+        self.assertEqual(summary["max_score"], 25.0)
+
+        response = AdminSessionExamsSummaryView.as_view()(
+            self._request(
+                f"/api/v1/results/admin/sessions/{self.session.id}/exams/summary/"
+            ),
+            session_id=self.session.id,
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        exam_summary = response.data["exams"][0]
+        self.assertEqual(exam_summary["avg_score"], 25.0)
+        self.assertEqual(exam_summary["highest_score"], 25.0)
+        self.assertEqual(exam_summary["pass_count"], 0)
+        self.assertEqual(exam_summary["fail_count"], 1)
+
+        legacy_summary = AdminExamSummaryView.as_view()(
+            self._request(f"/api/v1/results/admin/exams/{exam.id}/summary/"),
+            exam_id=exam.id,
+        )
+        self.assertEqual(legacy_summary.status_code, 200, legacy_summary.data)
+        self.assertEqual(legacy_summary.data["avg_score"], 25.0)
+        self.assertEqual(legacy_summary.data["pass_count"], 0)
+        self.assertEqual(legacy_summary.data["fail_count"], 1)
+
+        scores_response = SessionScoresView.as_view()(
+            self._request(
+                f"/api/v1/results/admin/sessions/{self.session.id}/scores/"
+            ),
+            session_id=self.session.id,
+        )
+        self.assertEqual(scores_response.status_code, 200, scores_response.data)
+        exam_entry = scores_response.data["rows"][0]["exams"][0]
+        self.assertEqual(exam_entry["block"]["score"], 25.0)
+        self.assertIsNone(exam_entry["block"]["objective_score"])
+        self.assertIsNone(exam_entry["block"]["subjective_score"])
+        self.assertFalse(exam_entry["block"]["passed"])
+        self.assertEqual(
+            [attempt["score"] for attempt in exam_entry["attempts"]],
+            [25.0, 100.0],
+        )
+        self.assertEqual(exam_entry["items"], [])
+
+        attempt_ids, legacy_enrollment_ids = _finalized_representative_scope(
+            exam_id=exam.id,
+            tenant=self.tenant,
+        )
+        self.assertEqual(attempt_ids, [first_attempt.id])
+        self.assertEqual(legacy_enrollment_ids, [])
+        question_stats = QuestionStatsService.per_question_stats(
+            exam_id=exam.id,
+            attempt_ids=attempt_ids,
+            legacy_enrollment_ids=legacy_enrollment_ids,
+        )
+        self.assertEqual(question_stats[0]["attempts"], 1)
+        self.assertEqual(question_stats[0]["correct"], 0)
+
+        clinic_targets = ClinicTargetService.list_admin_targets(tenant=self.tenant)
+        clinic_target = next(
+            row for row in clinic_targets if int(row.get("exam_id") or 0) == exam.id
+        )
+        self.assertEqual(clinic_target["exam_score"], 25.0)
+        self.assertEqual(
+            [attempt["score"] for attempt in clinic_target["attempt_history"]],
+            [25.0, 100.0],
+        )
+
+        workbook = load_workbook(BytesIO(build_exam_analysis_export(
+            exam=exam,
+            tenant=self.tenant,
+        )))
+        self.assertEqual(workbook["학생별 등수"]["E6"].value, 25)
+        self.assertEqual(workbook["학생별 등수"]["L6"].value, "1")
+        self.assertEqual(workbook["학생별 답안"]["H6"].value, "1차 오답")
+
+        session_snapshot = build_session_results_snapshot(session_id=self.session.id)
+        self.assertEqual(session_snapshot["exams"][0]["avg_score"], 25.0)
+        self.assertEqual(session_snapshot["exams"][0]["pass_count"], 0)
+        lecture_snapshot = build_lecture_results_snapshot(
+            lecture_id=self.lecture.id,
+            include_exam_level_stats=True,
+        )
+        self.assertEqual(lecture_snapshot["sessions"][0]["exams"][0]["avg_score"], 25.0)
+        self.assertEqual(lecture_snapshot["sessions"][0]["exams"][0]["pass_count"], 0)
 
     def test_session_score_summary_uses_one_latest_result_lookup_for_many_exams(self):
         SessionProgress = apps.get_model("progress", "SessionProgress")

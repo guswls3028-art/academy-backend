@@ -18,6 +18,10 @@ from apps.domains.enrollment.models import Enrollment
 from apps.domains.exams.models import Exam
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.results.models import Result, StudentReportedScore
+from apps.domains.results.utils.initial_exam_score import (
+    load_initial_exam_scores,
+    project_initial_exam_score,
+)
 from apps.domains.students.models import Student
 from apps.support.results.student_reported_scores import serialize_reported_score
 
@@ -305,19 +309,38 @@ def _build_student_performance_console_uncached(
             "attempt__meta",
         )
     )
-    if days is not None:
-        result_query = result_query.filter(recorded_at__gte=timezone.now() - timedelta(days=days))
+    result_rows = list(result_query)
+    initial_scores = load_initial_exam_scores(
+        exam_ids=exam_titles,
+        enrollment_ids=selected_enrollment_ids,
+    )
+    period_start_at = timezone.now() - timedelta(days=days) if days is not None else None
 
     latest_result_by_exam: dict[tuple[int, int], dict[str, Any]] = {}
-    for result in result_query:
+    for result in result_rows:
         enrollment_meta = enrollment_student_lecture.get(int(result["enrollment_id"]))
         if not enrollment_meta:
             continue
         student_id, row_lecture_id = enrollment_meta
         attempt_meta = result.get("attempt__meta")
-        if isinstance(attempt_meta, dict) and attempt_meta.get("status") == "NOT_SUBMITTED":
+        initial_score = project_initial_exam_score(
+            state=initial_scores.get((int(result["target_id"]), int(result["enrollment_id"]))),
+            fallback_score=result.get("total_score"),
+            fallback_max_score=result.get("max_score"),
+            fallback_not_submitted=(
+                isinstance(attempt_meta, dict)
+                and attempt_meta.get("status") == "NOT_SUBMITTED"
+            ),
+            fallback_recorded_at=result.get("recorded_at"),
+        )
+        if initial_score.not_submitted:
             continue
-        score_pct = _score_pct(result.get("total_score"), result.get("max_score"))
+        recorded_at = initial_score.recorded_at or result.get("recorded_at")
+        if period_start_at is not None and (
+            recorded_at is None or recorded_at < period_start_at
+        ):
+            continue
+        score_pct = _score_pct(initial_score.total_score, initial_score.max_score)
         if score_pct is None:
             continue
         latest_result_by_exam[(student_id, int(result["target_id"]))] = {
@@ -329,7 +352,7 @@ def _build_student_performance_console_uncached(
             ),
             "title": exam_titles[int(result["target_id"])],
             "score_pct": score_pct,
-            "recorded_at": result["recorded_at"],
+            "recorded_at": recorded_at,
         }
 
     session_type_result_count = {

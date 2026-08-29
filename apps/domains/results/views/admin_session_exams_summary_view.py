@@ -14,6 +14,10 @@ from apps.domains.results.utils.session_exam import get_exams_for_session
 from apps.domains.results.utils.result_queries import (
     latest_results_for_targets_per_enrollment,
 )
+from apps.domains.results.utils.initial_exam_score import (
+    load_initial_exam_scores,
+    project_initial_exam_score,
+)
 from apps.support.results.progress_read_dependencies import (
     progress_policy_meta_for_lecture,
     session_score_enrollment_ids,
@@ -109,20 +113,32 @@ class AdminSessionExamsSummaryView(APIView):
         )
         for result in latest_results:
             results_by_exam[int(result.target_id)].append(result)
+        initial_scores = load_initial_exam_scores(
+            exam_ids=exam_ids,
+            enrollment_ids=roster_enrollment_ids,
+        )
 
         exam_rows = []
         for ex in exams:
             results = results_by_exam.get(int(ex.id), [])
-            scored_results = [
-                result
-                for result in results
-                if not (
-                    result.attempt_id
-                    and isinstance(result.attempt.meta, dict)
-                    and result.attempt.meta.get("status") == "NOT_SUBMITTED"
+            projected_scores = [
+                project_initial_exam_score(
+                    state=initial_scores.get((int(ex.id), int(result.enrollment_id))),
+                    fallback_score=result.total_score,
+                    fallback_max_score=result.max_score,
+                    fallback_not_submitted=bool(
+                        result.attempt_id
+                        and isinstance(result.attempt.meta, dict)
+                        and result.attempt.meta.get("status") == "NOT_SUBMITTED"
+                    ),
                 )
+                for result in results
             ]
-            scores = [float(result.total_score or 0.0) for result in scored_results]
+            scores = [
+                projected.total_score
+                for projected in projected_scores
+                if projected.total_score is not None and not projected.not_submitted
+            ]
             pass_score = float(getattr(ex, "pass_score", 0.0) or 0.0)
             if pass_score > 0:
                 pcount = sum(score >= pass_score for score in scores)

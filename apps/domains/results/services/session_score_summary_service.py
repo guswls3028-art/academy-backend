@@ -11,6 +11,10 @@ from apps.domains.results.utils.session_exam import get_exam_ids_for_session
 from apps.domains.results.utils.result_queries import (
     latest_results_for_targets_per_enrollment,
 )
+from apps.domains.results.utils.initial_exam_score import (
+    load_initial_exam_scores,
+    project_initial_exam_score,
+)
 from apps.support.results.progress_read_dependencies import (
     session_by_id,
     session_progress_queryset_for_session,
@@ -125,20 +129,32 @@ class SessionScoreSummaryService:
             )
             .select_related("attempt")
         )
-        scored_results = [
-            result
-            for result in all_results
-            if not (
-                result.attempt_id
-                and isinstance(result.attempt.meta, dict)
-                and result.attempt.meta.get("status") == "NOT_SUBMITTED"
+        initial_scores = load_initial_exam_scores(
+            exam_ids=exam_ids,
+            enrollment_ids=roster_enrollment_ids,
+        )
+        projected_scores = [
+            project_initial_exam_score(
+                state=initial_scores.get((int(result.target_id), int(result.enrollment_id))),
+                fallback_score=result.total_score,
+                fallback_max_score=result.max_score,
+                fallback_not_submitted=bool(
+                    result.attempt_id
+                    and isinstance(result.attempt.meta, dict)
+                    and result.attempt.meta.get("status") == "NOT_SUBMITTED"
+                ),
             )
+            for result in all_results
+        ]
+        scores = [
+            projected.total_score
+            for projected in projected_scores
+            if projected.total_score is not None and not projected.not_submitted
         ]
 
-        if not scored_results:
+        if not scores:
             score_summary = {"avg_score": 0.0, "min_score": 0.0, "max_score": 0.0}
         else:
-            scores = [float(result.total_score or 0.0) for result in scored_results]
             score_summary = {
                 "avg_score": (sum(scores) / len(scores)) if scores else 0.0,
                 "min_score": min(scores) if scores else 0.0,

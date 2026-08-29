@@ -22,6 +22,10 @@ from __future__ import annotations
 from typing import Any
 
 from apps.domains.results.models import ExamResult, ExamAttempt
+from apps.domains.results.utils.initial_exam_score import (
+    load_initial_exam_scores,
+    project_initial_exam_score,
+)
 from apps.support.results.progress_read_dependencies import (
     exam_remediation_link_values,
 )
@@ -206,6 +210,15 @@ def compute_exam_achievement_bulk(
         int(i["session"].id) for i in items
         if use_session_filter and i.get("session") is not None
     }
+    initial_scores = load_initial_exam_scores(
+        exam_ids=exam_ids,
+        enrollment_ids=enrollment_ids,
+    )
+    attempt_ids.update(
+        state.attempt_id
+        for state in initial_scores.values()
+        if state.attempt_id is not None
+    )
 
     # 1) ClinicLink bulk fetch (remediated 판정)
     # key 구조:
@@ -290,20 +303,31 @@ def compute_exam_achievement_bulk(
         e_id = int(i["enrollment_id"])
         x_id = int(i["exam_id"])
         supplied_attempt_id = int(i["attempt_id"]) if i.get("attempt_id") else None
-        # Result.attempt is a nullable generic projection link.  Treat it as
-        # untrusted and fail closed unless it belongs to this exact pair.
-        a_id = supplied_attempt_id if (
-            supplied_attempt_id is not None
-            and pair_by_attempt.get(supplied_attempt_id) == (e_id, x_id)
+        initial_state = initial_scores.get((x_id, e_id))
+        initial_attempt_id = initial_state.attempt_id if initial_state else None
+        # 1차 상태가 있으면 Result가 가리키는 최신 대표 재시험이 아니라 1차의
+        # 미응시/확정 상태를 쓴다. 첫 시도가 없는 legacy만 Result.attempt로 호환한다.
+        candidate_attempt_id = initial_attempt_id or supplied_attempt_id
+        a_id = candidate_attempt_id if (
+            candidate_attempt_id is not None
+            and pair_by_attempt.get(candidate_attempt_id) == (e_id, x_id)
         ) else None
         session = i.get("session")
         sid = int(session.id) if (use_session_filter and session is not None) else None
 
         meta_status = meta_status_by_attempt.get(a_id) if a_id else None
-        is_not_submitted = meta_status == "NOT_SUBMITTED"
+        initial_score = project_initial_exam_score(
+            state=initial_state,
+            fallback_score=i.get("total_score"),
+            fallback_max_score=None,
+            fallback_not_submitted=meta_status == "NOT_SUBMITTED",
+        )
+        is_not_submitted = initial_score.not_submitted
+        if is_not_submitted:
+            meta_status = "NOT_SUBMITTED"
 
         is_pass = compute_first_pass(
-            total_score=i.get("total_score"),
+            total_score=initial_score.total_score,
             pass_score=i.get("pass_score"),
             is_not_submitted=is_not_submitted,
         )

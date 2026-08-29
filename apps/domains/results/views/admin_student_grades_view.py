@@ -14,6 +14,10 @@ from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.models import Result
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement_bulk
 from apps.domains.results.utils.ranking import compute_exam_rankings_batch
+from apps.domains.results.utils.initial_exam_score import (
+    load_initial_exam_scores,
+    project_initial_exam_score,
+)
 from apps.support.results.admin_student_grades_dependencies import (
     active_student_for_grades,
     enrollment_ids_for_student,
@@ -91,6 +95,10 @@ class AdminStudentGradesView(APIView):
             )
         )
         exam_ids = list({r["target_id"] for r in results})
+        initial_scores = load_initial_exam_scores(
+            exam_ids=exam_ids,
+            enrollment_ids=enrollment_ids,
+        )
 
         exams_map = {}
         if exam_ids:
@@ -151,7 +159,15 @@ class AdminStudentGradesView(APIView):
             # 시스템 강의(공개 영상 컨테이너)는 성적에서 제외
             if session_meta.get("lecture_is_system"):
                 continue
-            if not _is_json_safe_number(r.get("total_score")) or not _is_json_safe_number(r.get("max_score")):
+            projected_score = project_initial_exam_score(
+                state=initial_scores.get((int(eid), int(r["enrollment_id"]))),
+                fallback_score=r.get("total_score"),
+                fallback_max_score=r.get("max_score"),
+            )
+            if (
+                projected_score.total_score is None
+                and not projected_score.not_submitted
+            ) or not _is_json_safe_number(projected_score.max_score):
                 continue
 
             session_id = session_meta.get("session_id")
@@ -179,6 +195,7 @@ class AdminStudentGradesView(APIView):
                 "session_date": session_meta.get("session_date"),
                 "lecture_id": lecture_id, "lecture_title": lecture_title,
                 "lecture_color": lecture_color, "lecture_chip_label": lecture_chip_label,
+                "initial_score": projected_score,
             })
 
         # ── Stage 2: SSOT 유틸로 성취 일괄 계산 (ClinicLink/ExamAttempt/ExamResult 각 1쿼리)
@@ -186,7 +203,7 @@ class AdminStudentGradesView(APIView):
             {
                 "enrollment_id": row["r"]["enrollment_id"],
                 "exam_id": row["eid"],
-                "total_score": row["r"]["total_score"],
+                "total_score": row["initial_score"].total_score or 0.0,
                 "pass_score": row["info"]["pass_score"],
                 "attempt_id": row["r"].get("attempt_id"),
                 "session": row["session"],
@@ -226,8 +243,8 @@ class AdminStudentGradesView(APIView):
                 "exam_id": eid,
                 "enrollment_id": enroll_id,
                 "title": info["title"],
-                "total_score": None if is_not_submitted else r["total_score"],
-                "max_score": r["max_score"],
+                "total_score": None if is_not_submitted else row["initial_score"].total_score,
+                "max_score": row["initial_score"].max_score,
                 "is_pass": ach_data.get("is_pass"),
                 "achievement": ach_data.get("achievement"),
                 "meta_status": meta_status,

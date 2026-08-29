@@ -13,6 +13,10 @@ from django.utils import timezone
 
 from apps.domains.exams.models import Exam
 from apps.domains.results.models import Result, ResultFact, ResultItem
+from apps.domains.results.utils.initial_exam_score import (
+    load_initial_exam_scores,
+    project_initial_exam_score,
+)
 from apps.domains.submissions.models import Submission
 from apps.support.student_app.results_summary import build_student_grades_summary
 
@@ -146,6 +150,8 @@ def _is_test_exam_title(title: str | None) -> bool:
 
 
 def _is_not_submitted(row: dict[str, Any]) -> bool:
+    if row.get("_initial_not_submitted") is True:
+        return True
     meta = row.get("attempt__meta")
     return isinstance(meta, dict) and meta.get("status") == "NOT_SUBMITTED"
 
@@ -362,6 +368,21 @@ def build_teacher_enterprise_analytics(*, tenant: Any, days: int = 180) -> dict[
             "attempt__meta",
         )
     )
+    initial_scores = load_initial_exam_scores(
+        exam_ids=clean_exam_ids,
+        enrollment_ids=[row["enrollment_id"] for row in result_rows],
+    )
+    for row in result_rows:
+        fallback_not_submitted = _is_not_submitted(row)
+        initial_score = project_initial_exam_score(
+            state=initial_scores.get((int(row["target_id"]), int(row["enrollment_id"]))),
+            fallback_score=row.get("total_score"),
+            fallback_max_score=row.get("max_score"),
+            fallback_not_submitted=fallback_not_submitted,
+        )
+        row["total_score"] = initial_score.total_score
+        row["max_score"] = initial_score.max_score
+        row["_initial_not_submitted"] = initial_score.not_submitted
 
     score_pcts = []
     pass_denominator = 0

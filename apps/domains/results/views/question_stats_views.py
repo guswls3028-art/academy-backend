@@ -7,6 +7,7 @@ from rest_framework.permissions import IsAuthenticated
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.api.common.query_params import parse_query_int
 from apps.domains.results.services.question_stats_service import QuestionStatsService
+from apps.domains.results.models import ExamAttempt
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
 from apps.domains.results.serializers.question_stats import (
     QuestionStatSerializer,
@@ -23,24 +24,37 @@ def _verify_exam_tenant(request, exam_id: int) -> None:
 
 
 def _finalized_representative_scope(*, exam_id: int, tenant) -> tuple[list[int], list[int]]:
-    """Return current finalized attempt ids plus tenant-scoped legacy enrollments."""
-    results = (
+    """Return finalized first-attempt ids plus tenant-scoped no-attempt legacy rows."""
+    results = list(
         latest_results_per_enrollment(target_type="exam", target_id=int(exam_id))
         .filter(enrollment__tenant=tenant)
         .exclude(enrollment_id__isnull=True)
         .select_related("attempt")
     )
-    attempt_ids: list[int] = []
-    legacy_enrollment_ids: list[int] = []
-    for result in results:
-        attempt = result.attempt
-        if attempt is None:
-            legacy_enrollment_ids.append(int(result.enrollment_id))
-            continue
-        meta = attempt.meta if isinstance(attempt.meta, dict) else {}
-        if meta.get("status") == "NOT_SUBMITTED" or attempt.status != "done":
-            continue
-        attempt_ids.append(int(attempt.id))
+    enrollment_ids = [int(result.enrollment_id) for result in results]
+    first_attempts = list(
+        ExamAttempt.objects.filter(
+            exam_id=int(exam_id),
+            enrollment_id__in=enrollment_ids,
+            attempt_index=1,
+        ).only("id", "enrollment_id", "status", "meta")
+    )
+    first_enrollment_ids = {int(attempt.enrollment_id) for attempt in first_attempts}
+    attempt_ids = [
+        int(attempt.id)
+        for attempt in first_attempts
+        if attempt.status == "done"
+        and not (
+            isinstance(attempt.meta, dict)
+            and attempt.meta.get("status") == "NOT_SUBMITTED"
+        )
+    ]
+    legacy_enrollment_ids = [
+        int(result.enrollment_id)
+        for result in results
+        if result.attempt_id is None
+        and int(result.enrollment_id) not in first_enrollment_ids
+    ]
     return attempt_ids, legacy_enrollment_ids
 
 
@@ -50,7 +64,7 @@ class AdminExamQuestionStatsView(APIView):
 
     ✅ 단일 진실:
     - ResultFact 기반 (append-only)
-    - 대표 attempt 교체/재시험 여부와 무관하게 항상 일관된 통계
+    - 대표 attempt 교체/재시험 여부와 무관하게 1차 문항 통계
     """
 
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]

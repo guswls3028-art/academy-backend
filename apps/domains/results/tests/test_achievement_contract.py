@@ -21,15 +21,20 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.domains.clinic.tests import ClinicTestMixin
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.exams.models import Exam
+from apps.domains.exams.models import Exam, ExamEnrollment, ExamQuestion, Sheet
 from apps.domains.progress.models import ClinicLink
-from apps.domains.results.models import ExamAttempt, ExamResult, Result
+from apps.domains.results.models import ExamAttempt, ExamResult, Result, ResultItem
 from apps.domains.results.utils.exam_achievement import (
     compute_exam_achievement,
     compute_exam_achievement_bulk,
 )
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.results.views.admin_student_grades_view import AdminStudentGradesView
+from apps.domains.results.views.admin_exam_results_view import AdminExamResultsView
+from apps.domains.results.views.admin_exam_result_detail_view import (
+    AdminExamResultDetailView,
+)
+from apps.domains.results.services.student_result_service import get_my_exam_result_data
 
 
 User = get_user_model()
@@ -178,6 +183,109 @@ class AchievementContractTest(TestCase, ClinicTestMixin):
             exam, score=0, meta_status="NOT_SUBMITTED",
         )
         self._assert_consistent(exam, result, expected="NOT_SUBMITTED")
+
+    def test_student_and_counseling_views_keep_initial_score_after_retake(self):
+        exam = self._make_exam("initial_score_only", pass_score=60.0)
+        ExamEnrollment.objects.create(exam=exam, enrollment=self.enrollment)
+        sheet = Sheet.objects.create(exam=exam, name="MAIN", total_questions=1)
+        question = ExamQuestion.objects.create(sheet=sheet, number=1, score=100)
+        first_attempt = ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=self.enrollment,
+            attempt_index=1,
+            is_representative=False,
+            status="done",
+            submission_id=0,
+            meta={
+                "initial_snapshot": {
+                    "total_score": 25.0,
+                    "max_score": 100.0,
+                    "source": "test",
+                },
+                "total_score": 25.0,
+                "max_score": 100.0,
+            },
+        )
+        retake_attempt = ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=self.enrollment,
+            attempt_index=2,
+            is_retake=True,
+            is_representative=True,
+            status="done",
+            submission_id=0,
+            meta={"total_score": 100.0, "max_score": 100.0, "pass_score": 60.0},
+        )
+        retake_result = Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.enrollment,
+            total_score=100,
+            max_score=100,
+            attempt=retake_attempt,
+        )
+        ResultItem.objects.create(
+            result=retake_result,
+            question=question,
+            answer="재시험 답안",
+            is_correct=True,
+            score=100,
+            max_score=100,
+            source="online",
+        )
+
+        factory = APIRequestFactory()
+        admin_request = factory.get(
+            "/results/admin/student-grades/",
+            {"student_id": self.student.id},
+        )
+        admin_request.tenant = self.tenant
+        force_authenticate(admin_request, user=self.admin_user)
+        admin_response = AdminStudentGradesView.as_view()(admin_request)
+        self.assertEqual(admin_response.status_code, 200, admin_response.data)
+        self.assertEqual(admin_response.data["exams"][0]["total_score"], 25.0)
+        self.assertEqual(admin_response.data["exams"][0]["achievement"], "FAIL")
+
+        exam_list_request = factory.get(f"/results/admin/exams/{exam.id}/results/")
+        exam_list_request.tenant = self.tenant
+        force_authenticate(exam_list_request, user=self.admin_user)
+        exam_list_response = AdminExamResultsView.as_view()(exam_list_request, exam_id=exam.id)
+        self.assertEqual(exam_list_response.status_code, 200, exam_list_response.data)
+        self.assertEqual(exam_list_response.data["results"][0]["exam_score"], 25.0)
+
+        detail_request = factory.get(
+            f"/results/admin/exams/{exam.id}/enrollments/{self.enrollment.id}/"
+        )
+        detail_request.tenant = self.tenant
+        force_authenticate(detail_request, user=self.admin_user)
+        detail_response = AdminExamResultDetailView.as_view()(
+            detail_request,
+            exam_id=exam.id,
+            enrollment_id=self.enrollment.id,
+        )
+        self.assertEqual(detail_response.status_code, 200, detail_response.data)
+        self.assertEqual(detail_response.data["total_score"], 25.0)
+        self.assertEqual(detail_response.data["items"], [])
+        self.assertEqual(detail_response.data["edit_state"]["lock_reason"], "RETAKE_REPRESENTATIVE")
+
+        student_request = factory.get(f"/results/student/exams/{exam.id}/")
+        student_request.tenant = self.tenant
+        student_request.user = self.student.user
+        TenantMembership.ensure_active(
+            tenant=self.tenant,
+            user=self.student.user,
+            role="student",
+        )
+        student_data = get_my_exam_result_data(
+            student_request,
+            exam.id,
+            tenant=self.tenant,
+        )
+        self.assertEqual(student_data["total_score"], 25.0)
+        self.assertEqual(student_data["achievement"], "FAIL")
+        self.assertEqual(student_data["items"], [])
+        self.assertEqual(student_data["analysis"]["total_questions"], 0)
+        self.assertEqual(first_attempt.meta["initial_snapshot"]["total_score"], 25.0)
 
     def test_bulk_achievement_ignores_corrupt_foreign_tenant_clinic_link(self):
         exam = self._make_exam("foreign_link", pass_score=60.0)

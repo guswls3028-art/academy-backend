@@ -1,8 +1,6 @@
 # apps/domains/results/views/admin_exam_summary_view.py
 from __future__ import annotations
 
-from django.db.models import Avg, Max, Min, Q
-
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -14,6 +12,10 @@ from apps.domains.results.serializers.admin_exam_summary import AdminExamSummary
 from apps.domains.results.utils.clinic import get_clinic_enrollment_ids_for_session
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
+from apps.domains.results.utils.initial_exam_score import (
+    load_initial_exam_scores,
+    project_initial_exam_score,
+)
 from apps.support.results.admin_exam_dependencies import get_regular_active_exam_for_tenant
 
 
@@ -61,26 +63,40 @@ class AdminExamSummaryView(APIView):
             target_type="exam",
             target_id=exam_id,
         ).filter(enrollment__tenant=request.tenant)
-        scored_rs = rs.filter(
-            Q(attempt__isnull=True) | Q(attempt__status="done"),
-        ).filter(
-            Q(attempt__meta__status__isnull=True)
-            | ~Q(attempt__meta__status="NOT_SUBMITTED"),
-        )
-
-        participant_count = rs.values("enrollment_id").distinct().count()
+        results = list(rs.select_related("attempt"))
+        participant_count = len(results)
         if participant_count == 0:
             return Response(AdminExamSummarySerializer(EMPTY).data)
 
-        agg = scored_rs.aggregate(
-            avg_score=Avg("total_score"),
-            min_score=Min("total_score"),
-            max_score=Max("total_score"),
+        initial_scores = load_initial_exam_scores(
+            exam_ids=[exam_id],
+            enrollment_ids=[result.enrollment_id for result in results],
         )
+        scores = []
+        for result in results:
+            initial_state = initial_scores.get((exam_id, int(result.enrollment_id)))
+            legacy_scored = bool(
+                result.attempt_id is None
+                or (
+                    result.attempt.status == "done"
+                    and not (
+                        isinstance(result.attempt.meta, dict)
+                        and result.attempt.meta.get("status") == "NOT_SUBMITTED"
+                    )
+                )
+            )
+            projected = project_initial_exam_score(
+                state=initial_state,
+                fallback_score=result.total_score,
+                fallback_max_score=result.max_score,
+                fallback_not_submitted=not legacy_scored,
+            )
+            if projected.total_score is not None and not projected.not_submitted:
+                scores.append(projected.total_score)
 
         if pass_score > 0:
-            pass_count = scored_rs.filter(total_score__gte=pass_score).count()
-            fail_count = scored_rs.filter(total_score__lt=pass_score).count()
+            pass_count = sum(score >= pass_score for score in scores)
+            fail_count = sum(score < pass_score for score in scores)
             scored_count = pass_count + fail_count
             pass_rate = (pass_count / scored_count) if scored_count else 0.0
         else:
@@ -103,9 +119,9 @@ class AdminExamSummaryView(APIView):
 
         payload = {
             "participant_count": int(participant_count),
-            "avg_score": float(agg["avg_score"] or 0.0),
-            "min_score": float(agg["min_score"] or 0.0),
-            "max_score": float(agg["max_score"] or 0.0),
+            "avg_score": float(sum(scores) / len(scores)) if scores else 0.0,
+            "min_score": float(min(scores)) if scores else 0.0,
+            "max_score": float(max(scores)) if scores else 0.0,
             "pass_count": int(pass_count),
             "fail_count": int(fail_count),
             "pass_rate": round(float(pass_rate), 4),

@@ -10,7 +10,7 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import TenantMembership
 from apps.domains.clinic.tests import ClinicTestMixin
-from apps.domains.results.models import Result, StudentReportedScore
+from apps.domains.results.models import ExamAttempt, Result, StudentReportedScore
 from apps.domains.results.views.admin_student_performance_view import (
     AdminStudentPerformanceView,
 )
@@ -130,6 +130,49 @@ class StudentPerformanceConsoleTest(TestCase, ClinicTestMixin):
         self.assertEqual(selected.status_code, 200, selected.data)
         self.assertEqual(selected.data["summary"]["student_count"], 1)
         self.assertEqual(selected.data["students"][0]["scored_count"], 2)
+
+    def test_retake_score_and_date_stay_supplemental_in_counseling_console(self):
+        result = self._score(title="상담 1차 고정", score=100, days_ago=1)
+        exam = self.data["lec_session"].exams.model.objects.get(id=result.target_id)
+        first_recorded_at = timezone.now() - timedelta(days=60)
+        ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=self.enrollment,
+            attempt_index=1,
+            is_representative=False,
+            status="done",
+            submission_id=0,
+            meta={
+                "initial_snapshot": {
+                    "total_score": 25.0,
+                    "max_score": 100.0,
+                    "submitted_at": first_recorded_at.isoformat(),
+                    "source": "test",
+                },
+                "total_score": 25.0,
+                "max_score": 100.0,
+            },
+        )
+        retake = ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=self.enrollment,
+            attempt_index=2,
+            is_retake=True,
+            is_representative=True,
+            status="done",
+            submission_id=0,
+            meta={"total_score": 100.0, "max_score": 100.0},
+        )
+        result.attempt = retake
+        result.save(update_fields=["attempt", "updated_at"])
+
+        all_time = self._get({"days": "all"})
+        self.assertEqual(all_time.status_code, 200, all_time.data)
+        self.assertEqual(all_time.data["students"][0]["latest_score_pct"], 25.0)
+
+        recent = self._get({"days": 30})
+        self.assertEqual(recent.status_code, 200, recent.data)
+        self.assertEqual(recent.data["summary"]["result_count"], 0)
 
     def test_session_type_filter_recomputes_the_entire_academy_scope(self):
         self._score(title="정규 1회", score=70, days_ago=3)
