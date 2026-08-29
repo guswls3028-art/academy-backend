@@ -87,6 +87,9 @@ Required invariants:
   tenant fails closed. Username collisions roll back every identity copy.
 - student phone is optional; parent phone is required on creation/import/signup.
 - phone fields are normalized to numeric `010XXXXXXXX` 11-digit strings.
+- Public JWT login NFKC-normalizes and trims the submitted identifier. It removes
+  spaces, hyphens, dots, and parentheses only when the compact value is exactly an
+  `010` 11-digit mobile identifier; punctuation in custom IDs remains significant.
 - an exact student-phone/parent-phone match means the student has no phone. The
   Excel parser, JSON import, signup approval, single create, and profile write
   store that value only as `parent_phone`; `Student.phone` and `User.phone` are
@@ -382,7 +385,7 @@ Rules:
 |---|---|
 | OMR automatic grading | candidate set is same-tenant active roster; identifier is phone/parent-phone last 8 digits; unmatched/ambiguous scans remain reviewable facts |
 | Results/exam scores | submission, exam, enrollment, and tenant must match before score/result writes |
-| Clinic | clinic target and remediation state must resolve through enrollment/session context; `/clinic/idcard/` returns every unresolved target across active enrollments in newest-first order, with the actual source title, nullable dedicated scope, and session label |
+| Clinic | clinic target and remediation state must resolve through enrollment/session context; `/clinic/idcard/` returns every unresolved target across active enrollments in newest-first order, with the actual source title, nullable dedicated scope, session label, and a separate tenant-local reservation/departure projection |
 | Homework | assignment/submission rows must carry tenant-scoped enrollment identity |
 | Attendance | attendance status that affects secession/enrollment must call the lifecycle path, not mutate student rows directly |
 | Video/progress | student visibility and progress must use tenant-scoped enrollment/session access |
@@ -393,8 +396,19 @@ Clinic source projection never guesses from an uploaded filename or copies a fre
 description into scope. `source_title` is the tenant-scoped Exam/Homework title, and
 `source_scope` stays `null` until that source domain owns a dedicated unit/range value;
 clients render the missing scope explicitly instead of hiding the rest of the target.
-The passcard consumes only the aggregate `current_result` verdict. Manual clinic PDFs
-remain independently authored content and do not inherit this projection.
+The passcard keeps the unresolved `ClinicLink` verdict in `current_result` and returns
+the separate `passcard_state` (`PASSED`, `CLINIC_REQUIRED`, or `RETURN_ALLOWED`). A
+future-or-today `booked` reservation, or an `attended`/completed participant
+on the current `Asia/Seoul` local date, temporarily yields `RETURN_ALLOWED` without
+resolving any `ClinicLink`. The protection expires on the next local date; if any link
+is still unresolved, the student returns to `CLINIC_REQUIRED`. `cancelled`, `rejected`,
+and `no_show` never protect departure. `pending` remains visible as `승인 대기` but
+does not allow departure. `valid_bookings` is sorted by effective date, start time,
+status priority, and participant id. For an unresolved student,
+`current_booking` is the first return-protecting item when one exists; otherwise it is
+the first visible pending item. The projection includes only status and schedule
+fields, not student or parent PII. Manual clinic PDFs remain independently authored
+content and do not inherit this projection.
 
 ### Staff student-support session and ended-lecture boundary
 

@@ -217,6 +217,56 @@ class TenantMembershipAuthorizationRegressionTests(TestCase):
             str(parent_user.id),
         )
 
+    def test_student_phone_login_accepts_common_mobile_formatting(self):
+        tenant = _tenant("auth-formatted-student-phone")
+        student_user = _user(tenant, "01012345678")
+        TenantMembership.ensure_active(tenant=tenant, user=student_user, role="student")
+        Student.objects.create(
+            tenant=tenant,
+            user=student_user,
+            ps_number="01012345678",
+            omr_code="12345678",
+            name="Formatted Phone Student",
+            phone="01012345678",
+            parent_phone="01087654321",
+        )
+
+        serializer = _login_serializer(
+            tenant=tenant,
+            identifier=" ０１０-１２３４-５６７８ ",
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertEqual(
+            AccessToken(serializer.validated_data["access"])["user_id"],
+            str(student_user.id),
+        )
+
+    def test_non_phone_login_identifier_keeps_punctuation(self):
+        tenant = _tenant("auth-custom-identifier-punctuation")
+        custom_identifier = "student-010-1234-5678"
+        custom_user = _user(tenant, custom_identifier)
+        TenantMembership.ensure_active(tenant=tenant, user=custom_user, role="student")
+        Student.objects.create(
+            tenant=tenant,
+            user=custom_user,
+            ps_number=custom_identifier,
+            omr_code="87654321",
+            name="Punctuated Identifier Student",
+            parent_phone="01087654321",
+        )
+
+        serializer = _login_serializer(
+            tenant=tenant,
+            identifier=custom_identifier,
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertEqual(
+            AccessToken(serializer.validated_data["access"])["user_id"],
+            str(custom_user.id),
+        )
+
     def test_duplicate_login_identifier_with_shared_password_fails_closed(self):
         tenant = _tenant("auth-duplicate-shared-password")
         first = _user(tenant, "shared-login", password="same-password", is_staff=True)

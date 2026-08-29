@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import re
+import unicodedata
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -17,6 +19,20 @@ from apps.core.services.password import (
     consume_pending_password_reset,
     pending_password_reset_matches,
 )
+
+
+_PHONE_LOGIN_SEPARATORS_RE = re.compile(r"[\s\-().]+")
+
+
+def _normalize_login_identifier(value: object) -> str:
+    """Normalize only an unambiguous Korean mobile-number login ID.
+
+    Staff and student identifiers may legitimately contain punctuation, so the
+    auth boundary must not apply a general punctuation-stripping rule.
+    """
+    raw = unicodedata.normalize("NFKC", str(value or "")).strip()
+    compact = _PHONE_LOGIN_SEPARATORS_RE.sub("", raw)
+    return compact if re.fullmatch(r"010\d{8}", compact) else raw
 
 
 def _extract_tenant_code(*sources) -> str:
@@ -111,7 +127,7 @@ class TenantAwareTokenObtainPairSerializer(TokenObtainPairSerializer):
 
     def validate(self, attrs):
         request = self.context.get("request")
-        username = (attrs.get("username") or "").strip()
+        username = _normalize_login_identifier(attrs.get("username"))
         password = attrs.get("password") or ""
 
         tenant = _tenant_for_auth(request, getattr(self, "initial_data", None), attrs) if request else None

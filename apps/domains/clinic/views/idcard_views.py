@@ -5,6 +5,9 @@ GET /api/v1/clinic/idcard/
 - 단일 진실: progress.ClinicLink(is_auto=True, resolved_at__isnull=True)
 - 서버 기준 오늘 날짜 반환 (위조 방지)
 """
+import datetime
+
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -12,6 +15,7 @@ from rest_framework.permissions import IsAuthenticated
 
 from apps.core.permissions import TenantResolved
 from apps.domains.clinic.color_utils import get_effective_clinic_colors
+from apps.domains.clinic.models import SessionParticipant
 from apps.support.clinic.idcard_dependencies import (
     active_enrollments_for_student,
     clinic_link_source_projection,
@@ -19,6 +23,99 @@ from apps.support.clinic.idcard_dependencies import (
     student_for_idcard_user,
     unresolved_auto_clinic_links,
 )
+
+
+BOOKING_STATUS_LABELS = {
+    "none": "예약 없음",
+    "required": "예약 필요",
+    "pending": "승인 대기",
+    "booked": "예약 확정",
+    "attended": "클리닉 진행 중",
+    "completed": "클리닉 진행 완료",
+}
+
+
+def _participant_schedule(participant):
+    session = getattr(participant, "session", None)
+    return (
+        getattr(session, "date", None) or participant.requested_date,
+        getattr(session, "start_time", None) or participant.requested_start_time,
+        getattr(session, "location", None),
+        getattr(session, "title", "") or "",
+    )
+
+
+def _valid_booking_projection(*, tenant, student, local_date):
+    """Project only reservations that protect departure on this KST date."""
+    current_timezone = timezone.get_current_timezone()
+    local_day_start = timezone.make_aware(
+        datetime.datetime.combine(local_date, datetime.time.min),
+        current_timezone,
+    )
+    local_day_end = local_day_start + datetime.timedelta(days=1)
+    participants = list(
+        SessionParticipant.objects.filter(
+            tenant=tenant,
+            student=student,
+        )
+        .filter(
+            Q(
+                status__in=(
+                    SessionParticipant.Status.PENDING,
+                    SessionParticipant.Status.BOOKED,
+                ),
+            )
+            & (
+                Q(session__date__gte=local_date)
+                | Q(session__isnull=True, requested_date__gte=local_date)
+            )
+            | Q(status=SessionParticipant.Status.ATTENDED)
+            & (
+                Q(session__date=local_date)
+                | Q(session__isnull=True, requested_date=local_date)
+                | Q(completed_at__gte=local_day_start, completed_at__lt=local_day_end)
+            )
+        )
+        .select_related("session")
+        .order_by("id")
+    )
+    projected = []
+    for participant in participants:
+        schedule_date, start_time, location, title = _participant_schedule(participant)
+        completed_today = bool(
+            participant.completed_at
+            and timezone.localdate(participant.completed_at) == local_date
+        )
+        if participant.status in (
+            SessionParticipant.Status.PENDING,
+            SessionParticipant.Status.BOOKED,
+        ):
+            is_valid = bool(schedule_date and schedule_date >= local_date)
+        else:
+            is_valid = schedule_date == local_date or completed_today
+        if not is_valid:
+            continue
+
+        status = "completed" if completed_today else participant.status
+        projected.append({
+            "participant_id": int(participant.id),
+            "session_id": int(participant.session_id) if participant.session_id else None,
+            "title": title,
+            "status": status,
+            "status_label": BOOKING_STATUS_LABELS[status],
+            "date": schedule_date.isoformat() if schedule_date else None,
+            "start_time": start_time.isoformat() if start_time else None,
+            "location": location,
+        })
+
+    status_order = {"completed": 0, "attended": 1, "booked": 2, "pending": 3}
+    projected.sort(key=lambda booking: (
+        booking["date"] or "9999-12-31",
+        booking["start_time"] or "23:59:59",
+        status_order[booking["status"]],
+        booking["participant_id"],
+    ))
+    return projected
 
 
 def _profile_photo_url(request, student):
@@ -38,10 +135,37 @@ def _response_payload(
     histories: list[dict] | None = None,
     current_targets: list[dict] | None = None,
     lectures: list[dict] | None = None,
+    valid_bookings: list[dict] | None = None,
+    server_now=None,
 ):
-    now = timezone.now()
+    now = server_now or timezone.localtime(timezone.now())
     histories = histories or []
     current_targets = current_targets or []
+    valid_bookings = valid_bookings or []
+    clinic_required = bool(
+        current_targets or any(h["clinic_required"] for h in histories)
+    )
+    return_protecting_bookings = [
+        booking
+        for booking in valid_bookings
+        if booking["status"] in {"booked", "attended", "completed"}
+    ]
+    current_booking = (
+        return_protecting_bookings[0]
+        if clinic_required and return_protecting_bookings
+        else valid_bookings[0] if valid_bookings else None
+    )
+    if not clinic_required:
+        passcard_state = "PASSED"
+    elif return_protecting_bookings:
+        passcard_state = "RETURN_ALLOWED"
+    else:
+        passcard_state = "CLINIC_REQUIRED"
+    booking_status = (
+        current_booking["status"]
+        if current_booking
+        else "required" if clinic_required else "none"
+    )
     return {
         "student_name": student_name,
         "profile_photo_url": profile_photo_url,
@@ -51,11 +175,14 @@ def _response_payload(
         "histories": histories,
         "current_targets": current_targets,
         "lectures": lectures or [],
-        "current_result": (
-            "FAIL"
-            if current_targets or any(h["clinic_required"] for h in histories)
-            else "SUCCESS"
-        ),
+        # ClinicLink verdict and temporary departure protection are separate axes.
+        "current_result": "FAIL" if clinic_required else "SUCCESS",
+        "passcard_state": passcard_state,
+        "can_leave": passcard_state != "CLINIC_REQUIRED",
+        "booking_status": booking_status,
+        "booking_status_label": BOOKING_STATUS_LABELS[booking_status],
+        "current_booking": current_booking,
+        "valid_bookings": valid_bookings,
     }
 
 
@@ -70,12 +197,19 @@ class StudentClinicIdcardView(APIView):
         user = request.user
         tenant = request.tenant
         student = student_for_idcard_user(tenant=tenant, user=user)
+        local_now = timezone.localtime(timezone.now())
 
         # 패스카드 배경 색상 (매일 자동 3색 또는 저장값)
         colors = get_effective_clinic_colors(tenant) if tenant else ["#ef4444", "#3b82f6", "#22c55e"]
 
         if not student:
-            return Response(_response_payload(colors=colors))
+            return Response(_response_payload(colors=colors, server_now=local_now))
+
+        valid_bookings = _valid_booking_projection(
+            tenant=tenant,
+            student=student,
+            local_date=local_now.date(),
+        )
 
         # tenant is guaranteed by TenantResolved permission
         # 활성 강의 전체를 기준으로 집계한다. 한 학생이 여러 강의를 수강해도
@@ -91,6 +225,8 @@ class StudentClinicIdcardView(APIView):
                     student_name=getattr(student, "name", "") or "",
                     profile_photo_url=_profile_photo_url(request, student),
                     colors=colors,
+                    valid_bookings=valid_bookings,
+                    server_now=local_now,
                 )
             )
 
@@ -157,6 +293,7 @@ class StudentClinicIdcardView(APIView):
                 "session_order": sess.order,
                 "session_title": sess.title or "",
                 "source_type": getattr(link, "source_type", None),
+                "source_id": getattr(link, "source_id", None),
                 "source_title": source.get("source_title"),
                 "source_scope": source.get("source_scope"),
                 "created_at": getattr(link, "created_at", None),
@@ -171,5 +308,7 @@ class StudentClinicIdcardView(APIView):
                 histories=histories,
                 current_targets=current_targets,
                 lectures=lectures,
+                valid_bookings=valid_bookings,
+                server_now=local_now,
             )
         )
