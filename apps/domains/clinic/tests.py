@@ -1754,6 +1754,10 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
             ["homework", "exam"],
         )
         self.assertEqual(
+            [target["source_id"] for target in resp.data["current_targets"]],
+            [homework.id, exam.id],
+        )
+        self.assertEqual(
             [target["source_title"] for target in resp.data["current_targets"]],
             [homework.title, exam.title],
         )
@@ -1768,6 +1772,244 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
         self.assertTrue(
             all(target["created_at"] for target in resp.data["current_targets"])
         )
+
+    def test_idcard_active_reservations_protect_return_and_sort_nearest(self):
+        enrollment = self.data["enrollments"][0]
+        self.make_clinic_link(
+            enrollment,
+            self.data["lec_session"],
+            tenant=self.tenant,
+            source_type="exam",
+        )
+        today = timezone.localdate()
+        later = self.make_clinic_session(
+            self.tenant,
+            date=today + datetime.timedelta(days=2),
+            start_time=datetime.time(16, 0),
+            location="3층 자습실",
+        )
+        nearer = self.make_clinic_session(
+            self.tenant,
+            date=today + datetime.timedelta(days=1),
+            start_time=datetime.time(15, 0),
+            location="2층 보강실",
+        )
+        pending = self.make_participant(
+            self.tenant,
+            later,
+            self.student,
+            enrollment=enrollment,
+            status=SessionParticipant.Status.PENDING,
+        )
+        today_booked = self.make_participant(
+            self.tenant,
+            self.data["clinic_session"],
+            self.student,
+            enrollment=enrollment,
+            status=SessionParticipant.Status.BOOKED,
+        )
+        booked = self.make_participant(
+            self.tenant,
+            nearer,
+            self.student,
+            enrollment=enrollment,
+            status=SessionParticipant.Status.BOOKED,
+        )
+
+        resp = self.client.get(
+            "/api/v1/clinic/idcard/",
+            **self._headers(self.tenant),
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data["current_result"], "FAIL")
+        self.assertEqual(resp.data["passcard_state"], "RETURN_ALLOWED")
+        self.assertTrue(resp.data["can_leave"])
+        self.assertEqual(resp.data["booking_status"], "booked")
+        self.assertEqual(resp.data["booking_status_label"], "예약 확정")
+        self.assertEqual(resp.data["current_booking"]["participant_id"], today_booked.id)
+        self.assertEqual(resp.data["current_booking"]["date"], today.isoformat())
+        self.assertEqual(resp.data["current_booking"]["start_time"], "14:00:00")
+        self.assertEqual(resp.data["current_booking"]["location"], "101호")
+        self.assertEqual(
+            [booking["participant_id"] for booking in resp.data["valid_bookings"]],
+            [today_booked.id, booked.id, pending.id],
+        )
+
+    def test_idcard_pending_reservation_is_visible_but_does_not_allow_return(self):
+        enrollment = self.data["enrollments"][0]
+        self.make_clinic_link(
+            enrollment,
+            self.data["lec_session"],
+            tenant=self.tenant,
+            source_type="exam",
+        )
+        tomorrow = timezone.localdate() + datetime.timedelta(days=1)
+        clinic_session = self.make_clinic_session(
+            self.tenant,
+            date=tomorrow,
+            start_time=datetime.time(17, 0),
+            location="승인 대기실",
+        )
+        pending = self.make_participant(
+            self.tenant,
+            clinic_session,
+            self.student,
+            enrollment=enrollment,
+            status=SessionParticipant.Status.PENDING,
+        )
+
+        resp = self.client.get(
+            "/api/v1/clinic/idcard/",
+            **self._headers(self.tenant),
+        )
+
+        self.assertEqual(resp.data["current_result"], "FAIL")
+        self.assertEqual(resp.data["passcard_state"], "CLINIC_REQUIRED")
+        self.assertFalse(resp.data["can_leave"])
+        self.assertEqual(resp.data["booking_status"], "pending")
+        self.assertEqual(resp.data["booking_status_label"], "승인 대기")
+        self.assertEqual(resp.data["current_booking"]["participant_id"], pending.id)
+
+    def test_idcard_today_attendance_or_completion_expires_next_local_day(self):
+        enrollment = self.data["enrollments"][0]
+        self.make_clinic_link(
+            enrollment,
+            self.data["lec_session"],
+            tenant=self.tenant,
+            source_type="exam",
+        )
+        today = timezone.localdate()
+        clinic_session = self.make_clinic_session(
+            self.tenant,
+            date=today,
+            start_time=datetime.time(18, 0),
+            location="당일 이행실",
+        )
+        participant = self.make_participant(
+            self.tenant,
+            clinic_session,
+            self.student,
+            enrollment=enrollment,
+            status=SessionParticipant.Status.ATTENDED,
+        )
+
+        attended = self.client.get(
+            "/api/v1/clinic/idcard/",
+            **self._headers(self.tenant),
+        )
+        self.assertEqual(attended.data["passcard_state"], "RETURN_ALLOWED")
+        self.assertEqual(attended.data["booking_status"], "attended")
+
+        participant.completed_at = timezone.now()
+        participant.save(update_fields=["completed_at", "updated_at"])
+        completed = self.client.get(
+            "/api/v1/clinic/idcard/",
+            **self._headers(self.tenant),
+        )
+        self.assertEqual(completed.data["passcard_state"], "RETURN_ALLOWED")
+        self.assertEqual(completed.data["booking_status"], "completed")
+
+        clinic_session.date = today - datetime.timedelta(days=1)
+        clinic_session.save(update_fields=["date", "updated_at"])
+        SessionParticipant.objects.filter(id=participant.id).update(
+            completed_at=timezone.now() - datetime.timedelta(days=1),
+        )
+        expired = self.client.get(
+            "/api/v1/clinic/idcard/",
+            **self._headers(self.tenant),
+        )
+        self.assertEqual(expired.data["current_result"], "FAIL")
+        self.assertEqual(expired.data["passcard_state"], "CLINIC_REQUIRED")
+        self.assertFalse(expired.data["can_leave"])
+        self.assertEqual(expired.data["booking_status"], "required")
+        self.assertIsNone(expired.data["current_booking"])
+
+    def test_idcard_terminal_reservations_never_protect_unresolved_target(self):
+        enrollment = self.data["enrollments"][0]
+        self.make_clinic_link(
+            enrollment,
+            self.data["lec_session"],
+            tenant=self.tenant,
+            source_type="exam",
+        )
+        today = timezone.localdate()
+        for index, status in enumerate(
+            (
+                SessionParticipant.Status.CANCELLED,
+                SessionParticipant.Status.REJECTED,
+                SessionParticipant.Status.NO_SHOW,
+            ),
+            start=1,
+        ):
+            clinic_session = self.make_clinic_session(
+                self.tenant,
+                date=today + datetime.timedelta(days=index),
+                start_time=datetime.time(10 + index, 0),
+                location=f"종료 상태실 {index}",
+            )
+            self.make_participant(
+                self.tenant,
+                clinic_session,
+                self.student,
+                enrollment=enrollment,
+                status=status,
+            )
+
+        resp = self.client.get(
+            "/api/v1/clinic/idcard/",
+            **self._headers(self.tenant),
+        )
+
+        self.assertEqual(resp.data["passcard_state"], "CLINIC_REQUIRED")
+        self.assertFalse(resp.data["can_leave"])
+        self.assertEqual(resp.data["booking_status"], "required")
+        self.assertEqual(resp.data["valid_bookings"], [])
+
+    def test_idcard_passed_student_still_sees_active_reservation(self):
+        today = timezone.localdate()
+        clinic_session = self.make_clinic_session(
+            self.tenant,
+            date=today + datetime.timedelta(days=1),
+            start_time=datetime.time(11, 0),
+            location="합격자 예약실",
+        )
+        participant = self.make_participant(
+            self.tenant,
+            clinic_session,
+            self.student,
+            enrollment=self.data["enrollments"][0],
+            status=SessionParticipant.Status.BOOKED,
+        )
+
+        resp = self.client.get(
+            "/api/v1/clinic/idcard/",
+            **self._headers(self.tenant),
+        )
+
+        self.assertEqual(resp.data["current_result"], "SUCCESS")
+        self.assertEqual(resp.data["passcard_state"], "PASSED")
+        self.assertTrue(resp.data["can_leave"])
+        self.assertEqual(resp.data["booking_status"], "booked")
+        self.assertEqual(resp.data["current_booking"]["participant_id"], participant.id)
+
+    @patch("apps.domains.clinic.views.idcard_views.timezone.now")
+    def test_idcard_server_date_uses_kst_local_date(self, mocked_now):
+        mocked_now.return_value = datetime.datetime(
+            2026,
+            8,
+            29,
+            15,
+            30,
+            tzinfo=datetime.timezone.utc,
+        )
+
+        resp = self.client.get(
+            "/api/v1/clinic/idcard/",
+            **self._headers(self.tenant),
+        )
+
+        self.assertEqual(resp.data["server_date"], "2026-08-30")
 
     def test_deleted_student_cannot_create_own_booking(self):
         self.student.deleted_at = timezone.now()
