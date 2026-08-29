@@ -1,6 +1,6 @@
 # 메시징 도메인 SSOT (공용 카카오 알림톡 발송 시스템)
 
-> 최종 갱신: 2026-08-23 (수동 발송 봉투를 현재 진입 유형으로 고정)
+> 최종 갱신: 2026-08-29 (일반 강의 출결을 수동 preview→confirm 전용으로 복구)
 > 근거: 코드 직접 확인. 추측 없음.
 
 ---
@@ -185,8 +185,8 @@
 | `counseling_reservation_created` | clinic_info | ✅ | ⚠️ "상담"이 "[클리닉 안내]" prefix — 학부모 혼동 가능 |
 | `clinic_reservation_changed` | clinic_change | ✅ | `clinic.services.lifecycle`가 기존일정/변동사항/수정자 변수 생성 |
 | `clinic_cancelled` | clinic_change | ✅ | `clinic.services.lifecycle`가 기존일정/변동사항/수정자 변수 생성 |
-| `check_in_complete` | attendance | ✅ | |
-| `absent_occurred` | attendance | ✅ | |
+| `check_in_complete` | attendance | manual | 일반 강의 출결 상태 저장과 분리된 출결 알림 preview→confirm만 허용 |
+| `absent_occurred` | attendance | manual | 일반 강의 출결 상태 저장과 분리된 출결 알림 preview→confirm만 허용 |
 | `lecture_session_reminder` | attendance | manual | minutes_before 스케줄러 미구현 |
 | `exam_scheduled_days_before` | attendance | manual | 시험 예정 안내를 강의/차시 컨텍스트 봉투에 담음 |
 | `exam_start_minutes_before` | attendance | manual | 시험 시작 안내를 강의/차시 컨텍스트 봉투에 담음 |
@@ -288,8 +288,6 @@
 | `clinic_check_out` | `clinic/services/lifecycle.py` + `clinic/views/participant_views.py` | 등원한 참가자의 별도 checkout service 이벤트. exact 승인 템플릿 없으면 queue 0 |
 | `clinic_absent` | `clinic/services/lifecycle.py` + `clinic/views/participant_views.py` | service가 이벤트 선택하고 view가 발송 결과를 응답에 포함 |
 | `clinic_self_study_completed` | `clinic/services/lifecycle.py` + `clinic/views/participant_views.py` | complete service 이벤트 뒤 view가 발송 결과를 응답에 포함 |
-| `check_in_complete` | attendance/views.py:80 | `_send_attendance_notification` |
-| `absent_occurred` | attendance/views.py:80 | `_send_attendance_notification` |
 | `registration_approved_*` | 신규 학생 첫 ACTIVE 수강 확정 + 계정 변경 플로우 | `send_alimtalk_via_owner` 경유 |
 | `password_find_otp` | legacy OTP 경로 | `send_alimtalk_via_owner` 경유 |
 | `password_reset_*` | 현재 공개 비밀번호 찾기 + 관리자/선생님 재설정 | `send_alimtalk_via_owner` 경유 |
@@ -301,6 +299,7 @@
 - `enrollment_expiring_soon` (DISABLED)
 - `withdrawal_complete` (MANUAL_DEFAULT)
 - `lecture_session_reminder` (MANUAL_DEFAULT, minutes_before=30)
+- `check_in_complete`, `absent_occurred` (MANUAL_DEFAULT, 출결 알림 preview→confirm 전용)
 - `exam_scheduled_days_before` ~ `retake_assigned` (MANUAL_DEFAULT, 시험 관련 5개)
 - `assignment_registered` ~ `assignment_not_submitted` (MANUAL_DEFAULT, 과제 관련 3개)
 - `monthly_report_generated` (MANUAL_DEFAULT)
@@ -529,7 +528,8 @@ SHA-256(canonical) -> 64자 hex
 - `f"clinic_participant_{obj.pk}"` (`clinic/views/participant_views.py` create)
 - `f"participant_{participant.pk}_{next_status}_{int(time.time())}"` (`clinic/services/lifecycle.py`)
 - `f"booking_change_{new_booking.pk}"` (`clinic/views/participant_views.py`)
-- `str(attendance.id)` (attendance/views.py:77)
+- 일반 강의 입실·결석 수동 발송은 preview token의 batch occurrence를 사용하며,
+  출결 상태 저장은 occurrence나 outbox를 만들지 않는다.
 
 ---
 
@@ -696,13 +696,18 @@ POST로 기존 기본 템플릿 리셋 가능. 이름이 기본값과 동일한 
 - `clinic_check_out`은 실제 하원 시각과 `participant_<id>_checkout` business object를 사용한다. `clinic_self_study_completed`의 `completed_at`과 멱등성 키를 공유하지 않는다.
 - 2026-05-23 단말 확인: 실제 카카오톡 복붙 본문에는 자유 본문(`#{선생님메모}`)만 보이고 ITEM_LIST 변수는 별도 UI로 표시될 수 있다. 현재 템플릿 본문은 검수 통과한 자유 본문 정책을 유지한다. 기본 본문에 일정 정보를 중복 삽입하려면 기존 테넌트 템플릿 reset/overwrite 정책을 먼저 정해야 한다.
 
-### _send_attendance_notification
+### 일반 강의 출결 수동 알림
 
-출처: `attendance/views.py:34-85`
+출처: `messaging/views_notification.py`, `messaging/notification_dispatch.py`
 
-- **학부모만 발송** (`send_to="parent"`)
-- Time Guard: 세션 날짜가 오늘이 아니면 발송하지 않음 (과거 날짜 행정 수정 시 알림 방지)
-- context: 강의명, 차시명, 날짜, 시간, 반이름, _domain_object_id
+- `attendance/views.py`의 개별 PATCH, 일괄 출석, 차시 명단 생성은
+  `check_in_complete`/`absent_occurred` 발송이나 outbox 생성을 하지 않는다.
+- 선생은 출결 화면의 별도 발송 동작으로 대상·수신자·문구를 preview하고,
+  생성된 `NotificationPreviewToken`을 confirm해야만 durable outbox가 생긴다.
+- preview와 confirm은 같은 테넌트·사용자·수신 범위를 다시 검증하고,
+  사용된 token은 재사용할 수 없다.
+- 이 경계는 일반 강의에만 적용한다. 클리닉 등원·결석의 자동/수동 정책과
+  participant 상태 전이는 별도 계약이다.
 
 ---
 
@@ -749,7 +754,9 @@ DEFAULT, SIGNUP, ATTENDANCE, LECTURE, EXAM, ASSIGNMENT, GRADES, CLINIC, PAYMENT,
 | `apps/worker/messaging_worker/sqs_main.py` | 섹션 1, 6, 8 (워커, 공급자 분기, 멱등성) |
 | `apps/domains/clinic/views/participant_views.py` | 섹션 4, 13 (트리거 호출 위치, on_commit dispatch) |
 | `apps/domains/clinic/services/lifecycle.py` | 섹션 4, 8, 13 (상태/완료 전이와 클리닉 이벤트 context) |
-| `apps/domains/attendance/views.py` | 섹션 4, 13 (트리거 호출 위치) |
+| `apps/domains/messaging/views_notification.py` | 섹션 5, 13 (출결 알림 preview→confirm API) |
+| `apps/domains/messaging/notification_dispatch.py` | 섹션 5, 8, 13 (수동 발송 대상·멱등 outbox) |
+| `apps/domains/attendance/views.py` | 섹션 4, 13 (일반 강의 출결 저장과 발송의 분리 경계) |
 
 ### TEMPLATE_TYPE_VARIABLES 변경 시
 
@@ -786,3 +793,4 @@ DEFAULT, SIGNUP, ATTENDANCE, LECTURE, EXAM, ASSIGNMENT, GRADES, CLINIC, PAYMENT,
 - 2026-03-28: 비필수 트리거 전면 비활성화
 - 2026-03-31: 뿌리오(ppurio) v3 API 전환
 - 2026-04-09: SSOT 문서 전면 재작성 -- 코드 기반 16개 섹션 구조화
+- 2026-08-29: 일반 강의 개별 출결 PATCH에 재유입된 입실·결석 자동 훅을 제거하고, 메시징 도메인의 출결 알림 preview→confirm만 허용하는 수동 전용 경계를 복구
