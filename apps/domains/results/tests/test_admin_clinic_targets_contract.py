@@ -7,11 +7,6 @@ from rest_framework import serializers
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.clinic.models import (
-    Session as ClinicSession,
-    SessionParticipant,
-    SessionParticipantPlanItem,
-)
 from apps.domains.results.models import ExamAttempt, Result
 from apps.domains.results.views.admin_clinic_targets_view import (
     AdminClinicTargetsView,
@@ -27,6 +22,13 @@ class AdminClinicTargetsContractTests(TestCase):
         self.Exam = django_apps.get_model("exams", "Exam")
         self.Lecture = django_apps.get_model("lectures", "Lecture")
         self.LectureSession = django_apps.get_model("lectures", "Session")
+        self.ClinicSession = django_apps.get_model("clinic", "Session")
+        self.SessionParticipant = django_apps.get_model(
+            "clinic", "SessionParticipant"
+        )
+        self.SessionParticipantPlanItem = django_apps.get_model(
+            "clinic", "SessionParticipantPlanItem"
+        )
         self.ClinicLink = django_apps.get_model("progress", "ClinicLink")
         self.Student = django_apps.get_model("students", "Student")
         self.factory = APIRequestFactory()
@@ -126,7 +128,7 @@ class AdminClinicTargetsContractTests(TestCase):
         return AdminClinicTargetsView.as_view()(request)
 
     def test_projects_only_authoritative_same_tenant_active_plan_linkage(self):
-        clinic_session = ClinicSession.objects.create(
+        clinic_session = self.ClinicSession.objects.create(
             tenant=self.tenant,
             title="토요일 보충",
             date=datetime.date(2026, 8, 29),
@@ -135,20 +137,20 @@ class AdminClinicTargetsContractTests(TestCase):
             location="본관 302호",
             max_participants=8,
         )
-        participant = SessionParticipant.objects.create(
+        participant = self.SessionParticipant.objects.create(
             tenant=self.tenant,
             session=clinic_session,
             student=self.student,
             enrollment=self.enrollment,
-            status=SessionParticipant.Status.BOOKED,
-            source=SessionParticipant.Source.STUDENT_REQUEST,
+            status="booked",
+            source="student_request",
             preferred_start_time=datetime.time(15, 0),
             preferred_end_time=datetime.time(16, 0),
             student_request_memo="학원 셔틀 뒤에 도착해요",
             staff_memo="도착하면 3번 좌석 안내",
             memo="노출하면 안 되는 출처 불명 메모",
         )
-        plan_item = SessionParticipantPlanItem.objects.create(
+        plan_item = self.SessionParticipantPlanItem.objects.create(
             participant=participant,
             clinic_link=self.link,
             selected_by=self.admin,
@@ -172,7 +174,7 @@ class AdminClinicTargetsContractTests(TestCase):
             name="다른 테넌트 학생",
             parent_phone="01011111111",
         )
-        foreign_session = ClinicSession.objects.create(
+        foreign_session = self.ClinicSession.objects.create(
             tenant=foreign_tenant,
             date=datetime.date(2026, 8, 30),
             start_time=datetime.time(9, 0),
@@ -180,15 +182,15 @@ class AdminClinicTargetsContractTests(TestCase):
             location="외부 101호",
             max_participants=8,
         )
-        foreign_participant = SessionParticipant.objects.create(
+        foreign_participant = self.SessionParticipant.objects.create(
             tenant=foreign_tenant,
             session=foreign_session,
             student=foreign_student,
-            status=SessionParticipant.Status.BOOKED,
-            source=SessionParticipant.Source.MANUAL,
+            status="booked",
+            source="manual",
             staff_memo="다른 테넌트 메모",
         )
-        SessionParticipantPlanItem.objects.create(
+        self.SessionParticipantPlanItem.objects.create(
             participant=foreign_participant,
             clinic_link=self.link,
             selected_by=self.admin,
