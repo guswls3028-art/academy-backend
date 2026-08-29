@@ -13,6 +13,7 @@ from apps.shared.contracts.ai_job import AIJob
 logger = logging.getLogger(__name__)
 
 EXCEL_EXPORT_EXPIRES_IN = 3600  # 1시간
+XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 def _upload_and_presign(
@@ -29,13 +30,17 @@ def _upload_and_presign(
     )
 
     key = f"exports/{tenant_id}/{job_id}_{filename}"
-    content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     upload_fileobj_to_r2_excel(
         fileobj=fileobj,
         key=key,
-        content_type=content_type,
+        content_type=XLSX_CONTENT_TYPE,
     )
-    return generate_presigned_get_url_excel(key=key, expires_in=EXCEL_EXPORT_EXPIRES_IN)
+    return generate_presigned_get_url_excel(
+        key=key,
+        expires_in=EXCEL_EXPORT_EXPIRES_IN,
+        filename=filename,
+        content_type=XLSX_CONTENT_TYPE,
+    )
 
 
 def handle_attendance_excel_export(job: AIJob) -> AIResult:

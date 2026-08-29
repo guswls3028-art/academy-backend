@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 from typing import Callable
+from urllib.parse import quote
 
 import boto3
 from django.conf import settings
@@ -94,15 +95,27 @@ def generate_presigned_get_url_excel(
     *,
     key: str,
     expires_in: int = 3600,
+    filename: str | None = None,
+    content_type: str | None = None,
 ) -> str:
     """R2 엑셀 버킷 presigned GET URL (다운로드용)."""
     s3 = _get_s3_client()
+    params = {
+        "Bucket": _excel_bucket(),
+        "Key": key,
+    }
+    if filename:
+        safe_name = filename.replace("\r", "").replace("\n", "").replace('"', "")
+        ascii_name = safe_name if safe_name.isascii() else "download.xlsx"
+        params["ResponseContentDisposition"] = (
+            f'attachment; filename="{ascii_name}"; '
+            f"filename*=UTF-8''{quote(safe_name, safe='')}"
+        )
+    if content_type:
+        params["ResponseContentType"] = content_type
     return s3.generate_presigned_url(
         ClientMethod="get_object",
-        Params={
-            "Bucket": _excel_bucket(),
-            "Key": key,
-        },
+        Params=params,
         ExpiresIn=expires_in,
     )
 

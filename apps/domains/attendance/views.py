@@ -620,7 +620,6 @@ class AttendanceViewSet(ModelViewSet):
             source_domain="attendance",
             source_id=str(lecture.id),
             tier="basic",
-            idempotency_key=f"attendance_export:{tenant.id}:{lecture.id}",
         )
         if not out.get("ok"):
             return Response(
