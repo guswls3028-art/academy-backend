@@ -33,9 +33,15 @@
             "type": "integer"
           },
           "clinic_reason": {
-            "description": "Assessment source category: exam, homework, or both.",
             "nullable": true,
-            "type": "string"
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ClinicReasonEnum"
+              },
+              {
+                "$ref": "#/components/schemas/NullEnum"
+              }
+            ]
           },
           "created_at": {
             "format": "date-time",
