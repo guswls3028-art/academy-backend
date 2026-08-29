@@ -3,8 +3,9 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from django.contrib.auth import get_user_model
+from django.db.models import Q
 
-from apps.core.models.user import user_internal_username
+from apps.core.models.user import user_display_username, user_internal_username
 from apps.domains.students.models import Student
 from apps.domains.students.ps_number import _generate_unique_ps_number
 
@@ -97,7 +98,24 @@ def student_login_id_taken(
     )
     if exclude_user_id:
         user_qs = user_qs.exclude(pk=exclude_user_id)
-    return user_qs.exists()
+    if user_qs.exists():
+        return True
+
+    active_login_users = (
+        get_user_model()
+        .objects.filter(
+            tenant_memberships__tenant=tenant,
+            tenant_memberships__is_active=True,
+        )
+        .filter(Q(username=username) | Q(username__endswith=f"_{username}"))
+        .distinct()
+    )
+    if exclude_user_id:
+        active_login_users = active_login_users.exclude(pk=exclude_user_id)
+    return any(
+        user_display_username(user) == username
+        for user in active_login_users.only("id", "username")
+    )
 
 
 RequestedConflictPolicy = Literal["error", "fallback"]

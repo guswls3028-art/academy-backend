@@ -76,14 +76,20 @@ def create_student_account(
     data["phone"] = student_phone
     if shared_parent_phone:
         data["uses_identifier"] = True
-        if ps_number == original_phone:
-            ps_number = resolve_student_login_id(tenant=tenant)
-            data["ps_number"] = ps_number
         data["omr_code"] = derive_student_omr_code(
             phone=None,
             parent_phone=parent_phone,
             current=data.get("omr_code"),
         )
+    normalized_parent_phone = phone_digits(parent_phone)
+    if (
+        student_phone is None
+        and normalized_parent_phone
+        and ps_number == normalized_parent_phone
+    ):
+        ps_number = resolve_student_login_id(tenant=tenant)
+        data["ps_number"] = ps_number
+        data["uses_identifier"] = True
 
     with transaction.atomic():
         parent = None

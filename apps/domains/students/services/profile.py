@@ -12,16 +12,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from django.contrib.auth import get_user_model
-
 from apps.core.models import Program
-from apps.core.models.user import user_display_username, user_internal_username
+from apps.core.models.user import user_display_username
 from apps.domains.students.models import Student
 from apps.domains.students.services.identity import (
     StudentIdentityError,
     canonical_student_phone,
     derive_student_omr_code,
     normalize_student_phone,
+    student_login_id_taken,
 )
 from apps.domains.students.services.school import (
     ALL_SCHOOL_TYPES,
@@ -156,15 +155,12 @@ def _validate_identity(student: Student, tenant, display_username: str) -> str:
     username = str(display_username or "").strip()
     if not username:
         return ""
-    User = get_user_model()
-    internal = user_internal_username(tenant, username)
-    if User.objects.filter(username=internal).exclude(pk=student.user_id).exists():
-        raise StudentProfileUpdateError({"detail": "이미 사용 중인 아이디입니다."})
-    if Student.objects.filter(
+    if student_login_id_taken(
         tenant=tenant,
-        ps_number=username,
-        deleted_at__isnull=True,
-    ).exclude(pk=student.pk).exists():
+        display_username=username,
+        exclude_student_id=student.pk,
+        exclude_user_id=student.user_id,
+    ):
         raise StudentProfileUpdateError({"detail": "이미 사용 중인 아이디입니다."})
     return username
 
