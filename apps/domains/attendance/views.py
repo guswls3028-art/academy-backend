@@ -38,7 +38,6 @@ from apps.support.attendance.view_dependencies import (
     deactivate_fees_for_enrollment,
     dispatch_job,
     get_exams_for_session,
-    send_event_notification,
 )
 
 logger = logging.getLogger(__name__)
@@ -108,69 +107,6 @@ def _secession_status_conflict(instance, requested_status):
             status=status.HTTP_409_CONFLICT,
         )
     return None
-
-
-def _send_attendance_notification(tenant, attendance, trigger, actor_id=None):
-    """
-    출결 알림톡 발송 (best-effort, 실패해도 출결 처리는 유지).
-    trigger: "check_in_complete" 또는 "absent_occurred"
-
-    Time Guard: 세션 날짜가 오늘이 아니면 발송하지 않음.
-    과거 날짜 출결 등록/수정은 행정 작업이지 실시간 이벤트가 아니므로
-    학부모에게 "입실하였습니다" 알림을 보내면 안 됨.
-    """
-    try:
-        from django.utils import timezone
-
-        enrollment = attendance.enrollment
-        student = enrollment.student
-        session = attendance.session
-        lecture = session.lecture
-        now = timezone.localtime()
-
-        # ── Time Guard: 오늘 세션만 알림 발송 ──
-        session_date = session.date
-        today = now.date()
-        if session_date and session_date != today:
-            logger.info(
-                "attendance notification skipped (time guard): "
-                "trigger=%s session_date=%s today=%s att_id=%s",
-                trigger, session_date, today, attendance.id,
-            )
-            return
-
-        # 반 정보 (section_mode일 때)
-        section = getattr(session, "section", None)
-        section_label = ""
-        if section:
-            prefix = "클리닉 " if section.section_type == "CLINIC" else ""
-            section_label = f"{prefix}{section.label}반"
-
-        context = {
-            "강의명": lecture.title or "",
-            "차시명": session.title or session.display_label,
-            "날짜": str(session_date) if session_date else now.strftime("%Y-%m-%d"),
-            "시간": now.strftime("%H:%M"),
-            "반이름": section_label,
-            "_domain_object_id": str(attendance.id),
-            "_source_domain": "attendance",
-            "_source_use_case": f"attendance.{trigger}",
-        }
-        if actor_id:
-            context["_actor_id"] = str(actor_id)
-
-        send_event_notification(
-            tenant=tenant,
-            trigger=trigger,
-            student=student,
-            send_to="parent",
-            context=context,
-        )
-    except Exception:
-        logger.exception(
-            "attendance notification failed: trigger=%s attendance_id=%s",
-            trigger, attendance.id,
-        )
 
 
 class AttendanceListPagination(PageNumberPagination):
@@ -355,31 +291,9 @@ class AttendanceViewSet(ModelViewSet):
             instance.refresh_from_db()
             return Response(AttendanceSerializer(instance).data)
 
-        # 일반 출결 상태 변경 (PRESENT, ABSENT 등)
-        old_status = instance.status
-        response = super().partial_update(request, *args, **kwargs)
-        instance.refresh_from_db()
-        new_status_actual = instance.status
-
-        # 상태가 실제로 변경된 경우에만 알림 발송
-        if old_status != new_status_actual:
-            tenant = getattr(request, "tenant", None)
-            trigger = None
-            if new_status_actual == "PRESENT":
-                trigger = "check_in_complete"
-            elif new_status_actual == "ABSENT":
-                trigger = "absent_occurred"
-
-            if trigger and tenant:
-                _att = instance
-                _t = tenant
-                _tr = trigger
-                _actor_id = getattr(request.user, "id", None)
-                transaction.on_commit(
-                    lambda: _send_attendance_notification(_t, _att, _tr, actor_id=_actor_id)
-                )
-
-        return response
+        # 일반 강의 출결 저장은 알림 발송과 분리한다. 입실/결석 안내는
+        # 전용 preview → confirm 수동 발송 경로에서만 요청할 수 있다.
+        return super().partial_update(request, *args, **kwargs)
 
     # =========================================================
     # 0-1️⃣ 전체 현장 출석 (세션 내 모든 출결을 PRESENT로 일괄 변경)
@@ -434,7 +348,7 @@ class AttendanceViewSet(ModelViewSet):
             )
 
         # 일반 강의 전체 출석은 행정 작업 — 알림톡 발송하지 않음.
-        # 입실/결석 알림은 클리닉 전용 기능.
+        # 입실/결석 안내는 출결 저장과 분리된 수동 preview → confirm 경로만 사용한다.
 
         return Response(
             {
@@ -568,8 +482,8 @@ class AttendanceViewSet(ModelViewSet):
             student_ids=student_ids,
         )
 
-        # 차시 학생 등록(bulk_create)은 행정 작업 — 입실(check_in_complete) 알림톡 발송 안 함.
-        # 실제 입실 알림은 partial_update(개별 출결 변경) 또는 bulk_set_present(전체 현장 출석)에서만 발송.
+        # 차시 학생 등록(bulk_create)은 행정 작업 — 입실 알림톡을 발송하지 않음.
+        # 일반 강의 입실/결석 안내는 별도 수동 preview → confirm 경로만 사용한다.
 
         return Response(
             AttendanceSerializer(created, many=True).data,

@@ -14,7 +14,6 @@ DB 의존 없이 mock 기반으로 핵심 로직을 검증.
 8. 반 등록 완료 / 퇴원 알림
 """
 
-from importlib import import_module
 from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
@@ -67,7 +66,6 @@ _SVC = "apps.domains.messaging.services"
 _QSV = "apps.domains.messaging.services.queue_service"
 _REG = "apps.domains.messaging.services.registration_service"
 _SQS = "apps.domains.messaging.sqs_queue"
-_ATT_VIEWS = "apps.domains.attendance.views"
 
 
 class _DispatchThroughQueueMixin:
@@ -1129,54 +1127,8 @@ class TestEnrollmentAndWithdrawalNotifications(_DispatchThroughQueueMixin, TestC
 
 
 # ──────────────────────────────────────────
-# 안전장치 테스트 — time guard, idempotency, recipient whitelist
+# 안전장치 테스트 — idempotency, recipient whitelist
 # ──────────────────────────────────────────
-
-class TestTimeGuard(TestCase):
-    """출결 알림톡 time guard: 오늘 세션만 발송."""
-
-    @patch(f"{_ATT_VIEWS}.send_event_notification")
-    def test_past_date_session_skipped(self, mock_send):
-        """과거 날짜 세션 출결 변경 시 알림톡 발송하지 않음."""
-        from datetime import date, timedelta
-        yesterday = date.today() - timedelta(days=1)
-
-        session = SimpleNamespace(date=yesterday, title="3차시", order=3)
-        session.lecture = SimpleNamespace(title="수학A", tenant_id=1)
-        enrollment = SimpleNamespace(student=_make_student())
-        att = SimpleNamespace(id=1, enrollment=enrollment, session=session)
-        tenant = _make_tenant()
-
-        attendance_views = import_module(_ATT_VIEWS)
-        attendance_views._send_attendance_notification(
-            tenant,
-            att,
-            "check_in_complete",
-        )
-
-        mock_send.assert_not_called()
-
-    @patch(f"{_ATT_VIEWS}.send_event_notification")
-    def test_today_session_sends(self, mock_send):
-        """오늘 날짜 세션 출결 변경 시 알림톡 정상 발송."""
-        from datetime import date
-        today = date.today()
-
-        session = SimpleNamespace(date=today, title="3차시", order=3)
-        session.lecture = SimpleNamespace(title="수학A", tenant_id=1)
-        enrollment = SimpleNamespace(student=_make_student())
-        att = SimpleNamespace(id=1, enrollment=enrollment, session=session)
-        tenant = _make_tenant()
-
-        attendance_views = import_module(_ATT_VIEWS)
-        attendance_views._send_attendance_notification(
-            tenant,
-            att,
-            "check_in_complete",
-        )
-
-        mock_send.assert_called_once()
-
 
 class TestIdempotencyMetadata(_DispatchThroughQueueMixin, TestCase):
     """send_event_notification이 멱등성 메타데이터를 enqueue_alimtalk에 전달."""
@@ -1408,14 +1360,14 @@ class TestDryRunMode(TestCase):
 
 
 class TestAttendanceNotificationHook(TestCase):
-    """일반 출결 상태 변경 시 현재 알림톡 훅이 유지되는지 확인."""
+    """일반 출결 저장이 자동 알림 훅과 분리되어 있는지 확인."""
 
-    @patch(f"{_ATT_VIEWS}.send_event_notification")
-    def test_partial_update_keeps_notification_hook(self, mock_send):
-        """partial_update는 PRESENT/ABSENT 전환 시 알림 훅을 유지한다."""
+    def test_partial_update_has_no_automatic_notification_hook(self):
+        """PRESENT/ABSENT 저장은 수동 preview→confirm 흐름을 우회하지 않는다."""
         from apps.domains.attendance import views as att_views
         import inspect
         source = inspect.getsource(att_views.AttendanceViewSet.partial_update)
-        self.assertIn("_send_attendance_notification", source)
-        self.assertIn("check_in_complete", source)
-        self.assertIn("absent_occurred", source)
+        self.assertNotIn("_send_attendance_notification", source)
+        self.assertNotIn("send_event_notification", source)
+        self.assertNotIn("check_in_complete", source)
+        self.assertNotIn("absent_occurred", source)

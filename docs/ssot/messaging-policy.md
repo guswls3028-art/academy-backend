@@ -1,4 +1,4 @@
-# 메시징/알림톡 운영 정책 SSOT (2026-08-23 갱신)
+# 메시징/알림톡 운영 정책 SSOT (2026-08-29 갱신)
 
 ## 정책 분류 체계
 
@@ -38,8 +38,8 @@
 | assignment_registered | 과제 등록 알림 | 학부모 | 선생이 수동 발송 |
 | assignment_due_hours_before | 과제 마감 N시간 전 | 학부모 | 스케줄러 미구현, `manual_only` |
 | withdrawal_complete | 퇴원 안내 | 학부모 | 선생이 수동 발송 |
-| check_in_complete | 일반 강의 입실 | 학부모 | 선생이 수동 발송 |
-| absent_occurred | 일반 강의 결석 | 학부모 | 선생이 수동 발송 |
+| check_in_complete | 일반 강의 입실 | 학부모 | 선생이 출결 알림 preview→confirm으로 수동 발송. 출결 상태 저장은 발송하지 않음 |
+| absent_occurred | 일반 강의 결석 | 학부모 | 선생이 출결 알림 preview→confirm으로 수동 발송. 출결 상태 저장은 발송하지 않음 |
 | monthly_report_generated | 월간 리포트 생성 | 학부모 | 선생이 수동 발송 |
 | exam_scheduled_days_before | 시험 D-N 리마인더 | 학부모 | 스케줄러 미구현, `manual_only` |
 | exam_start_minutes_before | 시험 시작 N분 전 | 학부모 | 스케줄러 미구현, `manual_only` |
@@ -64,6 +64,11 @@
 7. **비알림톡 입력 실패 폐쇄.** SMS/LMS와 알 수 없는 `message_mode`를 알림톡으로 보정하지 않는다. 신규 코드에는 SMS 발송·enqueue 호환 callable이나 `sms_allowed` capability를 만들지 않는다.
 8. **클리닉 하원과 학습 완료 분리.** `clinic_check_out`은 `checked_out_at`, `clinic_self_study_completed`는 `completed_at`을 소유한다. 하원 trigger는 exact 승인 템플릿이 준비되기 전 통합 봉투에 임의 매핑하거나 다른 클리닉 trigger로 대체하지 않는다.
 
+일반 강의의 개별·일괄 출결 상태 저장과 차시 명단 생성은 알림 발송과 분리한다.
+`PRESENT`/`ABSENT` 전환은 `check_in_complete`/`absent_occurred` outbox를 만들지
+않으며, 일반 강의 입실·결석 안내는 메시징 도메인의 출결 알림
+preview→confirm 경로에서 선생이 명시적으로 확인한 경우에만 생성한다.
+
 ## 공용 알림톡 정책
 
 - 모든 알림톡 큐 payload는 `OWNER_TENANT_ID` 공용 채널로 정규화한다.
@@ -82,7 +87,7 @@
 5. **check_recipient_allowed()** — `MESSAGING_RECIPIENT_DENYLIST`의 운영 차단번호를 우선 거부하고, 테스트 환경에서는 `MESSAGING_TEST_WHITELIST`로 추가 제한한다. API enqueue와 워커 소비 입구에서 검사하며 공용 Solapi 호출 직전에도 다시 검사한다.
 6. **NotificationPreviewToken** — preview→confirm 핸드셰이크 (1회용, 5분 TTL). confirm 성공 즉시 수신자/본문을 비우며, 1분 주기 `process_scheduled_notifications`가 만료 행을 회당 500건 정리한다. 수동 대량 정리는 `python manage.py purge_expired_notification_preview_tokens [--dry-run]`을 사용한다.
 7. **멱등성 키** — business_idempotency_key (trigger + student_id + 날짜)
-8. **Time Guard** — 과거 날짜 출결은 알림 차단
+8. **일반 강의 출결 수동 발송 경계** — 출결 상태 PATCH·일괄 출석·차시 명단 생성은 자동 outbox를 만들지 않는다. 입실·결석 안내는 `NotificationPreviewToken`을 사용하는 출결 알림 preview→confirm 경로만 허용한다.
 9. **계정 알림 event metadata** — `registration_approved_*`, `password_*` 발송은 큐 payload에 원 trigger를 `event_type`으로 싣는다. `NotificationLog.message_body` 보안 마스킹과 운영 추적은 이 값에 의존한다.
    신규 학생 계정 생성 시 초기 안내값은 암호화해 대기시키고, 첫 ACTIVE 수강 확정 후 계정 안내 outbox가 모두 확보되면 즉시 제거한다. 학생/학부모 계정 안내, 아이디 변경, 비밀번호 변경, 학생 전화번호 최초 등록은 SYSTEM_AUTO이며 legacy `send_welcome_message`/`skip_notify` 입력으로 끄지 않는다.
    `registration_approved_student|parent`의 첫 수강 계정 안내는 legacy `AutoSendConfig.enabled` 값으로 끌 수 없다. 공용 owner의 exact APPROVED 템플릿이 없을 때만 fail-closed하며, 학생과 학부모의 유효 수신번호가 다르면 각 계정 안내 outbox를 모두 확보해야 한다.
@@ -116,6 +121,7 @@
 - 잔액 충전/자동충전 뒤 audited recovery가 기존 이력을 보존하며 `sent`와 provider id까지 닫혔는지 확인한다. `ambiguous`는 접수 여부가 불명확하므로 자동 재발송하지 않고 공급자 대사 후 수동 조치한다.
 
 ## 변경 이력
+- 2026-08-29: 일반 강의 개별 출결 PATCH에 재유입된 입실·결석 자동 훅을 제거하고, 출결 알림 preview→confirm 수동 발송만 허용하는 회귀 계약을 복구
 - 2026-08-23: 참관 사본에서 계정 아이디·비밀번호·OTP를 포함할 수 있는 5개 계정 트리거를 fail-closed로 제외했다. durable trigger와 payload event type을 중앙 민감도 판정으로 함께 검사해 legacy mismatch도 차단하며, 기존 감사 로그와 outbox는 보존한다.
 - 2026-08-23: tenant membership으로 재검증되는 명시적 참관 수신자를 추가했다. 참관 사본은 원본과 분리된 outbox/provider 로그로 추적하며 동일 번호를 중복 발송하지 않는다.
 - 2026-08-23: API와 Messaging worker의 공용 Solapi 설정이 서로 같아도 공급자의 유일 ACTIVE sender와 다르면 발송 전 fail-closed하도록 운영 정합화 경계를 추가했다. sender-only 교정은 shared lock, 두 SSM exact 보존, API+Messaging 제한 refresh, HMAC runtime readback을 모두 통과해야 한다.
