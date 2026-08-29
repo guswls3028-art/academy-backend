@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 from typing import Any
 
 
@@ -137,6 +138,76 @@ def clinic_links_for_admin_targets(*, tenant, include_resolved: bool):
     if not include_resolved:
         links = links.filter(resolved_at__isnull=True)
     return links.filter(enrollment__status="ACTIVE")
+
+
+def linked_bookings_for_clinic_links(*, tenant, clinic_link_ids: list[int]):
+    """Project exact active participant-plan linkage for staff clinic targets.
+
+    SessionParticipantPlanItem is the authoritative join. Defensive tenant,
+    student, and enrollment checks fail closed if legacy/corrupt rows disagree.
+    The provenance-unknown participant ``memo`` is intentionally never read.
+    """
+    if not clinic_link_ids:
+        return {}
+
+    from apps.domains.clinic.models import SessionParticipantPlanItem
+    from django.db.models import F, Q
+
+    plan_items = (
+        SessionParticipantPlanItem.objects.filter(
+            clinic_link_id__in=clinic_link_ids,
+            removed_at__isnull=True,
+            clinic_link__tenant=tenant,
+            clinic_link__enrollment__tenant=tenant,
+            clinic_link__enrollment__student__tenant=tenant,
+            participant__tenant=tenant,
+            participant__session__isnull=False,
+            participant__session__tenant=tenant,
+            participant__student__tenant=tenant,
+            participant__student_id=F("clinic_link__enrollment__student_id"),
+        )
+        .filter(
+            Q(participant__enrollment_id__isnull=True)
+            | Q(participant__enrollment_id=F("clinic_link__enrollment_id"))
+        )
+        .select_related("participant__session")
+        .order_by(
+            "clinic_link_id",
+            "participant__session__date",
+            "participant__session__start_time",
+            "participant_id",
+            "id",
+        )
+    )
+
+    projected: dict[int, list[dict[str, Any]]] = {}
+    for plan_item in plan_items:
+        participant = plan_item.participant
+        session = participant.session
+        session_end = (
+            datetime.datetime.combine(session.date, session.start_time)
+            + datetime.timedelta(minutes=int(session.duration_minutes or 0))
+        ).time()
+        projected.setdefault(int(plan_item.clinic_link_id), []).append(
+            {
+                "plan_item_id": int(plan_item.id),
+                "participant_id": int(participant.id),
+                "session_id": int(session.id),
+                "session_date": session.date,
+                "session_start_time": session.start_time,
+                "session_end_time": session_end,
+                "location": session.location,
+                "participant_status": participant.status,
+                "preferred_start_time": participant.preferred_start_time,
+                "preferred_end_time": participant.preferred_end_time,
+                "student_request_memo": participant.student_request_memo,
+                "staff_memo": participant.staff_memo,
+                "linked_at": plan_item.created_at,
+                "linked_by_id": plan_item.selected_by_id,
+                "linkage_source": "participant_plan",
+            }
+        )
+    return projected
 
 
 def filter_links_by_section(links, *, tenant, section_id: int):

@@ -170,6 +170,19 @@ source-specific `ClinicLink`를 만든 뒤 `WAIVED`로 해소한다. 반복 요�
 `include_resolved=true`는 해소 이력을 함께 반환하며 기본 조회는 현재 미해결과
 판정 대기만 반환한다.
 
+관리자 대상 응답은 각 `ClinicLink`의 `resolution_evidence`, append-only
+`resolution_history`, `linked_bookings`를 함께 투영한다. `linked_bookings`는 활성
+`SessionParticipantPlanItem` FK만 권위 연결로 사용하며 이름·날짜·시험명으로
+참가자를 추정하지 않는다. 각 항목은 같은 tenant·같은 학생·일치하거나 비어 있는
+수강 관계를 다시 확인한 뒤 참가자/클리닉 세션 ID, 세션 날짜·시작·종료·장소,
+참가 상태, 학생 작성 `student_request_memo`, 교직원 `staff_memo`, 선택 provenance를
+반환한다. 작성 출처가 불명확한 legacy `SessionParticipant.memo`는 읽거나 반환하지
+않는다. tenant context가 없는 `GET /results/admin/clinic-targets/`는 빈 성공 대신
+`403 {"detail":"Tenant required","code":"TENANT_REQUIRED"}`로 실패 폐쇄한다.
+권한 없는 사용자도 403이며 GET은 링크·계획·해소 이력을 변경하지 않는다. 집중
+회귀는 `apps/domains/results/tests/test_admin_clinic_targets_contract.py`가 정확한
+연결만 포함하고 교차 tenant/corrupt 연결과 legacy memo를 제외하는지 함께 검증한다.
+
 클리닉 읽기 경계는 `ClinicLink.tenant`만 신뢰하지 않는다. 링크의 enrollment,
 student, enrollment lecture, session lecture가 모두 요청 tenant에 속해야 하며,
 다형 `source_type/source_id`가 현재 다른 tenant의 시험·과제를 가리키면 현재 목록과

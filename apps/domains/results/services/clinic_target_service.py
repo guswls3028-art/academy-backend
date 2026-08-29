@@ -27,6 +27,7 @@ from academy.adapters.db.django.repositories_clinic_targets import (
     first_homework_score,
     homework_cutline_settings_for_target,
     homework_scores_for_target,
+    linked_bookings_for_clinic_links,
     regular_exam_for_source,
     regular_homework_for_clinic_target,
 )
@@ -243,6 +244,10 @@ class ClinicTargetService:
             exam_ids=source_exam_ids,
             enrollment_ids=all_enrollment_ids,
         )
+        linked_bookings = linked_bookings_for_clinic_links(
+            tenant=tenant,
+            clinic_link_ids=[int(link.id) for link in links_list],
+        )
 
         # ✅ 클리닉 하이라이트 (미출석 대상자 노란 형광펜)
         from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
@@ -311,6 +316,9 @@ class ClinicTargetService:
                 "cycle_no": int(getattr(link, "cycle_no", 1) or 1),
                 "resolution_type": getattr(link, "resolution_type", None),
                 "resolved_at": getattr(link, "resolved_at", None),
+                "resolution_evidence": getattr(link, "resolution_evidence", None),
+                "resolution_history": list(getattr(link, "resolution_history", None) or []),
+                "linked_bookings": linked_bookings.get(int(link.id), []),
                 "student_name": student_name,
                 "session_title": _get_session_title(session),
                 "source_type": source_type,

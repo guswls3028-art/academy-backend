@@ -19,6 +19,212 @@
         ],
         "type": "string"
       },
+      "AdminClinicTarget": {
+        "properties": {
+          "attempt_history": {
+            "items": {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "clinic_link_id": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "clinic_reason": {
+            "description": "Assessment source category: exam, homework, or both.",
+            "nullable": true,
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "cutline_score": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "cycle_no": {
+            "default": 1,
+            "type": "integer"
+          },
+          "enrollment_id": {
+            "type": "integer"
+          },
+          "exam_id": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "exam_score": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "grade": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "homework_cutline": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "homework_cutline_mode": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/HomeworkCutlineModeEnum"
+              },
+              {
+                "$ref": "#/components/schemas/NullEnum"
+              }
+            ]
+          },
+          "homework_cutline_value": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "homework_round_unit_percent": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "homework_score": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "latest_attempt_index": {
+            "default": 1,
+            "type": "integer"
+          },
+          "lecture_chip_label": {
+            "nullable": true,
+            "type": "string"
+          },
+          "lecture_color": {
+            "nullable": true,
+            "type": "string"
+          },
+          "lecture_id": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "lecture_title": {
+            "nullable": true,
+            "type": "string"
+          },
+          "linked_bookings": {
+            "items": {
+              "$ref": "#/components/schemas/LinkedClinicBooking"
+            },
+            "type": "array"
+          },
+          "max_score": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "meta_status": {
+            "nullable": true,
+            "type": "string"
+          },
+          "name_highlight_clinic_target": {
+            "default": false,
+            "type": "boolean"
+          },
+          "parent_phone": {
+            "default": "",
+            "type": "string"
+          },
+          "profile_photo_url": {
+            "nullable": true,
+            "type": "string"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/AdminClinicTargetReasonEnum"
+          },
+          "resolution_evidence": {
+            "nullable": true
+          },
+          "resolution_history": {
+            "items": {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "resolution_type": {
+            "nullable": true,
+            "type": "string"
+          },
+          "resolved_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "school": {
+            "default": "",
+            "type": "string"
+          },
+          "session_id": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "session_title": {
+            "type": "string"
+          },
+          "source_id": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "source_scope": {
+            "nullable": true,
+            "type": "string"
+          },
+          "source_title": {
+            "nullable": true,
+            "type": "string"
+          },
+          "source_type": {
+            "nullable": true,
+            "type": "string"
+          },
+          "student_id": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "student_name": {
+            "type": "string"
+          },
+          "student_phone": {
+            "default": "",
+            "type": "string"
+          }
+        },
+        "required": [
+          "created_at",
+          "cutline_score",
+          "enrollment_id",
+          "exam_score",
+          "reason",
+          "session_title",
+          "student_name"
+        ],
+        "type": "object"
+      },
+      "AdminClinicTargetReasonEnum": {
+        "description": "* `score` - score\n* `confidence` - confidence\n* `missing` - missing",
+        "enum": [
+          "score",
+          "confidence",
+          "missing"
+        ],
+        "type": "string"
+      },
       "AdminExamResultRow": {
         "properties": {
           "achievement": {
@@ -578,7 +784,7 @@
             "nullable": true
           },
           "reason": {
-            "$ref": "#/components/schemas/ReasonEnum"
+            "$ref": "#/components/schemas/ClinicLinkReasonEnum"
           },
           "resolution_evidence": {
             "description": "해소 근거: {exam_id, attempt_id, homework_id, score, ...}",
@@ -634,6 +840,16 @@
         ],
         "type": "object"
       },
+      "ClinicLinkReasonEnum": {
+        "description": "* `AUTO_FAILED` - 자동(차시 미통과)\n* `AUTO_RISK` - 자동(위험 알림)\n* `MANUAL_REQUEST` - 수동(학생/학부모 요청)\n* `TEACHER_RECOMMEND` - 강사 추천",
+        "enum": [
+          "AUTO_FAILED",
+          "AUTO_RISK",
+          "MANUAL_REQUEST",
+          "TEACHER_RECOMMEND"
+        ],
+        "type": "string"
+      },
       "ClinicLinkRequest": {
         "properties": {
           "approved": {
@@ -657,7 +873,7 @@
             "nullable": true
           },
           "reason": {
-            "$ref": "#/components/schemas/ReasonEnum"
+            "$ref": "#/components/schemas/ClinicLinkReasonEnum"
           },
           "resolution_evidence": {
             "description": "해소 근거: {exam_id, attempt_id, homework_id, score, ...}",
@@ -3195,7 +3411,7 @@
         "type": "object"
       },
       "HomeworkCutlineModeEnum": {
-        "description": "* `PERCENT` - 퍼센트 (%)\n* `COUNT` - 점수",
+        "description": "* `PERCENT` - PERCENT\n* `COUNT` - COUNT",
         "enum": [
           "PERCENT",
           "COUNT"
@@ -4634,6 +4850,89 @@
           "SESSION"
         ],
         "type": "string"
+      },
+      "LinkageSourceEnum": {
+        "description": "* `participant_plan` - participant_plan",
+        "enum": [
+          "participant_plan"
+        ],
+        "type": "string"
+      },
+      "LinkedClinicBooking": {
+        "properties": {
+          "linkage_source": {
+            "$ref": "#/components/schemas/LinkageSourceEnum"
+          },
+          "linked_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "linked_by_id": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "location": {
+            "type": "string"
+          },
+          "participant_id": {
+            "type": "integer"
+          },
+          "participant_status": {
+            "$ref": "#/components/schemas/ParticipantStatusEnum"
+          },
+          "plan_item_id": {
+            "type": "integer"
+          },
+          "preferred_end_time": {
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
+          "preferred_start_time": {
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
+          "session_date": {
+            "format": "date",
+            "type": "string"
+          },
+          "session_end_time": {
+            "format": "time",
+            "type": "string"
+          },
+          "session_id": {
+            "type": "integer"
+          },
+          "session_start_time": {
+            "format": "time",
+            "type": "string"
+          },
+          "staff_memo": {
+            "type": "string"
+          },
+          "student_request_memo": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "linkage_source",
+          "linked_at",
+          "linked_by_id",
+          "location",
+          "participant_id",
+          "participant_status",
+          "plan_item_id",
+          "preferred_end_time",
+          "preferred_start_time",
+          "session_date",
+          "session_end_time",
+          "session_id",
+          "session_start_time",
+          "staff_memo",
+          "student_request_memo"
+        ],
+        "type": "object"
       },
       "LockReasonEnum": {
         "description": "* `GRADING` - 채점중\n* `PUBLISHED` - 게시됨\n* `MANUAL` - 수동잠금\n* `OTHER` - 기타",
@@ -6685,6 +6984,18 @@
         ],
         "type": "string"
       },
+      "ParticipantStatusEnum": {
+        "description": "* `pending` - pending\n* `booked` - booked\n* `attended` - attended\n* `no_show` - no_show\n* `cancelled` - cancelled\n* `rejected` - rejected",
+        "enum": [
+          "pending",
+          "booked",
+          "attended",
+          "no_show",
+          "cancelled",
+          "rejected"
+        ],
+        "type": "string"
+      },
       "PatchedAnswerKeyRequest": {
         "properties": {
           "answers": {
@@ -6745,7 +7056,7 @@
             "nullable": true
           },
           "reason": {
-            "$ref": "#/components/schemas/ReasonEnum"
+            "$ref": "#/components/schemas/ClinicLinkReasonEnum"
           },
           "resolution_evidence": {
             "description": "해소 근거: {exam_id, attempt_id, homework_id, score, ...}",
@@ -10434,16 +10745,6 @@
           "number"
         ],
         "type": "object"
-      },
-      "ReasonEnum": {
-        "description": "* `AUTO_FAILED` - 자동(차시 미통과)\n* `AUTO_RISK` - 자동(위험 알림)\n* `MANUAL_REQUEST` - 수동(학생/학부모 요청)\n* `TEACHER_RECOMMEND` - 강사 추천",
-        "enum": [
-          "AUTO_FAILED",
-          "AUTO_RISK",
-          "MANUAL_REQUEST",
-          "TEACHER_RECOMMEND"
-        ],
-        "type": "string"
       },
       "RecordPaymentPaymentMethodEnum": {
         "description": "* `CARD` - CARD\n* `BANK_TRANSFER` - BANK_TRANSFER\n* `CASH` - CASH\n* `OTHER` - OTHER",
@@ -37936,10 +38237,23 @@
     },
     "/api/v1/results/admin/clinic-targets/": {
       "get": {
-        "operationId": "results_admin_clinic_targets_retrieve",
+        "operationId": "results_admin_clinic_targets_list",
         "responses": {
           "200": {
-            "description": "No response body"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AdminClinicTarget"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "description": "Tenant or role denied"
           }
         },
         "security": [
