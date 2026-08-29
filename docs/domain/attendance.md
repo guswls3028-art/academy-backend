@@ -23,6 +23,22 @@
 상태 필터는 동일한 테넌트 범위 안에서 정렬과 함께 적용된다. 수정·삭제 요청의
 행 잠금 쿼리에는 목록 정렬을 적용하지 않는다.
 
+## 강의 명단 Excel 다운로드
+
+강의 수강생 화면의 `엑셀 다운로드`는
+`POST /api/v1/lectures/attendance/excel/`로 현재 테넌트와 강의를 검증한 뒤,
+Tools worker가 요청 시점의 명단·차시·출결을 새 `.xlsx` 스냅샷으로 만든다.
+완료 작업의 `result.download_url`은 1시간 동안만 유효하다. 따라서 다운로드를
+다시 누르면 과거 완료 작업이나 만료 URL을 재사용하지 않고 새 작업과 새 URL을
+발급해야 한다.
+
+R2 서명 URL은 `Content-Disposition: attachment`와 RFC 5987 UTF-8 파일명,
+XLSX MIME(`application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`)을
+응답 오버라이드로 포함한다. 교차 출처 링크의 `download` 속성을 무시하는 iOS
+Safari에서도 XML 응답 화면으로 이동하지 않고 파일 다운로드로 처리하기 위한
+서버 계약이다. 작업 실패, 만료 링크, 또는 결과 URL 누락은 성공 파일로 취급하지
+않으며 클라이언트는 실패로 표시한다.
+
 ## 권한과 실패 경계
 
 - 인증된 현재 테넌트 교직원만 목록을 조회할 수 있다.
@@ -35,9 +51,14 @@
 
 ```powershell
 python -m pytest apps/domains/attendance/tests/test_attendance_list_ordering.py
+python -m pytest apps/domains/attendance/tests/test_attendance_excel_export.py
 python -m ruff check apps/domains/attendance/views.py `
-  apps/domains/attendance/tests/test_attendance_list_ordering.py
+  apps/domains/attendance/tests/test_attendance_list_ordering.py `
+  apps/domains/attendance/tests/test_attendance_excel_export.py `
+  apps/infrastructure/storage/r2.py `
+  academy/application/use_cases/ai/pipelines/excel_export_handler.py
 ```
 
 핵심 회귀는 테넌트 격리, 페이지네이션 이전 전체 이름순, 상태 운영 순서,
-오름·내림차순, 잘못된 정렬값의 안전한 기본값 복구다.
+오름·내림차순, 잘못된 정렬값의 안전한 기본값 복구와 반복 다운로드의 새 작업,
+실제 XLSX 파싱, iOS 안전 다운로드 헤더다.
