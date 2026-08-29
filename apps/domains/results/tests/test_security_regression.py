@@ -16,6 +16,7 @@ from datetime import timedelta
 from unittest.mock import patch
 
 from django.core.management import call_command
+from django.db.models import Max
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from django.utils import timezone
@@ -58,8 +59,14 @@ def _make_tenant():
     return Tenant.objects.create(name="ResultsSecAcademy", code="ressec", is_active=True)
 
 
-def _make_student(tenant, ps_number, name="학생", forced_user_id=None):
-    """일반 학생 생성. forced_user_id가 주어지면 User.id를 명시적으로 지정 (PK 충돌 시뮬용)."""
+def _make_student(
+    tenant,
+    ps_number,
+    name="학생",
+    forced_user_id=None,
+    forced_student_id=None,
+):
+    """일반 학생 생성. 명시 PK는 User↔Student 충돌 회귀에서만 사용한다."""
     internal = user_internal_username(tenant, ps_number)
     user_kwargs = dict(
         username=internal, password="test1234",
@@ -73,12 +80,17 @@ def _make_student(tenant, ps_number, name="학생", forced_user_id=None):
     else:
         user = User.objects.create_user(**user_kwargs)
 
-    student = Student.objects.create(
+    student_kwargs = dict(
         tenant=tenant, user=user,
         ps_number=ps_number, name=name,
         omr_code=ps_number[:8].rjust(8, "0"),
         parent_phone=f"010-3333-{ps_number[-4:]:>04}",
     )
+    if forced_student_id is not None:
+        student = Student(id=forced_student_id, **student_kwargs)
+        student.save(force_insert=True)
+    else:
+        student = Student.objects.create(**student_kwargs)
     TenantMembership.ensure_active(tenant=tenant, user=user, role="student")
     return user, student
 
@@ -93,10 +105,17 @@ class _Mixin:
             tenant=self.tenant, title="L", name="L", subject="MATH",
         )
 
-        # 학생 A — User.id 를 일부러 큰 값(900)으로 강제해 user_b가 끼어들 자리를 만든다.
-        # student_a.id 는 auto sequence라 1이 된다.
+        # 전체 테스트 순서와 무관한 빈 PK를 고른 뒤 Student A에 부여한다.
+        # 고정 PK(예: 900)는 다른 테스트가 sequence로 이미 소비할 수 있으므로 금지한다.
+        collision_id = max(
+            User.objects.aggregate(max_id=Max("id"))["max_id"] or 0,
+            Student.objects.aggregate(max_id=Max("id"))["max_id"] or 0,
+        ) + 10_000
         self.user_a, self.student_a = _make_student(
-            self.tenant, "A001", "학생A", forced_user_id=900,
+            self.tenant,
+            "A001",
+            "학생A",
+            forced_student_id=collision_id,
         )
         self.enroll_a = Enrollment.objects.create(
             tenant=self.tenant, student=self.student_a,
