@@ -31,6 +31,10 @@ from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight
 from apps.domains.results.utils.ranking import compute_exam_rankings
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement_bulk
 from apps.domains.results.utils.exam_absence import current_exam_absence_counts
+from apps.domains.results.utils.initial_exam_score import (
+    load_initial_exam_scores,
+    project_initial_exam_score,
+)
 from apps.support.results.admin_student_grades_dependencies import (
     primary_session_metadata_by_exam_and_lecture,
 )
@@ -136,6 +140,19 @@ class AdminExamResultsView(ListAPIView):
 
         queryset = self.get_queryset()
         results = list(queryset)
+        initial_scores = load_initial_exam_scores(
+            exam_ids=[exam_id],
+            enrollment_ids=[result.enrollment_id for result in results],
+        )
+        projected_scores = {
+            int(result.enrollment_id): project_initial_exam_score(
+                state=initial_scores.get((exam_id, int(result.enrollment_id))),
+                fallback_score=result.total_score,
+                fallback_max_score=result.max_score,
+                fallback_recorded_at=result.submitted_at or result.created_at,
+            )
+            for result in results
+        }
 
         # -------------------------------------------------
         # enrollment_id → student_name (Enrollment 단일 진실)
@@ -206,6 +223,11 @@ class AdminExamResultsView(ListAPIView):
 
         # Result.attempt_id fallback (현재 페이지 결과만)
         attempt_ids = [r.attempt_id for r in results if getattr(r, "attempt_id", None)]
+        attempt_ids.extend(
+            state.attempt_id
+            for state in initial_scores.values()
+            if state.attempt_id is not None
+        )
         attempt_map = {
             a.id: a
             for a in ExamAttempt.objects.filter(id__in=attempt_ids, exam_id=exam_id)
@@ -224,6 +246,22 @@ class AdminExamResultsView(ListAPIView):
                     "attempt_id": int(a.id),
                     "submission_id": int(a.submission_id) if a.submission_id is not None else 0,
                 }
+
+        # 기본 성적 행의 제출/처리 상태도 2차+ 최신 제출이 아니라 1차 시도를 따른다.
+        for (state_exam_id, enrollment_id), state in initial_scores.items():
+            if state_exam_id != exam_id or state.attempt_id is None:
+                continue
+            attempt = attempt_map.get(int(state.attempt_id))
+            if attempt is None:
+                continue
+            latest_map[int(enrollment_id)] = {
+                "attempt_id": int(attempt.id),
+                "submission_id": (
+                    int(attempt.submission_id)
+                    if attempt.submission_id is not None
+                    else 0
+                ),
+            }
 
         # Submission.status (현재 페이지에서 참조하는 submission만)
         submission_ids = [
@@ -261,7 +299,7 @@ class AdminExamResultsView(ListAPIView):
             achievement_items.append({
                 "enrollment_id": int(r.enrollment_id),
                 "exam_id": exam_id,
-                "total_score": float(r.total_score) if r.total_score is not None else None,
+                "total_score": projected_scores[int(r.enrollment_id)].total_score,
                 "pass_score": pass_score,
                 "attempt_id": getattr(r, "attempt_id", None),
                 "session": session,
@@ -298,12 +336,9 @@ class AdminExamResultsView(ListAPIView):
             #    관리자 목록과 학생 상세 뷰의 드리프트를 구조적으로 차단.
             # 미응시·미채점 케이스에서 0 coerce 금지 — None 그대로 유지해
             # achievement 판정과 화면 표시가 모순되지 않도록.
-            raw_total_score = (
-                float(r.total_score) if r.total_score is not None else None
-            )
-            raw_max_score = (
-                float(r.max_score) if r.max_score is not None else None
-            )
+            initial_score = projected_scores[enrollment_id]
+            raw_total_score = initial_score.total_score
+            raw_max_score = initial_score.max_score
             achievement_data = achievement_map[(enrollment_id, exam_id)]
             visible_total_score = (
                 None
@@ -379,7 +414,7 @@ class AdminExamResultsView(ListAPIView):
                 "is_provisional": achievement_data["is_provisional"],
                 "meta_status": achievement_data["meta_status"],
 
-                "submitted_at": r.submitted_at,
+                "submitted_at": initial_score.recorded_at,
 
                 "submission_id": submission_id,
                 "submission_status": submission_status,

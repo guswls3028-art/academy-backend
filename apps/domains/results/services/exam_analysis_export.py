@@ -13,11 +13,16 @@ from openpyxl.formatting.rule import ColorScaleRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
+from apps.domains.results.models import ExamAttempt, ResultFact
 from apps.domains.results.services.exam_result_excel_import import (
     ExamResultWorkbookError,
 )
 from apps.domains.results.services.question_stats_service import QuestionStatsService
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement_bulk
+from apps.domains.results.utils.initial_exam_score import (
+    load_initial_exam_scores,
+    project_initial_exam_score,
+)
 from apps.domains.results.utils.ranking import compute_exam_rankings
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
@@ -246,6 +251,51 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
         .prefetch_related("items")
     )
     result_by_id = {int(result.enrollment_id): result for result in results}
+    initial_states = load_initial_exam_scores(
+        exam_ids=[int(exam.id)],
+        enrollment_ids=candidate_by_id,
+    )
+    initial_scores = {
+        int(result.enrollment_id): project_initial_exam_score(
+            state=initial_states.get((int(exam.id), int(result.enrollment_id))),
+            fallback_score=result.total_score,
+            fallback_max_score=result.max_score,
+            fallback_recorded_at=result.submitted_at or result.created_at,
+        )
+        for result in results
+    }
+    initial_attempt_ids = {
+        int(state.attempt_id)
+        for state in initial_states.values()
+        if state.attempt_id is not None
+    }
+    initial_attempts = {
+        int(attempt.id): attempt
+        for attempt in ExamAttempt.objects.filter(id__in=initial_attempt_ids).only(
+            "id", "status", "meta",
+        )
+    }
+    fact_items_by_enrollment: dict[int, dict[int, Any]] = {}
+    for fact in ResultFact.objects.filter(
+        attempt_id__in=initial_attempt_ids,
+        enrollment_id__in=candidate_by_id,
+    ).order_by("-id"):
+        fact_items_by_enrollment.setdefault(int(fact.enrollment_id), {}).setdefault(
+            int(fact.question_id),
+            fact,
+        )
+
+    def initial_items(result: Any | None) -> list[Any]:
+        if result is None:
+            return []
+        enrollment_id = int(result.enrollment_id)
+        state = initial_states.get((int(exam.id), enrollment_id))
+        if state is None:
+            return list(result.items.all()) if result.attempt_id is None else []
+        if result.attempt_id == state.attempt_id:
+            return list(result.items.all())
+        return list(fact_items_by_enrollment.get(enrollment_id, {}).values())
+
     rankings = compute_exam_rankings(exam_id=int(exam.id), tenant=tenant)
     session = get_primary_session_for_exam(int(exam.id))
     pass_score = float(exam.pass_score or 0.0)
@@ -255,13 +305,9 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
             {
                 "enrollment_id": int(result.enrollment_id),
                 "exam_id": int(exam.id),
-                "total_score": (
-                    float(result.total_score)
-                    if result.total_score is not None
-                    else None
-                ),
+                "total_score": initial_scores[int(result.enrollment_id)].total_score,
                 "pass_score": pass_score,
-                "attempt_id": getattr(result, "attempt_id", None),
+                "attempt_id": initial_scores[int(result.enrollment_id)].attempt_id,
                 "session": session,
             }
             for result in results
@@ -278,7 +324,10 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
         )
         if achievement.get("meta_status") == "NOT_SUBMITTED":
             return "NOT_SUBMITTED"
-        attempt = getattr(result, "attempt", None)
+        initial_score = initial_scores[int(result.enrollment_id)]
+        attempt = initial_attempts.get(int(initial_score.attempt_id or 0))
+        if attempt is None and initial_score.attempt_id is None:
+            attempt = getattr(result, "attempt", None)
         attempt_status = str(getattr(attempt, "status", "") or "").lower()
         if attempt_status in {"pending", "grading"}:
             return "PROCESSING"
@@ -297,20 +346,21 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
         return (
             float(ranking_score)
             if ranking_score is not None
-            else float(result.total_score or 0.0)
+            else float(initial_scores[int(result.enrollment_id)].total_score or 0.0)
         )
 
     scored_results = [result for result in results if is_scored(result)]
     scores = [analysis_score(result) for result in scored_results]
     scored_attempt_ids = [
-        int(result.attempt_id)
+        int(initial_scores[int(result.enrollment_id)].attempt_id)
         for result in scored_results
-        if getattr(result, "attempt_id", None) is not None
+        if initial_scores[int(result.enrollment_id)].attempt_id is not None
     ]
     legacy_scored_enrollment_ids = [
         int(result.enrollment_id)
         for result in scored_results
-        if getattr(result, "attempt_id", None) is None
+        if initial_states.get((int(exam.id), int(result.enrollment_id))) is None
+        and getattr(result, "attempt_id", None) is None
     ]
     question_stats = QuestionStatsService.per_question_stats(
         exam_id=int(exam.id),
@@ -544,8 +594,12 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
         scored = analysis_status == "DONE"
         rank_info = rankings.get(enrollment_id, {}) if scored else {}
         score = analysis_score(result) if scored else None
-        result_max = float(result.max_score or max_score) if result is not None else max_score
-        items = list(result.items.all()) if result is not None else []
+        result_max = (
+            float(initial_scores[enrollment_id].max_score or max_score)
+            if result is not None
+            else max_score
+        )
+        items = initial_items(result)
         wrong_numbers = sorted(
             question_by_id[int(item.question_id)].number
             for item in items
@@ -581,7 +635,11 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
             verdict,
             status,
             ", ".join(str(number) for number in wrong_numbers),
-            timezone.localtime(result.updated_at).strftime("%Y-%m-%d %H:%M") if result is not None else "",
+            (
+                timezone.localtime(initial_scores[enrollment_id].recorded_at).strftime("%Y-%m-%d %H:%M")
+                if result is not None and initial_scores[enrollment_id].recorded_at is not None
+                else ""
+            ),
         ]
         sort_key = (
             rank_info.get("rank") is None,
@@ -615,7 +673,7 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
     _set_title(
         answers_sheet,
         f"{exam.title} · 학생별 답안",
-        "현재 대표 결과 기준입니다. 빨강은 오답, 초록은 정답이며 미입력은 채점 기록이 없는 문항입니다.",
+        "1차 결과 기준입니다. 빨강은 오답, 초록은 정답이며 미입력은 복원 가능한 1차 채점 기록이 없는 문항입니다.",
         last_column=answer_last_column,
     )
     answer_headers = ["등수", "학교", "이름", "강의", "1차 점수", "만점", "판정"] + [
@@ -625,8 +683,8 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
     for offset, (_, enrollment_id, ranked_values) in enumerate(ranked_rows, start=1):
         result = result_by_id.get(enrollment_id)
         item_by_question = {
-            int(item.question_id): item for item in result.items.all()
-        } if result is not None else {}
+            int(item.question_id): item for item in initial_items(result)
+        }
         base_values = ranked_values[:6] + [ranked_values[9]]
         for column, value in enumerate(base_values, start=1):
             answers_sheet.cell(5 + offset, column, value)

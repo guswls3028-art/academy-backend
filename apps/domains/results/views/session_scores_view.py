@@ -659,6 +659,7 @@ class SessionScoresView(APIView):
 
         # Exam: 차수별 이력(알림톡/드로어 공통) + 성취(1차/최종 통과 분리)
         exam_attempts_by_key: Dict[tuple[int, int], List[Dict[str, Any]]] = {}
+        initial_attempt_id_by_key: Dict[tuple[int, int], int] = {}
         if exam_ids and enrollment_ids:
             for attempt in (
                 ExamAttempt.objects
@@ -667,6 +668,8 @@ class SessionScoresView(APIView):
             ):
                 exid = int(attempt.exam_id)
                 eid = int(attempt.enrollment_id)
+                if int(attempt.attempt_index) == 1:
+                    initial_attempt_id_by_key[(exid, eid)] = int(attempt.id)
                 result = result_map.get(exid, {}).get(eid)
                 exam_attempts_by_key.setdefault((exid, eid), []).append(
                     _build_exam_attempt_summary(
@@ -683,6 +686,7 @@ class SessionScoresView(APIView):
                 if (eid, exid) not in exam_enrolled_set:
                     continue
                 r = result_map.get(exid, {}).get(eid)
+                representative_is_initial = False
                 achievement_items.append({
                     "enrollment_id": eid,
                     "exam_id": exid,
@@ -774,10 +778,51 @@ class SessionScoresView(APIView):
                     locked = attempt_status.lower() == "grading" if attempt_status else False
                     pass_score = exam_pass_score_map.get(exid, 0.0)
 
-                    # ✅ 미응시 감지
+                    attempt_summaries = exam_attempts_by_key.get((exid, eid), [])
+                    initial_attempt = next(
+                        (
+                            attempt
+                            for attempt in attempt_summaries
+                            if int(attempt.get("attempt_index") or 0) == 1
+                        ),
+                        None,
+                    )
+                    initial_attempt_id = initial_attempt_id_by_key.get((exid, eid))
+                    representative_is_initial = bool(
+                        (
+                            initial_attempt_id is not None
+                            and r.attempt_id
+                            and initial_attempt_id == int(r.attempt_id)
+                        )
+                        or (initial_attempt_id is None and r.attempt_id is None)
+                    )
+                    initial_score = (
+                        float(r.total_score or 0.0)
+                        if representative_is_initial
+                        else (
+                            initial_attempt.get("score")
+                            if initial_attempt is not None
+                            else float(r.total_score or 0.0)
+                        )
+                    )
+                    initial_max_score = (
+                        float(r.max_score or 0.0)
+                        if representative_is_initial
+                        else (
+                            initial_attempt.get("max_score")
+                            if initial_attempt is not None
+                            else float(r.max_score or 0.0)
+                        )
+                    )
+
+                    # ✅ 미응시 감지: 대표 재시험이 아니라 1차 상태가 기본 성적을 소유한다.
                     _meta_status = (
-                        attempt_meta_status_map.get(int(r.attempt_id))
-                        if r.attempt_id is not None else None
+                        initial_attempt.get("meta_status")
+                        if initial_attempt is not None
+                        else (
+                            attempt_meta_status_map.get(int(r.attempt_id))
+                            if r.attempt_id is not None else None
+                        )
                     )
                     is_not_submitted = (_meta_status == "NOT_SUBMITTED")
 
@@ -785,20 +830,25 @@ class SessionScoresView(APIView):
                     if is_not_submitted:
                         passed = None
                     elif pass_score > 0:
-                        passed = bool(float(r.total_score or 0.0) >= float(pass_score))
+                        passed = bool(float(initial_score or 0.0) >= float(pass_score))
                     else:
                         passed = None
 
                     items_list = list(r.items.all()) if hasattr(r, "items") else []
-                    objective_val = float(getattr(r, "objective_score", 0.0) or 0.0)
-                    subjective_val = max(
-                        0.0,
-                        float(r.total_score or 0.0) - objective_val,
+                    objective_val = (
+                        float(getattr(r, "objective_score", 0.0) or 0.0)
+                        if representative_is_initial
+                        else None
+                    )
+                    subjective_val = (
+                        max(0.0, float(initial_score or 0.0) - objective_val)
+                        if objective_val is not None
+                        else None
                     )
 
                     block = {
-                        "score": None if is_not_submitted else float(r.total_score or 0.0),
-                        "max_score": float(r.max_score or 0.0),
+                        "score": None if is_not_submitted else float(initial_score or 0.0),
+                        "max_score": float(initial_max_score or 0.0),
                         "passed": passed,
                         "clinic_required": clinic_required,
                         "is_locked": locked,
@@ -837,7 +887,7 @@ class SessionScoresView(APIView):
                 )
 
                 items_payload: List[Dict[str, Any]] = []
-                if r is not None and hasattr(r, "items"):
+                if r is not None and representative_is_initial and hasattr(r, "items"):
                     score_shape = score_shape_by_exam.get(int(exid))
                     for ri in items_list:
                         item_payload = {

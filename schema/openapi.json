@@ -38372,7 +38372,7 @@
     },
     "/api/v1/results/admin/exams/{exam_id}/questions/": {
       "get": {
-        "description": "GET /api/v1/results/admin/exams/{exam_id}/questions/\n\n✅ 단일 진실:\n- ResultFact 기반 (append-only)\n- 대표 attempt 교체/재시험 여부와 무관하게 항상 일관된 통계",
+        "description": "GET /api/v1/results/admin/exams/{exam_id}/questions/\n\n✅ 단일 진실:\n- ResultFact 기반 (append-only)\n- 대표 attempt 교체/재시험 여부와 무관하게 1차 문항 통계",
         "operationId": "results_admin_exams_questions_retrieve",
         "parameters": [
           {

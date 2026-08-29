@@ -167,6 +167,52 @@ class MyGradesSummaryHomeworkTests(TestCase):
         })
         self.assertTrue(all("recorded_at" in row for row in response.data["exam_trend"]))
 
+    def test_retake_score_stays_supplemental_to_initial_student_report_score(self):
+        result = self._score_exam(
+            title="재시험 분리 시험",
+            order=1,
+            score=100,
+            max_score=100,
+        )
+        exam = self.Exam.objects.get(id=result.target_id)
+        self.ExamEnrollment.objects.create(exam=exam, enrollment=self.enrollment)
+        self.ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=self.enrollment,
+            attempt_index=1,
+            is_representative=False,
+            status="done",
+            meta={
+                "initial_snapshot": {
+                    "total_score": 25.0,
+                    "max_score": 100.0,
+                    "source": "test",
+                },
+                "total_score": 25.0,
+                "max_score": 100.0,
+            },
+        )
+        retake = self.ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=self.enrollment,
+            attempt_index=2,
+            is_retake=True,
+            is_representative=True,
+            status="done",
+            meta={"total_score": 100.0, "max_score": 100.0},
+        )
+        result.attempt = retake
+        result.save(update_fields=["attempt", "updated_at"])
+
+        response = self._call()
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["exams"][0]["total_score"], 25.0)
+        self.assertEqual(response.data["exams"][0]["is_pass"], False)
+        self.assertEqual(response.data["exams"][0]["retake_count"], 2)
+        self.assertEqual(response.data["exam_trend"][0]["score"], 25.0)
+        self.assertEqual(response.data["exam_summary"]["average_score_pct"], 25.0)
+
     def test_student_summary_lists_active_lectures_before_they_have_scores(self):
         self.lecture.color = "#2563eb"
         self.lecture.chip_label = "수"

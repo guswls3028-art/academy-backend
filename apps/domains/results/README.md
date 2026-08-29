@@ -199,6 +199,18 @@ Session Assessment Inspection
   `ClinicLink`를 사유·사용자·source fingerprint가 있는 `MANUAL_OVERRIDE`로 해소한다.
   따라서 25점 시험과 점수 없는 과제도 원자료 그대로 재시험/자동 Clinic 대상에서
   제외된다. 해제는 같은 링크를 미해소로 돌려 현재 원자료로 재평가한다.
+- 시험의 기본 성적은 `ExamAttempt(attempt_index=1)`에 보존된
+  `meta.initial_snapshot`이다. 2차 이상 재시험이 대표 `Result`를 갱신해도 차시 성적표,
+  학생·학부모 성적표와 상세, 관리자 학생 상담, 시험/차시/강의 요약 및 운영 분석은
+  1차 점수·만점·미응시 상태를 사용한다. 재시험 점수는 같은 원시험의 `attempts` 보충
+  이력과 최종 보완 성취에만 사용하며 1차 평균·석차·추이·합불을 덮어쓰지 않는다.
+- 2차 이상 시도가 최신 `ResultItem`을 덮어 1차 문항 상세를 확실히 복원할 수 없으면,
+  1차 원점수 옆에 재시험 문항을 섞지 않고 문항 상세를 비운다. 재시험 점수와 차수는
+  `ExamAttempt` 이력에서 별도로 표시한다.
+- 첫 시도 스냅샷이 없는 모델 도입 전 데이터는 현재 `Result`로 실패 폐쇄 호환한다.
+  별도 `Exam`으로 이미 만든 과거 재시험은 원시험과 안전하게 연결할 식별자가 없으므로
+  자동 합치거나 삭제하지 않고 독립 시험 기록으로 유지한다. 이후 운영은 원시험의
+  재시험 이력을 사용한다.
 - 완료 저장은 2자 이상의 사유와 `expected_updated_at`을 요구한다. 다른 탭이 먼저
   저장한 경우 `409 ASSESSMENT_CORRECTION_CONFLICT`와 최신 시각을 반환하며, 일반
   학생·학부모와 다른 tenant/roster/source는 실패 폐쇄한다. `EXAM_PASS`와
@@ -247,6 +259,8 @@ Aggregation
 `apps/support/results/enterprise_analytics.py`다.
 이 서비스는 `Result`, `ResultFact`, `ResultItem`, `Submission`을 함께 읽어
 성적 분포, 기간별 추이, 수동 성적 입력, 자동채점 사용량을 tenant scope 안에서 집계한다.
+성적 분포·평균·합격률과 월별 점수 추이는 1차 점수 projection을 사용하고, 2차 이상
+재시험은 시도/보완 이력으로만 남긴다.
 `[E2E-*]`, `LOCAL-DEMO`, `DEMO-*` 구조화 prefix로 식별되는 합성 시험은 기본 분석에서 제외한다.
 `주간 테스트`, `Level Test`처럼 실제 운영에서 쓰는 일반 시험명은 분석에 포함한다.
 노출 엔드포인트는 교사용 `GET /results/admin/analytics/`,

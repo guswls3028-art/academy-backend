@@ -11,6 +11,10 @@ from django.db.models.functions import Coalesce
 
 from apps.domains.results.models import ExamAttempt, Result
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement_bulk
+from apps.domains.results.utils.initial_exam_score import (
+    load_initial_exam_scores,
+    project_initial_exam_score,
+)
 from apps.support.results.admin_student_grades_dependencies import (
     enrollment_lecture_metadata_by_id,
     exam_metadata_by_id,
@@ -149,6 +153,10 @@ def build_student_exam_history(
         )
     )
     exam_ids = list({row["target_id"] for row in results})
+    initial_scores = load_initial_exam_scores(
+        exam_ids=exam_ids,
+        enrollment_ids=enrollment_ids,
+    )
     exams_map = exam_metadata_by_id(tenant=tenant, exam_ids=exam_ids) if exam_ids else {}
 
     retake_counts: dict[tuple[int, int], int] = {}
@@ -203,7 +211,15 @@ def build_student_exam_history(
         ) or {}
         if session_meta.get("lecture_is_system"):
             continue
-        if not is_json_safe_number(result.get("total_score")) or not is_json_safe_number(result.get("max_score")):
+        initial_score = project_initial_exam_score(
+            state=initial_scores.get((int(exam_id), int(result["enrollment_id"]))),
+            fallback_score=result.get("total_score"),
+            fallback_max_score=result.get("max_score"),
+        )
+        if (
+            initial_score.total_score is None
+            and not initial_score.not_submitted
+        ) or not is_json_safe_number(initial_score.max_score):
             continue
 
         lecture_id = session_meta.get("lecture_id") or enrollment_info["lecture_id"]
@@ -213,6 +229,7 @@ def build_student_exam_history(
         seen_exam_ids.add(exam_id)
         canonical_rows.append({
             "result": result,
+            "initial_score": initial_score,
             "exam_id": exam_id,
             "info": info,
             "session_id": session_meta.get("session_id"),
@@ -232,7 +249,7 @@ def build_student_exam_history(
             {
                 "enrollment_id": row["result"]["enrollment_id"],
                 "exam_id": row["exam_id"],
-                "total_score": row["result"]["total_score"],
+                "total_score": row["initial_score"].total_score,
                 "pass_score": row["info"]["pass_score"],
                 "attempt_id": row["result"].get("attempt_id"),
                 "session": None,
@@ -257,8 +274,8 @@ def build_student_exam_history(
             "exam_id": exam_id,
             "enrollment_id": enrollment_id,
             "title": row["info"]["title"],
-            "total_score": None if is_not_submitted else result["total_score"],
-            "max_score": result["max_score"],
+            "total_score": None if is_not_submitted else row["initial_score"].total_score,
+            "max_score": row["initial_score"].max_score,
             "is_pass": achievement.get("is_pass"),
             "achievement": achievement.get("achievement"),
             "meta_status": achievement.get("meta_status"),

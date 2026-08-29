@@ -15,6 +15,10 @@ from apps.domains.results.serializers.student_exam_result import StudentExamResu
 from apps.domains.results.utils.session_exam import get_sessions_for_exam
 from apps.domains.results.utils.clinic import is_clinic_required
 from apps.domains.results.utils.ranking import compute_exam_rankings
+from apps.domains.results.utils.initial_exam_score import (
+    load_initial_exam_scores,
+    project_initial_exam_score,
+)
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement
 from apps.domains.results.services.assessment_correction_status import (
     assessment_correction_payload,
@@ -142,7 +146,34 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
             include_manual=False,
         )
 
+    initial_scores = load_initial_exam_scores(
+        exam_ids=[exam_id],
+        enrollment_ids=[enrollment_id],
+    )
+    initial_state = initial_scores.get((exam_id, enrollment_id))
+    initial_score = project_initial_exam_score(
+        state=initial_state,
+        fallback_score=result.total_score,
+        fallback_max_score=result.max_score,
+        fallback_recorded_at=result.submitted_at or result.created_at,
+    )
+
     data = StudentExamResultSerializer(result).data
+    representative_is_initial = bool(
+        (
+            initial_state is not None
+            and initial_state.attempt_id is not None
+            and result.attempt_id == initial_state.attempt_id
+        )
+        or (initial_state is None and result.attempt_id is None)
+    )
+    if not representative_is_initial:
+        # ResultItem은 최신 대표 Result 스냅샷이라 2차+가 덮어쓸 수 있다.
+        # 1차 문항을 확실히 복원할 수 없으면 재시험 상세를 1차 원점수에 섞지 않는다.
+        data["items"] = []
+    data["total_score"] = initial_score.total_score
+    data["max_score"] = initial_score.max_score
+    data["submitted_at"] = initial_score.recorded_at
     data["student_results_published"] = True
     data["allow_retake"] = allow_retake
     data["max_attempts"] = max_attempts
@@ -156,7 +187,7 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
         enrollment_id=enrollment_id,
         exam_id=exam_id,
         session=session,
-        total_score=float(result.total_score or 0.0),
+        total_score=float(initial_score.total_score or 0.0),
         pass_score=pass_score,
         attempt_id=result.attempt_id,
         tenant=tenant,

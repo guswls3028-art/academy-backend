@@ -38,6 +38,10 @@ from apps.domains.results.utils.clinic import (
     filter_tenant_consistent_source_links,
 )
 from apps.domains.results.utils.session_exam import get_exams_for_session
+from apps.domains.results.utils.initial_exam_score import (
+    load_initial_exam_scores,
+    project_initial_exam_score,
+)
 
 
 def _safe_str(v: Any, default: str = "-") -> str:
@@ -227,6 +231,16 @@ class ClinicTargetService:
         all_enrollment_ids = list({int(getattr(lk, "enrollment_id", 0) or 0) for lk in links_list} - {0})
         enrollment_map = enrollment_map_for_ids(
             tenant=tenant,
+            enrollment_ids=all_enrollment_ids,
+        )
+        source_exam_ids = {
+            int(getattr(link, "source_id", 0) or 0)
+            for link in links_list
+            if getattr(link, "source_type", None) == "exam"
+            and int(getattr(link, "source_id", 0) or 0) > 0
+        }
+        initial_exam_scores = load_initial_exam_scores(
+            exam_ids=source_exam_ids,
             enrollment_ids=all_enrollment_ids,
         )
 
@@ -444,13 +458,27 @@ class ClinicTargetService:
                 .first()
             )
 
-            exam_score = _safe_float(getattr(result, "total_score", 0.0) if result else 0.0, 0.0)
-            attempt_id = int(getattr(result, "attempt_id", 0) or 0) if result else 0
-            attempt_meta_status = None
-            if attempt_id:
-                attempt = getattr(result, "attempt", None)
-                if attempt and isinstance(attempt.meta, dict):
-                    attempt_meta_status = attempt.meta.get("status")
+            initial_state = initial_exam_scores.get((exam_id, enrollment_id))
+            if initial_state is None and exam_id not in source_exam_ids:
+                initial_state = load_initial_exam_scores(
+                    exam_ids=[exam_id],
+                    enrollment_ids=[enrollment_id],
+                ).get((exam_id, enrollment_id))
+            initial_score = project_initial_exam_score(
+                state=initial_state,
+                fallback_score=(getattr(result, "total_score", None) if result else None),
+                fallback_max_score=(getattr(result, "max_score", None) if result else exam_max_score),
+                fallback_not_submitted=bool(
+                    result
+                    and result.attempt_id
+                    and isinstance(result.attempt.meta, dict)
+                    and result.attempt.meta.get("status") == "NOT_SUBMITTED"
+                ),
+            )
+            exam_score = _safe_float(initial_score.total_score, 0.0)
+            visible_max_score = _safe_float(initial_score.max_score, exam_max_score)
+            attempt_id = int(initial_score.attempt_id or 0)
+            attempt_meta_status = "NOT_SUBMITTED" if initial_score.not_submitted else None
 
             # 재시도 이력 (ExamAttempt 전체)
             all_attempts = ExamAttempt.objects.filter(
@@ -474,7 +502,7 @@ class ClinicTargetService:
                 attempt_history.append({
                     "attempt_index": att.attempt_index,
                     "score": att_score,
-                    "max_score": exam_max_score,
+                    "max_score": _safe_float(meta.get("max_score"), visible_max_score),
                     "passed": att_passed,
                     "at": att.created_at.isoformat() if att.created_at else None,
                 })
@@ -498,7 +526,7 @@ class ClinicTargetService:
                 "exam_score": float(exam_score),
                 "cutline_score": float(cutline),
                 "meta_status": attempt_meta_status,
-                "max_score": exam_max_score,
+                "max_score": visible_max_score,
                 "source_title": exam_title,
                 "latest_attempt_index": latest_attempt_index,
                 "attempt_history": attempt_history,

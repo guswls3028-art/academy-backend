@@ -3,12 +3,15 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from django.db.models import Avg, Min, Max, Count
 from django.utils import timezone
 
 from apps.domains.results.utils.clinic import get_clinic_enrollment_ids_for_session
 from apps.domains.results.utils.session_exam import get_exams_for_session
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
+from apps.domains.results.utils.initial_exam_score import (
+    load_initial_exam_scores,
+    project_initial_exam_score,
+)
 from apps.support.results.progress_read_dependencies import (
     lecture_by_id,
     progress_policy_meta_for_lecture,
@@ -113,25 +116,46 @@ def build_lecture_results_snapshot(
                 if not exid:
                     continue
 
-                rs = latest_results_per_enrollment(target_type="exam", target_id=exid)
-
-                agg = rs.aggregate(
-                    participant_count=Count("id"),
-                    avg_score=Avg("total_score"),
-                    min_score=Min("total_score"),
-                    max_score=Max("total_score"),
+                results = list(
+                    latest_results_per_enrollment(
+                        target_type="exam",
+                        target_id=exid,
+                    ).select_related("attempt")
                 )
+                initial_scores = load_initial_exam_scores(
+                    exam_ids=[exid],
+                    enrollment_ids=[result.enrollment_id for result in results],
+                )
+                projected_scores = [
+                    project_initial_exam_score(
+                        state=initial_scores.get((exid, int(result.enrollment_id))),
+                        fallback_score=result.total_score,
+                        fallback_max_score=result.max_score,
+                        fallback_not_submitted=bool(
+                            result.attempt_id
+                            and isinstance(result.attempt.meta, dict)
+                            and result.attempt.meta.get("status") == "NOT_SUBMITTED"
+                        ),
+                    )
+                    for result in results
+                ]
+                scores = [
+                    projected.total_score
+                    for projected in projected_scores
+                    if projected.total_score is not None and not projected.not_submitted
+                ]
 
                 pass_score = _safe_float(getattr(ex, "pass_score", 0.0) or 0.0)
                 if pass_score > 0:
-                    pcount = rs.filter(total_score__gte=pass_score).count()
-                    fcount = rs.filter(total_score__lt=pass_score).count()
+                    pcount = sum(score >= pass_score for score in scores)
+                    fcount = sum(score < pass_score for score in scores)
                 else:
                     pcount = 0
                     fcount = 0
 
-                p_total = _safe_int(agg["participant_count"] or 0)
-                p_rate = (pcount / p_total) if p_total else 0.0
+                p_total = len(results)
+                scored_total = pcount + fcount
+                p_rate = (pcount / scored_total) if scored_total else 0.0
 
                 ex_rows.append(
                     {
@@ -139,9 +163,9 @@ def build_lecture_results_snapshot(
                         "title": _safe_str(getattr(ex, "title", "")),
                         "pass_score": float(pass_score),
                         "participant_count": int(p_total),
-                        "avg_score": float(agg["avg_score"] or 0.0),
-                        "min_score": float(agg["min_score"] or 0.0),
-                        "max_score": float(agg["max_score"] or 0.0),
+                        "avg_score": float(sum(scores) / len(scores)) if scores else 0.0,
+                        "min_score": float(min(scores)) if scores else 0.0,
+                        "max_score": float(max(scores)) if scores else 0.0,
                         "pass_count": int(pcount),
                         "fail_count": int(fcount),
                         "pass_rate": round(float(p_rate), 4),

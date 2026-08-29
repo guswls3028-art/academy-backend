@@ -14,7 +14,7 @@ from apps.domains.enrollment.models import Enrollment
 from apps.domains.exams.models import Exam, ExamEnrollment, ExamQuestion, Sheet
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.parents.models import Parent
-from apps.domains.results.models import Result, ResultFact, ResultItem
+from apps.domains.results.models import ExamAttempt, Result, ResultFact, ResultItem
 from apps.support.results.enterprise_analytics import (
     build_student_enterprise_analytics,
     normalize_analytics_days,
@@ -180,6 +180,53 @@ class EnterpriseAnalyticsTests(TestCase):
         self.assertEqual(response.data["data_quality"]["clean_exam_count"], 1)
         self.assertEqual(response.data["data_quality"]["filtered_test_exam_count"], 1)
         self.assertEqual([row["title"] for row in response.data["top_exams"]], ["Real Exam"])
+
+    def test_admin_analytics_uses_initial_score_after_retake(self):
+        student = self._student(self.tenant, "retake")
+        exam, enrollment, result = self._exam_result_for_student(
+            tenant=self.tenant,
+            student=student,
+            title="Retake Separated Exam",
+            score=100,
+        )
+        ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=enrollment,
+            attempt_index=1,
+            is_representative=False,
+            status="done",
+            meta={
+                "initial_snapshot": {
+                    "total_score": 25.0,
+                    "max_score": 100.0,
+                    "source": "test",
+                },
+                "total_score": 25.0,
+                "max_score": 100.0,
+            },
+        )
+        retake = ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=enrollment,
+            attempt_index=2,
+            is_retake=True,
+            is_representative=True,
+            status="done",
+            meta={"total_score": 100.0, "max_score": 100.0},
+        )
+        result.attempt = retake
+        result.save(update_fields=["attempt", "updated_at"])
+
+        request = self.factory.get("/api/v1/results/admin/analytics/")
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+
+        response = AdminEnterpriseAnalyticsView.as_view()(request)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["summary"]["avg_score_pct"], 25.0)
+        self.assertEqual(response.data["summary"]["pass_rate_pct"], 0.0)
+        self.assertEqual(response.data["top_exams"][0]["avg_score_pct"], 25.0)
 
     def test_parent_student_analytics_uses_selected_child_only(self):
         parent_user = User.objects.create_user(
