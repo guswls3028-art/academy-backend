@@ -136,23 +136,18 @@ def get_student_for_clinic_request(request):
     return get_request_student(request)
 
 
-def unresolved_clinic_enrollment_ids(tenant, enrollment_ids: Iterable[int]) -> set[int]:
-    from apps.domains.progress.models import ClinicLink
+def clinic_highlight_map_for_enrollments(
+    *,
+    tenant,
+    enrollment_ids: Iterable[int],
+) -> dict[int, bool]:
+    from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
 
-    ids = [int(enrollment_id) for enrollment_id in enrollment_ids if enrollment_id]
-    if not ids:
-        return set()
-    return set(
-        ClinicLink.objects
-        .filter(
-            tenant=tenant,
-            is_auto=True,
-            resolved_at__isnull=True,
-            enrollment_id__in=ids,
-        )
-        .values_list("enrollment_id", flat=True)
-        .distinct()
-    )
+    ids = {int(enrollment_id) for enrollment_id in enrollment_ids if enrollment_id}
+    return compute_clinic_highlight_map(
+        tenant=tenant,
+        enrollment_ids=ids,
+    ) if ids else {}
 
 
 def clinic_reason_for_unresolved_auto_links(tenant, enrollment_id: int | None) -> str | None:

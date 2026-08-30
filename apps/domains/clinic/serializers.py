@@ -6,13 +6,13 @@ from .models import Session, SessionParticipant, Test, Submission
 from apps.core.permissions import is_effective_staff
 from apps.support.clinic.session_dependencies import (
     active_students_for_clinic_tenant,
+    clinic_highlight_map_for_enrollments,
     empty_enrollment_queryset,
     empty_lecture_queryset,
     enrollments_for_clinic_tenant,
     lectures_for_tenant,
     sections_for_tenant,
     storage_presigned_get_url,
-    unresolved_clinic_enrollment_ids,
 )
 
 
@@ -229,20 +229,20 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
         lecture = getattr(enrollment, "lecture", None) if enrollment else None
         return getattr(lecture, "chip_label", None) if lecture else None
 
-    def _get_unresolved_clinic_enrollment_ids(self) -> set:
-        """list 직렬화 시 미해결 자동 ClinicLink가 있는 enrollment_id 집합을 1회 prefetch.
+    def _get_clinic_highlight_map(self) -> dict[int, bool]:
+        """list 직렬화 시 패스카드와 동일한 하이라이트 맵을 1회 계산한다.
 
         get_name_highlight_clinic_target N+1 회피용. tenant 격리는 ClinicLink.tenant FK로 직접 필터.
         """
         ctx = self.context
-        if "_unresolved_clinic_eids" in ctx:
-            return ctx["_unresolved_clinic_eids"]
+        if "_clinic_highlight_map" in ctx:
+            return ctx["_clinic_highlight_map"]
 
         request = ctx.get("request")
         tenant = getattr(request, "tenant", None) if request else None
         if not tenant:
-            ctx["_unresolved_clinic_eids"] = set()
-            return set()
+            ctx["_clinic_highlight_map"] = {}
+            return {}
 
         # parent의 instance(list)에서 enrollment_id 수집
         enrollment_ids = set()
@@ -258,23 +258,23 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
                 enrollment_ids.add(int(eid))
 
         if not enrollment_ids:
-            ctx["_unresolved_clinic_eids"] = set()
-            return set()
+            ctx["_clinic_highlight_map"] = {}
+            return {}
 
-        unresolved = unresolved_clinic_enrollment_ids(tenant, enrollment_ids)
-        ctx["_unresolved_clinic_eids"] = unresolved
-        return unresolved
+        highlight_map = clinic_highlight_map_for_enrollments(
+            tenant=tenant,
+            enrollment_ids=enrollment_ids,
+        )
+        ctx["_clinic_highlight_map"] = highlight_map
+        return highlight_map
 
     def get_name_highlight_clinic_target(self, obj):
-        """클리닉 대상(미해결) + 미출석이면 True"""
-        # 이미 출석(ATTENDED)이면 False
-        if getattr(obj, "status", None) == "attended":
-            return False
+        """학생 패스카드가 CLINIC_REQUIRED일 때만 True."""
         eid = getattr(obj, "enrollment_id", None)
         if not eid:
             return False
-        # bulk prefetch한 set에서 O(1) 룩업으로 N+1 회피.
-        return int(eid) in self._get_unresolved_clinic_enrollment_ids()
+        # bulk 계산한 map에서 O(1) 룩업으로 N+1 회피.
+        return self._get_clinic_highlight_map().get(int(eid), False)
 
     def get_profile_photo_url(self, obj):
         """학생 프로필 사진 R2 presigned URL"""

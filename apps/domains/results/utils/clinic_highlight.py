@@ -5,7 +5,7 @@
 name_highlight_clinic_target = True 조건:
   1. 해당 enrollment에 미해결(resolved_at IS NULL) 자동 ClinicLink 존재
   2. 해당 enrollment/session의 최종 진행 상태가 완료가 아님
-  3. 해당 enrollment가 클리닉 세션에 출석(ATTENDED)한 적 없음
+  3. 같은 학생에게 패스카드 BOOKING_CONFIRMED를 만드는 예약/수강이 없음
 
 세션 스코프와 글로벌 스코프 두 가지 모드 제공:
   - session 지정: 해당 세션의 ClinicLink만 검사 (성적/시험/과제 탭)
@@ -16,10 +16,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, Set
 
-from apps.domains.results.utils.clinic import filter_live_source_links
+from apps.domains.results.utils.clinic import filter_current_clinic_links
+from apps.support.clinic.idcard_dependencies import (
+    passcard_confirmed_enrollment_ids,
+)
 from apps.support.results.progress_read_dependencies import (
-    attended_clinic_enrollment_ids,
-    completed_session_progress_pairs,
     unresolved_auto_clinic_links_for_enrollments,
 )
 
@@ -51,36 +52,33 @@ def compute_clinic_highlight_map(
         enrollment_ids=enrollment_ids,
         session=session,
     )
-    clinic_links = filter_live_source_links(
+    clinic_links = filter_current_clinic_links(
         clinic_qs.order_by("id"),
         tenant=tenant,
     )
     if not clinic_links:
         return {eid: False for eid in enrollment_ids}
 
-    session_ids = list({int(link.session_id or 0) for link in clinic_links} - {0})
-    clinic_enrollment_ids = list({int(link.enrollment_id or 0) for link in clinic_links} - {0})
-    completed_pairs = completed_session_progress_pairs(
-        session_ids=session_ids,
-        enrollment_ids=clinic_enrollment_ids,
-    )
     clinic_ids = {
         int(link.enrollment_id)
         for link in clinic_links
-        if (int(link.enrollment_id), int(link.session_id)) not in completed_pairs
     }
 
     if not clinic_ids:
         return {eid: False for eid in enrollment_ids}
 
-    # 2) 클리닉 출석 완료 enrollment
-    attended_ids = attended_clinic_enrollment_ids(
+    # 2) 패스카드와 동일한 학생 단위 예약완료 상태를 계산한다. 어느 강의에서
+    # 예약했든 해당 학생의 미해결 과락 하이라이트 전체가 함께 해제되어야 한다.
+    confirmed_enrollment_ids = passcard_confirmed_enrollment_ids(
         tenant=tenant,
         enrollment_ids=clinic_ids,
     )
 
-    # 3) 결과: 대상이면서 미출석 → True
+    # 3) 결과: 과락 대상이면서 패스카드 CLINIC_REQUIRED인 경우만 True
     return {
-        eid: (eid in clinic_ids and eid not in attended_ids)
+        eid: (
+            eid in clinic_ids
+            and eid not in confirmed_enrollment_ids
+        )
         for eid in enrollment_ids
     }

@@ -1,3 +1,6 @@
+import datetime
+
+from django.apps import apps as django_apps
 from django.contrib.auth import get_user_model
 from django.db import connection
 from django.test import TestCase
@@ -1121,6 +1124,79 @@ class SessionScoresRosterScopeTests(TestCase):
             session=self.session,
         )
         self.assertFalse(highlights[self.active_enrollment.id])
+
+    def test_session_scores_highlight_matches_passcard_booking_state(self):
+        clinic_session_model = django_apps.get_model("clinic", "Session")
+        session_participant_model = django_apps.get_model("clinic", "SessionParticipant")
+        link = ClinicLink.objects.create(
+            tenant=self.tenant,
+            enrollment=self.active_enrollment,
+            session=self.session,
+            reason=ClinicLink.Reason.AUTO_FAILED,
+            is_auto=True,
+            approved=True,
+            source_type="exam",
+            source_id=self.exam.id,
+        )
+
+        def read_row():
+            request = self.factory.get(
+                f"/api/v1/results/admin/sessions/{self.session.id}/scores/"
+            )
+            request.tenant = self.tenant
+            force_authenticate(request, user=self.admin)
+            response = SessionScoresView.as_view()(
+                request,
+                session_id=self.session.id,
+            )
+            self.assertEqual(response.status_code, 200, response.data)
+            return next(
+                row
+                for row in response.data["rows"]
+                if row["enrollment_id"] == self.active_enrollment.id
+            )
+
+        target_row = read_row()
+        self.assertTrue(target_row["clinic_required"])
+        self.assertTrue(target_row["name_highlight_clinic_target"])
+
+        clinic_session = clinic_session_model.objects.create(
+            tenant=self.tenant,
+            date=timezone.localdate() + datetime.timedelta(days=7),
+            start_time=datetime.time(17, 0),
+            location="성적표 예약 검증실",
+            max_participants=10,
+        )
+        participant = session_participant_model.objects.create(
+            tenant=self.tenant,
+            session=clinic_session,
+            student=self.active_enrollment.student,
+            enrollment=self.active_enrollment,
+            status=session_participant_model.Status.PENDING,
+        )
+        self.assertTrue(read_row()["name_highlight_clinic_target"])
+
+        participant.status = session_participant_model.Status.BOOKED
+        participant.save(update_fields=["status", "updated_at"])
+        self.assertFalse(read_row()["name_highlight_clinic_target"])
+
+        clinic_session.date = timezone.localdate() - datetime.timedelta(days=1)
+        clinic_session.save(update_fields=["date", "updated_at"])
+        participant.status = session_participant_model.Status.ATTENDED
+        participant.save(update_fields=["status", "updated_at"])
+        self.assertFalse(read_row()["name_highlight_clinic_target"])
+
+        participant.completed_at = timezone.now()
+        participant.save(update_fields=["completed_at", "updated_at"])
+        completed_row = read_row()
+        self.assertTrue(completed_row["clinic_required"])
+        self.assertTrue(completed_row["name_highlight_clinic_target"])
+
+        link.resolved_at = timezone.now()
+        link.save(update_fields=["resolved_at", "updated_at"])
+        passed_row = read_row()
+        self.assertFalse(passed_row["clinic_required"])
+        self.assertFalse(passed_row["name_highlight_clinic_target"])
 
     def test_session_scores_ignores_exam_clinic_link_when_source_not_in_session(self):
         other_exam = Exam.objects.create(

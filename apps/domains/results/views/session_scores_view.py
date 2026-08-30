@@ -50,6 +50,7 @@ from apps.domains.results.utils.result_queries import (
 )
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement_bulk
 from apps.domains.results.utils.exam_absence import current_exam_absence_counts
+from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
 from apps.domains.results.services.assessment_correction_status import (
     assessment_correction_payload,
     exam_correction_fingerprint,
@@ -72,7 +73,6 @@ from apps.support.results.session_scores_dependencies import (
     HomeworkAssignment,
     HomeworkScore,
     Session,
-    SessionParticipant,
     SessionProgress,
     Sheet,
     Submission,
@@ -473,34 +473,10 @@ class SessionScoresView(APIView):
         # SessionProgress.completed=True면 현재 클리닉 대상에서 제외한다.
         clinic_ids: Set[int] = raw_clinic_ids - progress_completed_ids
 
-        # -------------------------------------------------
-        # 3b) 클리닉 수강 완료(enrollment별 ATTENDED 1건 이상) → 하이라이트 제거
-        # ⚠️ tenant 필터 필수: enrollment_id 만으로 필터 시 타 테넌트 데이터 혼입 가능
-        # -------------------------------------------------
-        enrollment_ids_clinic_attended: Set[int] = set(
-            SessionParticipant.objects.filter(
-                tenant=tenant,
-                enrollment_id__in=enrollment_ids,
-                status=SessionParticipant.Status.ATTENDED,
-            )
-            .values_list("enrollment_id", flat=True)
-            .distinct()
-        )
-
-        # -------------------------------------------------
-        # 3c) 클리닉 예약 있음(enrollment별 PENDING/BOOKED 1건 이상)
-        # -------------------------------------------------
-        enrollment_ids_with_clinic_booking: Set[int] = set(
-            SessionParticipant.objects.filter(
-                tenant=tenant,
-                enrollment_id__in=enrollment_ids,
-                status__in=[
-                    SessionParticipant.Status.PENDING,
-                    SessionParticipant.Status.BOOKED,
-                ],
-            )
-            .values_list("enrollment_id", flat=True)
-            .distinct()
+        clinic_highlight_map = compute_clinic_highlight_map(
+            tenant=tenant,
+            enrollment_ids=set(enrollment_ids),
+            session=session,
         )
 
         # -------------------------------------------------
@@ -982,10 +958,9 @@ class SessionScoresView(APIView):
             ]
             updated_at = max((d for d in all_timestamps if d), default=None)
 
-            # 클리닉 대상이면서 해당 주차 클리닉 미수강 → 이름만 노란 형광펜 하이라이트(백엔드 단일 진실)
-            # 수강 완료(ATTENDED) 시 하이라이트 제거
+            # 노란 하이라이트는 학생 패스카드 CLINIC_REQUIRED와 동일한 상태다.
             name_highlight_clinic_target = (
-                clinic_required and eid not in enrollment_ids_clinic_attended
+                clinic_required and clinic_highlight_map.get(eid, False)
             )
             correction_status_by_source = {
                 ("exam", int(exam["exam_id"])): exam["block"].get("correction_status")

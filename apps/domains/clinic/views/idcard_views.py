@@ -5,9 +5,6 @@ GET /api/v1/clinic/idcard/
 - 단일 진실: progress.ClinicLink(is_auto=True, resolved_at__isnull=True)
 - 서버 기준 오늘 날짜 반환 (위조 방지)
 """
-import datetime
-
-from django.db.models import Q
 from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -16,6 +13,10 @@ from rest_framework.permissions import IsAuthenticated
 from apps.core.permissions import TenantResolved
 from apps.domains.clinic.color_utils import get_effective_clinic_colors
 from apps.domains.clinic.models import SessionParticipant
+from apps.domains.clinic.services.passcard_state import (
+    passcard_tenant_booking_q,
+    passcard_visible_booking_q,
+)
 from apps.support.clinic.idcard_dependencies import (
     active_enrollments_for_student,
     clinic_link_source_projection,
@@ -46,57 +47,33 @@ def _participant_schedule(participant):
 
 
 def _valid_booking_projection(*, tenant, student, local_date):
-    """Project only reservations that protect departure on this KST date."""
-    current_timezone = timezone.get_current_timezone()
-    local_day_start = timezone.make_aware(
-        datetime.datetime.combine(local_date, datetime.time.min),
-        current_timezone,
-    )
-    local_day_end = local_day_start + datetime.timedelta(days=1)
+    """Project pending/confirmed bookings that still affect the passcard."""
     participants = list(
         SessionParticipant.objects.filter(
             tenant=tenant,
             student=student,
         )
-        .filter(
-            Q(
-                status__in=(
-                    SessionParticipant.Status.PENDING,
-                    SessionParticipant.Status.BOOKED,
-                ),
-            )
-            & (
-                Q(session__date__gte=local_date)
-                | Q(session__isnull=True, requested_date__gte=local_date)
-            )
-            | Q(status=SessionParticipant.Status.ATTENDED)
-            & (
-                Q(session__date=local_date)
-                | Q(session__isnull=True, requested_date=local_date)
-                | Q(completed_at__gte=local_day_start, completed_at__lt=local_day_end)
-            )
-        )
+        .filter(passcard_tenant_booking_q(tenant=tenant))
+        .filter(passcard_visible_booking_q(local_date=local_date))
         .select_related("session")
         .order_by("id")
     )
     projected = []
     for participant in participants:
         schedule_date, start_time, location, title = _participant_schedule(participant)
-        completed_today = bool(
-            participant.completed_at
-            and timezone.localdate(participant.completed_at) == local_date
-        )
         if participant.status in (
             SessionParticipant.Status.PENDING,
             SessionParticipant.Status.BOOKED,
         ):
             is_valid = bool(schedule_date and schedule_date >= local_date)
         else:
-            is_valid = schedule_date == local_date or completed_today
+            # Once a student checks in, the reservation state remains until
+            # the clinic work itself is marked complete, even after midnight.
+            is_valid = participant.completed_at is None
         if not is_valid:
             continue
 
-        status = "completed" if completed_today else participant.status
+        status = participant.status
         projected.append({
             "participant_id": int(participant.id),
             "session_id": int(participant.session_id) if participant.session_id else None,
@@ -108,7 +85,7 @@ def _valid_booking_projection(*, tenant, student, local_date):
             "location": location,
         })
 
-    status_order = {"completed": 0, "attended": 1, "booked": 2, "pending": 3}
+    status_order = {"attended": 0, "booked": 1, "pending": 2}
     projected.sort(key=lambda booking: (
         booking["date"] or "9999-12-31",
         booking["start_time"] or "23:59:59",
@@ -148,7 +125,7 @@ def _response_payload(
     return_protecting_bookings = [
         booking
         for booking in valid_bookings
-        if booking["status"] in {"booked", "attended", "completed"}
+        if booking["status"] in {"booked", "attended"}
     ]
     current_booking = (
         return_protecting_bookings[0]
@@ -158,7 +135,7 @@ def _response_payload(
     if not clinic_required:
         passcard_state = "PASSED"
     elif return_protecting_bookings:
-        passcard_state = "RETURN_ALLOWED"
+        passcard_state = "BOOKING_CONFIRMED"
     else:
         passcard_state = "CLINIC_REQUIRED"
     booking_status = (
