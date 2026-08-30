@@ -30,6 +30,7 @@ def enrollments_for_tenant(tenant):
         .filter(student__deleted_at__isnull=True)
         .exclude(lecture__is_system=True)
         .select_related("student", "lecture")
+        .order_by("student__name", "student_id", "id")
     )
 
 
@@ -40,6 +41,7 @@ def session_enrollments_for_tenant(tenant):
         .filter(tenant=tenant)
         .filter(enrollment__student__deleted_at__isnull=True)
         .select_related("session", "enrollment", "enrollment__student")
+        .order_by("enrollment__student__name", "enrollment_id", "id")
     )
 
 
@@ -56,7 +58,7 @@ def active_session_enrollments_for_session(*, tenant, session_id: int):
             enrollment__student__deleted_at__isnull=True,
         )
         .select_related("enrollment", "enrollment__student", "enrollment__lecture")
-        .order_by("id")
+        .order_by("enrollment__student__name", "enrollment_id", "id")
     )
 
 

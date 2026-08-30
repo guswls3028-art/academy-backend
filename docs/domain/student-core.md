@@ -1,7 +1,7 @@
 # Student Domain Core SSOT
 
 **Status:** Active
-**Last checked:** 2026-08-27 KST
+**Last checked:** 2026-08-30 KST
 **Truth basis:** code inspection of `apps/domains/students/`, `apps/core/views/account_recovery.py`, `apps/core/services/password.py`, `apps/domains/results/services/submission_scope_guard.py`, `apps/domains/results/services/student_result_service.py`, and frontend shared student contracts.
 
 This document is the integration SSOT for the student domain. More specific
@@ -30,6 +30,12 @@ Student state is not one boolean. `deleted_at`, tenant account access,
 only controls staff management classification and must never be described or
 implemented as login suspension. Deletion/restore and enrollment state transfer
 are owned by `student-lifecycle.md`.
+
+Tenant-scoped student, lecture-enrollment, and session-enrollment lists use
+student name ascending with stable ID tie-breakers unless the user explicitly
+chooses another supported ordering. Search, deleted-state, lecture, and session
+scope are applied before this global ordering and pagination. The shared list
+rules are owned by `data-list-ordering.md`.
 
 ## 1. Canonical Student Graph
 

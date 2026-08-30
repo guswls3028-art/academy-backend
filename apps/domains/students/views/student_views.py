@@ -99,6 +99,31 @@ class StudentListPagination(PageNumberPagination):
         })
 
 
+class StableStudentOrderingFilter(OrderingFilter):
+    """Keep every student list deterministic, with 가나다순 as the fallback."""
+
+    def get_ordering(self, request, queryset, view):
+        ordering = list(super().get_ordering(request, queryset, view) or ["name", "id"])
+        fields = [field.lstrip("-") for field in ordering]
+        primary_descending = ordering[0].startswith("-")
+
+        if "name" not in fields and fields[0] != "id":
+            id_ordering = None
+            if "id" in fields:
+                id_index = fields.index("id")
+                id_ordering = ordering.pop(id_index)
+                fields.pop(id_index)
+            ordering.append("name")
+            fields.append("name")
+            if id_ordering is not None:
+                ordering.append(id_ordering)
+                fields.append("id")
+
+        if "id" not in fields:
+            ordering.append("-id" if primary_descending else "id")
+        return ordering
+
+
 class StudentViewSet(ModelViewSet):
     """
     학생 관리 ViewSet
@@ -330,7 +355,7 @@ class StudentViewSet(ModelViewSet):
     filter_backends = [
         DjangoFilterBackend,
         StudentSearchFilter,
-        OrderingFilter,
+        StableStudentOrderingFilter,
     ]
     filterset_class = StudentFilter
     search_fields = ["ps_number", "omr_code", "name", "high_school", "middle_school", "major", "phone", "parent_phone"]
@@ -340,13 +365,16 @@ class StudentViewSet(ModelViewSet):
         "updated_at",
         "deleted_at",
         "name",
+        "ps_number",
         "phone",
         "parent_phone",
+        "is_managed",
+        "gender",
         "high_school",
         "high_school_class",
         "grade",
     ]
-    ordering = ["-id"]
+    ordering = ["name", "id"]
 
     def filter_queryset(self, queryset):
         queryset = super().filter_queryset(queryset)
