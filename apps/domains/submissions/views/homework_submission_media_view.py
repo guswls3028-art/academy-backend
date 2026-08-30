@@ -23,6 +23,7 @@ from apps.domains.submissions.services.homework_media import (
 from apps.infrastructure.storage.r2 import generate_presigned_get_url
 from apps.support.submissions.dependencies import (
     enrollment_belongs_to_tenant,
+    homework_submission_is_closed_for_student_append,
     homework_submission_is_teacher_reviewed,
     request_is_parent,
     student_owns_enrollment,
@@ -134,6 +135,18 @@ class HomeworkSubmissionMediaCollectionView(APIView):
             homework_id=int(homework_id),
             enrollment_id=enrollment_id,
         )
+        if homework_submission_is_closed_for_student_append(
+            tenant=tenant,
+            enrollment_id=enrollment_id,
+            homework_id=int(homework_id),
+        ):
+            return Response(
+                {
+                    "code": "HOMEWORK_MEDIA_REVIEWED",
+                    "detail": "검수가 완료된 과제에는 파일을 더 추가할 수 없습니다.",
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
         upload_file = request.FILES.get("file")
         if not upload_file:
             raise ValidationError({"file": "파일을 선택해 주세요."})

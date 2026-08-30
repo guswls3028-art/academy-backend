@@ -157,11 +157,9 @@ X를 나중에 다시 맞힌 뒤에도 남기려면 O·복습으로 바꾼다. �
   클라이언트가 tenant·사용자·object key를 지정하거나 응답에서 bucket key를 읽는
   경로는 없다.
 - 한 과제는 활성 파일 20개, 파일당 100MB, 활성 파일 합계 500MB까지다. JPG/JPEG,
-  PNG, GIF, WebP, HEIC/HEIF, AVIF, MP4/M4V/MOV, WebM을 허용하고, 확장자 또는
-  브라우저 MIME이 이 중 하나면 원본을 먼저 보존한다.
-  휴대폰별 MIME·파일 signature 차이는 제출을 막지 않으며 교사가 원본을 직접
-  확인한다. tenant의 활성 학생, 본인 활성 수강, 현재 과제 배정은 모두 맞아야
-  목록·업로드·삭제할 수 있고 학부모는 변경할 수 없다.
+  PNG, GIF, WebP, HEIC/HEIF, AVIF, MP4/M4V/MOV, WebM만 허용하고 확장자·선언 MIME·
+  실제 signature가 일치해야 한다. tenant의 활성 학생, 본인 활성 수강, 현재 과제
+  배정은 모두 맞아야 목록·업로드·삭제할 수 있고 학부모는 변경할 수 없다.
 - 브라우저가 만든 `client_file_id`는 tenant 안에서 유일하며 같은 fingerprint로
   재시도할 때 같은 자식 행과 저장 키를 쓴다. 이미 성공한 동일 fingerprint는 새
   행으로 복제하지 않는다. 한 파일의 object-store 저장이 실패하면 그 행만
@@ -173,8 +171,8 @@ X를 나중에 다시 맞힌 뒤에도 남기려면 O·복습으로 바꾼다. �
   API는 성공으로 응답하지 않는다. 따라서 DB 장애 중 이름 없는 orphan을 새로 만들지
   않으며 감사 행과 object identity의 연결이 유지된다.
 - 학생 삭제는 행과 object를 즉시 없애지 않고 `removed_at`, `removed_by`,
-  `removed` 상태를 기록한다. 점수 또는 완료된 교정 기록 뒤에도 보충 증거 파일은
-  계속 추가할 수 있지만, 이미 검수 근거가 된 파일 삭제는
+  `removed` 상태를 기록한다. 불합격 점수 뒤에는 재제출 파일을 추가할 수 있지만,
+  합격 점수 또는 완료된 교정 기록 뒤에는 추가와 삭제를
   `409 HOMEWORK_MEDIA_REVIEWED`로 막는다. soft-delete object는 감사·복구 근거로
   보존하며, 향후 정리도 tenant·행·보존기간을 확정한 별도 exact-target 작업에서만
   수행한다. 이번 expand migration은 child table만 만들며 기존 행, constraint,
@@ -193,7 +191,7 @@ X를 나중에 다시 맞힌 뒤에도 남기려면 O·복습으로 바꾼다. �
   다루며 기존 숙제 제출 행·파일·점수는 삭제하거나 변환하지 않는다.
 - 직접 확인은 기존 `AssessmentCorrection`을 사용해 점수와 독립적으로 저장한다.
   확인 완료·취소는 `expected_updated_at`으로 다른 화면의 판정을 덮어쓰지 않으며,
-  완료 뒤에도 학생의 보충 파일 추가는 허용하고 기존 근거 파일 삭제만 잠근다. 이미
+  완료 뒤에는 학생의 파일 추가·삭제를 잠근다. 이미
   `HomeworkScore`가 있으면 점수 입력을 검수 완료의 더 강한 근거로 표시하고
   제출관리에서는 확인 취소를 제공하지 않는다.
 
