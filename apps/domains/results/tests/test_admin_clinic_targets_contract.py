@@ -2,11 +2,11 @@ import datetime
 
 from django.apps import apps as django_apps
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework import serializers
-from rest_framework.test import APIRequestFactory, force_authenticate
+from rest_framework.test import APIClient, APIRequestFactory, force_authenticate
 
-from apps.core.models import Tenant, TenantMembership
+from apps.core.models import Tenant, TenantDomain, TenantMembership
 from apps.domains.results.models import ExamAttempt, Result
 from apps.domains.results.views.admin_clinic_targets_view import (
     AdminClinicTargetsView,
@@ -236,6 +236,33 @@ class AdminClinicTargetsContractTests(TestCase):
         # Exercise the view contract directly so middleware/permissions cannot
         # turn its historic 200 [] fallback into an unrelated denial envelope.
         response = AdminClinicTargetsView().get(request)
+
+        self.assertEqual(response.status_code, 403, response.data)
+        self.assertEqual(
+            response.data,
+            {"detail": "Tenant required", "code": "TENANT_REQUIRED"},
+        )
+        self.assertEqual(self.ClinicLink.objects.count(), before)
+
+    @override_settings(
+        ALLOWED_HOSTS=["api.hakwonplus.com", "testserver"],
+        TENANT_HEADER_CODE_ALLOWED_HOSTS=("api.hakwonplus.com",),
+    )
+    def test_missing_tenant_header_on_central_api_fails_closed(self):
+        TenantDomain.objects.create(
+            tenant=self.tenant,
+            host="api.hakwonplus.com",
+            is_primary=False,
+            is_active=True,
+        )
+        client = APIClient()
+        client.force_authenticate(user=self.admin)
+        before = self.ClinicLink.objects.count()
+
+        response = client.get(
+            "/api/v1/results/admin/clinic-targets/",
+            HTTP_HOST="api.hakwonplus.com",
+        )
 
         self.assertEqual(response.status_code, 403, response.data)
         self.assertEqual(
