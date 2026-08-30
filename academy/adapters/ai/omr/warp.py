@@ -344,7 +344,7 @@ def _try_contour_warp(
 # Strategy 3: Cardinal rotation fallbacks
 # ---------------------------------------------------------------------------
 
-def _rotate_image_cw(image_bgr: np.ndarray, degrees: int) -> np.ndarray:
+def rotate_cardinal_cw(image_bgr: np.ndarray, degrees: int) -> np.ndarray:
     """Rotate image by a cardinal clockwise angle."""
     normalized = degrees % 360
     if normalized == 0:
@@ -402,7 +402,7 @@ def _try_rotated_marker_homography(
     """
     candidates: List[AlignmentResult] = []
     for degrees in (90, 180, 270):
-        rotated = _rotate_image_cw(image_bgr, degrees)
+        rotated = rotate_cardinal_cw(image_bgr, degrees)
         try:
             result = _try_marker_homography(rotated, meta, out_w, out_h)
         except Exception:
@@ -439,7 +439,7 @@ def _try_rotation_only(
 
     contour_candidates: List[AlignmentResult] = []
     for degrees in (90, 270, 180):
-        rotated = _rotate_image_cw(image_bgr, degrees)
+        rotated = rotate_cardinal_cw(image_bgr, degrees)
         try:
             result = _try_contour_warp(rotated, out_w, out_h)
         except Exception:
@@ -463,7 +463,7 @@ def _try_rotation_only(
     # 최후: portrait → landscape 단순 회전 + resize. 방향을 알 수 없는 경우라
     # 기존 운영 동작과 동일하게 90° CW를 우선한다.
     correction = 90
-    rotated = _rotate_image_cw(image_bgr, correction)
+    rotated = rotate_cardinal_cw(image_bgr, correction)
     resized = cv2.resize(rotated, (out_w, out_h), interpolation=cv2.INTER_LINEAR)
     logger.info("warp: rotation_only (portrait -> landscape, no marker/contour)")
     return AlignmentResult(

@@ -136,8 +136,11 @@ flowchart LR
 - 시험 설정/제출관리 화면은 OMR 스캔을 직접 등록하지 않는다. 등록이 필요하면 성적 탭으로 이동시키고, 해당 화면은 출력/대상자/제출 확인/재채점 보조 역할만 맡는다.
 - `수강생 일괄배정`은 자동 materialize 실패나 운영 보정용 보조 기능이다. 초보 사용자 기본 흐름에서는 숨기고 더보기 메뉴에 둔다.
 - 업로드 화면은 "파일 선택 -> 등록 시작 -> 성적표/드로어에서 결과 확인"으로 읽혀야 한다. OMR 스캔 등록을 위해 사용자가 여러 화면을 이해해야 하는 설계를 만들지 않는다.
+- 등록 전 파일 목록은 썸네일, 위·아래 순서 이동, 개별 삭제, 이미지 좌·우 90도 회전을 제공한다. 재접수 batch는 기존 ordinal을 학생 답안 순서로 보존하므로 순서 이동만 잠그고, 이미지 회전과 삭제는 명시적으로 허용한다.
 - 학생 상세 드로어와 선택형 시험명은 OMR 스캔 썸네일/정렬된 미리보기와 수동 답안 보정 진입점을 제공해야 한다. 자동 인식이 틀릴 수 있음을 전제로, 보정은 OMR 검토에서 선택적으로 수행하고 직접 정오 입력 표가 자동채점 결과를 덮어쓰지 않는다.
 - 자동 식별 후보와 답안이 이미 채워졌고 검토 사유가 `IDENTIFIER_*`뿐인 행은 비활성 `변경 사항 없음`으로 막지 않는다. 화면은 원본과 현재 학생을 확인하라는 설명과 **현재 학생으로 확정하고 점수 표시** 동작을 제공한다. 학생 연결이 없을 때는 검색·선택을 요구하고, 답안·정렬·문항 검토 사유가 하나라도 섞이면 학생 확인 동작으로 우회하지 않는다.
+- 검토 화면의 회전은 원본 기준 미리보기다. 운영자가 `이 방향으로 다시 읽기`를 확정하면 원본 object를 복사하지 않고 같은 key를 참조하는 새 immutable Submission을 만들고, `client_request_id`로 멱등 dispatch한다. 기존 제출은 새 판독을 비교·채택하기 전까지 보존한다.
+- 성적표의 `OMR_REVIEW_REQUIRED`는 최신 유효 OMR만 사용한다. `FAILED`/`SUPERSEDED` 과거 제출의 검토 플래그는 최신 정상 제출을 덮지 않는다. 커트라인 통과와 오답 보완 상태도 분리해, 통과 학생은 행 판정이 `통과`이고 시험 상세에만 `보완 필요`가 남는다.
 
 ### 직접 채점 결과 엑셀 가져오기
 
@@ -163,7 +166,7 @@ OMR 사용이 어려운 혼합형 시험은 같은 성적 저장 경로에 엑�
 3. 선생님: 스캔 파일 업로드 (batch upload)
 4. 시스템:
    a. `OMRSheetContract` 생성 → 객관식/서술형 경계와 fingerprint 확정
-   b. `warp.py` → A4 landscape로 보정 (90/180/270도 회전 포함)
+   b. 명시된 `manual_rotation_degrees`를 원본에 먼저 적용한 뒤 `warp.py` → A4 landscape로 보정 (자동 90/180/270도 회전 포함)
    c. `identifier.py` → 전화번호 8자리 추출 → 학생 매칭 fact 기록
    d. `engine.py` → 계약상 객관식 버블만 감지
    e. `ai_omr_result_mapper.py` → 답안 projection + 인식 fact 저장
@@ -186,6 +189,12 @@ submission의 저장된 DONE 결과에 답안이 있고 기존 답안이 없으�
 확정한 뒤 진행도와 수업 분석을 갱신한다. 수동 검토 표시가 있는 OMR만 DRAFT를
 유지한다.
 
+단일정답 문항에서 워커가 강한 복수마킹을 `status=ok, marking=multi`로 보내더라도
+정답과 완전히 일치하는 다중정답 키가 아니면 `ANSWER_SCORE_AMBIGUOUS`로 검토를
+요구한다. 재채점은 DONE 제출을 `ANSWERS_READY`로 되돌리는 데서 끝나지 않고
+`force_regrade`로 FINAL `ExamResult`, canonical `Result`/`ResultItem`, 진행도까지 실제
+다시 계산한다.
+
 ## 대량 등록 작업과 진행 상태 계약
 
 100장까지의 OMR 파일 선택은 브라우저 메모리가 아니라 서버의
@@ -198,6 +207,10 @@ submission의 저장된 DONE 결과에 답안이 있고 기존 답안이 없으�
    다시 보내면 서버가 item row를 먼저 잠그고 파일 검증보다 앞서 `RECEIVED`를 확인해
    no-op 처리한다. 따라서 같은 ordinal의 늦은 잘못된 파일이나 동시 재전송이 기존
    Submission 연결을 실패 상태로 되돌리지 않고, 워커도 중복 dispatch하지 않는다.
+   같은 tenant·시험에서 다른 batch/ordinal로 동일 바이트가 다시 오면 SHA-256과 DB
+   conditional unique constraint로 경합까지 직렬화하고 `duplicate`로 완료 처리한다.
+   새 Submission/R2 object/worker dispatch를 만들지 않으며 파일명이 같아도 바이트가
+   다르면 정상 신규 접수다.
 4. 요청 응답이 끊겨도 detail GET의 `pending_admission_ordinals`와
    `admission_failed_ordinals`로 미접수 파일만 다시 선택한다. 이미 성공한 ordinal은
    재전송하지 않는다.
@@ -207,9 +220,12 @@ submission의 저장된 DONE 결과에 답안이 있고 기존 답안이 없으�
    표시하지 않는다.
 
 Batch와 item에는 tenant, 생성 직원, 시험/차시/강의 id, 총수, ordinal, Submission 연결,
-안전한 실패 코드만 저장한다. 파일명, 학생 이름·전화번호, R2 raw key는 batch 모델이나
+동일 파일 판정용 SHA-256, 안전한 실패 코드만 저장한다. 파일명, 학생 이름·전화번호, R2 raw key는 batch 모델이나
 batch API 응답에 저장·노출하지 않는다. 실제 원본과 학생 매칭은 기존 tenant-scoped
 Submission 계약을 그대로 사용한다.
+도입 전 item은 migration에서 tenant/exam scope만 backfill하고 기존 R2 원본을 다시 읽지
+않으므로 hash는 빈 값으로 보존한다. 기존 제출·점수는 바꾸지 않으며 cross-batch 동일 파일
+차단은 도입 후 새로 접수되는 파일부터 적용한다.
 
 파일을 R2에 올린 뒤 Submission metadata 저장, item 연결, dispatch 중 하나라도 실패해
 DB transaction이 rollback되면 서버는 그 요청에서 생성한 exact object key만 즉시 보상
@@ -237,6 +253,12 @@ retry가 만든 새 상태를 stale 객체가 덮어쓰지 않는다. 잠금 뒤
 않는다. 아직 파일을 받지 못했거나 admission 단계에서 실패한 ordinal은
 `requires_file_ordinals`로 반환해 명시적 파일 재선택을 요구한다. 다른 tenant, 다른 생성 직원,
 다른 시험 batch는 404/403으로 fail-closed 한다.
+
+같은 시험 응시의 스캔 교체는 재시험이 아니다. 중복 후보를 채택하거나 명시적 덮어쓰기를
+확정하면 대표 `ExamAttempt`의 id/index를 유지한 채 `submission_id`만 새 immutable 스캔
+event로 다시 연결하고 `omr_scan_replacements`에 이전/신규 submission, actor, 시각, 사유를
+남긴다. 그 뒤 이전 DONE 제출을 SUPERSEDED로 전환하고 강제 재채점한다. 실제 재시험 정책과
+최대 응시 횟수는 이 좁은 교체 경로에 소비되지 않는다.
 
 ## 문항 구성
 

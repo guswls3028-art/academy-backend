@@ -147,7 +147,12 @@ class ExamGradingService:
     # Public API
     # ------------------------------------------------------------------
     @transaction.atomic
-    def auto_grade_objective(self, *, submission_id: int) -> ExamResult:
+    def auto_grade_objective(
+        self,
+        *,
+        submission_id: int,
+        force_regrade: bool = False,
+    ) -> ExamResult:
         submission = self._load_submission(submission_id)
         exam = self._load_exam(submission)
         validate_exam_submission_scope(submission=submission, exam=exam)
@@ -161,7 +166,7 @@ class ExamGradingService:
             .first()
         )
 
-        if existing and existing.status == ExamResult.Status.FINAL:
+        if existing and existing.status == ExamResult.Status.FINAL and not force_regrade:
             return existing
 
         questions = list(sheet.questions.all().only("id", "number"))

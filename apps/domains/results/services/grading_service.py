@@ -15,9 +15,12 @@ from apps.support.results.grading_dependencies import (
 
 
 @transaction.atomic
-def grade_submission(submission_id: int) -> ExamResult:
+def grade_submission(submission_id: int, *, force_regrade: bool = False) -> ExamResult:
     service = ExamGradingService()
-    result = service.auto_grade_objective(submission_id=int(submission_id))
+    result = service.auto_grade_objective(
+        submission_id=int(submission_id),
+        force_regrade=force_regrade,
+    )
 
     submission = get_submission_for_grading(submission_id=int(submission_id))
 

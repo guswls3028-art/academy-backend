@@ -79,7 +79,10 @@ def grade_omr_submission_if_ready(
 
     from apps.domains.results.services.grading_service import grade_submission
 
-    result = grade_submission(int(submission_id))
+    result = grade_submission(
+        int(submission_id),
+        force_regrade=allow_done_regrade,
+    )
     status = (
         Submission.objects
         .filter(id=int(submission_id))
