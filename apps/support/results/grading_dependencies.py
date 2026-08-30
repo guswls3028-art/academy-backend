@@ -128,6 +128,29 @@ def get_submission_for_result_sync(*, submission_id: int) -> Any:
     )
 
 
+def has_confirmed_current_omr_identity(
+    *,
+    tenant_id: int,
+    exam_id: int,
+    enrollment_id: int,
+    submission_id: int,
+) -> bool:
+    from apps.domains.submissions.models import OMRStudentMatch
+
+    return OMRStudentMatch.objects.filter(
+        tenant_id=int(tenant_id),
+        submission_id=int(submission_id),
+        submission__tenant_id=int(tenant_id),
+        submission__target_type="exam",
+        submission__target_id=int(exam_id),
+        submission__source="omr_scan",
+        submission__enrollment_id=int(enrollment_id),
+        enrollment_id=int(enrollment_id),
+        status=OMRStudentMatch.Status.CONFIRMED,
+        is_current=True,
+    ).exists()
+
+
 def get_exam_for_result_sync(*, exam_id: int) -> Any:
     from apps.domains.exams.models import Exam
 
