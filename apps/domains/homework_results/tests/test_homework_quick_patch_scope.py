@@ -513,7 +513,15 @@ class HomeworkQuickPatchCreateRaceTests(TransactionTestCase):
             barrier.wait(timeout=10)
             return original_create(*args, **kwargs)
 
-        with patch.object(HomeworkScore.objects, "create", side_effect=racing_create):
+        # The lease contract is covered separately. Bypass its row lock here so both
+        # requests reach the post-lease empty-cell create window at the same time.
+        with (
+            patch(
+                "apps.domains.homework_results.views.homework_score_viewset."
+                "require_homework_score_edit_lease"
+            ),
+            patch.object(HomeworkScore.objects, "create", side_effect=racing_create),
+        ):
             with ThreadPoolExecutor(max_workers=2) as executor:
                 results = list(executor.map(self._request, [71, 82]))
 
