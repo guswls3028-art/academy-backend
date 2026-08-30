@@ -378,6 +378,35 @@ def homework_submission_is_teacher_reviewed(
     ).exists()
 
 
+def homework_submission_is_closed_for_student_append(
+    *,
+    tenant,
+    enrollment_id: int,
+    homework_id: int,
+) -> bool:
+    """Return whether the student's retry flow is already complete."""
+    from apps.domains.homework_results.models import HomeworkScore
+
+    if HomeworkScore.objects.filter(
+        enrollment_id=enrollment_id,
+        enrollment__tenant=tenant,
+        homework_id=homework_id,
+        homework__tenant=tenant,
+        passed=True,
+    ).exists():
+        return True
+
+    from apps.domains.progress.models import AssessmentCorrection
+
+    return AssessmentCorrection.objects.filter(
+        tenant=tenant,
+        enrollment_id=enrollment_id,
+        source_type=AssessmentCorrection.SourceType.HOMEWORK,
+        source_id=homework_id,
+        completed=True,
+    ).exists()
+
+
 def homework_submission_review_map(
     *,
     tenant,

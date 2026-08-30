@@ -300,28 +300,18 @@ class HomeworkSubmissionMediaTests(TestCase):
         self.assertEqual(upload_fileobj_to_r2.call_count, 2)
 
     @patch("apps.domains.submissions.services.homework_media.upload_fileobj_to_r2")
-    def test_accepts_extension_when_signature_or_browser_mime_is_unreliable(
-        self,
-        upload_fileobj_to_r2,
-    ):
-        mismatched_browser_mime = self._post(
-            file=SimpleUploadedFile("camera.jpg", b"phone-camera-bytes", content_type="application/octet-stream")
-        )
-        self.assertEqual(mismatched_browser_mime.status_code, 201, mismatched_browser_mime.data)
-        self.assertEqual(mismatched_browser_mime.data["media_kind"], "image")
-        self.assertEqual(mismatched_browser_mime.data["mime_type"], "image/jpeg")
-
-    @patch("apps.domains.submissions.services.homework_media.upload_fileobj_to_r2")
-    def test_accepts_camera_file_without_extension_when_browser_mime_is_supported(
+    def test_rejects_signature_mismatch_before_object_or_row_write(
         self,
         upload_fileobj_to_r2,
     ):
         response = self._post(
-            file=SimpleUploadedFile("camera-capture", b"phone-camera-bytes", content_type="image/heic")
+            file=SimpleUploadedFile("fake.jpg", b"not-an-image", content_type="image/jpeg")
         )
-        self.assertEqual(response.status_code, 201, response.data)
-        self.assertEqual(response.data["media_kind"], "image")
-        self.assertEqual(response.data["mime_type"], "image/heic")
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(response.data["code"], "HOMEWORK_MEDIA_SIGNATURE")
+        upload_fileobj_to_r2.assert_not_called()
+        self.assertEqual(Submission.objects.count(), 0)
+        self.assertEqual(SubmissionMedia.objects.count(), 0)
 
     @patch("apps.domains.submissions.services.homework_media.upload_fileobj_to_r2")
     def test_rejects_twenty_first_active_file(
@@ -575,7 +565,7 @@ class HomeworkSubmissionMediaTests(TestCase):
         self.assertEqual(response.data["code"], "HOMEWORK_MEDIA_REVIEWED")
 
     @patch("apps.domains.submissions.services.homework_media.upload_fileobj_to_r2")
-    def test_student_can_append_file_after_teacher_score(
+    def test_student_can_append_file_after_failed_teacher_score(
         self,
         upload_fileobj_to_r2,
     ):
@@ -592,9 +582,9 @@ class HomeworkSubmissionMediaTests(TestCase):
             enrollment=self.enrollment,
             session=self.session,
             homework=self.homework,
-            score=10,
+            score=3,
             max_score=10,
-            passed=True,
+            passed=False,
             attempt_index=1,
         )
         response = self._post(file=_jpeg("reviewed-score.jpg"))
@@ -604,7 +594,29 @@ class HomeworkSubmissionMediaTests(TestCase):
         self.assertEqual(SubmissionMedia.objects.count(), 1)
 
     @patch("apps.domains.submissions.services.homework_media.upload_fileobj_to_r2")
-    def test_student_can_append_file_after_completed_correction_with_historic_parent(
+    def test_student_upload_is_locked_after_passing_teacher_score_before_object_or_row_write(
+        self,
+        upload_fileobj_to_r2,
+    ):
+        create_homework_score_fixture(
+            enrollment=self.enrollment,
+            session=self.session,
+            homework=self.homework,
+            score=10,
+            max_score=10,
+            passed=True,
+            attempt_index=1,
+        )
+        response = self._post(file=_jpeg("reviewed-score.jpg"))
+
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertEqual(response.data["code"], "HOMEWORK_MEDIA_REVIEWED")
+        upload_fileobj_to_r2.assert_not_called()
+        self.assertEqual(Submission.objects.count(), 0)
+        self.assertEqual(SubmissionMedia.objects.count(), 0)
+
+    @patch("apps.domains.submissions.services.homework_media.upload_fileobj_to_r2")
+    def test_student_upload_is_locked_after_completed_correction_with_historic_parent(
         self,
         upload_fileobj_to_r2,
     ):
@@ -627,12 +639,14 @@ class HomeworkSubmissionMediaTests(TestCase):
             completed=True,
             updated_by=self.teacher,
         )
+        submission_count = Submission.objects.count()
         response = self._post(file=_jpeg("reviewed-correction.jpg"))
 
-        self.assertEqual(response.status_code, 201, response.data)
-        upload_fileobj_to_r2.assert_called_once()
-        self.assertEqual(Submission.objects.count(), 2)
-        self.assertEqual(SubmissionMedia.objects.count(), 1)
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertEqual(response.data["code"], "HOMEWORK_MEDIA_REVIEWED")
+        upload_fileobj_to_r2.assert_not_called()
+        self.assertEqual(Submission.objects.count(), submission_count)
+        self.assertEqual(SubmissionMedia.objects.count(), 0)
 
     @patch("apps.domains.submissions.services.homework_media.upload_fileobj_to_r2")
     def test_student_cannot_remove_another_students_file(
