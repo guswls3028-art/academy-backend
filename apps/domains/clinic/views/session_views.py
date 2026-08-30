@@ -166,11 +166,16 @@ class SessionViewSet(viewsets.ModelViewSet):
                 {"tenant": "테넌트 컨텍스트가 필요합니다. (호스트 또는 X-Tenant-Code 확인)"}
             )
         created_by = self.request.user if self.request.user.is_authenticated else None
-        try:
-            serializer.save(
-                tenant=tenant,
-                created_by=created_by,
+        save_kwargs = {
+            "tenant": tenant,
+            "created_by": created_by,
+        }
+        if "allow_multi_slot_booking" not in serializer.validated_data:
+            save_kwargs["allow_multi_slot_booking"] = bool(
+                tenant.clinic_allow_multi_slot_booking_default
             )
+        try:
+            serializer.save(**save_kwargs)
         except IntegrityError as e:
             err_str = str(e)
             if "uniq_clinic_session_per_tenant_time_loc" in err_str:
@@ -371,6 +376,7 @@ class SessionViewSet(viewsets.ModelViewSet):
                 "section": s.section_id,
                 "section_label": s.section.label if s.section_id else None,
                 "section_type": s.section.section_type if s.section_id else None,
+                "allow_multi_slot_booking": s.allow_multi_slot_booking,
             }
             for s in qs
         ]
@@ -419,6 +425,10 @@ class SessionViewSet(viewsets.ModelViewSet):
         dates = data.pop("dates")
         target_lecture_ids = data.pop("target_lecture_ids")
         section_id = data.pop("section_id", None)
+        allow_multi_slot_booking = data.pop(
+            "allow_multi_slot_booking",
+            bool(tenant.clinic_allow_multi_slot_booking_default),
+        )
         today = timezone.localdate()
 
         # Validate section belongs to this tenant
@@ -463,6 +473,7 @@ class SessionViewSet(viewsets.ModelViewSet):
                         target_grade=data.get("target_grade"),
                         target_school_type=data.get("target_school_type"),
                         section=section_obj,
+                        allow_multi_slot_booking=allow_multi_slot_booking,
                         created_by=created_by,
                     )
                     if target_lecture_ids:

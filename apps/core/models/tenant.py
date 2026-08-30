@@ -102,6 +102,11 @@ class Tenant(models.Model):
         default=False,
         help_text="True면 학생 예약 신청을 자동 승인(booked)합니다.",
     )
+    clinic_allow_multi_slot_booking_default = models.BooleanField(
+        default=False,
+        db_default=False,
+        help_text="새 클리닉 세션의 같은 날 여러 시간대 예약 허용 기본값입니다.",
+    )
     # 학생 가입 신청(회원가입) 자동 승인 — True면 신청 즉시 Student 생성·승인
     student_registration_auto_approve = models.BooleanField(
         default=False,

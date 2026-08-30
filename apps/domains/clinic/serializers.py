@@ -431,6 +431,7 @@ class ClinicSessionBulkCreateSerializer(serializers.Serializer):
     target_grade = serializers.IntegerField(required=False, allow_null=True, default=None)
     target_school_type = serializers.CharField(required=False, allow_null=True, default=None)
     section_id = serializers.IntegerField(required=False, allow_null=True, default=None)
+    allow_multi_slot_booking = serializers.BooleanField(required=False)
     target_lecture_ids = serializers.ListField(
         child=serializers.IntegerField(), required=False, default=[]
     )
