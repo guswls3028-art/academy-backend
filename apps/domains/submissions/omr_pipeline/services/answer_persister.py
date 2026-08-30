@@ -162,7 +162,7 @@ def persist_answers(
         )
 
         st = str(a.get("status") or "").lower()
-        mk = str(a.get("marking") or "").lower()  # noqa: F841 — kept for future use
+        mk = str(a.get("marking") or "").lower()
         conf = a.get("confidence")
 
         try:
@@ -185,6 +185,12 @@ def persist_answers(
         if st == "error":
             manual_required = True
             reasons.append("ANSWER_STATUS_NOT_OK")
+        elif mk == "multi" and not expected_multi_ok and score_ambiguous:
+            # The detector may classify a strong multi-mark as status=ok. On a
+            # single-answer key that is still score-affecting ambiguity and must
+            # never be auto-published as a valid answer.
+            manual_required = True
+            reasons.append("ANSWER_SCORE_AMBIGUOUS")
         elif st not in ("ok", "blank") and not expected_multi_ok and score_ambiguous:
             manual_required = True
             reasons.append("ANSWER_SCORE_AMBIGUOUS")

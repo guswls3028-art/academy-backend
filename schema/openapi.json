@@ -5222,6 +5222,84 @@
           null
         ]
       },
+      "OmrRotateRescanConflict": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "detail"
+        ],
+        "type": "object"
+      },
+      "OmrRotateRescanCreatedResult": {
+        "properties": {
+          "created": {
+            "type": "boolean"
+          },
+          "rotation_degrees": {
+            "$ref": "#/components/schemas/RotationDegreesEnum"
+          },
+          "status": {
+            "type": "string"
+          },
+          "submission_id": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "created",
+          "rotation_degrees",
+          "status",
+          "submission_id"
+        ],
+        "type": "object"
+      },
+      "OmrRotateRescanRequestRequest": {
+        "properties": {
+          "client_request_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "rotation_degrees": {
+            "$ref": "#/components/schemas/RotationDegreesEnum"
+          }
+        },
+        "required": [
+          "client_request_id",
+          "rotation_degrees"
+        ],
+        "type": "object"
+      },
+      "OmrRotateRescanResult": {
+        "properties": {
+          "created": {
+            "type": "boolean"
+          },
+          "rotation_degrees": {
+            "$ref": "#/components/schemas/RotationDegreesEnum"
+          },
+          "status": {
+            "type": "string"
+          },
+          "submission_id": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "created",
+          "rotation_degrees",
+          "status",
+          "submission_id"
+        ],
+        "type": "object"
+      },
       "OmrUploadBatchCompletionClaimResponse": {
         "properties": {
           "batch": {
@@ -5291,6 +5369,12 @@
             "format": "date-time",
             "type": "string"
           },
+          "duplicate_ordinals": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          },
           "exam_id": {
             "type": "integer"
           },
@@ -5355,6 +5439,7 @@
           "completion_notice_claimed",
           "counts",
           "created_at",
+          "duplicate_ordinals",
           "exam_id",
           "failed_ordinals",
           "id",
@@ -5391,6 +5476,12 @@
           "created_at": {
             "format": "date-time",
             "type": "string"
+          },
+          "duplicate_ordinals": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
           },
           "exam_id": {
             "type": "integer"
@@ -5438,6 +5529,7 @@
           "completion_notice_claimed",
           "counts",
           "created_at",
+          "duplicate_ordinals",
           "exam_id",
           "failed_ordinals",
           "id",
@@ -5474,6 +5566,12 @@
           },
           "created_count": {
             "type": "integer"
+          },
+          "duplicate_ordinals": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
           },
           "exam_id": {
             "type": "integer"
@@ -5528,6 +5626,7 @@
           "counts",
           "created_at",
           "created_count",
+          "duplicate_ordinals",
           "exam_id",
           "failed_ordinals",
           "id",
@@ -11436,6 +11535,15 @@
           "OTHER"
         ],
         "type": "string"
+      },
+      "RotationDegreesEnum": {
+        "description": "* `90` - 90\n* `180` - 180\n* `270` - 270",
+        "enum": [
+          90,
+          180,
+          270
+        ],
+        "type": "integer"
       },
       "SchoolTypeEnum": {
         "description": "* `ELEMENTARY` - 초등\n* `MIDDLE` - 중등\n* `HIGH` - 고등",
@@ -47331,6 +47439,86 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Submission"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "submissions"
+        ]
+      }
+    },
+    "/api/v1/submissions/submissions/{id}/rotate-rescan/": {
+      "post": {
+        "description": "Re-run an immutable OMR source with an explicit cardinal rotation.",
+        "operationId": "submissions_submissions_rotate_rescan_create",
+        "parameters": [
+          {
+            "description": "submission을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OmrRotateRescanRequestRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/OmrRotateRescanRequestRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/OmrRotateRescanRequestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OmrRotateRescanResult"
+                }
+              }
+            },
+            "description": ""
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OmrRotateRescanCreatedResult"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OmrRotateRescanConflict"
                 }
               }
             },

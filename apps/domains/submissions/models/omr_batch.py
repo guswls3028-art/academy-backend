@@ -46,8 +46,16 @@ class OmrUploadBatchItem(TimestampModel):
     class AdmissionStatus(models.TextChoices):
         PENDING = "pending", "Pending"
         RECEIVED = "received", "Received"
+        DUPLICATE = "duplicate", "Duplicate"
         FAILED = "failed", "Failed"
 
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="omr_upload_batch_items",
+        null=True,
+    )
+    exam_id = models.PositiveBigIntegerField(null=True)
     batch = models.ForeignKey(
         OmrUploadBatch,
         on_delete=models.CASCADE,
@@ -60,6 +68,19 @@ class OmrUploadBatchItem(TimestampModel):
         related_name="omr_upload_batch_item",
         null=True,
         blank=True,
+    )
+    duplicate_of_submission = models.ForeignKey(
+        "submissions.Submission",
+        on_delete=models.SET_NULL,
+        related_name="duplicate_omr_upload_items",
+        null=True,
+        blank=True,
+    )
+    content_sha256 = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        null=True,
     )
     admission_status = models.CharField(
         max_length=16,
@@ -76,10 +97,22 @@ class OmrUploadBatchItem(TimestampModel):
                 fields=["batch", "admission_status", "ordinal"],
                 name="omr_item_batch_status_idx",
             ),
+            models.Index(
+                fields=["tenant", "exam_id", "content_sha256"],
+                name="omr_item_exam_hash_idx",
+            ),
         ]
         constraints = [
             models.UniqueConstraint(
                 fields=["batch", "ordinal"],
                 name="uniq_omr_batch_item_ordinal",
+            ),
+            models.UniqueConstraint(
+                fields=["tenant", "exam_id", "content_sha256"],
+                condition=(
+                    models.Q(admission_status="received")
+                    & ~models.Q(content_sha256="")
+                ),
+                name="uniq_received_omr_exam_content",
             ),
         ]

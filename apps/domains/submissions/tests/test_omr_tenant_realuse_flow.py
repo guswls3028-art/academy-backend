@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
@@ -38,8 +39,11 @@ from apps.domains.submissions.services.ai_omr_result_mapper import apply_omr_ai_
 from apps.domains.submissions.views.submission_view import SubmissionViewSet
 from academy.adapters.ai.omr.engine import AnswerDetectConfig, detect_omr_answers_v7
 from academy.adapters.ai.omr.identifier import IdentifierConfigV1, detect_identifier_v1
-from academy.adapters.ai.omr.warp import align_to_a4_landscape
-from academy.adapters.ai.omr.warp import _try_contour_warp
+from academy.adapters.ai.omr.warp import (
+    _try_contour_warp,
+    align_to_a4_landscape,
+    rotate_cardinal_cw,
+)
 from tests.omr.test_omr_full_pipeline import distort
 from tests.omr.test_omr_realuse import render_marked_pdf
 
@@ -48,6 +52,16 @@ User = get_user_model()
 
 
 class OMRTenantRealUseFlowTests(TestCase):
+    def test_explicit_cardinal_rotation_changes_input_pixels_clockwise(self):
+        image = np.arange(2 * 3 * 3, dtype=np.uint8).reshape((2, 3, 3))
+
+        for degrees, quarter_turns in ((90, -1), (180, -2), (270, -3)):
+            with self.subTest(degrees=degrees):
+                np.testing.assert_array_equal(
+                    rotate_cardinal_cw(image, degrees),
+                    np.rot90(image, k=quarter_turns),
+                )
+
     def test_contour_fallback_rejects_narrow_internal_panel(self):
         image = np.ones((3507, 2480, 3), dtype=np.uint8) * 255
         image[2697:2700, 80:2381] = 0
@@ -337,7 +351,7 @@ class OMRTenantRealUseFlowTests(TestCase):
         )
 
         wrong_marks = {
-            "1": ["1", "2"],
+            "1": ["2", "4"],
             "2": ["1", "4"],
             "3": ["1", "5"],
             **{str(i): "1" for i in range(4, 21)},
@@ -1061,7 +1075,7 @@ class OMRMapperReviewPolicyTests(TestCase):
         self.assertFalse(submission.meta["manual_review"]["required"])
         self.assertEqual(submission.meta["answer_stats"]["ambiguous"], 1)
 
-    def test_clear_multi_answer_is_scored_without_manual_review(self):
+    def test_clear_multi_answer_overlapping_correct_mark_requires_manual_review(self):
         tenant, _exam, enrollment, submission = self._make_exam()
 
         apply_omr_ai_result({
@@ -1091,7 +1105,11 @@ class OMRMapperReviewPolicyTests(TestCase):
 
         submission.refresh_from_db()
         self.assertEqual(submission.enrollment_id, enrollment.id)
-        self.assertFalse(submission.meta["manual_review"]["required"])
+        self.assertTrue(submission.meta["manual_review"]["required"])
+        self.assertIn(
+            "ANSWER_SCORE_AMBIGUOUS",
+            submission.meta["manual_review"]["reasons"],
+        )
         self.assertEqual(submission.meta["answer_stats"]["ok"], 2)
 
     def test_ambiguous_identifier_without_competing_candidate_is_resolved(self):
@@ -1292,6 +1310,24 @@ class AcceptFromDuplicatesTests(TestCase):
         view = SubmissionViewSet.as_view({"get": "manual_edit"})
         return view(request, pk=sub_id)
 
+    def _post_rotate(
+        self,
+        sub_id: int,
+        *,
+        request_id: str = "rotate-test-1",
+        rotation: int = 90,
+    ):
+        path = f"/submissions/submissions/{sub_id}/rotate-rescan/"
+        request = self.factory.post(
+            path,
+            {"rotation_degrees": rotation, "client_request_id": request_id},
+            format="json",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.staff)
+        view = SubmissionViewSet.as_view({"post": "rotate_rescan"})
+        return view(request, pk=sub_id)
+
     def test_manual_edit_get_exposes_duplicate_siblings(self):
         response = self._get_manual_edit(self.kept.id)
         self.assertEqual(response.status_code, 200, response.data)
@@ -1299,6 +1335,40 @@ class AcceptFromDuplicatesTests(TestCase):
         self.assertEqual(len(siblings), 1)
         self.assertEqual(siblings[0]["submission_id"], self.other.id)
         self.assertEqual(siblings[0]["status"], Submission.Status.DONE)
+
+    @patch("apps.domains.submissions.views.submission_view.dispatch_submission")
+    def test_rotate_rescan_reuses_original_and_is_idempotent(self, dispatch_submission):
+        first = self._post_rotate(self.other.id)
+        second = self._post_rotate(self.other.id)
+
+        self.assertEqual(first.status_code, 201, first.data)
+        self.assertTrue(first.data["created"])
+        self.assertEqual(second.status_code, 200, second.data)
+        self.assertFalse(second.data["created"])
+        self.assertEqual(second.data["submission_id"], first.data["submission_id"])
+        replacement = Submission.objects.get(id=first.data["submission_id"])
+        self.assertEqual(replacement.file_key, self.other.file_key)
+        self.assertEqual(replacement.payload["manual_rotation_degrees"], 90)
+        self.assertEqual(
+            replacement.payload["omr_rotation_request"]["source_submission_id"],
+            self.other.id,
+        )
+        self.other.refresh_from_db()
+        self.assertEqual(self.other.status, Submission.Status.DONE)
+        dispatch_submission.assert_called_once_with(replacement)
+
+    @patch("apps.domains.submissions.views.submission_view.dispatch_submission")
+    def test_rotate_rescan_rejects_idempotency_key_reuse_with_different_rotation(
+        self,
+        dispatch_submission,
+    ):
+        first = self._post_rotate(self.other.id, request_id="stable-key", rotation=90)
+        mismatch = self._post_rotate(self.other.id, request_id="stable-key", rotation=180)
+
+        self.assertEqual(first.status_code, 201, first.data)
+        self.assertEqual(mismatch.status_code, 409, mismatch.data)
+        self.assertEqual(mismatch.data["code"], "IDEMPOTENCY_PAYLOAD_MISMATCH")
+        dispatch_submission.assert_called_once()
 
     def test_accept_from_duplicates_promotes_kept_and_supersedes_other(self):
         response = self._post_accept(self.kept.id)
@@ -1344,6 +1414,49 @@ class AcceptFromDuplicatesTests(TestCase):
         ).order_by("-id").first()
         self.assertIsNotNone(result)
         self.assertEqual(float(result.total_score or 0), 50.0)
+
+    def test_accept_from_duplicates_rebinds_same_attempt_instead_of_creating_retake(self):
+        attempt = ExamAttempt.objects.create(
+            exam=self.exam,
+            enrollment=self.enrollment,
+            submission_id=self.other.id,
+            attempt_index=1,
+            is_representative=True,
+            status="done",
+            meta={
+                "initial_snapshot": {
+                    "submission_id": self.other.id,
+                    "total_score": 100,
+                    "max_score": 100,
+                    "source": "submission_sync",
+                }
+            },
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.enrollment,
+            attempt=attempt,
+            total_score=100,
+            max_score=100,
+            objective_score=100,
+        )
+
+        response = self._post_accept(self.kept.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(ExamAttempt.objects.filter(exam=self.exam, enrollment=self.enrollment).count(), 1)
+        attempt.refresh_from_db()
+        self.assertEqual(attempt.submission_id, self.kept.id)
+        self.assertEqual(attempt.attempt_index, 1)
+        self.assertFalse(attempt.is_retake)
+        self.assertEqual(
+            attempt.meta["omr_scan_replacements"][-1]["previous_submission_id"],
+            self.other.id,
+        )
+        result = Result.objects.get(target_id=self.exam.id, enrollment=self.enrollment)
+        self.assertEqual(result.attempt_id, attempt.id)
+        self.assertEqual(float(result.total_score), 50.0)
 
     def test_rejects_when_enrollment_missing(self):
         unmatched = Submission.objects.create(

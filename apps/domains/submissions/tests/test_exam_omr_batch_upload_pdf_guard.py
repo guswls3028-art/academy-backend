@@ -163,7 +163,11 @@ class ExamOMRBatchUploadPdfGuardTests(TestCase):
 
     @staticmethod
     def _image(name: str):
-        return SimpleUploadedFile(name, b"jpeg-body", content_type="image/jpeg")
+        return SimpleUploadedFile(
+            name,
+            f"jpeg-body:{name}".encode(),
+            content_type="image/jpeg",
+        )
 
     def test_rejects_multipage_pdf_before_creating_submission(self):
         upload = SimpleUploadedFile(
@@ -201,6 +205,67 @@ class ExamOMRBatchUploadPdfGuardTests(TestCase):
         self.assertEqual(response.data["total_count"], 22)
         self.assertEqual(response.data["counts"]["pending_admission"], 22)
         self.assertEqual(response.data["pending_admission_ordinals"], list(range(1, 23)))
+
+    @patch("apps.domains.submissions.views.exam_omr_batch_upload_view.dispatch_submission")
+    @patch("apps.domains.submissions.serializers.submission.upload_fileobj_to_r2")
+    def test_exact_file_reupload_across_batches_is_accounted_without_new_submission(
+        self,
+        upload_fileobj_to_r2,
+        dispatch_submission,
+    ):
+        first_batch = self._initialize(1).data["id"]
+        first = self._upload_to_batch(
+            first_batch,
+            [SimpleUploadedFile("scan-a.jpg", b"same-scan", content_type="image/jpeg")],
+            [1],
+        )
+        second_batch = self._initialize(1).data["id"]
+        duplicate = self._upload_to_batch(
+            second_batch,
+            [SimpleUploadedFile("renamed.jpg", b"same-scan", content_type="image/jpeg")],
+            [1],
+        )
+
+        self.assertEqual(first.data["created_count"], 1)
+        self.assertEqual(duplicate.status_code, 201)
+        self.assertEqual(duplicate.data["created_count"], 0)
+        self.assertEqual(duplicate.data["counts"]["duplicate"], 1)
+        self.assertEqual(duplicate.data["duplicate_ordinals"], [1])
+        self.assertTrue(duplicate.data["terminal"])
+        self.assertEqual(Submission.objects.filter(target_id=self.exam.id).count(), 1)
+        duplicate_item = OmrUploadBatchItem.objects.get(batch_id=second_batch, ordinal=1)
+        self.assertEqual(
+            duplicate_item.duplicate_of_submission_id,
+            first.data["submission_ids"][0],
+        )
+        self.assertEqual(upload_fileobj_to_r2.call_count, 1)
+        self.assertEqual(dispatch_submission.call_count, 1)
+
+    @patch("apps.domains.submissions.views.exam_omr_batch_upload_view.dispatch_submission")
+    @patch("apps.domains.submissions.serializers.submission.upload_fileobj_to_r2")
+    def test_same_filename_with_different_bytes_is_not_a_duplicate(
+        self,
+        upload_fileobj_to_r2,
+        dispatch_submission,
+    ):
+        first_batch = self._initialize(1).data["id"]
+        self._upload_to_batch(
+            first_batch,
+            [SimpleUploadedFile("scan.jpg", b"scan-one", content_type="image/jpeg")],
+            [1],
+        )
+        second_batch = self._initialize(1).data["id"]
+        second = self._upload_to_batch(
+            second_batch,
+            [SimpleUploadedFile("scan.jpg", b"scan-two", content_type="image/jpeg")],
+            [1],
+        )
+
+        self.assertEqual(second.data["created_count"], 1)
+        self.assertEqual(second.data["counts"]["duplicate"], 0)
+        self.assertEqual(Submission.objects.filter(target_id=self.exam.id).count(), 2)
+        self.assertEqual(upload_fileobj_to_r2.call_count, 2)
+        self.assertEqual(dispatch_submission.call_count, 2)
 
     def test_preserves_1_22_and_100_item_totals(self):
         for total_count in (1, 22, 100):
@@ -615,6 +680,8 @@ class OmrUploadBatchCompletionClaimConcurrencyPostgresTests(TransactionTestCase)
             status=Submission.Status.DONE,
         )
         OmrUploadBatchItem.objects.create(
+            tenant=tenant,
+            exam_id=exam.id,
             batch=batch,
             ordinal=1,
             admission_status=OmrUploadBatchItem.AdmissionStatus.RECEIVED,

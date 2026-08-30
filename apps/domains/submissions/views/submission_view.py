@@ -4,6 +4,8 @@ from __future__ import annotations
 from django.db import transaction
 from django.utils import timezone
 
+from drf_spectacular.utils import extend_schema, inline_serializer
+from rest_framework import serializers
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -46,6 +48,7 @@ from apps.support.submissions.dependencies import (
     enrollment_belongs_to_tenant,
     exam_question_number_by_id,
     get_synced_exam_score,
+    rebind_representative_omr_submission,
     request_is_parent,
     student_owns_enrollment,
     target_belongs_to_tenant,
@@ -86,6 +89,147 @@ class SubmissionViewSet(ModelViewSet):
         if self.action in ("create", "admin_omr_upload"):
             return SubmissionCreateSerializer
         return SubmissionSerializer
+
+    @extend_schema(
+        request=inline_serializer(
+            name="OmrRotateRescanRequest",
+            fields={
+                "rotation_degrees": serializers.ChoiceField(choices=[90, 180, 270]),
+                "client_request_id": serializers.CharField(max_length=128),
+            },
+        ),
+        responses={
+            200: inline_serializer(
+                name="OmrRotateRescanResult",
+                fields={
+                    "submission_id": serializers.IntegerField(),
+                    "status": serializers.CharField(),
+                    "rotation_degrees": serializers.ChoiceField(choices=[90, 180, 270]),
+                    "created": serializers.BooleanField(),
+                },
+            ),
+            201: inline_serializer(
+                name="OmrRotateRescanCreatedResult",
+                fields={
+                    "submission_id": serializers.IntegerField(),
+                    "status": serializers.CharField(),
+                    "rotation_degrees": serializers.ChoiceField(choices=[90, 180, 270]),
+                    "created": serializers.BooleanField(),
+                },
+            ),
+            409: inline_serializer(
+                name="OmrRotateRescanConflict",
+                fields={
+                    "detail": serializers.CharField(),
+                    "code": serializers.CharField(),
+                },
+            ),
+        },
+    )
+    @action(detail=True, methods=["post"], url_path="rotate-rescan")
+    def rotate_rescan(self, request, pk=None):
+        """Re-run an immutable OMR source with an explicit cardinal rotation."""
+        tenant = getattr(request, "tenant", None)
+        if tenant is None:
+            return Response({"detail": "Tenant required"}, status=403)
+        try:
+            rotation = int(request.data.get("rotation_degrees"))
+        except (TypeError, ValueError):
+            return Response({"detail": "rotation_degrees must be 90, 180, or 270"}, status=400)
+        if rotation not in (90, 180, 270):
+            return Response({"detail": "rotation_degrees must be 90, 180, or 270"}, status=400)
+        client_request_id = str(request.data.get("client_request_id") or "").strip()
+        if not client_request_id or len(client_request_id) > 128:
+            return Response({"detail": "client_request_id is required"}, status=400)
+
+        with transaction.atomic():
+            source = Submission.objects.select_for_update().filter(pk=pk, tenant=tenant).first()
+            if source is None:
+                return Response({"detail": "답안지를 찾을 수 없습니다."}, status=404)
+            if (
+                source.source != Submission.Source.OMR_SCAN
+                or source.target_type != Submission.TargetType.EXAM
+                or not source.file_key
+            ):
+                return Response({"detail": "원본 파일이 있는 OMR 시험 답안지만 다시 읽을 수 있습니다."}, status=400)
+
+            existing = (
+                Submission.objects
+                .filter(
+                    tenant=tenant,
+                    source=Submission.Source.OMR_SCAN,
+                    target_type=Submission.TargetType.EXAM,
+                    target_id=int(source.target_id),
+                    payload__omr_rotation_request__client_request_id=client_request_id,
+                    payload__omr_rotation_request__source_submission_id=int(source.id),
+                )
+                .order_by("id")
+                .first()
+            )
+            if existing is not None:
+                existing_request = (
+                    existing.payload.get("omr_rotation_request", {})
+                    if isinstance(existing.payload, dict)
+                    else {}
+                )
+                existing_rotation = int(existing_request.get("rotation_degrees") or 0)
+                if existing_rotation != rotation:
+                    return Response(
+                        {
+                            "detail": "client_request_id가 다른 회전 요청에 이미 사용되었습니다.",
+                            "code": "IDEMPOTENCY_PAYLOAD_MISMATCH",
+                        },
+                        status=409,
+                    )
+                return Response(
+                    {
+                        "submission_id": int(existing.id),
+                        "status": existing.status,
+                        "rotation_degrees": existing_rotation,
+                        "created": False,
+                    },
+                    status=200,
+                )
+
+            payload = dict(source.payload or {})
+            payload["manual_rotation_degrees"] = rotation
+            payload["omr_rotation_request"] = {
+                "client_request_id": client_request_id,
+                "source_submission_id": int(source.id),
+                "rotation_degrees": rotation,
+                "requested_by_user_id": getattr(request.user, "id", None),
+                "requested_at": timezone.now().isoformat(),
+            }
+            replacement = Submission.objects.create(
+                tenant=tenant,
+                user=source.user,
+                enrollment=source.enrollment,
+                target_type=source.target_type,
+                target_id=source.target_id,
+                source=Submission.Source.OMR_SCAN,
+                file_key=source.file_key,
+                file_type=source.file_type,
+                file_size=source.file_size,
+                payload=payload,
+                meta={
+                    "rotation_rescan": {
+                        "source_submission_id": int(source.id),
+                        "rotation_degrees": rotation,
+                        "client_request_id": client_request_id,
+                    }
+                },
+            )
+            dispatch_submission(replacement)
+
+        return Response(
+            {
+                "submission_id": int(replacement.id),
+                "status": replacement.status,
+                "rotation_degrees": rotation,
+                "created": True,
+            },
+            status=201,
+        )
 
     @action(detail=False, methods=["post"], url_path="admin/omr-upload")
     def admin_omr_upload(self, request):
@@ -404,6 +548,7 @@ class SubmissionViewSet(ModelViewSet):
         resolved_enrollment_id: int | None = None
         exam_enrollment_created = False
         should_create_exam_enrollment = False
+        allow_duplicate = False
         if isinstance(identifier, dict) and identifier.get("enrollment_id") is not None:
             try:
                 candidate_eid = int(identifier["enrollment_id"])
@@ -555,6 +700,51 @@ class SubmissionViewSet(ModelViewSet):
                 identifier_payload=identifier,
             )
 
+        if allow_duplicate and resolved_enrollment_id is not None:
+            actor = f"admin.manual_edit.user_{getattr(request.user, 'id', '?')}"
+            all_siblings = list(
+                Submission.objects.select_for_update()
+                .filter(
+                    tenant=tenant,
+                    target_type=Submission.TargetType.EXAM,
+                    target_id=int(submission.target_id),
+                    enrollment_id=int(resolved_enrollment_id),
+                    source=Submission.Source.OMR_SCAN,
+                )
+                .exclude(id=submission.id)
+            )
+            rebind_representative_omr_submission(
+                exam_id=int(submission.target_id),
+                enrollment_id=int(resolved_enrollment_id),
+                replacement_submission_id=int(submission.id),
+                allowed_previous_submission_ids={int(sibling.id) for sibling in all_siblings},
+                actor=actor,
+            )
+            now = timezone.now()
+            for sibling in all_siblings:
+                if sibling.status not in OMR_CONFLICT_STATUSES:
+                    continue
+                if sibling.status == Submission.Status.DONE:
+                    supersede_submission(sibling, actor=actor)
+                    reason = "superseded_by_manual_override"
+                else:
+                    fail_submission(
+                        sibling,
+                        admin_override=True,
+                        error_message="discarded:duplicate",
+                        actor=actor,
+                    )
+                    reason = "duplicate"
+                sibling_meta = dict(sibling.meta or {})
+                sibling_meta["discarded"] = {
+                    "at": now.isoformat(),
+                    "by_user_id": getattr(request.user, "id", None),
+                    "reason": reason,
+                    "kept_sibling_id": int(submission.id),
+                }
+                sibling.meta = sibling_meta
+                sibling.save(update_fields=["meta", "updated_at"])
+
         try:
             from academy.application.use_cases.omr.grading_readiness import (
                 grade_omr_submission_if_ready,
@@ -650,16 +840,28 @@ class SubmissionViewSet(ModelViewSet):
             actor = f"admin.accept_from_duplicates.user_{getattr(request.user, 'id', '?')}"
 
             # 같은 (exam, enrollment) 다른 active sub 폐기
-            sibling_qs = (
+            all_siblings = list(
                 Submission.objects.select_for_update()
                 .filter(
                     tenant=tenant,
                     target_type=Submission.TargetType.EXAM,
                     target_id=int(submission.target_id),
                     enrollment_id=int(submission.enrollment_id),
-                    status__in=OMR_CONFLICT_STATUSES,
+                    source=Submission.Source.OMR_SCAN,
                 )
                 .exclude(id=submission.id)
+            )
+            sibling_qs = [
+                sibling
+                for sibling in all_siblings
+                if sibling.status in OMR_CONFLICT_STATUSES
+            ]
+            rebind_representative_omr_submission(
+                exam_id=int(submission.target_id),
+                enrollment_id=int(submission.enrollment_id),
+                replacement_submission_id=int(submission.id),
+                allowed_previous_submission_ids={int(sibling.id) for sibling in all_siblings},
+                actor=actor,
             )
             discarded_count = 0
             superseded_count = 0

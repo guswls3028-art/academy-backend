@@ -39,10 +39,113 @@ def request_is_parent(request: Any) -> bool:
     return is_request_parent(request)
 
 
-def grade_submission_objective(submission_id: int):
+def grade_submission_objective(submission_id: int, *, force_regrade: bool = False):
     from apps.domains.results.services.grading_service import grade_submission
 
-    return grade_submission(int(submission_id))
+    return grade_submission(int(submission_id), force_regrade=force_regrade)
+
+
+def rebind_representative_omr_submission(
+    *,
+    exam_id: int,
+    enrollment_id: int,
+    replacement_submission_id: int,
+    allowed_previous_submission_ids: set[int],
+    actor: str,
+):
+    """Rebind a replacement scan to the same physical exam sitting."""
+    from django.core.exceptions import ValidationError
+    from django.db import transaction
+    from django.utils import timezone
+
+    from apps.domains.results.models import ExamAttempt
+    from apps.domains.submissions.models import Submission
+
+    with transaction.atomic():
+        attempt = (
+            ExamAttempt.objects.select_for_update()
+            .filter(
+                exam_id=int(exam_id),
+                enrollment_id=int(enrollment_id),
+                is_representative=True,
+            )
+            .first()
+        )
+        if attempt is None:
+            return None
+        if int(attempt.submission_id or 0) == int(replacement_submission_id):
+            return attempt
+        previous_submission_id = int(attempt.submission_id or 0)
+        if previous_submission_id not in {int(value) for value in allowed_previous_submission_ids}:
+            raise ValidationError("Representative attempt is not owned by the OMR replacement set.")
+
+        submissions = {
+            int(row.id): row
+            for row in Submission.objects.select_for_update().filter(
+                id__in=[previous_submission_id, int(replacement_submission_id)]
+            )
+        }
+        previous = submissions.get(previous_submission_id)
+        replacement = submissions.get(int(replacement_submission_id))
+        if previous is None or replacement is None:
+            raise ValidationError("OMR replacement submissions could not be resolved.")
+        expected = (
+            previous.tenant_id,
+            previous.target_type,
+            int(previous.target_id),
+            int(previous.enrollment_id or 0),
+            previous.source,
+        )
+        actual = (
+            replacement.tenant_id,
+            replacement.target_type,
+            int(replacement.target_id),
+            int(replacement.enrollment_id or 0),
+            replacement.source,
+        )
+        if (
+            expected != actual
+            or actual[1] != Submission.TargetType.EXAM
+            or actual[4] != Submission.Source.OMR_SCAN
+        ):
+            raise ValidationError("OMR replacement scope mismatch.")
+        if actual[2] != int(exam_id) or actual[3] != int(enrollment_id):
+            raise ValidationError("OMR replacement exam or enrollment mismatch.")
+        if (
+            ExamAttempt.objects.select_for_update()
+            .filter(submission_id=int(replacement_submission_id))
+            .exclude(id=attempt.id)
+            .exists()
+        ):
+            raise ValidationError("Replacement submission already belongs to another attempt.")
+
+        now = timezone.now().isoformat()
+        meta = dict(attempt.meta or {}) if isinstance(attempt.meta, dict) else {}
+        replacements = list(meta.get("omr_scan_replacements") or [])
+        replacements.append(
+            {
+                "previous_submission_id": previous_submission_id,
+                "replacement_submission_id": int(replacement_submission_id),
+                "reason": "same_exam_rescan_not_retake",
+                "actor": actor,
+                "at": now,
+            }
+        )
+        meta["omr_scan_replacements"] = replacements
+        initial = meta.get("initial_snapshot")
+        if (
+            isinstance(initial, dict)
+            and int(initial.get("submission_id") or 0) == previous_submission_id
+        ):
+            initial["submission_id"] = int(replacement_submission_id)
+            initial["previous_submission_id"] = previous_submission_id
+            initial["scan_rebound_at"] = now
+            meta["initial_snapshot"] = initial
+        attempt.submission_id = int(replacement_submission_id)
+        attempt.status = "pending"
+        attempt.meta = meta
+        attempt.save(update_fields=["submission_id", "status", "meta", "updated_at"])
+        return attempt
 
 
 def dispatch_submission_ai_job(**kwargs: Any) -> Any:
@@ -123,7 +226,7 @@ def regrade_exam_submissions(*, tenant, exam_id: int, actor: str) -> dict[str, A
                     submission = Submission.objects.select_for_update().get(id=int(submission_id))
                     if submission.status != Submission.Status.ANSWERS_READY:
                         reopen_for_regrade(submission, actor=actor)
-            grade_submission_objective(int(submission_id))
+            grade_submission_objective(int(submission_id), force_regrade=True)
             graded += 1
         except Exception as exc:
             failed.append(

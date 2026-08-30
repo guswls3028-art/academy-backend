@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 from datetime import timedelta
+import hashlib
 import logging
 from uuid import UUID
 
 from django.apps import apps
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers, status
@@ -122,6 +123,7 @@ class OmrUploadBatchSummarySerializer(serializers.Serializer):
     pending_admission_ordinals = serializers.ListField(child=serializers.IntegerField())
     failed_ordinals = serializers.ListField(child=serializers.IntegerField())
     admission_failed_ordinals = serializers.ListField(child=serializers.IntegerField())
+    duplicate_ordinals = serializers.ListField(child=serializers.IntegerField())
     terminal = serializers.BooleanField()
     overall_status = serializers.CharField()
     completion_notice_claimed = serializers.BooleanField()
@@ -200,7 +202,15 @@ def _create_batch(*, tenant, user, exam_id: int, total_count: int, session_id: i
             total_count=total_count,
         )
         OmrUploadBatchItem.objects.bulk_create(
-            [OmrUploadBatchItem(batch=batch, ordinal=ordinal) for ordinal in range(1, total_count + 1)]
+            [
+                OmrUploadBatchItem(
+                    tenant=tenant,
+                    exam_id=exam_id,
+                    batch=batch,
+                    ordinal=ordinal,
+                )
+                for ordinal in range(1, total_count + 1)
+            ]
         )
     return batch
 
@@ -232,6 +242,7 @@ def _batch_summary(batch: OmrUploadBatch) -> dict:
     counts = {
         "pending_admission": 0,
         "received": 0,
+        "duplicate": 0,
         "processing": 0,
         "completed": 0,
         "needs_identification": 0,
@@ -241,12 +252,17 @@ def _batch_summary(batch: OmrUploadBatch) -> dict:
     pending_admission_ordinals: list[int] = []
     failed_ordinals: list[int] = []
     admission_failed_ordinals: list[int] = []
+    duplicate_ordinals: list[int] = []
 
     for item in items:
         submission = item.submission
         if item.admission_status == OmrUploadBatchItem.AdmissionStatus.PENDING:
             counts["pending_admission"] += 1
             pending_admission_ordinals.append(int(item.ordinal))
+            continue
+        if item.admission_status == OmrUploadBatchItem.AdmissionStatus.DUPLICATE:
+            counts["duplicate"] += 1
+            duplicate_ordinals.append(int(item.ordinal))
             continue
         if item.admission_status == OmrUploadBatchItem.AdmissionStatus.FAILED or submission is None:
             counts["failed"] += 1
@@ -296,6 +312,7 @@ def _batch_summary(batch: OmrUploadBatch) -> dict:
         "pending_admission_ordinals": pending_admission_ordinals,
         "failed_ordinals": failed_ordinals,
         "admission_failed_ordinals": admission_failed_ordinals,
+        "duplicate_ordinals": duplicate_ordinals,
         "terminal": terminal,
         "overall_status": overall_status,
         "completion_notice_claimed": batch.completion_notice_claimed_at is not None,
@@ -317,6 +334,66 @@ def _file_validation_error(upload_file) -> tuple[str, str] | None:
         if page_count != 1:
             return "multipage_pdf", f"{page_count}페이지 PDF입니다. 답안지 1장당 1개 파일로 업로드해 주세요."
     return None
+
+
+def _uploaded_file_sha256(upload_file) -> str:
+    """Hash an upload without consuming the stream used by the serializer."""
+    pos = upload_file.tell() if hasattr(upload_file, "tell") else 0
+    digest = hashlib.sha256()
+    try:
+        upload_file.seek(0)
+        for chunk in upload_file.chunks():
+            digest.update(chunk)
+    finally:
+        try:
+            upload_file.seek(pos)
+        except Exception:
+            upload_file.seek(0)
+    return digest.hexdigest()
+
+
+def _mark_duplicate_admission(
+    *,
+    item_id: int,
+    tenant,
+    exam_id: int,
+    content_sha256: str,
+) -> bool:
+    with transaction.atomic():
+        existing = (
+            OmrUploadBatchItem.objects
+            .filter(
+                tenant=tenant,
+                exam_id=int(exam_id),
+                content_sha256=content_sha256,
+                admission_status=OmrUploadBatchItem.AdmissionStatus.RECEIVED,
+                submission_id__isnull=False,
+            )
+            .exclude(id=int(item_id))
+            .order_by("id")
+            .first()
+        )
+        if existing is None:
+            return False
+        item = OmrUploadBatchItem.objects.select_for_update().get(id=int(item_id))
+        if item.admission_status == OmrUploadBatchItem.AdmissionStatus.RECEIVED:
+            return False
+        item.admission_status = OmrUploadBatchItem.AdmissionStatus.DUPLICATE
+        item.submission = None
+        item.duplicate_of_submission_id = int(existing.submission_id)
+        item.content_sha256 = content_sha256
+        item.failure_code = ""
+        item.failure_message = ""
+        item.save(update_fields=[
+            "admission_status",
+            "submission",
+            "duplicate_of_submission",
+            "content_sha256",
+            "failure_code",
+            "failure_message",
+            "updated_at",
+        ])
+        return True
 
 
 def _mark_admission_failed(item_id: int, *, code: str, message: str) -> bool:
@@ -496,6 +573,7 @@ class ExamOMRBatchUploadView(APIView):
                 continue
 
             uploaded_key = ""
+            content_sha256 = ""
             try:
                 with transaction.atomic():
                     locked_item = (
@@ -523,6 +601,37 @@ class ExamOMRBatchUploadView(APIView):
                             ]
                         )
                         continue
+                    content_sha256 = _uploaded_file_sha256(upload_file)
+                    duplicate = (
+                        OmrUploadBatchItem.objects
+                        .filter(
+                            tenant=tenant,
+                            exam_id=int(exam_id),
+                            content_sha256=content_sha256,
+                            admission_status=OmrUploadBatchItem.AdmissionStatus.RECEIVED,
+                            submission_id__isnull=False,
+                        )
+                        .exclude(id=locked_item.id)
+                        .order_by("id")
+                        .first()
+                    )
+                    if duplicate is not None:
+                        locked_item.admission_status = OmrUploadBatchItem.AdmissionStatus.DUPLICATE
+                        locked_item.submission = None
+                        locked_item.duplicate_of_submission_id = int(duplicate.submission_id)
+                        locked_item.content_sha256 = content_sha256
+                        locked_item.failure_code = ""
+                        locked_item.failure_message = ""
+                        locked_item.save(update_fields=[
+                            "admission_status",
+                            "submission",
+                            "duplicate_of_submission",
+                            "content_sha256",
+                            "failure_code",
+                            "failure_message",
+                            "updated_at",
+                        ])
+                        continue
                     serializer = SubmissionCreateSerializer(
                         data={
                             "enrollment_id": None,
@@ -537,13 +646,17 @@ class ExamOMRBatchUploadView(APIView):
                     submission = serializer.save(user=request.user, tenant=tenant)
                     uploaded_key = str(submission.file_key or "")
                     locked_item.submission = submission
+                    locked_item.duplicate_of_submission = None
                     locked_item.admission_status = OmrUploadBatchItem.AdmissionStatus.RECEIVED
+                    locked_item.content_sha256 = content_sha256
                     locked_item.failure_code = ""
                     locked_item.failure_message = ""
                     locked_item.save(
                         update_fields=[
                             "submission",
+                            "duplicate_of_submission",
                             "admission_status",
+                            "content_sha256",
                             "failure_code",
                             "failure_message",
                             "updated_at",
@@ -551,6 +664,29 @@ class ExamOMRBatchUploadView(APIView):
                     )
                     dispatch_submission(submission)
                     created_ids.append(int(submission.id))
+            except IntegrityError:
+                if uploaded_key:
+                    _delete_rolled_back_upload(
+                        key=uploaded_key,
+                        batch_id=batch.id,
+                        ordinal=int(ordinal),
+                    )
+                marked_duplicate = bool(content_sha256) and _mark_duplicate_admission(
+                    item_id=item.id,
+                    tenant=tenant,
+                    exam_id=int(exam_id),
+                    content_sha256=content_sha256,
+                )
+                if not marked_duplicate:
+                    logger.exception(
+                        "OMR batch item uniqueness admission failed",
+                        extra={"batch_id": str(batch.id), "ordinal": int(ordinal)},
+                    )
+                    _mark_admission_failed(
+                        item.id,
+                        code="admission_integrity_failed",
+                        message="파일 접수 충돌을 확인하지 못했습니다. 해당 항목만 다시 선택해 주세요.",
+                    )
             except Exception:
                 if uploaded_key:
                     _delete_rolled_back_upload(

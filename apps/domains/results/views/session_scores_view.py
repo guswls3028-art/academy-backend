@@ -540,14 +540,22 @@ class SessionScoresView(APIView):
                     enrollment_id__in=enrollment_ids,
                     source=Submission.Source.OMR_SCAN,
                 )
+                .exclude(
+                    status__in=[
+                        Submission.Status.FAILED,
+                        Submission.Status.SUPERSEDED,
+                    ]
+                )
                 .order_by("target_id", "enrollment_id", "-id")
             )
+            seen_omr_keys: Set[tuple[int, int]] = set()
             for sub in omr_submissions:
                 if not sub.enrollment_id:
                     continue
                 key = (int(sub.target_id), int(sub.enrollment_id))
-                if key in omr_review_map:
+                if key in seen_omr_keys:
                     continue
+                seen_omr_keys.add(key)
                 submission_meta = sub.meta if isinstance(sub.meta, dict) else {}
                 manual_review = (
                     submission_meta.get("manual_review")

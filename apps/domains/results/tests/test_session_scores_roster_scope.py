@@ -353,6 +353,48 @@ class SessionScoresRosterScopeTests(TestCase):
         self.assertTrue(block["meta"]["manual_review_required"])
         self.assertEqual(block["meta"]["manual_review_reasons"], ["ANSWER_STATUS_NOT_OK"])
 
+    def test_session_scores_ignores_superseded_omr_review_when_current_scan_is_clean(self):
+        Submission.objects.create(
+            tenant=self.tenant,
+            user=self.admin,
+            enrollment_id=self.active_enrollment.id,
+            target_type=Submission.TargetType.EXAM,
+            target_id=self.exam.id,
+            source=Submission.Source.OMR_SCAN,
+            status=Submission.Status.SUPERSEDED,
+            meta={
+                "manual_review": {
+                    "required": True,
+                    "reasons": ["ANSWER_STATUS_NOT_OK"],
+                }
+            },
+        )
+        Submission.objects.create(
+            tenant=self.tenant,
+            user=self.admin,
+            enrollment_id=self.active_enrollment.id,
+            target_type=Submission.TargetType.EXAM,
+            target_id=self.exam.id,
+            source=Submission.Source.OMR_SCAN,
+            status=Submission.Status.DONE,
+            meta={"manual_review": {"required": False}},
+        )
+
+        request = self.factory.get(f"/api/v1/results/admin/sessions/{self.session.id}/scores/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+
+        response = SessionScoresView.as_view()(request, session_id=self.session.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        row = next(
+            item
+            for item in response.data["rows"]
+            if item["enrollment_id"] == self.active_enrollment.id
+        )
+        block = row["exams"][0]["block"]
+        self.assertNotEqual((block.get("meta") or {}).get("status"), "OMR_REVIEW_REQUIRED")
+
     def test_exam_correction_completion_is_manual_persistent_and_score_versioned(self):
         result = Result.objects.create(
             target_type="exam",

@@ -414,7 +414,7 @@ def handle_ai_job(job: AIJob) -> AIResult:
             # 7단계: 다운로드(완료), 메타가져오기, 이미지로드, 정렬, ROI빌드, 식별자감지, 답안감지
 
             from academy.adapters.ai.omr.engine import detect_omr_answers_v7, AnswerDetectConfig
-            from academy.adapters.ai.omr.warp import align_to_a4_landscape
+            from academy.adapters.ai.omr.warp import align_to_a4_landscape, rotate_cardinal_cw
             from academy.adapters.ai.omr.identifier import detect_identifier_v1, IdentifierConfigV1
             from apps.domains.assets.omr.services.meta_generator import build_omr_meta
 
@@ -444,6 +444,13 @@ def handle_ai_job(job: AIJob) -> AIResult:
                 return AIResult.failed(job.id, f"cannot read OMR input: {e}")
             if img_bgr is None:
                 return AIResult.failed(job.id, "cannot read image")
+
+            manual_rotation = int(payload.get("manual_rotation_degrees") or 0)
+            if manual_rotation not in (0, 90, 180, 270):
+                return AIResult.failed(job.id, "OMR manual_rotation_degrees must be 0, 90, 180, or 270")
+            if manual_rotation:
+                img_bgr = rotate_cardinal_cw(img_bgr, manual_rotation)
+            input_meta["manual_rotation_degrees"] = manual_rotation
             
             # OMR: 식별자 버블(3.6mm)의 fill 정확도를 위해 A4 300dpi 해상도 유지
             # 다른 job type은 4MP로 제한하지만, OMR은 원본 해상도 필요
@@ -500,6 +507,7 @@ def handle_ai_job(job: AIJob) -> AIResult:
                     "alignment_method": align_result.method,
                     "alignment_orientation": align_result.orientation,
                     "input_correction_rotation": align_result.input_correction_rotation,
+                    "manual_rotation_degrees": manual_rotation,
                     "input": input_meta,
                     "input_image_size": {"width": int(img_bgr.shape[1]), "height": int(img_bgr.shape[0])},
                     "input_was_resized": bool(was_resized),

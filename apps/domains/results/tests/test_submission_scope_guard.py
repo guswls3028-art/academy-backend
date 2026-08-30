@@ -11,6 +11,7 @@ from apps.domains.lectures.models import Lecture, Session
 from apps.domains.results.models import ExamAttempt, ExamResult, Result, ResultFact, ResultItem
 from apps.domains.results.services.exam_grading_service import ExamGradingService
 from apps.domains.results.services.attempt_service import ExamAttemptService
+from apps.domains.results.services.grading_service import grade_submission
 from apps.domains.results.services.sync_result_from_submission import (
     sync_result_from_exam_submission,
 )
@@ -222,6 +223,42 @@ class SubmissionScopeGuardTests(TestCase):
         result = Result.objects.get(target_id=self.exam.id, enrollment_id=self.enrollment.id)
         self.assertEqual(result.attempt.submission_id, first.id)
         self.assertFalse(ExamResult.objects.filter(submission=second).exists())
+
+    def test_done_omr_regrade_recomputes_final_and_persisted_result(self):
+        ExamEnrollment.objects.create(exam=self.exam, enrollment=self.enrollment)
+        submission = self._unassigned_submission()
+        submission.source = Submission.Source.OMR_SCAN
+        submission.meta = {"manual_review": {"required": False}}
+        submission.save(update_fields=["source", "meta", "updated_at"])
+
+        first = grade_submission(submission.id)
+        self.assertEqual(float(first.total_score), 10.0)
+        self.assertEqual(
+            float(Result.objects.get(target_id=self.exam.id, enrollment=self.enrollment).total_score),
+            10.0,
+        )
+
+        SubmissionAnswer.objects.filter(
+            submission=submission,
+            exam_question_id=self.question.id,
+        ).update(answer="2")
+        from academy.application.use_cases.omr.grading_readiness import (
+            grade_omr_submission_if_ready,
+        )
+
+        decision = grade_omr_submission_if_ready(
+            submission.id,
+            actor="test.force_regrade",
+            allow_done_regrade=True,
+        )
+
+        self.assertTrue(decision.graded)
+        legacy = ExamResult.objects.get(submission=submission)
+        canonical = Result.objects.get(target_id=self.exam.id, enrollment=self.enrollment)
+        self.assertEqual(float(legacy.total_score), 0.0)
+        self.assertEqual(float(canonical.total_score), 0.0)
+        submission.refresh_from_db()
+        self.assertEqual(submission.status, Submission.Status.DONE)
 
     def test_sync_attaches_zero_manual_placeholder_to_real_submission(self):
         ExamEnrollment.objects.create(exam=self.exam, enrollment=self.enrollment)

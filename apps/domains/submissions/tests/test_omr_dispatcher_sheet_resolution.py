@@ -268,6 +268,56 @@ class OMRDispatcherSheetResolutionTests(TestCase):
         self.assertEqual(result.answer_stats["unique_total"], 19)
         self.assertEqual(SubmissionAnswer.objects.filter(submission=submission).count(), 19)
 
+    def test_single_answer_question_flags_strong_multi_mark_even_when_worker_status_is_ok(self):
+        questions = self._reset_sheet_shape(total_questions=1, choice_count=1)
+        AnswerKey.objects.create(
+            exam=self.template_exam,
+            answers={str(questions[0].id): "1"},
+        )
+        submission = self._submission()
+        exam_structure = load_submission_exam_structure(submission)
+
+        result = persist_answers(
+            submission=submission,
+            answers_payload=[{
+                "question_id": 1,
+                "detected": ["1", "2"],
+                "status": "ok",
+                "marking": "multi",
+                "confidence": 0.99,
+            }],
+            worker_result_meta={"version": "v15", "aligned": True},
+            exam_structure=exam_structure,
+        )
+
+        self.assertTrue(result.manual_required)
+        self.assertIn("ANSWER_SCORE_AMBIGUOUS", result.manual_review_reasons)
+
+    def test_expected_multi_answer_remains_auto_gradable(self):
+        questions = self._reset_sheet_shape(total_questions=1, choice_count=1)
+        AnswerKey.objects.create(
+            exam=self.template_exam,
+            answers={str(questions[0].id): "1,2"},
+        )
+        submission = self._submission()
+        exam_structure = load_submission_exam_structure(submission)
+
+        result = persist_answers(
+            submission=submission,
+            answers_payload=[{
+                "question_id": 1,
+                "detected": ["1", "2"],
+                "status": "ok",
+                "marking": "multi",
+                "confidence": 0.99,
+            }],
+            worker_result_meta={"version": "v15", "aligned": True},
+            exam_structure=exam_structure,
+        )
+
+        self.assertFalse(result.manual_required)
+        self.assertNotIn("ANSWER_SCORE_AMBIGUOUS", result.manual_review_reasons)
+
     def test_custom_sheet_type_matrix_resolves_payload_and_document_defaults(self):
         cases = [
             {
