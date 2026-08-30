@@ -38,6 +38,7 @@ class ScoreBlockSerializer(serializers.Serializer):
 
     # 과제만: 미제출 등 meta.status (NOT_SUBMITTED)
     meta = serializers.DictField(allow_null=True, required=False, default=None)
+    updated_at = serializers.DateTimeField(allow_null=True, required=False, default=None)
 
     # 시험 성취 SSOT: 1차 성적과 보강/재시험 최종 통과를 분리한다.
     remediated = serializers.BooleanField(allow_null=True, required=False, default=None)

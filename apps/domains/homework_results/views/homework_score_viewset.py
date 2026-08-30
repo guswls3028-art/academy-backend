@@ -80,6 +80,32 @@ def _locked_response(obj: HomeworkScore) -> Response:
     )
 
 
+def _cell_conflict_response(
+    obj: HomeworkScore | None,
+    expected_updated_at,
+) -> Response:
+    serialized = HomeworkScoreSerializer(obj).data if obj is not None else {}
+    meta = serialized.get("meta")
+    return Response(
+        {
+            "detail": "다른 화면에서 이 과제 점수가 먼저 저장되었습니다.",
+            "code": "SCORE_CELL_CONFLICT",
+            "server_value": {
+                "score": serialized.get("score"),
+                "max_score": serialized.get("max_score"),
+                "meta_status": meta.get("status") if isinstance(meta, dict) else None,
+                "updated_at": serialized.get("updated_at"),
+            },
+            "expected_updated_at": (
+                expected_updated_at.isoformat()
+                if expected_updated_at is not None
+                else None
+            ),
+        },
+        status=drf_status.HTTP_409_CONFLICT,
+    )
+
+
 def _apply_score_and_policy(
     *,
     obj: HomeworkScore,
@@ -348,6 +374,8 @@ class HomeworkScoreViewSet(ModelViewSet):
             score = serializer.validated_data.get("score")
             max_score = serializer.validated_data.get("max_score")
             meta_status = serializer.validated_data.get("meta_status")
+            expected_version_provided = "expected_updated_at" in serializer.validated_data
+            expected_updated_at = serializer.validated_data.get("expected_updated_at")
 
             homework = get_object_or_404(
                 Homework.objects.select_related(
@@ -403,17 +431,24 @@ class HomeworkScoreViewSet(ModelViewSet):
                 if obj and obj.is_locked:
                     return _locked_response(obj)
 
+                if expected_version_provided:
+                    if obj is None and expected_updated_at is not None:
+                        return _cell_conflict_response(None, expected_updated_at)
+                    if obj is not None and obj.updated_at != expected_updated_at:
+                        return _cell_conflict_response(obj, expected_updated_at)
+
                 if not obj:
                     try:
-                        obj = HomeworkScore.objects.create(
-                            homework=homework,
-                            session=session,
-                            enrollment_id=enrollment_id,
-                            attempt_index=1,
-                            score=None,
-                            max_score=None,
-                            updated_by_user_id=_safe_user_id(request),
-                        )
+                        with transaction.atomic():
+                            obj = HomeworkScore.objects.create(
+                                homework=homework,
+                                session=session,
+                                enrollment_id=enrollment_id,
+                                attempt_index=1,
+                                score=None,
+                                max_score=None,
+                                updated_by_user_id=_safe_user_id(request),
+                            )
                     except IntegrityError:
                         obj = (
                             HomeworkScore.objects.filter(
@@ -429,6 +464,8 @@ class HomeworkScoreViewSet(ModelViewSet):
                             raise
                         if obj.is_locked:
                             return _locked_response(obj)
+                        if expected_version_provided:
+                            return _cell_conflict_response(obj, expected_updated_at)
 
                 if meta_status == HomeworkScore.MetaStatus.NOT_SUBMITTED:
                     obj.meta = {"status": HomeworkScore.MetaStatus.NOT_SUBMITTED}

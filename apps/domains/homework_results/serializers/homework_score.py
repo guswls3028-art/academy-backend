@@ -99,6 +99,10 @@ class HomeworkQuickPatchSerializer(serializers.Serializer):
         allow_null=True,
         required=False,
     )
+    expected_updated_at = serializers.DateTimeField(
+        allow_null=True,
+        required=False,
+    )
 
     def validate(self, attrs):
         score = attrs.get("score")
