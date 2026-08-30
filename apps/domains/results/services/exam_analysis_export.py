@@ -23,7 +23,6 @@ from apps.domains.results.utils.initial_exam_score import (
     load_initial_exam_scores,
     project_initial_exam_score,
 )
-from apps.domains.results.utils.ranking import compute_exam_rankings
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.support.results.exam_result_excel_import_dependencies import (
@@ -296,7 +295,6 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
             return list(result.items.all())
         return list(fact_items_by_enrollment.get(enrollment_id, {}).values())
 
-    rankings = compute_exam_rankings(exam_id=int(exam.id), tenant=tenant)
     session = get_primary_session_for_exam(int(exam.id))
     pass_score = float(exam.pass_score or 0.0)
     has_pass_criterion = pass_score > 0
@@ -341,16 +339,37 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
         return result_status(result) == "DONE"
 
     def analysis_score(result: Any) -> float:
-        rank_info = rankings.get(int(result.enrollment_id), {})
-        ranking_score = rank_info.get("ranking_score")
-        return (
-            float(ranking_score)
-            if ranking_score is not None
-            else float(initial_scores[int(result.enrollment_id)].total_score or 0.0)
-        )
+        initial_score = initial_scores[int(result.enrollment_id)]
+        if result.attempt_id == initial_score.attempt_id:
+            return float(result.total_score or 0.0)
+        return float(initial_score.total_score or 0.0)
+
+    def analysis_max_score(result: Any) -> float:
+        initial_score = initial_scores[int(result.enrollment_id)]
+        if result.attempt_id == initial_score.attempt_id:
+            return float(result.max_score or exam.max_score or 100.0)
+        return float(initial_score.max_score or exam.max_score or 100.0)
 
     scored_results = [result for result in results if is_scored(result)]
-    scores = [analysis_score(result) for result in scored_results]
+    score_by_enrollment = {
+        int(result.enrollment_id): analysis_score(result)
+        for result in scored_results
+    }
+    scores = list(score_by_enrollment.values())
+    analysis_rankings: dict[int, dict[str, float | int]] = {}
+    previous_score: float | None = None
+    current_rank = 0
+    for position, (enrollment_id, score) in enumerate(
+        sorted(score_by_enrollment.items(), key=lambda item: (-item[1], item[0])),
+        start=1,
+    ):
+        if previous_score is None or score != previous_score:
+            current_rank = position
+            previous_score = score
+        analysis_rankings[enrollment_id] = {
+            "rank": current_rank,
+            "ranking_score": score,
+        }
     scored_attempt_ids = [
         int(initial_scores[int(result.enrollment_id)].attempt_id)
         for result in scored_results
@@ -578,7 +597,7 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
     _set_title(
         ranked_sheet,
         f"{exam.title} · 학생별 등수",
-        "석차 기준 1차 점수와 서버 등수입니다. 공동 등수는 같은 등수로 표시하고 다음 등수는 인원만큼 건너뜁니다.",
+        "서술형 확정분을 포함한 1차 확정 점수와 등수입니다. 공동 등수는 같은 등수로 표시하고 다음 등수는 인원만큼 건너뜁니다.",
         last_column=13,
     )
     ranked_headers = [
@@ -592,13 +611,9 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
         result = result_by_id.get(enrollment_id)
         analysis_status = result_status(result)
         scored = analysis_status == "DONE"
-        rank_info = rankings.get(enrollment_id, {}) if scored else {}
+        rank_info = analysis_rankings.get(enrollment_id, {}) if scored else {}
         score = analysis_score(result) if scored else None
-        result_max = (
-            float(initial_scores[enrollment_id].max_score or max_score)
-            if result is not None
-            else max_score
-        )
+        result_max = analysis_max_score(result) if result is not None else max_score
         items = initial_items(result)
         wrong_numbers = sorted(
             question_by_id[int(item.question_id)].number

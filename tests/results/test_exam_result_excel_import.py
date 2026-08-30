@@ -1445,6 +1445,77 @@ class ExamResultExcelImportTests(TestCase):
         self.assertEqual(answers.cell(5, 8).value, "1번")
         self.assertEqual(answers.cell(6, 8).value, "'=1+1")
 
+    def test_analysis_export_uses_confirmed_first_attempt_total_for_score_and_rank(self):
+        second_enrollment = self._create_enrollment(
+            name="박학생",
+            username="excel-student-analysis-confirmed-2",
+            ps_number="EX-CONFIRMED-002",
+            phone="01022223333",
+            parent_phone="01044445555",
+        )
+        ExamEnrollment.objects.create(exam=self.exam, enrollment=second_enrollment)
+        apply_exam_result_import(
+            plan=plan_exam_result_import(
+                exam=self.exam,
+                tenant=self.tenant,
+                filename="analysis-confirmed-score.xlsx",
+                workbook_bytes=_workbook_bytes(
+                    [
+                        ["수강등록ID", "이름", 1, 2],
+                        [self.enrollment.id, "김학생", "O", "O"],
+                        [second_enrollment.id, "박학생", "O", "O"],
+                    ]
+                ),
+            )
+        )
+        top_result = Result.objects.get(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.enrollment,
+        )
+        top_item = top_result.items.get(question=self.short_question)
+        top_item.score = 55
+        top_item.save(update_fields=["score", "updated_at"])
+        self.assertEqual(
+            sum(top_result.items.values_list("score", flat=True)),
+            95,
+        )
+        top_meta = dict(top_result.attempt.meta)
+        top_meta["initial_snapshot"] = {
+            **top_meta["initial_snapshot"],
+            "total_score": 95.0,
+        }
+        top_result.attempt.meta = top_meta
+        top_result.attempt.save(update_fields=["meta", "updated_at"])
+
+        second_result = Result.objects.get(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=second_enrollment,
+        )
+        second_result.total_score = 99
+        second_result.save(update_fields=["total_score", "updated_at"])
+        second_meta = dict(second_result.attempt.meta)
+        second_meta["initial_snapshot"] = {
+            **second_meta["initial_snapshot"],
+            "total_score": 99.0,
+        }
+        second_result.attempt.meta = second_meta
+        second_result.attempt.save(update_fields=["meta", "updated_at"])
+
+        exported = build_exam_analysis_export(exam=self.exam, tenant=self.tenant)
+        workbook = load_workbook(io.BytesIO(exported), data_only=True)
+
+        briefing = workbook["수업 브리핑"]
+        self.assertEqual(briefing.cell(15, 1).value, "100/100")
+        ranked = workbook["학생별 등수"]
+        self.assertEqual(ranked.cell(6, 1).value, 1)
+        self.assertEqual(ranked.cell(6, 3).value, "김학생")
+        self.assertEqual(ranked.cell(6, 5).value, 100)
+        self.assertEqual(ranked.cell(7, 1).value, 2)
+        self.assertEqual(ranked.cell(7, 3).value, "박학생")
+        self.assertEqual(ranked.cell(7, 5).value, 99)
+
     def test_analysis_export_keeps_unset_pass_score_unclassified(self):
         self.exam.pass_score = 0
         self.exam.save(update_fields=["pass_score", "updated_at"])
@@ -1491,8 +1562,20 @@ class ExamResultExcelImportTests(TestCase):
             enrollment=self.enrollment,
         )
         self.assertEqual(result.attempt.meta["initial_snapshot"]["total_score"], 100.0)
+        result.attempt.is_representative = False
+        result.attempt.save(update_fields=["is_representative", "updated_at"])
+        retake_attempt = ExamAttempt.objects.create(
+            exam=self.exam,
+            enrollment=self.enrollment,
+            attempt_index=2,
+            is_retake=True,
+            is_representative=True,
+            status="done",
+            meta={"total_score": 40.0, "max_score": 100.0},
+        )
+        result.attempt = retake_attempt
         result.total_score = 40
-        result.save(update_fields=["total_score", "updated_at"])
+        result.save(update_fields=["attempt", "total_score", "updated_at"])
 
         exported = build_exam_analysis_export(exam=self.exam, tenant=self.tenant)
         workbook = load_workbook(io.BytesIO(exported), data_only=True)
