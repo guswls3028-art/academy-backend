@@ -2193,6 +2193,104 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         self.assertIsNotNone(session.expires_at.tzinfo)
 
     @override_settings(CDN_HLS_BASE_URL="https://cdn.example.test", CDN_HLS_SIGNING_SECRET="")
+    def test_proctored_playback_honors_teacher_free_seek_setting(self):
+        self.video.allow_skip = True
+        self.video.save(update_fields=["allow_skip"])
+        Attendance.objects.create(
+            tenant=self.tenant,
+            session=self.target_session,
+            enrollment=self.target_enrollment,
+            status="ONLINE",
+        )
+
+        response = self._get_playback(enrollment_id=self.target_enrollment.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["policy"]["access_mode"], AccessMode.PROCTORED_CLASS.value)
+        self.assertTrue(response.data["policy"]["monitoring_enabled"])
+        self.assertTrue(response.data["policy"]["allow_seek"])
+        self.assertEqual(response.data["policy"]["seek"]["mode"], "free")
+
+    @override_settings(CDN_HLS_BASE_URL="https://cdn.example.test", CDN_HLS_SIGNING_SECRET="")
+    def test_completed_proctored_progress_restores_free_seek(self):
+        Attendance.objects.create(
+            tenant=self.tenant,
+            session=self.target_session,
+            enrollment=self.target_enrollment,
+            status="ONLINE",
+        )
+        VideoProgress.objects.create(
+            video=self.video,
+            enrollment=self.target_enrollment,
+            progress=0.9,
+            last_position=90,
+            completed=True,
+        )
+
+        response = self._get_playback(enrollment_id=self.target_enrollment.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["policy"]["access_mode"], AccessMode.FREE_REVIEW.value)
+        self.assertFalse(response.data["policy"]["monitoring_enabled"])
+        self.assertTrue(response.data["policy"]["allow_seek"])
+        self.assertEqual(response.data["policy"]["seek"]["mode"], "free")
+
+    @override_settings(CDN_HLS_BASE_URL="https://cdn.example.test", CDN_HLS_SIGNING_SECRET="")
+    def test_proctored_completion_record_restores_free_seek_without_progress(self):
+        Attendance.objects.create(
+            tenant=self.tenant,
+            session=self.target_session,
+            enrollment=self.target_enrollment,
+            status="ONLINE",
+        )
+        VideoAccess.objects.create(
+            video=self.video,
+            enrollment=self.target_enrollment,
+            rule="free",
+            access_mode=AccessMode.FREE_REVIEW,
+            proctored_completed_at=timezone.now(),
+        )
+
+        response = self._get_playback(enrollment_id=self.target_enrollment.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["policy"]["access_mode"], AccessMode.FREE_REVIEW.value)
+        self.assertFalse(response.data["policy"]["monitoring_enabled"])
+        self.assertTrue(response.data["policy"]["allow_seek"])
+        self.assertEqual(response.data["policy"]["seek"]["mode"], "free")
+
+    @override_settings(CDN_HLS_BASE_URL="https://cdn.example.test", CDN_HLS_SIGNING_SECRET="")
+    def test_completed_watch_does_not_override_explicit_seek_block(self):
+        Attendance.objects.create(
+            tenant=self.tenant,
+            session=self.target_session,
+            enrollment=self.target_enrollment,
+            status="ONLINE",
+        )
+        VideoProgress.objects.create(
+            video=self.video,
+            enrollment=self.target_enrollment,
+            progress=0.9,
+            last_position=90,
+            completed=True,
+        )
+        VideoAccess.objects.create(
+            video=self.video,
+            enrollment=self.target_enrollment,
+            rule="free",
+            access_mode=AccessMode.FREE_REVIEW,
+            block_seek=True,
+            proctored_completed_at=timezone.now(),
+        )
+
+        response = self._get_playback(enrollment_id=self.target_enrollment.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["policy"]["access_mode"], AccessMode.FREE_REVIEW.value)
+        self.assertFalse(response.data["policy"]["allow_seek"])
+        self.assertEqual(response.data["policy"]["seek"]["mode"], "blocked")
+
+    @override_settings(CDN_HLS_BASE_URL="https://cdn.example.test", CDN_HLS_SIGNING_SECRET="")
     def test_proctored_forward_skip_is_server_counted_and_survives_playback_reload(self):
         Attendance.objects.create(
             tenant=self.tenant,

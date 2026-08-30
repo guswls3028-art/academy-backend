@@ -478,10 +478,12 @@ python -m pytest apps\domains\students\tests\test_student_support.py -v --tb=sho
 
 `FREE_REVIEW` and `PROCTORED_CLASS` decide whether monitored playback sessions
 and event writes are required. They do not erase the teacher's saved video
-controls. In review mode, `Video.max_speed` and `Video.show_watermark` remain the
-effective playback-rate and watermark policy. `Video.allow_skip=True` keeps the
-existing free seek behavior; the default `False` now selects the limited
-forward-skip budget instead of blocking every useful jump.
+controls. In every non-blocked mode, `Video.allow_skip=True` (or a student-level
+`allow_skip_override=True`) keeps free seeking even when an `ONLINE` attendance
+still requires monitored playback. In review mode, `Video.max_speed` and
+`Video.show_watermark` remain the effective playback-rate and watermark policy.
+The default `allow_skip=False` selects the limited forward-skip budget instead
+of blocking every useful jump until the required watch is complete.
 
 Default-limited review and proctored playback both block arbitrary forward
 seeking, but the student may move forward through the server-approved
@@ -501,9 +503,10 @@ proctored event stream.
 The budget is unavailable when the duration is missing, and an explicit
 `VideoAccess.block_seek` still blocks all seeking. Parents may watch through the
 existing selected-child contract but cannot consume the student's persisted
-skip allowance. Once the proctored completion rule changes the video to
-`FREE_REVIEW`, free seeking applies only when the teacher explicitly enabled
-`Video.allow_skip`; otherwise the same persisted limited allowance remains.
+skip allowance. Once completed `VideoProgress` or
+`VideoAccess.proctored_completed_at` changes the video to `FREE_REVIEW`, the
+student has already satisfied the required watch and free seeking is restored.
+This completion exception does not override an explicit `block_seek=True`.
 The student player must consume the nested `policy` returned by
 `GET /api/v1/student/video/videos/{video_id}/playback/`; the flat video fields
 are display metadata, not a second policy source.
