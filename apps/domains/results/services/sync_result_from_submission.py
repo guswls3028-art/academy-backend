@@ -269,6 +269,17 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
     )
     attached_placeholder = False
     created_attempt = False
+    if not attempt and not essay_question_ids:
+        attempt = ExamAttemptService.attach_matching_manual_objective_placeholder_for_submission(
+            exam_id=int(exam.id),
+            enrollment_id=int(enrollment_id),
+            submission_id=int(submission.id),
+            expected_items=items_payload,
+            expected_objective_score=total,
+            expected_max_score=result_max_score,
+        )
+        attached_placeholder = attempt is not None
+
     if not attempt:
         attempt = ExamAttemptService.attach_manual_score_placeholder_for_submission(
             exam_id=int(exam.id),
@@ -325,7 +336,14 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
                 if isinstance(previous, dict)
                 else None
             )
-            if previous_source == "admin_manual_subjective" and existing_subjective > 0:
+            reconciliation = (
+                previous.get("reconciliation")
+                if isinstance(previous, dict)
+                else None
+            )
+            if reconciliation == "exact_manual_objective_match":
+                attempt.meta["initial_snapshot"]["source"] = "omr_attached_matching_manual_result"
+            elif previous_source == "admin_manual_subjective" and existing_subjective > 0:
                 attempt.meta["initial_snapshot"]["source"] = "omr_attached_manual_subjective"
             elif previous_meta_source == "manual_entry" and existing_subjective > 0:
                 attempt.meta["initial_snapshot"]["source"] = "omr_attached_manual_essay_items"

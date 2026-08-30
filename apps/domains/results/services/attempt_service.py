@@ -11,6 +11,7 @@ from django.utils import timezone
 
 from apps.domains.results.models import ExamAttempt
 from apps.support.results.attempt_dependencies import exam_for_attempt_policy
+from apps.support.results.grading_dependencies import has_confirmed_current_omr_identity
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +114,125 @@ class ExamAttemptService:
             ) from e
 
         return attempt
+
+    @staticmethod
+    @transaction.atomic
+    def attach_matching_manual_objective_placeholder_for_submission(
+        *,
+        exam_id: int,
+        enrollment_id: int,
+        submission_id: int,
+        expected_items: list[dict[str, Any]],
+        expected_objective_score: float,
+        expected_max_score: float,
+    ) -> ExamAttempt | None:
+        """Attach a manual objective result only when it exactly matches OMR."""
+        if not expected_items:
+            return None
+
+        placeholder = (
+            ExamAttempt.objects
+            .select_for_update()
+            .filter(
+                exam_id=int(exam_id),
+                enrollment_id=int(enrollment_id),
+                submission_id=0,
+                attempt_index=1,
+                is_retake=False,
+                is_representative=True,
+                status="done",
+            )
+            .order_by("id")
+            .first()
+        )
+        if not placeholder:
+            return None
+
+        meta = dict(placeholder.meta or {}) if isinstance(placeholder.meta, dict) else {}
+        if str(meta.get("source") or "") != "manual_entry":
+            return None
+
+        from apps.domains.results.models import Result, ResultItem
+
+        result = (
+            Result.objects
+            .select_for_update()
+            .filter(
+                target_type="exam",
+                target_id=int(exam_id),
+                enrollment_id=int(enrollment_id),
+                attempt_id=int(placeholder.id),
+            )
+            .first()
+        )
+        if result is None:
+            return None
+
+        tenant_id = int(result.enrollment.tenant_id)
+        if int(placeholder.exam.tenant_id) != tenant_id:
+            return None
+
+        current_identity_matches = has_confirmed_current_omr_identity(
+            tenant_id=tenant_id,
+            exam_id=int(exam_id),
+            enrollment_id=int(enrollment_id),
+            submission_id=int(submission_id),
+        )
+        if not current_identity_matches:
+            return None
+
+        if abs(_safe_float(result.total_score) - float(expected_objective_score)) >= 0.0001:
+            return None
+        if abs(_safe_float(result.objective_score) - float(expected_objective_score)) >= 0.0001:
+            return None
+        if abs(_safe_float(result.max_score) - float(expected_max_score)) >= 0.0001:
+            return None
+
+        expected_by_question = {
+            int(item["question_id"]): item
+            for item in expected_items
+        }
+        existing_items = list(
+            ResultItem.objects
+            .select_for_update()
+            .filter(result=result)
+            .order_by("question_id")
+        )
+        if len(existing_items) != len(expected_by_question):
+            return None
+        if {int(item.question_id) for item in existing_items} != set(expected_by_question):
+            return None
+
+        for item in existing_items:
+            expected = expected_by_question[int(item.question_id)]
+            if str(item.source or "") != "manual":
+                return None
+            if str(item.answer or "").strip() != str(expected.get("answer") or "").strip():
+                return None
+            if bool(item.is_correct) != bool(expected.get("is_correct")):
+                return None
+            if abs(_safe_float(item.score) - _safe_float(expected.get("score"))) >= 0.0001:
+                return None
+            if abs(_safe_float(item.max_score) - _safe_float(expected.get("max_score"))) >= 0.0001:
+                return None
+
+        meta["manual_score_placeholder"] = {
+            "attached_submission_id": int(submission_id),
+            "attached_at": timezone.now().isoformat(),
+            "previous_submission_id": 0,
+            "previous_initial_snapshot": (
+                meta.get("initial_snapshot")
+                if isinstance(meta.get("initial_snapshot"), dict)
+                else {}
+            ),
+            "previous_meta_source": "manual_entry",
+            "reconciliation": "exact_manual_objective_match",
+        }
+        placeholder.submission_id = int(submission_id)
+        placeholder.status = "pending"
+        placeholder.meta = meta
+        placeholder.save(update_fields=["submission_id", "status", "meta", "updated_at"])
+        return placeholder
 
     @staticmethod
     @transaction.atomic

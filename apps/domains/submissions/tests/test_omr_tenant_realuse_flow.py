@@ -17,7 +17,13 @@ from apps.domains.exams.models import (
     Sheet,
 )
 from apps.domains.lectures.models import Lecture, Session
-from apps.domains.results.models import ExamResult, Result, ResultFact
+from apps.domains.results.models import (
+    ExamAttempt,
+    ExamResult,
+    Result,
+    ResultFact,
+    ResultItem,
+)
 from apps.domains.results.services.answer_matching import answer_matches
 from apps.domains.results.services.grading_service import grade_submission
 from apps.domains.students.services.creation import create_student_account
@@ -756,6 +762,126 @@ class OMRMapperReviewPolicyTests(TestCase):
         )
         self.assertEqual(current_match.status, OMRStudentMatch.Status.CONFIRMED)
         self.assertEqual(current_match.method, OMRStudentMatch.Method.MANUAL)
+
+    def test_manual_match_confirmation_reuses_exact_manual_objective_result(self):
+        tenant, exam, enrollment, submission = self._make_exam()
+        questions = list(
+            ExamQuestion.objects.filter(sheet__exam=exam).order_by("number")
+        )
+        attempt = ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=enrollment,
+            submission_id=0,
+            attempt_index=1,
+            is_representative=True,
+            status="done",
+            meta={"source": "manual_entry"},
+        )
+        manual_result = Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=enrollment,
+            attempt=attempt,
+            total_score=100,
+            max_score=100,
+            objective_score=100,
+        )
+        for question, answer in zip(questions, ["1", "2"], strict=True):
+            ResultItem.objects.create(
+                result=manual_result,
+                question=question,
+                answer=answer,
+                is_correct=True,
+                score=50,
+                max_score=50,
+                source="manual",
+            )
+            ResultFact.objects.create(
+                target_type="exam",
+                target_id=exam.id,
+                enrollment=enrollment,
+                submission_id=0,
+                attempt=attempt,
+                question_id=question.id,
+                answer=answer,
+                is_correct=True,
+                score=50,
+                max_score=50,
+                source="manual",
+            )
+            SubmissionAnswer.objects.create(
+                tenant=tenant,
+                submission=submission,
+                exam_question_id=question.id,
+                answer=answer,
+            )
+
+        submission.enrollment_id = enrollment.id
+        submission.status = Submission.Status.DONE
+        submission.meta = {
+            "identifier_status": "matched_fuzzy",
+            "identifier_match_kind": "fuzzy",
+            "manual_review": {
+                "required": True,
+                "reasons": ["IDENTIFIER_FUZZY_MATCH"],
+            },
+        }
+        submission.save(
+            update_fields=["enrollment_id", "status", "meta", "updated_at"]
+        )
+
+        request = APIRequestFactory().post(
+            f"/submissions/submissions/{submission.id}/manual-edit/",
+            {
+                "identifier": {"enrollment_id": enrollment.id},
+                "answers": [
+                    {"exam_question_id": question.id, "answer": answer}
+                    for question, answer in zip(questions, ["1", "2"], strict=True)
+                ],
+                "note": "omr_review_ui_confirm_match",
+            },
+            format="json",
+        )
+        request.tenant = tenant
+        force_authenticate(request, user=submission.user)
+
+        response = SubmissionViewSet.as_view({"post": "manual_edit"})(
+            request,
+            pk=submission.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data["graded"])
+        self.assertEqual(float(response.data["score"]), 100.0)
+        submission.refresh_from_db()
+        attempt.refresh_from_db()
+        manual_result.refresh_from_db()
+        self.assertFalse(submission.meta["manual_review"]["required"])
+        self.assertEqual(submission.meta["identifier_match_kind"], "manual")
+        self.assertEqual(attempt.submission_id, submission.id)
+        self.assertEqual(manual_result.attempt_id, attempt.id)
+        self.assertEqual(float(manual_result.total_score), 100.0)
+        self.assertEqual(
+            ResultFact.objects.filter(
+                target_id=exam.id,
+                enrollment=enrollment,
+                source="manual",
+            ).count(),
+            2,
+        )
+        self.assertEqual(
+            ResultFact.objects.filter(
+                target_id=exam.id,
+                enrollment=enrollment,
+                submission_id=submission.id,
+                source="online",
+            ).count(),
+            2,
+        )
+        self.assertEqual(
+            ExamResult.objects.get(submission=submission).status,
+            ExamResult.Status.FINAL,
+        )
 
     def test_ai_answers_after_manual_match_preserve_student_and_grade(self):
         tenant, exam, enrollment, submission = self._make_exam()

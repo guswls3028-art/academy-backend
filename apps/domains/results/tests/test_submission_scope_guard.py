@@ -10,6 +10,7 @@ from apps.domains.exams.models import AnswerKey, Exam, ExamEnrollment, ExamQuest
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.results.models import ExamAttempt, ExamResult, Result, ResultFact, ResultItem
 from apps.domains.results.services.exam_grading_service import ExamGradingService
+from apps.domains.results.services.attempt_service import ExamAttemptService
 from apps.domains.results.services.sync_result_from_submission import (
     sync_result_from_exam_submission,
 )
@@ -18,6 +19,7 @@ from apps.domains.students.models import Student
 from apps.domains.submissions.models import (
     OMRDetectedAnswer,
     OMRRecognitionRun,
+    OMRStudentMatch,
     Submission,
     SubmissionAnswer,
 )
@@ -520,6 +522,91 @@ class SubmissionScopeGuardTests(TestCase):
                 result=result,
                 question=essay,
                 source__in=["online", "omr"],
+            ).exists()
+        )
+
+    def test_sync_attaches_exact_matching_manual_objective_result(self):
+        ExamEnrollment.objects.create(exam=self.exam, enrollment=self.enrollment)
+        attempt = ExamAttempt.objects.create(
+            exam=self.exam,
+            enrollment=self.enrollment,
+            submission_id=0,
+            attempt_index=1,
+            is_representative=True,
+            status="done",
+            meta={"source": "manual_entry"},
+        )
+        result = Result.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.enrollment,
+            attempt=attempt,
+            total_score=10.0,
+            max_score=10.0,
+            objective_score=10.0,
+        )
+        ResultItem.objects.create(
+            result=result,
+            question=self.question,
+            answer="1",
+            is_correct=True,
+            score=10.0,
+            max_score=10.0,
+            source="manual",
+        )
+        submission = self._submission_for_exam(self.exam, self.question, answer="1")
+        submission.source = Submission.Source.OMR_SCAN
+        submission.save(update_fields=["source", "updated_at"])
+        self.assertIsNone(
+            ExamAttemptService.attach_matching_manual_objective_placeholder_for_submission(
+                exam_id=self.exam.id,
+                enrollment_id=self.enrollment.id,
+                submission_id=submission.id,
+                expected_items=[
+                    {
+                        "question_id": self.question.id,
+                        "answer": "1",
+                        "is_correct": True,
+                        "score": 10.0,
+                        "max_score": 10.0,
+                    }
+                ],
+                expected_objective_score=10.0,
+                expected_max_score=10.0,
+            )
+        )
+        OMRStudentMatch.objects.create(
+            tenant=self.tenant,
+            submission=submission,
+            enrollment=self.enrollment,
+            status=OMRStudentMatch.Status.CONFIRMED,
+            method=OMRStudentMatch.Method.MANUAL,
+            identifier_status="matched",
+            actor="test.manual_confirm",
+            is_current=True,
+        )
+
+        synced = sync_result_from_exam_submission(submission.id)
+
+        attempt.refresh_from_db()
+        result.refresh_from_db()
+        self.assertEqual(synced.id, result.id)
+        self.assertEqual(attempt.submission_id, submission.id)
+        self.assertEqual(
+            attempt.meta["initial_snapshot"]["source"],
+            "omr_attached_matching_manual_result",
+        )
+        self.assertEqual(float(result.total_score), 10.0)
+        self.assertEqual(float(result.objective_score), 10.0)
+        self.assertEqual(ResultItem.objects.get(result=result).source, "online")
+        self.assertTrue(
+            ResultFact.objects.filter(
+                target_id=self.exam.id,
+                enrollment=self.enrollment,
+                submission_id=submission.id,
+                question_id=self.question.id,
+                answer="1",
+                score=10.0,
             ).exists()
         )
 
