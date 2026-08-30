@@ -689,6 +689,7 @@ POST로 기존 기본 템플릿 리셋 가능. 이름이 기본값과 동일한 
 다른 trigger나 SMS/LMS fallback은 없다.
 
 - 예약 생성은 `transaction.on_commit()` 뒤 발송하고, 상태·하원·완료·일정 변경은 서비스의 DB 전이가 끝난 뒤 view가 발송 결과를 응답에 포함한다.
+- 학생 본인이 예약을 생성·변경·취소하면 클라이언트의 `send_to` 입력과 무관하게 학생+학부모(`both`)를 사용한다. 직원이 처리하는 등원·결석·하원·완료·재촉의 기존 수신자 선택은 바뀌지 않는다.
 - create/change_booking/status/checkout/complete 계열은 `clinic.services.lifecycle`이 서로 다른 `ClinicNotificationEvent`를 반환한다.
 - clinic_info context 변수: 클리닉명, 장소, 날짜, 시간, _domain_object_id
 - clinic_change context 변수: 클리닉명, 장소, 날짜, 시간, 클리닉기존일정, 클리닉변동사항, 클리닉수정자, _domain_object_id

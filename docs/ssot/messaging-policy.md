@@ -16,9 +16,9 @@
 ### AUTO_DEFAULT — 학생 행동 즉시 통보 (자동 기본 on, 선생이 설정에서 끌 수 있음)
 | Trigger | 설명 | 수신자 | 발송 순간 |
 |---------|------|--------|----------|
-| clinic_reservation_created | 클리닉 예약 완료 | 학부모 | 예약 생성(booked/pending) 시 |
-| clinic_reservation_changed | 클리닉 예약 변경 | 학부모 | 예약 변경 시 |
-| clinic_cancelled | 클리닉 예약 취소 | 학부모 | 상태 → cancelled |
+| clinic_reservation_created | 클리닉 예약 완료 | 학생이 직접 예약하면 학생+학부모 | 예약 생성(booked/pending) 시 |
+| clinic_reservation_changed | 클리닉 예약 변경 | 학생이 직접 변경하면 학생+학부모 | 예약 변경 시 |
+| clinic_cancelled | 클리닉 예약 취소 | 학생이 직접 취소하면 학생+학부모 | 상태 → cancelled |
 | clinic_check_in | 클리닉 등원/지각 등원 | 직원 선택(학생/학부모/둘 다) | 상태 → attended, 실제 `checked_in_at` 기록 시 |
 | clinic_check_out | 클리닉 하원 | 직원 선택(학생/학부모/둘 다) | 등원한 학생의 별도 `checked_out_at` 기록 시. 승인된 exact 하원 템플릿이 없으면 발송 0 |
 | clinic_absent | 클리닉 결석 | 직원 선택(학생/학부모/둘 다) | 확인 팝업 승인 후 상태 → no_show, 1회만 요청 |
@@ -63,6 +63,24 @@
 6. **fallback 금지.** exact trigger의 공용 승인 템플릿 또는 명시 unified category 템플릿이 없으면 발송하지 않는다.
 7. **비알림톡 입력 실패 폐쇄.** SMS/LMS와 알 수 없는 `message_mode`를 알림톡으로 보정하지 않는다. 신규 코드에는 SMS 발송·enqueue 호환 callable이나 `sms_allowed` capability를 만들지 않는다.
 8. **클리닉 하원과 학습 완료 분리.** `clinic_check_out`은 `checked_out_at`, `clinic_self_study_completed`는 `completed_at`을 소유한다. 하원 trigger는 exact 승인 템플릿이 준비되기 전 통합 봉투에 임의 매핑하거나 다른 클리닉 trigger로 대체하지 않는다.
+
+## 클리닉 일정 알림 활성화
+
+학생의 예약 생성·일정 변경·예약 취소 세 이벤트만 일괄 활성화할 때는 먼저
+`python manage.py activate_clinic_schedule_notifications`로 변경 계획을 확인하고,
+동일 명령에 `--apply`를 붙여 적용한다. 이 명령은 `Tenant.is_active=True`이면서
+`Tenant.messaging_is_active=True`인 테넌트만 대상으로 아래 세 config만 생성하거나
+ON 한다.
+
+- `clinic_reservation_created`
+- `clinic_reservation_changed`
+- `clinic_cancelled`
+
+다른 `AutoSendConfig`, 학원 전체 메시징 스위치, 메시지 본문과 발송 시점은 변경하지
+않는다. 기존 템플릿이 연결되어 있으면 그대로 보존하고, 누락된 경우에만 해당
+트리거의 기본 클리닉 템플릿을 생성·연결한다. 대상 config 중 비알림톡 모드가 한
+건이라도 있거나 공용 승인 알림톡 매핑이 없으면 전체 적용을 실패 폐쇄한다. 설정
+활성화 자체는 메시지를 발송하거나 과거 이벤트를 재발송하지 않는다.
 
 일반 강의의 개별·일괄 출결 상태 저장과 차시 명단 생성은 알림 발송과 분리한다.
 `PRESENT`/`ABSENT` 전환은 `check_in_complete`/`absent_occurred` outbox를 만들지
