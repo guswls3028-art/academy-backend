@@ -111,6 +111,16 @@ def dispatch_submission(submission: Submission) -> None:
     if submission.status != Submission.Status.SUBMITTED:
         return
 
+    # Homework media is intentionally manual-review only. Keep the uploaded
+    # submission intact without creating an AI job until automatic checking has
+    # a complete, verified product contract.
+    if submission.target_type == Submission.TargetType.HOMEWORK:
+        logger.info(
+            "Homework submission %s retained for teacher review",
+            submission.id,
+        )
+        return
+
     # ONLINE — 즉시 채점
     if submission.source == Submission.Source.ONLINE:
         SubmissionService.process(submission)

@@ -16,6 +16,7 @@ from apps.domains.submissions.services.homework_media import (
 from apps.support.submissions.dependencies import (
     clinic_highlight_map_for_enrollments,
     enrollment_map_for_submission_list,
+    homework_submission_review_map,
     homework_submission_target_exists,
 )
 
@@ -103,6 +104,11 @@ class HomeworkSubmissionsListView(APIView):
             tenant=tenant,
             enrollment_ids=enrollment_ids,
         )
+        review_map = homework_submission_review_map(
+            tenant=tenant,
+            enrollment_ids=enrollment_ids,
+            homework_id=int(homework_id),
+        )
 
         items: list[Dict[str, Any]] = []
         for s in submissions_list:
@@ -165,6 +171,16 @@ class HomeworkSubmissionsListView(APIView):
                     "created_at": s.created_at.isoformat() if hasattr(s, "created_at") and s.created_at else None,
                     "profile_photo_url": _get_photo_url(student),
                     "name_highlight_clinic_target": highlight_map.get(int(enrollment_id), False) if enrollment_id else False,
+                    **review_map.get(
+                        int(enrollment_id) if enrollment_id else 0,
+                        {
+                            "teacher_reviewed": False,
+                            "teacher_review_source": None,
+                            "teacher_review_note": "",
+                            "teacher_reviewed_at": None,
+                            "teacher_review_updated_at": None,
+                        },
+                    ),
                     **lecture_info,
                 }
             )

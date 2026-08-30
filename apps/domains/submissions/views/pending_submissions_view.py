@@ -92,6 +92,10 @@ class PendingSubmissionsView(APIView):
                 | Q(status__in=TERMINAL_STATUSES, created_at__gte=cutoff)
             )
 
+        # Homework photos and videos are teacher-reviewed in the homework detail.
+        # Do not expose the unfinished automatic checker as a processing queue.
+        qs = qs.exclude(target_type=SUBMISSION_TARGET_HOMEWORK)
+
         submissions = list(qs.order_by("-created_at")[:200])
         if not submissions:
             return Response([], status=200)
