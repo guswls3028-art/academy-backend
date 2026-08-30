@@ -84,6 +84,7 @@ class ScoreDraftEditLeaseTests(TestCase):
         *,
         session=None,
         acknowledge_stale=False,
+        active_cell=None,
     ):
         return ScoreDraftView.as_view()(
             self._request(
@@ -93,6 +94,7 @@ class ScoreDraftEditLeaseTests(TestCase):
                 {
                     "changes": changes or [],
                     "acknowledge_stale": acknowledge_stale,
+                    "active_cell": active_cell,
                 },
             ),
             session_id=(session or self.session).id,
@@ -115,15 +117,98 @@ class ScoreDraftEditLeaseTests(TestCase):
             session_id=self.session.id,
         )
 
-    def test_empty_drafts_coexist_but_same_user_other_tab_is_blocked(self):
-        self.assertEqual(self._put(self.admin_a, "tab-a").status_code, 200)
+    def test_same_account_tabs_can_select_disjoint_homework_cells_and_see_presence(self):
+        first_cell = {
+            "type": "homework",
+            "enrollmentId": 21,
+            "homeworkId": 31,
+        }
+        second_cell = {
+            "type": "homework",
+            "enrollmentId": 22,
+            "homeworkId": 31,
+        }
+        first_change = {**first_cell, "score": 80}
+        second_change = {**second_cell, "score": 90}
 
-        other_staff = self._put(self.admin_b, "tab-b")
-        self.assertEqual(other_staff.status_code, 200)
+        first = self._put(
+            self.admin_a,
+            "tab-a",
+            [first_change],
+            active_cell=first_cell,
+        )
+        second = self._put(
+            self.admin_a,
+            "tab-a-2",
+            [second_change],
+            active_cell=second_cell,
+        )
 
-        other_tab = self._get(self.admin_a, "tab-a-2")
-        self.assertEqual(other_tab.status_code, 409)
-        self.assertEqual(other_tab.data["code"], "SCORE_EDIT_LOCKED")
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(
+            second.data["active_editors"],
+            [
+                {
+                    "client_id": "tab-a",
+                    "editor_user_id": self.admin_a.id,
+                    "editor_name": "score-lease-a",
+                    "active_cell": first_cell,
+                }
+            ],
+        )
+        self.assertEqual(
+            ScoreEditDraft.objects.filter(
+                session=self.session,
+                editor_user=self.admin_a,
+            ).count(),
+            2,
+        )
+        for client_id, enrollment_id in (("tab-a", 21), ("tab-a-2", 22)):
+            request = self._request("patch", self.admin_a, client_id)
+            with transaction.atomic():
+                self.assertEqual(
+                    require_homework_score_edit_lease(
+                        request,
+                        session_id=self.session.id,
+                        enrollment_id=enrollment_id,
+                        homework_id=31,
+                    ).id,
+                    self.session.id,
+                )
+
+    def test_same_homework_cell_presence_conflicts_but_other_cells_remain_available(self):
+        occupied_cell = {
+            "type": "homework",
+            "enrollmentId": 21,
+            "homeworkId": 31,
+        }
+        self.assertEqual(
+            self._put(
+                self.admin_a,
+                "tab-a",
+                active_cell=occupied_cell,
+            ).status_code,
+            200,
+        )
+
+        conflict = self._put(
+            self.admin_b,
+            "tab-b",
+            active_cell=occupied_cell,
+        )
+        available = self._put(
+            self.admin_b,
+            "tab-b",
+            active_cell={
+                **occupied_cell,
+                "enrollmentId": 22,
+            },
+        )
+
+        self.assertEqual(conflict.status_code, 409)
+        self.assertEqual(conflict.data["code"], "SCORE_EDIT_LOCKED")
+        self.assertEqual(available.status_code, 200)
 
     def test_draft_and_commit_reject_ambiguous_boolean_values(self):
         put_response = self._put(
@@ -233,7 +318,9 @@ class ScoreDraftEditLeaseTests(TestCase):
         )
         self.assertEqual(draft.payload["changes"], [])
         self.assertEqual(self._put(self.admin_b, "tab-b").status_code, 200)
-        self.assertEqual(self._get(self.admin_a, "tab-a-2").status_code, 409)
+        other_tab = self._get(self.admin_a, "tab-a-2")
+        self.assertEqual(other_tab.status_code, 200)
+        self.assertEqual(other_tab.data["changes"], [])
 
         self.assertEqual(
             self._commit(self.admin_a, "tab-a", release_lease=True).status_code,
@@ -374,8 +461,8 @@ class ScoreDraftEditLeaseTests(TestCase):
         self.assertEqual(empty_heartbeat.status_code, 409)
         self.assertEqual(empty_heartbeat.data["code"], "SCORE_EDIT_STALE")
         duplicated_tab = self._put(self.admin_a, "tab-a-2")
-        self.assertEqual(duplicated_tab.status_code, 409)
-        self.assertEqual(duplicated_tab.data["code"], "SCORE_EDIT_STALE")
+        self.assertEqual(duplicated_tab.status_code, 200)
+        self.assertEqual(duplicated_tab.data["changes"], [])
         stale_commit = self._commit(
             self.admin_a,
             "tab-a",

@@ -23,6 +23,41 @@ def score_edit_payload_parts(payload) -> tuple[str | None, list]:
     return None, payload if isinstance(payload, list) else []
 
 
+def score_edit_payload_active_cell(payload) -> dict | None:
+    if not isinstance(payload, dict):
+        return None
+    active_cell = payload.get("active_cell")
+    return normalize_homework_active_cell(active_cell)
+
+
+def normalize_homework_active_cell(value) -> dict | None:
+    if not isinstance(value, dict) or value.get("type") != "homework":
+        return None
+    enrollment_id = value.get("enrollmentId")
+    homework_id = value.get("homeworkId")
+    if (
+        isinstance(enrollment_id, bool)
+        or isinstance(homework_id, bool)
+        or not isinstance(enrollment_id, int)
+        or not isinstance(homework_id, int)
+        or enrollment_id <= 0
+        or homework_id <= 0
+    ):
+        return None
+    return {
+        "type": "homework",
+        "enrollmentId": enrollment_id,
+        "homeworkId": homework_id,
+    }
+
+
+def score_edit_active_homework_key(value) -> tuple[int, int] | None:
+    active_cell = normalize_homework_active_cell(value)
+    if active_cell is None:
+        return None
+    return (active_cell["enrollmentId"], active_cell["homeworkId"])
+
+
 def score_edit_payload_is_invalidated(payload) -> bool:
     return bool(isinstance(payload, dict) and payload.get("invalidated"))
 
@@ -67,10 +102,15 @@ def score_edit_lease_payload(
     *,
     client_id: str | None,
     changes: list,
+    active_cell: dict | None = None,
     invalidated: bool = False,
     invalidated_reason: str | None = None,
 ) -> dict:
-    payload = {"client_id": client_id, "changes": changes}
+    payload = {
+        "client_id": client_id,
+        "changes": changes,
+        "active_cell": normalize_homework_active_cell(active_cell),
+    }
     if invalidated:
         payload["invalidated"] = True
         payload["invalidated_reason"] = (
@@ -111,6 +151,7 @@ def invalidate_score_edit_leases_for_exam(
         draft.payload = score_edit_lease_payload(
             client_id=client_id,
             changes=changes,
+            active_cell=score_edit_payload_active_cell(draft.payload),
             invalidated=True,
             invalidated_reason=reason,
         )

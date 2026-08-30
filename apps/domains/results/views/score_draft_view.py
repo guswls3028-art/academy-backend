@@ -24,6 +24,7 @@ from rest_framework import status as drf_status
 
 from apps.core.parsing import parse_bool
 from apps.core.permissions import TenantResolvedAndStaff
+from apps.core.models.user import user_display_username
 from apps.domains.results.guards.score_edit_lease_guard import (
     EDIT_LEASE_TTL,
     ScoreEditLeaseConflict,
@@ -34,8 +35,13 @@ from apps.domains.results.guards.score_edit_lease_guard import (
     score_edit_payload_is_invalidated,
 )
 from apps.domains.results.guards.score_edit_lease_state import (
+    active_score_edit_drafts,
+    normalize_homework_active_cell,
+    score_edit_active_homework_key,
     score_edit_changes_are_exclusive,
     score_edit_changes_conflict,
+    score_edit_homework_keys,
+    score_edit_payload_active_cell,
 )
 from apps.domains.results.models import ScoreEditDraft
 from apps.support.results.progress_read_dependencies import (
@@ -62,6 +68,66 @@ def _lock_session(*, session_id: int, tenant):
     )
 
 
+def _draft_client_id(draft) -> str:
+    stored_client_id, _ = score_edit_payload_parts(draft.payload)
+    return str(getattr(draft, "client_id", "") or stored_client_id or "")
+
+
+def _is_current_editor(draft, *, user_id: int, client_id: str) -> bool:
+    return (
+        int(draft.editor_user_id) == int(user_id)
+        and _draft_client_id(draft) in ("", client_id)
+    )
+
+
+def _editor_name(user) -> str:
+    return str(
+        getattr(user, "name", "")
+        or user.get_full_name()
+        or user_display_username(user)
+        or "다른 직원"
+    ).strip()
+
+
+def _active_editors(*, session_id: int, tenant_id: int, user_id: int, client_id: str):
+    editors = []
+    drafts = (
+        active_score_edit_drafts(scope_ids=[int(session_id)], tenant_id=tenant_id)
+        .select_related("editor_user")
+        .order_by("editor_user_id", "client_id", "id")
+    )
+    for draft in drafts:
+        if _is_current_editor(draft, user_id=user_id, client_id=client_id):
+            continue
+        if score_edit_payload_is_invalidated(draft.payload):
+            continue
+        active_cell = score_edit_payload_active_cell(draft.payload)
+        if active_cell is None:
+            continue
+        editors.append(
+            {
+                "client_id": _draft_client_id(draft),
+                "editor_user_id": int(draft.editor_user_id),
+                "editor_name": _editor_name(draft.editor_user),
+                "active_cell": active_cell,
+            }
+        )
+    return editors
+
+
+def _draft_response(*, changes, stale, session_id, tenant_id, user_id, client_id):
+    return {
+        "changes": changes,
+        "stale": stale,
+        "active_editors": _active_editors(
+            session_id=session_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            client_id=client_id,
+        ),
+    }
+
+
 class ScoreDraftView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
@@ -82,27 +148,53 @@ class ScoreDraftView(APIView):
             updated_at__gte=active_since,
         )
         for active in active_drafts:
+            if _is_current_editor(
+                active,
+                user_id=request.user.id,
+                client_id=client_id,
+            ):
+                continue
             if score_edit_payload_is_invalidated(active.payload):
                 continue
-            stored_client_id, active_changes = score_edit_payload_parts(active.payload)
-            if active.editor_user_id == request.user.id:
-                if stored_client_id is not None and stored_client_id != client_id:
-                    return _locked_response()
-            elif score_edit_changes_are_exclusive(active_changes):
+            _, active_changes = score_edit_payload_parts(active.payload)
+            if score_edit_changes_are_exclusive(active_changes):
                 return _locked_response()
 
         draft = ScoreEditDraft.objects.filter(
             session_id=int(session_id),
             tenant_id=tenant.id,
             editor_user_id=request.user.id,
+            client_id=client_id,
         ).first()
+        if draft is None:
+            draft = ScoreEditDraft.objects.filter(
+                session_id=int(session_id),
+                tenant_id=tenant.id,
+                editor_user_id=request.user.id,
+                client_id="",
+            ).first()
         if not draft:
-            return Response({"changes": []})
+            return Response(
+                _draft_response(
+                    changes=[],
+                    stale=False,
+                    session_id=session_id,
+                    tenant_id=tenant.id,
+                    user_id=request.user.id,
+                    client_id=client_id,
+                )
+            )
         _, changes = score_edit_payload_parts(draft.payload)
-        return Response({
-            "changes": changes,
-            "stale": score_edit_payload_is_invalidated(draft.payload),
-        })
+        return Response(
+            _draft_response(
+                changes=changes,
+                stale=score_edit_payload_is_invalidated(draft.payload),
+                session_id=session_id,
+                tenant_id=tenant.id,
+                user_id=request.user.id,
+                client_id=client_id,
+            )
+        )
 
     def put(self, request, session_id: int):
         tenant = getattr(request, "tenant", None)
@@ -111,6 +203,10 @@ class ScoreDraftView(APIView):
         changes = request.data.get("changes")
         if not isinstance(changes, list):
             return Response({"detail": "changes must be a list"}, status=400)
+        raw_active_cell = request.data.get("active_cell")
+        active_cell = normalize_homework_active_cell(raw_active_cell)
+        if raw_active_cell is not None and active_cell is None:
+            return Response({"detail": "active_cell must be a homework cell"}, status=400)
         acknowledge_stale = parse_bool(
             request.data.get("acknowledge_stale", False),
             field_name="acknowledge_stale",
@@ -130,11 +226,40 @@ class ScoreDraftView(APIView):
                     continue
                 if score_edit_payload_is_invalidated(existing.payload):
                     continue
-                stored_client_id, existing_changes = score_edit_payload_parts(existing.payload)
-                if existing.editor_user_id == request.user.id:
-                    if stored_client_id is not None and stored_client_id != client_id:
-                        return _locked_response()
-                elif score_edit_changes_conflict(existing_changes, changes):
+                if _is_current_editor(
+                    existing,
+                    user_id=request.user.id,
+                    client_id=client_id,
+                ):
+                    continue
+                _, existing_changes = score_edit_payload_parts(existing.payload)
+                existing_active_key = score_edit_active_homework_key(
+                    score_edit_payload_active_cell(existing.payload)
+                )
+                incoming_active_key = score_edit_active_homework_key(active_cell)
+                existing_homework_keys = score_edit_homework_keys(existing_changes)
+                incoming_homework_keys = score_edit_homework_keys(changes)
+                presence_conflicts = (
+                    incoming_active_key is not None
+                    and (
+                        score_edit_changes_are_exclusive(existing_changes)
+                        or incoming_active_key == existing_active_key
+                        or (
+                            existing_homework_keys is not None
+                            and incoming_active_key in existing_homework_keys
+                        )
+                    )
+                ) or (
+                    existing_active_key is not None
+                    and (
+                        score_edit_changes_are_exclusive(changes)
+                        or (
+                            incoming_homework_keys is not None
+                            and existing_active_key in incoming_homework_keys
+                        )
+                    )
+                )
+                if score_edit_changes_conflict(existing_changes, changes) or presence_conflicts:
                     return _locked_response()
 
             draft = next(
@@ -142,25 +267,44 @@ class ScoreDraftView(APIView):
                     item
                     for item in drafts
                     if int(item.session_id) == int(session_id)
-                    and item.editor_user_id == request.user.id
+                    and _is_current_editor(
+                        item,
+                        user_id=request.user.id,
+                        client_id=client_id,
+                    )
                 ),
                 None,
             )
             if draft is not None and score_edit_payload_is_invalidated(draft.payload):
                 if not acknowledge_stale:
                     return _stale_response()
-            payload = score_edit_lease_payload(client_id=client_id, changes=changes)
+            payload = score_edit_lease_payload(
+                client_id=client_id,
+                changes=changes,
+                active_cell=active_cell,
+            )
             if draft is None:
                 draft = ScoreEditDraft.objects.create(
                     session_id=int(session_id),
                     tenant_id=tenant.id,
                     editor_user_id=request.user.id,
+                    client_id=client_id,
                     payload=payload,
                 )
             else:
+                draft.client_id = client_id
                 draft.payload = payload
-                draft.save(update_fields=["payload", "updated_at"])
-        return Response({"changes": changes})
+                draft.save(update_fields=["client_id", "payload", "updated_at"])
+        return Response(
+            _draft_response(
+                changes=changes,
+                stale=False,
+                session_id=session_id,
+                tenant_id=tenant.id,
+                user_id=request.user.id,
+                client_id=client_id,
+            )
+        )
 
 
 class ScoreDraftCommitView(APIView):
@@ -184,19 +328,12 @@ class ScoreDraftCommitView(APIView):
                     session_id=int(session_id),
                     tenant_id=tenant.id,
                     editor_user_id=request.user.id,
+                    client_id__in=["", client_id],
                 )
                 .first()
             )
             if draft is None:
                 return Response(status=204)
-            stored_client_id, _ = score_edit_payload_parts(draft.payload)
-            lease_is_active = draft.updated_at >= timezone.now() - EDIT_LEASE_TTL
-            if (
-                lease_is_active
-                and stored_client_id is not None
-                and stored_client_id != client_id
-            ):
-                return _locked_response()
             if (
                 not release_lease
                 and score_edit_payload_is_invalidated(draft.payload)
@@ -205,6 +342,10 @@ class ScoreDraftCommitView(APIView):
             if release_lease:
                 draft.delete()
             else:
-                draft.payload = score_edit_lease_payload(client_id=client_id, changes=[])
+                draft.payload = score_edit_lease_payload(
+                    client_id=client_id,
+                    changes=[],
+                    active_cell=score_edit_payload_active_cell(draft.payload),
+                )
                 draft.save(update_fields=["payload", "updated_at"])
         return Response(status=204)
