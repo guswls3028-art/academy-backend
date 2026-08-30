@@ -72,7 +72,6 @@ class Command(BaseCommand):
                     config = (
                         AutoSendConfig.objects.select_for_update()
                         .filter(tenant=tenant, trigger=trigger)
-                        .select_related("template")
                         .first()
                     )
                     if config and (config.message_mode or "alimtalk").strip().lower() != "alimtalk":
