@@ -338,6 +338,46 @@ class ScoreDraftEditLeaseTests(TestCase):
 
         self.assertEqual(self._put(self.admin_b, "tab-b").status_code, 200)
 
+    def test_expired_empty_lease_can_be_taken_over_by_same_account_new_tab(self):
+        self.assertEqual(self._put(self.admin_a, "tab-a").status_code, 200)
+        ScoreEditDraft.objects.filter(
+            session=self.session,
+            editor_user=self.admin_a,
+        ).update(updated_at=timezone.now() - timedelta(minutes=3))
+
+        response = self._put(self.admin_a, "tab-b")
+
+        self.assertEqual(response.status_code, 200)
+        draft = ScoreEditDraft.objects.get(
+            session=self.session,
+            editor_user=self.admin_a,
+        )
+        self.assertEqual(draft.payload["client_id"], "tab-b")
+        self.assertEqual(draft.payload["changes"], [])
+
+    def test_expired_changed_lease_stays_locked_for_same_account_new_tab(self):
+        change = {
+            "type": "examTotal",
+            "examId": 11,
+            "enrollmentId": 22,
+            "score": 74,
+        }
+        self.assertEqual(self._put(self.admin_a, "tab-a", [change]).status_code, 200)
+        ScoreEditDraft.objects.filter(
+            session=self.session,
+            editor_user=self.admin_a,
+        ).update(updated_at=timezone.now() - timedelta(minutes=3))
+
+        response = self._put(self.admin_a, "tab-b")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data["code"], "SCORE_EDIT_LOCKED")
+        draft = ScoreEditDraft.objects.get(
+            session=self.session,
+            editor_user=self.admin_a,
+        )
+        self.assertEqual(draft.payload["changes"], [change])
+
     def test_legacy_list_payload_remains_readable(self):
         changes = [{"type": "homework", "enrollmentId": 3, "homeworkId": 4, "score": 5}]
         ScoreEditDraft.objects.create(
