@@ -264,7 +264,7 @@ class AdminExamResultsScopeTest(TestCase):
             target_id=exam.id,
             enrollment=peer,
             attempt=peer_attempt,
-            total_score=20,
+            total_score=19,
             max_score=100,
         )
 
@@ -282,6 +282,58 @@ class AdminExamResultsScopeTest(TestCase):
         )
         self.assertEqual([row["result_status"] for row in rows], ["DONE", "DONE"])
         self.assertEqual(first_attempt.attempt_index, 1)
+
+    def test_confirmed_same_first_attempt_total_updates_score_and_competition_rank(self):
+        exam = self._make_exam()
+        enrollments = [
+            self.enrollment,
+            self._make_enrollment(
+                self.tenant,
+                self.lecture,
+                "SCOPE002",
+                "두번째 학생",
+            ),
+            self._make_enrollment(
+                self.tenant,
+                self.lecture,
+                "SCOPE003",
+                "세번째 학생",
+            ),
+        ]
+        for enrollment, confirmed_score in zip(
+            enrollments,
+            [100, 95, 95],
+            strict=True,
+        ):
+            attempt = ExamAttempt.objects.create(
+                exam=exam,
+                enrollment=enrollment,
+                submission_id=0,
+                attempt_index=1,
+                is_representative=True,
+                status="done",
+                meta={"initial_snapshot": {"total_score": 95, "max_score": 100}},
+            )
+            Result.objects.create(
+                target_type="exam",
+                target_id=exam.id,
+                enrollment=enrollment,
+                attempt=attempt,
+                total_score=confirmed_score,
+                max_score=100,
+            )
+
+        response = self._get(exam.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        rows = response.data["results"]
+        self.assertEqual(
+            [
+                (row["rank"], row["ranking_score"], row["final_score"])
+                for row in rows
+            ],
+            [(1, 100.0, 100.0), (2, 95.0, 95.0), (2, 95.0, 95.0)],
+        )
 
     def test_ties_use_competition_rank_and_skip_occupied_positions(self):
         exam = self._make_exam()
