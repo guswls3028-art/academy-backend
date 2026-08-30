@@ -2,6 +2,14 @@ from django.db import migrations, models
 import django.db.models.deletion
 
 
+ACADEMY_MIGRATION_PHASE = "contract"
+ACADEMY_MIGRATION_REASON = (
+    "Add a conditional hash index and uniqueness constraint while every new scope/hash "
+    "column remains nullable, so overlapping older API instances can keep inserting "
+    "batch items without knowing the new fields."
+)
+
+
 def backfill_scope(apps, schema_editor):
     Item = apps.get_model("submissions", "OmrUploadBatchItem")
     for item in Item.objects.select_related("batch").iterator(chunk_size=500):
@@ -43,7 +51,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="omruploadbatchitem",
             name="content_sha256",
-            field=models.CharField(blank=True, default="", max_length=64),
+            field=models.CharField(blank=True, default="", max_length=64, null=True),
         ),
         migrations.AlterField(
             model_name="omruploadbatchitem",
@@ -60,20 +68,6 @@ class Migration(migrations.Migration):
             ),
         ),
         migrations.RunPython(backfill_scope, migrations.RunPython.noop),
-        migrations.AlterField(
-            model_name="omruploadbatchitem",
-            name="tenant",
-            field=models.ForeignKey(
-                on_delete=django.db.models.deletion.CASCADE,
-                related_name="omr_upload_batch_items",
-                to="core.tenant",
-            ),
-        ),
-        migrations.AlterField(
-            model_name="omruploadbatchitem",
-            name="exam_id",
-            field=models.PositiveBigIntegerField(),
-        ),
         migrations.AddIndex(
             model_name="omruploadbatchitem",
             index=models.Index(

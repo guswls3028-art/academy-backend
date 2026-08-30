@@ -224,8 +224,10 @@ Batch와 item에는 tenant, 생성 직원, 시험/차시/강의 id, 총수, ordi
 batch API 응답에 저장·노출하지 않는다. 실제 원본과 학생 매칭은 기존 tenant-scoped
 Submission 계약을 그대로 사용한다.
 도입 전 item은 migration에서 tenant/exam scope만 backfill하고 기존 R2 원본을 다시 읽지
-않으므로 hash는 빈 값으로 보존한다. 기존 제출·점수는 바꾸지 않으며 cross-batch 동일 파일
-차단은 도입 후 새로 접수되는 파일부터 적용한다.
+않으므로 hash는 빈 값으로 보존한다. rolling 배포 중 구버전 API가 만드는 item도 새
+scope/hash 열을 모르므로 null일 수 있으며 conditional constraint 대상에서 제외된다. 신규
+API는 세 값을 항상 채운다. 기존 제출·점수는 바꾸지 않으며 cross-batch 동일 파일 차단은
+도입 후 신규 API로 접수되는 파일부터 적용한다.
 
 파일을 R2에 올린 뒤 Submission metadata 저장, item 연결, dispatch 중 하나라도 실패해
 DB transaction이 rollback되면 서버는 그 요청에서 생성한 exact object key만 즉시 보상

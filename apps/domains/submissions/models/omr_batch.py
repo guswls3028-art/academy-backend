@@ -53,8 +53,9 @@ class OmrUploadBatchItem(TimestampModel):
         Tenant,
         on_delete=models.CASCADE,
         related_name="omr_upload_batch_items",
+        null=True,
     )
-    exam_id = models.PositiveBigIntegerField()
+    exam_id = models.PositiveBigIntegerField(null=True)
     batch = models.ForeignKey(
         OmrUploadBatch,
         on_delete=models.CASCADE,
@@ -75,7 +76,12 @@ class OmrUploadBatchItem(TimestampModel):
         null=True,
         blank=True,
     )
-    content_sha256 = models.CharField(max_length=64, blank=True, default="")
+    content_sha256 = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        null=True,
+    )
     admission_status = models.CharField(
         max_length=16,
         choices=AdmissionStatus.choices,
