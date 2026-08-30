@@ -78,18 +78,6 @@ def _safe_display_name(name: str, extension: str) -> str:
     return candidate[:255]
 
 
-def _read_prefix(upload_file, size: int = 64) -> bytes:
-    position = upload_file.tell() if hasattr(upload_file, "tell") else 0
-    try:
-        upload_file.seek(0)
-        return upload_file.read(size) or b""
-    finally:
-        try:
-            upload_file.seek(position)
-        except Exception:
-            upload_file.seek(0)
-
-
 def _fingerprint(upload_file) -> str:
     position = upload_file.tell() if hasattr(upload_file, "tell") else 0
     digest = hashlib.sha256()
@@ -106,33 +94,44 @@ def _fingerprint(upload_file) -> str:
             upload_file.seek(0)
 
 
-def _sniff_media(prefix: bytes, extension: str) -> tuple[str, str, str] | None:
-    if prefix.startswith(b"\xff\xd8\xff"):
-        return "image", "image/jpeg", "jpg"
-    if prefix.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "image", "image/png", "png"
-    if prefix.startswith((b"GIF87a", b"GIF89a")):
-        return "image", "image/gif", "gif"
-    if len(prefix) >= 12 and prefix.startswith(b"RIFF") and prefix[8:12] == b"WEBP":
-        return "image", "image/webp", "webp"
-    if prefix.startswith(b"\x1aE\xdf\xa3"):
-        return "video", "video/webm", "webm"
-    if len(prefix) >= 12 and prefix[4:8] == b"ftyp":
-        brands = prefix[8:64]
-        if any(brand in brands for brand in (b"avif", b"avis")):
-            return "image", "image/avif", "avif"
-        if any(brand in brands for brand in (b"heic", b"heix", b"hevc", b"hevx", b"mif1", b"msf1")):
-            return "image", "image/heic", "heic"
-        if extension in {"mp4", "m4v", "mov"}:
-            mime = "video/quicktime" if extension == "mov" else "video/mp4"
-            return "video", mime, extension
-    return None
+_MEDIA_BY_EXTENSION = {
+    "jpg": ("image", "image/jpeg", "jpg"),
+    "jpeg": ("image", "image/jpeg", "jpg"),
+    "png": ("image", "image/png", "png"),
+    "gif": ("image", "image/gif", "gif"),
+    "webp": ("image", "image/webp", "webp"),
+    "heic": ("image", "image/heic", "heic"),
+    "heif": ("image", "image/heif", "heif"),
+    "avif": ("image", "image/avif", "avif"),
+    "mp4": ("video", "video/mp4", "mp4"),
+    "m4v": ("video", "video/mp4", "m4v"),
+    "mov": ("video", "video/quicktime", "mov"),
+    "webm": ("video", "video/webm", "webm"),
+}
+_MEDIA_BY_DECLARED_MIME = {
+    "image/jpeg": _MEDIA_BY_EXTENSION["jpg"],
+    "image/jpg": _MEDIA_BY_EXTENSION["jpg"],
+    "image/png": _MEDIA_BY_EXTENSION["png"],
+    "image/gif": _MEDIA_BY_EXTENSION["gif"],
+    "image/webp": _MEDIA_BY_EXTENSION["webp"],
+    "image/heic": _MEDIA_BY_EXTENSION["heic"],
+    "image/heif": _MEDIA_BY_EXTENSION["heif"],
+    "image/heic-sequence": _MEDIA_BY_EXTENSION["heic"],
+    "image/heif-sequence": _MEDIA_BY_EXTENSION["heif"],
+    "image/avif": _MEDIA_BY_EXTENSION["avif"],
+    "video/mp4": _MEDIA_BY_EXTENSION["mp4"],
+    "video/x-m4v": _MEDIA_BY_EXTENSION["m4v"],
+    "video/quicktime": _MEDIA_BY_EXTENSION["mov"],
+    "video/webm": _MEDIA_BY_EXTENSION["webm"],
+}
 
 
 def validate_homework_media_file(upload_file) -> ValidatedHomeworkMedia:
     name = str(getattr(upload_file, "name", "") or "")
     extension = name.rsplit(".", 1)[-1].lower() if "." in name else ""
-    if extension not in {"jpg", "jpeg", "png", "gif", "webp", "heic", "heif", "avif", "mp4", "m4v", "mov", "webm"}:
+    declared_mime = str(getattr(upload_file, "content_type", "") or "").split(";", 1)[0].lower()
+    media = _MEDIA_BY_EXTENSION.get(extension) or _MEDIA_BY_DECLARED_MIME.get(declared_mime)
+    if media is None:
         raise ValidationError(
             {
                 "code": "HOMEWORK_MEDIA_TYPE",
@@ -150,50 +149,11 @@ def validate_homework_media_file(upload_file) -> ValidatedHomeworkMedia:
             }
         )
 
-    sniffed = _sniff_media(_read_prefix(upload_file), extension)
-    if sniffed is None:
-        raise ValidationError(
-            {
-                "code": "HOMEWORK_MEDIA_SIGNATURE",
-                "detail": "파일 내용이 선택한 사진·동영상 형식과 일치하지 않습니다.",
-            }
-        )
-    media_kind, canonical_mime, sniffed_extension = sniffed
-    compatible_extensions = {
-        "jpg": {"jpg", "jpeg"},
-        "heic": {"heic", "heif"},
-    }.get(sniffed_extension, {sniffed_extension})
-    if extension not in compatible_extensions:
-        raise ValidationError(
-            {
-                "code": "HOMEWORK_MEDIA_SIGNATURE",
-                "detail": "파일 확장자와 실제 파일 내용이 일치하지 않습니다.",
-            }
-        )
-
-    declared_mime = str(getattr(upload_file, "content_type", "") or "").split(";", 1)[0].lower()
-    allowed_declared = {
-        "image/jpeg": {"image/jpeg", "image/jpg"},
-        "image/png": {"image/png"},
-        "image/gif": {"image/gif"},
-        "image/webp": {"image/webp"},
-        "image/heic": {"image/heic", "image/heif", "image/heic-sequence", "image/heif-sequence"},
-        "image/avif": {"image/avif"},
-        "video/mp4": {"video/mp4", "video/x-m4v"},
-        "video/quicktime": {"video/quicktime"},
-        "video/webm": {"video/webm"},
-    }[canonical_mime]
-    if declared_mime not in {"", "application/octet-stream"} and declared_mime not in allowed_declared:
-        raise ValidationError(
-            {
-                "code": "HOMEWORK_MEDIA_MIME",
-                "detail": "브라우저가 보낸 파일 형식과 실제 파일 내용이 일치하지 않습니다.",
-            }
-        )
+    media_kind, canonical_mime, storage_extension = media
 
     return ValidatedHomeworkMedia(
-        original_filename=_safe_display_name(name, extension),
-        extension=extension,
+        original_filename=_safe_display_name(name, storage_extension),
+        extension=storage_extension,
         media_kind=media_kind,
         mime_type=canonical_mime,
         size=size,
