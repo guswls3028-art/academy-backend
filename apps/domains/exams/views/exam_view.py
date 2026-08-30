@@ -23,6 +23,7 @@ from apps.domains.exams.services.structure_copy_service import (
 from apps.domains.exams.services.template_resolver import resolve_structure_exam
 from apps.support.exams.view_dependencies import (
     IsTeacherOrAdmin,
+    active_enrollment_ids_for_exam_assignment,
     dispatch_progress_for_exam,
     get_session_model,
     regular_exam_delete_blocker,
@@ -213,6 +214,17 @@ class ExamViewSet(ModelViewSet):
             )
 
             exam.sessions.add(session)
+            active_enrollment_ids = active_enrollment_ids_for_exam_assignment(
+                tenant=tenant,
+                session=session,
+            )
+            ExamEnrollment.objects.bulk_create(
+                [
+                    ExamEnrollment(exam=exam, enrollment_id=enrollment_id)
+                    for enrollment_id in active_enrollment_ids
+                ],
+                ignore_conflicts=True,
+            )
             if template_exam is not None:
                 copy_exam_structure(source_exam=template_exam, target_exam=exam)
             elif source_exam is not None:
