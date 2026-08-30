@@ -1,6 +1,13 @@
 from django.db import migrations, models
 
 
+ACADEMY_MIGRATION_PHASE = "contract"
+ACADEMY_MIGRATION_REASON = (
+    "Relax the score-draft uniqueness from one row per user to one row per browser "
+    "client; the database default keeps older API inserts compatible during overlap."
+)
+
+
 def backfill_client_ids(apps, schema_editor):
     ScoreEditDraft = apps.get_model("results", "ScoreEditDraft")
     for draft in ScoreEditDraft.objects.only("id", "payload", "client_id").iterator():
