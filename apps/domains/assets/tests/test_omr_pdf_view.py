@@ -14,7 +14,7 @@ from apps.domains.assets.omr.renderer.pdf_renderer import OMRPdfRenderer
 from apps.domains.assets.omr.services.omr_document_service import OMRDocumentService
 from apps.domains.assets.omr.views.omr_pdf_views import OMRPdfView
 from apps.domains.assets.omr.views.omr_document_views import ToolsOMRPreviewView
-from apps.domains.exams.models import Exam, ExamAsset
+from apps.domains.exams.models import AnswerKey, Exam, ExamAsset, ExamQuestion, Sheet
 from apps.domains.lectures.models import Lecture, Session
 
 
@@ -85,6 +85,59 @@ class OMRPdfViewTests(TestCase):
         self.assertEqual(response.status_code, 404)
         generate_url.assert_not_called()
 
+    def test_exam_answer_key_renders_non_objective_answer_as_written_area(self):
+        sheet = Sheet.objects.create(
+            exam=self.exam,
+            total_questions=20,
+            choice_count=19,
+            essay_count=1,
+        )
+        questions = [
+            ExamQuestion.objects.create(
+                sheet=sheet,
+                number=number,
+                question_kind="choice" if number < 20 else "essay",
+            )
+            for number in range(1, 21)
+        ]
+        answer_key = AnswerKey.objects.create(
+            exam=self.exam,
+            answers={
+                **{str(question.id): "1" for question in questions[:-1]},
+                str(questions[-1].id): "풀이 과정을 서술하세요",
+            },
+        )
+
+        written_doc = OMRDocumentService.from_exam(
+            exam=self.exam,
+            tenant=self.tenant,
+            mc_count=19,
+            essay_count=1,
+            choice_question_numbers=list(range(1, 20)),
+            essay_question_numbers=[20],
+        )
+        written_html = OMRHtmlRenderer().render(written_doc).decode("utf-8")
+
+        self.assertIn("서술형 1문항", written_html)
+        self.assertEqual(written_html.count('class="dr-bx"'), 1)
+        self.assertNotIn('class="dr-place"', written_html)
+
+        answer_key.answers[str(questions[-1].id)] = "7"
+        answer_key.save(update_fields=["answers"])
+        numeric_doc = OMRDocumentService.from_exam(
+            exam=self.exam,
+            tenant=self.tenant,
+            mc_count=19,
+            essay_count=1,
+            choice_question_numbers=list(range(1, 20)),
+            essay_question_numbers=[20],
+        )
+        numeric_html = OMRHtmlRenderer().render(numeric_doc).decode("utf-8")
+
+        self.assertIn("서술형 1문항", numeric_html)
+        self.assertEqual(numeric_html.count('class="dr-bx"'), 1)
+        self.assertNotIn('class="dr-place"', numeric_html)
+
 
 class OMRDocumentRenderingTests(TestCase):
     @patch("apps.infrastructure.storage.r2.get_admin_object_bytes")
@@ -114,16 +167,15 @@ class OMRDocumentRenderingTests(TestCase):
         self.assertEqual(doc.essay_count, 0)
         self.assertEqual(doc.render_essay_count, 5)
         self.assertTrue(doc.has_decorative_essay_area)
-        self.assertEqual(doc.render_essay_label, "단답형 공간")
+        self.assertEqual(doc.render_essay_label, "서술형 작성 공간")
         self.assertEqual(doc.to_defaults_dict()["essay_count"], 0)
         self.assertEqual(doc.to_defaults_dict()["render_essay_count"], 5)
-        self.assertEqual(doc.to_defaults_dict()["render_essay_label"], "단답형 공간")
+        self.assertEqual(doc.to_defaults_dict()["render_essay_label"], "서술형 작성 공간")
 
         html = OMRHtmlRenderer().render(doc).decode("utf-8")
         self.assertIn("객관식 1번 ~ 20번", html)
-        self.assertIn("단답형 공간", html)
-        self.assertNotIn("단답형 5문항", html)
-        self.assertNotIn("서술형", html)
+        self.assertIn("서술형 작성 공간", html)
+        self.assertNotIn("단답형", html)
 
         pdf = OMRPdfRenderer().render(doc)
         self.assertTrue(pdf.startswith(b"%PDF"))
@@ -145,8 +197,8 @@ class OMRDocumentRenderingTests(TestCase):
         self.assertEqual(shown.render_essay_count, 5)
         self.assertEqual(hidden.render_essay_count, 0)
         self.assertFalse(hidden.has_decorative_essay_area)
-        self.assertIn("단답형 공간", OMRHtmlRenderer().render(shown).decode("utf-8"))
-        self.assertNotIn("단답형 공간", OMRHtmlRenderer().render(hidden).decode("utf-8"))
+        self.assertIn("서술형 작성 공간", OMRHtmlRenderer().render(shown).decode("utf-8"))
+        self.assertNotIn("서술형 작성 공간", OMRHtmlRenderer().render(hidden).decode("utf-8"))
         self.assertTrue(OMRPdfRenderer().render(hidden).startswith(b"%PDF"))
 
     def test_large_objective_only_document_hides_optional_essay_area_automatically(self):
@@ -160,19 +212,19 @@ class OMRDocumentRenderingTests(TestCase):
         self.assertFalse(doc.can_include_optional_essay_area)
         self.assertEqual(doc.render_essay_count, 0)
         self.assertEqual(doc.validate(), [])
-        self.assertNotIn("단답형 공간", OMRHtmlRenderer().render(doc).decode("utf-8"))
+        self.assertNotIn("서술형 작성 공간", OMRHtmlRenderer().render(doc).decode("utf-8"))
         self.assertTrue(OMRPdfRenderer().render(doc).startswith(b"%PDF"))
 
-    def test_short_answer_only_document_supports_twenty_questions(self):
+    def test_written_answer_only_document_supports_twenty_questions(self):
         doc = OMRDocument(exam_title="Exam", mc_count=0, essay_count=20)
 
         self.assertEqual(doc.render_essay_count, 20)
         self.assertEqual(doc.validate(), [])
         html = OMRHtmlRenderer().render(doc).decode("utf-8")
         self.assertNotIn("객관식 1번", html)
-        self.assertIn("단답형 0~999 (백·십·일)", html)
-        self.assertEqual(html.count('class="dr-place"'), 60)
-        self.assertEqual(html.count('class="dr-bu"'), 600)
+        self.assertIn("서술형 20문항", html)
+        self.assertNotIn("단답형 0~999 (백·십·일)", html)
+        self.assertEqual(html.count('class="dr-bx"'), 20)
         self.assertTrue(OMRPdfRenderer().render(doc).startswith(b"%PDF"))
 
     def test_real_essay_count_overrides_decorative_essay_area(self):
@@ -180,7 +232,7 @@ class OMRDocumentRenderingTests(TestCase):
 
         self.assertEqual(doc.render_essay_count, 3)
         html = OMRHtmlRenderer().render(doc).decode("utf-8")
-        self.assertIn("단답형 0~999 (백·십·일)", html)
+        self.assertIn("서술형 3문항", html)
         self.assertIn('<div class="dr-n">21</div>', html)
         self.assertIn('<div class="dr-n">23</div>', html)
 
@@ -200,6 +252,21 @@ class OMRDocumentRenderingTests(TestCase):
         self.assertIn('<div class="ar-n">1</div>', html)
         self.assertIn('<div class="ar-n">3</div>', html)
         self.assertIn('<div class="dr-n">2</div>', html)
+        self.assertTrue(OMRPdfRenderer().render(doc).startswith(b"%PDF"))
+
+    def test_all_non_objective_rows_render_as_written_areas(self):
+        doc = OMRDocument(
+            exam_title="Mixed written answers",
+            mc_count=19,
+            essay_count=2,
+            essay_question_numbers=(20, 21),
+        )
+
+        html = OMRHtmlRenderer().render(doc).decode("utf-8")
+
+        self.assertIn("서술형 2문항", html)
+        self.assertNotIn('class="dr-place"', html)
+        self.assertEqual(html.count('class="dr-bx"'), 2)
         self.assertTrue(OMRPdfRenderer().render(doc).startswith(b"%PDF"))
 
 
@@ -258,11 +325,11 @@ class OMRDocumentApiContractTests(TestCase):
         })
 
         self.assertEqual(response.status_code, 200)
-        self.assertNotIn("단답형 공간", response.content.decode("utf-8"))
+        self.assertNotIn("서술형 작성 공간", response.content.decode("utf-8"))
 
-    def test_preview_contract_accepts_twenty_short_answer_questions(self):
+    def test_tools_preview_renders_twenty_written_answers_without_numeric_bubbles(self):
         response = self._post_preview({
-            "exam_title": "Short answer only",
+            "exam_title": "Written answer only",
             "mc_count": 0,
             "essay_count": 20,
             "n_choices": 5,
@@ -271,7 +338,10 @@ class OMRDocumentApiContractTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         html = response.content.decode("utf-8")
-        self.assertIn("단답형 0~999 (백·십·일)", html)
+        self.assertIn("서술형 20문항", html)
+        self.assertNotIn("단답형 0~999 (백·십·일)", html)
+        self.assertNotIn('class="dr-place"', html)
+        self.assertEqual(html.count('class="dr-bx"'), 20)
         self.assertNotIn("객관식 1번", html)
 
     def test_preview_contract_accepts_mixed_question_number_order(self):

@@ -66,6 +66,6 @@ class ObjectiveOMRMetaView(APIView):
         meta = build_omr_meta(
             question_count=query.validated_data["question_count"],
             n_choices=query.validated_data["n_choices"],
-            essay_count=query.validated_data["essay_count"],
+            essay_count=0,
         )
         return Response(meta, status=200)
