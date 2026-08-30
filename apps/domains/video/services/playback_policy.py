@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from apps.domains.video.models import AccessMode
-from apps.domains.video.policy import video_forward_skip_budget
+from apps.domains.video.policy import is_video_progress_complete, video_forward_skip_budget
 
 
 def build_effective_playback_policy(
@@ -18,6 +18,19 @@ def build_effective_playback_policy(
     # the same effective controls as FREE_REVIEW.
     mode = AccessMode.FREE_REVIEW if access_mode is None else (
         access_mode if isinstance(access_mode, AccessMode) else AccessMode(access_mode)
+    )
+    completed_review = mode == AccessMode.FREE_REVIEW and (
+        (
+            progress is not None
+            and is_video_progress_complete(
+                getattr(progress, "progress", 0),
+                getattr(progress, "completed", False),
+            )
+        )
+        or (
+            permission is not None
+            and getattr(permission, "proctored_completed_at", None) is not None
+        )
     )
     allow_seek = bool(video.allow_skip)
     max_rate = float(video.max_speed or 1.0)
@@ -47,7 +60,13 @@ def build_effective_playback_policy(
         allow_seek = False
         seek_policy = {"mode": "blocked"}
     elif mode == AccessMode.PROCTORED_CLASS:
-        if not permission or not permission.block_seek:
+        if (not permission or not permission.block_seek) and allow_seek:
+            seek_policy = {
+                "mode": "free",
+                "forward_limit": None,
+                "grace_seconds": 3,
+            }
+        elif not permission or not permission.block_seek:
             budget = video_forward_skip_budget(
                 duration=video.duration,
                 used_seconds=getattr(progress, "forward_skip_seconds_used", 0),
@@ -67,7 +86,14 @@ def build_effective_playback_policy(
         if not permission or permission.show_watermark_override is None:
             watermark_enabled = True
     elif mode == AccessMode.FREE_REVIEW:
-        if not allow_seek and (not permission or not permission.block_seek):
+        if completed_review and (not permission or not permission.block_seek):
+            allow_seek = True
+            seek_policy = {
+                "mode": "free",
+                "forward_limit": None,
+                "grace_seconds": 3,
+            }
+        elif not allow_seek and (not permission or not permission.block_seek):
             budget = video_forward_skip_budget(
                 duration=video.duration,
                 used_seconds=getattr(progress, "forward_skip_seconds_used", 0),
