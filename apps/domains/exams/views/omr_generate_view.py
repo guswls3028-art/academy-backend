@@ -89,7 +89,7 @@ class GenerateOMRSheetAssetView(APIView):
         meta = build_omr_meta(
             question_count=mc_count,
             n_choices=n_choices,
-            essay_count=essay_count,
+            essay_count=0,
         )
 
         # OMR 시트 URL 구성

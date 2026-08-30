@@ -72,6 +72,8 @@ class LegacyOMRGenerateViewTests(TestCase):
         self.assertEqual(response.data["mc_count"], 0)
         self.assertEqual(response.data["essay_count"], 20)
         self.assertIn("mc=0", response.data["omr_url"])
+        self.assertEqual(response.data["meta"]["essay_count"], 0)
+        self.assertEqual(response.data["meta"]["numeric_short_answers"], [])
 
     def test_invalid_count_returns_validation_error_instead_of_server_error(self):
         response = self._post({"mc_count": "not-a-number", "essay_count": 0})

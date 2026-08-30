@@ -59,30 +59,11 @@ def load_submission_exam_structure(submission) -> OmrExamStructure:
             correct_answers_by_pk = answer_key.answers
 
         if contract:
-            from apps.support.exams.numeric_short_answer import (
-                math_numeric_short_answer_question_ids,
-            )
-
-            question_kind_by_id = {
-                int(question.exam_question_id): question.kind
-                for question in contract.questions
-                if question.exam_question_id is not None
-            }
-            numeric_question_ids = math_numeric_short_answer_question_ids(
-                subject=getattr(template_exam, "subject", None),
-                exam=exam,
-                question_ids=question_kind_by_id,
-                question_kind=question_kind_by_id.get,
-                answers=correct_answers_by_pk,
-            )
             qnum_to_pk = {
                 int(question.number): int(question.exam_question_id)
                 for question in contract.questions
                 if question.exam_question_id is not None
-                and (
-                    question.kind == "choice"
-                    or int(question.exam_question_id) in numeric_question_ids
-                )
+                and question.kind == "choice"
             }
             contract_snapshot["auto_detect_count"] = len(qnum_to_pk)
 

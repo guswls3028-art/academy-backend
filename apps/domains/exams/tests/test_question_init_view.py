@@ -187,8 +187,10 @@ class ExamQuestionInitViewTests(TestCase):
         self.assertEqual(contract.essay_question_numbers, (2,))
         self.assertEqual(
             [q["question_number"] for q in contract.template_meta["questions"]],
-            [1, 3, 2],
+            [1, 3],
         )
+        self.assertEqual(contract.template_meta["essay_count"], 0)
+        self.assertEqual(contract.template_meta["numeric_short_answers"], [])
 
     def test_legacy_count_payload_clears_explicit_types_and_keeps_legacy_order(self):
         exam, sheet = self._regular_exam_with_questions()

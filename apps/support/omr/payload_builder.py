@@ -16,12 +16,11 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Optional
 
-from apps.domains.exams.models import AnswerKey, Exam, ExamQuestion, Sheet
+from apps.domains.exams.models import ExamQuestion, Sheet
 from apps.domains.submissions.models import Submission
 from apps.support.omr.contract_builder import build_omr_sheet_contract
 from apps.support.omr.sheet_resolver import resolve_omr_sheet_for_submission
 from apps.infrastructure.storage.r2 import generate_presigned_get_url
-from apps.support.exams.numeric_short_answer import math_numeric_short_answer_question_ids
 
 
 def _safe_int(v: Any) -> Optional[int]:
@@ -56,35 +55,7 @@ def build_omr_payload(submission: Submission) -> dict[str, Any]:
     sheet_id = int(sheet.id)
     contract = build_omr_sheet_contract(sheet=sheet)
     objective_numbers = set(contract.objective_question_numbers)
-    answer_key = (
-        AnswerKey.objects.filter(exam_id=contract.template_exam_id)
-        .select_related("exam")
-        .only("answers", "exam__subject")
-        .first()
-    )
-    target_exam = (
-        Exam.objects.filter(id=int(submission.target_id), tenant=submission.tenant)
-        .only("id", "subject")
-        .first()
-    )
-    question_kind_by_id = {
-        int(question.exam_question_id): question.kind
-        for question in contract.questions
-        if question.exam_question_id is not None
-    }
-    numeric_question_ids = math_numeric_short_answer_question_ids(
-        subject=getattr(getattr(answer_key, "exam", None), "subject", None),
-        exam=target_exam,
-        question_ids=question_kind_by_id,
-        question_kind=question_kind_by_id.get,
-        answers=getattr(answer_key, "answers", None),
-    )
-    numeric_numbers = {
-        int(question.number)
-        for question in contract.questions
-        if question.exam_question_id in numeric_question_ids
-    }
-    auto_detect_numbers = objective_numbers | numeric_numbers
+    auto_detect_numbers = objective_numbers
     contract_snapshot = contract.to_dict(include_template_meta=False)
     contract_snapshot["auto_detect_count"] = len(auto_detect_numbers)
 
@@ -136,12 +107,8 @@ def build_omr_payload(submission: Submission) -> dict[str, Any]:
             for question in template_meta.get("questions", [])
             if int(question.get("question_number", 0)) in auto_detect_numbers
         ]
-        template_meta["numeric_short_answers"] = [
-            question
-            for question in template_meta.get("numeric_short_answers", [])
-            if int(question.get("question_number", 0)) in numeric_numbers
-        ]
-        template_meta["numeric_short_answer_count"] = len(numeric_numbers)
+        template_meta["numeric_short_answers"] = []
+        template_meta["numeric_short_answer_count"] = 0
         payload["template_meta"] = template_meta
 
     return payload

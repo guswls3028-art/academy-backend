@@ -87,8 +87,10 @@ class OMRDocument:
     @property
     def render_essay_label(self) -> str:
         if self.has_decorative_essay_area:
-            return "단답형 공간"
-        return f"단답형 {self.render_essay_count}문항"
+            return "서술형 작성 공간"
+        if self.render_essay_count > 0:
+            return f"서술형 {self.render_essay_count}문항"
+        return "서술형 답안"
 
     def validate(self) -> list[str]:
         """유효성 검사. 오류 메시지 리스트 반환 (빈 리스트면 유효)."""
@@ -98,10 +100,10 @@ class OMRDocument:
         if self.mc_count < 0 or self.mc_count > MAX_MC_QUESTIONS:
             errors.append(f"객관식 문항 수는 0~{MAX_MC_QUESTIONS} 사이여야 합니다.")
         if self.essay_count < 0 or self.essay_count > MAX_ESSAY_QUESTIONS:
-            errors.append(f"단답형 문항 수는 0~{MAX_ESSAY_QUESTIONS} 사이여야 합니다.")
+            errors.append(f"서술형 문항 수는 0~{MAX_ESSAY_QUESTIONS} 사이여야 합니다.")
         if self.decorative_essay_count < 0 or self.decorative_essay_count > MAX_ESSAY_QUESTIONS:
             errors.append(
-                f"표시용 단답형 문항 수는 0~{MAX_ESSAY_QUESTIONS} 사이여야 합니다."
+                f"표시용 서술형 문항 수는 0~{MAX_ESSAY_QUESTIONS} 사이여야 합니다."
             )
         if self.mc_count + self.essay_count < 1:
             errors.append("문항이 최소 1개 이상이어야 합니다.")
@@ -110,7 +112,7 @@ class OMRDocument:
         if self.choice_question_numbers and len(self.choice_question_numbers) != self.mc_count:
             errors.append("객관식 문항 번호 수가 객관식 문항 수와 일치해야 합니다.")
         if self.essay_question_numbers and len(self.essay_question_numbers) != self.essay_count:
-            errors.append("단답형 문항 번호 수가 단답형 문항 수와 일치해야 합니다.")
+            errors.append("서술형 문항 번호 수가 서술형 문항 수와 일치해야 합니다.")
         explicit_numbers = self.resolved_choice_question_numbers + self.resolved_essay_question_numbers
         if len(explicit_numbers) != len(set(explicit_numbers)) or any(n <= 0 for n in explicit_numbers):
             errors.append("문항 번호는 중복 없는 양의 정수여야 합니다.")

@@ -59,6 +59,21 @@ class ObjectiveOMRQueryValidationTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("n_choices", response.data)
 
+    def test_meta_excludes_written_questions_from_omr_detection(self):
+        request = self.factory.get(
+            "/api/v1/assets/omr/objective/meta/",
+            {"question_count": 19, "essay_count": 1},
+        )
+        force_authenticate(request, user=self.admin)
+
+        response = ObjectiveOMRMetaView.as_view()(request)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["mc_count"], 19)
+        self.assertEqual(response.data["essay_count"], 0)
+        self.assertEqual(response.data["numeric_short_answers"], [])
+        self.assertTrue(all(question["type"] == "choice" for question in response.data["questions"]))
+
     def test_template_list_rejects_non_integer_exam_id(self):
         request = self.factory.get(
             "/api/v1/assets/omr/objective/",

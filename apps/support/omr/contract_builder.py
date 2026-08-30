@@ -25,13 +25,10 @@ def build_omr_sheet_contract(*, sheet, exam=None, n_choices: int = 5) -> OMRShee
         use_explicit_kinds=source == "question_types",
     )
     choice_numbers = [q.number for q in question_contracts if q.kind == "choice"]
-    essay_numbers = [q.number for q in question_contracts if q.kind == "essay"]
     template_meta = build_objective_template_meta(
         question_count=choice_count,
         n_choices=n_choices,
-        essay_count=essay_count,
         choice_question_numbers=choice_numbers,
-        essay_question_numbers=essay_numbers,
     )
     return OMRSheetContract(
         sheet_id=getattr(sheet, "id", None),

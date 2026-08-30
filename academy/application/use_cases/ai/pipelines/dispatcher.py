@@ -431,9 +431,8 @@ def handle_ai_job(job: AIJob) -> AIResult:
                 if qc_raw is None:
                     return AIResult.failed(job.id, "OMR question_count required")
                 qc = int(qc_raw)
-                ec = int(payload.get("essay_count") or 0)
                 nc = int(payload.get("n_choices") or 5)
-                meta = build_omr_meta(question_count=qc, n_choices=nc, essay_count=ec)
+                meta = build_omr_meta(question_count=qc, n_choices=nc, essay_count=0)
 
             _record_progress(job.id, "fetching_meta", 30, step_index=2, step_total=7, step_name_display="메타생성", step_percent=100, tenant_id=tenant_id)
 

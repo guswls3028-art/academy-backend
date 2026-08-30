@@ -106,7 +106,7 @@ CT4 = HexColor("#999999")      # 버블숫자 — 인쇄 시 보이되 마킹하
 
 # 배경 — 극도로 은은
 C_HDR = HexColor("#f4f4f4")         # MC 헤더
-C_HDR_ESSAY = HexColor("#f4f4f4")   # 단답형 헤더 — 동일 톤
+C_HDR_ESSAY = HexColor("#f4f4f4")   # 서술형 헤더 — 동일 톤
 C_ZEBRA = HexColor("#fafafa")       # zebra
 C_BUB_FILL = HexColor("#f8f8f8")    # 버블 내부 — 미세 회색 (순백보다 부드러움)
 C_G10 = HexColor("#666666")         # 10행
@@ -556,11 +556,7 @@ class OMRPdfRenderer:
             instruction_number += 1
 
         if doc.render_essay_count > 0:
-            instruction = (
-                "단답형은 백·십·일 자리 숫자를 마킹하세요."
-                if doc.essay_count > 0
-                else "단답형은 답을 정자로 깔끔하게 적어주세요."
-            )
+            instruction = "서술형 답안은 해당 번호의 작성칸에 깔끔하게 적어주세요."
             c.drawString(ix, _line_y(line), f"{instruction_number}. {instruction}")
             line += 1
             instruction_number += 1
@@ -719,7 +715,7 @@ class OMRPdfRenderer:
             cnt = len(question_numbers_by_section[sx])
             rh = bh / cnt if cnt > 0 else bh
 
-            # 헤더: "번호 | 객관식 1번 ~ 20번" 또는 "번호 | 단답형 N문항"
+            # 헤더: "번호 | 객관식 1번 ~ 20번" 또는 "번호 | 서술형 N문항"
             c.setFont(_FB, 5.5); c.setFillColor(CT2)
             c.drawCentredString(sxp + nw / 2, ft - hh + _mm(1.5), "번호")
             if typ == 'mc':
@@ -737,11 +733,7 @@ class OMRPdfRenderer:
                                     ft - hh + _mm(1.5), lb)
             else:
                 c.setFont(_FB, 6); c.setFillColor(CT2)
-                essay_header = (
-                    "단답형 0~999 (백·십·일)"
-                    if doc.essay_count > 0
-                    else doc.render_essay_label
-                )
+                essay_header = doc.render_essay_label
                 c.drawCentredString(sxp + nw + (vwp - nw) / 2,
                                     ft - hh + _mm(1.5), essay_header)
 
@@ -757,32 +749,6 @@ class OMRPdfRenderer:
             cnt = len(question_numbers_by_section[sx])
             rh = bh / cnt if cnt > 0 else bh
             if typ == 'essay':
-                if doc.essay_count <= 0:
-                    continue
-                answer_x = sx + MC_NUM_W
-                answer_w = dw - MC_NUM_W
-                group_w = answer_w / 3
-                slot_w = group_w / 10
-                short_bub_w = min(BUB_W, slot_w * 0.7)
-                for qi in range(cnt):
-                    rc = bt + (qi + 0.5) * rh
-                    for digit_index in range(3):
-                        group_x = answer_x + digit_index * group_w
-                        if digit_index > 0:
-                            c.setStrokeColor(C4); c.setLineWidth(S4)
-                            c.line(_mm(group_x), _y(bt + qi * rh), _mm(group_x), _y(bt + (qi + 1) * rh))
-                        for value in range(10):
-                            bx_mm = group_x + (value + 0.5) * slot_w
-                            bx = _mm(bx_mm); by = _y(rc)
-                            c.setStrokeColor(C5); c.setLineWidth(S5)
-                            c.setFillColor(C_BUB_FILL)
-                            c.ellipse(
-                                bx - _mm(short_bub_w / 2), by - _mm(BUB_H / 2),
-                                bx + _mm(short_bub_w / 2), by + _mm(BUB_H / 2),
-                                stroke=1, fill=1,
-                            )
-                            c.setFont(_FB, 4.8); c.setFillColor(CT4)
-                            c.drawCentredString(bx, by - _mm(0.8), str(value))
                 continue
 
             ax = sx + MC_NUM_W + MC_BUB_PAD
