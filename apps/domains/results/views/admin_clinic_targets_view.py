@@ -17,6 +17,7 @@ Endpoint
 - 현재는 운영에서 "전체 대상자"가 소수라는 가정 하에 list로 반환
 """
 
+from django.conf import settings
 from django.db import transaction
 try:
     from drf_spectacular.utils import OpenApiResponse, extend_schema
@@ -74,7 +75,13 @@ class AdminClinicTargetsView(APIView):
     )
     def get(self, request):
         tenant = getattr(request, "tenant", None)
-        if not tenant:
+        host = request.get_host().split(":", 1)[0].strip().lower()
+        tenant_header_hosts = {
+            str(value).strip().lower()
+            for value in getattr(settings, "TENANT_HEADER_CODE_ALLOWED_HOSTS", ())
+        }
+        tenant_header = (request.META.get("HTTP_X_TENANT_CODE") or "").strip()
+        if not tenant or (host in tenant_header_hosts and not tenant_header):
             return Response(
                 {"detail": "Tenant required", "code": "TENANT_REQUIRED"},
                 status=drf_status.HTTP_403_FORBIDDEN,
