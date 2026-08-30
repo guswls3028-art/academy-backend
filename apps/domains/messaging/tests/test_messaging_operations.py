@@ -65,6 +65,29 @@ class MessagingOperationsBase(TestCase):
 
 
 class SendMessagePreflightViewTests(MessagingOperationsBase):
+    def test_preflight_blocks_grade_messages_to_students(self):
+        student = self._student("011")
+
+        response = SendMessagePreflightView.as_view()(
+            self._request(
+                "post",
+                "/api/v1/messaging/send/preflight/",
+                {
+                    "send_to": "student",
+                    "student_ids": [student.id],
+                    "raw_body": "성적표 안내입니다.",
+                    "block_category": "grades",
+                },
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.data["ok"])
+        self.assertTrue(any(
+            item["code"] == "grade_recipient_policy"
+            for item in response.data["blockers"]
+        ))
+
     def test_preflight_reports_recipient_template_and_phone_health(self):
         ok_student = self._student("001", parent_phone="01033334444")
         no_phone_student = self._student("002", parent_phone="")
