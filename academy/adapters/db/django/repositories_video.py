@@ -185,7 +185,11 @@ def create_video(
 
 def get_enrollments_for_lecture_active(lecture):
     from apps.domains.enrollment.models import Enrollment
-    return Enrollment.objects.filter(lecture=lecture, status="ACTIVE").select_related("student")
+    return (
+        Enrollment.objects.filter(lecture=lecture, status="ACTIVE")
+        .select_related("student")
+        .order_by("student__name", "student_id", "id")
+    )
 
 
 def get_video_progresses_for_video(video):
