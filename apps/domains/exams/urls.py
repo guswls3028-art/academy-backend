@@ -29,6 +29,7 @@ from apps.domains.exams.views.exam_questions_by_exam_view import ExamQuestionsBy
 from apps.domains.exams.views.exam_question_init_view import ExamQuestionInitView
 from apps.domains.exams.views.question_auto_view import SheetAutoQuestionsView
 from apps.domains.exams.views.exam_enrollment_view import ExamEnrollmentManageView
+from apps.domains.exams.views.exam_lecture_assignment_view import ExamLectureAssignmentView
 from apps.domains.exams.views.student_exam_view import StudentAvailableExamListView
 from apps.domains.exams.views.bulk_template_create_view import BulkTemplateCreateView
 from apps.domains.exams.views.pdf_question_extract_view import PdfQuestionExtractView
@@ -138,6 +139,11 @@ urlpatterns = [
     # Enrollment
     # =========================
     path("<int:exam_id>/enrollments/", ExamEnrollmentManageView.as_view()),
+    path(
+        "<int:exam_id>/lecture-assignments/",
+        ExamLectureAssignmentView.as_view(),
+        name="exam-lecture-assignments",
+    ),
 
     # =========================
     # Student

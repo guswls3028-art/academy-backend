@@ -13,7 +13,14 @@ from rest_framework.exceptions import ValidationError, NotFound, PermissionDenie
 from django.db import transaction
 
 from apps.core.permissions import TenantResolvedAndMember
-from apps.domains.exams.models import AnswerKey, Exam, ExamAsset, ExamQuestion, Sheet
+from apps.domains.exams.models import (
+    AnswerKey,
+    Exam,
+    ExamAsset,
+    ExamQuestion,
+    QuestionExplanation,
+    Sheet,
+)
 from apps.domains.exams.serializers.exam import ExamSerializer
 from apps.support.exams.view_dependencies import IsTeacherOrAdmin
 
@@ -34,7 +41,9 @@ def _copy_sheet(source_exam: Exam, template_exam: Exam) -> dict[int, int]:
     )
 
     question_id_map: dict[int, int] = {}
-    for question in source_sheet.questions.order_by("number", "id"):
+    for question in source_sheet.questions.select_related("explanation").order_by(
+        "number", "id"
+    ):
         copied_question = ExamQuestion.objects.create(
             sheet=template_sheet,
             number=question.number,
@@ -44,6 +53,16 @@ def _copy_sheet(source_exam: Exam, template_exam: Exam) -> dict[int, int]:
             region_meta=question.region_meta,
         )
         question_id_map[int(question.id)] = int(copied_question.id)
+
+        explanation = getattr(question, "explanation", None)
+        if isinstance(explanation, QuestionExplanation):
+            QuestionExplanation.objects.create(
+                question=copied_question,
+                text=explanation.text,
+                image_key=explanation.image_key,
+                source=explanation.source,
+                match_confidence=explanation.match_confidence,
+            )
     return question_id_map
 
 

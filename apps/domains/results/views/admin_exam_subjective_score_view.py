@@ -24,6 +24,9 @@ from rest_framework.exceptions import ValidationError, NotFound
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.models import Result, ResultFact, ExamAttempt
 from apps.domains.results.validation import parse_finite_score
+from apps.support.results.exam_policy_dependencies import (
+    effective_exam_pass_score,
+)
 from apps.domains.results.guards.exam_enrollment_guard import validate_exam_enrollment_assigned
 from apps.domains.results.guards.score_edit_lease_guard import (
     require_score_edit_lease_from_headers,
@@ -53,7 +56,7 @@ class AdminExamSubjectiveScoreView(APIView):
 
         # ✅ tenant isolation: verify enrollment belongs to tenant
         from apps.domains.results.guards.enrollment_tenant_guard import validate_enrollment_belongs_to_tenant
-        validate_enrollment_belongs_to_tenant(enrollment_id, request.tenant)
+        enrollment = validate_enrollment_belongs_to_tenant(enrollment_id, request.tenant)
         validate_exam_enrollment_assigned(exam, enrollment_id)
 
         if "score" not in request.data:
@@ -151,7 +154,10 @@ class AdminExamSubjectiveScoreView(APIView):
             raise ValidationError(
                 {"detail": f"total score must be between 0 and {max_score}", "code": "INVALID"}
             )
-        pass_score = float(getattr(exam, "pass_score", 0.0) or 0.0) if exam else 0.0
+        pass_score = effective_exam_pass_score(
+            exam=exam,
+            lecture_id=getattr(enrollment, "lecture_id", None),
+        )
 
         submission_id = get_latest_exam_submission_id(
             enrollment_id=enrollment_id,

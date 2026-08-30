@@ -27,6 +27,9 @@ from apps.domains.progress.services.clinic_resolution_service import (
     ClinicResolutionService,
     _dispatch_progress_for_link,
 )
+from apps.support.progress.exam_policy_dependencies import (
+    effective_exam_pass_score,
+)
 from apps.support.progress.clinic_remediation_dependencies import (
     calc_homework_passed_and_clinic,
     get_exam_retake_models,
@@ -91,7 +94,14 @@ class ClinicRemediationService:
             raise ValueError(f"ClinicLink {clinic_link_id}는 시험 유형이 아닙니다 (source_type={link.source_type})")
 
         exam = Exam.objects.get(id=link.source_id, tenant_id=link.tenant_id)
-        pass_score_val = float(pass_score) if pass_score is not None else float(getattr(exam, "pass_score", 0) or 0)
+        pass_score_val = (
+            float(pass_score)
+            if pass_score is not None
+            else effective_exam_pass_score(
+                exam=exam,
+                lecture_id=getattr(link.session, "lecture_id", None),
+            )
+        )
         max_score_val = float(max_score) if max_score is not None else float(getattr(exam, "max_score", 100) or 100)
 
         # 점수 검증: 음수/만점 초과 차단
@@ -350,7 +360,10 @@ class ClinicRemediationService:
             raise ValueError(f"ClinicLink {clinic_link_id}는 시험 유형이 아닙니다")
 
         exam = Exam.objects.get(id=link.source_id, tenant_id=link.tenant_id)
-        default_pass_score = float(getattr(exam, "pass_score", 0) or 0)
+        default_pass_score = effective_exam_pass_score(
+            exam=exam,
+            lecture_id=getattr(link.session, "lecture_id", None),
+        )
         default_max_score = float(getattr(exam, "max_score", 100) or 100)
 
         attempt = ExamAttempt.objects.select_for_update().get(

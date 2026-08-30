@@ -131,8 +131,13 @@ class RegularStructureCopyTests(TestCase):
         regular_questions = list(regular.sheet.questions.order_by("number"))
         self.assertEqual([q.number for q in regular_questions], [1, 2])
         self.assertNotEqual(regular_questions[0].id, template_questions[0].id)
+        self.assertEqual(regular_questions[0].image_key, "questions/q1.png")
         self.assertEqual(regular_questions[0].region_meta["w"], 3)
         self.assertEqual(regular_questions[0].explanation.text, "source explanation")
+        self.assertEqual(
+            regular_questions[0].explanation.image_key,
+            "explanations/q1.png",
+        )
         self.assertEqual(regular.assets.get(asset_type=ExamAsset.AssetType.PROBLEM_PDF).file_key, "assets/problem.pdf")
 
         answers = regular.answer_key.answers

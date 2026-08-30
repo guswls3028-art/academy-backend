@@ -30,15 +30,10 @@ from apps.support.omr.score_shape import get_exam_score_shape
 from apps.support.results.admin_exam_item_score_dependencies import (
     dispatch_progress_pipeline,
     get_answer_key_value,
-    get_enrollment_for_tenant,
     get_exam_question_for_item_score,
     get_latest_exam_submission_id,
     get_regular_active_exam_for_tenant,
 )
-
-# ✅ 단일 진실: session 매핑 + progress 트리거
-from apps.domains.results.utils.session_exam import get_primary_session_for_exam
-
 
 _OBJECTIVE_CHOICE_LABELS = {"1", "2", "3", "4", "5"}
 
@@ -123,7 +118,10 @@ class AdminExamItemScoreView(APIView):
         score_shape = get_exam_score_shape(exam)
 
         # ✅ tenant isolation: verify enrollment belongs to tenant
-        validate_enrollment_belongs_to_tenant(enrollment_id, request.tenant)
+        enrollment_obj = validate_enrollment_belongs_to_tenant(
+            enrollment_id,
+            request.tenant,
+        )
         validate_exam_enrollment_assigned(exam, enrollment_id)
 
         if "score" not in request.data:
@@ -148,13 +146,6 @@ class AdminExamItemScoreView(APIView):
             .first()
         )
         if not result:
-            enrollment_obj = get_enrollment_for_tenant(
-                enrollment_id=enrollment_id,
-                tenant=request.tenant,
-            )
-            if not enrollment_obj:
-                raise NotFound({"detail": "enrollment not found", "code": "NOT_FOUND"})
-
             attempt, _ = ExamAttempt.objects.get_or_create(
                 exam_id=exam_id,
                 enrollment_id=enrollment_id,
@@ -383,13 +374,6 @@ class AdminExamItemScoreView(APIView):
         # -------------------------------------------------
         # 7️⃣ progress pipeline 즉시 트리거
         # -------------------------------------------------
-        session = get_primary_session_for_exam(exam_id)
-        if not session:
-            return Response(
-                {"detail": "session not found for this exam; cannot recalculate progress", "code": "INVALID"},
-                status=drf_status.HTTP_409_CONFLICT,
-            )
-
         # Submission에는 session_id 없음 → exam+enrollment 기준 최신 제출 조회
         submission_id = get_latest_exam_submission_id(
             enrollment_id=enrollment_id,

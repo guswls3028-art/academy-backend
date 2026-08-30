@@ -10,7 +10,7 @@ GET /results/admin/exams/<exam_id>/enrollments/<enrollment_id>/
 ✅ PHASE 3 확정 계약 (FRONTEND LOCK)
 ==========================================================================================
 응답 보장 필드:
-- passed                : Exam.pass_score 기준 시험 합불
+- passed                : 학생 강의의 유효 커트라인 기준 시험 합불
 - clinic_required       : ClinicLink 단일 진실 (자동 트리거만)
 - items[].is_editable   : edit_state 기반
 - edit_state            : LOCK 판단 메타
@@ -40,7 +40,9 @@ from apps.domains.results.serializers.student_exam_result import (
 )
 
 # ✅ 단일 진실 유틸
-from apps.domains.results.utils.session_exam import get_primary_session_for_exam
+from apps.domains.results.utils.session_exam import (
+    get_unambiguous_session_for_exam_lecture,
+)
 from apps.domains.results.utils.clinic import is_clinic_required
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement
 from apps.domains.results.utils.initial_exam_score import (
@@ -52,6 +54,9 @@ from apps.support.omr.score_shape import get_exam_score_shape
 # ✅ OMR 스캔 이미지 presigned URL
 from apps.support.omr.scan_images import build_omr_scan_image_payload
 from apps.domains.results.services.answer_matching import format_answer_for_display
+from apps.support.results.exam_policy_dependencies import (
+    effective_exam_pass_score,
+)
 from apps.support.results.admin_exam_dependencies import (
     get_enrollment_for_tenant,
     get_regular_active_exam_for_tenant,
@@ -83,7 +88,16 @@ class AdminExamResultDetailView(APIView):
         validate_enrollment_belongs_to_tenant(enrollment_id, request.tenant)
         validate_exam_enrollment_readable(exam, enrollment_id)
 
-        pass_score = float(getattr(exam, "pass_score", 0.0) or 0.0)
+        enrollment_obj = get_enrollment_for_tenant(
+            enrollment_id=enrollment_id,
+            tenant=request.tenant,
+        )
+        if enrollment_obj is None:
+            raise NotFound("enrollment not found for this tenant")
+        pass_score = effective_exam_pass_score(
+            exam=exam,
+            lecture_id=getattr(enrollment_obj, "lecture_id", None),
+        )
         score_shape = get_exam_score_shape(exam)
 
         # -------------------------------------------------
@@ -103,12 +117,6 @@ class AdminExamResultDetailView(APIView):
         initial_score = None
         representative_is_initial = False
         if not result:
-            enrollment_obj = get_enrollment_for_tenant(
-                enrollment_id=enrollment_id,
-                tenant=request.tenant,
-            )
-            if not enrollment_obj:
-                raise NotFound("enrollment not found for this tenant")
             data = {
                 "target_type": "exam",
                 "target_id": exam_id,
@@ -168,7 +176,10 @@ class AdminExamResultDetailView(APIView):
         # 4️⃣ clinic_required (단일 진실)
         # -------------------------------------------------
         clinic_required = False
-        session = get_primary_session_for_exam(exam_id)
+        session = get_unambiguous_session_for_exam_lecture(
+            exam_id=exam_id,
+            lecture_id=getattr(enrollment_obj, "lecture_id", None),
+        )
         if session:
             clinic_required = is_clinic_required(
                 session=session,

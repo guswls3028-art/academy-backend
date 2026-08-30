@@ -58,6 +58,68 @@ def active_session_enrollments_for_session(**kwargs):
     return _rows(**kwargs)
 
 
+def session_roster_rows_for_exam_assignment(*, tenant, session_ids: list[int]):
+    from django.db.models import F
+    from apps.domains.enrollment.models import SessionEnrollment
+
+    return list(
+        SessionEnrollment.objects.filter(
+            tenant=tenant,
+            session_id__in=session_ids,
+            enrollment__tenant=tenant,
+            enrollment__lecture_id=F("session__lecture_id"),
+            enrollment__status="ACTIVE",
+            enrollment__student__deleted_at__isnull=True,
+        ).values("session_id", "enrollment_id")
+    )
+
+
+def active_enrollment_ids_for_exam_assignment(*, tenant, session):
+    from apps.domains.enrollment.models import SessionEnrollment
+
+    return list(
+        SessionEnrollment.objects.filter(
+            tenant=tenant,
+            session=session,
+            enrollment__tenant=tenant,
+            enrollment__lecture=session.lecture,
+            enrollment__status="ACTIVE",
+            enrollment__student__deleted_at__isnull=True,
+        ).values_list("enrollment_id", flat=True)
+    )
+
+
+def available_session_for_exam_assignment(*, tenant, session_id: int):
+    from apps.domains.lectures.models import Session
+
+    return (
+        Session.objects.select_for_update()
+        .select_related("lecture")
+        .filter(
+            id=int(session_id),
+            lecture__tenant=tenant,
+            lecture__is_active=True,
+            lecture__is_system=False,
+        )
+        .first()
+    )
+
+
+def linked_lecture_for_exam_assignment(*, tenant, exam, lecture_id: int):
+    from apps.domains.lectures.models import Lecture
+
+    return (
+        Lecture.objects.filter(
+            id=int(lecture_id),
+            tenant=tenant,
+            is_system=False,
+            sessions__exams=exam,
+        )
+        .distinct()
+        .first()
+    )
+
+
 def pdf_extract_exam_validation_error(*, tenant, exam_id: int) -> str | None:
     from apps.domains.exams.models import Exam, ExamQuestion
     from apps.domains.results.models import Result

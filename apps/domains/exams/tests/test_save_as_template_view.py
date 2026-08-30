@@ -12,6 +12,7 @@ AnswerKey = apps.get_model("exams", "AnswerKey")
 Exam = apps.get_model("exams", "Exam")
 ExamAsset = apps.get_model("exams", "ExamAsset")
 ExamQuestion = apps.get_model("exams", "ExamQuestion")
+QuestionExplanation = apps.get_model("exams", "QuestionExplanation")
 Sheet = apps.get_model("exams", "Sheet")
 Lecture = apps.get_model("lectures", "Lecture")
 Session = apps.get_model("lectures", "Session")
@@ -100,6 +101,13 @@ class SaveAsTemplateViewTests(TestCase):
             score=4.5,
             image_key="questions/q2.png",
         )
+        QuestionExplanation.objects.create(
+            question=source_q1,
+            text="직접 잘라 저장한 해설",
+            image_key="explanations/q1-crop.png",
+            source="manual",
+            match_confidence=0.95,
+        )
         AnswerKey.objects.create(
             exam=self.exam,
             answers={
@@ -146,6 +154,13 @@ class SaveAsTemplateViewTests(TestCase):
         self.assertNotEqual(copied_questions[0].id, source_q1.id)
         self.assertEqual(copied_questions[0].image_key, "questions/q1.png")
         self.assertEqual(copied_questions[0].region_meta["w"], 3)
+        self.assertEqual(
+            copied_questions[0].explanation.image_key,
+            "explanations/q1-crop.png",
+        )
+        self.assertEqual(copied_questions[0].explanation.text, "직접 잘라 저장한 해설")
+        self.assertEqual(copied_questions[0].explanation.source, "manual")
+        self.assertEqual(copied_questions[0].explanation.match_confidence, 0.95)
 
         copied_answers = template.answer_key.answers
         self.assertEqual(copied_answers[str(copied_questions[0].id)], "A")

@@ -20,7 +20,7 @@ from django.test import RequestFactory, TestCase
 
 from apps.domains.clinic.tests import ClinicTestMixin
 from apps.core.models import TenantMembership
-from apps.domains.exams.models import Exam
+from apps.domains.exams.models import Exam, ExamLecturePolicy
 from apps.domains.progress.models import (
     ClinicLink,
     ProgressPolicy,
@@ -107,6 +107,51 @@ class DriftResolutionTest(TestCase, ClinicTestMixin):
         self.assertFalse(sp.completed, "일부 시험 불합격 → 세션 미완료")
         self.assertIn("all_passed", sp.exam_meta)
         self.assertFalse(sp.exam_meta["all_passed"])
+
+    def test_session_uses_shared_exam_cutoff_for_its_lecture(self):
+        """강의별 귀가 기준은 SessionProgress와 ClinicLink 판정에도 적용된다."""
+        from apps.domains.results.models import Result
+        from apps.domains.progress.services.session_calculator import (
+            SessionProgressCalculator,
+        )
+
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="학교 공통 시험",
+            pass_score=60.0,
+            max_score=100.0,
+        )
+        exam.sessions.add(self.lec_session)
+        ExamLecturePolicy.objects.create(
+            exam=exam,
+            lecture=self.lecture,
+            pass_score=70.0,
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.enrollment,
+            total_score=65,
+            max_score=100,
+        )
+        ProgressPolicy.objects.update_or_create(
+            lecture=self.lecture,
+            defaults={
+                "exam_pass_source": ProgressPolicy.ExamPassSource.EXAM,
+                "exam_start_session_order": 1,
+                "exam_end_session_order": 9999,
+            },
+        )
+
+        progress = SessionProgressCalculator.calculate(
+            enrollment_id=self.enrollment.id,
+            session=self.lec_session,
+            attendance_type="online",
+            video_progress_rate=100,
+        )
+
+        self.assertFalse(progress.exam_passed)
+        self.assertEqual(progress.exam_meta["exams"][0]["pass_score"], 70.0)
 
     def test_missing_result_blocks_session_completion(self):
         """세션에 시험 2개, Result는 1개만 있어도 세션 완료로 판정되면 안 됨.

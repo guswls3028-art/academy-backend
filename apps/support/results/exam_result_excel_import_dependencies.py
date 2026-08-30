@@ -59,12 +59,19 @@ def get_result_import_candidates(
     tenant: Any,
 ) -> list[ResultImportCandidateRecord]:
     from apps.domains.enrollment.models import Enrollment, SessionEnrollment
-    from apps.domains.exams.models import ExamEnrollment
+    from apps.domains.exams.models import Exam, ExamEnrollment
+    from django.db.models import F
+
+    linked_lecture_ids = set(
+        Exam.objects.filter(id=int(exam_id), tenant=tenant)
+        .values_list("sessions__lecture_id", flat=True)
+    )
 
     enrollment_ids = list(
         ExamEnrollment.objects.filter(
             exam_id=int(exam_id),
             enrollment__tenant=tenant,
+            enrollment__lecture_id__in=linked_lecture_ids,
         ).values_list("enrollment_id", flat=True)
     )
     if not enrollment_ids:
@@ -75,6 +82,7 @@ def get_result_import_candidates(
                 session__exams__tenant=tenant,
                 session__lecture__tenant=tenant,
                 enrollment__tenant=tenant,
+                enrollment__lecture_id=F("session__lecture_id"),
                 enrollment__status="ACTIVE",
                 enrollment__student__deleted_at__isnull=True,
             )

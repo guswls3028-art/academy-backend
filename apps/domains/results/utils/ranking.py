@@ -137,6 +137,7 @@ def compute_exam_rankings(
     *,
     exam_id: int,
     tenant: Any,
+    lecture_ids: Optional[Iterable[int]] = None,
 ) -> Dict[int, dict]:
     """
     시험별 enrollment_id → {rank, percentile, cohort_size, cohort_avg} 맵 반환.
@@ -158,6 +159,10 @@ def compute_exam_rankings(
             enrollment__lecture__is_system=False,
         )
     )
+    if lecture_ids is not None:
+        base_qs = base_qs.filter(
+            enrollment__lecture_id__in=[int(value) for value in lecture_ids]
+        )
 
     # NOT_SUBMITTED attempt 제외
     attempt_ids = list(

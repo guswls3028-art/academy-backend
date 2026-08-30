@@ -306,6 +306,9 @@
             "nullable": true,
             "type": "string"
           },
+          "lecture_id": {
+            "type": "integer"
+          },
           "lecture_title": {
             "nullable": true,
             "type": "string"
@@ -317,6 +320,10 @@
           "name_highlight_clinic_target": {
             "default": false,
             "type": "boolean"
+          },
+          "pass_score": {
+            "format": "double",
+            "type": "number"
           },
           "passed": {
             "nullable": true,
@@ -370,6 +377,8 @@
           "exam_max_score",
           "exam_score",
           "final_score",
+          "lecture_id",
+          "pass_score",
           "passed",
           "result_status",
           "student_name",
@@ -26473,6 +26482,95 @@
         ]
       }
     },
+    "/api/v1/exams/{exam_id}/lecture-assignments/": {
+      "get": {
+        "operationId": "exams_lecture_assignments_retrieve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "exam_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "exams"
+        ]
+      },
+      "patch": {
+        "operationId": "exams_lecture_assignments_partial_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "exam_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "exams"
+        ]
+      },
+      "post": {
+        "operationId": "exams_lecture_assignments_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "exam_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "exams"
+        ]
+      }
+    },
     "/api/v1/exams/{exam_id}/omr/defaults/": {
       "get": {
         "description": "GET /api/v1/exams/{exam_id}/omr/defaults/\n\n시험 기반 OMR 기본값 반환 (시험명, 강의명, 차시명, 문항수, 로고 URL).",
@@ -39483,7 +39581,7 @@
     },
     "/api/v1/results/admin/exams/{exam_id}/results/": {
       "get": {
-        "description": "GET /results/admin/exams/<exam_id>/results/\n\n✅ 목표(원본 유지 + 정합성 강화)\n- Result(스냅샷) 기반 점수 리스트\n- Attempt/Submission 상태 연결\n- Clinic 기준 통일(ClinicLink)\n- Session↔Exam 매핑 단일화(utils.session_exam)\n\n⚠️ pass 기준 정의:\n- 이 화면은 \"시험(exam) 단위 결과\"이므로\n  pass/fail은 Exam.pass_score 기준으로 제공한다.\n- 세션 종합 통과(SessionProgress.exam_passed)는\n  /admin/sessions/... summary API에서 제공하는 것이 정석.\n\n응답: { \"count\", \"next\", \"previous\", \"results\": AdminExamResultRow[] }\n?page=1 로 페이지 접근 가능.",
+        "description": "GET /results/admin/exams/<exam_id>/results/\n\n✅ 목표(원본 유지 + 정합성 강화)\n- Result(스냅샷) 기반 점수 리스트\n- Attempt/Submission 상태 연결\n- Clinic 기준 통일(ClinicLink)\n- Session↔Exam 매핑 단일화(utils.session_exam)\n\n⚠️ pass 기준 정의:\n- 강의별 커트라인이 있으면 해당 기준, 없으면 Exam.pass_score를 제공한다.\n- 세션 종합 통과(SessionProgress.exam_passed)는\n  /admin/sessions/... summary API에서 제공하는 것이 정석.\n\n응답: { \"count\", \"next\", \"previous\", \"results\": AdminExamResultRow[] }\n?page=1 로 페이지 접근 가능.",
         "operationId": "results_admin_exams_results_list",
         "parameters": [
           {
