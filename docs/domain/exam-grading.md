@@ -70,6 +70,10 @@ API 오류 모양으로 구분할 수 없다.
 - `POST /exams/{exam_id}/lecture-assignments/`는 요청 tenant의 활성 비시스템 차시만
   연결한다. 연결 시 해당 차시의 현재 활성 `SessionEnrollment`를 `ExamEnrollment`에
   중복 없이 합쳐 즉시 OMR·수동 채점 대상이 되게 한다.
+- 정규 시험 최초 생성(`POST /exams/`)도 선택한 최초 차시의 같은 tenant·강의에 속한
+  활성 `SessionEnrollment`를 트랜잭션 안에서 `ExamEnrollment`에 중복 없이 만든다.
+  따라서 `source_exam_id`로 기존 시험을 불러온 뒤 다른 강의를 추가해도 최초 강의와
+  추가 강의의 roster 합집합이 실제 채점 대상 정본과 일치한다.
 - `PATCH /exams/{exam_id}/lecture-assignments/`는 시험에 실제 연결된 강의의 기준만
   변경하고 진척 파이프라인을 다시 실행한다. 다른 tenant 차시·강의는 실패 폐쇄한다.
 
