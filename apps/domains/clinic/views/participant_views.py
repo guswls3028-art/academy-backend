@@ -85,6 +85,16 @@ def _validated_send_to(request, *, default: str) -> str:
     return value
 
 
+def _schedule_change_send_to(request, *, default: str) -> str:
+    role = get_active_membership_role(
+        getattr(request, "user", None),
+        getattr(request, "tenant", None),
+    )
+    if role == "student":
+        return "both"
+    return _validated_send_to(request, default=default)
+
+
 def _get_request_student_for_clinic(request):
     tenant = getattr(request, "tenant", None)
     user = getattr(request, "user", None)
@@ -298,7 +308,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         - 선생: 모든 상태 변경 가능
         """
         next_status = request.data.get("status")
-        send_to = _validated_send_to(request, default="parent")
+        send_to = _schedule_change_send_to(request, default="parent")
         try:
             is_late = serializers.BooleanField().run_validation(
                 request.data.get("is_late", False)
@@ -553,7 +563,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             ).run_validation(request.data.get("preferred_end_time"))
         except serializers.ValidationError as exc:
             raise serializers.ValidationError({"preferred_time": exc.detail}) from exc
-        send_to = _validated_send_to(request, default="parent")
+        send_to = _schedule_change_send_to(request, default="parent")
 
         tenant = getattr(request, "tenant", None)
         if not tenant:

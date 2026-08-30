@@ -2133,15 +2133,20 @@ class StudentClinicBookingChangeAPITest(APITestCase, ClinicAPITestMixin):
         old_booking = self._pending_booking()
         new_session = self._new_session()
 
-        resp = self.client.post(
-            f"/api/v1/clinic/participants/{old_booking.id}/change-booking/",
-            {
-                "new_session_id": str(new_session.id),
-                "student_request_memo": "시간 변경",
-            },
-            format="json",
-            **self._headers(self.tenant),
-        )
+        with patch(
+            "apps.domains.clinic.views.participant_views._send_clinic_notification",
+            return_value={"requested": 2, "failed": 0, "send_to": "both"},
+        ) as notify:
+            resp = self.client.post(
+                f"/api/v1/clinic/participants/{old_booking.id}/change-booking/",
+                {
+                    "new_session_id": str(new_session.id),
+                    "student_request_memo": "시간 변경",
+                    "send_to": "parent",
+                },
+                format="json",
+                **self._headers(self.tenant),
+            )
 
         self.assertEqual(resp.status_code, 200, resp.data)
         old_booking.refresh_from_db()
@@ -2153,6 +2158,9 @@ class StudentClinicBookingChangeAPITest(APITestCase, ClinicAPITestMixin):
         self.assertEqual(new_booking.student_id, self.student.id)
         self.assertEqual(new_booking.status, SessionParticipant.Status.PENDING)
         self.assertEqual(new_booking.student_request_memo, "시간 변경")
+        notify.assert_called_once()
+        self.assertEqual(notify.call_args.args[2], "clinic_reservation_changed")
+        self.assertEqual(notify.call_args.kwargs["send_to"], "both")
 
     def test_change_booking_rejects_malformed_session_id(self):
         old_booking = self._pending_booking()

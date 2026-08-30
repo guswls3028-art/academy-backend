@@ -197,14 +197,21 @@ class ParticipantPendingStatusTransitionAPITest(APITestCase, ClinicAPITestMixin)
             status="pending",
         )
 
-        resp = self.client.patch(
-            f"/api/v1/clinic/participants/{participant.id}/set_status/",
-            {"status": "cancelled"},
-            format="json",
-            **self._headers(self.tenant),
-        )
+        with patch(
+            "apps.domains.clinic.views.participant_views._send_clinic_notification",
+            return_value={"requested": 2, "failed": 0, "send_to": "both"},
+        ) as notify:
+            resp = self.client.patch(
+                f"/api/v1/clinic/participants/{participant.id}/set_status/",
+                {"status": "cancelled", "send_to": "parent"},
+                format="json",
+                **self._headers(self.tenant),
+            )
 
         self.assertEqual(resp.status_code, 200, resp.data)
         participant.refresh_from_db()
         self.assertEqual(participant.status, "cancelled")
         self.assertEqual(participant.status_changed_by_id, self.student.user_id)
+        notify.assert_called_once()
+        self.assertEqual(notify.call_args.args[2], "clinic_cancelled")
+        self.assertEqual(notify.call_args.kwargs["send_to"], "both")
