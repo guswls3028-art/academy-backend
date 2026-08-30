@@ -209,7 +209,8 @@
 |---|---|
 | `clinic_check_out` | 실제 하원과 자율학습 완료를 분리했지만 하원 전용 승인 봉투가 아직 없으므로 exact owner template 준비 전 fail-closed |
 | `video_encoding_complete` / `matchup_report_submitted` | "[성적표 안내]" prefix 의미 불일치 (강사 본인/owner/admin 알림) |
-| `qna_answered` / `counsel_answered` | 한 때 TYPE_SCORE 재사용([v1.2.0 release](../releases/v1.2.0.md) §6) 이었으나 prefix 의미 불일치로 매핑 제거. test_alimtalk_content_builders.py:55-60 None assert 적용 |
+| `qna_answered` | 공용 ITEM_LIST 봉투와 의미가 맞지 않아 통합 매핑은 유지하지 않는다. 별도 owner exact 템플릿은 학생 이름과 사이트 링크만 치환하는 고정 문구이며, provider와 DB가 모두 `APPROVED`일 때만 발송한다. |
+| `counsel_answered` | 한 때 TYPE_SCORE 재사용([v1.2.0 release](../releases/v1.2.0.md) §6) 이었으나 prefix 의미 불일치로 매핑 제거. test_alimtalk_content_builders.py:55-60 None assert 적용 |
 
 ### 매핑 X 트리거의 실제 발송 path
 
@@ -218,7 +219,7 @@
 2. owner tenant (T1 hakwonplus) 의 같은 trigger AutoSendConfig template이 `solapi_status=APPROVED`이고 SID가 있을 때만 발송
 3. owner exact approved template이 없으면 발송 차단 (`return False`)
 
-→ 즉, 위 매핑 제외 trigger 들의 실제 운영 발송 여부 = owner tenant AutoSendConfig 의 별도 승인 template 등록 상태에 의존. **tenant template, 자유양식, 다른 trigger로 fallback하지 않는다.** Community/Q&A 외부 알림톡은 승인 봉투 부재로 fail-closed다.
+→ 즉, 위 매핑 제외 trigger 들의 실제 운영 발송 여부 = owner tenant AutoSendConfig 의 별도 승인 template 등록 상태에 의존. **tenant template, 자유양식, 다른 trigger로 fallback하지 않는다.** Q&A 답변 알림은 전용 고정 문구의 검수 상태가 `PENDING`/`REJECTED`이면 fail-closed하며, `APPROVED` 확인 뒤에만 opt-in 테넌트에서 발송한다. 기존 답변을 소급 발송하지 않는다.
 
 **참고:** `clinic_reservation_changed`와 `clinic_cancelled`는 `clinic_change` 템플릿을 사용하여 기존일정/변동사항/수정자 변수를 ITEM_LIST에 표시.
 

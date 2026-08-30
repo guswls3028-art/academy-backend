@@ -399,8 +399,13 @@ _TEMPLATE_DEFINITIONS: dict[str, dict] = {
     "qna_answered": {
         "category": "community",
         "name": "[{academy_name}] 질문 답변 완료",
-        "subject": "질문에 답변이 등록되었습니다",
-        "body": "선생님이 질문에 답변하셨습니다.\n앱에서 답변 내용을 확인해 주세요.",
+        "subject": "",
+        "body": (
+            "[질문 답변 완료]\n\n"
+            "#{학생이름2}학생님, 등록한 질문에 선생님 답변이 도착했습니다.\n\n"
+            "학생앱의 알림(종 모양)을 눌러 해당 질문과 답변을 확인해 주세요.\n\n"
+            "접속: #{사이트링크}"
+        ),
         "minutes_before": None,
     },
     "counsel_answered": {

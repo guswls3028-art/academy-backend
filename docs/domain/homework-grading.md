@@ -192,15 +192,17 @@ X를 나중에 다시 맞힌 뒤에도 남기려면 O·복습으로 바꾼다. �
   제출관리에서 직접 미리본 뒤 확인 완료를 기록한다. 공용 제출함은 시험 OMR 처리만
   다루며 기존 숙제 제출 행·파일·점수는 삭제하거나 변환하지 않는다.
 - 직접 확인은 기존 `AssessmentCorrection`을 사용해 점수와 독립적으로 저장한다.
-  확인 완료·취소는 `expected_updated_at`으로 다른 화면의 판정을 덮어쓰지 않으며,
-  완료 뒤에도 학생의 보충 파일 추가는 허용하고 기존 근거 파일 삭제만 잠근다. 이미
-  `HomeworkScore`가 있으면 점수 입력을 검수 완료의 더 강한 근거로 표시하고
-  제출관리에서는 확인 취소를 제공하지 않는다.
+  확인 완료·취소는 `expected_updated_at`으로 다른 화면의 판정을 덮어쓰지 않는다.
+  학생 파일 잠금과 제출관리의 `teacher_reviewed` 표시는 같은 현재 상태를 사용한다.
+  최신 `HomeworkScore.passed=true`이거나 점수 행 없이 직접 확인이 완료된 과제만
+  완료/통과로 잠근다. 미입력, `NOT_SUBMITTED`, 미완료/불합격, 이전 통과 뒤 최신
+  재시도가 불합격인 과제는 과거 검수 이력과 무관하게 학생이 파일을 추가·삭제해
+  보완할 수 있다. 점수 행이 있으면 최신 시도 결과가 직접 확인보다 우선한다.
 
 | Method | Path | 역할 |
 |--------|------|------|
 | GET/POST | `/submissions/submissions/homework/{homework_id}/media/` | 본인 파일 목록·파일 하나 업로드. 여러 파일은 독립 요청으로 부분 성공을 보존 |
-| DELETE | `/submissions/submissions/homework/{homework_id}/media/{media_id}/` | 검수 전 본인 파일 soft remove |
+| DELETE | `/submissions/submissions/homework/{homework_id}/media/{media_id}/` | 미제출·미완료·불합격인 본인 파일 soft remove. 완료/통과 상태는 잠금 |
 | GET | `/submissions/submissions/homework/{homework_id}/media/{media_id}/preview/` | 권한 확인 뒤 짧은 미리보기 URL 발급 |
 | GET | `/submissions/submissions/homework/{homework_id}/` | 교직원 학생별 제출, ordered `files`, 직접 검수 상태 목록 |
 | PATCH | `/results/admin/sessions/{session_id}/score-correction/` | `source_type=homework`인 교사 확인 완료·취소. 점수는 변경하지 않음 |

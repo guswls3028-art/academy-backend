@@ -588,6 +588,15 @@ class ProvisionDefaultTemplatesTests(TestCase):
                 trigger="qna_answered",
             ).enabled
         )
+        qna_template = AutoSendConfig.objects.select_related("template").get(
+            tenant=self.tenant,
+            trigger="qna_answered",
+        ).template
+        self.assertEqual(qna_template.subject, "")
+        self.assertIn("[질문 답변 완료]", qna_template.body)
+        self.assertIn("#{학생이름2}", qna_template.body)
+        self.assertIn("#{사이트링크}", qna_template.body)
+        self.assertNotIn("#{선생님메모}", qna_template.body)
         self.assertFalse(
             AutoSendConfig.objects.get(
                 tenant=self.tenant,

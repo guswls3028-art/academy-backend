@@ -459,16 +459,22 @@ def homework_submission_is_teacher_reviewed(
     enrollment_id: int,
     homework_id: int,
 ) -> bool:
-    """Return whether teacher-owned scoring/correction now locks media changes."""
+    """Return whether the current passing/completed result locks media changes."""
     from apps.domains.homework_results.models import HomeworkScore
 
-    if HomeworkScore.objects.filter(
-        enrollment_id=enrollment_id,
-        enrollment__tenant=tenant,
-        homework_id=homework_id,
-        homework__tenant=tenant,
-    ).exists():
-        return True
+    latest_score = (
+        HomeworkScore.objects.filter(
+            enrollment_id=enrollment_id,
+            enrollment__tenant=tenant,
+            homework_id=homework_id,
+            homework__tenant=tenant,
+        )
+        .only("passed", "attempt_index", "updated_at")
+        .order_by("-attempt_index", "-updated_at", "-id")
+        .first()
+    )
+    if latest_score is not None:
+        return bool(latest_score.passed)
 
     from apps.domains.progress.models import AssessmentCorrection
 
@@ -512,7 +518,7 @@ def homework_submission_review_map(
             homework_id=int(homework_id),
             homework__tenant=tenant,
         )
-        .only("enrollment_id", "updated_at", "attempt_index")
+        .only("enrollment_id", "updated_at", "attempt_index", "passed")
         .order_by("enrollment_id", "-attempt_index", "-updated_at", "-id")
     ):
         score_map.setdefault(int(score.enrollment_id), score)
@@ -522,18 +528,29 @@ def homework_submission_review_map(
         score = score_map.get(enrollment_id)
         correction = correction_map.get(enrollment_id)
         manual_completed = bool(correction and correction.completed)
-        review_source = "score" if score else "manual" if manual_completed else None
+        score_passed = bool(score and score.passed)
+        manual_completed_without_score = manual_completed and score is None
+        teacher_reviewed = score_passed or manual_completed_without_score
+        review_source = (
+            "score"
+            if score_passed
+            else "manual"
+            if manual_completed_without_score
+            else None
+        )
         reviewed_at = (
             score.updated_at
-            if score
+            if score_passed
             else correction.completed_at
-            if manual_completed
+            if manual_completed_without_score
             else None
         )
         review_map[enrollment_id] = {
-            "teacher_reviewed": bool(score or manual_completed),
+            "teacher_reviewed": teacher_reviewed,
             "teacher_review_source": review_source,
-            "teacher_review_note": correction.note if manual_completed else "",
+            "teacher_review_note": (
+                correction.note if manual_completed_without_score else ""
+            ),
             "teacher_reviewed_at": reviewed_at.isoformat() if reviewed_at else None,
             "teacher_review_updated_at": (
                 correction.updated_at.isoformat() if correction else None

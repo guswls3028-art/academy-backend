@@ -96,7 +96,7 @@ preview→confirm 경로에서 선생이 명시적으로 확인한 경우에만 
 - `send_alimtalk_via_owner()`는 `OWNER_TENANT_ID`의 exact trigger AutoSendConfig에 연결된 APPROVED 템플릿만 사용한다.
 - `password_reset_*` 또는 `password_find_otp`가 `registration_approved_*` 템플릿으로 대체되는 fallback은 금지한다.
 - 2026-07-08 Solapi 실등록 감사 기준 `notice_payment` SID는 provider에 없으므로 결제 트리거는 논리 매핑을 유지하되 fail-closed다.
-- Community/Q&A 외부 알림톡은 승인 봉투가 없어 자유양식/출석 봉투로 fallback하지 않는다.
+- Community/Q&A 외부 알림톡은 owner의 exact `qna_answered` 고정 문구 템플릿만 사용한다. 학생 이름과 사이트 링크 외 자유문구를 넣지 않으며, provider와 DB가 모두 `APPROVED`가 아니면 발송하지 않는다. 자유양식·출석·성적 봉투로 fallback하지 않고 기존 답변도 소급 발송하지 않는다.
 
 ## 안전장치 체계
 1. **Tenant.messaging_is_active** — 대표·관리자가 화면에서 직접 제어하는 학원 전체 on/off. 신규·기존 사용 중 학원은 기본 on이며 개인 고객의 선호를 코드나 운영 환경변수에 넣지 않는다.
