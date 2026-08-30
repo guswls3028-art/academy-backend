@@ -43,6 +43,7 @@ from apps.support.students.view_dependencies import (
 from academy.adapters.db.django import repositories_students as student_repo
 from ..models import Student
 from ..filters import StudentFilter, StudentSearchFilter
+from ..ordering import student_name_codepoint_ordering
 from ..selectors import student_for_tenant_user, students_for_tenant
 from ..services import (
     StudentLifecycleError,
@@ -121,7 +122,7 @@ class StableStudentOrderingFilter(OrderingFilter):
 
         if "id" not in fields:
             ordering.append("-id" if primary_descending else "id")
-        return ordering
+        return student_name_codepoint_ordering(ordering, name_field="name")
 
 
 class StudentViewSet(ModelViewSet):
@@ -397,7 +398,13 @@ class StudentViewSet(ModelViewSet):
             if descending
             else class_order.asc(nulls_last=True)
         )
-        return queryset.order_by(class_order, "name", "id")
+        return queryset.order_by(
+            class_order,
+            *student_name_codepoint_ordering(
+                ("name", "id"),
+                name_field="name",
+            ),
+        )
 
     # ------------------------------
     # Tag 관리

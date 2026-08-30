@@ -185,10 +185,15 @@ def create_video(
 
 def get_enrollments_for_lecture_active(lecture):
     from apps.domains.enrollment.models import Enrollment
+    from apps.domains.students.ordering import student_name_codepoint_ordering
+
     return (
         Enrollment.objects.filter(lecture=lecture, status="ACTIVE")
         .select_related("student")
-        .order_by("student__name", "student_id", "id")
+        .order_by(*student_name_codepoint_ordering(
+            ("student__name", "student_id", "id"),
+            name_field="student__name",
+        ))
     )
 
 

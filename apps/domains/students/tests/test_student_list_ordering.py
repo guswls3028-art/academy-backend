@@ -1,5 +1,3 @@
-from unittest import skipUnless
-
 from django.contrib.auth import get_user_model
 from django.db import connection
 from django.test import TestCase
@@ -213,9 +211,8 @@ class TestStudentListOrdering(TestCase):
         )
 
 
-@skipUnless(connection.vendor == "postgresql", "PostgreSQL collation contract")
-class TestPostgresKoreanStudentOrdering(TestCase):
-    """Reproduce the en_US.UTF-8 ordering drift found by the production audit."""
+class TestKoreanStudentOrdering(TestCase):
+    """Reproduce the PostgreSQL drift while preserving the SQLite test path."""
 
     def setUp(self):
         self.factory = APIRequestFactory()
@@ -346,8 +343,9 @@ class TestPostgresKoreanStudentOrdering(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         return response.data
 
-    def _student_queryset(self):
-        request = Request(self.factory.get("/api/v1/students/"))
+    def _student_queryset(self, *, ordering=None):
+        query = {"ordering": ordering} if ordering else None
+        request = Request(self.factory.get("/api/v1/students/", query))
         request.tenant = self.tenant
         view = StudentViewSet()
         view.request = request
@@ -357,7 +355,11 @@ class TestPostgresKoreanStudentOrdering(TestCase):
         return view.filter_queryset(view.get_queryset())
 
     def assert_codepoint_collation(self, queryset):
-        self.assertIn('COLLATE "C"', str(queryset.query))
+        sql = str(queryset.query)
+        if connection.vendor == "postgresql":
+            self.assertIn('COLLATE "C"', sql)
+        else:
+            self.assertNotIn("COLLATE", sql)
 
     def test_student_pages_use_korean_codepoint_order_before_pagination(self):
         first_page = self._list(page=1, page_size=3)
@@ -369,6 +371,13 @@ class TestPostgresKoreanStudentOrdering(TestCase):
             [row.id for row in self.expected],
         )
         self.assert_codepoint_collation(self._student_queryset())
+
+        descending_qs = self._student_queryset(ordering="-name")
+        self.assertEqual(
+            list(descending_qs.values_list("id", flat=True)),
+            [row.id for row in reversed(self.expected)],
+        )
+        self.assert_codepoint_collation(descending_qs)
 
     def test_all_five_consumers_share_collation_tie_breaks_and_scope(self):
         expected_enrollment_ids = [

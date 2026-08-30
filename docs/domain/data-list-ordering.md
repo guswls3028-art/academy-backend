@@ -69,3 +69,10 @@ C:\academy\backend\.venv\Scripts\python.exe -m pytest `
 보조키로 붙인다. 수강·차시 수강·영상 시청 현황과 권한 대상처럼 별도 정렬 UI
 없이 학생 행을 반환하는 API도 학생명과 ID 보조키를 기본으로 사용한다. 상세
 열기·선택·재조회는 이 표시 순서를 바꾸지 않는다.
+
+PostgreSQL의 운영 기본 collation이 `en_US.UTF-8`이어도 한글 완성형 이름은
+Unicode codepoint 가나다순이어야 한다. 따라서 학생 목록, 강의 수강, 차시 수강,
+활성 차시 roster, 영상 roster의 이름 식에는 명시적으로 `COLLATE "C"`를
+적용하고 기존 학생/enrollment/행 ID 보조키를 그대로 유지한다. SQLite 테스트는
+동등한 기본 binary 정렬을 사용해 별도 collation 등록 없이 같은 순서와 페이지
+안정성을 검증한다.
