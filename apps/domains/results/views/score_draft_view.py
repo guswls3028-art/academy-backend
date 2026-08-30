@@ -288,15 +288,36 @@ class ScoreDraftView(APIView):
                 ),
                 None,
             )
-            if draft is None and any(
-                _is_same_user_draft(
-                    item,
-                    session_id=session_id,
-                    user_id=request.user.id,
+            if draft is None:
+                same_user_draft = next(
+                    (
+                        item
+                        for item in drafts
+                        if _is_same_user_draft(
+                            item,
+                            session_id=session_id,
+                            user_id=request.user.id,
+                        )
+                    ),
+                    None,
                 )
-                for item in drafts
-            ):
-                return _locked_response()
+                if same_user_draft is not None:
+                    _, previous_changes = score_edit_payload_parts(
+                        same_user_draft.payload
+                    )
+                    expired_empty_lease = (
+                        same_user_draft.updated_at < active_since
+                        and not score_edit_payload_is_invalidated(
+                            same_user_draft.payload
+                        )
+                        and not previous_changes
+                        and score_edit_payload_active_cell(
+                            same_user_draft.payload
+                        ) is None
+                    )
+                    if not expired_empty_lease:
+                        return _locked_response()
+                    draft = same_user_draft
             if draft is not None and score_edit_payload_is_invalidated(draft.payload):
                 if not acknowledge_stale:
                     return _stale_response()
