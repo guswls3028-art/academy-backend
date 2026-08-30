@@ -20,7 +20,6 @@ from typing import Any, Dict, List, Optional
 
 from academy.adapters.db.django.repositories_clinic_targets import (
     clinic_links_for_admin_targets,
-    completed_progress_pairs,
     enrollment_map_for_ids,
     explicit_not_submitted_exam_targets,
     filter_links_by_section,
@@ -35,7 +34,7 @@ from apps.domains.results.models import Result, ResultFact, ExamAttempt
 
 # ✅ 단일 진실 유틸
 from apps.domains.results.utils.clinic import (
-    filter_live_source_links,
+    filter_current_clinic_links,
     filter_tenant_consistent_source_links,
 )
 from apps.domains.results.utils.session_exam import get_exams_for_session
@@ -208,24 +207,7 @@ class ClinicTargetService:
                 tenant=tenant,
             )
         if not include_resolved and links_list:
-            links_list = filter_live_source_links(links_list, tenant=tenant)
-
-        if not include_resolved and links_list:
-            session_ids = list({int(getattr(lk, "session_id", 0) or 0) for lk in links_list} - {0})
-            enrollment_ids_for_progress = list({int(getattr(lk, "enrollment_id", 0) or 0) for lk in links_list} - {0})
-            completed_pairs = completed_progress_pairs(
-                session_ids=session_ids,
-                enrollment_ids=enrollment_ids_for_progress,
-            )
-            # 최종 진행 상태가 완료면 현재 대상자 목록에서 제외한다.
-            # 남아 있는 미해소 ClinicLink는 데이터 잔상일 수 있으므로 운영 노출 SSOT는 completed를 우선한다.
-            links_list = [
-                lk for lk in links_list
-                if (
-                    int(getattr(lk, "session_id", 0) or 0),
-                    int(getattr(lk, "enrollment_id", 0) or 0),
-                ) not in completed_pairs
-            ]
+            links_list = filter_current_clinic_links(links_list, tenant=tenant)
 
         # ✅ enrollment 일괄 조회 (N+1 방지 + 학생 SSOT 표시 필드)
         # 🔐 tenant 강제 — links는 tenant 스코프이지만 enrollment_id 참조는 강제 제약 없음.

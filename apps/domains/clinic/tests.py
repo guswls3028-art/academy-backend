@@ -186,6 +186,91 @@ class MultiTenantIsolationTest(TestCase, ClinicTestMixin):
         self.assertTrue(result_b.get(self.b["enrollments"][0].id))
         self.assertFalse(result_b.get(self.a["enrollments"][0].id, False))
 
+    def test_clinic_highlight_matches_student_passcard_booking_lifecycle(self):
+        """노란 하이라이트는 학생 패스카드가 CLINIC_REQUIRED일 때만 켜진다."""
+        from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
+
+        tenant = self.a["tenant"]
+        student = self.a["students"][0]
+        first_enrollment = self.a["enrollments"][0]
+        second_lecture = self.make_lecture(tenant, title="영어")
+        second_session = self.make_lecture_session(second_lecture, order=2)
+        second_enrollment = self.make_enrollment(tenant, student, second_lecture)
+        second_exam = Exam.objects.create(
+            tenant=tenant,
+            title="tenant A second live exam",
+            exam_type=Exam.ExamType.REGULAR,
+            is_active=True,
+        )
+        second_exam.sessions.add(second_session)
+        second_link = self.make_clinic_link(
+            second_enrollment,
+            second_session,
+            source_type="exam",
+            source_id=second_exam.id,
+        )
+        enrollment_ids = {first_enrollment.id, second_enrollment.id}
+
+        def highlights():
+            return compute_clinic_highlight_map(
+                tenant=tenant,
+                enrollment_ids=enrollment_ids,
+            )
+
+        self.assertEqual(highlights(), {
+            first_enrollment.id: True,
+            second_enrollment.id: True,
+        })
+
+        foreign_session = self.make_clinic_session(
+            self.b["tenant"],
+            date=timezone.localdate() + datetime.timedelta(days=7),
+        )
+        self.make_participant(
+            tenant,
+            foreign_session,
+            student,
+            enrollment=first_enrollment,
+            status=SessionParticipant.Status.BOOKED,
+        )
+        self.assertTrue(
+            all(highlights().values()),
+            "다른 tenant 세션을 가리키는 손상 예약은 상태를 바꾸면 안 된다.",
+        )
+
+        clinic_session = self.make_clinic_session(
+            tenant,
+            date=timezone.localdate() + datetime.timedelta(days=7),
+        )
+        participant = self.make_participant(
+            tenant,
+            clinic_session,
+            student,
+            enrollment=first_enrollment,
+            status=SessionParticipant.Status.PENDING,
+        )
+        self.assertTrue(all(highlights().values()), "승인 대기는 대상자 상태를 유지해야 한다.")
+
+        participant.status = SessionParticipant.Status.BOOKED
+        participant.save(update_fields=["status", "updated_at"])
+        self.assertFalse(any(highlights().values()), "확정 예약은 학생 전체 하이라이트를 해제해야 한다.")
+
+        clinic_session.date = timezone.localdate() - datetime.timedelta(days=1)
+        clinic_session.save(update_fields=["date", "updated_at"])
+        participant.status = SessionParticipant.Status.ATTENDED
+        participant.save(update_fields=["status", "updated_at"])
+        self.assertFalse(any(highlights().values()), "미완료 수강 중에는 날짜가 지나도 해제 상태다.")
+
+        participant.completed_at = timezone.now()
+        participant.save(update_fields=["completed_at", "updated_at"])
+        self.assertTrue(all(highlights().values()), "미해결 수강완료 뒤에는 대상자로 돌아와야 한다.")
+
+        self.link_a.resolved_at = timezone.now()
+        self.link_a.save(update_fields=["resolved_at", "updated_at"])
+        second_link.resolved_at = timezone.now()
+        second_link.save(update_fields=["resolved_at", "updated_at"])
+        self.assertFalse(any(highlights().values()), "모든 과락 요소 해소 뒤에는 합격자 상태다.")
+
     def test_clinic_link_queryset_isolates_tenants(self):
         """ClinicLink queryset이 tenant별로 격리됨"""
         links_a = ClinicLink.objects.filter(tenant=self.a["tenant"])
@@ -211,12 +296,12 @@ class MultiTenantIsolationTest(TestCase, ClinicTestMixin):
         """ClinicSessionParticipantSerializer.get_name_highlight_clinic_target가 tenant 필터 적용"""
         from apps.domains.clinic.serializers import ClinicSessionParticipantSerializer
 
-        # participant를 tenant A에 생성
+        # 승인 대기는 아직 대상자이므로 하이라이트 유지
         p_a = self.make_participant(
             self.a["tenant"], self.a["clinic_session"],
             self.a["students"][0],
             enrollment=self.a["enrollments"][0],
-            status="booked",
+            status="pending",
         )
 
         # request mock with tenant A
@@ -227,6 +312,12 @@ class MultiTenantIsolationTest(TestCase, ClinicTestMixin):
         serializer = ClinicSessionParticipantSerializer(p_a, context={"request": request})
         highlight_a = serializer.data.get("name_highlight_clinic_target")
         self.assertTrue(highlight_a, "tenant A participant should be highlighted")
+
+        # 확정 예약 순간에는 패스카드와 동일하게 하이라이트 해제
+        p_a.status = SessionParticipant.Status.BOOKED
+        p_a.save(update_fields=["status", "updated_at"])
+        serializer_booked = ClinicSessionParticipantSerializer(p_a, context={"request": request})
+        self.assertFalse(serializer_booked.data.get("name_highlight_clinic_target"))
 
         # 같은 participant를 tenant B request로 직렬화 시 highlight=False
         request.tenant = self.b["tenant"]
@@ -1587,6 +1678,22 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
         self.student.user.save(update_fields=["tenant"])
         self.client.force_authenticate(user=self.student.user)
 
+    def _make_live_exam_clinic_link(self, enrollment, lecture_session):
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title=f"패스카드 실재 시험 {ClinicLink.objects.count() + 1}",
+            exam_type=Exam.ExamType.REGULAR,
+            is_active=True,
+        )
+        exam.sessions.add(lecture_session)
+        return self.make_clinic_link(
+            enrollment,
+            lecture_session,
+            tenant=self.tenant,
+            source_type="exam",
+            source_id=exam.id,
+        )
+
     def test_student_create_cannot_force_attended_status(self):
         resp = self.client.post(
             "/api/v1/clinic/participants/",
@@ -1605,11 +1712,9 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
 
     def test_student_booking_uses_target_enrollment_matching_session_lecture(self):
         target_enrollment = self.data["enrollments"][0]
-        self.make_clinic_link(
+        self._make_live_exam_clinic_link(
             target_enrollment,
             self.data["lec_session"],
-            tenant=self.tenant,
-            source_type="exam",
         )
         unrelated_lecture = self.make_lecture(
             self.tenant,
@@ -1639,11 +1744,9 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
 
     def test_idcard_aggregates_targets_from_all_active_enrollments(self):
         target_enrollment = self.data["enrollments"][0]
-        link = self.make_clinic_link(
+        link = self._make_live_exam_clinic_link(
             target_enrollment,
             self.data["lec_session"],
-            tenant=self.tenant,
-            source_type="exam",
         )
         unrelated_lecture = self.make_lecture(
             self.tenant,
@@ -1727,6 +1830,13 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
             session=second_session,
             title="부교재 화학평형",
         )
+        homework_assignment_model = django_apps.get_model("homework", "HomeworkAssignment")
+        homework_assignment_model.objects.create(
+            tenant=self.tenant,
+            homework=homework,
+            session=second_session,
+            enrollment=second_enrollment,
+        )
         newer_link = self.make_clinic_link(
             second_enrollment,
             second_session,
@@ -1773,13 +1883,11 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
             all(target["created_at"] for target in resp.data["current_targets"])
         )
 
-    def test_idcard_active_reservations_protect_return_and_sort_nearest(self):
+    def test_idcard_confirmed_reservations_hold_reserved_state_and_sort_nearest(self):
         enrollment = self.data["enrollments"][0]
-        self.make_clinic_link(
+        self._make_live_exam_clinic_link(
             enrollment,
             self.data["lec_session"],
-            tenant=self.tenant,
-            source_type="exam",
         )
         today = timezone.localdate()
         later = self.make_clinic_session(
@@ -1823,7 +1931,7 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
 
         self.assertEqual(resp.status_code, 200, resp.data)
         self.assertEqual(resp.data["current_result"], "FAIL")
-        self.assertEqual(resp.data["passcard_state"], "RETURN_ALLOWED")
+        self.assertEqual(resp.data["passcard_state"], "BOOKING_CONFIRMED")
         self.assertTrue(resp.data["can_leave"])
         self.assertEqual(resp.data["booking_status"], "booked")
         self.assertEqual(resp.data["booking_status_label"], "예약 확정")
@@ -1838,11 +1946,9 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
 
     def test_idcard_pending_reservation_is_visible_but_does_not_allow_return(self):
         enrollment = self.data["enrollments"][0]
-        self.make_clinic_link(
+        self._make_live_exam_clinic_link(
             enrollment,
             self.data["lec_session"],
-            tenant=self.tenant,
-            source_type="exam",
         )
         tomorrow = timezone.localdate() + datetime.timedelta(days=1)
         clinic_session = self.make_clinic_session(
@@ -1871,13 +1977,13 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
         self.assertEqual(resp.data["booking_status_label"], "승인 대기")
         self.assertEqual(resp.data["current_booking"]["participant_id"], pending.id)
 
-    def test_idcard_today_attendance_or_completion_expires_next_local_day(self):
+    def test_idcard_reservation_holds_until_completion_then_requires_next_booking(self):
+        from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
+
         enrollment = self.data["enrollments"][0]
-        self.make_clinic_link(
+        link = self._make_live_exam_clinic_link(
             enrollment,
             self.data["lec_session"],
-            tenant=self.tenant,
-            source_type="exam",
         )
         today = timezone.localdate()
         clinic_session = self.make_clinic_session(
@@ -1894,12 +2000,29 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
             status=SessionParticipant.Status.ATTENDED,
         )
 
+        def is_highlighted():
+            return compute_clinic_highlight_map(
+                tenant=self.tenant,
+                enrollment_ids={enrollment.id},
+            )[enrollment.id]
+
         attended = self.client.get(
             "/api/v1/clinic/idcard/",
             **self._headers(self.tenant),
         )
-        self.assertEqual(attended.data["passcard_state"], "RETURN_ALLOWED")
+        self.assertEqual(attended.data["passcard_state"], "BOOKING_CONFIRMED")
         self.assertEqual(attended.data["booking_status"], "attended")
+        self.assertFalse(is_highlighted())
+
+        clinic_session.date = today - datetime.timedelta(days=1)
+        clinic_session.save(update_fields=["date", "updated_at"])
+        still_attended = self.client.get(
+            "/api/v1/clinic/idcard/",
+            **self._headers(self.tenant),
+        )
+        self.assertEqual(still_attended.data["passcard_state"], "BOOKING_CONFIRMED")
+        self.assertEqual(still_attended.data["booking_status"], "attended")
+        self.assertFalse(is_highlighted())
 
         participant.completed_at = timezone.now()
         participant.save(update_fields=["completed_at", "updated_at"])
@@ -1907,31 +2030,49 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
             "/api/v1/clinic/idcard/",
             **self._headers(self.tenant),
         )
-        self.assertEqual(completed.data["passcard_state"], "RETURN_ALLOWED")
-        self.assertEqual(completed.data["booking_status"], "completed")
+        self.assertEqual(completed.data["current_result"], "FAIL")
+        self.assertEqual(completed.data["passcard_state"], "CLINIC_REQUIRED")
+        self.assertFalse(completed.data["can_leave"])
+        self.assertEqual(completed.data["booking_status"], "required")
+        self.assertIsNone(completed.data["current_booking"])
+        self.assertTrue(is_highlighted())
 
-        clinic_session.date = today - datetime.timedelta(days=1)
-        clinic_session.save(update_fields=["date", "updated_at"])
-        SessionParticipant.objects.filter(id=participant.id).update(
-            completed_at=timezone.now() - datetime.timedelta(days=1),
+        next_session = self.make_clinic_session(
+            self.tenant,
+            date=today + datetime.timedelta(days=2),
+            start_time=datetime.time(17, 0),
+            location="다음 클리닉실",
         )
-        expired = self.client.get(
+        next_booking = self.make_participant(
+            self.tenant,
+            next_session,
+            self.student,
+            enrollment=enrollment,
+            status=SessionParticipant.Status.BOOKED,
+        )
+        rebooked = self.client.get(
             "/api/v1/clinic/idcard/",
             **self._headers(self.tenant),
         )
-        self.assertEqual(expired.data["current_result"], "FAIL")
-        self.assertEqual(expired.data["passcard_state"], "CLINIC_REQUIRED")
-        self.assertFalse(expired.data["can_leave"])
-        self.assertEqual(expired.data["booking_status"], "required")
-        self.assertIsNone(expired.data["current_booking"])
+        self.assertEqual(rebooked.data["passcard_state"], "BOOKING_CONFIRMED")
+        self.assertTrue(rebooked.data["can_leave"])
+        self.assertEqual(rebooked.data["current_booking"]["participant_id"], next_booking.id)
+        self.assertFalse(is_highlighted())
+
+        ClinicLink.objects.filter(id=link.id).update(resolved_at=timezone.now())
+        passed = self.client.get(
+            "/api/v1/clinic/idcard/",
+            **self._headers(self.tenant),
+        )
+        self.assertEqual(passed.data["current_result"], "SUCCESS")
+        self.assertEqual(passed.data["passcard_state"], "PASSED")
+        self.assertFalse(is_highlighted())
 
     def test_idcard_terminal_reservations_never_protect_unresolved_target(self):
         enrollment = self.data["enrollments"][0]
-        self.make_clinic_link(
+        self._make_live_exam_clinic_link(
             enrollment,
             self.data["lec_session"],
-            tenant=self.tenant,
-            source_type="exam",
         )
         today = timezone.localdate()
         for index, status in enumerate(

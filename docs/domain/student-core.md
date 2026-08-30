@@ -391,7 +391,7 @@ Rules:
 |---|---|
 | OMR automatic grading | candidate set is same-tenant active roster; identifier is phone/parent-phone last 8 digits; unmatched/ambiguous scans remain reviewable facts |
 | Results/exam scores | submission, exam, enrollment, and tenant must match before score/result writes |
-| Clinic | clinic target and remediation state must resolve through enrollment/session context; `/clinic/idcard/` returns every unresolved target across active enrollments in newest-first order, with the actual source title, nullable dedicated scope, session label, and a separate tenant-local reservation/departure projection |
+| Clinic | clinic target and remediation state must resolve through enrollment/session context; `/clinic/idcard/` returns every unresolved target across active enrollments in newest-first order, with the actual source title, nullable dedicated scope, session label, and a separate tenant-local reservation/passcard projection |
 | Homework | assignment/submission rows must carry tenant-scoped enrollment identity |
 | Attendance | attendance status that affects secession/enrollment must call the lifecycle path, not mutate student rows directly |
 | Video/progress | student visibility and progress must use tenant-scoped enrollment/session access |
@@ -403,18 +403,30 @@ description into scope. `source_title` is the tenant-scoped Exam/Homework title,
 `source_scope` stays `null` until that source domain owns a dedicated unit/range value;
 clients render the missing scope explicitly instead of hiding the rest of the target.
 The passcard keeps the unresolved `ClinicLink` verdict in `current_result` and returns
-the separate `passcard_state` (`PASSED`, `CLINIC_REQUIRED`, or `RETURN_ALLOWED`). A
-future-or-today `booked` reservation, or an `attended`/completed participant
-on the current `Asia/Seoul` local date, temporarily yields `RETURN_ALLOWED` without
-resolving any `ClinicLink`. The protection expires on the next local date; if any link
-is still unresolved, the student returns to `CLINIC_REQUIRED`. `cancelled`, `rejected`,
-and `no_show` never protect departure. `pending` remains visible as `승인 대기` but
-does not allow departure. `valid_bookings` is sorted by effective date, start time,
-status priority, and participant id. For an unresolved student,
-`current_booking` is the first return-protecting item when one exists; otherwise it is
-the first visible pending item. The projection includes only status and schedule
-fields, not student or parent PII. Manual clinic PDFs remain independently authored
-content and do not inherit this projection.
+the separate `passcard_state` (`PASSED`, `CLINIC_REQUIRED`, or
+`BOOKING_CONFIRMED`). A future-or-today `booked` reservation yields
+`BOOKING_CONFIRMED` without resolving any `ClinicLink`. After check-in, `attended`
+keeps that state across local-date changes until `completed_at` is recorded. Completion
+ends the booking state immediately: if any link is still unresolved, the student
+returns to `CLINIC_REQUIRED` until the next confirmed booking; if every link has been
+resolved, the state is `PASSED`. `cancelled`, `rejected`, and `no_show` never confirm
+the booking state. `pending` remains visible as `승인 대기` but stays
+`CLINIC_REQUIRED`. `valid_bookings` is sorted by effective date, start time, status
+priority, and participant id. For an unresolved student, `current_booking` is the first
+confirmed or in-progress item when one exists; otherwise it is the first visible
+pending item. The projection includes only status and schedule fields, not student or
+parent PII. Manual clinic PDFs remain independently authored content and do not
+inherit this projection.
+
+`name_highlight_clinic_target` is the administrative projection of the same
+student-level state, not an independent attendance flag. It is `true` only while
+the student's passcard is `CLINIC_REQUIRED`. A confirmed future/today booking or an
+incomplete `attended` clinic changes the passcard to `BOOKING_CONFIRMED` and removes
+the yellow name highlight from every unresolved enrollment for that student.
+`pending` does not remove it. When clinic work receives `completed_at`, unresolved
+links make both the passcard and yellow highlight return immediately; resolving all
+links makes the passcard `PASSED` and keeps the highlight off. All projections use
+tenant-scoped student and enrollment relationships and fail closed on missing data.
 
 ### Staff student-support session and ended-lecture boundary
 

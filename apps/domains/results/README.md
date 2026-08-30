@@ -194,6 +194,15 @@ student, enrollment lecture, session lecture가 모두 요청 tenant에 속해�
 `apps/domains/progress/tests/test_drift_and_resolution.py::DriftResolutionTest::test_clinic_link_viewset_rejects_mismatched_enrollment_tenant`가
 일반 API 경계를 확인한다.
 
+학생 이름의 `name_highlight_clinic_target`은 별도 출석 플래그가 아니라 학생
+패스카드의 `CLINIC_REQUIRED` 상태를 관리자 화면에 투영한 값이다. 현재 미해결
+과락 링크가 있어도 오늘·미래 `booked` 또는 `completed_at`이 없는 `attended`가
+학생에게 하나라도 있으면 패스카드와 모든 강의의 노란 하이라이트가 함께
+`BOOKING_CONFIRMED`/`false`가 된다. `pending`은 하이라이트를 끄지 않는다.
+클리닉 수강완료 뒤 링크가 남아 있으면 즉시 `CLINIC_REQUIRED`/`true`로 돌아가며,
+모든 링크가 해소되면 `PASSED`/`false`다. 현재 대상 링크의 원본·완료 진행 상태와
+예약 판정은 패스카드, 대상자 목록, 성적표, 참가자 직렬화가 같은 공용 계산을 쓴다.
+
 Session Assessment Inspection
 -----------------------------
 

@@ -8,6 +8,7 @@ from django.apps import apps
 from apps.support.results.progress_read_dependencies import (
     clinic_link_queryset_for_session,
     completed_enrollment_ids_for_session,
+    completed_session_progress_pairs,
 )
 
 
@@ -130,6 +131,25 @@ def filter_live_source_links(
             live_links.append(link)
 
     return live_links
+
+
+def filter_current_clinic_links(clinic_links: Iterable[Any], *, tenant: Any) -> list[Any]:
+    """Apply the shared current-target source and completed-progress contract."""
+    live_links = filter_live_source_links(clinic_links, tenant=tenant)
+    if not live_links:
+        return []
+
+    session_ids = list({int(link.session_id or 0) for link in live_links} - {0})
+    enrollment_ids = list({int(link.enrollment_id or 0) for link in live_links} - {0})
+    completed_pairs = completed_session_progress_pairs(
+        session_ids=session_ids,
+        enrollment_ids=enrollment_ids,
+    )
+    return [
+        link
+        for link in live_links
+        if (int(link.enrollment_id), int(link.session_id)) not in completed_pairs
+    ]
 
 
 def filter_tenant_consistent_source_links(

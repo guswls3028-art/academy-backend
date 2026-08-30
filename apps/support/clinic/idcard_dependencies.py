@@ -22,6 +22,39 @@ def active_enrollments_for_student(*, tenant: Any, student: Any) -> list[Any]:
     )
 
 
+def passcard_confirmed_enrollment_ids(
+    *,
+    tenant: Any,
+    enrollment_ids: set[int],
+) -> set[int]:
+    """Map the passcard's student-level booking state onto enrollments."""
+    if not enrollment_ids:
+        return set()
+
+    from apps.domains.enrollment.models import Enrollment
+
+    enrollment_student_map = dict(
+        Enrollment.objects.filter(
+            tenant=tenant,
+            id__in=enrollment_ids,
+            student__tenant=tenant,
+        ).values_list("id", "student_id")
+    )
+    from apps.domains.clinic.services.passcard_state import (
+        passcard_confirmed_student_ids,
+    )
+
+    confirmed_student_ids = passcard_confirmed_student_ids(
+        tenant=tenant,
+        student_ids=set(enrollment_student_map.values()),
+    )
+    return {
+        int(enrollment_id)
+        for enrollment_id, student_id in enrollment_student_map.items()
+        if student_id in confirmed_student_ids
+    }
+
+
 def ordered_sessions_by_enrollment(
     *,
     tenant: Any,
@@ -76,7 +109,7 @@ def unresolved_auto_clinic_links(
 
     from apps.domains.progress.models import ClinicLink
 
-    return list(
+    clinic_links = (
         ClinicLink.objects.filter(
             tenant=tenant,
             enrollment_id__in=enrollment_ids,
@@ -87,6 +120,9 @@ def unresolved_auto_clinic_links(
         .select_related("session__lecture")
         .order_by("-created_at", "-id")
     )
+    from apps.domains.results.utils.clinic import filter_current_clinic_links
+
+    return filter_current_clinic_links(clinic_links, tenant=tenant)
 
 
 def clinic_link_source_projection(
