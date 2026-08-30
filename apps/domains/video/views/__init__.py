@@ -2,6 +2,7 @@
 from .video_policy_impact import VideoPolicyImpactAPIView
 
 from .video_views import VideoViewSet
+from .direct_entitlement_views import DirectVideoEntitlementViewSet
 from .permission_views import InactiveVideoEntitlementViewSet, VideoPermissionViewSet
 from .progress_views import VideoProgressViewSet, VideoProgressView
 from .internal_views import VideoProcessingCompleteView

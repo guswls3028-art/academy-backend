@@ -35,6 +35,7 @@ class StudentSessionVideoContext:
     enrollment: object | None
     is_public_session: bool
     inactive_entitlements_by_video_id: Mapping[int, object] | None = None
+    direct_entitlements_by_video_id: Mapping[int, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,7 @@ class StudentVideoAccessContext:
     access_mode: AccessMode | None
     is_public_video: bool
     inactive_entitlement: object | None = None
+    direct_entitlement: object | None = None
 
     @property
     def access_mode_value(self) -> str | None:
@@ -74,6 +76,21 @@ def get_students_for_request(request):
             return [selected] if selected else []
         return list(active_students)
     return []
+
+
+def direct_entitlements_for_request_student(request, *, student=None):
+    from apps.domains.video.services.direct_entitlements import (
+        active_direct_video_entitlements_for_student,
+    )
+
+    tenant = getattr(request, "tenant", None)
+    selected = student or get_request_student(request)
+    if not tenant or not selected or getattr(selected, "tenant_id", None) != tenant.id:
+        return []
+    return active_direct_video_entitlements_for_student(
+        tenant=tenant,
+        student=selected,
+    )
 
 
 def get_enrollment_for_student(request, enrollment_id: Optional[int], lecture_id: Optional[int] = None):
@@ -285,13 +302,24 @@ def resolve_student_session_video_context(
         active_error = exc
         enrollment = None
     inactive_entitlements = {}
+    direct_entitlements = {}
     if enrollment is None and not is_public:
         enrollment, inactive_entitlements = _find_inactive_entitlements_for_session(
             request,
             session,
             explicit_enrollment_id=explicit_enrollment_id,
         )
-    if enrollment is None and not student_can_access_session(request, session):
+    if enrollment is None and not inactive_entitlements and not is_public:
+        direct_entitlements = _find_direct_entitlements_for_session(
+            request,
+            session,
+            explicit_enrollment_id=explicit_enrollment_id,
+        )
+    if (
+        enrollment is None
+        and not direct_entitlements
+        and not student_can_access_session(request, session)
+    ):
         if active_error is not None and active_error.status_code == status.HTTP_400_BAD_REQUEST:
             raise active_error
         detail = (
@@ -305,6 +333,7 @@ def resolve_student_session_video_context(
         enrollment=enrollment,
         is_public_session=is_public,
         inactive_entitlements_by_video_id=inactive_entitlements,
+        direct_entitlements_by_video_id=direct_entitlements,
     )
 
 
@@ -351,6 +380,38 @@ def _find_inactive_entitlements_for_session(
     return enrollment, {item.video_id: item for item in matches}
 
 
+def _find_direct_entitlements_for_session(
+    request,
+    session,
+    *,
+    explicit_enrollment_id: Optional[int] = None,
+):
+    from apps.domains.video.services.direct_entitlements import (
+        active_direct_video_entitlements_for_student,
+    )
+
+    if explicit_enrollment_id is not None:
+        return {}
+    tenant = getattr(request, "tenant", None)
+    students = get_students_for_request(request)
+    if not tenant or not students:
+        return {}
+    matches = []
+    for student in students:
+        matches.extend(
+            entitlement
+            for entitlement in active_direct_video_entitlements_for_student(
+                tenant=tenant,
+                student=student,
+            )
+            if entitlement.video.session_id == session.id
+        )
+    student_ids = {item.student_id for item in matches}
+    if len(student_ids) != 1:
+        return {}
+    return {item.video_id: item for item in matches}
+
+
 def _find_inactive_entitlement_for_video(
     request,
     video,
@@ -392,6 +453,37 @@ def _find_inactive_entitlement_for_video(
     return matches[0].enrollment, matches[0]
 
 
+def _find_direct_entitlement_for_video(
+    request,
+    video,
+    *,
+    explicit_enrollment_id: Optional[int] = None,
+):
+    from apps.domains.video.services.direct_entitlements import (
+        get_active_direct_video_entitlement,
+    )
+
+    if explicit_enrollment_id is not None:
+        return None
+    tenant = getattr(request, "tenant", None)
+    students = get_students_for_request(request)
+    if not tenant or not students:
+        return None
+    matches = [
+        entitlement
+        for student in students
+        if (
+            entitlement := get_active_direct_video_entitlement(
+                tenant=tenant,
+                student=student,
+                video=video,
+            )
+        )
+        is not None
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
 def resolve_student_video_access_context(
     request,
     video,
@@ -428,22 +520,34 @@ def resolve_student_video_access_context(
         active_error = exc
         enrollment = None
     inactive_entitlement = None
+    direct_entitlement = None
     if enrollment is None:
         enrollment, inactive_entitlement = _find_inactive_entitlement_for_video(
             request,
             video,
             explicit_enrollment_id=explicit_enrollment_id,
         )
-    if not enrollment:
+    if enrollment is None and inactive_entitlement is None:
+        direct_entitlement = _find_direct_entitlement_for_video(
+            request,
+            video,
+            explicit_enrollment_id=explicit_enrollment_id,
+        )
+    if not enrollment and direct_entitlement is None:
         if active_error is not None and active_error.status_code == status.HTTP_400_BAD_REQUEST:
             raise active_error
-        raise StudentVideoAccessError("이 영상을 시청하려면 해당 강의에 수강 등록이 필요합니다.")
+        raise StudentVideoAccessError("이 영상을 볼 수 있는 수강 또는 개별 권한이 필요합니다.")
 
     return StudentVideoAccessContext(
         enrollment=enrollment,
-        access_mode=get_effective_access_mode(video=video, enrollment=enrollment),
+        access_mode=(
+            AccessMode.FREE_REVIEW
+            if direct_entitlement is not None
+            else get_effective_access_mode(video=video, enrollment=enrollment)
+        ),
         is_public_video=False,
         inactive_entitlement=inactive_entitlement,
+        direct_entitlement=direct_entitlement,
     )
 
 

@@ -28,8 +28,10 @@ from apps.support.student_app.video_dependencies import (
     update_inactive_entitled_video_progress,
 )
 from apps.support.student_app.video_media import (
+    bounded_direct_media_expiry,
     bounded_inactive_media_expiry,
     build_thumbnail_url,
+    issue_direct_playback_access_grant,
     issue_playback_access_grant,
     pick_video_urls,
 )
@@ -41,6 +43,7 @@ from apps.domains.video.contracts import (
 )
 from academy.application.use_cases.student_video_access_context import (
     StudentVideoAccessError,
+    direct_entitlements_for_request_student,
     ensure_student_video_watch_allowed,
     is_video_progress_complete,
     normalize_video_progress,
@@ -269,6 +272,25 @@ class StudentVideoMeView(APIView):
             )
             inactive_first_video_by_lecture.setdefault(lecture_id, entitlement.video)
             inactive_first_entitlement_by_lecture.setdefault(lecture_id, entitlement)
+        direct_entitlements = direct_entitlements_for_request_student(
+            request,
+            student=student,
+        )
+        direct_video_ids_by_lecture: dict[int, set[int]] = {}
+        direct_session_ids_by_lecture: dict[int, set[int]] = {}
+        direct_first_video_by_lecture = {}
+        direct_first_entitlement_by_lecture = {}
+        for entitlement in direct_entitlements:
+            lecture_id = entitlement.video.session.lecture_id
+            enrollment_by_lecture.setdefault(lecture_id, None)
+            direct_video_ids_by_lecture.setdefault(lecture_id, set()).add(
+                entitlement.video_id
+            )
+            direct_session_ids_by_lecture.setdefault(lecture_id, set()).add(
+                entitlement.video.session_id
+            )
+            direct_first_video_by_lecture.setdefault(lecture_id, entitlement.video)
+            direct_first_entitlement_by_lecture.setdefault(lecture_id, entitlement)
         lecture_ids = list(enrollment_by_lecture.keys())
         history_enrollments = list(
             learning_history_enrollments_for_student(
@@ -350,8 +372,10 @@ class StudentVideoMeView(APIView):
         for lec in lectures_qs:
             sessions = sorted(lec.sessions.all(), key=lambda x: (x.order, x.id))
             inactive_session_ids = inactive_session_ids_by_lecture.get(lec.id)
-            if inactive_session_ids is not None:
-                sessions = [s for s in sessions if s.id in inactive_session_ids]
+            direct_session_ids = direct_session_ids_by_lecture.get(lec.id)
+            exact_session_ids = inactive_session_ids or direct_session_ids
+            if exact_session_ids is not None:
+                sessions = [s for s in sessions if s.id in exact_session_ids]
             sessions_data = [
                 {
                     "id": s.id,
@@ -368,12 +392,15 @@ class StudentVideoMeView(APIView):
             lec_video_count = 0
             lec_total_duration = 0
             for s in sessions:
-                if lec.id in inactive_video_ids_by_lecture:
-                    entitled_ids = inactive_video_ids_by_lecture[lec.id]
+                exact_video_ids = (
+                    inactive_video_ids_by_lecture.get(lec.id)
+                    or direct_video_ids_by_lecture.get(lec.id)
+                )
+                if exact_video_ids is not None:
                     entitled_videos = [
                         entitlement.video
-                        for entitlement in inactive_entitlements
-                        if entitlement.video_id in entitled_ids
+                        for entitlement in [*inactive_entitlements, *direct_entitlements]
+                        if entitlement.video_id in exact_video_ids
                         and entitlement.video.session_id == s.id
                     ]
                     lec_video_count += len(entitled_videos)
@@ -387,16 +414,22 @@ class StudentVideoMeView(APIView):
             # 썸네일 URL (student-app support helper 재사용)
             first_vid = (
                 inactive_first_video_by_lecture.get(lec.id)
+                or direct_first_video_by_lecture.get(lec.id)
                 or first_video_by_lecture.get(lec.id)
             )
-            first_entitlement = inactive_first_entitlement_by_lecture.get(lec.id)
+            inactive_first_entitlement = inactive_first_entitlement_by_lecture.get(lec.id)
+            direct_first_entitlement = direct_first_entitlement_by_lecture.get(lec.id)
             thumb_url = (
                 build_thumbnail_url(
                     first_vid,
                     expires_at=(
-                        bounded_inactive_media_expiry(first_entitlement)
-                        if first_entitlement is not None
-                        else None
+                        bounded_inactive_media_expiry(inactive_first_entitlement)
+                        if inactive_first_entitlement is not None
+                        else (
+                            bounded_direct_media_expiry(direct_first_entitlement)
+                            if direct_first_entitlement is not None
+                            else None
+                        )
                     ),
                 )
                 if first_vid
@@ -720,6 +753,7 @@ class StudentSessionVideoListView(APIView):
 
         enrollment_obj = access_context.enrollment
         inactive_entitlements = access_context.inactive_entitlements_by_video_id or {}
+        direct_entitlements = access_context.direct_entitlements_by_video_id or {}
 
         videos = list(
             Video.objects
@@ -728,8 +762,9 @@ class StudentSessionVideoListView(APIView):
             .order_by("order", "title", "id")
         )
         videos = sort_videos_for_playlist(videos)
-        if inactive_entitlements:
-            videos = [v for v in videos if v.id in inactive_entitlements]
+        exact_entitlements = inactive_entitlements or direct_entitlements
+        if exact_entitlements:
+            videos = [v for v in videos if v.id in exact_entitlements]
 
         # 진행률 + 권한을 일괄 조회 (N+1 방지)
         from academy.adapters.db.django import repositories_video as video_repo
@@ -774,23 +809,33 @@ class StudentSessionVideoListView(APIView):
                     access_by_video_id=perm_map,
                     attendance_status=attendance_status,
                 )
+        elif direct_entitlements:
+            access_mode_map = {
+                video_id: AccessMode.FREE_REVIEW
+                for video_id in direct_entitlements
+            }
 
         items = []
         for v in videos:
             perm_obj = perm_map.get(v.id)
 
             inactive_entitlement = inactive_entitlements.get(v.id)
+            direct_entitlement = direct_entitlements.get(v.id)
             thumb = build_thumbnail_url(
                 v,
                 expires_at=(
                     bounded_inactive_media_expiry(inactive_entitlement)
                     if inactive_entitlement is not None
-                    else None
+                    else (
+                        bounded_direct_media_expiry(direct_entitlement)
+                        if direct_entitlement is not None
+                        else None
+                    )
                 ),
             )
 
             access_mode_value = None
-            if enrollment_obj:
+            if enrollment_obj or direct_entitlement is not None:
                 access_mode = access_mode_map.get(v.id)
                 access_mode_value = access_mode.value if access_mode else None
 
@@ -908,6 +953,7 @@ class StudentVideoPlaybackView(APIView):
         access_mode_value = access_context.access_mode_value
         video_access_mode_value = access_mode_value
         inactive_entitlement = access_context.inactive_entitlement
+        direct_entitlement = access_context.direct_entitlement
         inactive_media_expires_at = None
         if inactive_entitlement is not None:
             if _is_youtube_video(video):
@@ -919,6 +965,14 @@ class StudentVideoPlaybackView(APIView):
             )
             if inactive_media_expires_at <= int(timezone.now().timestamp()):
                 raise PermissionDenied("영상 권한이 만료되었습니다.")
+        elif direct_entitlement is not None:
+            if _is_youtube_video(video):
+                raise PermissionDenied(
+                    "수강 등록 없는 개별 권한은 YouTube 영상에 적용할 수 없습니다."
+                )
+            inactive_media_expires_at = bounded_direct_media_expiry(
+                direct_entitlement
+            )
 
         perm_obj = None
         if VideoPermission and enrollment_obj:
@@ -1040,14 +1094,21 @@ class StudentVideoPlaybackView(APIView):
         playback_session_id = None
         playback_expires_at = None
         playback_policy_version = int(getattr(video, "policy_version", 1) or 1)
-        if enrollment_obj:
+        if enrollment_obj or direct_entitlement is not None:
             try:
-                playback_grant = issue_playback_access_grant(
-                    video=video,
-                    enrollment=enrollment_obj,
-                    user=request.user,
-                    device_id=str(request.headers.get("X-Device-Id") or request.user.id),
-                )
+                if direct_entitlement is not None:
+                    playback_grant = issue_direct_playback_access_grant(
+                        video=video,
+                        entitlement=direct_entitlement,
+                        user=request.user,
+                    )
+                else:
+                    playback_grant = issue_playback_access_grant(
+                        video=video,
+                        enrollment=enrollment_obj,
+                        user=request.user,
+                        device_id=str(request.headers.get("X-Device-Id") or request.user.id),
+                    )
                 playback_token = playback_grant.token
                 playback_session_id = playback_grant.session_id
                 playback_expires_at = playback_grant.expires_at
@@ -1067,7 +1128,7 @@ class StudentVideoPlaybackView(APIView):
                 access_mode_value = playback_grant.access_mode
                 if not access_context.is_public_video:
                     video_access_mode_value = access_mode_value
-                if inactive_entitlement is not None:
+                if inactive_entitlement is not None or direct_entitlement is not None:
                     inactive_media_expires_at = playback_grant.expires_at
                     hls_url, mp4_url = pick_video_urls(
                         video,
@@ -1107,7 +1168,7 @@ class StudentVideoPlaybackView(APIView):
         )
 
         student = get_request_student(request)
-        if student:
+        if student and direct_entitlement is None:
             from apps.domains.students.activity import record_student_target_open
 
             record_student_target_open(
@@ -1124,7 +1185,7 @@ class StudentVideoPlaybackView(APIView):
         from django.db.models import F as _F
 
         _view_key = f"video_view:{video_id}:{request.user.id}"
-        if not _cache.get(_view_key):
+        if direct_entitlement is None and not _cache.get(_view_key):
             Video.objects.filter(id=video_id).update(view_count=_F("view_count") + 1)
             _cache.set(_view_key, 1, 300)
 
