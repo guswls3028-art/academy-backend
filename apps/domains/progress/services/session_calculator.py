@@ -7,6 +7,9 @@ from django.utils import timezone
 from django.db.models import Count
 
 from apps.domains.progress.models import SessionProgress, ProgressPolicy
+from apps.support.progress.exam_policy_dependencies import (
+    exam_pass_score_overrides,
+)
 from apps.support.progress.session_calculator_dependencies import (
     get_exam_ids_for_session,
     get_exam_model,
@@ -121,6 +124,10 @@ class SessionProgressCalculator:
         exam_attempted = True
 
         exams = {e.id: e for e in Exam.objects.filter(id__in=[int(x) for x in exam_ids])}
+        lecture_pass_scores = exam_pass_score_overrides(
+            exam_ids=[int(exam_id) for exam_id in exam_ids],
+            lecture_id=int(session.lecture_id),
+        )
 
         # ✅ Attempt count is authoritative from ExamAttempt
         attempt_counts = {
@@ -155,7 +162,17 @@ class SessionProgressCalculator:
         for eid in [int(x) for x in exam_ids]:
             ex = exams.get(eid)
 
-            exam_pass_score = cls._safe_float(getattr(ex, "pass_score", None), default=0.0) if ex else 0.0
+            exam_pass_score = (
+                lecture_pass_scores.get(
+                    eid,
+                    cls._safe_float(
+                        getattr(ex, "pass_score", None),
+                        default=0.0,
+                    ),
+                )
+                if ex
+                else 0.0
+            )
             policy_pass_score = cls._safe_float(getattr(policy, "exam_pass_score", 0.0), default=0.0)
             pass_score = (
                 policy_pass_score

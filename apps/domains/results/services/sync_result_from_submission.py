@@ -27,6 +27,9 @@ from apps.domains.results.services.submission_answer_map import (
     require_complete_omr_answers,
 )
 from apps.domains.results.services.submission_scope_guard import validate_exam_submission_scope
+from apps.support.results.exam_policy_dependencies import (
+    effective_exam_pass_score,
+)
 from apps.support.omr.score_adjustment import get_score_adjustment_from_answers
 from apps.support.omr.score_shape import get_exam_score_shape
 from apps.support.exams.numeric_short_answer import (
@@ -72,7 +75,11 @@ def _sync_legacy_exam_result_snapshot(
         }
         for item in items_payload
     }
-    pass_score = float(getattr(exam, "pass_score", 0) or 0)
+    enrollment = getattr(submission, "enrollment", None)
+    pass_score = effective_exam_pass_score(
+        exam=exam,
+        lecture_id=getattr(enrollment, "lecture_id", None),
+    )
     legacy.exam = exam
     legacy.total_score = round(float(objective_score), 2)
     legacy.max_score = round(float(objective_max_score), 2)

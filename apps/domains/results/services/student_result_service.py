@@ -20,6 +20,9 @@ from apps.domains.results.utils.initial_exam_score import (
     project_initial_exam_score,
 )
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement
+from apps.support.results.exam_policy_dependencies import (
+    effective_exam_pass_score,
+)
 from apps.domains.results.services.assessment_correction_status import (
     assessment_correction_payload,
     exam_correction_fingerprint,
@@ -182,7 +185,10 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
 
     # ✅ 성취 계산 (SSOT: utils/exam_achievement)
     # student/admin 뷰가 동일 유틸을 사용해 드리프트 재발을 구조적으로 방지.
-    pass_score = float(getattr(exam, "pass_score", 0) or 0)
+    pass_score = effective_exam_pass_score(
+        exam=exam,
+        lecture_id=getattr(enrollment, "lecture_id", None),
+    )
     achievement_data = compute_exam_achievement(
         enrollment_id=enrollment_id,
         exam_id=exam_id,
@@ -279,7 +285,11 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
     data["analysis"] = summarize_result_items(data.get("items") or [])
 
     # 석차 정보 추가
-    rank_map = compute_exam_rankings(exam_id=exam_id, tenant=tenant)
+    rank_map = compute_exam_rankings(
+        exam_id=exam_id,
+        tenant=tenant,
+        lecture_ids={int(enrollment.lecture_id)},
+    )
     rank_info = {} if is_not_submitted else rank_map.get(enrollment_id, {})
     data["rank"] = rank_info.get("rank")
     data["percentile"] = rank_info.get("percentile")

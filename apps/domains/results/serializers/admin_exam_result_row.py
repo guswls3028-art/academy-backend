@@ -40,6 +40,8 @@ class AdminExamResultRowSerializer(serializers.Serializer):
     lecture_title = serializers.CharField(allow_null=True, allow_blank=True, required=False, default=None)
     lecture_color = serializers.CharField(allow_null=True, allow_blank=True, required=False, default=None)
     lecture_chip_label = serializers.CharField(allow_null=True, allow_blank=True, required=False, default=None)
+    lecture_id = serializers.IntegerField()
+    pass_score = serializers.FloatField()
 
     # ===============================
     # 석차 정보

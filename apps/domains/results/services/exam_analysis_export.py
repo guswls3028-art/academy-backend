@@ -13,6 +13,10 @@ from openpyxl.formatting.rule import ColorScaleRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
+from apps.support.results.exam_policy_dependencies import (
+    effective_exam_pass_scores,
+    sessions_by_id_for_tenant,
+)
 from apps.domains.results.models import ExamAttempt, ResultFact
 from apps.domains.results.services.exam_result_excel_import import (
     ExamResultWorkbookError,
@@ -24,7 +28,9 @@ from apps.domains.results.utils.initial_exam_score import (
     project_initial_exam_score,
 )
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
-from apps.domains.results.utils.session_exam import get_primary_session_for_exam
+from apps.support.results.admin_student_grades_dependencies import (
+    primary_session_metadata_by_exam_and_lecture,
+)
 from apps.support.results.exam_result_excel_import_dependencies import (
     get_result_import_candidates,
     get_result_import_questions,
@@ -94,7 +100,7 @@ def _briefing(
     std_rate: float,
     question_stats: list[dict[str, Any]],
     fail_count: int,
-    pass_score: float,
+    pass_score_label: str,
     has_pass_criterion: bool,
 ) -> ExamBriefing:
     weak = [row for row in question_stats if float(row.get("accuracy") or 0.0) < 0.5]
@@ -122,16 +128,16 @@ def _briefing(
         cut_review_detail = "합격 컷이 설정되지 않아 합격·미달 인원을 계산하지 않았습니다. 시험 설정에서 기준 점수를 먼저 확인하세요."
     elif scored_count < 5:
         cut_review = "컷 판단 보류"
-        cut_review_detail = f"현재 {pass_score:g}점 기준을 유지하고 표본이 쌓인 뒤 검토하세요."
+        cut_review_detail = f"현재 {pass_score_label} 기준을 유지하고 표본이 쌓인 뒤 검토하세요."
     elif fail_rate >= 0.6:
         cut_review = "난이도·문항 오류 먼저 확인"
-        cut_review_detail = f"현재 컷 {pass_score:g}점에서 {fail_count}명이 미달입니다. 컷 변경 전 시험 난이도와 문항 오류를 확인하세요."
+        cut_review_detail = f"현재 {pass_score_label}에서 {fail_count}명이 미달입니다. 컷 변경 전 시험 난이도와 문항 오류를 확인하세요."
     elif fail_rate <= 0.1:
         cut_review = "현재 컷 유지 또는 상향 검토"
-        cut_review_detail = f"현재 컷 {pass_score:g}점의 미달 비율이 10% 이하입니다. 수업 목표에 따라 다음 시험부터 조정할 수 있습니다."
+        cut_review_detail = f"현재 {pass_score_label}의 미달 비율이 10% 이하입니다. 수업 목표에 따라 다음 시험부터 조정할 수 있습니다."
     else:
         cut_review = "현재 컷으로 운영 가능"
-        cut_review_detail = f"현재 컷 {pass_score:g}점에서 {fail_count}명이 미달입니다. 이번 시험은 현 기준으로 보충 대상을 운영하세요."
+        cut_review_detail = f"현재 {pass_score_label}에서 {fail_count}명이 미달입니다. 이번 시험은 현 기준으로 보충 대상을 운영하세요."
 
     if critical:
         numbers = ", ".join(f"{int(row['question_number'])}번" for row in critical[:3])
@@ -295,18 +301,55 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
             return list(result.items.all())
         return list(fact_items_by_enrollment.get(enrollment_id, {}).values())
 
-    session = get_primary_session_for_exam(int(exam.id))
-    pass_score = float(exam.pass_score or 0.0)
-    has_pass_criterion = pass_score > 0
+    lecture_ids = {
+        int(candidate.lecture_id)
+        for candidate in candidates
+        if candidate.lecture_id is not None
+    }
+    pass_scores_by_lecture = effective_exam_pass_scores(
+        exam=exam,
+        lecture_ids=lecture_ids,
+    )
+    default_pass_score = float(exam.pass_score or 0.0)
+    session_meta = primary_session_metadata_by_exam_and_lecture(
+        tenant=tenant,
+        exam_lecture_pairs={
+            (int(exam.id), lecture_id) for lecture_id in lecture_ids
+        },
+    )
+    session_ids_by_lecture = {
+        lecture_id: int(meta["session_id"])
+        for (_exam_id, lecture_id), meta in session_meta.items()
+        if meta.get("session_id") is not None
+    }
+    sessions_by_id = sessions_by_id_for_tenant(
+        session_ids=set(session_ids_by_lecture.values()),
+        tenant=tenant,
+    )
+    sessions_by_lecture = {
+        lecture_id: sessions_by_id.get(session_id)
+        for lecture_id, session_id in session_ids_by_lecture.items()
+    }
+
+    def candidate_pass_score(candidate: Any) -> float:
+        lecture_id = getattr(candidate, "lecture_id", None)
+        if lecture_id is None:
+            return default_pass_score
+        return pass_scores_by_lecture.get(int(lecture_id), default_pass_score)
+
     achievement_map = compute_exam_achievement_bulk(
         items=[
             {
                 "enrollment_id": int(result.enrollment_id),
                 "exam_id": int(exam.id),
                 "total_score": initial_scores[int(result.enrollment_id)].total_score,
-                "pass_score": pass_score,
+                "pass_score": candidate_pass_score(
+                    candidate_by_id[int(result.enrollment_id)]
+                ),
                 "attempt_id": initial_scores[int(result.enrollment_id)].attempt_id,
-                "session": session,
+                "session": sessions_by_lecture.get(
+                    candidate_by_id[int(result.enrollment_id)].lecture_id
+                ),
             }
             for result in results
         ],
@@ -394,17 +437,34 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
         )
     )
     max_score = float(exam.max_score or 100.0)
-    pass_count = (
-        sum(1 for score in scores if score >= pass_score)
-        if has_pass_criterion
-        else 0
+    scored_with_criterion = [
+        (analysis_score(result), candidate_pass_score(candidate_by_id[int(result.enrollment_id)]))
+        for result in scored_results
+        if candidate_pass_score(candidate_by_id[int(result.enrollment_id)]) > 0
+    ]
+    criterion_count = len(scored_with_criterion)
+    has_pass_criterion = criterion_count > 0
+    pass_count = sum(
+        1 for score, criterion in scored_with_criterion if score >= criterion
     )
-    fail_count = max(len(scores) - pass_count, 0) if has_pass_criterion else 0
+    fail_count = max(criterion_count - pass_count, 0)
     pass_rate = (
-        pass_count / len(scores)
-        if has_pass_criterion and scores
+        pass_count / criterion_count
+        if has_pass_criterion
         else 0.0
     )
+    criterion_scores = sorted({
+        candidate_pass_score(candidate)
+        for candidate in candidates
+        if candidate_pass_score(candidate) > 0
+    })
+    if len(criterion_scores) == 1:
+        pass_score_label = f"컷 {criterion_scores[0]:g}점"
+    elif criterion_scores:
+        joined = "/".join(f"{score:g}" for score in criterion_scores)
+        pass_score_label = f"강의별 컷 {joined}점"
+    else:
+        pass_score_label = "합격 컷 미설정"
     score_rates = [_score_rate(score, max_score) for score in scores]
     std_rate = pstdev(score_rates) if score_rates else 0.0
     briefing = _briefing(
@@ -413,7 +473,7 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
         std_rate=std_rate,
         question_stats=question_stats,
         fail_count=fail_count,
-        pass_score=pass_score,
+        pass_score_label=pass_score_label,
         has_pass_criterion=has_pass_criterion,
     )
 
@@ -472,6 +532,8 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
             "1차 합격",
             (
                 f"{pass_count}명 · {pass_rate * 100:.0f}%"
+                if has_pass_criterion and criterion_count == len(scores)
+                else f"{pass_count}/{criterion_count}명 · {pass_rate * 100:.0f}%"
                 if has_pass_criterion
                 else "기준 미설정"
             ),
@@ -629,9 +691,11 @@ def build_exam_analysis_export(*, exam: Any, tenant: Any) -> bytes:
             "DONE": "완료",
         }[analysis_status]
         achievement = achievement_map.get((enrollment_id, int(exam.id)), {})
+        pass_score = candidate_pass_score(candidate)
+        candidate_has_pass_criterion = pass_score > 0
         if score is None:
             verdict = "-"
-        elif not has_pass_criterion:
+        elif not candidate_has_pass_criterion:
             verdict = "기준 미설정"
         elif bool(achievement.get("remediated")):
             verdict = "보충 완료"

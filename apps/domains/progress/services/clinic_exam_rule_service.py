@@ -6,6 +6,10 @@ from apps.support.progress.clinic_exam_rule_dependencies import (
     low_confidence_fact_count,
     repeated_wrong_question_ids,
 )
+from apps.support.progress.exam_policy_dependencies import (
+    effective_exam_pass_score,
+    exam_by_id,
+)
 
 
 class ClinicExamRuleService:
@@ -21,6 +25,7 @@ class ClinicExamRuleService:
         *,
         enrollment_id: int,
         exam_id: int,
+        lecture_id: int | None = None,
     ) -> dict:
         reasons: dict = {}
 
@@ -32,7 +37,15 @@ class ClinicExamRuleService:
             exam_id=exam_id,
         )
 
-        pass_score = exam_pass_score(exam_id=exam_id)
+        exam = exam_by_id(exam_id=int(exam_id))
+        pass_score = (
+            effective_exam_pass_score(
+                exam=exam,
+                lecture_id=lecture_id,
+            )
+            if exam is not None
+            else exam_pass_score(exam_id=exam_id)
+        )
 
         if result and result.total_score < pass_score:
             reasons["LOW_SCORE"] = {

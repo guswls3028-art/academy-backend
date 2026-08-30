@@ -76,6 +76,28 @@ def get_primary_session_for_exam(exam_id: int) -> Optional[Any]:
     return qs.order_by("order", "id").first()
 
 
+def get_unambiguous_session_for_exam_lecture(
+    *,
+    exam_id: int,
+    lecture_id: int | None,
+) -> Optional[Any]:
+    """Return the one exact linked session for an exam and lecture.
+
+    Shared exams may be connected to several lectures. Clinic and correction
+    state must never borrow another lecture's session, and multiple matching
+    sessions are ambiguous, so both cases fail closed with ``None``.
+    """
+    if lecture_id is None:
+        return None
+
+    candidates = list(
+        get_sessions_for_exam(int(exam_id))
+        .filter(lecture_id=int(lecture_id))
+        .order_by("order", "id")[:2]
+    )
+    return candidates[0] if len(candidates) == 1 else None
+
+
 # ---------------------------------------------------------------------
 # ✅ NEW: Canonical API (ProgressPipeline용)
 # ---------------------------------------------------------------------

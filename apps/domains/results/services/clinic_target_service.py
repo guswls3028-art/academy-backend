@@ -31,6 +31,9 @@ from academy.adapters.db.django.repositories_clinic_targets import (
     regular_homework_for_clinic_target,
 )
 from apps.domains.results.models import Result, ResultFact, ExamAttempt
+from apps.support.results.exam_policy_dependencies import (
+    effective_exam_pass_score,
+)
 
 # ✅ 단일 진실 유틸
 from apps.domains.results.utils.clinic import (
@@ -432,7 +435,10 @@ class ClinicTargetService:
                 continue
 
             exam_id = int(getattr(exam, "id", 0) or 0)
-            cutline = _safe_float(getattr(exam, "pass_score", 0.0), 0.0)
+            cutline = effective_exam_pass_score(
+                exam=exam,
+                lecture_id=getattr(session, "lecture_id", None),
+            )
             exam_max_score = _safe_float(getattr(exam, "max_score", 100.0), 100.0)
             exam_title = _safe_str(getattr(exam, "title", None), "-")
 
@@ -548,7 +554,10 @@ class ClinicTargetService:
                 "reason": "missing",
                 "clinic_reason": "exam",
                 "exam_score": None,
-                "cutline_score": _safe_float(exam.pass_score, 0.0),
+                "cutline_score": effective_exam_pass_score(
+                    exam=exam,
+                    lecture_id=getattr(session, "lecture_id", None),
+                ),
                 "meta_status": "NOT_SUBMITTED",
                 "clinic_link_id": None,
                 "cycle_no": 1,

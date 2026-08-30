@@ -60,6 +60,9 @@ from apps.domains.results.serializers.session_scores import (
     AssessmentCorrectionUpdateSerializer,
     SessionScoreRowSerializer,
 )
+from apps.support.results.exam_policy_dependencies import (
+    exam_pass_score_overrides,
+)
 from apps.support.results.assessment_correction_dependencies import (
     set_teacher_assessment_resolution,
 )
@@ -598,6 +601,12 @@ class SessionScoresView(APIView):
             int(ex.id): float(getattr(ex, "pass_score", 0.0) or 0.0)
             for ex in exams
         }
+        exam_pass_score_map.update(
+            exam_pass_score_overrides(
+                exam_ids=exam_ids,
+                lecture_id=int(session.lecture_id),
+            )
+        )
         exam_max_score_map = {
             int(ex.id): float(getattr(ex, "max_score", 100.0) or 100.0)
             for ex in exams

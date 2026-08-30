@@ -274,6 +274,7 @@ class ClinicTriggerService:
         reasons = ClinicExamRuleService.evaluate(
             enrollment_id=int(enrollment_id),
             exam_id=int(exam_id),
+            lecture_id=getattr(session, "lecture_id", None),
         )
         if not reasons:
             return

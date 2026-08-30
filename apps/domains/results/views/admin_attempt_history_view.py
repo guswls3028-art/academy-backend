@@ -57,6 +57,10 @@ from rest_framework.exceptions import ValidationError
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.api.common.query_params import parse_query_int
+from apps.support.results.exam_policy_dependencies import (
+    effective_exam_pass_score,
+    enrollment_lecture_id,
+)
 from apps.support.results.admin_attempt_history_dependencies import (
     enrollment_belongs_to_tenant,
     get_exam_history_models,
@@ -114,7 +118,14 @@ class AdminAttemptHistoryView(APIView):
         if not exam:
             raise ValidationError("Exam not found for this tenant.")
 
-        pass_score = float(exam.pass_score or 0)
+        lecture_id = enrollment_lecture_id(
+            enrollment_id=enrollment_id,
+            tenant=request.tenant,
+        )
+        pass_score = effective_exam_pass_score(
+            exam=exam,
+            lecture_id=lecture_id,
+        )
         max_score = float(exam.max_score or 100)
 
         # 1️⃣ 1차 점수: Result (성적 산출 SSOT)
@@ -216,7 +227,7 @@ class AdminAttemptHistoryView(APIView):
             "source_type": "exam",
             "source_id": exam_id,
             "source_title": exam.title,
-            "pass_score": exam.pass_score,
+            "pass_score": pass_score,
             "max_score": max_score,
             "attempts": attempt_list,
             "clinic_link_id": clinic_link_id,

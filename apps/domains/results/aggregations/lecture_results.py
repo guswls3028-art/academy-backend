@@ -7,6 +7,9 @@ from django.utils import timezone
 
 from apps.domains.results.utils.clinic import get_clinic_enrollment_ids_for_session
 from apps.domains.results.utils.session_exam import get_exams_for_session
+from apps.support.results.exam_policy_dependencies import (
+    effective_exam_pass_score,
+)
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
 from apps.domains.results.utils.initial_exam_score import (
     load_initial_exam_scores,
@@ -120,6 +123,9 @@ def build_lecture_results_snapshot(
                     latest_results_per_enrollment(
                         target_type="exam",
                         target_id=exid,
+                    ).filter(
+                        enrollment__tenant=getattr(s.lecture, "tenant", None),
+                        enrollment__lecture_id=getattr(s, "lecture_id", None),
                     ).select_related("attempt")
                 )
                 initial_scores = load_initial_exam_scores(
@@ -145,7 +151,10 @@ def build_lecture_results_snapshot(
                     if projected.total_score is not None and not projected.not_submitted
                 ]
 
-                pass_score = _safe_float(getattr(ex, "pass_score", 0.0) or 0.0)
+                pass_score = effective_exam_pass_score(
+                    exam=ex,
+                    lecture_id=getattr(s, "lecture_id", None),
+                )
                 if pass_score > 0:
                     pcount = sum(score >= pass_score for score in scores)
                     fcount = sum(score < pass_score for score in scores)

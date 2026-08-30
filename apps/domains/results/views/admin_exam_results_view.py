@@ -4,8 +4,14 @@ from __future__ import annotations
 from rest_framework.generics import ListAPIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.exceptions import ValidationError
 
+from apps.api.common.query_params import parse_query_int
 from apps.core.permissions import TenantResolvedAndStaff
+from apps.support.results.exam_policy_dependencies import (
+    effective_exam_pass_scores,
+    sessions_by_id_for_tenant,
+)
 from apps.domains.results.models import Result, ResultFact, ExamAttempt
 from apps.domains.results.serializers.admin_exam_result_row import (
     AdminExamResultRowSerializer,
@@ -22,8 +28,6 @@ from apps.support.results.admin_exam_dependencies import (
     regular_active_exam_with_session_exists,
 )
 
-# ✅ 단일 진실 유틸
-from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.results.utils.clinic import get_clinic_enrollment_ids_for_session
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
 from apps.domains.results.views.session_scores_view import _safe_student_name, _get_enrollment_display_fields
@@ -93,8 +97,7 @@ class AdminExamResultsView(ListAPIView):
     - Session↔Exam 매핑 단일화(utils.session_exam)
 
     ⚠️ pass 기준 정의:
-    - 이 화면은 "시험(exam) 단위 결과"이므로
-      pass/fail은 Exam.pass_score 기준으로 제공한다.
+    - 강의별 커트라인이 있으면 해당 기준, 없으면 Exam.pass_score를 제공한다.
     - 세션 종합 통과(SessionProgress.exam_passed)는
       /admin/sessions/... summary API에서 제공하는 것이 정석.
 
@@ -118,12 +121,45 @@ class AdminExamResultsView(ListAPIView):
         ):
             return Result.objects.none()
 
+        exam = get_regular_active_exam_for_tenant_or_none(
+            exam_id=int(exam_id),
+            tenant=self.request.tenant,
+        )
+        if exam is None:
+            return Result.objects.none()
+        linked_lecture_ids = set(
+            exam.sessions.filter(lecture__tenant=self.request.tenant)
+            .values_list("lecture_id", flat=True)
+        )
+        selected_lecture_id = parse_query_int(
+            self.request.query_params,
+            "lecture_id",
+            min_value=1,
+        )
+        if (
+            selected_lecture_id is not None
+            and selected_lecture_id not in linked_lecture_ids
+        ):
+            raise ValidationError(
+                {"lecture_id": "이 시험에 연결되지 않은 강의입니다."}
+            )
+        self.linked_lecture_ids = linked_lecture_ids
+        self.selected_lecture_id = selected_lecture_id
+        scoped_lecture_ids = (
+            {selected_lecture_id}
+            if selected_lecture_id is not None
+            else linked_lecture_ids
+        )
+
         return (
             latest_results_per_enrollment(
                 target_type="exam",
                 target_id=int(exam_id),
             )
-            .filter(enrollment__tenant=self.request.tenant)
+            .filter(
+                enrollment__tenant=self.request.tenant,
+                enrollment__lecture_id__in=scoped_lecture_ids,
+            )
             .exclude(enrollment_id__isnull=True)
             .prefetch_related("items")
             .order_by("enrollment_id")
@@ -136,10 +172,14 @@ class AdminExamResultsView(ListAPIView):
             exam_id=exam_id,
             tenant=request.tenant,
         )
-        pass_score = float(getattr(exam, "pass_score", 0.0) or 0.0) if exam else 0.0
-
         queryset = self.get_queryset()
         results = list(queryset)
+        linked_lecture_ids = getattr(self, "linked_lecture_ids", set())
+        selected_lecture_id = getattr(self, "selected_lecture_id", None)
+        pass_scores_by_lecture = effective_exam_pass_scores(
+            exam=exam,
+            lecture_ids=linked_lecture_ids,
+        ) if exam else {}
         initial_scores = load_initial_exam_scores(
             exam_ids=[exam_id],
             enrollment_ids=[result.enrollment_id for result in results],
@@ -205,10 +245,19 @@ class AdminExamResultsView(ListAPIView):
             )
         }
 
-        # -------------------------------------------------
-        # Session 찾기 (clinic 판단용)
-        # -------------------------------------------------
-        session = get_primary_session_for_exam(exam_id)
+        session_ids_by_lecture = {
+            lecture_id: int(meta["session_id"])
+            for (_mapped_exam_id, lecture_id), meta in correction_session_meta.items()
+            if meta.get("session_id") is not None
+        }
+        sessions_by_id = sessions_by_id_for_tenant(
+            session_ids=set(session_ids_by_lecture.values()),
+            tenant=request.tenant,
+        )
+        sessions_by_lecture = {
+            lecture_id: sessions_by_id.get(session_id)
+            for lecture_id, session_id in session_ids_by_lecture.items()
+        }
 
         # -------------------------------------------------
         # enrollment_id → 최신 attempt/submission 맵 (exam 전체 기준)
@@ -286,11 +335,33 @@ class AdminExamResultsView(ListAPIView):
         # -------------------------------------------------
         # 클리닉 하이라이트 (SSOT 유틸)
         # -------------------------------------------------
-        highlight_map = compute_clinic_highlight_map(
-            tenant=request.tenant,
-            enrollment_ids=set(enrollment_ids_page),
-            session=session,
-        ) if session else {}
+        highlight_map = {}
+        clinic_required_ids = set()
+        enrollment_ids_by_lecture = {}
+        for enrollment_id, enrollment in enrollment_map.items():
+            lecture_id = getattr(enrollment, "lecture_id", None)
+            if lecture_id is not None:
+                enrollment_ids_by_lecture.setdefault(int(lecture_id), set()).add(
+                    int(enrollment_id)
+                )
+        for lecture_id, lecture_enrollment_ids in enrollment_ids_by_lecture.items():
+            session = sessions_by_lecture.get(lecture_id)
+            if session is None:
+                continue
+            highlight_map.update(
+                compute_clinic_highlight_map(
+                    tenant=request.tenant,
+                    enrollment_ids=lecture_enrollment_ids,
+                    session=session,
+                )
+            )
+            clinic_required_ids.update(
+                get_clinic_enrollment_ids_for_session(
+                    session=session,
+                    include_manual=False,
+                )
+                & lecture_enrollment_ids
+            )
 
         # -------------------------------------------------
         # 석차 계산 (전체 응시자 대상, 페이지와 무관)
@@ -336,13 +407,18 @@ class AdminExamResultsView(ListAPIView):
         # -------------------------------------------------
         achievement_items = []
         for r in results:
+            enrollment = enrollment_map.get(int(r.enrollment_id))
+            lecture_id = int(getattr(enrollment, "lecture_id", 0) or 0)
             achievement_items.append({
                 "enrollment_id": int(r.enrollment_id),
                 "exam_id": exam_id,
                 "total_score": projected_scores[int(r.enrollment_id)].total_score,
-                "pass_score": pass_score,
+                "pass_score": pass_scores_by_lecture.get(
+                    lecture_id,
+                    float(getattr(exam, "pass_score", 0.0) or 0.0),
+                ),
                 "attempt_id": getattr(r, "attempt_id", None),
-                "session": session,
+                "session": sessions_by_lecture.get(lecture_id),
             })
         achievement_map = compute_exam_achievement_bulk(
             items=achievement_items,
@@ -352,12 +428,6 @@ class AdminExamResultsView(ListAPIView):
             tenant=request.tenant,
             enrollment_ids=enrollment_ids_page,
         )
-        clinic_required_ids = (
-            get_clinic_enrollment_ids_for_session(session=session, include_manual=False)
-            if session
-            else set()
-        )
-
         # -------------------------------------------------
         # rows 구성 (기존 로직 유지 + 성취 SSOT 필드 주입)
         # -------------------------------------------------
@@ -444,6 +514,11 @@ class AdminExamResultsView(ListAPIView):
                 "final_score": visible_total_score,
 
                 "passed": passed,
+                "lecture_id": int(lecture_id),
+                "pass_score": pass_scores_by_lecture.get(
+                    int(lecture_id),
+                    float(getattr(exam, "pass_score", 0.0) or 0.0),
+                ),
                 "clinic_required": clinic_required,
 
                 # 성취 SSOT 필드
@@ -489,5 +564,6 @@ class AdminExamResultsView(ListAPIView):
             "count": len(rows),
             "next": None,
             "previous": None,
+            "selected_lecture_id": selected_lecture_id,
             "results": serializer.data,
         })

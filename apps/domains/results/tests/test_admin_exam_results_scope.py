@@ -1,11 +1,22 @@
+from io import BytesIO
+
 from django.apps import apps as django_apps
 from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase, TestCase
+from openpyxl import load_workbook
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
-from django.apps import apps as django_apps
 from apps.domains.results.models import ExamAttempt, Result
+from apps.domains.results.aggregations.lecture_results import (
+    build_lecture_results_snapshot,
+)
+from apps.domains.results.aggregations.session_results import (
+    build_session_results_snapshot,
+)
+from apps.domains.results.services.exam_analysis_export import (
+    build_exam_analysis_export,
+)
 from apps.domains.results.services.assessment_correction_status import (
     exam_correction_fingerprint,
 )
@@ -95,8 +106,11 @@ class AdminExamResultsScopeTest(TestCase):
         exam.sessions.add(self.lec_session)
         return exam
 
-    def _get(self, exam_id: int):
-        request = self.factory.get(f"/results/admin/exams/{exam_id}/results/")
+    def _get(self, exam_id: int, *, lecture_id: int | None = None):
+        suffix = f"?lecture_id={lecture_id}" if lecture_id is not None else ""
+        request = self.factory.get(
+            f"/results/admin/exams/{exam_id}/results/{suffix}"
+        )
         request.tenant = self.tenant
         force_authenticate(request, user=self.admin_user)
         return AdminExamResultsView.as_view()(request, exam_id=exam_id)
@@ -362,3 +376,134 @@ class AdminExamResultsScopeTest(TestCase):
         )
         self.assertEqual([row["cohort_size"] for row in rows], [4, 4, 4, 4])
         self.assertEqual([row["percentile"] for row in rows], [25.0, 50.0, 50.0, 100.0])
+
+    def test_shared_exam_filters_results_and_applies_each_lecture_cutoff(self):
+        exam = self._make_exam()
+        lecture_b = self.Lecture.objects.create(
+            tenant=self.tenant,
+            title="B학교 강의",
+            name="B학교 강의",
+            subject="MATH",
+        )
+        session_b = self.Session.objects.create(
+            lecture=lecture_b,
+            order=1,
+            title="1회차",
+        )
+        enrollment_b = self._make_enrollment(
+            self.tenant,
+            lecture_b,
+            "SCOPEB01",
+            "B학교 학생",
+        )
+        exam.sessions.add(session_b)
+        ExamLecturePolicy = django_apps.get_model("exams", "ExamLecturePolicy")
+        ExamLecturePolicy.objects.create(
+            exam=exam,
+            lecture=lecture_b,
+            pass_score=70,
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.enrollment,
+            total_score=65,
+            max_score=100,
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=enrollment_b,
+            total_score=65,
+            max_score=100,
+        )
+        ExamEnrollment = django_apps.get_model("exams", "ExamEnrollment")
+        ExamEnrollment.objects.bulk_create([
+            ExamEnrollment(exam=exam, enrollment=self.enrollment),
+            ExamEnrollment(exam=exam, enrollment=enrollment_b),
+        ])
+
+        overall = self._get(exam.id)
+        filtered = self._get(exam.id, lecture_id=lecture_b.id)
+
+        self.assertEqual(overall.status_code, 200, overall.data)
+        self.assertEqual(overall.data["count"], 2)
+        rows_by_lecture = {
+            row["lecture_id"]: row for row in overall.data["results"]
+        }
+        self.assertEqual(rows_by_lecture[self.lecture.id]["pass_score"], 60.0)
+        self.assertTrue(rows_by_lecture[self.lecture.id]["passed"])
+        self.assertEqual(rows_by_lecture[lecture_b.id]["pass_score"], 70.0)
+        self.assertFalse(rows_by_lecture[lecture_b.id]["passed"])
+        self.assertEqual(
+            {row["cohort_size"] for row in overall.data["results"]},
+            {2},
+        )
+
+        self.assertEqual(filtered.status_code, 200, filtered.data)
+        self.assertEqual(filtered.data["count"], 1)
+        self.assertEqual(filtered.data["results"][0]["lecture_id"], lecture_b.id)
+        self.assertEqual(filtered.data["results"][0]["cohort_size"], 1)
+        self.assertEqual(filtered.data["selected_lecture_id"], lecture_b.id)
+
+        session_a_snapshot = build_session_results_snapshot(
+            session_id=self.lec_session.id,
+        )
+        session_b_snapshot = build_session_results_snapshot(session_id=session_b.id)
+        self.assertEqual(
+            {
+                key: session_a_snapshot["exams"][0][key]
+                for key in (
+                    "pass_score",
+                    "participant_count",
+                    "pass_count",
+                    "fail_count",
+                )
+            },
+            {"pass_score": 60.0, "participant_count": 1, "pass_count": 1, "fail_count": 0},
+        )
+        self.assertEqual(
+            {
+                key: session_b_snapshot["exams"][0][key]
+                for key in (
+                    "pass_score",
+                    "participant_count",
+                    "pass_count",
+                    "fail_count",
+                )
+            },
+            {"pass_score": 70.0, "participant_count": 1, "pass_count": 0, "fail_count": 1},
+        )
+        lecture_b_snapshot = build_lecture_results_snapshot(
+            lecture_id=lecture_b.id,
+            include_exam_level_stats=True,
+        )
+        self.assertEqual(
+            lecture_b_snapshot["sessions"][0]["exams"][0]["participant_count"],
+            1,
+        )
+        self.assertEqual(
+            lecture_b_snapshot["sessions"][0]["exams"][0]["pass_score"],
+            70.0,
+        )
+
+        workbook = load_workbook(BytesIO(build_exam_analysis_export(
+            exam=exam,
+            tenant=self.tenant,
+        )))
+        ranked_sheet = workbook["학생별 등수"]
+        export_by_lecture = {
+            ranked_sheet.cell(row, 4).value: {
+                "pass_score": ranked_sheet.cell(row, 9).value,
+                "verdict": ranked_sheet.cell(row, 10).value,
+            }
+            for row in range(6, 8)
+        }
+        self.assertEqual(
+            export_by_lecture[self.lecture.title],
+            {"pass_score": 60, "verdict": "합격"},
+        )
+        self.assertEqual(
+            export_by_lecture[lecture_b.title],
+            {"pass_score": 70, "verdict": "보충 대상"},
+        )

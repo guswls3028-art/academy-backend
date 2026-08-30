@@ -725,7 +725,7 @@ class ExamResultExcelImportTests(TestCase):
             [],
         )
 
-    def test_question_stats_endpoint_uses_only_current_finalized_attempt(self):
+    def test_question_stats_endpoint_uses_only_first_finalized_attempt(self):
         old_attempt = ExamAttempt.objects.create(
             exam=self.exam,
             enrollment=self.enrollment,
@@ -778,7 +778,7 @@ class ExamResultExcelImportTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.data), 1)
         self.assertEqual(response.data[0]["attempts"], 1)
-        self.assertEqual(response.data[0]["correct"], 0)
+        self.assertEqual(response.data[0]["correct"], 1)
 
     def test_dimensionless_xlsx_is_matched_and_scored(self):
         payload = _without_worksheet_dimension(
@@ -923,21 +923,10 @@ class ExamResultExcelImportTests(TestCase):
             "get",
             f"/results/admin/exams/{self.exam.id}/results/",
         )
-        with patch(
-            "apps.domains.results.views.admin_exam_results_view.compute_exam_rankings",
-            return_value={
-                self.enrollment.id: {
-                    "rank": 1,
-                    "percentile": 1.0,
-                    "cohort_size": 99,
-                    "cohort_avg": 100.0,
-                }
-            },
-        ):
-            list_response = AdminExamResultsView.as_view()(
-                list_request,
-                exam_id=self.exam.id,
-            )
+        list_response = AdminExamResultsView.as_view()(
+            list_request,
+            exam_id=self.exam.id,
+        )
         self.assertEqual(list_response.status_code, 200)
         result_row = list_response.data["results"][0]
         self.assertIsNone(result_row["final_score"])

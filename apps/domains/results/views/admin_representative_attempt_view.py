@@ -20,10 +20,12 @@ from apps.domains.results.guards.score_edit_lease_guard import (
     require_score_edit_scope_available_for_exam,
 )
 
-# ✅ 단일 진실: session 매핑 + progress 트리거
-from apps.domains.results.utils.session_exam import get_primary_session_for_exam
+from apps.domains.results.utils.session_exam import (
+    get_unambiguous_session_for_exam_lecture,
+)
 from apps.support.results.admin_exam_dependencies import (
     dispatch_progress_pipeline,
+    get_enrollment_for_tenant,
     get_latest_session_submission_id,
     get_regular_active_exam_for_tenant,
 )
@@ -134,6 +136,24 @@ class AdminRepresentativeAttemptView(APIView):
 
         enrollment_id = int(enrollment_id)
         attempt_id = int(attempt_id)
+        enrollment = get_enrollment_for_tenant(
+            enrollment_id=enrollment_id,
+            tenant=request.tenant,
+        )
+        if enrollment is None:
+            raise NotFound({"detail": "enrollment not found", "code": "NOT_FOUND"})
+        session = get_unambiguous_session_for_exam_lecture(
+            exam_id=exam_id,
+            lecture_id=getattr(enrollment, "lecture_id", None),
+        )
+        if session is None:
+            return Response(
+                {
+                    "detail": "one exact session is required for this exam and lecture",
+                    "code": "INVALID",
+                },
+                status=drf_status.HTTP_409_CONFLICT,
+            )
 
         attempts_qs = (
             ExamAttempt.objects
@@ -164,13 +184,6 @@ class AdminRepresentativeAttemptView(APIView):
             enrollment_id=enrollment_id,
             attempt_id=attempt_id,
         )
-
-        session = get_primary_session_for_exam(exam_id)
-        if not session:
-            return Response(
-                {"detail": "session not found for this exam; cannot recalculate progress", "code": "INVALID"},
-                status=drf_status.HTTP_409_CONFLICT,
-            )
 
         submission_id = get_latest_session_submission_id(
             enrollment_id=enrollment_id,
