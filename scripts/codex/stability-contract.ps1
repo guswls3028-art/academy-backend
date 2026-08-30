@@ -47,11 +47,11 @@ function Get-AcademyChangeRiskPlan {
     $docsPattern = '^(docs/)|(^|/)(agents|readme(?:[-_.][^/]*)?|conventions|contributing|security|code_of_conduct|changelog|license)\.md$'
     $backendTestPattern = '(^|/)__tests__(/|$)|(^|/)tests?(/|\.py$)|(^|/)test_[^/]+\.py$|_test\.py$'
     $frontendTestPattern = '^e2e/|(^|/)(__tests__|tests?)(/|$)|\.(spec|test)\.[^/]+$|(^|/)test\.[^/]+$'
-    $backendProductPattern = '^(apps/|academy/|manage\.py$)'
+    $backendProductPattern = '^(apps/|academy/|schema/|scripts/lint/|manage\.py$)'
     $backendRuntimeBuildPattern = '^(libs/|docker/|requirements/)'
     $frontendRuntimePattern = '^(src/|public/|functions/)'
     $frontendRuntimeBuildPattern = '^(package\.json$|pnpm-lock\.yaml$|vite\.config\.[^/]+$|tsconfig(?:\.[^/]+)?\.json$|eslint\.config\.[^/]+$|index\.html$)'
-    $backendGovernancePattern = '^((\.github/workflows/)|(scripts/(v1|codex)/)|(docs/(operations|infrastructure)/))'
+    $backendGovernancePattern = '^((\.github/workflows/)|(scripts/(v1|codex|post_deploy_smoke)/)|(docs/(operations|infrastructure)/))'
     $frontendGovernancePattern = '^((\.github/workflows/)|(scripts/guard-deployment-governance\.mjs$)|(scripts/guard-runtime)|(scripts/tests/(visual-audit-workflow|workspace-deployment-contract))|(docs/deployment-operations\.md$))'
     $docsOnly = -not [bool](@($all | Where-Object { $_ -notmatch $docsPattern }).Count)
     $backendProduct = Test-AnyPath $backend $backendProductPattern

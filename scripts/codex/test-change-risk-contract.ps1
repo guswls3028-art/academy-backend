@@ -59,6 +59,19 @@ Assert-Contains $backendProduct.Requirements "failure-first-regression" "product
 Assert-Contains $backendProduct.Requirements "postgresql-tenant-ci" "backend product changes must require PostgreSQL tenant CI"
 Assert-Contains $backendProduct.Gates "backend-core" "backend product changes must include the core local gates"
 
+$backendContractPaths = Get-AcademyChangeRiskPlan `
+    -BackendPaths @(
+        "schema/openapi.json",
+        "schema/generation-baseline.json",
+        "scripts/lint/check_safe_method_writes.py",
+        "scripts/post_deploy_smoke/video_playback_chain.py"
+    ) `
+    -FrontendPaths @()
+Assert-Contains $backendContractPaths.Risks "tenant-data" "API schema and lint paths must retain backend product gates"
+Assert-Contains $backendContractPaths.Risks "deployment-governance" "post-deploy smoke paths must retain deployment governance"
+Assert-Contains $backendContractPaths.Gates "backend-core" "API schema and lint paths must include backend core gates"
+Assert-Contains $backendContractPaths.Gates "backend-deployment-contracts" "post-deploy smoke paths must include deployment contracts"
+
 $frontendProduct = Get-AcademyChangeRiskPlan `
     -BackendPaths @() `
     -FrontendPaths @(

@@ -1,7 +1,7 @@
 # 학생 지원 대리보기·활동 감사 계약
 
-**상태:** Active  
-**최종 확인:** 2026-08-22 KST  
+**상태:** Active
+**최종 확인:** 2026-08-29 KST
 **정본 구현:** `apps/domains/students/views/support_views.py`,
 `apps/domains/students/services/activity.py`, `apps/domains/students/models.py`,
 `apps/core/authentication.py`
@@ -64,8 +64,11 @@
 응시 완료처럼 각 도메인의 별도 상태 전이를 대신하지 않으며 분쟁 확인 시 해당
 정본 데이터와 함께 판단한다. 기록 실패는 학습 화면을 막지 않는다.
 
-과제 선택, 영상 재생 URL 발급, 시험 결과 열람은 검증된 대상 ID와 제목도
-`student_activity.target_open`에 남긴다. 종료 강의의 영상 재생 횟수는 이 학생별
+과제 선택은 `POST .../homework-open/`, 영상 재생 URL 발급은 명시적 playback
+POST, 시험 결과 열람은 `POST .../exam-result-open/`에서 정확한 대상 접근을 다시
+검증한 뒤 ID와 제목을 `student_activity.target_open`에 남긴다. 해당 GET은 모두
+읽기 전용이다. 연결된 학부모의 열람은 허용하되 학생 본인의 활동으로 기록하지
+않는다. 종료 강의의 영상 재생 횟수는 이 학생별
 target 기록만 집계하며 전체 영상 조회수나 다른 학생 기록을 섞지 않는다. 이 세부
 기록 역시 기능 배포 이후부터 쌓이며 과거 횟수를 추정하지 않는다.
 
@@ -89,7 +92,11 @@ target 기록만 집계하며 전체 영상 조회수나 다른 학생 기록을
 - `count`는 이번 응답 건수, `total_count`는 조건 전체 건수이며 `has_more`는 최신
   100건 제한 여부를 뜻한다. 각 결과는 사람이 읽을 수 있는 `actor_label`,
   검증된 `target_label`, 고객지원 확인용 `evidence_id`를 제공한다.
-- 조회 자체는 `student_activity.view` 감사 로그를 남긴다.
+- GET은 읽기 전용이다. backend가 먼저
+  `POST /api/v1/students/<student_id>/activities/view/`를 배포한 뒤 프런트가 조회
+  직전에 같은 필터를 POST한다. 서버는 학생과 교직원 권한을 다시 확인한 뒤
+  `student_activity.view` 감사 로그를 남긴다. legacy GET 감사 fallback은 없으며,
+  감사 POST가 실패하면 활동 내역을 열지 않는다.
 
 ## 실패 동작과 검증
 

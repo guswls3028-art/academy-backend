@@ -7,7 +7,7 @@ from rest_framework.permissions import IsAuthenticated
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.api.common.query_params import parse_query_int
 
-from django.db import IntegrityError, transaction
+from django.db import transaction
 
 from apps.domains.homework.models import HomeworkPolicy
 from apps.domains.homework.serializers import (
@@ -42,32 +42,46 @@ class HomeworkPolicyViewSet(viewsets.ModelViewSet):
         if not tenant:
             return qs_base.none()
 
-        sid = session_id
-
-        # session 존재 및 해당 tenant 소유 여부 검증 (500/잘못된 정책 생성 방지)
-        if not session_exists_for_tenant(session_id=sid, tenant=tenant):
+        # session 존재 및 해당 tenant 소유 여부 검증
+        if not session_exists_for_tenant(session_id=session_id, tenant=tenant):
             return qs_base.none()
+        return qs_base.filter(session_id=session_id)
 
+    @transaction.atomic
+    def create(self, request, *args, **kwargs):
+        tenant = getattr(request, "tenant", None)
         try:
-            with transaction.atomic():
-                obj, _ = HomeworkPolicy.objects.get_or_create(
-                    tenant=tenant,
-                    session_id=sid,
-                    defaults={
-                        "cutline_percent": 80,
-                        "cutline_mode": "PERCENT",
-                        "cutline_value": 80,
-                        "round_unit_percent": 5,
-                        "clinic_enabled": True,
-                        "clinic_on_fail": True,
-                    },
-                )
-        except IntegrityError:
-            # 레이스 컨디션 등으로 create가 실패하면, 이미 만들어진 row를 재조회
-            obj = HomeworkPolicy.objects.filter(tenant=tenant, session_id=sid).first()
-            if not obj:
-                return qs_base.none()
-        return qs_base.filter(id=obj.id)
+            session_id = int(request.data.get("session"))
+        except (TypeError, ValueError):
+            return Response(
+                {"session": "유효한 차시 ID가 필요합니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not tenant or not session_exists_for_tenant(
+            session_id=session_id,
+            tenant=tenant,
+        ):
+            return Response(
+                {"session": "해당 차시를 찾을 수 없습니다."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        policy, created = HomeworkPolicy.objects.get_or_create(
+            tenant=tenant,
+            session_id=session_id,
+            defaults={
+                "cutline_percent": 80,
+                "cutline_mode": "PERCENT",
+                "cutline_value": 80,
+                "round_unit_percent": 5,
+                "clinic_enabled": True,
+                "clinic_on_fail": True,
+            },
+        )
+        return Response(
+            HomeworkPolicySerializer(policy).data,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
 
     @transaction.atomic
     def partial_update(self, request, *args, **kwargs):

@@ -10934,6 +10934,19 @@
         ],
         "type": "object"
       },
+      "PublicViewCount": {
+        "properties": {
+          "view_count": {
+            "minimum": 0,
+            "readOnly": true,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "view_count"
+        ],
+        "type": "object"
+      },
       "Question": {
         "description": "🔧 PATCH:\n- ExamQuestion.region_meta(bbox)가 이미 모델/서비스에서 저장되는데\n  serializer에서 누락되면 프론트에서 하이라이트/오답노트 영역표시 불가.",
         "properties": {
@@ -13769,6 +13782,24 @@
         ],
         "type": "object"
       },
+      "StudentActivityCategory": {
+        "description": "* `login` - login\n* `home` - home\n* `homework` - homework\n* `video` - video\n* `exam` - exam\n* `result` - result\n* `attendance` - attendance\n* `clinic` - clinic\n* `notice` - notice\n* `profile` - profile\n* `fee` - fee\n* `guide` - guide",
+        "enum": [
+          "login",
+          "home",
+          "homework",
+          "video",
+          "exam",
+          "result",
+          "attendance",
+          "clinic",
+          "notice",
+          "profile",
+          "fee",
+          "guide"
+        ],
+        "type": "string"
+      },
       "StudentActivityFeedSchema": {
         "properties": {
           "count": {
@@ -13820,7 +13851,7 @@
             "$ref": "#/components/schemas/ActorModeEnum"
           },
           "category": {
-            "$ref": "#/components/schemas/StudentActivityItemSchemaCategoryEnum"
+            "$ref": "#/components/schemas/StudentActivityCategory"
           },
           "device_class": {
             "$ref": "#/components/schemas/DeviceClassEnum"
@@ -13859,24 +13890,6 @@
         ],
         "type": "object"
       },
-      "StudentActivityItemSchemaCategoryEnum": {
-        "description": "* `login` - login\n* `home` - home\n* `homework` - homework\n* `video` - video\n* `exam` - exam\n* `result` - result\n* `attendance` - attendance\n* `clinic` - clinic\n* `notice` - notice\n* `profile` - profile\n* `fee` - fee\n* `guide` - guide",
-        "enum": [
-          "login",
-          "home",
-          "homework",
-          "video",
-          "exam",
-          "result",
-          "attendance",
-          "clinic",
-          "notice",
-          "profile",
-          "fee",
-          "guide"
-        ],
-        "type": "string"
-      },
       "StudentActivityRecordSchemaRequest": {
         "properties": {
           "device_class": {
@@ -13891,6 +13904,37 @@
           "device_class",
           "screen_id"
         ],
+        "type": "object"
+      },
+      "StudentActivityViewAuditSchemaRequest": {
+        "properties": {
+          "category": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/StudentActivityCategory"
+              },
+              {
+                "$ref": "#/components/schemas/BlankEnum"
+              }
+            ]
+          },
+          "days": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DaysEnum"
+              }
+            ],
+            "default": 30
+          },
+          "include_support": {
+            "default": false,
+            "type": "boolean"
+          },
+          "query": {
+            "maxLength": 80,
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "StudentCreate": {
@@ -14686,6 +14730,18 @@
         "required": [
           "lecture",
           "student"
+        ],
+        "type": "object"
+      },
+      "StudentExamResultOpenSchemaRequest": {
+        "properties": {
+          "exam_id": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "exam_id"
         ],
         "type": "object"
       },
@@ -30236,6 +30292,46 @@
         ]
       }
     },
+    "/api/v1/landing-public/board/{id}/view/": {
+      "post": {
+        "description": "Record an intentional detail open without mutating the GET request.",
+        "operationId": "landing_public_board_view_create",
+        "parameters": [
+          {
+            "description": "public board post을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicViewCount"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "landing-public"
+        ]
+      }
+    },
     "/api/v1/landing-public/matchup-showcase/": {
       "get": {
         "description": "공개 매치업 적중보고서 게시판.\n\nlist/retrieve/pdf_stream/preview_image: 비로그인 OK (PUBLISHED + window 만 노출 / EXPIRED는 카드만)\npublish/unpublish/destroy/partial_update: staff (owner/admin) only\n\nxframe_exempt: pdf_stream 학생 카톡 iframe embed 용. DRF action method-level\n@method_decorator는 dispatch 우회되어 미작동 — class-level dispatch decorator로 강제.\n(commit 4638d55a)",
@@ -30496,6 +30592,46 @@
         ]
       }
     },
+    "/api/v1/landing-public/matchup-showcase/{id}/view/": {
+      "post": {
+        "description": "공개 매치업 적중보고서 게시판.\n\nlist/retrieve/pdf_stream/preview_image: 비로그인 OK (PUBLISHED + window 만 노출 / EXPIRED는 카드만)\npublish/unpublish/destroy/partial_update: staff (owner/admin) only\n\nxframe_exempt: pdf_stream 학생 카톡 iframe embed 용. DRF action method-level\n@method_decorator는 dispatch 우회되어 미작동 — class-level dispatch decorator로 강제.\n(commit 4638d55a)",
+        "operationId": "landing_public_matchup_showcase_view_create",
+        "parameters": [
+          {
+            "description": "public matchup showcase을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicViewCount"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "landing-public"
+        ]
+      }
+    },
     "/api/v1/landing-public/problem-review-showcase/": {
       "get": {
         "description": "Public, tenant-scoped snapshots of teacher-reviewed exam analyses.",
@@ -30608,6 +30744,47 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PublicProblemReviewShowcase"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          },
+          {}
+        ],
+        "tags": [
+          "landing-public"
+        ]
+      }
+    },
+    "/api/v1/landing-public/problem-review-showcase/{id}/view/": {
+      "post": {
+        "description": "Public, tenant-scoped snapshots of teacher-reviewed exam analyses.",
+        "operationId": "landing_public_problem_review_showcase_view_create",
+        "parameters": [
+          {
+            "description": "public problem review showcase을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicViewCount"
                 }
               }
             },
@@ -31396,6 +31573,46 @@
         "responses": {
           "200": {
             "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "landing-public"
+        ]
+      }
+    },
+    "/api/v1/landing-public/showcase/{id}/view/": {
+      "post": {
+        "description": "공개 시험 성적 showcase.\n\nlist/retrieve: 비로그인 OK (published 만, expired 시 list 메타만)\npublish/unpublish/refresh/destroy: staff only",
+        "operationId": "landing_public_showcase_view_create",
+        "parameters": [
+          {
+            "description": "public exam showcase을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicViewCount"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [
@@ -43868,7 +44085,7 @@
     },
     "/api/v1/student/video/videos/{video_id}/playback/": {
       "get": {
-        "description": "GET /student/video/videos/{video_id}/playback/",
+        "description": "GET access check / POST playback bootstrap for one student video.",
         "operationId": "student_video_videos_playback_retrieve",
         "parameters": [
           {
@@ -43894,6 +44111,43 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/StudentVideoPlaybackOrAccessCheck"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "student"
+        ]
+      },
+      "post": {
+        "description": "GET access check / POST playback bootstrap for one student video.",
+        "operationId": "student_video_videos_playback_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "video_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentVideoPlayback"
                 }
               }
             },
@@ -44819,6 +45073,55 @@
             "multipart/form-data": {
               "schema": {
                 "$ref": "#/components/schemas/StudentActivityRecordSchemaRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentActivityAcceptedSchema"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      }
+    },
+    "/api/v1/students/me/activity/exam-result-open/": {
+      "post": {
+        "description": "Record an exam-result open only after exact result access succeeds.",
+        "operationId": "students_exam_result_open_activity_record",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentExamResultOpenSchemaRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentExamResultOpenSchemaRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentExamResultOpenSchemaRequest"
               }
             }
           },
@@ -46361,6 +46664,64 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/StudentActivityFeedSchema"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      }
+    },
+    "/api/v1/students/{student_id}/activities/view/": {
+      "post": {
+        "description": "Record an explicit staff access to one student's activity timeline.",
+        "operationId": "students_activity_view_audit_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentActivityViewAuditSchemaRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentActivityViewAuditSchemaRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentActivityViewAuditSchemaRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentActivityAcceptedSchema"
                 }
               }
             },

@@ -20,6 +20,8 @@ from .account_notification_views import StudentAccountNotificationLogView
 from .support_views import (
     StudentActivityRecordView,
     StudentActivityView,
+    StudentActivityViewAuditView,
+    StudentExamResultOpenActivityView,
     StudentHomeworkOpenActivityView,
     StudentSupportSessionEndView,
     StudentSupportSessionRevokeView,
@@ -41,7 +43,9 @@ __all__ = [
     "SendExistingCredentialsView",
     "StudentAccountNotificationLogView",
     "StudentActivityView",
+    "StudentActivityViewAuditView",
     "StudentActivityRecordView",
+    "StudentExamResultOpenActivityView",
     "StudentHomeworkOpenActivityView",
     "StudentSupportSessionEndView",
     "StudentSupportSessionRevokeView",

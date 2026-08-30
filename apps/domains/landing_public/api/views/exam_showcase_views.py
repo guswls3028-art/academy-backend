@@ -11,6 +11,7 @@ from datetime import date
 
 from django.db.models import Q
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -19,6 +20,7 @@ from apps.core.permissions import TenantResolved, TenantResolvedAndStaff, is_eff
 
 from ...models import PublicExamShowcase
 from ...services.exam_showcase_builder import build_showcase_snapshot
+from ..serializers import PublicViewCountSerializer
 
 
 class PublicExamShowcaseViewSet(viewsets.GenericViewSet):
@@ -31,7 +33,7 @@ class PublicExamShowcaseViewSet(viewsets.GenericViewSet):
     queryset = PublicExamShowcase.objects.all()
 
     def get_permissions(self):
-        if self.action in ("list", "retrieve"):
+        if self.action in ("list", "retrieve", "record_view"):
             return [TenantResolved()]
         return [TenantResolvedAndStaff()]
 
@@ -91,12 +93,6 @@ class PublicExamShowcaseViewSet(viewsets.GenericViewSet):
         # expired 시 rows 노출 차단 (staff 만 열람 가능). list 와 동일한 _viewer_is_staff 사용.
         viewer_is_staff = self._viewer_is_staff(request)
 
-        # view_count + (작성자 본인 제외 추후). P2 audit: refresh로 stale -1 회피.
-        if not viewer_is_staff:
-            from django.db.models import F
-            PublicExamShowcase.objects.filter(pk=obj.pk).update(view_count=F("view_count") + 1)
-            obj.refresh_from_db(fields=["view_count"])
-
         payload = {
             "id": obj.id,
             "title": obj.title,
@@ -112,6 +108,17 @@ class PublicExamShowcaseViewSet(viewsets.GenericViewSet):
             "rows": obj.rows if (viewer_is_staff or not expired) else [],
         }
         return Response(payload)
+
+    @extend_schema(request=None, responses={200: PublicViewCountSerializer})
+    @action(detail=True, methods=["post"], url_path="view")
+    def record_view(self, request, *args, **kwargs):
+        obj = self.get_object()
+        if not self._viewer_is_staff(request):
+            from django.db.models import F
+
+            PublicExamShowcase.objects.filter(pk=obj.pk).update(view_count=F("view_count") + 1)
+            obj.refresh_from_db(fields=["view_count"])
+        return Response({"view_count": obj.view_count})
 
     @action(detail=False, methods=["post"], url_path="publish")
     def publish(self, request):

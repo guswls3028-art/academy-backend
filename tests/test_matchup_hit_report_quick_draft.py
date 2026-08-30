@@ -54,6 +54,53 @@ class HitReportQuickDraftTest(TestCase):
             meta={"source_type": source_type},
         )
 
+    def test_get_missing_report_is_read_only_and_requires_explicit_start(self):
+        exam_doc = self._document("새 시험지", "school_exam_pdf")
+        request = RequestFactory().get(
+            f"/api/v1/matchup/documents/{exam_doc.id}/hit-report-draft/",
+        )
+        request.user = self.user
+        request.tenant = self.tenant
+
+        response = HitReportDraftView().get(request, exam_doc.id)
+        payload = json.loads(response.content)
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(payload["code"], "hit_report_not_initialized")
+        self.assertFalse(
+            MatchupHitReport.objects.filter(
+                tenant=self.tenant,
+                document=exam_doc,
+                author=self.user,
+            ).exists()
+        )
+
+    def test_post_starts_report_once(self):
+        exam_doc = self._document("새 시험지", "school_exam_pdf")
+        MatchupProblem.objects.create(
+            tenant=self.tenant,
+            document=exam_doc,
+            number=1,
+            text="시험 문제",
+        )
+        request = RequestFactory().post(
+            f"/api/v1/matchup/documents/{exam_doc.id}/hit-report-draft/?mode=quick",
+        )
+        request.user = self.user
+        request.tenant = self.tenant
+
+        response = HitReportDraftView().post(request, exam_doc.id)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            MatchupHitReport.objects.filter(
+                tenant=self.tenant,
+                document=exam_doc,
+                author=self.user,
+            ).count(),
+            1,
+        )
+
     def test_quick_mode_returns_report_shell_and_existing_selection_without_candidates(self):
         exam_doc = self._document("시험지", "school_exam_pdf")
         ref_doc = self._document("학원 대비자료", "academy_workbook")

@@ -35,6 +35,7 @@ $developmentOidc = Get-Content -LiteralPath (
 $requiredProductionMarkers = @(
     "environment: production",
     "prepare-build:",
+    "tests/test_critical_academy_journey.py",
     "build-runtime-images:",
     "needs: [detect-changes, prepare-build, build-runtime-images]",
     "fail-fast: false",
@@ -54,6 +55,7 @@ foreach ($marker in $requiredProductionMarkers) {
 foreach ($marker in @(
     "Backend static and migration contract",
     "Backend Django smoke and deployment contracts",
+    "scripts/lint/check_safe_method_writes.py",
     "--allow-contract-review",
     "permissions:",
     "contents: read"
@@ -61,6 +63,9 @@ foreach ($marker in @(
     if (-not $qualityWorkflow.Contains($marker)) {
         $failures += "Backend quality workflow is missing marker: $marker"
     }
+}
+if (-not $productionWorkflow.Contains("scripts/lint/check_safe_method_writes.py")) {
+    $failures += "Production workflow is missing the safe-method write boundary."
 }
 if (-not $productionWorkflow.Contains('ARGS+=(--allow-contract)')) {
     $failures += "Production workflow is missing the explicit contract execution marker."

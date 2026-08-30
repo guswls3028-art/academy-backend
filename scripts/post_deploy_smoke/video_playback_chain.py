@@ -66,8 +66,8 @@ def _req(method: str, url: str, *, headers: dict | None = None, body: bytes | No
         return e.code, e.read(), dict(e.headers or {})
 
 
-def _post_json(url: str, payload: dict, *, headers: dict | None = None) -> tuple[int, dict]:
-    body = json.dumps(payload).encode("utf-8")
+def _post_json(url: str, payload: dict | None, *, headers: dict | None = None) -> tuple[int, dict]:
+    body = json.dumps(payload or {}).encode("utf-8")
     h = {"Content-Type": "application/json"}
     if headers:
         h.update(headers)
@@ -155,7 +155,11 @@ def find_first_video(token: str) -> tuple[int, int, int]:
 def fetch_play_url(token: str, video_id: int, enrollment_id: int | None) -> str:
     qp = f"?enrollment={enrollment_id}" if enrollment_id else ""
     url = f"{API_URL}/api/v1/student/video/videos/{video_id}/playback/{qp}"
-    status, body = _get_json(url, token=token)
+    status, body = _post_json(
+        url,
+        None,
+        headers={"Authorization": f"Bearer {token}"},
+    )
     if status != 200:
         raise SmokeFail(f"playback endpoint {status}: {body}")
     play_url = body.get("play_url") or body.get("hls_url")

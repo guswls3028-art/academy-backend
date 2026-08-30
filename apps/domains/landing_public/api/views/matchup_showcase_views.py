@@ -29,6 +29,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.clickjacking import xframe_options_exempt
 from django.utils.decorators import method_decorator
+from drf_spectacular.utils import extend_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
@@ -50,6 +51,7 @@ from apps.support.landing_public.matchup_showcase_dependencies import (
 )
 
 from ...models import PublicMatchupShowcase
+from ..serializers import PublicViewCountSerializer
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +102,7 @@ class PublicMatchupShowcaseViewSet(viewsets.GenericViewSet):
     queryset = PublicMatchupShowcase.objects.all()
 
     def get_permissions(self):
-        if self.action in ("list", "retrieve", "pdf_stream", "preview_image"):
+        if self.action in ("list", "retrieve", "record_view", "pdf_stream", "preview_image"):
             return [TenantResolved()]
         return [TenantResolvedAndStaff()]
 
@@ -183,13 +185,18 @@ class PublicMatchupShowcaseViewSet(viewsets.GenericViewSet):
     def retrieve(self, request, *args, **kwargs):
         obj = self.get_object()
         viewer_is_staff = _viewer_is_staff(request)
-        # 상세 진입 시 view_count + (staff 본인 제외). serialize 전에 update + refresh.
-        # P2 audit (2026-05-14): 이전엔 serialize 후 update → 응답 view_count -1 stale.
-        if not viewer_is_staff:
+        return Response(self._serialize_card(obj, viewer_is_staff=viewer_is_staff))
+
+    @extend_schema(request=None, responses={200: PublicViewCountSerializer})
+    @action(detail=True, methods=["post"], url_path="view")
+    def record_view(self, request, pk=None):
+        obj = self.get_object()
+        if not _viewer_is_staff(request):
             from django.db.models import F
+
             PublicMatchupShowcase.objects.filter(pk=obj.pk).update(view_count=F("view_count") + 1)
             obj.refresh_from_db(fields=["view_count"])
-        return Response(self._serialize_card(obj, viewer_is_staff=viewer_is_staff))
+        return Response({"view_count": obj.view_count})
 
     @action(detail=True, methods=["get"], url_path="pdf")
     def pdf_stream(self, request, pk=None):

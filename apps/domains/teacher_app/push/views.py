@@ -127,16 +127,21 @@ class PushNotificationConfigView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def get(self, request):
-        config, _ = PushNotificationConfig.objects.get_or_create(
+        config = PushNotificationConfig.objects.filter(
             user=request.user,
-            defaults={"tenant": request.tenant},
-        )
+            tenant=request.tenant,
+        ).first()
+        if config is None:
+            config = PushNotificationConfig(
+                user=request.user,
+                tenant=request.tenant,
+            )
         return Response(PushNotificationConfigSerializer(config).data)
 
     def patch(self, request):
         config, _ = PushNotificationConfig.objects.get_or_create(
             user=request.user,
-            defaults={"tenant": request.tenant},
+            tenant=request.tenant,
         )
         ser = PushNotificationConfigSerializer(config, data=request.data, partial=True)
         ser.is_valid(raise_exception=True)

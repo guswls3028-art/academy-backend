@@ -128,9 +128,9 @@ class YouTubeVideoSourceTests(TestCase):
             show_watermark=False,
         )
 
-        request = self.factory.get(
-            f"/api/v1/student/video/videos/{video.id}/playback/",
-            {"enrollment": enrollment.id},
+        request = self.factory.post(
+            f"/api/v1/student/video/videos/{video.id}/playback/"
+            f"?enrollment={enrollment.id}",
         )
         request.tenant = self.tenant
         force_authenticate(request, user=student_user)
@@ -210,9 +210,14 @@ class YouTubeVideoSourceTests(TestCase):
             get(f"/api/v1/student/video/sessions/{self.session.id}/videos/"),
             session_id=self.session.id,
         )
+        playback_request = self.factory.post(
+            f"/api/v1/student/video/videos/{video.id}/playback/"
+            f"?enrollment={enrollment.id}"
+        )
+        playback_request.tenant = self.tenant
+        force_authenticate(playback_request, user=student_user)
         playback_response = StudentVideoPlaybackView.as_view()(
-            get(f"/api/v1/student/video/videos/{video.id}/playback/"),
-            video_id=video.id,
+            playback_request, video_id=video.id
         )
         home_response = StudentVideoMeView.as_view()(
             get("/api/v1/student/video/me/"),

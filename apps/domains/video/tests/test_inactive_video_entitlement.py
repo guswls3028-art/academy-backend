@@ -201,7 +201,7 @@ class InactiveVideoEntitlementConcurrencyTests(TransactionTestCase):
             close_old_connections()
             tenant = Tenant.objects.get(id=self.tenant.id)
             user = User.objects.get(id=self.student.user_id)
-            request = APIRequestFactory().get(
+            request = APIRequestFactory().post(
                 f"/api/v1/student/video/videos/{self.video.id}/playback/"
                 f"?enrollment={self.enrollment.id}"
             )

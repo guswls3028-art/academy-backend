@@ -660,17 +660,16 @@ python manage.py diagnose_messaging_incident `
 
 ---
 
-## 12. 자동 프로비저닝
+## 12. 명시적 프로비저닝
 
-### AutoSendConfigView._auto_provision
+`GET /api/v1/messaging/auto-send/`는 완전한 읽기 요청이다. 누락된
+트리거는 `enabled=false`인 가상 기본값으로 응답하며 `AutoSendConfig`나
+`MessageTemplate`을 만들지 않는다. 따라서 설정 화면 열기, 새로고침, 사전
+가져오기가 자동발송을 켜거나 과거 트리거를 되살릴 수 없다.
 
-출처: `views.py:892-930`
-
-- 테넌트가 처음 자동발송 설정에 접근 시 1회 실행 (configs가 하나도 없으면 트리거)
-- `default_templates.py:get_default_templates(tenant.name)` 으로 기본 템플릿 생성
-- `{academy_name}` 플레이스홀더를 tenant.name으로 치환
-- 기본 설정: `enabled=True`, `message_mode="alimtalk"`
-- 자유양식 템플릿(`freeform_*`)은 AutoSendConfig 생성 없이 MessageTemplate만 생성 (유효 트리거가 아님)
+기본 템플릿과 설정 행의 생성·갱신은 아래
+`ProvisionDefaultTemplatesView` POST에서만 일어난다. `{academy_name}` 치환,
+기본 본문, 자유양식 템플릿 처리도 이 명시적 변경 요청 안에서만 수행한다.
 
 ### 기본 템플릿 목록
 
@@ -686,7 +685,7 @@ freeform_general, freeform_grades, freeform_lecture, freeform_exam, freeform_ass
 
 출처: `views.py:977`
 
-POST로 기존 기본 템플릿 리셋 가능. 이름이 기본값과 동일한 템플릿은 최신 기본값으로 덮어쓰기. 사용자가 새로 만든 템플릿은 유지.
+POST로 기존 기본 템플릿 리셋 가능. 이름이 기본값과 동일한 템플릿은 최신 기본값으로 덮어쓰기. 사용자가 새로 만든 템플릿은 유지. 새 자동발송 설정은 안전 기본값인 `enabled=false`로 생성한다.
 
 ---
 

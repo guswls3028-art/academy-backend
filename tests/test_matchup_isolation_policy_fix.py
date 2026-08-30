@@ -342,13 +342,13 @@ def test_hit_report_draft_returns_candidates_from_split_exam_problem(tenant, aut
         doc_title="중대부고 수업자료",
     )
 
-    request = RequestFactory().get(
+    request = RequestFactory().post(
         f"/api/v1/matchup/documents/{exam_doc.id}/hit-report-draft/"
     )
     request.user = author
     request.tenant = tenant
 
-    response = HitReportDraftView().get(request, exam_doc.id)
+    response = HitReportDraftView().post(request, exam_doc.id)
     payload = json.loads(response.content)
 
     assert response.status_code == 200

@@ -171,7 +171,7 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
             query.append("access_check=true")
         if query:
             path += f"?{'&'.join(query)}"
-        request = self.factory.get(path)
+        request = self.factory.get(path) if access_check else self.factory.post(path)
         if selected_student_id is not None:
             request.META["HTTP_X_STUDENT_ID"] = str(selected_student_id)
         request.tenant = self.tenant
@@ -409,6 +409,21 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
 
         self.assertEqual(response.status_code, 400, response.data)
         self.assertIn("access_check", response.data)
+        self.assertFalse(VideoPlaybackSession.objects.exists())
+        self.video.refresh_from_db()
+        self.assertEqual(self.video.view_count, 0)
+
+    def test_playback_get_requires_explicit_post_without_side_effects(self):
+        request = self.factory.get(
+            f"/api/v1/student/video/videos/{self.video.id}/playback/"
+            f"?enrollment={self.target_enrollment.id}"
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.user)
+
+        response = StudentVideoPlaybackView.as_view()(request, video_id=self.video.id)
+
+        self.assertEqual(response.status_code, 405, response.data)
         self.assertFalse(VideoPlaybackSession.objects.exists())
         self.video.refresh_from_db()
         self.assertEqual(self.video.view_count, 0)
@@ -1004,7 +1019,7 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
             granted_by_reference=f"user:{staff.id}",
             expires_at=timezone.now() + timedelta(hours=2),
         )
-        request = self.factory.get(
+        request = self.factory.post(
             f"/api/v1/student/video/videos/{self.video.id}/playback/"
         )
         request.tenant = self.tenant

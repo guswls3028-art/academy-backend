@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from django.db.models import Q
+from django.http import Http404
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema
 from rest_framework import serializers
@@ -16,12 +17,14 @@ from apps.core.models import OpsAuditLog
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.core.services.ops_audit import record_audit
 from apps.domains.enrollment.selectors import active_homework_assignment_for_student
+from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
 from apps.core.models.user import user_display_username
 from apps.domains.students.models import Student, StudentSupportSession
 from apps.domains.students.services.activity import (
     record_student_screen_view,
     record_student_target_open,
 )
+from apps.support.student_app.results_summary import get_student_exam_result_data
 
 
 ACTIVITY_CATEGORIES = (
@@ -99,6 +102,21 @@ class StudentSupportSessionEndedSchema(serializers.Serializer):
 
 class StudentHomeworkOpenSchema(serializers.Serializer):
     homework_id = serializers.IntegerField(min_value=1)
+
+
+class StudentExamResultOpenSchema(serializers.Serializer):
+    exam_id = serializers.IntegerField(min_value=1)
+
+
+class StudentActivityViewAuditSchema(serializers.Serializer):
+    days = serializers.ChoiceField(choices=(7, 30, 90), default=30)
+    category = serializers.ChoiceField(
+        choices=ACTIVITY_CATEGORIES,
+        required=False,
+        allow_blank=True,
+    )
+    include_support = serializers.BooleanField(default=False)
+    query = serializers.CharField(required=False, allow_blank=True, max_length=80)
 
 
 def _student_for_staff(request, student_id: int) -> Student | None:
@@ -273,23 +291,6 @@ class StudentActivityView(APIView):
                 }
             )
 
-        record_audit(
-            request,
-            action="student_activity.view",
-            target_tenant=request.tenant,
-            target_user=student.user,
-            summary=f"학생 활동 조회: {student.name}",
-            payload={
-                "student_id": student.id,
-                "days": days,
-                "category": category,
-                "include_support": include_support,
-                "result_count": len(results),
-                "total_count": total_count,
-                "query": query,
-            },
-        )
-
         return Response(
             {
                 "student": {"id": student.id, "name": student.name},
@@ -302,6 +303,40 @@ class StudentActivityView(APIView):
                 "query": query,
             }
         )
+
+
+class StudentActivityViewAuditView(APIView):
+    """Record an explicit staff access to one student's activity timeline."""
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+
+    @extend_schema(
+        operation_id="students_activity_view_audit_create",
+        request=StudentActivityViewAuditSchema,
+        responses={202: StudentActivityAcceptedSchema},
+    )
+    def post(self, request, student_id: int):
+        student = _student_for_staff(request, student_id)
+        if student is None:
+            return Response({"detail": "학생 정보를 찾을 수 없습니다."}, status=404)
+        serializer = StudentActivityViewAuditSchema(data=request.data or {})
+        serializer.is_valid(raise_exception=True)
+        values = serializer.validated_data
+        record_audit(
+            request,
+            action="student_activity.view",
+            target_tenant=request.tenant,
+            target_user=student.user,
+            summary=f"학생 활동 조회: {student.name}",
+            payload={
+                "student_id": student.id,
+                "days": values["days"],
+                "category": values.get("category", ""),
+                "include_support": values["include_support"],
+                "query": values.get("query", ""),
+            },
+        )
+        return Response({"accepted": True}, status=202)
 
 
 def _end_support_session(*, request, support_session: StudentSupportSession, reason: str) -> bool:
@@ -438,7 +473,7 @@ class StudentHomeworkOpenActivityView(APIView):
         )
         if assignment is None:
             return Response({"detail": "열람할 수 없는 과제입니다."}, status=404)
-        record_student_target_open(
+        accepted = record_student_target_open(
             request=request,
             student=student,
             screen_id="student.assignment.submit",
@@ -446,4 +481,41 @@ class StudentHomeworkOpenActivityView(APIView):
             target_id=assignment.homework_id,
             target_label=assignment.homework.title,
         )
-        return Response({"accepted": True}, status=202)
+        return Response({"accepted": accepted}, status=202)
+
+
+class StudentExamResultOpenActivityView(APIView):
+    """Record an exam-result open only after exact result access succeeds."""
+
+    permission_classes = [IsAuthenticated, IsStudentOrParent]
+
+    @extend_schema(
+        operation_id="students_exam_result_open_activity_record",
+        request=StudentExamResultOpenSchema,
+        responses={202: StudentActivityAcceptedSchema},
+    )
+    def post(self, request):
+        try:
+            exam_id = int((request.data or {}).get("exam_id"))
+        except (TypeError, ValueError):
+            return Response({"detail": "시험 결과를 다시 확인해 주세요."}, status=400)
+        student = get_request_student(request)
+        if student is None or student.tenant_id != request.tenant.id:
+            return Response({"detail": "기록할 수 없는 학생 활동입니다."}, status=403)
+        try:
+            result = get_student_exam_result_data(
+                request,
+                exam_id,
+                tenant=request.tenant,
+            )
+        except Http404:
+            return Response({"detail": "열람할 수 없는 시험 결과입니다."}, status=404)
+        accepted = record_student_target_open(
+            request=request,
+            student=student,
+            screen_id="student.exam.result",
+            target_type="exam",
+            target_id=exam_id,
+            target_label=result.get("exam_title") or result.get("title") or f"시험 #{exam_id}",
+        )
+        return Response({"accepted": accepted}, status=202)

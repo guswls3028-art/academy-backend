@@ -58,6 +58,17 @@ class LandingPublishBackfillTests(TestCase):
         force_authenticate(request, user=self.owner)
         return request
 
+    def test_admin_get_returns_virtual_default_without_creating_landing(self):
+        request = self._auth_request("get", "/api/v1/core/landing/admin/")
+
+        response = LandingAdminView.as_view()(request)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertFalse(LandingPage.objects.filter(tenant=self.tenant).exists())
+        self.assertFalse(response.data["is_published"])
+        self.assertIsNone(response.data["updated_at"])
+        self.assertTrue(response.data["draft_config"]["sections"])
+
     def test_put_persists_backfilled_sections(self):
         request = self._auth_request(
             "put",

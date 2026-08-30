@@ -292,12 +292,19 @@ class HitReportDraftView(View):
 
         # 강사 scope: 같은 시험지에 강사별로 별개 보고서. 작성자 본인 보고서를 가져온다.
         # admin/owner가 doc 진입 시: author=user로 자기 보고서 작성. 기존 다른 강사 보고서는 영향 없음.
-        report, _ = MatchupHitReport.objects.get_or_create(
+        report = MatchupHitReport.objects.filter(
             tenant=request.tenant,
             document=doc,
             author=getattr(request, "user", None),
-            defaults={"title": doc.title or ""},
-        )
+        ).first()
+        if report is None:
+            return JsonResponse(
+                {
+                    "detail": "보고서를 먼저 명시적으로 시작해 주세요.",
+                    "code": "hit_report_not_initialized",
+                },
+                status=404,
+            )
 
         mode = (request.GET.get("mode") or "").strip().lower()
         candidate_problem_ids: list[int] = []
@@ -619,6 +626,22 @@ class HitReportDraftView(View):
                 for p in extra_meta.values()
             ],
         })
+
+    def post(self, request, doc_id):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+        try:
+            doc = MatchupDocument.objects.get(id=doc_id, tenant=request.tenant)
+        except MatchupDocument.DoesNotExist:
+            return JsonResponse({"detail": "Not found"}, status=404)
+
+        MatchupHitReport.objects.get_or_create(
+            tenant=request.tenant,
+            document=doc,
+            author=getattr(request, "user", None),
+            defaults={"title": doc.title or ""},
+        )
+        return self.get(request, doc_id)
 
 
 @method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")

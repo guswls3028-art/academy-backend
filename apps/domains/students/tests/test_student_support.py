@@ -144,6 +144,26 @@ class StudentSupportTests(TestCase):
         self.assertEqual(response.data["count"], 1)
         self.assertEqual(response.data["results"][0]["category"], "video")
         self.assertEqual(response.data["results"][0]["actor_mode"], "student")
+        self.assertFalse(
+            OpsAuditLog.objects.filter(action="student_activity.view").exists()
+        )
+
+        audit = client.post(
+            f"/api/v1/students/{self.student.id}/activities/view/",
+            {
+                "days": 30,
+                "category": "",
+                "include_support": False,
+                "query": "",
+            },
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(audit.status_code, 202, audit.content)
+        event = OpsAuditLog.objects.get(action="student_activity.view")
+        self.assertEqual(event.target_tenant, self.tenant)
+        self.assertEqual(event.target_user, self.student_user)
+        self.assertEqual(event.payload["student_id"], self.student.id)
 
         response = client.get(
             f"/api/v1/students/{self.student.id}/activities/?days=30&include_support=1",
