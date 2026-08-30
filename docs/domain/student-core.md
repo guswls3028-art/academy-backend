@@ -33,9 +33,12 @@ are owned by `student-lifecycle.md`.
 
 Tenant-scoped student, lecture-enrollment, and session-enrollment lists use
 student name ascending with stable ID tie-breakers unless the user explicitly
-chooses another supported ordering. Search, deleted-state, lecture, and session
-scope are applied before this global ordering and pagination. The shared list
-rules are owned by `data-list-ordering.md`.
+chooses another supported ordering. PostgreSQL name keys use explicit Unicode
+codepoint collation instead of the database's default locale, so 가나다 and
+same-name order do not drift between student, lecture, session, and video
+consumers. Search, deleted-state, lecture, and session scope are applied before
+this global ordering and pagination. The shared list rules are owned by
+`data-list-ordering.md`.
 
 ## 1. Canonical Student Graph
 

@@ -21,6 +21,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import OrderingFilter
 
 from apps.core.parsing import parse_bool
+from apps.core.db import student_name_ordering
 from apps.api.common.query_params import parse_query_bool
 from apps.api.common.upload_validation import (
     DEFAULT_MAX_EXCEL_SIZE,
@@ -121,7 +122,12 @@ class StableStudentOrderingFilter(OrderingFilter):
 
         if "id" not in fields:
             ordering.append("-id" if primary_descending else "id")
-        return ordering
+        return [
+            student_name_ordering(descending=item.startswith("-"))
+            if item.lstrip("-") == "name"
+            else item
+            for item in ordering
+        ]
 
 
 class StudentViewSet(ModelViewSet):
@@ -397,7 +403,7 @@ class StudentViewSet(ModelViewSet):
             if descending
             else class_order.asc(nulls_last=True)
         )
-        return queryset.order_by(class_order, "name", "id")
+        return queryset.order_by(class_order, student_name_ordering(), "id")
 
     # ------------------------------
     # Tag 관리

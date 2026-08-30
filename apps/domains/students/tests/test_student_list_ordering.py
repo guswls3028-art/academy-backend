@@ -1,12 +1,15 @@
 from django.contrib.auth import get_user_model
+from django.db import connection
 from django.test import TestCase
 from django.utils import timezone
+from rest_framework.request import Request
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from academy.adapters.db.django import repositories_video as video_repo
 from apps.core.models.tenant import Tenant
 from apps.core.models.tenant_membership import TenantMembership
 from apps.domains.enrollment.selectors import (
+    active_session_enrollments_for_session,
     enrollments_for_tenant,
     session_enrollments_for_tenant,
 )
@@ -87,10 +90,10 @@ class TestStudentListOrdering(TestCase):
             tenant=self.tenant,
             user=user,
             ps_number=f"ORDER-{suffix}",
-            omr_code=f"8800000{suffix}",
+            omr_code=f"88{suffix:06d}",
             name=name,
-            phone=f"0101000000{suffix}",
-            parent_phone=f"0102000000{suffix}",
+            phone=f"0101{suffix:07d}",
+            parent_phone=f"0102{suffix:07d}",
             grade=grade,
         )
 
@@ -206,3 +209,102 @@ class TestStudentListOrdering(TestCase):
             ],
             ["가람", "나래", "하늘"],
         )
+
+    def test_postgres_korean_codepoint_order_is_shared_by_all_rosters(self):
+        if connection.vendor != "postgresql":
+            self.skipTest("PostgreSQL collation contract")
+
+        probes = [
+            self._create_student(name, suffix, grade=1)
+            for suffix, name in enumerate(
+                ("간", "가가", "각", "가", "나", "가가"),
+                start=10,
+            )
+        ]
+        expected_student_ids = [
+            row.id
+            for row in sorted(
+                [self.haneul, self.garam_first, self.narae, self.garam_second, *probes],
+                key=lambda row: (row.name, row.id),
+            )
+        ]
+
+        request = Request(self.factory.get("/api/v1/students/"))
+        request.tenant = self.tenant
+        view = StudentViewSet()
+        view.request = request
+        view.action = "list"
+        view.args = ()
+        view.kwargs = {}
+        queryset = view.filter_queryset(view.get_queryset())
+
+        self.assertIn('COLLATE "C"', str(queryset.query))
+        self.assertEqual(
+            list(queryset.values_list("id", flat=True)),
+            expected_student_ids,
+        )
+
+        lecture = create_lecture_fixture(
+            tenant=self.tenant,
+            title="PostgreSQL 학생 정렬 강의",
+            name="PostgreSQL 학생 정렬 강의",
+            subject="수학",
+        )
+        session = create_session_fixture(
+            lecture=lecture,
+            order=1,
+            title="PostgreSQL 정렬 차시",
+        )
+        enrollments = [
+            create_enrollment_fixture(
+                tenant=self.tenant,
+                student=student,
+                lecture=lecture,
+            )
+            for student in probes
+        ]
+        session_enrollments = [
+            create_session_enrollment_fixture(
+                tenant=self.tenant,
+                session=session,
+                enrollment=enrollment,
+            )
+            for enrollment in enrollments
+        ]
+        expected_enrollment_ids = [
+            enrollment.id
+            for _, enrollment in sorted(
+                zip(probes, enrollments, strict=True),
+                key=lambda pair: (pair[0].name, pair[0].id, pair[1].id),
+            )
+        ]
+        expected_session_ids = [
+            session_enrollment.id
+            for student, enrollment, session_enrollment in sorted(
+                zip(probes, enrollments, session_enrollments, strict=True),
+                key=lambda row: (row[0].name, row[1].id, row[2].id),
+            )
+        ]
+
+        querysets = (
+            (enrollments_for_tenant(self.tenant), expected_enrollment_ids),
+            (session_enrollments_for_tenant(self.tenant), expected_session_ids),
+            (
+                active_session_enrollments_for_session(
+                    tenant=self.tenant,
+                    session_id=session.id,
+                ),
+                expected_session_ids,
+            ),
+            (
+                video_repo.get_enrollments_for_lecture_active(lecture),
+                expected_enrollment_ids,
+            ),
+        )
+        for roster_queryset, expected_ids in querysets:
+            with self.subTest(model=roster_queryset.model.__name__):
+                self.assertIn('COLLATE "C"', str(roster_queryset.query))
+                self.assertEqual(
+                    list(roster_queryset.values_list("id", flat=True)),
+                    expected_ids,
+                )

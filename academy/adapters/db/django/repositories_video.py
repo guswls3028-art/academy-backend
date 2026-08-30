@@ -6,6 +6,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Optional
 
+from apps.core.db import student_name_ordering
+
 if TYPE_CHECKING:
     from apps.domains.video.models import VideoTranscodeJob  # noqa: F401  (forward-ref)
 
@@ -188,7 +190,7 @@ def get_enrollments_for_lecture_active(lecture):
     return (
         Enrollment.objects.filter(lecture=lecture, status="ACTIVE")
         .select_related("student")
-        .order_by("student__name", "student_id", "id")
+        .order_by(student_name_ordering("student__name"), "student_id", "id")
     )
 
 

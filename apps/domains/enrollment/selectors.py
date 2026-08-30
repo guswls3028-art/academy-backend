@@ -5,6 +5,7 @@ from __future__ import annotations
 from django.db.models import Q
 from rest_framework.exceptions import NotFound, ValidationError
 
+from apps.core.db import student_name_ordering
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.support.enrollment.selectors_dependencies import (
     get_exam_enrollment_models,
@@ -30,7 +31,7 @@ def enrollments_for_tenant(tenant):
         .filter(student__deleted_at__isnull=True)
         .exclude(lecture__is_system=True)
         .select_related("student", "lecture")
-        .order_by("student__name", "student_id", "id")
+        .order_by(student_name_ordering("student__name"), "student_id", "id")
     )
 
 
@@ -41,7 +42,11 @@ def session_enrollments_for_tenant(tenant):
         .filter(tenant=tenant)
         .filter(enrollment__student__deleted_at__isnull=True)
         .select_related("session", "enrollment", "enrollment__student")
-        .order_by("enrollment__student__name", "enrollment_id", "id")
+        .order_by(
+            student_name_ordering("enrollment__student__name"),
+            "enrollment_id",
+            "id",
+        )
     )
 
 
@@ -58,7 +63,11 @@ def active_session_enrollments_for_session(*, tenant, session_id: int):
             enrollment__student__deleted_at__isnull=True,
         )
         .select_related("enrollment", "enrollment__student", "enrollment__lecture")
-        .order_by("enrollment__student__name", "enrollment_id", "id")
+        .order_by(
+            student_name_ordering("enrollment__student__name"),
+            "enrollment_id",
+            "id",
+        )
     )
 
 
