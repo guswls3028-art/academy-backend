@@ -238,6 +238,31 @@ class SendMessageViewTests(TestCase):
         self.assertEqual(kwargs["target_type"], "parent")
         self.assertEqual(kwargs["target_id"], self.student.id)
 
+    def test_grade_message_to_student_is_rejected_before_dispatch(self):
+        request = self.factory.post(
+            "/api/v1/messaging/send/",
+            data={
+                "send_to": "student",
+                "student_ids": [self.student.id],
+                "raw_body": "성적표 안내입니다.",
+                "block_category": "grades",
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+        request.user = self.admin
+        request.tenant = self.tenant
+
+        with patch(
+            "apps.domains.messaging.services.enqueue_alimtalk",
+            return_value=True,
+        ) as enqueue_alimtalk:
+            response = self._send(request)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["code"], "grade_recipient_policy")
+        enqueue_alimtalk.assert_not_called()
+
     def test_score_entry_category_overrides_reused_clinic_copy_envelope(self):
         clinic_copy = MessageTemplate.objects.create(
             tenant=self.tenant,

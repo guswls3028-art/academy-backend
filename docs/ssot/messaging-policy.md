@@ -1,4 +1,4 @@
-# 메시징/알림톡 운영 정책 SSOT (2026-08-29 갱신)
+# 메시징/알림톡 운영 정책 SSOT (2026-08-30 갱신)
 
 ## 정책 분류 체계
 
@@ -63,6 +63,7 @@
 6. **fallback 금지.** exact trigger의 공용 승인 템플릿 또는 명시 unified category 템플릿이 없으면 발송하지 않는다.
 7. **비알림톡 입력 실패 폐쇄.** SMS/LMS와 알 수 없는 `message_mode`를 알림톡으로 보정하지 않는다. 신규 코드에는 SMS 발송·enqueue 호환 callable이나 `sms_allowed` capability를 만들지 않는다.
 8. **클리닉 하원과 학습 완료 분리.** `clinic_check_out`은 `checked_out_at`, `clinic_self_study_completed`는 `completed_at`을 소유한다. 하원 trigger는 exact 승인 템플릿이 준비되기 전 통합 봉투에 임의 매핑하거나 다른 클리닉 trigger로 대체하지 않는다.
+9. **성적 알림은 보호자 전용이며 미확정 상태를 추정하지 않는다.** `grades` 수동 발송과 `exam_score_published`·`monthly_report_generated` 미리보기는 `send_to=parent`만 허용한다. 점수가 `null`이면 교사가 `NOT_SUBMITTED`를 명시한 경우에만 미응시·미제출로 표시하고, 그 외 미입력 항목이 하나라도 있으면 성적 발송 진입점에서 실패 폐쇄한다. 미입력을 0점·불합격·보충 필요로 변환하지 않는다.
 
 ## 클리닉 일정 알림 활성화
 
