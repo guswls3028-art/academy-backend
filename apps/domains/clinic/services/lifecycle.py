@@ -15,6 +15,7 @@ from apps.domains.clinic.models import (
     SessionParticipantPlanItem,
 )
 from apps.support.clinic.session_dependencies import (
+    active_students_for_clinic_tenant,
     active_enrolled_lecture_ids_for_student,
     cancel_pending_clinic_participant_reminders,
     clinic_enrollment_for_tenant,
@@ -55,6 +56,12 @@ class ParticipantTransitionResult:
 class ParticipantWriteResult:
     participant: SessionParticipant
     notification: ClinicNotificationEvent | None = None
+
+
+@dataclass(frozen=True)
+class ParticipantBulkWriteResult:
+    participants: tuple[SessionParticipant, ...]
+    notifications: tuple[ClinicNotificationEvent, ...]
 
 
 STAFF_STATUS_TRANSITIONS = {
@@ -913,6 +920,78 @@ def create_participant(
     return ParticipantWriteResult(
         participant=participant,
         notification=_reservation_notification(participant),
+    )
+
+
+@transaction.atomic
+def create_participants_bulk(
+    *,
+    tenant,
+    session_ids: list[int],
+    student_ids: list[int],
+    request_student=None,
+    student_request_memo: str = "",
+    memo: str = "",
+    preferred_start_time=None,
+    preferred_end_time=None,
+) -> ParticipantBulkWriteResult:
+    """Create the complete same-day session/student selection or create nothing."""
+    requested_session_ids = [int(session_id) for session_id in session_ids]
+    sessions = list(
+        Session.objects
+        .filter(tenant=tenant, id__in=requested_session_ids)
+        .select_for_update()
+        .prefetch_related("target_lectures")
+        .order_by("date", "start_time", "id")
+    )
+    if len(sessions) != len(requested_session_ids):
+        raise NotFound("선택한 클리닉 시간대를 찾을 수 없습니다.")
+    if len({session.date for session in sessions}) != 1:
+        raise ValidationError(
+            {"session_ids": "한 번에 신청하는 시간대는 같은 날짜여야 합니다."}
+        )
+
+    if request_student is not None:
+        if student_ids:
+            raise PermissionDenied("다른 학생의 클리닉 예약을 신청할 수 없습니다.")
+        students = [request_student]
+    else:
+        if not student_ids:
+            raise ValidationError({"student_ids": "추가할 학생을 한 명 이상 선택해 주세요."})
+        requested_student_ids = [int(student_id) for student_id in student_ids]
+        students = list(
+            active_students_for_clinic_tenant(tenant)
+            .filter(id__in=requested_student_ids)
+            .select_for_update()
+            .order_by("id")
+        )
+        if len(students) != len(requested_student_ids):
+            raise NotFound("선택한 학생을 찾을 수 없습니다.")
+
+    participants: list[SessionParticipant] = []
+    notifications: list[ClinicNotificationEvent] = []
+    for student in students:
+        for session in sessions:
+            validated_data = {
+                "session": session,
+                "student": student,
+                "student_request_memo": student_request_memo,
+                "memo": memo,
+                "preferred_start_time": preferred_start_time,
+                "preferred_end_time": preferred_end_time,
+            }
+            result = create_participant(
+                tenant=tenant,
+                validated_data=validated_data,
+                request_student=request_student,
+            )
+            participants.append(result.participant)
+            if result.notification:
+                notifications.append(result.notification)
+
+    return ParticipantBulkWriteResult(
+        participants=tuple(participants),
+        notifications=tuple(notifications),
     )
 
 

@@ -358,6 +358,66 @@ class ClinicSessionParticipantCreateSerializer(serializers.ModelSerializer):
         return attrs
 
 
+class ClinicSessionParticipantBulkCreateSerializer(serializers.Serializer):
+    """Create one student's or several staff-selected students' same-day slots atomically."""
+
+    session_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        min_length=1,
+        max_length=20,
+    )
+    student_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        required=False,
+        default=list,
+        max_length=100,
+    )
+    student_request_memo = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default="",
+        max_length=2000,
+    )
+    memo = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default="",
+        max_length=2000,
+    )
+    preferred_start_time = serializers.TimeField(required=False, allow_null=True)
+    preferred_end_time = serializers.TimeField(required=False, allow_null=True)
+
+    def validate(self, attrs):
+        session_ids = attrs["session_ids"]
+        student_ids = attrs.get("student_ids", [])
+        if len(set(session_ids)) != len(session_ids):
+            raise serializers.ValidationError(
+                {"session_ids": "같은 시간대를 중복해서 선택할 수 없습니다."}
+            )
+        if len(set(student_ids)) != len(student_ids):
+            raise serializers.ValidationError(
+                {"student_ids": "같은 학생을 중복해서 선택할 수 없습니다."}
+            )
+        participant_count = len(session_ids) * max(len(student_ids), 1)
+        if participant_count > 500:
+            raise serializers.ValidationError(
+                {"detail": "한 번에 만들 수 있는 클리닉 예약은 최대 500건입니다."}
+            )
+        if len(session_ids) > 1 and (
+            attrs.get("preferred_start_time") is not None
+            or attrs.get("preferred_end_time") is not None
+        ):
+            raise serializers.ValidationError(
+                {"preferred_time": "희망 시간은 한 시간대만 선택했을 때 입력할 수 있습니다."}
+            )
+        return attrs
+
+
+class ClinicSessionParticipantBulkCreateResponseSerializer(serializers.Serializer):
+    count = serializers.IntegerField()
+    participants = ClinicSessionParticipantSerializer(many=True)
+
+
 class ClinicSessionBulkCreateSerializer(serializers.Serializer):
     """
     POST /clinic/sessions/bulk-create/ 전용 직렬화기
