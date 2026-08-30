@@ -80,6 +80,13 @@ def _is_current_editor(draft, *, user_id: int, client_id: str) -> bool:
     )
 
 
+def _is_same_user_draft(draft, *, session_id: int, user_id: int) -> bool:
+    return (
+        int(draft.session_id) == int(session_id)
+        and int(draft.editor_user_id) == int(user_id)
+    )
+
+
 def _editor_name(user) -> str:
     return str(
         getattr(user, "name", "")
@@ -173,6 +180,12 @@ class ScoreDraftView(APIView):
                 editor_user_id=request.user.id,
                 client_id="",
             ).first()
+        if draft is not None and not _is_current_editor(
+            draft,
+            user_id=request.user.id,
+            client_id=client_id,
+        ):
+            draft = None
         if not draft:
             return Response(
                 _draft_response(
@@ -275,6 +288,15 @@ class ScoreDraftView(APIView):
                 ),
                 None,
             )
+            if draft is None and any(
+                _is_same_user_draft(
+                    item,
+                    session_id=session_id,
+                    user_id=request.user.id,
+                )
+                for item in drafts
+            ):
+                return _locked_response()
             if draft is not None and score_edit_payload_is_invalidated(draft.payload):
                 if not acknowledge_stale:
                     return _stale_response()
@@ -288,11 +310,11 @@ class ScoreDraftView(APIView):
                     session_id=int(session_id),
                     tenant_id=tenant.id,
                     editor_user_id=request.user.id,
-                    client_id=client_id,
+                    client_id="",
                     payload=payload,
                 )
             else:
-                draft.client_id = client_id
+                draft.client_id = ""
                 draft.payload = payload
                 draft.save(update_fields=["client_id", "payload", "updated_at"])
         return Response(
@@ -334,6 +356,12 @@ class ScoreDraftCommitView(APIView):
             )
             if draft is None:
                 return Response(status=204)
+            if not _is_current_editor(
+                draft,
+                user_id=request.user.id,
+                client_id=client_id,
+            ):
+                return _locked_response()
             if (
                 not release_lease
                 and score_edit_payload_is_invalidated(draft.payload)
