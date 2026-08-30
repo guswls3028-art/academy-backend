@@ -378,6 +378,67 @@ def homework_submission_is_teacher_reviewed(
     ).exists()
 
 
+def homework_submission_review_map(
+    *,
+    tenant,
+    enrollment_ids: set[int],
+    homework_id: int,
+) -> dict[int, dict[str, Any]]:
+    """Return the teacher-owned review projection for homework submissions."""
+    if not enrollment_ids:
+        return {}
+
+    normalized_ids = {int(enrollment_id) for enrollment_id in enrollment_ids}
+    from apps.domains.homework_results.models import HomeworkScore
+    from apps.domains.progress.models import AssessmentCorrection
+
+    correction_map = {
+        int(correction.enrollment_id): correction
+        for correction in AssessmentCorrection.objects.filter(
+            tenant=tenant,
+            enrollment_id__in=normalized_ids,
+            source_type=AssessmentCorrection.SourceType.HOMEWORK,
+            source_id=int(homework_id),
+        )
+    }
+    score_map = {}
+    for score in (
+        HomeworkScore.objects.filter(
+            enrollment_id__in=normalized_ids,
+            enrollment__tenant=tenant,
+            homework_id=int(homework_id),
+            homework__tenant=tenant,
+        )
+        .only("enrollment_id", "updated_at", "attempt_index")
+        .order_by("enrollment_id", "-attempt_index", "-updated_at", "-id")
+    ):
+        score_map.setdefault(int(score.enrollment_id), score)
+
+    review_map: dict[int, dict[str, Any]] = {}
+    for enrollment_id in normalized_ids:
+        score = score_map.get(enrollment_id)
+        correction = correction_map.get(enrollment_id)
+        manual_completed = bool(correction and correction.completed)
+        review_source = "score" if score else "manual" if manual_completed else None
+        reviewed_at = (
+            score.updated_at
+            if score
+            else correction.completed_at
+            if manual_completed
+            else None
+        )
+        review_map[enrollment_id] = {
+            "teacher_reviewed": bool(score or manual_completed),
+            "teacher_review_source": review_source,
+            "teacher_review_note": correction.note if manual_completed else "",
+            "teacher_reviewed_at": reviewed_at.isoformat() if reviewed_at else None,
+            "teacher_review_updated_at": (
+                correction.updated_at.isoformat() if correction else None
+            ),
+        }
+    return review_map
+
+
 def validate_exam_enrollment_candidate(
     *,
     tenant,

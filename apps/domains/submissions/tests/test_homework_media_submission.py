@@ -8,6 +8,7 @@ from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db.models.query import QuerySet
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
@@ -23,6 +24,7 @@ from apps.domains.lectures.test_support import (
 )
 from apps.domains.students.test_support import create_student_fixture
 from apps.domains.submissions.models import Submission, SubmissionMedia
+from apps.domains.submissions.services import dispatcher
 from apps.domains.submissions.views.homework_submission_media_view import (
     HomeworkSubmissionMediaCollectionView,
     HomeworkSubmissionMediaDetailView,
@@ -30,6 +32,9 @@ from apps.domains.submissions.views.homework_submission_media_view import (
 )
 from apps.domains.submissions.views.homework_submissions_list_view import (
     HomeworkSubmissionsListView,
+)
+from apps.domains.submissions.views.pending_submissions_view import (
+    PendingSubmissionsView,
 )
 from apps.support.results.admin_student_grades_dependencies import (
     submitted_homework_keys_for_grades,
@@ -732,6 +737,8 @@ class HomeworkSubmissionMediaTests(TestCase):
         self.assertEqual(listed.data[0]["files"][0]["error_message"], "analysis failed")
         self.assertNotIn("object_key", listed.data[0]["files"][0])
         self.assertNotIn("file_key", listed.data[0])
+        self.assertFalse(listed.data[0]["teacher_reviewed"])
+        self.assertIsNone(listed.data[0]["teacher_review_source"])
 
         preview_request = self._request(
             "get",
@@ -760,6 +767,86 @@ class HomeworkSubmissionMediaTests(TestCase):
             media_id=str(failed_media.id),
         )
         self.assertEqual(failed_preview.status_code, 409, failed_preview.data)
+
+        AssessmentCorrection = django_apps.get_model("progress", "AssessmentCorrection")
+        correction = AssessmentCorrection.objects.create(
+            tenant=self.tenant,
+            enrollment=self.enrollment,
+            session=self.session,
+            source_type=AssessmentCorrection.SourceType.HOMEWORK,
+            source_id=self.homework.id,
+            completed=True,
+            completed_at=timezone.now(),
+            note="제출 파일 직접 확인",
+            updated_by=self.teacher,
+        )
+        reviewed_request = self._request(
+            "get",
+            f"/api/v1/submissions/submissions/homework/{self.homework.id}/",
+            user=self.teacher,
+        )
+        reviewed = HomeworkSubmissionsListView.as_view()(
+            reviewed_request,
+            homework_id=self.homework.id,
+        )
+        self.assertEqual(reviewed.status_code, 200, reviewed.data)
+        self.assertTrue(reviewed.data[0]["teacher_reviewed"])
+        self.assertEqual(reviewed.data[0]["teacher_review_source"], "manual")
+        self.assertEqual(reviewed.data[0]["teacher_review_note"], "제출 파일 직접 확인")
+        self.assertEqual(
+            reviewed.data[0]["teacher_review_updated_at"],
+            correction.updated_at.isoformat(),
+        )
+
+        create_homework_score_fixture(
+            enrollment=self.enrollment,
+            session=self.session,
+            homework=self.homework,
+            score=10,
+            max_score=10,
+            passed=True,
+            attempt_index=1,
+        )
+        scored_request = self._request(
+            "get",
+            f"/api/v1/submissions/submissions/homework/{self.homework.id}/",
+            user=self.teacher,
+        )
+        scored = HomeworkSubmissionsListView.as_view()(
+            scored_request,
+            homework_id=self.homework.id,
+        )
+        self.assertEqual(scored.status_code, 200, scored.data)
+        self.assertEqual(scored.data[0]["teacher_review_source"], "score")
+
+    @patch("apps.domains.submissions.services.homework_media.upload_fileobj_to_r2")
+    def test_homework_media_stays_manual_and_is_excluded_from_auto_inbox(
+        self,
+        upload_fileobj_to_r2,
+    ):
+        created = self._post(file=_jpeg("manual-review.jpg"))
+        self.assertEqual(created.status_code, 201, created.data)
+        parent = Submission.objects.get(media_files__id=int(created.data["id"]))
+
+        with (
+            patch.object(dispatcher, "dispatch_job") as dispatch_job,
+            patch.object(dispatcher, "start_ai_worker_instance") as start_worker,
+        ):
+            dispatcher.dispatch_submission(parent)
+
+        parent.refresh_from_db()
+        self.assertEqual(parent.status, Submission.Status.SUBMITTED)
+        dispatch_job.assert_not_called()
+        start_worker.assert_not_called()
+
+        request = self._request(
+            "get",
+            "/api/v1/submissions/submissions/pending/?filter=pending",
+            user=self.teacher,
+        )
+        response = PendingSubmissionsView.as_view()(request)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data, [])
 
     @patch(
         "apps.domains.submissions.views.homework_submission_media_view.generate_presigned_get_url",

@@ -88,6 +88,12 @@
 | `NEEDS_IDENTIFICATION` | 학생 식별 필요 | AI/OMR이 학생 매칭 실패 | 수동 매칭 완료(→ANSWERS_READY) |
 | `SUPERSEDED` | 재응시로 대체됨 | 새 제출이 기존 제출을 대체 | 종단 상태 |
 
+사진·동영상 숙제 제출은 이 자동 처리 상태기의 사용자 경로에서 제외한다. 업로드 뒤
+`SUBMITTED`와 파일을 보존하고 AI dispatch·공용 제출함에는 넣지 않으며, 과제 상세에서
+교사가 직접 확인한다. 교사 확인은 `AssessmentCorrection`이 소유하고 점수 입력은
+`HomeworkScore`가 계속 소유하므로, 숙제 파일 확인만을 위해 `DONE`으로 위장 전이하지
+않는다. 기존 제출·점수·파일은 이 경계 변경으로 삭제하거나 재작성하지 않는다.
+
 #### 허용 전이 (STATUS_FLOW) — 검증 엔진: `transition.py`
 
 런타임 호출부는 `transition.py`를 직접 호출하지 않는다. 상태 변경 public API는

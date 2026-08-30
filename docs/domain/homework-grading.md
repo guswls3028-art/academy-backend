@@ -184,13 +184,23 @@ X를 나중에 다시 맞힌 뒤에도 남기려면 O·복습으로 바꾼다. �
 - 교직원 제출 목록은 자식 파일별 상태·오류를 반환하되 저장 키는 반환하지 않는다.
   미리보기는 같은 tenant의 교직원 또는 소유 학생만 서버가 10분짜리 서명 URL을
   발급하며, 실패·업로드 중·삭제 파일은 준비되지 않은 것으로 거부한다.
+- 사진·동영상 숙제 제출은 자동검사 대기함이나 AI 작업으로 보내지 않는다. 부모
+  `Submission`은 `submitted` 상태와 원본 파일을 그대로 보존하고, 교사는 과제 상세의
+  제출관리에서 직접 미리본 뒤 확인 완료를 기록한다. 공용 제출함은 시험 OMR 처리만
+  다루며 기존 숙제 제출 행·파일·점수는 삭제하거나 변환하지 않는다.
+- 직접 확인은 기존 `AssessmentCorrection`을 사용해 점수와 독립적으로 저장한다.
+  확인 완료·취소는 `expected_updated_at`으로 다른 화면의 판정을 덮어쓰지 않으며,
+  완료 뒤에는 학생의 파일 추가·삭제를 잠근다. 이미 `HomeworkScore`가 있으면 점수
+  입력을 검수 완료의 더 강한 근거로 표시하고 제출관리에서는 확인 취소를 제공하지
+  않는다.
 
 | Method | Path | 역할 |
 |--------|------|------|
 | GET/POST | `/submissions/submissions/homework/{homework_id}/media/` | 본인 파일 목록·파일 하나 업로드. 여러 파일은 독립 요청으로 부분 성공을 보존 |
 | DELETE | `/submissions/submissions/homework/{homework_id}/media/{media_id}/` | 검수 전 본인 파일 soft remove |
 | GET | `/submissions/submissions/homework/{homework_id}/media/{media_id}/preview/` | 권한 확인 뒤 짧은 미리보기 URL 발급 |
-| GET | `/submissions/submissions/homework/{homework_id}/` | 교직원 학생별 제출과 ordered `files` 검수 목록 |
+| GET | `/submissions/submissions/homework/{homework_id}/` | 교직원 학생별 제출, ordered `files`, 직접 검수 상태 목록 |
+| PATCH | `/results/admin/sessions/{session_id}/score-correction/` | `source_type=homework`인 교사 확인 완료·취소. 점수는 변경하지 않음 |
 
 | Method | Path | 역할 |
 |--------|------|------|
