@@ -12,7 +12,7 @@ from academy.adapters.db.django.repositories_progress_inputs import (
     get_session_with_lecture,
     get_submission_progress_target_for_update,
     has_unresolved_clinic_link,
-    list_enrollment_ids_with_exam_result,
+    list_exam_result_progress_enrollments,
     list_sessions_for_exam,
     list_sessions_for_homework,
     list_unresolved_homework_source_ids,
@@ -123,7 +123,22 @@ class ProgressPipelineService:
                 logger.warning("progress pipeline: no sessions matched exam_id=%s (submission_id=%s)", target_id, submission_id)
                 return
 
-            for s in sessions:
+            matching_sessions = self._sessions_for_lecture(
+                sessions=sessions,
+                lecture_id=int(target.lecture_id),
+            )
+            if not matching_sessions:
+                logger.warning(
+                    "progress pipeline: no linked session matches enrollment lecture "
+                    "(exam_id=%s, submission_id=%s, enroll=%s, lecture=%s)",
+                    target_id,
+                    submission_id,
+                    enroll_id,
+                    target.lecture_id,
+                )
+                return
+
+            for s in matching_sessions:
                 self._recompute_for_session(enrollment_id=int(enroll_id), session=s, exam_id=target_id)
 
             return
@@ -151,10 +166,9 @@ class ProgressPipelineService:
     # Internal: exam-based
     # ---------------------------------------------------------
     def _apply_by_exam(self, *, exam_id: int) -> None:
-        # 누가 봐도 "이 시험을 본 사람들"만 recompute
-        enroll_ids = list_enrollment_ids_with_exam_result(int(exam_id))
+        progress_enrollments = list_exam_result_progress_enrollments(int(exam_id))
 
-        if not enroll_ids:
+        if not progress_enrollments:
             logger.info("progress pipeline: no enrollments for exam_id=%s", exam_id)
             return
 
@@ -163,9 +177,26 @@ class ProgressPipelineService:
             logger.warning("progress pipeline: no sessions matched exam_id=%s", exam_id)
             return
 
-        for enroll_id in enroll_ids:
-            for s in sessions:
-                self._recompute_for_session(enrollment_id=int(enroll_id), session=s, exam_id=exam_id)
+        for progress_enrollment in progress_enrollments:
+            matching_sessions = self._sessions_for_lecture(
+                sessions=sessions,
+                lecture_id=int(progress_enrollment.lecture_id),
+            )
+            if not matching_sessions:
+                logger.warning(
+                    "progress pipeline: no linked session matches result enrollment lecture "
+                    "(exam_id=%s, enroll=%s, lecture=%s)",
+                    exam_id,
+                    progress_enrollment.enrollment_id,
+                    progress_enrollment.lecture_id,
+                )
+                continue
+            for s in matching_sessions:
+                self._recompute_for_session(
+                    enrollment_id=int(progress_enrollment.enrollment_id),
+                    session=s,
+                    exam_id=exam_id,
+                )
 
     # ---------------------------------------------------------
     # Mapping helpers (defensive)
@@ -176,6 +207,14 @@ class ProgressPipelineService:
         없으면 fallback 시도.
         """
         return list_sessions_for_exam(int(exam_id))
+
+    @staticmethod
+    def _sessions_for_lecture(*, sessions: list[Any], lecture_id: int) -> list[Any]:
+        return [
+            session
+            for session in sessions
+            if int(getattr(session, "lecture_id", 0) or 0) == int(lecture_id)
+        ]
 
     def _find_sessions_for_homework(self, *, homework_id: int) -> list[Any]:
         """
