@@ -246,8 +246,11 @@ tenant가 없거나 다른 tenant의 시험이면 거부한다. 이미 분리 �
 
 **시험 → 채점·결과 → 학생별 결과**는 1차 점수 석차와 현재 최종점수를
 구분한다. `GET /results/admin/exams/{exam_id}/results/`의 `ranking_score`가
-`rank`의 기준이고 `final_score`는 대표 결과의 현재 점수다. 재시험·정정으로 두
-값이 다르면 화면은 1차 점수를 주값, 최종점수를 보조값으로 함께 표시한다.
+`rank`의 기준이다. 현재 대표 `Result.attempt_id`가 1차 attempt와 같으면 서술형
+확정분까지 반영된 canonical `Result.total_score`/`max_score`가
+`ranking_score`와 `final_score`의 공통 원본이다. 현재 대표가 재시험 attempt이면
+보존된 1차 snapshot을 두 필드에 사용해 재시험 점수가 1차 결과 목록을 덮지 않는다.
+등수도 이 화면에 표시하는 같은 점수 집합으로 다시 계산한다.
 
 1차 `ExamAttempt.meta.initial_snapshot`이 없는 과거 행은
 `backfill_initial_snapshot`으로 복구한다. 이 명령은 append-only 1차 attempt의

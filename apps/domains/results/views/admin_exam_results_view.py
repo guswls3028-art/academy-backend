@@ -28,10 +28,10 @@ from apps.domains.results.utils.clinic import get_clinic_enrollment_ids_for_sess
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
 from apps.domains.results.views.session_scores_view import _safe_student_name, _get_enrollment_display_fields
 from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
-from apps.domains.results.utils.ranking import compute_exam_rankings
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement_bulk
 from apps.domains.results.utils.exam_absence import current_exam_absence_counts
 from apps.domains.results.utils.initial_exam_score import (
+    InitialExamScore,
     load_initial_exam_scores,
     project_initial_exam_score,
 )
@@ -144,15 +144,24 @@ class AdminExamResultsView(ListAPIView):
             exam_ids=[exam_id],
             enrollment_ids=[result.enrollment_id for result in results],
         )
-        projected_scores = {
-            int(result.enrollment_id): project_initial_exam_score(
+        projected_scores = {}
+        for result in results:
+            enrollment_id = int(result.enrollment_id)
+            projected = project_initial_exam_score(
                 state=initial_scores.get((exam_id, int(result.enrollment_id))),
                 fallback_score=result.total_score,
                 fallback_max_score=result.max_score,
                 fallback_recorded_at=result.submitted_at or result.created_at,
             )
-            for result in results
-        }
+            if result.attempt_id == projected.attempt_id:
+                projected = InitialExamScore(
+                    total_score=float(result.total_score or 0.0),
+                    max_score=float(result.max_score or 0.0),
+                    not_submitted=projected.not_submitted,
+                    attempt_id=projected.attempt_id,
+                    recorded_at=projected.recorded_at,
+                )
+            projected_scores[enrollment_id] = projected
 
         # -------------------------------------------------
         # enrollment_id → student_name (Enrollment 단일 진실)
@@ -286,10 +295,41 @@ class AdminExamResultsView(ListAPIView):
         # -------------------------------------------------
         # 석차 계산 (전체 응시자 대상, 페이지와 무관)
         # -------------------------------------------------
-        rank_map = compute_exam_rankings(
-            exam_id=exam_id,
-            tenant=request.tenant,
+        ranked_scores = sorted(
+            (
+                (enrollment_id, float(projected.total_score))
+                for enrollment_id, projected in projected_scores.items()
+                if not projected.not_submitted and projected.total_score is not None
+            ),
+            key=lambda row: (-row[1], row[0]),
         )
+        rank_map = {}
+        cohort_size = len(ranked_scores)
+        cohort_avg = (
+            round(sum(score for _, score in ranked_scores) / cohort_size, 2)
+            if cohort_size
+            else 0.0
+        )
+        previous_score = None
+        current_rank = 0
+        for position, (enrollment_id, score) in enumerate(
+            ranked_scores,
+            start=1,
+        ):
+            if previous_score is None or score != previous_score:
+                current_rank = position
+                previous_score = score
+            rank_map[enrollment_id] = {
+                "rank": current_rank,
+                "ranking_score": score,
+                "percentile": (
+                    100.0
+                    if cohort_size <= 1
+                    else round((current_rank / cohort_size) * 100, 1)
+                ),
+                "cohort_size": cohort_size,
+                "cohort_avg": cohort_avg,
+            }
 
         # -------------------------------------------------
         # 성취/클리닉 상태 일괄 계산 (N+1 방지)
