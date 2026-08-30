@@ -575,7 +575,7 @@ class HomeworkSubmissionMediaTests(TestCase):
         self.assertEqual(response.data["code"], "HOMEWORK_MEDIA_REVIEWED")
 
     @patch("apps.domains.submissions.services.homework_media.upload_fileobj_to_r2")
-    def test_student_can_append_file_after_teacher_score(
+    def test_student_upload_is_locked_after_passing_teacher_score(
         self,
         upload_fileobj_to_r2,
     ):
@@ -597,14 +597,94 @@ class HomeworkSubmissionMediaTests(TestCase):
             passed=True,
             attempt_index=1,
         )
+        submission_count = Submission.objects.count()
+        media_count = SubmissionMedia.objects.count()
+
         response = self._post(file=_jpeg("reviewed-score.jpg"))
+
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertEqual(response.data["code"], "HOMEWORK_MEDIA_REVIEWED")
+        upload_fileobj_to_r2.assert_not_called()
+        self.assertEqual(Submission.objects.count(), submission_count)
+        self.assertEqual(SubmissionMedia.objects.count(), media_count)
+
+    @patch("apps.domains.submissions.services.homework_media.upload_fileobj_to_r2")
+    def test_latest_failed_score_keeps_student_upload_open_after_earlier_pass_and_manual_review(
+        self,
+        upload_fileobj_to_r2,
+    ):
+        AssessmentCorrection = django_apps.get_model("progress", "AssessmentCorrection")
+        create_homework_score_fixture(
+            enrollment=self.enrollment,
+            session=self.session,
+            homework=self.homework,
+            score=10,
+            max_score=10,
+            passed=True,
+            attempt_index=1,
+        )
+        create_homework_score_fixture(
+            enrollment=self.enrollment,
+            session=self.session,
+            homework=self.homework,
+            score=4,
+            max_score=10,
+            passed=False,
+            attempt_index=2,
+        )
+        AssessmentCorrection.objects.create(
+            tenant=self.tenant,
+            enrollment=self.enrollment,
+            session=self.session,
+            source_type=AssessmentCorrection.SourceType.HOMEWORK,
+            source_id=self.homework.id,
+            completed=True,
+            updated_by=self.teacher,
+        )
+
+        response = self._post(file=_jpeg("failed-retry-supplement.jpg"))
 
         self.assertEqual(response.status_code, 201, response.data)
         upload_fileobj_to_r2.assert_called_once()
-        self.assertEqual(SubmissionMedia.objects.count(), 1)
+        self.assertTrue(
+            SubmissionMedia.objects.filter(id=int(response.data["id"])).exists()
+        )
 
     @patch("apps.domains.submissions.services.homework_media.upload_fileobj_to_r2")
-    def test_student_can_append_file_after_completed_correction_with_historic_parent(
+    def test_not_submitted_score_keeps_student_remove_open(
+        self,
+        upload_fileobj_to_r2,
+    ):
+        created = self._post(file=_jpeg("not-submitted.jpg"))
+        create_homework_score_fixture(
+            enrollment=self.enrollment,
+            session=self.session,
+            homework=self.homework,
+            score=None,
+            max_score=10,
+            passed=False,
+            attempt_index=1,
+            meta={"status": "NOT_SUBMITTED"},
+        )
+        request = self._request(
+            "delete",
+            f"/api/v1/submissions/submissions/homework/{self.homework.id}/media/{created.data['id']}/",
+            data={"enrollment_id": self.enrollment.id},
+        )
+
+        response = HomeworkSubmissionMediaDetailView.as_view()(
+            request,
+            homework_id=self.homework.id,
+            media_id=str(created.data["id"]),
+        )
+
+        self.assertEqual(response.status_code, 204, response.data)
+        self.assertIsNotNone(
+            SubmissionMedia.objects.get(id=int(created.data["id"])).removed_at
+        )
+
+    @patch("apps.domains.submissions.services.homework_media.upload_fileobj_to_r2")
+    def test_student_upload_is_locked_after_completed_correction_with_historic_parent(
         self,
         upload_fileobj_to_r2,
     ):
@@ -627,12 +707,16 @@ class HomeworkSubmissionMediaTests(TestCase):
             completed=True,
             updated_by=self.teacher,
         )
+        submission_count = Submission.objects.count()
+        media_count = SubmissionMedia.objects.count()
+
         response = self._post(file=_jpeg("reviewed-correction.jpg"))
 
-        self.assertEqual(response.status_code, 201, response.data)
-        upload_fileobj_to_r2.assert_called_once()
-        self.assertEqual(Submission.objects.count(), 2)
-        self.assertEqual(SubmissionMedia.objects.count(), 1)
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertEqual(response.data["code"], "HOMEWORK_MEDIA_REVIEWED")
+        upload_fileobj_to_r2.assert_not_called()
+        self.assertEqual(Submission.objects.count(), submission_count)
+        self.assertEqual(SubmissionMedia.objects.count(), media_count)
 
     @patch("apps.domains.submissions.services.homework_media.upload_fileobj_to_r2")
     def test_student_cannot_remove_another_students_file(
@@ -808,15 +892,31 @@ class HomeworkSubmissionMediaTests(TestCase):
             correction.updated_at.isoformat(),
         )
 
-        create_homework_score_fixture(
+        failed_score = create_homework_score_fixture(
             enrollment=self.enrollment,
             session=self.session,
             homework=self.homework,
-            score=10,
+            score=4,
             max_score=10,
-            passed=True,
+            passed=False,
             attempt_index=1,
         )
+        failed_request = self._request(
+            "get",
+            f"/api/v1/submissions/submissions/homework/{self.homework.id}/",
+            user=self.teacher,
+        )
+        failed = HomeworkSubmissionsListView.as_view()(
+            failed_request,
+            homework_id=self.homework.id,
+        )
+        self.assertEqual(failed.status_code, 200, failed.data)
+        self.assertFalse(failed.data[0]["teacher_reviewed"])
+        self.assertIsNone(failed.data[0]["teacher_review_source"])
+
+        failed_score.score = 10
+        failed_score.passed = True
+        failed_score.save(update_fields=["score", "passed", "updated_at"])
         scored_request = self._request(
             "get",
             f"/api/v1/submissions/submissions/homework/{self.homework.id}/",
