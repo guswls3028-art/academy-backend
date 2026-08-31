@@ -80,3 +80,9 @@ tenant 안의 현재 상태를 조회하는 용도다. 정책 적용·수업 진
 서비스가 검증한 입력으로만 기록하며 generic POST/PATCH/DELETE로 FK나 상태를 만들거나
 옮기지 않는다. 따라서 member가 임의 enrollment·session·lecture ID를 보낸 쓰기는
 `405`로 실패하고, `ClinicLink`의 별도 lifecycle API는 이 조회 전용 경계와 분리한다.
+
+공유 시험에서 진척을 다시 계산할 때도 `Enrollment.lecture_id`가 강의 소유권 정본이다.
+시험 결과 수강생은 같은 tenant의 실제 시험 응시 대상이어야 하며, 시험에 연결된 차시 중
+그 수강생 강의와 일치하는 차시에만 `SessionProgress`가 만들어진다. `LectureProgress`의
+수강 등록당 하나인 계약을 피하려고 오류를 삼키거나 강의 소유권을 바꾸지 않는다. 맞는
+연결 차시가 없거나 tenant·시험 대상 경계가 맞지 않으면 다른 차시를 추정하지 않는다.

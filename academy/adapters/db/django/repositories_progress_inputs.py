@@ -9,8 +9,15 @@ from typing import Any
 @dataclass(frozen=True)
 class SubmissionProgressTarget:
     enrollment_id: int
+    lecture_id: int
     target_type: str
     target_id: int
+
+
+@dataclass(frozen=True)
+class ExamResultProgressEnrollment:
+    enrollment_id: int
+    lecture_id: int
 
 
 @dataclass(frozen=True)
@@ -32,6 +39,7 @@ def get_session_with_lecture(session_id: int) -> Any | None:
 def get_submission_progress_target_for_update(
     submission_id: int,
 ) -> SubmissionProgressTarget | None:
+    from apps.domains.enrollment.models import Enrollment
     from apps.domains.submissions.models import Submission
 
     submission = (
@@ -44,30 +52,58 @@ def get_submission_progress_target_for_update(
         return None
 
     enrollment_id = getattr(submission, "enrollment_id", None)
+    lecture_id = (
+        Enrollment.objects.filter(id=int(enrollment_id))
+        .values_list("lecture_id", flat=True)
+        .first()
+        if enrollment_id
+        else None
+    )
     target_type = str(getattr(submission, "target_type", "") or "")
     target_id = int(getattr(submission, "target_id", 0) or 0)
-    if not enrollment_id or not target_type or not target_id:
+    if not enrollment_id or not lecture_id or not target_type or not target_id:
         return SubmissionProgressTarget(
             enrollment_id=int(enrollment_id or 0),
+            lecture_id=int(lecture_id or 0),
             target_type=target_type,
             target_id=target_id,
         )
     return SubmissionProgressTarget(
         enrollment_id=int(enrollment_id),
+        lecture_id=int(lecture_id),
         target_type=target_type,
         target_id=target_id,
     )
 
 
-def list_enrollment_ids_with_exam_result(exam_id: int) -> list[int]:
+def list_exam_result_progress_enrollments(
+    exam_id: int,
+) -> list[ExamResultProgressEnrollment]:
+    from apps.domains.exams.models import Exam
     from apps.domains.results.models import Result
 
-    enrollment_ids = (
-        Result.objects.filter(target_type="exam", target_id=int(exam_id))
-        .values_list("enrollment_id", flat=True)
+    exam = Exam.objects.filter(id=int(exam_id)).only("id", "tenant_id").first()
+    if not exam:
+        return []
+
+    rows = (
+        Result.objects.filter(
+            target_type="exam",
+            target_id=int(exam_id),
+            enrollment__tenant_id=int(exam.tenant_id),
+            enrollment__exam_enrollments__exam_id=int(exam_id),
+        )
+        .values_list("enrollment_id", "enrollment__lecture_id")
         .distinct()
     )
-    return [int(value) for value in enrollment_ids if value is not None]
+    return [
+        ExamResultProgressEnrollment(
+            enrollment_id=int(enrollment_id),
+            lecture_id=int(lecture_id),
+        )
+        for enrollment_id, lecture_id in rows
+        if enrollment_id is not None and lecture_id is not None
+    ]
 
 
 def list_sessions_for_exam(exam_id: int) -> list[Any]:
