@@ -1,6 +1,12 @@
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+from unittest import skipUnless
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
 from django.apps import apps
-from django.test import TestCase
+from django.db import close_old_connections, connection
+from django.test import TestCase, TransactionTestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
@@ -168,6 +174,80 @@ class HomeworkQuickPatchScopeTests(TestCase):
         )
         self.assertEqual(response.data["id"], score.id)
         self.assertEqual(score.score, 80)
+
+    def test_quick_patch_uses_cell_version_cas_and_preserves_server_value_on_conflict(self):
+        first = self._quick_patch(
+            {
+                "session_id": self.session.id,
+                "homework_id": self.homework.id,
+                "enrollment_id": self.assigned_enrollment.id,
+                "score": 70,
+                "expected_updated_at": None,
+            }
+        )
+        original_version = first.data["updated_at"]
+
+        winner = self._quick_patch(
+            {
+                "session_id": self.session.id,
+                "homework_id": self.homework.id,
+                "enrollment_id": self.assigned_enrollment.id,
+                "score": 80,
+                "expected_updated_at": original_version,
+            }
+        )
+        self.assertNotEqual(winner.data["updated_at"], original_version)
+
+        conflict = self._quick_patch(
+            {
+                "session_id": self.session.id,
+                "homework_id": self.homework.id,
+                "enrollment_id": self.assigned_enrollment.id,
+                "score": 90,
+                "expected_updated_at": original_version,
+            },
+            expected_status=409,
+        )
+
+        score = HomeworkScore.objects.get(
+            homework=self.homework,
+            session=self.session,
+            enrollment=self.assigned_enrollment,
+            attempt_index=1,
+        )
+        self.assertEqual(score.score, 80)
+        self.assertEqual(conflict.data["code"], "SCORE_CELL_CONFLICT")
+        self.assertEqual(conflict.data["server_value"]["score"], 80)
+        self.assertEqual(
+            conflict.data["server_value"]["updated_at"],
+            winner.data["updated_at"],
+        )
+        self.assertEqual(conflict.data["expected_updated_at"], original_version)
+
+    def test_quick_patch_expected_empty_cell_conflicts_with_existing_score(self):
+        existing = HomeworkScore.objects.create(
+            homework=self.homework,
+            session=self.session,
+            enrollment=self.assigned_enrollment,
+            attempt_index=1,
+            score=65,
+            max_score=100,
+        )
+
+        conflict = self._quick_patch(
+            {
+                "session_id": self.session.id,
+                "homework_id": self.homework.id,
+                "enrollment_id": self.assigned_enrollment.id,
+                "score": 75,
+                "expected_updated_at": None,
+            },
+            expected_status=409,
+        )
+
+        existing.refresh_from_db()
+        self.assertEqual(existing.score, 65)
+        self.assertEqual(conflict.data["server_value"]["score"], 65)
 
     def test_uses_configured_homework_max_score_when_request_omits_it(self):
         self.homework.meta = {"default_max_score": 43}
@@ -341,3 +421,120 @@ class HomeworkQuickPatchScopeTests(TestCase):
         score.refresh_from_db()
         self.assertEqual(score.score, 55)
         self.assertIsNone(score.meta)
+
+
+class HomeworkQuickPatchCreateRaceTests(TransactionTestCase):
+    reset_sequences = True
+
+    def setUp(self):
+        self.factory = APIRequestFactory()
+        self.tenant = Tenant.objects.create(name="CAS Race", code="casrace", is_active=True)
+        self.admin = User.objects.create_user(
+            username="casrace-admin",
+            password="test1234",
+            tenant=self.tenant,
+            is_staff=True,
+        )
+        TenantMembership.ensure_active(tenant=self.tenant, user=self.admin, role="admin")
+        self.lecture = Lecture.objects.create(
+            tenant=self.tenant,
+            title="CAS Race Lecture",
+            name="CAS Race Lecture",
+            subject="MATH",
+        )
+        self.session = Session.objects.create(lecture=self.lecture, order=1, title="1회차")
+        self.homework = Homework.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title="CAS Race Homework",
+        )
+        student_user = User.objects.create_user(
+            username="casrace-student",
+            password="test1234",
+            tenant=self.tenant,
+        )
+        student = Student.objects.create(
+            tenant=self.tenant,
+            user=student_user,
+            name="CAS Race Student",
+            ps_number="CAS-RACE",
+            omr_code="CASRACE",
+        )
+        self.enrollment = Enrollment.objects.create(
+            tenant=self.tenant,
+            lecture=self.lecture,
+            student=student,
+            status="ACTIVE",
+        )
+        HomeworkAssignment.objects.create(
+            tenant=self.tenant,
+            homework=self.homework,
+            session=self.session,
+            enrollment=self.enrollment,
+        )
+        ScoreEditDraft.objects.create(
+            session=self.session,
+            tenant=self.tenant,
+            editor_user=self.admin,
+            payload={"client_id": "cas-race-tab", "changes": []},
+        )
+
+    def _request(self, score):
+        close_old_connections()
+        tenant = Tenant.objects.get(pk=self.tenant.pk)
+        user = User.objects.get(pk=self.admin.pk)
+        request = self.factory.patch(
+            "/homework/scores/quick/",
+            {
+                "session_id": self.session.id,
+                "homework_id": self.homework.id,
+                "enrollment_id": self.enrollment.id,
+                "score": score,
+                "expected_updated_at": None,
+            },
+            format="json",
+            HTTP_X_SCORE_EDITOR_CLIENT="cas-race-tab",
+            HTTP_X_SCORE_SESSION_ID=str(self.session.id),
+        )
+        request.tenant = tenant
+        force_authenticate(request, user=user)
+        try:
+            response = HomeworkScoreViewSet.as_view({"patch": "quick_patch"})(request)
+            return response.status_code, dict(response.data)
+        finally:
+            close_old_connections()
+
+    @skipUnless(connection.vendor == "postgresql", "unique create race requires PostgreSQL")
+    def test_expected_empty_cell_create_race_allows_one_winner_and_one_conflict(self):
+        barrier = Barrier(2)
+        original_create = HomeworkScore.objects.create
+
+        def racing_create(*args, **kwargs):
+            barrier.wait(timeout=10)
+            return original_create(*args, **kwargs)
+
+        # The lease contract is covered separately. Bypass its row lock here so both
+        # requests reach the post-lease empty-cell create window at the same time.
+        with (
+            patch(
+                "apps.domains.homework_results.views.homework_score_viewset."
+                "require_homework_score_edit_lease"
+            ),
+            patch.object(HomeworkScore.objects, "create", side_effect=racing_create),
+        ):
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                results = list(executor.map(self._request, [71, 82]))
+
+        self.assertEqual(sorted(status for status, _ in results), [200, 409])
+        winner = next(data for status, data in results if status == 200)
+        conflict = next(data for status, data in results if status == 409)
+        score = HomeworkScore.objects.get(
+            homework=self.homework,
+            session=self.session,
+            enrollment=self.enrollment,
+            attempt_index=1,
+        )
+        self.assertEqual(score.score, winner["score"])
+        self.assertEqual(conflict["code"], "SCORE_CELL_CONFLICT")
+        self.assertEqual(conflict["server_value"]["score"], winner["score"])
+        self.assertEqual(HomeworkScore.objects.count(), 1)

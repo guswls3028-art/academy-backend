@@ -80,13 +80,6 @@ def _is_current_editor(draft, *, user_id: int, client_id: str) -> bool:
     )
 
 
-def _is_same_user_draft(draft, *, session_id: int, user_id: int) -> bool:
-    return (
-        int(draft.session_id) == int(session_id)
-        and int(draft.editor_user_id) == int(user_id)
-    )
-
-
 def _editor_name(user) -> str:
     return str(
         getattr(user, "name", "")
@@ -289,25 +282,19 @@ class ScoreDraftView(APIView):
                 None,
             )
             if draft is None:
-                same_user_draft = next(
-                    (
-                        item
-                        for item in drafts
-                        if _is_same_user_draft(
-                            item,
-                            session_id=session_id,
-                            user_id=request.user.id,
-                        )
-                    ),
-                    None,
-                )
-                if same_user_draft is not None:
+                expired_same_user_drafts = [
+                    item
+                    for item in drafts
+                    if item.updated_at < active_since
+                    and int(item.session_id) == int(session_id)
+                    and int(item.editor_user_id) == int(request.user.id)
+                ]
+                for same_user_draft in expired_same_user_drafts:
                     _, previous_changes = score_edit_payload_parts(
                         same_user_draft.payload
                     )
-                    expired_empty_lease = (
-                        same_user_draft.updated_at < active_since
-                        and not score_edit_payload_is_invalidated(
+                    reusable_empty_lease = (
+                        not score_edit_payload_is_invalidated(
                             same_user_draft.payload
                         )
                         and not previous_changes
@@ -315,9 +302,10 @@ class ScoreDraftView(APIView):
                             same_user_draft.payload
                         ) is None
                     )
-                    if not expired_empty_lease:
+                    if not reusable_empty_lease:
                         return _locked_response()
                     draft = same_user_draft
+                    break
             if draft is not None and score_edit_payload_is_invalidated(draft.payload):
                 if not acknowledge_stale:
                     return _stale_response()
@@ -331,11 +319,11 @@ class ScoreDraftView(APIView):
                     session_id=int(session_id),
                     tenant_id=tenant.id,
                     editor_user_id=request.user.id,
-                    client_id="",
+                    client_id=client_id,
                     payload=payload,
                 )
             else:
-                draft.client_id = ""
+                draft.client_id = client_id
                 draft.payload = payload
                 draft.save(update_fields=["client_id", "payload", "updated_at"])
         return Response(

@@ -926,6 +926,7 @@ class SessionScoresView(APIView):
                         "is_locked": False,
                         "lock_reason": None,
                         "meta": None,
+                        "updated_at": None,
                     }
                     updated_at = None
                 else:
@@ -941,6 +942,7 @@ class SessionScoresView(APIView):
                         "is_locked": bool(hs.is_locked),
                         "lock_reason": hs.lock_reason,
                         "meta": getattr(hs, "meta", None),
+                        "updated_at": hs.updated_at,
                     }
                     updated_at = hs.updated_at
                 block.update(

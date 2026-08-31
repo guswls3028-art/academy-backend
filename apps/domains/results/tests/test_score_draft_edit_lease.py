@@ -117,7 +117,7 @@ class ScoreDraftEditLeaseTests(TestCase):
             session_id=self.session.id,
         )
 
-    def test_same_account_second_tab_remains_exclusive_during_expand_release(self):
+    def test_same_account_tabs_can_select_disjoint_homework_cells_and_see_presence(self):
         first_cell = {
             "type": "homework",
             "enrollmentId": 21,
@@ -145,26 +145,37 @@ class ScoreDraftEditLeaseTests(TestCase):
         )
 
         self.assertEqual(first.status_code, 200)
-        self.assertEqual(second.status_code, 409)
-        self.assertEqual(second.data["code"], "SCORE_EDIT_LOCKED")
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(
+            second.data["active_editors"],
+            [
+                {
+                    "client_id": "tab-a",
+                    "editor_user_id": self.admin_a.id,
+                    "editor_name": "score-lease-a",
+                    "active_cell": first_cell,
+                }
+            ],
+        )
         self.assertEqual(
             ScoreEditDraft.objects.filter(
                 session=self.session,
                 editor_user=self.admin_a,
             ).count(),
-            1,
+            2,
         )
-        request = self._request("patch", self.admin_a, "tab-a")
-        with transaction.atomic():
-            self.assertEqual(
-                require_homework_score_edit_lease(
-                    request,
-                    session_id=self.session.id,
-                    enrollment_id=21,
-                    homework_id=31,
-                ).id,
-                self.session.id,
-            )
+        for client_id, enrollment_id in (("tab-a", 21), ("tab-a-2", 22)):
+            request = self._request("patch", self.admin_a, client_id)
+            with transaction.atomic():
+                self.assertEqual(
+                    require_homework_score_edit_lease(
+                        request,
+                        session_id=self.session.id,
+                        enrollment_id=enrollment_id,
+                        homework_id=31,
+                    ).id,
+                    self.session.id,
+                )
 
     def test_same_homework_cell_presence_conflicts_but_other_cells_remain_available(self):
         occupied_cell = {
@@ -490,8 +501,8 @@ class ScoreDraftEditLeaseTests(TestCase):
         self.assertEqual(empty_heartbeat.status_code, 409)
         self.assertEqual(empty_heartbeat.data["code"], "SCORE_EDIT_STALE")
         duplicated_tab = self._put(self.admin_a, "tab-a-2")
-        self.assertEqual(duplicated_tab.status_code, 409)
-        self.assertEqual(duplicated_tab.data["code"], "SCORE_EDIT_LOCKED")
+        self.assertEqual(duplicated_tab.status_code, 200)
+        self.assertEqual(duplicated_tab.data["changes"], [])
         stale_commit = self._commit(
             self.admin_a,
             "tab-a",
