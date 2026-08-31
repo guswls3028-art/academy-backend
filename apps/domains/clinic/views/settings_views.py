@@ -27,6 +27,11 @@ class ClinicSettingsView(APIView):
 
         use_daily_random = getattr(tenant, "clinic_use_daily_random", False)
         auto_approve_booking = getattr(tenant, "clinic_auto_approve_booking", False)
+        multi_slot_booking_default = getattr(
+            tenant,
+            "clinic_allow_multi_slot_booking_default",
+            False,
+        )
         saved = getattr(tenant, "clinic_idcard_colors", None)
         if not saved or not isinstance(saved, list) or len(saved) < 3:
             saved = ["#ef4444", "#3b82f6", "#22c55e"]
@@ -37,6 +42,7 @@ class ClinicSettingsView(APIView):
             "colors": colors[:3],
             "use_daily_random": use_daily_random,
             "auto_approve_booking": auto_approve_booking,
+            "multi_slot_booking_default": multi_slot_booking_default,
             "saved_colors": saved[:3],
         })
 
@@ -81,10 +87,16 @@ class ClinicSettingsView(APIView):
 
         use_daily_random = getattr(tenant, "clinic_use_daily_random", False)
         auto_approve_booking = getattr(tenant, "clinic_auto_approve_booking", False)
+        multi_slot_booking_default = getattr(
+            tenant,
+            "clinic_allow_multi_slot_booking_default",
+            False,
+        )
         saved = getattr(tenant, "clinic_idcard_colors", None) or ["#ef4444", "#3b82f6", "#22c55e"]
         return Response({
             "colors": get_effective_clinic_colors(tenant),
             "use_daily_random": use_daily_random,
             "auto_approve_booking": auto_approve_booking,
+            "multi_slot_booking_default": multi_slot_booking_default,
             "saved_colors": saved[:3],
         })

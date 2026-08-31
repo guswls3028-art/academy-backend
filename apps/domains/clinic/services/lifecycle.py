@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework.exceptions import APIException, NotFound, PermissionDenied, ValidationError
 
@@ -15,6 +16,7 @@ from apps.domains.clinic.models import (
     SessionParticipantPlanItem,
 )
 from apps.support.clinic.session_dependencies import (
+    active_students_for_clinic_tenant,
     active_enrolled_lecture_ids_for_student,
     cancel_pending_clinic_participant_reminders,
     clinic_enrollment_for_tenant,
@@ -55,6 +57,12 @@ class ParticipantTransitionResult:
 class ParticipantWriteResult:
     participant: SessionParticipant
     notification: ClinicNotificationEvent | None = None
+
+
+@dataclass(frozen=True)
+class ParticipantBulkWriteResult:
+    participants: tuple[SessionParticipant, ...]
+    notifications: tuple[ClinicNotificationEvent, ...]
 
 
 STAFF_STATUS_TRANSITIONS = {
@@ -657,6 +665,20 @@ def _ensure_active_student_for_tenant(*, tenant, student) -> None:
         raise ValidationError({"detail": "삭제된 학생은 클리닉 예약 대상이 될 수 없습니다."})
 
 
+def _lock_active_student_for_booking(*, tenant, student):
+    """Serialize every booking write for one tenant-scoped student."""
+    _ensure_active_student_for_tenant(tenant=tenant, student=student)
+    locked_student = (
+        active_students_for_clinic_tenant(tenant)
+        .select_for_update()
+        .filter(pk=student.pk)
+        .first()
+    )
+    if locked_student is None:
+        raise ValidationError({"detail": "삭제된 학생은 클리닉 예약 대상이 될 수 없습니다."})
+    return locked_student
+
+
 def _validate_student_session_eligibility(*, tenant, student, session) -> None:
     if not session:
         return
@@ -754,31 +776,53 @@ def _assert_no_active_duplicate(
     session=None,
     requested_date=None,
     requested_start_time=None,
+    exclude_participant_id=None,
 ) -> None:
     active_statuses = [
         SessionParticipant.Status.PENDING,
         SessionParticipant.Status.BOOKED,
     ]
+    active = SessionParticipant.objects.filter(
+        tenant=tenant,
+        student=student,
+        status__in=active_statuses,
+    )
+    if exclude_participant_id is not None:
+        active = active.exclude(pk=exclude_participant_id)
+
     if session:
-        exists = SessionParticipant.objects.filter(
+        exists = active.filter(
             tenant=tenant,
             session=session,
-            student=student,
-            status__in=active_statuses,
         ).exists()
         if exists:
             raise Conflict("이미 해당 세션에 예약된 학생입니다.")
+
+        same_date = active.filter(
+            Q(session__date=session.date)
+            | Q(session__isnull=True, requested_date=session.date)
+        )
+        if not same_date.exists():
+            return
+        if not session.allow_multi_slot_booking:
+            raise Conflict("이 클리닉은 같은 날 한 시간대만 예약할 수 있습니다.")
+        if same_date.filter(
+            Q(session__isnull=True) | Q(session__allow_multi_slot_booking=False)
+        ).exists():
+            raise Conflict("기존 예약 중 같은 날 여러 시간대를 허용하지 않는 클리닉이 있습니다.")
     elif requested_date and requested_start_time:
-        exists = SessionParticipant.objects.filter(
-            tenant=tenant,
+        exists = active.filter(
             session__isnull=True,
             requested_date=requested_date,
             requested_start_time=requested_start_time,
-            student=student,
-            status__in=active_statuses,
         ).exists()
         if exists:
             raise Conflict("이미 해당 시간에 예약 신청이 있습니다.")
+        if active.filter(
+            Q(session__date=requested_date)
+            | Q(session__isnull=True, requested_date=requested_date)
+        ).exists():
+            raise Conflict("같은 날 한 시간대만 예약할 수 있습니다.")
 
 
 @transaction.atomic
@@ -835,7 +879,7 @@ def create_participant(
         if enrollment.student_id != student.id:
             raise ValidationError({"detail": "enrollment_id와 student가 일치하지 않습니다."})
 
-    _ensure_active_student_for_tenant(tenant=tenant, student=student)
+    student = _lock_active_student_for_booking(tenant=tenant, student=student)
 
     if session:
         session = (
@@ -917,6 +961,87 @@ def create_participant(
 
 
 @transaction.atomic
+def create_participants_bulk(
+    *,
+    tenant,
+    session_ids: list[int],
+    student_ids: list[int],
+    request_student=None,
+    student_request_memo: str = "",
+    memo: str = "",
+    preferred_start_time=None,
+    preferred_end_time=None,
+) -> ParticipantBulkWriteResult:
+    """Create the complete same-day session/student selection or create nothing."""
+    requested_session_ids = [int(session_id) for session_id in session_ids]
+    if request_student is not None:
+        if student_ids:
+            raise PermissionDenied("다른 학생의 클리닉 예약을 신청할 수 없습니다.")
+        students = [
+            _lock_active_student_for_booking(
+                tenant=tenant,
+                student=request_student,
+            )
+        ]
+    else:
+        if not student_ids:
+            raise ValidationError({"student_ids": "추가할 학생을 한 명 이상 선택해 주세요."})
+        requested_student_ids = [int(student_id) for student_id in student_ids]
+        students = list(
+            active_students_for_clinic_tenant(tenant)
+            .filter(id__in=requested_student_ids)
+            .select_for_update()
+            .order_by("id")
+        )
+        if len(students) != len(requested_student_ids):
+            raise NotFound("선택한 학생을 찾을 수 없습니다.")
+
+    sessions = list(
+        Session.objects
+        .filter(tenant=tenant, id__in=requested_session_ids)
+        .select_for_update()
+        .prefetch_related("target_lectures")
+        .order_by("date", "start_time", "id")
+    )
+    if len(sessions) != len(requested_session_ids):
+        raise NotFound("선택한 클리닉 시간대를 찾을 수 없습니다.")
+    if len({session.date for session in sessions}) != 1:
+        raise ValidationError(
+            {"session_ids": "한 번에 신청하는 시간대는 같은 날짜여야 합니다."}
+        )
+    if len(sessions) > 1 and any(
+        not session.allow_multi_slot_booking for session in sessions
+    ):
+        raise Conflict("선택한 클리닉 중 같은 날 여러 시간대 예약을 허용하지 않는 세션이 있습니다.")
+
+    participants: list[SessionParticipant] = []
+    notifications: list[ClinicNotificationEvent] = []
+    for student in students:
+        for session in sessions:
+            validated_data = {
+                "session": session,
+                "student": student,
+                "student_request_memo": student_request_memo,
+                "memo": memo,
+                "preferred_start_time": preferred_start_time,
+                "preferred_end_time": preferred_end_time,
+            }
+            result = create_participant(
+                tenant=tenant,
+                validated_data=validated_data,
+                request_student=request_student,
+            )
+            participants.append(result.participant)
+            if result.notification:
+                notifications.append(result.notification)
+
+    return ParticipantBulkWriteResult(
+        participants=tuple(participants),
+        notifications=tuple(notifications),
+    )
+
+
+@transaction.atomic
 def change_participant_booking(
     *,
     tenant,
@@ -936,6 +1061,29 @@ def change_participant_booking(
     except (TypeError, ValueError) as exc:
         raise ValidationError({"detail": "new_session_id는 숫자여야 합니다."}) from exc
     try:
+        booking_identity = (
+            SessionParticipant.objects
+            .only("student_id")
+            .get(pk=participant_id, tenant=tenant, student__deleted_at__isnull=True)
+        )
+    except SessionParticipant.DoesNotExist as exc:
+        raise NotFound("예약을 찾을 수 없습니다.") from exc
+
+    is_staff_change = request_student is None
+    booking_student = request_student
+    if is_staff_change:
+        booking_student = (
+            active_students_for_clinic_tenant(tenant)
+            .filter(pk=booking_identity.student_id)
+            .first()
+        )
+        if booking_student is None:
+            raise NotFound("예약을 찾을 수 없습니다.")
+    booking_student = _lock_active_student_for_booking(
+        tenant=tenant,
+        student=booking_student,
+    )
+    try:
         old_booking = (
             SessionParticipant.objects
             .select_for_update()
@@ -943,10 +1091,6 @@ def change_participant_booking(
         )
     except SessionParticipant.DoesNotExist as exc:
         raise NotFound("예약을 찾을 수 없습니다.") from exc
-
-    is_staff_change = request_student is None
-    booking_student = old_booking.student if is_staff_change else request_student
-    _ensure_active_student_for_tenant(tenant=tenant, student=booking_student)
     if not is_staff_change:
         if old_booking.student_id != request_student.id:
             raise PermissionDenied("다른 학생의 예약을 변경할 수 없습니다.")
@@ -973,7 +1117,12 @@ def change_participant_booking(
 
     _validate_student_session_eligibility(tenant=tenant, student=booking_student, session=new_session)
     _assert_session_capacity(tenant=tenant, session=new_session)
-    _assert_no_active_duplicate(tenant=tenant, student=booking_student, session=new_session)
+    _assert_no_active_duplicate(
+        tenant=tenant,
+        student=booking_student,
+        session=new_session,
+        exclude_participant_id=old_booking.id,
+    )
     preferred_start_time, preferred_end_time = _validated_time_preference(
         session=new_session,
         preferred_start_time=preferred_start_time,

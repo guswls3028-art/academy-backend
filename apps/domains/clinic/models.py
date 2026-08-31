@@ -76,6 +76,11 @@ class Session(TimestampModel):
         db_default=False,
         help_text="학생이 세션 범위 안의 희망 시작·종료 시각을 요청할 수 있으면 True.",
     )
+    allow_multi_slot_booking = models.BooleanField(
+        default=False,
+        db_default=False,
+        help_text="같은 날짜의 다른 클리닉 시간대도 함께 예약할 수 있으면 True.",
+    )
 
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

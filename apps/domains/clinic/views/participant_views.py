@@ -16,6 +16,8 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 
 from ..models import SessionParticipant, SessionParticipantPlanItem
 from ..serializers import (
+    ClinicSessionParticipantBulkCreateResponseSerializer,
+    ClinicSessionParticipantBulkCreateSerializer,
     ClinicSessionParticipantSerializer,
     ClinicSessionParticipantCreateSerializer,
 )
@@ -26,6 +28,7 @@ from ..services import (
     checkout_participant,
     complete_participant,
     create_participant,
+    create_participants_bulk,
     replace_participant_clinic_plan,
     uncomplete_participant,
     update_participant_staff_memo,
@@ -241,6 +244,8 @@ class ParticipantViewSet(viewsets.ModelViewSet):
     def get_serializer_class(self):
         if self.action == "create":
             return ClinicSessionParticipantCreateSerializer
+        if self.action == "bulk_create":
+            return ClinicSessionParticipantBulkCreateSerializer
         return ClinicSessionParticipantSerializer
 
     def update(self, request, *args, **kwargs):
@@ -298,6 +303,52 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             obj, context={"request": request}
         ).data
         return Response(out, status=status.HTTP_201_CREATED)
+
+    @extend_schema(
+        request=ClinicSessionParticipantBulkCreateSerializer,
+        responses={201: ClinicSessionParticipantBulkCreateResponseSerializer},
+    )
+    @action(detail=False, methods=["post"], url_path="bulk-create")
+    def bulk_create(self, request, *args, **kwargs):
+        """Create every selected same-day slot atomically for a student or staff selection."""
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            raise serializers.ValidationError(
+                {"tenant": "테넌트 컨텍스트가 필요합니다. (호스트 또는 X-Tenant-Code 확인)"}
+            )
+
+        request_student = _get_request_student_for_clinic(request)
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        result = create_participants_bulk(
+            tenant=tenant,
+            request_student=request_student,
+            **serializer.validated_data,
+        )
+
+        if result.notifications:
+            events = result.notifications
+
+            def send_notifications():
+                for event in events:
+                    _send_clinic_notification(
+                        tenant,
+                        event.student,
+                        event.trigger,
+                        event.context,
+                    )
+
+            transaction.on_commit(send_notifications)
+
+        response_data = {
+            "count": len(result.participants),
+            "participants": ClinicSessionParticipantSerializer(
+                result.participants,
+                many=True,
+                context={"request": request},
+            ).data,
+        }
+        return Response(response_data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["patch"])
     def set_status(self, request, pk=None):

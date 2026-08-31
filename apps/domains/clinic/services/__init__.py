@@ -2,6 +2,7 @@ from .lifecycle import (
     ClinicNotificationEvent,
     COMPLETE_ALLOWED_STATUSES,
     ParticipantTransitionResult,
+    ParticipantBulkWriteResult,
     ParticipantWriteResult,
     STAFF_STATUS_TRANSITIONS,
     STUDENT_STATUS_TRANSITIONS,
@@ -13,6 +14,7 @@ from .lifecycle import (
     replace_participant_clinic_plan,
     complete_participant,
     create_participant,
+    create_participants_bulk,
     uncomplete_participant,
     update_participant_staff_memo,
 )
@@ -21,6 +23,7 @@ __all__ = [
     "ClinicNotificationEvent",
     "COMPLETE_ALLOWED_STATUSES",
     "ParticipantTransitionResult",
+    "ParticipantBulkWriteResult",
     "ParticipantWriteResult",
     "STAFF_STATUS_TRANSITIONS",
     "STUDENT_STATUS_TRANSITIONS",
@@ -32,6 +35,7 @@ __all__ = [
     "replace_participant_clinic_plan",
     "complete_participant",
     "create_participant",
+    "create_participants_bulk",
     "uncomplete_participant",
     "update_participant_staff_memo",
 ]
