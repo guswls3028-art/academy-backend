@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "status": "successful",
   "complete": true,
-  "generatedAt": "2026-08-31T12:22:11+00:00",
-  "gitSha": "8d5a8cf2e9c55f78da6a4828d4d64aadc9d8179c",
-  "releaseImageTag": "sha-8d5a8cf2e9c55f78da6a4828d4d64aadc9d8179c-run-33390739148-1",
+  "generatedAt": "2026-08-31T14:46:39+00:00",
+  "gitSha": "eb07ffbcd8ea77876089d0bb2b08b2f32958ae2e",
+  "releaseImageTag": "sha-eb07ffbcd8ea77876089d0bb2b08b2f32958ae2e-run-33403741394-1",
   "images": {
     "academy-base": {
       "digest": "sha256:091af41b702e012793685ac702f8ac33d47f5edf3819f47ed1cce44ca150824a",
@@ -12,23 +12,23 @@
       "source": "prior-success"
     },
     "academy-api": {
-      "digest": "sha256:3ff9574eb22eac2166bf764b2355c463fb7c1bdc8399ab1ed5a92388e2225c23",
-      "tag": "sha-8d5a8cf2e9c55f78da6a4828d4d64aadc9d8179c-run-33390739148-1",
+      "digest": "sha256:3aa72282d559733e1a8e1f5cb5838cd61b60a3759ce760a04b64578f816941f7",
+      "tag": "sha-eb07ffbcd8ea77876089d0bb2b08b2f32958ae2e-run-33403741394-1",
       "source": "built"
     },
     "academy-video-worker": {
       "digest": "sha256:04949511d3701b2f9051ac91a4c1705148b5b840982da05af3dcce6d979362da",
       "tag": "sha-8d5a8cf2e9c55f78da6a4828d4d64aadc9d8179c-run-33390739148-1",
-      "source": "built"
+      "source": "prior-success"
     },
     "academy-messaging-worker": {
       "digest": "sha256:97b8441275c452b6d9d5f9ad8d7de74e44f66e5f65c23584a92157c6dc1bb3d9",
       "tag": "sha-8d5a8cf2e9c55f78da6a4828d4d64aadc9d8179c-run-33390739148-1",
-      "source": "built"
+      "source": "prior-success"
     },
     "academy-ai-worker-cpu": {
-      "digest": "sha256:b15d6e44467f96be8d119997a0716870ea237bd59e946cdc1badcc4cbfb7ed8e",
-      "tag": "sha-8d5a8cf2e9c55f78da6a4828d4d64aadc9d8179c-run-33390739148-1",
+      "digest": "sha256:0ea0954739f76866676d465732fc1865703ef6716cce49858936bf6c63c06dd6",
+      "tag": "sha-eb07ffbcd8ea77876089d0bb2b08b2f32958ae2e-run-33403741394-1",
       "source": "built"
     },
     "academy-tools-worker": {
@@ -37,5 +37,5 @@
       "source": "prior-success"
     }
   },
-  "verifiedAt": "2026-08-31T12:40:33+00:00"
+  "verifiedAt": "2026-08-31T15:05:47+00:00"
 }
