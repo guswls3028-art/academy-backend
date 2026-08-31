@@ -9,7 +9,7 @@ from typing import Iterable
 
 from django.utils.dateparse import parse_datetime
 
-from apps.domains.results.models import ExamAttempt
+from apps.domains.results.models import ExamAttempt, Result
 
 
 @dataclass(frozen=True)
@@ -44,18 +44,37 @@ def load_initial_exam_scores(
     exam_ids: Iterable[int],
     enrollment_ids: Iterable[int],
 ) -> dict[tuple[int, int], InitialExamScore]:
-    """Load preserved first-attempt scores without consulting mutable Result rows."""
+    """Load first-attempt scores without letting a stale snapshot hide grading.
+
+    While the current ``Result`` still represents attempt 1, its confirmed score
+    is the canonical value. Once a retake becomes representative, the preserved
+    attempt-1 snapshot remains the immutable first-attempt score.
+    """
     normalized_exam_ids = sorted({int(value) for value in exam_ids})
     normalized_enrollment_ids = sorted({int(value) for value in enrollment_ids})
     if not normalized_exam_ids or not normalized_enrollment_ids:
         return {}
 
     states: dict[tuple[int, int], InitialExamScore] = {}
-    attempts = ExamAttempt.objects.filter(
+    attempts = list(ExamAttempt.objects.filter(
         exam_id__in=normalized_exam_ids,
         enrollment_id__in=normalized_enrollment_ids,
         attempt_index=1,
-    ).only("exam_id", "enrollment_id", "meta", "created_at")
+    ).only("id", "exam_id", "enrollment_id", "meta", "created_at"))
+    current_results = {
+        (int(result.target_id), int(result.enrollment_id)): result
+        for result in Result.objects.filter(
+            target_type="exam",
+            target_id__in=normalized_exam_ids,
+            enrollment_id__in=normalized_enrollment_ids,
+        ).only(
+            "target_id",
+            "enrollment_id",
+            "attempt_id",
+            "total_score",
+            "max_score",
+        )
+    }
     for attempt in attempts:
         meta = attempt.meta if isinstance(attempt.meta, dict) else {}
         snapshot = (
@@ -63,13 +82,32 @@ def load_initial_exam_scores(
             if isinstance(meta.get("initial_snapshot"), dict)
             else {}
         )
+        current_result = current_results.get(
+            (int(attempt.exam_id), int(attempt.enrollment_id))
+        )
+        result_is_same_attempt = bool(
+            current_result is not None
+            and current_result.attempt_id == int(attempt.id)
+        )
         states[(int(attempt.exam_id), int(attempt.enrollment_id))] = InitialExamScore(
-            total_score=_safe_score(snapshot.get("total_score"))
-            if snapshot
-            else _safe_score(meta.get("total_score")),
-            max_score=_safe_score(snapshot.get("max_score"))
-            if snapshot
-            else _safe_score(meta.get("max_score")),
+            total_score=(
+                _safe_score(current_result.total_score)
+                if result_is_same_attempt
+                else (
+                    _safe_score(snapshot.get("total_score"))
+                    if snapshot
+                    else _safe_score(meta.get("total_score"))
+                )
+            ),
+            max_score=(
+                _safe_score(current_result.max_score)
+                if result_is_same_attempt
+                else (
+                    _safe_score(snapshot.get("max_score"))
+                    if snapshot
+                    else _safe_score(meta.get("max_score"))
+                )
+            ),
             not_submitted=meta.get("status") == "NOT_SUBMITTED",
             attempt_id=int(attempt.id),
             recorded_at=_safe_datetime(
