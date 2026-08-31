@@ -24,6 +24,7 @@
 | [student-performance-console.md](student-performance-console.md) | 성적 | 학생별 누적 성적과 정규·보강 결과 범위 |
 | [student-grade-report.md](student-grade-report.md) | 성적 | 학생 카드 오답 완료 상태와 학원별 성장 그래프 섹션 구성 |
 | [arrival-operations.md](arrival-operations.md) | 출결·클리닉 | 보강 예정 저장과 클리닉 예약을 합친 오늘·내일 등원 운영 현황 |
+| [clinic-booking.md](clinic-booking.md) | 클리닉 | 세션별 같은 날 다중 시간대 예약 정책·원자성·동시성 |
 
 ## 도메인별
 

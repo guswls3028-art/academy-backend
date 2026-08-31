@@ -1025,6 +1025,10 @@
       },
       "ClinicSession": {
         "properties": {
+          "allow_multi_slot_booking": {
+            "description": "같은 날짜의 다른 클리닉 시간대도 함께 예약할 수 있으면 True.",
+            "type": "boolean"
+          },
           "allow_time_preference": {
             "description": "학생이 세션 범위 안의 희망 시작·종료 시각을 요청할 수 있으면 True.",
             "type": "boolean"
@@ -1416,6 +1420,70 @@
         ],
         "type": "object"
       },
+      "ClinicSessionParticipantBulkCreateRequest": {
+        "description": "Create one student's or several staff-selected students' same-day slots atomically.",
+        "properties": {
+          "memo": {
+            "default": "",
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "preferred_end_time": {
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
+          "preferred_start_time": {
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
+          "session_ids": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "type": "array"
+          },
+          "student_ids": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "student_request_memo": {
+            "default": "",
+            "maxLength": 2000,
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_ids"
+        ],
+        "type": "object"
+      },
+      "ClinicSessionParticipantBulkCreateResponse": {
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "participants": {
+            "items": {
+              "$ref": "#/components/schemas/ClinicSessionParticipant"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "count",
+          "participants"
+        ],
+        "type": "object"
+      },
       "ClinicSessionParticipantCreate": {
         "description": "✅ 예약 등록(생성) 전용\n- 선생: student, enrollment_id 직접 지정 가능\n- 학생: student 생략 가능 (자동 설정), source=\"student_request\", status=\"pending\"\n- session 또는 (requested_date + requested_start_time) 중 하나 필수",
         "properties": {
@@ -1665,6 +1733,10 @@
       },
       "ClinicSessionRequest": {
         "properties": {
+          "allow_multi_slot_booking": {
+            "description": "같은 날짜의 다른 클리닉 시간대도 함께 예약할 수 있으면 True.",
+            "type": "boolean"
+          },
           "allow_time_preference": {
             "description": "학생이 세션 범위 안의 희망 시작·종료 시각을 요청할 수 있으면 True.",
             "type": "boolean"
@@ -7487,6 +7559,10 @@
       },
       "PatchedClinicSessionRequest": {
         "properties": {
+          "allow_multi_slot_booking": {
+            "description": "같은 날짜의 다른 클리닉 시간대도 함께 예약할 수 있으면 True.",
+            "type": "boolean"
+          },
           "allow_time_preference": {
             "description": "학생이 세션 범위 안의 희망 시작·종료 시각을 요청할 수 있으면 True.",
             "type": "boolean"
@@ -17987,6 +18063,55 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ClinicSessionParticipantCreate"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "clinic"
+        ]
+      }
+    },
+    "/api/v1/clinic/participants/bulk-create/": {
+      "post": {
+        "description": "Create every selected same-day slot atomically for a student or staff selection.",
+        "operationId": "clinic_participants_bulk_create_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClinicSessionParticipantBulkCreateRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/ClinicSessionParticipantBulkCreateRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/ClinicSessionParticipantBulkCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClinicSessionParticipantBulkCreateResponse"
                 }
               }
             },
@@ -38180,6 +38305,55 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ClinicSessionParticipantCreate"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/api/v1/results/admin/clinic-bookings/bulk-create/": {
+      "post": {
+        "description": "Create every selected same-day slot atomically for a student or staff selection.",
+        "operationId": "results_admin_clinic_bookings_bulk_create_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClinicSessionParticipantBulkCreateRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/ClinicSessionParticipantBulkCreateRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/ClinicSessionParticipantBulkCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClinicSessionParticipantBulkCreateResponse"
                 }
               }
             },
