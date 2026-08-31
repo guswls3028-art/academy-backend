@@ -28,6 +28,7 @@ from apps.domains.results.utils.exam_achievement import (
     compute_exam_achievement,
     compute_exam_achievement_bulk,
 )
+from apps.domains.results.utils.ranking import compute_exam_rankings
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.results.views.admin_student_grades_view import AdminStudentGradesView
 from apps.domains.results.views.admin_exam_results_view import AdminExamResultsView
@@ -286,6 +287,43 @@ class AchievementContractTest(TestCase, ClinicTestMixin):
         self.assertEqual(student_data["items"], [])
         self.assertEqual(student_data["analysis"]["total_questions"], 0)
         self.assertEqual(first_attempt.meta["initial_snapshot"]["total_score"], 25.0)
+
+    def test_current_first_attempt_uses_confirmed_result_in_student_and_rank_views(self):
+        exam = self._make_exam("confirmed_mixed_score", pass_score=60.0)
+        ExamEnrollment.objects.create(exam=exam, enrollment=self.enrollment)
+        attempt, result = self._make_attempt_and_result(exam, score=90)
+        attempt.meta = {
+            "initial_snapshot": {
+                "total_score": 85.0,
+                "max_score": 100.0,
+                "source": "submission_sync",
+            },
+            "total_score": 90.0,
+            "subjective_score": 5.0,
+        }
+        attempt.save(update_fields=["meta", "updated_at"])
+
+        factory = APIRequestFactory()
+        student_request = factory.get(f"/results/student/exams/{exam.id}/")
+        student_request.tenant = self.tenant
+        student_request.user = self.student.user
+        TenantMembership.ensure_active(
+            tenant=self.tenant,
+            user=self.student.user,
+            role="student",
+        )
+
+        student_data = get_my_exam_result_data(
+            student_request,
+            exam.id,
+            tenant=self.tenant,
+        )
+        ranking = compute_exam_rankings(exam_id=exam.id, tenant=self.tenant)
+
+        self.assertEqual(result.attempt_id, attempt.id)
+        self.assertEqual(student_data["total_score"], 90.0)
+        self.assertEqual(student_data["achievement"], "PASS")
+        self.assertEqual(ranking[self.enrollment.id]["ranking_score"], 90.0)
 
     def test_bulk_achievement_ignores_corrupt_foreign_tenant_clinic_link(self):
         exam = self._make_exam("foreign_link", pass_score=60.0)

@@ -23,6 +23,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
 from apps.domains.results.models import Result, ExamAttempt
+from apps.domains.results.utils.initial_exam_score import load_initial_exam_scores
 from django.db.models import Max, Subquery
 
 
@@ -64,29 +65,32 @@ def _first_attempt_state(
     if not exam_ids_int:
         return {}, set()
 
-    qs = ExamAttempt.objects.filter(
-        exam_id__in=exam_ids_int,
-        attempt_index=1,
+    enrollment_ids_int = (
+        [int(x) for x in enrollment_ids]
+        if enrollment_ids is not None
+        else list(
+            ExamAttempt.objects.filter(
+                exam_id__in=exam_ids_int,
+                attempt_index=1,
+            ).values_list("enrollment_id", flat=True)
+        )
     )
-    if enrollment_ids is not None:
-        qs = qs.filter(enrollment_id__in=[int(x) for x in enrollment_ids])
+    states = load_initial_exam_scores(
+        exam_ids=exam_ids_int,
+        enrollment_ids=enrollment_ids_int,
+    )
 
     override: Dict[int, Dict[int, float]] = {eid: {} for eid in exam_ids_int}
     not_submitted_pairs: set[tuple[int, int]] = set()
-    for att in qs.only("exam_id", "enrollment_id", "meta"):
-        meta = att.meta if isinstance(att.meta, dict) else {}
-        if meta.get("status") == "NOT_SUBMITTED":
-            not_submitted_pairs.add((int(att.exam_id), int(att.enrollment_id)))
+    for (exam_id, enrollment_id), state in states.items():
+        if state.not_submitted:
+            not_submitted_pairs.add((exam_id, enrollment_id))
             continue
-        snapshot = meta.get("initial_snapshot")
-        if not isinstance(snapshot, dict):
+        if state.total_score is None:
             continue
-        raw = snapshot.get("total_score")
-        if raw is None:
-            continue
-        score = _safe_nonnegative_score(raw)
+        score = _safe_nonnegative_score(state.total_score)
         if score is not None:
-            override[int(att.exam_id)][int(att.enrollment_id)] = score
+            override[exam_id][enrollment_id] = score
     return override, not_submitted_pairs
 
 
