@@ -337,6 +337,8 @@
 - 전화번호는 마스킹해 반환하고, 유효한 학생/학부모 번호가 없는 대상은 `excluded`와 `exclude_reason`으로 구분한다.
 - 여러 학생을 선택한 경우 학생 선택은 표시할 `full_message_body`만 바꾸며, 실제 발송 대상 집합은 바꾸지 않는다.
 - 공용 `preview -> confirm` 경로도 `full_message_body`를 표시한다. 1회용 confirm 토큰에는 발송에 불필요한 이 표시 전용 필드를 저장하지 않는다.
+- `grades` 수동 발송은 해석된 전체 학생 ID 집합과 `alimtalk_extra_vars_per_student` 키 집합이 정확히 같고, 모든 학생 항목에 비어 있지 않은 `_body_subst`가 있어야 한다. preflight와 confirm이 같은 검사를 수행하며, 한 명이라도 누락·초과·형식 오류이면 `grade_personalization_incomplete`로 실패 폐쇄한다.
+- 성적 본문은 학생별 `_body_subst`만 사용한다. 공용 `raw_body`나 `alimtalk_extra_vars`에 들어온 첫 선택 학생의 점수는 다른 학생의 대체값이 될 수 없다. 이 경계는 예약 발송을 포함해 outbox 생성 전에 적용한다.
 
 ### CATEGORY_TO_TEMPLATE_TYPE 매핑
 
