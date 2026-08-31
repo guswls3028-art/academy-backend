@@ -29,6 +29,10 @@ from apps.domains.messaging.selectors import (
     notification_logs_for_business_tenant,
 )
 from apps.domains.messaging.services.recipients import resolve_student_message_recipients
+from apps.domains.messaging.services.grade_personalization import (
+    normalize_per_student_context,
+    validate_grade_personalization,
+)
 
 
 MAX_MANUAL_RECIPIENTS = 200
@@ -168,14 +172,10 @@ def _build_manual_preview_recipients(
         body_base = (template.body or "").strip()
 
     shared_context = data.get("alimtalk_extra_vars") or {}
-    raw_per_student = data.get("alimtalk_extra_vars_per_student") or {}
-    per_student_context: dict[int, dict[str, Any]] = {}
-    for raw_student_id, raw_context in raw_per_student.items():
-        try:
-            student_id = int(raw_student_id)
-        except (TypeError, ValueError):
-            continue
-        per_student_context[student_id] = raw_context if isinstance(raw_context, dict) else {}
+    per_student_context, _invalid = normalize_per_student_context(
+        data.get("alimtalk_extra_vars_per_student") or {}
+    )
+    is_grade_send = (data.get("block_category") or "").strip() == "grades"
 
     tenant_name = (tenant.name or "").strip()
     site_url = get_tenant_site_url(tenant) or ""
@@ -184,7 +184,15 @@ def _build_manual_preview_recipients(
         phone = recipient.phone or ""
         excluded = not phone or len(phone) < 10
         student_context = dict(per_student_context.get(recipient.student_id, {}))
-        student_body = student_context.pop("_body_subst", None) or body_base
+        student_body_override = student_context.pop("_body_subst", None)
+        if is_grade_send:
+            student_body = (
+                student_body_override.strip()
+                if isinstance(student_body_override, str)
+                else ""
+            )
+        else:
+            student_body = student_body_override or body_base
         merged_context = {**shared_context, **student_context}
         replacements = build_manual_replacements(
             template_type=template_plan.template_type,
@@ -249,6 +257,20 @@ def build_send_preflight(tenant, data: dict[str, Any]) -> dict[str, Any]:
     recipients = resolve_student_message_recipients(tenant, student_ids, send_to=send_to)
     resolved_count = len(recipients)
     phones = [recipient.phone for recipient in recipients]
+
+    _per_student_context, personalization_issue = validate_grade_personalization(
+        block_category=(data.get("block_category") or "").strip(),
+        raw_per_student=data.get("alimtalk_extra_vars_per_student") or {},
+        recipients=recipients,
+    )
+    if personalization_issue:
+        blockers.append(
+            PreflightIssue(
+                personalization_issue.code,
+                personalization_issue.title,
+                personalization_issue.detail,
+            )
+        )
 
     invalid_or_deleted = max(0, selected_count - resolved_count)
     phone_summary = _phone_summary(phones)

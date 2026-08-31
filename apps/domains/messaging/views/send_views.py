@@ -15,6 +15,9 @@ from apps.domains.messaging.models import MessageTemplate
 from apps.domains.messaging.permissions import can_send_messages
 from apps.domains.messaging.selectors import HOURLY_SEND_LIMIT, get_hourly_notification_usage
 from apps.domains.messaging.serializers import SendMessageRequestSerializer
+from apps.domains.messaging.services.grade_personalization import (
+    validate_grade_personalization,
+)
 from apps.domains.messaging.services.recipients import resolve_student_message_recipients
 
 
@@ -119,6 +122,21 @@ class SendMessageView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        block_category = (data.get("block_category") or "").strip()
+        extra_vars_per_student, personalization_issue = validate_grade_personalization(
+            block_category=block_category,
+            raw_per_student=data.get("alimtalk_extra_vars_per_student") or {},
+            recipients=recipients,
+        )
+        if personalization_issue:
+            return Response(
+                {
+                    "detail": personalization_issue.detail,
+                    "code": personalization_issue.code,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         expected_dispatches = sum(
             1 for recipient in recipients if recipient.phone and len(recipient.phone) >= 10
         )
@@ -163,13 +181,6 @@ class SendMessageView(APIView):
         # ── 알림톡: 통합 승인 봉투 우선 사용 ──
         # 시스템 기본양식(signup: 가입승인/비번찾기)만 자체 Solapi 템플릿 유지
         alimtalk_extra_vars = data.get("alimtalk_extra_vars") or {}
-        raw_per_student = data.get("alimtalk_extra_vars_per_student") or {}
-        extra_vars_per_student = {}
-        for k, v in raw_per_student.items():
-            try:
-                extra_vars_per_student[int(k)] = v if isinstance(v, dict) else {}
-            except (ValueError, TypeError):
-                pass
 
         if message_mode == "alimtalk":
             from apps.domains.messaging.alimtalk_content_builders import (
@@ -178,7 +189,6 @@ class SendMessageView(APIView):
             )
             category = (t.category if t else "") or ""
             tpl_name = (t.name if t else "") or ""
-            block_category = (data.get("block_category") or "").strip()
             unified_tt, unified_sid = get_unified_for_manual_send(
                 block_category,
                 category,
@@ -253,7 +263,13 @@ class SendMessageView(APIView):
             # substituteScoreVars 결과를 _body_subst 로 보냄. backend가 그대로 사용 → 모든 score
             # sub-variable(#{시험1명}, #{시험1점수}, #{과제N...}, #{시험총점}) 치환됨. 학원장 limglish 보고
             # "본문 변수 미치환 → 빈 자리" 결함 fix.
-            student_body = student_extra.pop("_body_subst", None) or body_base
+            student_body_override = student_extra.pop("_body_subst", None)
+            if block_category == "grades":
+                # Grade sends are fail-closed above: never substitute the shared
+                # request body (which may contain another student's scores).
+                student_body = student_body_override.strip()
+            else:
+                student_body = student_body_override or body_base
 
             merged_context = {**alimtalk_extra_vars, **student_extra}
 

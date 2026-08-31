@@ -88,6 +88,39 @@ class SendMessagePreflightViewTests(MessagingOperationsBase):
             for item in response.data["blockers"]
         ))
 
+    def test_preflight_blocks_incomplete_grade_personalization(self):
+        first_student = self._student("012", parent_phone="01033334444")
+        second_student = self._student("013", parent_phone="01055556666")
+
+        response = SendMessagePreflightView.as_view()(
+            self._request(
+                "post",
+                "/api/v1/messaging/send/preflight/",
+                {
+                    "send_to": "parent",
+                    "student_ids": [first_student.id, second_student.id],
+                    "raw_body": "전역 본문",
+                    "block_category": "grades",
+                    "alimtalk_extra_vars": {
+                        "강의명": "중2 과학",
+                        "차시명": "2차시",
+                    },
+                    "alimtalk_extra_vars_per_student": {
+                        str(first_student.id): {
+                            "_body_subst": "시험 70/100\n교재 100/100\n메인자료 100/100",
+                        },
+                    },
+                },
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.data["ok"])
+        self.assertTrue(any(
+            item["code"] == "grade_personalization_incomplete"
+            for item in response.data["blockers"]
+        ))
+
     def test_preflight_reports_recipient_template_and_phone_health(self):
         ok_student = self._student("001", parent_phone="01033334444")
         no_phone_student = self._student("002", parent_phone="")
@@ -185,6 +218,11 @@ class SendMessagePreflightViewTests(MessagingOperationsBase):
                     "alimtalk_extra_vars": {
                         "강의명": "중2 수학",
                         "차시명": "1차시",
+                    },
+                    "alimtalk_extra_vars_per_student": {
+                        str(student.id): {
+                            "_body_subst": "이번 수업 결과를 안내드립니다.",
+                        },
                     },
                 },
             )

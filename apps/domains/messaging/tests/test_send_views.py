@@ -70,6 +70,36 @@ class SendMessageViewTests(TestCase):
         with self.captureOnCommitCallbacks(execute=True):
             return SendMessageView.as_view()(request)
 
+    def _create_student(
+        self,
+        suffix: str,
+        *,
+        phone: str,
+        parent_phone: str,
+    ):
+        student_user = User.objects.create_user(
+            username=user_internal_username(self.tenant, suffix),
+            password="test1234",
+            tenant=self.tenant,
+            phone=phone,
+            name=f"학생{suffix}",
+        )
+        student = Student.objects.create(
+            tenant=self.tenant,
+            user=student_user,
+            ps_number=suffix,
+            name=f"학생{suffix}",
+            phone=phone,
+            parent_phone=parent_phone,
+            omr_code=f"99{suffix}",
+        )
+        TenantMembership.ensure_active(
+            tenant=self.tenant,
+            user=student_user,
+            role="student",
+        )
+        return student
+
     def test_student_direct_alimtalk_uses_selected_attendance_envelope(self):
         request = self.factory.post(
             "/api/v1/messaging/send/",
@@ -263,6 +293,101 @@ class SendMessageViewTests(TestCase):
         self.assertEqual(response.data["code"], "grade_recipient_policy")
         enqueue_alimtalk.assert_not_called()
 
+    def test_grade_message_rejects_incomplete_per_student_bodies(self):
+        second_student = self._create_student(
+            "S002",
+            phone="01022223333",
+            parent_phone="01044445555",
+        )
+        first_body = "시험 80/100\n과제 20/100\n메인자료 미제출"
+        request = self.factory.post(
+            "/api/v1/messaging/send/",
+            data={
+                "send_to": "parent",
+                "student_ids": [self.student.id, second_student.id],
+                "raw_body": first_body,
+                "block_category": "grades",
+                "alimtalk_extra_vars": {
+                    "강의명": "중2 과학",
+                    "차시명": "2차시",
+                    "시험성적": "80/100",
+                },
+                "alimtalk_extra_vars_per_student": {
+                    str(self.student.id): {"_body_subst": first_body},
+                },
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+        request.user = self.admin
+        request.tenant = self.tenant
+
+        with patch(
+            "apps.domains.messaging.services.enqueue_alimtalk",
+            return_value=True,
+        ) as enqueue_alimtalk:
+            response = self._send(request)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["code"], "grade_personalization_incomplete")
+        enqueue_alimtalk.assert_not_called()
+        self.assertFalse(ScheduledNotification.objects.exists())
+
+    def test_grade_message_dispatches_exact_distinct_per_student_bodies(self):
+        second_student = self._create_student(
+            "S003",
+            phone="01055556666",
+            parent_phone="01077778888",
+        )
+        first_body = "시험 70/100\n교재 100/100\n메인자료 100/100"
+        second_body = "시험 80/100\n교재 20/100\n메인자료 미제출"
+        request = self.factory.post(
+            "/api/v1/messaging/send/",
+            data={
+                "send_to": "parent",
+                "student_ids": [self.student.id, second_student.id],
+                "raw_body": "전역 첫 학생 본문은 사용하면 안 됩니다.",
+                "block_category": "grades",
+                "alimtalk_extra_vars": {
+                    "강의명": "중2 과학",
+                    "차시명": "2차시",
+                    "시험성적": "80/100",
+                },
+                "alimtalk_extra_vars_per_student": {
+                    str(self.student.id): {"_body_subst": first_body},
+                    str(second_student.id): {"_body_subst": second_body},
+                },
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+        request.user = self.admin
+        request.tenant = self.tenant
+
+        with (
+            patch(
+                "apps.domains.messaging.services.get_tenant_site_url",
+                return_value="https://example.test",
+            ),
+            patch(
+                "apps.domains.messaging.services.enqueue_alimtalk",
+                return_value=True,
+            ) as enqueue_alimtalk,
+        ):
+            response = self._send(request)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(enqueue_alimtalk.call_count, 2)
+        sent_memos = []
+        for call in enqueue_alimtalk.call_args_list:
+            replacements = {
+                item["key"]: item["value"]
+                for item in call.kwargs["alimtalk_replacements"]
+            }
+            sent_memos.append(replacements["선생님메모"])
+        self.assertCountEqual(sent_memos, [first_body, second_body])
+        self.assertNotIn("전역 첫 학생 본문", "\n".join(sent_memos))
+
     def test_score_entry_category_overrides_reused_clinic_copy_envelope(self):
         clinic_copy = MessageTemplate.objects.create(
             tenant=self.tenant,
@@ -282,6 +407,11 @@ class SendMessageViewTests(TestCase):
                 "alimtalk_extra_vars": {
                     "강의명": "중2 수학",
                     "차시명": "1차시",
+                },
+                "alimtalk_extra_vars_per_student": {
+                    str(self.student.id): {
+                        "_body_subst": "이번 수업 결과를 안내드립니다.",
+                    },
                 },
             },
             format="json",
