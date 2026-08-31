@@ -39,26 +39,26 @@ def get_session_with_lecture(session_id: int) -> Any | None:
 def get_submission_progress_target_for_update(
     submission_id: int,
 ) -> SubmissionProgressTarget | None:
+    from apps.domains.enrollment.models import Enrollment
     from apps.domains.submissions.models import Submission
 
     submission = (
         Submission.objects.select_for_update()
-        .select_related("enrollment")
         .filter(id=int(submission_id))
-        .only(
-            "id",
-            "enrollment_id",
-            "enrollment__lecture_id",
-            "target_type",
-            "target_id",
-        )
+        .only("id", "enrollment_id", "target_type", "target_id")
         .first()
     )
     if not submission:
         return None
 
     enrollment_id = getattr(submission, "enrollment_id", None)
-    lecture_id = getattr(getattr(submission, "enrollment", None), "lecture_id", None)
+    lecture_id = (
+        Enrollment.objects.filter(id=int(enrollment_id))
+        .values_list("lecture_id", flat=True)
+        .first()
+        if enrollment_id
+        else None
+    )
     target_type = str(getattr(submission, "target_type", "") or "")
     target_id = int(getattr(submission, "target_id", 0) or 0)
     if not enrollment_id or not lecture_id or not target_type or not target_id:
