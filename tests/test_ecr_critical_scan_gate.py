@@ -207,8 +207,9 @@ def test_current_high_acceptances_are_exact_and_time_bounded() -> None:
 
     libssh2 = [entry for entry in accepted if entry["packageName"] == "libssh2"]
     glib = [entry for entry in accepted if entry["packageName"] == "glib2.0"]
+    perl = [entry for entry in accepted if entry["packageName"] == "perl"]
     openssl = [entry for entry in accepted if entry["packageName"] == "openssl"]
-    assert len(accepted) == 21
+    assert len(accepted) == 22
     assert {entry["cve"] for entry in libssh2} == {
         "CVE-2026-58050",
         "CVE-2026-58051",
@@ -237,6 +238,11 @@ def test_current_high_acceptances_are_exact_and_time_bounded() -> None:
         == ["academy-api", "academy-ai-worker-cpu", "academy-tools-worker"]
         for entry in glib
     )
+    archive_tar_hardlink = [
+        entry for entry in perl if entry["cve"] == "CVE-2026-42497"
+    ]
+    assert len(archive_tar_hardlink) == 1
+    assert archive_tar_hardlink[0]["repositories"] == ["academy-ai-worker-cpu"]
     assert openssl == []
     assert all(
         entry["vendorTracker"]
@@ -255,6 +261,7 @@ def test_current_high_acceptances_are_exact_and_time_bounded() -> None:
         ("CVE-2026-48962", "perl", "5.40.1-6"),
         ("CVE-2026-57432", "perl", "5.40.1-6"),
         ("CVE-2026-7017", "perl", "5.40.1-6"),
+        ("CVE-2026-42497", "perl", "5.40.1-6"),
         ("CVE-2026-5928", "glibc", "2.41-12+deb13u3"),
         ("CVE-2026-58010", "glib2.0", "2.84.4-3~deb13u3"),
         ("CVE-2026-58011", "glib2.0", "2.84.4-3~deb13u3"),
@@ -316,6 +323,8 @@ def test_high_acceptance_remains_valid_through_expiry_day() -> None:
     )
     assert baselines["academy-api"] == 21
     assert len([key for key in reviewed if key[0] == "academy-api"]) == 21
+    assert baselines["academy-ai-worker-cpu"] == 22
+    assert len([key for key in reviewed if key[0] == "academy-ai-worker-cpu"]) == 22
 
 
 def test_base_image_requires_security_fixed_openssl() -> None:

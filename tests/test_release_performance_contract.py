@@ -75,7 +75,7 @@ def test_reviewed_runtime_images_own_exact_high_budgets() -> None:
         "academy-api": 21,
         "academy-video-worker": 8,
         "academy-messaging-worker": 8,
-        "academy-ai-worker-cpu": 21,
+        "academy-ai-worker-cpu": 22,
         "academy-tools-worker": 21,
     }
     exact_counts = {repository: 0 for repository in baseline}

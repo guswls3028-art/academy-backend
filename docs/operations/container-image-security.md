@@ -263,6 +263,20 @@ Academy 운영 이미지는 ARM64이며 앱, worker, Docker entrypoint, requirem
 확대하지 않는다. 후속 후보는 이전 실패 이후 누적된 앱 변경을 다시 빌드하고
 persistent development부터 production까지 전체 게이트를 새로 통과해야 한다.
 
+후속 후보 `sha-cb22e3cd...-run-33501236135-1`은 Critical exact identity 검사를
+통과했지만 AI digest `sha256:7f6b3a28...`의 완료 scan에서 직전 성공 AI digest
+`sha256:1c9b23a9...`의 High 21건에 `CVE-2026-42497` (`perl` `5.40.1-6`)
+한 건만 추가해 High 상한에서 실패 폐쇄했다. 기존 21개 identity는 제거되거나
+변경되지 않았고 API와 Video에는 이 새 High가 관측되지 않았다. Debian trixie에는
+수정 패키지가 없고 이 finding은 Perl `Archive::Tar`가 공격자 지정 경로로 hardlink를
+추출하는 경로다. 저장소 전체 runtime entrypoint에는 Perl 또는 `Archive::Tar` 실행
+경로가 없으며 AI worker는 제품 tar 입력을 Perl로 추출하지 않는다. 따라서 실제
+완료 scan이 확인된 AI repository와 exact CVE/package/version만 2026-09-19까지
+한시 수용하고 AI 상한만 22로 맞춘다. Base, API, Video, Messaging, Tools 범위나
+상한은 바꾸지 않는다. 이 workflow도 development 진입 전에 중단되고 shared lock을
+반환했으므로 운영 runtime은 변경되지 않았으며, 다음 후보가 전체 release gate를
+처음부터 다시 통과해야 한다.
+
 집중 검증:
 
 ```powershell
