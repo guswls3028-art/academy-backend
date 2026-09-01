@@ -111,7 +111,7 @@ class ClinicOperationsWorkflowAPITest(APITestCase, ClinicAPITestMixin):
         self.assertEqual(participant.status, "booked")
         self.assertIsNone(participant.checked_in_at)
 
-    def test_checkout_requires_arrival_and_preserves_study_completion(self):
+    def test_checkout_without_arrival_requires_exact_confirmation_and_is_idempotent(self):
         participant = self.make_participant(
             self.tenant,
             self.data["clinic_session"],
@@ -126,8 +126,81 @@ class ClinicOperationsWorkflowAPITest(APITestCase, ClinicAPITestMixin):
             **self._headers(self.tenant),
         )
         self.assertEqual(rejected.status_code, 400, rejected.data)
+        participant.refresh_from_db()
+        self.assertIsNone(participant.checked_out_at)
 
-        participant.status = "attended"
+        wrong_session = self.client.post(
+            f"/api/v1/clinic/participants/{participant.id}/checkout/",
+            {
+                "confirm_without_arrival": True,
+                "expected_session_id": participant.session_id + 1,
+                "expected_student_id": participant.student_id,
+            },
+            format="json",
+            **self._headers(self.tenant),
+        )
+        self.assertEqual(wrong_session.status_code, 409, wrong_session.data)
+
+        wrong_student = self.client.post(
+            f"/api/v1/clinic/participants/{participant.id}/checkout/",
+            {
+                "confirm_without_arrival": True,
+                "expected_session_id": participant.session_id,
+                "expected_student_id": participant.student_id + 1,
+            },
+            format="json",
+            **self._headers(self.tenant),
+        )
+        self.assertEqual(wrong_student.status_code, 409, wrong_student.data)
+
+        with patch(
+            "apps.domains.clinic.views.participant_views._send_clinic_notification",
+        ) as notify:
+            checked_out = self.client.post(
+                f"/api/v1/clinic/participants/{participant.id}/checkout/",
+                {
+                    "confirm_without_arrival": True,
+                    "expected_session_id": participant.session_id,
+                    "expected_student_id": participant.student_id,
+                },
+                format="json",
+                **self._headers(self.tenant),
+            )
+
+        self.assertEqual(checked_out.status_code, 200, checked_out.data)
+        self.assertEqual(checked_out.data["checkout_mode"], "arrival_not_recorded")
+        self.assertIsNone(checked_out.data["notification"])
+        notify.assert_not_called()
+        participant.refresh_from_db()
+        first_checked_out_at = participant.checked_out_at
+        self.assertIsNotNone(first_checked_out_at)
+        self.assertIsNone(participant.checked_in_at)
+        self.assertEqual(participant.status, "booked")
+        self.assertEqual(participant.checkout_mode, "arrival_not_recorded")
+        self.assertEqual(participant.checked_out_by_id, self.admin.id)
+
+        duplicate = self.client.post(
+            f"/api/v1/clinic/participants/{participant.id}/checkout/",
+            {
+                "confirm_without_arrival": True,
+                "expected_session_id": participant.session_id,
+                "expected_student_id": participant.student_id,
+            },
+            format="json",
+            **self._headers(self.tenant),
+        )
+        self.assertEqual(duplicate.status_code, 200, duplicate.data)
+        participant.refresh_from_db()
+        self.assertEqual(participant.checked_out_at, first_checked_out_at)
+
+    def test_normal_checkout_preserves_arrival_and_study_completion_and_is_idempotent(self):
+        participant = self.make_participant(
+            self.tenant,
+            self.data["clinic_session"],
+            self.student,
+            status="attended",
+        )
+
         participant.checked_in_at = timezone.now()
         participant.is_late = True
         participant.completed_at = timezone.now() - datetime.timedelta(minutes=10)
@@ -145,11 +218,10 @@ class ClinicOperationsWorkflowAPITest(APITestCase, ClinicAPITestMixin):
 
         with patch(
             "apps.domains.clinic.views.participant_views._send_clinic_notification",
-            return_value={"requested": 1, "failed": 0},
         ) as notify:
             checked_out = self.client.post(
                 f"/api/v1/clinic/participants/{participant.id}/checkout/",
-                {"send_to": "parent"},
+                {},
                 format="json",
                 **self._headers(self.tenant),
             )
@@ -160,21 +232,45 @@ class ClinicOperationsWorkflowAPITest(APITestCase, ClinicAPITestMixin):
         self.assertEqual(participant.completed_at, completed_at)
         self.assertIsNotNone(participant.checked_in_at)
         self.assertTrue(participant.is_late)
-        notify.assert_called_once()
-        self.assertEqual(notify.call_args.kwargs["send_to"], "parent")
-        self.assertEqual(notify.call_args.args[2], "clinic_check_out")
-        self.assertEqual(
-            notify.call_args.args[3]["_domain_object_id"],
-            f"participant_{participant.id}_checkout",
-        )
+        self.assertEqual(participant.checkout_mode, "arrival_recorded")
+        self.assertEqual(checked_out.data["checkout_mode"], "arrival_recorded")
+        self.assertIsNone(checked_out.data["notification"])
+        notify.assert_not_called()
+        first_checked_out_at = participant.checked_out_at
 
         duplicate = self.client.post(
             f"/api/v1/clinic/participants/{participant.id}/checkout/",
-            {"send_to": "parent"},
+            {},
             format="json",
             **self._headers(self.tenant),
         )
-        self.assertEqual(duplicate.status_code, 400, duplicate.data)
+        self.assertEqual(duplicate.status_code, 200, duplicate.data)
+        participant.refresh_from_db()
+        self.assertEqual(participant.checked_out_at, first_checked_out_at)
+
+    def test_checkout_cannot_cross_tenant_boundary(self):
+        foreign = self.setup_api_tenant("clinic_operations_foreign", student_count=1)
+        participant = self.make_participant(
+            foreign["tenant"],
+            foreign["clinic_session"],
+            foreign["students"][0],
+            status="booked",
+        )
+
+        response = self.client.post(
+            f"/api/v1/clinic/participants/{participant.id}/checkout/",
+            {
+                "confirm_without_arrival": True,
+                "expected_session_id": participant.session_id,
+                "expected_student_id": participant.student_id,
+            },
+            format="json",
+            **self._headers(self.tenant),
+        )
+
+        self.assertEqual(response.status_code, 404, response.data)
+        participant.refresh_from_db()
+        self.assertIsNone(participant.checked_out_at)
 
     def test_checkout_notification_is_distinct_and_template_fail_closed(self):
         self.assertEqual(AutoSendConfig.Trigger.CLINIC_CHECK_OUT, "clinic_check_out")
@@ -202,10 +298,7 @@ class ClinicOperationsWorkflowAPITest(APITestCase, ClinicAPITestMixin):
         )
 
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertEqual(
-            response.data["notification"],
-            {"requested": 0, "failed": 1, "send_to": "parent"},
-        )
+        self.assertIsNone(response.data["notification"])
         participant.refresh_from_db()
         self.assertIsNotNone(participant.checked_out_at)
 

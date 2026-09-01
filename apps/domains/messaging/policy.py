@@ -15,6 +15,21 @@ from django.conf import settings
 logger = logging.getLogger(__name__)
 
 
+CLINIC_NOTIFICATION_TRIGGERS = frozenset(
+    {
+        "clinic_reminder",
+        "clinic_reservation_created",
+        "clinic_reservation_changed",
+        "clinic_cancelled",
+        "clinic_check_in",
+        "clinic_check_out",
+        "clinic_absent",
+        "clinic_self_study_completed",
+        "clinic_result_notification",
+    }
+)
+
+
 # ──────────────────────────────────────────
 # 트리거 정책 분류 — SSOT
 # ──────────────────────────────────────────

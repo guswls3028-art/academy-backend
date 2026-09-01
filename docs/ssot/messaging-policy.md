@@ -20,7 +20,7 @@
 | clinic_reservation_changed | 클리닉 예약 변경 | 학생이 직접 변경하면 학생+학부모 | 예약 변경 시 |
 | clinic_cancelled | 클리닉 예약 취소 | 학생이 직접 취소하면 학생+학부모 | 상태 → cancelled |
 | clinic_check_in | 클리닉 등원/지각 등원 | 직원 선택(학생/학부모/둘 다) | 상태 → attended, 실제 `checked_in_at` 기록 시 |
-| clinic_check_out | 클리닉 하원 | 직원 선택(학생/학부모/둘 다) | 등원한 학생의 별도 `checked_out_at` 기록 시. 승인된 exact 하원 템플릿이 없으면 발송 0 |
+| clinic_check_out | 클리닉 하원 | 현재 미지원 | 정상 등원 또는 명시 확인한 미등원 하원의 별도 `checked_out_at` 기록. 승인된 exact 하원 템플릿이 없으므로 UI 수신자 제어와 발송 요청 모두 0 |
 | clinic_absent | 클리닉 결석 | 직원 선택(학생/학부모/둘 다) | 확인 팝업 승인 후 상태 → no_show, 1회만 요청 |
 | clinic_reminder | 클리닉 시작 N분 전 또는 스태프 재촉 | 자동은 학생, 수동은 직원 선택(학생/학부모/둘 다) | EventBridge `academy-v1-send-clinic-reminders` → `send_clinic_reminders`; 수동은 1회 또는 사용자 간격 반복, 같은 날 최대 22:00. 명시적 재클릭은 매번 독립 occurrence |
 | clinic_self_study_completed | 클리닉 자율학습 완료 | 학부모 | 자율학습 완료(`completed_at`) 시. 하원과 별도 이벤트 |
@@ -62,7 +62,7 @@
 5. **공용 알림톡 only.** 제품·고객·운영 경로 모두 SMS/LMS를 실발송하지 않는다. tenant별 PFID/provider도 사용하지 않으며, 운영 오류 알림은 Slack webhook만 사용한다.
 6. **fallback 금지.** exact trigger의 공용 승인 템플릿 또는 명시 unified category 템플릿이 없으면 발송하지 않는다.
 7. **비알림톡 입력 실패 폐쇄.** SMS/LMS와 알 수 없는 `message_mode`를 알림톡으로 보정하지 않는다. 신규 코드에는 SMS 발송·enqueue 호환 callable이나 `sms_allowed` capability를 만들지 않는다.
-8. **클리닉 하원과 학습 완료 분리.** `clinic_check_out`은 `checked_out_at`, `clinic_self_study_completed`는 `completed_at`을 소유한다. 하원 trigger는 exact 승인 템플릿이 준비되기 전 통합 봉투에 임의 매핑하거나 다른 클리닉 trigger로 대체하지 않는다.
+8. **클리닉 하원과 학습 완료 분리.** `clinic_check_out`은 `checked_out_at`과 `checkout_mode`, `clinic_self_study_completed`는 `completed_at`을 소유한다. `arrival_not_recorded`는 등원 상태/시각을 만들지 않는다. 하원 trigger는 exact 승인 템플릿이 준비되기 전 UI 제어·queue 요청을 노출하거나 통합 봉투/다른 클리닉 trigger로 대체하지 않는다.
 9. **성적 알림은 보호자 전용이며 미확정 상태를 추정하지 않는다.** `grades` 수동 발송과 `exam_score_published`·`monthly_report_generated` 미리보기는 `send_to=parent`만 허용한다. 점수가 `null`이면 교사가 `NOT_SUBMITTED`를 명시한 경우에만 미응시·미제출로 표시하고, 그 외 미입력 항목이 하나라도 있으면 성적 발송 진입점에서 실패 폐쇄한다. 미입력을 0점·불합격·보충 필요로 변환하지 않는다. `grades` 수동 발송은 서버가 해석한 전체 수신 학생 ID와 `alimtalk_extra_vars_per_student`의 키가 정확히 일치하고 각 학생의 비어 있지 않은 `_body_subst`가 있을 때만 허용한다. 누락·초과·잘못된 키나 본문이 있으면 공용 `raw_body` 또는 첫 학생의 전역 성적값으로 대체하지 않고 미리보기와 confirm을 모두 차단한다.
 
 ## 클리닉 일정 알림 활성화
@@ -114,6 +114,7 @@ preview→confirm 경로에서 선생이 명시적으로 확인한 경우에만 
 11. **SQS enqueue 복구** — transient enqueue 실패는 30초 지수 백오프, 최대 8회 재시도한다. `dispatching` 5분 stale claim도 같은 dispatch key로 회수한다. 입력 오류와 일반 알림의 업무 tenant 전체 발송 중지는 SQS 호출·재시도 없이 즉시 terminal `failed`로 전이해 payload를 제거하며, transient 재시도 소진도 terminal `failed`다. 첫 수강 계정 안내 2종은 운영 중지 중 15분 간격 `pending`으로 보류해 일회용 비밀번호를 잃지 않는다.
 12. **provider 호출 경계** — 워커는 공급사 호출 전에 `NotificationLog.status=sending`을 영속화한다. `sending` 이후 crash/중복 SQS는 공급사를 다시 호출하지 않는다. 같은 SQS 메시지 재전달은 `sending→ambiguous`로 원자 승격하며 차감액을 유지한다. timeout처럼 접수 여부가 불명확한 결과와 함께 operations의 `action_required`로 운영 확인한다.
 13. **provider 결과/크레딧 추적** — 성공 응답 group/message id는 `provider_message_id`에 저장한다. 크레딧 예약/롤백은 NotificationLog와 함께 멱등 처리하며 `ambiguous`는 자동 환불하지 않는다.
+13-A. **접수와 최종 전달 분리** — `NotificationLog.status=sent`와 provider ID는 공급사 접수 근거다. 권한 있는 교직원이 상세에서 명시적으로 최종 상태를 확인할 때만 저장된 group ID로 Solapi 메시지 목록을 read-only 조회한다. provider `2000`은 접수, `3000`은 통신사 결과 대기, 모든 메시지의 `4000`만 최종 전달 성공이며 다른 terminal 코드는 실패다. 조회 오류는 접수 상태를 전달 성공으로 승격하지 않는다.
 14. **outbox 개인정보 보존 최소화** — `ScheduledNotification.payload` 원문은 재시도 가능한 `pending/dispatching` 동안에만 보존한다. `sent/cancelled/terminal failed` 전이 시 수신번호, 본문, 치환값, 이름을 제거하고 전달 식별 메타데이터만 남긴다. 비-object legacy payload는 포렌식 원형을 보존한 채 terminal failed로 격리한다.
 15. **계정 target key 무전화번호 원칙** — 학생/학부모 계정 알림의 `target_id`는 `student:{student_id}`, `parent:{student_id}`, `parent-account:{parent_id}`만 사용한다. 저장 어댑터와 API는 legacy `parent:{student_id}:{phone}` suffix를 제거한다.
 16. **첫 수강 계정 안내 멱등성** — 변경 배포 후 생성된 학생만 암호화된 pending 안내를 가진다. 학생-only 등록·가입 승인·학생 Excel 등록은 발송하지 않는다. 수강 bulk 등록, 수강 Excel 등록, `PENDING|INACTIVE → ACTIVE` 전이에서 커밋 후 pending 안내를 확인하며, 계정 target 기반 outbox가 이미 있으면 재사용한다. 모든 유효 수신자 outbox 확보 전에는 암호문을 유지하고 동일 수강 요청으로 재시도한다. 기존 학생과 두 번째 이후 수강은 pending 값이 없으므로 발송하지 않는다.

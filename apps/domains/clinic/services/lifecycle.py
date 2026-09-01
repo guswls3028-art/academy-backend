@@ -447,27 +447,6 @@ def _complete_notification(participant: SessionParticipant) -> ClinicNotificatio
     )
 
 
-def _checkout_notification(participant: SessionParticipant) -> ClinicNotificationEvent:
-    session = participant.session
-    checked_out_at = participant.checked_out_at or timezone.now()
-    return ClinicNotificationEvent(
-        trigger="clinic_check_out",
-        student=participant.student,
-        context={
-            "클리닉명": getattr(session, "title", "") if session else "",
-            "장소": getattr(session, "location", "") if session else "",
-            "날짜": (
-                str(session.date)
-                if session and session.date
-                else checked_out_at.strftime("%Y-%m-%d")
-            ),
-            "시간": checked_out_at.strftime("%H:%M"),
-            "_actual_time": checked_out_at.strftime("%H:%M"),
-            "_domain_object_id": f"participant_{participant.pk}_checkout",
-        },
-    )
-
-
 @transaction.atomic
 def change_participant_status(
     *,
@@ -579,27 +558,63 @@ def complete_participant(*, tenant, participant_id: int, actor) -> ParticipantTr
 
 
 @transaction.atomic
-def checkout_participant(*, tenant, participant_id: int, actor) -> ParticipantTransitionResult:
+def checkout_participant(
+    *,
+    tenant,
+    participant_id: int,
+    actor,
+    confirm_without_arrival: bool = False,
+    expected_session_id: int | None = None,
+    expected_student_id: int | None = None,
+) -> ParticipantTransitionResult:
     participant = _locked_participant(tenant=tenant, participant_id=participant_id)
+    if expected_session_id is not None and participant.session_id != expected_session_id:
+        raise Conflict("선택한 클리닉 일정이 변경되었습니다. 다시 확인해 주세요.")
+    if expected_student_id is not None and participant.student_id != expected_student_id:
+        raise Conflict("선택한 학생 정보가 변경되었습니다. 다시 확인해 주세요.")
     if participant.checked_out_at is not None:
-        raise ValidationError({"detail": "이미 하원 처리된 참가자입니다."})
-    if (
-        participant.status != SessionParticipant.Status.ATTENDED
-        or participant.checked_in_at is None
-    ):
-        raise ValidationError({"detail": "등원 처리된 참가자만 하원 처리할 수 있습니다."})
+        return ParticipantTransitionResult(participant=participant)
+
+    arrival_recorded = (
+        participant.status == SessionParticipant.Status.ATTENDED
+        and participant.checked_in_at is not None
+    )
+    if not arrival_recorded:
+        if not confirm_without_arrival:
+            raise ValidationError(
+                {"detail": "등원 기록 없이 하원하려면 미등원 하원을 명시적으로 확인해 주세요."}
+            )
+        if expected_session_id is None or expected_student_id is None:
+            raise ValidationError(
+                {"detail": "미등원 하원은 현재 클리닉 일정과 학생을 다시 확인해야 합니다."}
+            )
+        if participant.session_id is None or participant.status != SessionParticipant.Status.BOOKED:
+            raise ValidationError(
+                {"detail": "예약 확정 상태의 클리닉 참가자만 미등원 하원 처리할 수 있습니다."}
+            )
 
     participant.checked_out_at = timezone.now()
     participant.checked_out_by = actor
-    participant.save(update_fields=["checked_out_at", "checked_out_by", "updated_at"])
+    participant.checkout_mode = (
+        SessionParticipant.CheckoutMode.ARRIVAL_RECORDED
+        if arrival_recorded
+        else SessionParticipant.CheckoutMode.ARRIVAL_NOT_RECORDED
+    )
+    participant.save(
+        update_fields=[
+            "checked_out_at",
+            "checked_out_by",
+            "checkout_mode",
+            "updated_at",
+        ]
+    )
     cancel_pending_clinic_participant_reminders(
         tenant_id=tenant.id,
         participant_id=participant.id,
     )
-    return ParticipantTransitionResult(
-        participant=participant,
-        notification=_checkout_notification(participant),
-    )
+    # clinic_check_out has no exact approved Alimtalk envelope. Do not create a
+    # misleading failed delivery request or reuse another clinic trigger.
+    return ParticipantTransitionResult(participant=participant)
 
 
 @transaction.atomic

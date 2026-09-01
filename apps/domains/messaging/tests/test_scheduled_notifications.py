@@ -712,3 +712,25 @@ class ScheduledNotificationViewTests(TestCase):
         notification = ScheduledNotification.objects.get(tenant=self.tenant)
         self.assertEqual(notification.status, ScheduledNotification.Status.PENDING)
         self.assertEqual(notification.attempt_count, 1)
+
+    def test_clinic_scope_returns_only_clinic_outbox_rows(self):
+        clinic = ScheduledNotification.objects.create(
+            tenant=self.tenant,
+            trigger="clinic_reminder",
+            send_at=timezone.now() + timedelta(minutes=30),
+            payload={"tenant_id": self.tenant.id, "target_name": "클리닉 학생"},
+        )
+        ScheduledNotification.objects.create(
+            tenant=self.tenant,
+            trigger="exam_score_published",
+            send_at=timezone.now() + timedelta(minutes=30),
+            payload={"tenant_id": self.tenant.id, "target_name": "시험 학생"},
+        )
+
+        response = ScheduledNotificationListView.as_view()(
+            self._request("get", "/api/v1/messaging/scheduled/?scope=clinic")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["id"], clinic.id)

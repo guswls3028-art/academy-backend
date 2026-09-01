@@ -52,6 +52,17 @@ class ClinicRecipientActionSerializer(serializers.Serializer):
     send_to = serializers.ChoiceField(choices=CLINIC_RECIPIENT_TARGETS)
 
 
+class ClinicCheckoutRequestSerializer(serializers.Serializer):
+    send_to = serializers.ChoiceField(
+        choices=CLINIC_RECIPIENT_TARGETS,
+        required=False,
+        write_only=True,
+    )
+    confirm_without_arrival = serializers.BooleanField(required=False, default=False)
+    expected_session_id = serializers.IntegerField(min_value=1, required=False)
+    expected_student_id = serializers.IntegerField(min_value=1, required=False)
+
+
 class ClinicReminderRequestSerializer(ClinicRecipientActionSerializer):
     mode = serializers.ChoiceField(choices=("once", "repeat"), default="once")
     interval_minutes = serializers.IntegerField(min_value=10, required=False)
@@ -460,34 +471,29 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         return Response(out)
 
     @extend_schema(
-        request=ClinicRecipientActionSerializer,
+        request=ClinicCheckoutRequestSerializer,
         parameters=[OpenApiParameter("id", OpenApiTypes.INT, OpenApiParameter.PATH)],
         responses={200: ClinicSessionParticipantSerializer, 400: OpenApiTypes.OBJECT},
     )
     @action(detail=True, methods=["post"])
     def checkout(self, request, pk=None):
         """Record departure independently from self-study completion."""
-        send_to = _validated_send_to(request, default="parent")
+        payload = ClinicCheckoutRequestSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
         result = checkout_participant(
             tenant=getattr(request, "tenant", None),
             participant_id=self.get_object().pk,
             actor=request.user,
+            confirm_without_arrival=payload.validated_data["confirm_without_arrival"],
+            expected_session_id=payload.validated_data.get("expected_session_id"),
+            expected_student_id=payload.validated_data.get("expected_student_id"),
         )
         obj = result.participant
-        notification_result = None
-        if result.notification:
-            notification_result = _send_clinic_notification(
-                getattr(request, "tenant", None),
-                result.notification.student,
-                result.notification.trigger,
-                result.notification.context,
-                send_to=send_to,
-            )
 
         out = ClinicSessionParticipantSerializer(
             obj, context={"request": request}
         ).data
-        out["notification"] = notification_result
+        out["notification"] = None
         return Response(out)
 
     @extend_schema(

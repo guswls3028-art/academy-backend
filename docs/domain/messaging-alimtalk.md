@@ -520,6 +520,15 @@ SHA-256(canonical) -> 64자 hex
 | `ambiguous` | 공급사 호출 후 timeout/통신 오류로 접수 여부 불명 | 금지, 운영자 확인 |
 
 - DB, SQS, 외부 공급사 사이에는 공통 transaction이 없고 공급사가 공식 idempotency 계약을 제공하지 않으므로 수학적인 exactly-once는 불가능하다.
+- 클리닉 설정의 이력은 `scope=clinic`으로 clinic trigger만 조회한다. 예약 outbox는
+  `scheduled/pending/dispatching/cancelled/failed`, worker log는
+  `pending/dispatching/provider_accepted/failed/skipped`로 설명하고, 정책·템플릿·수신자
+  차단은 실패 발송이 아니라 `skipped`로 표시한다.
+- log 상세의 `verify_provider=true`는 저장된 provider group ID 하나만 read-only
+  조회한다. Solapi `statusCode=2000`은 공급사 접수, `3000`은 통신사 결과 대기이며
+  모든 메시지가 `statusCode=4000`일 때만 `delivered`다. 다른 terminal 코드는 `failed`, 조회 실패는
+  `unavailable`이며 저장된 접수 근거를 전달 완료로 오인하지 않는다. 정확한 group ID는
+  기존 역할별 마스킹 정책을 유지한다.
 - 중복 발송 방지를 우선해 `sending` 이후에는 워커 재시작, 같은 SQS 재전달, 다른 SQS MessageId의 중복 전달 모두 공급사를 다시 호출하지 않는다. 같은 SQS 메시지가 재전달되면 provider 응답 저장 실패/worker 중단으로 간주해 `sending→ambiguous`를 원자 반영하고 기존 차감액을 유지한다.
 - 대가는 at-most-once 모호 구간이다. 현재 `sending` DB 기록부터 실제 발송 endpoint 호출 전까지 Solapi는 보통 짧은 client 준비 구간이고, Ppurio는 token preflight timeout 최대 10초를 포함한다. 호출 후 응답 모호 구간은 Ppurio request timeout 최대 15초다. 이 구간 crash/timeout은 `ambiguous`이며 자동 재발송하지 않는다.
 - 크레딧 예약은 `NotificationLog.amount_deducted`와 tenant 잔액을 한 transaction에서 기록하고, 재선점/롤백도 멱등 처리한다. `ambiguous`는 실제 접수 가능성이 있어 자동 환불하지 않는다.
@@ -692,12 +701,12 @@ POST로 기존 기본 템플릿 리셋 가능. 이름이 기본값과 동일한 
 다른 trigger나 SMS/LMS fallback은 없다.
 
 - 예약 생성은 `transaction.on_commit()` 뒤 발송하고, 상태·하원·완료·일정 변경은 서비스의 DB 전이가 끝난 뒤 view가 발송 결과를 응답에 포함한다.
-- 학생 본인이 예약을 생성·변경·취소하면 클라이언트의 `send_to` 입력과 무관하게 학생+학부모(`both`)를 사용한다. 직원이 처리하는 등원·결석·하원·완료·재촉의 기존 수신자 선택은 바뀌지 않는다.
+- 학생 본인이 예약을 생성·변경·취소하면 클라이언트의 `send_to` 입력과 무관하게 학생+학부모(`both`)를 사용한다. 직원이 처리하는 등원·결석·완료·재촉은 기존 수신자 선택을 유지한다. 하원은 exact 승인 봉투가 없어 수신자 선택을 노출하지 않고 발송 요청 0을 유지한다.
 - create/change_booking/status/checkout/complete 계열은 `clinic.services.lifecycle`이 서로 다른 `ClinicNotificationEvent`를 반환한다.
 - clinic_info context 변수: 클리닉명, 장소, 날짜, 시간, _domain_object_id
 - clinic_change context 변수: 클리닉명, 장소, 날짜, 시간, 클리닉기존일정, 클리닉변동사항, 클리닉수정자, _domain_object_id
 - `clinic_check_in`/`clinic_absent` 트리거 전용 추가 변수: **도착시간** (상태 처리 시점의 `timezone.now()` → `HH:MM` 포맷). 선생님메모 본문에서 `#{도착시간}`으로 사용 가능.
-- `clinic_check_out`은 실제 하원 시각과 `participant_<id>_checkout` business object를 사용한다. `clinic_self_study_completed`의 `completed_at`과 멱등성 키를 공유하지 않는다.
+- `clinic_check_out`은 실제 하원 시각과 `checkout_mode`를 소유한다. 현재 exact 승인 봉투가 없어 delivery business object를 만들지 않는다. 향후 승인 봉투가 생겨도 `clinic_self_study_completed`의 `completed_at`과 멱등성 키를 공유하지 않는다.
 - 2026-05-23 단말 확인: 실제 카카오톡 복붙 본문에는 자유 본문(`#{선생님메모}`)만 보이고 ITEM_LIST 변수는 별도 UI로 표시될 수 있다. 현재 템플릿 본문은 검수 통과한 자유 본문 정책을 유지한다. 기본 본문에 일정 정보를 중복 삽입하려면 기존 테넌트 템플릿 reset/overwrite 정책을 먼저 정해야 한다.
 
 ### 일반 강의 출결 수동 알림

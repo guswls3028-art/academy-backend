@@ -10,6 +10,7 @@ from rest_framework.views import APIView
 from apps.api.common.query_params import parse_query_int
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.messaging.models import ScheduledNotification
+from apps.domains.messaging.policy import CLINIC_NOTIFICATION_TRIGGERS
 from apps.domains.messaging.permissions import can_send_messages
 from apps.domains.messaging.serializers import ScheduledNotificationSerializer
 from apps.domains.messaging.security import redact_terminal_delivery_payload
@@ -39,6 +40,8 @@ class ScheduledNotificationListView(APIView):
         status_filter = (request.query_params.get("status") or "").strip().lower()
 
         qs = ScheduledNotification.objects.filter(tenant=request.tenant)
+        if (request.query_params.get("scope") or "").strip().lower() == "clinic":
+            qs = qs.filter(trigger__in=CLINIC_NOTIFICATION_TRIGGERS)
         valid_statuses = {choice[0] for choice in ScheduledNotification.Status.choices}
         if status_filter in valid_statuses:
             qs = qs.filter(status=status_filter)

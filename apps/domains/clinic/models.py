@@ -130,6 +130,10 @@ class SessionParticipant(TimestampModel):
         MANUAL = "manual", "Manual"
         STUDENT_REQUEST = "student_request", "Student Request"  # 학생 신청
 
+    class CheckoutMode(models.TextChoices):
+        ARRIVAL_RECORDED = "arrival_recorded", "Arrival recorded"
+        ARRIVAL_NOT_RECORDED = "arrival_not_recorded", "Arrival not recorded"
+
     class Reason(models.TextChoices):
         EXAM = "exam", "Exam"
         HOMEWORK = "homework", "Homework"
@@ -213,6 +217,17 @@ class SessionParticipant(TimestampModel):
         blank=True,
         on_delete=models.SET_NULL,
         related_name="clinic_check_outs",
+    )
+    checkout_mode = models.CharField(
+        max_length=24,
+        choices=CheckoutMode.choices,
+        blank=True,
+        default="",
+        db_default="",
+        help_text=(
+            "하원 처리 당시 등원 기록의 존재 여부. arrival_not_recorded는 등원을 "
+            "추정하거나 생성하지 않은 명시적 예외 처리다."
+        ),
     )
 
     completed_at = models.DateTimeField(null=True, blank=True, help_text="자율학습 완료 시각")
