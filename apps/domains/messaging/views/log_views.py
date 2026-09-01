@@ -11,6 +11,8 @@ from apps.core.permissions import TenantResolvedAndStaff
 from apps.api.common.query_params import parse_query_int
 from apps.core.services.tenant_access import get_authorized_tenant_role
 from apps.domains.messaging.models import NotificationLog
+from apps.domains.messaging.policy import CLINIC_NOTIFICATION_TRIGGERS
+from apps.domains.messaging.provider_delivery import get_provider_delivery_status
 from apps.domains.messaging.security import (
     SENSITIVE_MESSAGE_PLACEHOLDER,
     sanitize_notification_target_id,
@@ -88,6 +90,11 @@ def _project_log(
     visible_body = stored_body if include_body and body_visibility in {"available", "sensitive_redacted"} else ""
     provider_id = str(log.provider_message_id or "")
     failure_code, failure_summary = _safe_failure_projection(log)
+    delivery_status = (
+        "provider_accepted"
+        if provider_id and (log.status == "sent" or log.success)
+        else "unavailable"
+    )
     return {
         "id": log.id,
         "sent_at": log.sent_at,
@@ -100,6 +107,11 @@ def _project_log(
         "provider_message_id": provider_id if privileged else "",
         "provider_evidence": bool(provider_id),
         "provider_message_reference": _masked_provider_reference(provider_id),
+        "provider_delivery_status": delivery_status,
+        "provider_status_code": "",
+        "provider_delivery_checked_at": None,
+        "provider_delivery_updated_at": None,
+        "provider_delivery_failure_reason": "",
         "failure_code": failure_code,
         "failure_reason": failure_summary,
         "body_visibility": body_visibility,
@@ -129,6 +141,8 @@ class NotificationLogListView(APIView):
         # status 필터: success / failure / all (기본 all)
         status_filter = (request.query_params.get("status") or "").strip().lower()
         base_qs = _alimtalk_logs_for_business_tenant(request.tenant)
+        if (request.query_params.get("scope") or "").strip().lower() == "clinic":
+            base_qs = base_qs.filter(notification_type__in=CLINIC_NOTIFICATION_TRIGGERS)
         if status_filter == "success":
             base_qs = base_qs.filter(success=True)
         elif status_filter == "failure":
@@ -159,10 +173,22 @@ class NotificationLogDetailView(APIView):
         if not log:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         role = get_authorized_tenant_role(request.user, request.tenant)
-        return Response(
-            _project_log(
-                log,
-                privileged=role in _PRIVILEGED_LOG_ROLES,
-                include_body=True,
-            )
+        item = _project_log(
+            log,
+            privileged=role in _PRIVILEGED_LOG_ROLES,
+            include_body=True,
         )
+        if (request.query_params.get("verify_provider") or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }:
+            provider = get_provider_delivery_status(log)
+            item.update(
+                provider_delivery_status=provider["status"],
+                provider_status_code=provider["status_code"],
+                provider_delivery_checked_at=provider["checked_at"],
+                provider_delivery_updated_at=provider["updated_at"],
+                provider_delivery_failure_reason=provider["failure_reason"],
+            )
+        return Response(item)

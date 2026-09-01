@@ -94,6 +94,26 @@ bulk 모두 `409`로 거부하고 요청 전체를 롤백한다. 일정 변경�
 규칙을 그대로 따른다. 학생 직접 예약 생성·일정 변경·취소 알림은 기존 계약대로
 학생과 학부모 모두에게 보내며, 교직원 수신자 선택 규칙은 변경하지 않는다.
 
+## 미등원 하원 감사 계약
+
+`POST /api/v1/clinic/participants/{id}/checkout/`은 정상 등원 후 하원과, 현장에서
+등원 처리를 놓친 예약 학생의 하원을 모두 기록한다. 두 경로 모두 기존
+`checked_out_at`, `checked_out_by`를 사용하며 자율학습 `completed_at`은 건드리지
+않는다.
+
+- 정상 등원(`status=attended`, `checked_in_at` 존재)은 기존 빈 payload도 허용하고
+  `checkout_mode=arrival_recorded`를 기록한다.
+- 등원 기록이 없는 예약 확정 학생은 `confirm_without_arrival=true`와 현재
+  `expected_session_id`, `expected_student_id`를 모두 보내야 한다. 이때
+  `checkout_mode=arrival_not_recorded`를 기록하며 `status`나 `checked_in_at`을
+  생성·추정하지 않는다.
+- 예상 session/student가 바뀌면 `409`, 다른 tenant 참가자는 `404`, pending·취소·
+  거절·결석·세션 미연결 행은 실패 폐쇄한다.
+- 같은 참가자의 반복 하원 요청은 `200`으로 기존 결과를 돌려주고 하원 시각·처리자를
+  다시 쓰지 않는다.
+- `clinic_check_out` exact 승인 알림톡 봉투가 없으므로 현재 하원 API는 알림 요청을
+  생성하지 않는다. 다른 클리닉 trigger로 대체하지 않는다.
+
 ## 구현과 검증
 
 - 입력·응답 직렬화: `apps/domains/clinic/serializers.py`
@@ -101,6 +121,7 @@ bulk 모두 `409`로 거부하고 요청 전체를 롤백한다. 일정 변경�
 - API 액션·커밋 후 알림: `apps/domains/clinic/views/participant_views.py`
 - tenant/session 정책: `apps/core/models/tenant.py`, `apps/domains/clinic/models.py`
 - 집중 API 회귀: `tests/test_clinic_multi_slot_booking_api.py`
+- 하원·등원 독립 회귀: `tests/test_clinic_operations_workflow_api.py`
 
 ```powershell
 $env:DJANGO_SETTINGS_MODULE='apps.api.config.settings.test'

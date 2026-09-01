@@ -758,6 +758,39 @@
         ],
         "type": "string"
       },
+      "CheckoutModeEnum": {
+        "description": "* `arrival_recorded` - Arrival recorded\n* `arrival_not_recorded` - Arrival not recorded",
+        "enum": [
+          "arrival_recorded",
+          "arrival_not_recorded"
+        ],
+        "type": "string"
+      },
+      "ClinicCheckoutRequestRequest": {
+        "properties": {
+          "confirm_without_arrival": {
+            "default": false,
+            "type": "boolean"
+          },
+          "expected_session_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "expected_student_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "send_to": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SendToEnum"
+              }
+            ],
+            "writeOnly": true
+          }
+        },
+        "type": "object"
+      },
       "ClinicLink": {
         "properties": {
           "approved": {
@@ -961,17 +994,6 @@
           "both"
         ],
         "type": "string"
-      },
-      "ClinicRecipientActionRequest": {
-        "properties": {
-          "send_to": {
-            "$ref": "#/components/schemas/SendToEnum"
-          }
-        },
-        "required": [
-          "send_to"
-        ],
-        "type": "object"
       },
       "ClinicReminderRequestRequest": {
         "properties": {
@@ -1216,6 +1238,17 @@
           "checked_out_by_name": {
             "readOnly": true,
             "type": "string"
+          },
+          "checkout_mode": {
+            "description": "하원 처리 당시 등원 기록의 존재 여부. arrival_not_recorded는 등원을 추정하거나 생성하지 않은 명시적 예외 처리다.\n\n* `arrival_recorded` - Arrival recorded\n* `arrival_not_recorded` - Arrival not recorded",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CheckoutModeEnum"
+              },
+              {
+                "$ref": "#/components/schemas/BlankEnum"
+              }
+            ]
           },
           "clinic_reason": {
             "nullable": true,
@@ -1640,6 +1673,17 @@
           "checked_out_by": {
             "nullable": true,
             "type": "integer"
+          },
+          "checkout_mode": {
+            "description": "하원 처리 당시 등원 기록의 존재 여부. arrival_not_recorded는 등원을 추정하거나 생성하지 않은 명시적 예외 처리다.\n\n* `arrival_recorded` - Arrival recorded\n* `arrival_not_recorded` - Arrival not recorded",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CheckoutModeEnum"
+              },
+              {
+                "$ref": "#/components/schemas/BlankEnum"
+              }
+            ]
           },
           "clinic_reason": {
             "nullable": true,
@@ -7470,6 +7514,17 @@
           "checked_out_by": {
             "nullable": true,
             "type": "integer"
+          },
+          "checkout_mode": {
+            "description": "하원 처리 당시 등원 기록의 존재 여부. arrival_not_recorded는 등원을 추정하거나 생성하지 않은 명시적 예외 처리다.\n\n* `arrival_recorded` - Arrival recorded\n* `arrival_not_recorded` - Arrival not recorded",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CheckoutModeEnum"
+              },
+              {
+                "$ref": "#/components/schemas/BlankEnum"
+              }
+            ]
           },
           "clinic_reason": {
             "nullable": true,
@@ -18419,21 +18474,20 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ClinicRecipientActionRequest"
+                "$ref": "#/components/schemas/ClinicCheckoutRequestRequest"
               }
             },
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/ClinicRecipientActionRequest"
+                "$ref": "#/components/schemas/ClinicCheckoutRequestRequest"
               }
             },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/ClinicRecipientActionRequest"
+                "$ref": "#/components/schemas/ClinicCheckoutRequestRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -38661,21 +38715,20 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ClinicRecipientActionRequest"
+                "$ref": "#/components/schemas/ClinicCheckoutRequestRequest"
               }
             },
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/ClinicRecipientActionRequest"
+                "$ref": "#/components/schemas/ClinicCheckoutRequestRequest"
               }
             },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/ClinicRecipientActionRequest"
+                "$ref": "#/components/schemas/ClinicCheckoutRequestRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from academy.adapters.db.django.repositories_messaging import (
@@ -14,6 +17,7 @@ from academy.adapters.db.django.repositories_messaging import (
 )
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.messaging.models import NotificationLog
+from apps.domains.messaging.provider_delivery import get_provider_delivery_status
 from apps.domains.messaging.security import SENSITIVE_MESSAGE_PLACEHOLDER
 from apps.domains.messaging.views.log_views import NotificationLogDetailView, NotificationLogListView
 
@@ -456,3 +460,145 @@ class NotificationLogRedactionTests(TestCase):
             pk=customer_proxy_log.id,
         )
         self.assertEqual(customer_detail.status_code, 200)
+
+    def test_clinic_scope_returns_only_clinic_alimtalk_rows(self):
+        clinic_log = NotificationLog.objects.create(
+            tenant=self.tenant,
+            success=True,
+            status="sent",
+            message_mode="alimtalk",
+            notification_type="clinic_reminder",
+            provider_message_id="group-clinic-accepted",
+            target_name="클리닉 학생",
+        )
+        NotificationLog.objects.create(
+            tenant=self.tenant,
+            success=True,
+            status="sent",
+            message_mode="alimtalk",
+            notification_type="exam_score_published",
+            target_name="시험 학생",
+        )
+
+        request = self.factory.get("/api/v1/messaging/log/?scope=clinic")
+        force_authenticate(request, user=self.admin)
+        request.user = self.admin
+        request.tenant = self.tenant
+
+        response = NotificationLogListView.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["id"], clinic_log.id)
+        self.assertEqual(
+            response.data["results"][0]["provider_delivery_status"],
+            "provider_accepted",
+        )
+
+    @patch("apps.domains.messaging.views.log_views.get_provider_delivery_status")
+    def test_detail_verifies_final_provider_delivery_without_exposing_provider_payload(
+        self,
+        get_provider_delivery_status,
+    ):
+        log = NotificationLog.objects.create(
+            tenant=self.tenant,
+            success=True,
+            status="sent",
+            message_mode="alimtalk",
+            notification_type="clinic_check_in",
+            provider_message_id="group-clinic-delivered",
+            target_name="클리닉 학생",
+        )
+        checked_at = timezone.now()
+        get_provider_delivery_status.return_value = {
+            "status": "delivered",
+            "status_code": "4000",
+            "checked_at": checked_at,
+            "updated_at": checked_at,
+            "failure_reason": "",
+        }
+        request = self.factory.get(
+            f"/api/v1/messaging/log/{log.id}/?verify_provider=true"
+        )
+        force_authenticate(request, user=self.admin)
+        request.user = self.admin
+        request.tenant = self.tenant
+
+        response = NotificationLogDetailView.as_view()(request, pk=log.id)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["provider_delivery_status"], "delivered")
+        self.assertEqual(response.data["provider_status_code"], "4000")
+        self.assertEqual(response.data["provider_delivery_checked_at"], checked_at)
+        self.assertNotIn("group-clinic-delivered", response.data["provider_delivery_failure_reason"])
+        get_provider_delivery_status.assert_called_once_with(log)
+
+    @patch("apps.domains.messaging.provider_delivery.get_solapi_client")
+    def test_provider_delivery_status_distinguishes_acceptance_delivery_and_failure(
+        self,
+        get_solapi_client,
+    ):
+        log = NotificationLog.objects.create(
+            tenant=self.tenant,
+            success=True,
+            status="sent",
+            message_mode="alimtalk",
+            provider_message_id="group-clinic-status",
+        )
+        message = SimpleNamespace(
+            status="SENDING",
+            status_code="2000",
+            date_updated=timezone.now(),
+            date_reported=None,
+        )
+        get_solapi_client.return_value.get_messages.return_value = SimpleNamespace(
+            message_list={"private-message-id": message},
+        )
+
+        accepted = get_provider_delivery_status(log)
+        self.assertEqual(accepted["status"], "provider_accepted")
+        self.assertEqual(accepted["status_code"], "2000")
+
+        message.status = "COMPLETE"
+        message.status_code = "4000"
+        delivered = get_provider_delivery_status(log)
+        self.assertEqual(delivered["status"], "delivered")
+        self.assertEqual(delivered["status_code"], "4000")
+
+        sdk_shaped_message = SimpleNamespace(
+            status_code="4000",
+            date_updated=timezone.now(),
+        )
+        get_solapi_client.return_value.get_messages.return_value = SimpleNamespace(
+            message_list={"private-sdk-message-id": sdk_shaped_message},
+        )
+        sdk_shaped_delivery = get_provider_delivery_status(log)
+        self.assertEqual(sdk_shaped_delivery["status"], "delivered")
+
+        sdk_shaped_message.status_code = "3000"
+        carrier_pending = get_provider_delivery_status(log)
+        self.assertEqual(carrier_pending["status"], "provider_accepted")
+
+        pending_message = SimpleNamespace(
+            status="SENDING",
+            status_code="2000",
+            date_updated=timezone.now(),
+            date_reported=None,
+        )
+        get_solapi_client.return_value.get_messages.return_value = SimpleNamespace(
+            message_list={
+                "private-message-id": message,
+                "private-pending-id": pending_message,
+            },
+        )
+        partial = get_provider_delivery_status(log)
+        self.assertEqual(partial["status"], "provider_accepted")
+
+        get_solapi_client.return_value.get_messages.return_value = SimpleNamespace(
+            message_list={"private-message-id": message},
+        )
+        message.status_code = "4001"
+        failed = get_provider_delivery_status(log)
+        self.assertEqual(failed["status"], "failed")
+        self.assertEqual(failed["status_code"], "4001")
+        self.assertNotIn("private-message-id", str(failed))
