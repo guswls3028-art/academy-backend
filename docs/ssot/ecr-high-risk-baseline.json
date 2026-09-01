@@ -5,7 +5,7 @@
     "academy-api": 21,
     "academy-video-worker": 8,
     "academy-messaging-worker": 8,
-    "academy-ai-worker-cpu": 21,
+    "academy-ai-worker-cpu": 22,
     "academy-tools-worker": 21
   },
   "acceptedHighFindings": [
@@ -40,6 +40,17 @@
       "expiresOn": "2026-09-19",
       "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-11824",
       "rationale": "Debian trixie remains vulnerable in an SQLite FTS5 MATCH path that requires a crafted SQLite database. Academy production uses PostgreSQL and neither ingests attacker-provided SQLite databases nor executes application FTS5 queries."
+    },
+    {
+      "cve": "CVE-2026-42497",
+      "packageName": "perl",
+      "packageVersion": "5.40.1-6",
+      "repositories": [
+        "academy-ai-worker-cpu"
+      ],
+      "expiresOn": "2026-09-19",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-42497",
+      "rationale": "Debian trixie remains vulnerable in the Perl Archive::Tar hardlink extraction path. Academy AI runtime entrypoints do not invoke Perl or Archive::Tar and do not extract product tar archives with Perl, so this exact completed-scan identity is accepted only for the observed AI image."
     },
     {
       "cve": "CVE-2026-48959",
