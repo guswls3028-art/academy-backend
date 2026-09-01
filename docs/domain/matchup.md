@@ -135,7 +135,12 @@ Gemini VLM을 먼저 운영 실험할 때는 전체 문서를 VLM primary로 바
 - `POST /api/v1/landing-public/matchup-showcase/publish-upload/`는 20MB 이하 PDF,
   선택 제목·설명·공개 기간, 선택 `source_hit_report_id`를 받는다.
 - `POST /api/v1/landing-public/matchup-showcase/publish/`는 기존
-  `MatchupHitReport`에서 PDF를 생성하는 호환 경로다.
+  `MatchupHitReport`에서 PDF를 생성하는 호환 경로다. 같은 테넌트·보고서의 공개
+  또는 예약 공개 snapshot이 이미 있으면 `200`과 기존 게시물을 반환하고
+  `X-Idempotent-Replay: true`를 표시한다. PostgreSQL transaction advisory lock을
+  상태 조회 전에 획득해 더블클릭·API 재시도·동시 요청도 R2 객체와 공개 행을
+  하나만 만든다. 비공개 또는 공개 기간이 끝난 과거 snapshot은 보존하며 새 버전
+  발행을 막지 않는다.
 - 두 경로 모두 게시 시점 PDF 스냅샷과 대표 정적 미리보기를 저장한다. 이후
   원본 보고서나 로컬 파일이 바뀌어도 게시물 내용은 자동 변경하지 않는다.
 - 홈페이지 설정 게시 직전의 대표 미리보기 검증은 `MatchupHitReport` 행만 잠근다.
@@ -167,6 +172,9 @@ PDF snapshot key, 공개 상태, 조회수는 보존하고 적중 통계 필드�
 소유 회귀는
 `apps/domains/landing_public/tests/test_matchup_showcase_visibility.py`에서 권한,
 테넌트 격리, 공개 기간, 직접 업로드와 스냅샷 보존을 확인한다.
+`apps/domains/landing_public/tests/test_matchup_showcase_publish_concurrency_pg.py`는
+동시 발행이 snapshot 생성 1회, `201` 1회, 멱등 `200` 1회로 닫히는지 실제
+PostgreSQL transaction에서 확인한다.
 `apps/domains/matchup/tests/test_hit_statistics.py`는 공개 metadata와 PDF가 동일한 유사도 임계값,
 제외 문항, 분모를 사용하는지 확인한다. 운영 canary로
 합성 게시물을 만들 때는 제목에 실행 식별자를 넣고, 생성 응답의 정확한 ID와

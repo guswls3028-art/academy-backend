@@ -68,6 +68,134 @@ class PublicMatchupShowcaseVisibilityTests(TestCase):
             force_authenticate(request, user=self.owner)
         return request
 
+    def test_publish_retry_reuses_unexpired_published_snapshot(self):
+        existing = PublicMatchupShowcase.objects.create(
+            tenant=self.tenant,
+            hit_report_id_ref=42,
+            title="Existing snapshot",
+            status=PublicMatchupShowcase.Status.PUBLISHED,
+            published_at=timezone.now(),
+            snapshot_pdf_key="matchup-showcase-snapshots/existing.pdf",
+            snapshot_pdf_bytes=123,
+            snapshot_meta={"source": "generated"},
+            snapshot_at=timezone.now(),
+            created_by=self.owner,
+        )
+        request = self._request(
+            "post",
+            "/api/v1/landing-public/matchup-showcase/publish/",
+            {"hit_report_id": 42},
+            staff=True,
+        )
+
+        with (
+            patch(
+                "apps.domains.landing_public.api.views.matchup_showcase_views."
+                "get_matchup_hit_report_for_showcase",
+                return_value=SimpleNamespace(id=42, title="Report", document_id=None),
+            ),
+            patch(
+                "apps.domains.landing_public.api.views.matchup_showcase_views."
+                "build_matchup_snapshot_for_hit_report",
+            ) as build_snapshot,
+        ):
+            response = PublicMatchupShowcaseViewSet.as_view({"post": "publish"})(request)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["id"], existing.id)
+        self.assertEqual(response.headers["X-Idempotent-Replay"], "true")
+        self.assertEqual(PublicMatchupShowcase.objects.filter(tenant=self.tenant).count(), 1)
+        build_snapshot.assert_not_called()
+
+    def test_publish_retry_reuses_scheduled_snapshot(self):
+        scheduled = PublicMatchupShowcase.objects.create(
+            tenant=self.tenant,
+            hit_report_id_ref=43,
+            title="Scheduled snapshot",
+            status=PublicMatchupShowcase.Status.PUBLISHED,
+            published_at=timezone.now() + timedelta(hours=1),
+            snapshot_pdf_key="matchup-showcase-snapshots/scheduled.pdf",
+            snapshot_pdf_bytes=123,
+            snapshot_meta={"source": "generated"},
+            snapshot_at=timezone.now(),
+            created_by=self.owner,
+        )
+        request = self._request(
+            "post",
+            "/api/v1/landing-public/matchup-showcase/publish/",
+            {"hit_report_id": 43},
+            staff=True,
+        )
+
+        with (
+            patch(
+                "apps.domains.landing_public.api.views.matchup_showcase_views."
+                "get_matchup_hit_report_for_showcase",
+                return_value=SimpleNamespace(id=43, title="Report", document_id=None),
+            ),
+            patch(
+                "apps.domains.landing_public.api.views.matchup_showcase_views."
+                "build_matchup_snapshot_for_hit_report",
+            ) as build_snapshot,
+        ):
+            response = PublicMatchupShowcaseViewSet.as_view({"post": "publish"})(request)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["id"], scheduled.id)
+        self.assertEqual(response.headers["X-Idempotent-Replay"], "true")
+        self.assertEqual(PublicMatchupShowcase.objects.filter(tenant=self.tenant).count(), 1)
+        build_snapshot.assert_not_called()
+
+    def test_publish_after_expired_snapshot_creates_new_version(self):
+        expired = PublicMatchupShowcase.objects.create(
+            tenant=self.tenant,
+            hit_report_id_ref=44,
+            title="Expired snapshot",
+            status=PublicMatchupShowcase.Status.PUBLISHED,
+            published_at=timezone.now() - timedelta(days=2),
+            published_until=timezone.now() - timedelta(days=1),
+            snapshot_pdf_key="matchup-showcase-snapshots/expired.pdf",
+            snapshot_pdf_bytes=123,
+            snapshot_meta={"source": "generated"},
+            snapshot_at=timezone.now() - timedelta(days=2),
+            created_by=self.owner,
+        )
+        request = self._request(
+            "post",
+            "/api/v1/landing-public/matchup-showcase/publish/",
+            {"hit_report_id": 44},
+            staff=True,
+        )
+
+        with (
+            patch(
+                "apps.domains.landing_public.api.views.matchup_showcase_views."
+                "get_matchup_hit_report_for_showcase",
+                return_value=SimpleNamespace(id=44, title="Report", document_id=None),
+            ),
+            patch(
+                "apps.domains.landing_public.api.views.matchup_showcase_views."
+                "build_matchup_snapshot_for_hit_report",
+                return_value=(
+                    "matchup-showcase-snapshots/new-version.pdf",
+                    456,
+                    {"source": "generated"},
+                ),
+            ) as build_snapshot,
+        ):
+            response = PublicMatchupShowcaseViewSet.as_view({"post": "publish"})(request)
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertNotEqual(response.data["id"], expired.id)
+        self.assertEqual(
+            PublicMatchupShowcase.objects.filter(
+                tenant=self.tenant,
+                hit_report_id_ref=44,
+            ).count(),
+            2,
+        )
+        build_snapshot.assert_called_once_with(self.tenant, 44)
+
     def test_public_list_hides_future_published_snapshot(self):
         PublicMatchupShowcase.objects.create(
             tenant=self.tenant,
