@@ -72,8 +72,8 @@ def test_reviewed_runtime_images_own_exact_high_budgets() -> None:
     assert document["schemaVersion"] == 3
     assert baseline == {
         "academy-base": 8,
-        "academy-api": 21,
-        "academy-video-worker": 8,
+        "academy-api": 22,
+        "academy-video-worker": 9,
         "academy-messaging-worker": 8,
         "academy-ai-worker-cpu": 22,
         "academy-tools-worker": 21,

@@ -242,7 +242,11 @@ def test_current_high_acceptances_are_exact_and_time_bounded() -> None:
         entry for entry in perl if entry["cve"] == "CVE-2026-42497"
     ]
     assert len(archive_tar_hardlink) == 1
-    assert archive_tar_hardlink[0]["repositories"] == ["academy-ai-worker-cpu"]
+    assert archive_tar_hardlink[0]["repositories"] == [
+        "academy-api",
+        "academy-video-worker",
+        "academy-ai-worker-cpu",
+    ]
     assert openssl == []
     assert all(
         entry["vendorTracker"]
@@ -286,7 +290,20 @@ def test_current_high_acceptances_are_exact_and_time_bounded() -> None:
             if repository == "academy-api"
         )
     )
-    assert gate.evaluate_high_budget("academy-api", api_findings, baselines, known) == 21
+    assert gate.evaluate_high_budget("academy-api", api_findings, baselines, known) == 22
+    video_findings = _scan(
+        *(
+            _finding(cve, package, version, "HIGH")
+            for repository, cve, package, version in sorted(known)
+            if repository == "academy-video-worker"
+        )
+    )
+    assert (
+        gate.evaluate_high_budget(
+            "academy-video-worker", video_findings, baselines, known
+        )
+        == 9
+    )
     tools_findings = _scan(
         *(
             _finding(cve, package, version, "HIGH")
@@ -321,8 +338,10 @@ def test_high_acceptance_remains_valid_through_expiry_day() -> None:
         Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json",
         date(2026, 9, 19),
     )
-    assert baselines["academy-api"] == 21
-    assert len([key for key in reviewed if key[0] == "academy-api"]) == 21
+    assert baselines["academy-api"] == 22
+    assert len([key for key in reviewed if key[0] == "academy-api"]) == 22
+    assert baselines["academy-video-worker"] == 9
+    assert len([key for key in reviewed if key[0] == "academy-video-worker"]) == 9
     assert baselines["academy-ai-worker-cpu"] == 22
     assert len([key for key in reviewed if key[0] == "academy-ai-worker-cpu"]) == 22
 
