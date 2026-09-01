@@ -615,7 +615,7 @@ jobs:
 
       - name: Set up Docker Buildx
         if: needs.detect-changes.outputs.build_base == 'true' || needs.detect-changes.outputs.force_full == 'true'
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
 
       - name: Configure AWS credentials (OIDC only)
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
@@ -629,7 +629,7 @@ jobs:
 
       - name: Login to Amazon ECR
         id: login-ecr
-        uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2
 
       - name: Ensure ECR repos
         run: |
@@ -790,7 +790,7 @@ jobs:
 
       - name: Set up Docker Buildx
         if: steps.selection.outputs.should_build == 'true'
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
 
       - name: Configure AWS credentials (OIDC only)
         if: steps.selection.outputs.should_build == 'true'
@@ -806,7 +806,7 @@ jobs:
 
       - name: Login to Amazon ECR
         if: steps.selection.outputs.should_build == 'true'
-        uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2
 
       - name: Build and push ${{ matrix.repository }} (arm64)
         if: steps.selection.outputs.should_build == 'true'
