@@ -31,6 +31,10 @@ class SetupThreeTenantsTests(TestCase):
             ymath_program.feature_flags["score_summary_column_default"],
             "exam_wrong",
         )
+        self.assertEqual(
+            ymath_program.feature_flags["assessment_status_display"],
+            "wrong_completion",
+        )
         visible = {
             row["id"]: row["visible"]
             for row in ymath_program.ui_config[STUDENT_GRADE_REPORT_LAYOUT_KEY]["sections"]
@@ -46,6 +50,7 @@ class SetupThreeTenantsTests(TestCase):
         tchul_program = Program.objects.get(tenant__code="tchul")
         self.assertNotIn("score_output_mode", tchul_program.feature_flags)
         self.assertNotIn("score_summary_column_default", tchul_program.feature_flags)
+        self.assertNotIn("assessment_status_display", tchul_program.feature_flags)
 
     def test_existing_ymath_flags_are_repaired_without_dropping_custom_flags(self):
         tenant = Tenant.objects.create(code="ymath", name="Ymath", is_active=True)
@@ -70,6 +75,10 @@ class SetupThreeTenantsTests(TestCase):
         self.assertEqual(
             program.feature_flags["score_summary_column_default"],
             "exam_wrong",
+        )
+        self.assertEqual(
+            program.feature_flags["assessment_status_display"],
+            "wrong_completion",
         )
         self.assertIn(STUDENT_GRADE_REPORT_LAYOUT_KEY, program.ui_config)
 
@@ -112,6 +121,35 @@ class SetupThreeTenantsTests(TestCase):
         self.assertEqual(other_program.feature_flags, {"custom_flag": "other"})
 
         migration.remove_seeded_ymath_score_summary_default(django_apps, None)
+
+        ymath_program.refresh_from_db()
+        self.assertEqual(ymath_program.feature_flags, {"custom_flag": "keep"})
+
+    def test_assessment_status_display_migration_is_ymath_only_and_preserves_flags(self):
+        migration = importlib.import_module(
+            "apps.core.migrations.0060_set_ymath_wrong_completion_display"
+        )
+        ymath = Tenant.objects.create(code="ymath", name="Ymath", is_active=True)
+        ymath_program = Program.objects.get(tenant=ymath)
+        ymath_program.feature_flags = {"custom_flag": "keep"}
+        ymath_program.save(update_fields=["feature_flags"])
+        other = Tenant.objects.create(code="tchul", name="Tchul", is_active=True)
+        other_program = Program.objects.get(tenant=other)
+        other_program.feature_flags = {"custom_flag": "other"}
+        other_program.save(update_fields=["feature_flags"])
+
+        migration.apply_ymath_wrong_completion_display(django_apps, None)
+
+        ymath_program.refresh_from_db()
+        other_program.refresh_from_db()
+        self.assertEqual(ymath_program.feature_flags["custom_flag"], "keep")
+        self.assertEqual(
+            ymath_program.feature_flags["assessment_status_display"],
+            "wrong_completion",
+        )
+        self.assertEqual(other_program.feature_flags, {"custom_flag": "other"})
+
+        migration.remove_seeded_ymath_wrong_completion_display(django_apps, None)
 
         ymath_program.refresh_from_db()
         self.assertEqual(ymath_program.feature_flags, {"custom_flag": "keep"})

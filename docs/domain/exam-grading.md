@@ -353,6 +353,17 @@ PostgreSQL 최초 생성 경쟁은
 종합 판정을 유지한다. 직원이 표시 옵션을 명시적으로 바꾸면
 테넌트·사용자별 브라우저 설정이 기본값보다 우선한다.
 
+Ymath의 `Program.feature_flags.assessment_status_display=wrong_completion`은
+교사·학생 화면의 시험 판정 표현을 `오답 미완료`와 `오답 완료`로 제한한다.
+`PENDING`은 `오답 미완료`, `COMPLETED`와 만점의 `NOT_REQUIRED`는
+`오답 완료`로 표시하며, 미응시·미채점 또는 차시를 하나로 확정할 수 없는
+`null`은 완료로 추정하지 않고 `채점 대기`로 유지한다. 교사의 완료/해제는
+기존 `score-correction` PATCH와 2자 이상 확인 근거를 그대로 사용한다.
+이 플래그는 표시와 그 안전한 액션 문구만 바꾸며 `Result`, `ExamAttempt`,
+`AssessmentCorrection`, `ClinicLink`, 원점수·문항 답안·재시험 이력을
+삭제하거나 마이그레이션하지 않는다. 다른 테넌트의 통과·보강 합격 계약도
+그대로 유지한다.
+
 교사 모바일의 **성적 입력**은 같은 차시 성적표 응답을 사용해 학생 이름 검색,
 `확인 필요·처리됨·채점 대기` 필터와 처리율을 표시하고, 비만점 결과의 완료 여부를
 `PATCH /results/admin/sessions/{session_id}/score-correction/`로 바로 바꾼다. 점수
