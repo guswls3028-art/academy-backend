@@ -247,6 +247,22 @@ unstable 패키지를 운영 이미지에 혼합하지 않고 정확한 현재 �
 수정 base digest가 제공되면 acceptance를 삭제하고 전체 6-image scan과 release
 연속성 게이트를 다시 실행한다.
 
+2026-09-01 영상 복습 탐색 정책 후보 `sha-bed34f9a9...-run-33499266157-1`은
+development 진입 전 ECR Critical 게이트에서 새 Perl finding
+`CVE-2026-42496`과 `CVE-2026-8376`을 차단했다. 실패 workflow는 shared lock을
+반환했고 development, preprod, production runtime을 변경하지 않았다. 같은 태그의
+완료 scan을 직접 재조회한 결과 API `sha256:9f01c88c...`, AI
+`sha256:e07a4891...`, Video `sha256:944bac9a...` 세 digest에서만 두 finding과
+`perl` `5.40.1-6` identity가 정확히 일치했다. Debian trixie에는 두 건 모두
+수정 패키지가 없다. 42496은 Perl `Archive::Tar`가 공격자 지정 symlink target을
+추출하는 경로이고, 8376은 32-bit Perl이 공격자 지정 정규식을 컴파일하는 경로다.
+Academy 운영 이미지는 ARM64이며 앱, worker, Docker entrypoint, requirements,
+운영 script 전체에 Perl interpreter 또는 `Archive::Tar` 실행 경로가 없다. 따라서
+완료 scan이 확인된 세 repository와 exact CVE/package/version만 기존과 같은
+2026-09-19 만료로 한시 수용한다. `academy-base`, Messaging, Tools에는 이 검토를
+확대하지 않는다. 후속 후보는 이전 실패 이후 누적된 앱 변경을 다시 빌드하고
+persistent development부터 production까지 전체 게이트를 새로 통과해야 한다.
+
 집중 검증:
 
 ```powershell

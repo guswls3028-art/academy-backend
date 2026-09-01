@@ -66,6 +66,32 @@
       "rationale": "Debian stable remains affected by crafted Storable deserialization. Perl is inherited from the reviewed upstream slim image, but Academy has no Perl execution path and never invokes Perl Storable on user-controlled data. Keep exact package-version matching until Debian publishes a stable fix."
     },
     {
+      "cve": "CVE-2026-42496",
+      "packageName": "perl",
+      "packageVersion": "5.40.1-6",
+      "repositories": [
+        "academy-api",
+        "academy-video-worker",
+        "academy-ai-worker-cpu"
+      ],
+      "expiresOn": "2026-09-19",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-42496",
+      "rationale": "Debian trixie postpones this Archive::Tar symlink-target issue and has no stable fix. Completed ECR scans observed the exact finding only in the new API, Video, and AI candidate digests. Academy has no Perl interpreter, Archive::Tar, or Perl archive-extraction entrypoint, so uploaded content cannot reach this Perl path. Keep the acceptance scoped to those exact repositories and package version until Debian publishes a stable fix."
+    },
+    {
+      "cve": "CVE-2026-8376",
+      "packageName": "perl",
+      "packageVersion": "5.40.1-6",
+      "repositories": [
+        "academy-api",
+        "academy-video-worker",
+        "academy-ai-worker-cpu"
+      ],
+      "expiresOn": "2026-09-19",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-8376",
+      "rationale": "Debian classifies this as a no-DSA minor issue and has no trixie fix. The overflow requires a 32-bit Perl build compiling an attacker-controlled regular expression, while Academy production images are ARM64 and expose no Perl execution or regex-compilation path. Keep the acceptance scoped to the three completed candidate scans and exact package version until Debian publishes a stable fix."
+    },
+    {
       "cve": "CVE-2026-58016",
       "packageName": "glib2.0",
       "packageVersion": "2.84.4-3~deb13u3",
