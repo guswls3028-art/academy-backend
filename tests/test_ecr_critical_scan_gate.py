@@ -106,6 +106,31 @@ def test_upstream_perl_findings_are_exact_and_expiring() -> None:
     }
 
 
+def test_new_perl_findings_are_scoped_to_scanned_runtime_images() -> None:
+    acceptances = gate.load_acceptances(
+        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-critical-risk-acceptance.json",
+        date(2026, 9, 1),
+    )
+    findings = _scan(
+        _finding("CVE-2026-42496", "perl", "5.40.1-6"),
+        _finding("CVE-2026-8376", "perl", "5.40.1-6"),
+    )
+
+    for repository in (
+        "academy-api",
+        "academy-ai-worker-cpu",
+        "academy-video-worker",
+    ):
+        accepted = gate.evaluate_findings(repository, findings, acceptances)
+        assert {key[1] for key, _ in accepted} == {
+            "CVE-2026-42496",
+            "CVE-2026-8376",
+        }
+
+    with pytest.raises(gate.GateError, match="unaccepted critical"):
+        gate.evaluate_findings("academy-base", findings, acceptances)
+
+
 @pytest.mark.parametrize(
     ("cve", "package", "version"),
     [
