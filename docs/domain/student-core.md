@@ -489,13 +489,13 @@ python -m pytest apps\domains\students\tests\test_student_support.py -v --tb=sho
 and event writes are required. They do not erase the teacher's saved video
 controls. In every non-blocked mode, `Video.allow_skip=True` (or a student-level
 `allow_skip_override=True`) keeps free seeking even when an `ONLINE` attendance
-still requires monitored playback. In review mode, `Video.max_speed` and
-`Video.show_watermark` remain the effective playback-rate and watermark policy.
-The default `allow_skip=False` selects the limited forward-skip budget instead
-of blocking every useful jump until the required watch is complete.
+still requires monitored playback. `FREE_REVIEW` also always permits free
+seeking because the student is not completing a monitored substitute-attendance
+watch. In review mode, `Video.max_speed` and `Video.show_watermark` remain the
+effective playback-rate and watermark policy.
 
-Default-limited review and proctored playback both block arbitrary forward
-seeking, but the student may move forward through the server-approved
+For a first `PROCTORED_CLASS` watch with skipping disabled, arbitrary forward
+seeking is blocked, but the student may move forward through the server-approved
 `budgeted_forward` control in fixed 10-second steps. The per-video allowance is
 the smaller of 20% of the encoded duration and 30 minutes.
 `VideoProgress.forward_skip_seconds_used` is the
@@ -513,9 +513,10 @@ The budget is unavailable when the duration is missing, and an explicit
 `VideoAccess.block_seek` still blocks all seeking. Parents may watch through the
 existing selected-child contract but cannot consume the student's persisted
 skip allowance. Once completed `VideoProgress` or
-`VideoAccess.proctored_completed_at` changes the video to `FREE_REVIEW`, the
-student has already satisfied the required watch and free seeking is restored.
-This completion exception does not override an explicit `block_seek=True`.
+`VideoAccess.proctored_completed_at` changes the video to `FREE_REVIEW`, free
+seeking is restored; ordinary offline/review students receive the same free
+seeking without needing a prior per-video completion row. No review-mode rule
+overrides an explicit `block_seek=True`.
 The student player must consume the nested `policy` returned by
 `GET /api/v1/student/video/videos/{video_id}/playback/`; the flat video fields
 are display metadata, not a second policy source.
@@ -523,7 +524,8 @@ are display metadata, not a second policy source.
 Tenant-wide public-library videos intentionally have no enrollment-specific
 `access_mode`. Their effective playback policy is therefore resolved as
 `FREE_REVIEW`; the response keeps the public video's flat `access_mode=null`
-compatibility field while the nested policy remains complete and executable.
+compatibility field while the nested policy remains complete and executable,
+including free seeking without a per-enrollment skip budget.
 
 For active enrollments, lightweight `?access_check=true` uses the same effective
 access-mode resolver as playback issuance. Explicit offline `PROCTORED_CLASS`
