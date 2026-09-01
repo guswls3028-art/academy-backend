@@ -48,6 +48,14 @@
 - 성적 보드는 `전체·확인 필요·처리됨`으로 시험을 필터링한다. 시험 상세는 같은 상태를
   설명 문장과 함께 표시하되 학생·학부모에게 수정 권한을 주지 않는다.
 
+Ymath는 `Program.feature_flags.assessment_status_display=wrong_completion`을
+테넌트 표시 정본으로 사용한다. 시험 카드·상세·홈·클리닉 상태 카드에서는
+`PENDING`을 **오답 미완료**, `COMPLETED`와 `NOT_REQUIRED`를 **오답 완료**로
+보이고 PASS·합격·보강 합격 뱃지를 함께 노출하지 않는다. `null`은 완료로
+간주하지 않는다. 이 정책은 API의 내부 `achievement`, 원점수, 재시험과
+`ClinicLink` 이력을 보존한 채 표시만 단순화하며, 다른 테넌트의 성취 표현을
+바꾸지 않는다.
+
 구현은 `apps/domains/results/services/assessment_correction_status.py`의 내용 지문과
 상태 판정을 교사용 차시 성적표와 학생 성적 요약이 함께 사용한다.
 
