@@ -85,50 +85,21 @@ def test_current_acceptance_is_exact_and_time_bounded() -> None:
     }
 
 
-def test_upstream_perl_findings_are_exact_and_expiring() -> None:
+def test_removed_perl_findings_fail_closed() -> None:
     acceptances = gate.load_acceptances(
         Path(__file__).parents[1] / "docs" / "ssot" / "ecr-critical-risk-acceptance.json",
         date(2026, 7, 31),
     )
-    accepted = gate.evaluate_findings(
-        "academy-base",
-        _scan(
-            _finding("CVE-2026-12087", "perl", "5.40.1-6"),
-            _finding("CVE-2026-13221", "perl", "5.40.1-6"),
-            _finding("CVE-2026-57433", "perl", "5.40.1-6"),
-        ),
-        acceptances,
-    )
-    assert {key[1] for key, _ in accepted} == {
-        "CVE-2026-12087",
-        "CVE-2026-13221",
-        "CVE-2026-57433",
-    }
-
-
-def test_new_perl_findings_are_scoped_to_scanned_runtime_images() -> None:
-    acceptances = gate.load_acceptances(
-        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-critical-risk-acceptance.json",
-        date(2026, 9, 1),
-    )
-    findings = _scan(
-        _finding("CVE-2026-42496", "perl", "5.40.1-6"),
-        _finding("CVE-2026-8376", "perl", "5.40.1-6"),
-    )
-
-    for repository in (
-        "academy-api",
-        "academy-ai-worker-cpu",
-        "academy-video-worker",
-    ):
-        accepted = gate.evaluate_findings(repository, findings, acceptances)
-        assert {key[1] for key, _ in accepted} == {
-            "CVE-2026-42496",
-            "CVE-2026-8376",
-        }
-
-    with pytest.raises(gate.GateError, match="unaccepted critical"):
-        gate.evaluate_findings("academy-base", findings, acceptances)
+    with pytest.raises(gate.GateError, match="unaccepted critical ECR findings"):
+        gate.evaluate_findings(
+            "academy-base",
+            _scan(
+                _finding("CVE-2026-12087", "perl", "5.40.1-6"),
+                _finding("CVE-2026-13221", "perl", "5.40.1-6"),
+                _finding("CVE-2026-57433", "perl", "5.40.1-6"),
+            ),
+            acceptances,
+        )
 
 
 @pytest.mark.parametrize(
@@ -197,7 +168,7 @@ def test_high_baseline_is_exact_and_allows_non_increase() -> None:
         )
     )
 
-    assert gate.evaluate_high_budget("academy-base", findings, baselines, known) == 8
+    assert gate.evaluate_high_budget("academy-base", findings, baselines, known) == 3
 
 
 def test_current_high_acceptances_are_exact_and_time_bounded() -> None:
@@ -207,9 +178,8 @@ def test_current_high_acceptances_are_exact_and_time_bounded() -> None:
 
     libssh2 = [entry for entry in accepted if entry["packageName"] == "libssh2"]
     glib = [entry for entry in accepted if entry["packageName"] == "glib2.0"]
-    perl = [entry for entry in accepted if entry["packageName"] == "perl"]
     openssl = [entry for entry in accepted if entry["packageName"] == "openssl"]
-    assert len(accepted) == 22
+    assert len(accepted) == 16
     assert {entry["cve"] for entry in libssh2} == {
         "CVE-2026-58050",
         "CVE-2026-58051",
@@ -238,15 +208,6 @@ def test_current_high_acceptances_are_exact_and_time_bounded() -> None:
         == ["academy-api", "academy-ai-worker-cpu", "academy-tools-worker"]
         for entry in glib
     )
-    archive_tar_hardlink = [
-        entry for entry in perl if entry["cve"] == "CVE-2026-42497"
-    ]
-    assert len(archive_tar_hardlink) == 1
-    assert archive_tar_hardlink[0]["repositories"] == [
-        "academy-api",
-        "academy-video-worker",
-        "academy-ai-worker-cpu",
-    ]
     assert openssl == []
     assert all(
         entry["vendorTracker"]
@@ -260,12 +221,6 @@ def test_current_high_acceptances_are_exact_and_time_bounded() -> None:
     } == {
         ("CVE-2026-11822", "sqlite3", "3.46.1-7+deb13u1"),
         ("CVE-2026-11824", "sqlite3", "3.46.1-7+deb13u1"),
-        ("CVE-2026-48959", "perl", "5.40.1-6"),
-        ("CVE-2026-48961", "perl", "5.40.1-6"),
-        ("CVE-2026-48962", "perl", "5.40.1-6"),
-        ("CVE-2026-57432", "perl", "5.40.1-6"),
-        ("CVE-2026-7017", "perl", "5.40.1-6"),
-        ("CVE-2026-42497", "perl", "5.40.1-6"),
         ("CVE-2026-5928", "glibc", "2.41-12+deb13u3"),
         ("CVE-2026-58010", "glib2.0", "2.84.4-3~deb13u3"),
         ("CVE-2026-58011", "glib2.0", "2.84.4-3~deb13u3"),
@@ -290,20 +245,7 @@ def test_current_high_acceptances_are_exact_and_time_bounded() -> None:
             if repository == "academy-api"
         )
     )
-    assert gate.evaluate_high_budget("academy-api", api_findings, baselines, known) == 22
-    video_findings = _scan(
-        *(
-            _finding(cve, package, version, "HIGH")
-            for repository, cve, package, version in sorted(known)
-            if repository == "academy-video-worker"
-        )
-    )
-    assert (
-        gate.evaluate_high_budget(
-            "academy-video-worker", video_findings, baselines, known
-        )
-        == 9
-    )
+    assert gate.evaluate_high_budget("academy-api", api_findings, baselines, known) == 16
     tools_findings = _scan(
         *(
             _finding(cve, package, version, "HIGH")
@@ -318,7 +260,7 @@ def test_current_high_acceptances_are_exact_and_time_bounded() -> None:
             baselines,
             known,
         )
-        == 21
+        == 16
     )
 
 
@@ -338,12 +280,8 @@ def test_high_acceptance_remains_valid_through_expiry_day() -> None:
         Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json",
         date(2026, 9, 19),
     )
-    assert baselines["academy-api"] == 22
-    assert len([key for key in reviewed if key[0] == "academy-api"]) == 22
-    assert baselines["academy-video-worker"] == 9
-    assert len([key for key in reviewed if key[0] == "academy-video-worker"]) == 9
-    assert baselines["academy-ai-worker-cpu"] == 22
-    assert len([key for key in reviewed if key[0] == "academy-ai-worker-cpu"]) == 22
+    assert baselines["academy-api"] == 16
+    assert len([key for key in reviewed if key[0] == "academy-api"]) == 16
 
 
 def test_base_image_requires_security_fixed_openssl() -> None:

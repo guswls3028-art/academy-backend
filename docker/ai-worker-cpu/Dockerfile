@@ -20,13 +20,25 @@ FROM ${BASE_IMAGE} AS base
 
 ENV WORKER_TYPE=CPU
 
-# AI Worker CPU 전용 시스템 의존성 (OCR, OpenCV 런타임) — 코드 변경과 무관
+# AI Worker CPU 전용 시스템 의존성 (OCR, OpenCV 런타임) — 코드 변경과 무관.
+# The clean common base has no Perl, so restore perl-base only while Debian
+# configures this transaction and remove it again before the layer is sealed.
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    perl-base \
     tesseract-ocr \
     tesseract-ocr-kor \
     libgl1 \
-    && rm -rf /var/lib/apt/lists/*
+    && dpkg --configure -a \
+    && dpkg --purge --force-remove-essential perl-base \
+    && apt-get autoremove -y --purge \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* \
+    && test -z "$(dpkg --audit)" \
+    && apt-get check \
+    && ! dpkg-query -W perl-base >/dev/null 2>&1 \
+    && for package in perl 'perl-modules-*' 'libperl*' libdpkg-perl liberror-perl; do ! dpkg-query -W "$package" >/dev/null 2>&1; done \
+    && ! command -v perl >/dev/null 2>&1
 
 # opencv-python-headless deliberately has no GUI/GLib runtime dependency.
 # Keep the server image on the wheel-owned runtime instead of adding the

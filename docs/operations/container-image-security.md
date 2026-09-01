@@ -30,6 +30,27 @@
 - 런타임에는 앱이 실제 사용하는 패키지만 둔다. DB migration과 점검은 Django와
   AWS/RDS readback을 사용하므로 `postgresql-client` CLI는 제거했고, Python
   PostgreSQL 연결에 필요한 `libpq5`는 유지한다.
+- 최종 런타임 이미지는 upstream `python:3.11-slim`에서 상속한 미사용
+  `perl-base`를 마지막 apt 경계 뒤에 제거한다. 공통 base가 상속만 하는
+  Messaging을 봉인하고, API·Video·AI·Tools는 각 전용 apt 설치가 끝난 뒤 다시
+  제거해 전이 의존성의 재유입도 막는다. 정리된 base 위에서 Debian 패키지의
+  debconf/postinst 구성이 Perl을 요구하므로, 이 네 이미지의 최종 runtime apt
+  `RUN`은 설치 목록 맨 앞에 `perl-base`를 구성 전용 prerequisite로 명시한다.
+  `dpkg --configure -a` 뒤 즉시 purge·autoremove·clean하며 이 계층 밖으로 Perl을
+  복사하거나 유지하지 않는다. Debian trixie `5.40.1-6`에는 stable 수정본이 없으며
+  forky/sid 패키지를 stable 이미지에 섞지 않는다. 모든 제거 경계는
+  `dpkg --audit`와 `apt-get check`가 정상이고, `dpkg-query`와 `command -v perl`이
+  모두 실패해야 빌드를 계속한다. 후속 Tesseract,
+  OpenCV/embedded FFmpeg, sentence-transformers와 각 entrypoint 검증이 비-Perl
+  런타임을 봉인한다. 따라서 어떤 runtime repository도 Perl Critical/High 예외
+  범위에 포함하지 않으며, Perl이 다시 들어오면 완료 ECR scan에서 신규
+  finding으로 실패 폐쇄한다.
+- Video의 비공개 `ffmpeg-builder` stage는 `build-essential`·`git`의 실제 빌드
+  의존성인 Perl toolchain을 유지할 수 있다. 이 stage는 ECR에 publish하지 않고
+  final stage로는 `/opt/academy-ffmpeg`만 정확히 복사한다. broad filesystem,
+  dpkg database, interpreter 또는 Perl module copy는 계약 테스트가 차단하며,
+  최종 이미지 검증은 복사된 트리와 FFmpeg 동적 링크에도 Perl payload가 없는지
+  확인한다.
 - builder의 Python 패키지는 최종 `appuser` 소유권을 지정한
   `COPY --chown`으로 runtime에 한 번만 기록한다. 앱 소스도 같은 방식으로
   복사하며 별도 `RUN chown -R`을 두지 않는다. 별도 chown 레이어는 같은 파일
@@ -230,66 +251,30 @@ security는 `2.41.5-0+deb13u1`을 수정 버전으로 제공하므로 High 상�
 run은 shared lock을 반환했고 운영 runtime을 변경하지 않았다.
 
 현재 Critical 한시 항목은 Debian stable에 수정본이 아직 없거나 Debian이
-`no-dsa`/minor로 분류한 glibc·GLib·Perl finding이다. GLib의
+`no-dsa`/minor로 분류한 glibc·GLib finding이다. GLib의
 `g_dbus_node_info_new_for_xml` malformed introspection-XML 경로는 OCR CLI와
 Academy Python 워커가 호출하지 않으며, 워커는 D-Bus introspection XML을 입력으로
 받지 않는다. glibc 취약 native `scanf` 경로도 Academy Python 앱의 실행
-경로가 아니다. Perl은 고정한 upstream slim base에서 상속되지만
-저장소의 runtime 코드·Docker entrypoint·운영 스크립트에는 Perl script,
-interpreter, `pack_ip`, Storable 실행 경로가 없다. Debian trixie는 해당
-glibc·Perl·GLib 패키지를 계속 vulnerable 또는 `no-dsa`로 표시한다. 따라서
-unstable 패키지를 운영 이미지에 혼합하지 않고 정확한 현재 버전에 대한 한시
-승인만 2026-09-19까지 유지한다. 이 판단은 위험을 삭제하지 않으며 다음 연장은
-다시 vendor 상태와 실제 실행 경로를 검토한 PR이 필요하다.
+경로가 아니다. 모든 최종 runtime은 미사용 `perl-base`를 제거하므로 Perl 예외를
+갖지 않는다. Debian trixie가 glibc·GLib 패키지를 계속 vulnerable 또는
+`no-dsa`로 표시하는 동안 다른 suite 패키지를 혼합하지 않고 정확한 현재 버전에
+대한 한시 승인만 2026-09-19까지 유지한다. 이 판단은 위험을 삭제하지 않으며 다음
+연장은 다시 vendor 상태와 실제 실행 경로를 검토한 PR이 필요하다.
 
-사용하지 않는 `postgresql-client` CLI는 런타임 공격 표면과 이미지 크기를 줄이기
-위해 제거했지만 ECR 재검증 결과 Perl source finding의 원인은 아니었다. vendor
-수정 base digest가 제공되면 acceptance를 삭제하고 전체 6-image scan과 release
-연속성 게이트를 다시 실행한다.
-
-2026-09-01 영상 복습 탐색 정책 후보 `sha-bed34f9a9...-run-33499266157-1`은
-development 진입 전 ECR Critical 게이트에서 새 Perl finding
-`CVE-2026-42496`과 `CVE-2026-8376`을 차단했다. 실패 workflow는 shared lock을
-반환했고 development, preprod, production runtime을 변경하지 않았다. 같은 태그의
-완료 scan을 직접 재조회한 결과 API `sha256:9f01c88c...`, AI
-`sha256:e07a4891...`, Video `sha256:944bac9a...` 세 digest에서만 두 finding과
-`perl` `5.40.1-6` identity가 정확히 일치했다. Debian trixie에는 두 건 모두
-수정 패키지가 없다. 42496은 Perl `Archive::Tar`가 공격자 지정 symlink target을
-추출하는 경로이고, 8376은 32-bit Perl이 공격자 지정 정규식을 컴파일하는 경로다.
-Academy 운영 이미지는 ARM64이며 앱, worker, Docker entrypoint, requirements,
-운영 script 전체에 Perl interpreter 또는 `Archive::Tar` 실행 경로가 없다. 따라서
-완료 scan이 확인된 세 repository와 exact CVE/package/version만 기존과 같은
-2026-09-19 만료로 한시 수용한다. `academy-base`, Messaging, Tools에는 이 검토를
-확대하지 않는다. 후속 후보는 이전 실패 이후 누적된 앱 변경을 다시 빌드하고
-persistent development부터 production까지 전체 게이트를 새로 통과해야 한다.
-
-후속 후보 `sha-cb22e3cd...-run-33501236135-1`은 Critical exact identity 검사를
-통과했지만 AI digest `sha256:7f6b3a28...`의 완료 scan에서 직전 성공 AI digest
-`sha256:1c9b23a9...`의 High 21건에 `CVE-2026-42497` (`perl` `5.40.1-6`)
-한 건만 추가해 High 상한에서 실패 폐쇄했다. 기존 21개 identity는 제거되거나
-변경되지 않았고 API와 Video에는 이 새 High가 관측되지 않았다. Debian trixie에는
-수정 패키지가 없고 이 finding은 Perl `Archive::Tar`가 공격자 지정 경로로 hardlink를
-추출하는 경로다. 저장소 전체 runtime entrypoint에는 Perl 또는 `Archive::Tar` 실행
-경로가 없으며 AI worker는 제품 tar 입력을 Perl로 추출하지 않는다. 따라서 실제
-완료 scan이 확인된 AI repository와 exact CVE/package/version만 2026-09-19까지
-한시 수용하고 AI 상한만 22로 맞춘다. Base, API, Video, Messaging, Tools 범위나
-상한은 바꾸지 않는다. 이 workflow도 development 진입 전에 중단되고 shared lock을
-반환했으므로 운영 runtime은 변경되지 않았으며, 다음 후보가 전체 release gate를
-처음부터 다시 통과해야 한다.
-
-다음 후보 `sha-ee4e1377...-run-33502957943-1`에서는 AI exact High 22건이
-통과했지만 API 완료 scan도 같은 `CVE-2026-42497`을 반환해 기존 상한 21에서
-실패 폐쇄했다. 후보의 여섯 digest를 모두 직접 열거한 결과 API
-`sha256:9f01c88c...`는 22건, Video `sha256:21337e3d...`는 9건, AI
-`sha256:7f6b3a28...`는 22건이며 세 이미지 모두 기존 identity 집합에 이 exact
-Perl finding 한 건만 추가됐다. Base `sha256:fa20a45a...`는 8건, Messaging
-`sha256:ed72706b...`는 8건, Tools `sha256:776dc5a8...`는 21건이고 이 finding을
-반환하지 않았다. 따라서 동일한 vendor·reachability 판단을 실제 관측된 API,
-Video, AI에만 적용하고 세 저장소 상한을 각각 22, 9, 22로 맞춘다. Base,
-Messaging, Tools는 범위와 상한을 유지한다. 이 workflow도 development 진입 전에
-중단되고 shared lock을 반환해 production runtime은 변경되지 않았다. 다음 후보는
-ECR exact identity부터 persistent development, preprod, production까지 전체
-release gate를 다시 통과해야 한다.
+2026-09-01 후보 run `33499266157`은 새 Debian DB가 반환한
+`CVE-2026-42496`·`CVE-2026-8376` (`perl` `5.40.1-6`)을 AI 완료 scan에서
+승인되지 않은 Critical로 탐지해 development 전에 실패 폐쇄했다. 같은 후보의
+API·Video 완료 scan에도 두 identity가 존재함을 확인했다. 저장소와 runtime
+entrypoint에는 Perl 실행 경로가 없고 stable 수정판도 없으므로 위험 승인을 늘리지
+않는다. 공통 base에서 제거한 직후 API의 Tesseract apt를 실행한 failure-first
+빌드는 Perl 기반 debconf frontend 부재로 `fontconfig-config` postinst가 code
+100을 반환했다. 따라서 후속 apt가 있는 이미지는 같은 계층에서만 `perl-base`를
+잠시 복원해 패키지 구성을 마친 뒤 제거한다. 공통 base와 전용 apt 경계의 최종
+상태에서 `perl-base`를 제거하고, 기존 Perl
+Critical 3건과 High 5건도 SSOT에서 함께 삭제한다. 다음 후보는 Base·API·Video·
+Messaging·AI·Tools 여섯 완료 scan에서 새 두 CVE와 기존 Perl identity가 모두
+사라지고 High exact identity가 새 상한과 일치해야만 release를 진행한다. 실패한
+run은 development/preprod/production을 변경하지 않았고 shared lock을 반환했다.
 
 집중 검증:
 
