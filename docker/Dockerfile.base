@@ -53,7 +53,13 @@ RUN test -n "${APT_REFRESH_TOKEN}" \
     && dpkg --compare-versions "$openssl_version" ge "3.5.7-1~deb13u2" \
     && util_linux_version="$(dpkg-query -W -f='${Version}' util-linux)" \
     && dpkg --compare-versions "$util_linux_version" ge "2.41.5-0+deb13u1" \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && dpkg --purge --force-remove-essential perl-base \
+    && test -z "$(dpkg --audit)" \
+    && apt-get check \
+    && ! dpkg-query -W perl-base >/dev/null 2>&1 \
+    && for package in perl 'perl-modules-*' 'libperl*' libdpkg-perl liberror-perl; do ! dpkg-query -W "$package" >/dev/null 2>&1; done \
+    && ! command -v perl >/dev/null 2>&1
 
 # non-root 사용자 (보안·감사 대비, CMD/경로 규칙 유지)
 RUN groupadd --gid 1000 appuser \

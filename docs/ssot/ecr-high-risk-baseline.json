@@ -1,12 +1,12 @@
 {
   "schemaVersion": 3,
   "maximumHighFindings": {
-    "academy-base": 8,
-    "academy-api": 22,
-    "academy-video-worker": 9,
-    "academy-messaging-worker": 8,
-    "academy-ai-worker-cpu": 22,
-    "academy-tools-worker": 21
+    "academy-base": 3,
+    "academy-api": 16,
+    "academy-video-worker": 3,
+    "academy-messaging-worker": 3,
+    "academy-ai-worker-cpu": 16,
+    "academy-tools-worker": 16
   },
   "acceptedHighFindings": [
     {
@@ -40,99 +40,6 @@
       "expiresOn": "2026-09-19",
       "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-11824",
       "rationale": "Debian trixie remains vulnerable in an SQLite FTS5 MATCH path that requires a crafted SQLite database. Academy production uses PostgreSQL and neither ingests attacker-provided SQLite databases nor executes application FTS5 queries."
-    },
-    {
-      "cve": "CVE-2026-42497",
-      "packageName": "perl",
-      "packageVersion": "5.40.1-6",
-      "repositories": [
-        "academy-api",
-        "academy-video-worker",
-        "academy-ai-worker-cpu"
-      ],
-      "expiresOn": "2026-09-19",
-      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-42497",
-      "rationale": "Debian trixie remains vulnerable in the Perl Archive::Tar hardlink extraction path. Academy API, Video, and AI runtime entrypoints do not invoke Perl or Archive::Tar and do not extract product tar archives with Perl, so this exact identity is accepted only for the three completed scans that returned it."
-    },
-    {
-      "cve": "CVE-2026-48959",
-      "packageName": "perl",
-      "packageVersion": "5.40.1-6",
-      "repositories": [
-        "academy-base",
-        "academy-api",
-        "academy-video-worker",
-        "academy-messaging-worker",
-        "academy-ai-worker-cpu",
-        "academy-tools-worker"
-      ],
-      "expiresOn": "2026-09-19",
-      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-48959",
-      "rationale": "The affected Perl IO::Uncompress named ZIP-entry path can consume excessive CPU. Academy runtime entrypoints do not invoke a Perl interpreter or IO::Uncompress and ZIP handling is owned by Python validators."
-    },
-    {
-      "cve": "CVE-2026-48961",
-      "packageName": "perl",
-      "packageVersion": "5.40.1-6",
-      "repositories": [
-        "academy-base",
-        "academy-api",
-        "academy-video-worker",
-        "academy-messaging-worker",
-        "academy-ai-worker-cpu",
-        "academy-tools-worker"
-      ],
-      "expiresOn": "2026-09-19",
-      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-48961",
-      "rationale": "The affected code is the Perl zipdetails command-line utility. Academy runtime entrypoints and operational scripts do not invoke Perl or zipdetails, so untrusted product input cannot reach this packaged utility."
-    },
-    {
-      "cve": "CVE-2026-48962",
-      "packageName": "perl",
-      "packageVersion": "5.40.1-6",
-      "repositories": [
-        "academy-base",
-        "academy-api",
-        "academy-video-worker",
-        "academy-messaging-worker",
-        "academy-ai-worker-cpu",
-        "academy-tools-worker"
-      ],
-      "expiresOn": "2026-09-19",
-      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-48962",
-      "rationale": "The affected Perl File::GlobMapper output-glob evaluation path is not used by Academy. Runtime entrypoints contain no Perl or File::GlobMapper invocation and product file handling uses Python code."
-    },
-    {
-      "cve": "CVE-2026-57432",
-      "packageName": "perl",
-      "packageVersion": "5.40.1-6",
-      "repositories": [
-        "academy-base",
-        "academy-api",
-        "academy-video-worker",
-        "academy-messaging-worker",
-        "academy-ai-worker-cpu",
-        "academy-tools-worker"
-      ],
-      "expiresOn": "2026-09-19",
-      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-57432",
-      "rationale": "The affected Perl pack and unpack path requires an untrusted template. Academy runtime entrypoints never invoke Perl and do not pass product input to Perl pack or unpack operations."
-    },
-    {
-      "cve": "CVE-2026-7017",
-      "packageName": "perl",
-      "packageVersion": "5.40.1-6",
-      "repositories": [
-        "academy-base",
-        "academy-api",
-        "academy-video-worker",
-        "academy-messaging-worker",
-        "academy-ai-worker-cpu",
-        "academy-tools-worker"
-      ],
-      "expiresOn": "2026-09-19",
-      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-7017",
-      "rationale": "The affected Perl HTTP::Tiny redirect path can forward credentials across origins. Academy runtime networking uses Python clients and contains no Perl HTTP::Tiny invocation or Perl network entrypoint."
     },
     {
       "cve": "CVE-2026-5928",

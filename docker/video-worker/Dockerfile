@@ -49,10 +49,21 @@ USER root
 # Video Worker 전용 시스템 의존성. Debian ffmpeg/libav 패키지는 설치하지
 # 않는다. 위의 고정 upstream commit은 CVE-2026-70628/70632 수정 두 개를
 # 모두 포함하며, ECR의 패키지 버전 휴리스틱과 실제 런타임을 일치시킨다.
+# perl-base is present only while Debian configures this same apt transaction.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    perl-base \
     libgl1 \
     libx264-164 \
-    && rm -rf /var/lib/apt/lists/*
+    && dpkg --configure -a \
+    && dpkg --purge --force-remove-essential perl-base \
+    && apt-get autoremove -y --purge \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* \
+    && test -z "$(dpkg --audit)" \
+    && apt-get check \
+    && ! dpkg-query -W perl-base >/dev/null 2>&1 \
+    && for package in perl 'perl-modules-*' 'libperl*' libdpkg-perl liberror-perl; do ! dpkg-query -W "$package" >/dev/null 2>&1; done \
+    && ! command -v perl >/dev/null 2>&1
 COPY --from=ffmpeg-builder /opt/academy-ffmpeg /opt/academy-ffmpeg
 RUN set -eux; \
     test "$(cat /opt/academy-ffmpeg/academy-source-commit)" = "${FFMPEG_COMMIT}"; \

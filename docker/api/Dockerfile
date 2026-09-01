@@ -13,11 +13,23 @@ USER root
 # Problem Studio transfer packages use bounded local OCR for scanned pages.
 # upload_complete source probing is fail-open; authoritative validation/transcoding
 # remains isolated in the AWS Batch Video worker, so the API does not ship FFmpeg.
+# perl-base is a same-layer package-configuration prerequisite only; the clean
+# common base does not retain it and neither may this final runtime.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    perl-base \
     tesseract-ocr \
     tesseract-ocr-kor \
+    && dpkg --configure -a \
+    && (tesseract --version > /dev/null 2>&1 || (echo "tesseract not in PATH" && exit 1)) \
+    && dpkg --purge --force-remove-essential perl-base \
+    && apt-get autoremove -y --purge \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
-    && (tesseract --version > /dev/null 2>&1 || (echo "tesseract not in PATH" && exit 1))
+    && test -z "$(dpkg --audit)" \
+    && apt-get check \
+    && ! dpkg-query -W perl-base >/dev/null 2>&1 \
+    && for package in perl 'perl-modules-*' 'libperl*' libdpkg-perl liberror-perl; do ! dpkg-query -W "$package" >/dev/null 2>&1; done \
+    && ! command -v perl >/dev/null 2>&1
 USER appuser
 
 # Shared requirements와 API-only deps를 한 번에 해석한다. api.txt는

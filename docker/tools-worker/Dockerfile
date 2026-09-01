@@ -13,11 +13,22 @@ ENV WORKER_TYPE=TOOLS
 USER root
 # Problem Studio 원본 이관은 스캔 PDF/이미지의 제한적 OCR까지 tools worker에서
 # 끝내야 API 60초 경계를 피하면서도 산출물 품질이 API와 일치한다.
+# perl-base exists only while Debian configures this same apt transaction.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    perl-base \
     tesseract-ocr \
     tesseract-ocr-kor \
+    && dpkg --configure -a \
+    && (tesseract --version > /dev/null 2>&1 || (echo "tesseract not in PATH" && exit 1)) \
+    && dpkg --purge --force-remove-essential perl-base \
+    && apt-get autoremove -y --purge \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
-    && (tesseract --version > /dev/null 2>&1 || (echo "tesseract not in PATH" && exit 1))
+    && test -z "$(dpkg --audit)" \
+    && apt-get check \
+    && ! dpkg-query -W perl-base >/dev/null 2>&1 \
+    && for package in perl 'perl-modules-*' 'libperl*' libdpkg-perl liberror-perl; do ! dpkg-query -W "$package" >/dev/null 2>&1; done \
+    && ! command -v perl >/dev/null 2>&1
 
 USER appuser
 

@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 
@@ -63,6 +64,58 @@ def test_headless_opencv_images_do_not_explicitly_install_system_glib() -> None:
     assert "OpenCV wheel video support OK" in _read(PRODUCTION_DOCKERFILES["ai"])
 
 
+def test_runtime_images_remove_unused_perl_after_their_final_apt_layer() -> None:
+    required_checks = (
+        "dpkg --purge --force-remove-essential perl-base",
+        "dpkg --audit",
+        "apt-get check",
+        "! dpkg-query -W perl-base",
+        "for package in perl 'perl-modules-*' 'libperl*' libdpkg-perl liberror-perl",
+        "! command -v perl",
+    )
+
+    base_dockerfile = _read(REPO_ROOT / "docker" / "Dockerfile.base")
+    assert base_dockerfile.rfind("apt-get install") < base_dockerfile.rfind(
+        "dpkg --purge --force-remove-essential perl-base"
+    )
+    for check in required_checks:
+        assert check in base_dockerfile
+
+    for service in ("api", "video", "ai", "tools"):
+        dockerfile = _read(PRODUCTION_DOCKERFILES[service])
+        runtime_dockerfile = (
+            dockerfile.split("FROM ${BASE_IMAGE} AS base", maxsplit=1)[1]
+            if service == "video"
+            else dockerfile
+        )
+        apt_layers = re.findall(
+            r"RUN apt-get update.*?(?=\n\n)", runtime_dockerfile, flags=re.DOTALL
+        )
+
+        assert apt_layers, service
+        for apt_layer in apt_layers:
+            assert "perl-base \\" in apt_layer, service
+            assert apt_layer.index("perl-base \\") < apt_layer.index(
+                "dpkg --configure -a"
+            ), service
+            assert apt_layer.index("dpkg --configure -a") < apt_layer.index(
+                "dpkg --purge --force-remove-essential perl-base"
+            ), service
+            assert "apt-get autoremove -y --purge" in apt_layer, service
+            assert "apt-get clean" in apt_layer, service
+            for check in required_checks:
+                assert check in apt_layer, service
+
+    video_dockerfile = _read(PRODUCTION_DOCKERFILES["video"])
+    assert [
+        line for line in video_dockerfile.splitlines() if line.startswith("COPY --from=")
+    ] == ["COPY --from=ffmpeg-builder /opt/academy-ffmpeg /opt/academy-ffmpeg"]
+
+    messaging_dockerfile = _read(PRODUCTION_DOCKERFILES["messaging"])
+    assert "FROM ${BASE_IMAGE}" in messaging_dockerfile
+    assert "apt-get install" not in messaging_dockerfile
+
+
 def test_reviewed_runtime_images_own_exact_high_budgets() -> None:
     document = json.loads(
         _read(REPO_ROOT / "docs" / "ssot" / "ecr-high-risk-baseline.json")
@@ -71,12 +124,12 @@ def test_reviewed_runtime_images_own_exact_high_budgets() -> None:
 
     assert document["schemaVersion"] == 3
     assert baseline == {
-        "academy-base": 8,
-        "academy-api": 22,
-        "academy-video-worker": 9,
-        "academy-messaging-worker": 8,
-        "academy-ai-worker-cpu": 22,
-        "academy-tools-worker": 21,
+        "academy-base": 3,
+        "academy-api": 16,
+        "academy-video-worker": 3,
+        "academy-messaging-worker": 3,
+        "academy-ai-worker-cpu": 16,
+        "academy-tools-worker": 16,
     }
     exact_counts = {repository: 0 for repository in baseline}
     assert "knownHighFindings" not in document
@@ -91,6 +144,18 @@ def test_reviewed_runtime_images_own_exact_high_budgets() -> None:
         for repository in finding["repositories"]:
             exact_counts[repository] += 1
     assert exact_counts == baseline
+    assert all(
+        finding["packageName"] != "perl"
+        for finding in document["acceptedHighFindings"]
+    )
+
+    critical_document = json.loads(
+        _read(REPO_ROOT / "docs" / "ssot" / "ecr-critical-risk-acceptance.json")
+    )
+    assert all(
+        finding["packageName"] != "perl"
+        for finding in critical_document["acceptedFindings"]
+    )
 
 
 def test_runtime_images_build_in_parallel_before_candidate_assembly() -> None:
