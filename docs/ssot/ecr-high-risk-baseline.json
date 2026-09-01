@@ -2,8 +2,8 @@
   "schemaVersion": 3,
   "maximumHighFindings": {
     "academy-base": 8,
-    "academy-api": 21,
-    "academy-video-worker": 8,
+    "academy-api": 22,
+    "academy-video-worker": 9,
     "academy-messaging-worker": 8,
     "academy-ai-worker-cpu": 22,
     "academy-tools-worker": 21
@@ -46,11 +46,13 @@
       "packageName": "perl",
       "packageVersion": "5.40.1-6",
       "repositories": [
+        "academy-api",
+        "academy-video-worker",
         "academy-ai-worker-cpu"
       ],
       "expiresOn": "2026-09-19",
       "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-42497",
-      "rationale": "Debian trixie remains vulnerable in the Perl Archive::Tar hardlink extraction path. Academy AI runtime entrypoints do not invoke Perl or Archive::Tar and do not extract product tar archives with Perl, so this exact completed-scan identity is accepted only for the observed AI image."
+      "rationale": "Debian trixie remains vulnerable in the Perl Archive::Tar hardlink extraction path. Academy API, Video, and AI runtime entrypoints do not invoke Perl or Archive::Tar and do not extract product tar archives with Perl, so this exact identity is accepted only for the three completed scans that returned it."
     },
     {
       "cve": "CVE-2026-48959",

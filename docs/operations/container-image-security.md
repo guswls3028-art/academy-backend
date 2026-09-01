@@ -277,6 +277,20 @@ persistent development부터 production까지 전체 게이트를 새로 통과�
 반환했으므로 운영 runtime은 변경되지 않았으며, 다음 후보가 전체 release gate를
 처음부터 다시 통과해야 한다.
 
+다음 후보 `sha-ee4e1377...-run-33502957943-1`에서는 AI exact High 22건이
+통과했지만 API 완료 scan도 같은 `CVE-2026-42497`을 반환해 기존 상한 21에서
+실패 폐쇄했다. 후보의 여섯 digest를 모두 직접 열거한 결과 API
+`sha256:9f01c88c...`는 22건, Video `sha256:21337e3d...`는 9건, AI
+`sha256:7f6b3a28...`는 22건이며 세 이미지 모두 기존 identity 집합에 이 exact
+Perl finding 한 건만 추가됐다. Base `sha256:fa20a45a...`는 8건, Messaging
+`sha256:ed72706b...`는 8건, Tools `sha256:776dc5a8...`는 21건이고 이 finding을
+반환하지 않았다. 따라서 동일한 vendor·reachability 판단을 실제 관측된 API,
+Video, AI에만 적용하고 세 저장소 상한을 각각 22, 9, 22로 맞춘다. Base,
+Messaging, Tools는 범위와 상한을 유지한다. 이 workflow도 development 진입 전에
+중단되고 shared lock을 반환해 production runtime은 변경되지 않았다. 다음 후보는
+ECR exact identity부터 persistent development, preprod, production까지 전체
+release gate를 다시 통과해야 한다.
+
 집중 검증:
 
 ```powershell
