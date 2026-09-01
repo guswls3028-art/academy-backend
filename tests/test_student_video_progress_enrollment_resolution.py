@@ -1850,7 +1850,7 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         self.assertIsNone(response.data["video"]["access_mode"])
         self.assertEqual(response.data["policy"]["access_mode"], AccessMode.FREE_REVIEW.value)
         self.assertFalse(response.data["policy"]["monitoring_enabled"])
-        self.assertEqual(response.data["policy"]["seek"]["mode"], "budgeted_forward")
+        self.assertEqual(response.data["policy"]["seek"]["mode"], "free")
 
     def test_inactive_system_public_lecture_keeps_free_playback_and_heartbeat(self):
         self.target_lecture.is_system = True
@@ -2134,7 +2134,7 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         )
 
     @override_settings(CDN_HLS_BASE_URL="https://cdn.example.test", CDN_HLS_SIGNING_SECRET="")
-    def test_free_review_default_uses_limited_forward_skip_budget(self):
+    def test_free_review_default_allows_free_seeking(self):
         self.video.allow_skip = False
         self.video.max_speed = 1.0
         self.video.show_watermark = True
@@ -2146,8 +2146,8 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         self.assertEqual(response.data["policy"]["access_mode"], AccessMode.FREE_REVIEW.value)
         self.assertFalse(response.data["policy"]["monitoring_enabled"])
         self.assertTrue(response.data["policy"]["allow_seek"])
-        self.assertEqual(response.data["policy"]["seek"]["mode"], "budgeted_forward")
-        self.assertEqual(response.data["policy"]["seek"]["limit_seconds"], 20)
+        self.assertEqual(response.data["policy"]["seek"]["mode"], "free")
+        self.assertIsNone(response.data["policy"]["seek"]["forward_limit"])
         self.assertEqual(response.data["policy"]["playback_rate"]["max"], 1.0)
         self.assertTrue(response.data["policy"]["watermark"]["enabled"])
 
@@ -2322,13 +2322,14 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         self.assertEqual(playback.data["policy"]["seek"]["used_seconds"], 20)
         self.assertEqual(playback.data["policy"]["seek"]["remaining_seconds"], 0)
 
-    def test_free_review_forward_skip_uses_the_same_persisted_budget(self):
+    def test_free_review_forward_skip_budget_is_not_applicable(self):
         response = self._post_forward_skip(enrollment_id=self.target_enrollment.id)
 
-        self.assertEqual(response.status_code, 200, response.data)
-        self.assertEqual(response.data["granted_seconds"], 10)
-        progress = VideoProgress.objects.get(video=self.video, enrollment=self.target_enrollment)
-        self.assertEqual(progress.forward_skip_seconds_used, 10)
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertEqual(response.data["code"], "skip_budget_not_applicable")
+        self.assertFalse(
+            VideoProgress.objects.filter(video=self.video, enrollment=self.target_enrollment).exists()
+        )
 
     def test_forward_skip_rejects_video_with_explicit_free_seeking(self):
         self.video.allow_skip = True
