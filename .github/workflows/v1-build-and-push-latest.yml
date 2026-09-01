@@ -337,6 +337,11 @@ jobs:
         run: |
           python scripts/lint/check_submission_lifecycle_boundary.py
 
+      - name: Safe HTTP method database-write boundary
+        run: |
+          python -m unittest scripts.lint.test_check_safe_method_writes
+          python scripts/lint/check_safe_method_writes.py
+
       - name: Refactor boundary touched-file guard
         run: |
           if [ "${{ github.event_name }}" = "push" ] && \
@@ -402,7 +407,7 @@ jobs:
         env:
           DJANGO_SETTINGS_MODULE: apps.api.config.settings.test
         run: |
-          pytest tests/test_smoke.py -v --tb=short -x
+          pytest tests/test_smoke.py tests/test_critical_academy_journey.py -v --tb=short -x
 
       - name: Verify deployment evidence contracts
         shell: pwsh

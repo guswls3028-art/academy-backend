@@ -78,12 +78,34 @@ class HomeworkPolicyApiTests(APITestCase):
             "HTTP_X_TENANT_CODE": self.tenant.code,
         }
 
-    def test_get_policy_by_session_creates_and_returns_policy(self):
+    def _create_policy(self):
+        return self.client.post(
+            "/api/v1/homework/policies/",
+            {"session": self.session.id},
+            format="json",
+            **self.req_headers,
+        )
+
+    def test_get_policy_by_session_is_read_only_until_explicit_create(self):
+        initial = self.client.get(
+            f"/api/v1/homework/policies/?session={self.session.id}",
+            **self.req_headers,
+        )
+        self.assertEqual(initial.status_code, 200, initial.data)
+        initial_results = (
+            initial.data["results"]
+            if isinstance(initial.data, dict) and "results" in initial.data
+            else initial.data
+        )
+        self.assertEqual(initial_results, [])
+
+        created = self._create_policy()
+        self.assertEqual(created.status_code, 201, created.data)
+
         res = self.client.get(
             f"/api/v1/homework/policies/?session={self.session.id}",
             **self.req_headers,
         )
-        self.assertEqual(res.status_code, 200, res.data)
 
         data = res.data
         results = data["results"] if isinstance(data, dict) and "results" in data else data
@@ -95,12 +117,7 @@ class HomeworkPolicyApiTests(APITestCase):
         self.assertTrue(isinstance(p["cutline_value"], int))
 
     def test_patch_policy_updates_fields(self):
-        # First GET ensures policy exists
-        res = self.client.get(
-            f"/api/v1/homework/policies/?session={self.session.id}",
-            **self.req_headers,
-        )
-        pid = res.data["results"][0]["id"]
+        pid = self._create_policy().data["id"]
 
         res2 = self.client.patch(
             f"/api/v1/homework/policies/{pid}/",
@@ -113,10 +130,7 @@ class HomeworkPolicyApiTests(APITestCase):
         self.assertEqual(int(res2.data["cutline_value"]), 70)
 
     def test_title_only_patch_preserves_session_cutline_default(self):
-        self.client.get(
-            f"/api/v1/homework/policies/?session={self.session.id}",
-            **self.req_headers,
-        )
+        self._create_policy()
         homework = Homework.objects.create(
             tenant=self.tenant,
             session=self.session,
@@ -171,12 +185,7 @@ class HomeworkPolicyApiTests(APITestCase):
         self.assertEqual(homework.title, "다른 선생님 수정")
 
     def test_patch_policy_recalculates_existing_homework_scores(self):
-        # ensure policy exists
-        res = self.client.get(
-            f"/api/v1/homework/policies/?session={self.session.id}",
-            **self.req_headers,
-        )
-        pid = res.data["results"][0]["id"]
+        pid = self._create_policy().data["id"]
 
         hw = Homework.objects.create(tenant=self.tenant, session=self.session, title="HW1")
         hs = HomeworkScore.objects.create(
@@ -203,11 +212,7 @@ class HomeworkPolicyApiTests(APITestCase):
 
     def test_raising_policy_cutline_creates_a_homework_clinic_link(self):
         ClinicLink = apps.get_model("progress", "ClinicLink")
-        res = self.client.get(
-            f"/api/v1/homework/policies/?session={self.session.id}",
-            **self.req_headers,
-        )
-        pid = res.data["results"][0]["id"]
+        pid = self._create_policy().data["id"]
         homework = Homework.objects.create(
             tenant=self.tenant,
             session=self.session,
@@ -253,11 +258,7 @@ class HomeworkPolicyApiTests(APITestCase):
             title="20점 과제",
             meta={"default_max_score": 20},
         )
-        res = self.client.get(
-            f"/api/v1/homework/policies/?session={self.session.id}",
-            **self.req_headers,
-        )
-        pid = res.data["results"][0]["id"]
+        pid = self._create_policy().data["id"]
 
         response = self.client.patch(
             f"/api/v1/homework/policies/{pid}/",
@@ -273,11 +274,8 @@ class HomeworkPolicyApiTests(APITestCase):
 
     def test_updating_homework_max_score_syncs_existing_primary_scores(self):
         ClinicLink = apps.get_model("progress", "ClinicLink")
-        policy_res = self.client.get(
-            f"/api/v1/homework/policies/?session={self.session.id}",
-            **self.req_headers,
-        )
-        self.assertEqual(policy_res.status_code, 200, policy_res.data)
+        policy_res = self._create_policy()
+        self.assertEqual(policy_res.status_code, 201, policy_res.data)
         homework = Homework.objects.create(
             tenant=self.tenant,
             session=self.session,
@@ -536,11 +534,8 @@ class HomeworkPolicyApiTests(APITestCase):
         self.assertEqual(homework.grading_mode, Homework.GradingMode.SCORE)
 
     def test_percent_override_is_not_limited_by_session_count_cutline(self):
-        policy_res = self.client.get(
-            f"/api/v1/homework/policies/?session={self.session.id}",
-            **self.req_headers,
-        )
-        policy_id = policy_res.data["results"][0]["id"]
+        policy_res = self._create_policy()
+        policy_id = policy_res.data["id"]
         policy_patch = self.client.patch(
             f"/api/v1/homework/policies/{policy_id}/",
             {"cutline_mode": "COUNT", "cutline_value": 90},
@@ -596,11 +591,8 @@ class HomeworkPolicyApiTests(APITestCase):
         self.assertEqual(homework.cutline_mode, Homework.CutlineMode.PERCENT)
 
     def test_session_policy_change_does_not_overwrite_homework_cutline(self):
-        policy_res = self.client.get(
-            f"/api/v1/homework/policies/?session={self.session.id}",
-            **self.req_headers,
-        )
-        policy_id = policy_res.data["results"][0]["id"]
+        policy_res = self._create_policy()
+        policy_id = policy_res.data["id"]
         overridden = Homework.objects.create(
             tenant=self.tenant,
             session=self.session,

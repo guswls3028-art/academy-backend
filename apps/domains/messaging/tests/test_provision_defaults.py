@@ -43,6 +43,27 @@ class ProvisionDefaultTemplatesTests(TestCase):
         request.tenant = self.tenant
         return request
 
+    def test_autosend_get_returns_disabled_virtual_rows_without_writing(self):
+        template_count = MessageTemplate.objects.filter(tenant=self.tenant).count()
+        config_count = AutoSendConfig.objects.filter(tenant=self.tenant).count()
+
+        response = AutoSendConfigView.as_view()(
+            self._request("get", "/api/v1/messaging/auto-send/")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data)
+        self.assertTrue(all(item["id"] is None for item in response.data))
+        self.assertTrue(all(item["enabled"] is False for item in response.data))
+        self.assertEqual(
+            MessageTemplate.objects.filter(tenant=self.tenant).count(),
+            template_count,
+        )
+        self.assertEqual(
+            AutoSendConfig.objects.filter(tenant=self.tenant).count(),
+            config_count,
+        )
+
     def test_existing_template_body_and_subject_are_not_overwritten(self):
         defaults = get_default_templates(self.tenant.name)
         default = defaults["registration_approved_student"]
@@ -576,33 +597,25 @@ class ProvisionDefaultTemplatesTests(TestCase):
         self.assertFalse(by_trigger["matchup_report_submitted"]["enabled"])
         self.assertFalse(by_trigger["qna_answered"]["enabled"])
         self.assertFalse(by_trigger["counsel_answered"]["enabled"])
-        self.assertFalse(
-            AutoSendConfig.objects.get(
-                tenant=self.tenant,
-                trigger="matchup_report_submitted",
-            ).enabled
+        self.assertFalse(AutoSendConfig.objects.filter(tenant=self.tenant).exists())
+
+    def test_explicit_provision_creates_disabled_qna_template_contract(self):
+        response = ProvisionDefaultTemplatesView.as_view()(
+            self._request("post", "/api/v1/messaging/provision-defaults/")
         )
-        self.assertFalse(
-            AutoSendConfig.objects.get(
-                tenant=self.tenant,
-                trigger="qna_answered",
-            ).enabled
-        )
-        qna_template = AutoSendConfig.objects.select_related("template").get(
+
+        self.assertEqual(response.status_code, 200)
+        qna_config = AutoSendConfig.objects.select_related("template").get(
             tenant=self.tenant,
             trigger="qna_answered",
-        ).template
+        )
+        self.assertFalse(qna_config.enabled)
+        qna_template = qna_config.template
         self.assertEqual(qna_template.subject, "")
         self.assertIn("[질문 답변 완료]", qna_template.body)
         self.assertIn("#{학생이름2}", qna_template.body)
         self.assertIn("#{사이트링크}", qna_template.body)
         self.assertNotIn("#{선생님메모}", qna_template.body)
-        self.assertFalse(
-            AutoSendConfig.objects.get(
-                tenant=self.tenant,
-                trigger="counsel_answered",
-            ).enabled
-        )
 
     def test_video_encoding_trigger_is_not_enabled_by_default_until_template_ready(self):
         response = AutoSendConfigView.as_view()(
@@ -612,12 +625,7 @@ class ProvisionDefaultTemplatesTests(TestCase):
         self.assertEqual(response.status_code, 200)
         by_trigger = {item["trigger"]: item for item in response.data}
         self.assertFalse(by_trigger["video_encoding_complete"]["enabled"])
-        self.assertFalse(
-            AutoSendConfig.objects.get(
-                tenant=self.tenant,
-                trigger="video_encoding_complete",
-            ).enabled
-        )
+        self.assertFalse(AutoSendConfig.objects.filter(tenant=self.tenant).exists())
 
     def test_autosend_patch_rejects_enable_without_effective_approved_template(self):
         template = MessageTemplate.objects.create(

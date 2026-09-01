@@ -87,3 +87,33 @@ class LandingPublicRaceGuardTests(TestCase):
 
         self.assertIn("transaction.atomic", source)
         self.assertIn("select_for_update", source)
+
+    def test_board_get_is_read_only_and_post_view_records_open(self):
+        self.board.author = User.objects.create_user(
+            username="landing-race-author",
+            password="test1234",
+            tenant=self.tenant,
+        )
+        self.board.save(update_fields=["author"])
+        get_request = self.factory.get(f"/landing-public/board/{self.board.id}/")
+        get_request.tenant = self.tenant
+
+        response = PublicBoardPostViewSet.as_view({"get": "retrieve"})(
+            get_request,
+            pk=self.board.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.board.refresh_from_db()
+        self.assertEqual(self.board.view_count, 0)
+
+        post_request = self.factory.post(f"/landing-public/board/{self.board.id}/view/")
+        post_request.tenant = self.tenant
+        view_response = PublicBoardPostViewSet.as_view({"post": "record_view"})(
+            post_request,
+            pk=self.board.id,
+        )
+
+        self.assertEqual(view_response.status_code, 200, view_response.data)
+        self.board.refresh_from_db()
+        self.assertEqual(self.board.view_count, 1)

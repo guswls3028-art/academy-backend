@@ -211,12 +211,22 @@ class StudentPublicSessionView(APIView):
                 {"detail": "공개 영상은 해당 학원 소속 학생만 이용할 수 있습니다."},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        lecture = Lecture.get_or_create_system_lecture(tenant)
-        session, _ = Session.objects.get_or_create(
-            lecture=lecture,
-            order=1,
-            defaults={"title": "전체공개영상", "date": None},
+        lecture = (
+            Lecture.objects.filter(tenant=tenant)
+            .filter(Q(is_system=True) | Q(title="전체공개영상"))
+            .order_by("-is_system", "id")
+            .first()
         )
+        session = (
+            Session.objects.filter(lecture=lecture, order=1).first()
+            if lecture is not None
+            else None
+        )
+        if lecture is None or session is None:
+            return Response(
+                {"detail": "공개 영상 세션이 없습니다."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
         return Response(
             {"session_id": session.id, "lecture_id": lecture.id},
             status=status.HTTP_200_OK,
@@ -316,12 +326,18 @@ class StudentVideoMeView(APIView):
             .order_by("title")
         )
 
-        # 공개 영상: 시스템 강의가 없으면 자동 생성 — 학생이면 항상 볼 수 있어야 함
-        public_lecture = Lecture.get_or_create_system_lecture(tenant)
-        public_session, _ = Session.objects.get_or_create(
-            lecture=public_lecture,
-            order=1,
-            defaults={"title": "전체공개영상", "date": None},
+        # 공개 영상 컨테이너는 선생님의 업로드 시작 시 생성된다. 학생 조회는
+        # 저장 상태를 바꾸지 않으며, 아직 컨테이너가 없으면 null을 반환한다.
+        public_lecture = (
+            Lecture.objects.filter(tenant=tenant)
+            .filter(Q(is_system=True) | Q(title="전체공개영상"))
+            .order_by("-is_system", "id")
+            .first()
+        )
+        public_session = (
+            Session.objects.filter(lecture=public_lecture, order=1).first()
+            if public_lecture is not None
+            else None
         )
 
         # 강의별 영상 요약을 한 번의 쿼리로 가져오기 (N+1 방지)
@@ -329,7 +345,9 @@ class StudentVideoMeView(APIView):
         Video = get_video_model()
 
         # 수강 강의 세션 + 전체공개영상 세션 모두 포함
-        all_lecture_ids = lecture_ids + archived_lecture_ids + [public_lecture.id]
+        all_lecture_ids = lecture_ids + archived_lecture_ids
+        if public_lecture is not None:
+            all_lecture_ids.append(public_lecture.id)
         session_ids_all = list(
             Session.objects.filter(lecture_id__in=all_lecture_ids)
             .values_list("id", flat=True)
@@ -447,19 +465,21 @@ class StudentVideoMeView(APIView):
             })
 
         # 전체공개영상 세션 영상 요약
-        pub_summary = video_summary_by_session.get(public_session.id)
-        pub_video_count = pub_summary["video_count"] if pub_summary else 0
-        pub_total_duration = pub_summary["total_duration"] if pub_summary else 0
-        pub_first_vid = first_video_by_lecture.get(public_lecture.id)
-        pub_thumb_url = build_thumbnail_url(pub_first_vid) if pub_first_vid else None
+        public_data = None
+        if public_lecture is not None and public_session is not None:
+            pub_summary = video_summary_by_session.get(public_session.id)
+            pub_video_count = pub_summary["video_count"] if pub_summary else 0
+            pub_total_duration = pub_summary["total_duration"] if pub_summary else 0
+            pub_first_vid = first_video_by_lecture.get(public_lecture.id)
+            pub_thumb_url = build_thumbnail_url(pub_first_vid) if pub_first_vid else None
 
-        public_data = {
-            "session_id": public_session.id,
-            "lecture_id": public_lecture.id,
-            "video_count": pub_video_count,
-            "total_duration": pub_total_duration,
-            "thumbnail_url": pub_thumb_url,
-        }
+            public_data = {
+                "session_id": public_session.id,
+                "lecture_id": public_lecture.id,
+                "video_count": pub_video_count,
+                "total_duration": pub_total_duration,
+                "thumbnail_url": pub_thumb_url,
+            }
 
         archived_data = []
         VideoProgress = get_video_progress_model()
@@ -886,7 +906,7 @@ class StudentSessionVideoListView(APIView):
 
 class StudentVideoPlaybackView(APIView):
     """
-    GET /student/video/videos/{video_id}/playback/
+    GET access check / POST playback bootstrap for one student video.
     """
 
     permission_classes = [IsAuthenticated, IsStudentOrParent]
@@ -916,6 +936,25 @@ class StudentVideoPlaybackView(APIView):
         },
     )
     def get(self, request, video_id: int):
+        if not parse_query_bool(
+            request.query_params,
+            "access_check",
+            default=False,
+        ):
+            return Response(
+                {"detail": "재생 시작은 POST 요청을 사용해 주세요."},
+                status=status.HTTP_405_METHOD_NOT_ALLOWED,
+            )
+        return self._resolve_playback(request, video_id)
+
+    @extend_schema(
+        request=None,
+        responses={200: StudentVideoPlaybackSerializer},
+    )
+    def post(self, request, video_id: int):
+        return self._resolve_playback(request, video_id)
+
+    def _resolve_playback(self, request, video_id: int):
         Video, VideoPermission = _import_media_models()
         explicit_enrollment_id = _get_explicit_enrollment_id(request)
         access_check = parse_query_bool(

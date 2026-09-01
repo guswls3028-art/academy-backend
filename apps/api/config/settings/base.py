@@ -196,9 +196,10 @@ MIDDLEWARE = [
     "apps.api.common.middleware.CorsResponseFixMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    "apps.api.common.middleware.UnhandledExceptionMiddleware",
+    "apps.core.middleware.safe_method_write.SafeMethodDatabaseWriteMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
-    "apps.api.common.middleware.UnhandledExceptionMiddleware",
 
     # 🔒 Tenant SSOT (Host-based, after host normalization)
     "apps.core.middleware.tenant.TenantMiddleware",

@@ -398,7 +398,7 @@ class DirectVideoEntitlementTests(TestCase):
         self.assertFalse(check_response.data["monitoring_enabled"])
 
         playback_request = self._request(
-            "get",
+            "post",
             f"/api/v1/student/video/videos/{self.video.id}/playback/",
             user=self.student_user,
         )
@@ -456,7 +456,7 @@ class DirectVideoEntitlementTests(TestCase):
         before = self._side_effect_counts()
         before_view_count = self.video.view_count
         playback_request = self._request(
-            "get",
+            "post",
             f"/api/v1/student/video/videos/{self.video.id}/playback/",
             user=self.student_user,
         )
@@ -575,7 +575,7 @@ class DirectVideoEntitlementTests(TestCase):
         entitlement = self._grant().entitlement
         playback = StudentVideoPlaybackView.as_view()(
             self._request(
-                "get",
+                "post",
                 f"/api/v1/student/video/videos/{self.video.id}/playback/",
                 user=self.student_user,
             ),

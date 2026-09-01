@@ -88,10 +88,12 @@ class LandingAdminView(APIView):
 
     def get(self, request):
         tenant = request.tenant
-        landing, _created = LandingPage.objects.get_or_create(
-            tenant=tenant,
-            defaults={"draft_config": default_draft_config(tenant)},
-        )
+        landing = LandingPage.objects.filter(tenant=tenant).first()
+        if landing is None:
+            landing = LandingPage(
+                tenant=tenant,
+                draft_config=default_draft_config(tenant),
+            )
         # 신규 섹션 타입은 응답에서만 보강한다. 학원장이 저장한 draft_config를
         # GET/publish 부수효과로 덮어쓰지 않는다.
         draft = resolve_image_urls(backfill_missing_sections(landing.draft_config))

@@ -23,12 +23,13 @@ def test_quality_gate_runs_the_default_collected_suite_under_coverage() -> None:
     assert workflow.count("python -m coverage run --parallel-mode") == 2
     assert (
         "python -m coverage run --parallel-mode --source=apps,academy -m pytest "
-        "tests/test_smoke.py -v --tb=short -x"
+        "tests/test_smoke.py tests/test_critical_academy_journey.py -v --tb=short -x"
     ) in normalized_workflow
     assert (
         "python -m coverage run --parallel-mode --source=apps,academy -m pytest "
         "-q --tb=short apps/api apps/billing apps/core apps/shared apps/support "
-        "apps/domains tests --ignore=tests/test_smoke.py"
+        "apps/domains tests --ignore=tests/test_smoke.py "
+        "--ignore=tests/test_critical_academy_journey.py"
     ) in normalized_workflow
     assert "python -m coverage combine" in workflow
     assert (

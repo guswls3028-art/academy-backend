@@ -48,11 +48,6 @@ class AutoSendConfigView(APIView):
         triggers = [c[0] for c in AutoSendConfig.Trigger.choices]
         configs = AutoSendConfig.objects.filter(tenant=tenant).select_related("template").defer("delay_mode", "delay_value")
 
-        # ── 자동 프로비저닝: config가 하나도 없으면 기본 템플릿 + config 자동 생성 ──
-        if not configs.exists():
-            self._auto_provision(tenant)
-            configs = AutoSendConfig.objects.filter(tenant=tenant).select_related("template").defer("delay_mode", "delay_value")
-
         from apps.domains.messaging.alimtalk_content_builders import get_template_type
         from apps.domains.messaging.policy import get_trigger_policy, get_trigger_implementation_status
 
@@ -92,42 +87,6 @@ class AutoSendConfigView(APIView):
                     "implementation_status": impl_status,
                 })
         return Response(result)
-
-    @staticmethod
-    def _auto_provision(tenant):
-        """기본 템플릿 + AutoSendConfig 자동 생성 (첫 접근 시 1회)"""
-        from ..default_templates import get_default_templates
-        import logging
-        logger = logging.getLogger(__name__)
-
-        templates = get_default_templates(tenant.name or "학원")
-        valid_triggers = {c[0] for c in AutoSendConfig.Trigger.choices}
-        for trigger, defaults in templates.items():
-            tpl_name = defaults["name"]
-            tpl, created = MessageTemplate.objects.get_or_create(
-                tenant=tenant,
-                name=tpl_name,
-                defaults={
-                    "category": defaults["category"],
-                    "subject": defaults.get("subject", ""),
-                    "body": defaults["body"],
-                    "is_system": True,
-                },
-            )
-            # 자유양식 템플릿 등 유효한 트리거가 아니면 AutoSendConfig 생성 스킵
-            if trigger not in valid_triggers:
-                continue
-            AutoSendConfig.objects.get_or_create(
-                tenant=tenant,
-                trigger=trigger,
-                defaults={
-                    "template": tpl,
-                    "enabled": _default_enabled_for_trigger(trigger),
-                    "message_mode": "alimtalk",
-                    "minutes_before": defaults.get("minutes_before"),
-                },
-            )
-        logger.info("Auto-provisioned default templates for tenant %s", tenant.id)
 
     @transaction.atomic
     def patch(self, request):

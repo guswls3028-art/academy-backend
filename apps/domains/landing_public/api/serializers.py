@@ -6,6 +6,10 @@ from ..models import PublicBoardPost, PublicPostLike, PublicPostReply, PublicRev
 _STAFF_ROLES = {"owner", "admin", "staff", "teacher", "assistant"}
 
 
+class PublicViewCountSerializer(serializers.Serializer):
+    view_count = serializers.IntegerField(min_value=0, read_only=True)
+
+
 class PublicProblemReviewShowcaseSerializer(serializers.Serializer):
     id = serializers.IntegerField(read_only=True)
     title = serializers.CharField(read_only=True)

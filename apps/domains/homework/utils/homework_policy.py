@@ -37,7 +37,7 @@ def resolve_homework_cutline_settings(
     *,
     session: Any,
     homework: Any | None = None,
-    create_policy: bool = True,
+    create_policy: bool = False,
 ) -> HomeworkCutlineSettings:
     """과제별 커트라인을 우선하고, 없으면 기존 차시 정책을 사용한다."""
     tenant = getattr(getattr(session, "lecture", None), "tenant", None)

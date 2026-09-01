@@ -5,10 +5,11 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.urls import resolve
 from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
-from apps.core.models import Tenant, TenantMembership
+from apps.core.models import OpsAuditLog, Tenant, TenantMembership
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.exams.models import AnswerKey, Exam, ExamEnrollment, ExamQuestion, Sheet
 from apps.domains.lectures.models import Lecture, Session
@@ -72,6 +73,7 @@ class ParentExamChildSelectionTests(TestCase):
             password="pw1234",
             tenant=self.tenant,
         )
+        TenantMembership.ensure_active(tenant=self.tenant, user=user, role="student")
         return Student.objects.create(
             tenant=self.tenant,
             user=user,
@@ -124,6 +126,12 @@ class ParentExamChildSelectionTests(TestCase):
             HTTP_X_STUDENT_ID=str(student.id),
         )
         force_authenticate(request, user=self.parent_user)
+        request.tenant = self.tenant
+        return request
+
+    def _student_post_request(self, path: str, *, student: Student, data: dict):
+        request = self.factory.post(path, data, format="json")
+        force_authenticate(request, user=student.user)
         request.tenant = self.tenant
         return request
 
@@ -204,6 +212,67 @@ class ParentExamChildSelectionTests(TestCase):
         self.assertEqual(response_a.status_code, 200, response_a.data)
         self.assertEqual(response_a.data["total_score"], 10)
         self.assertEqual(response_b.status_code, 404)
+
+    def test_exam_result_get_is_read_only_and_explicit_activity_post_is_scoped(self):
+        result_response = MyExamResultView.as_view()(
+            self._request(
+                f"/student/results/me/exams/{self.exam_a.id}/",
+                student=self.student_a,
+            ),
+            exam_id=self.exam_a.id,
+        )
+
+        self.assertEqual(result_response.status_code, 200, result_response.data)
+        self.assertFalse(
+            OpsAuditLog.objects.filter(action="student_activity.target_open").exists()
+        )
+
+        activity_view = resolve(
+            "/api/v1/students/me/activity/exam-result-open/"
+        ).func
+        parent_activity_response = activity_view(
+            self._post_request(
+                "/students/me/activity/exam-result-open/",
+                student=self.student_a,
+                data={"exam_id": self.exam_a.id},
+            )
+        )
+
+        self.assertEqual(parent_activity_response.status_code, 202, parent_activity_response.data)
+        self.assertFalse(parent_activity_response.data["accepted"])
+        self.assertFalse(
+            OpsAuditLog.objects.filter(action="student_activity.target_open").exists()
+        )
+
+        activity_response = activity_view(
+            self._student_post_request(
+                "/students/me/activity/exam-result-open/",
+                student=self.student_a,
+                data={"exam_id": self.exam_a.id},
+            )
+        )
+
+        self.assertEqual(activity_response.status_code, 202, activity_response.data)
+        self.assertTrue(activity_response.data["accepted"])
+        activity = OpsAuditLog.objects.get(action="student_activity.target_open")
+        self.assertEqual(activity.target_user_id, self.student_a.user_id)
+        self.assertEqual(activity.payload["target_id"], str(self.exam_a.id))
+
+    def test_exam_result_activity_rejects_other_selected_child(self):
+        response = resolve(
+            "/api/v1/students/me/activity/exam-result-open/"
+        ).func(
+            self._post_request(
+                "/students/me/activity/exam-result-open/",
+                student=self.student_b,
+                data={"exam_id": self.exam_a.id},
+            )
+        )
+
+        self.assertEqual(response.status_code, 404, response.data)
+        self.assertFalse(
+            OpsAuditLog.objects.filter(action="student_activity.target_open").exists()
+        )
 
     def test_unpublished_result_keeps_retake_policy_without_exposing_score(self):
         self.exam_a.student_results_published = False

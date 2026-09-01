@@ -26,7 +26,7 @@ from apps.core.permissions import is_effective_staff
 from apps.infrastructure.storage.r2 import get_object_bytes_r2_storage
 
 from ...models import PublicProblemReviewShowcase
-from ..serializers import PublicProblemReviewShowcaseSerializer
+from ..serializers import PublicProblemReviewShowcaseSerializer, PublicViewCountSerializer
 
 
 LEGACY_COMPATIBILITY_MARKER = "pre-verification-publication"
@@ -100,10 +100,16 @@ class PublicProblemReviewShowcaseViewSet(viewsets.GenericViewSet):
 
     def retrieve(self, request, *args, **kwargs):
         obj = self.get_object()
+        return Response(self._serialize(obj, include_snapshot=True))
+
+    @extend_schema(request=None, responses={200: PublicViewCountSerializer})
+    @action(detail=True, methods=["post"], url_path="view")
+    def record_view(self, request, pk=None):
+        obj = self.get_object()
         if not is_effective_staff(request.user, obj.tenant):
             PublicProblemReviewShowcase.objects.filter(pk=obj.pk).update(view_count=F("view_count") + 1)
             obj.refresh_from_db(fields=["view_count"])
-        return Response(self._serialize(obj, include_snapshot=True))
+        return Response({"view_count": obj.view_count})
 
     @action(detail=True, methods=["get"], url_path="pdf")
     @extend_schema(responses={(200, "application/pdf"): OpenApiTypes.BINARY})

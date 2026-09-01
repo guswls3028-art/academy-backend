@@ -2,7 +2,27 @@ from unittest.mock import patch
 
 import pytest
 
-from scripts.post_deploy_smoke.video_playback_chain import API_URL, SmokeFail, find_first_video
+from scripts.post_deploy_smoke.video_playback_chain import (
+    API_URL,
+    SmokeFail,
+    fetch_play_url,
+    find_first_video,
+)
+
+
+def test_fetch_play_url_uses_explicit_post_bootstrap() -> None:
+    with patch(
+        "scripts.post_deploy_smoke.video_playback_chain._post_json",
+        return_value=(200, {"play_url": "https://cdn.example/master.m3u8"}),
+    ) as post_json:
+        result = fetch_play_url("student-token", 123, 456)
+
+    assert result == "https://cdn.example/master.m3u8"
+    post_json.assert_called_once_with(
+        f"{API_URL}/api/v1/student/video/videos/123/playback/?enrollment=456",
+        None,
+        headers={"Authorization": "Bearer student-token"},
+    )
 
 
 def test_find_first_video_skips_enrolled_sessions_without_videos() -> None:

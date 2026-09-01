@@ -518,8 +518,14 @@ seeking is restored; ordinary offline/review students receive the same free
 seeking without needing a prior per-video completion row. No review-mode rule
 overrides an explicit `block_seek=True`.
 The student player must consume the nested `policy` returned by
-`GET /api/v1/student/video/videos/{video_id}/playback/`; the flat video fields
+`POST /api/v1/student/video/videos/{video_id}/playback/`; the flat video fields
 are display metadata, not a second policy source.
+
+The cross-repository rollout is backend-first: the backend adds the explicit
+POST bootstrap and makes a GET without `access_check=true` fail closed with
+HTTP 405. The frontend then switches to POST against that sealed contract.
+There is no compatibility fallback from POST to the legacy mutating GET;
+read-only access checks remain GET throughout the rollout.
 
 Tenant-wide public-library videos intentionally have no enrollment-specific
 `access_mode`. Their effective playback policy is therefore resolved as
@@ -527,7 +533,8 @@ Tenant-wide public-library videos intentionally have no enrollment-specific
 compatibility field while the nested policy remains complete and executable,
 including free seeking without a per-enrollment skip budget.
 
-For active enrollments, lightweight `?access_check=true` uses the same effective
+For active enrollments, lightweight read-only
+`GET .../playback/?access_check=true` uses the same effective
 access-mode resolver as playback issuance. Explicit offline `PROCTORED_CLASS`
 and online `FREE_REVIEW` overrides therefore return the exact mode and
 monitoring flag that playback enforces, while `BLOCKED` remains a 403.
@@ -569,7 +576,8 @@ comments remain active-enrollment-only and return 403 for an inactive
 enrollment even when that exact video is entitled. The access check returns
 only `ok`, effective `access_mode`,
 `monitoring_enabled`, and `policy_version`; it does not create playback
-sessions, activity records, or view counts. A full bootstrap rechecks the
+sessions, activity records, or view counts. A full `POST .../playback/`
+bootstrap rechecks the
 lecture, enrollment, video, and effective mode under row locks before recording
 activity or view count. Every mode receives a short-lived current-access token;
 only `PROCTORED_CLASS` creates a monitored playback session.

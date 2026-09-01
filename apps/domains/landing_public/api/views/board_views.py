@@ -2,6 +2,7 @@
 from django.db.models import F
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
@@ -14,6 +15,7 @@ from ..serializers import (
     PublicBoardPostDetailSerializer,
     PublicBoardPostListSerializer,
     PublicBoardPostWriteSerializer,
+    PublicViewCountSerializer,
     _is_staff_role,
     _resolve_display_name,
     _resolve_role,
@@ -41,7 +43,7 @@ class PublicBoardPostViewSet(viewsets.GenericViewSet):
     # ─── Permissions per action ───
 
     def get_permissions(self):
-        if self.action in ("list", "retrieve"):
+        if self.action in ("list", "retrieve", "record_view"):
             return [TenantResolved()]
         if self.action == "moderate":
             return [TenantResolvedAndStaff()]
@@ -109,16 +111,18 @@ class PublicBoardPostViewSet(viewsets.GenericViewSet):
         # 비공개/숨김 가드 (staff/작성자 우회는 get_queryset에서 처리됨)
         viewer_role = _resolve_role(request.user, getattr(request, "tenant", None)) if request.user.is_authenticated else ""
         ctx = {"request": request, "viewer_role": viewer_role}
-        # view count 증가 (작성자 본인 제외).
-        # P2 audit (2026-05-14): F+1 update 후 refresh_from_db 없으면 obj.view_count 가
-        # stale 한 상태로 serialize → 응답에 -1 view_count 노출. refresh.
-        if request.user.is_authenticated and obj.author_id == request.user.id:
-            pass
-        else:
-            PublicBoardPost.objects.filter(pk=obj.pk).update(view_count=F("view_count") + 1)
-            obj.refresh_from_db(fields=["view_count"])
         ser = PublicBoardPostDetailSerializer(obj, context=ctx)
         return Response(ser.data)
+
+    @extend_schema(request=None, responses={200: PublicViewCountSerializer})
+    @action(detail=True, methods=["post"], url_path="view")
+    def record_view(self, request, *args, **kwargs):
+        """Record an intentional detail open without mutating the GET request."""
+        obj = self.get_object()
+        if not (request.user.is_authenticated and obj.author_id == request.user.id):
+            PublicBoardPost.objects.filter(pk=obj.pk).update(view_count=F("view_count") + 1)
+            obj.refresh_from_db(fields=["view_count"])
+        return Response({"view_count": obj.view_count})
 
     def create(self, request, *args, **kwargs):
         ser = PublicBoardPostWriteSerializer(data=request.data)

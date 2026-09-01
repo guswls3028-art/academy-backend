@@ -30,6 +30,8 @@ SPECTACULAR_SETTINGS = {
             "FREE_REVIEW",
             "PROCTORED_CLASS",
         ],
+        "StudentActivityCategory":
+            "apps.domains.students.views.support_views.ACTIVITY_CATEGORIES",
         "InactiveVideoEntitlementSource": [
             ("STAFF_AUTHORIZATION", "교직원 명시 승인"),
         ],

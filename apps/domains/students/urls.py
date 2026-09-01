@@ -11,7 +11,9 @@ from .views import (
     StudentPasswordFindVerifyView,
     StudentPasswordResetSendView,
     StudentActivityView,
+    StudentActivityViewAuditView,
     StudentActivityRecordView,
+    StudentExamResultOpenActivityView,
     StudentSupportSessionView,
     StudentSupportSessionEndView,
     StudentSupportSessionRevokeView,
@@ -39,6 +41,7 @@ router.register(r"", StudentViewSet, basename="student")
 urlpatterns = [
     path("me/activity/", StudentActivityRecordView.as_view(), name="student-activity-record"),
     path("me/activity/homework-open/", StudentHomeworkOpenActivityView.as_view(), name="student-homework-open-activity"),
+    path("me/activity/exam-result-open/", StudentExamResultOpenActivityView.as_view(), name="student-exam-result-open-activity"),
     path("me/support-session/end/", StudentSupportSessionEndView.as_view(), name="student-support-session-end-current"),
     path("password_find/request/", StudentPasswordFindRequestView.as_view(), name="student-password-find-request"),
     path("password_find/verify/", StudentPasswordFindVerifyView.as_view(), name="student-password-find-verify"),
@@ -46,6 +49,11 @@ urlpatterns = [
     path("send_existing_credentials/", SendExistingCredentialsView.as_view(), name="student-send-existing-credentials"),
     path("<int:student_id>/account-notifications/", StudentAccountNotificationLogView.as_view(), name="student-account-notifications"),
     path("<int:student_id>/activities/", StudentActivityView.as_view(), name="student-activities"),
+    path(
+        "<int:student_id>/activities/view/",
+        StudentActivityViewAuditView.as_view(),
+        name="student-activities-view-audit",
+    ),
     path("<int:student_id>/support-session/", StudentSupportSessionView.as_view(), name="student-support-session"),
     path(
         "<int:student_id>/support-sessions/<uuid:session_id>/end/",
