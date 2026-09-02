@@ -4,6 +4,7 @@ from django.apps import apps as django_apps
 from django.contrib.auth import get_user_model
 from django.db import connection
 from django.test import TestCase
+from rest_framework.exceptions import ValidationError
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
@@ -18,7 +19,12 @@ from apps.domains.homework_results.models import Homework, HomeworkScore
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.progress.models import AssessmentCorrection, ClinicLink, SessionProgress
 from apps.domains.progress.services.clinic_remediation_service import ClinicRemediationService
+from apps.domains.progress.services.clinic_trigger_service import ClinicTriggerService
+from apps.domains.progress.services.session_calculator import SessionProgressCalculator
 from apps.domains.results.services.clinic_target_service import ClinicTargetService
+from apps.domains.results.guards.exam_enrollment_guard import (
+    validate_exam_enrollment_assigned,
+)
 from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
 from apps.domains.results.models import Result, ExamAttempt
 from apps.domains.results.views.session_scores_view import (
@@ -28,6 +34,7 @@ from apps.domains.results.views.session_scores_view import (
 from apps.domains.students.models import Student
 from apps.domains.submissions.models import Submission
 from apps.domains.submissions.views.submission_view import SubmissionViewSet
+from apps.support.submissions.dependencies import validate_exam_enrollment_candidate
 
 
 User = get_user_model()
@@ -209,7 +216,7 @@ class SessionScoresRosterScopeTests(TestCase):
         )
 
     def test_session_scores_treats_session_student_as_omr_exam_target(self):
-        ExamEnrollment.objects.filter(exam=self.exam, enrollment=self.active_enrollment).delete()
+        ExamEnrollment.objects.filter(exam=self.exam).delete()
 
         request = self.factory.get(f"/api/v1/results/admin/sessions/{self.session.id}/scores/")
         request.tenant = self.tenant
@@ -223,6 +230,81 @@ class SessionScoresRosterScopeTests(TestCase):
         self.assertEqual(len(rows[0]["exams"]), 1)
         self.assertEqual(rows[0]["exams"][0]["exam_id"], self.exam.id)
         self.assertIsNone(rows[0]["exams"][0]["block"]["score"])
+
+    def test_explicit_exam_targets_exclude_non_target_exam_from_scores_and_clinic(self):
+        Attendance.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            enrollment=self.stale_enrollment,
+            status="PRESENT",
+        )
+        other_exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="다른 학생만 보는 순환",
+            pass_score=70,
+            max_score=100,
+        )
+        other_exam.sessions.add(self.session)
+        ExamEnrollment.objects.create(
+            exam=other_exam,
+            enrollment=self.stale_enrollment,
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.active_enrollment,
+            total_score=85,
+            max_score=100,
+            objective_score=85,
+        )
+
+        request = self.factory.get(
+            f"/api/v1/results/admin/sessions/{self.session.id}/scores/"
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        response = SessionScoresView.as_view()(request, session_id=self.session.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        active_row = next(
+            row
+            for row in response.data["rows"]
+            if row["enrollment_id"] == self.active_enrollment.id
+        )
+        self.assertEqual(
+            [row["exam_id"] for row in active_row["exams"]],
+            [self.exam.id],
+        )
+
+        progress = SessionProgressCalculator.calculate(
+            enrollment_id=self.active_enrollment.id,
+            session=self.session,
+            attendance_type=SessionProgress.AttendanceType.OFFLINE,
+            homework_submitted=False,
+        )
+        ClinicTriggerService.auto_create_per_exam(progress)
+
+        self.assertTrue(progress.exam_passed)
+        self.assertEqual(
+            [row["exam_id"] for row in progress.exam_meta["exams"]],
+            [self.exam.id],
+        )
+        self.assertFalse(
+            ClinicLink.objects.filter(
+                enrollment=self.active_enrollment,
+                source_type="exam",
+                source_id=other_exam.id,
+            ).exists()
+        )
+        with self.assertRaises(ValidationError):
+            validate_exam_enrollment_assigned(other_exam, self.active_enrollment.id)
+        candidate = validate_exam_enrollment_candidate(
+            tenant=self.tenant,
+            exam_id=other_exam.id,
+            enrollment_id=self.active_enrollment.id,
+        )
+        self.assertFalse(candidate.ok)
+        self.assertFalse(candidate.should_create)
 
     def test_session_scores_uses_one_latest_result_lookup_for_many_exams(self):
         for idx in range(3):
