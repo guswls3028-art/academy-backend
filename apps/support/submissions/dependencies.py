@@ -418,6 +418,12 @@ def target_enrollment_assignment_exists(
         if in_exam:
             return True
 
+        if ExamEnrollment.objects.filter(
+            exam_id=target_id_i,
+            exam__tenant=tenant,
+        ).exists():
+            return False
+
         in_session = SessionEnrollment.objects.filter(
             tenant=tenant,
             session__exams__id=target_id_i,
@@ -583,6 +589,15 @@ def validate_exam_enrollment_candidate(
     ).exists()
     if in_exam:
         return ExamEnrollmentCandidate(ok=True)
+
+    if ExamEnrollment.objects.filter(
+        exam_id=exam_id,
+        exam__tenant=tenant,
+    ).exists():
+        return ExamEnrollmentCandidate(
+            ok=False,
+            detail="해당 시험의 대상 학생이 아닙니다.",
+        )
 
     in_session = SessionEnrollment.objects.filter(
         tenant=tenant,

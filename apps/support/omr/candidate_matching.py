@@ -45,6 +45,23 @@ def tail8_variants(value: str) -> set[str]:
 
 def _candidate_enrollments(*, exam_id: int, tenant):
     from apps.domains.enrollment.models import Enrollment
+    from apps.domains.exams.models import ExamEnrollment
+
+    explicit_target_ids = ExamEnrollment.objects.filter(
+        exam_id=exam_id,
+        exam__tenant=tenant,
+    ).values_list("enrollment_id", flat=True)
+    if explicit_target_ids.exists():
+        return (
+            Enrollment.objects.filter(
+                id__in=explicit_target_ids,
+                tenant=tenant,
+                status="ACTIVE",
+                student__deleted_at__isnull=True,
+            )
+            .select_related("student")
+            .distinct()
+        )
 
     return (
         Enrollment.objects.filter(
@@ -103,7 +120,8 @@ def resolve_enrollment_by_identifier(
     2. 정확 매칭 0건일 때만 fuzzy fallback: Hamming 거리 ≤1 후보 검색.
        후보가 정확히 1명일 때만 자동 매칭, 그 외(0/2+)는 None → 수동 식별.
 
-    시험 대상자는 명시 ExamEnrollment와 시험이 붙은 SessionEnrollment를 함께 본다.
+    명시 ExamEnrollment 대상자가 있으면 그 명단만 본다. 명시 대상자가
+    전혀 없는 구형 시험에서만 연결된 세션 명단을 fallback으로 사용한다.
     """
     lookup_tails = {tail for tail in tail8_variants(identifier) if len(tail) == 8}
     lookup_digit_tails = {tail for tail in lookup_tails if tail.isdigit()}
@@ -173,6 +191,12 @@ def lock_exam_enrollment_candidate(*, tenant, exam_id: int, enrollment_id: int |
     ):
         return True
 
+    if ExamEnrollment.objects.filter(
+        exam_id=int(exam_id),
+        exam__tenant=tenant,
+    ).exists():
+        return False
+
     in_session = SessionEnrollment.objects.filter(
         tenant=tenant,
         session__exams__id=int(exam_id),
@@ -221,6 +245,12 @@ def ensure_exam_enrollment_candidate(*, tenant, exam_id: int, enrollment_id: int
     ).exists()
     if in_exam:
         return True
+
+    if ExamEnrollment.objects.filter(
+        exam_id=int(exam_id),
+        exam__tenant=tenant,
+    ).exists():
+        return False
 
     in_session = SessionEnrollment.objects.filter(
         tenant=tenant,

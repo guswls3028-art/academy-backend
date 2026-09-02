@@ -56,6 +56,9 @@ from apps.domains.results.services.assessment_correction_status import (
     exam_correction_fingerprint,
 )
 from apps.support.omr.score_shape import get_exam_score_shape
+from apps.support.progress.session_calculator_dependencies import (
+    get_exam_target_enrollment_pairs_for_session,
+)
 from apps.domains.results.serializers.session_scores import (
     AssessmentCorrectionUpdateSerializer,
     SessionScoreRowSerializer,
@@ -305,15 +308,12 @@ class SessionScoresView(APIView):
         # -------------------------------------------------
         # 1b) 학생별 시험/과제 등록 여부 맵 (미등록 컬럼 비활성화용)
         # -------------------------------------------------
-        exam_enrolled_set: Set[tuple[int, int]] = set()
-        if exam_ids:
-            for row in ExamEnrollment.objects.filter(
-                exam_id__in=exam_ids
-            ).values_list("enrollment_id", "exam_id"):
-                exam_enrolled_set.add((int(row[0]), int(row[1])))
-            for eid in active_session_enrollment_ids:
-                for exid in exam_ids:
-                    exam_enrolled_set.add((int(eid), int(exid)))
+        exam_enrolled_set: Set[tuple[int, int]] = (
+            get_exam_target_enrollment_pairs_for_session(
+                session=session,
+                enrollment_ids=active_session_enrollment_ids,
+            )
+        )
 
         hw_assigned_set: Set[tuple[int, int]] = set()
         for row in HomeworkAssignment.objects.filter(

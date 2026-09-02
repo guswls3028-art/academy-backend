@@ -20,7 +20,7 @@ from django.test import RequestFactory, TestCase
 
 from apps.domains.clinic.tests import ClinicTestMixin
 from apps.core.models import TenantMembership
-from apps.domains.exams.models import Exam, ExamLecturePolicy
+from apps.domains.exams.models import Exam, ExamEnrollment, ExamLecturePolicy
 from apps.domains.progress.models import (
     ClinicLink,
     ProgressPolicy,
@@ -37,6 +37,77 @@ from apps.domains.progress.services.clinic_trigger_service import (
 from apps.domains.progress.views import ClinicLinkViewSet
 
 User = get_user_model()
+
+
+class SharedExamTargetScopeTest(TestCase, ClinicTestMixin):
+    def setUp(self):
+        self.data = self.setup_full_tenant("shared-target", student_count=2)
+        self.tenant = self.data["tenant"]
+        self.target_enrollment, self.other_enrollment = self.data["enrollments"]
+        self.lec_session = self.data["lec_session"]
+        self.lecture = self.data["lecture"]
+
+    def test_non_target_exam_does_not_fail_progress_or_create_clinic(self):
+        from apps.domains.results.models import Result
+        from apps.domains.progress.services.session_calculator import (
+            SessionProgressCalculator,
+        )
+
+        target_exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="Target exam",
+            pass_score=60,
+            max_score=100,
+        )
+        other_exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="Other student's exam",
+            pass_score=60,
+            max_score=100,
+        )
+        target_exam.sessions.add(self.lec_session)
+        other_exam.sessions.add(self.lec_session)
+        ExamEnrollment.objects.create(
+            exam=target_exam,
+            enrollment=self.target_enrollment,
+        )
+        ExamEnrollment.objects.create(
+            exam=other_exam,
+            enrollment=self.other_enrollment,
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=target_exam.id,
+            enrollment=self.target_enrollment,
+            total_score=85,
+            max_score=100,
+        )
+        ProgressPolicy.objects.create(
+            lecture=self.lecture,
+            exam_pass_source=ProgressPolicy.ExamPassSource.EXAM,
+            exam_start_session_order=1,
+            homework_start_session_order=2,
+        )
+
+        progress = SessionProgressCalculator.calculate(
+            enrollment_id=self.target_enrollment.id,
+            session=self.lec_session,
+            attendance_type="offline",
+        )
+        ClinicTriggerService.auto_create_per_exam(progress)
+
+        self.assertTrue(progress.exam_passed)
+        self.assertEqual(
+            [row["exam_id"] for row in progress.exam_meta["exams"]],
+            [target_exam.id],
+        )
+        self.assertFalse(
+            ClinicLink.objects.filter(
+                enrollment=self.target_enrollment,
+                source_type="exam",
+                source_id=other_exam.id,
+            ).exists()
+        )
 
 
 class DriftResolutionTest(TestCase, ClinicTestMixin):

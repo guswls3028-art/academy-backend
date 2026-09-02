@@ -11,7 +11,7 @@ from apps.support.progress.exam_policy_dependencies import (
     exam_pass_score_overrides,
 )
 from apps.support.progress.session_calculator_dependencies import (
-    get_exam_ids_for_session,
+    get_target_exam_ids_for_session_enrollment,
     get_exam_model,
     get_result_attempt_models,
     homework_score_exists,
@@ -82,7 +82,10 @@ class SessionProgressCalculator:
     ) -> Tuple[bool, Optional[float], bool, Dict[str, Any]]:
         Result, ExamAttempt = get_result_attempt_models()
         Exam = get_exam_model()
-        exam_ids = get_exam_ids_for_session(session)
+        exam_ids = get_target_exam_ids_for_session_enrollment(
+            session=session,
+            enrollment_id=enrollment_id,
+        )
 
         if not exam_ids:
             meta = {

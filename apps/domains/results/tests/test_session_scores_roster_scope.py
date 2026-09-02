@@ -19,9 +19,10 @@ from apps.domains.homework_results.models import Homework, HomeworkScore
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.progress.models import AssessmentCorrection, ClinicLink, SessionProgress
 from apps.domains.progress.services.clinic_remediation_service import ClinicRemediationService
-from apps.domains.progress.services.clinic_trigger_service import ClinicTriggerService
-from apps.domains.progress.services.session_calculator import SessionProgressCalculator
 from apps.domains.results.services.clinic_target_service import ClinicTargetService
+from apps.domains.results.services.session_score_summary_service import (
+    SessionScoreSummaryService,
+)
 from apps.domains.results.guards.exam_enrollment_guard import (
     validate_exam_enrollment_assigned,
 )
@@ -257,6 +258,22 @@ class SessionScoresRosterScopeTests(TestCase):
             max_score=100,
             objective_score=85,
         )
+        Result.objects.create(
+            target_type="exam",
+            target_id=other_exam.id,
+            enrollment=self.active_enrollment,
+            total_score=0,
+            max_score=100,
+            objective_score=0,
+        )
+        SessionProgress.objects.create(
+            enrollment=self.active_enrollment,
+            session=self.session,
+            exam_passed=True,
+            homework_passed=True,
+            video_completed=True,
+            completed=True,
+        )
 
         request = self.factory.get(
             f"/api/v1/results/admin/sessions/{self.session.id}/scores/"
@@ -276,19 +293,6 @@ class SessionScoresRosterScopeTests(TestCase):
             [self.exam.id],
         )
 
-        progress = SessionProgressCalculator.calculate(
-            enrollment_id=self.active_enrollment.id,
-            session=self.session,
-            attendance_type=SessionProgress.AttendanceType.OFFLINE,
-            homework_submitted=False,
-        )
-        ClinicTriggerService.auto_create_per_exam(progress)
-
-        self.assertTrue(progress.exam_passed)
-        self.assertEqual(
-            [row["exam_id"] for row in progress.exam_meta["exams"]],
-            [self.exam.id],
-        )
         self.assertFalse(
             ClinicLink.objects.filter(
                 enrollment=self.active_enrollment,
@@ -296,6 +300,8 @@ class SessionScoresRosterScopeTests(TestCase):
                 source_id=other_exam.id,
             ).exists()
         )
+        summary = SessionScoreSummaryService.build(session_id=self.session.id)
+        self.assertEqual(summary["avg_score"], 85.0)
         with self.assertRaises(ValidationError):
             validate_exam_enrollment_assigned(other_exam, self.active_enrollment.id)
         candidate = validate_exam_enrollment_candidate(
