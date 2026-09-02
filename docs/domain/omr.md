@@ -120,10 +120,14 @@ flowchart LR
 
 ## 채점 대상 SSOT
 
-- **OMR 채점 대상의 기준은 시험이 연결된 차시의 `SessionEnrollment` roster다.**
-- `ExamEnrollment`는 시험별 명시 대상자이자 기존 API 호환 레이어다. OMR 업로드/학생 매칭/성적 수동입력 시점에 차시 roster 학생이면 자동으로 materialize할 수 있으며, OMR 채점의 선행 조건이 아니다.
+- 시험에 `ExamEnrollment`가 하나라도 있으면 그 명시 명단이 OMR·수동 채점 대상의
+  정본이다. 비대상 학생은 같은 차시에 있어도 후보·성적·미응시·클리닉 판정에
+  포함하지 않는다.
+- 명시 대상자가 전혀 없는 기존 시험만 연결 차시의 `SessionEnrollment` roster를
+  호환 대상으로 사용하며, 실제 OMR 매칭/수동 입력 시 `ExamEnrollment`를 만든다.
 - 후보 학생은 항상 같은 tenant, 활성 `Enrollment`, 삭제되지 않은 학생으로 제한한다. 다른 tenant나 시험이 연결되지 않은 차시의 학생으로 fallback하지 않는다.
-- 성적탭 row 모수는 차시 출석/수강 roster다. 시험 점수 셀은 `ExamEnrollment`가 없어도 차시에 붙은 시험의 OMR/수동입력 대상 학생에게 보여야 한다.
+- 성적탭 row 모수는 차시 출석/수강 roster다. 각 시험 점수 셀은 명시 대상자에게만
+  보이고, 명시 명단이 없는 기존 시험에 한해 차시 roster 전체에 보인다.
 - 오인식/미식별 스캔은 `Submission`의 수동 검토 상태와 답안 보정 API를 통해 보정한다. 원본 운영 데이터를 임의로 수정하지 않고, 검토자가 선택적으로 답안/점수를 확정한다.
 - 학생이 이미 후보로 연결된 fuzzy match도 답안 변경 여부와 무관하게 같은 수동 보정 API에서 현재 `enrollment_id`를 명시해 확정한다. 이 요청은 수동 검토 표시를 해제하고 매칭 fact, 문항별 `ResultFact`, canonical `Result`, legacy `ExamResult`를 한 transaction에서 동기화한다.
 - 객관식 전용 시험에 OMR과 동일한 수기 결과가 먼저 저장돼 있으면 별도 재응시로 만들지 않는다. tenant·시험·submission·enrollment가 일치하는 현재 `confirmed` OMR 매칭 fact가 있고, 완료된 1차 대표 수기 attempt의 문항 집합·답안·정오·문항 점수·만점·총점이 새 OMR 계산값과 모두 정확히 같을 때만 그 attempt를 OMR submission에 연결해 재사용한다. 누락/추가 문항, 답·점수 불일치, 수기 외 source, 서술형이 포함된 시험은 이 경로를 거부하고 기존 재응시 보호를 유지한다. 수기 `ResultFact`는 보존하고 OMR 동기화 fact를 append-only로 추가한다.

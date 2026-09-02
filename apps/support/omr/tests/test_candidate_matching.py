@@ -110,6 +110,58 @@ class OmrCandidateMatchingTests(TestCase):
             ).exists()
         )
 
+    def test_explicit_exam_targets_exclude_other_session_students(self):
+        tenant, exam, target_enrollment = self._create_exam_target()
+        other_student = create_student_account(
+            tenant=tenant,
+            student_data={
+                "ps_number": "OMR-CAND-002",
+                "name": "[OMR] Non Target",
+                "phone": "01099998888",
+                "parent_phone": "01077776666",
+                "omr_code": "11223344",
+                "school_type": "HIGH",
+            },
+            password="test1234",
+        )
+        other_enrollment = Enrollment.objects.create(
+            tenant=tenant,
+            student=other_student.student,
+            lecture=target_enrollment.lecture,
+            status="ACTIVE",
+        )
+        session = exam.sessions.get()
+        SessionEnrollment.objects.create(
+            tenant=tenant,
+            session=session,
+            enrollment=other_enrollment,
+        )
+        ExamEnrollment.objects.create(
+            exam=exam,
+            enrollment=target_enrollment,
+        )
+
+        enrollment_id, kind = resolve_enrollment_by_identifier(
+            tenant=tenant,
+            exam_id=exam.id,
+            identifier="11223344",
+        )
+        ensured = ensure_exam_enrollment_candidate(
+            tenant=tenant,
+            exam_id=exam.id,
+            enrollment_id=other_enrollment.id,
+        )
+
+        self.assertIsNone(enrollment_id)
+        self.assertEqual(kind, "none")
+        self.assertFalse(ensured)
+        self.assertFalse(
+            ExamEnrollment.objects.filter(
+                exam=exam,
+                enrollment=other_enrollment,
+            ).exists()
+        )
+
     def test_omr_code_is_an_exact_identifier_source(self):
         tenant, exam, enrollment = self._create_exam_target(omr_code="13572468")
 

@@ -253,6 +253,7 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
         self._assert_no_manual_score_side_effects()
 
     def test_total_score_accepts_linked_session_roster_and_materializes_exam_enrollment(self):
+        ExamEnrollment.objects.filter(exam=self.exam).delete()
         response = self._patch(
             AdminExamTotalScoreView,
             {"score": 10, "max_score": 100},
@@ -276,6 +277,7 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
         )
 
     def test_total_score_accepts_attendance_roster_and_materializes_exam_enrollment(self):
+        ExamEnrollment.objects.filter(exam=self.exam).delete()
         Attendance.objects.create(
             tenant=self.tenant,
             session=self.session,
@@ -778,6 +780,7 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
         )
 
     def test_detail_for_session_roster_is_read_only_without_materializing_assignment(self):
+        ExamEnrollment.objects.filter(exam=self.exam).delete()
         request = self.factory.get("/results/admin/exams/detail/")
         request.tenant = self.tenant
         force_authenticate(request, user=self.admin)
@@ -811,6 +814,7 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
         )
 
     def test_detail_for_attendance_roster_is_read_only_without_materializing_assignment(self):
+        ExamEnrollment.objects.filter(exam=self.exam).delete()
         Attendance.objects.create(
             tenant=self.tenant,
             session=self.session,

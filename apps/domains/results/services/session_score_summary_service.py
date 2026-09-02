@@ -20,6 +20,9 @@ from apps.support.results.progress_read_dependencies import (
     session_progress_queryset_for_session,
     session_score_enrollment_ids,
 )
+from apps.support.progress.session_calculator_dependencies import (
+    get_exam_target_enrollment_pairs_for_session,
+)
 
 
 class SessionScoreSummaryService:
@@ -92,6 +95,10 @@ class SessionScoreSummaryService:
             tenant=session.lecture.tenant,
             session=session,
         )
+        target_pairs = get_exam_target_enrollment_pairs_for_session(
+            session=session,
+            enrollment_ids=roster_enrollment_ids,
+        )
 
         # -------------------------------------------------
         # pass_rate: 원본은 SessionProgress.completed 기준
@@ -118,8 +125,9 @@ class SessionScoreSummaryService:
         # - enrollment 중복 방어: 여러 시험의 최신 대표 결과를 한 번에 선택
         # - NOT_SUBMITTED 대표 시도는 점수 통계에서 제외
         # -------------------------------------------------
-        all_results = list(
-            latest_results_for_targets_per_enrollment(
+        all_results = [
+            result
+            for result in latest_results_for_targets_per_enrollment(
                 target_type="exam",
                 target_ids=exam_ids,
             )
@@ -128,7 +136,8 @@ class SessionScoreSummaryService:
                 enrollment__tenant_id=tenant_id,
             )
             .select_related("attempt")
-        )
+            if (int(result.enrollment_id), int(result.target_id)) in target_pairs
+        ]
         initial_scores = load_initial_exam_scores(
             exam_ids=exam_ids,
             enrollment_ids=roster_enrollment_ids,
@@ -171,10 +180,12 @@ class SessionScoreSummaryService:
             enrollment__tenant_id=tenant_id,
         )
 
-        per_exam_enrollment = list(
-            attempts.values("exam_id", "enrollment_id")
+        per_exam_enrollment = [
+            row
+            for row in attempts.values("exam_id", "enrollment_id")
             .annotate(cnt=Count("id"))
-        )
+            if (int(row["enrollment_id"]), int(row["exam_id"])) in target_pairs
+        ]
 
         total_attempts = sum(int(r["cnt"] or 0) for r in per_exam_enrollment)
         attempted_pairs = len(per_exam_enrollment)
