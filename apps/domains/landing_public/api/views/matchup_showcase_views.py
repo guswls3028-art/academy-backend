@@ -19,11 +19,13 @@ URL:
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import uuid
 from typing import Any
 
 from django.http import HttpResponse, StreamingHttpResponse
+from django.db import connection, transaction
 from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -54,6 +56,37 @@ from ...models import PublicMatchupShowcase
 from ..serializers import PublicViewCountSerializer
 
 logger = logging.getLogger(__name__)
+
+
+def _lock_matchup_showcase_publish(*, tenant_id: int, hit_report_id: int) -> None:
+    """Serialize one tenant/report publish boundary before any R2 write."""
+    if connection.vendor != "postgresql":
+        # Production is PostgreSQL-only. SQLite remains available for the isolated unit suite;
+        # the PostgreSQL contract job exercises the real concurrent lock path.
+        return
+    digest = hashlib.blake2b(
+        f"matchup-showcase:{tenant_id}:{hit_report_id}".encode(),
+        digest_size=8,
+    ).digest()
+    lock_id = int.from_bytes(digest, byteorder="big", signed=True)
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_advisory_xact_lock(%s)", [lock_id])
+
+
+def _published_showcase_for_retry(*, tenant_id: int, hit_report_id: int):
+    """Return the deterministic current/scheduled snapshot, excluding expired versions."""
+    now = timezone.now()
+    eligible = PublicMatchupShowcase.objects.filter(
+        tenant_id=tenant_id,
+        hit_report_id_ref=hit_report_id,
+        status=PublicMatchupShowcase.Status.PUBLISHED,
+    ).filter(Q(published_until__isnull=True) | Q(published_until__gt=now))
+    current = (
+        eligible.filter(Q(published_at__isnull=True) | Q(published_at__lte=now))
+        .order_by("-published_at", "-created_at", "-pk")
+        .first()
+    )
+    return current or eligible.order_by("published_at", "created_at", "pk").first()
 
 
 def _matchup_upload_snapshot_key(*, tenant_id: int, file_name: str) -> str:
@@ -295,36 +328,76 @@ class PublicMatchupShowcaseViewSet(viewsets.GenericViewSet):
             return error_response
         published_at = published_at or timezone.now()
 
-        # snapshot 생성 (PDF generate → R2 upload)
-        try:
-            snapshot_key, snapshot_bytes, snapshot_meta = build_matchup_snapshot_for_hit_report(tenant, hit_report_id)
-        except Exception:
-            logger.exception("matchup_showcase_snapshot_build_failed report=%s", hit_report_id)
-            return Response({"detail": "스냅샷 생성 실패"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        with transaction.atomic():
+            _lock_matchup_showcase_publish(
+                tenant_id=tenant.id,
+                hit_report_id=hit_report_id,
+            )
+            existing = _published_showcase_for_retry(
+                tenant_id=tenant.id,
+                hit_report_id=hit_report_id,
+            )
+            if existing is not None:
+                duplicate_count = (
+                    PublicMatchupShowcase.objects.filter(
+                        tenant_id=tenant.id,
+                        hit_report_id_ref=hit_report_id,
+                        status=PublicMatchupShowcase.Status.PUBLISHED,
+                    )
+                    .filter(
+                        Q(published_until__isnull=True)
+                        | Q(published_until__gt=timezone.now())
+                    )
+                    .count()
+                )
+                if duplicate_count > 1:
+                    logger.error(
+                        "matchup_showcase_existing_duplicate tenant=%s report=%s count=%s survivor=%s",
+                        tenant.id,
+                        hit_report_id,
+                        duplicate_count,
+                        existing.id,
+                    )
+                return Response(
+                    self._serialize_card(existing, viewer_is_staff=True),
+                    status=status.HTTP_200_OK,
+                    headers={"X-Idempotent-Replay": "true"},
+                )
 
-        now = timezone.now()
-        try:
-            obj = PublicMatchupShowcase.objects.create(
-                tenant=tenant,
-                hit_report_id_ref=hit_report_id,
-                title=title[:200],
-                description=description,
-                status=PublicMatchupShowcase.Status.PUBLISHED,
-                published_at=published_at,
-                published_until=published_until,
-                snapshot_pdf_key=snapshot_key,
-                snapshot_pdf_bytes=snapshot_bytes,
-                snapshot_meta=snapshot_meta,
-                snapshot_at=now,
-                created_by=request.user if request.user.is_authenticated else None,
-            )
-        except Exception:
-            delete_matchup_preview_assets(pdf_key=snapshot_key)
-            logger.exception("matchup_showcase_snapshot_publish_failed report=%s", hit_report_id)
-            return Response(
-                {"detail": "스냅샷 게시 실패"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            # The exact advisory lock stays held across snapshot generation and row creation.
+            # A retry therefore observes the committed row before it can write another R2 object.
+            try:
+                snapshot_key, snapshot_bytes, snapshot_meta = build_matchup_snapshot_for_hit_report(
+                    tenant,
+                    hit_report_id,
+                )
+            except Exception:
+                logger.exception("matchup_showcase_snapshot_build_failed report=%s", hit_report_id)
+                return Response({"detail": "스냅샷 생성 실패"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+            now = timezone.now()
+            try:
+                obj = PublicMatchupShowcase.objects.create(
+                    tenant=tenant,
+                    hit_report_id_ref=hit_report_id,
+                    title=title[:200],
+                    description=description,
+                    status=PublicMatchupShowcase.Status.PUBLISHED,
+                    published_at=published_at,
+                    published_until=published_until,
+                    snapshot_pdf_key=snapshot_key,
+                    snapshot_pdf_bytes=snapshot_bytes,
+                    snapshot_meta=snapshot_meta,
+                    snapshot_at=now,
+                    created_by=request.user if request.user.is_authenticated else None,
+                )
+            except Exception:
+                delete_matchup_preview_assets(pdf_key=snapshot_key)
+                logger.exception("matchup_showcase_snapshot_publish_failed report=%s", hit_report_id)
+                return Response(
+                    {"detail": "스냅샷 게시 실패"},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
         return Response(self._serialize_card(obj, viewer_is_staff=True), status=status.HTTP_201_CREATED)
 
     @action(
