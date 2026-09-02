@@ -146,6 +146,75 @@ class MyGradesSummaryHomeworkTests(TestCase):
             max_score=max_score,
         )
 
+    def test_student_grades_excludes_result_for_explicit_non_target_exam(self):
+        target_exam = self.Exam.objects.create(
+            tenant=self.tenant,
+            title="지정 시험",
+            is_active=True,
+            max_score=100,
+            pass_score=70,
+        )
+        non_target_exam = self.Exam.objects.create(
+            tenant=self.tenant,
+            title="순환",
+            is_active=True,
+            max_score=100,
+            pass_score=70,
+        )
+        target_exam.sessions.add(self.session)
+        non_target_exam.sessions.add(self.session)
+        self.ExamEnrollment.objects.create(
+            exam=target_exam,
+            enrollment=self.enrollment,
+        )
+
+        other_user = User.objects.create_user(
+            username="student-grades-other-target",
+            password="pw1234",
+            tenant=self.tenant,
+        )
+        other_student = Student.objects.create(
+            tenant=self.tenant,
+            user=other_user,
+            ps_number="SGH002",
+            omr_code="22223333",
+            name="다른 학생",
+        )
+        other_enrollment = Enrollment.objects.create(
+            tenant=self.tenant,
+            student=other_student,
+            lecture=self.lecture,
+            status="ACTIVE",
+        )
+        self.ExamEnrollment.objects.create(
+            exam=non_target_exam,
+            enrollment=other_enrollment,
+        )
+        self.Result.objects.create(
+            target_type="exam",
+            target_id=target_exam.id,
+            enrollment=self.enrollment,
+            total_score=85,
+            max_score=100,
+        )
+        # Preserve a historical bad row to prove read paths no longer consume it.
+        self.Result.objects.create(
+            target_type="exam",
+            target_id=non_target_exam.id,
+            enrollment=self.enrollment,
+            total_score=0,
+            max_score=100,
+        )
+
+        response = self._call()
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(
+            [(row["exam_id"], row["title"]) for row in response.data["exams"]],
+            [(target_exam.id, "지정 시험")],
+        )
+        self.assertEqual(response.data["exam_summary"]["scored_count"], 1)
+
     def test_exam_trend_accumulates_rounds_and_normalizes_different_max_scores(self):
         self._score_exam(title="월간 테스트", order=1, score=16, max_score=20)
         self._score_exam(title="중간 테스트", order=2, score=45, max_score=50)
