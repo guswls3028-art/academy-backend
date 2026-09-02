@@ -24,6 +24,36 @@ def enrollment_ids_for_student(*, tenant: Any, student_id: int) -> list[int]:
     )
 
 
+def explicit_exam_target_scope(
+    *,
+    tenant: Any,
+    exam_ids: set[int],
+    enrollment_ids: set[int],
+) -> tuple[set[int], set[tuple[int, int]]]:
+    """Return exams with explicit targets and authorized enrollment/exam pairs."""
+    if not exam_ids or not enrollment_ids:
+        return set(), set()
+
+    from apps.domains.exams.models import ExamEnrollment
+
+    explicit_exam_ids = set(
+        ExamEnrollment.objects.filter(
+            exam_id__in=exam_ids,
+            exam__tenant=tenant,
+        ).values_list("exam_id", flat=True)
+    )
+    target_pairs = {
+        (int(enrollment_id), int(exam_id))
+        for enrollment_id, exam_id in ExamEnrollment.objects.filter(
+            exam_id__in=explicit_exam_ids,
+            enrollment_id__in=enrollment_ids,
+            exam__tenant=tenant,
+            enrollment__tenant=tenant,
+        ).values_list("enrollment_id", "exam_id")
+    }
+    return {int(exam_id) for exam_id in explicit_exam_ids}, target_pairs
+
+
 def exam_metadata_by_id(*, tenant: Any, exam_ids: list[int]) -> dict[int, dict[str, Any]]:
     from apps.domains.exams.models import Exam
 

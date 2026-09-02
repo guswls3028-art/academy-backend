@@ -18,6 +18,7 @@ from apps.domains.results.utils.initial_exam_score import (
 from apps.support.results.admin_student_grades_dependencies import (
     enrollment_lecture_metadata_by_id,
     exam_metadata_by_id,
+    explicit_exam_target_scope,
     primary_session_metadata_by_exam_and_lecture,
 )
 
@@ -152,6 +153,18 @@ def build_student_exam_history(
             "attempt_id",
         )
     )
+    result_exam_ids = {int(row["target_id"]) for row in results}
+    explicit_exam_ids, explicit_target_pairs = explicit_exam_target_scope(
+        tenant=tenant,
+        exam_ids=result_exam_ids,
+        enrollment_ids={int(enrollment_id) for enrollment_id in enrollment_ids},
+    )
+    results = [
+        row
+        for row in results
+        if int(row["target_id"]) not in explicit_exam_ids
+        or (int(row["enrollment_id"]), int(row["target_id"])) in explicit_target_pairs
+    ]
     exam_ids = list({row["target_id"] for row in results})
     initial_scores = load_initial_exam_scores(
         exam_ids=exam_ids,
