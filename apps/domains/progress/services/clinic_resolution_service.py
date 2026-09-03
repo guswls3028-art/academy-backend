@@ -8,6 +8,7 @@
 3. 관리자 수동 해소 (MANUAL_OVERRIDE)
 4. 면제 (WAIVED)
 5. 원본 시험/과제 제거 (SOURCE_REMOVED)
+6. 명시적 시험 미응시 전환 (NOT_SUBMITTED, 알림 없음)
 
 절대 금지:
 - 예약(booking)으로 해소
@@ -442,6 +443,79 @@ class ClinicResolutionService:
             normalized_enrollment_ids,
         )
         return count
+
+    @staticmethod
+    @transaction.atomic
+    def resolve_by_exam_not_submitted(
+        *,
+        tenant_id: int,
+        enrollment_id: int,
+        exam_id: int,
+        attempt_id: int,
+        user_id: Optional[int] = None,
+    ) -> int:
+        """Close only stale failure links invalidated by an explicit absence.
+
+        The remediation history stays intact and any active today-plan selection
+        is audit-closed. Clinic bookings, arrivals, and completions are separate
+        operational facts and are deliberately left untouched. This transition
+        never sends a resolution notification.
+        """
+        tenant_id = int(tenant_id)
+        enrollment_id = int(enrollment_id)
+        exam_id = int(exam_id)
+        attempt_id = int(attempt_id)
+        source_filter = (
+            Q(source_type="exam", source_id=exam_id)
+            | Q(source_type__isnull=True, meta__exam_id=exam_id)
+        )
+        links = list(
+            ClinicLink.objects.select_for_update()
+            .filter(
+                tenant_id=tenant_id,
+                enrollment_id=enrollment_id,
+                resolved_at__isnull=True,
+            )
+            .filter(source_filter)
+            .order_by("session_id", "id")
+        )
+        if not links:
+            return 0
+
+        now = timezone.now()
+        for link in links:
+            _append_history(link, action="resolve_exam_not_submitted", at=now)
+            link.resolved_at = now
+            link.resolution_type = ClinicLink.ResolutionType.NOT_SUBMITTED
+            link.resolution_evidence = {
+                "status": "NOT_SUBMITTED",
+                "exam_id": exam_id,
+                "attempt_id": attempt_id,
+                "enrollment_id": enrollment_id,
+                "user_id": user_id,
+                "transitioned_at": now.isoformat(),
+            }
+            link.save(
+                update_fields=[
+                    "resolved_at",
+                    "resolution_type",
+                    "resolution_evidence",
+                    "resolution_history",
+                    "updated_at",
+                ]
+            )
+            _deactivate_today_plan(link)
+
+        logger.info(
+            "clinic_resolution: NOT_SUBMITTED resolved %d links "
+            "(tenant=%s, enrollment=%s, exam=%s, attempt=%s)",
+            len(links),
+            tenant_id,
+            enrollment_id,
+            exam_id,
+            attempt_id,
+        )
+        return len(links)
 
     @staticmethod
     @transaction.atomic

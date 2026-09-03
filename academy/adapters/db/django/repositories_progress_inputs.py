@@ -95,6 +95,7 @@ def list_exam_result_progress_enrollments(
         )
         .values_list("enrollment_id", "enrollment__lecture_id")
         .distinct()
+        .order_by("enrollment_id", "enrollment__lecture_id")
     )
     return [
         ExamResultProgressEnrollment(

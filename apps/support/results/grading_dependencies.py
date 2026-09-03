@@ -94,6 +94,9 @@ def submission_enrollment_assigned_to_exam(*, exam_id: int, enrollment_id: int, 
         exam_id=int(exam_id),
         enrollment_id=int(enrollment_id),
         enrollment__tenant_id=int(tenant_id),
+        exam__tenant_id=int(tenant_id),
+        exam__sessions__lecture_id=F("enrollment__lecture_id"),
+        exam__sessions__lecture__tenant_id=int(tenant_id),
     ).exists()
 
 

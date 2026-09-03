@@ -66,8 +66,11 @@ def filter_live_source_links(
     }
 
     live_exam_pairs: set[tuple[int, int]] = set()
+    explicitly_targeted_exam_ids: set[int] = set()
+    live_exam_target_pairs: set[tuple[int, int]] = set()
     if exam_ids and session_ids:
         Exam = apps.get_model("exams", "Exam")
+        ExamEnrollment = apps.get_model("exams", "ExamEnrollment")
         live_exam_pairs = {
             (int(exam_id), int(session_id))
             for exam_id, session_id in Exam.objects.filter(
@@ -77,6 +80,21 @@ def filter_live_source_links(
                 id__in=exam_ids,
                 sessions__id__in=session_ids,
             ).values_list("id", "sessions__id")
+        }
+        explicitly_targeted_exam_ids = {
+            int(exam_id)
+            for exam_id in ExamEnrollment.objects.filter(
+                exam_id__in=exam_ids,
+                exam__tenant=tenant,
+            ).values_list("exam_id", flat=True)
+        }
+        live_exam_target_pairs = {
+            (int(exam_id), int(enrollment_id))
+            for exam_id, enrollment_id in ExamEnrollment.objects.filter(
+                exam_id__in=exam_ids,
+                exam__tenant=tenant,
+                enrollment__tenant=tenant,
+            ).values_list("exam_id", "enrollment_id")
         }
 
     live_homework_pairs: set[tuple[int, int]] = set()
@@ -111,7 +129,14 @@ def filter_live_source_links(
 
         exam_id = _link_source_id(link, "exam")
         if exam_id is not None:
-            if (exam_id, session_id) in live_exam_pairs:
+            enrollment_id = int(getattr(link, "enrollment_id", 0) or 0)
+            if (
+                (exam_id, session_id) in live_exam_pairs
+                and (
+                    exam_id not in explicitly_targeted_exam_ids
+                    or (exam_id, enrollment_id) in live_exam_target_pairs
+                )
+            ):
                 live_links.append(link)
             continue
 

@@ -178,6 +178,16 @@ class SubmissionScopeGuardTests(TestCase):
             ExamGradingService().auto_grade_objective(submission_id=submission.id)
 
         self.assertFalse(ExamResult.objects.filter(submission=submission).exists())
+
+    def test_auto_grade_rejects_submission_after_exam_is_unlinked_from_lecture(self):
+        ExamEnrollment.objects.create(exam=self.exam, enrollment=self.enrollment)
+        self.exam.sessions.remove(self.session)
+        submission = self._unassigned_submission()
+
+        with self.assertRaises(DjangoValidationError):
+            ExamGradingService().auto_grade_objective(submission_id=submission.id)
+
+        self.assertFalse(ExamResult.objects.filter(submission=submission).exists())
         self.assertFalse(Result.objects.filter(target_id=self.exam.id, enrollment_id=self.enrollment.id).exists())
         self.assertFalse(ExamAttempt.objects.filter(exam=self.exam, enrollment=self.enrollment).exists())
 

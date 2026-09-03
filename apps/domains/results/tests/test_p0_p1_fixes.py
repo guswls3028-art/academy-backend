@@ -11,7 +11,9 @@ F. HomeworkScore score > max_score validation
 """
 from __future__ import annotations
 
+from unittest.mock import patch
 
+from django.apps import apps as django_apps
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
@@ -24,8 +26,18 @@ from apps.domains.exams.models import Exam, ExamEnrollment, ExamQuestion, Sheet
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.students.models import Student
-from apps.domains.results.models import ExamAttempt, Result, ScoreEditDraft
+from apps.domains.results.models import (
+    ExamAttempt,
+    Result,
+    ResultFact,
+    ResultItem,
+    ScoreEditDraft,
+)
 from apps.domains.results.services.attempt_service import ExamAttemptService
+from apps.domains.results.services.wrong_note_service import (
+    WrongNoteQuery,
+    list_wrong_notes_for_enrollment,
+)
 from apps.domains.results.views.admin_exam_objective_score_view import AdminExamObjectiveScoreView
 from apps.domains.results.views.admin_exam_subjective_score_view import AdminExamSubjectiveScoreView
 from apps.domains.results.views.admin_exam_item_score_view import AdminExamItemScoreView
@@ -360,6 +372,203 @@ class TestManualScoreClearsNotSubmitted(TestCase, BaseTestMixin):
         self.assertNotEqual((attempt.meta or {}).get("status"), "NOT_SUBMITTED")
         self.assertEqual((attempt.meta or {}).get("total_score"), 4.0)
         self.assertEqual(float(result.total_score), 4.0)
+
+    def test_not_submitted_clears_derived_state_and_allows_explicit_resume(self):
+        import datetime
+
+        from django.utils import timezone
+
+        exam = self._create_exam(title="Absent derived state", pass_score=60)
+        sheet = Sheet.objects.create(exam=exam, name="MAIN", total_questions=1)
+        question = ExamQuestion.objects.create(sheet=sheet, number=1, score=100)
+        attempt = ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=self.enrollment,
+            submission_id=None,
+            attempt_index=1,
+            is_representative=True,
+            status="done",
+            meta={"total_score": 30.0},
+        )
+        result = Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.enrollment,
+            attempt=attempt,
+            total_score=30.0,
+            max_score=100.0,
+            objective_score=30.0,
+        )
+        ResultItem.objects.create(
+            result=result,
+            question=question,
+            answer="1",
+            is_correct=False,
+            score=0.0,
+            max_score=100.0,
+            source="manual",
+        )
+        ClinicLink = django_apps.get_model("progress", "ClinicLink")
+        clinic_link = ClinicLink.objects.create(
+            tenant=self.tenant,
+            enrollment=self.enrollment,
+            session=self.session,
+            source_type="exam",
+            source_id=exam.id,
+            reason=ClinicLink.Reason.AUTO_FAILED,
+            is_auto=True,
+        )
+        ClinicSession = django_apps.get_model("clinic", "Session")
+        SessionParticipant = django_apps.get_model("clinic", "SessionParticipant")
+        SessionParticipantPlanItem = django_apps.get_model(
+            "clinic",
+            "SessionParticipantPlanItem",
+        )
+        clinic_session = ClinicSession.objects.create(
+            tenant=self.tenant,
+            title="Preserved operational clinic",
+            date=timezone.localdate(),
+            start_time=datetime.time(18, 0),
+            duration_minutes=60,
+            location="Room 1",
+            max_participants=10,
+            created_by=self.user,
+        )
+        completed_at = timezone.now()
+        participants = [
+            SessionParticipant.objects.create(
+                tenant=self.tenant,
+                session=clinic_session,
+                student=self.student,
+                enrollment=self.enrollment,
+                status="booked",
+                source="manual",
+                clinic_reason="exam",
+            ),
+            SessionParticipant.objects.create(
+                tenant=self.tenant,
+                session=clinic_session,
+                student=self.student,
+                enrollment=self.enrollment,
+                status="attended",
+                source="manual",
+                clinic_reason="exam",
+                checked_in_at=completed_at,
+            ),
+            SessionParticipant.objects.create(
+                tenant=self.tenant,
+                session=clinic_session,
+                student=self.student,
+                enrollment=self.enrollment,
+                status="attended",
+                source="manual",
+                clinic_reason="exam",
+                checked_in_at=completed_at,
+                completed_at=completed_at,
+                completed_by=self.user,
+            ),
+        ]
+        plan_items = [
+            SessionParticipantPlanItem.objects.create(
+                participant=participant,
+                clinic_link=clinic_link,
+                selected_by=self.user,
+            )
+            for participant in participants
+        ]
+        notification_patcher = patch(
+            "apps.domains.progress.services.clinic_resolution_service."
+            "send_clinic_resolution_notification"
+        )
+        mock_notification = notification_patcher.start()
+        self.addCleanup(notification_patcher.stop)
+
+        self._patch(
+            AdminExamTotalScoreView,
+            exam,
+            {"meta_status": "NOT_SUBMITTED"},
+        )
+
+        result.refresh_from_db()
+        attempt.refresh_from_db()
+        clinic_link.refresh_from_db()
+        self.assertEqual(float(result.total_score), 0.0)
+        self.assertEqual(float(result.objective_score), 0.0)
+        self.assertEqual(ResultItem.objects.filter(result=result).count(), 0)
+        self.assertEqual((attempt.meta or {}).get("status"), "NOT_SUBMITTED")
+        self.assertIsNotNone(clinic_link.resolved_at)
+        self.assertEqual(clinic_link.resolution_type, "NOT_SUBMITTED")
+        self.assertEqual(
+            (clinic_link.resolution_evidence or {}).get("user_id"),
+            self.user.id,
+        )
+        self.assertEqual(
+            (clinic_link.resolution_history or [])[-1]["action"],
+            "resolve_exam_not_submitted",
+        )
+        wrong_note_total, wrong_note_items = list_wrong_notes_for_enrollment(
+            enrollment_id=self.enrollment.id,
+            q=WrongNoteQuery(exam_id=exam.id),
+        )
+        self.assertEqual((wrong_note_total, wrong_note_items), (0, []))
+        for plan_item in plan_items:
+            plan_item.refresh_from_db()
+            self.assertIsNotNone(plan_item.removed_at)
+            self.assertEqual(
+                plan_item.removal_reason,
+                "clinic_link_resolved:NOT_SUBMITTED",
+            )
+        for expected_status, participant in zip(
+            ("booked", "attended", "attended"),
+            participants,
+            strict=True,
+        ):
+            participant.refresh_from_db()
+            self.assertEqual(participant.status, expected_status)
+        self.assertIsNotNone(participants[1].checked_in_at)
+        self.assertIsNotNone(participants[2].completed_at)
+
+        first_fact_count = ResultFact.objects.filter(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.enrollment,
+            source="manual_not_submitted",
+        ).count()
+        self._patch(
+            AdminExamTotalScoreView,
+            exam,
+            {"meta_status": "NOT_SUBMITTED"},
+        )
+        self.assertEqual(
+            ResultFact.objects.filter(
+                target_type="exam",
+                target_id=exam.id,
+                enrollment=self.enrollment,
+                source="manual_not_submitted",
+            ).count(),
+            first_fact_count,
+        )
+
+        self._patch(
+            AdminExamTotalScoreView,
+            exam,
+            {"score": 40.0, "max_score": 100.0},
+        )
+        result.refresh_from_db()
+        attempt.refresh_from_db()
+        self.assertEqual(float(result.total_score), 40.0)
+        self.assertNotEqual((attempt.meta or {}).get("status"), "NOT_SUBMITTED")
+        self.assertEqual(
+            ClinicLink.objects.filter(
+                tenant=self.tenant,
+                enrollment=self.enrollment,
+                source_type="exam",
+                source_id=exam.id,
+                resolved_at__isnull=True,
+            ).count(),
+            1,
+        )
+        mock_notification.assert_not_called()
 
 
 # ============================================================

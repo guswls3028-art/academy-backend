@@ -735,7 +735,7 @@ class AssessmentLifecycleSsotTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertEqual(response.data["exams"][0]["participant_count"], 1)
+        self.assertEqual(response.data["exams"][0]["participant_count"], 0)
         self.assertEqual(response.data["exams"][0]["pass_count"], 0)
         self.assertEqual(response.data["exams"][0]["fail_count"], 0)
 

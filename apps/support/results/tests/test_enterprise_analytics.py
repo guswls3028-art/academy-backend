@@ -11,7 +11,7 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.enrollment.models import Enrollment
-from apps.domains.exams.models import Exam, ExamEnrollment, ExamQuestion, Sheet
+from apps.domains.exams.models import Exam, ExamEnrollment, ExamLecturePolicy, ExamQuestion, Sheet
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.parents.models import Parent
 from apps.domains.results.models import ExamAttempt, Result, ResultFact, ResultItem
@@ -180,6 +180,72 @@ class EnterpriseAnalyticsTests(TestCase):
         self.assertEqual(response.data["data_quality"]["clean_exam_count"], 1)
         self.assertEqual(response.data["data_quality"]["filtered_test_exam_count"], 1)
         self.assertEqual([row["title"] for row in response.data["top_exams"]], ["Real Exam"])
+
+    def test_admin_analytics_excludes_stale_non_target_result(self):
+        target_student = self._student(self.tenant, "target")
+        exam, target_enrollment, _ = self._exam_result_for_student(
+            tenant=self.tenant,
+            student=target_student,
+            title="Targeted Exam",
+            score=80,
+        )
+        stale_student = self._student(self.tenant, "stale")
+        stale_enrollment = Enrollment.objects.create(
+            tenant=self.tenant,
+            student=stale_student,
+            lecture=target_enrollment.lecture,
+            status="ACTIVE",
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=stale_enrollment,
+            total_score=0,
+            max_score=100,
+            objective_score=0,
+        )
+        request = self.factory.get("/api/v1/results/admin/analytics/")
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+
+        response = AdminEnterpriseAnalyticsView.as_view()(request)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["summary"]["exam_result_count"], 1)
+        self.assertEqual(response.data["summary"]["avg_score_pct"], 80.0)
+        self.assertEqual(response.data["summary"]["pass_rate_pct"], 100.0)
+
+    def test_admin_history_and_analytics_use_lecture_pass_score(self):
+        student = self._student(self.tenant, "lecture-cutoff")
+        exam, enrollment, _ = self._exam_result_for_student(
+            tenant=self.tenant,
+            student=student,
+            title="Shared Cutoff",
+            score=65,
+            pass_score=60,
+        )
+        ExamLecturePolicy.objects.create(
+            exam=exam,
+            lecture=enrollment.lecture,
+            pass_score=70,
+        )
+        history_request = self.factory.get(
+            "/api/v1/results/admin/student-grades/",
+            {"student_id": student.id},
+        )
+        force_authenticate(history_request, user=self.admin)
+        history_request.tenant = self.tenant
+        history = AdminStudentGradesView.as_view()(history_request)
+        analytics_request = self.factory.get("/api/v1/results/admin/analytics/")
+        force_authenticate(analytics_request, user=self.admin)
+        analytics_request.tenant = self.tenant
+        analytics = AdminEnterpriseAnalyticsView.as_view()(analytics_request)
+
+        self.assertEqual(history.status_code, 200, history.data)
+        self.assertFalse(history.data["exams"][0]["is_pass"])
+        self.assertEqual(analytics.status_code, 200, analytics.data)
+        self.assertEqual(analytics.data["summary"]["pass_rate_pct"], 0.0)
+        self.assertEqual(analytics.data["top_exams"][0]["pass_rate_pct"], 0.0)
 
     def test_admin_analytics_uses_initial_score_after_retake(self):
         student = self._student(self.tenant, "retake")

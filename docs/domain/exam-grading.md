@@ -76,6 +76,9 @@ API 오류 모양으로 구분할 수 없다.
   추가 강의의 roster 합집합이 실제 채점 대상 정본과 일치한다.
 - `PATCH /exams/{exam_id}/lecture-assignments/`는 시험에 실제 연결된 강의의 기준만
   변경하고 진척 파이프라인을 다시 실행한다. 다른 tenant 차시·강의는 실패 폐쇄한다.
+- 학생·학부모 성적 이력, 교직원 학생 이력, 세션 성적 메타와 행, 세션 요약, 운영
+  analytics는 모두 결과 수강 강의의 유효 기준을 사용한다. 하나의 응답 안에서 기본
+  기준과 강의별 기준을 섞지 않는다.
 - 공유 시험의 진척 재계산은 `Result.enrollment`가 같은 tenant의 실제
   `ExamEnrollment`이고, 그 수강 등록의 `lecture_id`와 시험 연결 차시의 강의가
   일치할 때만 실행한다. 결과 수강생 전체와 연결 차시 전체를 곱하지 않는다. 같은
@@ -84,12 +87,18 @@ API 오류 모양으로 구분할 수 없다.
 - 기존 강의 할당을 반복 저장하거나 채점·OMR 제출에서 진척을 다시 계산해도
   `SessionProgress`는 실제 수강 강의의 차시에만 유지되고, 수강 등록당 하나인
   `LectureProgress`의 강의 소유권은 바뀌거나 중복 생성되지 않는다.
+- 공유 시험에서 한 강의의 마지막 연결 차시를 제거하면 그 강의 수강생의 기존
+  `ExamEnrollment`는 이력 보존용으로 남을 수 있지만, 학생 시험 목록·상세·문항·제출과
+  grading scope는 현재 시험 연결 차시와 수강 강의가 일치하지 않으면 실패 폐쇄한다.
 - 시험에 `ExamEnrollment`가 하나라도 있으면 그 명단이 시험별 대상자 정본이다.
   같은 차시의 다른 학생은 해당 시험의 성적 셀·미응시·불합격·진척·클리닉 판정에
   포함하지 않고 학생·학부모 성적 이력에도 노출하지 않으며, 수동 채점이나 제출로
   대상자 행을 우회 생성할 수도 없다. 과거에 잘못 생성된 비대상 `Result`도 이 읽기
   경계에서 제외한다. 명시 대상자가 전혀 없는 기존 시험만 연결 차시 roster를 호환
   경로로 사용한다.
+- 대상자 완전 치환 뒤 제거된 학생의 기존 `Result`와 append-only fact는 보존하되,
+  세션 시험 요약·운영 analytics·오답노트와 unresolved 자동 `ClinicLink` 읽기에서는
+  즉시 제외한다. 데이터 보존은 현재 대상 노출 권한이 아니다.
 
 시험별 성적과 문항 통계는 선택 `lecture_id`로 **전체 / 강의별** 조회할 수 있다.
 전체 조회도 각 결과의 `Enrollment.lecture_id`에 맞는 기준으로 합불을 계산하며,
@@ -403,6 +412,7 @@ Ymath의 `Program.feature_flags.assessment_status_display=wrong_completion`은
 `apply=false` 미리보기를 거쳐 `apply=true`를 누르기 전에는 결과를 쓰지 않는다.
 확정된 결시는 `NOT_SUBMITTED`로 남고 점수·석차·백분위·응시자 평균과 추이에서
 제외된다.
+세션 시험 요약의 `participant_count`와 합격률 분모도 점수가 확정된 응시자만 포함한다.
 
 ### 점수 입력
 
@@ -430,7 +440,14 @@ Ymath의 `Program.feature_flags.assessment_status_display=wrong_completion`은
   `ResultItem`은 OMR 값으로 잠기며, 선택형 OMR 결과가 완전하지 않으면
   답변형 성적 확정을 거부한다.
 - 학생을 `absent`로 확정하면 `NOT_SUBMITTED` attempt로 저장하고 점수,
-  평균, 석차, 합불, 문항 통계에서 0점 응시자로 계산하지 않는다.
+  평균, 석차, 합불, 문항 통계와 시험 요약의 응시자 수에서 0점 응시자로 계산하지 않는다.
+- 이 전환은 같은 transaction에서 대표 결과의 `total_score`와 `objective_score`를
+  0으로 정규화하고 문항 snapshot을 제거한다. 이전 실패 클리닉 링크는
+  `resolution_type=NOT_SUBMITTED` 감사 이력으로 닫고 오늘 대상 선택만 무효화한다.
+  이미 예약·등원·완료된 클리닉 참여 사실은 취소하지 않으며 전환 알림도 보내지
+  않는다. 동일 요청 재시도는 no-op 성공하고 이후 점수 입력은 합법적인 명시 재개다.
+  진도와 클리닉 파생 판정은 현재 대표 시도의 상태만 사용하므로, 과거 비대표
+  `NOT_SUBMITTED` 시도는 정상 재응시 점수를 다시 미응시로 되돌리지 않는다.
 - 일반 시험 재계산은 submission 다음 수강·결과·attempt 순서로 잠근 뒤
   `NOT_SUBMITTED`를 다시 확인한다. 수동 채점도 수강·결과·attempt 순서를 사용하므로
   두 경로가 역순 잠금으로 교착하지 않는다. 명시적인 응시 재개 없이 결시 attempt를

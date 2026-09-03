@@ -55,10 +55,10 @@ def explicit_exam_target_scope(
 
 
 def exam_metadata_by_id(*, tenant: Any, exam_ids: list[int]) -> dict[int, dict[str, Any]]:
-    from apps.domains.exams.models import Exam
+    from apps.domains.exams.models import Exam, ExamLecturePolicy
 
     exams_map = {}
-    exams = (
+    exams = list(
         Exam.objects.filter(
             id__in=exam_ids,
             tenant=tenant,
@@ -77,6 +77,15 @@ def exam_metadata_by_id(*, tenant: Any, exam_ids: list[int]) -> dict[int, dict[s
             "sheet__id",
         )
     )
+    pass_scores_by_exam: dict[int, dict[int, float]] = {}
+    for row in ExamLecturePolicy.objects.filter(
+        exam_id__in=[int(exam.id) for exam in exams],
+        exam__tenant=tenant,
+        lecture__tenant=tenant,
+    ).values("exam_id", "lecture_id", "pass_score"):
+        pass_scores_by_exam.setdefault(int(row["exam_id"]), {})[int(row["lecture_id"])] = float(
+            row["pass_score"]
+        )
     for exam in exams:
         structure_exam_id = exam.effective_structure_exam_id
         if (
@@ -90,6 +99,7 @@ def exam_metadata_by_id(*, tenant: Any, exam_ids: list[int]) -> dict[int, dict[s
         exams_map[exam.id] = {
             "title": exam.title,
             "pass_score": float(exam.pass_score or 0),
+            "pass_score_by_lecture": pass_scores_by_exam.get(int(exam.id), {}),
             "is_active": bool(exam.is_active),
             "student_results_published": bool(exam.student_results_published),
             "effective_structure_exam_id": structure_exam_id,

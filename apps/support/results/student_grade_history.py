@@ -263,7 +263,10 @@ def build_student_exam_history(
                 "enrollment_id": row["result"]["enrollment_id"],
                 "exam_id": row["exam_id"],
                 "total_score": row["initial_score"].total_score,
-                "pass_score": row["info"]["pass_score"],
+                "pass_score": row["info"]["pass_score_by_lecture"].get(
+                    int(row["lecture_id"]),
+                    row["info"]["pass_score"],
+                ),
                 "attempt_id": row["result"].get("attempt_id"),
                 "session": None,
             }

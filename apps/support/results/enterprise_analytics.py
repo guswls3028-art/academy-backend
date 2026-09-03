@@ -11,13 +11,14 @@ from typing import Any, Iterable
 from django.db.models import Q
 from django.utils import timezone
 
-from apps.domains.exams.models import Exam
+from apps.domains.exams.models import Exam, ExamLecturePolicy
 from apps.domains.results.models import Result, ResultFact, ResultItem
 from apps.domains.results.utils.initial_exam_score import (
     load_initial_exam_scores,
     project_initial_exam_score,
 )
 from apps.domains.submissions.models import Submission
+from apps.support.results.admin_student_grades_dependencies import explicit_exam_target_scope
 from apps.support.student_app.results_summary import build_student_grades_summary
 
 
@@ -222,9 +223,10 @@ def _build_top_exams(rows: list[dict[str, Any]], exam_infos: dict[int, _ExamInfo
             if pct is None:
                 continue
             score_pcts.append(pct)
-            if info and info.pass_score > 0:
+            pass_score = float(row.get("_pass_score") or 0)
+            if info and pass_score > 0:
                 pass_denominator += 1
-                if float(row.get("total_score") or 0) >= info.pass_score:
+                if float(row.get("total_score") or 0) >= pass_score:
                     pass_count += 1
         stat = _stats(score_pcts)
         output.append({
@@ -360,6 +362,7 @@ def build_teacher_enterprise_analytics(*, tenant: Any, days: int = 180) -> dict[
             "id",
             "target_id",
             "enrollment_id",
+            "enrollment__lecture_id",
             "total_score",
             "max_score",
             "submitted_at",
@@ -368,6 +371,25 @@ def build_teacher_enterprise_analytics(*, tenant: Any, days: int = 180) -> dict[
             "attempt__meta",
         )
     )
+    explicit_exam_ids, explicit_target_pairs = explicit_exam_target_scope(
+        tenant=tenant,
+        exam_ids=set(clean_exam_ids),
+        enrollment_ids={int(row["enrollment_id"]) for row in result_rows},
+    )
+    result_rows = [
+        row
+        for row in result_rows
+        if int(row["target_id"]) not in explicit_exam_ids
+        or (int(row["enrollment_id"]), int(row["target_id"])) in explicit_target_pairs
+    ]
+    lecture_pass_scores = {
+        (int(row["exam_id"]), int(row["lecture_id"])): float(row["pass_score"])
+        for row in ExamLecturePolicy.objects.filter(
+            exam_id__in=clean_exam_ids,
+            exam__tenant=tenant,
+            lecture__tenant=tenant,
+        ).values("exam_id", "lecture_id", "pass_score")
+    }
     initial_scores = load_initial_exam_scores(
         exam_ids=clean_exam_ids,
         enrollment_ids=[row["enrollment_id"] for row in result_rows],
@@ -383,6 +405,11 @@ def build_teacher_enterprise_analytics(*, tenant: Any, days: int = 180) -> dict[
         row["total_score"] = initial_score.total_score
         row["max_score"] = initial_score.max_score
         row["_initial_not_submitted"] = initial_score.not_submitted
+        info = all_exam_infos.get(int(row["target_id"]))
+        row["_pass_score"] = lecture_pass_scores.get(
+            (int(row["target_id"]), int(row["enrollment__lecture_id"])),
+            info.pass_score if info else 0.0,
+        )
 
     score_pcts = []
     pass_denominator = 0
@@ -396,10 +423,10 @@ def build_teacher_enterprise_analytics(*, tenant: Any, days: int = 180) -> dict[
         if pct is None:
             continue
         score_pcts.append(pct)
-        info = all_exam_infos.get(int(row["target_id"]))
-        if info and info.pass_score > 0:
+        pass_score = float(row.get("_pass_score") or 0)
+        if pass_score > 0:
             pass_denominator += 1
-            if float(row.get("total_score") or 0) >= info.pass_score:
+            if float(row.get("total_score") or 0) >= pass_score:
                 pass_count += 1
 
     manual_rows = list(
@@ -473,10 +500,10 @@ def build_teacher_enterprise_analytics(*, tenant: Any, days: int = 180) -> dict[
         if pct is None:
             continue
         bucket["_scores"].append(pct)
-        info = all_exam_infos.get(int(row["target_id"]))
-        if info and info.pass_score > 0:
+        pass_score = float(row.get("_pass_score") or 0)
+        if pass_score > 0:
             bucket["_pass_denominator"] += 1
-            if float(row.get("total_score") or 0) >= info.pass_score:
+            if float(row.get("total_score") or 0) >= pass_score:
                 bucket["_pass_count"] += 1
     for row in manual_rows:
         key = _month_key(row.get("created_at"))

@@ -150,6 +150,7 @@ class SessionProgressCalculator:
         for ea in ExamAttempt.objects.filter(
             exam_id__in=[int(x) for x in exam_ids],
             enrollment_id=int(enrollment_id),
+            is_representative=True,
         ):
             meta = ea.meta if isinstance(ea.meta, dict) else {}
             if meta.get("status") == "NOT_SUBMITTED":
@@ -194,6 +195,7 @@ class SessionProgressCalculator:
                     "submitted_at": None,
                     "attempt_count": int(attempt_counts.get(eid, 0)),
                     "no_result": True,
+                    "meta_status": None,
                 })
                 continue
 
@@ -214,6 +216,7 @@ class SessionProgressCalculator:
                 "passed": passed_value,
                 "submitted_at": r.submitted_at.isoformat() if r.submitted_at else None,
                 "attempt_count": int(attempt_counts.get(eid, 0)),
+                "meta_status": "NOT_SUBMITTED" if is_not_submitted else None,
             })
 
         strategy = policy.exam_aggregate_strategy

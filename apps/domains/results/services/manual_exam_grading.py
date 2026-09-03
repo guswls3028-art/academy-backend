@@ -29,7 +29,10 @@ from apps.support.exams.numeric_short_answer import (
     math_numeric_short_answer_question_ids,
 )
 from apps.support.omr.score_shape import get_exam_score_shape
-from apps.support.results.admin_exam_dependencies import dispatch_progress_pipeline
+from apps.support.results.admin_exam_dependencies import (
+    dispatch_progress_pipeline,
+    resolve_exam_not_submitted_clinic_links,
+)
 from apps.support.results.exam_result_excel_import_dependencies import (
     get_answer_key_answers,
     get_locked_enrollment_for_tenant,
@@ -468,7 +471,11 @@ def plan_manual_grading(
 
 
 @transaction.atomic
-def apply_manual_grading(*, plan: ManualGradePlan) -> dict[str, Any]:
+def apply_manual_grading(
+    *,
+    plan: ManualGradePlan,
+    user_id: int | None = None,
+) -> dict[str, Any]:
     if not plan.can_apply:
         raise ManualExamGradingError(
             "오류가 있는 채점표는 반영할 수 없습니다."
@@ -561,6 +568,13 @@ def apply_manual_grading(*, plan: ManualGradePlan) -> dict[str, Any]:
                 max_score=planned_row.max_score,
                 now=now,
                 is_not_submitted=True,
+            )
+            resolve_exam_not_submitted_clinic_links(
+                tenant_id=int(exam.tenant_id),
+                enrollment_id=enrollment_id,
+                exam_id=int(exam.id),
+                attempt_id=int(attempt.id),
+                user_id=int(user_id) if user_id is not None else None,
             )
             continue
 

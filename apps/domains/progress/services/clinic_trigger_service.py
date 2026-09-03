@@ -20,7 +20,12 @@ from django.db.models import Max
 
 from apps.domains.progress.models import ClinicLink, SessionProgress
 from apps.domains.progress.services.clinic_exam_rule_service import ClinicExamRuleService
-from apps.support.progress.clinic_trigger_dependencies import get_enrollment_tenant_id
+from apps.support.progress.clinic_trigger_dependencies import (
+    get_enrollment_tenant_id,
+    is_representative_exam_not_submitted,
+    lock_enrollment_for_clinic_trigger,
+    locked_representative_exam_is_not_submitted,
+)
 from apps.support.progress.assessment_correction_dependencies import (
     is_current_teacher_exam_resolution,
 )
@@ -198,36 +203,50 @@ class ClinicTriggerService:
             # not a scored failure. Creating a ClinicLink here makes multi-exam
             # sessions emit premature remediation/resolution notifications while
             # the remaining exams are still being graded.
-            if exam_row.get("no_result") or exam_row.get("score") is None:
+            if (
+                exam_row.get("no_result")
+                or exam_row.get("score") is None
+                or exam_row.get("meta_status") == "NOT_SUBMITTED"
+            ):
                 continue
 
             passed = exam_row.get("passed", True)
             if passed:
                 continue  # 이 시험은 합격 → ClinicLink 불필요
 
-            latest_resolution_type = _latest_source_resolution_type(
-                enrollment_id=session_progress.enrollment_id,
-                session=session_progress.session,
-                source_type="exam",
-                source_id=exam_id,
-            )
-            if latest_resolution_type == ClinicLink.ResolutionType.EXAM_PASS:
-                continue
+            with transaction.atomic():
+                lock_enrollment_for_clinic_trigger(
+                    enrollment_id=int(session_progress.enrollment_id),
+                )
+                if locked_representative_exam_is_not_submitted(
+                    enrollment_id=int(session_progress.enrollment_id),
+                    exam_id=exam_id,
+                ):
+                    continue
 
-            _idempotent_create_clinic_link(
-                enrollment_id=session_progress.enrollment_id,
-                session=session_progress.session,
-                source_type="exam",
-                source_id=exam_id,
-                reason=ClinicLink.Reason.AUTO_FAILED,
-                meta={
-                    "kind": "EXAM_FAILED",
-                    "kinds": ["EXAM_FAILED"],
-                    "exam_id": exam_id,
-                    "score": exam_row.get("score"),
-                    "pass_score": exam_row.get("pass_score"),
-                },
-            )
+                latest_resolution_type = _latest_source_resolution_type(
+                    enrollment_id=session_progress.enrollment_id,
+                    session=session_progress.session,
+                    source_type="exam",
+                    source_id=exam_id,
+                )
+                if latest_resolution_type == ClinicLink.ResolutionType.EXAM_PASS:
+                    continue
+
+                _idempotent_create_clinic_link(
+                    enrollment_id=session_progress.enrollment_id,
+                    session=session_progress.session,
+                    source_type="exam",
+                    source_id=exam_id,
+                    reason=ClinicLink.Reason.AUTO_FAILED,
+                    meta={
+                        "kind": "EXAM_FAILED",
+                        "kinds": ["EXAM_FAILED"],
+                        "exam_id": exam_id,
+                        "score": exam_row.get("score"),
+                        "pass_score": exam_row.get("pass_score"),
+                    },
+                )
 
     @staticmethod
     def auto_create_if_failed(session_progress: SessionProgress) -> None:
@@ -271,6 +290,12 @@ class ClinicTriggerService:
         V1.1.2: source_type/source_id로 시험별 개별 ClinicLink 생성.
         동시성: atomic + IntegrityError fallback으로 idempotent
         """
+        if is_representative_exam_not_submitted(
+            enrollment_id=int(enrollment_id),
+            exam_id=int(exam_id),
+        ):
+            return
+
         reasons = ClinicExamRuleService.evaluate(
             enrollment_id=int(enrollment_id),
             exam_id=int(exam_id),
@@ -283,6 +308,13 @@ class ClinicTriggerService:
         # (분리된 atomic 두 블록 사이에서 lock 이 풀려 동시 worker 가 동일 row 를
         # 둘 다 신규 생성으로 진입할 수 있던 결함을 제거.)
         with transaction.atomic():
+            lock_enrollment_for_clinic_trigger(enrollment_id=int(enrollment_id))
+            if locked_representative_exam_is_not_submitted(
+                enrollment_id=int(enrollment_id),
+                exam_id=int(exam_id),
+            ):
+                return
+
             existing = ClinicLink.objects.select_for_update().filter(
                 enrollment_id=int(enrollment_id),
                 session=session,

@@ -128,7 +128,12 @@ class StudentExamDetailView(APIView):
                 {"detail": "시험을 찾을 수 없거나 응시 권한이 없습니다."},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        return Response(_serialize_exam(exam))
+        submission_status_map = submission_status_map_for_student_exams(
+            tenant=tenant,
+            student=request_student,
+            exams=[exam],
+        )
+        return Response(_serialize_exam(exam, submission_status_map=submission_status_map))
 
 
 class StudentExamQuestionsView(APIView):

@@ -66,6 +66,28 @@ def resolve_removed_source_clinic_links(
     )
 
 
+def resolve_exam_not_submitted_clinic_links(
+    *,
+    tenant_id: int,
+    enrollment_id: int,
+    exam_id: int,
+    attempt_id: int,
+    user_id: int | None = None,
+) -> int:
+    """Audit-close failure links invalidated by an explicit absent action."""
+    from apps.domains.progress.services.clinic_resolution_service import (
+        ClinicResolutionService,
+    )
+
+    return ClinicResolutionService.resolve_by_exam_not_submitted(
+        tenant_id=tenant_id,
+        enrollment_id=enrollment_id,
+        exam_id=exam_id,
+        attempt_id=attempt_id,
+        user_id=user_id,
+    )
+
+
 def set_teacher_assessment_resolution(
     *,
     tenant_id: int,
