@@ -194,6 +194,7 @@ def complete_submission_after_auto_grade(submission, *, actor: str) -> None:
 def regrade_exam_submissions(*, tenant, exam_id: int, actor: str) -> dict[str, Any]:
     from django.db import transaction
 
+    from apps.domains.results.models import ExamAttempt
     from apps.domains.submissions.models import Submission
     from apps.domains.submissions.services.lifecycle import reopen_for_regrade
 
@@ -221,12 +222,27 @@ def regrade_exam_submissions(*, tenant, exam_id: int, actor: str) -> dict[str, A
             skipped += 1
             continue
         try:
-            if current_status != Submission.Status.ANSWERS_READY:
-                with transaction.atomic():
-                    submission = Submission.objects.select_for_update().get(id=int(submission_id))
-                    if submission.status != Submission.Status.ANSWERS_READY:
-                        reopen_for_regrade(submission, actor=actor)
-            grade_submission_objective(int(submission_id), force_regrade=True)
+            with transaction.atomic():
+                submission = Submission.objects.select_for_update().get(id=int(submission_id))
+                attempt = (
+                    ExamAttempt.objects.select_for_update()
+                    .filter(
+                        exam_id=int(exam_id),
+                        submission_id=int(submission_id),
+                        enrollment__tenant=tenant,
+                    )
+                    .first()
+                )
+                if (
+                    attempt is not None
+                    and isinstance(attempt.meta, dict)
+                    and attempt.meta.get("status") == "NOT_SUBMITTED"
+                ):
+                    skipped += 1
+                    continue
+                if submission.status != Submission.Status.ANSWERS_READY:
+                    reopen_for_regrade(submission, actor=actor)
+                grade_submission_objective(int(submission_id), force_regrade=True)
             graded += 1
         except Exception as exc:
             failed.append(

@@ -14,7 +14,7 @@ from apps.domains.enrollment.models import Enrollment
 from apps.domains.exams.models import AnswerKey, Exam, ExamEnrollment, ExamQuestion, Sheet
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.parents.models import Parent
-from apps.domains.results.models import Result, ResultItem
+from apps.domains.results.models import ExamAttempt, Result, ResultItem
 from apps.domains.student_app.exams.views import (
     StudentExamListView,
     StudentExamQuestionsView,
@@ -145,6 +145,69 @@ class ParentExamChildSelectionTests(TestCase):
         self.assertEqual([row["id"] for row in response_a.data["items"]], [self.exam_a.id])
         self.assertEqual(response_b.status_code, 200)
         self.assertEqual([row["id"] for row in response_b.data["items"]], [self.exam_b.id])
+
+    @patch("apps.domains.student_app.exams.views.dispatch_student_exam_submission")
+    def test_submit_rejects_max_attempts_before_superseding_current_done(self, mock_dispatch):
+        self.exam_b.allow_retake = True
+        self.exam_b.max_attempts = 2
+        self.exam_b.save(update_fields=["allow_retake", "max_attempts", "updated_at"])
+        first = Submission.objects.create(
+            tenant=self.tenant,
+            user=self.student_b.user,
+            enrollment=self.enrollment_b,
+            target_type=Submission.TargetType.EXAM,
+            target_id=self.exam_b.id,
+            source=Submission.Source.ONLINE,
+            status=Submission.Status.SUPERSEDED,
+        )
+        second = Submission.objects.create(
+            tenant=self.tenant,
+            user=self.student_b.user,
+            enrollment=self.enrollment_b,
+            target_type=Submission.TargetType.EXAM,
+            target_id=self.exam_b.id,
+            source=Submission.Source.ONLINE,
+            status=Submission.Status.DONE,
+        )
+        ExamAttempt.objects.create(
+            exam=self.exam_b,
+            enrollment=self.enrollment_b,
+            submission_id=first.id,
+            attempt_index=1,
+            status="done",
+            is_representative=False,
+        )
+        ExamAttempt.objects.create(
+            exam=self.exam_b,
+            enrollment=self.enrollment_b,
+            submission_id=second.id,
+            attempt_index=2,
+            status="done",
+            is_representative=True,
+            is_retake=True,
+        )
+
+        response = StudentExamSubmitView.as_view()(
+            self._student_post_request(
+                f"/student/exams/{self.exam_b.id}/submit/",
+                student=self.student_b,
+                data={"answers": [{"exam_question_id": self.question_b.id, "answer": "1"}]},
+            ),
+            pk=self.exam_b.id,
+        )
+
+        self.assertEqual(response.status_code, 409, response.data)
+        second.refresh_from_db()
+        self.assertEqual(second.status, Submission.Status.DONE)
+        self.assertEqual(
+            Submission.objects.filter(
+                enrollment=self.enrollment_b,
+                target_type=Submission.TargetType.EXAM,
+                target_id=self.exam_b.id,
+            ).count(),
+            2,
+        )
+        mock_dispatch.assert_not_called()
 
     def test_ended_lecture_hides_active_exam_but_preserves_published_result(self):
         lecture = self.enrollment_a.lecture

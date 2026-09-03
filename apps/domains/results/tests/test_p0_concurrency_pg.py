@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import threading
 import unittest
+from unittest.mock import patch
 
 import pytest
 from django.contrib.auth import get_user_model
@@ -18,11 +19,17 @@ from django.db import IntegrityError, connection, transaction
 from django.test import TransactionTestCase
 
 from apps.core.models import Tenant
-from apps.domains.exams.models import Exam
+from apps.domains.exams.models import Exam, ExamEnrollment
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.students.models import Student
 from apps.domains.results.models import ExamAttempt
+from apps.domains.submissions.models import Submission
+from apps.support.student_app.exam_dependencies import (
+    StudentExamSubmitError,
+    create_online_exam_submission,
+)
+from apps.support.submissions.dependencies import regrade_exam_submissions
 
 pytestmark = pytest.mark.django_db(transaction=True)
 User = get_user_model()
@@ -58,7 +65,140 @@ class TestP0ConcurrencyPG(TransactionTestCase):
         )
         exam.save()
         exam.sessions.add(session)
+        ExamEnrollment.objects.create(exam=exam, enrollment=enrollment)
         return tenant, enrollment, exam
+
+    def test_concurrent_legal_retake_creates_one_active_submission(self):
+        tenant, enrollment, exam = self._setup_data()
+        exam.allow_retake = True
+        exam.max_attempts = 2
+        exam.save(update_fields=["allow_retake", "max_attempts", "updated_at"])
+        first = Submission.objects.create(
+            tenant=tenant,
+            user=enrollment.student.user,
+            enrollment=enrollment,
+            target_type=Submission.TargetType.EXAM,
+            target_id=exam.id,
+            source=Submission.Source.ONLINE,
+            status=Submission.Status.DONE,
+        )
+        ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=enrollment,
+            submission_id=first.id,
+            attempt_index=1,
+            status="done",
+        )
+        barrier = threading.Barrier(2, timeout=10)
+        results = {"created": 0, "conflict": 0, "errors": []}
+
+        def submit_retake():
+            try:
+                connection.close()
+                barrier.wait()
+                create_online_exam_submission(
+                    request_user=enrollment.student.user,
+                    request_student=enrollment.student,
+                    tenant=tenant,
+                    exam=exam,
+                    enrollment=enrollment,
+                    answers=[{"exam_question_id": 1, "answer": "1"}],
+                )
+                results["created"] += 1
+            except StudentExamSubmitError as exc:
+                if exc.status_code == 409:
+                    results["conflict"] += 1
+                else:
+                    results["errors"].append(str(exc))
+            except Exception as exc:
+                results["errors"].append(f"{type(exc).__name__}: {exc}")
+            finally:
+                connection.close()
+
+        threads = [threading.Thread(target=submit_retake) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(15)
+
+        self.assertEqual(results, {"created": 1, "conflict": 1, "errors": []})
+        first.refresh_from_db()
+        self.assertEqual(first.status, Submission.Status.SUPERSEDED)
+        self.assertEqual(
+            Submission.objects.filter(
+                enrollment=enrollment,
+                target_type=Submission.TargetType.EXAM,
+                target_id=exam.id,
+                status=Submission.Status.SUBMITTED,
+            ).count(),
+            1,
+        )
+
+    def test_concurrent_regrade_then_absent_confirmation_finishes_absent(self):
+        tenant, enrollment, exam = self._setup_data()
+        submission = Submission.objects.create(
+            tenant=tenant,
+            user=enrollment.student.user,
+            enrollment=enrollment,
+            target_type=Submission.TargetType.EXAM,
+            target_id=exam.id,
+            source=Submission.Source.OMR_SCAN,
+            status=Submission.Status.DONE,
+        )
+        attempt = ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=enrollment,
+            submission_id=submission.id,
+            attempt_index=1,
+            status="done",
+            meta={},
+        )
+        grading_started = threading.Event()
+        allow_grading_to_finish = threading.Event()
+        absent_finished = threading.Event()
+        errors = []
+
+        def fake_grade(_submission_id, *, force_regrade):
+            self.assertTrue(force_regrade)
+            grading_started.set()
+            self.assertTrue(allow_grading_to_finish.wait(10))
+
+        def run_regrade():
+            try:
+                connection.close()
+                regrade_exam_submissions(tenant=tenant, exam_id=exam.id, actor="pg-test")
+            except Exception as exc:
+                errors.append(f"regrade {type(exc).__name__}: {exc}")
+            finally:
+                connection.close()
+
+        def confirm_absent():
+            try:
+                connection.close()
+                with transaction.atomic():
+                    locked = ExamAttempt.objects.select_for_update().get(id=attempt.id)
+                    locked.meta = {**(locked.meta or {}), "status": "NOT_SUBMITTED"}
+                    locked.save(update_fields=["meta", "updated_at"])
+                absent_finished.set()
+            except Exception as exc:
+                errors.append(f"absent {type(exc).__name__}: {exc}")
+            finally:
+                connection.close()
+
+        with patch("apps.support.submissions.dependencies.grade_submission_objective", side_effect=fake_grade):
+            regrade_thread = threading.Thread(target=run_regrade)
+            absent_thread = threading.Thread(target=confirm_absent)
+            regrade_thread.start()
+            self.assertTrue(grading_started.wait(10))
+            absent_thread.start()
+            self.assertFalse(absent_finished.wait(0.2))
+            allow_grading_to_finish.set()
+            regrade_thread.join(15)
+            absent_thread.join(15)
+
+        self.assertEqual(errors, [])
+        attempt.refresh_from_db()
+        self.assertEqual(attempt.meta.get("status"), "NOT_SUBMITTED")
 
     def test_concurrent_representative_creation_only_one_wins(self):
         """

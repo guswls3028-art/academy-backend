@@ -17,7 +17,7 @@ DATABASES = {
             "connect_timeout": 10,
         },
         "TEST": {
-            "NAME": "test_academy_p0p1",
+            "NAME": os.getenv("TEST_DB_NAME", "test_academy_p0p1"),
         },
     }
 }
