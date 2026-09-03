@@ -8,7 +8,7 @@
 
 Webhook 설정:
   DEV_ALERTS_WEBHOOK_URL=https://hooks.slack.com/services/...
-  비어 있으면 전송 생략 (조건 평가 + stdout만).
+  비어 있으면 실패 종료. 수신처 없이 평가만 하려면 --dry-run을 명시한다.
 """
 from __future__ import annotations
 
@@ -645,11 +645,9 @@ def _post_slack(webhook_url: str, payload: dict) -> bool:
         )
         with urllib.request.urlopen(req, timeout=8) as resp:
             return 200 <= resp.status < 300
-    except urllib.error.URLError as e:
-        logger.warning("Slack webhook URLError: %s", e)
-        return False
-    except Exception:
-        logger.exception("Slack webhook unexpected error")
+    except Exception as exc:
+        # Webhook URLs and provider responses can contain credentials or PII.
+        logger.warning("Slack webhook failed (%s)", type(exc).__name__)
         return False
 
 
@@ -712,8 +710,10 @@ def _record_cron_invocation(opts: dict, *, result: str, error: str = "") -> None
             result=result,
             error=error[:255],
         )
-    except Exception:
-        logger.exception("check_dev_alerts invocation audit failed")
+    except Exception as exc:
+        raise CommandError(
+            f"check_dev_alerts invocation audit failed ({type(exc).__name__})"
+        ) from None
 
 
 # ── Command ──
@@ -742,9 +742,13 @@ class Command(BaseCommand):
     def handle(self, *args, **opts):
         try:
             result = self._handle(*args, **opts)
-        except Exception as exc:
+        except CommandError as exc:
             _record_cron_invocation(opts, result="failed", error=str(exc))
             raise
+        except Exception as exc:
+            error = f"check_dev_alerts failed ({type(exc).__name__})"
+            _record_cron_invocation(opts, result="failed", error=error)
+            raise CommandError(error) from None
         _record_cron_invocation(opts, result="success")
         return result
 
@@ -752,27 +756,22 @@ class Command(BaseCommand):
         dry_run = opts["dry_run"]
         silent = opts["silent"]
         only = set(opts["rule"] or [])
+        if only - {rule.key for rule in RULES}:
+            raise CommandError("Unknown alert rule selection")
         rules = [rule for rule in RULES if not only or rule.key in only]
 
+        failures: list[str] = []
         triggered: list[tuple[Rule, dict]] = []
         for rule in rules:
             try:
                 result = rule.evaluate()
             except Exception as exc:
-                logger.exception("Rule %s evaluate failed", rule.key)
-                self.stdout.write(self.style.ERROR(f"[{rule.key}] error: {exc}"))
-                if rule.key == "user_incidents":
-                    raise CommandError(
-                        f"사용자 오류 모니터링 룰 평가 실패: {exc}"
-                    ) from exc
+                error = f"Rule {rule.key} evaluation failed ({type(exc).__name__})"
+                logger.warning(error)
+                failures.append(error)
                 continue
             if result:
                 triggered.append((rule, result))
-
-        if not triggered:
-            if not silent:
-                self.stdout.write(self.style.SUCCESS("All clear — no rules triggered."))
-            return
 
         for rule, data in triggered:
             self.stdout.write(self.style.WARNING(f"\n[{rule.key}] {data.get('title')}"))
@@ -781,25 +780,27 @@ class Command(BaseCommand):
 
         if dry_run:
             self.stdout.write(self.style.NOTICE("\n--dry-run: Slack 전송 생략."))
-            return
+        else:
+            webhook_url = (getattr(settings, "DEV_ALERTS_WEBHOOK_URL", "") or "").strip()
+            if not webhook_url:
+                failures.append("DEV_ALERTS_WEBHOOK_URL is not configured")
+            elif triggered:
+                payload = _build_slack_blocks(triggered)
+                if not _post_slack(webhook_url, payload):
+                    failures.append("Slack delivery failed")
+                else:
+                    for rule, data in triggered:
+                        if rule.key == "user_incidents":
+                            _record_user_incident_slack_delivery(data)
+                    self.stdout.write(self.style.SUCCESS(
+                        f"\nSlack 전송 OK ({len(triggered)} rule(s))."
+                    ))
 
-        webhook_url = (getattr(settings, "DEV_ALERTS_WEBHOOK_URL", "") or "").strip()
-        if not webhook_url:
+        if failures:
+            raise CommandError("; ".join(failures))
+        if not triggered and not silent:
             self.stdout.write(
-                self.style.NOTICE(
-                    "\nDEV_ALERTS_WEBHOOK_URL 미설정 — Slack 전송 생략."
+                self.style.SUCCESS(
+                    "All clear — no rules triggered."
                 )
             )
-            return
-
-        payload = _build_slack_blocks(triggered)
-        if not _post_slack(webhook_url, payload):
-            self.stdout.write(self.style.ERROR("\nSlack 전송 실패."))
-            return
-
-        for rule, data in triggered:
-            if rule.key == "user_incidents":
-                _record_user_incident_slack_delivery(data)
-        self.stdout.write(
-            self.style.SUCCESS(f"\nSlack 전송 OK ({len(triggered)} rule(s)).")
-        )
