@@ -22,6 +22,9 @@ from apps.domains.progress.services.lecture_calculator import LectureProgressCal
 from apps.domains.progress.services.risk_evaluator import RiskEvaluator
 from apps.domains.progress.services.clinic_trigger_service import ClinicTriggerService
 from apps.domains.progress.services.clinic_resolution_service import ClinicResolutionService
+from apps.support.progress.clinic_trigger_dependencies import (
+    lock_enrollment_for_clinic_trigger,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -246,6 +249,11 @@ class ProgressPipelineService:
                 - False: 제출 취소 등 명시적 해제
                 - None: 변경 없음 (기존 SessionProgress 값 그대로 유지)
         """
+        # Every progress mutation starts from the stable enrollment lock. This
+        # serializes a concurrent NOT_SUBMITTED action before any derived row or
+        # ClinicLink can be written.
+        lock_enrollment_for_clinic_trigger(enrollment_id=int(enrollment_id))
+
         # 기존 SessionProgress에서 출결/영상/과제 상태를 보존 (덮어쓰기 방지)
         from apps.domains.progress.models import SessionProgress as _SP
         _existing = _SP.objects.filter(

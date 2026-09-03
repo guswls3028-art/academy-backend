@@ -14,7 +14,7 @@ from rest_framework import status as drf_status
 from rest_framework.exceptions import ValidationError, NotFound
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
-from apps.domains.results.models import Result, ResultFact, ExamAttempt
+from apps.domains.results.models import ExamAttempt, Result, ResultFact, ResultItem
 from apps.domains.results.validation import parse_finite_score
 from apps.support.results.exam_policy_dependencies import (
     effective_exam_pass_score,
@@ -29,6 +29,8 @@ from apps.support.results.admin_exam_dependencies import (
     dispatch_progress_pipeline,
     get_latest_exam_submission_id,
     get_regular_active_exam_for_tenant,
+    lock_enrollment_for_exam_state_transition,
+    resolve_exam_not_submitted_clinic_links,
 )
 from django.db.models import Max
 
@@ -267,10 +269,16 @@ class AdminExamTotalScoreView(APIView):
         """
         시험 미응시 처리.
         - ExamAttempt.meta.status = "NOT_SUBMITTED"
-        - Result.total_score = 0 (FloatField non-nullable)
+        - Result 점수와 문항 snapshot 제거
+        - 이전 실패 ClinicLink는 감사 이력을 보존해 NOT_SUBMITTED로 해소
         - 프론트/API에서 meta.status로 "미응시" 표시
         """
         max_score = float(getattr(exam, "max_score", 100.0) or 100.0)
+        state_changed = False
+        lock_enrollment_for_exam_state_transition(
+            enrollment_id=enrollment_id,
+            tenant=request.tenant,
+        )
 
         result = (
             Result.objects.select_for_update()
@@ -288,8 +296,15 @@ class AdminExamTotalScoreView(APIView):
                 exam_id=exam_id, enrollment_id=enrollment_id,
                 submission_id=0, attempt_index=next_index,
                 is_retake=(last > 0), is_representative=True,
-                status="done", meta={"status": "NOT_SUBMITTED"},
+                status="done",
+                meta={
+                    "status": "NOT_SUBMITTED",
+                    "total_score": 0.0,
+                    "max_score": max_score,
+                    "synced_from_result": True,
+                },
             )
+            state_changed = True
             if not result:
                 result = Result.objects.create(
                     target_type="exam", target_id=exam_id,
@@ -300,25 +315,91 @@ class AdminExamTotalScoreView(APIView):
                 result.attempt_id = int(attempt.id)
                 result.total_score = 0.0
                 result.max_score = max_score
-                result.save(update_fields=["attempt_id", "total_score", "max_score", "updated_at"])
+                result.objective_score = 0.0
+                result.save(
+                    update_fields=[
+                        "attempt_id",
+                        "total_score",
+                        "max_score",
+                        "objective_score",
+                        "updated_at",
+                    ]
+                )
         else:
-            attempt = ExamAttempt.objects.filter(id=int(result.attempt_id)).first()
+            attempt = (
+                ExamAttempt.objects.select_for_update()
+                .filter(id=int(result.attempt_id))
+                .first()
+            )
             if attempt:
-                attempt.meta = attempt.meta or {}
-                attempt.meta["status"] = "NOT_SUBMITTED"
-                attempt.save(update_fields=["meta", "updated_at"])
-            result.total_score = 0.0
-            result.save(update_fields=["total_score", "updated_at"])
+                meta = dict(attempt.meta or {})
+                normalized_meta = {
+                    **meta,
+                    "status": "NOT_SUBMITTED",
+                    "total_score": 0.0,
+                    "max_score": max_score,
+                    "synced_from_result": True,
+                }
+                if meta != normalized_meta or attempt.status != "done":
+                    state_changed = True
+                    attempt.meta = normalized_meta
+                    attempt.status = "done"
+                    attempt.save(update_fields=["meta", "status", "updated_at"])
+            if (
+                float(result.total_score or 0.0) != 0.0
+                or float(result.objective_score or 0.0) != 0.0
+                or float(result.max_score or 0.0) != max_score
+            ):
+                state_changed = True
+                result.total_score = 0.0
+                result.objective_score = 0.0
+                result.max_score = max_score
+                result.save(
+                    update_fields=[
+                        "total_score",
+                        "objective_score",
+                        "max_score",
+                        "updated_at",
+                    ]
+                )
+
+        deleted_items, _ = (
+            ResultItem.objects.select_for_update().filter(result=result).delete()
+        )
+        state_changed = state_changed or bool(deleted_items)
+        resolved_clinic_links = resolve_exam_not_submitted_clinic_links(
+            tenant_id=int(request.tenant.id),
+            enrollment_id=enrollment_id,
+            exam_id=exam_id,
+            attempt_id=int(result.attempt_id),
+            user_id=int(request.user.id),
+        )
+        state_changed = state_changed or bool(resolved_clinic_links)
 
         # audit
-        ResultFact.objects.create(
-            target_type="exam", target_id=exam_id,
-            enrollment_id=enrollment_id, submission_id=0,
-            attempt_id=int(result.attempt_id), question_id=0,
-            answer="", is_correct=False, score=0.0, max_score=max_score,
+        audit_exists = ResultFact.objects.filter(
+            target_type="exam",
+            target_id=exam_id,
+            enrollment_id=enrollment_id,
+            attempt_id=int(result.attempt_id),
             source="manual_not_submitted",
-            meta={"status": "NOT_SUBMITTED", "edited_at": timezone.now().isoformat()},
-        )
+            meta__status="NOT_SUBMITTED",
+        ).exists()
+        if state_changed or not audit_exists:
+            ResultFact.objects.create(
+                target_type="exam", target_id=exam_id,
+                enrollment_id=enrollment_id, submission_id=0,
+                attempt_id=int(result.attempt_id), question_id=0,
+                answer="", is_correct=False, score=0.0, max_score=max_score,
+                source="manual_not_submitted",
+                meta={
+                    "status": "NOT_SUBMITTED",
+                    "edited_at": timezone.now().isoformat(),
+                    "user_id": int(request.user.id),
+                    "deleted_result_items": int(deleted_items),
+                    "resolved_clinic_links": int(resolved_clinic_links),
+                },
+            )
 
         # progress pipeline (clinic 판정)
         progress_ok = False

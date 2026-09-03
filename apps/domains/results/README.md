@@ -151,6 +151,13 @@ objective + subjective 합산과 문항별 만점 검증을 깨면 안 된다.
 거친다. 결시 확정은 `ExamAttempt.meta.status=NOT_SUBMITTED`로 저장하고 문항
 결과를 제거한다. 결시 행은 상세 기록에는 남지만 점수·석차·백분위·응시자 평균
 및 추이 집계에서는 제외하며, 조회 응답 조립 단계에서도 이 값을 다시 차단한다.
+합산 점수 PATCH와 직접 채점표 확정은 같은 전이를 적용한다. 대표 `Result`의
+`total_score`와 `objective_score`를 0으로 맞추고 `ResultItem`을 원자적으로 제거하며,
+기존 실패 `ClinicLink`는 물리 삭제나 통과 처리 대신 감사 가능한
+`resolution_type=NOT_SUBMITTED`로 닫는다. 연결된 오늘 계획 선택은 해제하지만 이미
+예약·등원·완료된 클리닉 참여 사실은 보존한다. 동일 결시 요청은 성공하는 no-op이고
+감사 사실을 중복 생성하지 않으며, 이후 명시적 점수 입력은 결시 표식을 해제하고
+새 점수에 맞는 클리닉 판정을 다시 만들 수 있다. 결시 전환 자체는 알림을 보내지 않는다.
 
 클리닉 운영 목록의 `GET /results/admin/clinic-targets/`는 점수 미달과
 `NOT_SUBMITTED`를 구분한다. 과제 미제출은 기존 source-specific `ClinicLink`를

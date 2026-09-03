@@ -194,6 +194,7 @@ class SessionProgressCalculator:
                     "submitted_at": None,
                     "attempt_count": int(attempt_counts.get(eid, 0)),
                     "no_result": True,
+                    "meta_status": None,
                 })
                 continue
 
@@ -214,6 +215,7 @@ class SessionProgressCalculator:
                 "passed": passed_value,
                 "submitted_at": r.submitted_at.isoformat() if r.submitted_at else None,
                 "attempt_count": int(attempt_counts.get(eid, 0)),
+                "meta_status": "NOT_SUBMITTED" if is_not_submitted else None,
             })
 
         strategy = policy.exam_aggregate_strategy

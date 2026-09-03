@@ -29,6 +29,7 @@ from apps.support.student_app.exam_dependencies import (
     StudentExamSubmitError,
     create_online_exam_submission,
 )
+from apps.support.results.admin_exam_dependencies import dispatch_progress_pipeline
 from apps.support.submissions.dependencies import regrade_exam_submissions
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -214,6 +215,94 @@ class TestP0ConcurrencyPG(TransactionTestCase):
         self.assertEqual(errors, [])
         attempt.refresh_from_db()
         self.assertEqual(attempt.meta.get("status"), "NOT_SUBMITTED")
+
+    def test_pipeline_waits_for_absent_transition_and_skips_clinic_creation(self):
+        tenant, enrollment, exam = self._setup_data()
+        attempt = ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=enrollment,
+            submission_id=None,
+            attempt_index=1,
+            is_representative=True,
+            status="done",
+            meta={"total_score": 30.0},
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=enrollment,
+            attempt=attempt,
+            total_score=30.0,
+            max_score=100.0,
+            objective_score=30.0,
+        )
+        absence_started = threading.Event()
+        allow_absence_commit = threading.Event()
+        pipeline_started = threading.Event()
+        pipeline_finished = threading.Event()
+        errors = []
+
+        def confirm_absent():
+            try:
+                connection.close()
+                with transaction.atomic():
+                    Enrollment.objects.select_for_update().get(id=enrollment.id)
+                    Result.objects.select_for_update().get(
+                        target_type="exam",
+                        target_id=exam.id,
+                        enrollment=enrollment,
+                    )
+                    locked = ExamAttempt.objects.select_for_update().get(id=attempt.id)
+                    locked.meta = {
+                        **(locked.meta or {}),
+                        "status": "NOT_SUBMITTED",
+                        "total_score": 0.0,
+                    }
+                    locked.save(update_fields=["meta", "updated_at"])
+                    absence_started.set()
+                    if not allow_absence_commit.wait(10):
+                        raise AssertionError("absence commit was not released")
+            except Exception as exc:
+                errors.append(f"absent {type(exc).__name__}: {exc}")
+            finally:
+                connection.close()
+
+        def recompute_progress():
+            try:
+                connection.close()
+                if not absence_started.wait(10):
+                    raise AssertionError("absence transition did not start")
+                pipeline_started.set()
+                dispatch_progress_pipeline(exam_id=int(exam.id))
+                pipeline_finished.set()
+            except Exception as exc:
+                errors.append(f"pipeline {type(exc).__name__}: {exc}")
+            finally:
+                connection.close()
+
+        absence_thread = threading.Thread(target=confirm_absent)
+        pipeline_thread = threading.Thread(target=recompute_progress)
+        absence_thread.start()
+        self.assertTrue(absence_started.wait(10))
+        pipeline_thread.start()
+        self.assertTrue(pipeline_started.wait(10))
+        self.assertFalse(pipeline_finished.wait(0.2))
+        allow_absence_commit.set()
+        absence_thread.join(15)
+        pipeline_thread.join(15)
+
+        self.assertEqual(errors, [])
+        self.assertTrue(pipeline_finished.is_set())
+        ClinicLink = django_apps.get_model("progress", "ClinicLink")
+        self.assertFalse(
+            ClinicLink.objects.filter(
+                tenant=tenant,
+                enrollment=enrollment,
+                source_type="exam",
+                source_id=exam.id,
+                resolved_at__isnull=True,
+            ).exists()
+        )
 
     def test_concurrent_representative_creation_only_one_wins(self):
         """

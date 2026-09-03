@@ -66,7 +66,10 @@ class AdminExamManualGradingView(APIView):
             )
 
         try:
-            result = apply_manual_grading(plan=plan)
+            result = apply_manual_grading(
+                plan=plan,
+                user_id=int(request.user.id),
+            )
         except ManualExamGradingError as exc:
             raise ValidationError({"detail": str(exc)}) from exc
         return Response(result, status=status.HTTP_200_OK)

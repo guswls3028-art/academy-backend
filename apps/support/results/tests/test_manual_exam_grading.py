@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from django.apps import apps as django_apps
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
@@ -540,6 +541,16 @@ class ManualExamGradingTests(TestCase):
             manual_method=Exam.ManualGradingMethod.CORRECTNESS,
         )
         sheet = build_manual_grading_sheet(exam=exam, tenant=self.tenant)
+        ClinicLink = django_apps.get_model("progress", "ClinicLink")
+        clinic_link = ClinicLink.objects.create(
+            tenant=self.tenant,
+            enrollment=self.enrollment,
+            session=self.session,
+            source_type="exam",
+            source_id=exam.id,
+            reason=ClinicLink.Reason.AUTO_FAILED,
+            is_auto=True,
+        )
 
         plan = plan_manual_grading(
             exam=exam,
@@ -557,7 +568,7 @@ class ManualExamGradingTests(TestCase):
 
         self.assertTrue(plan.can_apply, plan.errors)
         self.assertEqual(plan.as_payload()["not_submitted_count"], 1)
-        apply_manual_grading(plan=plan)
+        apply_manual_grading(plan=plan, user_id=self.admin.id)
 
         result = Result.objects.get(
             target_type="exam",
@@ -567,6 +578,15 @@ class ManualExamGradingTests(TestCase):
         attempt = ExamAttempt.objects.get(id=result.attempt_id)
         self.assertEqual((attempt.meta or {}).get("status"), "NOT_SUBMITTED")
         self.assertFalse(ResultItem.objects.filter(result=result).exists())
+        clinic_link.refresh_from_db()
+        self.assertEqual(
+            clinic_link.resolution_type,
+            ClinicLink.ResolutionType.NOT_SUBMITTED,
+        )
+        self.assertEqual(
+            (clinic_link.resolution_evidence or {}).get("user_id"),
+            self.admin.id,
+        )
         self.assertNotIn(
             self.enrollment.id,
             compute_exam_rankings(exam_id=exam.id, tenant=self.tenant),

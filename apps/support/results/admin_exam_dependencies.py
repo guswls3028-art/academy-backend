@@ -65,6 +65,19 @@ def get_enrollment_for_tenant(*, enrollment_id: int, tenant: Any) -> Any | None:
     return Enrollment.objects.filter(id=enrollment_id, tenant=tenant).first()
 
 
+def lock_enrollment_for_exam_state_transition(
+    *,
+    enrollment_id: int,
+    tenant: Any,
+) -> Any:
+    from apps.domains.enrollment.models import Enrollment
+
+    return Enrollment.objects.select_for_update().get(
+        id=int(enrollment_id),
+        tenant=tenant,
+    )
+
+
 def enrollment_exists_for_tenant(*, enrollment_id: int, tenant: Any) -> bool:
     from apps.domains.enrollment.models import Enrollment
 
@@ -149,3 +162,11 @@ def dispatch_progress_pipeline(**kwargs: Any) -> Any:
     from apps.domains.progress.dispatcher import dispatch_progress_pipeline as _dispatch
 
     return _dispatch(**kwargs)
+
+
+def resolve_exam_not_submitted_clinic_links(**kwargs: Any) -> int:
+    from apps.domains.progress.dispatcher import (
+        resolve_exam_not_submitted_clinic_links as _resolve,
+    )
+
+    return _resolve(**kwargs)

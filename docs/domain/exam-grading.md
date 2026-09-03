@@ -440,7 +440,12 @@ Ymath의 `Program.feature_flags.assessment_status_display=wrong_completion`은
   `ResultItem`은 OMR 값으로 잠기며, 선택형 OMR 결과가 완전하지 않으면
   답변형 성적 확정을 거부한다.
 - 학생을 `absent`로 확정하면 `NOT_SUBMITTED` attempt로 저장하고 점수,
-  평균, 석차, 합불, 문항 통계에서 0점 응시자로 계산하지 않는다.
+  평균, 석차, 합불, 문항 통계와 시험 요약의 응시자 수에서 0점 응시자로 계산하지 않는다.
+- 이 전환은 같은 transaction에서 대표 결과의 `total_score`와 `objective_score`를
+  0으로 정규화하고 문항 snapshot을 제거한다. 이전 실패 클리닉 링크는
+  `resolution_type=NOT_SUBMITTED` 감사 이력으로 닫고 오늘 대상 선택만 무효화한다.
+  이미 예약·등원·완료된 클리닉 참여 사실은 취소하지 않으며 전환 알림도 보내지
+  않는다. 동일 요청 재시도는 no-op 성공하고 이후 점수 입력은 합법적인 명시 재개다.
 - 일반 시험 재계산은 submission 다음 수강·결과·attempt 순서로 잠근 뒤
   `NOT_SUBMITTED`를 다시 확인한다. 수동 채점도 수강·결과·attempt 순서를 사용하므로
   두 경로가 역순 잠금으로 교착하지 않는다. 명시적인 응시 재개 없이 결시 attempt를
