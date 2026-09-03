@@ -30,13 +30,13 @@ def passcard_tenant_booking_q(*, tenant: Any) -> Q:
 def passcard_visible_booking_q(*, local_date=None) -> Q:
     """Bookings that remain visible in the student passcard projection."""
     effective_date = local_date or timezone.localdate()
-    return _scheduled_booking_q(
+    return (_scheduled_booking_q(
         statuses=(
             SessionParticipant.Status.PENDING,
             SessionParticipant.Status.BOOKED,
         ),
         local_date=effective_date,
-    ) | Q(
+    ) & Q(completed_at__isnull=True)) | Q(
         status=SessionParticipant.Status.ATTENDED,
         completed_at__isnull=True,
     )
@@ -45,10 +45,10 @@ def passcard_visible_booking_q(*, local_date=None) -> Q:
 def passcard_confirming_booking_q(*, local_date=None) -> Q:
     """Bookings that change CLINIC_REQUIRED to BOOKING_CONFIRMED."""
     effective_date = local_date or timezone.localdate()
-    return _scheduled_booking_q(
+    return (_scheduled_booking_q(
         statuses=(SessionParticipant.Status.BOOKED,),
         local_date=effective_date,
-    ) | Q(
+    ) & Q(completed_at__isnull=True)) | Q(
         status=SessionParticipant.Status.ATTENDED,
         completed_at__isnull=True,
     )

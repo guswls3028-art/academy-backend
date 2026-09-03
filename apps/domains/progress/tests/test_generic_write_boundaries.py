@@ -7,12 +7,14 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.progress.models import (
+    ClinicLink,
     LectureProgress,
     ProgressPolicy,
     RiskLog,
     SessionProgress,
 )
 from apps.domains.progress.views import (
+    ClinicLinkViewSet,
     LectureProgressViewSet,
     ProgressPolicyViewSet,
     RiskLogViewSet,
@@ -89,3 +91,28 @@ class DerivedProgressApiReadOnlyTests(TestCase):
                     pk=999,
                 )
                 self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    def test_clinic_link_state_owner_does_not_expose_generic_update_or_destroy(self):
+        cases = [
+            ("clinic-links", ClinicLinkViewSet, ClinicLink),
+        ]
+
+        for route, viewset, model in cases:
+            for action in ("update", "partial_update", "destroy"):
+                with self.subTest(route=route, action=action):
+                    self.assertFalse(hasattr(viewset, action))
+            self.assertFalse(model.objects.exists())
+            for method in ("patch", "delete"):
+                with self.subTest(route=route, method=method.upper()):
+                    response = viewset.as_view({"get": "retrieve"})(
+                        self._request(
+                            method,
+                            f"/api/v1/{route}/999/",
+                            {"status": "cancelled", "resolved_at": "2026-09-03T00:00:00Z"},
+                        ),
+                        pk=999,
+                    )
+                    self.assertEqual(
+                        response.status_code,
+                        status.HTTP_405_METHOD_NOT_ALLOWED,
+                    )

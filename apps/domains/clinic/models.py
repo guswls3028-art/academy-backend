@@ -238,6 +238,12 @@ class SessionParticipant(TimestampModel):
         on_delete=models.SET_NULL,
         related_name="clinic_completions",
     )
+    completion_history = models.JSONField(
+        default=list,
+        db_default=models.Value([], output_field=models.JSONField()),
+        blank=True,
+        help_text="완료/완료 취소의 append-only 감사 이력",
+    )
 
     memo = models.TextField(blank=True, null=True)
     student_request_memo = models.TextField(

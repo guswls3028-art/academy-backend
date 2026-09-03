@@ -1236,6 +1236,26 @@ class TenantIsolationAPITest(APITestCase, ClinicAPITestMixin):
         )
         self.assertEqual(resp.status_code, 200)
 
+    def test_participant_generic_update_and_destroy_are_not_exposed(self):
+        """Lifecycle actions, not generic detail writes, own participant state."""
+        self.client.force_authenticate(user=self.a["admin_user"])
+
+        patch_response = self.client.patch(
+            f"/api/v1/clinic/participants/{self.part_a.id}/",
+            {"status": "cancelled"},
+            format="json",
+            **self._headers(self.a["tenant"]),
+        )
+        delete_response = self.client.delete(
+            f"/api/v1/clinic/participants/{self.part_a.id}/",
+            **self._headers(self.a["tenant"]),
+        )
+
+        self.assertEqual(patch_response.status_code, 405)
+        self.assertEqual(delete_response.status_code, 405)
+        self.part_a.refresh_from_db()
+        self.assertEqual(self.part_a.status, SessionParticipant.Status.BOOKED)
+
     def test_tenant_a_cannot_create_participant_with_tenant_b_student(self):
         """tenant A session에 tenant B student를 꽂는 교차 테넌트 예약 생성 차단."""
         self.client.force_authenticate(user=self.a["admin_user"])
@@ -1483,6 +1503,31 @@ class CompleteBlockedAPITest(APITestCase, ClinicAPITestMixin):
         p.refresh_from_db()
         self.assertEqual(p.status, "attended")
         self.assertIsNone(p.completed_at)
+
+    def test_uncomplete_keeps_append_only_actor_audit_and_restores_passcard_projection(self):
+        p = self.make_participant(
+            self.tenant, self.data["clinic_session"],
+            self.data["students"][0], status="attended",
+        )
+        complete_resp = self.client.post(
+            f"/api/v1/clinic/participants/{p.id}/complete/",
+            **self._headers(self.tenant),
+        )
+        self.assertEqual(complete_resp.status_code, 200, complete_resp.data)
+
+        uncomplete_resp = self.client.post(
+            f"/api/v1/clinic/participants/{p.id}/uncomplete/",
+            **self._headers(self.tenant),
+        )
+
+        self.assertEqual(uncomplete_resp.status_code, 200, uncomplete_resp.data)
+        p.refresh_from_db()
+        self.assertEqual(
+            [entry["action"] for entry in p.completion_history],
+            ["complete", "uncomplete"],
+        )
+        self.assertTrue(all(entry["actor_id"] == self.data["admin_user"].id for entry in p.completion_history))
+        self.assertIsNotNone(p.completion_history[1]["previous_completed_at"])
 
 
 class ParticipantStatusTransitionAPITest(APITestCase, ClinicAPITestMixin):
@@ -2067,6 +2112,48 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
         self.assertEqual(passed.data["current_result"], "SUCCESS")
         self.assertEqual(passed.data["passcard_state"], "PASSED")
         self.assertFalse(is_highlighted())
+
+    @patch(
+        "apps.domains.clinic.views.participant_views._send_clinic_notification",
+        return_value={"requested": 1, "failed": 0},
+    )
+    def test_completed_attendance_correction_to_booked_does_not_restore_release(self, _notify):
+        enrollment = self.data["enrollments"][0]
+        self._make_live_exam_clinic_link(enrollment, self.data["lec_session"])
+        participant = self.make_participant(
+            self.tenant,
+            self.make_clinic_session(
+                self.tenant,
+                date=timezone.localdate(),
+                start_time=datetime.time(18, 0),
+                location="완료 정정실",
+            ),
+            self.student,
+            enrollment=enrollment,
+            status=SessionParticipant.Status.ATTENDED,
+        )
+        self.client.force_authenticate(user=self.data["admin_user"])
+        completed = self.client.post(
+            f"/api/v1/clinic/participants/{participant.id}/complete/",
+            **self._headers(self.tenant),
+        )
+        self.assertEqual(completed.status_code, 200, completed.data)
+        corrected = self.client.patch(
+            f"/api/v1/clinic/participants/{participant.id}/set_status/",
+            {"status": "booked"},
+            format="json",
+            **self._headers(self.tenant),
+        )
+        self.assertEqual(corrected.status_code, 200, corrected.data)
+
+        self.client.force_authenticate(user=self.student.user)
+        passcard = self.client.get(
+            "/api/v1/clinic/idcard/",
+            **self._headers(self.tenant),
+        )
+        self.assertEqual(passcard.data["passcard_state"], "CLINIC_REQUIRED")
+        self.assertFalse(passcard.data["can_leave"])
+        self.assertIsNone(passcard.data["current_booking"])
 
     def test_idcard_terminal_reservations_never_protect_unresolved_target(self):
         enrollment = self.data["enrollments"][0]

@@ -92,7 +92,7 @@ class ClinicTimeRequestAPITest(APITestCase, ClinicAPITestMixin):
 
         self.assertEqual(response.status_code, 400, response.data)
 
-    def test_generic_staff_patch_cannot_bypass_time_preference_validation(self):
+    def test_generic_staff_patch_is_not_exposed(self):
         participant = self.make_participant(
             self.tenant,
             self.session,
@@ -129,7 +129,7 @@ class ClinicTimeRequestAPITest(APITestCase, ClinicAPITestMixin):
 
             self.assertEqual(
                 response.status_code,
-                400,
+                405,
                 response.content.decode("utf-8", errors="replace"),
             )
             participant.refresh_from_db()

@@ -4,7 +4,7 @@ import logging
 from django.db import transaction
 from django.db.models import Prefetch
 from drf_spectacular.utils import OpenApiParameter, OpenApiTypes, extend_schema
-from rest_framework import viewsets, status
+from rest_framework import mixins, viewsets, status
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
@@ -156,7 +156,12 @@ def _send_clinic_notification(tenant, student, trigger, context=None, *, send_to
 # ============================================================
 # Participant
 # ============================================================
-class ParticipantViewSet(viewsets.ModelViewSet):
+class ParticipantViewSet(
+    mixins.CreateModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.ListModelMixin,
+    viewsets.GenericViewSet,
+):
     """
     ✅ 클리닉 예약 / 출석 / 미이행 / 취소 관리
     - 운영 핵심 엔드포인트
@@ -258,22 +263,6 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         if self.action == "bulk_create":
             return ClinicSessionParticipantBulkCreateSerializer
         return ClinicSessionParticipantSerializer
-
-    def update(self, request, *args, **kwargs):
-        protected_fields = (
-            "preferred_start_time",
-            "preferred_end_time",
-            "student_request_memo",
-        )
-        blocked = [field for field in protected_fields if field in request.data]
-        if blocked:
-            raise serializers.ValidationError(
-                {
-                    field: "예약 생성 또는 일정 변경 API에서만 수정할 수 있습니다."
-                    for field in blocked
-                }
-            )
-        return super().update(request, *args, **kwargs)
 
     def create(self, request, *args, **kwargs):
         """
@@ -591,6 +580,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         result = uncomplete_participant(
             tenant=getattr(request, "tenant", None),
             participant_id=self.get_object().pk,
+            actor=request.user,
         )
         obj = result.participant
 

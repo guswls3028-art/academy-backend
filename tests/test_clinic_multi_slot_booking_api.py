@@ -142,6 +142,32 @@ class ClinicMultiSlotBookingAPITest(APITestCase, ClinicAPITestMixin):
             ).exists()
         )
 
+    def test_student_bulk_booking_rejects_non_contiguous_sessions_atomically(self):
+        gap_session = self.make_clinic_session(
+            self.tenant,
+            date=self.tomorrow,
+            start_time=datetime.time(19, 0),
+            location="클리닉 1실",
+            max_participants=10,
+        )
+        self._allow_multiple(self.first_session, gap_session)
+        self.client.force_authenticate(user=self.student.user)
+
+        response = self.client.post(
+            "/api/v1/clinic/participants/bulk-create/",
+            {"session_ids": [self.first_session.id, gap_session.id]},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertFalse(
+            SessionParticipant.objects.filter(
+                tenant=self.tenant,
+                student=self.student,
+            ).exists()
+        )
+
     def test_staff_adds_multiple_students_to_multiple_slots_atomically(self):
         self._allow_multiple(self.first_session, self.second_session)
         self.client.force_authenticate(user=self.data["admin_user"])

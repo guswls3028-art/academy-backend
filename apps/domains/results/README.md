@@ -209,6 +209,11 @@ student, enrollment lecture, session lecture가 모두 요청 tenant에 속해�
 클리닉 수강완료 뒤 링크가 남아 있으면 즉시 `CLINIC_REQUIRED`/`true`로 돌아가며,
 모든 링크가 해소되면 `PASSED`/`false`다. 현재 대상 링크의 원본·완료 진행 상태와
 예약 판정은 패스카드, 대상자 목록, 성적표, 참가자 직렬화가 같은 공용 계산을 쓴다.
+`pending`/`booked` 행도 `completed_at`이 남아 있으면 새 예약이 아니므로 패스카드를
+보호하지 않는다. 따라서 완료 후 출석 상태만 `booked`로 정정해도
+`BOOKING_CONFIRMED`/`can_leave=true`로 되돌아가지 않는다. `linked_bookings`는 취소·
+거절 참가자를 방어적으로 제외하며, 일정 변경 service가 유효한 오늘 계획을 새 참가자
+행으로 옮긴 뒤에만 새 예약을 권위 연결로 반환한다.
 
 Session Assessment Inspection
 -----------------------------

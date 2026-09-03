@@ -2,7 +2,7 @@
 from rest_framework import status as drf_status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.viewsets import ModelViewSet, ReadOnlyModelViewSet
+from rest_framework.viewsets import ReadOnlyModelViewSet
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.filters import SearchFilter, OrderingFilter
 from django_filters.rest_framework import DjangoFilterBackend
@@ -78,7 +78,7 @@ class LectureProgressViewSet(ReadOnlyModelViewSet):
         return LectureProgress.objects.filter(lecture__tenant=tenant).select_related("lecture", "last_session")
 
 
-class ClinicLinkViewSet(ModelViewSet):
+class ClinicLinkViewSet(ReadOnlyModelViewSet):
     serializer_class = ClinicLinkSerializer
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 

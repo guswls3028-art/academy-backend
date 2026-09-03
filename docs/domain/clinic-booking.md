@@ -18,6 +18,9 @@
 - 세션의 `allow_multi_slot_booking`이 `false`이면 학생 한 명은 해당 날짜에
   `pending` 또는 `booked` 예약을 하나만 가질 수 있다. `true`인 세션끼리만
   같은 날짜의 여러 시간대를 예약할 수 있다.
+- 여러 시간대를 한 요청으로 선택할 때는 시작 시각 순으로 앞 세션의 종료 시각과
+  다음 세션의 시작 시각이 정확히 이어져야 한다. 중간 공백이나 겹침이 있으면
+  참가자를 하나도 만들지 않고 `400`으로 실패한다.
 
 프론트엔드 상호작용 계약은 학생 앱
 `src/app_student/domains/clinic/README.md`와 선생님 앱
@@ -53,6 +56,8 @@
 - 세션 또는 학생이 없거나 다른 테넌트에 속하면 존재를 추정하지 않고 실패한다.
 - 여러 시간대를 선택했는데 하나라도 `allow_multi_slot_booking=false`이면 아무
   참가자도 만들지 않고 `409`로 실패한다.
+- 같은 날짜의 허용 세션들이어도 서로 연속하지 않으면 아무 참가자도 만들지 않고
+  `400`으로 실패한다.
 
 ## 세션 정책과 초기값
 
@@ -80,7 +85,7 @@ tenant를 추정하지 않고 실패 폐쇄한다.
 단일 생성, 학생 bulk, 교직원 bulk, 일정 변경이 모두 같은 학생 row lock을
 사용하므로 서로 다른 세션을 향한 동시 요청도 같은 날짜 정책을 우회하지 못한다.
 이후 기존 단일 참가자 생성 규칙을 학생 × 세션 조합마다 적용한다.
-정원 마감, 잘못된 대상, 권한 오류가 하나라도 발생하면 요청 전체를 롤백한다.
+정원 마감, 비연속 시간대, 잘못된 대상, 권한 오류가 하나라도 발생하면 요청 전체를 롤백한다.
 따라서 2명 × 2시간대 요청이 일부만 저장되는 상태는 없다.
 
 이미 같은 학생·세션의 활성 예약이 있거나 같은 날짜 정책이 충돌하면 단일 생성과
@@ -93,6 +98,20 @@ bulk 모두 `409`로 거부하고 요청 전체를 롤백한다. 일정 변경�
 다중 예약은 기존 `SessionParticipant` 행들의 집합이므로 조회·출석·취소·패스카드
 규칙을 그대로 따른다. 학생 직접 예약 생성·일정 변경·취소 알림은 기존 계약대로
 학생과 학부모 모두에게 보내며, 교직원 수신자 선택 규칙은 변경하지 않는다.
+
+참가자와 보충 대상의 상태 변경은 일반 detail `PATCH/PUT/DELETE`로 허용하지 않는다.
+예약 생성·일정 변경·상태 변경·완료·완료 취소·하원·오늘 계획 action만 각 service의
+잠금과 감사 규칙을 통과한다. 일정 변경은 이전 참가자의 반복 알림을 취소하고, 이전
+오늘 계획 행을 `booking_changed`로 닫은 뒤 새 세션의 대상 강의에도 유효한 항목만 새
+참가자에게 원자적으로 이어 준다. 취소·거절은 오늘 계획을 각각
+`booking_cancelled`/`booking_rejected`로 닫는다. 세션 삭제도 cascade 전에 해당
+참가자의 미래 반복 알림을 취소·redact한다. 예약 알림 dispatcher는 lifecycle 정리가
+누락된 과거 행도 현재 tenant의 `booked` 참가자인지 다시 확인하고 아니면 발송하지 않는다.
+
+자율학습 완료와 완료 취소는 `completion_history`에 actor와 시각을 append-only로
+남긴다. 완료 취소는 현재 `completed_at/by`만 비우며 기존 완료 감사와 이미 생성된
+알림 이력을 삭제하지 않는다. 별도 승인된 정정 템플릿이 없으므로 다른 trigger를
+대용하지 않는다.
 
 ## 미등원 하원 감사 계약
 
@@ -122,6 +141,9 @@ bulk 모두 `409`로 거부하고 요청 전체를 롤백한다. 일정 변경�
 - tenant/session 정책: `apps/core/models/tenant.py`, `apps/domains/clinic/models.py`
 - 집중 API 회귀: `tests/test_clinic_multi_slot_booking_api.py`
 - 하원·등원 독립 회귀: `tests/test_clinic_operations_workflow_api.py`
+- 상태 소유권·오늘 계획·패스카드·완료 감사 회귀:
+  `apps/domains/progress/tests/test_generic_write_boundaries.py`,
+  `tests/test_clinic_participant_plan_api.py`, `apps/domains/clinic/tests.py`
 
 ```powershell
 $env:DJANGO_SETTINGS_MODULE='apps.api.config.settings.test'

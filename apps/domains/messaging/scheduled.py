@@ -537,6 +537,22 @@ def _claim_due_notifications(
             )
 
         for notification in due:
+            if _clinic_participant_reminder_is_stale(notification):
+                notification.status = ScheduledNotification.Status.CANCELLED
+                notification.next_attempt_at = None
+                notification.error_message = "clinic_participant_closed"
+                notification.payload = redact_terminal_delivery_payload(
+                    trigger=notification.trigger,
+                    payload=notification.payload,
+                )
+                notification.save(update_fields=[
+                    "status",
+                    "next_attempt_at",
+                    "error_message",
+                    "payload",
+                ])
+                terminal_count += 1
+                continue
             terminal_error = _terminal_payload_error(notification.payload)
             if not terminal_error:
                 terminal_error = _terminal_policy_error(
@@ -686,6 +702,28 @@ def _claim_due_notifications(
                 )
             )
     return claims, terminal_count, deferred_count, reconciled_count
+
+
+def _clinic_participant_reminder_is_stale(notification) -> bool:
+    if notification.trigger != "clinic_reminder":
+        return False
+    origin_id = str(notification.origin_id or "")
+    prefix = "clinic_participant:"
+    marker = ":manual_reminder:"
+    if not origin_id.startswith(prefix) or marker not in origin_id:
+        return False
+    participant_text = origin_id[len(prefix):].split(marker, 1)[0]
+    try:
+        participant_id = int(participant_text)
+    except (TypeError, ValueError):
+        return True
+
+    from apps.domains.clinic.contracts import is_clinic_participant_reminder_active
+
+    return not is_clinic_participant_reminder_active(
+        participant_id=participant_id,
+        tenant_id=notification.tenant_id,
+    )
 
 
 def process_due_notifications(
