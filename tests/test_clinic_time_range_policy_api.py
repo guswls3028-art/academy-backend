@@ -10,7 +10,7 @@ from rest_framework.test import APITestCase
 
 from apps.core.models import TenantMembership
 from apps.domains.clinic.models import SessionParticipant
-from apps.domains.clinic.services.lifecycle import create_participant
+from apps.domains.clinic.services.lifecycle import booking_availability_for_session, create_participant
 from apps.domains.messaging.models import NotificationLog, ScheduledNotification
 from apps.domains.clinic.tests import ClinicAPITestMixin
 
@@ -144,6 +144,54 @@ class ClinicTimeRangePolicyAPITest(APITestCase, ClinicAPITestMixin):
         self.assertEqual(fixed.booking_mode, "fixed_slot")
         self.assertIsNone(participant.booking_start_time)
         self.assertIsNone(participant.booking_end_time)
+
+    def test_range_list_and_tree_stay_open_when_total_bookings_exceed_capacity(self):
+        for student, start, end in zip(
+            self.students, ["10:00", "11:00", "12:00"], ["11:00", "12:00", "13:00"]
+        ):
+            self.assertEqual(self._book(student, start=start, end=end).status_code, 201)
+        for user in (self.admin, self.students[0].user):
+            self.client.force_authenticate(user=user)
+            response = self.client.get("/api/v1/clinic/sessions/", **self._headers())
+            self.assertEqual(response.status_code, 200, response.data)
+            rows = response.data if isinstance(response.data, list) else response.data["results"]
+            row = next(row for row in rows if row["id"] == self.session.id)
+            self.assertEqual(row["booked_count"], 3)
+            self.assertFalse(row["is_full"])
+            self.assertEqual(row["available_slots"], 2)
+        self.client.force_authenticate(user=self.admin)
+        tree = self.client.get(
+            "/api/v1/clinic/sessions/tree/",
+            {"year": self.session.date.year, "month": self.session.date.month},
+            **self._headers(),
+        )
+        row = next(row for row in tree.data if row["id"] == self.session.id)
+        self.assertEqual(row["booking_mode"], "time_range")
+        self.assertEqual(row["booking_interval_minutes"], 30)
+        self.assertEqual(row["booking_max_stay_minutes"], 180)
+        self.assertFalse(row["is_full"])
+
+    def test_range_summary_is_full_only_when_every_interval_is_full_including_attended(self):
+        self.session.duration_minutes = 60
+        self.session.max_participants = 1
+        self.session.save(update_fields=["duration_minutes", "max_participants"])
+        self.assertEqual(self._book(self.students[0], start="09:00", end="09:30").status_code, 201)
+        self.assertEqual(self._book(self.students[1], start="09:30", end="10:00").status_code, 201)
+        SessionParticipant.objects.filter(tenant=self.tenant, session=self.session).update(status="attended")
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.get(f"/api/v1/clinic/sessions/{self.session.id}/", **self._headers())
+        self.assertTrue(response.data["is_full"])
+        self.assertEqual(response.data["available_slots"], 0)
+        SessionParticipant.objects.filter(tenant=self.tenant, student=self.students[1]).update(status="cancelled")
+        response = self.client.get(f"/api/v1/clinic/sessions/{self.session.id}/", **self._headers())
+        self.assertFalse(response.data["is_full"])
+        self.assertEqual(response.data["available_slots"], 1)
+
+    def test_availability_does_not_query_per_time_interval(self):
+        self.assertEqual(self._book(self.students[0]).status_code, 201)
+        with self.assertNumQueries(1):
+            availability = booking_availability_for_session(tenant=self.tenant, session=self.session)
+        self.assertEqual(len(availability["slots"]), 16)
 
 
 class ClinicCapabilityAndContactAPITest(APITestCase, ClinicAPITestMixin):

@@ -86,6 +86,13 @@
 구간 정원을 초과할 수 없다. 고정 시간대 정원 계산은 기존 pending/booked 계약을
 그대로 유지한다.
 
+목록·상세·운영 tree의 `is_full`도 같은 구간별 계산을 사용한다. `time_range`는
+모든 구간이 마감일 때만 전체 마감이고, `available_slots`는 구간 중 가장 큰 잔여
+정원이다. 누적 예약 인원이 동시 정원을 넘더라도 열린 구간을 숨기지 않는다.
+운영 tree는 예약 방식·간격·최대 체류 snapshot을 함께 내려주고, 화면은 시간 범위
+수업의 누적 예약 인원과 동시 정원을 구분한다. 목록 조회는 tenant-scoped 활성
+예약을 한 번에 prefetch하므로 세션 수나 시간 구간 수만큼 추가 쿼리가 발생하지 않는다.
+
 `Tenant.clinic_allow_multi_slot_booking_default`는 새 세션의 기본값이고,
 `Session.allow_multi_slot_booking`은 생성 시점에 그 값을 복사한 snapshot이다.
 세션 생성 요청이 값을 명시하면 명시값이 우선하며, 이후 테넌트 기본값을 바꿔도

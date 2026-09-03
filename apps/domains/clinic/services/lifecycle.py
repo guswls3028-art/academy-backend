@@ -997,30 +997,30 @@ def booking_availability_for_session(*, tenant, session: Session) -> dict[str, A
     start = datetime.datetime.combine(session.date, session.start_time)
     end = start + datetime.timedelta(minutes=session.duration_minutes)
     slots = []
+    active = getattr(session, "booking_capacity_participants", None)
+    if active is None or session.booking_mode == "fixed_slot":
+        active = list(SessionParticipant.objects.filter(
+            tenant=tenant,
+            session=session,
+            status__in=(
+                SessionParticipant.Status.PENDING,
+                SessionParticipant.Status.BOOKED,
+                *([SessionParticipant.Status.ATTENDED] if session.booking_mode == "time_range" else []),
+            ),
+        ).only("booking_start_time", "booking_end_time"))
     cursor = start
     while cursor < end:
         next_cursor = min(cursor + datetime.timedelta(minutes=interval), end)
         if session.booking_mode == "time_range":
-            used = SessionParticipant.objects.filter(
-                tenant=tenant,
-                session=session,
-                status__in=(
-                    SessionParticipant.Status.PENDING,
-                    SessionParticipant.Status.BOOKED,
-                    SessionParticipant.Status.ATTENDED,
-                ),
-                booking_start_time__lt=next_cursor.time(),
-                booking_end_time__gt=cursor.time(),
-            ).count()
+            used = sum(
+                participant.booking_start_time is not None
+                and participant.booking_end_time is not None
+                and participant.booking_start_time < next_cursor.time()
+                and participant.booking_end_time > cursor.time()
+                for participant in active
+            )
         else:
-            used = SessionParticipant.objects.filter(
-                tenant=tenant,
-                session=session,
-                status__in=(
-                    SessionParticipant.Status.PENDING,
-                    SessionParticipant.Status.BOOKED,
-                ),
-            ).count()
+            used = len(active)
         slots.append({
             "start_time": cursor.time().strftime("%H:%M"),
             "end_time": next_cursor.time().strftime("%H:%M"),

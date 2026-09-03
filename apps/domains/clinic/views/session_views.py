@@ -2,7 +2,7 @@
 import logging
 
 from django.db import IntegrityError, transaction
-from django.db.models import Count, Q, Exists, OuterRef
+from django.db.models import Count, Q, Exists, OuterRef, Prefetch
 from django.http import Http404
 from django.utils import timezone
 from drf_spectacular.utils import OpenApiParameter, OpenApiTypes, extend_schema
@@ -87,6 +87,22 @@ class SessionViewSet(viewsets.ModelViewSet):
     ordering_fields = ["date", "start_time", "created_at", "id"]
     ordering = ["-date", "-start_time", "-id"]
 
+    @staticmethod
+    def _booking_capacity_prefetch(tenant):
+        return Prefetch(
+            "participants",
+            queryset=SessionParticipant.objects.filter(
+                tenant=tenant,
+                session__booking_mode="time_range",
+                status__in=(
+                    SessionParticipant.Status.PENDING,
+                    SessionParticipant.Status.BOOKED,
+                    SessionParticipant.Status.ATTENDED,
+                ),
+            ).only("session_id", "booking_start_time", "booking_end_time"),
+            to_attr="booking_capacity_participants",
+        )
+
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)
         if not tenant:
@@ -96,7 +112,7 @@ class SessionViewSet(viewsets.ModelViewSet):
         qs = (
             Session.objects
             .filter(tenant=tenant)
-            .prefetch_related("target_lectures")
+            .prefetch_related("target_lectures", self._booking_capacity_prefetch(tenant))
             .annotate(
                 participant_count=Count("participants", distinct=True),
                 booked_count=Count(
@@ -361,6 +377,7 @@ class SessionViewSet(viewsets.ModelViewSet):
                 date__month=month,
             )
             .select_related("section")
+            .prefetch_related(self._booking_capacity_prefetch(tenant))
             .annotate(
                 participant_count=Count("participants"),
                 booked_count=Count(
@@ -396,6 +413,7 @@ class SessionViewSet(viewsets.ModelViewSet):
         elif section_id is not None:
             qs = qs.filter(section_id=section_id)
 
+        capacity_serializer = self.get_serializer()
         data = [
             {
                 "id": s.id,
@@ -417,6 +435,10 @@ class SessionViewSet(viewsets.ModelViewSet):
                 "section_label": s.section.label if s.section_id else None,
                 "section_type": s.section.section_type if s.section_id else None,
                 "allow_multi_slot_booking": s.allow_multi_slot_booking,
+                "booking_mode": s.booking_mode,
+                "booking_interval_minutes": s.booking_interval_minutes,
+                "booking_max_stay_minutes": s.booking_max_stay_minutes,
+                "is_full": capacity_serializer.get_is_full(s),
             }
             for s in qs
         ]
