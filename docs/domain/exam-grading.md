@@ -433,8 +433,9 @@ Ymath의 `Program.feature_flags.assessment_status_display=wrong_completion`은
   평균, 석차, 합불, 문항 통계에서 0점 응시자로 계산하지 않는다.
 - 일반 시험 재계산은 submission 다음 수강·결과·attempt 순서로 잠근 뒤
   `NOT_SUBMITTED`를 다시 확인한다. 수동 채점도 수강·결과·attempt 순서를 사용하므로
-  두 경로가 역순 잠금으로 교착하지 않는다. 명시적인 응시 재개 없이 결시 attempt를 reopen하거나 점수·`ResultItem`·
-  오답·클리닉을 다시 만들지 않는다. 재계산과 결시 확정이 동시에 실행되면 먼저 잠금을
+  두 경로가 역순 잠금으로 교착하지 않는다. 명시적인 응시 재개 없이 결시 attempt를
+  reopen하거나 점수·`ResultItem`·오답·클리닉을 다시 만들지 않는다. 재계산과 결시
+  확정이 동시에 실행되면 먼저 잠금을
   얻은 작업 뒤에 두 번째 작업이 최신 상태를 다시 읽어 최종 결시 상태를 보존한다.
 
 AI OMR 성공 콜백은 인식 fact를 저장한 뒤 같은 worker 프로세스에서 채점과

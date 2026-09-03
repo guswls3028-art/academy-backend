@@ -58,7 +58,7 @@ def rebind_representative_omr_submission(
     from django.db import transaction
     from django.utils import timezone
 
-    from apps.domains.results.models import ExamAttempt, Result
+    from apps.domains.results.models import ExamAttempt
     from apps.domains.submissions.models import Submission
 
     with transaction.atomic():
