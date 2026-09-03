@@ -1127,6 +1127,19 @@ def create_participants_bulk(
         not session.allow_multi_slot_booking for session in sessions
     ):
         raise Conflict("선택한 클리닉 중 같은 날 여러 시간대 예약을 허용하지 않는 세션이 있습니다.")
+    for previous, current in zip(sessions, sessions[1:]):
+        previous_start = datetime.datetime.combine(
+            previous.date,
+            previous.start_time,
+        )
+        previous_end = previous_start + datetime.timedelta(
+            minutes=previous.duration_minutes,
+        )
+        current_start = datetime.datetime.combine(current.date, current.start_time)
+        if previous_end != current_start:
+            raise ValidationError(
+                {"session_ids": "여러 시간대는 빈 시간 없이 연속해서 선택해 주세요."}
+            )
 
     participants: list[SessionParticipant] = []
     notifications: list[ClinicNotificationEvent] = []

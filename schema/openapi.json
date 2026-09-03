@@ -1279,6 +1279,9 @@
             "readOnly": true,
             "type": "string"
           },
+          "completion_history": {
+            "readOnly": true
+          },
           "created_at": {
             "format": "date-time",
             "readOnly": true,
@@ -1428,6 +1431,7 @@
         "required": [
           "checked_out_by_name",
           "completed_by_name",
+          "completion_history",
           "created_at",
           "enrollment_id",
           "id",
@@ -7440,61 +7444,6 @@
             "maxLength": 50,
             "minLength": 1,
             "type": "string"
-          }
-        },
-        "type": "object"
-      },
-      "PatchedClinicLinkRequest": {
-        "properties": {
-          "approved": {
-            "type": "boolean"
-          },
-          "cycle_no": {
-            "description": "클리닉 차수: 1차, 2차, 3차...",
-            "format": "int64",
-            "maximum": 9223372036854775807,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "is_auto": {
-            "type": "boolean"
-          },
-          "memo": {
-            "nullable": true,
-            "type": "string"
-          },
-          "meta": {
-            "nullable": true
-          },
-          "reason": {
-            "$ref": "#/components/schemas/ClinicLinkReasonEnum"
-          },
-          "resolution_evidence": {
-            "description": "해소 근거: {exam_id, attempt_id, homework_id, score, ...}",
-            "nullable": true
-          },
-          "resolution_type": {
-            "description": "해소 유형: 시험통과/과제통과/수동해소/면제/원본삭제/시험미응시/레거시\n\n* `EXAM_PASS` - 시험 통과\n* `HOMEWORK_PASS` - 과제 통과\n* `MANUAL_OVERRIDE` - 관리자 수동 해소\n* `WAIVED` - 면제\n* `CARRIED_OVER` - 다음 차수로 이월\n* `SOURCE_REMOVED` - 원본 삭제\n* `NOT_SUBMITTED` - 시험 미응시 전환\n* `BOOKING_LEGACY` - 레거시(예약 기반)",
-            "nullable": true,
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/ClinicLinkResolutionTypeEnum"
-              },
-              {
-                "$ref": "#/components/schemas/BlankEnum"
-              },
-              {
-                "$ref": "#/components/schemas/NullEnum"
-              }
-            ]
-          },
-          "resolved_at": {
-            "format": "date-time",
-            "nullable": true,
-            "type": "string"
-          },
-          "session": {
-            "type": "integer"
           }
         },
         "type": "object"
@@ -18273,36 +18222,6 @@
       }
     },
     "/api/v1/clinic/participants/{id}/": {
-      "delete": {
-        "description": "✅ 클리닉 예약 / 출석 / 미이행 / 취소 관리\n- 운영 핵심 엔드포인트",
-        "operationId": "clinic_participants_destroy",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "No response body"
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "clinic"
-        ]
-      },
       "get": {
         "description": "✅ 클리닉 예약 / 출석 / 미이행 / 취소 관리\n- 운영 핵심 엔드포인트",
         "operationId": "clinic_participants_retrieve",
@@ -18316,119 +18235,6 @@
             }
           }
         ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ClinicSessionParticipant"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "clinic"
-        ]
-      },
-      "patch": {
-        "description": "✅ 클리닉 예약 / 출석 / 미이행 / 취소 관리\n- 운영 핵심 엔드포인트",
-        "operationId": "clinic_participants_partial_update",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchedClinicSessionParticipantRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchedClinicSessionParticipantRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchedClinicSessionParticipantRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ClinicSessionParticipant"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "clinic"
-        ]
-      },
-      "put": {
-        "description": "✅ 클리닉 예약 / 출석 / 미이행 / 취소 관리\n- 운영 핵심 엔드포인트",
-        "operationId": "clinic_participants_update",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ClinicSessionParticipantRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/ClinicSessionParticipantRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/ClinicSessionParticipantRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "content": {
@@ -37336,85 +37142,9 @@
         "tags": [
           "progress"
         ]
-      },
-      "post": {
-        "operationId": "progress_clinic_links_create",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ClinicLinkRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/ClinicLinkRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/ClinicLinkRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ClinicLink"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "progress"
-        ]
       }
     },
     "/api/v1/progress/clinic-links/{id}/": {
-      "delete": {
-        "operationId": "progress_clinic_links_destroy",
-        "parameters": [
-          {
-            "description": "clinic link을 식별하는 고유한 정수 값.",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "No response body"
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "progress"
-        ]
-      },
       "get": {
         "operationId": "progress_clinic_links_retrieve",
         "parameters": [
@@ -37428,119 +37158,6 @@
             }
           }
         ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ClinicLink"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "progress"
-        ]
-      },
-      "patch": {
-        "operationId": "progress_clinic_links_partial_update",
-        "parameters": [
-          {
-            "description": "clinic link을 식별하는 고유한 정수 값.",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchedClinicLinkRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchedClinicLinkRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchedClinicLinkRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ClinicLink"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "progress"
-        ]
-      },
-      "put": {
-        "operationId": "progress_clinic_links_update",
-        "parameters": [
-          {
-            "description": "clinic link을 식별하는 고유한 정수 값.",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ClinicLinkRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/ClinicLinkRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/ClinicLinkRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "content": {
@@ -38675,36 +38292,6 @@
       }
     },
     "/api/v1/results/admin/clinic-bookings/{id}/": {
-      "delete": {
-        "description": "✅ 클리닉 예약 / 출석 / 미이행 / 취소 관리\n- 운영 핵심 엔드포인트",
-        "operationId": "results_admin_clinic_bookings_destroy",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "No response body"
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "results"
-        ]
-      },
       "get": {
         "description": "✅ 클리닉 예약 / 출석 / 미이행 / 취소 관리\n- 운영 핵심 엔드포인트",
         "operationId": "results_admin_clinic_bookings_retrieve",
@@ -38718,119 +38305,6 @@
             }
           }
         ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ClinicSessionParticipant"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "results"
-        ]
-      },
-      "patch": {
-        "description": "✅ 클리닉 예약 / 출석 / 미이행 / 취소 관리\n- 운영 핵심 엔드포인트",
-        "operationId": "results_admin_clinic_bookings_partial_update",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchedClinicSessionParticipantRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchedClinicSessionParticipantRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchedClinicSessionParticipantRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ClinicSessionParticipant"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "jwtAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
-        "tags": [
-          "results"
-        ]
-      },
-      "put": {
-        "description": "✅ 클리닉 예약 / 출석 / 미이행 / 취소 관리\n- 운영 핵심 엔드포인트",
-        "operationId": "results_admin_clinic_bookings_update",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ClinicSessionParticipantRequest"
-              }
-            },
-            "application/x-www-form-urlencoded": {
-              "schema": {
-                "$ref": "#/components/schemas/ClinicSessionParticipantRequest"
-              }
-            },
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/ClinicSessionParticipantRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "content": {
