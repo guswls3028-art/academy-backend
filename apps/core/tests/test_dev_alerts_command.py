@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 
 from apps.core.management.commands import check_dev_alerts as alerts
 from apps.core.models import OpsAuditLog
@@ -167,3 +167,20 @@ class DevAlertsCommandTests(TestCase):
                  .order_by("id").values_list("result", flat=True)),
             ["failed", "success"],
         )
+
+
+class DevAlertsEvaluatorImportTests(SimpleTestCase):
+    def test_import_failures_cannot_be_reported_as_no_findings(self):
+        original_import = builtins.__import__
+
+        def failing_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "apps.core.models":
+                raise ImportError("synthetic unavailable model")
+            return original_import(name, globals, locals, fromlist, level)
+
+        for evaluate in (alerts.rule_unanswered_inbox, alerts.rule_stale_workers, alerts.rule_circuit_breaker_open):
+            with self.subTest(rule=evaluate.__name__):
+                with patch("builtins.__import__", side_effect=failing_import):
+                    with self.assertRaises(ImportError):
+                        evaluate()
+import builtins

@@ -67,3 +67,13 @@ class MessagingDeliveryAlertTests(TestCase):
         self.assertEqual(result["rows"][0]["tenant"], self.customer.code)
         self.assertEqual(result["rows"][0]["state"], "retryable_failed")
         self.assertEqual(result["rows"][0]["count"], 1)
+
+    @patch("apps.domains.messaging.services.solapi_client.get_solapi_client")
+    def test_provider_failure_alert_and_logs_exclude_raw_response(self, get_client):
+        sentinel = "synthetic-private-provider-response"
+        get_client.return_value.get_balance.side_effect = RuntimeError(sentinel)
+        with self.assertLogs("apps.core.management.commands.check_dev_alerts", level="WARNING") as logs:
+            result = rule_messaging_delivery_health()
+        self.assertEqual(result["rows"], [{"provider_balance_check": "request_failed"}])
+        self.assertNotIn(sentinel, str(result))
+        self.assertNotIn(sentinel, "\n".join(logs.output))

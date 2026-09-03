@@ -250,15 +250,9 @@ def rule_audit_failed_24h(threshold: int = 5):
 
 def rule_unanswered_inbox(min_age_hours: int = 24):
     """생성된 지 N시간 이상 지난 비공개 지원 티켓과 플랫폼 도입 문의."""
-    try:
-        from apps.core.models import LandingConsultRequest
-        from apps.core.services.platform_inbox import PROMO_LEAD_SOURCES
-        from apps.domains.community.models import (
-            PostEntity,
-            platform_support_q,
-        )
-    except Exception:
-        return None
+    from apps.core.models import LandingConsultRequest
+    from apps.core.services.platform_inbox import PROMO_LEAD_SOURCES
+    from apps.domains.community.models import PostEntity, platform_support_q
     from django.db.models import F, Max, Q
 
     since = timezone.now() - timedelta(hours=min_age_hours)
@@ -470,11 +464,8 @@ def rule_user_incidents(window_minutes: int | None = None):
 
 def rule_stale_workers(min_age_minutes: int = 5):
     """N분+ heartbeat 미갱신 워커. SQS 워커 process 멈춤 즉시 감지."""
-    try:
-        from apps.core.models import WorkerHeartbeatModel
-        from apps.shared.utils.heartbeat import HEARTBEAT_RETENTION_HOURS
-    except Exception:
-        return None
+    from apps.core.models import WorkerHeartbeatModel
+    from apps.shared.utils.heartbeat import HEARTBEAT_RETENTION_HOURS
     now = timezone.now()
     cutoff = now - timedelta(minutes=min_age_minutes)
     alert_floor = now - timedelta(hours=HEARTBEAT_RETENTION_HOURS)
@@ -509,10 +500,7 @@ def rule_stale_workers(min_age_minutes: int = 5):
 
 def rule_circuit_breaker_open():
     """현재 open 상태인 외부 API circuit (in-memory state는 alert에서 안 잡힘 → ops_audit 기반)."""
-    try:
-        from apps.core.models import OpsAuditLog
-    except Exception:
-        return None
+    from apps.core.models import OpsAuditLog
     # 최근 30분 내 circuit_open 액션 (해소되지 않은 상태)
     since = timezone.now() - timedelta(minutes=30)
     qs = OpsAuditLog.objects.filter(action="circuit.open", created_at__gte=since).order_by("-created_at")
@@ -585,7 +573,7 @@ def rule_messaging_delivery_health(window_minutes: int = 30):
     except (InvalidOperation, TypeError, ValueError):
         rows.append({"provider_balance_check": "invalid_response"})
     except Exception as exc:
-        logger.warning("Solapi balance check failed: %s", exc)
+        logger.warning("Solapi balance check failed (%s)", type(exc).__name__)
         rows.append({"provider_balance_check": "request_failed"})
 
     if not rows:
