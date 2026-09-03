@@ -3,6 +3,12 @@
 from django.db import migrations, models
 
 
+ACADEMY_MIGRATION_PHASE = "contract"
+ACADEMY_MIGRATION_REASON = (
+    "새 예약 정책 필드는 모든 기존 행에 유효한 DB 기본값을 함께 넣고, 제약은 이후의 잘못된 정책 쓰기만 차단한다."
+)
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
