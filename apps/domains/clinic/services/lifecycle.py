@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import datetime
-import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -414,7 +413,7 @@ def _reservation_notification(participant: SessionParticipant) -> ClinicNotifica
             "장소": getattr(session, "location", "") if session else "",
             "날짜": str(session.date) if session and session.date else "",
             "시간": str(session.start_time)[:5] if session and getattr(session, "start_time", None) else "",
-            "_domain_object_id": f"clinic_participant_{participant.pk}",
+            "_domain_object_id": f"clinic_participant:{participant.pk}:reservation",
         },
     )
 
@@ -433,7 +432,7 @@ def _booking_change_notification(
             session=new_session,
             old_session=old_session,
             actor=actor,
-            domain_object_id=f"booking_change_{new_booking.pk}",
+            domain_object_id=f"clinic_participant:{new_booking.pk}:booking_change",
         ),
     )
 
@@ -468,7 +467,10 @@ def _status_notification(
         "장소": f"[취소] {location}" if is_cancel else f"[결석] {location}" if is_absent else location,
         "날짜": date,
         "시간": f"취소({start_time})" if is_cancel else f"결석({start_time})" if is_absent else start_time,
-        "_domain_object_id": f"participant_{participant.pk}_{next_status}_{int(time.time())}",
+        "_domain_object_id": (
+            f"clinic_participant:{participant.pk}:{trigger}:"
+            f"{int((participant.status_changed_at or timezone.now()).timestamp())}"
+        ),
     }
     if is_cancel:
         context.update(
@@ -502,7 +504,10 @@ def _complete_notification(participant: SessionParticipant) -> ClinicNotificatio
             "장소": getattr(session, "location", "") if session else "",
             "날짜": str(session.date) if session and session.date else now.strftime("%Y-%m-%d"),
             "시간": now.strftime("%H:%M"),
-            "_domain_object_id": str(participant.pk),
+            "_domain_object_id": (
+                f"clinic_participant:{participant.pk}:completed:"
+                f"{int((participant.completed_at or now).timestamp())}"
+            ),
         },
     )
 
@@ -523,7 +528,10 @@ def _checkout_notification(participant: SessionParticipant) -> ClinicNotificatio
             ),
             "시간": checked_out_at.strftime("%H:%M"),
             "_actual_time": checked_out_at.strftime("%H:%M"),
-            "_domain_object_id": f"participant_{participant.pk}_checkout",
+            "_domain_object_id": (
+                f"clinic_participant:{participant.pk}:checkout:"
+                f"{int(checked_out_at.timestamp())}"
+            ),
         },
     )
 
@@ -684,15 +692,15 @@ def checkout_participant(
     if not arrival_recorded:
         if not confirm_without_arrival:
             raise ValidationError(
-                {"detail": "등원 기록 없이 하원하려면 미등원 하원을 명시적으로 확인해 주세요."}
+                {"detail": "등원 기록 없이 하원하려면 현재 학생과 일정을 명시적으로 확인해 주세요."}
             )
         if expected_session_id is None or expected_student_id is None:
             raise ValidationError(
-                {"detail": "미등원 하원은 현재 클리닉 일정과 학생을 다시 확인해야 합니다."}
+                {"detail": "등원 기록 없는 하원은 현재 클리닉 일정과 학생을 다시 확인해야 합니다."}
             )
         if participant.session_id is None or participant.status != SessionParticipant.Status.BOOKED:
             raise ValidationError(
-                {"detail": "예약 확정 상태의 클리닉 참가자만 미등원 하원 처리할 수 있습니다."}
+                {"detail": "예약 확정 상태의 클리닉 참가자만 등원 기록 없이 하원 처리할 수 있습니다."}
             )
 
     participant.checked_out_at = timezone.now()
@@ -871,6 +879,51 @@ def _validated_time_preference(
     return preferred_start_time, preferred_end_time
 
 
+def _validated_booking_range(
+    *,
+    session: Session | None,
+    booking_start_time,
+    booking_end_time,
+) -> tuple[datetime.time | None, datetime.time | None]:
+    """Validate the actual reservation interval independently from preferences."""
+
+    if session is None or session.booking_mode == "fixed_slot":
+        if booking_start_time is not None or booking_end_time is not None:
+            raise ValidationError(
+                {"booking_time": "고정 시간대 클리닉에는 실제 예약 시간을 따로 입력하지 않습니다."}
+            )
+        return None, None
+    if booking_start_time is None or booking_end_time is None:
+        raise ValidationError(
+            {"booking_time": "예약 시작과 종료 시간을 함께 입력해 주세요."}
+        )
+
+    session_start = datetime.datetime.combine(session.date, session.start_time)
+    session_end = session_start + datetime.timedelta(minutes=session.duration_minutes)
+    booking_start = datetime.datetime.combine(session.date, booking_start_time)
+    booking_end = datetime.datetime.combine(session.date, booking_end_time)
+    if session_end.date() != session.date:
+        raise ValidationError(
+            {"booking_time": "자정을 넘는 클리닉은 시간 범위 예약을 지원하지 않습니다."}
+        )
+    if not session_start <= booking_start < booking_end <= session_end:
+        raise ValidationError(
+            {"booking_time": "예약 시간은 클리닉 운영 시간 안에서 시작이 종료보다 빨라야 합니다."}
+        )
+    interval = int(session.booking_interval_minutes)
+    start_offset = int((booking_start - session_start).total_seconds() // 60)
+    end_offset = int((booking_end - session_start).total_seconds() // 60)
+    if interval not in (30, 60) or start_offset % interval or end_offset % interval:
+        raise ValidationError(
+            {"booking_time": f"예약 시간은 세션 시작 기준 {interval}분 간격에 맞춰 주세요."}
+        )
+    if end_offset - start_offset > int(session.booking_max_stay_minutes):
+        raise ValidationError(
+            {"booking_time": f"한 번에 최대 {session.booking_max_stay_minutes}분까지 예약할 수 있습니다."}
+        )
+    return booking_start_time, booking_end_time
+
+
 def _preferred_active_enrollment_id(
     *,
     tenant,
@@ -890,19 +943,100 @@ def _clinic_reason_for_enrollment(*, tenant, enrollment_id: int | None) -> str |
     return clinic_reason_for_unresolved_auto_links(tenant, enrollment_id)
 
 
-def _assert_session_capacity(*, tenant, session) -> None:
+def _assert_session_capacity(
+    *,
+    tenant,
+    session,
+    booking_start_time=None,
+    booking_end_time=None,
+) -> None:
     if not session or session.max_participants is None:
         return
-    current_booked = SessionParticipant.objects.filter(
+    active = SessionParticipant.objects.filter(
         tenant=tenant,
         session=session,
-        status__in=[
+        status__in=(
             SessionParticipant.Status.BOOKED,
             SessionParticipant.Status.PENDING,
-        ],
-    ).count()
-    if current_booked >= session.max_participants:
-        raise Conflict("해당 클리닉은 정원이 마감되었습니다.")
+        ),
+    )
+    if session.booking_mode == "fixed_slot":
+        if active.count() >= session.max_participants:
+            raise Conflict("해당 클리닉은 정원이 마감되었습니다.")
+        return
+
+    if booking_start_time is None or booking_end_time is None:
+        raise ValidationError({"booking_time": "예약 시작과 종료 시간을 입력해 주세요."})
+    ranged_active = SessionParticipant.objects.filter(
+        tenant=tenant,
+        session=session,
+        status__in=(
+            SessionParticipant.Status.PENDING,
+            SessionParticipant.Status.BOOKED,
+            SessionParticipant.Status.ATTENDED,
+        ),
+    )
+    cursor = datetime.datetime.combine(session.date, booking_start_time)
+    end = datetime.datetime.combine(session.date, booking_end_time)
+    step = datetime.timedelta(minutes=int(session.booking_interval_minutes))
+    while cursor < end:
+        next_cursor = min(cursor + step, end)
+        concurrent = ranged_active.filter(
+            booking_start_time__lt=next_cursor.time(),
+            booking_end_time__gt=cursor.time(),
+        ).count()
+        if concurrent >= session.max_participants:
+            raise Conflict("해당 클리닉은 선택한 시간의 정원이 마감되었습니다.")
+        cursor = next_cursor
+
+
+def booking_availability_for_session(*, tenant, session: Session) -> dict[str, Any]:
+    """Return tenant-scoped interval capacity without exposing participant identity."""
+
+    interval = int(session.booking_interval_minutes)
+    start = datetime.datetime.combine(session.date, session.start_time)
+    end = start + datetime.timedelta(minutes=session.duration_minutes)
+    slots = []
+    cursor = start
+    while cursor < end:
+        next_cursor = min(cursor + datetime.timedelta(minutes=interval), end)
+        if session.booking_mode == "time_range":
+            used = SessionParticipant.objects.filter(
+                tenant=tenant,
+                session=session,
+                status__in=(
+                    SessionParticipant.Status.PENDING,
+                    SessionParticipant.Status.BOOKED,
+                    SessionParticipant.Status.ATTENDED,
+                ),
+                booking_start_time__lt=next_cursor.time(),
+                booking_end_time__gt=cursor.time(),
+            ).count()
+        else:
+            used = SessionParticipant.objects.filter(
+                tenant=tenant,
+                session=session,
+                status__in=(
+                    SessionParticipant.Status.PENDING,
+                    SessionParticipant.Status.BOOKED,
+                ),
+            ).count()
+        slots.append({
+            "start_time": cursor.time().strftime("%H:%M"),
+            "end_time": next_cursor.time().strftime("%H:%M"),
+            "remaining_capacity": max(int(session.max_participants) - used, 0),
+        })
+        cursor = next_cursor
+    return {
+        "booking_mode": session.booking_mode,
+        "interval_minutes": interval,
+        "max_stay_minutes": int(session.booking_max_stay_minutes),
+        "window": {
+            "start_time": start.time().strftime("%H:%M"),
+            "end_time": end.time().strftime("%H:%M"),
+        },
+        "slots": slots,
+    }
 
 
 def _assert_no_active_duplicate(
@@ -1024,7 +1158,19 @@ def create_participant(
             .select_for_update()
             .get(pk=session.pk)
         )
-        _assert_session_capacity(tenant=tenant, session=session)
+
+    booking_start_time, booking_end_time = _validated_booking_range(
+        session=session,
+        booking_start_time=validated_data.get("booking_start_time"),
+        booking_end_time=validated_data.get("booking_end_time"),
+    )
+    if session:
+        _assert_session_capacity(
+            tenant=tenant,
+            session=session,
+            booking_start_time=booking_start_time,
+            booking_end_time=booking_end_time,
+        )
 
     preferred_start_time, preferred_end_time = _validated_time_preference(
         session=session,
@@ -1086,6 +1232,8 @@ def create_participant(
             student_request_memo=student_request_memo,
             preferred_start_time=preferred_start_time,
             preferred_end_time=preferred_end_time,
+            booking_start_time=booking_start_time,
+            booking_end_time=booking_end_time,
         )
     except IntegrityError as exc:
         raise Conflict("이미 해당 세션에 예약된 학생입니다.") from exc
@@ -1107,6 +1255,8 @@ def create_participants_bulk(
     memo: str = "",
     preferred_start_time=None,
     preferred_end_time=None,
+    booking_start_time=None,
+    booking_end_time=None,
 ) -> ParticipantBulkWriteResult:
     """Create the complete same-day session/student selection or create nothing."""
     requested_session_ids = [int(session_id) for session_id in session_ids]
@@ -1149,6 +1299,10 @@ def create_participants_bulk(
         not session.allow_multi_slot_booking for session in sessions
     ):
         raise Conflict("선택한 클리닉 중 같은 날 여러 시간대 예약을 허용하지 않는 세션이 있습니다.")
+    if len(sessions) > 1 and any(session.booking_mode == "time_range" for session in sessions):
+        raise ValidationError(
+            {"session_ids": "시간 범위 방식은 한 세션씩 예약해 주세요."}
+        )
     for previous, current in zip(sessions, sessions[1:]):
         previous_start = datetime.datetime.combine(
             previous.date,
@@ -1174,6 +1328,8 @@ def create_participants_bulk(
                 "memo": memo,
                 "preferred_start_time": preferred_start_time,
                 "preferred_end_time": preferred_end_time,
+                "booking_start_time": booking_start_time,
+                "booking_end_time": booking_end_time,
             }
             result = create_participant(
                 tenant=tenant,
@@ -1202,6 +1358,8 @@ def change_participant_booking(
     student_request_memo=None,
     preferred_start_time=None,
     preferred_end_time=None,
+    booking_start_time=None,
+    booking_end_time=None,
 ) -> ParticipantWriteResult:
     if not new_session_id:
         raise ValidationError({"detail": "new_session_id가 필요합니다."})
@@ -1265,7 +1423,17 @@ def change_participant_booking(
         raise NotFound("변경할 세션을 찾을 수 없습니다.") from exc
 
     _validate_student_session_eligibility(tenant=tenant, student=booking_student, session=new_session)
-    _assert_session_capacity(tenant=tenant, session=new_session)
+    booking_start_time, booking_end_time = _validated_booking_range(
+        session=new_session,
+        booking_start_time=booking_start_time,
+        booking_end_time=booking_end_time,
+    )
+    _assert_session_capacity(
+        tenant=tenant,
+        session=new_session,
+        booking_start_time=booking_start_time,
+        booking_end_time=booking_end_time,
+    )
     _assert_no_active_duplicate(
         tenant=tenant,
         student=booking_student,
@@ -1318,6 +1486,8 @@ def change_participant_booking(
             staff_memo=next_staff_memo or "",
             preferred_start_time=preferred_start_time,
             preferred_end_time=preferred_end_time,
+            booking_start_time=booking_start_time,
+            booking_end_time=booking_end_time,
         )
     except IntegrityError as exc:
         raise Conflict("이미 해당 세션에 예약된 학생입니다.") from exc

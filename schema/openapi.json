@@ -766,6 +766,84 @@
         ],
         "type": "string"
       },
+      "ClinicAvailabilityResponse": {
+        "properties": {
+          "booking_mode": {
+            "$ref": "#/components/schemas/ClinicAvailabilityResponseBookingModeEnum"
+          },
+          "interval_minutes": {
+            "$ref": "#/components/schemas/IntervalMinutesEnum"
+          },
+          "max_stay_minutes": {
+            "minimum": 30,
+            "type": "integer"
+          },
+          "slots": {
+            "items": {
+              "$ref": "#/components/schemas/ClinicAvailabilitySlot"
+            },
+            "type": "array"
+          },
+          "window": {
+            "$ref": "#/components/schemas/ClinicAvailabilityWindow"
+          }
+        },
+        "required": [
+          "booking_mode",
+          "interval_minutes",
+          "max_stay_minutes",
+          "slots",
+          "window"
+        ],
+        "type": "object"
+      },
+      "ClinicAvailabilityResponseBookingModeEnum": {
+        "description": "* `fixed_slot` - fixed_slot\n* `time_range` - time_range",
+        "enum": [
+          "fixed_slot",
+          "time_range"
+        ],
+        "type": "string"
+      },
+      "ClinicAvailabilitySlot": {
+        "properties": {
+          "end_time": {
+            "format": "time",
+            "type": "string"
+          },
+          "remaining_capacity": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "start_time": {
+            "format": "time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "end_time",
+          "remaining_capacity",
+          "start_time"
+        ],
+        "type": "object"
+      },
+      "ClinicAvailabilityWindow": {
+        "properties": {
+          "end_time": {
+            "format": "time",
+            "type": "string"
+          },
+          "start_time": {
+            "format": "time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "end_time",
+          "start_time"
+        ],
+        "type": "object"
+      },
       "ClinicCheckoutRequestRequest": {
         "properties": {
           "confirm_without_arrival": {
@@ -971,6 +1049,45 @@
         ],
         "type": "string"
       },
+      "ClinicNotificationRetryRequestRequest": {
+        "properties": {
+          "log_id": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "log_id"
+        ],
+        "type": "object"
+      },
+      "ClinicNotificationRetryResponse": {
+        "properties": {
+          "origin_id": {
+            "type": "string"
+          },
+          "outbox_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ClinicNotificationRetryResponseStatusEnum"
+          }
+        },
+        "required": [
+          "origin_id",
+          "outbox_id",
+          "status"
+        ],
+        "type": "object"
+      },
+      "ClinicNotificationRetryResponseStatusEnum": {
+        "description": "* `accepted` - accepted",
+        "enum": [
+          "accepted"
+        ],
+        "type": "string"
+      },
       "ClinicPlanReplaceRequest": {
         "properties": {
           "planned_clinic_link_ids": {
@@ -1063,6 +1180,28 @@
           "booked_count": {
             "readOnly": true,
             "type": "string"
+          },
+          "booking_interval_minutes": {
+            "description": "시간 범위 예약의 선택 간격 스냅샷입니다.",
+            "format": "int64",
+            "maximum": 9223372036854775807,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "booking_max_stay_minutes": {
+            "description": "시간 범위 예약의 최대 체류 분 스냅샷입니다.",
+            "format": "int64",
+            "maximum": 9223372036854775807,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "booking_mode": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ClinicSessionBookingModeEnum"
+              }
+            ],
+            "description": "세션 생성 시 고정된 예약 방식 스냅샷입니다.\n\n* `fixed_slot` - 고정 시간대\n* `time_range` - 시간 범위"
           },
           "created_at": {
             "format": "date-time",
@@ -1219,8 +1358,28 @@
         ],
         "type": "object"
       },
+      "ClinicSessionBookingModeEnum": {
+        "description": "* `fixed_slot` - 고정 시간대\n* `time_range` - 시간 범위",
+        "enum": [
+          "fixed_slot",
+          "time_range"
+        ],
+        "type": "string"
+      },
       "ClinicSessionParticipant": {
         "properties": {
+          "booking_end_time": {
+            "description": "시간 범위 방식에서 확정된 실제 예약 종료 시각입니다.",
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
+          "booking_start_time": {
+            "description": "시간 범위 방식에서 확정된 실제 예약 시작 시각입니다.",
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
           "checked_in_at": {
             "format": "date-time",
             "nullable": true,
@@ -1342,6 +1501,16 @@
             "readOnly": true,
             "type": "string"
           },
+          "recipient_contacts": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "readOnly": true,
+            "type": "array"
+          },
           "requested_date": {
             "format": "date",
             "nullable": true,
@@ -1443,6 +1612,7 @@
           "preferred_end_time",
           "preferred_start_time",
           "profile_photo_url",
+          "recipient_contacts",
           "session_date",
           "session_duration_minutes",
           "session_end_time",
@@ -1461,6 +1631,16 @@
       "ClinicSessionParticipantBulkCreateRequest": {
         "description": "Create one student's or several staff-selected students' same-day slots atomically.",
         "properties": {
+          "booking_end_time": {
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
+          "booking_start_time": {
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
           "memo": {
             "default": "",
             "maxLength": 2000,
@@ -1525,6 +1705,18 @@
       "ClinicSessionParticipantCreate": {
         "description": "✅ 예약 등록(생성) 전용\n- 선생: student, enrollment_id 직접 지정 가능\n- 학생: student 생략 가능 (자동 설정), source=\"student_request\", status=\"pending\"\n- session 또는 (requested_date + requested_start_time) 중 하나 필수",
         "properties": {
+          "booking_end_time": {
+            "description": "시간 범위 방식에서 확정된 실제 예약 종료 시각입니다.",
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
+          "booking_start_time": {
+            "description": "시간 범위 방식에서 확정된 실제 예약 시작 시각입니다.",
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
           "clinic_reason": {
             "nullable": true,
             "oneOf": [
@@ -1595,6 +1787,18 @@
       "ClinicSessionParticipantCreateRequest": {
         "description": "✅ 예약 등록(생성) 전용\n- 선생: student, enrollment_id 직접 지정 가능\n- 학생: student 생략 가능 (자동 설정), source=\"student_request\", status=\"pending\"\n- session 또는 (requested_date + requested_start_time) 중 하나 필수",
         "properties": {
+          "booking_end_time": {
+            "description": "시간 범위 방식에서 확정된 실제 예약 종료 시각입니다.",
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
+          "booking_start_time": {
+            "description": "시간 범위 방식에서 확정된 실제 예약 시작 시각입니다.",
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
           "clinic_reason": {
             "nullable": true,
             "oneOf": [
@@ -1664,6 +1868,18 @@
       },
       "ClinicSessionParticipantRequest": {
         "properties": {
+          "booking_end_time": {
+            "description": "시간 범위 방식에서 확정된 실제 예약 종료 시각입니다.",
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
+          "booking_start_time": {
+            "description": "시간 범위 방식에서 확정된 실제 예약 시작 시각입니다.",
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
           "checked_in_at": {
             "format": "date-time",
             "nullable": true,
@@ -1789,6 +2005,28 @@
           "allow_time_preference": {
             "description": "학생이 세션 범위 안의 희망 시작·종료 시각을 요청할 수 있으면 True.",
             "type": "boolean"
+          },
+          "booking_interval_minutes": {
+            "description": "시간 범위 예약의 선택 간격 스냅샷입니다.",
+            "format": "int64",
+            "maximum": 9223372036854775807,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "booking_max_stay_minutes": {
+            "description": "시간 범위 예약의 최대 체류 분 스냅샷입니다.",
+            "format": "int64",
+            "maximum": 9223372036854775807,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "booking_mode": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ClinicSessionBookingModeEnum"
+              }
+            ],
+            "description": "세션 생성 시 고정된 예약 방식 스냅샷입니다.\n\n* `fixed_slot` - 고정 시간대\n* `time_range` - 시간 범위"
           },
           "date": {
             "format": "date",
@@ -4240,6 +4478,14 @@
           "STAFF_AUTHORIZATION"
         ],
         "type": "string"
+      },
+      "IntervalMinutesEnum": {
+        "description": "* `30` - 30\n* `60` - 60",
+        "enum": [
+          30,
+          60
+        ],
+        "type": "integer"
       },
       "InvoiceDetail": {
         "properties": {
@@ -7450,6 +7696,18 @@
       },
       "PatchedClinicSessionParticipantRequest": {
         "properties": {
+          "booking_end_time": {
+            "description": "시간 범위 방식에서 확정된 실제 예약 종료 시각입니다.",
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
+          "booking_start_time": {
+            "description": "시간 범위 방식에서 확정된 실제 예약 시작 시각입니다.",
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
           "checked_in_at": {
             "format": "date-time",
             "nullable": true,
@@ -7571,6 +7829,28 @@
           "allow_time_preference": {
             "description": "학생이 세션 범위 안의 희망 시작·종료 시각을 요청할 수 있으면 True.",
             "type": "boolean"
+          },
+          "booking_interval_minutes": {
+            "description": "시간 범위 예약의 선택 간격 스냅샷입니다.",
+            "format": "int64",
+            "maximum": 9223372036854775807,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "booking_max_stay_minutes": {
+            "description": "시간 범위 예약의 최대 체류 분 스냅샷입니다.",
+            "format": "int64",
+            "maximum": 9223372036854775807,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "booking_mode": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ClinicSessionBookingModeEnum"
+              }
+            ],
+            "description": "세션 생성 시 고정된 예약 방식 스냅샷입니다.\n\n* `fixed_slot` - 고정 시간대\n* `time_range` - 시간 범위"
           },
           "date": {
             "format": "date",
@@ -18629,6 +18909,87 @@
         ]
       }
     },
+    "/api/v1/clinic/participants/{id}/retry-notification/": {
+      "post": {
+        "description": "Retry a confirmed failed clinic Alimtalk from its exact durable payload.",
+        "operationId": "clinic_participants_retry_notification_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClinicNotificationRetryRequestRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/ClinicNotificationRetryRequestRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/ClinicNotificationRetryRequestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClinicNotificationRetryResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {},
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {},
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "clinic"
+        ]
+      }
+    },
     "/api/v1/clinic/participants/{id}/set_status/": {
       "patch": {
         "description": "PATCH /clinic/participants/{id}/set_status/\n- 상태 변경 + audit 기록\n- 학생: 자신의 예약 신청(status=\"pending\")만 취소 가능\n- 선생: 모든 상태 변경 가능",
@@ -19188,6 +19549,45 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ClinicSession"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "clinic"
+        ]
+      }
+    },
+    "/api/v1/clinic/sessions/{id}/availability/": {
+      "get": {
+        "description": "✅ 클리닉 세션 CRUD\n- 예약 페이지 / 운영 페이지 공용\n- 모든 participant 통계는 BACKEND 단일진실",
+        "operationId": "clinic_sessions_availability_retrieve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClinicAvailabilityResponse"
                 }
               }
             },
@@ -36537,6 +36937,16 @@
       "get": {
         "description": "GET: 발송 로그 목록 (페이지네이션)",
         "operationId": "messaging_log_retrieve",
+        "parameters": [
+          {
+            "description": "PII가 없는 원천 식별자 접두사. 클리닉 참가자별 발송 이력 조회에 사용합니다.",
+            "in": "query",
+            "name": "origin_id_prefix",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "No response body"
@@ -38680,6 +39090,87 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ClinicReminderResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/api/v1/results/admin/clinic-bookings/{id}/retry-notification/": {
+      "post": {
+        "description": "Retry a confirmed failed clinic Alimtalk from its exact durable payload.",
+        "operationId": "results_admin_clinic_bookings_retry_notification_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClinicNotificationRetryRequestRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/ClinicNotificationRetryRequestRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/ClinicNotificationRetryRequestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClinicNotificationRetryResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {},
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {},
+                  "type": "object"
                 }
               }
             },

@@ -1,11 +1,13 @@
-# 클리닉 다중 시간대 예약 계약
+# 클리닉 예약 정책과 다중 시간대 계약
 
 ## 목적과 사용자 흐름
 
-클리닉 수업은 한 시간 단위 세션으로 유지한다. 학생이나 교직원이 같은 날짜의
-여러 세션을 한 번에 선택하면, 각 시간대마다 독립적인 `SessionParticipant`를
-만든다. 예를 들어 17:00–18:00과 18:00–19:00을 함께 선택하면 화면에는
-17:00–19:00 이용으로 요약하지만 데이터와 정원은 두 세션에서 각각 관리한다.
+클리닉 예약은 기존 한 시간 단위의 `fixed_slot`과 하나의 긴 운영 세션에서 실제
+체류 시간을 고르는 `time_range`를 함께 지원한다. 학생이나 교직원이 같은 날짜의
+고정 세션 여러 개를 한 번에 선택하면, 각 시간대마다 독립적인
+`SessionParticipant`를 만든다. 예를 들어 17:00–18:00과 18:00–19:00을 함께
+선택하면 화면에는 17:00–19:00 이용으로 요약하지만 데이터와 정원은 두 세션에서
+각각 관리한다.
 
 - 학생은 자신의 계정에 연결된 학생 한 명과 같은 날짜의 시간대 여러 개를
   선택해 신청한다.
@@ -61,6 +63,29 @@
 
 ## 세션 정책과 초기값
 
+새 세션은 두 예약 방식 중 하나를 생성 시점 snapshot으로 고정한다.
+
+- `fixed_slot`(기본값)은 기존처럼 세션 전체를 한 자리로 예약한다. 기존 tenant,
+  session, participant는 migration에서 모두 이 값이므로 기존 동작과 데이터가
+  바뀌지 않는다.
+- `time_range`는 한 개의 긴 운영 세션 안에서 학생이 실제
+  `booking_start_time`/`booking_end_time`을 선택한다. 시작·종료는 둘 다 있어야
+  하고 세션 시작 기준 30분 또는 60분 간격, 세션 운영 범위, 최대 체류 시간을
+  모두 만족해야 한다. `preferred_*` 희망 시간과는 별도 사실이다.
+- tenant 기본값 `clinic_booking_mode`, `clinic_booking_interval_minutes`,
+  `clinic_booking_max_stay_minutes`는 owner/admin만 바꾼다. 모든 직원 역할은 값을
+  읽을 수 있고, session의 snapshot은 이후 기본값 변경에 따라 바뀌지 않는다.
+- 활성 예약이 있는 session의 예약 방식·간격·최대 체류는 바꿀 수 없다.
+  `time_range`는 다중 session 선택과 섞지 않으며 반복 생성도 한 날짜씩 한다.
+
+`GET /api/v1/clinic/sessions/{id}/availability/`는 요청 tenant와 세션 대상 자격을
+통과한 사용자에게 운영 범위, 간격, 최대 체류, 각 구간의 남은 정원만 반환한다.
+참가자 신원은 반환하지 않는다. 시간 범위 정원은 session row lock 아래
+`pending`/`booked`/`attended`의 반열린 구간(`[start, end)`) 겹침을 각 간격마다
+검사한다. 따라서 10:00–11:00과 11:00–12:00은 겹치지 않으며 동시 요청도 같은
+구간 정원을 초과할 수 없다. 고정 시간대 정원 계산은 기존 pending/booked 계약을
+그대로 유지한다.
+
 `Tenant.clinic_allow_multi_slot_booking_default`는 새 세션의 기본값이고,
 `Session.allow_multi_slot_booking`은 생성 시점에 그 값을 복사한 snapshot이다.
 세션 생성 요청이 값을 명시하면 명시값이 우선하며, 이후 테넌트 기본값을 바꿔도
@@ -113,7 +138,7 @@ bulk 모두 `409`로 거부하고 요청 전체를 롤백한다. 일정 변경�
 알림 이력을 삭제하지 않는다. 별도 승인된 정정 템플릿이 없으므로 다른 trigger를
 대용하지 않는다.
 
-## 미등원 하원 감사 계약
+## 등원 기록 없는 하원 감사 계약
 
 `POST /api/v1/clinic/participants/{id}/checkout/`은 정상 등원 후 하원과, 현장에서
 등원 처리를 놓친 예약 학생의 하원을 모두 기록한다. 두 경로 모두 기존
@@ -141,6 +166,7 @@ bulk 모두 `409`로 거부하고 요청 전체를 롤백한다. 일정 변경�
 - API 액션·커밋 후 알림: `apps/domains/clinic/views/participant_views.py`
 - tenant/session 정책: `apps/core/models/tenant.py`, `apps/domains/clinic/models.py`
 - 집중 API 회귀: `tests/test_clinic_multi_slot_booking_api.py`
+- 시간 범위·권한·연락처·알림 이력 회귀: `tests/test_clinic_time_range_policy_api.py`
 - 하원·등원 독립 회귀: `tests/test_clinic_operations_workflow_api.py`
 - 상태 소유권·오늘 계획·패스카드·완료 감사 회귀:
   `apps/domains/progress/tests/test_generic_write_boundaries.py`,
@@ -149,6 +175,7 @@ bulk 모두 `409`로 거부하고 요청 전체를 롤백한다. 일정 변경�
 ```powershell
 $env:DJANGO_SETTINGS_MODULE='apps.api.config.settings.test'
 python -m pytest tests/test_clinic_multi_slot_booking_api.py -q
+python manage.py test tests.test_clinic_time_range_policy_api --noinput
 python manage.py makemigrations --check --dry-run
 python manage.py check --settings apps.api.config.settings.test
 ```

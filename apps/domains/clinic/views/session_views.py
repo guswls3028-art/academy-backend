@@ -5,6 +5,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import Count, Q, Exists, OuterRef
 from django.http import Http404
 from django.utils import timezone
+from drf_spectacular.utils import OpenApiParameter, OpenApiTypes, extend_schema
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.exceptions import APIException
@@ -30,8 +31,28 @@ from apps.support.clinic.session_dependencies import (
     send_clinic_session_reminder,
     unresolve_legacy_booking_links_for_session_delete,
 )
+from ..services.lifecycle import booking_availability_for_session
 
 logger = logging.getLogger(__name__)
+
+
+class ClinicAvailabilitySlotSerializer(serializers.Serializer):
+    start_time = serializers.TimeField(format="%H:%M")
+    end_time = serializers.TimeField(format="%H:%M")
+    remaining_capacity = serializers.IntegerField(min_value=0)
+
+
+class ClinicAvailabilityWindowSerializer(serializers.Serializer):
+    start_time = serializers.TimeField(format="%H:%M")
+    end_time = serializers.TimeField(format="%H:%M")
+
+
+class ClinicAvailabilityResponseSerializer(serializers.Serializer):
+    booking_mode = serializers.ChoiceField(choices=("fixed_slot", "time_range"))
+    interval_minutes = serializers.ChoiceField(choices=(30, 60))
+    max_stay_minutes = serializers.IntegerField(min_value=30)
+    window = ClinicAvailabilityWindowSerializer()
+    slots = ClinicAvailabilitySlotSerializer(many=True)
 
 
 # ============================================================
@@ -172,9 +193,17 @@ class SessionViewSet(viewsets.ModelViewSet):
             "created_by": created_by,
         }
         if "allow_multi_slot_booking" not in serializer.validated_data:
-            save_kwargs["allow_multi_slot_booking"] = bool(
-                tenant.clinic_allow_multi_slot_booking_default
+            save_kwargs["allow_multi_slot_booking"] = (
+                False
+                if serializer.validated_data.get("booking_mode") == "time_range"
+                else bool(tenant.clinic_allow_multi_slot_booking_default)
             )
+        if "booking_mode" not in serializer.validated_data:
+            save_kwargs["booking_mode"] = tenant.clinic_booking_mode
+        if "booking_interval_minutes" not in serializer.validated_data:
+            save_kwargs["booking_interval_minutes"] = tenant.clinic_booking_interval_minutes
+        if "booking_max_stay_minutes" not in serializer.validated_data:
+            save_kwargs["booking_max_stay_minutes"] = tenant.clinic_booking_max_stay_minutes
         try:
             serializer.save(**save_kwargs)
         except IntegrityError as e:
@@ -412,6 +441,20 @@ class SessionViewSet(viewsets.ModelViewSet):
         )
         return Response([x for x in qs if x])
 
+    @extend_schema(
+        parameters=[OpenApiParameter("id", OpenApiTypes.INT, OpenApiParameter.PATH)],
+        responses={200: ClinicAvailabilityResponseSerializer},
+    )
+    @action(detail=True, methods=["get"])
+    def availability(self, request, pk=None):
+        session = self.get_object()
+        return Response(
+            booking_availability_for_session(
+                tenant=request.tenant,
+                session=session,
+            )
+        )
+
     @action(detail=False, methods=["post"], url_path="bulk-create")
     def bulk_create(self, request, *args, **kwargs):
         """
@@ -440,6 +483,21 @@ class SessionViewSet(viewsets.ModelViewSet):
             "allow_multi_slot_booking",
             bool(tenant.clinic_allow_multi_slot_booking_default),
         )
+        booking_mode = data.pop("booking_mode", tenant.clinic_booking_mode)
+        booking_interval_minutes = data.pop(
+            "booking_interval_minutes",
+            tenant.clinic_booking_interval_minutes,
+        )
+        booking_max_stay_minutes = data.pop(
+            "booking_max_stay_minutes",
+            tenant.clinic_booking_max_stay_minutes,
+        )
+        if booking_mode == "time_range" and "allow_multi_slot_booking" not in request.data:
+            allow_multi_slot_booking = False
+        if booking_mode == "time_range" and len(dates) > 1:
+            raise serializers.ValidationError(
+                {"dates": "시간 범위 방식은 한 날짜씩 생성해 주세요."}
+            )
         today = timezone.localdate()
 
         # Validate section belongs to this tenant
@@ -485,6 +543,9 @@ class SessionViewSet(viewsets.ModelViewSet):
                         target_school_type=data.get("target_school_type"),
                         section=section_obj,
                         allow_multi_slot_booking=allow_multi_slot_booking,
+                        booking_mode=booking_mode,
+                        booking_interval_minutes=booking_interval_minutes,
+                        booking_max_stay_minutes=booking_max_stay_minutes,
                         created_by=created_by,
                     )
                     if target_lecture_ids:

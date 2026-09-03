@@ -107,6 +107,23 @@ class Tenant(models.Model):
         db_default=False,
         help_text="새 클리닉 세션의 같은 날 여러 시간대 예약 허용 기본값입니다.",
     )
+    clinic_booking_mode = models.CharField(
+        max_length=16,
+        choices=(("fixed_slot", "고정 시간대"), ("time_range", "시간 범위")),
+        default="fixed_slot",
+        db_default="fixed_slot",
+        help_text="새 클리닉 세션의 예약 방식 기본값입니다.",
+    )
+    clinic_booking_interval_minutes = models.PositiveSmallIntegerField(
+        default=60,
+        db_default=60,
+        help_text="시간 범위 예약의 선택 간격(30분 또는 60분)입니다.",
+    )
+    clinic_booking_max_stay_minutes = models.PositiveIntegerField(
+        default=240,
+        db_default=240,
+        help_text="시간 범위 예약에서 한 학생이 머물 수 있는 최대 분입니다.",
+    )
     # 학생 가입 신청(회원가입) 자동 승인 — True면 신청 즉시 Student 생성·승인
     student_registration_auto_approve = models.BooleanField(
         default=False,
@@ -161,6 +178,22 @@ class Tenant(models.Model):
             models.CheckConstraint(
                 condition=models.Q(credit_balance__gte=0),
                 name="credit_balance_non_negative",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(clinic_booking_mode__in=("fixed_slot", "time_range")),
+                name="tenant_clinic_booking_mode_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(clinic_booking_interval_minutes__in=(30, 60)),
+                name="tenant_clinic_booking_interval_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    clinic_booking_max_stay_minutes__gte=models.F(
+                        "clinic_booking_interval_minutes"
+                    )
+                ),
+                name="tenant_clinic_booking_stay_gte_interval",
             ),
         ]
 
