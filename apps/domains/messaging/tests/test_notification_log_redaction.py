@@ -247,6 +247,29 @@ class NotificationLogRedactionTests(TestCase):
         self.assertNotIn("01012345678", str(item))
         self.assertNotIn("203.0.113.10", str(item))
 
+    def test_ambiguous_log_keeps_unconfirmed_semantics_for_unrecognized_provider_error(self):
+        NotificationLog.objects.create(
+            tenant=self.tenant,
+            success=False,
+            status="ambiguous",
+            message_mode="alimtalk",
+            failure_reason="The read operation timed out",
+        )
+        list_request = self.factory.get("/api/v1/messaging/log/")
+        force_authenticate(list_request, user=self.admin)
+        list_request.user = self.admin
+        list_request.tenant = self.tenant
+
+        list_response = NotificationLogListView.as_view()(list_request)
+
+        item = list_response.data["results"][0]
+        self.assertEqual(item["failure_code"], "provider_unconfirmed")
+        self.assertEqual(
+            item["failure_reason"],
+            "공급사 접수 결과를 자동 확인하지 못했습니다. 관리자 확인이 필요합니다.",
+        )
+        self.assertNotIn("timed out", str(item))
+
     def test_log_api_keeps_active_attention_and_failed_filters_distinct(self):
         for log_status, success in (
             ("processing", False),
