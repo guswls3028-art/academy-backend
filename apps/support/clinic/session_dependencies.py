@@ -243,12 +243,13 @@ def cancel_pending_clinic_participant_reminders(*, tenant_id: int, participant_i
         )
         for row in rows:
             row.status = ScheduledNotification.Status.CANCELLED
+            row.next_attempt_at = None
             row.payload = redact_terminal_delivery_payload(
                 trigger=row.trigger,
                 payload=row.payload,
             )
             row.error_message = "clinic_participant_closed"
-            row.save(update_fields=["status", "payload", "error_message"])
+            row.save(update_fields=["status", "next_attempt_at", "payload", "error_message"])
     return len(rows)
 
 

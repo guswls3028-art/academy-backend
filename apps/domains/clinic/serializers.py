@@ -121,6 +121,7 @@ class ClinicSessionSerializer(serializers.ModelSerializer):
 
 
 class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
+    completion_history = serializers.JSONField(read_only=True)
     preferred_start_time = serializers.TimeField(read_only=True)
     preferred_end_time = serializers.TimeField(read_only=True)
     student_request_memo = serializers.CharField(read_only=True)
@@ -181,6 +182,7 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
         ):
             data.pop("staff_memo", None)
             data.pop("memo", None)
+            data.pop("completion_history", None)
         return data
 
     def get_session_date(self, obj):

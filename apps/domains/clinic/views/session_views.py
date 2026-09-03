@@ -22,6 +22,7 @@ from ..filters import SessionFilter
 from apps.core.permissions import TenantResolvedAndMember, TenantResolvedAndStaff
 from apps.api.common.query_params import parse_query_int
 from apps.support.clinic.session_dependencies import (
+    cancel_pending_clinic_participant_reminders,
     enrollments_for_clinic_tenant,
     get_student_for_clinic_request,
     lectures_for_tenant,
@@ -206,32 +207,42 @@ class SessionViewSet(viewsets.ModelViewSet):
         from apps.domains.clinic.services.lifecycle import _status_notification
         from apps.domains.clinic.views.participant_views import _send_clinic_notification
 
-        active_statuses = (
-            SessionParticipant.Status.PENDING,
-            SessionParticipant.Status.BOOKED,
-        )
         notifications: list[tuple] = []
-        for participant in (
-            SessionParticipant.objects
-            .select_related("student", "session")
-            .filter(tenant=tenant, session=instance, status__in=active_statuses)
-        ):
-            event = _status_notification(
-                participant,
-                SessionParticipant.Status.CANCELLED,
-                actor=getattr(self.request, "user", None),
-            )
-            if event is not None and event.student is not None:
-                notifications.append((event.student, event.trigger, dict(event.context)))
-
+        session_id = instance.pk
         with transaction.atomic():
+            locked_session = Session.objects.select_for_update().get(
+                pk=session_id,
+                tenant=tenant,
+            )
+            participants = list(
+                SessionParticipant.objects.select_for_update()
+                .select_related("student", "session")
+                .filter(tenant=tenant, session=locked_session)
+                .order_by("id")
+            )
+            for participant in participants:
+                cancel_pending_clinic_participant_reminders(
+                    tenant_id=tenant.id,
+                    participant_id=participant.id,
+                )
+                if participant.status in (
+                    SessionParticipant.Status.PENDING,
+                    SessionParticipant.Status.BOOKED,
+                ):
+                    event = _status_notification(
+                        participant,
+                        SessionParticipant.Status.CANCELLED,
+                        actor=getattr(self.request, "user", None),
+                    )
+                    if event is not None and event.student is not None:
+                        notifications.append((event.student, event.trigger, dict(event.context)))
             # 레거시 예약 기반 해소만 되돌림. 실제 pass 기반 해소는 유지.
             # 범위 제한은 support boundary 내부에서 target_lectures 기준으로 적용.
             unresolve_legacy_booking_links_for_session_delete(
                 tenant=tenant,
-                session=instance,
+                session=locked_session,
             )
-            instance.delete()
+            locked_session.delete()
 
             # commit 후에 발송 — DB 일관성 보장 + 실패해도 삭제 자체는 완료.
             def _dispatch_clinic_cancelled():
@@ -247,7 +258,7 @@ class SessionViewSet(viewsets.ModelViewSet):
                         logger.exception(
                             "session destroy clinic_cancelled dispatch failed | "
                             "tenant=%s session=%s student=%s",
-                            getattr(tenant, "id", "?"), instance.pk,
+                            getattr(tenant, "id", "?"), session_id,
                             getattr(student, "id", "?"),
                         )
 

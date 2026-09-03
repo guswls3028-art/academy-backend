@@ -94,6 +94,20 @@ bulk 모두 `409`로 거부하고 요청 전체를 롤백한다. 일정 변경�
 규칙을 그대로 따른다. 학생 직접 예약 생성·일정 변경·취소 알림은 기존 계약대로
 학생과 학부모 모두에게 보내며, 교직원 수신자 선택 규칙은 변경하지 않는다.
 
+참가자와 보충 대상의 상태 변경은 일반 detail `PATCH/PUT/DELETE`로 허용하지 않는다.
+예약 생성·일정 변경·상태 변경·완료·완료 취소·하원·오늘 계획 action만 각 service의
+잠금과 감사 규칙을 통과한다. 일정 변경은 이전 참가자의 반복 알림을 취소하고, 이전
+오늘 계획 행을 `booking_changed`로 닫은 뒤 새 세션의 대상 강의에도 유효한 항목만 새
+참가자에게 원자적으로 이어 준다. 취소·거절은 오늘 계획을 각각
+`booking_cancelled`/`booking_rejected`로 닫는다. 세션 삭제도 cascade 전에 해당
+참가자의 미래 반복 알림을 취소·redact한다. 예약 알림 dispatcher는 lifecycle 정리가
+누락된 과거 행도 현재 tenant의 `booked` 참가자인지 다시 확인하고 아니면 발송하지 않는다.
+
+자율학습 완료와 완료 취소는 `completion_history`에 actor와 시각을 append-only로
+남긴다. 완료 취소는 현재 `completed_at/by`만 비우며 기존 완료 감사와 이미 생성된
+알림 이력을 삭제하지 않는다. 별도 승인된 정정 템플릿이 없으므로 다른 trigger를
+대용하지 않는다.
+
 ## 미등원 하원 감사 계약
 
 `POST /api/v1/clinic/participants/{id}/checkout/`은 정상 등원 후 하원과, 현장에서
@@ -122,6 +136,9 @@ bulk 모두 `409`로 거부하고 요청 전체를 롤백한다. 일정 변경�
 - tenant/session 정책: `apps/core/models/tenant.py`, `apps/domains/clinic/models.py`
 - 집중 API 회귀: `tests/test_clinic_multi_slot_booking_api.py`
 - 하원·등원 독립 회귀: `tests/test_clinic_operations_workflow_api.py`
+- 상태 소유권·오늘 계획·패스카드·완료 감사 회귀:
+  `apps/domains/progress/tests/test_generic_write_boundaries.py`,
+  `tests/test_clinic_participant_plan_api.py`, `apps/domains/clinic/tests.py`
 
 ```powershell
 $env:DJANGO_SETTINGS_MODULE='apps.api.config.settings.test'

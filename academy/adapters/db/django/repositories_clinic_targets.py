@@ -165,6 +165,7 @@ def linked_bookings_for_clinic_links(*, tenant, clinic_link_ids: list[int]):
             participant__session__tenant=tenant,
             participant__student__tenant=tenant,
             participant__student_id=F("clinic_link__enrollment__student_id"),
+            participant__status__in=("pending", "booked", "attended", "no_show"),
         )
         .filter(
             Q(participant__enrollment_id__isnull=True)

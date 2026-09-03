@@ -1,13 +1,22 @@
 import datetime
+import threading
 from unittest.mock import patch
 
+from django.db import close_old_connections, connection
+from django.test import TransactionTestCase
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
-from rest_framework.test import APITestCase
+from rest_framework.test import APIClient, APITestCase
 
-from apps.domains.clinic.services.lifecycle import build_clinic_reminder_send_times
+from apps.core.models import Tenant
+from apps.domains.clinic.services.lifecycle import (
+    build_clinic_reminder_send_times,
+    create_participant,
+)
+from apps.domains.clinic.models import SessionParticipant
 from apps.domains.clinic.tests import ClinicAPITestMixin
 from apps.domains.messaging.models import ScheduledNotification
+from apps.domains.messaging.scheduled import _claim_due_notifications
 from apps.domains.messaging.models import AutoSendConfig
 from apps.domains.messaging.alimtalk_content_builders import get_template_type
 from apps.domains.messaging.management.commands.cleanup_dead_message_triggers import (
@@ -417,6 +426,102 @@ class ClinicOperationsWorkflowAPITest(APITestCase, ClinicAPITestMixin):
         self.assertEqual(unrelated.status, ScheduledNotification.Status.PENDING)
 
     @patch(
+        "apps.domains.clinic.views.participant_views._send_clinic_notification",
+        return_value={"requested": 1, "failed": 0},
+    )
+    def test_booking_change_cancels_old_participants_future_reminders(self, _notify):
+        participant = self.make_participant(
+            self.tenant,
+            self.data["clinic_session"],
+            self.student,
+            status="booked",
+        )
+        replacement_session = self.make_clinic_session(
+            self.tenant,
+            date=self.data["clinic_session"].date + datetime.timedelta(days=1),
+            start_time=datetime.time(16, 0),
+            location="102호",
+        )
+        reminder = ScheduledNotification.objects.create(
+            tenant=self.tenant,
+            trigger="clinic_reminder",
+            send_at=timezone.now() + datetime.timedelta(hours=1),
+            status=ScheduledNotification.Status.PENDING,
+            origin_id=f"clinic_participant:{participant.id}:manual_reminder:plan:next",
+            payload={"to": "01012345678", "text": "이전 일정"},
+        )
+
+        response = self.client.post(
+            f"/api/v1/clinic/participants/{participant.id}/change-booking/",
+            {"new_session_id": replacement_session.id, "send_to": "parent"},
+            format="json",
+            **self._headers(self.tenant),
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        reminder.refresh_from_db()
+        self.assertEqual(reminder.status, ScheduledNotification.Status.CANCELLED)
+        self.assertIsNone(reminder.next_attempt_at)
+        self.assertNotIn("to", reminder.payload)
+
+    @patch("apps.domains.clinic.views.participant_views._send_clinic_notification")
+    def test_session_delete_cancels_participant_future_reminders(self, _notify):
+        participant = self.make_participant(
+            self.tenant,
+            self.data["clinic_session"],
+            self.student,
+            status="booked",
+        )
+        reminder = ScheduledNotification.objects.create(
+            tenant=self.tenant,
+            trigger="clinic_reminder",
+            send_at=timezone.now() + datetime.timedelta(hours=1),
+            status=ScheduledNotification.Status.PENDING,
+            origin_id=f"clinic_participant:{participant.id}:manual_reminder:plan:next",
+            payload={"to": "01012345678", "text": "삭제된 일정"},
+        )
+
+        response = self.client.delete(
+            f"/api/v1/clinic/sessions/{self.data['clinic_session'].id}/",
+            **self._headers(self.tenant),
+        )
+
+        self.assertEqual(response.status_code, 204, response.data)
+        reminder.refresh_from_db()
+        self.assertEqual(reminder.status, ScheduledNotification.Status.CANCELLED)
+        self.assertIsNone(reminder.next_attempt_at)
+        self.assertNotIn("to", reminder.payload)
+
+    def test_due_dispatcher_cancels_stale_participant_reminder_before_claim(self):
+        participant = self.make_participant(
+            self.tenant,
+            self.data["clinic_session"],
+            self.student,
+            status="cancelled",
+        )
+        reminder = ScheduledNotification.objects.create(
+            tenant=self.tenant,
+            trigger="clinic_reminder",
+            send_at=timezone.now() - datetime.timedelta(minutes=1),
+            status=ScheduledNotification.Status.PENDING,
+            origin_id=f"clinic_participant:{participant.id}:manual_reminder:plan:next",
+            payload={"to": "01012345678", "text": "이미 취소된 일정"},
+        )
+
+        claims, terminal_count, _, _ = _claim_due_notifications(
+            batch_size=1,
+            now=timezone.now(),
+        )
+
+        self.assertEqual(claims, [])
+        self.assertEqual(terminal_count, 1)
+        reminder.refresh_from_db()
+        self.assertEqual(reminder.status, ScheduledNotification.Status.CANCELLED)
+        self.assertIsNone(reminder.next_attempt_at)
+        self.assertEqual(reminder.error_message, "clinic_participant_closed")
+        self.assertNotIn("to", reminder.payload)
+
+    @patch(
         "apps.domains.messaging.services.notification_service.send_event_notification",
         return_value=True,
     )
@@ -449,6 +554,75 @@ class ClinicOperationsWorkflowAPITest(APITestCase, ClinicAPITestMixin):
             call for call in send_event.call_args_list if call.kwargs.get("send_at")
         ]
         self.assertEqual(len(scheduled_calls), 4)
+
+
+class ClinicSessionDeletePostgresConcurrencyTest(TransactionTestCase, ClinicAPITestMixin):
+    reset_sequences = True
+
+    def setUp(self):
+        self.data = self.setup_api_tenant("clinic_session_delete_pg", student_count=2)
+
+    def test_delete_serializes_with_concurrent_participant_create(self):
+        if connection.vendor != "postgresql":
+            self.skipTest("PostgreSQL row-lock contract")
+
+        tenant_id = self.data["tenant"].id
+        session_id = self.data["clinic_session"].id
+        student_id = self.data["students"][1].id
+        admin_id = self.data["admin_user"].id
+        barrier = threading.Barrier(2)
+        errors = []
+
+        def delete_session():
+            close_old_connections()
+            try:
+                admin = type(self.data["admin_user"]).objects.get(id=admin_id)
+                client = APIClient()
+                client.force_authenticate(user=admin)
+                barrier.wait(timeout=10)
+                response = client.delete(
+                    f"/api/v1/clinic/sessions/{session_id}/",
+                    HTTP_HOST="localhost",
+                    HTTP_X_TENANT_CODE=self.data["tenant"].code,
+                )
+                if response.status_code not in (204, 404):
+                    errors.append(AssertionError(response.data))
+            except Exception as exc:  # pragma: no cover - asserted below
+                errors.append(exc)
+            finally:
+                close_old_connections()
+
+        def create_booking():
+            close_old_connections()
+            try:
+                tenant = Tenant.objects.get(id=tenant_id)
+                session = type(self.data["clinic_session"]).objects.get(id=session_id)
+                student = type(self.data["students"][1]).objects.get(id=student_id)
+                barrier.wait(timeout=10)
+                create_participant(
+                    tenant=tenant,
+                    validated_data={
+                        "session": session,
+                        "student": student,
+                        "status": "booked",
+                    },
+                )
+            except Exception:
+                # The delete may win; the invariant is that no child survives it.
+                pass
+            finally:
+                close_old_connections()
+
+        threads = [threading.Thread(target=delete_session), threading.Thread(target=create_booking)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=20)
+
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+        self.assertEqual(errors, [])
+        self.assertFalse(type(self.data["clinic_session"]).objects.filter(id=session_id).exists())
+        self.assertFalse(SessionParticipant.objects.filter(session_id=session_id).exists())
 
 
 class ClinicReminderScheduleContractTest(APITestCase):

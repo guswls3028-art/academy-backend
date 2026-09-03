@@ -134,6 +134,10 @@ def _plan_link_is_valid_for_participant(*, participant, clinic_link, target_lect
     lecture_session = clinic_link.session
     return bool(
         participant.session_id
+        and participant.status not in {
+            SessionParticipant.Status.CANCELLED,
+            SessionParticipant.Status.REJECTED,
+        }
         and clinic_link.tenant_id == participant.tenant_id
         and clinic_link.is_auto
         and clinic_link.resolved_at is None
@@ -269,6 +273,62 @@ def replace_participant_clinic_plan(
     if hasattr(participant, "_active_plan_items"):
         delattr(participant, "_active_plan_items")
     return participant
+
+
+def _deactivate_participant_plan(*, participant, actor, reason: str, removed_at=None) -> int:
+    return SessionParticipantPlanItem.objects.filter(
+        participant=participant,
+        removed_at__isnull=True,
+    ).update(
+        removed_at=removed_at or timezone.now(),
+        removed_by=actor,
+        removal_reason=reason,
+    )
+
+
+def _move_participant_plan(*, old_participant, new_participant, actor) -> int:
+    """Move only links still valid for the replacement session, preserving old audit rows."""
+    current_items = list(
+        SessionParticipantPlanItem.objects.select_for_update()
+        .filter(participant=old_participant, removed_at__isnull=True)
+        .select_related("clinic_link__enrollment", "clinic_link__session")
+        .order_by("id")
+    )
+    if not current_items:
+        return 0
+
+    target_lecture_ids = {
+        int(lecture_id)
+        for lecture_id in new_participant.session.target_lectures.values_list("id", flat=True)
+    }
+    valid_items = [
+        item
+        for item in current_items
+        if _plan_link_is_valid_for_participant(
+            participant=new_participant,
+            clinic_link=item.clinic_link,
+            target_lecture_ids=target_lecture_ids,
+        )
+    ]
+    changed_at = timezone.now()
+    SessionParticipantPlanItem.objects.filter(
+        id__in=[item.id for item in current_items]
+    ).update(
+        removed_at=changed_at,
+        removed_by=actor,
+        removal_reason="booking_changed",
+    )
+    SessionParticipantPlanItem.objects.bulk_create(
+        [
+            SessionParticipantPlanItem(
+                participant=new_participant,
+                clinic_link_id=item.clinic_link_id,
+                selected_by_id=item.selected_by_id or getattr(actor, "id", None),
+            )
+            for item in valid_items
+        ]
+    )
+    return len(valid_items)
 
 
 def _actor_label(actor) -> str:
@@ -514,6 +574,16 @@ def change_participant_status(
             tenant_id=tenant.id,
             participant_id=participant.id,
         )
+    if next_status in (
+        SessionParticipant.Status.CANCELLED,
+        SessionParticipant.Status.REJECTED,
+    ):
+        _deactivate_participant_plan(
+            participant=participant,
+            actor=actor,
+            reason=f"booking_{next_status}",
+            removed_at=changed_at,
+        )
     return ParticipantTransitionResult(
         participant=participant,
         notification=_status_notification(participant, next_status, actor=actor),
@@ -538,12 +608,23 @@ def complete_participant(*, tenant, participant_id: int, actor) -> ParticipantTr
             {"detail": f"'{participant.get_status_display()}' 상태의 참가자는 완료 처리할 수 없습니다."}
         )
 
-    participant.completed_at = timezone.now()
+    completed_at = timezone.now()
+    participant.completed_at = completed_at
     participant.completed_by = actor
+    participant.completion_history = [
+        *(participant.completion_history or []),
+        {
+            "action": "complete",
+            "at": completed_at.isoformat(),
+            "actor_id": getattr(actor, "id", None),
+            "completed_at": completed_at.isoformat(),
+        },
+    ]
     participant.save(
         update_fields=[
             "completed_at",
             "completed_by",
+            "completion_history",
             "updated_at",
         ]
     )
@@ -618,14 +699,32 @@ def checkout_participant(
 
 
 @transaction.atomic
-def uncomplete_participant(*, tenant, participant_id: int) -> ParticipantTransitionResult:
+def uncomplete_participant(*, tenant, participant_id: int, actor) -> ParticipantTransitionResult:
     participant = _locked_participant(tenant=tenant, participant_id=participant_id)
     if not participant.completed_at:
         raise ValidationError({"detail": "완료 처리되지 않은 참가자입니다."})
 
+    changed_at = timezone.now()
+    previous_completed_at = participant.completed_at
+    previous_completed_by_id = participant.completed_by_id
+    participant.completion_history = [
+        *(participant.completion_history or []),
+        {
+            "action": "uncomplete",
+            "at": changed_at.isoformat(),
+            "actor_id": getattr(actor, "id", None),
+            "previous_completed_at": previous_completed_at.isoformat(),
+            "previous_completed_by_id": previous_completed_by_id,
+        },
+    ]
     participant.completed_at = None
     participant.completed_by = None
-    participant.save(update_fields=["completed_at", "completed_by", "updated_at"])
+    participant.save(update_fields=[
+        "completed_at",
+        "completed_by",
+        "completion_history",
+        "updated_at",
+    ])
     return ParticipantTransitionResult(participant=participant)
 
 
@@ -1196,6 +1295,16 @@ def change_participant_booking(
         old_booking.save(
             update_fields=["status", "status_changed_at", "status_changed_by", "updated_at"]
         )
+
+    cancel_pending_clinic_participant_reminders(
+        tenant_id=tenant.id,
+        participant_id=old_booking.id,
+    )
+    _move_participant_plan(
+        old_participant=old_booking,
+        new_participant=new_booking,
+        actor=actor,
+    )
 
     return ParticipantWriteResult(
         participant=new_booking,
