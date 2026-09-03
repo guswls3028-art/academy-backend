@@ -39,6 +39,7 @@ from apps.api.common.query_params import parse_query_int
 from apps.core.services.tenant_access import STAFF_ROLES, get_active_membership_role
 from apps.support.clinic.session_dependencies import (
     get_student_for_clinic_request,
+    retry_failed_clinic_notification,
     send_clinic_event_notification,
     send_clinic_reminder_for_participant,
 )
@@ -80,6 +81,16 @@ class ClinicReminderResponseSerializer(serializers.Serializer):
 
 class ClinicStaffMemoSerializer(serializers.Serializer):
     staff_memo = serializers.CharField(allow_blank=True, max_length=2000)
+
+
+class ClinicNotificationRetryRequestSerializer(serializers.Serializer):
+    log_id = serializers.IntegerField(min_value=1)
+
+
+class ClinicNotificationRetryResponseSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=("accepted",))
+    outbox_id = serializers.IntegerField(min_value=1)
+    origin_id = serializers.CharField()
 
 
 class ClinicPlanReplaceSerializer(serializers.Serializer):
@@ -211,6 +222,7 @@ class ParticipantViewSet(
             "uncomplete",
             "remind",
             "set_staff_memo",
+            "retry_notification",
         ):
             return [TenantResolvedAndStaff()]
         return [IsAuthenticated(), TenantResolvedAndMember()]
@@ -227,6 +239,7 @@ class ParticipantViewSet(
             .filter(student__deleted_at__isnull=True)  # 삭제된 학생 제외
             .select_related(
                 "student",
+                "student__parent__user",
                 "session",
                 "status_changed_by",
                 "completed_by",
@@ -581,6 +594,48 @@ class ParticipantViewSet(
             )
         return Response({"ok": True, **result})
 
+    @extend_schema(
+        request=ClinicNotificationRetryRequestSerializer,
+        parameters=[OpenApiParameter("id", OpenApiTypes.INT, OpenApiParameter.PATH)],
+        responses={
+            200: ClinicNotificationRetryResponseSerializer,
+            404: OpenApiTypes.OBJECT,
+            409: OpenApiTypes.OBJECT,
+        },
+    )
+    @action(detail=True, methods=["post"], url_path="retry-notification")
+    def retry_notification(self, request, pk=None):
+        """Retry a confirmed failed clinic Alimtalk from its exact durable payload."""
+
+        participant = self.get_object()
+        try:
+            log_id = int(request.data.get("log_id"))
+        except (TypeError, ValueError) as exc:
+            raise serializers.ValidationError(
+                {"log_id": "재시도할 발송 로그가 필요합니다."}
+            ) from exc
+        result = retry_failed_clinic_notification(
+            tenant=request.tenant,
+            participant=participant,
+            log_id=log_id,
+            actor_id=request.user.id,
+        )
+        if result["result"] == "not_found":
+            return Response(
+                {"detail": result["detail"]},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        if result["result"] == "conflict":
+            return Response(
+                {"detail": result["detail"]},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return Response({
+            "status": result["status"],
+            "outbox_id": result["outbox_id"],
+            "origin_id": result["origin_id"],
+        })
+
     @action(detail=True, methods=["post"])
     def uncomplete(self, request, pk=None):
         """
@@ -618,6 +673,12 @@ class ParticipantViewSet(
             preferred_end_time = serializers.TimeField(
                 required=False, allow_null=True
             ).run_validation(request.data.get("preferred_end_time"))
+            booking_start_time = serializers.TimeField(
+                required=False, allow_null=True
+            ).run_validation(request.data.get("booking_start_time"))
+            booking_end_time = serializers.TimeField(
+                required=False, allow_null=True
+            ).run_validation(request.data.get("booking_end_time"))
         except serializers.ValidationError as exc:
             raise serializers.ValidationError({"preferred_time": exc.detail}) from exc
         send_to = _schedule_change_send_to(request, default="parent")
@@ -639,6 +700,8 @@ class ParticipantViewSet(
             student_request_memo=student_request_memo,
             preferred_start_time=preferred_start_time,
             preferred_end_time=preferred_end_time,
+            booking_start_time=booking_start_time,
+            booking_end_time=booking_end_time,
         )
         new_booking = result.participant
         notification_result = None

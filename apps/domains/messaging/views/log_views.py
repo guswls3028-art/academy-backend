@@ -3,10 +3,13 @@
 발송 로그 뷰
 """
 
+import re
+
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from drf_spectacular.utils import OpenApiParameter, OpenApiTypes, extend_schema
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.api.common.query_params import parse_query_int
 from apps.core.services.tenant_access import get_authorized_tenant_role
@@ -119,6 +122,7 @@ def _project_log(
         "message_body": visible_body,
         "message_mode": log.message_mode or "",
         "notification_type": log.notification_type or "",
+        "origin_id": log.origin_id or "",
         "source_tenant_id": log.source_tenant_id,
         "target_type": log.target_type or "",
         "target_id": sanitize_notification_target_id(log.target_id),
@@ -131,6 +135,16 @@ class NotificationLogListView(APIView):
 
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                "origin_id_prefix",
+                OpenApiTypes.STR,
+                OpenApiParameter.QUERY,
+                description="PII가 없는 원천 식별자 접두사. 클리닉 참가자별 발송 이력 조회에 사용합니다.",
+            ),
+        ]
+    )
     def get(self, request):
         page = parse_query_int(request.query_params, "page", default=1, min_value=1)
         page_size = min(
@@ -141,6 +155,17 @@ class NotificationLogListView(APIView):
         # status 필터: success / failure / all (기본 all)
         status_filter = (request.query_params.get("status") or "").strip().lower()
         base_qs = _alimtalk_logs_for_business_tenant(request.tenant)
+        origin_id_prefix = (request.query_params.get("origin_id_prefix") or "").strip()
+        if origin_id_prefix:
+            if len(origin_id_prefix) > 128 or not re.fullmatch(
+                r"[A-Za-z0-9:_-]+",
+                origin_id_prefix,
+            ):
+                return Response(
+                    {"origin_id_prefix": "유효한 원천 식별자 접두사를 입력해 주세요."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            base_qs = base_qs.filter(origin_id__startswith=origin_id_prefix)
         if (request.query_params.get("scope") or "").strip().lower() == "clinic":
             base_qs = base_qs.filter(notification_type__in=CLINIC_NOTIFICATION_TRIGGERS)
         if status_filter == "success":

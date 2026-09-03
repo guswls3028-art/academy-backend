@@ -62,6 +62,58 @@ class ClinicSessionSerializer(serializers.ModelSerializer):
         model = Session
         exclude = ("target_lectures",)
 
+    def validate(self, attrs):
+        instance = self.instance
+        mode = attrs.get("booking_mode", getattr(instance, "booking_mode", "fixed_slot"))
+        interval = attrs.get(
+            "booking_interval_minutes",
+            getattr(instance, "booking_interval_minutes", 60),
+        )
+        max_stay = attrs.get(
+            "booking_max_stay_minutes",
+            getattr(instance, "booking_max_stay_minutes", 240),
+        )
+        if interval not in (30, 60):
+            raise serializers.ValidationError(
+                {"booking_interval_minutes": "예약 간격은 30분 또는 60분이어야 합니다."}
+            )
+        if max_stay < interval or max_stay % interval:
+            raise serializers.ValidationError(
+                {"booking_max_stay_minutes": "최대 체류 시간은 예약 간격의 양의 배수여야 합니다."}
+            )
+        if instance and instance.participants.filter(
+            status__in=(
+                SessionParticipant.Status.PENDING,
+                SessionParticipant.Status.BOOKED,
+                SessionParticipant.Status.ATTENDED,
+            )
+        ).exists():
+            changed = any(
+                key in attrs and attrs[key] != getattr(instance, key)
+                for key in (
+                    "booking_mode",
+                    "booking_interval_minutes",
+                    "booking_max_stay_minutes",
+                )
+            )
+            if changed:
+                raise serializers.ValidationError(
+                    {"booking_policy": "활성 예약이 있는 세션의 예약 방식은 변경할 수 없습니다."}
+                )
+        if mode == "time_range" and attrs.get(
+            "allow_multi_slot_booking",
+            getattr(instance, "allow_multi_slot_booking", False),
+        ):
+            raise serializers.ValidationError(
+                {"allow_multi_slot_booking": "시간 범위 방식은 여러 세션 동시 예약과 함께 사용할 수 없습니다."}
+            )
+        duration = attrs.get("duration_minutes", getattr(instance, "duration_minutes", 60))
+        if mode == "time_range" and duration % interval:
+            raise serializers.ValidationError(
+                {"duration_minutes": "시간 범위 세션의 운영 시간은 예약 간격의 배수여야 합니다."}
+            )
+        return attrs
+
     def get_participant_count(self, obj: Session):
         return getattr(obj, "participant_count", 0)
 
@@ -165,6 +217,7 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
         read_only=True,
         default=None,
     )
+    recipient_contacts = serializers.SerializerMethodField()
 
     class Meta:
         model = SessionParticipant
@@ -183,7 +236,34 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
             data.pop("staff_memo", None)
             data.pop("memo", None)
             data.pop("completion_history", None)
+            data.pop("recipient_contacts", None)
         return data
+
+    def get_recipient_contacts(self, obj: SessionParticipant) -> list[dict[str, str]]:
+        student = obj.student
+        contacts = []
+        if student.phone:
+            contacts.append({
+                "role": "student",
+                "name": student.name,
+                "phone": student.phone,
+            })
+        if student.parent_phone:
+            parent_name = f"{student.name} 학부모"
+            parent = getattr(student, "parent", None)
+            parent_user = getattr(parent, "user", None) if parent else None
+            if parent_user:
+                parent_name = (
+                    parent_user.get_full_name()
+                    or getattr(parent_user, "name", "")
+                    or parent_name
+                )
+            contacts.append({
+                "role": "parent",
+                "name": parent_name,
+                "phone": student.parent_phone,
+            })
+        return contacts
 
     def get_session_date(self, obj):
         """session이 있으면 session.date, 없으면 requested_date"""
@@ -325,6 +405,8 @@ class ClinicSessionParticipantCreateSerializer(serializers.ModelSerializer):
             "requested_start_time",  # ✅ 학생 신청 시 시간
             "preferred_start_time",
             "preferred_end_time",
+            "booking_start_time",
+            "booking_end_time",
             "student_request_memo",
             "student",
             "status",
@@ -388,6 +470,8 @@ class ClinicSessionParticipantBulkCreateSerializer(serializers.Serializer):
     )
     preferred_start_time = serializers.TimeField(required=False, allow_null=True)
     preferred_end_time = serializers.TimeField(required=False, allow_null=True)
+    booking_start_time = serializers.TimeField(required=False, allow_null=True)
+    booking_end_time = serializers.TimeField(required=False, allow_null=True)
 
     def validate(self, attrs):
         session_ids = attrs["session_ids"]
@@ -412,6 +496,13 @@ class ClinicSessionParticipantBulkCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {"preferred_time": "희망 시간은 한 시간대만 선택했을 때 입력할 수 있습니다."}
             )
+        if len(session_ids) > 1 and (
+            attrs.get("booking_start_time") is not None
+            or attrs.get("booking_end_time") is not None
+        ):
+            raise serializers.ValidationError(
+                {"booking_time": "실제 예약 시간은 한 세션만 선택했을 때 입력할 수 있습니다."}
+            )
         return attrs
 
 
@@ -434,6 +525,15 @@ class ClinicSessionBulkCreateSerializer(serializers.Serializer):
     target_school_type = serializers.CharField(required=False, allow_null=True, default=None)
     section_id = serializers.IntegerField(required=False, allow_null=True, default=None)
     allow_multi_slot_booking = serializers.BooleanField(required=False)
+    booking_mode = serializers.ChoiceField(
+        choices=("fixed_slot", "time_range"),
+        required=False,
+    )
+    booking_interval_minutes = serializers.ChoiceField(
+        choices=(30, 60),
+        required=False,
+    )
+    booking_max_stay_minutes = serializers.IntegerField(min_value=30, required=False)
     target_lecture_ids = serializers.ListField(
         child=serializers.IntegerField(), required=False, default=[]
     )
@@ -450,6 +550,23 @@ class ClinicSessionBulkCreateSerializer(serializers.Serializer):
         if value is not None and value not in ("ELEMENTARY", "MIDDLE", "HIGH"):
             raise serializers.ValidationError("학교 유형은 ELEMENTARY, MIDDLE, HIGH 중 하나여야 합니다.")
         return value
+
+    def validate(self, attrs):
+        interval = attrs.get("booking_interval_minutes", 60)
+        max_stay = attrs.get("booking_max_stay_minutes", 240)
+        if max_stay % interval:
+            raise serializers.ValidationError(
+                {"booking_max_stay_minutes": "최대 체류 시간은 예약 간격의 배수여야 합니다."}
+            )
+        if attrs.get("booking_mode") == "time_range" and len(attrs["dates"]) > 1:
+            raise serializers.ValidationError(
+                {"dates": "시간 범위 방식은 한 날짜씩 생성해 주세요."}
+            )
+        if attrs.get("booking_mode") == "time_range" and attrs["duration_minutes"] % interval:
+            raise serializers.ValidationError(
+                {"duration_minutes": "시간 범위 세션의 운영 시간은 예약 간격의 배수여야 합니다."}
+            )
+        return attrs
 
 
 class ClinicTestSerializer(serializers.ModelSerializer):

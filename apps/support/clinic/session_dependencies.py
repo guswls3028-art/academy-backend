@@ -608,6 +608,75 @@ def send_clinic_event_notification(*, tenant, trigger: str, student, send_to: st
     )
 
 
+def retry_failed_clinic_notification(*, tenant, participant, log_id: int, actor_id: int) -> dict:
+    """Retry one exact failed clinic Alimtalk through the messaging boundary."""
+    from apps.domains.messaging.models import ScheduledNotification
+    from apps.domains.messaging.scheduled import dispatch_notification_now
+    from apps.domains.messaging.selectors import notification_logs_for_business_tenant
+
+    prefix = f"clinic_participant:{participant.id}:"
+    log = notification_logs_for_business_tenant(tenant).filter(
+        pk=log_id,
+        message_mode__in=("alimtalk", ""),
+        origin_id__startswith=prefix,
+    ).first()
+    if log is None:
+        return {"result": "not_found", "detail": "재시도할 발송 기록을 찾을 수 없습니다."}
+    if log.status not in {"failed", "retryable_failed"}:
+        return {
+            "result": "conflict",
+            "detail": "확정 실패 또는 재시도 가능 실패만 다시 보낼 수 있습니다.",
+        }
+    if log.target_type not in {"student", "parent"} or str(log.target_id) != str(
+        participant.student_id
+    ):
+        return {"result": "conflict", "detail": "발송 대상이 현재 학생과 일치하지 않습니다."}
+
+    original = ScheduledNotification.objects.filter(
+        tenant=tenant,
+        business_idempotency_key=log.business_idempotency_key,
+    ).order_by("id").first()
+    if original is None or not isinstance(original.payload, dict):
+        return {
+            "result": "conflict",
+            "detail": "원본 발송 자료를 확인할 수 없어 안전하게 재시도할 수 없습니다.",
+        }
+    payload = dict(original.payload)
+    if str(payload.get("message_mode") or "").lower() != "alimtalk":
+        return {"result": "conflict", "detail": "알림톡 원본만 재시도할 수 있습니다."}
+    if str(payload.get("target_type") or "") != log.target_type or str(
+        payload.get("target_id") or ""
+    ) != str(participant.student_id):
+        return {"result": "conflict", "detail": "원본 발송 대상이 현재 학생과 일치하지 않습니다."}
+
+    retry_origin = f"{prefix}retry:{log.id}"
+    outbox = ScheduledNotification.objects.filter(
+        tenant=tenant,
+        origin_id=retry_origin,
+    ).order_by("id").first()
+    if outbox is None:
+        payload.update({
+            "occurrence_key": f"clinic-retry:{log.id}",
+            "domain_object_id": retry_origin,
+            "origin_type": "clinic_notification_retry",
+            "origin_id": retry_origin,
+            "source_domain": "clinic",
+            "source_use_case": "notification_retry",
+            "actor_id": actor_id,
+        })
+        outbox = dispatch_notification_now(
+            tenant_id=tenant.id,
+            trigger=original.trigger,
+            payload=payload,
+        )
+    return {
+        "result": "accepted",
+        "status": "accepted",
+        "outbox_id": outbox.id,
+        "origin_id": retry_origin,
+    }
+
+
 def unresolve_legacy_booking_links_for_session_delete(*, tenant, session) -> None:
     from django.db.models import Q
     from apps.domains.clinic.models import SessionParticipant

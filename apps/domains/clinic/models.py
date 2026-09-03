@@ -81,6 +81,23 @@ class Session(TimestampModel):
         db_default=False,
         help_text="같은 날짜의 다른 클리닉 시간대도 함께 예약할 수 있으면 True.",
     )
+    booking_mode = models.CharField(
+        max_length=16,
+        choices=(("fixed_slot", "고정 시간대"), ("time_range", "시간 범위")),
+        default="fixed_slot",
+        db_default="fixed_slot",
+        help_text="세션 생성 시 고정된 예약 방식 스냅샷입니다.",
+    )
+    booking_interval_minutes = models.PositiveSmallIntegerField(
+        default=60,
+        db_default=60,
+        help_text="시간 범위 예약의 선택 간격 스냅샷입니다.",
+    )
+    booking_max_stay_minutes = models.PositiveIntegerField(
+        default=240,
+        db_default=240,
+        help_text="시간 범위 예약의 최대 체류 분 스냅샷입니다.",
+    )
 
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -92,6 +109,20 @@ class Session(TimestampModel):
 
     class Meta:
         constraints = [
+            models.CheckConstraint(
+                condition=models.Q(booking_mode__in=("fixed_slot", "time_range")),
+                name="clinic_session_booking_mode_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(booking_interval_minutes__in=(30, 60)),
+                name="clinic_session_booking_interval_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    booking_max_stay_minutes__gte=models.F("booking_interval_minutes")
+                ),
+                name="clinic_session_booking_stay_gte_interval",
+            ),
             # ✅ 학년 지정 세션: 같은 시간/장소/학년 중복 방지
             models.UniqueConstraint(
                 fields=["tenant", "date", "start_time", "location", "target_grade"],
@@ -262,6 +293,16 @@ class SessionParticipant(TimestampModel):
         blank=True,
         help_text="세션 안에서 요청한 희망 종료 시각. 실제 예약 종료 시각과 별개.",
     )
+    booking_start_time = models.TimeField(
+        null=True,
+        blank=True,
+        help_text="시간 범위 방식에서 확정된 실제 예약 시작 시각입니다.",
+    )
+    booking_end_time = models.TimeField(
+        null=True,
+        blank=True,
+        help_text="시간 범위 방식에서 확정된 실제 예약 종료 시각입니다.",
+    )
     staff_memo = models.TextField(
         blank=True,
         default="",
@@ -271,6 +312,20 @@ class SessionParticipant(TimestampModel):
 
     class Meta:
         constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(booking_start_time__isnull=True, booking_end_time__isnull=True)
+                    | models.Q(booking_start_time__isnull=False, booking_end_time__isnull=False)
+                ),
+                name="clinic_participant_booking_range_pair",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(booking_start_time__isnull=True)
+                    | models.Q(booking_start_time__lt=models.F("booking_end_time"))
+                ),
+                name="clinic_participant_booking_range_order",
+            ),
             models.UniqueConstraint(
                 fields=["tenant", "session", "student"],
                 name="uniq_clinic_participant_active",

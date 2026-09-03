@@ -4,7 +4,7 @@
 
 `GET /api/v1/messaging/log/`와 `GET /api/v1/messaging/log/{id}/`는 현재
 테넌트의 직원이 알림톡 처리 이력을 확인하는 읽기 전용 경로다. 실제 발송,
-재시도, 재큐잉, 예약 취소, 발송자나 공급자 선택은 이 API의 책임이 아니다.
+일반 재시도, 재큐잉, 예약 취소, 발송자나 공급자 선택은 이 API의 책임이 아니다.
 제품 메시지는 알림톡 단일 채널이며 SMS/LMS 대체 발송은 제공하지 않는다.
 조회 결과는 `message_mode=alimtalk`과 채널 필드가 없던 과거 호환 기록만
 포함한다. 명시적인 비알림톡 기록을 현재 알림톡 처리 이력으로 오인해 표시하지
@@ -28,6 +28,9 @@
   보안 안내문으로 대체된다. 높은 권한도 원문을 복원할 수 없다.
 - 공급자 실패 원문은 전화번호, 이메일, IP 등 개인정보를 포함할 수 있어
   반환하지 않는다. API는 안전한 실패 코드와 일반화된 설명만 투영한다.
+- `origin_id_prefix`는 영문·숫자·콜론·밑줄·하이픈만 허용하며 현재 tenant 안에서만
+  적용한다. 클리닉 운영 화면은 `clinic_participant:{id}:` 접두사로 한 참가자의
+  처리 이력을 폴링한다. 응답의 `origin_id`는 전화번호가 아닌 domain 식별자다.
 
 ## 상태와 시각 의미
 
@@ -64,11 +67,22 @@
 
 `message_body`가 비어 있으면 원문을 추정하거나 템플릿에서 재구성하지 않는다.
 
+## 클리닉 실패 재시도
+
+`POST /api/v1/clinic/participants/{id}/retry-notification/`은 현재 tenant의 직원이
+해당 참가자 접두사에 속한 `failed` 또는 `retryable_failed` 알림톡만 다시 요청하는
+좁은 경로다. `sent`, `processing`, `sending`, `ambiguous`는 중복 위험 때문에
+거부한다. 저장된 원본 outbox의 승인 template, 수신 역할, 치환값과 대상 학생 ID가
+현재 참가자와 정확히 맞아야 하며 원본이 없으면 추정하지 않는다. 새 원천 ID는
+`clinic_participant:{participant_id}:retry:{log_id}`로 고정되어 같은 실패 로그를
+여러 번 눌러도 outbox는 하나만 생성된다. SMS/LMS 전환은 없다.
+
 ## 검증
 
 ```powershell
 $env:DJANGO_SETTINGS_MODULE='apps.api.config.settings.test'
 C:\academy\backend\.venv\Scripts\python.exe manage.py test apps.domains.messaging.tests.test_notification_log_redaction.NotificationLogRedactionTests -v 1
+C:\academy\backend\.venv\Scripts\python.exe manage.py test tests.test_clinic_time_range_policy_api -v 1
 ```
 
 테스트는 테넌트 격리, 역할별 본문·공급자 증거, 민감 본문 비복원, 실패 원문
