@@ -23,7 +23,7 @@ from apps.domains.exams.models import Exam, ExamEnrollment
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.students.models import Student
-from apps.domains.results.models import ExamAttempt
+from apps.domains.results.models import ExamAttempt, Result
 from apps.domains.submissions.models import Submission
 from apps.support.student_app.exam_dependencies import (
     StudentExamSubmitError,
@@ -153,6 +153,14 @@ class TestP0ConcurrencyPG(TransactionTestCase):
             status="done",
             meta={},
         )
+        Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=enrollment,
+            attempt=attempt,
+            total_score=0,
+            max_score=100,
+        )
         grading_started = threading.Event()
         allow_grading_to_finish = threading.Event()
         absent_finished = threading.Event()
@@ -176,6 +184,12 @@ class TestP0ConcurrencyPG(TransactionTestCase):
             try:
                 connection.close()
                 with transaction.atomic():
+                    Enrollment.objects.select_for_update().get(id=enrollment.id)
+                    Result.objects.select_for_update().get(
+                        target_type="exam",
+                        target_id=exam.id,
+                        enrollment=enrollment,
+                    )
                     locked = ExamAttempt.objects.select_for_update().get(id=attempt.id)
                     locked.meta = {**(locked.meta or {}), "status": "NOT_SUBMITTED"}
                     locked.save(update_fields=["meta", "updated_at"])

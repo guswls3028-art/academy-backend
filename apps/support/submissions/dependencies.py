@@ -58,7 +58,7 @@ def rebind_representative_omr_submission(
     from django.db import transaction
     from django.utils import timezone
 
-    from apps.domains.results.models import ExamAttempt
+    from apps.domains.results.models import ExamAttempt, Result
     from apps.domains.submissions.models import Submission
 
     with transaction.atomic():
@@ -194,7 +194,8 @@ def complete_submission_after_auto_grade(submission, *, actor: str) -> None:
 def regrade_exam_submissions(*, tenant, exam_id: int, actor: str) -> dict[str, Any]:
     from django.db import transaction
 
-    from apps.domains.results.models import ExamAttempt
+    from apps.domains.enrollment.models import Enrollment
+    from apps.domains.results.models import ExamAttempt, Result
     from apps.domains.submissions.models import Submission
     from apps.domains.submissions.services.lifecycle import reopen_for_regrade
 
@@ -224,6 +225,15 @@ def regrade_exam_submissions(*, tenant, exam_id: int, actor: str) -> dict[str, A
         try:
             with transaction.atomic():
                 submission = Submission.objects.select_for_update().get(id=int(submission_id))
+                enrollment = Enrollment.objects.select_for_update().get(
+                    id=int(submission.enrollment_id),
+                    tenant=tenant,
+                )
+                Result.objects.select_for_update().filter(
+                    target_type="exam",
+                    target_id=int(exam_id),
+                    enrollment_id=int(enrollment.id),
+                ).first()
                 attempt = (
                     ExamAttempt.objects.select_for_update()
                     .filter(
