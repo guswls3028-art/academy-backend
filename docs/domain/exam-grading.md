@@ -446,6 +446,8 @@ Ymath의 `Program.feature_flags.assessment_status_display=wrong_completion`은
   `resolution_type=NOT_SUBMITTED` 감사 이력으로 닫고 오늘 대상 선택만 무효화한다.
   이미 예약·등원·완료된 클리닉 참여 사실은 취소하지 않으며 전환 알림도 보내지
   않는다. 동일 요청 재시도는 no-op 성공하고 이후 점수 입력은 합법적인 명시 재개다.
+  진도와 클리닉 파생 판정은 현재 대표 시도의 상태만 사용하므로, 과거 비대표
+  `NOT_SUBMITTED` 시도는 정상 재응시 점수를 다시 미응시로 되돌리지 않는다.
 - 일반 시험 재계산은 submission 다음 수강·결과·attempt 순서로 잠근 뒤
   `NOT_SUBMITTED`를 다시 확인한다. 수동 채점도 수강·결과·attempt 순서를 사용하므로
   두 경로가 역순 잠금으로 교착하지 않는다. 명시적인 응시 재개 없이 결시 attempt를

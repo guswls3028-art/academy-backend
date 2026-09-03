@@ -839,7 +839,7 @@
             "nullable": true
           },
           "resolution_type": {
-            "description": "해소 유형: 시험통과/과제통과/수동해소/면제/원본삭제/레거시\n\n* `EXAM_PASS` - 시험 통과\n* `HOMEWORK_PASS` - 과제 통과\n* `MANUAL_OVERRIDE` - 관리자 수동 해소\n* `WAIVED` - 면제\n* `CARRIED_OVER` - 다음 차수로 이월\n* `SOURCE_REMOVED` - 원본 삭제\n* `BOOKING_LEGACY` - 레거시(예약 기반)",
+            "description": "해소 유형: 시험통과/과제통과/수동해소/면제/원본삭제/시험미응시/레거시\n\n* `EXAM_PASS` - 시험 통과\n* `HOMEWORK_PASS` - 과제 통과\n* `MANUAL_OVERRIDE` - 관리자 수동 해소\n* `WAIVED` - 면제\n* `CARRIED_OVER` - 다음 차수로 이월\n* `SOURCE_REMOVED` - 원본 삭제\n* `NOT_SUBMITTED` - 시험 미응시 전환\n* `BOOKING_LEGACY` - 레거시(예약 기반)",
             "nullable": true,
             "oneOf": [
               {
@@ -928,7 +928,7 @@
             "nullable": true
           },
           "resolution_type": {
-            "description": "해소 유형: 시험통과/과제통과/수동해소/면제/원본삭제/레거시\n\n* `EXAM_PASS` - 시험 통과\n* `HOMEWORK_PASS` - 과제 통과\n* `MANUAL_OVERRIDE` - 관리자 수동 해소\n* `WAIVED` - 면제\n* `CARRIED_OVER` - 다음 차수로 이월\n* `SOURCE_REMOVED` - 원본 삭제\n* `BOOKING_LEGACY` - 레거시(예약 기반)",
+            "description": "해소 유형: 시험통과/과제통과/수동해소/면제/원본삭제/시험미응시/레거시\n\n* `EXAM_PASS` - 시험 통과\n* `HOMEWORK_PASS` - 과제 통과\n* `MANUAL_OVERRIDE` - 관리자 수동 해소\n* `WAIVED` - 면제\n* `CARRIED_OVER` - 다음 차수로 이월\n* `SOURCE_REMOVED` - 원본 삭제\n* `NOT_SUBMITTED` - 시험 미응시 전환\n* `BOOKING_LEGACY` - 레거시(예약 기반)",
             "nullable": true,
             "oneOf": [
               {
@@ -958,7 +958,7 @@
         "type": "object"
       },
       "ClinicLinkResolutionTypeEnum": {
-        "description": "* `EXAM_PASS` - 시험 통과\n* `HOMEWORK_PASS` - 과제 통과\n* `MANUAL_OVERRIDE` - 관리자 수동 해소\n* `WAIVED` - 면제\n* `CARRIED_OVER` - 다음 차수로 이월\n* `SOURCE_REMOVED` - 원본 삭제\n* `BOOKING_LEGACY` - 레거시(예약 기반)",
+        "description": "* `EXAM_PASS` - 시험 통과\n* `HOMEWORK_PASS` - 과제 통과\n* `MANUAL_OVERRIDE` - 관리자 수동 해소\n* `WAIVED` - 면제\n* `CARRIED_OVER` - 다음 차수로 이월\n* `SOURCE_REMOVED` - 원본 삭제\n* `NOT_SUBMITTED` - 시험 미응시 전환\n* `BOOKING_LEGACY` - 레거시(예약 기반)",
         "enum": [
           "EXAM_PASS",
           "HOMEWORK_PASS",
@@ -966,6 +966,7 @@
           "WAIVED",
           "CARRIED_OVER",
           "SOURCE_REMOVED",
+          "NOT_SUBMITTED",
           "BOOKING_LEGACY"
         ],
         "type": "string"
@@ -7473,7 +7474,7 @@
             "nullable": true
           },
           "resolution_type": {
-            "description": "해소 유형: 시험통과/과제통과/수동해소/면제/원본삭제/레거시\n\n* `EXAM_PASS` - 시험 통과\n* `HOMEWORK_PASS` - 과제 통과\n* `MANUAL_OVERRIDE` - 관리자 수동 해소\n* `WAIVED` - 면제\n* `CARRIED_OVER` - 다음 차수로 이월\n* `SOURCE_REMOVED` - 원본 삭제\n* `BOOKING_LEGACY` - 레거시(예약 기반)",
+            "description": "해소 유형: 시험통과/과제통과/수동해소/면제/원본삭제/시험미응시/레거시\n\n* `EXAM_PASS` - 시험 통과\n* `HOMEWORK_PASS` - 과제 통과\n* `MANUAL_OVERRIDE` - 관리자 수동 해소\n* `WAIVED` - 면제\n* `CARRIED_OVER` - 다음 차수로 이월\n* `SOURCE_REMOVED` - 원본 삭제\n* `NOT_SUBMITTED` - 시험 미응시 전환\n* `BOOKING_LEGACY` - 레거시(예약 기반)",
             "nullable": true,
             "oneOf": [
               {

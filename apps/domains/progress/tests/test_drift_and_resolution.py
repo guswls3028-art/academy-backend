@@ -360,6 +360,74 @@ class DriftResolutionTest(TestCase, ClinicTestMixin):
             ).exists()
         )
 
+    def test_retake_is_not_poisoned_by_old_not_submitted_attempt(self):
+        """정상 재응시는 과거 비대표 미응시 이력과 무관하게 현재 점수로 판정한다."""
+        from apps.domains.results.models import ExamAttempt, Result
+        from apps.domains.progress.services.session_calculator import (
+            SessionProgressCalculator,
+        )
+
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="Absent then passed",
+            pass_score=60.0,
+            max_score=100.0,
+        )
+        exam.sessions.add(self.lec_session)
+        ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=self.enrollment,
+            attempt_index=1,
+            is_representative=False,
+            status="done",
+            meta={"status": "NOT_SUBMITTED"},
+        )
+        retake = ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=self.enrollment,
+            attempt_index=2,
+            is_retake=True,
+            is_representative=True,
+            status="done",
+            meta={"total_score": 85.0, "max_score": 100.0},
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.enrollment,
+            attempt=retake,
+            total_score=85,
+            max_score=100,
+        )
+        ProgressPolicy.objects.update_or_create(
+            lecture=self.lecture,
+            defaults={
+                "exam_pass_source": ProgressPolicy.ExamPassSource.EXAM,
+                "exam_start_session_order": 1,
+                "exam_end_session_order": 9999,
+            },
+        )
+
+        progress = SessionProgressCalculator.calculate(
+            enrollment_id=self.enrollment.id,
+            session=self.lec_session,
+            attendance_type="online",
+            video_progress_rate=100,
+        )
+        ClinicTriggerService.auto_create_per_exam(progress)
+
+        self.assertTrue(progress.exam_passed)
+        self.assertIsNone(progress.exam_meta["exams"][0]["meta_status"])
+        self.assertFalse(
+            ClinicLink.objects.filter(
+                enrollment=self.enrollment,
+                session=self.lec_session,
+                source_type="exam",
+                source_id=exam.id,
+                resolved_at__isnull=True,
+            ).exists()
+        )
+
     def test_exam_pass_resolution_does_not_recreate_failed_clinic_link(self):
         """재시험 합격으로 닫힌 시험은 파이프라인 재실행 후에도 새 미해소 링크가 생기면 안 된다."""
         from django.apps import apps

@@ -150,6 +150,7 @@ class SessionProgressCalculator:
         for ea in ExamAttempt.objects.filter(
             exam_id__in=[int(x) for x in exam_ids],
             enrollment_id=int(enrollment_id),
+            is_representative=True,
         ):
             meta = ea.meta if isinstance(ea.meta, dict) else {}
             if meta.get("status") == "NOT_SUBMITTED":
