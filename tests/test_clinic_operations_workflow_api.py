@@ -18,7 +18,10 @@ from apps.domains.clinic.tests import ClinicAPITestMixin
 from apps.domains.messaging.models import ScheduledNotification
 from apps.domains.messaging.scheduled import _claim_due_notifications
 from apps.domains.messaging.models import AutoSendConfig
-from apps.domains.messaging.alimtalk_content_builders import get_template_type
+from apps.domains.messaging.alimtalk_content_builders import (
+    TYPE_CLINIC_INFO,
+    get_template_type,
+)
 from apps.domains.messaging.management.commands.cleanup_dead_message_triggers import (
     DEAD_TRIGGERS,
 )
@@ -164,6 +167,7 @@ class ClinicOperationsWorkflowAPITest(APITestCase, ClinicAPITestMixin):
 
         with patch(
             "apps.domains.clinic.views.participant_views._send_clinic_notification",
+            return_value={"requested": 1, "failed": 0, "send_to": "parent"},
         ) as notify:
             checked_out = self.client.post(
                 f"/api/v1/clinic/participants/{participant.id}/checkout/",
@@ -171,6 +175,7 @@ class ClinicOperationsWorkflowAPITest(APITestCase, ClinicAPITestMixin):
                     "confirm_without_arrival": True,
                     "expected_session_id": participant.session_id,
                     "expected_student_id": participant.student_id,
+                    "send_to": "parent",
                 },
                 format="json",
                 **self._headers(self.tenant),
@@ -178,8 +183,13 @@ class ClinicOperationsWorkflowAPITest(APITestCase, ClinicAPITestMixin):
 
         self.assertEqual(checked_out.status_code, 200, checked_out.data)
         self.assertEqual(checked_out.data["checkout_mode"], "arrival_not_recorded")
-        self.assertIsNone(checked_out.data["notification"])
-        notify.assert_not_called()
+        self.assertEqual(
+            checked_out.data["notification"],
+            {"requested": 1, "failed": 0, "send_to": "parent"},
+        )
+        notify.assert_called_once()
+        self.assertEqual(notify.call_args.args[2], "clinic_check_out")
+        self.assertEqual(notify.call_args.kwargs["send_to"], "parent")
         participant.refresh_from_db()
         first_checked_out_at = participant.checked_out_at
         self.assertIsNotNone(first_checked_out_at)
@@ -227,10 +237,11 @@ class ClinicOperationsWorkflowAPITest(APITestCase, ClinicAPITestMixin):
 
         with patch(
             "apps.domains.clinic.views.participant_views._send_clinic_notification",
+            return_value={"requested": 1, "failed": 0, "send_to": "parent"},
         ) as notify:
             checked_out = self.client.post(
                 f"/api/v1/clinic/participants/{participant.id}/checkout/",
-                {},
+                {"send_to": "parent"},
                 format="json",
                 **self._headers(self.tenant),
             )
@@ -243,8 +254,13 @@ class ClinicOperationsWorkflowAPITest(APITestCase, ClinicAPITestMixin):
         self.assertTrue(participant.is_late)
         self.assertEqual(participant.checkout_mode, "arrival_recorded")
         self.assertEqual(checked_out.data["checkout_mode"], "arrival_recorded")
-        self.assertIsNone(checked_out.data["notification"])
-        notify.assert_not_called()
+        self.assertEqual(
+            checked_out.data["notification"],
+            {"requested": 1, "failed": 0, "send_to": "parent"},
+        )
+        notify.assert_called_once()
+        self.assertEqual(notify.call_args.args[2], "clinic_check_out")
+        self.assertEqual(notify.call_args.kwargs["send_to"], "parent")
         first_checked_out_at = participant.checked_out_at
 
         duplicate = self.client.post(
@@ -281,15 +297,15 @@ class ClinicOperationsWorkflowAPITest(APITestCase, ClinicAPITestMixin):
         participant.refresh_from_db()
         self.assertIsNone(participant.checked_out_at)
 
-    def test_checkout_notification_is_distinct_and_template_fail_closed(self):
+    def test_checkout_notification_uses_approved_clinic_envelope(self):
         self.assertEqual(AutoSendConfig.Trigger.CLINIC_CHECK_OUT, "clinic_check_out")
         self.assertEqual(get_trigger_policy("clinic_check_out"), "AUTO_DEFAULT")
         self.assertEqual(get_trigger_implementation_status("clinic_check_out"), "implemented")
-        self.assertTrue(requires_template_ready_opt_in("clinic_check_out"))
-        self.assertIsNone(get_template_type("clinic_check_out"))
+        self.assertFalse(requires_template_ready_opt_in("clinic_check_out"))
+        self.assertEqual(get_template_type("clinic_check_out"), TYPE_CLINIC_INFO)
         self.assertNotIn("clinic_check_out", DEAD_TRIGGERS)
 
-    def test_checkout_without_approved_template_queues_zero_messages(self):
+    def test_checkout_without_enabled_tenant_config_reports_failed_request(self):
         participant = self.make_participant(
             self.tenant,
             self.data["clinic_session"],
@@ -307,7 +323,10 @@ class ClinicOperationsWorkflowAPITest(APITestCase, ClinicAPITestMixin):
         )
 
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertIsNone(response.data["notification"])
+        self.assertEqual(
+            response.data["notification"],
+            {"requested": 0, "failed": 1, "send_to": "parent"},
+        )
         participant.refresh_from_db()
         self.assertIsNotNone(participant.checked_out_at)
 

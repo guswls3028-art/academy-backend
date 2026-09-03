@@ -85,6 +85,21 @@ class ProvisionDefaultTemplatesTests(TestCase):
         self.assertEqual(template.subject, "원장님이 바꾼 제목")
         self.assertEqual(template.body, "원장님이 바꾼 본문")
 
+    def test_provision_defaults_enables_clinic_checkout_with_editable_copy(self):
+        response = ProvisionDefaultTemplatesView.as_view()(
+            self._request("post", "/api/v1/messaging/provision-defaults/")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        config = AutoSendConfig.objects.select_related("template").get(
+            tenant=self.tenant,
+            trigger="clinic_check_out",
+        )
+        self.assertTrue(config.enabled)
+        self.assertEqual(config.message_mode, "alimtalk")
+        self.assertEqual(config.template.category, "clinic")
+        self.assertIn("하원", config.template.body)
+
     def test_existing_editable_template_is_not_locked_as_system(self):
         defaults = get_default_templates(self.tenant.name)
         default = defaults["registration_approved_student"]

@@ -20,7 +20,7 @@
 | clinic_reservation_changed | 클리닉 예약 변경 | 학생이 직접 변경하면 학생+학부모 | 예약 변경 시 |
 | clinic_cancelled | 클리닉 예약 취소 | 학생이 직접 취소하면 학생+학부모 | 상태 → cancelled |
 | clinic_check_in | 클리닉 등원/지각 등원 | 직원 선택(학생/학부모/둘 다) | 상태 → attended, 실제 `checked_in_at` 기록 시 |
-| clinic_check_out | 클리닉 하원 | 현재 미지원 | 정상 등원 또는 명시 확인한 미등원 하원의 별도 `checked_out_at` 기록. 승인된 exact 하원 템플릿이 없으므로 UI 수신자 제어와 발송 요청 모두 0 |
+| clinic_check_out | 클리닉 하원 | 직원 선택(학생/학부모/둘 다) | 정상 등원 또는 명시 확인한 미등원 하원의 별도 `checked_out_at` 기록 시. 승인된 공용 `clinic_info` 봉투에 하원 전용 본문을 담아 요청 |
 | clinic_absent | 클리닉 결석 | 직원 선택(학생/학부모/둘 다) | 확인 팝업 승인 후 상태 → no_show, 1회만 요청 |
 | clinic_reminder | 클리닉 시작 N분 전 또는 스태프 재촉 | 자동은 학생, 수동은 직원 선택(학생/학부모/둘 다) | EventBridge `academy-v1-send-clinic-reminders` → `send_clinic_reminders`; 수동은 1회 또는 사용자 간격 반복, 같은 날 최대 22:00. 명시적 재클릭은 매번 독립 occurrence |
 | clinic_self_study_completed | 클리닉 자율학습 완료 | 학부모 | 자율학습 완료(`completed_at`) 시. 하원과 별도 이벤트 |
@@ -62,7 +62,7 @@
 5. **공용 알림톡 only.** 제품·고객·운영 경로 모두 SMS/LMS를 실발송하지 않는다. tenant별 PFID/provider도 사용하지 않으며, 운영 오류 알림은 Slack webhook만 사용한다.
 6. **fallback 금지.** exact trigger의 공용 승인 템플릿 또는 명시 unified category 템플릿이 없으면 발송하지 않는다.
 7. **비알림톡 입력 실패 폐쇄.** SMS/LMS와 알 수 없는 `message_mode`를 알림톡으로 보정하지 않는다. 신규 코드에는 SMS 발송·enqueue 호환 callable이나 `sms_allowed` capability를 만들지 않는다.
-8. **클리닉 하원과 학습 완료 분리.** `clinic_check_out`은 `checked_out_at`과 `checkout_mode`, `clinic_self_study_completed`는 `completed_at`을 소유한다. `arrival_not_recorded`는 등원 상태/시각을 만들지 않는다. 하원 trigger는 exact 승인 템플릿이 준비되기 전 UI 제어·queue 요청을 노출하거나 통합 봉투/다른 클리닉 trigger로 대체하지 않는다.
+8. **클리닉 하원과 학습 완료 분리.** `clinic_check_out`은 `checked_out_at`과 `checkout_mode`, `clinic_self_study_completed`는 `completed_at`을 소유한다. `arrival_not_recorded`는 등원 상태/시각을 만들지 않는다. 하원은 승인된 공용 `clinic_info` 봉투에 하원 전용 본문·실제 시각을 담고, 다른 trigger나 SMS/LMS로 대체하지 않는다.
 9. **성적 알림은 보호자 전용이며 미확정 상태를 추정하지 않는다.** `grades` 수동 발송과 `exam_score_published`·`monthly_report_generated` 미리보기는 `send_to=parent`만 허용한다. 점수가 `null`이면 교사가 `NOT_SUBMITTED`를 명시한 경우에만 미응시·미제출로 표시하고, 그 외 미입력 항목이 하나라도 있으면 성적 발송 진입점에서 실패 폐쇄한다. 미입력을 0점·불합격·보충 필요로 변환하지 않는다. `grades` 수동 발송은 서버가 해석한 전체 수신 학생 ID와 `alimtalk_extra_vars_per_student`의 키가 정확히 일치하고 각 학생의 비어 있지 않은 `_body_subst`가 있을 때만 허용한다. 누락·초과·잘못된 키나 본문이 있으면 공용 `raw_body` 또는 첫 학생의 전역 성적값으로 대체하지 않고 미리보기와 confirm을 모두 차단한다.
 
 ## 클리닉 일정 알림 활성화
@@ -142,6 +142,7 @@ preview→confirm 경로에서 선생이 명시적으로 확인한 경우에만 
 - 잔액 충전/자동충전 뒤 audited recovery가 기존 이력을 보존하며 `sent`와 provider id까지 닫혔는지 확인한다. `ambiguous`는 접수 여부가 불명확하므로 자동 재발송하지 않고 공급자 대사 후 수동 조치한다.
 
 ## 변경 이력
+- 2026-09-03: 하원 알림을 승인된 공용 `clinic_info` 봉투로 복구하고, 기존 테넌트에 하원 전용 본문/config를 기본 ON으로 프로비저닝했다. 정상 하원과 명시 확인한 미등원 하원 모두 직원이 수신자를 선택하며, 중복 하원은 재발송하지 않는다.
 - 2026-08-29: 일반 강의 개별 출결 PATCH에 재유입된 입실·결석 자동 훅을 제거하고, 출결 알림 preview→confirm 수동 발송만 허용하는 회귀 계약을 복구
 - 2026-08-23: 참관 사본에서 계정 아이디·비밀번호·OTP를 포함할 수 있는 5개 계정 트리거를 fail-closed로 제외했다. durable trigger와 payload event type을 중앙 민감도 판정으로 함께 검사해 legacy mismatch도 차단하며, 기존 감사 로그와 outbox는 보존한다.
 - 2026-08-23: tenant membership으로 재검증되는 명시적 참관 수신자를 추가했다. 참관 사본은 원본과 분리된 outbox/provider 로그로 추적하며 동일 번호를 중복 발송하지 않는다.

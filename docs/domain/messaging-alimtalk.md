@@ -171,14 +171,14 @@
 
 ## 3. 트리거 -> 템플릿 매핑 (TRIGGER_TO_TEMPLATE_TYPE)
 
-출처: `alimtalk_content_builders.py:86-126` (2026-07-08 기준)
+출처: `alimtalk_content_builders.py` (2026-09-03 기준)
 
 | 트리거 | 템플릿 타입 | 자동 발화 | 비고 |
 |--------|------------|---|------|
 | `clinic_reservation_created` | clinic_info | ✅ | |
 | `clinic_reminder` | clinic_info | ✅ | EventBridge `academy-v1-send-clinic-reminders` → `send_clinic_reminders` |
 | `clinic_check_in` | clinic_info | ✅ | |
-| `clinic_check_out` | exact owner template only | ✅ | 하원 전용 승인 템플릿 준비 전 fail-closed. 다른 clinic_info trigger로 fallback하지 않음 |
+| `clinic_check_out` | clinic_info | ✅ | 하원 전용 본문과 실제 하원 시각을 승인된 공용 클리닉 안내 봉투로 발송 |
 | `clinic_absent` | clinic_info | ✅ | ⚠️ 결석 통보를 "[클리닉 안내]" prefix — 의미 검토 |
 | `clinic_self_study_completed` | clinic_info | ✅ | 자율학습 완료 전용. 하원과 별도 이벤트 |
 | `clinic_result_notification` | clinic_info | ✅ | ⚠️ "결과"를 "안내" prefix — 의미 검토 |
@@ -207,7 +207,6 @@
 
 | 트리거 | 매핑 제외 사유 |
 |---|---|
-| `clinic_check_out` | 실제 하원과 자율학습 완료를 분리했지만 하원 전용 승인 봉투가 아직 없으므로 exact owner template 준비 전 fail-closed |
 | `video_encoding_complete` / `matchup_report_submitted` | "[성적표 안내]" prefix 의미 불일치 (강사 본인/owner/admin 알림) |
 | `qna_answered` | 공용 ITEM_LIST 봉투와 의미가 맞지 않아 통합 매핑은 유지하지 않는다. 별도 owner exact 템플릿은 학생 이름과 사이트 링크만 치환하는 고정 문구이며, provider와 DB가 모두 `APPROVED`일 때만 발송한다. |
 | `counsel_answered` | 한 때 TYPE_SCORE 재사용([v1.2.0 release](../releases/v1.2.0.md) §6) 이었으나 prefix 의미 불일치로 매핑 제거. test_alimtalk_content_builders.py:55-60 None assert 적용 |
@@ -256,7 +255,7 @@
 | | `clinic_reservation_changed` | 클리닉 예약 변경 | AUTO_DEFAULT |
 | | `clinic_cancelled` | 클리닉 예약 취소 | AUTO_DEFAULT |
 | | `clinic_check_in` | 클리닉 입실 | AUTO_DEFAULT |
-| | `clinic_check_out` | 클리닉 하원 | AUTO_DEFAULT, exact 승인 템플릿 준비 전 opt-in 차단 |
+| | `clinic_check_out` | 클리닉 하원 | AUTO_DEFAULT |
 | | `clinic_absent` | 클리닉 결석 | AUTO_DEFAULT |
 | | `clinic_self_study_completed` | 자율학습 완료 | AUTO_DEFAULT |
 | | `clinic_result_notification` | 클리닉 대상 해소(완료) | AUTO_DEFAULT |
@@ -286,7 +285,7 @@
 | `clinic_reservation_changed` | `clinic/services/lifecycle.py` + `clinic/views/participant_views.py` | change_booking service 이벤트 뒤 view가 발송 결과를 응답에 포함 |
 | `clinic_cancelled` | `clinic/services/lifecycle.py` + `clinic/views/participant_views.py` | service가 이벤트 선택하고 view가 발송 결과를 응답에 포함 |
 | `clinic_check_in` | `clinic/services/lifecycle.py` + `clinic/views/participant_views.py` | service가 이벤트 선택하고 view가 발송 결과를 응답에 포함 |
-| `clinic_check_out` | `clinic/services/lifecycle.py` + `clinic/views/participant_views.py` | 등원한 참가자의 별도 checkout service 이벤트. exact 승인 템플릿 없으면 queue 0 |
+| `clinic_check_out` | `clinic/services/lifecycle.py` + `clinic/views/participant_views.py` | 정상/미등원 하원의 별도 checkout 이벤트 뒤 view가 선택 수신자 발송 결과를 응답에 포함 |
 | `clinic_absent` | `clinic/services/lifecycle.py` + `clinic/views/participant_views.py` | service가 이벤트 선택하고 view가 발송 결과를 응답에 포함 |
 | `clinic_self_study_completed` | `clinic/services/lifecycle.py` + `clinic/views/participant_views.py` | complete service 이벤트 뒤 view가 발송 결과를 응답에 포함 |
 | `registration_approved_*` | 신규 학생 첫 ACTIVE 수강 확정 + 계정 변경 플로우 | `send_alimtalk_via_owner` 경유 |
@@ -700,12 +699,12 @@ POST로 기존 기본 템플릿 리셋 가능. 이름이 기본값과 동일한 
 다른 trigger나 SMS/LMS fallback은 없다.
 
 - 예약 생성은 `transaction.on_commit()` 뒤 발송하고, 상태·하원·완료·일정 변경은 서비스의 DB 전이가 끝난 뒤 view가 발송 결과를 응답에 포함한다.
-- 학생 본인이 예약을 생성·변경·취소하면 클라이언트의 `send_to` 입력과 무관하게 학생+학부모(`both`)를 사용한다. 직원이 처리하는 등원·결석·완료·재촉은 기존 수신자 선택을 유지한다. 하원은 exact 승인 봉투가 없어 수신자 선택을 노출하지 않고 발송 요청 0을 유지한다.
+- 학생 본인이 예약을 생성·변경·취소하면 클라이언트의 `send_to` 입력과 무관하게 학생+학부모(`both`)를 사용한다. 직원이 처리하는 등원·결석·하원·완료·재촉은 기존 수신자 선택을 유지한다.
 - create/change_booking/status/checkout/complete 계열은 `clinic.services.lifecycle`이 서로 다른 `ClinicNotificationEvent`를 반환한다.
 - clinic_info context 변수: 클리닉명, 장소, 날짜, 시간, _domain_object_id
 - clinic_change context 변수: 클리닉명, 장소, 날짜, 시간, 클리닉기존일정, 클리닉변동사항, 클리닉수정자, _domain_object_id
 - `clinic_check_in`/`clinic_absent` 트리거 전용 추가 변수: **도착시간** (상태 처리 시점의 `timezone.now()` → `HH:MM` 포맷). 선생님메모 본문에서 `#{도착시간}`으로 사용 가능.
-- `clinic_check_out`은 실제 하원 시각과 `checkout_mode`를 소유한다. 현재 exact 승인 봉투가 없어 delivery business object를 만들지 않는다. 향후 승인 봉투가 생겨도 `clinic_self_study_completed`의 `completed_at`과 멱등성 키를 공유하지 않는다.
+- `clinic_check_out`은 실제 하원 시각과 `checkout_mode`, `participant_<id>_checkout` business object를 사용한다. 승인된 공용 `clinic_info` 봉투에 하원 전용 본문을 담되 `clinic_self_study_completed`의 `completed_at`과 멱등성 키를 공유하지 않는다.
 - 2026-05-23 단말 확인: 실제 카카오톡 복붙 본문에는 자유 본문(`#{선생님메모}`)만 보이고 ITEM_LIST 변수는 별도 UI로 표시될 수 있다. 현재 템플릿 본문은 검수 통과한 자유 본문 정책을 유지한다. 기본 본문에 일정 정보를 중복 삽입하려면 기존 테넌트 템플릿 reset/overwrite 정책을 먼저 정해야 한다.
 
 ### 일반 강의 출결 수동 알림
