@@ -14,6 +14,7 @@ import unittest
 from unittest.mock import patch
 
 import pytest
+from django.apps import apps as django_apps
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, connection, transaction
 from django.test import TransactionTestCase
@@ -24,7 +25,6 @@ from apps.domains.lectures.models import Lecture, Session
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.students.models import Student
 from apps.domains.results.models import ExamAttempt, Result
-from apps.domains.submissions.models import Submission
 from apps.support.student_app.exam_dependencies import (
     StudentExamSubmitError,
     create_online_exam_submission,
@@ -33,6 +33,7 @@ from apps.support.submissions.dependencies import regrade_exam_submissions
 
 pytestmark = pytest.mark.django_db(transaction=True)
 User = get_user_model()
+Submission = django_apps.get_model("submissions", "Submission")
 
 
 class TestP0ConcurrencyPG(TransactionTestCase):
