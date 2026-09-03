@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta
 from rest_framework import serializers
 from .models import Session, SessionParticipant, Test, Submission
+from .services.lifecycle import booking_availability_for_session
 from apps.core.permissions import is_effective_staff
 from apps.support.clinic.session_dependencies import (
     active_students_for_clinic_tenant,
@@ -38,6 +39,7 @@ class ClinicSessionSerializer(serializers.ModelSerializer):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self._range_available_slots = {}
         request = self.context.get("request")
         if request and hasattr(request, "tenant") and request.tenant:
             self.fields["target_lecture_ids"].child_relation.queryset = (
@@ -127,12 +129,21 @@ class ClinicSessionSerializer(serializers.ModelSerializer):
         return (dt + timedelta(minutes=obj.duration_minutes)).time()
 
     def get_available_slots(self, obj):
+        if obj.booking_mode == "time_range" and obj.max_participants is not None:
+            if obj.pk not in self._range_available_slots:
+                availability = booking_availability_for_session(tenant=obj.tenant_id, session=obj)
+                self._range_available_slots[obj.pk] = max(
+                    (slot["remaining_capacity"] for slot in availability["slots"]), default=0,
+                )
+            return self._range_available_slots[obj.pk]
         cnt = getattr(obj, "booked_count", None)
         if obj.max_participants is None or cnt is None:
             return None
         return max(obj.max_participants - cnt, 0)
 
     def get_is_full(self, obj):
+        if obj.booking_mode == "time_range":
+            return self.get_available_slots(obj) == 0
         cnt = getattr(obj, "booked_count", None)
         if obj.max_participants is None or cnt is None:
             return False
