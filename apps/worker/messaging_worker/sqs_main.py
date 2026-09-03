@@ -101,6 +101,7 @@ logging.basicConfig(
 logger = logging.getLogger("messaging_worker")
 
 _NON_RETRYABLE_SEND_FAILURES = (
+    "clinic_booking_closed",
     "alimtalk_failed_or_rejected",
     "alimtalk_requires_pf_id_and_template_id",
     "InvalidParameterValue",
@@ -200,6 +201,19 @@ def _worker_tenant_binding_error(data: dict) -> str:
 
 def _is_non_retryable_send_failure(reason: str) -> bool:
     return any(item in (reason or "") for item in _NON_RETRYABLE_SEND_FAILURES)
+
+
+def _assert_clinic_reminder_delivery_active(data: dict, *, business_tenant_id: int) -> None:
+    """A queued range reminder cannot outlive its exact active booking."""
+    if data.get("event_type") != "clinic_reminder":
+        return
+    origin = str(data.get("domain_object_id") or data.get("origin_id") or "")
+    if not origin.startswith("clinic_booking:"):
+        return
+    from apps.domains.clinic.contracts import is_clinic_booking_reminder_active
+
+    if not is_clinic_booking_reminder_active(tenant_id=business_tenant_id, origin_id=origin):
+        raise ValueError("clinic_booking_closed")
 
 
 def _resolve_worker_business_key(data: dict, message_id: str | None) -> str:
@@ -1359,6 +1373,9 @@ def main() -> int:
                         nonlocal provider_send_started
                         if provider_send_started:
                             return True
+                        _assert_clinic_reminder_delivery_active(
+                            data, business_tenant_id=business_tenant_id,
+                        )
                         if claim_log_id is not None:
                             try:
                                 from academy.adapters.db.django.repositories_messaging import (

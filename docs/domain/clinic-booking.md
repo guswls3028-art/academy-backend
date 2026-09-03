@@ -131,6 +131,33 @@ bulk 모두 `409`로 거부하고 요청 전체를 롤백한다. 일정 변경�
 규칙을 그대로 따른다. 학생 직접 예약 생성·일정 변경·취소 알림은 기존 계약대로
 학생과 학부모 모두에게 보내며, 교직원 수신자 선택 규칙은 변경하지 않는다.
 
+### 자동 시작 리마인더
+
+`send_clinic_reminders`는 기존 tenant의 `clinic_reminder` enabled 및
+`minutes_before` 설정을 그대로 사용한다. `fixed_slot`은 기존 세션 시작시각과
+세션+학생 중복방지 키를 유지한다. `time_range`만 실제 예약의
+`booking_start_time`에서 설정된 분 수를 뺀 시점에 학생에게 보낸다. 긴 세션의
+개방시각이나 희망시각으로 대체하지 않으며, 자동 수신자를 부모나 교사로 바꾸지 않는다.
+
+- 기본 5분 지연 보정 창 안에 도달한 `booked` 예약만 평가한다. 예약 시작 이후나
+  보정 창이 지난 과거 알림을 소급 발송하지 않는다.
+- 범위 시작·종료가 없거나 세션 운영 범위를 벗어나거나, 학생·세션·예약 tenant가
+  다르거나 학생이 삭제됐거나 하원한 경우에는 발송하지 않는다.
+- 실제 예약별 `clinic_booking:<participant>:<session>:<date>:<start>` origin을
+  durable outbox에 저장한다. 반복 tick은 같은 occurrence를 새로 만들지 않고,
+  기존 세션 기준 알림 이력도 보존하여 시간 보정이 과거 발송의 재생이 되지 않게 한다.
+- dispatcher와 worker의 공급자 호출 직전에 현재 예약·날짜·시작시각·tenant를
+  다시 확인한다. 취소/이동/시간변경/삭제/시작시간 경과로 닫힌 occurrence는
+  외부 발송하지 않는다. 공급자 전 차단은 확정 실패로 처리하고 중복 재시도하지 않는다.
+  기존에 명시 설정된 참관 사본에도 같은 예약 생명주기를 적용한다.
+- `--dry-run`은 동일한 due/dedup 건수를 계산하지만 outbox나 외부 전송을 만들지 않는다.
+  수신 실패 및 SQS 재시도 정책은 [메시징 정책](../ssot/messaging-policy.md)을 따른다.
+
+검증은 `apps/support/clinic/tests/test_clinic_reminder_service.py`,
+`apps/domains/messaging/tests/test_scheduled_notifications.py`,
+`tests/test_messaging_worker_failures.py`의 실제 시간범위/고정시간 호환,
+재실행·취소·시간변경·tenant 격리·공급자 호출 0 회귀를 사용한다.
+
 참가자와 보충 대상의 상태 변경은 일반 detail `PATCH/PUT/DELETE`로 허용하지 않는다.
 예약 생성·일정 변경·상태 변경·완료·완료 취소·하원·오늘 계획 action만 각 service의
 잠금과 감사 규칙을 통과한다. 일정 변경은 이전 참가자의 반복 알림을 취소하고, 이전

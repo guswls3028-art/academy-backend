@@ -465,6 +465,61 @@ def send_clinic_reminder_for_students(*, session_id: int):
     }
 
 
+def _send_due_range_clinic_reminders(*, session, minutes_before, current, window, dry_run):
+    from django.utils import timezone
+
+    from apps.domains.clinic.contracts import is_clinic_booking_reminder_active
+    from apps.domains.clinic.models import SessionParticipant
+    from apps.domains.messaging.models import ScheduledNotification
+    from apps.domains.messaging.services.notification_service import send_event_notification
+
+    stats = {"sessions_due": 0, "attempted": 0, "sent": 0, "skipped": 0, "deduplicated": 0}
+    participants = SessionParticipant.objects.filter(
+        tenant_id=session.tenant_id, session=session,
+        student__tenant_id=session.tenant_id, student__deleted_at__isnull=True,
+        status=SessionParticipant.Status.BOOKED,
+        booking_start_time__isnull=False, booking_end_time__isnull=False,
+        checked_out_at__isnull=True,
+    ).select_related("student").order_by("booking_start_time", "id")
+    # Preserve old accepted/attempted history; correcting timing never replays it.
+    legacy_students = _dispatched_clinic_reminder_student_ids(
+        tenant_id=session.tenant_id, session_id=session.id,
+    )
+    origins = set(ScheduledNotification.objects.filter(
+        tenant_id=session.tenant_id, trigger="clinic_reminder",
+        origin_id__startswith="clinic_booking:",
+        created_at__gte=current - timedelta(days=2),
+    ).values_list("origin_id", flat=True))
+    for participant in participants:
+        start = timezone.make_aware(datetime.combine(session.date, participant.booking_start_time))
+        if not current - window <= start - timedelta(minutes=minutes_before) <= current:
+            continue
+        origin = f"clinic_booking:{participant.id}:{session.id}:{start:%Y%m%d:%H%M}"
+        if not is_clinic_booking_reminder_active(
+            tenant_id=session.tenant_id, origin_id=origin, now=current,
+        ):
+            continue
+        if participant.student_id in legacy_students or origin in origins:
+            stats["deduplicated"] += 1
+            continue
+        stats["attempted"] += 1
+        stats["sessions_due"] = 1
+        if dry_run:
+            continue
+        context = _clinic_reminder_context(
+            session=session, domain_object_id=origin, source_use_case="clinic.booking_reminder",
+        )
+        context["시간"] = start.strftime("%H:%M")
+        if send_event_notification(
+            tenant=session.tenant, trigger="clinic_reminder", student=participant.student,
+            send_to="student", context=context,
+        ):
+            stats["sent"] += 1
+        else:
+            stats["skipped"] += 1
+    return stats
+
+
 def send_due_clinic_reminders(
     *,
     now=None,
@@ -475,7 +530,7 @@ def send_due_clinic_reminders(
     """
     Send clinic reminders whose due time has arrived.
 
-    due_time = clinic session start - AutoSendConfig.minutes_before.
+    Fixed slots use session start; time ranges use the exact participant start.
     The default window catches small scheduler delays while avoiding old sessions.
     """
     from django.db.models import Count, Q
@@ -550,6 +605,14 @@ def send_due_clinic_reminders(
 
         for session in sessions:
             stats["sessions_checked"] += 1
+            if session.booking_mode == "time_range":
+                range_stats = _send_due_range_clinic_reminders(
+                    session=session, minutes_before=minutes_before, current=current,
+                    window=window, dry_run=dry_run,
+                )
+                for key, value in range_stats.items():
+                    stats[key] += value
+                continue
             if not session.date or not session.start_time:
                 stats["skipped"] += 1
                 continue

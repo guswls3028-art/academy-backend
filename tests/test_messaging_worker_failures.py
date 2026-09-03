@@ -2,6 +2,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from apps.worker.messaging_worker.sqs_main import (
+    _assert_clinic_reminder_delivery_active,
     _is_non_retryable_send_failure,
     _resolve_tenant_delivery_context,
     _resolve_worker_business_key,
@@ -10,6 +11,35 @@ from apps.worker.messaging_worker.sqs_main import (
     _should_defer_disabled_tenant_message,
     send_one_alimtalk,
 )
+
+
+@patch("apps.worker.messaging_worker.sqs_main._get_solapi_client")
+@patch("apps.domains.clinic.contracts.is_clinic_booking_reminder_active", return_value=False)
+def test_cancelled_range_booking_never_crosses_provider_boundary(active, client):
+    payload = {"event_type": "clinic_reminder", "origin_id": "clinic_booking:1:2:20260904:2000"}
+
+    def boundary():
+        _assert_clinic_reminder_delivery_active(payload, business_tenant_id=11)
+        return True
+
+    result = send_one_alimtalk(
+        SimpleNamespace(), to="01012345678", sender="01012345678", pf_id="PF",
+        template_id="KA", replacements=[], before_provider_call=boundary,
+    )
+    client.return_value.send.assert_not_called()
+    active.assert_called_once_with(tenant_id=11, origin_id=payload["origin_id"])
+    assert result["provider_called"] is False
+    assert result["reason"] == "clinic_booking_closed"
+    assert _send_failure_disposition(result["reason"], provider_send_started=False) == "terminal"
+
+
+@patch("apps.domains.clinic.contracts.is_clinic_booking_reminder_active")
+def test_fixed_slot_reminder_keeps_existing_provider_contract(active):
+    _assert_clinic_reminder_delivery_active(
+        {"event_type": "clinic_reminder", "origin_id": "clinic_session:2:reminder"},
+        business_tenant_id=11,
+    )
+    active.assert_not_called()
 
 
 def test_ppurio_credential_failures_are_non_retryable() -> None:
