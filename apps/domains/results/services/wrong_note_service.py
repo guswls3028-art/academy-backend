@@ -19,6 +19,7 @@ from apps.support.results.wrong_note_dependencies import (
     question_image_key,
     question_image_url,
     regular_exam_ids_by_lecture_and_order,
+    untargeted_explicit_exam_ids_for_enrollment,
 )
 
 
@@ -216,6 +217,15 @@ def list_wrong_notes_for_enrollment(
         if not exam_ids:
             return 0, []
         base = base.filter(result__target_id__in=exam_ids)
+
+    candidate_exam_ids = set(base.values_list("result__target_id", flat=True))
+    if candidate_exam_ids:
+        base = base.exclude(
+            result__target_id__in=untargeted_explicit_exam_ids_for_enrollment(
+                exam_ids={int(exam_id) for exam_id in candidate_exam_ids},
+                enrollment_id=enrollment_id,
+            )
+        )
 
     # 최신 오답 우선
     base = base.order_by("-result__submitted_at", "-id")

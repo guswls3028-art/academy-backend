@@ -18,6 +18,8 @@ from apps.domains.results.utils.initial_exam_score import (
     load_initial_exam_scores,
     project_initial_exam_score,
 )
+from apps.support.results.admin_student_grades_dependencies import explicit_exam_target_scope
+from apps.support.results.exam_policy_dependencies import exam_pass_score_overrides
 from apps.support.results.progress_read_dependencies import (
     progress_policy_meta_for_lecture,
     session_score_enrollment_ids,
@@ -100,7 +102,7 @@ class AdminSessionExamsSummaryView(APIView):
         # exam-level stats (Result 기반, enrollment 중복 방어)
         # -----------------------------
         results_by_exam = {exam_id: [] for exam_id in exam_ids}
-        latest_results = (
+        latest_results = list(
             latest_results_for_targets_per_enrollment(
                 target_type="exam",
                 target_ids=exam_ids,
@@ -111,13 +113,33 @@ class AdminSessionExamsSummaryView(APIView):
             )
             .select_related("attempt")
         )
+        explicit_exam_ids, explicit_target_pairs = explicit_exam_target_scope(
+            tenant=request.tenant,
+            exam_ids=set(exam_ids),
+            enrollment_ids=set(roster_enrollment_ids),
+        )
         for result in latest_results:
+            if (
+                int(result.target_id) in explicit_exam_ids
+                and (int(result.enrollment_id), int(result.target_id)) not in explicit_target_pairs
+            ):
+                continue
             results_by_exam[int(result.target_id)].append(result)
         initial_scores = load_initial_exam_scores(
             exam_ids=exam_ids,
             enrollment_ids=roster_enrollment_ids,
         )
 
+        pass_score_map = {
+            int(exam.id): float(getattr(exam, "pass_score", 0.0) or 0.0)
+            for exam in exams
+        }
+        pass_score_map.update(
+            exam_pass_score_overrides(
+                exam_ids=exam_ids,
+                lecture_id=int(session.lecture_id),
+            )
+        )
         exam_rows = []
         for ex in exams:
             results = results_by_exam.get(int(ex.id), [])
@@ -139,7 +161,7 @@ class AdminSessionExamsSummaryView(APIView):
                 for projected in projected_scores
                 if projected.total_score is not None and not projected.not_submitted
             ]
-            pass_score = float(getattr(ex, "pass_score", 0.0) or 0.0)
+            pass_score = pass_score_map.get(int(ex.id), 0.0)
             if pass_score > 0:
                 pcount = sum(score >= pass_score for score in scores)
                 fcount = sum(score < pass_score for score in scores)
@@ -147,7 +169,7 @@ class AdminSessionExamsSummaryView(APIView):
                 pcount = 0
                 fcount = 0
 
-            p_total = len(results)
+            p_total = len(scores)
             p_rate = (pcount / p_total) if p_total else 0.0
 
             exam_rows.append({

@@ -4,16 +4,17 @@ from django.apps import apps as django_apps
 from django.contrib.auth import get_user_model
 from django.db import connection
 from django.test import TestCase
-from rest_framework.exceptions import ValidationError
 from django.test.utils import CaptureQueriesContext
+from django.urls import resolve
 from django.utils import timezone
+from rest_framework.exceptions import ValidationError
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.attendance.models import Attendance
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.exams.models import AnswerKey, ExamQuestion, Sheet
-from apps.domains.exams.models import Exam, ExamEnrollment
+from apps.domains.exams.models import Exam, ExamEnrollment, ExamLecturePolicy
 from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.homework_results.models import Homework, HomeworkScore
 from apps.domains.lectures.models import Lecture, Session
@@ -27,11 +28,13 @@ from apps.domains.results.guards.exam_enrollment_guard import (
     validate_exam_enrollment_assigned,
 )
 from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
-from apps.domains.results.models import Result, ExamAttempt
+from apps.domains.results.models import ExamAttempt, Result, ResultItem
+from apps.domains.results.services.wrong_note_service import WrongNoteQuery, list_wrong_notes_for_enrollment
 from apps.domains.results.views.session_scores_view import (
     SessionScoreCorrectionView,
     SessionScoresView,
 )
+from apps.domains.results.views.admin_session_exams_summary_view import AdminSessionExamsSummaryView
 from apps.domains.students.models import Student
 from apps.domains.submissions.models import Submission
 from apps.domains.submissions.views.submission_view import SubmissionViewSet
@@ -144,6 +147,154 @@ class SessionScoresRosterScopeTests(TestCase):
         self.assertEqual(rows[0]["student_name"], "현재 학생")
         self.assertEqual(len(rows[0]["exams"]), 1)
         self.assertEqual(len(rows[0]["homeworks"]), 1)
+
+    def test_session_scores_meta_and_row_use_same_lecture_pass_score(self):
+        ExamLecturePolicy.objects.create(
+            exam=self.exam,
+            lecture=self.lecture,
+            pass_score=70,
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.active_enrollment,
+            total_score=65,
+            max_score=100,
+            objective_score=65,
+        )
+        request = self.factory.get(f"/api/v1/results/admin/sessions/{self.session.id}/scores/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+
+        response = SessionScoresView.as_view()(request, session_id=self.session.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["meta"]["exams"][0]["pass_score"], 70.0)
+        exam_row = response.data["rows"][0]["exams"][0]
+        self.assertEqual(exam_row["pass_score"], 70.0)
+        self.assertFalse(exam_row["block"]["passed"])
+        summary_request = self.factory.get(
+            f"/api/v1/results/admin/sessions/{self.session.id}/exams/summary/"
+        )
+        summary_request.tenant = self.tenant
+        force_authenticate(summary_request, user=self.admin)
+        summary = AdminSessionExamsSummaryView.as_view()(
+            summary_request,
+            session_id=self.session.id,
+        )
+        self.assertEqual(summary.data["exams"][0]["pass_score"], 70.0)
+        self.assertEqual(summary.data["exams"][0]["fail_count"], 1)
+
+    def test_session_exam_summary_excludes_absent_from_pass_rate_denominator(self):
+        Attendance.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            enrollment=self.stale_enrollment,
+            status="PRESENT",
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.active_enrollment,
+            total_score=80,
+            max_score=100,
+            objective_score=80,
+        )
+        absent_attempt = ExamAttempt.objects.create(
+            exam=self.exam,
+            enrollment=self.stale_enrollment,
+            attempt_index=1,
+            status="done",
+            meta={"status": "NOT_SUBMITTED"},
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.stale_enrollment,
+            attempt=absent_attempt,
+            total_score=0,
+            max_score=100,
+            objective_score=0,
+        )
+        request = self.factory.get(
+            f"/api/v1/results/admin/sessions/{self.session.id}/exams/summary/"
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+
+        response = AdminSessionExamsSummaryView.as_view()(request, session_id=self.session.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        exam_row = response.data["exams"][0]
+        self.assertEqual(exam_row["participant_count"], 1)
+        self.assertEqual(exam_row["pass_rate"], 1.0)
+
+    def test_roster_replacement_hides_removed_target_clinic_link(self):
+        Attendance.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            enrollment=self.stale_enrollment,
+            status="PRESENT",
+        )
+        ClinicLink.objects.create(
+            tenant=self.tenant,
+            enrollment=self.stale_enrollment,
+            session=self.session,
+            reason=ClinicLink.Reason.AUTO_FAILED,
+            is_auto=True,
+            source_type="exam",
+            source_id=self.exam.id,
+        )
+        sheet = Sheet.objects.create(exam=self.exam, name="TARGET", total_questions=1)
+        question = ExamQuestion.objects.create(sheet=sheet, number=1, score=10)
+        stale_result = Result.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.stale_enrollment,
+            total_score=0,
+            max_score=10,
+            objective_score=0,
+        )
+        ResultItem.objects.create(
+            result=stale_result,
+            question=question,
+            answer="2",
+            is_correct=False,
+            score=0,
+            max_score=10,
+            source="manual",
+        )
+        request = self.factory.put(
+            f"/api/v1/exams/{self.exam.id}/enrollments/?session_id={self.session.id}",
+            {"enrollment_ids": [self.active_enrollment.id]},
+            format="json",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+
+        response = resolve(request.path_info).func(request, exam_id=self.exam.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        target_ids = {
+            row["enrollment_id"]
+            for row in ClinicTargetService.list_admin_targets(tenant=self.tenant)
+        }
+        self.assertNotIn(self.stale_enrollment.id, target_ids)
+        wrong_count, _ = list_wrong_notes_for_enrollment(
+            enrollment_id=self.stale_enrollment.id,
+            q=WrongNoteQuery(exam_id=self.exam.id),
+        )
+        self.assertEqual(wrong_count, 0)
+        summary_request = self.factory.get(
+            f"/api/v1/results/admin/sessions/{self.session.id}/exams/summary/"
+        )
+        summary_request.tenant = self.tenant
+        force_authenticate(summary_request, user=self.admin)
+        summary = AdminSessionExamsSummaryView.as_view()(
+            summary_request,
+            session_id=self.session.id,
+        )
+        self.assertEqual(summary.data["exams"][0]["participant_count"], 0)
 
     def test_session_scores_rows_use_stable_student_name_order(self):
         self.active_enrollment.student.name = "Zulu student"

@@ -204,7 +204,10 @@ class AdminStudentGradesView(APIView):
                 "enrollment_id": row["r"]["enrollment_id"],
                 "exam_id": row["eid"],
                 "total_score": row["initial_score"].total_score or 0.0,
-                "pass_score": row["info"]["pass_score"],
+                "pass_score": row["info"]["pass_score_by_lecture"].get(
+                    int(row["lecture_id"]),
+                    row["info"]["pass_score"],
+                ),
                 "attempt_id": row["r"].get("attempt_id"),
                 "session": row["session"],
             }

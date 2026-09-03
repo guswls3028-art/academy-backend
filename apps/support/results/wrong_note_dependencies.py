@@ -117,6 +117,32 @@ def exams_with_wrong_note_sessions_by_id(
     }
 
 
+def untargeted_explicit_exam_ids_for_enrollment(
+    *,
+    exam_ids: set[int],
+    enrollment_id: int,
+) -> set[int]:
+    """Return explicit-target exams that no longer include the enrollment."""
+    if not exam_ids:
+        return set()
+
+    from apps.domains.exams.models import ExamEnrollment
+
+    explicit_exam_ids = set(
+        ExamEnrollment.objects.filter(exam_id__in=exam_ids).values_list(
+            "exam_id",
+            flat=True,
+        )
+    )
+    targeted_exam_ids = set(
+        ExamEnrollment.objects.filter(
+            exam_id__in=explicit_exam_ids,
+            enrollment_id=int(enrollment_id),
+        ).values_list("exam_id", flat=True)
+    )
+    return {int(exam_id) for exam_id in explicit_exam_ids - targeted_exam_ids}
+
+
 def question_image_key(*, question: Any, tenant_id: int) -> str:
     key = str(getattr(question, "image_key", "") or "")
     return key if key.startswith(f"tenants/{int(tenant_id)}/") else ""

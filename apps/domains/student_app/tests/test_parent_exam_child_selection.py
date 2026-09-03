@@ -16,6 +16,7 @@ from apps.domains.lectures.models import Lecture, Session
 from apps.domains.parents.models import Parent
 from apps.domains.results.models import ExamAttempt, Result, ResultItem
 from apps.domains.student_app.exams.views import (
+    StudentExamDetailView,
     StudentExamListView,
     StudentExamQuestionsView,
     StudentExamSubmitView,
@@ -187,6 +188,13 @@ class ParentExamChildSelectionTests(TestCase):
             is_retake=True,
         )
 
+        detail = StudentExamDetailView.as_view()(
+            self._request(f"/student/exams/{self.exam_b.id}/", student=self.student_b),
+            pk=self.exam_b.id,
+        )
+        self.assertTrue(detail.data["has_result"])
+        self.assertEqual(detail.data["attempt_count"], 2)
+
         response = StudentExamSubmitView.as_view()(
             self._student_post_request(
                 f"/student/exams/{self.exam_b.id}/submit/",
@@ -207,6 +215,45 @@ class ParentExamChildSelectionTests(TestCase):
             ).count(),
             2,
         )
+        mock_dispatch.assert_not_called()
+
+    @patch("apps.domains.student_app.exams.views.dispatch_student_exam_submission")
+    def test_unlinked_lecture_blocks_student_exam_endpoints(self, mock_dispatch):
+        own_session = self.exam_a.sessions.get(lecture=self.enrollment_a.lecture)
+        self.exam_a.sessions.add(self.exam_b.sessions.get())
+        self.exam_a.sessions.remove(own_session)
+
+        list_response = StudentExamListView.as_view()(
+            self._request("/student/exams/", student=self.student_a)
+        )
+        questions_response = StudentExamQuestionsView.as_view()(
+            self._request(
+                f"/student/exams/{self.exam_a.id}/questions/",
+                student=self.student_a,
+            ),
+            pk=self.exam_a.id,
+        )
+        Submission.objects.create(
+            tenant=self.tenant,
+            user=self.student_a.user,
+            enrollment=self.enrollment_a,
+            target_type=Submission.TargetType.EXAM,
+            target_id=self.exam_a.id,
+            source=Submission.Source.ONLINE,
+            status=Submission.Status.SUBMITTED,
+        )
+        submit_response = StudentExamSubmitView.as_view()(
+            self._student_post_request(
+                f"/student/exams/{self.exam_a.id}/submit/",
+                student=self.student_a,
+                data={"answers": [{"exam_question_id": self.question_a.id, "answer": "1"}]},
+            ),
+            pk=self.exam_a.id,
+        )
+
+        self.assertNotIn(self.exam_a.id, [row["id"] for row in list_response.data["items"]])
+        self.assertEqual(questions_response.status_code, 404)
+        self.assertEqual(submit_response.status_code, 404)
         mock_dispatch.assert_not_called()
 
     def test_ended_lecture_hides_active_exam_but_preserves_published_result(self):

@@ -607,6 +607,11 @@ class SessionScoresView(APIView):
                 lecture_id=int(session.lecture_id),
             )
         )
+        for exam_meta in response_meta["exams"]:
+            exam_meta["pass_score"] = exam_pass_score_map.get(
+                int(exam_meta["exam_id"]),
+                exam_meta["pass_score"],
+            )
         exam_max_score_map = {
             int(ex.id): float(getattr(ex, "max_score", 100.0) or 100.0)
             for ex in exams

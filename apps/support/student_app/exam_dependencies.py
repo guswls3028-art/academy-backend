@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from datetime import timedelta
 
-from django.db.models import Q
+from django.db.models import F, Q
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
@@ -44,6 +44,8 @@ def student_exam_queryset(student, tenant, *, include_upcoming_days: int = 0):
             exam_type=Exam.ExamType.REGULAR,
             exam_enrollments__enrollment_id__in=enrollment_ids,
             exam_enrollments__enrollment__lecture__is_active=True,
+            sessions__lecture_id=F("exam_enrollments__enrollment__lecture_id"),
+            sessions__lecture__tenant=tenant,
             is_active=True,
         )
         .filter(
@@ -185,6 +187,8 @@ def get_enrollment_for_student_exam(student, exam_id, tenant=None):
             enrollment__tenant=tenant,
             enrollment__status="ACTIVE",
             enrollment__lecture__is_active=True,
+            exam__sessions__lecture_id=F("enrollment__lecture_id"),
+            exam__sessions__lecture__tenant=tenant,
         )
         .select_related("enrollment", "enrollment__tenant")
         .order_by("id")

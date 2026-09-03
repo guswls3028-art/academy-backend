@@ -146,6 +146,39 @@ class MyGradesSummaryHomeworkTests(TestCase):
             max_score=max_score,
         )
 
+    def test_shared_exam_history_uses_enrollment_lecture_pass_score(self):
+        exam = self.Exam.objects.create(
+            tenant=self.tenant,
+            title="공유 시험",
+            exam_type=self.Exam.ExamType.REGULAR,
+            is_active=True,
+            max_score=100,
+            pass_score=60,
+        )
+        exam.sessions.add(self.session)
+        self.ExamEnrollment.objects.create(exam=exam, enrollment=self.enrollment)
+        django_apps.get_model("exams", "ExamLecturePolicy").objects.create(
+            exam=exam,
+            lecture=self.lecture,
+            pass_score=70,
+        )
+        self.Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.enrollment,
+            total_score=65,
+            max_score=100,
+        )
+
+        detail = self._call_exam_result(exam.id)
+        summary = self._call()
+
+        self.assertEqual(detail.status_code, 200, detail.data)
+        self.assertFalse(detail.data["is_pass"])
+        row = next(item for item in summary.data["exams"] if item["exam_id"] == exam.id)
+        self.assertFalse(row["is_pass"])
+        self.assertEqual(row["achievement"], "FAIL")
+
     def test_student_grades_excludes_result_for_explicit_non_target_exam(self):
         target_exam = self.Exam.objects.create(
             tenant=self.tenant,
