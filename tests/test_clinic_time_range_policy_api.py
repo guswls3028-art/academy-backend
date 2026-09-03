@@ -353,12 +353,16 @@ class ClinicTimeRangePostgresConcurrencyTest(TransactionTestCase, ClinicAPITestM
         self.data = self.setup_api_tenant("clinic_time_range_pg", student_count=2)
         self.session = self.data["clinic_session"]
         self.session.date = datetime.date.today() + datetime.timedelta(days=1)
+        self.session.start_time = datetime.time(9, 0)
+        self.session.duration_minutes = 480
         self.session.booking_mode = "time_range"
         self.session.booking_interval_minutes = 30
         self.session.booking_max_stay_minutes = 180
         self.session.max_participants = 1
         self.session.save(update_fields=[
             "date",
+            "start_time",
+            "duration_minutes",
             "booking_mode",
             "booking_interval_minutes",
             "booking_max_stay_minutes",
