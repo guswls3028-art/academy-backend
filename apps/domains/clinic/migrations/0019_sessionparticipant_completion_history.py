@@ -12,6 +12,7 @@ class Migration(migrations.Migration):
             name="completion_history",
             field=models.JSONField(
                 blank=True,
+                db_default=models.Value([], output_field=models.JSONField()),
                 default=list,
                 help_text="완료/완료 취소의 append-only 감사 이력",
             ),
