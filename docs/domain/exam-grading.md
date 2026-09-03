@@ -102,6 +102,10 @@ API 오류 모양으로 구분할 수 없다.
 합격 점수 `0`은 클리닉 합격 기준을 사용하지 않는 유효한 값이다. 만점은 0보다 커야
 하고 합격 점수는 0 이상이면서 만점을 넘을 수 없다. 재응시를 켜면 최대 응시 횟수는
 2회 이상이어야 한다. API와 모델 검증이 같은 범위를 강제한다.
+학생 온라인 제출은 `(exam, enrollment)`의 응시 대상 행을 먼저 잠그고 canonical
+`ExamAttempt.attempt_index`로 최대 횟수를 확인한다. 한도 초과는 현재 `DONE` 제출을
+`SUPERSEDED`로 바꾸거나 새 `SUBMITTED` 행을 만들기 전에 `409`로 끝나므로, 늦거나
+중복된 요청이 마지막 유효 응시를 역행시키지 않는다.
 
 문항이 생성된 뒤에도 `grading_mode`와 `manual_grading_method`는 시험
 설정에서 바꿀 수 있다. 이 전환은 문항, 정답, 기존 OMR·직접 입력 결과를
@@ -427,6 +431,12 @@ Ymath의 `Program.feature_flags.assessment_status_display=wrong_completion`은
   답변형 성적 확정을 거부한다.
 - 학생을 `absent`로 확정하면 `NOT_SUBMITTED` attempt로 저장하고 점수,
   평균, 석차, 합불, 문항 통계에서 0점 응시자로 계산하지 않는다.
+- 일반 시험 재계산은 submission 다음 수강·결과·attempt 순서로 잠근 뒤
+  `NOT_SUBMITTED`를 다시 확인한다. 수동 채점도 수강·결과·attempt 순서를 사용하므로
+  두 경로가 역순 잠금으로 교착하지 않는다. 명시적인 응시 재개 없이 결시 attempt를
+  reopen하거나 점수·`ResultItem`·오답·클리닉을 다시 만들지 않는다. 재계산과 결시
+  확정이 동시에 실행되면 먼저 잠금을
+  얻은 작업 뒤에 두 번째 작업이 최신 상태를 다시 읽어 최종 결시 상태를 보존한다.
 
 AI OMR 성공 콜백은 인식 fact를 저장한 뒤 같은 worker 프로세스에서 채점과
 `Result` 동기화를 닫는다. 이 동기화는 문항별 최신 `ResultItem`과 append-only

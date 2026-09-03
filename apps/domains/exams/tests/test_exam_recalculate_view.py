@@ -11,7 +11,7 @@ from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.exams.models import AnswerKey, Exam, ExamEnrollment, ExamQuestion, Sheet
 from apps.domains.exams.views.exam_recalculate_view import ExamRecalculateView
 from apps.domains.lectures.models import Lecture, Session
-from apps.domains.results.models import ExamResult, Result
+from apps.domains.results.models import ExamResult, Result, ResultItem
 from apps.domains.students.models import Student
 from apps.domains.submissions.models import Submission, SubmissionAnswer
 
@@ -134,6 +134,43 @@ class ExamRecalculateViewTests(TestCase):
         )
         self.assertEqual(float(result.total_score), 5.0)
         mock_dispatch.assert_called_once_with(submission_id=submission.id)
+
+    @patch("apps.domains.results.services.grading_service.dispatch_progress_pipeline")
+    def test_recalculate_preserves_confirmed_not_submitted_override(self, mock_dispatch):
+        submission = self._create_submission()
+        request = self.factory.post(f"/api/v1/exams/{self.exam.id}/recalculate/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        first = ExamRecalculateView.as_view()(request, exam_id=self.exam.id)
+        self.assertEqual(first.status_code, 200, first.data)
+
+        result = Result.objects.get(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.enrollment,
+        )
+        ResultItem.objects.filter(result=result).delete()
+        result.total_score = 0
+        result.objective_score = 0
+        result.save(update_fields=["total_score", "objective_score", "updated_at"])
+        attempt = result.attempt
+        attempt.meta = {**(attempt.meta or {}), "status": "NOT_SUBMITTED"}
+        attempt.save(update_fields=["meta", "updated_at"])
+
+        second_request = self.factory.post(f"/api/v1/exams/{self.exam.id}/recalculate/")
+        second_request.tenant = self.tenant
+        force_authenticate(second_request, user=self.admin)
+        second = ExamRecalculateView.as_view()(second_request, exam_id=self.exam.id)
+
+        self.assertEqual(second.status_code, 200, second.data)
+        self.assertEqual(second.data["graded"], 0)
+        self.assertEqual(second.data["skipped"], 1)
+        result.refresh_from_db()
+        attempt.refresh_from_db()
+        self.assertEqual(float(result.total_score), 0.0)
+        self.assertFalse(ResultItem.objects.filter(result=result).exists())
+        self.assertEqual(attempt.meta.get("status"), "NOT_SUBMITTED")
+        self.assertEqual(mock_dispatch.call_count, 1)
 
     @patch("apps.domains.results.services.grading_service.dispatch_progress_pipeline")
     def test_recalculate_skips_failed_submission_without_state_mutation(self, mock_dispatch):

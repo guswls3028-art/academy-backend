@@ -206,6 +206,8 @@ def create_online_exam_submission(
 ):
     from django.db import IntegrityError, transaction
 
+    from apps.domains.exams.models import ExamEnrollment
+    from apps.domains.results.models import ExamAttempt
     from apps.domains.submissions.models import Submission
     from apps.domains.submissions.services.lifecycle import (
         IN_PROGRESS_STATUSES,
@@ -214,6 +216,15 @@ def create_online_exam_submission(
 
     try:
         with transaction.atomic():
+            ExamEnrollment.objects.select_for_update().only("id").get(
+                exam_id=int(exam.id),
+                enrollment_id=enrollment.id,
+            )
+            attempt_indexes = list(
+                ExamAttempt.objects.select_for_update()
+                .filter(exam_id=int(exam.id), enrollment_id=enrollment.id)
+                .values_list("attempt_index", flat=True)
+            )
             prev_submissions = list(
                 Submission.objects.select_for_update().filter(
                     enrollment_id=enrollment.id,
@@ -231,7 +242,7 @@ def create_online_exam_submission(
             if done_submissions:
                 allow_retake = getattr(exam, "allow_retake", False)
                 max_attempts = getattr(exam, "max_attempts", 1) or 1
-                attempt_count = len(done_submissions)
+                attempt_count = max(attempt_indexes, default=len(done_submissions))
                 if not allow_retake or attempt_count >= max_attempts:
                     raise StudentExamSubmitError("재응시가 허용되지 않는 시험입니다.", 409)
                 supersede_done_submissions(
