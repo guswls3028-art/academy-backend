@@ -20,8 +20,6 @@ from apps.domains.progress.views import (
     RiskLogViewSet,
     SessionProgressViewSet,
 )
-from apps.domains.clinic.models import SessionParticipant
-from apps.domains.clinic.views.participant_views import ParticipantViewSet
 
 
 User = get_user_model()
@@ -94,10 +92,9 @@ class DerivedProgressApiReadOnlyTests(TestCase):
                 )
                 self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
 
-    def test_clinic_state_owners_do_not_expose_generic_update_or_destroy(self):
+    def test_clinic_link_state_owner_does_not_expose_generic_update_or_destroy(self):
         cases = [
             ("clinic-links", ClinicLinkViewSet, ClinicLink),
-            ("clinic-participants", ParticipantViewSet, SessionParticipant),
         ]
 
         for route, viewset, model in cases:

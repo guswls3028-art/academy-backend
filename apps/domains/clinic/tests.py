@@ -1236,6 +1236,26 @@ class TenantIsolationAPITest(APITestCase, ClinicAPITestMixin):
         )
         self.assertEqual(resp.status_code, 200)
 
+    def test_participant_generic_update_and_destroy_are_not_exposed(self):
+        """Lifecycle actions, not generic detail writes, own participant state."""
+        self.client.force_authenticate(user=self.a["admin_user"])
+
+        patch_response = self.client.patch(
+            f"/api/v1/clinic/participants/{self.part_a.id}/",
+            {"status": "cancelled"},
+            format="json",
+            **self._headers(self.a["tenant"]),
+        )
+        delete_response = self.client.delete(
+            f"/api/v1/clinic/participants/{self.part_a.id}/",
+            **self._headers(self.a["tenant"]),
+        )
+
+        self.assertEqual(patch_response.status_code, 405)
+        self.assertEqual(delete_response.status_code, 405)
+        self.part_a.refresh_from_db()
+        self.assertEqual(self.part_a.status, SessionParticipant.Status.BOOKED)
+
     def test_tenant_a_cannot_create_participant_with_tenant_b_student(self):
         """tenant A session에 tenant B student를 꽂는 교차 테넌트 예약 생성 차단."""
         self.client.force_authenticate(user=self.a["admin_user"])

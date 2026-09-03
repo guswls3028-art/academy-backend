@@ -718,15 +718,12 @@ def _clinic_participant_reminder_is_stale(notification) -> bool:
     except (TypeError, ValueError):
         return True
 
-    from apps.domains.clinic.models import SessionParticipant
+    from apps.domains.clinic.contracts import is_clinic_participant_reminder_active
 
-    return not SessionParticipant.objects.filter(
-        id=participant_id,
+    return not is_clinic_participant_reminder_active(
+        participant_id=participant_id,
         tenant_id=notification.tenant_id,
-        status=SessionParticipant.Status.BOOKED,
-        session__isnull=False,
-        student__deleted_at__isnull=True,
-    ).exists()
+    )
 
 
 def process_due_notifications(
