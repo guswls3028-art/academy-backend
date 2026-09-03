@@ -52,12 +52,12 @@ def _safe_failure_projection(log: NotificationLog) -> tuple[str, str]:
 
     raw = str(log.failure_reason or "").strip().lower()
     status_value = str(log.status or "").strip().lower()
+    if status_value == "ambiguous":
+        return (
+            "provider_unconfirmed",
+            "공급사 접수 결과를 자동 확인하지 못했습니다. 관리자 확인이 필요합니다.",
+        )
     if not raw:
-        if status_value == "ambiguous":
-            return (
-                "provider_unconfirmed",
-                "공급사 접수 결과를 자동 확인하지 못했습니다. 관리자 확인이 필요합니다.",
-            )
         return "", ""
     if any(marker in raw for marker in ("notenoughbalance", "insufficient_balance", "balance")):
         return "insufficient_balance", "알림톡 잔액이 부족해 발송하지 못했습니다."
