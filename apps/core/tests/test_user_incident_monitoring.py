@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.http import HttpRequest, JsonResponse
 from django.test import SimpleTestCase, TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
@@ -312,18 +313,23 @@ class UserIncidentAlertRuleTests(TestCase):
     def test_failed_slack_delivery_does_not_consume_incidents(self, post_mock):
         self._backend_incident()
 
-        call_command(
-            "check_dev_alerts",
-            "--rule",
-            "user_incidents",
-            stdout=StringIO(),
-        )
+        with self.assertRaises(CommandError):
+            call_command(
+                "check_dev_alerts",
+                "--rule",
+                "user_incidents",
+                stdout=StringIO(),
+            )
 
         post_mock.assert_called_once()
         self.assertFalse(
             OpsAuditLog.objects.filter(action=SLACK_DELIVERY_ACTION).exists()
         )
         self.assertIsNotNone(rule_user_incidents())
+        self.assertEqual(
+            OpsAuditLog.objects.get(action="cron.check_dev_alerts").result,
+            "failed",
+        )
 
     @override_settings(DEV_ALERTS_WEBHOOK_URL="https://hooks.example.invalid/test")
     @patch("apps.core.management.commands.check_dev_alerts._post_slack")

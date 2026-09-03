@@ -13,15 +13,17 @@
 ## 0. 사용자 오류 운영 알림
 
 `Dev Alerts Cron`은 사용자 오류 신호를 5분마다, 결제·worker 등 전체 운영 룰을
-매시 2분에 평가한다.
+매시 2분에 평가하도록 예약된다. GitHub 스케줄은 지연될 수 있으므로 실제 평가
+주기는 workflow 실행시각과 `cron.check_dev_alerts` 감사 로그로 확인한다.
 
 - API 사용자 경로의 HTTP 5xx
 - 브라우저 React/window/unhandled-rejection 오류
 - 공용 `문제 신고` 모달 접수
 - 관리자·선생님 개발자 메뉴의 `[BUG]` 제보
 
-운영 알림 채널은 Slack webhook 하나다. `DEV_ALERTS_WEBHOOK_URL`이 없으면 룰 평가와
-stdout/audit 기록만 수행하고 외부 발송은 하지 않는다. SMS/LMS 설정, 실발송 테스트,
+운영 알림 채널은 Slack webhook 하나다. `DEV_ALERTS_WEBHOOK_URL`이 없으면 외부 발송은
+하지 않고, 경고 발견 여부와 관계없이 명령을 실패 종료한다. 수신처 없이 평가만 하는
+명시적 `--dry-run`은 허용하지만 외부 알림 정상 동작의 증거가 아니다. SMS/LMS 설정, 실발송 테스트,
 CloudWatch transition 문자 발송 예외는 모두 제거되었다. 운영 장애용으로 승인된 공용
 카카오 템플릿이 없으므로 이 경로를 임의의 알림톡으로 대체하지 않고 fail-closed한다.
 
@@ -31,6 +33,23 @@ CloudWatch transition 문자 발송 예외는 모두 제거되었다. 운영 장
 fingerprint를 소비하지 않는다. 폐기 전 SMS가 남긴
 `OpsAuditLog(action=alerts.user_incident_sms)`는 기존 2일 중복 억제와 사고 이력
 조회에만 읽으며, 새 SMS provider 호출이나 재조회·재시도에는 사용하지 않는다.
+
+명령은 알 수 없는 `--rule`, 어느 룰이든 평가 오류, webhook 미설정·전송 실패를
+종료 코드 1과 `cron.check_dev_alerts.result=failed`로 기록한다. 일부 룰 평가가
+실패해도 나머지 정상 평가된 경고의 전송은 시도하며, 수락된 사용자 오류만
+fingerprint를 소비한다. 실패한 전체 검사를 `All clear`로 출력하지 않는다.
+`--silent`는 정상 무경고 출력만 억제하며 실패를 성공으로 바꾸지 않는다.
+`--dry-run`도 검사 오류는 실패한다. 감사 기록 자체를 저장할 수 없어도 명령은
+실패 종료하며, 예외 원문·webhook URL 대신 고정 사유와 예외 종류만 남긴다.
+
+무경고 실행은 수신처가 설정되어 있어도 불필요한 시험 메시지를 보내지 않는다.
+따라서 성공 실행은 해당 검사 완료의 근거이며, Slack 실수신 확인과 같지 않다.
+수신처 복구 후 재실행하면 아직 수락되지 않은 보존 기간 내 사용자 오류만 다시
+검사한다. 제품 outbox 재생·재발송이나 기존 감사 이력 수정은 하지 않는다.
+
+회귀 검증: `apps/core/tests/test_dev_alerts_command.py`와
+`apps/core/tests/test_user_incident_monitoring.py`에서 수신처 누락, 평가 실패,
+전송 실패, dry-run, 성공 후 중복 억제, 민감정보 비노출을 검증한다.
 
 5xx 폭주가 장애 중 DB 부하를 증폭하지 않도록 같은 테넌트·경로·오류 유형은 API
 프로세스별 60초에 1건만 bounded 비동기 큐로 감사 로그에 저장한다. 사용자 응답은

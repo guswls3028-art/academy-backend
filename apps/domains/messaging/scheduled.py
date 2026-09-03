@@ -708,6 +708,16 @@ def _clinic_participant_reminder_is_stale(notification) -> bool:
     if notification.trigger != "clinic_reminder":
         return False
     origin_id = str(notification.origin_id or "")
+    payload = getattr(notification, "payload", None)
+    if isinstance(payload, dict) and str(payload.get("domain_object_id") or "").startswith("clinic_booking:"):
+        # Explicit observer copies keep their own provenance but the same booking.
+        origin_id = str(payload["domain_object_id"])
+    if origin_id.startswith("clinic_booking:"):
+        from apps.domains.clinic.contracts import is_clinic_booking_reminder_active
+
+        return not is_clinic_booking_reminder_active(
+            tenant_id=notification.tenant_id, origin_id=origin_id,
+        )
     prefix = "clinic_participant:"
     marker = ":manual_reminder:"
     if not origin_id.startswith(prefix) or marker not in origin_id:

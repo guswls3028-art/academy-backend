@@ -340,3 +340,128 @@ class ClinicReminderServiceTest(TestCase):
         self.assertEqual(result["configs"], 0)
         self.assertEqual(result["sessions_due"], 0)
         mock_send.assert_not_called()
+
+    def _range_booking(self, suffix="031", start=time(20), end=time(21)):
+        self.session.booking_mode = "time_range"
+        self.session.start_time = time(17)
+        self.session.duration_minutes = 300
+        self.session.save()
+        AutoSendConfig.objects.get_or_create(
+            tenant=self.tenant, trigger="clinic_reminder",
+            defaults={"enabled": True, "minutes_before": 30},
+        )
+        return SessionParticipant.objects.create(
+            tenant=self.tenant, session=self.session,
+            student=self._student(suffix, "예약학생"),
+            status=SessionParticipant.Status.BOOKED,
+            booking_start_time=start, booking_end_time=end,
+        )
+
+    def _at(self, hour, minute=0):
+        return timezone.make_aware(datetime(2026, 5, 15, hour, minute))
+
+    @patch("apps.domains.messaging.services.notification_service.send_event_notification", return_value=True)
+    def test_range_reminder_uses_actual_booking_start_not_opening(self, send):
+        participant = self._range_booking()
+        early = send_due_clinic_reminders(now=self._at(16, 30))
+        self.assertEqual(early["attempted"], 0)
+        send.assert_not_called()
+        due = send_due_clinic_reminders(now=self._at(19, 30))
+        self.assertEqual(due["attempted"], 1)
+        self.assertEqual(due["sent"], 1)
+        self.assertEqual(send.call_args.kwargs["student"], participant.student)
+        self.assertEqual(send.call_args.kwargs["send_to"], "student")
+        self.assertEqual(send.call_args.kwargs["context"]["시간"], "20:00")
+
+    @patch("apps.domains.messaging.services.notification_service.send_event_notification", return_value=True)
+    def test_range_reminder_only_sends_due_uncancelled_bookings(self, send):
+        due = self._range_booking("032")
+        self._range_booking("033", start=time(20, 30), end=time(21))
+        cancelled = self._range_booking("034")
+        cancelled.status = SessionParticipant.Status.CANCELLED
+        cancelled.save()
+        result = send_due_clinic_reminders(now=self._at(19, 32))
+        self.assertEqual(result["sent"], 1)
+        send.assert_called_once()
+        self.assertEqual(send.call_args.kwargs["student"], due.student)
+
+    @patch("apps.domains.messaging.services.notification_service.send_event_notification")
+    def test_range_reminder_dry_run_counts_due_without_dispatch(self, send):
+        self._range_booking()
+        result = send_due_clinic_reminders(now=self._at(19, 30), dry_run=True)
+        self.assertEqual(result["attempted"], 1)
+        self.assertEqual(result["sessions_due"], 1)
+        send.assert_not_called()
+
+    @patch("apps.domains.messaging.services.notification_service.send_event_notification")
+    def test_range_reminder_never_replays_old_due_window(self, send):
+        self._range_booking()
+        result = send_due_clinic_reminders(now=self._at(19, 36))
+        self.assertEqual(result["attempted"], 0)
+        send.assert_not_called()
+
+    @patch("apps.domains.messaging.services.notification_service.send_event_notification")
+    def test_range_reminder_does_not_guess_missing_booking_time(self, send):
+        participant = self._range_booking()
+        participant.booking_start_time = None
+        participant.booking_end_time = None
+        participant.save()
+        result = send_due_clinic_reminders(now=self._at(16, 30))
+        self.assertEqual(result["attempted"], 0)
+        send.assert_not_called()
+
+    @patch("apps.domains.messaging.services.notification_service.send_event_notification")
+    def test_range_reminder_rejects_foreign_student_relation(self, send):
+        participant = self._range_booking()
+        foreign = Tenant.objects.create(code="foreign-clinic-reminder", name="Foreign")
+        Student.objects.filter(pk=participant.student_id).update(tenant=foreign)
+        result = send_due_clinic_reminders(now=self._at(19, 30))
+        self.assertEqual(result["attempted"], 0)
+        send.assert_not_called()
+
+    @patch("apps.domains.messaging.policy.get_owner_tenant_id")
+    @patch("apps.domains.messaging.policy.is_messaging_disabled", return_value=False)
+    def test_range_reminder_repeat_tick_preserves_one_durable_occurrence(self, _disabled, owner):
+        owner.return_value = self.tenant.id
+        participant = self._range_booking()
+        template = MessageTemplate.objects.create(
+            tenant=self.tenant, category="clinic", name="예약 시작 안내",
+            body="#{시간} 클리닉이 곧 시작됩니다.",
+        )
+        AutoSendConfig.objects.filter(tenant=self.tenant, trigger="clinic_reminder").update(template=template)
+        with patch("django.utils.timezone.now", return_value=self._at(19, 30)):
+            first = send_due_clinic_reminders(now=self._at(19, 30))
+            second = send_due_clinic_reminders(now=self._at(19, 31))
+        self.assertEqual(first["sent"], 1)
+        self.assertEqual(second["attempted"], 0)
+        self.assertEqual(second["deduplicated"], 1)
+        outbox = ScheduledNotification.objects.get(tenant=self.tenant, trigger="clinic_reminder")
+        self.assertEqual(outbox.origin_id, f"clinic_booking:{participant.id}:{self.session.id}:20260515:2000")
+        self.assertEqual(outbox.payload["target_type"], "student")
+        self.assertIn("20:00", outbox.payload["text"])
+
+    def test_range_pending_dispatch_rechecks_cancellation_time_and_tenant(self):
+        from apps.domains.messaging.scheduled import _clinic_participant_reminder_is_stale
+        from types import SimpleNamespace
+
+        participant = self._range_booking()
+        notification = SimpleNamespace(
+            trigger="clinic_reminder", tenant_id=self.tenant.id,
+            origin_id=f"clinic_booking:{participant.id}:{self.session.id}:20260515:2000",
+        )
+        with patch("django.utils.timezone.now", return_value=self._at(19, 30)):
+            self.assertFalse(_clinic_participant_reminder_is_stale(notification))
+            participant.status = SessionParticipant.Status.CANCELLED
+            participant.save(update_fields=["status"])
+            self.assertTrue(_clinic_participant_reminder_is_stale(notification))
+            participant.status = SessionParticipant.Status.BOOKED
+            participant.booking_start_time = time(20, 30)
+            participant.save(update_fields=["status", "booking_start_time"])
+            self.assertTrue(_clinic_participant_reminder_is_stale(notification))
+            participant.booking_start_time = time(20)
+            participant.save(update_fields=["booking_start_time"])
+            notification.tenant_id += 1000
+            self.assertTrue(_clinic_participant_reminder_is_stale(notification))
+        notification.tenant_id = self.tenant.id
+        with patch("django.utils.timezone.now", return_value=self._at(20, 1)):
+            self.assertTrue(_clinic_participant_reminder_is_stale(notification))
