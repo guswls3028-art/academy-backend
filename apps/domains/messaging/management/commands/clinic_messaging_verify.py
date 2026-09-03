@@ -24,6 +24,7 @@ CLINIC_MESSAGING_TRIGGERS: tuple[str, ...] = (
     "clinic_reservation_changed",
     "clinic_cancelled",
     "clinic_check_in",
+    "clinic_check_out",
     "clinic_absent",
     "clinic_reminder",
     "clinic_self_study_completed",
@@ -31,7 +32,7 @@ CLINIC_MESSAGING_TRIGGERS: tuple[str, ...] = (
 )
 
 class Command(BaseCommand):
-    help = "Clinic auto messaging: audit-config or check-logs (see docs/operations/clinic-messaging-production-verification.md)."
+    help = "Clinic auto messaging: audit-config or check-logs (see docs/ssot/messaging-policy.md)."
 
     def add_arguments(self, parser):
         parser.add_argument(
