@@ -107,7 +107,6 @@ TENANT_OPT_IN_AUTO_TRIGGERS: frozenset = frozenset([
 
 
 TEMPLATE_READY_OPT_IN_AUTO_TRIGGERS: frozenset = frozenset([
-    "clinic_check_out",
     "video_encoding_complete",
     "matchup_report_submitted",
     "qna_answered",

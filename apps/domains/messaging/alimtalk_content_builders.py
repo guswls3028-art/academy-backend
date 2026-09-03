@@ -91,8 +91,7 @@ TRIGGER_TO_TEMPLATE_TYPE: dict[str, str] = {
     "clinic_reservation_created": TYPE_CLINIC_INFO,
     "clinic_reminder": TYPE_CLINIC_INFO,
     "clinic_check_in": TYPE_CLINIC_INFO,
-    # clinic_check_out은 하원 전용 승인 템플릿이 확정되기 전까지 fail-closed.
-    # clinic_self_study_completed(할 일 완료)와 절대 통합하지 않는다.
+    "clinic_check_out": TYPE_CLINIC_INFO,
     "clinic_absent": TYPE_CLINIC_INFO,
     "clinic_self_study_completed": TYPE_CLINIC_INFO,
     "clinic_result_notification": TYPE_CLINIC_INFO,

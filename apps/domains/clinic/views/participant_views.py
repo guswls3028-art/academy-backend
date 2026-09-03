@@ -469,6 +469,7 @@ class ParticipantViewSet(
         """Record departure independently from self-study completion."""
         payload = ClinicCheckoutRequestSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
+        send_to = payload.validated_data.get("send_to", "parent")
         result = checkout_participant(
             tenant=getattr(request, "tenant", None),
             participant_id=self.get_object().pk,
@@ -482,7 +483,16 @@ class ParticipantViewSet(
         out = ClinicSessionParticipantSerializer(
             obj, context={"request": request}
         ).data
-        out["notification"] = None
+        notification_result = None
+        if result.notification:
+            notification_result = _send_clinic_notification(
+                getattr(request, "tenant", None),
+                result.notification.student,
+                result.notification.trigger,
+                result.notification.context,
+                send_to=send_to,
+            )
+        out["notification"] = notification_result
         return Response(out)
 
     @extend_schema(

@@ -230,6 +230,50 @@ class TestSendEventNotification(_DispatchThroughQueueMixin, TestCase):
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
+    def test_clinic_checkout_uses_shared_clinic_envelope(
+        self, mock_owner, mock_disabled, mock_config, mock_enqueue
+    ):
+        tenant = _make_tenant()
+        student = _make_student()
+        mock_config.return_value = _make_config(
+            "clinic_check_out",
+            body="클리닉에서 하원하였습니다.",
+        )
+        mock_enqueue.return_value = True
+
+        from apps.domains.messaging.services import send_event_notification
+
+        result = send_event_notification(
+            tenant=tenant,
+            trigger="clinic_check_out",
+            student=student,
+            send_to="parent",
+            context={
+                "장소": "2층 클리닉실",
+                "날짜": "2026-09-03",
+                "시간": "21:40",
+                "_domain_object_id": "participant_42_checkout",
+            },
+        )
+
+        self.assertTrue(result)
+        payload = mock_enqueue.call_args.kwargs
+        self.assertEqual(payload["template_id"], "KA01TP2604061058318608Hy40ZnTFZT")
+        self.assertEqual(payload["domain_object_id"], "participant_42_checkout")
+        self.assertEqual(
+            payload["occurrence_key"],
+            "clinic_check_out:participant_42_checkout",
+        )
+        replacements = {item["key"]: item["value"] for item in payload["alimtalk_replacements"]}
+        self.assertEqual(replacements["클리닉장소"], "2층 클리닉실")
+        self.assertEqual(replacements["클리닉날짜"], "2026-09-03")
+        self.assertEqual(replacements["클리닉시간"], "21:40")
+        self.assertIn("하원", replacements["선생님메모"])
+
+    @patch(f"{_QSV}.enqueue_alimtalk")
+    @patch(f"{_SEL}.get_auto_send_config")
+    @patch(f"{_POL}.is_messaging_disabled", return_value=False)
+    @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
     def test_auto_send_blocks_legacy_sms_mode(
         self, mock_owner, mock_disabled, mock_config, mock_enqueue
     ):

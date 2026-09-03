@@ -36,3 +36,12 @@ class MessagingPolicyTests(TestCase):
 
         self.assertEqual(get_trigger_implementation_status("clinic_reminder"), "implemented")
         self.assertTrue(is_auto_send_enabled_by_default("clinic_reminder"))
+
+    def test_clinic_checkout_is_default_enabled_with_shared_envelope(self):
+        from apps.domains.messaging.policy import (
+            get_trigger_implementation_status,
+            is_auto_send_enabled_by_default,
+        )
+
+        self.assertEqual(get_trigger_implementation_status("clinic_check_out"), "implemented")
+        self.assertTrue(is_auto_send_enabled_by_default("clinic_check_out"))

@@ -507,6 +507,27 @@ def _complete_notification(participant: SessionParticipant) -> ClinicNotificatio
     )
 
 
+def _checkout_notification(participant: SessionParticipant) -> ClinicNotificationEvent:
+    session = participant.session
+    checked_out_at = participant.checked_out_at or timezone.now()
+    return ClinicNotificationEvent(
+        trigger="clinic_check_out",
+        student=participant.student,
+        context={
+            "클리닉명": getattr(session, "title", "") if session else "",
+            "장소": getattr(session, "location", "") if session else "",
+            "날짜": (
+                str(session.date)
+                if session and session.date
+                else checked_out_at.strftime("%Y-%m-%d")
+            ),
+            "시간": checked_out_at.strftime("%H:%M"),
+            "_actual_time": checked_out_at.strftime("%H:%M"),
+            "_domain_object_id": f"participant_{participant.pk}_checkout",
+        },
+    )
+
+
 @transaction.atomic
 def change_participant_status(
     *,
@@ -693,9 +714,10 @@ def checkout_participant(
         tenant_id=tenant.id,
         participant_id=participant.id,
     )
-    # clinic_check_out has no exact approved Alimtalk envelope. Do not create a
-    # misleading failed delivery request or reuse another clinic trigger.
-    return ParticipantTransitionResult(participant=participant)
+    return ParticipantTransitionResult(
+        participant=participant,
+        notification=_checkout_notification(participant),
+    )
 
 
 @transaction.atomic
