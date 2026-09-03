@@ -330,7 +330,7 @@ class ClinicNotificationHistoryAndRetryAPITest(APITestCase, ClinicAPITestMixin):
 
         url = f"/api/v1/clinic/participants/{self.participant.id}/retry-notification/"
         with patch(
-            "apps.domains.clinic.views.participant_views.dispatch_notification_now",
+            "apps.domains.messaging.scheduled.dispatch_notification_now",
             side_effect=create_retry,
         ) as dispatch:
             first = self.client.post(url, {"log_id": failed.id}, format="json", **self._headers())

@@ -37,11 +37,9 @@ from ..services import (
 from apps.core.permissions import TenantResolvedAndMember, TenantResolvedAndStaff
 from apps.api.common.query_params import parse_query_int
 from apps.core.services.tenant_access import STAFF_ROLES, get_active_membership_role
-from apps.domains.messaging.models import ScheduledNotification
-from apps.domains.messaging.selectors import notification_logs_for_business_tenant
-from apps.domains.messaging.scheduled import dispatch_notification_now
 from apps.support.clinic.session_dependencies import (
     get_student_for_clinic_request,
+    retry_failed_clinic_notification,
     send_clinic_event_notification,
     send_clinic_reminder_for_participant,
 )
@@ -616,76 +614,26 @@ class ParticipantViewSet(
             raise serializers.ValidationError(
                 {"log_id": "재시도할 발송 로그가 필요합니다."}
             ) from exc
-        prefix = f"clinic_participant:{participant.id}:"
-        log = notification_logs_for_business_tenant(request.tenant).filter(
-            pk=log_id,
-            message_mode__in=("alimtalk", ""),
-            origin_id__startswith=prefix,
-        ).first()
-        if log is None:
+        result = retry_failed_clinic_notification(
+            tenant=request.tenant,
+            participant=participant,
+            log_id=log_id,
+            actor_id=request.user.id,
+        )
+        if result["result"] == "not_found":
             return Response(
-                {"detail": "재시도할 발송 기록을 찾을 수 없습니다."},
+                {"detail": result["detail"]},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        if log.status not in {"failed", "retryable_failed"}:
+        if result["result"] == "conflict":
             return Response(
-                {"detail": "확정 실패 또는 재시도 가능 실패만 다시 보낼 수 있습니다."},
+                {"detail": result["detail"]},
                 status=status.HTTP_409_CONFLICT,
-            )
-        if log.target_type not in {"student", "parent"} or str(log.target_id) != str(
-            participant.student_id
-        ):
-            return Response(
-                {"detail": "발송 대상이 현재 학생과 일치하지 않습니다."},
-                status=status.HTTP_409_CONFLICT,
-            )
-        original = ScheduledNotification.objects.filter(
-            tenant=request.tenant,
-            business_idempotency_key=log.business_idempotency_key,
-        ).order_by("id").first()
-        if original is None or not isinstance(original.payload, dict):
-            return Response(
-                {"detail": "원본 발송 자료를 확인할 수 없어 안전하게 재시도할 수 없습니다."},
-                status=status.HTTP_409_CONFLICT,
-            )
-        payload = dict(original.payload)
-        if str(payload.get("message_mode") or "").lower() != "alimtalk":
-            return Response(
-                {"detail": "알림톡 원본만 재시도할 수 있습니다."},
-                status=status.HTTP_409_CONFLICT,
-            )
-        if str(payload.get("target_type") or "") != log.target_type or str(
-            payload.get("target_id") or ""
-        ) != str(participant.student_id):
-            return Response(
-                {"detail": "원본 발송 대상이 현재 학생과 일치하지 않습니다."},
-                status=status.HTTP_409_CONFLICT,
-            )
-
-        retry_origin = f"{prefix}retry:{log.id}"
-        outbox = ScheduledNotification.objects.filter(
-            tenant=request.tenant,
-            origin_id=retry_origin,
-        ).order_by("id").first()
-        if outbox is None:
-            payload.update({
-                "occurrence_key": f"clinic-retry:{log.id}",
-                "domain_object_id": retry_origin,
-                "origin_type": "clinic_notification_retry",
-                "origin_id": retry_origin,
-                "source_domain": "clinic",
-                "source_use_case": "notification_retry",
-                "actor_id": request.user.id,
-            })
-            outbox = dispatch_notification_now(
-                tenant_id=request.tenant.id,
-                trigger=original.trigger,
-                payload=payload,
             )
         return Response({
-            "status": "accepted",
-            "outbox_id": outbox.id,
-            "origin_id": retry_origin,
+            "status": result["status"],
+            "outbox_id": result["outbox_id"],
+            "origin_id": result["origin_id"],
         })
 
     @action(detail=True, methods=["post"])
