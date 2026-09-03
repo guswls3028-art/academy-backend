@@ -80,6 +80,7 @@ backend/docs/
 | 강사 AI 문제 풀이 (Beta) | [domain/teacher-problem-solver.md](domain/teacher-problem-solver.md) |
 | 선생앱 학생 업무 도우미 (Beta) | [domain/teacher-ops-assistant.md](domain/teacher-ops-assistant.md) |
 | 문제 리뷰 리포트 작성·PDF/PPTX 출력 | [domain/problem-review-report.md](domain/problem-review-report.md) |
+| 타이머 Windows 배포·서명·PWA 대체 경계 | [domain/timer-distribution.md](domain/timer-distribution.md) |
 | 교사 제공 참고자료 인벤토리·보안·품질 경계 | [domain/teacher-provided-source-materials.md](domain/teacher-provided-source-materials.md) |
 | 운영 runbook | [operations/runbooks/](operations/runbooks/) |
 

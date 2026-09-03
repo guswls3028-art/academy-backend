@@ -16748,6 +16748,29 @@
         ],
         "type": "object"
       },
+      "TrustedTimerDistributionRequired": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "distribution": {
+            "type": "string"
+          },
+          "web_path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "detail",
+          "distribution",
+          "web_path"
+        ],
+        "type": "object"
+      },
       "TypeEnum": {
         "description": "* `exam` - exam\n* `homework` - homework",
         "enum": [
@@ -49504,11 +49527,18 @@
     },
     "/api/v1/tools/timer/download/": {
       "get": {
-        "description": "GET /api/v1/tools/timer/download/ — 현재 테넌트의 타이머 ZIP presigned URL 반환.",
+        "description": "GET /api/v1/tools/timer/download/ — unsigned 레거시 배포의 종단 응답.",
         "operationId": "tools_timer_download_retrieve",
         "responses": {
-          "200": {
-            "description": "No response body"
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrustedTimerDistributionRequired"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [
