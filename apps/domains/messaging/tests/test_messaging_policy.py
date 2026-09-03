@@ -45,3 +45,13 @@ class MessagingPolicyTests(TestCase):
 
         self.assertEqual(get_trigger_implementation_status("clinic_check_out"), "implemented")
         self.assertTrue(is_auto_send_enabled_by_default("clinic_check_out"))
+
+    def test_clinic_audit_inventory_matches_policy(self):
+        from apps.domains.messaging.management.commands.clinic_messaging_verify import (
+            CLINIC_MESSAGING_TRIGGERS,
+        )
+        from apps.domains.messaging.policy import TRIGGER_POLICY
+
+        expected = {trigger for trigger in TRIGGER_POLICY if trigger.startswith("clinic_")}
+        self.assertEqual(set(CLINIC_MESSAGING_TRIGGERS), expected)
+        self.assertEqual(len(CLINIC_MESSAGING_TRIGGERS), len(expected))
