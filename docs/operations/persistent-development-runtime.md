@@ -72,8 +72,22 @@ Session document다. Action은 Inspect/Setup/Cleanup뿐이고 tenant, release ID
 digest는 shell 문자/경로/SSM 참조를 허용하지 않는 strict pattern으로 제한한다.
 개발 settings, 현재 release/image, exact DB/user/R2, mock messaging, billing off,
 빈 Video Batch, 개발 큐를 검증한다. Setup은 advisory lock 아래 기존 tenant/user
-부재를 확인하며 원래 scenario 명령을 reset 없이 사용한다. Cleanup은 같은 명령의
-exact destroy와 numeric tenants/users0 readback이다. 운영 행이나 비밀값을 복제하지
+부재를 확인하며 원래 scenario 명령을 reset 없이 사용한다. 생성과 같은 DB transaction에
+`OpsAuditLog(action=development.qa.setup)` 1행으로 exact tenant ID/code와 256-bit
+run capability의 SHA-256 digest를 기록한다. 감사 기록 실패도 전체 생성 rollback이다.
+Cleanup은 같은 advisory lock/transaction 아래 exact tenant에 연결된 성공 소유권 행이
+정확히 1개이고 요청 capability digest가 일치할 때만 같은 명령의 destroy를 호출한다.
+누락·중복·다른 run capability·다른 tenant ID는 거부한다. 이미 부재하면 numeric
+tenant/user0 확인만 하고 destroy는 호출하지 않는다. 생성/정리가 겹쳐도 소유권 검사와
+destroy 사이에 lock을 풀지 않는다. 생성의 PII-free 감사 행은 tenant 삭제 후 FK가
+NULL인 보안 증거로 남으며 tenant/user 잔여 수와 별도로 구분한다.
+
+이 경계는 생성 요청자가 보유한 capability의 증명이며 GitHub JWT의 run claim을 서버가
+직접 검증한 것은 아니다. 원문 capability는 runner 메모리와 고정 SSM parameter로만
+전달하고 artifact/CLI stdout/오류에 넣지 않는다. SSM control-plane 요청 기록이나 host
+관리 권한은 별도 신뢰 경계이며 그런 기록에 대한 접근 권한을 frontend role에 추가하지
+않는다. capability를 잃거나 기존 소유권 기록이 없으면 자동 재발급·채택·타 run cleanup을
+하지 않고 별도 exact-target 복구 검토를 요구한다. 운영 행이나 비밀값을 복제하지
 않는다. Port document는 remote8000/local18000으로 고정하며 host/shell 입력이 없다.
 
 SSM Command API의 `GetCommandInvocation`은 resource-level 제한을 지원하지 않으므로
@@ -94,6 +108,26 @@ TokenValue에 의존한다. 이를 IAM-level foreign-channel denial이나 실제
 
 frontend runner/workflow와 원본 응답·CORS 보존, exact artifact, non-skipped 10-case,
 cleanup0 승격 계약은 frontend `docs/DEPLOYMENT-OPERATIONS.md`가 소유한다.
+
+#### 세션 제한과 장애 경계 (로컬 구현, 실제 AWS 동작 미검증)
+
+고정 QA document의 `inputs`는 maxSessionDuration=5분/idleSessionTimeout=5분,
+Port document는 25분/5분이다. 호출자가 timeout을 바꾸는 parameter는 없다. 이 값은
+문서의 서비스 측 세션 제한 설정이며 신규 문서를 실제 적용하고 종료 readback하기
+전에는 제한이 실제로 작동했다고 보고하지 않는다. IAM20 simulation은 이 설정이나
+데이터 소유권을 검증하지 않는다. STS 1시간 만료 자체도 기존 SSM 세션 종료 보장이 아니다.
+
+QA 원격 명령은 curl 각 10초, Docker inspect 15초(+kill 5초), Docker exec 210초
+(+kill 5초), 내부 Python alarm 180초로 제한한다. DB transaction의 statement timeout은
+150초/lock timeout은 5초이며 SSM secret read는 connect/read 각 10초, 최대 2회다.
+외부 timeout이 Docker client를 종료하는 것과 내부 Python/DB가 중단되는 것은 별개이므로
+내부 deadline과 DB timeout을 함께 둔다. 원격 host/프로세스의 비정상 정지까지 데이터
+정리를 보장하는 장치는 아니다. 세션 최대 수명이 끝나도 tenant는 자동 삭제되지 않는다.
+
+고정 문서의 소유권 함수 및 실제 `run()` cleanup 분기는
+`scripts/v1/test_frontend_development_qa.py`에서 로컬 fake DB/command로 검사한다.
+타 run/미소유/중복 record의 destroy 호출은 0, 자기 소유만 1, 부재는 0을 요구한다.
+외부 QA tenant나 실제 DB 행을 삭제하는 회귀가 아니다.
 
 ## 최초 구성
 

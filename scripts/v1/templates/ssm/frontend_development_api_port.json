@@ -2,6 +2,10 @@
   "schemaVersion": "1.0",
   "description": "Development API only; fixed remote and local ports, no remote host or shell input.",
   "sessionType": "Port",
+  "inputs": {
+    "maxSessionDuration": "25",
+    "idleSessionTimeout": "5"
+  },
   "properties": {
     "portNumber": "8000",
     "type": "LocalPortForwarding",
