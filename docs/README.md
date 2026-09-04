@@ -75,6 +75,7 @@ backend/docs/
 | 변경 위험 라우팅·교차 저장소 릴리스 증거 | [operations/change-risk-and-release-bundle.md](operations/change-risk-and-release-bundle.md) |
 | 운영 canary·E2E 잔재 정리 | [operations/production-canary.md](operations/production-canary.md) |
 | 개발자 문의 운영함 | [operations/dev-console-inbox.md](operations/dev-console-inbox.md) |
+| 읽기 전용 상태 모순 검사·전달 영수증 | [operations/state-integrity-monitor.md](operations/state-integrity-monitor.md) |
 | 제품 사용 분석 | [domain/product-usage-analytics.md](domain/product-usage-analytics.md) |
 | DB 확장·테넌트 분리 판단 | [infrastructure/database-scaling-and-tenant-isolation.md](infrastructure/database-scaling-and-tenant-isolation.md) |
 | 강사 AI 문제 풀이 (Beta) | [domain/teacher-problem-solver.md](domain/teacher-problem-solver.md) |
