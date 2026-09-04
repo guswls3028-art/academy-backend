@@ -38,7 +38,9 @@
 `AmazonSSMManagedInstanceCore`의 `GetParameter`/`GetParameters` 전체 자원 허용은
 개발 전용 Allow 문만 추가해서는 제한되지 않는다. `Ensure-ApiDevelopmentIAM`은
 `templates/iam/policy_api_development_parameter_boundary.json`의 explicit deny를
-기존 `academy-api-development-runtime` inline policy에 합친다. API env, workers
+재구성한 `academy-api-development-runtime` inline policy에 합친다. 이 전체 bootstrap은
+trust·managed attachment·profile도 수렴하므로 기존 host의 deny-only 교정에 사용하지
+않는다. 아래 좁은 적용기만 기존 inline의 모든 필드·문장을 보존한다. API env, workers
 env, 개발 DB credentials, 개발 QA password, 개발 R2 credentials의 정확한 다섯
 parameter ARN만 개별 조회할 수 있고, 그 밖의 parameter 조회와 모든
 `GetParametersByPath`/`GetParameterHistory`를 거부한다. 상위 경로 재귀 조회나
@@ -48,11 +50,85 @@ agent의 control/data channel 권한은 유지한다.
 이미 존재하는 역할에 이 deny가 적용됐다고 소스 변경만으로 판단하지 않는다.
 `python scripts/v1/converge_frontend_development_qa.py`는 기존 inline/managed
 grant 전체와 제안 deny의 양성/음성 IAM 시뮬레이션을 출력하는 **읽기 전용**
-계획이며 Apply 옵션이 없다. 운영 parameter 값 조회로 거부를 시험하지 않는다.
+계획이다. 기본 실행과 `--frontend-role-plan`은 IAM 및 잠금 쓰기를 하지 않는다.
+운영 parameter 값 조회로 거부를 시험하지 않는다.
 IAM 시뮬레이션은 KMS key policy, 조직 SCP 등을 포함한 실제 복호화 성공/실패의
 증거가 아니다. 검토된 최소 권한 수렴 및 실제 정책 readback 전에는 새 synthetic
 QA를 실행하지 않는다. frontend 전용 OIDC 역할의 도입은 이 개발 host 역할 교정과
 분리해 검토하며 backend production 역할의 신뢰나 권한을 넓히지 않는다.
+
+#### host 단일 정책 적용과 공용 잠금
+
+`converge_frontend_development_qa.py --apply-host-boundary`만 명시적 host 쓰기
+모드다. 코드/테스트 완료는 AWS 적용 승인이 아니다. 별도로 승인된 exact 작업에서
+새 계획의 `before_sha256`, `after_sha256`, `inventory_sha256`를 검토한 뒤
+각각 아래 인자로 전달한다. 과거 계획에 inventory fingerprint가 없다면 다시
+읽기 전용 계획을 만들며 임의로 hash를 채우지 않는다.
+
+```powershell
+python scripts/v1/converge_frontend_development_qa.py --aws-profile <approved-profile>
+# 별도의 exact AWS 적용 승인 및 competing writer 배제 확인 후에만 실행:
+python scripts/v1/converge_frontend_development_qa.py --aws-profile <approved-profile> --apply-host-boundary --expected-current-hash <before_sha256> --expected-proposed-hash <after_sha256> --expected-inventory-hash <inventory_sha256>
+# 적용 후 재검증은 읽기 전용이며 잠금도 변경하지 않는다:
+python scripts/v1/converge_frontend_development_qa.py --aws-profile <approved-profile> --verify-host-boundary --expected-proposed-hash <after_sha256> --expected-inventory-hash <inventory_sha256>
+```
+
+적용기는 기존 `deployment_lock.py`와 `academy-v1-video-job-lock`의
+`videoId=__deployment_control_v2__`를 재사용한다. 새 잠금/테이블/권한을 만들지
+않는다. account `809466760795`, region `ap-northeast-2`, role
+`academy-api-development-role`, policy `academy-api-development-runtime`만 대상으로
+한다. IAM과 잠금 helper는 같은 named profile 전용 subprocess 환경을 사용한다.
+상충하는 정적 credential 환경변수는 자식 환경에서만 제거하며 값을 출력하지 않는다.
+다른 table/region override 및 inherited `ACADEMY_DEPLOY_LOCK_OWNER` /
+`ACADEMY_RUNTIME_ENV_LOCK_OWNER`는 거부한다. 공용 acquire는 재진입 불가이므로
+같은 owner의 활성 잠금도 재획득하거나 부모 잠금으로 간주하지 않는다.
+
+잠금 획득 후 policy와 inventory hash를 다시 검사한다. inventory에는 role ID/EC2
+trust, permissions-boundary 부재, inline 1개, SSM managed grant 1개의 문서/버전,
+profile ID/role binding, 연결된 유일한 running·active·종료 방지 개발 instance와
+고정 scope 태그가 포함된다. inline의 기존 모든 필드·문장은 보존하고 검토한 두 Deny만
+추가한다. 충돌/중복 Sid, 다른 grant/role/profile/instance, hash drift는 쓰기 전에
+거부한다. 이미 적용된 policy는 다시 append하지 않고 별도 verifier를 사용한다.
+
+쓰기 직전 lease renew/assert와 current hash를 재검사하고 정확한 `PutRolePolicy`
+한 번만 호출한다. 그 외 IAM trust/attachment/profile, FE 역할, SSM, EC2/ASG/SQS
+변경이나 전체 bootstrap/QA 실행은 없다. postverify는 policy/inventory 재조회와
+**overlay 없는 현재 principal** 44개 action/resource 결과(allowed 19, explicitDeny
+25, missing/duplicate/context 0)를 검사하고 simulation 뒤 policy/inventory를 다시
+확인한다. 기존 plan의 `--policy-input-list` 제안 결과는 적용 증거로 사용하지 않는다.
+자동 IAM 재시도와 자동 rollback은 없으며 전파 지연도 검증 실패로 처리한다.
+
+기존 writer도 `initialize-api-development.ps1 → converge-api-development-prerequisites.ps1
+→ Ensure-ApiDevelopmentIAM`의 host IAM 구간에서 같은 잠금을 직접 획득한다.
+함수 자체는 실제 소유권을 각 IAM mutation 직전과 마지막 readback에서 검사하므로
+잠금 없는 직접 호출도 거부한다. 기존 역할 및 최초 역할/profile 생성은 유지되며
+PlanMode는 쓰기/잠금 없이 반환한다. 정상 host readback/소유권 검증 뒤 잠금을
+반환한 다음 기존 OIDC·queue·DB 및 initializer의 publish/deploy 흐름을 계속한다.
+이는 전체 initializer/SG/queue/DB/OIDC/standalone 개발 배포가 잠금으로 보호된다는
+주장이 아니다. narrow Apply는 이 broad bootstrap을 호출하지 않는다.
+
+획득 실패에는 release를 시도하지 않는다. 쓰기 전 실패이고 여전히 소유하면 반환하며,
+쓰기 시도 이후 timeout/검증 실패는 한 번 더 소유권을 확인해 보류 상태와 만료 추정
+시각을 보고한다. 소유권 상실이면 `ownership_unconfirmed`로 남기며 타인 item을
+해제하지 않는다. release 실패도 성공으로 숨기지 않는다. Python 적용기의 JSON
+checkpoint는 단계, owner, write-attempt 여부, 검증/잠금 상태를 구분하며 예외에
+포함된 원문 CLI/비밀값은 출력하지 않는다. PowerShell bootstrap도 불확실한
+획득/쓰기/소유권/반환을 구별하고 IAM native retry를 1회로 제한한다.
+
+Python 적용은 600초 deadline의 checkpoint와 native 호출 30초 제한(직접 AWS
+connect/read 5/15초, SDK retry 1회)을 사용한다. 기본 lease는 10,800초이며 보류는
+TTL까지만 유효하다. 갑작스러운 프로세스 종료에는 checkpoint/finally가 실행되지
+않을 수 있고 helper의 자식 프로세스 종료까지 보장하지 않는다. 이 잠금은 IAM의
+fencing token이나 CAS가 아니다. 직접 CLI/console·구버전 writer·만료 후 살아 있는
+프로세스의 check/write race를 제거하지 못하므로 승인된 작업 동안 경쟁 writer
+배제와 수정된 writer 채택이 필요하다. old policy 복원은 광역 parameter 읽기를
+재개하므로 자동 복구 대상이 아니며 별도 exact 승인/검증을 요구한다.
+
+검증: `python -B -m unittest scripts.v1.test_frontend_development_qa -v`.
+기존 initializer/IAM/guard를 로컬 fake AWS로 실행하고, 실제 공용 잠금 알고리즘을
+fake DynamoDB로 검사한다. 두 writer의 순서 교차·획득 실패·소유권 상실·commit 후
+timeout·postverify 실패 및 기존 initializer의 존재/신규 경로를 검증한다. 이는 실제
+AWS 경합·IAM 적용·SSM 세션·synthetic QA의 증거가 아니며 이들의 HOLD를 해제하지 않는다.
 
 ### frontend 동일 artifact real-use 진입점
 
@@ -60,7 +136,7 @@ QA를 실행하지 않는다. frontend 전용 OIDC 역할의 도입은 이 개�
 `policy_frontend_development_qa.json`은 별도 `academy-frontend-development-qa`
 역할의 검토 대상 계약이다. frontend main-ref OIDC만 허용하며 backend production
 역할과 기존 frontend R2 bootstrap 역할은 변경하지 않는다. 신규 역할/문서의 read-only
-계획은 아래로 분리해 실행한다. 현재 이 도구에는 Apply가 없으며, 기존 같은 이름의
+계획은 아래로 분리해 실행한다. frontend 역할/문서 Apply는 제공하지 않으며, 기존 같은 이름의
 자원이 발견되면 덮어쓰지 않고 별도 검토를 요구한다.
 
 ```powershell

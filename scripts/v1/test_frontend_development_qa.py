@@ -1,13 +1,17 @@
 """Offline contracts; never load credentials or contact AWS."""
 import ast
+import copy
 import hashlib
 import hmac
+import importlib.util
 import io
 import json
 import os
 import re
 import sys
-from contextlib import nullcontext
+import subprocess
+import tempfile
+from contextlib import nullcontext, redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -16,6 +20,597 @@ from unittest.mock import Mock, MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[2]
 BOUNDARY = ROOT / "scripts/v1/templates/iam/policy_api_development_parameter_boundary.json"
+
+
+def powershell_host_writer(mode="direct", holder="", fault="", missing=False, env_overrides=None):
+    """Execute the real initializer/prerequisite/IAM/guard against local fakes only."""
+    with tempfile.TemporaryDirectory(prefix="academy-host-lock-test-") as directory:
+        fixture = Path(directory)
+        scripts = fixture / "scripts/v1"
+        for name in ("initialize-api-development.ps1", "converge-api-development-prerequisites.ps1",
+                     "resources/iam.ps1", "core/guard.ps1", "templates/iam/trust_ec2.json",
+                     "templates/iam/policy_api_development_parameter_boundary.json"):
+            path = scripts / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes((ROOT / "scripts/v1" / name).read_bytes())
+        stubs = {
+            "core/env.ps1": "function Assert-AwsMutationIdentity { return @{ Account='809466760795' } }",
+            "core/logging.ps1": "function Write-Step {}\nfunction Write-Ok {}\nfunction Write-Warn {}",
+            "core/aws.ps1": "# AWS functions are fail-closed local fakes in the harness.",
+            "core/ssot.ps1": """
+function Load-SSOT {
+    $script:Region='ap-northeast-2'; $script:AccountId='809466760795'
+    $script:DynamoLockTableName='academy-v1-video-job-lock'
+    $script:ApiDevelopmentEnabled=$true; $script:ApiDevelopmentAccessMode='ssm-only'
+    $script:ApiDevelopmentRoleName='academy-api-development-role'
+    $script:ApiDevelopmentInstanceProfileName='academy-api-development'
+    $script:ApiDevelopmentR2CredentialParameter='/academy/r2/development/credentials'
+    $script:ApiDevelopmentSecurityGroupName='development'; $script:VpcId='vpc-fixture'
+    $script:SecurityGroupData='sg-data'; $script:ApiDevelopmentAiQueueName='dev-ai'
+    $script:ApiDevelopmentToolsQueueName='dev-tools'; $script:ApiDevelopmentMessagingQueueName='dev-messaging'
+    $script:EcrApiRepo='academy-api'; $script:EcrToolsRepo='academy-tools-worker'; $script:EcrAiRepo='academy-ai-worker-cpu'
+}
+""",
+            "resources/worker_userdata.ps1": "function Get-ReleaseManifestImage { return @{GitSha=('a'*40);Digest=('sha256:'+('b'*64))} }",
+            "converge-api-development-oidc.ps1": "param($AwsProfile)\n$global:events.Add('child:oidc')",
+            "converge-api-development-database.ps1": "param($TimeoutSec,$AwsProfile)\n$global:events.Add('child:database')",
+            "publish-api-development-env.ps1": """
+param($ReleaseId,$GithubOutputPath,$AwsProfile)
+$global:events.Add('child:publish')
+Set-Content -LiteralPath $GithubOutputPath -Value "parameter_version=1`nworkers_parameter_version=2`nproduction_database_name=production"
+""",
+            "deploy-api-development.ps1": """
+param($ApiImageUri,$ToolsImageUri,$AiImageUri,$ExpectedEnvVersion,$ExpectedWorkersEnvVersion,$ExpectedReleaseId,$ExpectedProductionDatabaseName,$TimeoutSec,$AwsProfile)
+if ($ExpectedEnvVersion -ne 1 -or $ExpectedWorkersEnvVersion -ne 2 -or $ExpectedProductionDatabaseName -ne 'production' -or $ApiImageUri -notmatch '@sha256:') { throw 'initializer argument regression' }
+$global:events.Add('child:deploy')
+""",
+        }
+        for name, source in stubs.items():
+            (scripts / name).write_text(source, encoding="utf-8")
+        harness = r"""
+$ErrorActionPreference='Stop'
+$global:events=[Collections.Generic.List[string]]::new()
+$global:holder=$env:FIXTURE_HOLDER
+$global:fault=$env:FIXTURE_FAULT
+$global:roleExists=$env:FIXTURE_MISSING -ne 'true'
+$global:profileExists=$global:roleExists
+$global:profileBound=$global:roleExists -and $global:fault -ne 'unbound'
+$global:hostWrites=0
+$global:policy=$null
+function global:aws {
+    if ($args[0] -eq 'sts' -and $args[1] -eq 'get-caller-identity') {
+        '{"Account":"809466760795","Arn":"arn:aws:iam::809466760795:user/offline"}'
+        $global:LASTEXITCODE=0; return
+    }
+    throw "UNSTUBBED NATIVE AWS: $($args[0])/$($args[1])"
+}
+function global:python {
+    $action=$args[1]; $owner=$args[([array]::IndexOf($args,'--owner')+1)]
+    $table=$args[([array]::IndexOf($args,'--table-name')+1)]
+    if ($table -ne 'academy-v1-video-job-lock') { throw 'wrong lock table' }
+    $global:events.Add("lock:$action")
+    $global:LASTEXITCODE=0
+    switch ($action) {
+        'acquire' { if ($global:holder) {$global:LASTEXITCODE=2} else {$global:holder=$owner} }
+        'assert-owned' { if ($global:holder -ne $owner) {$global:LASTEXITCODE=2} }
+        'renew' { if ($global:holder -ne $owner) {$global:LASTEXITCODE=2} }
+        'release' {
+            if ($global:holder -ne $owner -or $global:fault -eq 'release') {$global:LASTEXITCODE=2}
+            else {$global:holder=''}
+        }
+        default { throw "unknown lock action $action" }
+    }
+}
+function global:Convert-JsonArgToFileRef { param($Json) $global:converted=$Json; return 'file://offline.json' }
+function global:Remove-TempFiles {}
+function global:Invoke-AwsJson {
+    param([string[]]$ArgsArray)
+    switch ("$($ArgsArray[0])/$($ArgsArray[1])") {
+        'sts/get-caller-identity' { return @{Account='809466760795';Arn='arn:aws:iam::809466760795:user/offline'} }
+        'ssm/describe-parameters' { return @{Parameters=@(@{Type='SecureString'})} }
+        'ec2/describe-security-groups' {
+            if ($ArgsArray -contains '--group-ids') { return @{SecurityGroups=@(@{IpPermissions=@(@{IpProtocol='tcp';FromPort=5432;ToPort=5432;UserIdGroupPairs=@(@{GroupId='sg-dev'})})})} }
+            return @{SecurityGroups=@(@{GroupId='sg-dev';IpPermissions=@()})}
+        }
+        'sqs/get-queue-url' { return @{QueueUrl='https://offline.invalid/queue'} }
+        'sqs/get-queue-attributes' { return @{Attributes=@{QueueArn='arn:offline'}} }
+        'iam/get-role' { if ($global:roleExists) {return @{Role=@{RoleName='academy-api-development-role'}}}; return $null }
+        'iam/get-instance-profile' {
+            if (-not $global:profileExists) { return $null }
+            $roles=if($global:profileBound){@(@{RoleName='academy-api-development-role'})}else{@()}
+            return @{InstanceProfile=@{Roles=$roles}}
+        }
+        'iam/get-role-policy' {
+            if ($global:fault -eq 'postverify') {return @{PolicyDocument=@{Statement=@()}}}
+            return @{PolicyDocument=$global:policy}
+        }
+        'iam/list-attached-role-policies' {return @{AttachedPolicies=@(@{PolicyArn='arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'})}}
+        'iam/list-role-policies' {return @{PolicyNames=@('academy-api-development-runtime')}}
+        default { throw "UNSTUBBED AWS READ: $($ArgsArray[0])/$($ArgsArray[1])" }
+    }
+}
+function global:Invoke-Aws {
+    param([string[]]$ArgsArray,[string]$ErrorMessage)
+    if ($ArgsArray[0] -eq 'sqs' -and $ArgsArray[1] -eq 'set-queue-attributes') { $global:events.Add('queue:attributes'); return }
+    if ($ArgsArray[0] -ne 'iam') {throw 'unapproved fake mutation'}
+    $global:hostWrites++; $global:events.Add("iam:$($ArgsArray[1])")
+    switch ($ArgsArray[1]) {
+        'create-role' {$global:roleExists=$true}
+        'update-assume-role-policy' {}
+        'attach-role-policy' {}
+        'put-role-policy' {$global:policy=$global:converted | ConvertFrom-Json}
+        'create-instance-profile' {$global:profileExists=$true}
+        'add-role-to-instance-profile' {$global:profileBound=$true}
+        default {throw 'unexpected IAM mutation'}
+    }
+    if ($global:fault -eq 'lost' -and $global:hostWrites -eq 1) {$global:holder='peer'}
+    if ($global:fault -eq 'timeout' -and $ArgsArray[1] -eq 'put-role-policy') {throw 'commit then timeout'}
+}
+$failure=''
+try {
+    if ($env:FIXTURE_MODE -eq 'initializer') {
+        & "$env:FIXTURE_ROOT/initialize-api-development.ps1" -AwsProfile offline
+    } elseif ($env:FIXTURE_MODE -eq 'prerequisites') {
+        & "$env:FIXTURE_ROOT/converge-api-development-prerequisites.ps1" -AwsProfile offline
+    } else {
+        . "$env:FIXTURE_ROOT/core/ssot.ps1"
+        . "$env:FIXTURE_ROOT/core/logging.ps1"
+        . "$env:FIXTURE_ROOT/core/guard.ps1"
+        . "$env:FIXTURE_ROOT/resources/iam.ps1"
+        Load-SSOT
+        $script:PlanMode=$env:FIXTURE_MODE -eq 'plan'
+        $script:DeployLockAcquired=$false
+        Ensure-ApiDevelopmentIAM | Out-Null
+    }
+} catch {$failure=$_.Exception.Message}
+'FIXTURE_RESULT='+(@{error=$failure;events=@($global:events);holder=$global:holder;writes=$global:hostWrites;policy=$global:policy}|ConvertTo-Json -Depth 30 -Compress)
+"""
+        env = {key: value for key, value in os.environ.items()
+               if not key.startswith(("AWS_", "ACADEMY_DEPLOY_LOCK", "ACADEMY_RUNTIME_ENV_LOCK"))}
+        env.update(FIXTURE_ROOT=str(scripts), FIXTURE_MODE=mode, FIXTURE_HOLDER=holder,
+                   FIXTURE_FAULT=fault, FIXTURE_MISSING=str(missing).lower())
+        env.update(env_overrides or {})
+        result = subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-Command", harness],
+                                capture_output=True, text=True, timeout=30, env=env)
+        if result.returncode:
+            raise AssertionError(result.stdout + result.stderr)
+        lines = [line for line in result.stdout.splitlines() if line.startswith("FIXTURE_RESULT=")]
+        if len(lines) != 1:
+            raise AssertionError(result.stdout + result.stderr)
+        return json.loads(lines[0].split("=", 1)[1])
+
+
+class HostWriterLockTests(unittest.TestCase):
+    def test_direct_host_ensure_refuses_all_writes_without_owned_lock(self):
+        for missing in (False, True):
+            with self.subTest(missing=missing):
+                result = powershell_host_writer(missing=missing)
+                self.assertEqual(result["writes"], 0, result)
+                self.assertTrue(result["error"], result)
+
+    def test_prerequisites_cannot_write_or_release_another_writers_lease(self):
+        result = powershell_host_writer("prerequisites", holder="host-boundary-peer")
+        self.assertEqual(result["writes"], 0, result)
+        self.assertEqual(result["holder"], "host-boundary-peer")
+        self.assertNotIn("lock:release", result["events"])
+        self.assertTrue(result["error"])
+
+    def test_lost_ownership_stops_before_next_iam_write(self):
+        result = powershell_host_writer("prerequisites", fault="lost")
+        self.assertEqual(result["writes"], 1, result)
+        self.assertEqual(result["holder"], "peer")
+        self.assertTrue(result["error"])
+        self.assertNotIn("lock:release", result["events"])
+
+    def test_commit_timeout_and_postverify_failure_retain_without_retry_or_rollback(self):
+        for fault in ("timeout", "postverify"):
+            with self.subTest(fault=fault):
+                result = powershell_host_writer("prerequisites", fault=fault)
+                self.assertTrue(result["holder"], result)
+                self.assertTrue(result["error"], result)
+                self.assertEqual(result["events"].count("iam:put-role-policy"), 1)
+                self.assertNotIn("lock:release", result["events"])
+                self.assertNotIn("child:oidc", result["events"])
+
+    def test_initializer_existing_and_first_bootstrap_normal_flow_is_preserved(self):
+        for missing, fault, expected_writes in ((False, "", 3), (True, "", 5), (False, "unbound", 4)):
+            with self.subTest(missing=missing, fault=fault):
+                result = powershell_host_writer("initializer", missing=missing, fault=fault)
+                self.assertEqual(result["error"], "", result)
+                self.assertEqual(result["events"][-3:], ["child:database", "child:publish", "child:deploy"])
+                self.assertEqual(result["writes"], expected_writes)
+                self.assertEqual(result["holder"], "")
+                self.assertEqual(result["events"].count("lock:acquire"), 1)
+                self.assertEqual(result["events"].count("lock:release"), 1)
+                self.assertLess(result["events"].index("lock:acquire"), next(
+                    index for index, event in enumerate(result["events"]) if event.startswith("iam:")))
+                self.assertLess(result["events"].index("iam:put-role-policy"), result["events"].index("lock:release"))
+                self.assertLess(result["events"].index("lock:release"), result["events"].index("child:oidc"))
+
+    def test_plan_does_not_acquire_or_mutate(self):
+        result = powershell_host_writer("plan")
+        self.assertEqual(result["error"], "")
+        self.assertEqual(result["events"], [])
+
+    def test_bootstrap_refuses_inherited_owner_and_release_failure_stops_initializer(self):
+        for key in ("ACADEMY_DEPLOY_LOCK_OWNER", "ACADEMY_RUNTIME_ENV_LOCK_OWNER"):
+            result = powershell_host_writer("initializer", holder="parent", env_overrides={key: "parent"})
+            self.assertTrue(result["error"])
+            self.assertEqual(result["writes"], 0)
+            self.assertEqual(result["holder"], "parent")
+            self.assertNotIn("lock:acquire", result["events"])
+            self.assertNotIn("lock:release", result["events"])
+        result = powershell_host_writer("initializer", fault="release")
+        self.assertIn("HOST_IAM_LOCK_RELEASE_FAILED", result["error"])
+        self.assertTrue(result["holder"])
+        self.assertNotIn("child:deploy", result["events"])
+
+    def test_host_iam_direct_call_inventory_is_explicit(self):
+        callers = {path.relative_to(ROOT / "scripts/v1").as_posix()
+                   for path in (ROOT / "scripts/v1").rglob("*.ps1")
+                   if re.search(r"(?m)^\s*Ensure-ApiDevelopmentIAM\s", path.read_text(encoding="utf-8-sig"))}
+        self.assertEqual(callers, {"converge-api-development-prerequisites.ps1"})
+
+
+def load_script(name):
+    spec = importlib.util.spec_from_file_location(name, ROOT / "scripts/v1" / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class FakeHostAws:
+    def __init__(self, subject):
+        self.subject = subject
+        self.calls = []
+        self.fault = ""
+        self.reads = 0
+        self.policy = {"Version": "2012-10-17", "Id": "preserve-manual-fields",
+                       "Statement": [{"Sid": "Existing", "Effect": "Allow", "Action": "ecr:GetAuthorizationToken", "Resource": "*"}]}
+        self.role = {"Arn": f"arn:aws:iam::{subject.ACCOUNT}:role/{subject.ROLE}", "RoleId": "AROAOFFLINE",
+                     "AssumeRolePolicyDocument": json.loads((BOUNDARY.parent / "trust_ec2.json").read_text())}
+        self.profile = {"Arn": f"arn:aws:iam::{subject.ACCOUNT}:instance-profile/academy-api-development",
+                        "InstanceProfileId": "AIPAOFFLINE", "InstanceProfileName": "academy-api-development",
+                        "Roles": [{**self.role, "RoleName": subject.ROLE}]}
+        self.instance = {"InstanceId": "i-offline", "State": {"Name": "running"},
+                         "IamInstanceProfile": {"Arn": self.profile["Arn"]}, "Tags": [
+                             {"Key": key, "Value": value} for key, value in {
+                                 "Name": "academy-v1-api-development", "Environment": "development",
+                                 "ManagedBy": "academy-api-development", "Lifecycle": "active"}.items()]}
+
+    def __call__(self, args, profile):
+        self.calls.append(copy.deepcopy(args))
+        operation = tuple(args[:2])
+        s = self.subject
+        if operation == ("sts", "get-caller-identity"):
+            return {"Account": s.ACCOUNT, "Arn": f"arn:aws:iam::{s.ACCOUNT}:user/offline"}
+        if operation == ("iam", "get-role"):
+            return {"Role": copy.deepcopy(self.role)}
+        if operation == ("iam", "list-role-policies"):
+            return {"PolicyNames": [s.INLINE]}
+        if operation == ("iam", "get-role-policy"):
+            self.reads += 1
+            if self.fault == "hash-drift" and self.reads == 2:
+                self.policy["Id"] = "peer-edit"
+            return {"PolicyDocument": copy.deepcopy(self.policy)}
+        if operation == ("iam", "list-attached-role-policies"):
+            return {"AttachedPolicies": [{"PolicyName": "AmazonSSMManagedInstanceCore",
+                                          "PolicyArn": "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"}]}
+        if operation == ("iam", "get-policy"):
+            return {"Policy": {"DefaultVersionId": "v2"}}
+        if operation == ("iam", "get-policy-version"):
+            return {"PolicyVersion": {"VersionId": "v2", "Document": {"Version": "2012-10-17", "Statement": []}}}
+        if operation == ("iam", "list-instance-profiles-for-role"):
+            return {"InstanceProfiles": [copy.deepcopy(self.profile)]}
+        if operation == ("ec2", "describe-instances"):
+            return {"Reservations": [{"Instances": [copy.deepcopy(self.instance)]}]}
+        if operation == ("ec2", "describe-instance-attribute"):
+            return {"DisableApiTermination": {"Value": True}}
+        if operation == ("iam", "put-role-policy"):
+            self.policy = json.loads(args[args.index("--policy-document") + 1])
+            if self.fault == "commit-timeout":
+                raise subprocess.TimeoutExpired("offline-put", 30)
+            if self.fault == "commit-interrupt":
+                raise KeyboardInterrupt("must-not-print-this-exception-payload")
+            if self.fault == "inventory-drift":
+                self.role["RoleId"] = "PEER"
+            return {}
+        if operation == ("iam", "simulate-principal-policy"):
+            action = args[args.index("--action-names") + 1]
+            end = args.index("--policy-input-list") if "--policy-input-list" in args else len(args)
+            resources = args[args.index("--resource-arns") + 1:end]
+            expected = {(action, resource): decision for action, resource, decision in s.simulation_cases()}
+            results = [{"EvalActionName": action, "EvalResourceName": resource,
+                        "EvalDecision": expected[(action, resource)]} for resource in resources]
+            if self.fault == "postverify":
+                results[0]["EvalDecision"] = "implicitDeny"
+            if self.fault == "duplicate":
+                results.append(copy.deepcopy(results[0]))
+            if self.fault == "missing":
+                results.pop()
+            if self.fault == "context":
+                results[0]["MissingContextValues"] = ["offline-key"]
+            return {"EvaluationResults": results}
+        raise AssertionError(f"Unstubbed AWS call: {operation}")
+
+
+class FakeSharedLease:
+    """Run the actual shared-lock algorithm with an in-memory DynamoDB boundary."""
+    def __init__(self):
+        self.module = load_script("deployment_lock")
+        self.item = None
+        self.actions = []
+        self.after_acquire = None
+        self.fail_release = False
+
+    def ddb(self, operation, *args):
+        self.assert_table(args)
+        if operation == "get-item":
+            return {"Item": copy.deepcopy(self.item or {})}
+        values = json.loads(args[args.index("--expression-attribute-values") + 1])
+        now = int(values.get(":now", {"N": "0"})["N"])
+        if operation == "put-item":
+            if self.item and int(self.item["ttl"]["N"]) >= now:
+                raise RuntimeError("ConditionalCheckFailedException")
+            self.item = json.loads(args[args.index("--item") + 1])
+        elif operation in ("update-item", "delete-item"):
+            if (not self.item or self.item["owner"] != values[":owner"] or
+                    (operation == "update-item" and int(self.item["ttl"]["N"]) < now)):
+                raise RuntimeError("ConditionalCheckFailedException")
+            if operation == "delete-item":
+                if self.fail_release:
+                    raise RuntimeError("offline release failure")
+                self.item = None
+            else:
+                self.item["ttl"] = values[":expires"]
+        else:
+            raise AssertionError(operation)
+        return {}
+
+    def assert_table(self, args):
+        assert args[args.index("--table-name") + 1] == "academy-v1-video-job-lock"
+        key = json.loads(args[args.index("--item") + 1] if "--item" in args else args[args.index("--key") + 1])
+        assert key["videoId"]["S"] == "__deployment_control_v2__"
+
+    def __call__(self, action, owner, profile):
+        self.actions.append(action)
+        function = getattr(self.module, action.replace("-", "_"))
+        args = (self.module.DEFAULT_TABLE, owner)
+        with patch.object(self.module, "_aws", side_effect=self.ddb):
+            function(*args, 10800) if action in ("acquire", "renew") else function(*args)
+        if action == "acquire" and self.after_acquire:
+            self.after_acquire(owner)
+
+
+class HostBoundaryApplyTests(unittest.TestCase):
+    def setUp(self):
+        self.subject = load_script("converge_frontend_development_qa")
+        self.aws = FakeHostAws(self.subject)
+        self.lease = FakeSharedLease()
+        self.enterContext(patch.dict(os.environ, {key: value for key, value in os.environ.items()
+            if not key.startswith(("AWS_", "ACADEMY_DEPLOY_LOCK", "ACADEMY_RUNTIME_ENV_LOCK"))}, clear=True))
+        self.enterContext(patch.object(self.subject, "aws", side_effect=self.aws))
+        self.enterContext(patch.object(self.subject, "lock_action", side_effect=self.lease))
+        self.before = copy.deepcopy(self.aws.policy)
+        self.after = {**self.before, "Statement": self.before["Statement"] + self.subject.proposed_boundary()["Statement"]}
+        snapshot = self.subject.host_snapshot("offline")
+        self.hashes = (self.subject.policy_hash(self.before), self.subject.policy_hash(self.after),
+                       self.subject.policy_hash(snapshot["inventory"]))
+        self.aws.calls.clear()
+        self.aws.reads = 0
+
+    def apply(self):
+        return self.subject.apply_host_boundary("offline", *self.hashes)
+
+    def puts(self):
+        return [call for call in self.aws.calls if call[:2] == ["iam", "put-role-policy"]]
+
+    def test_exact_single_policy_apply_preserves_fields_and_verifies_without_overlay(self):
+        result = self.apply()
+        self.assertEqual(result["mode"], "HOST_POLICY_APPLIED")
+        self.assertEqual(result["lock_state"], "released")
+        self.assertEqual(self.aws.policy, self.after)
+        self.assertEqual(len(self.puts()), 1)
+        call, = self.puts()
+        self.assertEqual(call[2:6], ["--role-name", self.subject.ROLE, "--policy-name", self.subject.INLINE])
+        self.assertEqual(len(result["verification"]["cases"]), 44)
+        self.assertFalse(any("--policy-input-list" in args for args in self.aws.calls))
+        self.assertIsNone(self.lease.item)
+
+    def test_hash_drift_before_dispatch_releases_without_put(self):
+        self.aws.fault = "hash-drift"
+        with self.assertRaises(self.subject.HostApplyError) as caught:
+            self.apply()
+        self.assertEqual(self.puts(), [])
+        self.assertEqual(caught.exception.report["lock_state"], "released")
+
+    def test_other_writer_held_lock_fails_acquisition_without_release(self):
+        self.lease("acquire", "bootstrap-peer", "offline")
+        with self.assertRaises(self.subject.HostApplyError):
+            self.apply()
+        self.assertEqual(self.puts(), [])
+        self.assertNotIn("release", self.lease.actions)
+        self.assertEqual(self.lease.item["owner"]["S"], "bootstrap-peer")
+
+    def test_two_real_writer_paths_contend_for_same_owner_item(self):
+        # Interleave the actual PowerShell prerequisite while the Python writer
+        # holds the item; its fake native boundary receives that exact owner.
+        def competing_prerequisite(owner):
+            result = powershell_host_writer("prerequisites", holder=owner)
+            self.assertEqual(result["writes"], 0, result)
+            self.assertEqual(result["holder"], owner)
+            self.assertNotIn("lock:release", result["events"])
+        self.lease.after_acquire = competing_prerequisite
+        self.apply()
+        self.assertEqual(len(self.puts()), 1)
+        # Reverse order: the real initializer leaves its lease after an uncertain
+        # write. The narrow writer must not acquire, write, or release it.
+        held = powershell_host_writer("initializer", fault="timeout")
+        self.assertTrue(held["holder"])
+        self.lease.after_acquire = None
+        self.lease("acquire", held["holder"], "offline")
+        self.aws.calls.clear()
+        with self.assertRaises(self.subject.HostApplyError):
+            self.apply()
+        self.assertEqual(self.puts(), [])
+        self.assertEqual(self.lease.item["owner"]["S"], held["holder"])
+
+    def test_commit_timeout_and_postverify_errors_never_retry_or_rollback(self):
+        for fault in ("commit-timeout", "commit-interrupt", "postverify", "inventory-drift", "duplicate", "missing", "context"):
+            with self.subTest(fault=fault):
+                self.aws.policy = copy.deepcopy(self.before)
+                self.aws.calls.clear()
+                self.lease.item = None
+                self.aws.fault = fault
+                with self.assertRaises(self.subject.HostApplyError) as caught:
+                    self.apply()
+                self.assertEqual(len(self.puts()), 1)
+                self.assertEqual(caught.exception.report["lock_state"], "retained_until_ttl")
+                self.assertEqual(caught.exception.report["mode"], "HOST_POLICY_INDETERMINATE")
+                self.assertEqual(self.aws.policy, self.after)
+                self.assertNotIn("must-not-print", json.dumps(caught.exception.report))
+                self.aws.role["RoleId"] = "AROAOFFLINE"
+
+    def test_lost_or_expired_lease_never_releases_peer_or_writes(self):
+        for kind in ("lost", "expired"):
+            with self.subTest(kind=kind):
+                self.lease.item = None
+                self.lease.actions.clear()
+                def lose(owner):
+                    if kind == "lost":
+                        self.lease.item["owner"]["S"] = "peer"
+                    else:
+                        self.lease.item["ttl"]["N"] = "1"
+                self.lease.after_acquire = lose
+                with self.assertRaises(self.subject.HostApplyError):
+                    self.apply()
+                self.assertEqual(self.puts(), [])
+                # Even pre-write failure must assert before attempting release.
+                self.assertNotIn("release", self.lease.actions)
+
+    def test_release_failure_is_not_success(self):
+        self.lease.fail_release = True
+        with self.assertRaises(self.subject.HostApplyError) as caught:
+            self.apply()
+        self.assertEqual(len(self.puts()), 1)
+        self.assertEqual(caught.exception.report["lock_state"], "release_failed")
+
+    def test_invalid_or_inherited_input_has_no_lock_or_iam_mutation(self):
+        for key, value in (("ACADEMY_DEPLOY_LOCK_OWNER", "parent"), ("ACADEMY_RUNTIME_ENV_LOCK_OWNER", "parent"),
+                           ("ACADEMY_DEPLOY_LOCK_TABLE", "wrong"), ("AWS_REGION", "us-east-1")):
+            with self.subTest(key=key), patch.dict(os.environ, {key: value}):
+                with self.assertRaises(ValueError):
+                    self.apply()
+        self.assertEqual(self.lease.actions, [])
+        self.assertEqual(self.puts(), [])
+
+
+    def test_default_plan_and_already_applied_verifier_are_read_only(self):
+        result = self.subject.audit("offline")
+        self.assertEqual(result["inventory_sha256"], self.hashes[2])
+        self.assertEqual(result["before_sha256"], self.hashes[0])
+        self.assertEqual(result["after_sha256"], self.hashes[1])
+        self.assertTrue(result["proposed_simulation_pass"])
+        self.aws.policy = copy.deepcopy(self.after)
+        self.aws.calls.clear()
+        result = self.subject.verify_host_boundary("offline", *self.hashes[1:])
+        self.assertEqual(len(result["cases"]), 44)
+        self.assertEqual(self.lease.actions, [])
+        self.assertEqual(self.puts(), [])
+        self.assertFalse(any("--policy-input-list" in args for args in self.aws.calls))
+
+    def test_all_hash_gates_fail_before_put(self):
+        original = self.hashes
+        for index in range(3):
+            with self.subTest(index=index):
+                self.hashes = tuple("0" * 64 if position == index else value for position, value in enumerate(original))
+                with self.assertRaises(self.subject.HostApplyError):
+                    self.apply()
+                self.assertEqual(self.puts(), [])
+                self.assertIsNone(self.lease.item)
+        with self.assertRaises(ValueError):
+            self.subject.apply_host_boundary("offline", "", *original[1:])
+
+    def test_unexpected_grants_trust_boundary_profile_and_instance_fail_before_put(self):
+        original_call = self.aws.__call__
+        variants = (
+            (("iam", "list-role-policies"), lambda value: value["PolicyNames"].append("foreign")),
+            (("iam", "list-attached-role-policies"), lambda value: value["AttachedPolicies"].append({"PolicyArn": "foreign"})),
+            (("iam", "get-role"), lambda value: value["Role"].update(PermissionsBoundary={"PermissionsBoundaryArn": "foreign"})),
+            (("iam", "get-role"), lambda value: value["Role"]["AssumeRolePolicyDocument"].update(Statement=[])),
+            (("iam", "list-instance-profiles-for-role"), lambda value: value["InstanceProfiles"][0].update(Roles=[])),
+            (("ec2", "describe-instances"), lambda value: value["Reservations"][0]["Instances"].append(copy.deepcopy(self.aws.instance))),
+            (("ec2", "describe-instance-attribute"), lambda value: value.update(DisableApiTermination={"Value": False})),
+            (("iam", "get-policy-version"), lambda value: value["PolicyVersion"]["Document"].update(Id="managed-drift")),
+        )
+        for operation, mutate in variants:
+            def altered(args, profile):
+                value = original_call(args, profile)
+                if tuple(args[:2]) == operation:
+                    mutate(value)
+                return value
+            with self.subTest(operation=operation), patch.object(self.subject, "aws", side_effect=altered):
+                with self.assertRaises(self.subject.HostApplyError):
+                    self.apply()
+                self.assertEqual(self.puts(), [])
+                self.assertIsNone(self.lease.item)
+
+    def test_cli_modes_are_mutually_exclusive_and_require_reviewed_hashes(self):
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            for args in (["--apply-host-boundary"], ["--verify-host-boundary"],
+                         ["--frontend-role-plan", "--apply-host-boundary"],
+                         ["--expected-current-hash", "0" * 64]):
+                with self.assertRaises(SystemExit) as caught:
+                    self.subject.main(args)
+                self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(self.lease.actions, [])
+        self.assertEqual(self.aws.calls, [])
+        with patch.object(self.subject, "frontend_plan", return_value={"proposed_simulation_pass": True}) as frontend:
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(self.subject.main(["--frontend-role-plan", "--aws-profile", "offline"]), 0)
+            frontend.assert_called_once_with("offline")
+        self.assertEqual(self.aws.calls, [])
+
+    def test_native_iam_and_lock_use_same_profile_environment_without_retry(self):
+        subject = load_script("converge_frontend_development_qa")
+        secret_env = {"AWS_ACCESS_KEY_ID": "offline-marker", "AWS_SECRET_ACCESS_KEY": "offline-marker",
+                      "AWS_SESSION_TOKEN": "offline-marker", "AWS_PROFILE": "foreign", "AWS_REGION": "us-east-1"}
+        with patch.dict(os.environ, secret_env), patch.object(subject.subprocess, "run", return_value=SimpleNamespace(
+                returncode=0, stdout="{}", stderr="")) as native:
+            subject.aws(["iam", "get-role", "--role-name", subject.ROLE], "offline")
+            subject.lock_action("assert-owned", "local-owner", "offline")
+            iam, lock = native.call_args_list
+            self.assertEqual(iam.kwargs["env"], lock.kwargs["env"])
+            env = lock.kwargs["env"]
+            self.assertEqual(env["AWS_PROFILE"], "offline")
+            self.assertEqual(env["AWS_REGION"], subject.REGION)
+            self.assertEqual(env["AWS_DEFAULT_REGION"], subject.REGION)
+            self.assertEqual(env["AWS_MAX_ATTEMPTS"], "1")
+            self.assertNotIn("AWS_ACCESS_KEY_ID", env)
+            self.assertNotIn("AWS_SECRET_ACCESS_KEY", env)
+            self.assertNotIn("AWS_SESSION_TOKEN", env)
+            self.assertEqual(os.environ["AWS_PROFILE"], "foreign", "parent environment must not change")
+            self.assertEqual(iam.kwargs["timeout"], 30)
+            self.assertEqual(lock.kwargs["timeout"], 30)
+            self.assertIn(str(subject.LOCK_HELPER), lock.args[0])
+            self.assertIn("--cli-read-timeout", iam.args[0])
+
+    def test_same_owner_reacquire_and_stale_lease_fail_existing_algorithm(self):
+        self.lease("acquire", "same-owner", "offline")
+        with self.assertRaises(RuntimeError):
+            self.lease("acquire", "same-owner", "offline")
+        self.lease.item["ttl"]["N"] = "1"
+        with self.assertRaises(RuntimeError):
+            self.lease("renew", "same-owner", "offline")
+        with self.assertRaises(RuntimeError):
+            self.lease("assert-owned", "same-owner", "offline")
+
+    def test_expired_operation_deadline_stops_before_mutation(self):
+        with patch.object(self.subject.time, "monotonic", side_effect=[0, 601]):
+            with self.assertRaises(self.subject.HostApplyError):
+                self.apply()
+        self.assertEqual(self.puts(), [])
+        self.assertIsNone(self.lease.item)
 
 
 class DevelopmentParameterBoundaryTests(unittest.TestCase):
