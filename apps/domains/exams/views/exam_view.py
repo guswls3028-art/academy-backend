@@ -25,6 +25,7 @@ from apps.support.exams.view_dependencies import (
     IsTeacherOrAdmin,
     active_enrollment_ids_for_exam_assignment,
     dispatch_progress_for_exam,
+    refresh_exam_target_projections,
     get_session_model,
     regular_exam_delete_blocker,
     resolve_removed_exam_clinic_links,
@@ -188,7 +189,7 @@ class ExamViewSet(ModelViewSet):
             try:
                 session = (
                     Session.objects
-                    .select_for_update()
+                    .select_for_update(of=("self",), no_key=True)
                     .select_related("lecture")
                     .get(id=session_id, lecture__tenant=tenant)
                 )
@@ -213,18 +214,19 @@ class ExamViewSet(ModelViewSet):
                 display_order=int(max_order or 0) + 1,
             )
 
-            exam.sessions.add(session)
-            active_enrollment_ids = active_enrollment_ids_for_exam_assignment(
-                tenant=tenant,
-                session=session,
-            )
-            ExamEnrollment.objects.bulk_create(
-                [
-                    ExamEnrollment(exam=exam, enrollment_id=enrollment_id)
-                    for enrollment_id in active_enrollment_ids
-                ],
-                ignore_conflicts=True,
-            )
+            with refresh_exam_target_projections(exam=exam):
+                exam.sessions.add(session)
+                active_enrollment_ids = active_enrollment_ids_for_exam_assignment(
+                    tenant=tenant,
+                    session=session,
+                )
+                ExamEnrollment.objects.bulk_create(
+                    [
+                        ExamEnrollment(exam=exam, enrollment_id=enrollment_id)
+                        for enrollment_id in active_enrollment_ids
+                    ],
+                    ignore_conflicts=True,
+                )
             if template_exam is not None:
                 copy_exam_structure(source_exam=template_exam, target_exam=exam)
             elif source_exam is not None:

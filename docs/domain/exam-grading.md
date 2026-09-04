@@ -57,6 +57,44 @@ API 오류 모양으로 구분할 수 없다.
 대상자 저장 두 건이 동시에 들어와 두 선택의 합집합이 남지 않는다. 마지막으로 잠금을
 얻은 완전 치환 요청이 정본이며 다른 tenant나 연결되지 않은 차시 ID는 거부한다.
 
+### 시험 생성·대상 변경과 저장된 진척
+
+정규 시험 생성과 대상자 추가·제거는 응시 대상 변경과 기존 `SessionProgress`
+갱신을 **같은 트랜잭션**에서 끝낸다. 결과가 없는 새 대상 시험도 canonical
+계산에 포함하므로 이전 합격값이 남지 않는다. `on_commit` best-effort 콜백은
+사용하지 않는다. 계산·저장 실패 시 시험 생성/대상 치환과 부분 갱신이 모두
+롤백되고 API는 실패한다. 같은 대상 목록의 반복 저장은 파생값·최초완료시각을
+다시 쓰지 않는다. 이 경로는 과거의 모든 불일치를 자동 보정하는 backfill이 아니다.
+
+영향 범위는 변경 전후 **유효 대상 `(enrollment, session)` 집합의 차이**다.
+시험의 모든 연결 차시를 수강 등록의 같은 tenant·강의로 제한한다. 명시 대상이
+0명인 기존 시험의 roster 호환 규칙도 같은 canonical helper로 평가하므로,
+명시 목록의 첫 생성/마지막 제거가 다른 연결 강의에 주는 영향도 빠뜨리지 않는다.
+inactive/삭제 학생과 cross-tenant/잘못된 강의 관계는 갱신하지 않는다.
+시험 치환은 시험 본행 잠금으로 직렬화하고, 생성은 차시 본행의 non-key 잠금으로
+직렬화한다. 실제 영향 enrollment를 ID 순서로 non-key 잠근 후 진척 행을 잠가,
+서로 다른 시험 생성·치환과 정상 채점 재계산이 같은 진척을 덮어쓰지 않게 한다.
+FK key-share와 양립하는 잠금으로 공유 차시/강의의 교착 위험도 제한한다.
+
+| 파생 필드 | 계산 및 보존 계약 |
+|---|---|
+| `SessionProgress.exam_attempted`, `exam_aggregate_score`, `exam_passed`, `exam_meta` | 기존 `SessionProgressCalculator`의 시험 범위·명시 대상·미응시·집계·강의별 합격 기준을 그대로 공유한다. |
+| `completed`, `completed_at` | 기존 video/homework 값과 시험 합격의 AND. 최초 완료시각은 기존 계산기와 동일하게 한 번만 설정하고 완료 취소에도 지우지 않는다. |
+| `calculated_at`, `updated_at` | 실제 파생값이 달라진 행만 갱신한다. 출결·영상·과제 필드와 수동 `meta`는 보존한다. |
+| `LectureProgress` | 영향 수강 등록의 기존 canonical 강의 집계와 같은 위험수준 규칙을 사용한다. `meta`와 소유 강의는 보존하며 `RiskLog`를 만들지 않는다. |
+
+전체 `ProgressPipelineService`는 클리닉 자동 생성·해소 부작용을 가지므로 이
+대상자 편집 경로에서 호출하지 않는다. `Result`, `ResultFact`, `ExamAttempt`,
+`ClinicLink`/해소 이력, `AssessmentCorrection`, 발송 로그·예약·outbox는 바꾸지 않는다.
+신규 roster에 아직 진척 행이 없다면 시험 생성만으로 출결·과제 값을 추측해 행을
+만들지 않는다. 누락 수는 구조화 로그에 남고, roster/시험 조회는 실제 새 시험을
+반환하며 세션 요약의 participant_count는 기존 진척 행 수(없으면 0)를 유지한다.
+첫 실제 점수 입력은 기존 채점 파이프라인에서 진척을 생성한다. 조회 GET은 쓰지 않는다.
+
+검증: `apps/domains/progress/tests/test_exam_target_projection_pg.py`의 PostgreSQL
+API 생성→대상 편집→요약 조회, 진척 부재→최초 채점, rollback/중복/commit 후 예외,
+동시 치환·생성 교차, 다중 연결·legacy 전환·tenant 격리, 원본/수동/발송 불변 테스트.
+
 ### 하나의 시험을 여러 강의에서 운영
 
 정규 `Exam` 하나를 여러 강의의 차시에 연결해 문제·정답·원본과 채점 결과 구조를

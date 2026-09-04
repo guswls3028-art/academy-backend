@@ -212,6 +212,12 @@ def dispatch_progress_for_exam(*, exam_id: int) -> None:
     dispatch_progress_pipeline(exam_id=exam_id)
 
 
+def refresh_exam_target_projections(*, exam):
+    from apps.domains.progress.dispatcher import refresh_exam_target_projections as refresh
+
+    return refresh(exam=exam)
+
+
 def regular_exam_delete_blocker(exam) -> str | None:
     from apps.domains.results.models import Result, ResultFact
     from apps.domains.submissions.models import Submission

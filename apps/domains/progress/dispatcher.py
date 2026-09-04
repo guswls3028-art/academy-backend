@@ -9,6 +9,15 @@ from apps.domains.progress.services.progress_pipeline import ProgressPipelineSer
 logger = logging.getLogger(__name__)
 
 
+def refresh_exam_target_projections(*, exam):
+    """Projection-only context for a transactional exam creation/roster edit."""
+    from apps.domains.progress.services.exam_target_projection import (
+        refresh_exam_target_projections as refresh,
+    )
+
+    return refresh(exam=exam)
+
+
 def dispatch_progress_pipeline(
     *,
     exam_id: Optional[int] = None,

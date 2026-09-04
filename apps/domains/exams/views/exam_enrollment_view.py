@@ -18,6 +18,7 @@ from apps.domains.exams.models.exam import Exam
 from apps.support.exams.view_dependencies import (
     active_enrollment_ids_for_session,
     active_session_enrollments_for_session,
+    refresh_exam_target_projections,
 )
 
 from apps.domains.exams.serializers.exam_enrollment_serializer import (
@@ -215,18 +216,19 @@ class ExamEnrollmentManageView(APIView):
             )
 
         # ✅ 세션 범위 내 치환 (다른 세션의 enrollment은 유지)
-        ExamEnrollment.objects.filter(
-            exam_id=exam_id,
-            enrollment__tenant=tenant,
-            enrollment_id__in=valid_ids,
-        ).delete()
+        with refresh_exam_target_projections(exam=exam):
+            ExamEnrollment.objects.filter(
+                exam_id=exam_id,
+                enrollment__tenant=tenant,
+                enrollment_id__in=valid_ids,
+            ).delete()
 
-        bulk = [
-            ExamEnrollment(exam_id=exam_id, enrollment_id=eid)
-            for eid in sorted(incoming_ids)
-        ]
-        if bulk:
-            ExamEnrollment.objects.bulk_create(bulk, ignore_conflicts=True)
+            bulk = [
+                ExamEnrollment(exam_id=exam_id, enrollment_id=eid)
+                for eid in sorted(incoming_ids)
+            ]
+            if bulk:
+                ExamEnrollment.objects.bulk_create(bulk, ignore_conflicts=True)
 
         return Response(
             {

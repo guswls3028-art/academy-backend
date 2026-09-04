@@ -320,32 +320,9 @@ class SessionProgressCalculator:
         else:
             obj.video_completed = obj.video_progress_rate >= int(policy.video_required_rate)
 
-        regular_order = SessionProgressCalculator._regular_order_for_policy(session)
-        in_exam_range = bool(
-            regular_order is not None
-            and policy.exam_start_session_order <= regular_order <= policy.exam_end_session_order
-        )
-        if in_exam_range:
-            attempted, agg_score, passed, exam_meta = SessionProgressCalculator._aggregate_exam_results(
-                enrollment_id=enrollment_id,
-                session=session,
-                policy=policy,
-            )
-            obj.exam_attempted = bool(attempted)
-            obj.exam_aggregate_score = agg_score
-            obj.exam_passed = bool(passed)
-            obj.exam_meta = exam_meta
-        else:
-            obj.exam_attempted = False
-            obj.exam_aggregate_score = None
-            obj.exam_passed = True
-            obj.exam_meta = {
-                "strategy": str(policy.exam_aggregate_strategy),
-                "pass_source": str(policy.exam_pass_source),
-                "exams": [],
-                "note": "out_of_exam_range",
-            }
+        SessionProgressCalculator.set_exam_fields(obj=obj, session=session, policy=policy)
 
+        regular_order = SessionProgressCalculator._regular_order_for_policy(session)
         in_hw_range = bool(
             regular_order is not None
             and policy.homework_start_session_order <= regular_order <= policy.homework_end_session_order
@@ -374,6 +351,43 @@ class SessionProgressCalculator:
         else:
             obj.homework_passed = True
 
+        SessionProgressCalculator.set_completion_fields(obj)
+        obj.calculated_at = timezone.now()
+        obj.save()
+
+        return obj
+
+    @staticmethod
+    def set_exam_fields(*, obj: SessionProgress, session, policy: ProgressPolicy) -> None:
+        """Apply canonical exam policy without touching attendance/homework inputs."""
+        regular_order = SessionProgressCalculator._regular_order_for_policy(session)
+        in_exam_range = bool(
+            regular_order is not None
+            and policy.exam_start_session_order <= regular_order <= policy.exam_end_session_order
+        )
+        if in_exam_range:
+            attempted, agg_score, passed, exam_meta = SessionProgressCalculator._aggregate_exam_results(
+                enrollment_id=obj.enrollment_id,
+                session=session,
+                policy=policy,
+            )
+            obj.exam_attempted = bool(attempted)
+            obj.exam_aggregate_score = agg_score
+            obj.exam_passed = bool(passed)
+            obj.exam_meta = exam_meta
+        else:
+            obj.exam_attempted = False
+            obj.exam_aggregate_score = None
+            obj.exam_passed = True
+            obj.exam_meta = {
+                "strategy": str(policy.exam_aggregate_strategy),
+                "pass_source": str(policy.exam_pass_source),
+                "exams": [],
+                "note": "out_of_exam_range",
+            }
+
+    @staticmethod
+    def set_completion_fields(obj: SessionProgress) -> None:
         obj.completed = bool(obj.video_completed and obj.exam_passed and obj.homework_passed)
 
         # ⚠️ completed_at은 "최초 완료 시점"으로 불변화.
@@ -381,8 +395,3 @@ class SessionProgressCalculator:
         # 지우지 않음(감사 이력 보존). 현재 완료 여부는 `completed` 플래그로만 판단.
         if obj.completed and not obj.completed_at:
             obj.completed_at = timezone.now()
-
-        obj.calculated_at = timezone.now()
-        obj.save()
-
-        return obj
