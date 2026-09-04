@@ -126,7 +126,7 @@ fencing token이나 CAS가 아니다. 직접 CLI/console·구버전 writer·만�
 
 검증: `python -B -m unittest scripts.v1.test_frontend_development_qa -v`.
 Backend Quality Gate의 기존 `Deployment contract tests` 단계도 같은 명령을 실행하며
-0이 아닌 종료코드는 즉시 step 실패로 처리한다. 전체 pytest 수집과 별도인 30개 회귀다.
+0이 아닌 종료코드는 즉시 step 실패로 처리한다. 전체 pytest 수집과 별도인 회귀다.
 기존 initializer/IAM/guard를 로컬 fake AWS로 실행하고, 실제 공용 잠금 알고리즘을
 fake DynamoDB로 검사한다. 두 writer의 순서 교차·획득 실패·소유권 상실·commit 후
 timeout·postverify 실패 및 기존 initializer의 존재/신규 경로를 검증한다. 이는 실제
@@ -172,8 +172,39 @@ SSM Command API의 `GetCommandInvocation`은 resource-level 제한을 지원하�
 개발 명령 출력에만 한정된 권한이라고 주장할 수 없다. 새 역할은 SendCommand,
 GetCommandInvocation/ListCommandInvocations/ListCommands를 명시적으로 거부하고
 자기 Session의 결과만 받는다. StartSession은 두 exact document와 active-development
-태그 인스턴스에 제한하며 SessionDocumentAccessCheck를 요구한다. TerminateSession은
-session의 caller tag와 aws:userid가 일치해야 한다.
+태그 인스턴스에 제한한다. 저장소 정책의 `StartFixedDocuments`는 두 승인 문서에
+strict `Bool: {ssm:SessionDocumentAccessCheck: true}`를 요구한다. missing/false는
+문서 허용이 아니며 `BoolIfExists`로 누락을 허용하지 않는다. 인스턴스 statement는
+기존 account/region ARN과 Name/ManagedBy/Environment/Lifecycle 네 태그를 그대로
+검사한다. TerminateSession은 session의 caller tag와 aws:userid가 일치해야 한다.
+
+이 조건 위치 변경은 첫 공식 frontend 개발 run의 EC2 `StartSession` AccessDenied 후
+추가한 저장소 계약이다. 실패 당시 정책은 instance에 strict Bool을 요구했으며 기존
+simulation은 document key=true를 공통값으로 주입해 missing 사례를 검증하지 않았다.
+CloudTrail은 실제 평가 key의 missing/false를 공개하지 않으므로, 위치 이동이 실제
+AWS 연결을 해결했다고 단정하지 않는다. 저장소 테스트/PR/CI 성공은 live IAM 적용이나
+SSM runtime red→green 증거가 아니다. 기존 역할이 있으면 planner는 계속 fail-closed로
+중단한다. 별도 exact-main/정책 hash/공용 잠금/승인 경계의 단발 적용과 readback 전에는
+기존 live 정책을 수정하지 않으며 공식 same-artifact QA의 HOLD를 해제하지 않는다.
+
+planner의 45개 사례는 각 요청 context를 명시한다. 두 승인 문서와 기본 셸·승인외
+문서·RemoteHost/일반 Port/Interactive/SSH의 exact ARN에 missing/false/true를 각각
+평가한다. Amazon 소유 public document는 account 부분이 빈 ARN을 사용한다.
+인스턴스 허용 사례에는 document key가 없으며 네 태그의 개별 불일치도 검사한다.
+나머지 정책 key의 합성 positive controls는 서비스에서 관측한 값이 아니다. 생략한
+document key를 공통값으로 다시 채우지 않는다. simulator가 보고한 missing key는
+해당 사례가 의도적으로 생략한 document key만 허용하며, 다른 누락·이미 제공한 key의
+누락 보고·기대와 다른 결정은 전체 계획 실패다. 로컬 fake는 요청 matrix와 판정 집계만
+검사하며 IAM 판정기를 흉내 내거나 실제 세션 성공을 주장하지 않는다.
+
+[AWS 권한 정의](https://docs.aws.amazon.com/service-authorization/latest/reference/list_ssm.html)는
+이 key를 instance와 document 양쪽에 등재하지만 실제 요청의 주입 위치를 보장하지 않는다.
+[기본 문서 계약](https://docs.aws.amazon.com/systems-manager/latest/userguide/getting-started-default-session-document.html)은
+DocumentName 생략 시 기본 셸 문서의 IAM 권한도 요구한다. 다만 ARN별 simulation은
+생략 요청의 서비스 측 문서 선택을 실행하지 않는다. 기본/다른 문서의 실제 거부와
+승인 문서의 연결은 별도 승인 후 공식 역할로 검증해야 하며, 실패하면 권한 확대나
+guard 우회 없이 중단한다. 정책 위치 변경은 기존 tenant/user/소유권 데이터나
+문서의 명령·parameter·포트·수명 설정을 변경하지 않는다.
 
 `ssmmessages:OpenDataChannel`도 resource-level ARN을 지원하지 않으므로 이 action만
 Resource:*가 필요하다. 채널 인증은 StartSession의 session/caller 정보를 담은
@@ -192,7 +223,7 @@ cleanup0 승격 계약은 frontend `docs/DEPLOYMENT-OPERATIONS.md`가 소유한�
 고정 QA document의 `inputs`는 maxSessionDuration=5분/idleSessionTimeout=5분,
 Port document는 25분/5분이다. 호출자가 timeout을 바꾸는 parameter는 없다. 이 값은
 문서의 서비스 측 세션 제한 설정이며 신규 문서를 실제 적용하고 종료 readback하기
-전에는 제한이 실제로 작동했다고 보고하지 않는다. IAM20 simulation은 이 설정이나
+전에는 제한이 실제로 작동했다고 보고하지 않는다. IAM simulation은 이 설정이나
 데이터 소유권을 검증하지 않는다. STS 1시간 만료 자체도 기존 SSM 세션 종료 보장이 아니다.
 
 QA 원격 명령은 curl 각 10초, Docker inspect 15초(+kill 5초), Docker exec 210초

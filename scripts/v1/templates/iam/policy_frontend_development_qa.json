@@ -43,7 +43,12 @@
       "Resource": [
         "arn:aws:ssm:ap-northeast-2:809466760795:document/academy-frontend-development-qa",
         "arn:aws:ssm:ap-northeast-2:809466760795:document/academy-frontend-development-api-port"
-      ]
+      ],
+      "Condition": {
+        "Bool": {
+          "ssm:SessionDocumentAccessCheck": "true"
+        }
+      }
     },
     {
       "Sid": "StartVerifiedDevelopmentOnly",
@@ -56,9 +61,6 @@
           "ssm:resourceTag/ManagedBy": "academy-api-development",
           "ssm:resourceTag/Environment": "development",
           "ssm:resourceTag/Lifecycle": "active"
-        },
-        "Bool": {
-          "ssm:SessionDocumentAccessCheck": "true"
         }
       }
     },
