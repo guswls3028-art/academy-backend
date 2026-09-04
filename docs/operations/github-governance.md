@@ -66,8 +66,10 @@ PR/environment wildcard subject, 역할 체인, 장기 access key 또는 운영 
 read-only 계획은 `converge_frontend_development_qa.py --frontend-role-plan`과
 `templates/iam/{trust,policy}_frontend_development_qa.json`, 고정 SSM Session/Port
 document가 소유한다. 기존 개발 EC2의 parameter deny 보안 교정은 별도 계획/증거로
-검토한다. 이 도구에는 Apply가 없으며 실제 IAM/SSM 변경은 검토한 exact JSON과
-소스/기존 정책 hash를 다시 확인한 뒤에만 수행한다. plan 또는 simulation 성공을
+검토한다. `--frontend-role-plan`에는 Apply가 없다. 별도 `--apply-host-boundary`는
+검토된 세 hash와 공용 잠금·readback 아래 기존 개발 host inline 정책에 두 Deny만
+추가하며 frontend 역할/SSM 문서를 생성하지 않는다. 실제 IAM/SSM 변경은 검토한 exact
+JSON과 소스/기존 정책 hash를 다시 확인한 뒤에만 수행한다. plan 또는 simulation 성공을
 OIDC 인증/실제 development QA 성공으로 간주하지 않는다.
 
 권한의 정확한 범위와 OpenDataChannel의 resource-level 제한 불가 및 session token

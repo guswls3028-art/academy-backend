@@ -130,11 +130,14 @@ pwsh scripts/v1/disable-legacy-deploy-crons.ps1 -Action Off -AwsProfile default
   `connect-api-development.ps1 -AwsProfile <profile>`은 active instance를
   정확히 1대로 확인한 뒤 localhost:18000 SSM tunnel만 연다. public
   listener/ALB는 만들지 않는다.
-- **frontend release QA 권한 계획 (Apply 없음)**:
+- **frontend release QA 권한 계획과 별도 host-only Apply**:
   `python scripts/v1/converge_frontend_development_qa.py`는 개발 host parameter deny의
   전체 grant inventory/시뮬레이션만 수행한다. `--frontend-role-plan`은 별도 frontend
   main OIDC 역할과 고정 NonInteractiveCommands/Port document의 생성 전 계획을
   출력한다. 두 계획은 운영 parameter 값을 읽거나 IAM/SSM 자원을 변경하지 않는다.
+  별도 `--apply-host-boundary`만 승인된 기존 개발 host inline 정책에 두 Deny를 추가한다.
+  이 모드는 검토된 세 hash와 공용 잠금·readback을 요구하며 frontend 역할/SSM 문서를
+  만들지 않는다. `--frontend-role-plan`에는 Apply가 없다.
   실제 권한 수렴/readback 전에는 synthetic QA를 실행하지 않으며 frontend release는
   동일 artifact의 10-case real-use와 exact tenant/user cleanup0 없이는 차단한다.
   역할별 범위와 simulation 한계는
