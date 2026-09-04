@@ -125,6 +125,8 @@ fencing token이나 CAS가 아니다. 직접 CLI/console·구버전 writer·만�
 재개하므로 자동 복구 대상이 아니며 별도 exact 승인/검증을 요구한다.
 
 검증: `python -B -m unittest scripts.v1.test_frontend_development_qa -v`.
+Backend Quality Gate의 기존 `Deployment contract tests` 단계도 같은 명령을 실행하며
+0이 아닌 종료코드는 즉시 step 실패로 처리한다. 전체 pytest 수집과 별도인 30개 회귀다.
 기존 initializer/IAM/guard를 로컬 fake AWS로 실행하고, 실제 공용 잠금 알고리즘을
 fake DynamoDB로 검사한다. 두 writer의 순서 교차·획득 실패·소유권 상실·commit 후
 timeout·postverify 실패 및 기존 initializer의 존재/신규 경로를 검증한다. 이는 실제
