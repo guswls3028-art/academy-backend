@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
+from unittest import skipUnless
 from unittest.mock import patch
 
 from django.apps import apps
-from django.db import close_old_connections, transaction
+from django.db import close_old_connections, connection, transaction
 from django.test import TransactionTestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -277,6 +278,7 @@ class ExamTargetProjectionPostgresTests(TransactionTestCase):
         self.assertEqual((after.data["participant_count"], after.data["pass_rate"]), (1, 1))
         self.assert_canonical()
 
+    @skipUnless(connection.vendor == "postgresql", "PostgreSQL row-lock concurrency contract")
     def test_cross_concurrent_create_and_replace_have_no_deadlock_or_lost_projection(self):
         for _ in range(3):
             missing = self.missing_exam([*self.enrollments_a, *self.enrollments_b])
@@ -343,6 +345,7 @@ class ExamTargetProjectionPostgresTests(TransactionTestCase):
                 self.assertEqual(expected.risk_level, RiskEvaluator.level_for_consecutive_failures(count))
         self.assertEqual(self.protected(), protected)
 
+    @skipUnless(connection.vendor == "postgresql", "PostgreSQL row-lock concurrency contract")
     def test_concurrent_replacements_finish_with_exact_roster_and_canonical_projection(self):
         missing = self.missing_exam([*self.enrollments_a, *self.enrollments_b])
         self.recalculate()
