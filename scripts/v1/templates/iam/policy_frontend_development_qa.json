@@ -1,0 +1,100 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadRuntimeMetadata",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeInstances",
+        "ec2:DescribeInstanceAttribute",
+        "ec2:DescribeSecurityGroups",
+        "ssm:DescribeInstanceInformation",
+        "ssm:DescribeSessions"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ReadExactDevelopmentBoundary",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetRole",
+        "iam:GetRolePolicy",
+        "iam:ListRolePolicies",
+        "iam:ListAttachedRolePolicies"
+      ],
+      "Resource": "arn:aws:iam::809466760795:role/academy-api-development-role"
+    },
+    {
+      "Sid": "ReadExactDocuments",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetDocument",
+        "ssm:DescribeDocument"
+      ],
+      "Resource": [
+        "arn:aws:ssm:ap-northeast-2:809466760795:document/academy-frontend-development-qa",
+        "arn:aws:ssm:ap-northeast-2:809466760795:document/academy-frontend-development-api-port"
+      ]
+    },
+    {
+      "Sid": "StartFixedDocuments",
+      "Effect": "Allow",
+      "Action": "ssm:StartSession",
+      "Resource": [
+        "arn:aws:ssm:ap-northeast-2:809466760795:document/academy-frontend-development-qa",
+        "arn:aws:ssm:ap-northeast-2:809466760795:document/academy-frontend-development-api-port"
+      ]
+    },
+    {
+      "Sid": "StartVerifiedDevelopmentOnly",
+      "Effect": "Allow",
+      "Action": "ssm:StartSession",
+      "Resource": "arn:aws:ec2:ap-northeast-2:809466760795:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "ssm:resourceTag/Name": "academy-v1-api-development",
+          "ssm:resourceTag/ManagedBy": "academy-api-development",
+          "ssm:resourceTag/Environment": "development",
+          "ssm:resourceTag/Lifecycle": "active"
+        },
+        "Bool": {
+          "ssm:SessionDocumentAccessCheck": "true"
+        }
+      }
+    },
+    {
+      "Sid": "OpenSessionTokenData",
+      "Effect": "Allow",
+      "Action": "ssmmessages:OpenDataChannel",
+      "Resource": "*"
+    },
+    {
+      "Sid": "TerminateOwnedSessionOnly",
+      "Effect": "Allow",
+      "Action": "ssm:TerminateSession",
+      "Resource": "arn:aws:ssm:ap-northeast-2:809466760795:session/*",
+      "Condition": {
+        "StringEquals": {
+          "ssm:resourceTag/aws:ssmmessages:session-id": "${aws:userid}"
+        }
+      }
+    },
+    {
+      "Sid": "ReadExactQaPassword",
+      "Effect": "Allow",
+      "Action": "ssm:GetParameter",
+      "Resource": "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/api/development/ymath-realuse-password"
+    },
+    {
+      "Sid": "NoCommandOutputOrUnrestrictedShell",
+      "Effect": "Deny",
+      "Action": [
+        "ssm:SendCommand",
+        "ssm:GetCommandInvocation",
+        "ssm:ListCommandInvocations",
+        "ssm:ListCommands"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

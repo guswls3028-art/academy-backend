@@ -147,6 +147,16 @@ function Ensure-ApiPreprodCanaryIAM {
 
 function Ensure-ApiDevelopmentIAM {
     if ($script:PlanMode) { return $script:ApiDevelopmentInstanceProfileName }
+    if (
+        $script:ApiDevelopmentRoleName -cne "academy-api-development-role" -or
+        $script:ApiDevelopmentInstanceProfileName -cne "academy-api-development" -or
+        $script:AccountId -cne "809466760795" -or $script:Region -cne "ap-northeast-2" -or
+        $script:DynamoLockTableName -cne "academy-v1-video-job-lock" -or
+        ($env:AWS_REGION -and $env:AWS_REGION -cne $script:Region)
+    ) {
+        throw "Development IAM target and shared lock coordinates must match exactly."
+    }
+    Assert-DeployLockAcquired -Reg $script:Region
     Write-Step "Ensure isolated persistent API development IAM"
 
     $roleName = [string]$script:ApiDevelopmentRoleName
@@ -161,6 +171,8 @@ function Ensure-ApiDevelopmentIAM {
     $trustRef = "file://$($trustPath -replace '\\','/')"
     $role = Invoke-AwsJson @("iam", "get-role", "--role-name", $roleName, "--output", "json")
     if (-not $role) {
+        Assert-DeployLockAcquired -Reg $script:Region
+        $script:ApiDevelopmentIAMWriteAttempted = $true
         Invoke-Aws @(
             "iam", "create-role",
             "--role-name", $roleName,
@@ -168,6 +180,8 @@ function Ensure-ApiDevelopmentIAM {
         ) -ErrorMessage "create API development role" | Out-Null
         $script:ChangesMade = $true
     } else {
+        Assert-DeployLockAcquired -Reg $script:Region
+        $script:ApiDevelopmentIAMWriteAttempted = $true
         Invoke-Aws @(
             "iam", "update-assume-role-policy",
             "--role-name", $roleName,
@@ -175,6 +189,8 @@ function Ensure-ApiDevelopmentIAM {
         ) -ErrorMessage "update API development trust policy" | Out-Null
     }
 
+    Assert-DeployLockAcquired -Reg $script:Region
+    $script:ApiDevelopmentIAMWriteAttempted = $true
     Invoke-Aws @(
         "iam", "attach-role-policy",
         "--role-name", $roleName,
@@ -223,10 +239,18 @@ function Ensure-ApiDevelopmentIAM {
             }
         )
     }
+    # SSM ManagedInstanceCore also allows parameter reads on Resource=*. An
+    # allow-only development policy does not constrain that managed grant.
+    $parameterBoundaryPath = Join-Path $TemplatesPath "policy_api_development_parameter_boundary.json"
+    $parameterBoundaryJson = (Get-Content -LiteralPath $parameterBoundaryPath -Raw).
+        Replace("__REGION__", $script:Region).Replace("__ACCOUNT_ID__", $script:AccountId)
+    $runtimePolicy.Statement += @(($parameterBoundaryJson | ConvertFrom-Json).Statement)
     $runtimePolicyJson = $runtimePolicy | ConvertTo-Json -Depth 20 -Compress
     $runtimePolicyRef = Convert-JsonArgToFileRef $runtimePolicyJson
     $runtimePolicyFile = $runtimePolicyRef -replace '^file://', ''
     try {
+        Assert-DeployLockAcquired -Reg $script:Region
+        $script:ApiDevelopmentIAMWriteAttempted = $true
         Invoke-Aws @(
             "iam", "put-role-policy",
             "--role-name", $roleName,
@@ -243,10 +267,14 @@ function Ensure-ApiDevelopmentIAM {
         "--output", "json"
     )
     if (-not $profile) {
+        Assert-DeployLockAcquired -Reg $script:Region
+        $script:ApiDevelopmentIAMWriteAttempted = $true
         Invoke-Aws @(
             "iam", "create-instance-profile",
             "--instance-profile-name", $profileName
         ) -ErrorMessage "create API development instance profile" | Out-Null
+        Assert-DeployLockAcquired -Reg $script:Region
+        $script:ApiDevelopmentIAMWriteAttempted = $true
         Invoke-Aws @(
             "iam", "add-role-to-instance-profile",
             "--instance-profile-name", $profileName,
@@ -260,6 +288,8 @@ function Ensure-ApiDevelopmentIAM {
             throw "API development profile contains an unexpected role."
         }
         if (-not ($roles | Where-Object { $_.RoleName -eq $roleName })) {
+            Assert-DeployLockAcquired -Reg $script:Region
+            $script:ApiDevelopmentIAMWriteAttempted = $true
             Invoke-Aws @(
                 "iam", "add-role-to-instance-profile",
                 "--instance-profile-name", $profileName,
@@ -269,6 +299,7 @@ function Ensure-ApiDevelopmentIAM {
         }
     }
 
+    Assert-DeployLockAcquired -Reg $script:Region
     $readback = Invoke-AwsJson @(
         "iam", "get-role-policy",
         "--role-name", $roleName,
@@ -300,6 +331,7 @@ function Ensure-ApiDevelopmentIAM {
     if ($inlineNames.Count -ne 1 -or $inlineNames[0] -ne $ApiDevelopmentPolicyName) {
         throw "API development role has unexpected inline policies."
     }
+    Assert-DeployLockAcquired -Reg $script:Region
     Write-Ok "API development IAM is dedicated and least-privilege."
     return $profileName
 }

@@ -106,6 +106,8 @@ jobs:
       - name: Deployment contract tests
         shell: pwsh
         run: |
+          python -B -m unittest scripts.v1.test_frontend_development_qa -v
+          if ($LASTEXITCODE -ne 0) { throw "Frontend development QA boundary contracts failed." }
           ./scripts/codex/test-change-risk-contract.ps1
           ./scripts/codex/test-production-release-bundle-contract.ps1
           ./scripts/v1/test-verification-contract.ps1

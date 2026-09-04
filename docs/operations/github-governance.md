@@ -55,6 +55,29 @@ eligible reviewer가 아니거나 API가 review를 거부하면 reviewer 규칙�
 우회하지 않고 응답을 보존해 기술적 blocker로 보고한다. 이 standing 권한은
 지시받은 정확한 run에만 적용되며 다른 대기 실행을 함께 승인하지 않는다.
 
+### frontend development QA OIDC (적용 전 readback 필수)
+
+frontend의 same-artifact real-use는 기존 backend OIDC 역할을 공유하지 않고 별도
+`academy-frontend-development-qa` 역할을 사용한다. trust는 aud=sts.amazonaws.com과
+`repo:guswls3028-art/academy-frontend:ref:refs/heads/main` 하나만 허용한다.
+PR/environment wildcard subject, 역할 체인, 장기 access key 또는 운영 계정 credential을
+개발 job에 추가하지 않는다. frontend main의 job-level id-token:write만 사용한다.
+
+read-only 계획은 `converge_frontend_development_qa.py --frontend-role-plan`과
+`templates/iam/{trust,policy}_frontend_development_qa.json`, 고정 SSM Session/Port
+document가 소유한다. 기존 개발 EC2의 parameter deny 보안 교정은 별도 계획/증거로
+검토한다. `--frontend-role-plan`에는 Apply가 없다. 별도 `--apply-host-boundary`는
+검토된 세 hash와 공용 잠금·readback 아래 기존 개발 host inline 정책에 두 Deny만
+추가하며 frontend 역할/SSM 문서를 생성하지 않는다. 실제 IAM/SSM 변경은 검토한 exact
+JSON과 소스/기존 정책 hash를 다시 확인한 뒤에만 수행한다. plan 또는 simulation 성공을
+OIDC 인증/실제 development QA 성공으로 간주하지 않는다.
+
+권한의 정확한 범위와 OpenDataChannel의 resource-level 제한 불가 및 session token
+의존성은 [상시 개발 런타임](persistent-development-runtime.md)의 frontend 진입점이
+소유한다. mandatory development job의 실제 non-skipped 성공과 cleanup0 없이는
+frontend production environment 승인·배포를 시작하지 않는다. 기존 backend production
+trust/permissions, 보호 규칙, rollback environment는 그대로 보존한다.
+
 ## 3. Cloudflare secret 경계
 
 전역 API key와 계정 이메일을 workflow에 주입하지 않는다.

@@ -22,6 +22,7 @@ $script:ChangesMade = $false
 . (Join-Path $ScriptRoot "core\ssot.ps1")
 . (Join-Path $ScriptRoot "core\logging.ps1")
 . (Join-Path $ScriptRoot "core\aws.ps1")
+. (Join-Path $ScriptRoot "core\guard.ps1")
 . (Join-Path $ScriptRoot "resources\iam.ps1")
 Assert-AwsMutationIdentity | Out-Null
 Load-SSOT -Env prod | Out-Null
@@ -224,9 +225,84 @@ function Ensure-DevelopmentSecurityGroup {
     Write-Ok "API development security group is SSM-only (no inbound rules)."
 }
 
+# This critical section owns only host IAM, not the SG/queue/DB/OIDC bootstrap.
+# Acquire-DeployLock is not reentrant; never adopt or release a parent's lease.
+if ($env:ACADEMY_DEPLOY_LOCK_OWNER -or $env:ACADEMY_RUNTIME_ENV_LOCK_OWNER) {
+    throw "Development IAM bootstrap requires a standalone, locally owned lock."
+}
+if (
+    $script:Region -cne "ap-northeast-2" -or
+    $script:AccountId -cne "809466760795" -or
+    $script:DynamoLockTableName -cne "academy-v1-video-job-lock" -or
+    ($env:AWS_REGION -and $env:AWS_REGION -cne $script:Region) -or
+    ($env:ACADEMY_DEPLOY_LOCK_TABLE -and $env:ACADEMY_DEPLOY_LOCK_TABLE -cne $script:DynamoLockTableName)
+) {
+    throw "Development IAM bootstrap lock account/region/table must match the shared production lock."
+}
+$env:AWS_DEFAULT_REGION = $script:Region
+$iamIdentity = Invoke-AwsJson @("sts", "get-caller-identity", "--output", "json")
+$lockIdentityRaw = & aws sts get-caller-identity --region $script:Region --output json
+if ($LASTEXITCODE -ne 0) { throw "Cannot verify deployment-lock credential identity." }
+$lockIdentity = $lockIdentityRaw | ConvertFrom-Json
+if (
+    -not $iamIdentity -or -not $iamIdentity.Arn -or
+    $iamIdentity.Account -cne $script:AccountId -or
+    $lockIdentity.Account -cne $iamIdentity.Account -or
+    $lockIdentity.Arn -cne $iamIdentity.Arn
+) {
+    throw "IAM and deployment-lock credentials must resolve to the same identity."
+}
 Assert-DevelopmentR2CredentialParameter
 Ensure-DevelopmentSecurityGroup
-Ensure-ApiDevelopmentIAM | Out-Null
+$script:DeployLockAcquired = $false
+$script:ApiDevelopmentIAMWriteAttempted = $false
+$hostIamVerified = $false
+$previousMaxAttempts = $env:AWS_MAX_ATTEMPTS
+$env:AWS_MAX_ATTEMPTS = "1"
+try {
+    # A failed/ambiguous acquire must never enter the release branch.
+    $lockExpiryEstimate = [DateTimeOffset]::UtcNow.AddSeconds($script:DeployLockMaxAgeSec).ToString("o")
+    try {
+        Acquire-DeployLock -Reg $script:Region
+    } catch {
+        Write-Warning (
+            "HOST_IAM_LOCK_ACQUIRE_UNCONFIRMED owner={0} expiry_estimate_utc={1} iam_write_attempted=false; no release attempted." -f
+            $script:DeployLockOwner, $lockExpiryEstimate
+        )
+        throw
+    }
+    try {
+        Ensure-ApiDevelopmentIAM | Out-Null
+        Assert-DeployLockAcquired -Reg $script:Region
+        $hostIamVerified = $true
+    } finally {
+        $ownershipConfirmed = $false
+        try {
+            Assert-DeployLockAcquired -Reg $script:Region
+            $ownershipConfirmed = $true
+        } catch {
+            Write-Warning "HOST_IAM_LOCK_OWNERSHIP_UNCONFIRMED; no release attempted."
+        }
+        if ($ownershipConfirmed -and (-not $script:ApiDevelopmentIAMWriteAttempted -or $hostIamVerified)) {
+            # The generic Release-DeployLock intentionally swallows errors. This
+            # boundary must surface a failed release, so use its existing helper.
+            & python (Join-Path $ScriptRoot "deployment_lock.py") release `
+                --owner $script:DeployLockOwner --table-name $script:DynamoLockTableName
+            if ($LASTEXITCODE -ne 0) { throw "HOST_IAM_LOCK_RELEASE_FAILED; reconcile the owned lease before continuing." }
+            $script:DeployLockAcquired = $false
+        } elseif ($ownershipConfirmed) {
+            Write-Warning (
+                "HOST_IAM_INDETERMINATE lock_retained=true owner={0} expiry_estimate_utc={1}; no retry/rollback; retention ends at TTL." -f
+                $script:DeployLockOwner, $lockExpiryEstimate
+            )
+        }
+        if ($hostIamVerified -and -not $ownershipConfirmed) {
+            throw "HOST_IAM_LOCK_OWNERSHIP_UNCONFIRMED after readback."
+        }
+    }
+} finally {
+    $env:AWS_MAX_ATTEMPTS = $previousMaxAttempts
+}
 & (Join-Path $ScriptRoot "converge-api-development-oidc.ps1") `
     -AwsProfile $AwsProfile
 Ensure-DevelopmentQueue -QueueName $script:ApiDevelopmentAiQueueName
