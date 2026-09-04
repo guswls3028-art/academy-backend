@@ -45,7 +45,7 @@
         "arn:aws:ssm:ap-northeast-2:809466760795:document/academy-frontend-development-api-port"
       ],
       "Condition": {
-        "Bool": {
+        "BoolIfExists": {
           "ssm:SessionDocumentAccessCheck": "true"
         }
       }

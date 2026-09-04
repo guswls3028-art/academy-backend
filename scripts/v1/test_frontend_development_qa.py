@@ -772,7 +772,7 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
             "ssm:resourceTag/Lifecycle": "active",
         }})
         self.assertEqual(by_sid["StartFixedDocuments"]["Condition"], {
-            "Bool": {"ssm:SessionDocumentAccessCheck": "true"},
+            "BoolIfExists": {"ssm:SessionDocumentAccessCheck": "true"},
         })
         self.assertEqual(by_sid["StartFixedDocuments"]["Resource"], [
             "arn:aws:ssm:ap-northeast-2:809466760795:document/academy-frontend-development-qa",
@@ -781,6 +781,24 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
         self.assertEqual(by_sid["TerminateOwnedSessionOnly"]["Condition"]["StringEquals"], {
             "ssm:resourceTag/aws:ssmmessages:session-id": "${aws:userid}",
         })
+
+    def test_document_condition_change_preserves_exact_policy_trust_and_documents(self):
+        subject = load_script("converge_frontend_development_qa")
+        policy = json.loads((ROOT / "scripts/v1/templates/iam/policy_frontend_development_qa.json").read_text())
+        self.assertEqual(subject.policy_hash(policy),
+                         "d48b3b3fe4e732e44b3a6230e2bfe74d327ff177ec4a25522c194c26775a6e98")
+        condition = next(entry for entry in policy["Statement"] if entry["Sid"] == "StartFixedDocuments")["Condition"]
+        condition["Bool"] = condition.pop("BoolIfExists")
+        self.assertEqual(subject.policy_hash(policy),
+                         "187f6ac218435d3b3f938d903153c5785db3529ace89f4e79ea9b6e1bde8ddb6")
+        for path, expected in (
+            ("iam/trust_frontend_development_qa.json", "aa2c1a60b63ad287c2e8caba7257beaafe5d602df66659c3093f917ad670713a"),
+            ("ssm/frontend_development_qa.json", "9bd479198684bf2bb6a8d93ad28f36b6aa46fad7e781acf03f50fb7822c2e023"),
+            ("ssm/frontend_development_api_port.json", "974b6bf4e518533ee0ecd14c5e82b0a5f0538813e41253940cd46a6cb5e8d173"),
+        ):
+            with self.subTest(path=path):
+                document = json.loads((ROOT / "scripts/v1/templates" / path).read_text())
+                self.assertEqual(subject.policy_hash(document), expected)
 
     def test_fixed_session_document_has_no_command_parameter_or_interpolation_escape(self):
         directory = ROOT / "scripts/v1/templates/ssm"
@@ -837,6 +855,27 @@ class FrontendDocumentPlanTests(unittest.TestCase):
                               for item in sent}, case["context"])
         return result["cases"]
 
+    def test_existing_frontend_inventory_requires_one_exact_inline_and_no_attached_grants(self):
+        role = "academy-frontend-development-qa"
+        for names, attached in (([role], []), ([], []), (["foreign"], []),
+                                ([role, role], []), ([role, "foreign"], []),
+                                ([role], [{"PolicyArn": "arn:aws:iam::aws:policy/AdministratorAccess"}])):
+            responses = {
+                ("sts", "get-caller-identity"): {"Account": self.subject.ACCOUNT},
+                ("iam", "get-role"): {"Role": {"RoleName": role}},
+                ("iam", "list-role-policies"): {"PolicyNames": names},
+                ("iam", "list-attached-role-policies"): {"AttachedPolicies": attached},
+            }
+            expected = "role already exists" if names == [role] and not attached else "policy inventory"
+            with self.subTest(names=names, attached=attached), patch.object(
+                self.subject, "aws", side_effect=lambda args, profile: responses[tuple(args[:2])]
+            ) as aws:
+                with self.assertRaisesRegex(RuntimeError, expected):
+                    self.subject.frontend_plan("offline")
+                self.assertEqual([tuple(call.args[0][:2]) for call in aws.call_args_list], list(responses))
+                for call in aws.call_args_list[1:]:
+                    self.assertEqual(call.args, ([*call.args[0][:2], "--role-name", role], "offline"))
+
     def test_verdict_accepts_only_declared_omissions_and_rejects_wrong_decisions(self):
         # Stubbed verdicts test aggregation only, not IAM policy evaluation.
         cases = self.plan()
@@ -868,7 +907,7 @@ class FrontendDocumentPlanTests(unittest.TestCase):
                 rows = [case for case in cases if case["resource"] == prefix + document
                         and case["action"] == "ssm:StartSession"]
                 self.assertEqual({(case["context"].get(key), case["expected"]) for case in rows},
-                                 {(None, "implicitDeny"), ("false", "implicitDeny"), ("true", "allowed")})
+                                 {(None, "allowed"), ("false", "implicitDeny"), ("true", "allowed")})
                 self.assertEqual(len(rows), 3)
 
     def test_default_and_public_shell_forwarding_documents_use_exact_negative_arns(self):

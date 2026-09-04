@@ -173,23 +173,26 @@ SSM Command API의 `GetCommandInvocation`은 resource-level 제한을 지원하�
 GetCommandInvocation/ListCommandInvocations/ListCommands를 명시적으로 거부하고
 자기 Session의 결과만 받는다. StartSession은 두 exact document와 active-development
 태그 인스턴스에 제한한다. 저장소 정책의 `StartFixedDocuments`는 두 승인 문서에
-strict `Bool: {ssm:SessionDocumentAccessCheck: true}`를 요구한다. missing/false는
-문서 허용이 아니며 `BoolIfExists`로 누락을 허용하지 않는다. 인스턴스 statement는
+`BoolIfExists: {ssm:SessionDocumentAccessCheck: true}`를 사용한다. 승인 문서의
+missing/true는 허용하고 명시적 false는 거부한다. 조건 전체를 삭제하거나 승인 문서를
+추가하지 않는다. 인스턴스 statement는
 기존 account/region ARN과 Name/ManagedBy/Environment/Lifecycle 네 태그를 그대로
 검사한다. TerminateSession은 session의 caller tag와 aws:userid가 일치해야 한다.
 
-이 조건 위치 변경은 첫 공식 frontend 개발 run의 EC2 `StartSession` AccessDenied 후
-추가한 저장소 계약이다. 실패 당시 정책은 instance에 strict Bool을 요구했으며 기존
-simulation은 document key=true를 공통값으로 주입해 missing 사례를 검증하지 않았다.
-CloudTrail은 실제 평가 key의 missing/false를 공개하지 않으므로, 위치 이동이 실제
-AWS 연결을 해결했다고 단정하지 않는다. 저장소 테스트/PR/CI 성공은 live IAM 적용이나
-SSM runtime red→green 증거가 아니다. 기존 역할이 있으면 planner는 계속 fail-closed로
-중단한다. 별도 exact-main/정책 hash/공용 잠금/승인 경계의 단발 적용과 readback 전에는
-기존 live 정책을 수정하지 않으며 공식 same-artifact QA의 HOLD를 해제하지 않는다.
+instance의 strict Bool을 문서로 옮긴 것만으로는 실제 연결이 해결되지 않았으며,
+공식 개발 run은 고정 문서의 `StartSession` AccessDenied에서도 중단됐다. 이 변경은
+문서 statement의 연산자 한 키만 바꾼 저장소 계약이며 실제 해결 증거가 아니다.
+CloudTrail은 실제 평가 key의 missing/false를 공개하지 않으므로 그 값을 추정하지 않는다.
+저장소 테스트/PR/CI 성공은 live IAM 적용이나 SSM runtime red→green 증거가 아니다.
+기존 역할이 있으면 planner는 같은 이름의 inline 정책 정확히 1개와 attached 정책 0개를
+읽어 확인한다. 누락·중복·다른 inline·attached grant는 거부하고 정상 inventory여도
+기존 역할의 자동 갱신 없이 별도 검토를 요구하며 중단한다. 별도 exact-main/정책 hash/
+공용 잠금/승인 경계의 단발 적용과 readback 전에는 기존 live 정책을 수정하지 않는다.
 
 planner의 45개 사례는 각 요청 context를 명시한다. 두 승인 문서와 기본 셸·승인외
 문서·RemoteHost/일반 Port/Interactive/SSH의 exact ARN에 missing/false/true를 각각
-평가한다. Amazon 소유 public document는 account 부분이 빈 ARN을 사용한다.
+평가한다. 승인 문서의 missing 기대값만 allow로 바뀌며 false 거부와 승인외 문서의
+grant 부재는 유지한다. Amazon 소유 public document는 account 부분이 빈 ARN을 사용한다.
 인스턴스 허용 사례에는 document key가 없으며 네 태그의 개별 불일치도 검사한다.
 나머지 정책 key의 합성 positive controls는 서비스에서 관측한 값이 아니다. 생략한
 document key를 공통값으로 다시 채우지 않는다. simulator가 보고한 missing key는
@@ -197,14 +200,25 @@ document key를 공통값으로 다시 채우지 않는다. simulator가 보고�
 누락 보고·기대와 다른 결정은 전체 계획 실패다. 로컬 fake는 요청 matrix와 판정 집계만
 검사하며 IAM 판정기를 흉내 내거나 실제 세션 성공을 주장하지 않는다.
 
-[AWS 권한 정의](https://docs.aws.amazon.com/service-authorization/latest/reference/list_ssm.html)는
-이 key를 instance와 document 양쪽에 등재하지만 실제 요청의 주입 위치를 보장하지 않는다.
+[AWS 공식 정책 예제](https://aws.amazon.com/blogs/security/how-to-enable-secure-seamless-single-sign-on-to-amazon-ec2-windows-instances-with-aws-sso/)는
+StartSession에 `BoolIfExists`를 사용한다. 이는 Windows Fleet Manager 사례로,
+이 저장소의 문서-only statement 배치가 검증됐다는 뜻은 아니다.
+[현재 Quickstart](https://docs.aws.amazon.com/systems-manager/latest/userguide/getting-started-restrict-access-quickstart.html)의
+node/document allowlist 예제에는 이 조건이 없으므로 필수 연산자라고 주장하지 않는다.
+[IAM IfExists 규칙](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_elements_condition_operators.html#Conditions_IfExists)에
+따라 missing은 허용하되 false 거부를 유지하는 최소 변경이다.
 [기본 문서 계약](https://docs.aws.amazon.com/systems-manager/latest/userguide/getting-started-default-session-document.html)은
-DocumentName 생략 시 기본 셸 문서의 IAM 권한도 요구한다. 다만 ARN별 simulation은
-생략 요청의 서비스 측 문서 선택을 실행하지 않는다. 기본/다른 문서의 실제 거부와
-승인 문서의 연결은 별도 승인 후 공식 역할로 검증해야 하며, 실패하면 권한 확대나
-guard 우회 없이 중단한다. 정책 위치 변경은 기존 tenant/user/소유권 데이터나
-문서의 명령·parameter·포트·수명 설정을 변경하지 않는다.
+DocumentName 생략 시 기본 셸 문서의 IAM 권한도 요구하며,
+[사용자 지정 문서 계약](https://docs.aws.amazon.com/systems-manager/latest/userguide/getting-started-specify-session-document.html)은
+지정 문서의 권한이 없으면 요청이 실패한다고 명시한다. 네 태그의 node grant만으로
+문서 권한이 생기는 것은 아니다. exact2docs 밖의 grant가 없는 현재 inventory에서는
+별도 shell Deny를 추가하지 않는다. 기존 Run Command Deny는 StartSession 거부 증거가 아니다.
+ARN별 policy 검증은 생략 요청의 서비스 측 문서 선택이나 실제 shell 거부를 증명하지
+않는다. 기본/foreign 문서의 StartSession 실호출은 이 릴리스 검증에 포함하지 않으며,
+그 미실행을 공식 same-artifact flow의 추가 차단 조건으로 삼지 않는다. 실제 진행은
+별도 승인 후 검토된 fixed Inspect/Setup/Cleanup과 공식 same-artifact QA로 제한한다.
+실패하면 권한 확대나 guard 우회 없이 중단한다. 정책 연산자 변경은 기존 tenant/user/
+소유권 데이터, trust, 문서의 명령·parameter·포트·수명 설정을 변경하지 않는다.
 
 `ssmmessages:OpenDataChannel`도 resource-level ARN을 지원하지 않으므로 이 action만
 Resource:*가 필요하다. 채널 인증은 StartSession의 session/caller 정보를 담은

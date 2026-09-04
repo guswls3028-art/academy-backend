@@ -396,6 +396,10 @@ def frontend_plan(profile):
         if "NoSuchEntity" not in str(error):
             raise
     else:
+        names = aws(["iam", "list-role-policies", "--role-name", role_name], profile)["PolicyNames"]
+        attached = aws(["iam", "list-attached-role-policies", "--role-name", role_name], profile)["AttachedPolicies"]
+        if names != [role_name] or attached:
+            raise RuntimeError("Unexpected frontend QA role policy inventory; require exact inline1/attached0")
         raise RuntimeError("Frontend QA role already exists; audit it before proposing any update")
     paths = {
         "trust": "scripts/v1/templates/iam/trust_frontend_development_qa.json",
@@ -463,7 +467,7 @@ def frontend_plan(profile):
             context = dict(without_document_check)
             if value is not None:
                 context[document_check] = value
-            expected = "allowed" if resource in approved and value == "true" else "implicitDeny"
+            expected = "allowed" if resource in approved and value != "false" else "implicitDeny"
             cases.append(("ssm:StartSession", resource, context, expected))
     evidence = {"mode": "READ_ONLY_FRONTEND_ROLE_PLAN", "role": role_name,
                 "documents": documents, "canonical_sha256": {
