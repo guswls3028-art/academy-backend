@@ -223,6 +223,12 @@ function Ensure-ApiDevelopmentIAM {
             }
         )
     }
+    # SSM ManagedInstanceCore also allows parameter reads on Resource=*. An
+    # allow-only development policy does not constrain that managed grant.
+    $parameterBoundaryPath = Join-Path $TemplatesPath "policy_api_development_parameter_boundary.json"
+    $parameterBoundaryJson = (Get-Content -LiteralPath $parameterBoundaryPath -Raw).
+        Replace("__REGION__", $script:Region).Replace("__ACCOUNT_ID__", $script:AccountId)
+    $runtimePolicy.Statement += @(($parameterBoundaryJson | ConvertFrom-Json).Statement)
     $runtimePolicyJson = $runtimePolicy | ConvertTo-Json -Depth 20 -Compress
     $runtimePolicyRef = Convert-JsonArgToFileRef $runtimePolicyJson
     $runtimePolicyFile = $runtimePolicyRef -replace '^file://', ''

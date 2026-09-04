@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "1.0",
+  "description": "Development API only; fixed remote and local ports, no remote host or shell input.",
+  "sessionType": "Port",
+  "properties": {
+    "portNumber": "8000",
+    "type": "LocalPortForwarding",
+    "localPortNumber": "18000"
+  }
+}

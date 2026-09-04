@@ -1,9 +1,14 @@
+import re
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
+from django.db import connection
 from django.test import TestCase, override_settings
+from django.test.utils import CaptureQueriesContext
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import AccessToken
 
-from apps.core.models import OpsAuditLog, Tenant, TenantMembership
+from apps.core.models import OpsAuditLog, ProductUsageDailyActor, ProductUsageEvent, Tenant, TenantMembership
 from apps.core.models.user import user_internal_username
 from apps.domains.students.models import Student, StudentSupportSession
 
@@ -175,6 +180,35 @@ class StudentSupportTests(TestCase):
             {item["actor_mode"] for item in response.data["results"]},
             {"student", "support"},
         )
+
+    @override_settings(TENANT_DB_USAGE_ENABLED=True, TENANT_DB_USAGE_SAMPLE_RATE=1.0)
+    def test_dashboard_screen_observation_only_appends_one_audit_row(self):
+        headers = self._headers(self.student_user)
+        before_usage = (ProductUsageEvent.objects.count(), ProductUsageDailyActor.objects.count())
+        before_audit = OpsAuditLog.objects.count()
+        with patch("apps.core.services.platform_push.enqueue_platform_inbox") as push:
+            with CaptureQueriesContext(connection) as queries:
+                response = APIClient().post(
+                    "/api/v1/students/me/activity/",
+                    {"screen_id": "student.dashboard.home", "device_class": "desktop"},
+                    format="json",
+                    **headers,
+                )
+            push.assert_not_called()
+        self.assertEqual(response.status_code, 202)
+        # Capture the real middleware + authentication + view + signal chain,
+        # but report only SQL operation/table names, never SQL values or tokens.
+        mutations = []
+        for query in queries.captured_queries:
+            match = re.match(r'\s*(INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+["`]?([a-z_]+)', query["sql"], re.I)
+            if match:
+                mutations.append((match.group(1).upper(), match.group(2)))
+        self.assertEqual(mutations, [("INSERT INTO", "ops_audit_log")])
+        self.assertEqual(OpsAuditLog.objects.count(), before_audit + 1)
+        event = OpsAuditLog.objects.get(action="student_activity.screen_view")
+        self.assertEqual(event.payload["screen_id"], "student.dashboard.home")
+        self.assertEqual(event.payload["actor_mode"], "student")
+        self.assertEqual((ProductUsageEvent.objects.count(), ProductUsageDailyActor.objects.count()), before_usage)
 
     def test_student_and_support_screen_views_keep_distinct_actors(self):
         student_response = APIClient().post(

@@ -9,7 +9,8 @@
 - EC2 이름은 `academy-v1-api-development`이며 외부 inbound가 없는 전용 보안그룹을 쓴다.
   접속은 Session Manager와 `connect-api-development.ps1`의 로컬 포트 포워딩으로만 한다.
 - 인스턴스 역할 `academy-api-development-role`은 개발 환경 파라미터, API/Tools ECR pull,
-  개발 전용 SQS 세 큐에만 접근한다. 운영 SSM 파라미터와 운영 큐 권한은 없다.
+  개발 전용 SQS 세 큐만 Allow 대상으로 삼는다. 관리형 SSM 정책의 광역 parameter
+  Allow는 아래 explicit deny로 별도 제한해야 하며 실제 적용 여부는 readback한다.
 - PostgreSQL은 기존 RDS 서버 안의 `academy_api_development` 데이터베이스와
   `academy_api_development_app` 역할을 쓴다. 이 역할은 운영 DB의 `CONNECT` 권한이 없다.
 - 객체 저장소는 Cloudflare R2의 `academy-development-artifacts` 버킷만 사용한다.
@@ -31,6 +32,68 @@
   배포 readback에서도 이를 강제한다. 따라서 업로드 완료 후 Batch 제출은 누락 설정 오류로
   실패 폐쇄하며 운영 `academy-v1-video-batch-*` 큐·job definition으로 흘러가지 않는다.
 - 알림톡은 mock/dry-run, 자동 결제와 외부 알림 발송은 비활성화한다.
+
+### SSM parameter 권한 경계
+
+`AmazonSSMManagedInstanceCore`의 `GetParameter`/`GetParameters` 전체 자원 허용은
+개발 전용 Allow 문만 추가해서는 제한되지 않는다. `Ensure-ApiDevelopmentIAM`은
+`templates/iam/policy_api_development_parameter_boundary.json`의 explicit deny를
+기존 `academy-api-development-runtime` inline policy에 합친다. API env, workers
+env, 개발 DB credentials, 개발 QA password, 개발 R2 credentials의 정확한 다섯
+parameter ARN만 개별 조회할 수 있고, 그 밖의 parameter 조회와 모든
+`GetParametersByPath`/`GetParameterHistory`를 거부한다. 상위 경로 재귀 조회나
+접두사가 비슷한 경로를 예외로 인정하지 않는다. SSM managed attachment와
+agent의 control/data channel 권한은 유지한다.
+
+이미 존재하는 역할에 이 deny가 적용됐다고 소스 변경만으로 판단하지 않는다.
+`python scripts/v1/converge_frontend_development_qa.py`는 기존 inline/managed
+grant 전체와 제안 deny의 양성/음성 IAM 시뮬레이션을 출력하는 **읽기 전용**
+계획이며 Apply 옵션이 없다. 운영 parameter 값 조회로 거부를 시험하지 않는다.
+IAM 시뮬레이션은 KMS key policy, 조직 SCP 등을 포함한 실제 복호화 성공/실패의
+증거가 아니다. 검토된 최소 권한 수렴 및 실제 정책 readback 전에는 새 synthetic
+QA를 실행하지 않는다. frontend 전용 OIDC 역할의 도입은 이 개발 host 역할 교정과
+분리해 검토하며 backend production 역할의 신뢰나 권한을 넓히지 않는다.
+
+### frontend 동일 artifact real-use 진입점
+
+`templates/iam/trust_frontend_development_qa.json`과
+`policy_frontend_development_qa.json`은 별도 `academy-frontend-development-qa`
+역할의 검토 대상 계약이다. frontend main-ref OIDC만 허용하며 backend production
+역할과 기존 frontend R2 bootstrap 역할은 변경하지 않는다. 신규 역할/문서의 read-only
+계획은 아래로 분리해 실행한다. 현재 이 도구에는 Apply가 없으며, 기존 같은 이름의
+자원이 발견되면 덮어쓰지 않고 별도 검토를 요구한다.
+
+```powershell
+python scripts/v1/converge_frontend_development_qa.py --frontend-role-plan
+```
+
+`templates/ssm/frontend_development_qa.json`은 고정 `NonInteractiveCommands`
+Session document다. Action은 Inspect/Setup/Cleanup뿐이고 tenant, release ID,
+digest는 shell 문자/경로/SSM 참조를 허용하지 않는 strict pattern으로 제한한다.
+개발 settings, 현재 release/image, exact DB/user/R2, mock messaging, billing off,
+빈 Video Batch, 개발 큐를 검증한다. Setup은 advisory lock 아래 기존 tenant/user
+부재를 확인하며 원래 scenario 명령을 reset 없이 사용한다. Cleanup은 같은 명령의
+exact destroy와 numeric tenants/users0 readback이다. 운영 행이나 비밀값을 복제하지
+않는다. Port document는 remote8000/local18000으로 고정하며 host/shell 입력이 없다.
+
+SSM Command API의 `GetCommandInvocation`은 resource-level 제한을 지원하지 않으므로
+개발 명령 출력에만 한정된 권한이라고 주장할 수 없다. 새 역할은 SendCommand,
+GetCommandInvocation/ListCommandInvocations/ListCommands를 명시적으로 거부하고
+자기 Session의 결과만 받는다. StartSession은 두 exact document와 active-development
+태그 인스턴스에 제한하며 SessionDocumentAccessCheck를 요구한다. TerminateSession은
+session의 caller tag와 aws:userid가 일치해야 한다.
+
+`ssmmessages:OpenDataChannel`도 resource-level ARN을 지원하지 않으므로 이 action만
+Resource:*가 필요하다. 채널 인증은 StartSession의 session/caller 정보를 담은
+TokenValue에 의존한다. 이를 IAM-level foreign-channel denial이나 실제 세션 성공
+증거로 표현하지 않는다. TokenValue는 출력/공유하지 않는다. identity-policy simulation과
+실제 OIDC/세션/복호화 검증을 구분하고, 검토된 변경의 실제 적용 전에는 synthetic QA를
+계속 HOLD한다. 관련 AWS 정본은
+[StartSession](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_StartSession.html)과
+[Session schema](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-schema.html)다.
+
+frontend runner/workflow와 원본 응답·CORS 보존, exact artifact, non-skipped 10-case,
+cleanup0 승격 계약은 frontend `docs/DEPLOYMENT-OPERATIONS.md`가 소유한다.
 
 ## 최초 구성
 

@@ -1,0 +1,23 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyParameterReadsOutsideDevelopment",
+      "Effect": "Deny",
+      "Action": ["ssm:GetParameter", "ssm:GetParameters"],
+      "NotResource": [
+        "arn:aws:ssm:__REGION__:__ACCOUNT_ID__:parameter/academy/api/development/env",
+        "arn:aws:ssm:__REGION__:__ACCOUNT_ID__:parameter/academy/workers/development/env",
+        "arn:aws:ssm:__REGION__:__ACCOUNT_ID__:parameter/academy/api/development/db-credentials",
+        "arn:aws:ssm:__REGION__:__ACCOUNT_ID__:parameter/academy/api/development/ymath-realuse-password",
+        "arn:aws:ssm:__REGION__:__ACCOUNT_ID__:parameter/academy/r2/development/credentials"
+      ]
+    },
+    {
+      "Sid": "DenyParameterEnumerationAndHistory",
+      "Effect": "Deny",
+      "Action": ["ssm:GetParametersByPath", "ssm:GetParameterHistory"],
+      "Resource": "*"
+    }
+  ]
+}
