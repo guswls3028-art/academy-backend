@@ -416,46 +416,63 @@ def frontend_plan(profile):
     instance = f"arn:aws:ec2:{REGION}:{ACCOUNT}:instance/i-0db4c5cddac77fc87"
     tags = {"ssm:resourceTag/Name": "academy-v1-api-development",
             "ssm:resourceTag/ManagedBy": "academy-api-development",
-            "ssm:resourceTag/Environment": "development", "ssm:resourceTag/Lifecycle": "active",
-            "ssm:SessionDocumentAccessCheck": "true"}
+            "ssm:resourceTag/Environment": "development", "ssm:resourceTag/Lifecycle": "active"}
     user = "UNITROLE:academy-fe-qa-123-1"
     owned = {"aws:userid": user, "ssm:resourceTag/aws:ssmmessages:session-id": user}
+    document_check = "ssm:SessionDocumentAccessCheck"
+    # Synthetic controls for unrelated policy keys avoid unexplained simulator
+    # omissions. These are not observed AWS request/Session.Owner values.
+    without_document_check = {**tags, **owned}
+    positive = {**without_document_check, document_check: "true"}
     cases = [
-        ("ssm:StartSession", prefix + "document/academy-frontend-development-qa", {}, "allowed"),
-        ("ssm:StartSession", prefix + "document/academy-frontend-development-api-port", {}, "allowed"),
-        ("ssm:StartSession", prefix + "document/AWS-StartInteractiveCommand", {}, "implicitDeny"),
-        ("ssm:StartSession", instance, tags, "allowed"),
-        ("ssm:StartSession", instance, {**tags, "ssm:resourceTag/Environment": "production"}, "implicitDeny"),
-        ("ssm:StartSession", instance, {**tags, "ssm:resourceTag/Lifecycle": "candidate"}, "implicitDeny"),
-        ("ssm:StartSession", instance, {**tags, "ssm:SessionDocumentAccessCheck": "false"}, "implicitDeny"),
-        ("ssm:GetParameter", prefix + "parameter/academy/api/development/ymath-realuse-password", {}, "allowed"),
-        ("ssm:GetParameter", prefix + "parameter/academy/api/env", {}, "implicitDeny"),
-        ("ssm:GetParameter", prefix + "parameter/academy/api/development/env", {}, "implicitDeny"),
-        ("ssm:GetParametersByPath", prefix + "parameter/academy", {}, "implicitDeny"),
-        ("ssm:GetCommandInvocation", "*", {}, "explicitDeny"),
-        ("ssm:ListCommandInvocations", "*", {}, "explicitDeny"),
-        ("ssm:SendCommand", "*", {}, "explicitDeny"),
-        ("ssm:TerminateSession", prefix + "session/academy-fe-qa-123-1-unit", owned, "allowed"),
+        ("ssm:StartSession", instance, without_document_check, "allowed"),
+        ("ssm:StartSession", instance, {**positive, "ssm:resourceTag/Name": "foreign"}, "implicitDeny"),
+        ("ssm:StartSession", instance, {**positive, "ssm:resourceTag/ManagedBy": "foreign"}, "implicitDeny"),
+        ("ssm:StartSession", instance, {**positive, "ssm:resourceTag/Environment": "production"}, "implicitDeny"),
+        ("ssm:StartSession", instance, {**positive, "ssm:resourceTag/Lifecycle": "candidate"}, "implicitDeny"),
+        ("ssm:GetParameter", prefix + "parameter/academy/api/development/ymath-realuse-password", positive, "allowed"),
+        ("ssm:GetParameter", prefix + "parameter/academy/api/env", positive, "implicitDeny"),
+        ("ssm:GetParameter", prefix + "parameter/academy/api/development/env", positive, "implicitDeny"),
+        ("ssm:GetParametersByPath", prefix + "parameter/academy", positive, "implicitDeny"),
+        ("ssm:GetCommandInvocation", "*", positive, "explicitDeny"),
+        ("ssm:ListCommandInvocations", "*", positive, "explicitDeny"),
+        ("ssm:SendCommand", "*", positive, "explicitDeny"),
+        ("ssm:TerminateSession", prefix + "session/academy-fe-qa-123-1-unit", positive, "allowed"),
         ("ssm:TerminateSession", prefix + "session/academy-fe-qa-123-1-unit",
-         {**owned, "ssm:resourceTag/aws:ssmmessages:session-id": "FOREIGN:other"}, "implicitDeny"),
+         {**positive, "ssm:resourceTag/aws:ssmmessages:session-id": "FOREIGN:other"}, "implicitDeny"),
         # AWS does not support resource-level ARN conditions for this action.
         # The StartSession session/caller-bound TokenValue authorizes the stream;
         # this simulation cannot prove a foreign-channel denial.
-        ("ssmmessages:OpenDataChannel", "*", {}, "allowed"),
-        ("iam:GetRolePolicy", f"arn:aws:iam::{ACCOUNT}:role/academy-api-development-role", {}, "allowed"),
-        ("iam:GetRolePolicy", f"arn:aws:iam::{ACCOUNT}:role/academy-gha-ecr-build", {}, "implicitDeny"),
-        ("ec2:TerminateInstances", instance, tags, "implicitDeny"),
+        ("ssmmessages:OpenDataChannel", "*", positive, "allowed"),
+        ("iam:GetRolePolicy", f"arn:aws:iam::{ACCOUNT}:role/academy-api-development-role", positive, "allowed"),
+        ("iam:GetRolePolicy", f"arn:aws:iam::{ACCOUNT}:role/academy-gha-ecr-build", positive, "implicitDeny"),
+        ("ec2:TerminateInstances", instance, positive, "implicitDeny"),
     ]
+    approved = [prefix + "document/" + name for name in (role_name, "academy-frontend-development-api-port")]
+    # Amazon-owned public documents have an empty account component. The two
+    # default-document forms and unapproved name are negative ARN controls,
+    # not evidence of the service's omitted-DocumentName resolution.
+    denied = [prefix + "document/SSM-SessionManagerRunShell",
+              f"arn:aws:ssm:{REGION}::document/SSM-SessionManagerRunShell",
+              prefix + "document/unapproved-session-negative-only"]
+    denied += [f"arn:aws:ssm:{REGION}::document/{name}" for name in (
+        "AWS-StartInteractiveCommand", "AWS-StartSSHSession", "AWS-StartPortForwardingSession",
+        "AWS-StartPortForwardingSessionToRemoteHost")]
+    for resource in approved + denied:
+        for value in (None, "false", "true"):
+            context = dict(without_document_check)
+            if value is not None:
+                context[document_check] = value
+            expected = "allowed" if resource in approved and value == "true" else "implicitDeny"
+            cases.append(("ssm:StartSession", resource, context, expected))
     evidence = {"mode": "READ_ONLY_FRONTEND_ROLE_PLAN", "role": role_name,
                 "documents": documents, "canonical_sha256": {
                     name: hashlib.sha256(canonical(document).encode()).hexdigest() for name, document in documents.items()},
                 "cases": [], "iam_mutation": 0, "ssm_document_mutation": 0, "parameter_value_reads": 0,
                 "limitation": "Identity-policy simulation only; no OIDC exchange, SSM execution, KMS decryption or real QA proof"}
-    for action, resource, overrides, expected in cases:
-        # The simulator may report unused policy context keys on an implicit
-        # deny. Supply a complete positive context and change the exact negative
-        # dimension, rather than count a missing context as a security proof.
-        context = {**tags, **owned, **overrides}
+    for action, resource, context, expected in cases:
+        # Use the explicit case context verbatim: never refill an intentionally
+        # missing document key from a common positive/default context.
         arguments = ["iam", "simulate-custom-policy", "--policy-input-list", canonical(documents["policy"]),
                      "--action-names", action, "--resource-arns", resource]
         if context:
@@ -468,7 +485,8 @@ def frontend_plan(profile):
                                   "expected": expected, "decision": result["EvalDecision"],
                                   "missing_context": result.get("MissingContextValues", [])})
     evidence["proposed_simulation_pass"] = all(item["decision"] == item["expected"]
-                                                and not item["missing_context"] for item in evidence["cases"])
+        and set(item["missing_context"]) <= {document_check} - item["context"].keys()
+        for item in evidence["cases"])
     return evidence
 
 

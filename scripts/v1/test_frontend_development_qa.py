@@ -765,7 +765,19 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
         self.assertFalse(any(action.startswith(("iam:Put", "iam:Create", "ssm:Put", "ssm:Update", "ec2:Run")) for action in actions))
         self.assertNotIn("academy-gha-ecr-build", json.dumps(policy))
         by_sid = {entry["Sid"]: entry for entry in policy["Statement"]}
-        self.assertEqual(by_sid["StartVerifiedDevelopmentOnly"]["Condition"]["Bool"], {"ssm:SessionDocumentAccessCheck": "true"})
+        self.assertEqual(by_sid["StartVerifiedDevelopmentOnly"]["Condition"], {"StringEquals": {
+            "ssm:resourceTag/Name": "academy-v1-api-development",
+            "ssm:resourceTag/ManagedBy": "academy-api-development",
+            "ssm:resourceTag/Environment": "development",
+            "ssm:resourceTag/Lifecycle": "active",
+        }})
+        self.assertEqual(by_sid["StartFixedDocuments"]["Condition"], {
+            "Bool": {"ssm:SessionDocumentAccessCheck": "true"},
+        })
+        self.assertEqual(by_sid["StartFixedDocuments"]["Resource"], [
+            "arn:aws:ssm:ap-northeast-2:809466760795:document/academy-frontend-development-qa",
+            "arn:aws:ssm:ap-northeast-2:809466760795:document/academy-frontend-development-api-port",
+        ])
         self.assertEqual(by_sid["TerminateOwnedSessionOnly"]["Condition"]["StringEquals"], {
             "ssm:resourceTag/aws:ssmmessages:session-id": "${aws:userid}",
         })
@@ -788,6 +800,109 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
         port = json.loads((directory / "frontend_development_api_port.json").read_text())
         self.assertEqual(port["properties"], {"portNumber": "8000", "localPortNumber": "18000", "type": "LocalPortForwarding"})
         self.assertNotIn("parameters", port)
+
+
+class FrontendDocumentPlanTests(unittest.TestCase):
+    def setUp(self):
+        self.subject = load_script("converge_frontend_development_qa")
+        self.requests = []
+
+    def plan(self, responses=None, passed=False):
+        self.requests.clear()
+
+        def fake_aws(args, profile):
+            self.assertEqual(profile, "offline")
+            operation = tuple(args[:2])
+            if operation == ("sts", "get-caller-identity"):
+                return {"Account": self.subject.ACCOUNT}
+            if operation == ("iam", "get-role"):
+                raise RuntimeError("NoSuchEntity")
+            if operation == ("ssm", "get-document"):
+                raise RuntimeError("InvalidDocument")
+            self.assertEqual(operation, ("iam", "simulate-custom-policy"))
+            self.requests.append(copy.deepcopy(args))
+            # Deliberately not an IAM evaluator: exercise the planner's request
+            # matrix and prove it rejects an all-allowed simulation response.
+            return {"EvaluationResults": [next(responses) if responses is not None
+                                           else {"EvalDecision": "allowed"}]}
+
+        with patch.object(self.subject, "aws", side_effect=fake_aws):
+            result = self.subject.frontend_plan("offline")
+        self.assertEqual(result["proposed_simulation_pass"], passed)
+        self.assertEqual((result["iam_mutation"], result["ssm_document_mutation"],
+                          result["parameter_value_reads"]), (0, 0, 0))
+        for case, request in zip(result["cases"], self.requests, strict=True):
+            sent = json.loads(request[request.index("--context-entries") + 1])
+            self.assertEqual({item["ContextKeyName"]: item["ContextKeyValues"][0]
+                              for item in sent}, case["context"])
+        return result["cases"]
+
+    def test_verdict_accepts_only_declared_omissions_and_rejects_wrong_decisions(self):
+        # Stubbed verdicts test aggregation only, not IAM policy evaluation.
+        cases = self.plan()
+        key = "ssm:SessionDocumentAccessCheck"
+        responses = [{"EvalDecision": case["expected"],
+                      "MissingContextValues": [] if key in case["context"] else [key]}
+                     for case in cases]
+        self.plan(iter(responses), passed=True)
+        for missing in ("unexpected-context", "ssm:resourceTag/Name"):
+            with self.subTest(missing=missing):
+                broken = copy.deepcopy(responses)
+                broken[0]["MissingContextValues"] = [missing]
+                self.plan(iter(broken))
+        supplied = next(index for index, case in enumerate(cases) if key in case["context"])
+        broken = copy.deepcopy(responses)
+        broken[supplied]["MissingContextValues"] = [key]
+        self.plan(iter(broken))
+        denied = next(index for index, case in enumerate(cases) if case["expected"] == "implicitDeny")
+        broken = copy.deepcopy(responses)
+        broken[denied]["EvalDecision"] = "allowed"
+        self.plan(iter(broken))
+
+    def test_fixed_documents_have_missing_false_true_cases_without_context_refill(self):
+        cases = self.plan()
+        key = "ssm:SessionDocumentAccessCheck"
+        prefix = "arn:aws:ssm:ap-northeast-2:809466760795:document/"
+        for document in ("academy-frontend-development-qa", "academy-frontend-development-api-port"):
+            with self.subTest(document=document):
+                rows = [case for case in cases if case["resource"] == prefix + document
+                        and case["action"] == "ssm:StartSession"]
+                self.assertEqual({(case["context"].get(key), case["expected"]) for case in rows},
+                                 {(None, "implicitDeny"), ("false", "implicitDeny"), ("true", "allowed")})
+                self.assertEqual(len(rows), 3)
+
+    def test_default_and_public_shell_forwarding_documents_use_exact_negative_arns(self):
+        cases = self.plan()
+        public = "arn:aws:ssm:ap-northeast-2::document/"
+        account = "arn:aws:ssm:ap-northeast-2:809466760795:document/"
+        resources = [account + "SSM-SessionManagerRunShell", public + "SSM-SessionManagerRunShell",
+                     account + "unapproved-session-negative-only"]
+        resources += [public + name for name in (
+            "AWS-StartInteractiveCommand", "AWS-StartSSHSession", "AWS-StartPortForwardingSession",
+            "AWS-StartPortForwardingSessionToRemoteHost")]
+        for resource in resources:
+            with self.subTest(resource=resource):
+                rows = [case for case in cases if case["resource"] == resource]
+                self.assertEqual({(case["context"].get("ssm:SessionDocumentAccessCheck"), case["expected"])
+                                  for case in rows},
+                                 {(None, "implicitDeny"), ("false", "implicitDeny"), ("true", "implicitDeny")})
+                self.assertEqual(len(rows), 3)
+        self.assertFalse(any(":809466760795:document/AWS-" in case["resource"] for case in cases))
+
+    def test_instance_cases_keep_all_four_tags_and_do_not_require_document_context(self):
+        cases = self.plan()
+        rows = [case for case in cases if case["action"] == "ssm:StartSession"
+                and ":instance/" in case["resource"]]
+        tags = {"ssm:resourceTag/Name": "academy-v1-api-development",
+                "ssm:resourceTag/ManagedBy": "academy-api-development",
+                "ssm:resourceTag/Environment": "development", "ssm:resourceTag/Lifecycle": "active"}
+        allowed = [case for case in rows if case["expected"] == "allowed"]
+        self.assertEqual(len(allowed), 1)
+        self.assertNotIn("ssm:SessionDocumentAccessCheck", allowed[0]["context"])
+        self.assertTrue(all(allowed[0]["context"][key] == value for key, value in tags.items()))
+        for key, value in tags.items():
+            self.assertTrue(any(case["expected"] == "implicitDeny" and case["context"].get(key) != value
+                                for case in rows), key)
 
 
 if __name__ == "__main__":
