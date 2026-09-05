@@ -5,7 +5,10 @@
 # ==============================================================================
 
 ARG BASE_IMAGE=academy-base:latest
-FROM ${BASE_IMAGE} AS base
+FROM ${BASE_IMAGE} AS curl-fixed-system
+ARG LIBCURL_VERSION=8.21.0-2~bpo13+1
+ARG LIBNGHTTP3_VERSION=1.15.0-1~bpo13+1
+ARG LIBNGTCP2_VERSION=1.22.1-1~bpo13+1
 
 # 시스템·Python 의존성을 앱 소스보다 먼저 확정한다. 앱 코드 변경이
 # apt/pip 레이어를 무효화하지 않아야 일반 릴리스가 캐시를 재사용한다.
@@ -15,22 +18,39 @@ USER root
 # remains isolated in the AWS Batch Video worker, so the API does not ship FFmpeg.
 # perl-base is a same-layer package-configuration prerequisite only; the clean
 # common base does not retain it and neither may this final runtime.
+RUN printf '%s\n' 'deb https://deb.debian.org/debian trixie-backports main' \
+    > /etc/apt/sources.list.d/academy-trixie-backports.list
 RUN apt-get update && apt-get install -y --no-install-recommends \
     perl-base \
+    libnghttp3-9="${LIBNGHTTP3_VERSION}" \
+    libngtcp2-16="${LIBNGTCP2_VERSION}" \
+    libngtcp2-crypto-ossl0="${LIBNGTCP2_VERSION}" \
+    libcurl4t64="${LIBCURL_VERSION}" \
     tesseract-ocr \
     tesseract-ocr-kor \
     && dpkg --configure -a \
+    && libcurl_version="$(dpkg-query -W -f='${Version}' libcurl4t64)" \
+    && libnghttp3_version="$(dpkg-query -W -f='${Version}' libnghttp3-9)" \
+    && libngtcp2_version="$(dpkg-query -W -f='${Version}' libngtcp2-16)" \
+    && libngtcp2_crypto_version="$(dpkg-query -W -f='${Version}' libngtcp2-crypto-ossl0)" \
+    && test "$libcurl_version" = "${LIBCURL_VERSION}" \
+    && test "$libnghttp3_version" = "${LIBNGHTTP3_VERSION}" \
+    && test "$libngtcp2_version" = "${LIBNGTCP2_VERSION}" \
+    && test "$libngtcp2_crypto_version" = "${LIBNGTCP2_VERSION}" \
     && (tesseract --version > /dev/null 2>&1 || (echo "tesseract not in PATH" && exit 1)) \
     && dpkg --purge --force-remove-essential perl-base \
     && apt-get autoremove -y --purge \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
+    && rm -f /etc/apt/sources.list.d/academy-trixie-backports.list \
     && test -z "$(dpkg --audit)" \
     && apt-get check \
     && ! dpkg-query -W perl-base >/dev/null 2>&1 \
     && for package in perl 'perl-modules-*' 'libperl*' libdpkg-perl liberror-perl; do ! dpkg-query -W "$package" >/dev/null 2>&1; done \
     && ! command -v perl >/dev/null 2>&1
 USER appuser
+
+FROM curl-fixed-system AS base
 
 # Shared requirements와 API-only deps를 한 번에 해석한다. api.txt는
 # common.txt를, 두 파일은 constraints.txt를 참조하므로 모두 먼저 복사한다.

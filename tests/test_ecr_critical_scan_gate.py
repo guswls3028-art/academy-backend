@@ -103,6 +103,28 @@ def test_removed_perl_findings_fail_closed() -> None:
 
 
 @pytest.mark.parametrize(
+    "cve", ["CVE-2026-8924", "CVE-2026-8927"]
+)
+def test_fixed_curl_critical_findings_cannot_be_accepted(cve: str) -> None:
+    acceptances = gate.load_acceptances(
+        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-critical-risk-acceptance.json",
+        date(2026, 9, 5),
+    )
+
+    for repository in (
+        "academy-api",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker",
+    ):
+        with pytest.raises(gate.GateError, match="unaccepted critical"):
+            gate.evaluate_findings(
+                repository,
+                _scan(_finding(cve, "curl", "8.14.1-2+deb13u4")),
+                acceptances,
+            )
+
+
+@pytest.mark.parametrize(
     ("cve", "package", "version"),
     [
         ("CVE-2099-9999", "glibc", "2.41-12+deb13u3"),
@@ -303,6 +325,60 @@ def test_base_image_requires_security_fixed_util_linux() -> None:
         'dpkg --compare-versions "$util_linux_version" ge "2.41.5-0+deb13u1"'
         in dockerfile
     )
+
+
+def test_tesseract_runtimes_pin_security_fixed_libcurl() -> None:
+    repository = Path(__file__).parents[1]
+    affected = {
+        "api": repository / "docker" / "api" / "Dockerfile",
+        "ai": repository / "docker" / "ai-worker-cpu" / "Dockerfile",
+        "tools": repository / "docker" / "tools-worker" / "Dockerfile",
+    }
+
+    for service, path in affected.items():
+        dockerfile = path.read_text(encoding="utf-8")
+        assert "FROM ${BASE_IMAGE} AS curl-fixed-system" in dockerfile, service
+        assert "FROM curl-fixed-system AS base" in dockerfile, service
+        assert "ARG LIBCURL_VERSION=8.21.0-2~bpo13+1" in dockerfile, service
+        assert "ARG LIBNGHTTP3_VERSION=1.15.0-1~bpo13+1" in dockerfile, service
+        assert "ARG LIBNGTCP2_VERSION=1.22.1-1~bpo13+1" in dockerfile, service
+        assert (
+            "deb https://deb.debian.org/debian trixie-backports main" in dockerfile
+        ), service
+        assert 'libnghttp3-9="${LIBNGHTTP3_VERSION}"' in dockerfile, service
+        assert 'libngtcp2-16="${LIBNGTCP2_VERSION}"' in dockerfile, service
+        assert (
+            'libngtcp2-crypto-ossl0="${LIBNGTCP2_VERSION}"' in dockerfile
+        ), service
+        assert 'libcurl4t64="${LIBCURL_VERSION}"' in dockerfile, service
+        assert (
+            'test "$libcurl_version" = "${LIBCURL_VERSION}"' in dockerfile
+        ), service
+        assert (
+            'test "$libnghttp3_version" = "${LIBNGHTTP3_VERSION}"' in dockerfile
+        ), service
+        assert (
+            'test "$libngtcp2_version" = "${LIBNGTCP2_VERSION}"' in dockerfile
+        ), service
+        assert (
+            'test "$libngtcp2_crypto_version" = "${LIBNGTCP2_VERSION}"'
+            in dockerfile
+        ), service
+        assert (
+            "rm -f /etc/apt/sources.list.d/academy-trixie-backports.list"
+            in dockerfile
+        )
+
+    for path in (
+        repository / "docker" / "Dockerfile.base",
+        repository / "docker" / "video-worker" / "Dockerfile",
+        repository / "docker" / "messaging-worker" / "Dockerfile",
+    ):
+        dockerfile = path.read_text(encoding="utf-8")
+        assert "LIBCURL_VERSION" not in dockerfile
+        assert "LIBNGHTTP3_VERSION" not in dockerfile
+        assert "LIBNGTCP2_VERSION" not in dockerfile
+        assert "academy-trixie-backports.list" not in dockerfile
 
 
 def test_high_finding_regression_fails_closed() -> None:
