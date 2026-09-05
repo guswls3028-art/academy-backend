@@ -13,6 +13,7 @@ frontend route/표시 계약에서 교차 대조했다. 실행 코드와 실패 
 |---|---|---|---|---|
 | RP-01 | P1 privacy | `is_manager=true`인 강사·조교가 동료의 시급·근무금액·환급·월 정산을 조회하고 Excel/PDF를 내보낼 수 있었음 | `can_manage_staff_payroll`과 serializer가 `teacher`, `staff`를 민감 권한으로 승격했고 frontend도 서버 boolean만 신뢰하며 권한 토글을 제공 | 권한·`can_manage_staff`를 현재 tenant의 `owner`, `admin`으로 제한. 새 `is_manager` 쓰기와 무효 토글/내보내기 열을 제거하고 오래된 true flag도 역할 guard에서 거부. backend 역할·serializer 회귀와 390px Playwright로 고정 |
 | RP-02 | P1 operations | 허용된 강사·조교가 알림톡 수신자를 중복 이름 사이에서 식별하거나 공급사 접수 ID와 대조하기 어려웠음 | worker가 전화번호를 앞 4자리+마스킹으로 저장하고 log projection/mobile UI가 staff·teacher의 이름·본문·provider ID를 다시 제한 | 새 로그에 실제 수신 전화 저장, tenant staff에게 정확한 recipient/provider evidence와 비민감 상세 본문 제공. 계정 비밀·공급자 오류 원문은 계속 제거. backend 역할 회귀, worker 회귀, teacher/staff 390px Playwright로 고정 |
+| RP-03 | P1 operations | 같은 학생에 대해 학생·보호자를 함께 선택해도 최종 확인창에 마스킹 전화가 하나만 보여 두 실제 목적지를 확인하기 어려웠음 | preflight의 학생·보호자 행을 `student_id` 하나로 합쳐 표시했음. 실제 발송은 `send_to`와 `student_id`를 함께 사용해 두 대상으로 올바르게 분리됨 | 별도 frontend PR #424가 `send_to`별 마스킹 전화 표시를 보존. raw phone과 라우팅은 바꾸지 않고 두 목적지 표시, 390px overflow, 이후 학생 단독 payload 회귀로 고정 |
 
 ## 확인된 정상 경계
 
@@ -27,8 +28,9 @@ frontend route/표시 계약에서 교차 대조했다. 실행 코드와 실패 
 
 ## 겹침·보류
 
-- 학생 결과 알림톡 수신 정책은 별도 변경의 정확한 소유 범위이므로 이 감사에서
-  해당 send/preflight 파일을 수정하지 않았다.
+- 학생 결과 알림톡 수신 정책과 RP-03 표시 수정은 별도 변경의 정확한 소유 범위이므로
+  이 감사에서 해당 send/preflight/modal 파일을 수정하지 않았다. RP-03은 frontend
+  PR #424의 exact head `b0b88ede9`에서 회귀를 포함해 교정됐다.
 - safe-method 전체 저장소 계약의 별도 변경도 소유권을 넘겨받지 않았다. 이번에
   수정한 로그 조회와 급여 권한 판정에는 GET 데이터 쓰기를 추가하지 않았다.
 - 정식 배포는 기존 zlib 이미지 보안 gate와 release serialization을 통과해야 한다.
