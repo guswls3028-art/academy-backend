@@ -48,6 +48,7 @@ SCENARIO_ACTIVITY_AUDIT_ACTIONS = (
     "student_activity.screen_view",
     "student_activity.target_open",
 )
+SCENARIO_PROVENANCE_ACTION = "development.qa.scenario"
 
 
 def assert_isolated_runtime() -> None:
@@ -241,6 +242,7 @@ class Command(BaseCommand):
             tenant.name = "Ymath 실사용 복제 검증"
             tenant.is_active = True
             tenant.save(update_fields=["name", "is_active"])
+            self._ensure_scenario_provenance(tenant)
 
             feature_flags, ui_config = _ymath_program_contract()
             program, _ = Program.objects.get_or_create(tenant=tenant)
@@ -583,12 +585,43 @@ class Command(BaseCommand):
             .first()
         )
         if ownership_started_at is None:
+            ownership_started_at = (
+                OpsAuditLog.objects.filter(
+                    action=SCENARIO_PROVENANCE_ACTION,
+                    target_tenant=tenant,
+                    result="success",
+                    payload__tenant_code=tenant.code,
+                    payload__tenant_id=tenant.id,
+                )
+                .order_by("created_at")
+                .values_list("created_at", flat=True)
+                .first()
+            )
+        if ownership_started_at is None:
             if activity_rows.exists():
                 raise CommandError(
-                    "Refusing to delete scenario activity without an exact development.qa.setup ownership seal."
+                    "Refusing to delete scenario activity without an exact QA ownership provenance seal."
                 )
             return activity_rows.none()
         return activity_rows.filter(created_at__gte=ownership_started_at)
+
+    @staticmethod
+    def _ensure_scenario_provenance(tenant) -> None:
+        exact = {
+            "action": SCENARIO_PROVENANCE_ACTION,
+            "target_tenant": tenant,
+            "result": "success",
+            "payload__tenant_code": tenant.code,
+            "payload__tenant_id": tenant.id,
+        }
+        if not OpsAuditLog.objects.filter(**exact).exists():
+            OpsAuditLog.objects.create(
+                action=SCENARIO_PROVENANCE_ACTION,
+                actor_username="setup_ymath_realuse_scenario",
+                target_tenant=tenant,
+                payload={"tenant_code": tenant.code, "tenant_id": tenant.id},
+                result="success",
+            )
 
     @staticmethod
     def _non_database_residue(*, tenant_id: int | None, tenant_code: str) -> dict[str, int]:

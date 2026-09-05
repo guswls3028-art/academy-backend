@@ -168,10 +168,12 @@ destroy 사이에 lock을 풀지 않는다. destroy는 user 삭제 전에 exact 
 SimpleJWT outstanding token만 삭제한다. 학생 activity 감사 행은
 `student_activity.login/screen_view/target_open`, exact target tenant, scenario
 actor/target user, 현재 시각 이하, 그리고 최초 성공 `development.qa.setup` seal 시각
-이후를 모두 만족할 때만 삭제한다. activity가 있는데 이 seal이 없으면 시간 범위를
-추정하지 않고 전체 destroy를 거부한다. 다른 tenant/user, 다른 actor, seal 이전 감사
-행은 보존한다. 생성의 PII-free setup seal 자체도 tenant 삭제 후 FK가 NULL인 보안
-증거로 남는다.
+이후를 모두 만족할 때만 삭제한다. 일반 command 실행은 생성 transaction에 중복 없이
+남긴 `development.qa.scenario` provenance seal을 같은 방식의 하한으로 사용하고, 고정
+SSM 실행에서는 더 좁은 `development.qa.setup` seal을 우선한다. activity가 있는데 둘 다
+없으면 시간 범위를 추정하지 않고 전체 destroy를 거부한다. 다른 tenant/user, 다른 actor,
+선택된 seal 이전 감사 행은 보존한다. 두 PII-free provenance seal 자체도 tenant 삭제 후
+FK가 NULL인 보안 증거로 남는다.
 
 Inspect/Setup/Cleanup 출력은 tenant/user 수와 별도로 `outstanding_tokens`,
 `activity_audits`, exact development R2 prefix의 `r2_objects`, exact `QA_TENANT`

@@ -416,6 +416,13 @@ class SetupYmathRealuseScenarioTests(TestCase):
         self.assertTrue(OpsAuditLog.objects.filter(id=foreign_actor_audit.id).exists())
         self.assertTrue(OpsAuditLog.objects.filter(id=outside_window_audit.id).exists())
         self.assertTrue(OpsAuditLog.objects.filter(id=seal.id, action="development.qa.setup").exists())
+        self.assertTrue(
+            OpsAuditLog.objects.filter(
+                action="development.qa.scenario",
+                target_tenant__isnull=True,
+                payload__tenant_code=tenant_code,
+            ).exists()
+        )
         self.assertEqual(
             payload["residue"],
             {"activity_audits": 0, "outstanding_tokens": 0},
@@ -427,6 +434,10 @@ class SetupYmathRealuseScenarioTests(TestCase):
         tenant = Tenant.objects.get(code=tenant_code)
         user = tenant.users.order_by("id").first()
         token_id = RefreshToken.for_user(user)["jti"]
+        OpsAuditLog.objects.filter(
+            action="development.qa.scenario",
+            target_tenant=tenant,
+        ).delete()
         activity = OpsAuditLog.objects.create(
             actor_user=user,
             actor_username=user.username,
@@ -437,7 +448,7 @@ class SetupYmathRealuseScenarioTests(TestCase):
 
         with patch.dict(os.environ, {}, clear=True), self.assertRaisesMessage(
             CommandError,
-            "exact development.qa.setup ownership seal",
+            "exact QA ownership provenance seal",
         ):
             call_command(
                 "setup_ymath_realuse_scenario",
