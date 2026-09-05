@@ -340,12 +340,29 @@ def test_tesseract_runtimes_pin_security_fixed_libcurl() -> None:
         assert "FROM ${BASE_IMAGE} AS curl-fixed-system" in dockerfile, service
         assert "FROM curl-fixed-system AS base" in dockerfile, service
         assert "ARG LIBCURL_VERSION=8.21.0-2~bpo13+1" in dockerfile, service
+        assert "ARG LIBNGHTTP3_VERSION=1.15.0-1~bpo13+1" in dockerfile, service
+        assert "ARG LIBNGTCP2_VERSION=1.22.1-1~bpo13+1" in dockerfile, service
         assert (
             "deb https://deb.debian.org/debian trixie-backports main" in dockerfile
+        ), service
+        assert 'libnghttp3-9="${LIBNGHTTP3_VERSION}"' in dockerfile, service
+        assert 'libngtcp2-16="${LIBNGTCP2_VERSION}"' in dockerfile, service
+        assert (
+            'libngtcp2-crypto-ossl0="${LIBNGTCP2_VERSION}"' in dockerfile
         ), service
         assert 'libcurl4t64="${LIBCURL_VERSION}"' in dockerfile, service
         assert (
             'test "$libcurl_version" = "${LIBCURL_VERSION}"' in dockerfile
+        ), service
+        assert (
+            'test "$libnghttp3_version" = "${LIBNGHTTP3_VERSION}"' in dockerfile
+        ), service
+        assert (
+            'test "$libngtcp2_version" = "${LIBNGTCP2_VERSION}"' in dockerfile
+        ), service
+        assert (
+            'test "$libngtcp2_crypto_version" = "${LIBNGTCP2_VERSION}"'
+            in dockerfile
         ), service
         assert (
             "rm -f /etc/apt/sources.list.d/academy-trixie-backports.list"
@@ -359,6 +376,8 @@ def test_tesseract_runtimes_pin_security_fixed_libcurl() -> None:
     ):
         dockerfile = path.read_text(encoding="utf-8")
         assert "LIBCURL_VERSION" not in dockerfile
+        assert "LIBNGHTTP3_VERSION" not in dockerfile
+        assert "LIBNGTCP2_VERSION" not in dockerfile
         assert "academy-trixie-backports.list" not in dockerfile
 
 

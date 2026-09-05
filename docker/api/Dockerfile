@@ -7,6 +7,8 @@
 ARG BASE_IMAGE=academy-base:latest
 FROM ${BASE_IMAGE} AS curl-fixed-system
 ARG LIBCURL_VERSION=8.21.0-2~bpo13+1
+ARG LIBNGHTTP3_VERSION=1.15.0-1~bpo13+1
+ARG LIBNGTCP2_VERSION=1.22.1-1~bpo13+1
 
 # 시스템·Python 의존성을 앱 소스보다 먼저 확정한다. 앱 코드 변경이
 # apt/pip 레이어를 무효화하지 않아야 일반 릴리스가 캐시를 재사용한다.
@@ -20,12 +22,21 @@ RUN printf '%s\n' 'deb https://deb.debian.org/debian trixie-backports main' \
     > /etc/apt/sources.list.d/academy-trixie-backports.list
 RUN apt-get update && apt-get install -y --no-install-recommends \
     perl-base \
+    libnghttp3-9="${LIBNGHTTP3_VERSION}" \
+    libngtcp2-16="${LIBNGTCP2_VERSION}" \
+    libngtcp2-crypto-ossl0="${LIBNGTCP2_VERSION}" \
     libcurl4t64="${LIBCURL_VERSION}" \
     tesseract-ocr \
     tesseract-ocr-kor \
     && dpkg --configure -a \
     && libcurl_version="$(dpkg-query -W -f='${Version}' libcurl4t64)" \
+    && libnghttp3_version="$(dpkg-query -W -f='${Version}' libnghttp3-9)" \
+    && libngtcp2_version="$(dpkg-query -W -f='${Version}' libngtcp2-16)" \
+    && libngtcp2_crypto_version="$(dpkg-query -W -f='${Version}' libngtcp2-crypto-ossl0)" \
     && test "$libcurl_version" = "${LIBCURL_VERSION}" \
+    && test "$libnghttp3_version" = "${LIBNGHTTP3_VERSION}" \
+    && test "$libngtcp2_version" = "${LIBNGTCP2_VERSION}" \
+    && test "$libngtcp2_crypto_version" = "${LIBNGTCP2_VERSION}" \
     && (tesseract --version > /dev/null 2>&1 || (echo "tesseract not in PATH" && exit 1)) \
     && dpkg --purge --force-remove-essential perl-base \
     && apt-get autoremove -y --purge \

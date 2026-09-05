@@ -89,9 +89,13 @@
   포함하지 않는다. Trixie stable의 `8.14.1-2+deb13u4`는
   CVE-2026-8924와 CVE-2026-8927 수정 전 버전이므로 세 OCR Dockerfile은 공식
   `trixie-backports`의 `8.21.0-2~bpo13+1`을 exact pin으로 설치한다. 빌드 중
+  필요한 backports 의존성 폐쇄도 `libnghttp3-9=1.15.0-1~bpo13+1`,
+  `libngtcp2-16=1.22.1-1~bpo13+1`,
+  `libngtcp2-crypto-ossl0=1.22.1-1~bpo13+1`로 함께 고정한다. 그렇지 않으면 APT가
+  stable의 이전 HTTP/3 라이브러리를 유지해 libcurl 설치를 거부한다. 각
   `dpkg-query` 결과가 exact pin과 다르면 즉시 실패하고, backports source와 APT
   index는 같은 패키지 경계가 끝날 때 제거한다. 이 예외는 Debian suite 전환이나
-  전체 backports upgrade가 아니며 Tesseract의 필수 공유 라이브러리만 올린다.
+  전체 backports upgrade가 아니며 Tesseract의 필수 공유 라이브러리 폐쇄만 올린다.
   `tests/test_ecr_critical_scan_gate.py`가 세 affected image와 세 unaffected image의
   exact 경계를 검사한다. 세 Dockerfile의 `curl-fixed-system` target은 공통 base와
   실제 OCR APT 계층만 따로 빌드·실행·scan할 수 있게 하며 최종 runtime은 그 target을
