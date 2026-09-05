@@ -8,6 +8,7 @@ import io
 import json
 import os
 import re
+import shlex
 import sys
 import subprocess
 import tempfile
@@ -616,7 +617,8 @@ class HostBoundaryApplyTests(unittest.TestCase):
 class DevelopmentParameterBoundaryTests(unittest.TestCase):
     def test_cleanup_binds_creation_capability_and_refuses_other_runs_offline(self):
         session = json.loads((ROOT / "scripts/v1/templates/ssm/frontend_development_qa.json").read_text())
-        source = session["properties"]["linux"]["commands"].split("<<'ACADEMY_QA_PY'\n", 1)[1].rsplit("ACADEMY_QA_PY", 1)[0]
+        shell_script = shlex.split(session["properties"]["linux"]["commands"], posix=True)[2]
+        source = shell_script.split("<<'ACADEMY_QA_PY'\n", 1)[1].rsplit("ACADEMY_QA_PY", 1)[0]
         functions = [node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)
                      and node.name in {"ownership_payload", "assert_cleanup_owner"}]
         self.assertEqual(len(functions), 2, "missing server-side creation/cleanup ownership binding")
@@ -661,7 +663,8 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
 
     def test_actual_fixed_cleanup_control_flow_never_destroys_foreign_or_unowned_tenant(self):
         session = json.loads((ROOT / "scripts/v1/templates/ssm/frontend_development_qa.json").read_text())
-        source = session["properties"]["linux"]["commands"].split("<<'ACADEMY_QA_PY'\n", 1)[1].rsplit("ACADEMY_QA_PY", 1)[0]
+        shell_script = shlex.split(session["properties"]["linux"]["commands"], posix=True)[2]
+        source = shell_script.split("<<'ACADEMY_QA_PY'\n", 1)[1].rsplit("ACADEMY_QA_PY", 1)[0]
         functions = [node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)]
         namespace = {"hashlib": hashlib, "hmac": hmac, "re": re, "io": io, "json": json,
                      "os": os, "django": SimpleNamespace(setup=Mock())}
@@ -793,7 +796,7 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
                          "187f6ac218435d3b3f938d903153c5785db3529ace89f4e79ea9b6e1bde8ddb6")
         for path, expected in (
             ("iam/trust_frontend_development_qa.json", "aa2c1a60b63ad287c2e8caba7257beaafe5d602df66659c3093f917ad670713a"),
-            ("ssm/frontend_development_qa.json", "9bd479198684bf2bb6a8d93ad28f36b6aa46fad7e781acf03f50fb7822c2e023"),
+            ("ssm/frontend_development_qa.json", "308815f63ebce3584c2a2b162a20418b6f54a8b0ecd80bb9c5543bc51c34652d"),
             ("ssm/frontend_development_api_port.json", "974b6bf4e518533ee0ecd14c5e82b0a5f0538813e41253940cd46a6cb5e8d173"),
         ):
             with self.subTest(path=path):
@@ -810,7 +813,13 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
                 self.assertIsNone(re.fullmatch(parameter["allowedPattern"], unsafe))
         command = session["properties"]["linux"]["commands"]
         self.assertEqual(set(re.findall(r"{{\s*([^}]+?)\s*}}", command)), set(session["parameters"]))
-        python = command.split("<<'ACADEMY_QA_PY'\n", 1)[1].rsplit("ACADEMY_QA_PY", 1)[0]
+        agent_argv = shlex.split(command, posix=True)
+        self.assertEqual(agent_argv[:2], ["/bin/sh", "-lc"])
+        self.assertEqual(len(agent_argv), 3)
+        shell_script = agent_argv[2]
+        self.assertEqual(shell_script.splitlines()[0], "set -eu")
+        self.assertNotEqual(agent_argv[0], "set")
+        python = shell_script.split("<<'ACADEMY_QA_PY'\n", 1)[1].rsplit("ACADEMY_QA_PY", 1)[0]
         compile(python, "fixed-development-session", "exec")
         self.assertIn('assert existing is None', python)
         self.assertIn('payload["remaining"] == {"tenants": 0, "users": 0}', python)
