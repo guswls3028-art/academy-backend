@@ -16,7 +16,8 @@
 # ==============================================================================
 
 ARG BASE_IMAGE=academy-base:latest
-FROM ${BASE_IMAGE} AS base
+FROM ${BASE_IMAGE} AS curl-fixed-system
+ARG LIBCURL_VERSION=8.21.0-2~bpo13+1
 
 ENV WORKER_TYPE=CPU
 
@@ -24,16 +25,23 @@ ENV WORKER_TYPE=CPU
 # The clean common base has no Perl, so restore perl-base only while Debian
 # configures this transaction and remove it again before the layer is sealed.
 USER root
+RUN printf '%s\n' 'deb https://deb.debian.org/debian trixie-backports main' \
+    > /etc/apt/sources.list.d/academy-trixie-backports.list
 RUN apt-get update && apt-get install -y --no-install-recommends \
     perl-base \
+    libcurl4t64="${LIBCURL_VERSION}" \
     tesseract-ocr \
     tesseract-ocr-kor \
     libgl1 \
     && dpkg --configure -a \
+    && libcurl_version="$(dpkg-query -W -f='${Version}' libcurl4t64)" \
+    && test "$libcurl_version" = "${LIBCURL_VERSION}" \
+    && (tesseract --version > /dev/null 2>&1 || (echo "tesseract not in PATH" && exit 1)) \
     && dpkg --purge --force-remove-essential perl-base \
     && apt-get autoremove -y --purge \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
+    && rm -f /etc/apt/sources.list.d/academy-trixie-backports.list \
     && test -z "$(dpkg --audit)" \
     && apt-get check \
     && ! dpkg-query -W perl-base >/dev/null 2>&1 \
@@ -45,6 +53,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # vulnerable system GLib package back as a redundant compatibility shim.
 
 USER appuser
+
+FROM curl-fixed-system AS base
 
 # AI 전용 Python 의존성 (단일 RUN으로 레이어 최소화). requirements 변경 시에만 재설치.
 COPY requirements/constraints.txt requirements/common.txt requirements/worker-ai-common.txt requirements/worker-ai-cpu.txt requirements/worker-ai-excel.txt requirements/worker-ai-tools.txt ./requirements/
