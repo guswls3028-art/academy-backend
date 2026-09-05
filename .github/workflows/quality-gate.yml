@@ -203,3 +203,72 @@ jobs:
         run: |
           python -m pytest -q --tb=short \
             apps/api apps/billing apps/core apps/shared apps/support apps/domains tests
+
+  curl-fixed-system-probe:
+    name: ARM64 OCR libcurl build and vulnerability probe
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install pinned Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.74.0
+      - name: Build exact ARM64 OCR system targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build \
+            --platform linux/arm64 \
+            --build-arg "APT_REFRESH_TOKEN=curl-probe-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --file docker/Dockerfile.base \
+            --tag academy-base:curl-probe \
+            .
+          while IFS='|' read -r service dockerfile; do
+            docker build \
+              --platform linux/arm64 \
+              --target curl-fixed-system \
+              --build-arg BASE_IMAGE=academy-base:curl-probe \
+              --file "$dockerfile" \
+              --tag "academy-${service}:curl-probe" \
+              .
+          done <<'EOF'
+          api|docker/api/Dockerfile
+          ai-worker-cpu|docker/ai-worker-cpu/Dockerfile
+          tools-worker|docker/tools-worker/Dockerfile
+          EOF
+      - name: Verify package, OCR linkage, and exact CVE absence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/curl-probe"
+          for service in api ai-worker-cpu tools-worker; do
+            image="academy-${service}:curl-probe"
+            docker run --rm --user root --entrypoint sh "$image" -c '
+              set -eu
+              test "$(dpkg-query -W -f="${Version}" libcurl4t64)" = "8.21.0-2~bpo13+1"
+              tesseract --version >/dev/null
+              ldd "$(command -v tesseract)" | grep -q "libcurl.so.4"
+              test -z "$(dpkg --audit)"
+              apt-get check
+            '
+            report="${RUNNER_TEMP}/curl-probe/${service}.json"
+            trivy image --quiet --scanners vuln --format json --output "$report" "$image"
+            target_count=$(jq '[.Results[]?.Vulnerabilities[]? | select(
+              .VulnerabilityID == "CVE-2026-8924" or
+              .VulnerabilityID == "CVE-2026-8927"
+            )] | length' "$report")
+            test "$target_count" -eq 0
+            jq -r --arg service "$service" '
+              [.Results[]?.Vulnerabilities[]?
+               | select(.Severity == "CRITICAL" or .Severity == "HIGH")
+               | [.Severity, .VulnerabilityID, .PkgName, .InstalledVersion]]
+              | unique | sort
+              | "TRIVY_SCAN service=\($service) critical_high=\(length) identities=\(.)"
+            ' "$report"
+            echo "CURL_TARGET_CVE_ABSENT service=${service} libcurl=8.21.0-2~bpo13+1"
+          done
