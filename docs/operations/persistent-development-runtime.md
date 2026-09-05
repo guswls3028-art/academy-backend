@@ -148,6 +148,13 @@ python scripts/v1/converge_frontend_development_qa.py --frontend-role-plan
 `templates/ssm/frontend_development_qa.json`은 고정 `NonInteractiveCommands`
 Session document다. Action은 Inspect/Setup/Cleanup뿐이고 tenant, release ID,
 digest는 shell 문자/경로/SSM 참조를 허용하지 않는 strict pattern으로 제한한다.
+`NonInteractiveCommands` agent는 command 문자열에 shell을 암묵적으로 추가하지 않는다.
+따라서 Linux command는 POSIX tokenization 결과가 정확히
+`["/bin/sh", "-lc", <고정 script>]`가 되도록 shell과 단일 script 인자를 명시하며,
+script의 첫 줄 `set -eu`는 executable이 아니라 그 shell 안에서 실행한다. 호출자가
+command나 shell 인자를 전달하는 parameter는 없고 기존 고정 parameter pattern도
+유지한다. 이 argv 경계와 embedded Python 구문은
+`python -B -m unittest scripts.v1.test_frontend_development_qa -v`로 검증한다.
 개발 settings, 현재 release/image, exact DB/user/R2, mock messaging, billing off,
 빈 Video Batch, 개발 큐를 검증한다. Setup은 advisory lock 아래 기존 tenant/user
 부재를 확인하며 원래 scenario 명령을 reset 없이 사용한다. 생성과 같은 DB transaction에
