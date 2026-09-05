@@ -5708,6 +5708,59 @@
         ],
         "type": "object"
       },
+      "OmrUploadBatchItemSummary": {
+        "properties": {
+          "admission_status": {
+            "type": "string"
+          },
+          "duplicate_of_submission_id": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "failure_code": {
+            "nullable": true,
+            "type": "string"
+          },
+          "failure_message": {
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "identifier_status": {
+            "nullable": true,
+            "type": "string"
+          },
+          "ordinal": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          },
+          "submission_id": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "submission_status": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "admission_status",
+          "duplicate_of_submission_id",
+          "failure_code",
+          "failure_message",
+          "id",
+          "identifier_status",
+          "ordinal",
+          "status",
+          "submission_id",
+          "submission_status"
+        ],
+        "type": "object"
+      },
       "OmrUploadBatchRetryRequestRequest": {
         "properties": {
           "item_ordinals": {
@@ -5764,6 +5817,12 @@
             "format": "uuid",
             "type": "string"
           },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OmrUploadBatchItemSummary"
+            },
+            "type": "array"
+          },
           "lecture_id": {
             "nullable": true,
             "type": "integer"
@@ -5819,6 +5878,7 @@
           "exam_id",
           "failed_ordinals",
           "id",
+          "items",
           "lecture_id",
           "overall_status",
           "pending_admission_ordinals",
@@ -5872,6 +5932,12 @@
             "format": "uuid",
             "type": "string"
           },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OmrUploadBatchItemSummary"
+            },
+            "type": "array"
+          },
           "lecture_id": {
             "nullable": true,
             "type": "integer"
@@ -5909,6 +5975,7 @@
           "exam_id",
           "failed_ordinals",
           "id",
+          "items",
           "lecture_id",
           "overall_status",
           "pending_admission_ordinals",
@@ -5962,6 +6029,12 @@
             "format": "uuid",
             "type": "string"
           },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OmrUploadBatchItemSummary"
+            },
+            "type": "array"
+          },
           "lecture_id": {
             "nullable": true,
             "type": "integer"
@@ -6006,6 +6079,7 @@
           "exam_id",
           "failed_ordinals",
           "id",
+          "items",
           "lecture_id",
           "overall_status",
           "pending_admission_ordinals",
