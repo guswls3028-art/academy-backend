@@ -261,6 +261,17 @@ jobs:
             '
             report="${RUNNER_TEMP}/curl-probe/${service}.json"
             trivy image --quiet --scanners vuln --format json --output "$report" "$image"
+            jq -c '[.Results[]?.Vulnerabilities[]? | select(
+              .VulnerabilityID == "CVE-2026-8924" or
+              .VulnerabilityID == "CVE-2026-8927"
+            ) | {
+              id: .VulnerabilityID,
+              package: .PkgName,
+              installed: .InstalledVersion,
+              fixed: .FixedVersion,
+              status: .Status,
+              source: .DataSource.Name
+            }]' "$report"
             target_count=$(jq '[.Results[]?.Vulnerabilities[]? | select(
               .VulnerabilityID == "CVE-2026-8924" or
               .VulnerabilityID == "CVE-2026-8927"
