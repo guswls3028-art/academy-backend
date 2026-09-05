@@ -211,13 +211,6 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
-      id-token: write
-    env:
-      AWS_REGION: ap-northeast-2
-      ACADEMY_DEPLOY_LOCK_TABLE: academy-v1-video-job-lock
-      ACADEMY_DEPLOY_LOCK_OWNER: ci-curl-probe:${{ github.run_id }}:${{ github.run_attempt }}
-      ECR_REGISTRY: 809466760795.dkr.ecr.ap-northeast-2.amazonaws.com
-      PROBE_TAG: curl-probe-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -248,7 +241,7 @@ jobs:
           ai-worker-cpu|docker/ai-worker-cpu/Dockerfile
           tools-worker|docker/tools-worker/Dockerfile
           EOF
-      - name: Verify package and OCR linkage, then expose Trivy advisory result
+      - name: Verify package, OCR linkage, and exact CVE absence
         shell: bash
         run: |
           set -euo pipefail
@@ -283,9 +276,7 @@ jobs:
               .VulnerabilityID == "CVE-2026-8924" or
               .VulnerabilityID == "CVE-2026-8927"
             )] | length' "$report")
-            if [ "$target_count" -ne 0 ]; then
-              echo "::warning::Trivy Debian advisory metadata still marks the upstream-fixed libcurl build affected"
-            fi
+            test "$target_count" -eq 0
             jq -r --arg service "$service" '
               [.Results[]?.Vulnerabilities[]?
                | select(.Severity == "CRITICAL" or .Severity == "HIGH")
@@ -293,126 +284,5 @@ jobs:
               | unique | sort
               | "TRIVY_SCAN service=\($service) critical_high=\(length) identities=\(.)"
             ' "$report"
-            echo "TRIVY_CURL_TARGET_RESULT service=${service} libcurl=8.21.0-2~bpo13+1 targetCount=${target_count}"
+            echo "CURL_TARGET_CVE_ABSENT service=${service} libcurl=8.21.0-2~bpo13+1"
           done
-      - name: Configure AWS credentials for isolated ECR scan
-        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
-          aws-region: ${{ env.AWS_REGION }}
-          action-timeout-s: 180
-      - name: Acquire shared mutation lock for probe tags
-        id: lock
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 scripts/v1/deployment_lock.py acquire \
-            --owner "$ACADEMY_DEPLOY_LOCK_OWNER" \
-            --ttl-seconds 1800
-          echo "acquired=true" >> "$GITHUB_OUTPUT"
-      - name: Login to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2
-      - name: Push exact probe targets and read completed ECR scans
-        shell: bash
-        run: |
-          set -euo pipefail
-          probe_failed=0
-          while IFS='|' read -r service repository; do
-            local_image="academy-${service}:curl-probe"
-            ecr_image="${ECR_REGISTRY}/${repository}:${PROBE_TAG}"
-            docker tag "$local_image" "$ecr_image"
-            docker push "$ecr_image"
-            digest=$(aws ecr describe-images \
-              --repository-name "$repository" \
-              --image-ids "imageTag=${PROBE_TAG}" \
-              --region "$AWS_REGION" \
-              --query 'imageDetails[0].imageDigest' \
-              --output text)
-            if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-              echo "::error::Invalid probe digest for ${repository}: ${digest}"
-              exit 1
-            fi
-
-            scan_status=""
-            scan_json=""
-            for attempt in $(seq 1 40); do
-              if scan_json=$(aws ecr describe-image-scan-findings \
-                --repository-name "$repository" \
-                --image-id "imageDigest=${digest}" \
-                --region "$AWS_REGION" \
-                --output json 2>/dev/null); then
-                scan_status=$(jq -r '.imageScanStatus.status // empty' <<< "$scan_json")
-              fi
-              if [ "$scan_status" = "COMPLETE" ]; then break; fi
-              if [ "$scan_status" = "FAILED" ] || [ "$scan_status" = "UNSUPPORTED_IMAGE" ]; then
-                echo "::error::ECR probe scan failed repository=${repository} digest=${digest} status=${scan_status}"
-                exit 1
-              fi
-              sleep 10
-            done
-            if [ "$scan_status" != "COMPLETE" ]; then
-              echo "::error::ECR probe scan did not complete repository=${repository} digest=${digest}"
-              exit 1
-            fi
-
-            jq -c --arg repository "$repository" '
-              [.imageScanFindings.findings[]? | select(
-                .name == "CVE-2026-8924" or .name == "CVE-2026-8927"
-              ) | {
-                repository: $repository,
-                id: .name,
-                severity: .severity,
-                package: ([.attributes[]? | select(.key == "package_name") | .value][0]),
-                installed: ([.attributes[]? | select(.key == "package_version") | .value][0])
-              }]' <<< "$scan_json"
-            target_count=$(jq '[.imageScanFindings.findings[]? | select(
-              .name == "CVE-2026-8924" or .name == "CVE-2026-8927"
-            )] | length' <<< "$scan_json")
-            echo "ECR_CURL_PROBE repository=${repository} digest=${digest} targetCritical=${target_count}"
-            if [ "$target_count" -ne 0 ]; then probe_failed=1; fi
-          done <<'EOF'
-          api|academy-api
-          ai-worker-cpu|academy-ai-worker-cpu
-          tools-worker|academy-tools-worker
-          EOF
-          exit "$probe_failed"
-      - name: Delete exact isolated ECR probe digests
-        if: always() && steps.lock.outputs.acquired == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          for repository in academy-api academy-ai-worker-cpu academy-tools-worker; do
-            if ! detail=$(aws ecr describe-images \
-              --repository-name "$repository" \
-              --image-ids "imageTag=${PROBE_TAG}" \
-              --region "$AWS_REGION" \
-              --output json 2>/dev/null); then
-              echo "ECR_PROBE_CLEAN repository=${repository} state=absent"
-              continue
-            fi
-            if ! jq -e --arg tag "$PROBE_TAG" '
-              (.imageDetails | length) == 1 and
-              (.imageDetails[0].imageTags == [$tag]) and
-              (.imageDetails[0].imageDigest | test("^sha256:[0-9a-f]{64}$"))
-            ' <<< "$detail" >/dev/null; then
-              echo "::error::Refusing ambiguous ECR probe cleanup for ${repository}:${PROBE_TAG}"
-              exit 1
-            fi
-            digest=$(jq -r '.imageDetails[0].imageDigest' <<< "$detail")
-            aws ecr batch-delete-image \
-              --repository-name "$repository" \
-              --image-ids "imageDigest=${digest}" \
-              --region "$AWS_REGION" >/dev/null
-            if aws ecr describe-images \
-              --repository-name "$repository" \
-              --image-ids "imageDigest=${digest}" \
-              --region "$AWS_REGION" >/dev/null 2>&1; then
-              echo "::error::ECR probe digest remains after exact cleanup: ${repository}@${digest}"
-              exit 1
-            fi
-            echo "ECR_PROBE_CLEAN repository=${repository} digest=${digest} state=absent"
-          done
-      - name: Release shared mutation lock
-        if: always() && steps.lock.outputs.acquired == 'true'
-        shell: bash
-        run: python3 scripts/v1/deployment_lock.py release --owner "$ACADEMY_DEPLOY_LOCK_OWNER"
