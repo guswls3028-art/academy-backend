@@ -84,6 +84,14 @@ def _get_template_summary(event_type: str, template_id: str, message_mode: str) 
     return "비지원 채널 차단"
 
 
+def _recipient_summary(target_name: str, recipient: str) -> str:
+    """Keep the exact recipient phone for tenant-scoped delivery operations."""
+
+    name = str(target_name or "").strip()
+    phone = "".join(character for character in str(recipient or "") if character.isdigit())
+    return " ".join(part for part in (name, phone) if part)
+
+
 def _video_encoding_block_reason(event_type: str, message_mode: str, template_id: str) -> str:
     """영상 인코딩 완료는 알림톡 승인 템플릿 없이 발송하지 않는다."""
     if event_type != "video_encoding_complete":
@@ -1057,7 +1065,7 @@ def main() -> int:
                                     tenant_id=int(tenant_id),
                                     success=False,
                                     amount_deducted=Decimal("0"),
-                                    recipient_summary=(f"{target_name} " if target_name else "") + (to[:4] + "****"),
+                                    recipient_summary=_recipient_summary(target_name, to),
                                     failure_reason=policy_block_reason,
                                     message_body=text[:2000],
                                     message_mode=message_mode,
@@ -1150,7 +1158,7 @@ def main() -> int:
                                 message_mode=message_mode or "alimtalk",
                                 business_idempotency_key=business_key,
                                 sqs_message_id=message_id,
-                                recipient_summary=(f"{target_name} " if target_name else "") + (to[:4] + "****" if to else ""),
+                                recipient_summary=_recipient_summary(target_name, to),
                                 source_tenant_id=source_tenant_id_msg,
                                 target_type=target_type_msg,
                                 target_id=target_id_msg,
@@ -1230,10 +1238,7 @@ def main() -> int:
                                 tenant_id=int(tenant_id),
                                 success=False,
                                 amount_deducted=Decimal("0"),
-                                recipient_summary=(
-                                    (f"{target_name} " if target_name else "")
-                                    + (to[:4] + "****")
-                                ),
+                                recipient_summary=_recipient_summary(target_name, to),
                                 failure_reason=channel_policy_block_reason,
                                 message_body=text[:2000],
                                 message_mode=message_mode,
@@ -1320,7 +1325,7 @@ def main() -> int:
                                 tenant_id=int(tenant_id),
                                 success=False,
                                 amount_deducted=Decimal("0"),
-                                recipient_summary=(f"{target_name} " if target_name else "") + (to[:4] + "****"),
+                                recipient_summary=_recipient_summary(target_name, to),
                                 failure_reason="insufficient_balance",
                                 message_body=text[:2000],
                                 message_mode=message_mode,
@@ -1465,7 +1470,7 @@ def main() -> int:
                                             tenant_id=int(tenant_id),
                                             success=True,
                                             amount_deducted=charged_amount,
-                                            recipient_summary=(f"{target_name} " if target_name else "") + (to[:4] + "****"),
+                                            recipient_summary=_recipient_summary(target_name, to),
                                             template_summary=_get_template_summary(event_type_msg, template_id, message_mode),
                                             message_body=text[:2000],
                                             message_mode=message_mode,
@@ -1519,7 +1524,7 @@ def main() -> int:
                                             tenant_id=int(tenant_id),
                                             success=False,
                                             amount_deducted=Decimal("0"),
-                                            recipient_summary=(f"{target_name} " if target_name else "") + (to[:4] + "****"),
+                                            recipient_summary=_recipient_summary(target_name, to),
                                             failure_reason=failure_reason[:500],
                                             message_body=text[:2000],
                                             message_mode=message_mode,
