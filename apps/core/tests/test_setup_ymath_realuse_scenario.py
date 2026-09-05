@@ -4,7 +4,7 @@ import threading
 import time
 from datetime import timedelta
 from io import StringIO
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
@@ -13,11 +13,12 @@ from django.db import close_old_connections, connection
 from django.test import TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 from rest_framework_simplejwt.settings import api_settings
-from rest_framework_simplejwt.tokens import AccessToken
+from rest_framework_simplejwt.token_blacklist.models import OutstandingToken
+from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 
 from apps.api.common.auth_jwt import TenantAwareTokenObtainPairSerializer
 from apps.core.management.commands.setup_ymath_realuse_scenario import Command
-from apps.core.models import Program, Tenant, TenantMembership
+from apps.core.models import OpsAuditLog, Program, Tenant, TenantMembership
 from apps.core.models.user import user_display_username
 from apps.domains.parents.models import Parent
 from apps.domains.staffs.models import Staff
@@ -344,6 +345,180 @@ class SetupYmathRealuseScenarioTests(TestCase):
         self.assertIn('"remaining": {"tenants": 0, "users": 0}', out.getvalue())
         self.assertFalse(Tenant.objects.filter(id=tenant_id).exists())
         self.assertFalse(get_user_model().objects.filter(id__in=user_ids).exists())
+
+    def test_destroy_removes_only_owned_tokens_and_activity_audits_preserving_seal(self):
+        tenant_code = "qa-ymath-realuse-owned-evidence"
+        self._call_command(tenant_code=tenant_code)
+        tenant = Tenant.objects.get(code=tenant_code)
+        owned_users = list(tenant.users.order_by("id"))
+        owned_token_ids = [RefreshToken.for_user(user)["jti"] for user in owned_users]
+
+        other_tenant = Tenant.objects.create(code="other-evidence-tenant", name="Other")
+        other_user = get_user_model().objects.create_user(
+            username="other-evidence-user",
+            password="other-password",
+            tenant=other_tenant,
+        )
+        other_token_id = RefreshToken.for_user(other_user)["jti"]
+
+        seal = OpsAuditLog.objects.create(
+            actor_username="frontend-release-runner",
+            action="development.qa.setup",
+            target_tenant=tenant,
+            payload={"tenant_code": tenant_code, "tenant_id": tenant.id, "owner_sha256": "a" * 64},
+        )
+        owned_activity_ids = [
+            OpsAuditLog.objects.create(
+                actor_user=user,
+                actor_username=user.username,
+                action=action,
+                target_tenant=tenant,
+                target_user=user,
+                payload={"screen_id": "student.dashboard.home"},
+            ).id
+            for user, action in zip(
+                owned_users[:2],
+                ("student_activity.login", "student_activity.screen_view"),
+                strict=True,
+            )
+        ]
+        foreign_actor_audit = OpsAuditLog.objects.create(
+            actor_user=other_user,
+            actor_username=other_user.username,
+            action="student_activity.screen_view",
+            target_tenant=tenant,
+            target_user=owned_users[0],
+        )
+        outside_window_audit = OpsAuditLog.objects.create(
+            actor_user=owned_users[0],
+            actor_username=owned_users[0].username,
+            action="student_activity.screen_view",
+            target_tenant=tenant,
+            target_user=owned_users[0],
+        )
+        OpsAuditLog.objects.filter(id=outside_window_audit.id).update(
+            created_at=seal.created_at - timedelta(seconds=1)
+        )
+
+        out = StringIO()
+        with patch.dict(os.environ, {}, clear=True):
+            call_command(
+                "setup_ymath_realuse_scenario",
+                stdout=out,
+                tenant_code=tenant_code,
+                destroy=True,
+            )
+        payload = json.loads(out.getvalue().splitlines()[-1])
+
+        self.assertFalse(OutstandingToken.objects.filter(jti__in=owned_token_ids).exists())
+        self.assertTrue(OutstandingToken.objects.filter(jti=other_token_id).exists())
+        self.assertFalse(OpsAuditLog.objects.filter(id__in=owned_activity_ids).exists())
+        self.assertTrue(OpsAuditLog.objects.filter(id=foreign_actor_audit.id).exists())
+        self.assertTrue(OpsAuditLog.objects.filter(id=outside_window_audit.id).exists())
+        self.assertTrue(OpsAuditLog.objects.filter(id=seal.id, action="development.qa.setup").exists())
+        self.assertEqual(
+            payload["residue"],
+            {"activity_audits": 0, "outstanding_tokens": 0},
+        )
+
+    def test_destroy_fails_closed_when_activity_has_no_setup_ownership_seal(self):
+        tenant_code = "qa-ymath-realuse-unsealed-evidence"
+        self._call_command(tenant_code=tenant_code)
+        tenant = Tenant.objects.get(code=tenant_code)
+        user = tenant.users.order_by("id").first()
+        token_id = RefreshToken.for_user(user)["jti"]
+        activity = OpsAuditLog.objects.create(
+            actor_user=user,
+            actor_username=user.username,
+            action="student_activity.screen_view",
+            target_tenant=tenant,
+            target_user=user,
+        )
+
+        with patch.dict(os.environ, {}, clear=True), self.assertRaisesMessage(
+            CommandError,
+            "exact development.qa.setup ownership seal",
+        ):
+            call_command(
+                "setup_ymath_realuse_scenario",
+                tenant_code=tenant_code,
+                destroy=True,
+            )
+
+        self.assertTrue(Tenant.objects.filter(id=tenant.id).exists())
+        self.assertTrue(OutstandingToken.objects.filter(jti=token_id).exists())
+        self.assertTrue(OpsAuditLog.objects.filter(id=activity.id).exists())
+
+    def test_non_database_residue_uses_only_exact_prefix_process_and_listener_boundaries(self):
+        tenant_id = 712
+        tenant_code = "qa-ymath-realuse-residue"
+        exact_prefixes = (
+            f"tenants/{tenant_id}/",
+            f"excel/{tenant_id}/",
+            f"tenant-logos/{tenant_id}/",
+            f"landing-public/reviews/{tenant_id}/",
+            f"matchup-showcase-snapshots/tenant_{tenant_id}/",
+        )
+        requests = []
+        client = Mock()
+
+        def list_objects_v2(**kwargs):
+            requests.append(kwargs)
+            if kwargs["Prefix"] == exact_prefixes[0] and "ContinuationToken" not in kwargs:
+                return {"Contents": [{"Key": "one"}], "IsTruncated": True, "NextContinuationToken": "next"}
+            if kwargs.get("ContinuationToken") == "next":
+                return {"Contents": [{"Key": "two"}], "IsTruncated": False}
+            return {"Contents": [], "IsTruncated": False}
+
+        client.list_objects_v2.side_effect = list_objects_v2
+        owned_pid = str(os.getpid() + 10_000)
+        foreign_pid = str(os.getpid() + 10_001)
+
+        class FakePath:
+            def __init__(self, value):
+                self.value = str(value)
+
+            @property
+            def name(self):
+                return self.value.rsplit("/", 1)[-1]
+
+            def __truediv__(self, child):
+                return FakePath(f"{self.value}/{child}")
+
+            def iterdir(self):
+                self._assert_value("/proc")
+                return [FakePath(f"/proc/{owned_pid}"), FakePath(f"/proc/{foreign_pid}")]
+
+            def read_bytes(self):
+                if self.value == f"/proc/{owned_pid}/environ":
+                    return f"QA_TENANT={tenant_code}\0OTHER=value".encode()
+                if self.value == f"/proc/{foreign_pid}/environ":
+                    return b"QA_TENANT=foreign\0"
+                raise AssertionError(f"Unexpected bytes path: {self.value}")
+
+            def read_text(self):
+                if self.value == "/proc/net/tcp":
+                    return "header\n0: 0100007F:4650 00000000:0000 0A"
+                if self.value == "/proc/net/tcp6":
+                    return "header"
+                raise AssertionError(f"Unexpected text path: {self.value}")
+
+            def _assert_value(self, expected):
+                if self.value != expected:
+                    raise AssertionError(f"Expected {expected}, got {self.value}")
+
+        with patch("boto3.client", return_value=client), patch(
+            "apps.core.management.commands.setup_ymath_realuse_scenario.Path",
+            FakePath,
+        ):
+            residue = Command._non_database_residue(tenant_id=tenant_id, tenant_code=tenant_code)
+            no_tenant_residue = Command._non_database_residue(tenant_id=None, tenant_code=tenant_code)
+
+        self.assertEqual(residue, {"listeners": 1, "processes": 1, "r2_objects": 2})
+        self.assertEqual(no_tenant_residue, {"listeners": 1, "processes": 1, "r2_objects": 0})
+        self.assertEqual([request["Prefix"] for request in requests], [exact_prefixes[0], *exact_prefixes])
+        self.assertEqual(requests[1]["ContinuationToken"], "next")
+        self.assertTrue(all(request["Bucket"] == "test-storage" for request in requests))
 
     def test_destroy_is_idempotent_when_scenario_is_absent(self):
         out = StringIO()

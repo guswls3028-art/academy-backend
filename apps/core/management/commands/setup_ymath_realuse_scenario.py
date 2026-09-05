@@ -5,6 +5,7 @@ import os
 import re
 from collections import defaultdict
 from datetime import date, timedelta
+from pathlib import Path
 
 from django.apps import apps
 from django.conf import settings
@@ -12,8 +13,9 @@ from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connection, transaction
 from django.utils import timezone
+from rest_framework_simplejwt.token_blacklist.models import OutstandingToken
 
-from apps.core.models import Program, Tenant, TenantMembership
+from apps.core.models import OpsAuditLog, Program, Tenant, TenantMembership
 from apps.core.models.user import user_display_username, user_internal_username
 from apps.core.services.password import change_password
 from apps.domains.parents.services import ensure_parent_account_for_student
@@ -40,6 +42,11 @@ LOGIN_UAT_RESERVED_USERNAME_PREFIXES = (
     "ymath-qa-student-",
     "ymath-qa-staff-",
     "staff-",
+)
+SCENARIO_ACTIVITY_AUDIT_ACTIONS = (
+    "student_activity.login",
+    "student_activity.screen_view",
+    "student_activity.target_open",
 )
 
 
@@ -136,15 +143,19 @@ class Command(BaseCommand):
         assert_isolated_runtime()
         if options["destroy"]:
             deleted = None
+            residue = {"activity_audits": 0, "outstanding_tokens": 0}
             with transaction.atomic():
                 self._lock_tenant_code(tenant_code)
                 existing = self._exact_tenant_or_fail_on_case_variant(tenant_code)
                 if existing is not None:
+                    evidence = self._cleanup_ephemeral_evidence(existing)
                     deleted = {
                         "tenant_id": existing.id,
                         "counts": self._tenant_counts(existing),
                         "users": existing.users.count(),
+                        **evidence["deleted"],
                     }
+                    residue = evidence["remaining"]
                     existing.delete()
 
             remaining = self._remaining_for_code(tenant_code)
@@ -161,6 +172,7 @@ class Command(BaseCommand):
                             "status": "YMATH_REALUSE_SCENARIO_ABSENT",
                             "tenant_code": tenant_code,
                             "remaining": {"tenants": 0, "users": 0},
+                            "residue": residue,
                         },
                         ensure_ascii=False,
                         sort_keys=True,
@@ -174,8 +186,14 @@ class Command(BaseCommand):
                         "status": "YMATH_REALUSE_SCENARIO_DESTROYED",
                         "tenant_code": tenant_code,
                         "tenant_id": deleted["tenant_id"],
-                        "deleted": {**deleted["counts"], "users": deleted["users"]},
+                        "deleted": {
+                            **deleted["counts"],
+                            "users": deleted["users"],
+                            "activity_audits": deleted["activity_audits"],
+                            "outstanding_tokens": deleted["outstanding_tokens"],
+                        },
                         "remaining": remaining,
+                        "residue": residue,
                     },
                     ensure_ascii=False,
                     sort_keys=True,
@@ -210,6 +228,7 @@ class Command(BaseCommand):
                 raise CommandError("--login-uat requires --reset when the tenant already exists.")
             reset_counts = self._tenant_counts(existing) if existing and options["reset"] else None
             if existing and options["reset"]:
+                self._cleanup_ephemeral_evidence(existing)
                 existing.delete()
 
             tenant, _ = Tenant.objects.get_or_create(
@@ -503,6 +522,136 @@ class Command(BaseCommand):
             "tenants": Tenant.objects.filter(code__iexact=tenant_code).count(),
             "users": get_user_model().objects.filter(tenant__code__iexact=tenant_code).count(),
         }
+
+    @staticmethod
+    def _cleanup_ephemeral_evidence(tenant) -> dict[str, dict[str, int]]:
+        """Delete only transient evidence owned by one exact disposable scenario."""
+
+        user_ids = list(tenant.users.values_list("id", flat=True))
+        token_rows = OutstandingToken.objects.filter(user_id__in=user_ids)
+        token_ids = list(token_rows.values_list("id", flat=True))
+        activity_rows = Command._owned_activity_rows(tenant=tenant, user_ids=user_ids)
+        activity_ids = list(activity_rows.values_list("id", flat=True))
+
+        deleted = {
+            "activity_audits": len(activity_ids),
+            "outstanding_tokens": len(token_ids),
+        }
+        if activity_ids:
+            OpsAuditLog.objects.filter(id__in=activity_ids).delete()
+        if token_ids:
+            OutstandingToken.objects.filter(id__in=token_ids).delete()
+        remaining = {
+            "activity_audits": OpsAuditLog.objects.filter(id__in=activity_ids).count(),
+            "outstanding_tokens": OutstandingToken.objects.filter(id__in=token_ids).count(),
+        }
+        if any(remaining.values()):
+            raise CommandError(
+                "Isolated scenario cleanup left owned token or activity-audit residue: "
+                + json.dumps(remaining, sort_keys=True)
+            )
+        return {"deleted": deleted, "remaining": remaining}
+
+    @staticmethod
+    def _owned_database_residue(tenant) -> dict[str, int]:
+        user_ids = list(tenant.users.values_list("id", flat=True))
+        activity_rows = Command._owned_activity_rows(tenant=tenant, user_ids=user_ids)
+        return {
+            "activity_audits": activity_rows.count(),
+            "outstanding_tokens": OutstandingToken.objects.filter(user_id__in=user_ids).count(),
+        }
+
+    @staticmethod
+    def _owned_activity_rows(*, tenant, user_ids):
+        activity_rows = OpsAuditLog.objects.filter(
+            action__in=SCENARIO_ACTIVITY_AUDIT_ACTIONS,
+            target_tenant=tenant,
+            target_user_id__in=user_ids,
+            actor_user_id__in=user_ids,
+            created_at__lte=timezone.now(),
+        )
+        ownership_started_at = (
+            OpsAuditLog.objects.filter(
+                action="development.qa.setup",
+                target_tenant=tenant,
+                result="success",
+                payload__tenant_code=tenant.code,
+                payload__tenant_id=tenant.id,
+            )
+            .order_by("created_at")
+            .values_list("created_at", flat=True)
+            .first()
+        )
+        if ownership_started_at is None:
+            if activity_rows.exists():
+                raise CommandError(
+                    "Refusing to delete scenario activity without an exact development.qa.setup ownership seal."
+                )
+            return activity_rows.none()
+        return activity_rows.filter(created_at__gte=ownership_started_at)
+
+    @staticmethod
+    def _non_database_residue(*, tenant_id: int | None, tenant_code: str) -> dict[str, int]:
+        import boto3
+        from botocore.config import Config
+
+        client = boto3.client(
+            "s3",
+            endpoint_url=settings.R2_ENDPOINT,
+            region_name=settings.R2_REGION,
+            aws_access_key_id=settings.R2_ACCESS_KEY,
+            aws_secret_access_key=settings.R2_SECRET_KEY,
+            config=Config(
+                connect_timeout=10,
+                read_timeout=10,
+                retries={"total_max_attempts": 2},
+            ),
+        )
+        r2_objects = 0
+        if tenant_id is not None:
+            prefixes = (
+                f"tenants/{tenant_id}/",
+                f"excel/{tenant_id}/",
+                f"tenant-logos/{tenant_id}/",
+                f"landing-public/reviews/{tenant_id}/",
+                f"matchup-showcase-snapshots/tenant_{tenant_id}/",
+            )
+            for prefix in prefixes:
+                continuation_token = None
+                while True:
+                    request = {
+                        "Bucket": settings.R2_STORAGE_BUCKET,
+                        "Prefix": prefix,
+                        "MaxKeys": 1000,
+                    }
+                    if continuation_token:
+                        request["ContinuationToken"] = continuation_token
+                    page = client.list_objects_v2(**request)
+                    r2_objects += len(page.get("Contents") or [])
+                    if not page.get("IsTruncated"):
+                        break
+                    continuation_token = page["NextContinuationToken"]
+
+        marker = f"QA_TENANT={tenant_code}".encode()
+        processes = 0
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit() or int(entry.name) == os.getpid():
+                continue
+            try:
+                environment = (entry / "environ").read_bytes().split(b"\0")
+            except (FileNotFoundError, PermissionError, ProcessLookupError):
+                continue
+            if marker in environment:
+                processes += 1
+
+        expected_port = f"{18000:04X}"
+        listeners = 0
+        for filename in ("/proc/net/tcp", "/proc/net/tcp6"):
+            for line in Path(filename).read_text().splitlines()[1:]:
+                columns = line.split()
+                if len(columns) >= 4 and columns[1].rsplit(":", 1)[-1] == expected_port and columns[3] == "0A":
+                    listeners += 1
+        return {"listeners": listeners, "processes": processes, "r2_objects": r2_objects}
 
     @staticmethod
     def _validate_login_uat_contract(*, tenant, teacher, students, parents, staffs) -> None:

@@ -164,8 +164,25 @@ Cleanup은 같은 advisory lock/transaction 아래 exact tenant에 연결된 성
 정확히 1개이고 요청 capability digest가 일치할 때만 같은 명령의 destroy를 호출한다.
 누락·중복·다른 run capability·다른 tenant ID는 거부한다. 이미 부재하면 numeric
 tenant/user0 확인만 하고 destroy는 호출하지 않는다. 생성/정리가 겹쳐도 소유권 검사와
-destroy 사이에 lock을 풀지 않는다. 생성의 PII-free 감사 행은 tenant 삭제 후 FK가
-NULL인 보안 증거로 남으며 tenant/user 잔여 수와 별도로 구분한다.
+destroy 사이에 lock을 풀지 않는다. destroy는 user 삭제 전에 exact scenario user의
+SimpleJWT outstanding token만 삭제한다. 학생 activity 감사 행은
+`student_activity.login/screen_view/target_open`, exact target tenant, scenario
+actor/target user, 현재 시각 이하, 그리고 최초 성공 `development.qa.setup` seal 시각
+이후를 모두 만족할 때만 삭제한다. activity가 있는데 이 seal이 없으면 시간 범위를
+추정하지 않고 전체 destroy를 거부한다. 다른 tenant/user, 다른 actor, seal 이전 감사
+행은 보존한다. 생성의 PII-free setup seal 자체도 tenant 삭제 후 FK가 NULL인 보안
+증거로 남는다.
+
+Inspect/Setup/Cleanup 출력은 tenant/user 수와 별도로 `outstanding_tokens`,
+`activity_audits`, exact development R2 prefix의 `r2_objects`, exact `QA_TENANT`
+환경을 가진 다른 container process의 `processes`, container port 18000 LISTEN의
+`listeners`를 모두 numeric residue로 반환한다. Setup/Cleanup에서 하나라도 0이 아니면
+고정 문서가 실패한다. R2는 `tenants/<id>/`, `excel/<id>/`,
+`tenant-logos/<id>/`, `landing-public/reviews/<id>/`,
+`matchup-showcase-snapshots/tenant_<id>/`만 열거하며 여기서 broad object 삭제를 하지
+않는다. process/listener 수는 원격 development API container 경계다. runner 로컬
+tunnel/process와 AWS Session tuple은 frontend 계약이 별도로 종료·증명한다. 이 변경은
+스키마나 기존 데이터 migration을 만들지 않는다.
 
 이 경계는 생성 요청자가 보유한 capability의 증명이며 GitHub JWT의 run claim을 서버가
 직접 검증한 것은 아니다. 원문 capability는 runner 메모리와 고정 SSM parameter로만
@@ -257,7 +274,10 @@ QA 원격 명령은 curl 각 10초, Docker inspect 15초(+kill 5초), Docker exe
 고정 문서의 소유권 함수 및 실제 `run()` cleanup 분기는
 `scripts/v1/test_frontend_development_qa.py`에서 로컬 fake DB/command로 검사한다.
 타 run/미소유/중복 record의 destroy 호출은 0, 자기 소유만 1, 부재는 0을 요구한다.
-외부 QA tenant나 실제 DB 행을 삭제하는 회귀가 아니다.
+또한 token/activity/R2/process/listener residue가 모두 numeric 0이어야 한다. 실제
+cleanup 명령 회귀는 scenario command 테스트에서 소유 user token과 seal 이후 activity만
+삭제하고, 타 tenant token·다른 actor·seal 이전 activity·setup seal을 보존하는지
+검증한다. 외부 QA tenant나 실제 DB 행을 삭제하는 회귀가 아니다.
 
 ## 최초 구성
 
