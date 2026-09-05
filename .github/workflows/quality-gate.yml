@@ -250,7 +250,10 @@ jobs:
             image="academy-${service}:curl-probe"
             docker run --rm --user root --entrypoint sh "$image" -c '
               set -eu
-              test "$(dpkg-query -W -f="${Version}" libcurl4t64)" = "8.21.0-2~bpo13+1"
+              test "$(dpkg-query -W -f="\${Version}" libcurl4t64)" = "8.21.0-2~bpo13+1"
+              test "$(dpkg-query -W -f="\${Version}" libnghttp3-9)" = "1.15.0-1~bpo13+1"
+              test "$(dpkg-query -W -f="\${Version}" libngtcp2-16)" = "1.22.1-1~bpo13+1"
+              test "$(dpkg-query -W -f="\${Version}" libngtcp2-crypto-ossl0)" = "1.22.1-1~bpo13+1"
               tesseract --version >/dev/null
               ldd "$(command -v tesseract)" | grep -q "libcurl.so.4"
               test -z "$(dpkg --audit)"
