@@ -676,11 +676,21 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
         command = Mock()
         command._exact_tenant_or_fail_on_case_variant.return_value = SimpleNamespace(pk=72)
         command._remaining_for_code.return_value = {"tenants": 1, "users": 2}
+        command._owned_database_residue.return_value = {
+            "activity_audits": 0,
+            "outstanding_tokens": 0,
+        }
+        command._non_database_residue.return_value = {
+            "listeners": 0,
+            "processes": 0,
+            "r2_objects": 0,
+        }
         cursor = MagicMock()
         audit = Mock()
         destroy = Mock(side_effect=lambda *args, **kwargs: kwargs["stdout"].write(json.dumps({
             "status": "YMATH_REALUSE_SCENARIO_DESTROYED", "tenant_code": tenant,
             "remaining": {"tenants": 0, "users": 0},
+            "residue": {"activity_audits": 0, "outstanding_tokens": 0},
         })))
         bucket_keys = ("R2_AI_BUCKET", "R2_STORAGE_BUCKET", "R2_ADMIN_BUCKET", "R2_VIDEO_BUCKET", "R2_EXCEL_BUCKET")
         settings = SimpleNamespace(
@@ -717,9 +727,20 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
             audit.filter.return_value.values_list.return_value = [own_record]
             result = namespace["run"]()
             self.assertEqual(result["remaining"], {"tenants": 0, "users": 0})
+            self.assertEqual(result["residue"], {
+                "activity_audits": 0,
+                "listeners": 0,
+                "outstanding_tokens": 0,
+                "processes": 0,
+                "r2_objects": 0,
+            })
             self.assertEqual(destroy.call_count, 1)
             self.assertTrue(destroy.call_args.kwargs["destroy"])
             self.assertEqual(destroy.call_args.kwargs["tenant_code"], tenant)
+            command._non_database_residue.assert_called_once_with(
+                tenant_id=72,
+                tenant_code=tenant,
+            )
             command._exact_tenant_or_fail_on_case_variant.return_value = None
             command._remaining_for_code.return_value = {"tenants": 0, "users": 0}
             self.assertEqual(namespace["run"]()["status"], "YMATH_REALUSE_SCENARIO_ABSENT")
@@ -796,7 +817,7 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
                          "187f6ac218435d3b3f938d903153c5785db3529ace89f4e79ea9b6e1bde8ddb6")
         for path, expected in (
             ("iam/trust_frontend_development_qa.json", "aa2c1a60b63ad287c2e8caba7257beaafe5d602df66659c3093f917ad670713a"),
-            ("ssm/frontend_development_qa.json", "308815f63ebce3584c2a2b162a20418b6f54a8b0ecd80bb9c5543bc51c34652d"),
+            ("ssm/frontend_development_qa.json", "35867ef06dd6933993a1e716b6d7deb9e2242010e0f22ba93a59888c1889b340"),
             ("ssm/frontend_development_api_port.json", "974b6bf4e518533ee0ecd14c5e82b0a5f0538813e41253940cd46a6cb5e8d173"),
         ):
             with self.subTest(path=path):
@@ -823,6 +844,16 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
         compile(python, "fixed-development-session", "exec")
         self.assertIn('assert existing is None', python)
         self.assertIn('payload["remaining"] == {"tenants": 0, "users": 0}', python)
+        self.assertIn('payload["residue"] == {"activity_audits": 0, "outstanding_tokens": 0}', python)
+        self.assertIn('payload["residue"] == {"activity_audits": 0, "outstanding_tokens": 0, "listeners": 0,', python)
+        for residue_key in (
+            "activity_audits",
+            "listeners",
+            "outstanding_tokens",
+            "processes",
+            "r2_objects",
+        ):
+            self.assertIn(f'"{residue_key}"', python)
         self.assertNotIn("reset=True", python)
         port = json.loads((directory / "frontend_development_api_port.json").read_text())
         self.assertEqual(port["properties"], {"portNumber": "8000", "localPortNumber": "18000", "type": "LocalPortForwarding"})
