@@ -12,6 +12,8 @@ Self-contained instructions for the backend Git root.
   bounded `rg`/targeted reads and concise evidence; keep full logs in artifacts.
   Reuse unchanged passing checks unless failures/risks remain. Delegate only
   useful bounded independent work with minimal context; delegation is optional.
+- For risk-based effort, review delegation, truncated-output recovery or evidence
+  reuse, read `docs/operations/concurrent-codex-sessions.md` → Execution efficiency.
 
 ## Scope and authority
 

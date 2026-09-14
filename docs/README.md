@@ -72,7 +72,7 @@ backend/docs/
 | 컨테이너 이미지 보안 | [operations/container-image-security.md](operations/container-image-security.md) |
 | 상시 개발 런타임 | [operations/persistent-development-runtime.md](operations/persistent-development-runtime.md) |
 | 수동 정식 배포 | [operations/formal-deploy.md](operations/formal-deploy.md) |
-| 동시 Codex 세션 격리·정리 | [operations/concurrent-codex-sessions.md](operations/concurrent-codex-sessions.md) |
+| Codex 추론·위임·출력 복구·검증 재사용 / 세션 격리·정리 | [operations/concurrent-codex-sessions.md](operations/concurrent-codex-sessions.md) |
 | 변경 위험 라우팅·교차 저장소 릴리스 증거 | [operations/change-risk-and-release-bundle.md](operations/change-risk-and-release-bundle.md) |
 | 실패 은폐·정상 이용 복구 후보와 수리 상태 | [refactor/failure-transparency-stabilization.md](refactor/failure-transparency-stabilization.md) |
 | 운영 canary·E2E 잔재 정리 | [operations/production-canary.md](operations/production-canary.md) |
