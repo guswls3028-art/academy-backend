@@ -31,6 +31,134 @@ Compatible patches do not wait for a default 04:00 slot. Use the current
 technical holds until their actual release conditions pass. Historical task
 windows and old automation snapshots are not current release evidence.
 
+## Execution efficiency
+
+Read this section when choosing reasoning for design/review, delegating work,
+recovering truncated output, or reusing evidence. Optimize total consumption and
+elapsed time per verified completed task, including rework; shorter prompts or
+less reasoning alone do not establish savings or equal quality. Safety,
+acceptance criteria, scoped HOLDs, required CI and delivery ownership still apply.
+
+### Reasoning by actual change impact
+
+Keep the user defaults at the chosen model and `medium` for normal and Plan
+work. Never copy the current task's `ultra` into new-task/subagent defaults.
+
+| Actual work | Reasoning choice |
+|---|---|
+| Read-only lookup, prose cleanup, clear small fixes, ordinary existing-pattern implementation | `medium` |
+| Frontend/backend contract changes or broad structural changes | Consider `high` for design and final review |
+| Tenant isolation, auth/authorization, user-data integrity, message duplication/retry, migrations, deployment/recovery safety | Start the relevant analysis/review at `high` or above, before a failure |
+| Adequate evidence but unresolved cause/design, or repeated edit/test failure without new evidence | Change approach or consider higher reasoning; do not repeat the same loop |
+| Complex analysis unresolved at `high`, or a specifically justified high-risk review | Consider `ultra` only for that scope |
+
+Classify the actual impact, not words appearing in a document. Missing context,
+truncated logs, access denial and environment faults need evidence or recovery,
+not a larger reasoning setting.
+
+Instructions saying "think at high" do not change runtime effort. In the app,
+select High in the task's model/reasoning picker before the relevant work; an
+existing task's selection applies to subsequent turns. A CLI invocation can use
+`codex -c 'model_reasoning_effort="high"' -c 'plan_mode_reasoning_effort="high"'`
+without changing saved defaults. The app-server supports an explicit next-turn
+`effort` override, but AGENTS cannot switch an in-flight turn itself. If the
+current interface cannot change effort, state the required task setting and its
+scope to the user before the high-risk analysis; do not claim automatic routing.
+Use only values advertised by the installed model. A task run at `ultra` is not
+evidence that `medium` preserves its quality.
+
+### Valuable delegation and context
+
+Keep one concurrent subagent and default subagent effort `medium`. This limits
+simultaneously open subagents, not lifetime agent count, total tokens or cost.
+Small tasks need no agent. Reuse completed findings or the existing agent for a
+new bounded question instead of sequentially spawning near-duplicate workers.
+
+Supply the objective, exact paths/symbols/SHA, relevant constraints/invariants,
+expected result, and established facts/failure evidence. Omit unrelated history
+and whole documents/logs; do not omit evidence essential for correct review.
+With the available collaboration tool, `fork_turns: "none"` excludes surrounding
+conversation history. A positive integer string carries that many recent turns,
+not a token allowance. Runtime/project/tool instructions still occupy context,
+and files remain shared: a short prompt does not prove a small actual input.
+If the interface cannot control inheritance, record that limit instead of
+promising reduced context.
+
+For consequential changes, one independently scoped reviewer may inspect exact
+changed contracts and failure boundaries without repeating implementation.
+Explicitly request review delegation when needed, e.g. "Use one independent
+High reviewer for this exact change." Where supported, use
+`spawn_agent(fork_turns="none", reasoning_effort="high", message=<bounded brief>)`.
+The actual effort argument matters. Omitted/`all` history forks inherit the
+parent's model/effort and cannot accept these overrides; avoid them when they
+would carry `ultra`. Keep the model choice unchanged unless separately assigned.
+
+On installed Codex 0.154.0-alpha.6.2, `multiAgentMode` input is deprecated/ignored
+and the response always says `explicitRequestOnly`; this field does not prove
+delegation behavior. The model catalog associates Ultra with automatic task
+delegation. Do not expect a medium task to delegate review automatically; use
+the explicit request and check the available tool's current contract.
+
+### Output recovery and complete review
+
+Keep `tool_output_token_limit=4000`: it budgets each individual tool/function
+output stored in history, not the whole conversation/task, generated stdout or
+an archive. Tool-specific output limits/pagination may also apply.
+
+When long output must remain inspectable, explicitly redirect it to a suitable
+temporary/existing log before execution. Report exit code, failure summary,
+source path and relevant ranges. Do not permanently archive all successful
+output. If truncated, search/read missing ranges from that source; do not rerun
+the command or repeatedly dump the full log just to recover stdout. If a
+connector truncated upstream, use its pagination/refetch path. The setting
+does not guarantee original-file storage, and raising it cannot restore missing
+upstream content. Never repeat a mutation solely to recover output.
+
+Track which files/sections were actually inspected. Partial diff/log excerpts
+do not establish complete contract, migration or permission review; inspect the
+missing material before closure. Consider a supported per-command/read limit
+override only for recurring, evidenced re-read costs; do not change the global
+limit speculatively or confuse display budget with history storage.
+
+### Durable context, evidence reuse and measurement
+
+Keep automatic memory use/generation off and existing memory files intact.
+Use versioned owners instead of a new diary or memory index. Before decisions
+that depend on them, read current HOLD scope/owner/release conditions in the
+[deployment owner](deployment-modes.md) and frontend `DEPLOYMENT-OPERATIONS.md`,
+and the exact SHA/environment/run evidence in the
+[change-risk owner](change-risk-and-release-bundle.md). Missing release evidence
+does not clear a HOLD. Record important design decisions and reusable rejected
+approaches with their reasons in the affected current-state owner only when
+needed; do not reconstruct prior conversations or accumulate speculative TODOs.
+
+Reuse a check only after confirming relevant code, tests, dependencies, inputs
+and environment match, or documenting why their differences cannot affect the
+claim. Keep the tested SHA/environment and artifact/run link with that claim.
+File extensions such as `.md` or "config" do not prove unchanged behavior;
+assess effective behavior and retain required CI. Canonical and owned worktrees,
+saved defaults, new-session values and existing task/composer state are distinct.
+Read this owner from the fresh owned checkout/origin/main when canonical is stale.
+
+Fast is a separate speed/usage selection for the same model, not reasoning.
+Check installed catalog, authentication route, effective tier and current
+[official Speed guidance](https://learn.chatgpt.com/docs/agent-configuration/speed)
+before changing it. Preserve explicit task choices; an absent saved preference
+does not establish the tier of an existing turn. Never apply API billing claims
+to subscription usage or infer a credit multiplier from raw token counts.
+
+For a few ordinary subsequent tasks, use the existing completion report/artifact
+to note task type/risk, actual model/effort/tier, unique primary+child usage and
+elapsed time, edit/check repeats, review omissions and later reopening. Count
+each usage event once (not parent inherited baselines plus child totals). Measure
+subscription-window changes only when resets and other task consumption can be
+separated. Compare verified completions including rework, not cached-token ratio,
+reasoning share or AGENTS size. Separate canonical/owned and new/existing session
+cohorts. A small medium/high comparison needs the same starting state and
+acceptance criteria; no mass benchmark or quality-equivalence claim by default.
+
+Configuration semantics: [official reference](https://developers.openai.com/codex/config-reference/).
+
 ## Ownership model
 
 - `C:\academy\backend` and `C:\academy\frontend` are canonical readback roots.
