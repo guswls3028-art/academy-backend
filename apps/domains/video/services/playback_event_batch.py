@@ -9,7 +9,7 @@ from django.utils import timezone
 from academy.adapters.db.django import repositories_video as video_repo
 from academy.application.use_cases.student_video_access_context import lecture_allows_student_learning
 from apps.domains.video.models import AccessMode, Video, VideoPlaybackEvent, VideoPlaybackEventBatch, VideoPlaybackSession
-from apps.domains.video.services.access_resolver import get_effective_access_mode
+from apps.domains.video.services.access_resolver import get_effective_access_mode, is_completed_review_transition
 from apps.domains.video.services.playback_policy import build_effective_playback_policy
 from apps.domains.video.services.playback_session import get_tenant_session_limits, should_revoke_by_stats
 
@@ -66,16 +66,23 @@ def _lock_write_scope(reference, tenant_id, student_id, payload):
 
 
 def _policy(video, enrollment, payload):
+    access_mode = get_effective_access_mode(video=video, enrollment=enrollment)
     if (
         not lecture_allows_student_learning(video.session.lecture)
         or video.policy_version != payload.get("pv")
         or payload.get("access_mode") != AccessMode.PROCTORED_CLASS.value
-        or get_effective_access_mode(video=video, enrollment=enrollment) != AccessMode.PROCTORED_CLASS
+        or (
+            access_mode != AccessMode.PROCTORED_CLASS
+            and not is_completed_review_transition(
+                video=video, enrollment=enrollment,
+                token_access_mode=payload.get("access_mode"), access_mode=access_mode,
+            )
+        )
         or (video.visibility != Video.Visibility.PUBLIC and not video_repo.session_enrollment_exists(video.session, enrollment))
     ):
         raise PlaybackBatchError("policy_changed", 403)
     policy = build_effective_playback_policy(
-        video=video, access_mode=AccessMode.PROCTORED_CLASS,
+        video=video, access_mode=access_mode,
         permission=video_repo.video_access_get(video, enrollment),
         progress=video_repo.video_progress_get(video, enrollment),
     )

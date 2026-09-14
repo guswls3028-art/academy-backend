@@ -47,6 +47,7 @@ from ..serializers import (
     PlaybackV2ResponseSerializer,
 )
 from ..drm import create_playback_token, verify_playback_token
+from ..services.access_resolver import is_completed_review_transition
 from ..services.playback_session import (
     heartbeat_session,
     end_session,
@@ -156,7 +157,14 @@ def _is_policy_token_valid(payload: dict) -> bool:
         if current_access_mode == AccessMode.BLOCKED:
             return False
         token_access_mode = payload.get("access_mode")
-        if token_access_mode and token_access_mode != current_access_mode.value:
+        if (
+            token_access_mode
+            and token_access_mode != current_access_mode.value
+            and not is_completed_review_transition(
+                video=v, enrollment=enrollment,
+                token_access_mode=token_access_mode, access_mode=current_access_mode,
+            )
+        ):
             return False
     except Exception:
         return False
@@ -576,13 +584,21 @@ class PlaybackRenewView(APIView):
                     video=current_video,
                     enrollment=enrollment,
                 )
+                completed_review = is_completed_review_transition(
+                    video=current_video, enrollment=enrollment,
+                    token_access_mode=payload.get("access_mode"), access_mode=access_mode,
+                )
                 if (
                     access_mode == AccessMode.BLOCKED
-                    or payload.get("access_mode") != access_mode.value
+                    or (payload.get("access_mode") != access_mode.value and not completed_review)
                     or expected_policy_version != _policy_version_of(current_video)
                 ):
                     return _deny("policy_changed", code=403)
 
+                # Preserve the admitted session/protocol while the client adopts review policy.
+                # A new bootstrap already receives FREE_REVIEW with no monitored session.
+                if completed_review:
+                    access_mode = AccessMode.PROCTORED_CLASS
                 monitoring_enabled = access_mode == AccessMode.PROCTORED_CLASS
                 session_id = str(payload.get("session_id") or "") or None
                 playback_session = None

@@ -21,7 +21,7 @@ from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.students.models import Student
 from apps.domains.video.drm import create_playback_token
-from apps.domains.video.models import Video, VideoPlaybackEvent, VideoPlaybackEventBatch, VideoPlaybackSession
+from apps.domains.video.models import Video, VideoPlaybackEvent, VideoPlaybackEventBatch, VideoPlaybackSession, VideoProgress
 from apps.domains.video.services import playback_event_batch, playback_session
 from apps.domains.video.views import playback_views
 
@@ -137,6 +137,44 @@ class TestVideoFinalEventAtomicity(TransactionTestCase):
             self.assertEqual(data["acknowledgements"], [{"batch_id": self.batch["batch_id"], "event_count": 1, "duplicate": True}])
             self.assertEqual(self.snapshot(), {"status": "ENDED", "counter": 1, "audit_rows": 1})
             self.assertEqual(self.playback.event_batches.count(), 1)
+
+    def test_completed_review_drains_existing_batches_without_seek_violations(self):
+        VideoProgress.objects.create(
+            video=self.video, enrollment=self.enrollment, progress=0.9, completed=True,
+        )
+        self.batch["events"] = [{"type": "SEEK_ATTEMPT", "payload": {}}]
+        code, data = self.request("events")
+        self.assertEqual(code, 201, data)
+        event = VideoPlaybackEvent.objects.get()
+        self.assertEqual(event.policy_snapshot["access_mode"], "FREE_REVIEW")
+        self.assertFalse(event.violated)
+        final_batch = {"batch_id": str(uuid.uuid4()), "events": [{"type": "SEEK_ATTEMPT"}]}
+        code, data = self.request("end", batches=[self.batch, final_batch])
+        self.assertEqual(code, 200, data)
+        self.assertEqual(data["inserted_count"], 1)
+        self.assertEqual(self.snapshot(), {"status": "ENDED", "counter": 2, "audit_rows": 2})
+        self.assertEqual(self.playback.violated_count, 0)
+        repeated, data = self.request("end", batches=[self.batch, final_batch])
+        self.assertEqual(repeated, 200, data)
+        self.assertEqual(data["inserted_count"], 0)
+
+    def test_completed_review_drain_rejects_policy_change_and_withdrawal(self):
+        VideoProgress.objects.create(
+            video=self.video, enrollment=self.enrollment, progress=0.9, completed=True,
+        )
+        self.video.policy_version += 1
+        self.video.save(update_fields=["policy_version"])
+        for kind in ("events", "end"):
+            code, data = self.request(kind, batches=[self.batch])
+            self.assertEqual(code, 403, data)
+        self.video.policy_version -= 1
+        self.video.save(update_fields=["policy_version"])
+        SessionEnrollment.objects.filter(session=self.lesson, enrollment=self.enrollment).delete()
+        for kind in ("events", "end"):
+            code, data = self.request(kind, batches=[self.batch])
+            self.assertEqual(code, 403, data)
+        self.assertEqual(self.snapshot(), {"status": "ACTIVE", "counter": 0, "audit_rows": 0})
+        self.assertEqual(VideoPlaybackEventBatch.objects.count(), 0)
 
     def test_new_unsubmitted_event_after_end_remains_rejected(self):
         self.assertEqual(self.request("end")[0], 200)
