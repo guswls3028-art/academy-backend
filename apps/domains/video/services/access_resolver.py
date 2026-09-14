@@ -18,6 +18,26 @@ from apps.domains.video.policy import is_video_progress_complete
 from academy.adapters.db.django import repositories_video as video_repo
 
 
+def has_completed_proctored_watch(*, video: Video, enrollment) -> bool:
+    perm = video_repo.video_access_get(video, enrollment)
+    if perm and perm.proctored_completed_at is not None:
+        return True
+    progress = video_repo.video_progress_get(video, enrollment)
+    return bool(progress and is_video_progress_complete(progress.progress, progress.completed))
+
+
+def is_completed_review_transition(
+    *, video: Video, enrollment, token_access_mode, access_mode: AccessMode,
+) -> bool:
+    """Allow an existing monitored grant to finish after completion, subject to scope/pv checks."""
+    return (
+        token_access_mode == AccessMode.PROCTORED_CLASS.value
+        and access_mode == AccessMode.FREE_REVIEW
+        and getattr(enrollment, "status", None) == "ACTIVE"
+        and has_completed_proctored_watch(video=video, enrollment=enrollment)
+    )
+
+
 def _resolve_access_mode_loaded(
     *,
     perm,
@@ -175,6 +195,11 @@ def get_effective_access_mode(
         )
 
     if perm and perm.is_override:
+        if (
+            perm.access_mode == AccessMode.PROCTORED_CLASS
+            and has_completed_proctored_watch(video=video, enrollment=enrollment)
+        ):
+            return AccessMode.FREE_REVIEW
         return AccessMode(perm.access_mode)
 
     return resolve_access_mode(

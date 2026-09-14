@@ -579,6 +579,22 @@ skip allowance. Once completed `VideoProgress` or
 seeking is restored; ordinary offline/review students receive the same free
 seeking without needing a prior per-video completion row. No review-mode rule
 overrides an explicit `block_seek=True`.
+Completion also releases an explicit `PROCTORED_CLASS`/legacy `once` override:
+the student's ordinary progress save is sufficient, and the completion marker
+works without a progress row. `BLOCKED`, inactive enrollment authorization and
+exact session membership checks still precede this completion rule.
+
+An already admitted monitored playback session may finish across that completion
+transition. With unchanged `policy_version`, current exact ACTIVE enrollment
+access and completed progress or a completion marker, its existing
+`PROCTORED_CLASS` token remains valid for refresh, heartbeat, renewal and final
+event delivery. Renewal retains the signed mode, session identity and event
+protocol; new playback bootstrap returns `FREE_REVIEW` without a monitored
+session. Late events use the current effective policy, so free review seeking
+does not become a violation, and protocol2 final receipts remain atomic and
+idempotent. This exception never revives an expired/revoked session or survives
+withdrawal, `BLOCKED`, a policy-version change or an unrelated access-mode change.
+The player can therefore adopt review controls without interrupting playback.
 The student player must consume the nested `policy` returned by
 `POST /api/v1/student/video/videos/{video_id}/playback/`; the flat video fields
 are display metadata, not a second policy source.
