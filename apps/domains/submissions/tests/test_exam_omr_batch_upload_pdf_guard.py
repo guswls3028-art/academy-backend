@@ -201,6 +201,10 @@ class ExamOMRBatchUploadPdfGuardTests(TestCase):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.data["created_count"], 1)
         upload_fileobj_to_r2.assert_called_once()
+        # A stalled R2 connection must fail fast, not hang on boto3's
+        # unbounded default (apps/infrastructure/storage/r2.py). Guards
+        # against this kwarg silently being dropped in a future refactor.
+        self.assertEqual(upload_fileobj_to_r2.call_args.kwargs["timeout_seconds"], 30)
         dispatch_submission.assert_called_once()
 
     def test_initializes_a_durable_batch_before_file_admission(self):
