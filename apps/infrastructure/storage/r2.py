@@ -45,11 +45,12 @@ def upload_fileobj_to_r2(
     fileobj,
     key: str,
     content_type: str | None = None,
+    timeout_seconds: int | None = None,
 ) -> None:
     """
     Django UploadedFile -> R2 업로드 (AI 버킷)
     """
-    s3 = _get_s3_client()
+    s3 = _get_s3_client(timeout_seconds=timeout_seconds)
     s3.upload_fileobj(
         Fileobj=fileobj,
         Bucket=settings.R2_AI_BUCKET,

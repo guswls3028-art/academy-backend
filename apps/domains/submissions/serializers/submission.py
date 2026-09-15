@@ -126,6 +126,12 @@ class SubmissionCreateSerializer(serializers.ModelSerializer):
                     fileobj=upload_file,
                     key=key,
                     content_type=getattr(upload_file, "content_type", None),
+                    # Bounded so a stalled R2 connection fails fast instead of
+                    # holding the request (and this create() call's caller's
+                    # row locks, where applicable) for boto3's unbounded
+                    # default. 30s comfortably covers this app's upload size
+                    # limits (e.g. OMR batch upload's 10MB cap).
+                    timeout_seconds=30,
                 )
                 uploaded = True
                 self.uploaded_object_key = key
