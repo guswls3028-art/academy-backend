@@ -11,6 +11,9 @@ class UploadFileobjToR2TimeoutTests(unittest.TestCase):
     own unbounded defaults (60s connect, 60s read, up to 5 retries) -- see
     apps/infrastructure/storage/r2.py's _get_s3_client. Guards the
     timeout_seconds forwarding itself, independent of any particular caller.
+    Lives under submissions/tests (a covered coverage shard;
+    apps/infrastructure has none -- see tests/test_test_suite_governance.py)
+    since SubmissionCreateSerializer.create() is the caller this fix targets.
     """
 
     @patch("apps.infrastructure.storage.r2._get_s3_client")
