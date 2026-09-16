@@ -46,11 +46,28 @@ def upload_fileobj_to_r2(
     key: str,
     content_type: str | None = None,
     timeout_seconds: int | None = None,
+    single_put_max_bytes: int | None = None,
 ) -> None:
     """
     Django UploadedFile -> R2 업로드 (AI 버킷)
+
+    single_put_max_bytes: boto3 기본 multipart_threshold(8MB)는 timeout_seconds가
+    적용하는 요청당 경계를 우회한다 -- 8MB를 넘는 파일은 CreateMultipartUpload +
+    UploadPart(들) + CompleteMultipartUpload로 쪼개져 여러 요청이 되고, 각 요청이
+    개별적으로 timeout_seconds 안에 들어도 합산 시간이 호출자의 상위 타임아웃(예:
+    클라이언트의 90초 대기)을 넘을 수 있다. 호출자가 자신의 최대 파일 크기를 안다면
+    그보다 큰 값을 넘겨 항상 단일 PUT으로 강제한다 (academy/adapters/video/r2_uploader.py의
+    upload_directory와 동일 패턴).
     """
     s3 = _get_s3_client(timeout_seconds=timeout_seconds)
+    extra_kwargs = {}
+    if single_put_max_bytes is not None:
+        from boto3.s3.transfer import TransferConfig
+
+        extra_kwargs["Config"] = TransferConfig(
+            multipart_threshold=single_put_max_bytes,
+            use_threads=False,
+        )
     s3.upload_fileobj(
         Fileobj=fileobj,
         Bucket=settings.R2_AI_BUCKET,
@@ -58,6 +75,7 @@ def upload_fileobj_to_r2(
         ExtraArgs={
             "ContentType": content_type or "application/octet-stream"
         },
+        **extra_kwargs,
     )
 
 
