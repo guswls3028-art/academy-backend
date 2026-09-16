@@ -14,6 +14,7 @@ from rest_framework import serializers
 from apps.domains.submissions.models import Submission
 
 # ✅ API 서버 전용 R2 업로드
+from apps.api.common.upload_validation import DEFAULT_MAX_OMR_SIZE
 from apps.core.r2_paths import ai_submission_key
 from apps.infrastructure.storage.r2 import delete_object_r2_ai, upload_fileobj_to_r2
 
@@ -132,6 +133,14 @@ class SubmissionCreateSerializer(serializers.ModelSerializer):
                     # default. 30s comfortably covers this app's upload size
                     # limits (e.g. OMR batch upload's 10MB cap).
                     timeout_seconds=30,
+                    # Every known caller of this serializer validates against
+                    # this exact cap before reaching here (exam_omr_batch_upload_view,
+                    # exam_omr_submit_view, submission_view's create action) --
+                    # forcing a single PUT keeps the 30s timeout_seconds above
+                    # an actual per-request boundary instead of one that a
+                    # multipart split (boto3 default threshold: 8MB) could
+                    # multiply into several requests.
+                    single_put_max_bytes=DEFAULT_MAX_OMR_SIZE,
                 )
                 uploaded = True
                 self.uploaded_object_key = key

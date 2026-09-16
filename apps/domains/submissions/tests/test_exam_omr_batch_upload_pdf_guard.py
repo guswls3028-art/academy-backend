@@ -205,6 +205,11 @@ class ExamOMRBatchUploadPdfGuardTests(TestCase):
         # unbounded default (apps/infrastructure/storage/r2.py). Guards
         # against this kwarg silently being dropped in a future refactor.
         self.assertEqual(upload_fileobj_to_r2.call_args.kwargs["timeout_seconds"], 30)
+        # A file over boto3's default multipart_threshold (8MB) would
+        # otherwise split into several requests, letting the total exceed
+        # timeout_seconds even though each individual request stays within
+        # it. Must be forced to a single PUT at OMR's own validated max size.
+        self.assertEqual(upload_fileobj_to_r2.call_args.kwargs["single_put_max_bytes"], 10 * 1024 * 1024)
         dispatch_submission.assert_called_once()
 
     def test_initializes_a_durable_batch_before_file_admission(self):
