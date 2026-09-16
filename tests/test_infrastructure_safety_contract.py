@@ -1180,10 +1180,16 @@ def test_asg_pin_retries_only_the_expected_missing_runtime_container() -> None:
     )[1].split("$actual =", maxsplit=1)[0]
 
     assert "Start-Sleep -Seconds 15" in retry_block
-    assert '$isMissingExpectedContainer' in retry_block
+    assert '$isRuntimeNotReadyYet' in retry_block
     assert '[string]$result.Status -eq "Failed"' in retry_block
     assert "[string]::IsNullOrWhiteSpace($stdout)" in retry_block
     assert "No such (?:object|container)" in retry_block
+    # A freshly launched instance can be SSM-command-runnable before cloud-init
+    # finishes installing/starting Docker itself; these must retry too, not
+    # just "docker up, container not started yet".
+    assert "docker:\\s*command not found" in retry_block
+    assert "Cannot connect to the Docker daemon" in retry_block
+    assert "exit status 127" in retry_block
     assert "[Regex]::Escape($container)" in source
     assert "Runtime container did not become inspectable within 300s" in retry_block
     assert "Runtime verification command timed out" in retry_block
