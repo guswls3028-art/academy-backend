@@ -47,7 +47,7 @@
 
 | 단계 | 상태 | 산출물·종료 조건 | 재개 지점 |
 |---|---|---|---|
-| S0 정리·계획 | 정리·인계 정돈 완료 / 최종 문서 CI·병합 영수증은 PR480 | 정리 대상/보존 이유/개수·결과, 현재 문서 경로 정정, docs CI, 커밋·PR 인계 | §4·§7, 양쪽 docs 인덱스 |
+| S0 정리·계획 | 정리·인계 정돈 완료 / 최종 문서·QA CI 및 병합 영수증은 PR480 | 정리 대상/보존 이유/개수·결과, 현재 문서 경로 정정, required CI, 커밋·PR 인계 | §4·§7, 양쪽 docs 인덱스 |
 | S1 업무별 결함·증거 정리 | 5업무 공식 검사 대조, 첫 배치 실사용21 PASS | 아래5업무의 실행 테스트·미검증 조건·재현 결과 대조, 기존 결함 후보 현재성 확인 | §5 및 failure-transparency-stabilization.md |
 | S2 수리·필요 리팩토링 | 영상 목록 오류/빈 상태 수정, 클리닉 공통 mutation 통합·모바일 탭 압축 수정 완료 | P0/P1부터 정상 업무 단위로 실패 재현→수리→회귀/소비자 확인 | S1에서 재현된 최우선 항목 |
 | S3 규모·복구·편의성 | 영상14/클리닉14/숙제2 focused PASS. 실제 조교·교사 목록·운영 콘솔 포함 공식21 PASS | 혼합 합성 데이터, 중복/재시도/부분 실패, PC/390px, 응답시간·조회량, 정상 빈 결과 구분 | 각 변경의 도메인 문서·검사 |
@@ -147,10 +147,10 @@ canonical의 기존 dirty 변경을 가져오거나 덮어쓰지 않는다.
 | 목표·허용 범위 | 장기 안정성·편의성, 필요한 리팩토링. 기존 자료·tenant/권한 보호 |
 | base | backend `9ff14e4d4`, frontend `a705cb81a` |
 | 변경/판단 | 기존 계획·문서 정돈, 로컬 브랜치28개 정리. 교사 목록 오류 은폐, 클리닉 운영 콘솔의 느린 재조회 종속과 모바일 탭 압축 재현·수리 |
-| PR/커밋 | [backend480](https://github.com/guswls3028-art/academy-backend/pull/480)(문서), [frontend552](https://github.com/guswls3028-art/academy-frontend/pull/552) 병합 `3cb33cee37f2426c630ec0c2d4fff79bc99f3f2a`; 후속 [frontend553](https://github.com/guswls3028-art/academy-frontend/pull/553) 후보 `62ebd07cb56bfcf5bb565d37cd4142c5862474c7`→병합·운영 `d33c4c645868b8924719507524e2f03ea8d02d96` |
+| PR/커밋 | [backend480](https://github.com/guswls3028-art/academy-backend/pull/480)(문서·QA), [frontend552](https://github.com/guswls3028-art/academy-frontend/pull/552) 병합 `3cb33cee37f2426c630ec0c2d4fff79bc99f3f2a`; 후속 [frontend553](https://github.com/guswls3028-art/academy-frontend/pull/553) 후보 `62ebd07cb56bfcf5bb565d37cd4142c5862474c7`→병합·운영 `d33c4c645868b8924719507524e2f03ea8d02d96` |
 | 로컬 검증 | 영상14/클리닉14/숙제2 PASS, 알림 노출2 PASS 및 PC/390px 시각 검토, typecheck/lint/guards/budget/build PASS, 개발 canary 계약120 PASS. backend lifecycle/change-risk/release-bundle 계약3개 PASS. 독립 리뷰 완료 |
-| 공식 검증 | PR552 quality35468854237·E2E35468854197 PASS(Chromium695, iPhone36 PASS; Chromium 전용1개는 WebKit에서 제외). main35471220443의 격리20 PASS/1 FAIL은 승격 차단. 후속 quality35472858971·E2E35472859043 PASS, main35474667732 전체 SUCCESS. backend 중간 문서ebcd82dfd CI35472920726 PASS; 최종 문서 exact head CI·병합 기록은 PR480에서 확인 |
-| 배포 | §2의 정확한 backend/frontend pair로 bundle PASS, godmin.kr/hakwonplus.com 버전 일치·manifest·lock 해제 확인. 격리21 PASS·cleanup0 확인 후 exact run의 production 환경을 공식 API로 승인했고 운영 read-only도 통과. 문서만을 위한 backend 제품 배포는 하지 않음 |
+| 공식 검증 | PR552 quality35468854237·E2E35468854197 PASS(Chromium695, iPhone36 PASS; Chromium 전용1개는 WebKit에서 제외). main35471220443의 격리20 PASS/1 FAIL은 승격 차단. 후속 quality35472858971·E2E35472859043 PASS, main35474667732 전체 SUCCESS. backend 중간 문서ebcd82dfd CI35472920726 PASS; 후속35476371096의 무작위 암호문 검사 오탐은 아래 원인·수정 기록 참고. 최종 문서·QA exact head CI·병합 기록은 PR480에서 확인 |
+| 배포 | §2의 정확한 backend/frontend pair로 bundle PASS, godmin.kr/hakwonplus.com 버전 일치·manifest·lock 해제 확인. 격리21 PASS·cleanup0 확인 후 exact run의 production 환경을 공식 API로 승인했고 운영 read-only도 통과. 문서·QA 검사만 변경한 backend는 제품 배포 대상이 아님 |
 | 다음 한 작업 | 신규 가입 UI→직원 승인 UI→첫 로그인·보호자 연결을 격리 tenant에서 재현하고, 자동승인 저장 실패의 안내·입력 보존·재시도 경계를 확인한다. 이후 §5의 직원 처리 UI·정답/배점 변경 재채점·혼합 클리닉 데이터 검증을 이어간다 |
 | 주의 | 외부 dirty 변경 보호, Windows 삭제 거부, 역사 후보와 현재 장애 구분 |
 
@@ -169,6 +169,14 @@ reload 검증으로 수정했으며 숙제 mock2 PASS, PC/390px 시각 검토·l
 격리 재실행은21 PASS/0 FAIL/0 SKIP다. 조교 미리보기 이후 reload·PC/390px와 학생/보호자
 후속 결과까지 완료했고, 양쪽 합성 tenant/user/storage/process/listener 잔여0을 확인했다.
 첫 실패의 정리 증거와 수정 전 재현도 보존한다.
+
+backend [35476371096](https://github.com/guswls3028-art/academy-backend/actions/runs/35476371096)은
+PostgreSQL 회귀5398 PASS/1 FAIL/5 SKIP였다. Excel 자격 증명의 실제 Fernet 암호문에
+네 자리 합성 PIN `0000`이 우연히 포함되자 평문 유출로 오인한 테스트가 실패했다.
+같은 단문 부분 문자열 검사를 쓰던 worker 저장 검사까지 두 곳을 수정했다. 저장 결과와
+envelope의 정확한 키·암호문 형식, 기본 공개 응답의 자격 증명 제외를 검사하고 실제
+500개 복호화·만료와 저장소 반환·캐시 비공개 검증은 유지한다. 제품 암호화 구현이나
+난수 생성기를 바꾸지 않았다. 최종 required CI는 PR480의 수정된 exact head에서 확인한다.
 
 격리 teacher 목록은 관리자 계정의 교사 화면이다. YouTube 썸네일과 worker가 생성하지 않은 long-video fixture
 썸네일은 로컬 이미지 대역이며 목록 응답은 실제 API다. 숙제 PNG 미리보기는 실제

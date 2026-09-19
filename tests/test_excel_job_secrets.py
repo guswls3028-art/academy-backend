@@ -14,6 +14,8 @@ from academy.application.services.excel_parsing_service import ExcelParsingServi
 from apps.core.models import Tenant
 from apps.domains.ai.models import AIJobModel
 from apps.domains.ai.services.excel_job_secrets import (
+    EXCEL_CREDENTIALS_ENVELOPE_FIELD,
+    EXCEL_SECRET_PREFIX,
     decrypt_excel_job_secret,
     encrypt_excel_job_secret,
     public_excel_result,
@@ -59,7 +61,12 @@ class ExcelJobSecretTests(SimpleTestCase):
             now=now,
         )
 
-        self.assertNotIn(credentials[0]["password"], str(secured))
+        # Random ciphertext can contain a short PIN by chance; check its envelope.
+        self.assertEqual(set(secured), {"created", EXCEL_CREDENTIALS_ENVELOPE_FIELD})
+        envelope = secured[EXCEL_CREDENTIALS_ENVELOPE_FIELD]
+        self.assertEqual(set(envelope), {"ciphertext", "expires_at"})
+        self.assertTrue(envelope["ciphertext"].startswith(EXCEL_SECRET_PREFIX))
+        self.assertEqual(public_excel_result(secured), {"created": len(credentials)})
         self.assertEqual(
             public_excel_result(
                 secured,
