@@ -2,7 +2,9 @@
 
 **상태(2026-09-20 재확인):** 자동승인 저장 실패는 backend 수리·전체 CI 확인,
 실화면/운영 미검증. 공개영상 준비는 코드·기존 회귀에서 수리 확인.
-교사 목록 오류/빈 상태는 현재 코드에도 존재하며, 나머지 후보는 최신 재현이 필요하다.
+교사 목록 오류/빈 상태는 frontend PR552에서 수리했고 후속 PR553의 격리 실사용까지
+통과했다. exact 운영 검증 결과는 [실행 계획 §7](hardening-plan.md#7-인수인계와-재개)이
+소유한다. 나머지 후보는 최신 재현이 필요하다.
 **최초 발견 기준:** 2026-09-12, backend `ea0b3ae7866773d0f0a9d8b44056bb3cd68202ab`,
 frontend `a13ad36ed7d4a8e976c3d0d2874da73e825d21a0`.
 
@@ -71,6 +73,15 @@ frontend `a13ad36ed7d4a8e976c3d0d2874da73e825d21a0`.
 
 ### P2: 교사 영상 조회 실패가 실제 빈 목록으로 표시
 
+- **2026-09-20 수리:** frontend PR552는 최초 실패/정상0건/기존 목록 갱신 실패를
+  구분하고, 기존 데이터 보존·중복 재시도 방지·복구 후 경고 해제를 구현했다.
+  PC/390px 최초503→복구·정상0건·갱신 실패/reload를 포함한 focused14개와 공식 PR
+  E2E가 통과했다. PR553을 포함한 `d33c4c645868b8924719507524e2f03ea8d02d96`의
+  [격리 실사용35474667732](https://github.com/guswls3028-art/academy-frontend/actions/runs/35474667732)는
+  실제 목록 API/reload를 포함해21 PASS/0 FAIL/0 SKIP, cleanup0이다.
+  목록 검사는 관리자 계정의 교사 화면이며, 합성 영상 썸네일 대역을 실제 CDN/영상 처리
+  성공으로 해석하지 않는다. 정본은 frontend `docs/PUBLIC-VIDEO-WORKFLOW.md`다.
+- **아래 항목은 최초 발견 기록:**
 - frontend `src/app_teacher/domains/videos/pages/VideoListPage.tsx:80`은 query의
   오류 상태를 소비하지 않는다. `:183-186`은 미정의 데이터를 0건으로 계산하고
   `:281-286`은 첫 영상을 추가하라는 빈 상태를 표시한다.

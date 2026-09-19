@@ -1,7 +1,7 @@
 # 안정화·사용 편의성 실행 계획
 
-**상태:** active — S0 정리·문서 정돈·독립 검토 완료. PR552의 필수 CI는 통과·병합됐지만 격리 실사용20 PASS/1 FAIL로 운영 승격이 차단됐다. 신규 조교 안내 확인을 누락한 테스트를 재현·수정한 PR553의 CI 대기 중이다. 운영은 기존 baseline이며 전체 안정화 완료가 아니다.
-**갱신 기준:** 2026-09-20 KST. backend `9ff14e4d4`, frontend `a705cb81a`.
+**상태:** active — S0 정리와 첫 안정화 배치의 운영 검증 완료. PR552·553 수리, 격리 실사용21 PASS·cleanup0, 운영 read-only 및 버전/bundle 일치를 확인했다. 후속 신규 가입·승인과 나머지 검증 공백은 §5·§7에서 이어간다. 전체 안정화 완료가 아니다.
+**갱신 기준:** 2026-09-20 KST. 현재 운영 SHA/run은 §2, 작업 출발점은 §7.
 **범위:** backend, frontend, 기존 사용자 업무, 관련 검증·운영·문서.
 **요청:** 장기 안정성과 사용자 편의성을 위해 필요한 리팩토링까지 수행하고,
 작업자가 바뀌어도 근거와 다음 작업을 이어갈 수 있게 기록한다.
@@ -31,10 +31,10 @@
 | 구분 | 확인된 근거 | 아직 보장하지 않는 범위 |
 |---|---|---|
 | Backend 운영 | `f2ded2cafa11f2bc3b24f1fd3dcecf8e16a4e264`, [release35459301485](https://github.com/guswls3028-art/academy-backend/actions/runs/35459301485), 독립 canary30 PASS | 모든 기능·데이터 조합의 무결함 |
-| Frontend 운영 | `a705cb81a33300a11148c7f034fe5c2a8b5b2655`, [release35461988634](https://github.com/guswls3028-art/academy-frontend/actions/runs/35461988634), 격리 실사용21 PASS/0 FAIL/0 SKIP 및 운영 read-only PASS | 전체 업무를 망라하는 커버리지 |
+| Frontend 운영 | `d33c4c645868b8924719507524e2f03ea8d02d96`, [release35474667732](https://github.com/guswls3028-art/academy-frontend/actions/runs/35474667732), 격리 실사용21 PASS/0 FAIL/0 SKIP 및 운영 read-only PASS | 전체 업무를 망라하는 커버리지 |
 | 버전 일치 | 두 release와 manifest, godmin.kr/hakwonplus.com 버전 및 lock 해제 확인 | 이후 배포에 대한 자동 보증 |
 | 클리닉 | godmin700행 서버 내부10,960→3,644ms, SQL4,037→461회. 단일 전후 측정 | 브라우저 p95, 피크 동시성, 모든 학원 데이터 |
-| 시험·숙제 | 재채점/수동 점수 보존, 학생 업로드→관리자 계정의 교사 모바일 PNG→재접속 통과 | 별도 조교 역할 권한, 모든 파일·장애·재시도 조합 |
+| 시험·숙제 | 재채점/수동 점수 보존, 학생 업로드→실제 조교의 자동 발견·PNG 미리보기→reload·PC/390px 통과 | 직원 채점 UI, 모든 파일·장애·재시도 조합 |
 | 영상 | PC/mobile 각690초 재생·갱신·진도 복원, 검사 오류0 | 실제 사용자의 모든 네트워크 버퍼링 |
 | 도구 | 생성 API 타입, schema check, 경계 검사, 동일 산출물 개발 canary 존재 | 추가한 회귀 검사의 올바른 실행 경로 포함 |
 
@@ -47,11 +47,11 @@
 
 | 단계 | 상태 | 산출물·종료 조건 | 재개 지점 |
 |---|---|---|---|
-| S0 정리·계획 | 로컬 완료 / PR480 검토·초기 CI PASS / 최종 인계 보완 중 | 정리 대상/보존 이유/개수·결과, 현재 문서 경로 정정, docs CI, 커밋·PR 인계 | §4·§7, 양쪽 docs 인덱스 |
-| S1 업무별 결함·증거 정리 | 5업무 공식 검사 대조 완료, 새로운 실사용 실행 전 | 아래5업무의 실행 테스트·미검증 조건·재현 결과 대조, 기존 결함 후보 현재성 확인 | §5 및 failure-transparency-stabilization.md |
+| S0 정리·계획 | 정리·인계 정돈 완료 / 최종 문서 CI·병합 영수증은 PR480 | 정리 대상/보존 이유/개수·결과, 현재 문서 경로 정정, docs CI, 커밋·PR 인계 | §4·§7, 양쪽 docs 인덱스 |
+| S1 업무별 결함·증거 정리 | 5업무 공식 검사 대조, 첫 배치 실사용21 PASS | 아래5업무의 실행 테스트·미검증 조건·재현 결과 대조, 기존 결함 후보 현재성 확인 | §5 및 failure-transparency-stabilization.md |
 | S2 수리·필요 리팩토링 | 영상 목록 오류/빈 상태 수정, 클리닉 공통 mutation 통합·모바일 탭 압축 수정 완료 | P0/P1부터 정상 업무 단위로 실패 재현→수리→회귀/소비자 확인 | S1에서 재현된 최우선 항목 |
-| S3 규모·복구·편의성 | 첫 배치의 focused28 PASS, 실제 조교·교사 목록·운영 콘솔은 공식21에 연결 | 혼합 합성 데이터, 중복/재시도/부분 실패, PC/390px, 응답시간·조회량, 정상 빈 결과 구분 | 각 변경의 도메인 문서·검사 |
-| S4 배포·재발 확인 | 첫 격리 gate20 PASS/1 FAIL·cleanup0, 운영 승격 없음. 후속 PR553 CI 대기 | exact SHA/동일 산출물, required gate, 운영 버전·업무 readback, cleanup0, 한계 기록 | §7의 실패·복구와 기존 release-bundle 절차 |
+| S3 규모·복구·편의성 | 영상14/클리닉14/숙제2 focused PASS. 실제 조교·교사 목록·운영 콘솔 포함 공식21 PASS | 혼합 합성 데이터, 중복/재시도/부분 실패, PC/390px, 응답시간·조회량, 정상 빈 결과 구분 | 각 변경의 도메인 문서·검사 |
+| S4 배포·재발 확인 | 첫 실패를 수리한 후21 PASS·cleanup0·운영 승격·버전/bundle readback PASS | exact SHA/동일 산출물, required gate, 운영 버전·업무 readback, cleanup0, 한계 기록 | §7의 실패·복구와 기존 release-bundle 절차 |
 
 S1~S4는 기능별 작은 변경 단위로 반복한다. 테스트 변경은 어느 공식 job에서
 어떤 업무 조건을 실제 실행했는지 확인한다. 재현된 P0/P1을 미해결로 둔 채
@@ -78,9 +78,9 @@ S1~S4는 기능별 작은 변경 단위로 반복한다. 테스트 변경은 어
 |---|---|---|---|
 | 학생 등록·계정 | 입력→등록/승인→로그인→교직원/학생/보호자 조회 | 공식 account 검사는 미리 생성한 계정의 복구 요청·기존 로그인·프로필/보호자 조회다. 신규 가입→승인 UI 검증과 혼동하지 않으며 중복·저장 실패 포함 범위를 추가 확인 | [student-creation](../domain/student-creation.md), [student-core](../domain/student-core.md), frontend `student-parent-account-realuse.spec.ts` |
 | 시험·재채점 | 답안/배점 저장→채점→성적·클리닉·학생 화면→reload | OMR 재채점/수동 점수 통과. 미제출·재응시·부분 실패·재시도 조합 확인 | [exam-grading](../domain/exam-grading.md), frontend `omr-review-realuse.spec.ts` |
-| 숙제 | 제출→파일 저장→교직원 조회→명시적 처리→학생 결과 | 관리자 계정의 교사 모바일 PNG/reload 통과, 채점은 API 수행. 실제 조교 역할·직원 UI 처리·열린 화면의 새 제출 발견·다른 파일/실패 검증 필요 | [homework-grading](../domain/homework-grading.md), frontend `student-parent-homework-realuse.spec.ts` |
+| 숙제 | 제출→파일 저장→교직원 조회→명시적 처리→학생 결과 | 실제 staff 역할·첫 안내 확인·열린 상세의 새 제출 발견·PNG 미리보기·reload·PC/390px 통과. 채점은 관리자 API이므로 직원 처리 UI와 다른 파일/실패 조합은 별도 검증 필요 | [homework-grading](../domain/homework-grading.md), frontend `student-parent-homework-realuse.spec.ts` |
 | 클리닉 | 조회→통과/되돌리기→학생 상태→예약/취소→reload | 공식 검사는 교직원 UI 통과, API 되돌리기·학생 projection, 목록 reload를 포함한다. 되돌리기/학생 결과 전체 UI 여정과 혼동하지 않으며 700행 OMR/수동/재응시 조합·시간 기준 확인 | [clinic-booking](../domain/clinic-booking.md), `test_clinic_target_bulk_reads.py`, frontend `student-clinic-required-cancel-realuse.spec.ts` |
-| 영상 | 준비/업로드→처리→학생 재생→갱신·진도·복원 | 장시간 재생 통과. 교사 목록 오류/빈 상태 후보와 실제 버퍼링 관측 범위 확인 | [실패 은폐 후보](failure-transparency-stabilization.md), frontend `video-playback-renewal.realuse.spec.ts` |
+| 영상 | 준비/업로드→처리→학생 재생→갱신·진도·복원 | 장시간 재생 및 실제 목록/reload 통과. 목록 오류/빈 상태·재시도는 route-mock 검증. 실제 네트워크별 버퍼링은 별도 관측 | [실패 은폐 후보](failure-transparency-stabilization.md), frontend `video-playback-renewal.realuse.spec.ts` |
 
 frontend 공식 목록은 `playwright.development-release.config.ts`와
 `scripts/run-development-release-canary.mjs`의 실행 계약에서 확인한다.
@@ -89,17 +89,17 @@ frontend 공식 목록은 `playwright.development-release.config.ts`와
 
 ### 공식 검사와 다음 최소 검증의 연결
 
-2026-09-20의 코드 대조는 새 실사용 실행이나 결함 확정이 아니다. 아래 공백을 기존
-검사의 이름·다른 도메인 통과로 대체하지 않는다. 후보 source는 frontend PR #552이며
+2026-09-20 처음 코드 대조에서 확인한 공백과 이번 배치의 실제 실행 결과를 구분한다.
+검사 이름·다른 도메인 통과로 공백을 대체하지 않는다. 수리 source는 frontend PR #552·553이며
 실제 실행 SHA/run은 §7에 기록한다.
 
 | 우선순위 | 이미 검증하는 조건 | 다음 최소 검증 및 중단 기준 |
 |---|---|---|
-| 1. 숙제 역할·발견성 | `student-parent-homework-realuse.spec.ts`의 학생/보호자390px PNG 제출·reload, 교사 모바일 상세 PNG 디코딩, API92점 채점 뒤 결과·재로그인 | 실제 `staff` 계정으로 상세를 먼저 열기→학생 제출→새 제출 발견→미리보기/reload→직원 처리 UI→학생 결과. 권한 거부·상태 불일치가 재현되면 이 흐름을 먼저 수리 |
+| 1. 숙제 역할·발견성 | `student-parent-homework-realuse.spec.ts`의 실제 `staff` 계정 안내 확인→상세 먼저 열기→학생 PNG 제출→자동 발견·디코딩·reload, API92점 채점 뒤 결과·재로그인 | 발견성·역할 검증은 이번 배치 통과. 남은 직원 처리 UI→학생 결과와 다른 파일/실패 조합을 확인하며 권한 거부·상태 불일치 재현 시 우선 수리 |
 | 2. 가입·승인 | `createQaFamily`는 관리자 API로 사전 생성. account spec은 복구 요청과 기존 비밀번호 로그인, 관리자 API의 보호자 임시 비밀번호, 프로필 편집 취소를 검사 | 격리 tenant의 가입 UI→직원 승인 UI→첫 로그인·보호자 연결. 중복 신청 또는 저장 실패→입력 보존/재시도 한 경계를 추가하고 다른 tenant 승인·객체 접근 거부 확인 |
 | 3. 재채점 | `omr-review-realuse.spec.ts`의 전체 재채점 UI→수동 서술형 점수 유지→390px reload→학생/보호자 성적·분석 반영 | 정답/배점 변경 후 기대 점수·만점·클리닉의 일치, 일부 실패와 재시도. 단순 같은 답안 재실행의 성공과 구분 |
-| 4. 클리닉 | `student-clinic-required-cancel-realuse.spec.ts`의 PC 통과 UI, API 되돌리기, 학생 projection, 예약/취소 API·mock 발송 | 실제 되돌리기·학생 결과 UI, 혼합700행에서 요청/브라우저 시간과 재시도·중복 클릭. 단일 서버 측정으로 브라우저 p95를 주장하지 않음 |
-| 5. 영상 | PC/390px690초 재생·갱신·진도 복원. 이번 교사 목록 실패/재시도는 공식 route-mock에 포함 | 목록 정상 실서버 조회/reload는 기존 learning canary에 연결. 네트워크별 버퍼링과 구버전 활성 화면 연속성은 별도 관측·재현 |
+| 4. 클리닉 | `student-clinic-required-cancel-realuse.spec.ts`의 운영 콘솔390px 통과→PC reload·항목 소멸, 원점수20 유지, API 되돌리기·항목 복원, 학생 projection·예약/취소 | 실제 되돌리기·학생 결과 UI, 혼합700행에서 요청/브라우저 시간과 재시도·중복 클릭. 단일 서버 측정으로 브라우저 p95를 주장하지 않음 |
+| 5. 영상 | PC/390px690초 재생·갱신·진도 복원, 교사 목록 실서버 조회/reload. 목록 실패/재시도는 공식 route-mock에서 통과 | 네트워크별 버퍼링과 구버전 활성 화면 연속성은 별도 관측·재현 |
 
 공통 `qa-*` 요청 경계·실발송 금지·cleanup0은 유지한다. `ymath-qa-teacher` fixture는
 이름과 달리 membership이 `admin`이다(`setup_ymath_realuse_scenario.py`); 교사 화면에서
@@ -108,7 +108,7 @@ frontend 공식 목록은 `playwright.development-release.config.ts`와
 
 이번 배치에서 확인한 재발 경로는 화면별로 갈라진 동일 통과 처리와 실제 조교 대신
 관리자로 수행한 역할 검증이다. 기존 공통 mutation 재사용과 `/core/me/` 역할 readback을
-포함한 조교 시나리오로 연결한다. 시각 검토는 DOM visibility, 실제 포인터, 알림의 표시·
+포함한 조교 시나리오로 보강·검증했다. 시각 검토는 DOM visibility, 실제 포인터, 알림의 표시·
 퇴장 애니메이션과 촬영 시점을 구분한다. 캡처 중 잘린 메시지를 현재 제품의 레이어
 결함으로 단정하지 않는다. 이를 프로젝트의 모든 버그 원인으로 일반화하지 않는다.
 
@@ -123,7 +123,7 @@ frontend 공식 목록은 `playwright.development-release.config.ts`와
 - 클리닉 전체 미통과 화면과 운영 drawer의 수동 통과가 서로 다른 저장 후 처리 코드를
   사용했다. 운영 화면에서는 POST200 뒤에도 느린 재조회가 끝나기까지 처리 항목이 남는
   결함을 재현했다. 기존 공통 hook으로 확정 응답의 캐시 반영과 background 재조회를
-  통합하고, 함께 발견한390px 탭 압축·클릭 가림을 수정·검증한다.
+  통합했고, 함께 발견한390px 탭 압축·클릭 가림도 수정·검증했다.
 - [실패 은폐 후보](failure-transparency-stabilization.md)의 설정 저장 실패·이동, 활성 사용자
   복구는 최초 발견과 현재 재현을 구분한다. CI만으로 runtime 완료로 바꾸지 않는다.
 - 과거 영상/OMR의 만료 `ScoreEditDraft` 삭제 차단·403 표시, playback POST 응답 단절 및
@@ -137,20 +137,21 @@ frontend 공식 목록은 `playwright.development-release.config.ts`와
 
 ## 7. 인수인계와 재개
 
-현재 배치는 `stability-foundation-0920` 소유 worktree에서 S0와 첫 안정화 수리를 게시했다.
+현재 배치는 `stability-foundation-0920` 소유 worktree에서 S0와 첫 안정화 수리를 완료했다.
 다른 작업자는 아래 상태와 PR/CI를 확인하고 Git branch/worktree로 소유권을 확인한다.
 canonical의 기존 dirty 변경을 가져오거나 덮어쓰지 않는다.
+후속 작업은 완료된 배치의 작업공간을 재사용하지 않고 현재 `origin/main`에서 새 소유 세션으로 시작한다.
 
 | 항목 | 현재 상태 |
 |---|---|
 | 목표·허용 범위 | 장기 안정성·편의성, 필요한 리팩토링. 기존 자료·tenant/권한 보호 |
 | base | backend `9ff14e4d4`, frontend `a705cb81a` |
 | 변경/판단 | 기존 계획·문서 정돈, 로컬 브랜치28개 정리. 교사 목록 오류 은폐, 클리닉 운영 콘솔의 느린 재조회 종속과 모바일 탭 압축 재현·수리 |
-| PR/후보 | [backend480](https://github.com/guswls3028-art/academy-backend/pull/480)(문서), [frontend552](https://github.com/guswls3028-art/academy-frontend/pull/552) 병합 `3cb33cee37f2426c630ec0c2d4fff79bc99f3f2a`; 후속 [frontend553](https://github.com/guswls3028-art/academy-frontend/pull/553) 후보 `62ebd07cb56bfcf5bb565d37cd4142c5862474c7` |
-| 로컬 검증 | 영상14/클리닉14 PASS, 알림 노출2 PASS 및 PC/390px 시각 검토, typecheck/lint/guards/budget/build PASS, 개발 canary 계약120 PASS. backend lifecycle/change-risk/release-bundle 계약3개 PASS. 독립 리뷰 완료 |
-| 공식 검증 | PR552 quality35468854237·E2E35468854197 PASS(Chromium695, iPhone36 PASS; Chromium 전용1개는 WebKit에서 제외). main35471220443은 격리20 PASS/1 FAIL/0 SKIP로 차단. 후속 quality35472858971·E2E35472859043 대기. backend 초기 문서9616420d1 CI35466875097 PASS; 최종 문서 CI는 PR480 exact head에서 확인 |
-| 배포 | 운영 baseline은 §2. 실패한 격리 gate는 운영 승인을 받지 않았고 승격하지 않았다. 두 QA tenant/user와 storage/process/listener 잔여0 확인. 문서만을 위한 backend 제품 배포는 필요하지 않음 |
-| 다음 실행 | PR553 exact 후보의 전체CI 후 병합→동일 산출물21개 전부 통과→cleanup0→공식 production 승인→운영버전/bundle readback. 결과를 갱신한 최종 문서 CI·병합 |
+| PR/커밋 | [backend480](https://github.com/guswls3028-art/academy-backend/pull/480)(문서), [frontend552](https://github.com/guswls3028-art/academy-frontend/pull/552) 병합 `3cb33cee37f2426c630ec0c2d4fff79bc99f3f2a`; 후속 [frontend553](https://github.com/guswls3028-art/academy-frontend/pull/553) 후보 `62ebd07cb56bfcf5bb565d37cd4142c5862474c7`→병합·운영 `d33c4c645868b8924719507524e2f03ea8d02d96` |
+| 로컬 검증 | 영상14/클리닉14/숙제2 PASS, 알림 노출2 PASS 및 PC/390px 시각 검토, typecheck/lint/guards/budget/build PASS, 개발 canary 계약120 PASS. backend lifecycle/change-risk/release-bundle 계약3개 PASS. 독립 리뷰 완료 |
+| 공식 검증 | PR552 quality35468854237·E2E35468854197 PASS(Chromium695, iPhone36 PASS; Chromium 전용1개는 WebKit에서 제외). main35471220443의 격리20 PASS/1 FAIL은 승격 차단. 후속 quality35472858971·E2E35472859043 PASS, main35474667732 전체 SUCCESS. backend 중간 문서ebcd82dfd CI35472920726 PASS; 최종 문서 exact head CI·병합 기록은 PR480에서 확인 |
+| 배포 | §2의 정확한 backend/frontend pair로 bundle PASS, godmin.kr/hakwonplus.com 버전 일치·manifest·lock 해제 확인. 격리21 PASS·cleanup0 확인 후 exact run의 production 환경을 공식 API로 승인했고 운영 read-only도 통과. 문서만을 위한 backend 제품 배포는 하지 않음 |
+| 다음 한 작업 | 신규 가입 UI→직원 승인 UI→첫 로그인·보호자 연결을 격리 tenant에서 재현하고, 자동승인 저장 실패의 안내·입력 보존·재시도 경계를 확인한다. 이후 §5의 직원 처리 UI·정답/배점 변경 재채점·혼합 클리닉 데이터 검증을 이어간다 |
 | 주의 | 외부 dirty 변경 보호, Windows 삭제 거부, 역사 후보와 현재 장애 구분 |
 
 각 배치 종료 시 exact commit/PR·실행 결과·운영 반영 여부·남은 재현·다음 한 작업을
@@ -163,11 +164,13 @@ required CI와 executable 변경의 개발/운영 gate는 유지한다.
 테스트가 확인 단계를 누락했다. 동일 조건의 focused 재현에서 버튼은 visible/enabled였고
 안내 overlay가 포인터를 가로챘다. 실제 안내 확인 버튼→`/core/me/` 상태 false→미리보기→
 reload 검증으로 수정했으며 숙제 mock2 PASS, PC/390px 시각 검토·lint·guards·독립 리뷰를
-통과했다. 제품 권한·모달 정책을 바꾸거나 강제 클릭으로 우회하지 않았다. 실제 격리 재실행은
-아직 완료하지 않았으며 미리보기 이후 여정을 성공으로 기록하지 않는다. 나머지20개는
-운영 콘솔·교사 영상 목록·PC/mobile690초 재생을 포함해 통과했다.
+통과했다. 제품 권한·모달 정책을 바꾸거나 강제 클릭으로 우회하지 않았다. 후속 PR553을
+반영한 [35474667732](https://github.com/guswls3028-art/academy-frontend/actions/runs/35474667732)의
+격리 재실행은21 PASS/0 FAIL/0 SKIP다. 조교 미리보기 이후 reload·PC/390px와 학생/보호자
+후속 결과까지 완료했고, 양쪽 합성 tenant/user/storage/process/listener 잔여0을 확인했다.
+첫 실패의 정리 증거와 수정 전 재현도 보존한다.
 
-격리 teacher 목록의 YouTube 썸네일과 worker가 생성하지 않은 long-video fixture
+격리 teacher 목록은 관리자 계정의 교사 화면이다. YouTube 썸네일과 worker가 생성하지 않은 long-video fixture
 썸네일은 로컬 이미지 대역이며 목록 응답은 실제 API다. 숙제 PNG 미리보기는 실제
 development storage 객체를 검증한다. 그림 대역을 CDN/처리 성공으로, API 채점을
 조교 채점 UI 성공으로 바꿔 서술하지 않는다.
