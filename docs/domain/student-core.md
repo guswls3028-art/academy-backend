@@ -891,8 +891,9 @@ pnpm build
 pnpm exec playwright test e2e\auth\account-recovery-modal.spec.ts --reporter=list
 ```
 
-Launch-readiness and broader real-use gates are tracked in
-`../refactor/student-domain-launch-readiness.md`.
+Current real-use work is tracked in [hardening-plan.md](../refactor/hardening-plan.md)
+and follows the [release contract](../operations/change-risk-and-release-bundle.md).
+`../refactor/student-domain-launch-readiness.md` is the historical 2026-06-07 decision.
 
 ## 8. Do Not
 

@@ -1,12 +1,13 @@
 # Structure Reform Roadmap
 
-**Status:** [ACTIVE] strangler roadmap with implemented Phase 1 slices and Phase 2/3/4 guardrail slices
+**Status:** [DESIGN BACKLOG / HISTORICAL SLICES] structural proposals and recorded implementation slices
 **Captured:** 2026-05-22  
 **Principle:** converge feature responsibility first; move folders only after behavior boundaries are proven.
 
-This roadmap is separate from the current account-recovery/password/Alimtalk
-release. That release may keep its compatibility paths while this reform starts
-with audits, guardrails, and student canonicalization.
+Current execution order and handoff belong to [hardening-plan.md](../hardening-plan.md).
+The captured implementation and release context below are historical, not proof
+of the current runtime. Revalidate an open proposal against current code before
+adopting it; preserve its compatibility and data-safety conditions.
 
 ## Phase 0: Audit And Guardrails
 

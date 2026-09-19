@@ -1,7 +1,8 @@
 # 실패 은폐·정상 이용 복구 점검
 
-**상태:** 자동승인 저장 실패는 backend 수리·전체 CI 확인, 실화면/운영 미검증.
-나머지 4개 후보는 미해결, repo-confirmed / runtime-unverified 상태를 유지한다.
+**상태(2026-09-20 재확인):** 자동승인 저장 실패는 backend 수리·전체 CI 확인,
+실화면/운영 미검증. 공개영상 준비는 코드·기존 회귀에서 수리 확인.
+교사 목록 오류/빈 상태는 현재 코드에도 존재하며, 나머지 후보는 최신 재현이 필요하다.
 **최초 발견 기준:** 2026-09-12, backend `ea0b3ae7866773d0f0a9d8b44056bb3cd68202ab`,
 frontend `a13ad36ed7d4a8e976c3d0d2874da73e825d21a0`.
 
@@ -10,13 +11,22 @@ frontend `a13ad36ed7d4a8e976c3d0d2874da73e825d21a0`.
 재현됐다는 기록이 아니다.
 성공 기준은 [변경 위험·실사용 감사 계약](../operations/change-risk-and-release-bundle.md),
 배포 시점은 [배포 시점과 연속성](../operations/deployment-modes.md)을 따른다.
-현재 수정 중인 클리닉·성적·OMR·급여 파일은 해당 소유자가 공유한 exact diff를
-기준으로 별도 검토하며 이 점검에서 변경하지 않았다.
+현재 실행 순서·인수인계는 [hardening-plan.md](hardening-plan.md)가 소유한다.
+아래 최초 발견 당시의 파일 위치·상태는 현재 코드와 구분한다.
 
 ## 확인한 후보
 
 ### P1: 첫 공개영상 준비 요청이 읽기 전용 HTTP 가드와 충돌
 
+- **2026-09-20 현재성:** backend `e024816c3` 이후 GET은 조회, POST는 준비로 분리됐다.
+  현재 frontend는 공유 `preparePublicSession` POST를 사용한다.
+  `test_public_session_safe_method.py`는 실제 middleware의 빈 tenant·POST·영상 생성·조회,
+  rollback·재시도·권한·중복 생성 경계를 다룬다. frontend의
+  `public-video-preparation.mock.spec.ts`에는 준비 실패·입력 보존·재시도·reload 검사가 있다.
+  따라서 같은 코드를 다시 수리할 대상은 아니다. 이는 현재 코드/기존 검사 확인이며,
+  이번 작업에서 업로드 처리→학생 재생·구버전 열린 탭의 운영 수렴을 새로 검증한 것은 아니다.
+  정본: [공개영상 준비](../domain/public-video-session.md), frontend `docs/PUBLIC-VIDEO-WORKFLOW.md`.
+- **아래 항목은 최초 발견 기록:**
 - `apps/domains/video/views/video_views.py:878-895`의 GET `public-session`이
   `apps/support/video/view_dependencies.py:14-22`의 시스템 강의/차시 생성을 호출한다.
   시스템 컨테이너가 없거나 레거시 강의를 갱신해야 하는 tenant에서는 DB 쓰기가 필요하다.

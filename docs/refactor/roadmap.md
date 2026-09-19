@@ -1,11 +1,16 @@
 # Large Refactor Roadmap
 
-**Status:** [PROPOSED] execution plan  
+**Status:** [HISTORICAL PROPOSAL] initial architecture migration plan
 **Scope:** workspace root, backend, frontend, docs, validation pipeline  
 **Target document:** `C:\academy\ARCHITECTURE.md`  
 **Companion docs:** `inventory.md`, `phase-0-guardrails.md`, `validation-matrix.md`
 
-This document is the executable path toward the target architecture. It does not
+Current execution and handoff belong to [hardening-plan.md](hardening-plan.md).
+The checkboxes below are the initial proposal, not a current inventory of missing
+guards: schema generation, API types and boundary gates now exist in executable CI.
+Unimplemented structural proposals remain candidates, not approved changes.
+
+This document records the original path toward the target architecture. It does not
 describe current behavior unless marked [VERIFIED]. Current truth still comes
 from code, scripts, CI, and runtime checks.
 
