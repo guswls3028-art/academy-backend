@@ -8,7 +8,7 @@
 1) 단일 진실: enrollment_id (학생 식별은 enrollment_id로만)
 2) 현재 clinic_required 판단은 미해소 ClinicLink(자동 트리거)와 미완료 진행 상태 기준
 3) 점수/커트라인/사유(reason)는 source별 시험·과제 정책에서 파생
-4) Session ↔ Exam 매핑은 results.utils.session_exam.get_exams_for_session() 단일 진실 사용
+4) Session ↔ Exam 매핑은 get_exams_for_session과 같은 live_regular_exam_filter 단일 진실 사용
 - source가 있는 현재 링크는 정확한 시험·과제를 사용한다. source 없는 legacy 링크만
   세션의 가장 작은 exam id를 호환 표시 대상으로 사용한다.
 """
@@ -18,29 +18,27 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from django.db.models import F, Window
+from django.db.models.functions import RowNumber
+
 from academy.adapters.db.django.repositories_clinic_targets import (
     clinic_links_for_admin_targets,
     enrollment_map_for_ids,
     explicit_not_submitted_exam_targets,
     filter_links_by_section,
-    first_homework_score,
+    exam_cutline_overrides_for_targets,
     homework_cutline_settings_for_target,
-    homework_scores_for_target,
+    homework_score_map_for_targets,
     linked_bookings_for_clinic_links,
-    regular_exam_for_source,
-    regular_homework_for_clinic_target,
+    source_maps_for_clinic_targets,
 )
 from apps.domains.results.models import Result, ResultFact, ExamAttempt
-from apps.support.results.exam_policy_dependencies import (
-    effective_exam_pass_score,
-)
 
 # ✅ 단일 진실 유틸
 from apps.domains.results.utils.clinic import (
     filter_current_clinic_links,
     filter_tenant_consistent_source_links,
 )
-from apps.domains.results.utils.session_exam import get_exams_for_session
 from apps.domains.results.utils.initial_exam_score import (
     load_initial_exam_scores,
     project_initial_exam_score,
@@ -108,7 +106,7 @@ def _extract_invalid_reason_from_meta(meta: Any) -> Optional[str]:
     return None
 
 
-def _is_low_confidence_for_attempt(*, exam_id: int, enrollment_id: int, attempt_id: Optional[int]) -> bool:
+def _is_low_confidence_for_attempt(*, attempt, has_low_confidence_fact: bool) -> bool:
     """
     "신뢰도 낮음" 판정은 프로젝트 구현에 따라:
     - Attempt.meta.grading.invalid_reason (가능)
@@ -116,31 +114,12 @@ def _is_low_confidence_for_attempt(*, exam_id: int, enrollment_id: int, attempt_
     둘 다 방어적으로 체크한다.
     """
     # 1) Attempt.meta (있으면 최우선)
-    if attempt_id:
-        a = ExamAttempt.objects.filter(id=int(attempt_id)).first()
-        if a and hasattr(a, "meta"):
-            reason = _extract_invalid_reason_from_meta(getattr(a, "meta", None))
-            if (reason or "").upper() in ("LOW_CONFIDENCE", "AMBIGUOUS_SINGLE"):
-                return True
+    reason = _extract_invalid_reason_from_meta(getattr(attempt, "meta", None))
+    if (reason or "").upper() in ("LOW_CONFIDENCE", "AMBIGUOUS_SINGLE"):
+        return True
 
     # 2) ResultFact.meta (대표 attempt 기준)
-    if attempt_id:
-        qs = (
-            ResultFact.objects.filter(
-                target_type="exam",
-                target_id=int(exam_id),
-                enrollment_id=int(enrollment_id),
-                attempt_id=int(attempt_id),
-            )
-            .exclude(meta__isnull=True)
-            .order_by("-id")[:200]  # 방어: 너무 큰 scan 방지
-        )
-        for f in qs:
-            r = _extract_invalid_reason_from_meta(getattr(f, "meta", None))
-            if (r or "").upper() == "LOW_CONFIDENCE":
-                return True
-
-    return False
+    return has_low_confidence_fact
 
 
 def _get_session_title(session: Any) -> str:
@@ -219,15 +198,69 @@ class ClinicTargetService:
             tenant=tenant,
             enrollment_ids=all_enrollment_ids,
         )
+        session_ids = {int(link.session_id) for link in links_list}
         source_exam_ids = {
+            int(link.source_id) for link in links_list
+            if link.source_type == "exam" and link.source_id
+        }
+        legacy_session_ids = {
+            int(link.session_id) for link in links_list
+            if link.source_type != "homework" and not (link.source_type == "exam" and link.source_id)
+        }
+        homework_ids = {
             int(getattr(link, "source_id", 0) or 0)
             for link in links_list
-            if getattr(link, "source_type", None) == "exam"
-            and int(getattr(link, "source_id", 0) or 0) > 0
+            if getattr(link, "source_type", None) == "homework"
         }
+        exams_by_source, legacy_exams, homeworks_by_source = source_maps_for_clinic_targets(
+            tenant=tenant, session_ids=session_ids, exam_ids=source_exam_ids,
+            legacy_session_ids=legacy_session_ids, homework_ids=homework_ids,
+        )
+        exam_ids = {int(exam.id) for exam in exams_by_source.values()}
         initial_exam_scores = load_initial_exam_scores(
-            exam_ids=source_exam_ids,
+            exam_ids=exam_ids,
             enrollment_ids=all_enrollment_ids,
+        )
+        results_by_key = {}
+        for result in Result.objects.filter(
+            target_type="exam", target_id__in=exam_ids,
+            enrollment_id__in=all_enrollment_ids, enrollment__tenant=tenant,
+        ).select_related("attempt").order_by("-id"):
+            results_by_key.setdefault((int(result.target_id), int(result.enrollment_id)), result)
+        attempts_by_key = {}
+        attempts_by_id = {}
+        for attempt in ExamAttempt.objects.filter(
+            exam_id__in=exam_ids, exam__tenant=tenant,
+            enrollment_id__in=all_enrollment_ids, enrollment__tenant=tenant,
+        ).order_by("attempt_index"):
+            attempts_by_key.setdefault((int(attempt.exam_id), int(attempt.enrollment_id)), []).append(attempt)
+            attempts_by_id[int(attempt.id)] = attempt
+        low_confidence_fact_keys = set()
+        # Preserve the old latest-200 non-null facts per exact attempt boundary.
+        fact_rows = ResultFact.objects.filter(
+            target_type="exam", target_id__in=exam_ids,
+            enrollment_id__in=all_enrollment_ids, enrollment__tenant=tenant,
+            attempt_id__in={state.attempt_id for state in initial_exam_scores.values() if state.attempt_id},
+        ).exclude(meta__isnull=True).annotate(
+            clinic_fact_rank=Window(
+                expression=RowNumber(),
+                partition_by=[F("target_id"), F("enrollment_id"), F("attempt_id")],
+                order_by=F("id").desc(),
+            ),
+        ).filter(clinic_fact_rank__lte=200).values_list("target_id", "enrollment_id", "attempt_id", "meta")
+        for exam_id, enrollment_id, attempt_id, meta in fact_rows.iterator(chunk_size=2000):
+            if (_extract_invalid_reason_from_meta(meta) or "").upper() == "LOW_CONFIDENCE":
+                low_confidence_fact_keys.add((int(exam_id), int(enrollment_id), int(attempt_id)))
+        homework_scores = homework_score_map_for_targets(
+            tenant=tenant, enrollment_ids=all_enrollment_ids,
+            session_ids=session_ids, homework_ids=homework_ids,
+        )
+        missing_targets = explicit_not_submitted_exam_targets(tenant=tenant, section_id=section_id)
+        cutline_overrides = exam_cutline_overrides_for_targets(
+            tenant=tenant,
+            exam_ids=exam_ids | {int(result.target_id) for result, _ in missing_targets},
+            lecture_ids={int(link.session.lecture_id) for link in links_list}
+            | {int(session.lecture_id) for _, session in missing_targets},
         )
         linked_bookings = linked_bookings_for_clinic_links(
             tenant=tenant,
@@ -243,8 +276,7 @@ class ClinicTargetService:
 
         out: List[Dict[str, Any]] = []
 
-        # 세션별 exam 후보 캐시 (쿼리 절약)
-        exams_cache: Dict[int, Optional[Any]] = {}
+        photo_urls = {}
 
         for link in links_list:
             session = getattr(link, "session", None)
@@ -284,7 +316,9 @@ class ClinicTargetService:
             else:
                 school_name = getattr(student, "middle_school", None) if student else None
             grade_val = getattr(student, "grade", None) if student else None
-            profile_photo_url = _get_student_photo_url(student)
+            if student.id not in photo_urls:
+                photo_urls[student.id] = _get_student_photo_url(student)
+            profile_photo_url = photo_urls[student.id]
 
             # 공통 base row
             student_id = int(student.id) if student else None
@@ -322,22 +356,12 @@ class ClinicTargetService:
             # ── Homework source ──
             if source_type == "homework":
                 source_id = getattr(link, "source_id", None)
-                hw = (
-                    regular_homework_for_clinic_target(
-                        homework_id=int(source_id),
-                        tenant=tenant,
-                        session_id=session_id,
-                    )
-                    if source_id else None
-                )
+                hw = homeworks_by_source.get((session_id, int(source_id or 0)))
                 hw_title = _safe_str(getattr(hw, "title", None), "-") if hw else "-"
 
                 # 1차 점수 (성적 산출 대상)
-                first_hw_score = first_homework_score(
-                    enrollment_id=enrollment_id,
-                    session_id=session_id,
-                    homework_id=int(source_id) if source_id else 0,
-                )
+                all_hw_scores = homework_scores.get((enrollment_id, session_id, int(source_id or 0)), [])
+                first_hw_score = next((score for score in all_hw_scores if score.attempt_index == 1), None)
 
                 original_score = float(first_hw_score.score or 0) if first_hw_score and first_hw_score.score is not None else None
                 hw_max_score = (
@@ -364,12 +388,6 @@ class ClinicTargetService:
                 )
 
                 # 재시도 이력
-                all_hw_scores = homework_scores_for_target(
-                    enrollment_id=enrollment_id,
-                    session_id=session_id,
-                    homework_id=int(source_id) if source_id else 0,
-                )
-
                 attempt_history = []
                 latest_attempt_index = 1
                 for hs in all_hw_scores:
@@ -407,17 +425,10 @@ class ClinicTargetService:
             # ── Exam source (기존 로직 + 확장) ──
             source_id = getattr(link, "source_id", None)
             if source_type == "exam" and source_id:
-                exam = regular_exam_for_source(
-                    exam_id=int(source_id),
-                    tenant=tenant,
-                    session_id=session_id,
-                )
+                exam = exams_by_source.get((session_id, int(source_id)))
             else:
                 # Legacy fallback: 세션의 대표 exam
-                if session_id not in exams_cache:
-                    exams = list(get_exams_for_session(session))
-                    exams_cache[session_id] = sorted(exams, key=lambda x: x.id)[0] if exams else None
-                exam = exams_cache.get(session_id)
+                exam = legacy_exams.get(session_id)
 
             if not exam:
                 out.append({
@@ -435,31 +446,16 @@ class ClinicTargetService:
                 continue
 
             exam_id = int(getattr(exam, "id", 0) or 0)
-            cutline = effective_exam_pass_score(
-                exam=exam,
-                lecture_id=getattr(session, "lecture_id", None),
+            cutline = cutline_overrides.get(
+                (exam.id, session.lecture_id), float(exam.pass_score or 0.0),
             )
             exam_max_score = _safe_float(getattr(exam, "max_score", 100.0), 100.0)
             exam_title = _safe_str(getattr(exam, "title", None), "-")
 
             # 대표 스냅샷 Result (1차 시험 결과 = 성적 산출 대상)
-            result = (
-                Result.objects.filter(
-                    target_type="exam",
-                    target_id=exam_id,
-                    enrollment_id=enrollment_id,
-                )
-                .select_related("attempt")
-                .order_by("-id")
-                .first()
-            )
+            result = results_by_key.get((exam_id, enrollment_id))
 
             initial_state = initial_exam_scores.get((exam_id, enrollment_id))
-            if initial_state is None and exam_id not in source_exam_ids:
-                initial_state = load_initial_exam_scores(
-                    exam_ids=[exam_id],
-                    enrollment_ids=[enrollment_id],
-                ).get((exam_id, enrollment_id))
             initial_score = project_initial_exam_score(
                 state=initial_state,
                 fallback_score=(getattr(result, "total_score", None) if result else None),
@@ -477,10 +473,7 @@ class ClinicTargetService:
             attempt_meta_status = "NOT_SUBMITTED" if initial_score.not_submitted else None
 
             # 재시도 이력 (ExamAttempt 전체)
-            all_attempts = ExamAttempt.objects.filter(
-                exam_id=exam_id,
-                enrollment_id=enrollment_id,
-            ).order_by("attempt_index")
+            all_attempts = attempts_by_key.get((exam_id, enrollment_id), [])
 
             attempt_history = []
             latest_attempt_index = 1
@@ -509,9 +502,8 @@ class ClinicTargetService:
                 reason = "missing"
             else:
                 reason = "confidence" if _is_low_confidence_for_attempt(
-                    exam_id=exam_id,
-                    enrollment_id=enrollment_id,
-                    attempt_id=attempt_id if attempt_id else None,
+                    attempt=attempts_by_id.get(attempt_id),
+                    has_low_confidence_fact=(exam_id, enrollment_id, attempt_id) in low_confidence_fact_keys,
                 ) else "score"
 
             out.append({
@@ -531,10 +523,7 @@ class ClinicTargetService:
         # 명시적으로 미응시 처리된 시험은 점수 미달과 구분된 "판정 대기" 행이다.
         # 조회가 ClinicLink를 만들지는 않는다. 사용자가 면제 사유를 확정할 때만
         # source-specific WAIVED 이력을 생성한다.
-        for result, session in explicit_not_submitted_exam_targets(
-            tenant=tenant,
-            section_id=section_id,
-        ):
+        for result, session in missing_targets:
             enrollment = result.enrollment
             student = getattr(enrollment, "student", None)
             exam = result.attempt.exam
@@ -546,6 +535,8 @@ class ClinicTargetService:
                 school_name = getattr(student, "high_school", None) if student else None
             else:
                 school_name = getattr(student, "middle_school", None) if student else None
+            if student and student.id not in photo_urls:
+                photo_urls[student.id] = _get_student_photo_url(student)
             out.append({
                 "enrollment_id": int(enrollment.id),
                 "student_id": int(student.id) if student else None,
@@ -554,9 +545,8 @@ class ClinicTargetService:
                 "reason": "missing",
                 "clinic_reason": "exam",
                 "exam_score": None,
-                "cutline_score": effective_exam_pass_score(
-                    exam=exam,
-                    lecture_id=getattr(session, "lecture_id", None),
+                "cutline_score": cutline_overrides.get(
+                    (exam.id, session.lecture_id), float(exam.pass_score or 0.0),
                 ),
                 "meta_status": "NOT_SUBMITTED",
                 "clinic_link_id": None,
@@ -579,7 +569,7 @@ class ClinicTargetService:
                 "school": school_name or "",
                 "school_type": school_type,
                 "grade": getattr(student, "grade", None) if student else None,
-                "profile_photo_url": _get_student_photo_url(student),
+                "profile_photo_url": photo_urls.get(student.id) if student else None,
                 "max_score": _safe_float(exam.max_score, 100.0),
                 "latest_attempt_index": 0,
                 "attempt_history": [],
