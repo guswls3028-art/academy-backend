@@ -66,56 +66,13 @@ def _deactivate_today_plan(link: ClinicLink) -> None:
 
 
 def _dispatch_progress_for_link(link: ClinicLink) -> None:
+    """Recompute only the student and session changed by this clinic decision.
+
+    A link resolution does not change the exam or other students' answers.
+    Dispatch runs synchronously after commit, so an exam-wide dispatch makes
+    one student's pass wait for every examinee (and linked session).
+    The point pipeline still refreshes session/lecture progress and risk.
     """
-    해당 ClinicLink 기반으로 SessionProgress 재계산을 on_commit으로 예약.
-
-    필요 이유:
-      admin의 manual resolve / waive / unresolve / carry_over / 재시험 점수 수정이
-      SessionProgress.exam_passed·completed·clinic_required 등 집계 상태를 바꾸지만,
-      파이프라인을 명시적으로 재실행하지 않으면 학생/교사 화면의 파생 지표가
-      stale 상태로 남아 드리프트가 재발한다.
-
-    Dispatch 전략 (우선순위):
-      1) source_type="exam" + source_id 유효 → dispatch_progress_pipeline(exam_id=...)
-         (해당 시험 응시자 전체 재계산 — risk 평가까지 정확)
-      2) source_type=NULL legacy + meta.exam_id 유효 → exam_id path 동일
-      3) 그 외 (homework, exam_id 미상) + enrollment_id + session_id 존재
-         → dispatch_progress_pipeline(enrollment_id=..., session_id=...)
-         (특정 학생 × 세션 한 점 재계산)
-      4) 위 조건 모두 실패 → skip + debug log
-    """
-    exam_id: int | None = None
-    if link.source_type == "exam" and link.source_id:
-        try:
-            exam_id = int(link.source_id)
-        except (TypeError, ValueError):
-            exam_id = None
-    elif link.source_type is None and isinstance(link.meta, dict):
-        raw = link.meta.get("exam_id")
-        if raw is not None:
-            try:
-                exam_id = int(raw)
-            except (TypeError, ValueError):
-                exam_id = None
-
-    # Path 1/2: exam_id 경로
-    if exam_id is not None:
-        _eid = exam_id
-
-        def _dispatch_by_exam() -> None:
-            try:
-                from apps.domains.progress.dispatcher import dispatch_progress_pipeline
-                dispatch_progress_pipeline(exam_id=_eid)
-            except Exception:
-                logger.exception(
-                    "clinic_resolution: pipeline dispatch failed (link=%s, exam=%s)",
-                    link.id, _eid,
-                )
-
-        transaction.on_commit(_dispatch_by_exam)
-        return
-
-    # Path 3: enrollment + session 점 재계산
     if link.enrollment_id and link.session_id:
         _enr = int(link.enrollment_id)
         _sid = int(link.session_id)

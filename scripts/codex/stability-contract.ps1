@@ -285,7 +285,7 @@ function Assert-AcademyProductionReleaseBundle {
         -ExpectedSha $frontendSha `
         -ExpectedWorkflow "Frontend Quality Gate" `
         -AllowedEvents @("push") `
-        -RequiredJobs @("Deploy to Cloudflare Pages", "E2E 왕복 테스트 + tenant availability") `
+        -RequiredJobs @("Deploy to Cloudflare Pages", "Production read-only user flow + tenant availability") `
         -Label "frontend"
 
     $manifest = $backend.Manifest

@@ -136,7 +136,7 @@ pwsh scripts/codex/assert-production-release-bundle.ps1 `
    set도 owner는 `{S}`, ttl은 `{N}`만 허용하며 다른 type이나 추가 field가 있으면
    malformed Item으로 거부한다. 정상 Item은 만료된 경우에만 통과한다.
 5. frontend run은 `Frontend Quality Gate`의 `main` push run이고
-   `Deploy to Cloudflare Pages`, `E2E 왕복 테스트 + tenant availability`가
+   `Deploy to Cloudflare Pages`, `Production read-only user flow + tenant availability`가
    성공했다.
 6. frontend run의 `pending_deployments`가 0이며 지정 운영 `version.json`이
    exact frontend SHA 또는 이를 포함하는 현재 `origin/main` descendant를

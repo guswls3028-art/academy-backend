@@ -49,14 +49,20 @@ class ResolveDispatchTest(TestCase, ClinicTestMixin):
                 ClinicResolutionService.resolve_manually(
                     clinic_link_id=link.id, user_id=1, memo="ok",
                 )
-        mock_dispatch.assert_called_once_with(exam_id=self.exam.id)
+        mock_dispatch.assert_called_once_with(
+            enrollment_id=self.enrollment.id,
+            session_id=self.lec_session.id,
+        )
 
     def test_waive_dispatches_pipeline(self):
         link = self._make_unresolved_link()
         with patch(PATCH_TARGET) as mock_dispatch:
             with self.captureOnCommitCallbacks(execute=True):
                 ClinicResolutionService.waive(clinic_link_id=link.id, user_id=1)
-        mock_dispatch.assert_called_once_with(exam_id=self.exam.id)
+        mock_dispatch.assert_called_once_with(
+            enrollment_id=self.enrollment.id,
+            session_id=self.lec_session.id,
+        )
 
     def test_unresolve_dispatches_pipeline(self):
         link = self._make_unresolved_link()
@@ -68,14 +74,20 @@ class ResolveDispatchTest(TestCase, ClinicTestMixin):
         with patch(PATCH_TARGET) as mock_dispatch:
             with self.captureOnCommitCallbacks(execute=True):
                 ClinicResolutionService.unresolve(clinic_link_id=link.id)
-        mock_dispatch.assert_called_once_with(exam_id=self.exam.id)
+        mock_dispatch.assert_called_once_with(
+            enrollment_id=self.enrollment.id,
+            session_id=self.lec_session.id,
+        )
 
     def test_carry_over_dispatches_pipeline(self):
         link = self._make_unresolved_link()
         with patch(PATCH_TARGET) as mock_dispatch:
             with self.captureOnCommitCallbacks(execute=True):
                 ClinicResolutionService.carry_over(clinic_link_id=link.id)
-        mock_dispatch.assert_called_once_with(exam_id=self.exam.id)
+        mock_dispatch.assert_called_once_with(
+            enrollment_id=self.enrollment.id,
+            session_id=self.lec_session.id,
+        )
 
     def test_homework_link_dispatches_via_enrollment_session(self):
         """homework 링크도 enrollment+session path 로 dispatch 가 되어야 한다."""
@@ -109,8 +121,8 @@ class ResolveDispatchTest(TestCase, ClinicTestMixin):
             session_id=self.lec_session.id,
         )
 
-    def test_legacy_link_with_meta_exam_id_prefers_exam_path(self):
-        """source_type=NULL 이어도 meta.exam_id 가 유효하면 exam_id path 우선."""
+    def test_legacy_link_with_meta_exam_id_stays_scoped_to_student(self):
+        """Legacy exam metadata must not expand a one-student decision to the class."""
         link = ClinicLink.objects.create(
             tenant=self.tenant,
             enrollment=self.enrollment,
@@ -123,4 +135,7 @@ class ResolveDispatchTest(TestCase, ClinicTestMixin):
         with patch(PATCH_TARGET) as mock_dispatch:
             with self.captureOnCommitCallbacks(execute=True):
                 ClinicResolutionService.waive(clinic_link_id=link.id, user_id=1)
-        mock_dispatch.assert_called_once_with(exam_id=self.exam.id)
+        mock_dispatch.assert_called_once_with(
+            enrollment_id=self.enrollment.id,
+            session_id=self.lec_session.id,
+        )
