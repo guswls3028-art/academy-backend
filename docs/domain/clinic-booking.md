@@ -42,6 +42,23 @@
 
 ## API 계약
 
+### 교직원 미통과 대상 목록
+
+`GET /api/v1/results/admin/clinic-targets/`는 요청 tenant의 활성 수강과 현재
+유효한 자동 ClinicLink를 읽는다. 시험·과제 원본, 강의별 시험 커트라인,
+대표 성적·최초 응시·재응시 이력·신뢰도 근거를 요청 단위로 일괄 조회하므로
+대상 행마다 같은 정보를 다시 조회하지 않는다. 신뢰도는 최초 응시 meta와
+정확한 시험·수강·응시의 meta가 있는 최신 200개 ResultFact 경계를 유지한다.
+과제별 커트라인 우선/차시 정책 fallback과 source 없는 legacy 링크의 가장
+작은 live regular 시험 표시도 유지한다. 이 조회는 점수·수동 해소·미제출 이력을
+쓰거나 재계산하지 않으며, tenant 누락과 다른 tenant 원본은 노출하지 않는다.
+
+`tests/test_clinic_target_bulk_reads.py`는 시험·과제 2행과 700행의 조회 수가
+같은지, 최초 점수·재응시·최신 200개 경계와 수동 해소 이력 보존을 검사한다.
+기존 대상 목록/미응시 면제/수강 범위 회귀가 권한·미제출·원본 제거 계약을 검증한다.
+
+### 일괄 예약 생성
+
 `POST /api/v1/clinic/participants/bulk-create/`
 
 ```json
