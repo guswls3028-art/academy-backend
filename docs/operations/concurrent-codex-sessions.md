@@ -33,8 +33,9 @@ windows and old automation snapshots are not current release evidence.
 
 ## Execution efficiency
 
-Read this section when choosing reasoning for design/review, delegating work,
-recovering truncated output, or reusing evidence. Optimize total consumption and
+Read only the applicable subsection once per task when choosing reasoning,
+delegating, recovering output or reusing evidence; reread changed material.
+Optimize total consumption and
 elapsed time per verified completed task, including rework; shorter prompts or
 less reasoning alone do not establish savings or equal quality. Safety,
 acceptance criteria, scoped HOLDs, required CI and delivery ownership still apply.
@@ -88,12 +89,12 @@ For consequential changes, one independently scoped reviewer may inspect exact
 changed contracts and failure boundaries without repeating implementation.
 Explicitly request review delegation when needed, e.g. "Use one independent
 High reviewer for this exact change." Where supported, use
-`spawn_agent(fork_turns="none", reasoning_effort="high", message=<bounded brief>)`.
+`spawn_agent(task_name="focused_review", fork_turns="none", reasoning_effort="high", message=<bounded brief>)`.
 The actual effort argument matters. Omitted/`all` history forks inherit the
 parent's model/effort and cannot accept these overrides; avoid them when they
 would carry `ultra`. Keep the model choice unchanged unless separately assigned.
 
-On installed Codex 0.154.0-alpha.6.2, `multiAgentMode` input is deprecated/ignored
+Verified with Codex 0.154.0-alpha.6.2: `multiAgentMode` input is deprecated/ignored
 and the response always says `explicitRequestOnly`; this field does not prove
 delegation behavior. The model catalog associates Ultra with automatic task
 delegation. Do not expect a medium task to delegate review automatically; use
