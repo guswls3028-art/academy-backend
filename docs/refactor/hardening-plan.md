@@ -1,6 +1,6 @@
 # 안정화·사용 편의성 실행 계획
 
-**상태:** active — S0 로컬 정리·문서 정돈·독립 검토 완료. 영상 오류 은폐·클리닉 운영 화면 수리와 실제 조교 검증 보강을 PR552로 게시했다. required CI·격리 실사용·운영 반영 전이며 전체 안정화 완료가 아니다.
+**상태:** active — S0 정리·문서 정돈·독립 검토 완료. PR552의 필수 CI는 통과·병합됐지만 격리 실사용20 PASS/1 FAIL로 운영 승격이 차단됐다. 신규 조교 안내 확인을 누락한 테스트를 재현·수정한 PR553의 CI 대기 중이다. 운영은 기존 baseline이며 전체 안정화 완료가 아니다.
 **갱신 기준:** 2026-09-20 KST. backend `9ff14e4d4`, frontend `a705cb81a`.
 **범위:** backend, frontend, 기존 사용자 업무, 관련 검증·운영·문서.
 **요청:** 장기 안정성과 사용자 편의성을 위해 필요한 리팩토링까지 수행하고,
@@ -51,7 +51,7 @@
 | S1 업무별 결함·증거 정리 | 5업무 공식 검사 대조 완료, 새로운 실사용 실행 전 | 아래5업무의 실행 테스트·미검증 조건·재현 결과 대조, 기존 결함 후보 현재성 확인 | §5 및 failure-transparency-stabilization.md |
 | S2 수리·필요 리팩토링 | 영상 목록 오류/빈 상태 수정, 클리닉 공통 mutation 통합·모바일 탭 압축 수정 완료 | P0/P1부터 정상 업무 단위로 실패 재현→수리→회귀/소비자 확인 | S1에서 재현된 최우선 항목 |
 | S3 규모·복구·편의성 | 첫 배치의 focused28 PASS, 실제 조교·교사 목록·운영 콘솔은 공식21에 연결 | 혼합 합성 데이터, 중복/재시도/부분 실패, PC/390px, 응답시간·조회량, 정상 빈 결과 구분 | 각 변경의 도메인 문서·검사 |
-| S4 배포·재발 확인 | 최신 후보 required CI 대기 | exact SHA/동일 산출물, required gate, 운영 버전·업무 readback, cleanup0, 한계 기록 | 기존 deployment/release-bundle 절차 |
+| S4 배포·재발 확인 | 첫 격리 gate20 PASS/1 FAIL·cleanup0, 운영 승격 없음. 후속 PR553 CI 대기 | exact SHA/동일 산출물, required gate, 운영 버전·업무 readback, cleanup0, 한계 기록 | §7의 실패·복구와 기존 release-bundle 절차 |
 
 S1~S4는 기능별 작은 변경 단위로 반복한다. 테스트 변경은 어느 공식 job에서
 어떤 업무 조건을 실제 실행했는지 확인한다. 재현된 P0/P1을 미해결로 둔 채
@@ -117,7 +117,7 @@ frontend 공식 목록은 `playwright.development-release.config.ts`와
 - 첫 공개영상 GET provisioning 후보는 현재 backend에서 GET 조회/POST 준비로 이미 수리됐다.
   `test_public_session_safe_method.py`와 frontend `public-video-preparation.mock.spec.ts`가 존재한다.
   코드·기존 회귀의 확인이며 새 실사용 실행은 아니다. [현재 계약](../domain/public-video-session.md)을 따른다.
-- 교사 영상 목록 API 실패가 실제 빈 목록으로 표시되는 후보는 현재 코드에도 남아 있다.
+- 교사 영상 목록 API 실패가 실제 빈 목록으로 표시되는 결함은 PR552에서 수리·병합됐다.
   수정 전 최초503 실패를 재현했고, 후보 수정의 정상0건/최초실패→재시도/기존 목록 갱신
   실패·reload14개 회귀가 PC/390px에서 통과했다. 운영 완료는 §7의 exact release로 판정한다.
 - 클리닉 전체 미통과 화면과 운영 drawer의 수동 통과가 서로 다른 저장 후 처리 코드를
@@ -146,16 +146,26 @@ canonical의 기존 dirty 변경을 가져오거나 덮어쓰지 않는다.
 | 목표·허용 범위 | 장기 안정성·편의성, 필요한 리팩토링. 기존 자료·tenant/권한 보호 |
 | base | backend `9ff14e4d4`, frontend `a705cb81a` |
 | 변경/판단 | 기존 계획·문서 정돈, 로컬 브랜치28개 정리. 교사 목록 오류 은폐, 클리닉 운영 콘솔의 느린 재조회 종속과 모바일 탭 압축 재현·수리 |
-| PR/후보 | [backend480](https://github.com/guswls3028-art/academy-backend/pull/480)(문서), [frontend552](https://github.com/guswls3028-art/academy-frontend/pull/552), frontend `2202e9a7bf7e8bcdf19941de7f0951a9cde1a3a2` |
+| PR/후보 | [backend480](https://github.com/guswls3028-art/academy-backend/pull/480)(문서), [frontend552](https://github.com/guswls3028-art/academy-frontend/pull/552) 병합 `3cb33cee37f2426c630ec0c2d4fff79bc99f3f2a`; 후속 [frontend553](https://github.com/guswls3028-art/academy-frontend/pull/553) 후보 `62ebd07cb56bfcf5bb565d37cd4142c5862474c7` |
 | 로컬 검증 | 영상14/클리닉14 PASS, 알림 노출2 PASS 및 PC/390px 시각 검토, typecheck/lint/guards/budget/build PASS, 개발 canary 계약120 PASS. backend lifecycle/change-risk/release-bundle 계약3개 PASS. 독립 리뷰 완료 |
-| 공식 검증 | frontend 후보 quality35468854237·E2E35468854197 진행 중. backend 초기 문서9616420d1의CI35466875097 PASS; 최종 인계 문서 변경의 CI는 별도 확인 필요 |
-| 배포 | 운영 baseline은 §2. frontend 후보는 아직 CI/격리 서버/운영 반영 완료 아님. S0 문서만을 위한 backend 제품 배포는 필요하지 않음 |
-| 다음 실행 | frontend exact 후보의 전체CI 후 병합→동일 산출물21개(실제staff역할·열린 숙제 화면 자동발견·교사 목록·운영콘솔 포함)→cleanup0→운영버전/bundle readback. 결과를 갱신한 최종 문서 CI·병합 |
+| 공식 검증 | PR552 quality35468854237·E2E35468854197 PASS(Chromium695, iPhone36 PASS; Chromium 전용1개는 WebKit에서 제외). main35471220443은 격리20 PASS/1 FAIL/0 SKIP로 차단. 후속 quality35472858971·E2E35472859043 대기. backend 초기 문서9616420d1 CI35466875097 PASS; 최종 문서 CI는 PR480 exact head에서 확인 |
+| 배포 | 운영 baseline은 §2. 실패한 격리 gate는 운영 승인을 받지 않았고 승격하지 않았다. 두 QA tenant/user와 storage/process/listener 잔여0 확인. 문서만을 위한 backend 제품 배포는 필요하지 않음 |
+| 다음 실행 | PR553 exact 후보의 전체CI 후 병합→동일 산출물21개 전부 통과→cleanup0→공식 production 승인→운영버전/bundle readback. 결과를 갱신한 최종 문서 CI·병합 |
 | 주의 | 외부 dirty 변경 보호, Windows 삭제 거부, 역사 후보와 현재 장애 구분 |
 
 각 배치 종료 시 exact commit/PR·실행 결과·운영 반영 여부·남은 재현·다음 한 작업을
 갱신한다. 같은 입력의 통과 검사는 재사용하고 기능 정책은 도메인 문서에 반영한다.
 required CI와 executable 변경의 개발/운영 gate는 유지한다.
+
+첫 격리 실행 [35471220443](https://github.com/guswls3028-art/academy-frontend/actions/runs/35471220443)은
+실제 조교 역할, 학생 제출과 열린 상세의 파일 자동 발견까지 통과한 뒤 미리보기 클릭에서
+멈췄다. 신규 조교의 `first_login_guide_required=true` 안내가 본문 위에 있었는데 seeded-auth
+테스트가 확인 단계를 누락했다. 동일 조건의 focused 재현에서 버튼은 visible/enabled였고
+안내 overlay가 포인터를 가로챘다. 실제 안내 확인 버튼→`/core/me/` 상태 false→미리보기→
+reload 검증으로 수정했으며 숙제 mock2 PASS, PC/390px 시각 검토·lint·guards·독립 리뷰를
+통과했다. 제품 권한·모달 정책을 바꾸거나 강제 클릭으로 우회하지 않았다. 실제 격리 재실행은
+아직 완료하지 않았으며 미리보기 이후 여정을 성공으로 기록하지 않는다. 나머지20개는
+운영 콘솔·교사 영상 목록·PC/mobile690초 재생을 포함해 통과했다.
 
 격리 teacher 목록의 YouTube 썸네일과 worker가 생성하지 않은 long-video fixture
 썸네일은 로컬 이미지 대역이며 목록 응답은 실제 API다. 숙제 PNG 미리보기는 실제
