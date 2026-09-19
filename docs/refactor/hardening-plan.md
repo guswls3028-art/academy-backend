@@ -75,10 +75,10 @@ S1~S4는 기능별 작은 변경 단위로 반복한다. 테스트 변경은 어
 
 | 업무 | 사용자 성공 경로 | 현재 증거·우선 빈틈 | 소유 문서/검사 진입점 |
 |---|---|---|---|
-| 학생 등록·계정 | 입력→등록/승인→로그인→교직원/학생/보호자 조회 | account 검사는 존재. 신규 가입·중복·저장 실패의 정확한 공식 포함 범위 재확인 | [student-creation](../domain/student-creation.md), [student-core](../domain/student-core.md), frontend `student-parent-account-realuse.spec.ts` |
+| 학생 등록·계정 | 입력→등록/승인→로그인→교직원/학생/보호자 조회 | 공식 account 검사는 미리 생성한 계정의 복구 요청·기존 로그인·프로필/보호자 조회다. 신규 가입→승인 UI 검증과 혼동하지 않으며 중복·저장 실패 포함 범위를 추가 확인 | [student-creation](../domain/student-creation.md), [student-core](../domain/student-core.md), frontend `student-parent-account-realuse.spec.ts` |
 | 시험·재채점 | 답안/배점 저장→채점→성적·클리닉·학생 화면→reload | OMR 재채점/수동 점수 통과. 미제출·재응시·부분 실패·재시도 조합 확인 | [exam-grading](../domain/exam-grading.md), frontend `omr-review-realuse.spec.ts` |
 | 숙제 | 제출→파일 저장→교직원 조회→명시적 처리→학생 결과 | 모바일 PNG/reload 통과. 다른 파일·실패/삭제·권한·새 제출 발견성 확인 | [homework-grading](../domain/homework-grading.md), frontend `student-parent-homework-realuse.spec.ts` |
-| 클리닉 | 조회→통과/되돌리기→학생 상태→예약/취소→reload | 공식 pass/undo 통과. 700행에 OMR/수동/재응시 조합과 시간 기준 확인 | [clinic-booking](../domain/clinic-booking.md), `test_clinic_target_bulk_reads.py`, frontend `student-clinic-required-cancel-realuse.spec.ts` |
+| 클리닉 | 조회→통과/되돌리기→학생 상태→예약/취소→reload | 공식 검사는 교직원 UI 통과, API 되돌리기·학생 projection, 목록 reload를 포함한다. 되돌리기/학생 결과 전체 UI 여정과 혼동하지 않으며 700행 OMR/수동/재응시 조합·시간 기준 확인 | [clinic-booking](../domain/clinic-booking.md), `test_clinic_target_bulk_reads.py`, frontend `student-clinic-required-cancel-realuse.spec.ts` |
 | 영상 | 준비/업로드→처리→학생 재생→갱신·진도·복원 | 장시간 재생 통과. 교사 목록 오류/빈 상태 후보와 실제 버퍼링 관측 범위 확인 | [실패 은폐 후보](failure-transparency-stabilization.md), frontend `video-playback-renewal.realuse.spec.ts` |
 
 frontend 공식 목록은 `playwright.development-release.config.ts`와

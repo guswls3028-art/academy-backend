@@ -12,9 +12,9 @@
 | [structure-reform/DUPLICATE_ROOTS.md](structure-reform/DUPLICATE_ROOTS.md) | verified/proposed | 중복 진입점과 canonical 후보 |
 | [structure-reform/PRE_PROMOTION_STRUCTURE_PLAN.md](structure-reform/PRE_PROMOTION_STRUCTURE_PLAN.md) | proposed | 운영 홍보 직전 배포·작업트리·구조조정 착수 계획 |
 | [roadmap.md](roadmap.md) | historical proposal | 초기 구조 이동 제안; 현재 가드레일/실행 상태로 사용하지 않음 |
-| [inventory.md](inventory.md) | verified/proposed | 현재 구조 실측과 병목 inventory |
-| [phase-0-guardrails.md](phase-0-guardrails.md) | proposed | 코드 이동 전 안전망 구축 계획 |
-| [validation-matrix.md](validation-matrix.md) | proposed | 단계별 검증 매트릭스 |
+| [inventory.md](inventory.md) | historical snapshot | 2026-06-23 구조 실측·추론; 현재 수치로 재사용하지 않음 |
+| [phase-0-guardrails.md](phase-0-guardrails.md) | historical proposal | 초기 안전망 설계; 현재 구현/검사는 실행 소스 확인 |
+| [validation-matrix.md](validation-matrix.md) | historical proposal | 초기 검증 설계; 현재 gate는 owning workflow/운영 계약 |
 | [hardening-plan.md](hardening-plan.md) | active execution / handoff | 현재 안정화·사용 편의성 단계, 실제 증거·미검증 조건, 다음 작업 |
 | [failure-transparency-stabilization.md](failure-transparency-stabilization.md) | partially implemented / runtime-unverified | 자동승인·공개영상 준비 수리 근거와 남은 오류/복구 후보 |
 | [student-domain-phase2-stability-audit.md](student-domain-phase2-stability-audit.md) | historical audit | 2026-06-07 증거·미완료 후보; 현재성 재검증 필요 |
