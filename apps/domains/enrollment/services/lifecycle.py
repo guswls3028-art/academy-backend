@@ -69,6 +69,8 @@ def assess_disposable_enrollment(*, tenant, enrollment) -> DisposableEnrollmentI
     protected_attendances = attendances.count() - removable_attendances
 
     protected_dependencies: dict[str, int] = {}
+    if enrollment.lecture_memo:
+        protected_dependencies["enrollment.lecture_memo"] = 1
     allowed_accessors = {"attendances", "session_enrollments"}
     for relation in Enrollment._meta.related_objects:
         accessor = relation.get_accessor_name()

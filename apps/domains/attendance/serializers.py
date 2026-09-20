@@ -10,6 +10,9 @@ from apps.support.attendance.serializer_dependencies import (
 
 
 class AttendanceSerializer(serializers.ModelSerializer):
+    student_memo = serializers.SerializerMethodField()
+    lecture_memo = serializers.CharField(source="enrollment.lecture_memo", read_only=True)
+    lecture_memo_updated_at = serializers.DateTimeField(source="enrollment.updated_at", read_only=True)
     session = serializers.PrimaryKeyRelatedField(
         queryset=session_queryset_for_attendance_serializer(),
     )
@@ -63,6 +66,9 @@ class AttendanceSerializer(serializers.ModelSerializer):
             "student_id",
             "status",
             "memo",
+            "lecture_memo",
+            "lecture_memo_updated_at",
+            "student_memo",
             "planned_arrival_date",
             "planned_arrival_time",
             "name",
@@ -73,6 +79,9 @@ class AttendanceSerializer(serializers.ModelSerializer):
             "profile_photo_url",
             "name_highlight_clinic_target",
         ]
+
+    def get_student_memo(self, obj):
+        return obj.enrollment.student.memo or ""
 
     def validate(self, attrs):
         request = self.context.get("request")

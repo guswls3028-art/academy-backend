@@ -1,8 +1,8 @@
 # Student Domain Core SSOT
 
 **Status:** Active
-**Last checked:** 2026-08-30 KST
-**Truth basis:** code inspection of `apps/domains/students/`, `apps/core/views/account_recovery.py`, `apps/core/services/password.py`, `apps/domains/results/services/submission_scope_guard.py`, `apps/domains/results/services/student_result_service.py`, and frontend shared student contracts.
+**Last checked:** 2026-09-20 KST
+**Truth basis:** code inspection of `apps/domains/students/`, `apps/domains/enrollment/`, staff attendance projections, `apps/core/views/account_recovery.py`, `apps/core/services/password.py`, `apps/domains/results/services/submission_scope_guard.py`, `apps/domains/results/services/student_result_service.py`, and frontend shared student contracts.
 
 This document is the integration SSOT for the student domain. More specific
 documents still own their detailed contracts:
@@ -41,6 +41,54 @@ equivalent native binary ordering. The shared list rules are owned by
 `data-list-ordering.md`.
 
 ## 1. Canonical Student Graph
+
+### Lecture handoff memo
+
+`Enrollment.lecture_memo` is a shared staff handoff note for exactly one
+tenant/student/lecture, for example “use video for every session of this course”.
+Every session roster of that lecture reads the same enrollment field; another
+lecture has a different enrollment and note. It does not change attendance or
+video entitlement automatically. There is no new session-specific or personal
+private memo. Existing `Student.memo` (student-wide) and `Attendance.memo`
+(session attendance) retain their data and behavior; neither is copied into the
+new field. Existing student/parent profile responses already expose `Student.memo`.
+
+Active tenant memberships with role `owner`, `admin`, `staff`, or `teacher` use
+the existing `TenantResolvedAndStaff` boundary. Parent/student roles cannot read
+or write this lecture memo, including their own enrollment. The student/parent
+profile API does not project the new field. Staff enrollment, session-enrollment,
+and attendance serializers expose `lecture_memo` and `lecture_memo_updated_at`
+(the enrollment's `updated_at`). The two roster serializers also expose
+read-only `student_memo`, converting a null existing student memo to an empty
+string without changing stored data. No per-row student fetch is needed.
+
+`PATCH /api/v1/enrollments/{id}/lecture-memo/` accepts exactly
+`{"lecture_memo": "text"}` plus required `X-Expected-Updated-At` from the last
+read. Text is at most 2,000 characters, retains whitespace, and an empty string
+clears it. Success returns `{id, lecture_memo, lecture_memo_updated_at}`.
+The endpoint locks the tenant-scoped enrollment before checking the timestamp;
+missing/malformed timestamps or invalid bodies return 400, stale writes return
+409 with `code: stale_resource` and `current_updated_at`, and a foreign/missing
+enrollment returns 404 for an otherwise authorized caller. On conflict, retain
+the draft and reload the current memo before deliberate retry; never retry
+silently with a new timestamp. Frontend interactions are owned by the frontend
+attendance module documentation.
+
+Only this endpoint writes the field. Generic enrollment updates cannot write
+memo fields or save a stale memo incidentally; memo updates do not run fee,
+account-notification, or enrollment-status side effects. The migration adds an
+empty column with a persistent database default so old runtime inserts remain
+compatible during rolling deployment. Old runtimes do not know or overwrite the
+new column. There is no data-copy migration or new identity graph.
+
+Inactivation/reactivation and student soft-delete/restore preserve the memo.
+An explicit hard deletion of its enrollment/student/lecture removes it with that
+enrollment; a fresh enrollment after hard deletion starts empty. Automated
+disposable-enrollment correction refuses a nonempty memo as authored data.
+Tests: `apps/domains/enrollment/tests/test_lecture_memo.py` covers distinct admin
+and staff actors, role/tenant denial, profile non-disclosure, shared session
+projections, other-lecture isolation, old notes, clear/reload, stale-write
+protection, lifecycle preservation, cleanup protection, and old-runtime inserts.
 
 The durable student graph is:
 

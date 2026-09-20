@@ -4,6 +4,7 @@ import logging
 import uuid
 
 from django.db import transaction
+from django.shortcuts import get_object_or_404
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.decorators import action
 from rest_framework.filters import SearchFilter
@@ -12,7 +13,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.exceptions import ValidationError, NotFound
 from rest_framework.parsers import MultiPartParser
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 
 from apps.api.common.upload_validation import (
     DEFAULT_MAX_EXCEL_SIZE,
@@ -25,6 +26,8 @@ from .serializers import (
     EnrollmentExcelUploadAcceptedSerializer,
     EnrollmentExcelUploadRequestSerializer,
     EnrollmentSerializer,
+    LectureMemoResultSerializer,
+    LectureMemoSerializer,
     SessionEnrollmentSerializer,
 )
 from .filters import EnrollmentFilter
@@ -32,6 +35,10 @@ from django.conf import settings
 from apps.infrastructure.storage.r2 import delete_object_r2_excel, upload_fileobj_to_r2_excel
 from rest_framework.permissions import IsAuthenticated
 from apps.core.permissions import TenantResolvedAndStaff
+from apps.core.optimistic_concurrency import (
+    EXPECTED_UPDATED_AT_HEADER,
+    assert_expected_updated_at,
+)
 from apps.support.enrollment.view_dependencies import (
     dispatch_job,
     get_excel_parsing_job_status_response,
@@ -64,6 +71,28 @@ class EnrollmentViewSet(ModelViewSet):
             {"detail": "수강 등록은 bulk_create 엔드포인트를 사용해야 합니다."},
             status=status.HTTP_405_METHOD_NOT_ALLOWED,
         )
+
+    @extend_schema(
+        request=LectureMemoSerializer,
+        responses=LectureMemoResultSerializer,
+        parameters=[OpenApiParameter(
+            name=EXPECTED_UPDATED_AT_HEADER, type=str,
+            location=OpenApiParameter.HEADER, required=True,
+        )],
+    )
+    @transaction.atomic
+    @action(detail=True, methods=["patch"], url_path="lecture-memo")
+    def lecture_memo(self, request, pk=None):
+        enrollment = get_object_or_404(self.get_queryset().select_for_update(of=("self",)), pk=pk)
+        self.check_object_permissions(request, enrollment)
+        if not request.headers.get(EXPECTED_UPDATED_AT_HEADER):
+            raise ValidationError({EXPECTED_UPDATED_AT_HEADER: "현재 수정 시각이 필요합니다."})
+        assert_expected_updated_at(request=request, instance=enrollment)
+        serializer = LectureMemoSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        enrollment.lecture_memo = serializer.validated_data["lecture_memo"]
+        enrollment.save(update_fields=["lecture_memo", "updated_at"])
+        return Response(LectureMemoResultSerializer(enrollment).data)
 
     @transaction.atomic
     @action(detail=False, methods=["post"])
