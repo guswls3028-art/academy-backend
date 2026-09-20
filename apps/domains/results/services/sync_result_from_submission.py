@@ -184,7 +184,9 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
     }
     score_adjustment = get_score_adjustment_from_answers(answer_key.answers or {})
     questions = list(sheet.questions.all().order_by("number"))
-    numeric_short_answer_ids = math_numeric_short_answer_question_ids(
+    # Mirror paper-vs-online auto grading so re-sync cannot overwrite manual
+    # paper essay scores or demand answers that the OMR contract never recognizes.
+    numeric_short_answer_ids = set() if is_omr_scan_submission(submission) else math_numeric_short_answer_question_ids(
         exam=exam,
         question_ids=(int(q.id) for q in questions),
         question_kind=score_shape.question_kind,
