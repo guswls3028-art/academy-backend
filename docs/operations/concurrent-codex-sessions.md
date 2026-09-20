@@ -57,14 +57,24 @@ Classify the actual impact, not words appearing in a document. Missing context,
 truncated logs, access denial and environment faults need evidence or recovery,
 not a larger reasoning setting.
 
-Instructions saying "think at high" do not change runtime effort. In the app,
-select High in the task's model/reasoning picker before the relevant work; an
-existing task's selection applies to subsequent turns. A CLI invocation can use
+Instructions saying "think at high" do not change runtime effort. When actual
+risk requires High or above and the primary effort is lower or unverified, use
+the supported scoped delegation below at that effort before consequential
+implementation. This policy authorizes that request; no repeat user request is
+needed. A primary
+task already at the required effort can perform the analysis itself; do not add
+a duplicate reviewer solely for effort coverage.
+
+If delegation is unavailable, select the required effort in the app's
+model/reasoning picker before the relevant work; an existing selection applies to
+subsequent turns. A CLI invocation can use
 `codex -c 'model_reasoning_effort="high"' -c 'plan_mode_reasoning_effort="high"'`
 without changing saved defaults. The app-server supports an explicit next-turn
 `effort` override, but AGENTS cannot switch an in-flight turn itself. If the
-current interface cannot change effort, state the required task setting and its
-scope to the user before the high-risk analysis; do not claim automatic routing.
+current interface cannot provide either path, report the required setting/scope,
+defer that high-risk work until the effort requirement is met, and continue
+independent work. Neither policy nor a High child changes the primary task's
+runtime effort; do not claim automatic switching.
 Use only values advertised by the installed model. A task run at `ultra` is not
 evidence that `medium` preserves its quality.
 
@@ -85,10 +95,12 @@ and files remain shared: a short prompt does not prove a small actual input.
 If the interface cannot control inheritance, record that limit instead of
 promising reduced context.
 
-For consequential changes, one independently scoped reviewer may inspect exact
-changed contracts and failure boundaries without repeating implementation.
-Explicitly request review delegation when needed, e.g. "Use one independent
-High reviewer for this exact change." Where supported, use
+When higher-effort coverage is required above, request one scoped reviewer to
+check the proposed approach, invariants and failure boundaries before the risky
+implementation, then incorporate its findings. Continue independent work while
+it runs. Reuse that reviewer for the resulting relevant diff/evidence when
+needed; send only the changes and new evidence, not a second full investigation.
+Where supported, use
 `spawn_agent(task_name="focused_review", fork_turns="none", reasoning_effort="high", message=<bounded brief>)`.
 The actual effort argument matters. Omitted/`all` history forks inherit the
 parent's model/effort and cannot accept these overrides; avoid them when they
@@ -97,8 +109,8 @@ would carry `ultra`. Keep the model choice unchanged unless separately assigned.
 Verified with Codex 0.154.0-alpha.6.2: `multiAgentMode` input is deprecated/ignored
 and the response always says `explicitRequestOnly`; this field does not prove
 delegation behavior. The model catalog associates Ultra with automatic task
-delegation. Do not expect a medium task to delegate review automatically; use
-the explicit request and check the available tool's current contract.
+delegation. A saved medium default alone does not arrange review: the agent must
+invoke the explicit request under this policy and check the current tool contract.
 
 ### Output recovery and complete review
 
@@ -117,7 +129,8 @@ upstream content. Never repeat a mutation solely to recover output.
 
 Track which files/sections were actually inspected. Partial diff/log excerpts
 do not establish complete contract, migration or permission review; inspect the
-missing material before closure. Consider a supported per-command/read limit
+missing material before closure. An unavailable required source remains an
+evidence gap, never an assumed pass. Consider a supported per-command/read limit
 override only for recurring, evidenced re-read costs; do not change the global
 limit speculatively or confuse display budget with history storage.
 
@@ -132,6 +145,12 @@ and the exact SHA/environment/run evidence in the
 does not clear a HOLD. Record important design decisions and reusable rejected
 approaches with their reasons in the affected current-state owner only when
 needed; do not reconstruct prior conversations or accumulate speculative TODOs.
+
+Before consequential edits, identify the affected successful user outcome and
+relevant failure/invariant checks in the existing task plan/context. Before
+closure, map each to actual evidence or explicitly report the unresolved gap;
+do not weaken acceptance criteria to meet a token budget or create a separate
+checklist document for every task.
 
 Reuse a check only after confirming relevant code, tests, dependencies, inputs
 and environment match, or documenting why their differences cannot affect the
