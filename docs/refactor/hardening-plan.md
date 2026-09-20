@@ -247,6 +247,13 @@ frontend base `d33c4c6458`이다. 이전 작업공간은 닫혔으며 canonical�
   이미지 입력은 a7da와 같아 실제 이미지 성공 증거를 재사용한다. 원격 PR head와
   Actions 조회에서 새 자동 실행0건을 확인해 기존 공식 workflow를 같은 branch로
   dispatch했다(35540127663). 이 실행의 필수 CI 성공 없이 병합하지 않는다.
+  최종35540127663은 성공했다(PostgreSQL5467 PASS/5 SKIP/639 subtests,
+  Django5296 PASS/148 SKIP/629 subtests). PR489를 보호된 일반 merge로 병합한
+  main은 `057403c653f4c5f26fc43dc524b974895a4ba432`이며 공식 배포35540757110이
+  시작됐다. 6개 이미지 빌드·전체 보안 검사와 상시 격리 개발환경 검증은 성공했고,
+  별도 preprod도 DB 격리·CDN 재생 체인을 통과했다. 임시 서버 종료 확인 뒤
+  운영 마이그레이션을 마쳤고 API/worker 교체가 진행 중이다. 최종 운영 검증과
+  성공 manifest 확인 전에는 frontend를 승격하지 않는다.
   Python 전체 대신 같은3.11.15의 `pyexpat`·`_elementtree`를 함께 재빌드하고
   서비스의 마지막 패키지 설치 뒤 실제 연결·동작을 다시 확인한다.
 
