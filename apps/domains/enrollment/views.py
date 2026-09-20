@@ -75,10 +75,13 @@ class EnrollmentViewSet(ModelViewSet):
     @extend_schema(
         request=LectureMemoSerializer,
         responses=LectureMemoResultSerializer,
-        parameters=[OpenApiParameter(
-            name=EXPECTED_UPDATED_AT_HEADER, type=str,
-            location=OpenApiParameter.HEADER, required=True,
-        )],
+        parameters=[
+            OpenApiParameter(name="id", type=int, location=OpenApiParameter.PATH),
+            OpenApiParameter(
+                name=EXPECTED_UPDATED_AT_HEADER, type=str,
+                location=OpenApiParameter.HEADER, required=True,
+            ),
+        ],
     )
     @transaction.atomic
     @action(detail=True, methods=["patch"], url_path="lecture-memo")

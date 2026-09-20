@@ -145,7 +145,7 @@ class SessionEnrollmentSerializer(serializers.ModelSerializer):
             "created_at",
         ]
 
-    def get_student_memo(self, obj):
+    def get_student_memo(self, obj) -> str:
         return obj.enrollment.student.memo or ""
 
     def validate(self, attrs):
