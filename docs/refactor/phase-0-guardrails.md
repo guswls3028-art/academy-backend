@@ -1,7 +1,12 @@
 # Phase 0 Guardrails
 
-**Status:** [PROPOSED] before physical code movement  
+**Status:** [HISTORICAL PROPOSAL] original guardrail design before physical code movement
 **Purpose:** make the refactor observable and enforceable before package moves.
+
+Current execution belongs to [hardening-plan.md](hardening-plan.md). Several
+proposed rails now exist in executable CI; unchecked prose below does not prove
+they are missing. Follow current repository instructions from an owned worktree
+instead of replaying captured canonical-root commands.
 
 Phase 0 does not chase beauty. It installs rails so later movement cannot hide
 tenant leaks, stale frontend types, broken workers, or silent docs drift.

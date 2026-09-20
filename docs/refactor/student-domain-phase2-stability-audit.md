@@ -1,9 +1,16 @@
 # Student Domain Phase 2 Stability Audit
 
-**Status:** Active audit ledger
+**Status:** Historical audit ledger — findings captured on 2026-06-07
 **Captured:** 2026-06-07 KST
 **Owner SSOT:** `../domain/student-core.md`
 **Launch gate:** `student-domain-launch-readiness.md`
+
+This ledger preserves evidence and unresolved candidates from that date. Its
+production-writing commands and controlled-recipient observations are not current
+QA instructions. Current execution is [hardening-plan.md](hardening-plan.md),
+with [isolated development](../operations/persistent-development-runtime.md) and
+the [release contract](../operations/change-risk-and-release-bundle.md).
+Revalidate open entries before classifying them as current defects or resolved.
 
 This ledger turns the student-domain concern into executable invariants and
 real-use scenarios. It is not a release note. It is the working checklist for
