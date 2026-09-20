@@ -74,6 +74,10 @@ S1~S4는 기능별 작은 변경 단위로 반복한다. 테스트 변경은 어
 
 ## 5. 핵심 업무와 검증 기준
 
+이 절의 증거 표는 §7의 첫 완료 배치 기준이다. 이어서 확장한 가입·직원 채점·
+정답/만점 변경·수동 통과 취소·자정 이후 검증의 실행 상태는 §8을 우선한다.
+새 테스트의 존재만으로 아래 공백을 완료 처리하지 않는다.
+
 | 업무 | 사용자 성공 경로 | 현재 증거·우선 빈틈 | 소유 문서/검사 진입점 |
 |---|---|---|---|
 | 학생 등록·계정 | 입력→등록/승인→로그인→교직원/학생/보호자 조회 | 공식 account 검사는 미리 생성한 계정의 복구 요청·기존 로그인·프로필/보호자 조회다. 신규 가입→승인 UI 검증과 혼동하지 않으며 중복·저장 실패 포함 범위를 추가 확인 | [student-creation](../domain/student-creation.md), [student-core](../domain/student-core.md), frontend `student-parent-account-realuse.spec.ts` |
@@ -142,7 +146,7 @@ frontend 공식 목록은 `playwright.development-release.config.ts`와
 
 ## 7. 인수인계와 재개
 
-현재 배치는 `stability-foundation-0920` 소유 worktree에서 S0와 첫 안정화 수리를 완료했다.
+첫 배치는 `stability-foundation-0920` 소유 worktree에서 S0와 첫 안정화 수리를 완료했다.
 다른 작업자는 아래 상태와 PR/CI를 확인하고 Git branch/worktree로 소유권을 확인한다.
 canonical의 기존 dirty 변경을 가져오거나 덮어쓰지 않는다.
 후속 작업은 완료된 배치의 작업공간을 재사용하지 않고 현재 `origin/main`에서 새 소유 세션으로 시작한다.
@@ -203,6 +207,34 @@ development storage 객체를 검증한다. 그림 대역을 CDN/처리 성공�
 현재 소유 세션은 `stability-completion-0920`이며 backend base `efd2d2251`,
 frontend base `d33c4c6458`이다. 이전 작업공간은 닫혔으며 canonical의 외부 변경은 보존한다.
 실행 영수증은 `C:\academy\_artifacts\stability-completion-0920`에 남긴다.
+
+### 현재 실행 상태 — 2026-09-20 21:20 KST
+
+- Backend 활성화 PR [485](https://github.com/guswls3028-art/academy-backend/pull/485)는
+  exact head `680ed5cae8a52ce074fcfad0c055d1eb4d9362f5`의 필수 CI
+  [35508963261](https://github.com/guswls3028-art/academy-backend/actions/runs/35508963261)
+  통과 뒤 main `c88038d47a05e50ec7e8fd095698f88c910e080f`에 병합했다.
+  공식 배포 [35509622551](https://github.com/guswls3028-art/academy-backend/actions/runs/35509622551)는
+  진행 중이다. 전체 성공 manifest와 실제 플래그 true·DRF 3.17.2 확인 전까지
+  frontend 병합 HOLD를 유지한다.
+- 통합 frontend PR [556](https://github.com/guswls3028-art/academy-frontend/pull/556)의
+  후보는 `b9505cc2bff566ffc030dc149309d7dbbf8a33b5`다. Quality
+  [35509628519](https://github.com/guswls3028-art/academy-frontend/actions/runs/35509628519)는
+  성공했고 전체 E2E [35509628673](https://github.com/guswls3028-art/academy-frontend/actions/runs/35509628673)는
+  진행 중이다. 운영 frontend는 아직 `d33c4c645868b8924719507524e2f03ea8d02d96`다.
+- 빌드의 `/version.json`과 일반/빈 점수 점유 해제 요청의 `X-Client-Version`이
+  달라지던 경로를 하나의 빌드 식별자로 통일했다. 실제 빌드 HTTP 비교에서 수정 전
+  `dev` 불일치, 수정 후 일치를 확인했다. 인증·tenant·keepalive·요청 본문은 유지한다.
+  새 회귀는 기존 필수 Quality 경로에서 실행되어 성공했다. CI에 없는 검사로
+  오인해 중복 게이트를 추가하지 않았다.
+- 메시징 PR 558의 편집기/클립보드 수정과 PR 555의 출결·교사 화면 수정을 통합했다.
+  이 작업이 최종 frontend 배포를 소유하며 두 원작업은 독립 배포·공유 개발 환경
+  변경을 보류한다. 공식 21개 실사용·정리0 뒤 같은 산출물의 추가 출결/교사 UI
+  검사를 완료하고 운영 승격한다. 추가 검사의 실제 역할은 admin이며 조교 권한
+  증거는 공식 staff 시나리오로 구분한다.
+
+아래는 재현·수정·검증의 경과다. 현재 상태와 충돌하는 과거의 후보/대기 문장은
+당시 기록이며, 위 실행 상태와 공식 영수증을 우선한다.
 
 | 순서 | 현재 작업·근거 | 완료 조건 |
 |---|---|---|

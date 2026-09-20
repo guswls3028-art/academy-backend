@@ -1,10 +1,30 @@
 # Current Production Runtime SSOT
 
-**Verified:** 2026-08-20T13:34:28+09:00
+**Infrastructure snapshot verified:** 2026-08-20T13:34:28+09:00
 **Scope:** Academy V1 production, AWS account `809466760795`, region `ap-northeast-2`.
 **Truth sources:** AWS `describe-*` reads with profile `default`, `docs/ssot/params.yaml`, `docs/reports/drift.latest.md`, `docs/reports/resource-cleanup.latest.md`, `docs/reports/cost-waste-audit.latest.md`.
 
-This document records the verified current runtime shape. `params.yaml` remains the executable desired-state SSOT; this file is the operator-facing current-state SSOT and must be refreshed after infra/cost/deploy changes.
+This document records the dated infrastructure snapshot below and separately identifies
+deployment evidence. `params.yaml` remains the executable desired-state SSOT. Fresh AWS
+readback takes precedence over this snapshot; a later application deployment does not
+reverify every inventory or cost figure below.
+
+## Deployment Identity
+
+The [successful release manifest](../reports/release-manifest.latest.json) owns backend
+source SHA, immutable service digests, release status and verification time. Each frontend
+production domain's `/version.json` owns its built revision. The release notes' `CURRENT`
+label identifies the last sealed notes, not an independently verified live build.
+
+On 2026-09-20, reader rollout [35505492422](https://github.com/guswls3028-art/academy-backend/actions/runs/35505492422)
+completed at `2026-09-20T20:48:00+09:00`, source
+`07597fc6837e3274516c597be4355344327b3307`, with all service digests verified.
+An additional read-only check confirmed migration 0022, the expanded clinic time constraint,
+DRF 3.16.1 and both clinic write flags false. Activation rollout
+[35509622551](https://github.com/guswls3028-art/academy-backend/actions/runs/35509622551)
+is pending completion; it is not evidence of enabled overnight booking yet.
+The [stabilization handoff](../refactor/hardening-plan.md#8-안정화-계속-실행--2026-09-20)
+records the remaining same-artifact and affected-flow checks.
 
 ## Compute Baseline
 
@@ -65,15 +85,15 @@ instance. Batch-managed ASGs should have desired 0 when no Batch job is active.
 
 ## Verification
 
-Latest verification after the runtime-audit hardening release:
+Historical evidence for the infrastructure snapshot above (not the latest application release):
 
 - GitHub run `32330381855`, source
   `fc4f748dfbf47575eb9424ee301f6771c47116de`, passed immutable builds, exact
   ECR scan identity, persistent development, isolated preprod, migration,
   launch-before-terminate API/worker refreshes, runtime digest verification,
   Video Batch verification, and successful release-manifest promotion.
-- `docs/reports/release-manifest.latest.json` is `complete=true`,
-  `status=successful`, and records the same source SHA and run-bound image tag.
+- At that verification, the release manifest was `complete=true`,
+  `status=successful`, and recorded the same source SHA and run-bound image tag.
 - `pwsh scripts/v1/run-production-canary.ps1 -Mode PostDeploy -AwsProfile default -StrictWarnings -WriteReport`
   -> `PASS=30 WARN=0 FAIL=0`; API/worker ASGs were 1/1 healthy, ALB 1/1,
   RDS/Redis available, all three queues and DLQs empty, Batch valid, Django
