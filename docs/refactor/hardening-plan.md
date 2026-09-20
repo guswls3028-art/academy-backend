@@ -208,7 +208,7 @@ development storage 객체를 검증한다. 그림 대역을 CDN/처리 성공�
 frontend base `d33c4c6458`이다. 이전 작업공간은 닫혔으며 canonical의 외부 변경은 보존한다.
 실행 영수증은 `C:\academy\_artifacts\stability-completion-0920`에 남긴다.
 
-### 현재 실행 상태 — 2026-09-21 01:48 KST
+### 현재 실행 상태 — 2026-09-21 02:23 KST
 
 - Backend 활성화 PR [485](https://github.com/guswls3028-art/academy-backend/pull/485)는
   exact head `680ed5cae8a52ce074fcfad0c055d1eb4d9362f5`의 필수 CI
@@ -289,7 +289,23 @@ frontend base `d33c4c6458`이다. 이전 작업공간은 닫혔으며 canonical�
   bare LF/NUL은0이며 parser가 헤더 단계에서 두 번째 읽기를 요구함을 확인했다.
   parser 코드 pin·요청1건·정리·kernel/sequence/drop0·동일 container/image/master를
   검증했다. 따라서 내부 `_header` 표현과 길이 일치만으로 wire 완결성을 판단할 수
-  없다. 현재 남은 원인은 Node 표현→실제 전송 사이에서 구분자가 달라지는 지점이다.
+  없다. 후속 실제 Node22.23.1 socket handoff는1회·latin1·1017바이트·CRLF18개,
+  마지막 CR/LF/CR/LF·`_header`와 바이트 일치로 정상임을 확인했다. 같은 실행의
+  서버 입력은1017바이트·CRLF17개로 달랐다. 추가 고정 enum 관측에서 서버 입력은
+  CR19개/LF17개·마지막 CR/LF/CR/CR로, 최종 LF가 CR로 바뀌었음을 확인했다.
+  모든 관측은 원문 없이 길이/고정 분류만 남겼고, tenant382/383와6개 자식·정확한
+  세션5/5·포트·marker 정리0, 동일 개발 container/image/master를 검증했다.
+  원인은 연결 도구의 구체적인 변환 경로로 좁혀졌다. 설치된 AWS Session Manager
+  plugin1.2.814.0의 [SendInputDataMessage](https://github.com/aws/session-manager-plugin/blob/1.2.814.0/src/datachannel/streaming.go#L284-L287)는
+  단독 LF를 세션 종류와 무관하게 CR로 바꾼다. 실제 agent3.3.3598.0은 Mux 경로를
+  사용하며, smux 헤더8바이트와 요청1017바이트가1024+1로 나뉘는 경계가 정확히
+  맞는다. 최신 공식1.2.835.0에도 같은 변환이 남아 있어 단순 업그레이드는 해결책이
+  아니다. 기존 터미널 변환은 유지하고 Port의 바이트를 보존하도록 shell 세션으로만
+  조건을 제한하는 고정 소스 후보를 준비 중이다. 실제 함수의 RED→GREEN 회귀와
+  작업 전용 Windows/Linux 빌드 provenance, 수정 도구를 통한 같은 요청 성공을
+  확인하기 전 수정 완료로 판단하지 않는다. 전역 도구 설치나 앱 요청 본문·패딩·재시도·
+  timeout을 바꾸어 문제를 가리지 않는다. 기존 Q&A/계정 GET 및 과제 실패가 모두
+  이 원인인지는 수정 후 실제 흐름에서 별도로 확인해야 한다.
   최초 root 관측은 appuser의 user-site 패키지 경로 차이로 ready 전에 실패했다.
   정확한 설치 경로만 명시한 wrapper를 자체 검사하고 재실행했으며, 준비 실패와
   gate timeout 원본은 보존했다. tenant380/381도 관련 자원 정리0이다.
