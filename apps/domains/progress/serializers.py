@@ -61,6 +61,10 @@ class LectureProgressSerializer(serializers.ModelSerializer):
         ]
 
 
+class ClinicLinkUnresolveSerializer(serializers.Serializer):
+    expected_resolved_at = serializers.DateTimeField(required=False)
+
+
 class ClinicLinkSerializer(serializers.ModelSerializer):
     enrollment_id = serializers.IntegerField(read_only=True)
     session_title = serializers.SerializerMethodField()
