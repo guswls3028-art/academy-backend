@@ -76,9 +76,9 @@
   통과시킨다. checkout한 전체 SHA는 설치 디렉터리의
   `academy-source-commit` 마커에 기록하고 최종 stage에서 다시 대조한다.
   FFmpeg가 shallow checkout SHA를 자체 version 문자열에 노출하는지에는
-  의존하지 않는다. Video source build만 공개 저장소용 GitHub
-  `ubuntu-24.04-arm`에서 네이티브로 수행하며, 다른 runtime 이미지는 기존
-  x64 runner와 QEMU 경계를 유지한다. commit을 바꿀 때는 두 수정의 ancestry,
+  의존하지 않는다. Video source build와 공통 base의 빌드·native 보안 검사는
+  공개 저장소용 GitHub `ubuntu-24.04-arm`에서 수행한다. API·Messaging·AI·Tools
+  runtime 이미지는 기존 x64 runner와 QEMU 경계를 유지한다. commit을 바꿀 때는 두 수정의 ancestry,
   전체 SHA, 설치 마커, HLS smoke,
   ECR 완료 스캔과 기존 High 상한 비증가를 함께 확인한다. Debian FFmpeg와
   전이 패키지를 제거한 뒤 Video 이미지의 High 상한도 공통 base와 함께 낮췄다.
@@ -155,6 +155,15 @@ SOABI를 확인한 뒤 `pyexpat`·`_elementtree` 두 확장만 함께 재빌드�
 향후 공식 수정본으로 전환할 때는 이 취약점 수정 포함 여부, 두 ABI·Python CAPI,
 같은 정상/비정상 입력 회귀와 새 완료 scan을 확인하고 임시 backport를 제거한다.
 전체 배포에는 기존 격리 개발·preprod·운영 연속성·runtime readback 게이트도 적용한다.
+
+첫 검증35534369800/c95e의 x64/QEMU 빌드는 45분 제한으로 종료됐다. 공식 로그에서
+normal·`XML_MIN_SIZE`의 수정 전 실패 재현과 수정 후 upstream·UTF-16 검사는
+성공했지만 wide configure 도중 종료되어 Python 두 확장과 최종 이미지는
+검증하지 못했다. 컴파일·검사 실패를 관측한 결과로 혼동하지 않는다.
+반복 실행이나 한도 증가 대신 Quality의 `native-security-image`와 배포의
+`prepare-build`만 기존 Video와 같은 ARM runner로 실행한다. 이미지 목표
+`linux/arm64`, 고정된 소스·검사·OIDC·배포 잠금·스캔, Quality의 45분 한도는
+유지한다. 실제 완료 여부와 소요 시간은 이 변경 후의 공식 실행으로 확인한다.
 
 ## Critical 및 High 판정
 

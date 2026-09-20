@@ -739,6 +739,24 @@ def test_video_source_build_uses_native_arm64_runner() -> None:
     )
 
 
+def test_base_source_builds_use_native_arm64_without_relaxing_deadline() -> None:
+    workflows = Path(__file__).parents[1] / ".github/workflows"
+    for file, job, next_job in [
+        ("quality-gate.yml", "native-security-image", "static-contract"),
+        ("v1-build-and-push-latest.yml", "prepare-build", "build-runtime-images"),
+    ]:
+        text = (workflows / file).read_text(encoding="utf-8")
+        section = text.split(f"\n  {job}:\n", 1)[1].split(f"\n  {next_job}:\n", 1)[0]
+        assert "runs-on: ubuntu-24.04-arm" in section
+        assert "setup-qemu-action" not in section
+        assert "setup-buildx-action" in section
+        assert "file: docker/Dockerfile.base" in section
+        assert "platforms: linux/arm64" in section
+        if job == "native-security-image":
+            assert "timeout-minutes: 45" in section
+            assert "Verify fixed package versions and runtime ABI" in section
+
+
 def test_missing_scan_result_is_started_then_polled(monkeypatch: pytest.MonkeyPatch) -> None:
     descriptions = iter(
         [
