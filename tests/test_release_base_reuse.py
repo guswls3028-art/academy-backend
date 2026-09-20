@@ -110,6 +110,32 @@ def test_previous_base_source_does_not_reintroduce_already_shipped_app_changes(t
     assert len(outputs) == 7
 
 
+@pytest.mark.parametrize("changed", [
+    "apps/domains/results/tests/test_score_draft_edit_lease.py",
+    "apps/domains/clinic/tests.py",
+    "apps/support/clinic/tests/test_clinic_reminder_service.py",
+    "apps/worker/video_worker/tests/test_handler.py",
+    "apps/domains/messaging/tests/test_delivery.py",
+    "apps/worker/tools_worker/tests/test_jobs.py",
+    "academy/application/tests/test_use_case.py",
+    "tests/fixtures/security-20260919/ecr-high-risk-baseline.json",
+])
+def test_test_only_accumulated_diffs_do_not_rebuild_any_runtime(tmp_path, changed):
+    outputs = classify(tmp_path, runtime=changed)
+    assert len(outputs) == 7
+    assert set(outputs.values()) == {"false"}
+
+
+def test_test_filter_preserves_mixed_product_change(tmp_path):
+    outputs = classify(tmp_path, runtime=(
+        "apps/support/clinic/tests/test_clinic_reminder_service.py\n"
+        "apps/domains/results/views/score_draft_view.py"
+    ))
+    assert outputs["build_base"] == "false"
+    assert outputs["build_api"] == "true"
+    assert outputs["build_ai"] == "true"
+
+
 def test_api_patch_after_all_runtimes_shipped_shared_change_does_not_rebuild_workers(tmp_path):
     outputs = classify(
         tmp_path, base="academy/domain/old_shipped.py\ndocker/api/Dockerfile", runtime="docker/api/Dockerfile"

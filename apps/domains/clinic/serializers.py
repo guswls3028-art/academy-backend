@@ -8,6 +8,9 @@ from rest_framework import serializers
 from .models import Session, SessionParticipant, Test, Submission
 from .services.lifecycle import booking_availability_for_session
 from .time_ranges import (
+    booking_window,
+    session_window,
+    ends_after_next_day_midnight_values,
     ends_at_next_day_midnight_values,
     is_supported_time_range_values,
 )
@@ -58,6 +61,7 @@ class ClinicSessionSerializer(serializers.ModelSerializer):
 
     # ✅ 파생 필드: 종료 시간 (저장 X)
     end_time = serializers.SerializerMethodField()
+    end_date = serializers.SerializerMethodField()
 
     # ✅ [ADD] 운영 판단 필드
     available_slots = serializers.SerializerMethodField()
@@ -146,7 +150,7 @@ class ClinicSessionSerializer(serializers.ModelSerializer):
             )
         ):
             raise serializers.ValidationError(
-                {"duration_minutes": "시간 범위 세션은 같은 날 또는 정확히 다음 날 00:00에 끝나야 합니다."}
+                {"duration_minutes": "시간 범위 세션은 0분보다 길고 24시간보다 짧아야 합니다."}
             )
         ends_at_midnight = (
             mode == "time_range"
@@ -178,6 +182,21 @@ class ClinicSessionSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({
                 "duration_minutes": "자정 종료 시간 범위 예약은 안전 배포 완료 후 활성화됩니다."
             })
+        if (
+            mode == "time_range" and session_date is not None and start_time is not None
+            and ends_after_next_day_midnight_values(
+                session_date=session_date, start_time=start_time, duration_minutes=duration,
+            )
+            and not settings.CLINIC_OVERNIGHT_TIME_RANGE_WRITES_ENABLED
+            and not (
+                instance is not None and instance.booking_mode == "time_range"
+                and session_date == instance.date and start_time == instance.start_time
+                and duration == instance.duration_minutes
+            )
+        ):
+            raise serializers.ValidationError({
+                "duration_minutes": "다음 날까지 이어지는 예약은 안전 배포 완료 후 활성화됩니다."
+            })
         return attrs
 
     def get_participant_count(self, obj: Session):
@@ -191,6 +210,10 @@ class ClinicSessionSerializer(serializers.ModelSerializer):
             return None
         dt = datetime.combine(obj.date, obj.start_time)
         return (dt + timedelta(minutes=obj.duration_minutes)).time()
+
+    @extend_schema_field(OpenApiTypes.DATE)
+    def get_end_date(self, obj: Session):
+        return session_window(obj)[1].date()
 
     def get_available_slots(self, obj):
         if obj.booking_mode == "time_range" and obj.max_participants is not None:
@@ -248,6 +271,8 @@ class ClinicSessionSerializer(serializers.ModelSerializer):
 
 
 class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
+    booking_start_date = serializers.SerializerMethodField()
+    booking_end_date = serializers.SerializerMethodField()
     completion_history = serializers.JSONField(read_only=True)
     preferred_start_time = serializers.TimeField(read_only=True)
     preferred_end_time = serializers.TimeField(read_only=True)
@@ -391,6 +416,20 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
     def get_session_date(self, obj):
         """session이 있으면 session.date, 없으면 requested_date"""
         return obj.session.date if obj.session else obj.requested_date
+
+    def _booking_dates(self, obj):
+        if obj.session is None or obj.booking_start_time is None or obj.booking_end_time is None:
+            return None, None
+        start, end = booking_window(session=obj.session, start_time=obj.booking_start_time, end_time=obj.booking_end_time)
+        return start.date(), end.date()
+
+    @extend_schema_field(serializers.DateField(allow_null=True))
+    def get_booking_start_date(self, obj):
+        return self._booking_dates(obj)[0]
+
+    @extend_schema_field(serializers.DateField(allow_null=True))
+    def get_booking_end_date(self, obj):
+        return self._booking_dates(obj)[1]
     
     def get_session_start_time(self, obj):
         """session이 있으면 session.start_time, 없으면 requested_start_time"""
@@ -730,7 +769,7 @@ class ClinicSessionBulkCreateSerializer(serializers.Serializer):
             duration_minutes=attrs["duration_minutes"],
         ):
             raise serializers.ValidationError(
-                {"duration_minutes": "시간 범위 세션은 같은 날 또는 정확히 다음 날 00:00에 끝나야 합니다."}
+                {"duration_minutes": "시간 범위 세션은 0분보다 길고 24시간보다 짧아야 합니다."}
             )
         if (
             mode == "time_range"
@@ -743,6 +782,17 @@ class ClinicSessionBulkCreateSerializer(serializers.Serializer):
         ):
             raise serializers.ValidationError({
                 "duration_minutes": "자정 종료 시간 범위 예약은 안전 배포 완료 후 활성화됩니다."
+            })
+        if (
+            mode == "time_range"
+            and ends_after_next_day_midnight_values(
+                session_date=attrs["dates"][0], start_time=attrs["start_time"],
+                duration_minutes=attrs["duration_minutes"],
+            )
+            and not settings.CLINIC_OVERNIGHT_TIME_RANGE_WRITES_ENABLED
+        ):
+            raise serializers.ValidationError({
+                "duration_minutes": "다음 날까지 이어지는 예약은 안전 배포 완료 후 활성화됩니다."
             })
         return attrs
 

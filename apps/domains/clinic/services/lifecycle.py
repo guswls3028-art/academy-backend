@@ -17,6 +17,7 @@ from apps.domains.clinic.models import (
 )
 from apps.domains.clinic.time_ranges import (
     booking_window,
+    ends_after_next_day_midnight_values,
     is_supported_time_range_session,
     ranges_overlap,
     session_window,
@@ -133,11 +134,10 @@ class ParticipantSelfCancelPolicy:
 def _participant_booking_end_at(participant: SessionParticipant) -> datetime.datetime:
     session = participant.session
     session_start = datetime.datetime.combine(session.date, session.start_time)
-    if participant.booking_end_time is not None:
-        end_at = datetime.datetime.combine(session.date, participant.booking_end_time)
-        booking_start = participant.booking_start_time or session.start_time
-        if participant.booking_end_time <= booking_start:
-            end_at += datetime.timedelta(days=1)
+    if participant.booking_start_time is not None and participant.booking_end_time is not None:
+        _, end_at = booking_window(
+            session=session, start_time=participant.booking_start_time, end_time=participant.booking_end_time,
+        )
     else:
         end_at = session_start + datetime.timedelta(
             minutes=int(session.duration_minutes or 0)
@@ -1016,7 +1016,10 @@ def _validate_student_session_eligibility(*, tenant, student, session) -> None:
         return
     if getattr(session, "tenant_id", None) != getattr(tenant, "id", None):
         raise PermissionDenied("해당 세션에 접근할 권한이 없습니다.")
-    if session.date < timezone.localdate():
+    if (
+        session.date < timezone.localdate()
+        and session_window(session)[1] <= timezone.localtime().replace(tzinfo=None)
+    ):
         raise ValidationError({"detail": "지난 날짜의 클리닉은 예약할 수 없습니다."})
     if session.target_grade:
         if not student.grade or session.target_grade != student.grade:
@@ -1048,13 +1051,13 @@ def _validated_time_preference(
             {"preferred_time": "이 클리닉은 희망 시간을 받지 않습니다."}
         )
 
-    session_start = datetime.datetime.combine(session.date, session.start_time)
-    session_end = session_start + datetime.timedelta(minutes=session.duration_minutes)
-    preferred_start = datetime.datetime.combine(session.date, preferred_start_time)
-    preferred_end = datetime.datetime.combine(session.date, preferred_end_time)
-    if session_end.date() != session.date:
+    session_start, session_end = session_window(session)
+    preferred_start, preferred_end = booking_window(
+        session=session, start_time=preferred_start_time, end_time=preferred_end_time,
+    )
+    if not is_supported_time_range_session(session):
         raise ValidationError(
-            {"preferred_time": "자정을 넘는 클리닉은 희망 시간 입력을 지원하지 않습니다."}
+            {"preferred_time": "24시간 이상 운영하는 클리닉은 희망 시간 입력을 지원하지 않습니다."}
         )
     if not session_start <= preferred_start < preferred_end <= session_end:
         raise ValidationError(
@@ -1095,6 +1098,16 @@ def _validated_booking_range(
         })
 
     session_start, session_end = session_window(session)
+    if (
+        ends_after_next_day_midnight_values(
+            session_date=session.date, start_time=session.start_time,
+            duration_minutes=session.duration_minutes,
+        )
+        and not settings.CLINIC_OVERNIGHT_TIME_RANGE_WRITES_ENABLED
+    ):
+        raise ValidationError({
+            "booking_time": "다음 날까지 이어지는 예약은 안전 배포 완료 후 활성화됩니다."
+        })
     booking_start, booking_end = booking_window(
         session=session,
         start_time=booking_start_time,
@@ -1102,7 +1115,7 @@ def _validated_booking_range(
     )
     if not is_supported_time_range_session(session):
         raise ValidationError(
-            {"booking_time": "자정 이후까지 이어지는 클리닉은 시간 범위 예약을 지원하지 않습니다."}
+            {"booking_time": "시간 범위 세션은 0분보다 길고 24시간보다 짧아야 합니다."}
         )
     if not session_start <= booking_start < booking_end <= session_end:
         raise ValidationError(
@@ -1243,6 +1256,8 @@ def booking_availability_for_session(*, tenant, session: Session) -> dict[str, A
         else:
             used = len(active)
         slots.append({
+            "start_date": cursor.date().isoformat(),
+            "end_date": next_cursor.date().isoformat(),
             "start_time": cursor.time().strftime("%H:%M"),
             "end_time": next_cursor.time().strftime("%H:%M"),
             "remaining_capacity": max(int(session.max_participants) - used, 0),
@@ -1253,6 +1268,8 @@ def booking_availability_for_session(*, tenant, session: Session) -> dict[str, A
         "interval_minutes": interval,
         "max_stay_minutes": int(session.booking_max_stay_minutes),
         "window": {
+            "start_date": start.date().isoformat(),
+            "end_date": end.date().isoformat(),
             "start_time": start.time().strftime("%H:%M"),
             "end_time": end.time().strftime("%H:%M"),
         },
@@ -1268,6 +1285,8 @@ def _assert_no_active_duplicate(
     requested_date=None,
     requested_start_time=None,
     exclude_participant_id=None,
+    booking_start_time=None,
+    booking_end_time=None,
 ) -> None:
     active_statuses = [
         SessionParticipant.Status.PENDING,
@@ -1288,6 +1307,21 @@ def _assert_no_active_duplicate(
         ).exists()
         if exists:
             raise Conflict("이미 해당 세션에 예약된 학생입니다.")
+
+        start, end = session_window(session)
+        if booking_start_time is not None and booking_end_time is not None:
+            start, end = booking_window(session=session, start_time=booking_start_time, end_time=booking_end_time)
+        adjacent = active.filter(
+            session__date__range=(session.date - datetime.timedelta(days=1), session.date + datetime.timedelta(days=1)),
+        ).exclude(session__date=session.date).select_related("session")
+        for previous in adjacent:
+            previous_start, previous_end = session_window(previous.session)
+            if previous.booking_start_time is not None and previous.booking_end_time is not None:
+                previous_start, previous_end = booking_window(
+                    session=previous.session, start_time=previous.booking_start_time, end_time=previous.booking_end_time,
+                )
+            if ranges_overlap(start, end, previous_start, previous_end):
+                raise Conflict("자정을 넘는 기존 클리닉 예약과 시간이 겹칩니다.")
 
         same_date = active.filter(
             Q(session__date=session.date)
@@ -1340,7 +1374,10 @@ def create_participant(
         raise ValidationError({"detail": "session과 requested_date/requested_start_time을 동시에 사용할 수 없습니다."})
     if session and getattr(session, "tenant_id", None) != getattr(tenant, "id", None):
         raise PermissionDenied("해당 세션에 접근할 권한이 없습니다.")
-    if session and session.date < timezone.localdate():
+    if (
+        session and session.date < timezone.localdate()
+        and session_window(session)[1] <= timezone.localtime().replace(tzinfo=None)
+    ):
         raise ValidationError({"detail": "지난 날짜의 클리닉은 예약할 수 없습니다."})
 
     if request_student:
@@ -1405,6 +1442,8 @@ def create_participant(
         session=session,
         requested_date=requested_date,
         requested_start_time=requested_start_time,
+        booking_start_time=booking_start_time,
+        booking_end_time=booking_end_time,
     )
 
     if source == SessionParticipant.Source.MANUAL:
@@ -1723,6 +1762,8 @@ def change_participant_booking(
         student=booking_student,
         session=new_session,
         exclude_participant_id=old_booking.id,
+        booking_start_time=booking_start_time,
+        booking_end_time=booking_end_time,
     )
     preferred_start_time, preferred_end_time = _validated_time_preference(
         session=new_session,

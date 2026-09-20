@@ -537,6 +537,9 @@ CLINIC_MIDNIGHT_TIME_RANGE_WRITES_ENABLED = os.getenv(
     "CLINIC_MIDNIGHT_TIME_RANGE_WRITES_ENABLED",
     "",
 ).lower() in ("1", "true", "yes")
+CLINIC_OVERNIGHT_TIME_RANGE_WRITES_ENABLED = os.getenv(
+    "CLINIC_OVERNIGHT_TIME_RANGE_WRITES_ENABLED", "",
+).lower() in ("1", "true", "yes")
 
 # ==================================================
 # BILLING / SUBSCRIPTION

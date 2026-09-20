@@ -361,6 +361,28 @@ class ClinicReminderServiceTest(TestCase):
         return timezone.make_aware(datetime(2026, 5, 15, hour, minute))
 
     @patch("apps.domains.messaging.services.notification_service.send_event_notification", return_value=True)
+    def test_overnight_reminder_finds_previous_schedule_and_uses_actual_date(self, send):
+        participant = self._range_booking(start=time(0, 30), end=time(1, 30))
+        self.session.start_time = time(23)
+        self.session.duration_minutes = 180
+        self.session.save()
+        # Due after midnight: the operating session belongs to yesterday.
+        now = timezone.make_aware(datetime(2026, 5, 16, 0, 0))
+        due = send_due_clinic_reminders(now=now, tenant_id=self.tenant.id)
+        self.assertEqual(due["sent"], 1)
+        send.assert_called_once()
+        context = send.call_args.kwargs["context"]
+        self.assertEqual(context["날짜"], "2026-05-16")
+        self.assertEqual(context["시간"], "00:30")
+        self.assertEqual(context["_domain_object_id"], f"clinic_booking:{participant.id}:{self.session.id}:20260516:0030")
+        send.reset_mock()
+        participant.status = SessionParticipant.Status.CANCELLED
+        participant.save()
+        cancelled = send_due_clinic_reminders(now=now, tenant_id=self.tenant.id)
+        self.assertEqual(cancelled["attempted"], 0)
+        send.assert_not_called()
+
+    @patch("apps.domains.messaging.services.notification_service.send_event_notification", return_value=True)
     def test_range_reminder_uses_actual_booking_start_not_opening(self, send):
         participant = self._range_booking()
         early = send_due_clinic_reminders(now=self._at(16, 30))
