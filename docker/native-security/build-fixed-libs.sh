@@ -191,4 +191,111 @@ write_control \
 dpkg-deb --build --root-owner-group \
     "${libxml2_package}" "${output_root}/libxml2-fixed.deb"
 
-test "$(find "${output_root}" -maxdepth 1 -type f -name '*.deb' | wc -l)" -eq 3
+# CVE-2026-93990 has no released Expat/Debian fix. Keep the real upstream
+# version and source-package identity; scanner acceptance is a separate gate.
+expat_version='2.8.4+academy1-1'
+expat_archive="${work_root}/expat.tar.xz"
+expat_fix="${work_root}/expat-fix.patch"
+expat_tests="${work_root}/expat-tests.patch"
+download \
+    'https://github.com/libexpat/libexpat/releases/download/R_2_8_4/expat-2.8.4.tar.xz' \
+    "${expat_archive}" \
+    '656ae1cc8da3b4ea513bb4e254f33e6243938084c0ec6239da873376b09985a7'
+download \
+    'https://github.com/libexpat/libexpat/commit/0cfd15bdf4b2c22d6b0df73610709dfb60921091.patch' \
+    "${expat_fix}" \
+    '87b8095c3b348dc855ee21dd43ef2705a95269acac650db51f5c2df40cb9f307'
+download \
+    'https://github.com/libexpat/libexpat/commit/28fcfba540f6933aa8904a1514c4811713d2ab72.patch' \
+    "${expat_tests}" \
+    '7a470c152b8c0dbb2a32cff790445a905b81cf1d8894cd1bf7112e7754e1bc13'
+tar -xJf "${expat_archive}" -C "${work_root}"
+expat_source="${work_root}/expat-2.8.4"
+# Only patch context changes: 2.8.4 still has FASTCALL, unlike upstream main.
+test "$(grep -Fxc ' static int checkCharRefNumber(int result);' "${expat_fix}")" -eq 1
+sed 's/^ static int checkCharRefNumber(int result);$/ static int FASTCALL checkCharRefNumber(int result);/' \
+    "${expat_fix}" > "${work_root}/expat-fix-context.patch"
+(cd "${expat_source}" && patch --batch --forward --fuzz=0 -p2 < "${expat_tests}")
+
+for mode in normal min; do
+    build="${work_root}/expat-red-${mode}"
+    mkdir "${build}"
+    flags='-O2 -fstack-protector-strong -fPIC'
+    if [ "${mode}" = min ]; then flags="${flags} -DXML_MIN_SIZE"; fi
+    (
+        cd "${build}"
+        CFLAGS="${flags}" "${expat_source}/configure" --disable-static \
+            --without-docbook --without-examples --without-xmlwf
+        make -j "${jobs}"
+        if make check > red.log 2>&1; then
+            echo 'ERROR: unpatched Expat unexpectedly passed the upstream regression' >&2
+            exit 1
+        fi
+        test "$(grep -c '^FAIL \[' tests/runtests.log)" -eq 12
+        ! grep '^FAIL \[' tests/runtests.log | grep -v 'test_utf16_surrogate_pairs ('
+        result=0
+        python /usr/local/bin/verify-expat.py --library "${build}/lib/.libs/libexpat.so.1" \
+            > oracle.log 2>&1 || result=$?
+        test "${result}" -eq 66
+        grep -Fxq 'EXPAT_UTF16_INVALID_ACCEPTED' oracle.log
+        printf 'EXPAT_UPSTREAM_RED_PASS mode=%s failures=12\n' "${mode}"
+    )
+done
+(cd "${expat_source}" && patch --batch --forward --fuzz=0 -p2 < "${work_root}/expat-fix-context.patch")
+
+expat_package="${work_root}/expat-package"
+for mode in normal min wide; do
+    build="${work_root}/expat-green-${mode}"
+    source="${expat_source}"
+    flags='-O2 -fstack-protector-strong -fPIC'
+    library_name=libexpat
+    if [ "${mode}" = min ]; then flags="${flags} -DXML_MIN_SIZE"; fi
+    if [ "${mode}" = wide ]; then
+        # Debian libexpat1 owns both SONAMEs. Follow upstream's documented
+        # wide-library build procedure instead of dropping the wide ABI.
+        source="${work_root}/expat-wide"
+        cp -a "${expat_source}" "${source}"
+        find "${source}" -name Makefile.am -exec sed -i \
+            -e 's/libexpat\.la/libexpatw.la/g' -e 's/libexpat_la/libexpatw_la/g' {} +
+        (cd "${source}" && autoreconf --force --install)
+        flags="${flags} -DXML_UNICODE"
+        library_name=libexpatw
+    fi
+    mkdir "${build}"
+    (
+        cd "${build}"
+        CFLAGS="${flags}" LDFLAGS='-Wl,-z,relro -Wl,-z,now' \
+            "${source}/configure" --prefix=/usr --libdir="/usr/lib/${multiarch}" \
+            --disable-static --without-docbook --without-examples --without-xmlwf
+        make -j "${jobs}"
+        make check
+        if [ "${mode}" != wide ]; then
+            python /usr/local/bin/verify-expat.py --library "${build}/lib/.libs/libexpat.so.1"
+        fi
+        printf 'EXPAT_UPSTREAM_GREEN_PASS mode=%s\n' "${mode}"
+    )
+    if [ "${mode}" != min ]; then
+        library="$(find "${build}/lib/.libs" -maxdepth 1 -type f -name "${library_name}.so.1.*")"
+        test "$(printf '%s\n' "${library}" | wc -l)" -eq 1
+        test -f "${library}"
+        install -D -m 0644 "${library}" \
+            "${expat_package}/usr/lib/${multiarch}/$(basename "${library}")"
+        ln -s "$(basename "${library}")" "${expat_package}/usr/lib/${multiarch}/${library_name}.so.1"
+    fi
+done
+install -D -m 0644 "${expat_source}/COPYING" "${expat_package}/usr/share/doc/libexpat1/copyright"
+write_control "${expat_package}" 'libexpat1' 'expat' "${expat_version}" 'optional' \
+    'Depends: libc6 (>= 2.36)' 'Expat runtime with the CVE-2026-93990 backport'
+dpkg-deb --build --root-owner-group "${expat_package}" "${output_root}/libexpat1-fixed.deb"
+
+# The pinned Python image embeds Expat 2.7.4. Rebuild its matching XML pair;
+# _elementtree requires the exact Expat CAPI version exposed by pyexpat.
+python_archive="${work_root}/python.tar.xz"
+download \
+    'https://www.python.org/ftp/python/3.11.15/Python-3.11.15.tar.xz' \
+    "${python_archive}" \
+    '272179ddd9a2e41a0fc8e42e33dfbdca0b3711aa5abf372d3f2d51543d09b625'
+tar -xJf "${python_archive}" -C "${work_root}"
+python /usr/local/bin/build-python-xml.py "${work_root}/Python-3.11.15" \
+    "${expat_source}" "${work_root}/expat-green-normal" "${output_root}/python-xml"
+test "$(find "${output_root}" -maxdepth 1 -type f -name '*.deb' | wc -l)" -eq 4

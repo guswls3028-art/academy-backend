@@ -128,6 +128,18 @@ def test_historical_acceptance_is_exact_and_time_bounded() -> None:
     }
 
 
+@pytest.mark.parametrize("repository", gate.REPOSITORIES)
+@pytest.mark.parametrize("version", ["2.8.3-1~deb13u1", "2.8.4+academy1-1"])
+def test_expat_backport_does_not_override_actual_high_scan(repository, version):
+    policy = Path(__file__).parents[1] / "docs/ssot/ecr-high-risk-baseline.json"
+    baselines, known = gate.load_high_baselines(policy)
+    with pytest.raises(gate.GateError, match="High"):
+        gate.evaluate_high_budget(
+            repository, _scan(_finding("CVE-2026-93990", "expat", version, "HIGH")),
+            baselines, known,
+        )
+
+
 def test_removed_perl_findings_fail_closed() -> None:
     acceptances = gate.load_acceptances(
         HISTORICAL_POLICY_DIR / "ecr-critical-risk-acceptance.json",
@@ -401,7 +413,7 @@ def test_base_image_backports_new_native_library_fixes_without_acceptance() -> N
     assert "60d74a257d1ccec0475e749cba2f21559e48139efba6ff28224357c7c798dfee" in build_script
     assert "autoreconf --force --install" in build_script
     assert build_script.count("sha256sum --check") == 1
-    assert build_script.count("download \\") == 5
+    assert build_script.count("download \\") == 9
     assert (
         'dpkg --compare-versions "${zlib_version}" '
         'gt "1:1.3.dfsg+really1.3.1-1"'

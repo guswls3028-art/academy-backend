@@ -109,6 +109,53 @@
   그대로 상속한다. 완료 ECR scan은 두 CVE가 어떤 affected digest에도 남아 있으면
   기존 Critical gate에서 계속 실패 폐쇄한다.
 
+## Expat UTF-16 경계와 Python XML 호환성
+
+`CVE-2026-93990`은 잘못된 UTF-16 surrogate pair를 허용하는 문제다.
+공식 배포35532553325/c2ee의 새 API·AI digest에서 Debian `expat`
+`2.8.3-1~deb13u1` High1이 확인되어 development 이전에 중단됐다.
+2026-09-21 확인 시 [Debian tracker](https://security-tracker.debian.org/tracker/CVE-2026-93990)는
+trixie와 sid 모두 미수정으로 표시한다. Expat2.8.4로 버전만 올려도 해결되지 않는다.
+
+공통 base는 실제 upstream2.8.4와
+[공식 수정0cfd15b](https://github.com/libexpat/libexpat/commit/0cfd15bdf4b2c22d6b0df73610709dfb60921091),
+[공식 회귀28fcfba](https://github.com/libexpat/libexpat/commit/28fcfba540f6933aa8904a1514c4811713d2ab72)를
+SHA-256으로 고정해 빌드한다. 2.8.4에 남은 `FASTCALL`과 맞추기 위해 patch의
+context 한 줄만 정확히 변환하고 fuzz 없는 적용을 요구한다. 패키지 정체성은
+`Package: libexpat1`, `Source: expat`, 실제 backport 버전 `2.8.4+academy1-1`이다.
+아직 발표되지 않은 버전을 주장하거나 scanner에서 패키지를 숨기지 않는다.
+Debian 패키지가 제공하는 `libexpat.so.1`·`libexpatw.so.1` ABI를 모두 보존하고
+원본 라이선스를 포함한다. 빌드 입력·검증의 정본은 `docker/native-security/`다.
+
+고정된 Python OCI의 Python3.11.15는 Expat2.7.4를 `pyexpat`에 내장하므로
+시스템 라이브러리만 교체하면 그 취약 경로가 남는다. 같은 Python3.11.15 원본과
+SOABI를 확인한 뒤 `pyexpat`·`_elementtree` 두 확장만 함께 재빌드한다.
+`_elementtree`는 `pyexpat`의 Expat major/minor/micro CAPI가 정확히 같아야 하므로
+한 모듈만 교체하지 않는다. `pyexpat`가 수정된 시스템 `libexpat.so.1`에 연결되고
+별도 Expat 구현이나 임시 빌드 경로를 내장하지 않는지 검사한다. 실행 이미지에는
+두 확장과 빌드 출처 기록만 복사하며 CPython 전체나 컴파일 도구를 교체하지 않는다.
+
+공식 arm64 native 이미지 검사는 아래 성공·실패 경계를 모두 요구한다.
+
+- 원본2.8.4에 회귀 테스트만 적용했을 때 normal·`XML_MIN_SIZE` 빌드에서 해당
+  테스트만 실패하고, 잘못된 UTF-16 허용을 별도 동작 검사에서도 재현한다.
+- 수정 뒤 normal·`XML_MIN_SIZE`·wide 빌드의 upstream 테스트가 성공한다.
+  시스템 라이브러리와 Python XML 두 경로에서 UTF-16 LE/BE의 정상 한글·emoji·
+  유효 surrogate pair는 허용하고 비정상 pair는 거부한다.
+- CPython의 pyexpat·ElementTree·C accelerator·minidom·SAX 회귀와 실제로 로드한
+  확장의 경로·버전 검증이 성공한다. 검사 파일이나 소스 비교만으로 대체하지 않는다.
+- 공통 base와 API·Video·AI·Tools의 마지막 APT 설치 뒤에도 정확한 package/source와
+  실제 Python XML 동작을 재검증한다. Messaging은 검증한 공통 base를 상속한다.
+
+빌드·호환성 실패는 이미지를 중단시키며 운영 데이터의 재처리나 변경을 유발하지
+않는다. 실제 수정과 ECR scan의 판정은 별도 증거다. 이 backport가 동작 검사를
+통과해도 새 여섯 digest의 완료 스캔에서 Critical/High0을 확인하기 전에는 배포
+가능하다고 판단하지 않는다. scanner가 계속 High로 분류하면 실패 상태를 유지하며
+상한·acceptance를 추가하거나 package/source 이름을 바꾸어 넘기지 않는다.
+향후 공식 수정본으로 전환할 때는 이 취약점 수정 포함 여부, 두 ABI·Python CAPI,
+같은 정상/비정상 입력 회귀와 새 완료 scan을 확인하고 임시 backport를 제거한다.
+전체 배포에는 기존 격리 개발·preprod·운영 연속성·runtime readback 게이트도 적용한다.
+
 ## Critical 및 High 판정
 
 1. 후보 manifest의 여섯 digest 모두(`source=built`와 `source=prior-success`)에
