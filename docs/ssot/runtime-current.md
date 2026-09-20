@@ -16,7 +16,18 @@ source SHA, immutable service digests, release status and verification time. Eac
 production domain's `/version.json` owns its built revision. The release notes' `CURRENT`
 label identifies the last sealed notes, not an independently verified live build.
 
-On 2026-09-20, activation rollout
+On 2026-09-21 KST, stabilization rollout
+[35540757110](https://github.com/guswls3028-art/academy-backend/actions/runs/35540757110)
+completed successfully, source `057403c653f4c5f26fc43dc524b974895a4ba432`.
+All six new immutable images passed ECR with critical=0, acceptedCritical=0 and high=0.
+Persistent isolated development Excel/PPT/R2, isolated preprod database denial/CDN,
+confirmed temporary instance termination, production migration and healthy rolling
+replacement, actual service digests, student playback chain, manifest promotion and
+shared lock release passed. The candidate includes the paper OMR subjective-score
+boundary fix and patched native/Python XML parsers. Frontend promotion and expanded
+same-artifact UI verification remain tracked in the handoff below.
+
+Previously, on 2026-09-20, activation rollout
 [35509622551](https://github.com/guswls3028-art/academy-backend/actions/runs/35509622551)
 completed at `2026-09-20T22:04:28+09:00`, source
 `c88038d47a05e50ec7e8fd095698f88c910e080f`, with all service digests verified.

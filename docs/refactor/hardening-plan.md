@@ -208,12 +208,30 @@ development storage 객체를 검증한다. 그림 대역을 CDN/처리 성공�
 frontend base `d33c4c6458`이다. 이전 작업공간은 닫혔으며 canonical의 외부 변경은 보존한다.
 실행 영수증은 `C:\academy\_artifacts\stability-completion-0920`에 남긴다.
 
-### 현재 실행 상태 — 2026-09-21 KST, 이미지 보안 수정 후 재배포 대기
+### 현재 실행 상태 — 2026-09-21 KST, backend 배포 성공·frontend 실사용 검증 진행
+
+- Backend 공식 [35540757110](https://github.com/guswls3028-art/academy-backend/actions/runs/35540757110)은
+  최종 성공했다. 소스는 `057403c653f4c5f26fc43dc524b974895a4ba432`, 성공 manifest를
+  반영한 main은 `f30e36f2b1065a52c1cb8bee42cf3fc3a49906c2`다. 6개 새 이미지 각각
+  Critical0/acceptedCritical0/High0, 격리 개발 Excel/PPT/R2, preprod DB 격리·CDN,
+  임시 서버 종료 확인, 운영 migration·API/worker 교체·실행 digest·영상 체인,
+  manifest 승격과 공유 잠금 해제를 모두 통과했다.
+- Frontend PR562의 exact `18daa4c848f0749a24b5463d4852f4fa087deeda`는 Quality와
+  전체 E2E 성공 후 일반 merge로 `49512ab449626c5db3c0bf2e10edf56aae477b0f`에
+  반영됐다. 새 공식 [35543367845](https://github.com/guswls3028-art/academy-frontend/actions/runs/35543367845)가
+  진행 중이다. 동일 산출물21개·cleanup0, 고정 v3 최종 UI QA, 운영 승격과 두 도메인
+  파일 일치·영향 화면 확인이 남았다. 운영 frontend는 아직 d33c다.
+- 다음 실행은 새 공식21개 결과 확인이다. 실패하면 exact 산출물·응답·정리 결과로
+  원인을 좁히고 수정한다. 성공하면 새 source/run/artifact/backend manifest에 묶인
+  일회용 v3 pins로 최종 QA를 실행한다. 기존 실패한3efc 증거를 승격에 재사용하지 않는다.
+  메시지·공용 컨트롤 작업의 별도 병합·runtime HOLD는 유지한다.
+
+아래는 현재 성공본에 도달하기까지의 실패·수리 기록이며 현재 배포 상태를 대체하지 않는다.
 
 - OMR 수정의 공식 배포35532553325/c2ee는 이미지 조립·스캔 단계에서 실패했다.
   API와 AI의 완료된 스캔에서 `CVE-2026-93990` / `expat` /
   `2.8.3-1~deb13u1` High1이 각각 확인됐다. 격리 개발·preprod·운영 교체는
-  모두 건너뛰었고 공유 배포 잠금은 반환됐다. 운영 backend의 마지막 성공본은
+  모두 건너뛰었고 공유 배포 잠금은 반환됐다. 당시 운영 backend의 마지막 성공본은
   c880, frontend는 d33c이며 이 실패를 기능 수정의 운영 반영으로 세지 않는다.
   보안 수정은 fresh c2ee 기반의 소유 세션 `stability-ai-scan-0921`에서 진행한다.
   upstream Expat PR1282의 실제 수정과 정상/비정상 UTF-16 회귀를 고정하고,
