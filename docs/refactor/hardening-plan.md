@@ -208,7 +208,7 @@ development storage 객체를 검증한다. 그림 대역을 CDN/처리 성공�
 frontend base `d33c4c6458`이다. 이전 작업공간은 닫혔으며 canonical의 외부 변경은 보존한다.
 실행 영수증은 `C:\academy\_artifacts\stability-completion-0920`에 남긴다.
 
-### 현재 실행 상태 — 2026-09-20 22:10 KST
+### 현재 실행 상태 — 2026-09-20 22:56 KST
 
 - Backend 활성화 PR [485](https://github.com/guswls3028-art/academy-backend/pull/485)는
   exact head `680ed5cae8a52ce074fcfad0c055d1eb4d9362f5`의 필수 CI
@@ -225,10 +225,23 @@ frontend base `d33c4c6458`이다. 이전 작업공간은 닫혔으며 canonical�
   성공했고 전체 E2E [35509628673](https://github.com/guswls3028-art/academy-frontend/actions/runs/35509628673)도
   화면728개·iPhone36개·운영 read-only6개와 bundle/theme 검사를 통과했다.
   마지막 학생 작성창 경합 수정 후 dd4 Quality35512120717은 성공했고 전체
-  E2E35512120718은 진행 중이다. 필수 병합 검사 두 개와 backend 선행 조건 통과 후
+  E2E35512120718은729개 성공·1개 실패다. 실패는 비동기 실행 요청의 수신 전에
+  mock 본문을 읽는 테스트 경합으로 재현했고, 요청 수신 대기로 수정해 통과했다.
+  필수 병합 검사 두 개와 backend 선행 조건 통과 후
   보호된 일반 병합으로 main `27da7b7443c51bcde4d47740b74b9091030ab8cb`가 됐다.
   공식 main Quality [35512743917](https://github.com/guswls3028-art/academy-frontend/actions/runs/35512743917)의
-  동일 산출물 실사용을 진행한다. 전체 PR E2E·21개 실사용·추가 QA·정리0 모두
+  동일 산출물 실사용은16개 성공·5개 실패로 운영 승격을 차단했다. 양쪽 QA
+  tenant/user 및 R2·프로세스·리스너 정리0을 확인했다. PC/390px 각각690초 영상
+  재생·갱신·진도 저장은 오류0이며, 모바일 클리닉 수동 통과는 이번 측정에서
+  응답640ms·목록 반영675ms다(1회 관측이며 p95가 아님).
+  남은 실패는 클리닉 생성 버튼 문구 불일치, 수학 답안 fixture 검증,
+  과제 채점 컨트롤과 Q&A/계정 GET 통신 경계다. 클리닉 문구 수정 후 공식27da
+  산출물의 PC/390px mock 생성 검사는 통과했고 나머지는 좁은 격리 진단 중이다.
+  검사 보완 후속 PR [561](https://github.com/guswls3028-art/academy-frontend/pull/561),
+  `4c54bf220787087d947791429b539bfaa9d534b3`를 draft로 올려 필수 CI와 전체
+  E2E를 시작했다. 제품 코드와 빌드 입력은 바꾸지 않았으며, 과제390/1366px
+  입력 모드별 저장·재조회와 수학 정답 검증의 로컬 재현도 통과했다.
+  정확한 후속 후보의 전체 PR E2E·21개 실사용·추가 QA·정리0 모두
   성공하기 전 운영 승인은 보류한다. main push가 별도 전체 E2E를 자동 실행한다고
   가정하지 않는다. 운영은 아직 `d33c4c645868b8924719507524e2f03ea8d02d96`다.
 - 빌드의 `/version.json`과 일반/빈 점수 점유 해제 요청의 `X-Client-Version`이
