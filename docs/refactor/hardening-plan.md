@@ -208,25 +208,40 @@ development storage 객체를 검증한다. 그림 대역을 CDN/처리 성공�
 frontend base `d33c4c6458`이다. 이전 작업공간은 닫혔으며 canonical의 외부 변경은 보존한다.
 실행 영수증은 `C:\academy\_artifacts\stability-completion-0920`에 남긴다.
 
-### 현재 실행 상태 — 2026-09-20 21:20 KST
+### 현재 실행 상태 — 2026-09-20 22:10 KST
 
 - Backend 활성화 PR [485](https://github.com/guswls3028-art/academy-backend/pull/485)는
   exact head `680ed5cae8a52ce074fcfad0c055d1eb4d9362f5`의 필수 CI
   [35508963261](https://github.com/guswls3028-art/academy-backend/actions/runs/35508963261)
   통과 뒤 main `c88038d47a05e50ec7e8fd095698f88c910e080f`에 병합했다.
   공식 배포 [35509622551](https://github.com/guswls3028-art/academy-backend/actions/runs/35509622551)는
-  진행 중이다. 전체 성공 manifest와 실제 플래그 true·DRF 3.17.2 확인 전까지
-  frontend 병합 HOLD를 유지한다.
+  완료됐다. 성공 manifest는 같은 source와 `verifiedAt=2026-09-20T22:04:28+09:00`,
+  `complete=true`를 기록했다. 독립 read-only SSM으로 실제 API digest 일치,
+  migration0022·확장 제약·두 플래그 true·DRF 3.17.2를 확인해 backend 선행 HOLD를
+  해제했다. 여섯 이미지 모두 critical=0/acceptedCritical=0/high=0이다.
 - 통합 frontend PR [556](https://github.com/guswls3028-art/academy-frontend/pull/556)의
-  후보는 `b9505cc2bff566ffc030dc149309d7dbbf8a33b5`다. Quality
+  후보는 `dd4f7d14882c55e3e23ebf633d2c27d6a88c9285`다. 선행 b950의 Quality
   [35509628519](https://github.com/guswls3028-art/academy-frontend/actions/runs/35509628519)는
-  성공했고 전체 E2E [35509628673](https://github.com/guswls3028-art/academy-frontend/actions/runs/35509628673)는
-  진행 중이다. 운영 frontend는 아직 `d33c4c645868b8924719507524e2f03ea8d02d96`다.
+  성공했고 전체 E2E [35509628673](https://github.com/guswls3028-art/academy-frontend/actions/runs/35509628673)도
+  화면728개·iPhone36개·운영 read-only6개와 bundle/theme 검사를 통과했다.
+  마지막 학생 작성창 경합 수정 후 dd4 Quality35512120717은 성공했고 전체
+  E2E35512120718은 진행 중이다. 필수 병합 검사 두 개와 backend 선행 조건 통과 후
+  보호된 일반 병합으로 main `27da7b7443c51bcde4d47740b74b9091030ab8cb`가 됐다.
+  공식 main Quality [35512743917](https://github.com/guswls3028-art/academy-frontend/actions/runs/35512743917)의
+  동일 산출물 실사용을 진행한다. 전체 PR E2E·21개 실사용·추가 QA·정리0 모두
+  성공하기 전 운영 승인은 보류한다. main push가 별도 전체 E2E를 자동 실행한다고
+  가정하지 않는다. 운영은 아직 `d33c4c645868b8924719507524e2f03ea8d02d96`다.
 - 빌드의 `/version.json`과 일반/빈 점수 점유 해제 요청의 `X-Client-Version`이
   달라지던 경로를 하나의 빌드 식별자로 통일했다. 실제 빌드 HTTP 비교에서 수정 전
   `dev` 불일치, 수정 후 일치를 확인했다. 인증·tenant·keepalive·요청 본문은 유지한다.
   새 회귀는 기존 필수 Quality 경로에서 실행되어 성공했다. CI에 없는 검사로
   오인해 중복 게이트를 추가하지 않았다.
+- 학생 질문·상담은 reload 후 현재 탭 재클릭→즉시 작성 CTA에서 늦은 탐색이
+  폼을 닫는 경합2개를 독립 재현했다. 같은 탭의 재탐색을 생략하는1줄 수정 후
+  2개 모두 통과했고, PC/390px·복원·실제 탭 전환·실패 복구·자녀 격리까지
+  focused12개를 확인했다. 첫 전체 실행의 초기 page.goto timeout1개는 같은
+  source 재검증에서 통과했으며 실패 기록도 보존했다. Typecheck/lint/guard 통과.
+  이전 c183 CI의 유일 원인으로 단정하지 않는다.
 - 메시징 PR 558의 편집기/클립보드 수정과 PR 555의 출결·교사 화면 수정을 통합했다.
   이 작업이 최종 frontend 배포를 소유하며 두 원작업은 독립 배포·공유 개발 환경
   변경을 보류한다. 공식 21개 실사용·정리0 뒤 같은 산출물의 추가 출결/교사 UI

@@ -16,13 +16,13 @@ source SHA, immutable service digests, release status and verification time. Eac
 production domain's `/version.json` owns its built revision. The release notes' `CURRENT`
 label identifies the last sealed notes, not an independently verified live build.
 
-On 2026-09-20, reader rollout [35505492422](https://github.com/guswls3028-art/academy-backend/actions/runs/35505492422)
-completed at `2026-09-20T20:48:00+09:00`, source
-`07597fc6837e3274516c597be4355344327b3307`, with all service digests verified.
-An additional read-only check confirmed migration 0022, the expanded clinic time constraint,
-DRF 3.16.1 and both clinic write flags false. Activation rollout
+On 2026-09-20, activation rollout
 [35509622551](https://github.com/guswls3028-art/academy-backend/actions/runs/35509622551)
-is pending completion; it is not evidence of enabled overnight booking yet.
+completed at `2026-09-20T22:04:28+09:00`, source
+`c88038d47a05e50ec7e8fd095698f88c910e080f`, with all service digests verified.
+An additional read-only check confirmed the manifest's exact API digest, migration 0022,
+the expanded clinic time constraint, DRF 3.17.2 and both clinic write flags true.
+All six candidate images passed ECR scanning with critical=0, acceptedCritical=0 and high=0.
 The [stabilization handoff](../refactor/hardening-plan.md#8-안정화-계속-실행--2026-09-20)
 records the remaining same-artifact and affected-flow checks.
 
