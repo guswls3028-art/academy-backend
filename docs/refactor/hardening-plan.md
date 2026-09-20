@@ -233,6 +233,20 @@ frontend base `d33c4c6458`이다. 이전 작업공간은 닫혔으며 canonical�
   전환 head `6ccc90a5a3a2547e981bd55808d891699c1553fa`는 관련117개·workflow
   governance·YAML·diff 검사를 통과했다. 새 공식 CI35539079833을 시작했으며
   이전 실행의 부분 통과를 전체 이미지 성공으로 대체하지 않는다.
+  ARM 실행35539079833은 normal/min 검사를 약170초에 통과한 뒤 upstream의
+  ushort wide 테스트 미지원으로 실패했다. 라이브러리 ABI를 변경하지 않고
+  실제 wide parser의 정상/비정상 입력·16비트 callback 출력을 검증하도록 보완했다.
+  후속 head `a7da0fa97bf579c0ee4273415c93cc6c5cfbd167`의 관련119개·shell/AST/diff는
+  통과했다. 공식35539486916의 native 이미지 검사도 성공했다: normal/min 실패
+  재현·수정 후 전체 upstream, wide 실제 ABI·UTF-16, Python XML779개(13 skip),
+  실제 로드 경로·최종 이미지 package/parser 검증까지 통과했다. 새 여섯 digest의
+  ECR 스캔·전체 배포 성공은 여전히 별도 필수 단계다.
+  같은 실행의 전체 Django 검사는 QEMU action을 요구하던 이전 계약1개 때문에
+  실패했다(그 외5295 PASS). 해당 테스트만 native ARM·실행 검증으로 맞춘
+  head `7a35e49e8f836c6dea0537011ae4aa8c10351a1b`는 관련131개가 통과했다.
+  이미지 입력은 a7da와 같아 실제 이미지 성공 증거를 재사용한다. 원격 PR head와
+  Actions 조회에서 새 자동 실행0건을 확인해 기존 공식 workflow를 같은 branch로
+  dispatch했다(35540127663). 이 실행의 필수 CI 성공 없이 병합하지 않는다.
   Python 전체 대신 같은3.11.15의 `pyexpat`·`_elementtree`를 함께 재빌드하고
   서비스의 마지막 패키지 설치 뒤 실제 연결·동작을 다시 확인한다.
 
