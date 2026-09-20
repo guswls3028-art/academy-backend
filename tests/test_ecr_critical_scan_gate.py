@@ -493,8 +493,10 @@ def test_same_count_high_identity_substitution_fails_closed(
     replacement_cve: str,
     replacement_version: str,
 ) -> None:
+    # Evaluate identity against the reviewed snapshot; expiry is tested separately.
     baselines, known = gate.load_high_baselines(
-        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json"
+        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json",
+        date(2026, 9, 12),
     )
     expected = sorted(key for key in known if key[0] == "academy-base")
     findings = [
@@ -518,8 +520,10 @@ def test_same_count_high_identity_substitution_fails_closed(
 
 
 def test_removed_high_requires_reviewed_baseline_reduction() -> None:
+    # Evaluate budget against the reviewed snapshot; expiry is tested separately.
     baselines, known = gate.load_high_baselines(
-        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json"
+        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json",
+        date(2026, 9, 12),
     )
     expected = sorted(key for key in known if key[0] == "academy-base")
     findings = _scan(

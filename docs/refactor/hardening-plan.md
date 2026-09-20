@@ -132,6 +132,11 @@ frontend 공식 목록은 `playwright.development-release.config.ts`와
   중복 제출의 당시 미완료 조건은 현재 정책·검사에서 다시 판정한다.
 - Dev Alerts Cron 설정 누락은 별도 미해결 운영 항목이다. 서비스 canary 성공과 구분한다.
   새 알림 수신처/외부 발송을 임의로 설정하지 않는다.
+- 2026-09-20 UTC부터 기존 ECR critical/high 위험 수락의 `2026-09-19` 만료가 적용된다.
+  **다음 backend 이미지 승격의 선행 조건:** [컨테이너 보안](../operations/container-image-security.md)의
+  exact digest·취약점·패키지·도달성 근거로 수정/수락을 재검토하고 현재 날짜 게이트를 통과한다.
+  이번 테스트 수리는 수락 기간을 연장하지 않는다. 기존 성공 배포 영수증을 다음 후보의
+  보안 승인으로 재사용하지 않는다. 운영 장애 발생을 의미하는 판정은 아니다.
 - 유효 HOLD는 [배포 연속성](../operations/deployment-modes.md)과 frontend
   `docs/DEPLOYMENT-OPERATIONS.md`의 현재 scope·해제 조건을 보존한다.
 
@@ -177,6 +182,15 @@ PostgreSQL 회귀5398 PASS/1 FAIL/5 SKIP였다. Excel 자격 증명의 실제 Fe
 envelope의 정확한 키·암호문 형식, 기본 공개 응답의 자격 증명 제외를 검사하고 실제
 500개 복호화·만료와 저장소 반환·캐시 비공개 검증은 유지한다. 제품 암호화 구현이나
 난수 생성기를 바꾸지 않았다. 최종 required CI는 PR480의 수정된 exact head에서 확인한다.
+
+후속 [35477228432](https://github.com/guswls3028-art/academy-backend/actions/runs/35477228432)의
+Django 검사는5226 PASS/3 FAIL/147 SKIP였다. UTC 날짜 변경 후 두 역사 baseline 테스트가
+현재 날짜로 만료된 수락을 읽어 identity 대체·예산 축소 검증에 도달하지 못했다.
+해당 두 호출에 다른 역사 fixture 검사와 같은 `2026-09-12`를 명시했다.
+운영 게이트의 UTC 현재 날짜 판정과9월19일 허용/20일 거부 회귀 검사는 그대로 유지한다.
+실제 수락 만료는 위의 다음 backend 이미지 승격 선행 조건으로 남는다.
+또한 현재 배포 workflow의 `^apps/` 분류는 테스트도 포함하므로, 이 문서·QA만의 병합에서
+발생한 exact 배포 run은 운영 변경 전에 취소하고 PR480/실행 영수증에 결과를 기록한다.
 
 격리 teacher 목록은 관리자 계정의 교사 화면이다. YouTube 썸네일과 worker가 생성하지 않은 long-video fixture
 썸네일은 로컬 이미지 대역이며 목록 응답은 실제 API다. 숙제 PNG 미리보기는 실제
