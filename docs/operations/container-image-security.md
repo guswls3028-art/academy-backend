@@ -74,8 +74,8 @@
   x64 runner와 QEMU 경계를 유지한다. commit을 바꿀 때는 두 수정의 ancestry,
   전체 SHA, 설치 마커, HLS smoke,
   ECR 완료 스캔과 기존 High 상한 비증가를 함께 확인한다. Debian FFmpeg와
-  전이 패키지를 제거한 뒤 Video 이미지의 High 상한은 공통 base와 같은 8로
-  즉시 낮추며, 이 수치를 넘는 후보는 다시 실패 폐쇄한다.
+  전이 패키지를 제거한 뒤 Video 이미지의 High 상한도 공통 base와 함께 낮췄다.
+  현재 상한은 아래 후보 정책과 SSOT JSON을 따른다.
   API의 upload-complete probe는 실패 허용 보조 검사이고 Video worker가 최종 검증과
   변환을 소유한다. AI frame extraction은 OpenCV wheel에 포함된 FFmpeg 지원을 쓰며,
   wheel이 그 기능을 잃으면 AI 이미지 빌드가 즉시 실패한다. AI와 Video 런타임은
@@ -131,7 +131,30 @@
    상한을 같은 PR에서 내려야 한다. 알 수 없는 항목, 누락된 기존 항목,
    identity/count 불일치 중 어느 것도 development/preprod로 진행할 수 없다.
 
-### 현재 기준선: 2026-09-12 완료 스캔
+### 2026-09-20 후보 정책: 수정 패키지 설치와 예외 제거
+
+Debian trixie에 기존 예외 다섯 건의 수정본이 공개되어 만료를 연장하지 않는다.
+공통 base는 `libc6`·`libc-bin`을 명시적으로 설치해 `2.41-12+deb13u4` 이상,
+`libsqlite3-0`을 `3.46.1-7+deb13u2` 이상으로 검증한다.
+근거는 Debian의 [glibc 5450](https://security-tracker.debian.org/tracker/CVE-2026-5450),
+[glibc 5928](https://security-tracker.debian.org/tracker/CVE-2026-5928),
+[SQLite 11822](https://security-tracker.debian.org/tracker/CVE-2026-11822),
+[SQLite 11824](https://security-tracker.debian.org/tracker/CVE-2026-11824) 수정 상태다.
+OCR API·AI·Tools는 Tesseract의 전이 의존성 `libglib2.0-0t64`를
+`2.84.4-3~deb13u4` 이상으로 검증한다
+([GLib 58016](https://security-tracker.debian.org/tracker/CVE-2026-58016)).
+상위 Python OCI digest와 stable suite는 유지하며, native 검증은 실제 libc 로드와
+SQLite FTS5 생성·쓰기·검색도 실행한다.
+
+두 SSOT의 허용 identity는 비우고 여섯 repository의 High 상한을 모두 0으로
+낮춘다. 이는 새 후보가 통과해야 할 조건이며 운영 이미지가 이미 교체됐다는
+증거가 아니다. 공식 후보 workflow의 여섯 immutable digest 완료 scan에서
+Critical/High 0을 확인해야 development 이후로 진행할 수 있다. 새 finding이
+나오면 후보를 중단하고 패키지 원인을 다시 확인한다.
+이전 만료일·identity 교체·stale 판정 테스트는 `tests/fixtures/security-20260919/`의
+명시적 과거 스냅샷으로 유지한다. 해당 fixture는 배포 허가에 사용하지 않는다.
+
+### 과거 기준선 증거: 2026-09-12 완료 스캔
 
 후보 run [`34687613434`](https://github.com/guswls3028-art/academy-backend/actions/runs/34687613434)
 (source `a36a02bf9fba1b24adf2d561598f2ebcd463404f`, immutable tag

@@ -1,6 +1,11 @@
 #!/bin/sh
 set -eu
 
+dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libc6)" ge '2.41-12+deb13u4'
+dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libc-bin)" ge '2.41-12+deb13u4'
+dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libsqlite3-0)" ge '3.46.1-7+deb13u2'
+python -c 'import ctypes, sqlite3; ctypes.CDLL("libc.so.6"); db = sqlite3.connect(":memory:"); db.execute("create virtual table texts using fts5(body)"); db.execute("insert into texts values (?)", ("academy",)); assert db.execute("select body from texts where texts match ?", ("academy",)).fetchone() == ("academy",)'
+
 zlib_version="$(dpkg-query -W -f='${Version}' zlib1g)"
 test "${zlib_version}" = \
     '1:1.3.dfsg+really1.3.2.1+academy.git20260904.e3dc0a8-1'

@@ -352,6 +352,22 @@ PostgreSQL barrier 회귀는
 새 기기 복구 대상으로 선택하지 않는다. 이전 기기 행은 `SAME_ACCOUNT_HANDOFF`로
 무효화하되 payload를 보존한다. 다른 계정·tenant는 조회하거나 인계할 수 없다.
 
+새로고침 전 같은 계정의 빈 선택 점유가 남으면 `active_editors`의
+`has_pending_changes=false`로 변경 초안과 구분한다. 사용자가 해당 셀의 이어 입력을
+명시한 경우에만 `PUT score-draft`의 `take_over_same_user=true`, 빈 `changes`, 정확한
+`active_cell`로 점유를 인계한다. 서버는 충돌 행이 같은 계정의 빈 점유인지 잠금 안에서
+다시 확인하며, 다른 직원이나 점수를 담은 초안은 계속409로 보호한다. 이전 행은 삭제하지
+않고 `SAME_ACCOUNT_HANDOFF`로 무효화한다. 서버 성공 전에는 현재 화면을 편집 가능으로
+전환하지 않으며, 실패 시 입력과 안내·재시도를 유지한다.
+
+실제 문서 이탈 시 클라이언트의 점유/저장 요청이 모두 끝났고 미확정 입력도 없을 때만
+`POST score-draft/commit/`에 `release_lease=true`, `release_if_empty=true`를 보낼 수 있다.
+서버는 정확한 현재 client 행만 잠가 점수 변경이 없는 경우 `active_cell`만 지우고 행은
+보존한다. 점수 변경·다른 client·legacy 행·행 부재는 그대로 둔다. 대기 요청이 있는 이탈은
+이 요청을 보내지 않으며 기존 TTL 및 명시적 복구로 이어간다. 이는 일반 저장·잠금의 확정
+후 해제 계약을 대체하지 않는다. 회귀는 `test_score_draft_edit_lease.py`가 현재/다른 계정,
+주관식 선택, dirty 보존, 조건부 해제의 정확한 client와 flags를 검증한다.
+
 교사 모바일의 단건 점수 수정은 실제 대상 셀을 빈 lease보다 먼저 초안으로 등록한다.
 같은 계정의 다른 화면에 그 셀과 충돌하는 초안이 있으면 모바일 화면으로 편집권을
 인계하고 기존 초안은 `SAME_ACCOUNT_HANDOFF`로 무효화하되 입력값은 복구용으로

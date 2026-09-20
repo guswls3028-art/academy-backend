@@ -39,6 +39,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr-kor \
     libgl1 \
     && dpkg --configure -a \
+    && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libglib2.0-0t64)" ge "2.84.4-3~deb13u4" \
     && libcurl_version="$(dpkg-query -W -f='${Version}' libcurl4t64)" \
     && libnghttp3_version="$(dpkg-query -W -f='${Version}' libnghttp3-9)" \
     && libngtcp2_version="$(dpkg-query -W -f='${Version}' libngtcp2-16)" \
