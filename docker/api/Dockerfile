@@ -48,7 +48,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get check \
     && ! dpkg-query -W perl-base >/dev/null 2>&1 \
     && for package in perl 'perl-modules-*' 'libperl*' libdpkg-perl liberror-perl; do ! dpkg-query -W "$package" >/dev/null 2>&1; done \
-    && ! command -v perl >/dev/null 2>&1
+    && ! command -v perl >/dev/null 2>&1 \
+    && python /usr/local/bin/verify-expat.py --library libexpat.so.1 --python --package
 USER appuser
 
 FROM curl-fixed-system AS base

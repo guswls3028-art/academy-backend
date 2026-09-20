@@ -55,9 +55,11 @@ def test_native_security_changes_build_and_run_the_arm64_base_in_pr() -> None:
     assert "load: true" in workflow
     assert "verify-fixed-libs.sh:/tmp/verify-fixed-libs.sh:ro" in workflow
     assert "academy-base:native-security-check sh /tmp/verify-fixed-libs.sh" in workflow
-    for package in ("zlib1g", "libpcre2-8-0", "libxml2"):
+    for package in ("zlib1g", "libpcre2-8-0", "libxml2", "libexpat1"):
         assert f"dpkg-query -W -f='${{Version}}' {package}" in verifier
-    assert "docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8" in workflow
+    native_job = workflow.split("\n  native-security-image:\n", 1)[1].split("\n  static-contract:\n", 1)[0]
+    assert "runs-on: ubuntu-24.04-arm" in native_job
+    assert "setup-qemu-action" not in native_job
     assert "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c" in workflow
     assert "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a" in workflow
 
