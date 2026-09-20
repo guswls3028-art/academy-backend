@@ -208,7 +208,7 @@ development storage 객체를 검증한다. 그림 대역을 CDN/처리 성공�
 frontend base `d33c4c6458`이다. 이전 작업공간은 닫혔으며 canonical의 외부 변경은 보존한다.
 실행 영수증은 `C:\academy\_artifacts\stability-completion-0920`에 남긴다.
 
-### 현재 실행 상태 — 2026-09-21 KST, backend 배포 성공·frontend 실사용 검증 진행
+### 현재 실행 상태 — 2026-09-21 KST, backend 배포 성공·frontend 후속 실패 수리
 
 - Backend 공식 [35540757110](https://github.com/guswls3028-art/academy-backend/actions/runs/35540757110)은
   최종 성공했다. 소스는 `057403c653f4c5f26fc43dc524b974895a4ba432`, 성공 manifest를
@@ -219,10 +219,17 @@ frontend base `d33c4c6458`이다. 이전 작업공간은 닫혔으며 canonical�
 - Frontend PR562의 exact `18daa4c848f0749a24b5463d4852f4fa087deeda`는 Quality와
   전체 E2E 성공 후 일반 merge로 `49512ab449626c5db3c0bf2e10edf56aae477b0f`에
   반영됐다. 새 공식 [35543367845](https://github.com/guswls3028-art/academy-frontend/actions/runs/35543367845)가
-  진행 중이다. 동일 산출물21개·cleanup0, 고정 v3 최종 UI QA, 운영 승격과 두 도메인
-  파일 일치·영향 화면 확인이 남았다. 운영 frontend는 아직 d33c다.
-- 다음 실행은 새 공식21개 결과 확인이다. 실패하면 exact 산출물·응답·정리 결과로
-  원인을 좁히고 수정한다. 성공하면 새 source/run/artifact/backend manifest에 묶인
+  19 PASS/2 FAIL/0 SKIP/0 flaky로 종료됐다. 조교 숙제 채점은 통과했고 OMR은
+  재채점 HTTP200·graded>0·failed[] 이후 학생 점수 assertion469에서 실패했다.
+  실제 수신 점수는 안전한 보고서에 없어 동일 합성 시나리오의 제한된 진단이 필요하다.
+  자료함 DELETE ECONNREFUSED는 실제 SSM Port 세션이23:07:01.012Z부터
+ 23:32:01.167Z까지 정확히25분 뒤 종료된 시각과 일치한다. 로컬 suite30/tunnel35분과
+  서버 max25분의 불일치는 backend PR490의 고정35분 수정으로 처리하며 관련42개
+  검사가 통과했다. 아직 merge/실제 문서 적용 전이다. 두 QA tenant389/390 및
+  user/R2/process/listener 정리0, PC/모바일690초 재생·갱신·진도 저장·오류0이나
+  postPlayback Inspect는 전체 실패로 실행하지 않았다. 운영 frontend는 아직 d33c다.
+- 다음 실행은 OMR 실패의 합성 점수 진단과 PR490 CI/문서 버전 적용이다. 최종 v3
+  pins는 실행 false로 유지한다. 새 공식21개 성공 뒤 source/run/artifact/backend manifest에 묶인
   일회용 v3 pins로 최종 QA를 실행한다. 기존 실패한3efc 증거를 승격에 재사용하지 않는다.
   메시지·공용 컨트롤 작업의 별도 병합·runtime HOLD는 유지한다.
 
@@ -352,6 +359,10 @@ frontend base `d33c4c6458`이다. 이전 작업공간은 닫혔으며 canonical�
   삭제를 시도했지만 자동 승인 검토가 실행 전에 `blocked by policy`로 거부했다.
   삭제0·3개 모두 보존이며 다른 방법으로 재시도하지 않았다. 원본 소스·컴파일러·
   실행 파일·manifest·검증 기록도 유지한다. 이전 §4의 캐시 거부와 별개 기록이다.
+- Backend 배포 성공 뒤 `stability-omr-policy-0921/backend`는 clean b3b1f5d,
+  병합된 c2ee와 tree 일치 및 `git cherry` patch-equivalent를 확인해 공식 session
+  Close로 정리했다. 절대 대상·reparse 부재를 확인했고 사후 경로와 worktree 등록이
+  없음을 읽었다. 커밋·원격 PR·검증 산출물은 보존하며 위 거부된 캐시는 재시도하지 않았다.
 
 - Backend 활성화 PR [485](https://github.com/guswls3028-art/academy-backend/pull/485)는
   exact head `680ed5cae8a52ce074fcfad0c055d1eb4d9362f5`의 필수 CI
