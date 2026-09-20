@@ -108,13 +108,13 @@ class ScoreDraftEditLeaseTests(TestCase):
             session_id=(session or self.session).id,
         )
 
-    def _commit(self, user, client_id, *, release_lease):
+    def _commit(self, user, client_id, *, release_lease, release_if_empty=False):
         return ScoreDraftCommitView.as_view()(
             self._request(
                 "post",
                 user,
                 client_id,
-                {"release_lease": release_lease},
+                {"release_lease": release_lease, "release_if_empty": release_if_empty},
             ),
             session_id=self.session.id,
         )
@@ -156,6 +156,7 @@ class ScoreDraftEditLeaseTests(TestCase):
                     "editor_user_id": self.admin_a.id,
                     "editor_name": "score-lease-a",
                     "active_cell": first_cell,
+                    "has_pending_changes": True,
                 }
             ],
         )
@@ -394,6 +395,96 @@ class ScoreDraftEditLeaseTests(TestCase):
         self.assertEqual(available.status_code, 200)
         self.assertEqual(conflict.status_code, 409)
         self.assertEqual(conflict.data["code"], "SCORE_EDIT_LOCKED")
+
+    def test_same_account_empty_subjective_presence_requires_explicit_reclaim(self):
+        cell = {"type": "exam", "enrollmentId": 21, "examId": 11, "sub": "subjective"}
+        self.assertEqual(self._put(self.admin_a, "before-reload", active_cell=cell).status_code, 200)
+        reopened = self._get(self.admin_a, "after-reload")
+        self.assertFalse(reopened.data["active_editors"][0]["has_pending_changes"])
+        self.assertEqual(self._put(self.admin_a, "after-reload", active_cell=cell).status_code, 409)
+
+        reclaimed = self._put(
+            self.admin_a, "after-reload", active_cell=cell, take_over_same_user=True,
+        )
+
+        self.assertEqual(reclaimed.status_code, 200)
+        self.assertEqual(reclaimed.data["active_editors"], [])
+        previous = ScoreEditDraft.objects.get(client_id="before-reload", tenant=self.tenant)
+        self.assertEqual(previous.payload["changes"], [])
+        self.assertEqual(previous.payload["invalidated_reason"], "SAME_ACCOUNT_HANDOFF")
+        with transaction.atomic():
+            require_score_edit_lease(
+                self._request("patch", self.admin_a, "after-reload"),
+                session_id=self.session.id, target_cell=cell,
+            )
+        with self.assertRaises(ScoreEditLeaseStale), transaction.atomic():
+            require_score_edit_lease(
+                self._request("patch", self.admin_a, "before-reload"),
+                session_id=self.session.id, target_cell=cell,
+            )
+
+    def test_empty_presence_reclaim_never_takes_other_account(self):
+        cell = {"type": "exam", "enrollmentId": 21, "examId": 11, "sub": "subjective"}
+        self._put(self.admin_a, "first", active_cell=cell)
+        response = self._put(self.admin_b, "second", active_cell=cell, take_over_same_user=True)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(ScoreEditDraft.objects.get(client_id="first").payload["active_cell"], cell)
+
+    def test_empty_presence_reclaim_preserves_same_account_pending_scores(self):
+        cell = {"type": "exam", "enrollmentId": 21, "examId": 11, "sub": "subjective"}
+        change = {"type": "examSubjective", "enrollmentId": 21, "examId": 11, "score": 17}
+        self._put(self.admin_a, "first", [change], active_cell=cell)
+        reopened = self._get(self.admin_a, "second")
+        self.assertTrue(reopened.data["active_editors"][0]["has_pending_changes"])
+        response = self._put(self.admin_a, "second", active_cell=cell, take_over_same_user=True)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(ScoreEditDraft.objects.get(client_id="first").payload["changes"], [change])
+
+    def test_conditional_exit_release_clears_only_current_empty_presence(self):
+        cell = {"type": "exam", "enrollmentId": 21, "examId": 11, "sub": "subjective"}
+        other_cell = {**cell, "enrollmentId": 22}
+        self._put(self.admin_a, "closing", active_cell=cell)
+        self._put(self.admin_a, "still-open", active_cell=other_cell)
+        response = self._commit(self.admin_a, "closing", release_lease=True, release_if_empty=True)
+        self.assertEqual(response.status_code, 204)
+        current = ScoreEditDraft.objects.get(client_id="closing")
+        self.assertIsNone(current.payload["active_cell"])
+        self.assertEqual(current.payload["changes"], [])
+        self.assertEqual(ScoreEditDraft.objects.get(client_id="still-open").payload["active_cell"], other_cell)
+        self.assertEqual(self._put(self.admin_b, "other-staff", active_cell=cell).status_code, 200)
+
+    def test_conditional_exit_release_preserves_changes_received_before_release(self):
+        cell = {"type": "exam", "enrollmentId": 21, "examId": 11, "sub": "subjective"}
+        change = {"type": "examSubjective", "enrollmentId": 21, "examId": 11, "score": 17}
+        self._put(self.admin_a, "closing", active_cell=cell)
+        self._put(self.admin_a, "closing", [change], active_cell=cell)
+        before = ScoreEditDraft.objects.get(client_id="closing")
+        response = self._commit(self.admin_a, "closing", release_lease=True, release_if_empty=True)
+        self.assertEqual(response.status_code, 204)
+        after = ScoreEditDraft.objects.get(client_id="closing")
+        self.assertEqual(after.payload, before.payload)
+        self.assertEqual(after.updated_at, before.updated_at)
+
+    def test_conditional_exit_release_does_not_claim_legacy_or_missing_client(self):
+        cell = {"type": "exam", "enrollmentId": 21, "examId": 11, "sub": "subjective"}
+        legacy = ScoreEditDraft.objects.create(
+            tenant=self.tenant, session=self.session, editor_user=self.admin_a,
+            client_id="", payload={"changes": [], "active_cell": cell},
+        )
+        response = self._commit(self.admin_a, "missing", release_lease=True, release_if_empty=True)
+        self.assertEqual(response.status_code, 204)
+        legacy.refresh_from_db()
+        self.assertEqual(legacy.payload["active_cell"], cell)
+        self.assertEqual(ScoreEditDraft.objects.filter(tenant=self.tenant).count(), 1)
+
+    def test_conditional_exit_release_rejects_invalid_or_incompatible_flags(self):
+        for release_lease, release_if_empty in ((True, "sometimes"), (False, True)):
+            with self.subTest(release_lease=release_lease, release_if_empty=release_if_empty):
+                response = self._commit(
+                    self.admin_a, "closing", release_lease=release_lease,
+                    release_if_empty=release_if_empty,
+                )
+                self.assertEqual(response.status_code, 400)
 
     def test_same_account_mobile_score_handoff_preserves_and_fences_old_draft(self):
         desktop_change = {

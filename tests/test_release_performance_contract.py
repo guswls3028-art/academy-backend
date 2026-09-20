@@ -76,7 +76,12 @@ def test_headless_opencv_images_do_not_explicitly_install_system_glib() -> None:
     for service in ("ai", "video"):
         dockerfile = _read(PRODUCTION_DOCKERFILES[service])
 
-        assert "libglib2.0-0" not in dockerfile, service
+        # OCR may verify its transitive GLib dependency, but OpenCV must not
+        # introduce a direct system GLib installation (including version pins).
+        assert not any(
+            line.strip().startswith("libglib2.0-0")
+            for line in dockerfile.splitlines()
+        ), service
 
     ai_requirements = _read(REPO_ROOT / "requirements" / "worker-ai-cpu.txt")
     video_requirements = _read(REPO_ROOT / "requirements" / "worker-video.txt")
@@ -145,12 +150,12 @@ def test_reviewed_runtime_images_own_exact_high_budgets() -> None:
 
     assert document["schemaVersion"] == 3
     assert baseline == {
-        "academy-base": 3,
-        "academy-api": 3,
-        "academy-video-worker": 3,
-        "academy-messaging-worker": 3,
-        "academy-ai-worker-cpu": 3,
-        "academy-tools-worker": 3,
+        "academy-base": 0,
+        "academy-api": 0,
+        "academy-video-worker": 0,
+        "academy-messaging-worker": 0,
+        "academy-ai-worker-cpu": 0,
+        "academy-tools-worker": 0,
     }
     exact_counts = {repository: 0 for repository in baseline}
     assert "knownHighFindings" not in document

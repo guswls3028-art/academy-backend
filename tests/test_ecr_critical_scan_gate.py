@@ -3,10 +3,13 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pytest
+
+
+HISTORICAL_POLICY_DIR = Path(__file__).parent / "fixtures" / "security-20260919"
 
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "v1" / "ecr-critical-scan-gate.py"
@@ -70,9 +73,48 @@ def _high_policy_document(*entries: dict[str, object]) -> dict[str, object]:
     }
 
 
-def test_current_acceptance_is_exact_and_time_bounded() -> None:
+@pytest.mark.parametrize("repository", gate.REPOSITORIES)
+def test_current_candidate_requires_zero_critical_and_high(repository: str) -> None:
+    policy_dir = Path(__file__).parents[1] / "docs" / "ssot"
     acceptances = gate.load_acceptances(
-        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-critical-risk-acceptance.json",
+        policy_dir / "ecr-critical-risk-acceptance.json", datetime.now(timezone.utc).date()
+    )
+    baselines, known = gate.load_high_baselines(policy_dir / "ecr-high-risk-baseline.json")
+    assert not acceptances
+    assert not known
+    assert baselines[repository] == 0
+    assert gate.evaluate_findings(repository, _scan(), acceptances) == []
+    assert gate.evaluate_high_budget(repository, _scan(), baselines, known) == 0
+
+
+@pytest.mark.parametrize(
+    ("cve", "package", "version", "severity"),
+    [
+        ("CVE-2026-5450", "glibc", "2.41-12+deb13u3", "CRITICAL"),
+        ("CVE-2026-5928", "glibc", "2.41-12+deb13u3", "HIGH"),
+        ("CVE-2026-11822", "sqlite3", "3.46.1-7+deb13u1", "HIGH"),
+        ("CVE-2026-11824", "sqlite3", "3.46.1-7+deb13u1", "HIGH"),
+        ("CVE-2026-58016", "glib2.0", "2.84.4-3~deb13u3", "CRITICAL"),
+    ],
+)
+def test_vendor_fixed_findings_are_no_longer_accepted(cve, package, version, severity) -> None:
+    policy_dir = Path(__file__).parents[1] / "docs" / "ssot"
+    findings = _scan(_finding(cve, package, version, severity))
+    if severity == "CRITICAL":
+        acceptances = gate.load_acceptances(
+            policy_dir / "ecr-critical-risk-acceptance.json", datetime.now(timezone.utc).date()
+        )
+        with pytest.raises(gate.GateError, match="unaccepted critical"):
+            gate.evaluate_findings("academy-api", findings, acceptances)
+    else:
+        baselines, known = gate.load_high_baselines(policy_dir / "ecr-high-risk-baseline.json")
+        with pytest.raises(gate.GateError, match="High"):
+            gate.evaluate_high_budget("academy-api", findings, baselines, known)
+
+
+def test_historical_acceptance_is_exact_and_time_bounded() -> None:
+    acceptances = gate.load_acceptances(
+        HISTORICAL_POLICY_DIR / "ecr-critical-risk-acceptance.json",
         date(2026, 7, 31),
     )
     accepted = gate.evaluate_findings(
@@ -88,7 +130,7 @@ def test_current_acceptance_is_exact_and_time_bounded() -> None:
 
 def test_removed_perl_findings_fail_closed() -> None:
     acceptances = gate.load_acceptances(
-        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-critical-risk-acceptance.json",
+        HISTORICAL_POLICY_DIR / "ecr-critical-risk-acceptance.json",
         date(2026, 7, 31),
     )
     with pytest.raises(gate.GateError, match="unaccepted critical ECR findings"):
@@ -108,7 +150,7 @@ def test_removed_perl_findings_fail_closed() -> None:
 )
 def test_fixed_curl_critical_findings_cannot_be_accepted(cve: str) -> None:
     acceptances = gate.load_acceptances(
-        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-critical-risk-acceptance.json",
+        HISTORICAL_POLICY_DIR / "ecr-critical-risk-acceptance.json",
         date(2026, 9, 5),
     )
 
@@ -137,7 +179,7 @@ def test_unknown_or_changed_critical_finding_fails_closed(
     cve: str, package: str, version: str
 ) -> None:
     acceptances = gate.load_acceptances(
-        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-critical-risk-acceptance.json",
+        HISTORICAL_POLICY_DIR / "ecr-critical-risk-acceptance.json",
         date(2026, 7, 31),
     )
     with pytest.raises(gate.GateError, match="unaccepted critical"):
@@ -149,9 +191,7 @@ def test_unknown_or_changed_critical_finding_fails_closed(
 def test_expired_acceptance_blocks_before_scanning() -> None:
     with pytest.raises(gate.GateError, match="expired"):
         gate.load_acceptances(
-            Path(__file__).parents[1]
-            / "docs"
-            / "ssot"
+            HISTORICAL_POLICY_DIR
             / "ecr-critical-risk-acceptance.json",
             date(2026, 9, 20),
         )
@@ -159,7 +199,7 @@ def test_expired_acceptance_blocks_before_scanning() -> None:
 
 def test_retired_mbedtls_critical_findings_fail_closed() -> None:
     acceptances = gate.load_acceptances(
-        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-critical-risk-acceptance.json",
+        HISTORICAL_POLICY_DIR / "ecr-critical-risk-acceptance.json",
         date(2026, 8, 20),
     )
 
@@ -180,7 +220,7 @@ def test_high_finding_does_not_consume_critical_acceptance() -> None:
 
 def test_high_baseline_is_exact_and_allows_non_increase() -> None:
     baselines, known = gate.load_high_baselines(
-        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json",
+        HISTORICAL_POLICY_DIR / "ecr-high-risk-baseline.json",
         date(2026, 8, 23),
     )
     findings = _scan(
@@ -204,7 +244,7 @@ def test_completed_candidate_scans_match_reduced_high_baseline(repository: str) 
         _finding("CVE-2026-5928", "glibc", "2.41-12+deb13u3", "HIGH"),
     )
     baselines, known = gate.load_high_baselines(
-        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json",
+        HISTORICAL_POLICY_DIR / "ecr-high-risk-baseline.json",
         date(2026, 9, 12),
     )
 
@@ -212,8 +252,8 @@ def test_completed_candidate_scans_match_reduced_high_baseline(repository: str) 
     assert baselines[repository] == 3
 
 
-def test_current_high_acceptances_are_exact_and_time_bounded() -> None:
-    path = Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json"
+def test_historical_high_acceptances_are_exact_and_time_bounded() -> None:
+    path = HISTORICAL_POLICY_DIR / "ecr-high-risk-baseline.json"
     document = json.loads(path.read_text(encoding="utf-8"))
     accepted = document["acceptedHighFindings"]
 
@@ -263,7 +303,7 @@ def test_retired_ocr_high_identity_cannot_return_within_budget(
     repository: str, cve: str, package: str, version: str
 ) -> None:
     baselines, known = gate.load_high_baselines(
-        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json",
+        HISTORICAL_POLICY_DIR / "ecr-high-risk-baseline.json",
         date(2026, 9, 12),
     )
     findings = _scan(
@@ -279,9 +319,7 @@ def test_retired_ocr_high_identity_cannot_return_within_budget(
 def test_expired_high_acceptance_blocks_before_scanning() -> None:
     with pytest.raises(gate.GateError, match="High risk acceptance expired"):
         gate.load_high_baselines(
-            Path(__file__).parents[1]
-            / "docs"
-            / "ssot"
+            HISTORICAL_POLICY_DIR
             / "ecr-high-risk-baseline.json",
             date(2026, 9, 20),
         )
@@ -289,7 +327,7 @@ def test_expired_high_acceptance_blocks_before_scanning() -> None:
 
 def test_high_acceptance_remains_valid_through_expiry_day() -> None:
     baselines, reviewed = gate.load_high_baselines(
-        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json",
+        HISTORICAL_POLICY_DIR / "ecr-high-risk-baseline.json",
         date(2026, 9, 19),
     )
     assert baselines["academy-api"] == 3
@@ -495,7 +533,7 @@ def test_same_count_high_identity_substitution_fails_closed(
 ) -> None:
     # Evaluate identity against the reviewed snapshot; expiry is tested separately.
     baselines, known = gate.load_high_baselines(
-        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json",
+        HISTORICAL_POLICY_DIR / "ecr-high-risk-baseline.json",
         date(2026, 9, 12),
     )
     expected = sorted(key for key in known if key[0] == "academy-base")
@@ -522,7 +560,7 @@ def test_same_count_high_identity_substitution_fails_closed(
 def test_removed_high_requires_reviewed_baseline_reduction() -> None:
     # Evaluate budget against the reviewed snapshot; expiry is tested separately.
     baselines, known = gate.load_high_baselines(
-        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json",
+        HISTORICAL_POLICY_DIR / "ecr-high-risk-baseline.json",
         date(2026, 9, 12),
     )
     expected = sorted(key for key in known if key[0] == "academy-base")

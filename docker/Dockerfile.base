@@ -63,12 +63,18 @@ COPY --from=builder /build/native-security/out /tmp/academy-native-security
 RUN test -n "${APT_REFRESH_TOKEN}" \
     && apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
+    libc6 \
+    libc-bin \
+    libsqlite3-0 \
     ca-certificates \
     fonts-nanum \
     openssl \
     util-linux \
     && dpkg -i /tmp/academy-native-security/*.deb \
     && ldconfig \
+    && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libc6)" ge "2.41-12+deb13u4" \
+    && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libc-bin)" ge "2.41-12+deb13u4" \
+    && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libsqlite3-0)" ge "3.46.1-7+deb13u2" \
     && rm -rf /tmp/academy-native-security \
     && zlib_version="$(dpkg-query -W -f='${Version}' zlib1g)" \
     && dpkg --compare-versions "$zlib_version" ge "1:1.3.dfsg+really1.3.2.1+academy.git20260904.e3dc0a8-1" \

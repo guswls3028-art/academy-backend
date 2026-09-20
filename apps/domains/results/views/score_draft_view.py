@@ -104,12 +104,14 @@ def _active_editors(*, session_id: int, tenant_id: int, user_id: int, client_id:
         active_cell = score_edit_payload_active_cell(draft.payload)
         if active_cell is None:
             continue
+        _, changes = score_edit_payload_parts(draft.payload)
         editors.append(
             {
                 "client_id": _draft_client_id(draft),
                 "editor_user_id": int(draft.editor_user_id),
                 "editor_name": _editor_name(draft.editor_user),
                 "active_cell": active_cell,
+                "has_pending_changes": bool(changes),
             }
         )
     return editors
@@ -325,7 +327,7 @@ class ScoreDraftView(APIView):
                     continue
                 if (
                     take_over_same_user
-                    and changes
+                    and (changes or (active_cell is not None and not existing_changes))
                     and int(existing.editor_user_id) == int(request.user.id)
                 ):
                     handoff_drafts.append(existing)
@@ -426,6 +428,12 @@ class ScoreDraftCommitView(APIView):
             request.data.get("release_lease", True),
             field_name="release_lease",
         )
+        release_if_empty = parse_bool(
+            request.data.get("release_if_empty", False),
+            field_name="release_if_empty",
+        )
+        if release_if_empty and not release_lease:
+            return Response({"detail": "release_if_empty requires release_lease"}, status=400)
         with transaction.atomic():
             _lock_session(session_id=int(session_id), tenant=tenant)
             draft = (
@@ -434,7 +442,7 @@ class ScoreDraftCommitView(APIView):
                     session_id=int(session_id),
                     tenant_id=tenant.id,
                     editor_user_id=request.user.id,
-                    client_id__in=["", client_id],
+                    client_id__in=[client_id] if release_if_empty else ["", client_id],
                 )
                 .first()
             )
@@ -451,7 +459,15 @@ class ScoreDraftCommitView(APIView):
                 and score_edit_payload_is_invalidated(draft.payload)
             ):
                 return _stale_response()
-            if release_lease:
+            if release_if_empty:
+                _, changes = score_edit_payload_parts(draft.payload)
+                if changes or score_edit_payload_active_cell(draft.payload) is None:
+                    return Response(status=204)
+                # Best-effort document exit never discards a score draft or adopts
+                # another document's legacy lease. Keep invalidation fences intact.
+                draft.payload = {**draft.payload, "active_cell": None}
+                draft.save(update_fields=["payload", "updated_at"])
+            elif release_lease:
                 draft.delete()
             else:
                 draft.payload = score_edit_lease_payload(
