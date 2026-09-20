@@ -228,8 +228,11 @@ Backend PR[481](https://github.com/guswls3028-art/academy-backend/pull/481)의 e
 CI[35499929254](https://github.com/guswls3028-art/academy-backend/actions/runs/35499929254)를
 통과했다. main `6c566cf7fa357fc5ddee71c7175c270cde08cab8`에 병합했고 공식 배포
 [35501517908](https://github.com/guswls3028-art/academy-backend/actions/runs/35501517908)가
-진행 중이다. exact run의 production review는 eligible readback 후 공식 API로
-승인했으며 pending 해소와 보호 job 시작을 확인했다. 아직 운영 완료 증거는 아니다.
+최종 성공했다. exact run의 production review는 eligible readback 후 공식 API로
+승인했고 개발·preprod·임시 서버 정리·rolling·실제 digest 검증을 모두 통과했다.
+성공 manifest는 같은 source SHA와 여섯 candidate digest를 보존하며
+`verifiedAt=2026-09-20T19:16:15+09:00`, `complete=true`다. 여섯 ECR scan 모두
+critical=0/acceptedCritical=0/high=0을 확인했다.
 주관식 API 독립 검토에서 추가 결함은 없었다.
 Frontend 실제 native 종료 검사는 라우트 mock이 fetch keepalive를 관측하지 못하는
 한계를 확인해 실제 HTTP 수신으로 보강했다. 해당 관측 한계를 제품 실패로 계산하지 않는다.
@@ -254,7 +257,10 @@ tests.py를 push 및 누적 이미지 diff에서 제외하되 제품 변경이 �
 exact `e746b34b42ed592b72c1b27dab67d118d9e34c2d`는
 CI[35501775489](https://github.com/guswls3028-art/academy-backend/actions/runs/35501775489)에서
 PostgreSQL5436 PASS/5 SKIP/629 subtests, Django5265 PASS/148 SKIP/619 subtests,
-static/migration PASS를 확인했다. 선행481 배포가 완료되기 전에는 병합하지 않는다.
+static/migration PASS를 확인했다. 선행481 배포 완료 후 두 배포 보고서만 바뀐 main을
+공식 update-branch로 반영했다. 새 exact head는 `1f28cceca3e54e99eb4f6c964e0d4e59753c4e8d`이고,
+필수 CI[35504765481](https://github.com/guswls3028-art/academy-backend/actions/runs/35504765481)가
+진행 중이다. 최신 branch 보호를 우회하지 않으며 새 head의 CI 성공 후에 병합한다.
 그 뒤 모든 API/worker의 reader와0022 수렴을 확인해야 기본값true인 별도 활성화
 release를 승격할 수 있다. 명시적 환경false는 유지하며 두 runtime 설정을 확인한다.
 활성화 후보의 자정 전용·자정 이후 API 검사는15 PASS/11 subtests다. 기존 자정 전용
