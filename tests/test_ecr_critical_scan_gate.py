@@ -128,6 +128,18 @@ def test_historical_acceptance_is_exact_and_time_bounded() -> None:
     }
 
 
+@pytest.mark.parametrize("repository", gate.REPOSITORIES)
+@pytest.mark.parametrize("version", ["2.8.3-1~deb13u1", "2.8.4+academy1-1"])
+def test_expat_backport_does_not_override_actual_high_scan(repository, version):
+    policy = Path(__file__).parents[1] / "docs/ssot/ecr-high-risk-baseline.json"
+    baselines, known = gate.load_high_baselines(policy)
+    with pytest.raises(gate.GateError, match="High"):
+        gate.evaluate_high_budget(
+            repository, _scan(_finding("CVE-2026-93990", "expat", version, "HIGH")),
+            baselines, known,
+        )
+
+
 def test_removed_perl_findings_fail_closed() -> None:
     acceptances = gate.load_acceptances(
         HISTORICAL_POLICY_DIR / "ecr-critical-risk-acceptance.json",
@@ -401,7 +413,7 @@ def test_base_image_backports_new_native_library_fixes_without_acceptance() -> N
     assert "60d74a257d1ccec0475e749cba2f21559e48139efba6ff28224357c7c798dfee" in build_script
     assert "autoreconf --force --install" in build_script
     assert build_script.count("sha256sum --check") == 1
-    assert build_script.count("download \\") == 5
+    assert build_script.count("download \\") == 9
     assert (
         'dpkg --compare-versions "${zlib_version}" '
         'gt "1:1.3.dfsg+really1.3.1-1"'
@@ -725,6 +737,24 @@ def test_video_source_build_uses_native_arm64_runner() -> None:
         "if: steps.selection.outputs.should_build == 'true' "
         "&& matrix.service != 'video'" in workflow
     )
+
+
+def test_base_source_builds_use_native_arm64_without_relaxing_deadline() -> None:
+    workflows = Path(__file__).parents[1] / ".github/workflows"
+    for file, job, next_job in [
+        ("quality-gate.yml", "native-security-image", "static-contract"),
+        ("v1-build-and-push-latest.yml", "prepare-build", "build-runtime-images"),
+    ]:
+        text = (workflows / file).read_text(encoding="utf-8")
+        section = text.split(f"\n  {job}:\n", 1)[1].split(f"\n  {next_job}:\n", 1)[0]
+        assert "runs-on: ubuntu-24.04-arm" in section
+        assert "setup-qemu-action" not in section
+        assert "setup-buildx-action" in section
+        assert "file: docker/Dockerfile.base" in section
+        assert "platforms: linux/arm64" in section
+        if job == "native-security-image":
+            assert "timeout-minutes: 45" in section
+            assert "Verify fixed package versions and runtime ABI" in section
 
 
 def test_missing_scan_result_is_started_then_polled(monkeypatch: pytest.MonkeyPatch) -> None:

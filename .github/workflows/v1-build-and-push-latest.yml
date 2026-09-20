@@ -643,7 +643,7 @@ jobs:
 
   prepare-build:
     name: Prepare immutable base image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     outputs:
       base_image_uri: ${{ steps.base-image.outputs.uri }}
     permissions:
@@ -677,10 +677,6 @@ jobs:
         with:
           name: release-baseline-${{ github.run_attempt }}
           path: ${{ runner.temp }}/release-baseline
-
-      - name: Set up QEMU
-        if: needs.detect-changes.outputs.build_base == 'true' || needs.detect-changes.outputs.force_full == 'true'
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
 
       - name: Set up Docker Buildx
         if: needs.detect-changes.outputs.build_base == 'true' || needs.detect-changes.outputs.force_full == 'true'
