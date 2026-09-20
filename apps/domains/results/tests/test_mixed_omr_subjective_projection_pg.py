@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.management import call_command
 from django.test import TestCase
 from django.utils import timezone
@@ -252,6 +253,115 @@ class MixedOmrSubjectiveProjectionPostgresTests(TestCase):
             enrollment_id=self.enrollment.id,
             question_id=question.id,
         )
+
+    def _configure_paper_math_numeric_keys(self):
+        self.exam.grading_mode = Exam.GradingMode.MIXED
+        self.exam.max_score = 50
+        self.exam.pass_score = 15
+        self.exam.save(update_fields=["grading_mode", "max_score", "pass_score", "updated_at"])
+        self.sheet.total_questions = 32
+        self.sheet.choice_count = 30
+        self.sheet.essay_count = 2
+        self.sheet.save(update_fields=["total_questions", "choice_count", "essay_count"])
+        self.choice.score = 1
+        self.choice.save(update_fields=["score"])
+        self.essay.number = 31
+        self.essay.score = 10
+        self.essay.save(update_fields=["number", "score"])
+        choices = [self.choice, *ExamQuestion.objects.bulk_create([
+            ExamQuestion(sheet=self.sheet, number=number, score=1,
+                         question_kind=ExamQuestion.QuestionKind.CHOICE)
+            for number in range(2, 31)
+        ])]
+        essays = [self.essay, ExamQuestion.objects.create(
+            sheet=self.sheet, number=32, score=10,
+            question_kind=ExamQuestion.QuestionKind.ESSAY,
+        )]
+        key = AnswerKey.objects.get(exam=self.exam)
+        key.answers = {str(question.id): "1" for question in choices}
+        key.answers.update({str(question.id): "0" for question in essays})
+        key.save(update_fields=["answers", "updated_at"])
+        SubmissionAnswer.objects.bulk_create([
+            SubmissionAnswer(tenant=self.tenant, submission=self.submission,
+                             exam_question_id=question.id, answer="1")
+            for question in choices[1:]
+        ])
+        return key, essays
+
+    def test_paper_math_numeric_keys_keep_manual_scores_through_review_and_regrade(self):
+        key, essays = self._configure_paper_math_numeric_keys()
+        client = APIClient()
+        client.force_authenticate(user=self.staff)
+        for answer, expected_score in [("2", 29), ("1", 30)]:
+            response = client.post(
+                f"/api/v1/submissions/submissions/{self.submission.id}/manual-edit/",
+                {"answers": [{"exam_question_id": self.choice.id, "answer": answer}]},
+                format="json", HTTP_HOST="api.hakwonplus.com",
+                HTTP_X_TENANT_CODE=self.tenant.code,
+                HTTP_X_SCORE_EDITOR_CLIENT="mixed-omr-browser",
+            )
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertEqual(float(response.data["score"]), expected_score)
+            self.assertFalse(response.data["projection_ready"])
+            self.assertEqual(response.data["grading_status"], "subjective_pending")
+        canonical = Result.objects.get(target_type="exam", target_id=self.exam.id,
+                                       enrollment=self.enrollment)
+        self.assertFalse(ResultItem.objects.filter(result=canonical, question__in=essays).exists())
+        ScoreEditDraft.objects.create(
+            tenant=self.tenant, session=self.session, editor_user=self.staff,
+            client_id="mixed-omr-browser",
+            payload={"client_id": "mixed-omr-browser", "changes": []},
+        )
+        for essay, score in zip(essays, [8, 9]):
+            response = self._patch_item_score(question=essay, score=score)
+            self.assertEqual(response.status_code, 200, response.data)
+        canonical.refresh_from_db()
+        self.assertEqual(float(canonical.total_score), 47)
+
+        # An answer-key and maximum-score correction must not reinterpret the
+        # teacher's paper essay scores as numeric auto-graded answers.
+        key.answers[str(self.choice.id)] = "2"
+        key.save(update_fields=["answers", "updated_at"])
+        self.choice.score = 2
+        self.choice.save(update_fields=["score"])
+        self.exam.max_score = 51
+        self.exam.save(update_fields=["max_score", "updated_at"])
+        from academy.application.use_cases.omr.grading_readiness import (
+            grade_omr_submission_if_ready,
+        )
+        decision = grade_omr_submission_if_ready(self.submission.id, allow_done_regrade=True)
+        self.assertTrue(decision.graded)
+        canonical.refresh_from_db()
+        legacy = ExamResult.objects.get(submission=self.submission)
+        self.assertEqual(float(canonical.objective_score), 29)
+        self.assertEqual(float(canonical.total_score), 46)
+        self.assertEqual(float(canonical.max_score), 51)
+        self.assertEqual(legacy.status, ExamResult.Status.FINAL)
+        self.assertEqual(float(legacy.subjective_score), 17)
+        self.assertEqual(float(legacy.total_score), 46)
+        self.assertEqual(list(ResultItem.objects.filter(result=canonical, question__in=essays)
+                              .order_by("question__number").values_list("score", flat=True)), [8, 9])
+        self.assertFalse(SubmissionAnswer.objects.filter(submission=self.submission,
+                                                        exam_question_id__in=[q.id for q in essays]).exists())
+
+    def test_paper_math_numeric_keys_still_reject_missing_objective_answer(self):
+        self._configure_paper_math_numeric_keys()
+        SubmissionAnswer.objects.filter(submission=self.submission,
+                                        exam_question_id=self.choice.id).delete()
+        from apps.domains.results.services.exam_grading_service import ExamGradingService
+        from apps.domains.results.services.sync_result_from_submission import (
+            sync_result_from_exam_submission,
+        )
+        for grade in [
+            lambda: ExamGradingService().auto_grade_objective(submission_id=self.submission.id),
+            lambda: sync_result_from_exam_submission(self.submission.id),
+        ]:
+            with self.assertRaises(DjangoValidationError) as raised:
+                grade()
+            self.assertEqual(raised.exception.message_dict["code"], ["OMR_ANSWERS_INCOMPLETE"])
+        self.assertFalse(ExamResult.objects.filter(submission=self.submission).exists())
+        self.assertFalse(Result.objects.filter(target_type="exam", target_id=self.exam.id).exists())
+        self.assertFalse(ResultFact.objects.filter(submission_id=self.submission.id).exists())
 
     def test_objective_only_mixed_omr_stays_draft_and_dispatches_projection_retraction(self):
         with patch(
