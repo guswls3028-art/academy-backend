@@ -264,10 +264,15 @@ static/migration PASS를 확인했다. 선행481 배포 완료 후 두 배포 �
 자동 push35505463274의 contract 차단 뒤 공식 dispatch
 [35505492422](https://github.com/guswls3028-art/academy-backend/actions/runs/35505492422)에
 `allow_contract_migrations=true`를 명시했다. exact production review의 자격 확인·승인·
-pending 해소와 보호 job 시작을 확인했으며 현재 immutable image 단계다.
-모든 API/worker의 reader와0022 수렴 및 두 write 플래그false를 확인해야
-별도 활성화 PR[485](https://github.com/guswls3028-art/academy-backend/pull/485)를
-병합·승격할 수 있다. 명시적 환경false는 활성화 후에도 우선한다.
+pending 해소 뒤 전체 workflow가 성공했다. 성공 manifest의 source는07597fc6,
+`verifiedAt=2026-09-20T20:48:00+09:00`, `complete=true`다. 모든 API/worker의
+정확한 digest, 격리 개발·preprod·임시 서버 정리, 운영 migration·rolling·검증과
+image 정리를 통과했다. 추가 read-only SSM에서 운영 API의 manifest digest 일치,
+DRF3.16.1, migration0022, 서로 다른 시작/종료 시각을 허용하는 실제 DB 제약,
+두 write 플래그false를 확인했다. 별도 활성화
+PR[485](https://github.com/guswls3028-art/academy-backend/pull/485)의 reader 선행 HOLD는
+해제됐고 최신 main 병합 뒤 필수 CI를 다시 통과해야 한다.
+명시적 환경false는 활성화 후에도 우선한다.
 활성화 후보의 자정 전용·자정 이후 API 검사는15 PASS/11 subtests다. 기존 자정 전용
 테스트는 overnight=false를 명시하고, 자정 이후 정상 경로는 설정 override 없이
 실제 활성화 기본값으로 검사한다. 이 로컬 결과는 reader 배포 완료 조건을 해제하지 않는다.
