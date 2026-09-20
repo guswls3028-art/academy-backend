@@ -208,7 +208,7 @@ development storage 객체를 검증한다. 그림 대역을 CDN/처리 성공�
 frontend base `d33c4c6458`이다. 이전 작업공간은 닫혔으며 canonical의 외부 변경은 보존한다.
 실행 영수증은 `C:\academy\_artifacts\stability-completion-0920`에 남긴다.
 
-### 현재 실행 상태 — 2026-09-21 01:20 KST
+### 현재 실행 상태 — 2026-09-21 01:48 KST
 
 - Backend 활성화 PR [485](https://github.com/guswls3028-art/academy-backend/pull/485)는
   exact head `680ed5cae8a52ce074fcfad0c055d1eb4d9362f5`의 필수 CI
@@ -268,13 +268,12 @@ frontend base `d33c4c6458`이다. 이전 작업공간은 닫혔으며 canonical�
   정확한 세션의 비활성·EndDate·Terminating 읽기로 기존 종료 계약 충족을 별도 기록했다.
   실제 빌드 안내창의 요청도 빈 본문/Content-Length·Content-Type 없음으로 확인했다.
   이 음성 대조 검사들은 실제 인증 흐름의 실패 원인을 확정하지 않는다.
-  원본 첫 클리닉 테스트1개·재시도0을 두 번 좁게 관측했고, 두 실행 모두 같은
-  안내 확인 실패다. 최신 양끝 관측은 새 Node 연결·정상 CL0/완결 헤더1017바이트를
+  원본 첫 클리닉 테스트1개·재시도0을 반복 관측했으며 같은 안내 확인 실패다.
+  Node 내부 헤더 표현은 CL0/완결·1017바이트로 보였다. 양끝 관측은1017바이트를
   개발 API의 TCP가 모두 수신·ACK한 뒤 약2초 후 응답 없이 서버가 FIN을 먼저
-  보내는 것을 입증했다. 이 요청에서는 Node 연결 재사용·헤더 미완결·SSM 전달
-  손실 가설을 제외한다. Gunicorn26/gevent의 첫 요청 파싱 keepalive timeout과
-  부합하지만 실제 parser 내부 대기 원인은 아직 미확정이다. `gunicorn_h1c`는
-  설치되지 않았고 worker는 gevent·keepalive 기본2초다. WSGI 도달 여부도 미확정이다.
+  보내는 것을 입증했다. Node 연결 재사용 가설은 제외한다. 내부 표현만으로
+  실제 전송 헤더가 완결됐다고 판단했던 결론은 아래 실제 바이트 검사로 정정한다.
+  `gunicorn_h1c`는 설치되지 않았고 worker는 gevent·keepalive 기본2초다.
   tenant376/377와 관련 자원 정리0·포트0은 확인했으나 로컬 tunnel STOP이 종료
   이벤트 처리 전에 EPIPE를 낸 두 실행의 aggregate 완료 false는 보존한다.
   로컬 Job 종료·zero 확인을 원격 SSM 종료보다 먼저 수행하는 순서 수정 후,
@@ -285,10 +284,17 @@ frontend base `d33c4c6458`이다. 이전 작업공간은 닫혔으며 canonical�
   맞췄다. 두 번째150초 관측은4개 worker 동일성·분리·tracer 종료·EOF·marker 정리,
   unknown/drop/pending0으로 유효하다. 유일한1017바이트 연결에서 worker가 전체
   데이터를 읽고 즉시 다시 읽어 EAGAIN을 받은 뒤 약2초에 응답 없이 닫았다.
-  kernel→worker 수신 손실은 제외하며, 추가 읽기가 parser/WSGI 어느 단계에서
-  발생하는지는 아직 미확정이다. 다음 단계는 실제 요청을 메모리에서만 설치된
-  parser에 공급하는 수동 관측으로, Django/WSGI 호출·요청 재전송·원문/인증값/본문
-  저장을 하지 않는다. 요청/Agent 변경도 없으며 별도 진단은 운영 승격 증거가 아니다.
+  kernel→worker 수신 손실은 제외한다. 후속 수동 관측은 실제 요청을 메모리에서만
+  설치 parser에 공급했다. 실제1017바이트에 헤더 종료 구분자가 없고 CRLF는17개,
+  bare LF/NUL은0이며 parser가 헤더 단계에서 두 번째 읽기를 요구함을 확인했다.
+  parser 코드 pin·요청1건·정리·kernel/sequence/drop0·동일 container/image/master를
+  검증했다. 따라서 내부 `_header` 표현과 길이 일치만으로 wire 완결성을 판단할 수
+  없다. 현재 남은 원인은 Node 표현→실제 전송 사이에서 구분자가 달라지는 지점이다.
+  최초 root 관측은 appuser의 user-site 패키지 경로 차이로 ready 전에 실패했다.
+  정확한 설치 경로만 명시한 wrapper를 자체 검사하고 재실행했으며, 준비 실패와
+  gate timeout 원본은 보존했다. tenant380/381도 관련 자원 정리0이다.
+  Django/WSGI 호출·요청 재전송·원문/인증값/본문/요청 해시 저장은 하지 않았다.
+  요청/Agent 변경도 없으며 별도 진단은 운영 승격 증거가 아니다.
 - 빌드의 `/version.json`과 일반/빈 점수 점유 해제 요청의 `X-Client-Version`이
   달라지던 경로를 하나의 빌드 식별자로 통일했다. 실제 빌드 HTTP 비교에서 수정 전
   `dev` 불일치, 수정 후 일치를 확인했다. 인증·tenant·keepalive·요청 본문은 유지한다.
