@@ -352,12 +352,16 @@ TokenValue에 의존한다. 이를 IAM-level foreign-channel denial이나 실제
 frontend runner/workflow와 원본 응답·CORS 보존, exact artifact, non-skipped 10-case,
 cleanup0 승격 계약은 frontend `docs/DEPLOYMENT-OPERATIONS.md`가 소유한다.
 
-#### 세션 제한과 장애 경계 (로컬 구현, 실제 AWS 동작 미검증)
+#### 세션 제한과 장애 경계
 
 고정 QA document의 `inputs`는 maxSessionDuration=5분/idleSessionTimeout=5분,
-Port document는 25분/5분이다. 호출자가 timeout을 바꾸는 parameter는 없다. 이 값은
-문서의 서비스 측 세션 제한 설정이며 신규 문서를 실제 적용하고 종료 readback하기
-전에는 제한이 실제로 작동했다고 보고하지 않는다. IAM simulation은 이 설정이나
+Port document는 35분/5분이다. frontend의 30분 실사용 검사와 35분 로컬 tunnel
+제한에 맞춰, 연결 시작·검사 종료에 5분 여유를 둔다. 호출자가 timeout을 바꾸는
+parameter는 없다. 공식 실행35543367845의 기존25분 연결은23:07:01Z부터
+23:32:01Z까지 정확히25분 뒤 종료되어, 진행 중이던 자료함 삭제가 ECONNREFUSED로
+실패했다. 브라우저 timeout만 늘려서는 이 서버 측 수명을 바꿀 수 없다.
+새35분 값은 exact 문서 버전/default readback과 새 세션의 전체 실사용·정리 검증
+전에는 운영 적용 완료로 보고하지 않는다. IAM simulation은 이 설정이나
 데이터 소유권을 검증하지 않는다. STS 1시간 만료 자체도 기존 SSM 세션 종료 보장이 아니다.
 
 QA 원격 명령은 curl 각 10초, Docker inspect 15초(+kill 5초), Docker exec 210초
