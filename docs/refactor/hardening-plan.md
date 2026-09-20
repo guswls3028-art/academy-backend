@@ -224,10 +224,17 @@ frontend base `d33c4c6458`이다. 이전 작업공간은 닫혔으며 canonical�
 readback은 아직 필요하다. 클리닉 자정 이후 지원은 별도 reader-first 변경으로 이어간다.
 
 Backend PR[481](https://github.com/guswls3028-art/academy-backend/pull/481)의 exact
-`669709171ae21229c72b2588a0786e6503e0f2ba`는 app/PG/static CI를 통과했으며 native
-ARM 이미지 검증은 실행 중이다. 주관식 API 독립 검토에서 추가 결함은 없었다.
+`669709171ae21229c72b2588a0786e6503e0f2ba`는 app/PG/static/native ARM 이미지
+CI[35499929254](https://github.com/guswls3028-art/academy-backend/actions/runs/35499929254)를
+통과했다. main `6c566cf7fa357fc5ddee71c7175c270cde08cab8`에 병합했고 공식 배포
+[35501517908](https://github.com/guswls3028-art/academy-backend/actions/runs/35501517908)가
+진행 중이다. exact run의 production review는 eligible readback 후 공식 API로
+승인했으며 pending 해소와 보호 job 시작을 확인했다. 아직 운영 완료 증거는 아니다.
+주관식 API 독립 검토에서 추가 결함은 없었다.
 Frontend 실제 native 종료 검사는 라우트 mock이 fetch keepalive를 관측하지 못하는
 한계를 확인해 실제 HTTP 수신으로 보강했다. 해당 관측 한계를 제품 실패로 계산하지 않는다.
+실제 HTTP 반복 검사의 간헐 수신 누락은 별도 조사 중이며, 종료 전송의 전면 성공으로
+표시하지 않는다. 명시적 본인 빈 점유 재개와 미저장 값 보호도 독립적으로 검증한다.
 
 후속 클리닉 후보의 첫 재현은3 FAIL/2 PASS였다. 개설/직접 등록/학생 신청의 자정
 경계를 수정한 뒤 관련60 PASS/10 SQLite SKIP, 리마인더·연속 예약43 PASS/1 SKIP를
