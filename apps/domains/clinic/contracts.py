@@ -35,7 +35,7 @@ def is_clinic_booking_reminder_active(*, tenant_id: int, origin_id: str, now=Non
     participant = SessionParticipant.objects.select_related("session").filter(
         id=int(participant_id), tenant_id=tenant_id,
         session_id=int(session_id), session__tenant_id=tenant_id,
-        session__date=start.date(), session__booking_mode="time_range",
+        session__booking_mode="time_range",
         booking_start_time=start.time(), booking_end_time__isnull=False,
         status=SessionParticipant.Status.BOOKED,
         student__tenant_id=tenant_id, student__deleted_at__isnull=True,
@@ -45,12 +45,12 @@ def is_clinic_booking_reminder_active(*, tenant_id: int, origin_id: str, now=Non
         return False
     session = participant.session
     opening, closing = session_window(session)
-    _booking_start, ending = booking_window(
+    booking_start, ending = booking_window(
         session=session,
         start_time=participant.booking_start_time,
         end_time=participant.booking_end_time,
     )
-    return opening <= start.replace(tzinfo=None) < ending <= closing
+    return booking_start == start.replace(tzinfo=None) and opening <= booking_start < ending <= closing
 
 
 __all__ = ["is_clinic_participant_reminder_active", "is_clinic_booking_reminder_active"]

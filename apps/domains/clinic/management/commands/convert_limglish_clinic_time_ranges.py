@@ -12,6 +12,7 @@ from django.utils import timezone
 from apps.core.models import Tenant
 from apps.domains.clinic.models import Session, SessionParticipant
 from apps.domains.clinic.time_ranges import (
+    ends_after_next_day_midnight_values,
     booking_window,
     ends_at_next_day_midnight_values,
     is_supported_time_range_session,
@@ -59,7 +60,10 @@ def _build_plan(*, tenant, from_date: datetime.date, lock: bool) -> dict:
         sessions = sessions.select_for_update()
     sessions = list(sessions)
     for session in sessions:
-        if not is_supported_time_range_session(session):
+        # General overnight booking does not expand this exact legacy conversion.
+        if not is_supported_time_range_session(session) or ends_after_next_day_midnight_values(
+            session_date=session.date, start_time=session.start_time, duration_minutes=session.duration_minutes,
+        ):
             raise CommandError(
                 f"session {session.id} ends 자정 이후; no rows were changed"
             )

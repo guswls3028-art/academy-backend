@@ -15,14 +15,16 @@ def is_supported_time_range_values(
     start_time: datetime.time,
     duration_minutes: int,
 ) -> bool:
-    """Allow same-day ranges and the exact next-day midnight boundary only."""
+    """A range shorter than one day has unambiguous time-only endpoints."""
+    return 0 < int(duration_minutes) < 24 * 60
 
+
+def ends_after_next_day_midnight_values(
+    *, session_date: datetime.date, start_time: datetime.time, duration_minutes: int,
+) -> bool:
     start = datetime.datetime.combine(session_date, start_time)
-    end = start + datetime.timedelta(minutes=int(duration_minutes))
-    return end.date() == session_date or (
-        end.date() == session_date + datetime.timedelta(days=1)
-        and end.time() == datetime.time.min
-    )
+    midnight = datetime.datetime.combine(session_date + datetime.timedelta(days=1), datetime.time.min)
+    return start + datetime.timedelta(minutes=int(duration_minutes)) > midnight
 
 
 def ends_at_next_day_midnight_values(
@@ -54,8 +56,10 @@ def booking_window(
     end_time: datetime.time,
 ) -> tuple[datetime.datetime, datetime.datetime]:
     start = datetime.datetime.combine(session.date, start_time)
-    end = datetime.datetime.combine(session.date, end_time)
-    if end_time == datetime.time.min and start_time > datetime.time.min:
+    if start_time < session.start_time:
+        start += datetime.timedelta(days=1)
+    end = datetime.datetime.combine(start.date(), end_time)
+    if end_time < start_time:
         end += datetime.timedelta(days=1)
     return start, end
 
