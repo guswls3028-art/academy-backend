@@ -10,7 +10,10 @@ from apps.domains.clinic.services.lifecycle import booking_availability_for_sess
 from apps.domains.clinic.tests import ClinicAPITestMixin
 
 
-@override_settings(CLINIC_MIDNIGHT_TIME_RANGE_WRITES_ENABLED=True)
+@override_settings(
+    CLINIC_MIDNIGHT_TIME_RANGE_WRITES_ENABLED=True,
+    CLINIC_OVERNIGHT_TIME_RANGE_WRITES_ENABLED=False,
+)
 class ClinicTimeRangeMidnightAPITest(APITestCase, ClinicAPITestMixin):
     def setUp(self):
         self.data = self.setup_api_tenant("clinic_midnight_range", student_count=2)

@@ -249,3 +249,22 @@ tests.py를 push 및 누적 이미지 diff에서 제외하되 제품 변경이 �
 유지한다. 실행 가능한 분류/인프라 계약132 PASS 뒤 BASE 입력의 별도 경계 assertion
 1건을 정정했고, Windows cp949 출력 해석 오류2건은 UTF-8 환경에서 재확인했다.
 변경·실패3건은 모두 PASS이며 동일 입력의132개 성공 증거를 재사용한다.
+
+클리닉 reader PR[482](https://github.com/guswls3028-art/academy-backend/pull/482)의
+exact `e746b34b42ed592b72c1b27dab67d118d9e34c2d`는
+CI[35501775489](https://github.com/guswls3028-art/academy-backend/actions/runs/35501775489)에서
+PostgreSQL5436 PASS/5 SKIP/629 subtests, Django5265 PASS/148 SKIP/619 subtests,
+static/migration PASS를 확인했다. 선행481 배포가 완료되기 전에는 병합하지 않는다.
+그 뒤 모든 API/worker의 reader와0022 수렴을 확인해야 기본값true인 별도 활성화
+release를 승격할 수 있다. 명시적 환경false는 유지하며 두 runtime 설정을 확인한다.
+활성화 후보의 자정 전용·자정 이후 API 검사는15 PASS/11 subtests다. 기존 자정 전용
+테스트는 overnight=false를 명시하고, 자정 이후 정상 경로는 설정 override 없이
+실제 활성화 기본값으로 검사한다. 이 로컬 결과는 reader 배포 완료 조건을 해제하지 않는다.
+
+Frontend 고정 build의 점수 회귀는44 PASS/0 FAIL/0 SKIP, native/auth/playback56 PASS,
+추가 transport 계약3 PASS와 기존 refactor budget/typecheck/lint/build PASS다.
+실제 reload 검사에서 PC/390 모두 종료 요청 HTTP 수신은0회였고 명시적 본인 빈 점유
+재개→22 입력→저장→reload는 성공했다. 종료 전송을 보장한다고 서술하지 않는다.
+공식 격리 실사용의 staff 주관식 복구, 가입/승인, 정답·만점 변경 재채점, 조교 숙제
+UI 채점 및 자정 클리닉은 추가 검사 코드와 독립 검토를 마쳤거나 진행 중이며,
+실제 실행·cleanup0·배포 후 결과가 나오기 전에는 완료로 표시하지 않는다.

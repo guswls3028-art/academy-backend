@@ -112,17 +112,21 @@
   예약할 수 있다. 예약 시작이 세션 시작 시각보다 이르면 다음 날이고, 종료가
   예약 시작보다 이르면 그 다음 날짜다. 같은 시작·종료 시각은 빈 구간으로 거절한다.
   이 해석으로 시간만 저장한 기존 데이터는 보존하며 날짜는 세션에서 파생한다.
-- 자정 종료 write는 reader-first 배포 경계다. 새 reader와 DB 제약을 먼저 배포하는
-  동안 `CLINIC_MIDNIGHT_TIME_RANGE_WRITES_ENABLED` 기본값은 `false`이며, 단일·일괄
-  세션 생성과 학생/교직원 예약 모두 새 `00:00` write를 거절한다. 모든 API/worker가
-  자정 reader가 포함된 정확한 release로 수렴한 것을 확인한 뒤 같은 설정을 `true`로
-  활성화하고 health-gated refresh를 완료해야만 write와 limglish 전환을 진행한다.
+- 자정 종료 write는 reader-first 배포 경계다. 첫 reader/DB 배포는
+  `CLINIC_MIDNIGHT_TIME_RANGE_WRITES_ENABLED=false`로 단일·일괄 세션 생성과
+  학생/교직원 예약의 새 `00:00` write를 차단한다. 모든 API/worker가 호환 reader와
+  0022 제약을 사용하는 정확한 release로 수렴한 뒤에만 별도 활성화 release를 승격한다.
+  활성화 release의 기본값은 `true`이며 기존 환경의 명시적인 `false`는 우선한다.
+  같은 immutable candidate의 개발·preprod·health-gated rolling 배포와 runtime 설정
+  readback을 완료해야만 write와 limglish 전환을 진행한다.
   이미 저장된 자정 세션의 읽기와 비시간 필드 수정은 플래그를 다시 내린 상태에서도
   막지 않는다.
 - 다음 날00:00 이후 종료에는 별도 `CLINIC_OVERNIGHT_TIME_RANGE_WRITES_ENABLED`
-  reader-first 경계를 적용한다. 기본값false로 새 reader와0022 제약 확장을 배포한 뒤,
-  모든 API/worker의 exact digest 수렴을 확인하고 설정을true로 바꾸어 health-gated
-  refresh한다. 두 플래그가 활성화되어야 자정 종료를 포함한 전체 예약 흐름을 검증할 수 있다.
+  reader-first 경계를 적용한다. 첫 reader release는 기본값false로 새 reader와0022
+  제약 확장을 배포한다. 모든 API/worker의 exact digest 수렴을 확인한 다음 활성화
+  release에서 기본값true로 바꾼다. 이미 명시된false는 보존하므로 runtime의 두 플래그가
+  실제true인지 확인해야 한다. 두 플래그가 활성화되어야 자정 종료를 포함한 전체 예약
+  흐름을 검증할 수 있다. 활성화 release를 reader release보다 먼저 배포하지 않는다.
   플래그가 꺼져 있으면 새 단일·일괄 개설과 예약을 거절하되 기존 읽기·비시간 수정은
   유지한다. 활성화 후 rollback은 writer를 차단하고 새 reader/확장 제약을 유지한다.
   다음 날 예약을 저장한 상태에서 구 reader나 좁은 제약으로 내리지 않는다.
