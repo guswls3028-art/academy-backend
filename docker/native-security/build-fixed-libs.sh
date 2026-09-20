@@ -268,11 +268,17 @@ for mode in normal min wide; do
             "${source}/configure" --prefix=/usr --libdir="/usr/lib/${multiarch}" \
             --disable-static --without-docbook --without-examples --without-xmlwf
         make -j "${jobs}"
-        make check
-        if [ "${mode}" != wide ]; then
+        if [ "${mode}" = wide ]; then
+            # Upstream common.h explicitly rejects ushort XML_UNICODE tests.
+            # Keep Debian's ushort ABI; verify this actual library's input and
+            # UTF-16 callback output instead of switching to incompatible wchar_t.
+            python /usr/local/bin/verify-expat.py --library "${build}/lib/.libs/libexpatw.so.1" --wide
+            printf 'EXPAT_WIDE_ABI_AND_UTF16_PASS\n'
+        else
+            make check
             python /usr/local/bin/verify-expat.py --library "${build}/lib/.libs/libexpat.so.1"
+            printf 'EXPAT_UPSTREAM_GREEN_PASS mode=%s\n' "${mode}"
         fi
-        printf 'EXPAT_UPSTREAM_GREEN_PASS mode=%s\n' "${mode}"
     )
     if [ "${mode}" != min ]; then
         library="$(find "${build}/lib/.libs" -maxdepth 1 -type f -name "${library_name}.so.1.*")"

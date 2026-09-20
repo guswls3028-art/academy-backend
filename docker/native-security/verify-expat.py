@@ -59,6 +59,34 @@ def python_parsers(module_dir):
     return [expat_parse, etree_parse]
 
 
+def verify_wide_output(library):
+    lib = ctypes.CDLL(library)
+    lib.XML_ParserCreate.argtypes = [ctypes.c_void_p]
+    lib.XML_ParserCreate.restype = ctypes.c_void_p
+    lib.XML_Parse.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int, ctypes.c_int]
+    lib.XML_Parse.restype = ctypes.c_int
+    lib.XML_ParserFree.argtypes = [ctypes.c_void_p]
+    callback_type = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int)
+    lib.XML_SetCharacterDataHandler.argtypes = [ctypes.c_void_p, callback_type]
+    chunks = []
+
+    @callback_type
+    def collect(_user_data, characters, length):
+        chunks.append(ctypes.string_at(characters, length * 2))
+
+    parser = lib.XML_ParserCreate(None)
+    assert parser
+    text = "한국어 😀\U00010000\U0010ffff"
+    data = f"<a>{text}</a>".encode("utf-8")
+    try:
+        lib.XML_SetCharacterDataHandler(parser, collect)
+        assert lib.XML_Parse(parser, data, len(data), 1) == 1
+        encoding = "utf-16-le" if sys.byteorder == "little" else "utf-16-be"
+        assert b"".join(chunks) == text.encode(encoding), "EXPAT_WIDE_OUTPUT_ABI_MISMATCH"
+    finally:
+        lib.XML_ParserFree(parser)
+
+
 def verify(parsers):
     accepted_invalid = 0
     for parse in parsers:
@@ -89,10 +117,16 @@ if __name__ == "__main__":
     parser.add_argument("--python", action="store_true")
     parser.add_argument("--module-dir", type=Path, default=Path(sysconfig.get_config_var("DESTSHARED") or "."))
     parser.add_argument("--package", action="store_true")
+    parser.add_argument("--wide", action="store_true")
     args = parser.parse_args()
     if args.package:
         verify_package()
     parsers = [native_parser(args.library)]
+    if args.wide:
+        verify_wide_output(args.library)
+    if args.package:
+        verify_wide_output("libexpatw.so.1")
+        parsers.append(native_parser("libexpatw.so.1"))
     if args.python:
         parsers.extend(python_parsers(args.module_dir))
     sys.exit(verify(parsers))

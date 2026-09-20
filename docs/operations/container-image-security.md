@@ -139,7 +139,11 @@ SOABI를 확인한 뒤 `pyexpat`·`_elementtree` 두 확장만 함께 재빌드�
 
 - 원본2.8.4에 회귀 테스트만 적용했을 때 normal·`XML_MIN_SIZE` 빌드에서 해당
   테스트만 실패하고, 잘못된 UTF-16 허용을 별도 동작 검사에서도 재현한다.
-- 수정 뒤 normal·`XML_MIN_SIZE`·wide 빌드의 upstream 테스트가 성공한다.
+- 수정 뒤 normal·`XML_MIN_SIZE` 빌드의 upstream 테스트가 성공한다.
+  upstream 테스트는 ushort wide ABI를 명시적으로 지원하지 않으므로 wide
+  라이브러리는 실제 parser의 정상/비정상 UTF-16 입력 및 한글·emoji의
+  16비트 callback 출력 바이트를 검사한다. 테스트를 위해 libc와 호환되지 않는
+  `wchar_t` ABI로 바꾸지 않는다. 이 출력 검사도 최종 서비스 이미지에서 실행한다.
   시스템 라이브러리와 Python XML 두 경로에서 UTF-16 LE/BE의 정상 한글·emoji·
   유효 surrogate pair는 허용하고 비정상 pair는 거부한다.
 - CPython의 pyexpat·ElementTree·C accelerator·minidom·SAX 회귀와 실제로 로드한
