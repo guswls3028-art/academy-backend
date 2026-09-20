@@ -221,6 +221,20 @@ frontend base `d33c4c6458`이다. 이전 작업공간은 닫혔으며 canonical�
   함께 검증한다. High 상한0·예외 없음은 유지하며 새 여섯 digest의 완료 스캔과
   전체 배포 성공 전에는 frontend 승격·추가 최종 QA·다른 작업의 runtime HOLD를
   해제하지 않는다. 과거 스캔의0건을 현재 취약점 부재로 재사용하지 않는다.
+  보완 PR [489](https://github.com/guswls3028-art/academy-backend/pull/489)의 head는
+  `c95e9183f598cbe31a201dba31832299e16ba548`이다. 집중 계약116개·shell/Python
+  구문·diff 검사는 통과했다. 공식 CI35534369800의 이미지 검사는 45분 제한으로
+  취소됐으며 수동 취소가 아니다. normal·XML_MIN_SIZE의 취약 입력 실패 재현과
+  수정 후 upstream·UTF-16 검사는 통과했고 wide configure에서 종료됐다.
+  Python 확장·최종 이미지까지 통과한 것으로 세지 않는다. 같은 CI의 PostgreSQL5464 PASS/
+  5 SKIP/639 subtests, Django5293 PASS/148 SKIP/629 subtests와 static·migration은
+  성공했다. 45분 한도와 검사는 유지하고 Quality 및 공식 배포의 공통 base
+  빌드만 기존 Video와 같은 ARM runner로 옮긴 뒤 새 CI로 완료 여부를 검증한다.
+  전환 head `6ccc90a5a3a2547e981bd55808d891699c1553fa`는 관련117개·workflow
+  governance·YAML·diff 검사를 통과했다. 새 공식 CI35539079833을 시작했으며
+  이전 실행의 부분 통과를 전체 이미지 성공으로 대체하지 않는다.
+  Python 전체 대신 같은3.11.15의 `pyexpat`·`_elementtree`를 함께 재빌드하고
+  서비스의 마지막 패키지 설치 뒤 실제 연결·동작을 다시 확인한다.
 
 - 새 공식35528265922는19 PASS/2 FAIL/0 SKIP/0 flaky로 종료했고 운영 승격은
   차단됐다. 정확한3efc 산출물 fingerprint는
@@ -260,6 +274,9 @@ frontend base `d33c4c6458`이다. 이전 작업공간은 닫혔으며 canonical�
   두 실행기는 승인값 false·소비 완료로 기록하고 추가 재실행하지 않는다.
   미분류 dialog의 이름은 관측하지 않았고, 출근 선택 보완은 소스에서 확인한
   정상 로그인 단계의 누락을 해결한 것이다. 최신 Quality35532368840은 성공했다.
+  최신18daa의 전체 E2E35532368839도 성공했다: 브라우저732개·iPhone36개·운영
+  조회6개·bundle/theme 각1개, 기존 Chromium 전용1개는 WebKit에서 제외됐다.
+  이는 아직 실행하지 않은 후속 main의 격리 업무21개를 대체하지 않는다.
   657의 전체 E2E35531433771은 이 추가 코드 push로 workflow가 자동 대체·취소했다.
   수동 취소·면제 없이 새 검사를 진행하며, 선택된 브라우저 시나리오의 변경 없는
   입력에만 이전 성공 증거를 재사용한다.
