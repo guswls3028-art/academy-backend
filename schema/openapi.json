@@ -818,6 +818,10 @@
       },
       "ClinicAvailabilitySlot": {
         "properties": {
+          "end_date": {
+            "format": "date",
+            "type": "string"
+          },
           "end_time": {
             "format": "time",
             "type": "string"
@@ -826,22 +830,8 @@
             "minimum": 0,
             "type": "integer"
           },
-          "start_time": {
-            "format": "time",
-            "type": "string"
-          }
-        },
-        "required": [
-          "end_time",
-          "remaining_capacity",
-          "start_time"
-        ],
-        "type": "object"
-      },
-      "ClinicAvailabilityWindow": {
-        "properties": {
-          "end_time": {
-            "format": "time",
+          "start_date": {
+            "format": "date",
             "type": "string"
           },
           "start_time": {
@@ -850,7 +840,37 @@
           }
         },
         "required": [
+          "end_date",
           "end_time",
+          "remaining_capacity",
+          "start_date",
+          "start_time"
+        ],
+        "type": "object"
+      },
+      "ClinicAvailabilityWindow": {
+        "properties": {
+          "end_date": {
+            "format": "date",
+            "type": "string"
+          },
+          "end_time": {
+            "format": "time",
+            "type": "string"
+          },
+          "start_date": {
+            "format": "date",
+            "type": "string"
+          },
+          "start_time": {
+            "format": "time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "end_date",
+          "end_time",
+          "start_date",
           "start_time"
         ],
         "type": "object"
@@ -1234,6 +1254,11 @@
             "minimum": 0,
             "type": "integer"
           },
+          "end_date": {
+            "format": "date",
+            "readOnly": true,
+            "type": "string"
+          },
           "end_time": {
             "readOnly": true,
             "type": "string"
@@ -1352,6 +1377,7 @@
           "created_at",
           "created_by",
           "date",
+          "end_date",
           "end_time",
           "has_auto_targets",
           "id",
@@ -1380,10 +1406,22 @@
       },
       "ClinicSessionParticipant": {
         "properties": {
+          "booking_end_date": {
+            "format": "date",
+            "nullable": true,
+            "readOnly": true,
+            "type": "string"
+          },
           "booking_end_time": {
             "description": "시간 범위 방식에서 확정된 실제 예약 종료 시각입니다.",
             "format": "time",
             "nullable": true,
+            "type": "string"
+          },
+          "booking_start_date": {
+            "format": "date",
+            "nullable": true,
+            "readOnly": true,
             "type": "string"
           },
           "booking_start_time": {
@@ -1618,6 +1656,8 @@
           }
         },
         "required": [
+          "booking_end_date",
+          "booking_start_date",
           "can_self_cancel",
           "checked_out_by_name",
           "completed_by_name",

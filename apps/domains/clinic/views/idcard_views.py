@@ -15,6 +15,7 @@ from apps.domains.clinic.color_utils import get_effective_clinic_colors
 from apps.domains.clinic.models import SessionParticipant
 from apps.domains.clinic.services.passcard_state import (
     passcard_booking_covers_requirements,
+    passcard_booking_is_scheduled,
     passcard_required_booking_date,
     passcard_tenant_booking_q,
     passcard_visible_booking_q,
@@ -26,6 +27,7 @@ from apps.support.clinic.idcard_dependencies import (
     student_for_idcard_user,
     unresolved_auto_clinic_links,
 )
+from apps.domains.clinic.time_ranges import booking_window
 
 
 BOOKING_STATUS_LABELS = {
@@ -40,6 +42,11 @@ BOOKING_STATUS_LABELS = {
 
 def _participant_schedule(participant):
     session = getattr(participant, "session", None)
+    if session and participant.booking_start_time is not None and participant.booking_end_time is not None:
+        start, _ = booking_window(
+            session=session, start_time=participant.booking_start_time, end_time=participant.booking_end_time,
+        )
+        return start.date(), start.time(), session.location, session.title or ""
     return (
         getattr(session, "date", None) or participant.requested_date,
         getattr(session, "start_time", None) or participant.requested_start_time,
@@ -71,7 +78,7 @@ def _valid_booking_projection(*, tenant, student, local_date, required_date=None
             SessionParticipant.Status.PENDING,
             SessionParticipant.Status.BOOKED,
         ):
-            is_valid = bool(schedule_date and schedule_date >= local_date)
+            is_valid = passcard_booking_is_scheduled(participant=participant, local_date=local_date)
         else:
             # Existing work may remain in progress after midnight, but cannot
             # cover an assessment newer than this clinic's scheduled date.

@@ -1,7 +1,5 @@
 # PATH: apps/domains/clinic/models.py
 
-import datetime
-
 from django.db import models
 from django.conf import settings
 
@@ -324,11 +322,7 @@ class SessionParticipant(TimestampModel):
             models.CheckConstraint(
                 condition=(
                     models.Q(booking_start_time__isnull=True)
-                    | models.Q(booking_start_time__lt=models.F("booking_end_time"))
-                    | models.Q(
-                        booking_start_time__gt=datetime.time.min,
-                        booking_end_time=datetime.time.min,
-                    )
+                    | ~models.Q(booking_start_time=models.F("booking_end_time"))
                 ),
                 name="clinic_participant_booking_range_order",
             ),

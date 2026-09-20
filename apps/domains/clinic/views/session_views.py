@@ -37,12 +37,16 @@ logger = logging.getLogger(__name__)
 
 
 class ClinicAvailabilitySlotSerializer(serializers.Serializer):
+    start_date = serializers.DateField()
+    end_date = serializers.DateField()
     start_time = serializers.TimeField(format="%H:%M")
     end_time = serializers.TimeField(format="%H:%M")
     remaining_capacity = serializers.IntegerField(min_value=0)
 
 
 class ClinicAvailabilityWindowSerializer(serializers.Serializer):
+    start_date = serializers.DateField()
+    end_date = serializers.DateField()
     start_time = serializers.TimeField(format="%H:%M")
     end_time = serializers.TimeField(format="%H:%M")
 

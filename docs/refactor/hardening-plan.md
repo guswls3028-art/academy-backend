@@ -222,3 +222,23 @@ frontend base `d33c4c6458`이다. 이전 작업공간은 닫혔으며 canonical�
 기존 예외5건은 Debian stable 수정본으로 교체하고 Critical/High 허용을0으로 낮춘다.
 현재 이는 후보 조건이고 공식 native 이미지 CI·ECR scan·동일 산출물 실사용·운영
 readback은 아직 필요하다. 클리닉 자정 이후 지원은 별도 reader-first 변경으로 이어간다.
+
+Backend PR[481](https://github.com/guswls3028-art/academy-backend/pull/481)의 exact
+`669709171ae21229c72b2588a0786e6503e0f2ba`는 app/PG/static CI를 통과했으며 native
+ARM 이미지 검증은 실행 중이다. 주관식 API 독립 검토에서 추가 결함은 없었다.
+Frontend 실제 native 종료 검사는 라우트 mock이 fetch keepalive를 관측하지 못하는
+한계를 확인해 실제 HTTP 수신으로 보강했다. 해당 관측 한계를 제품 실패로 계산하지 않는다.
+
+후속 클리닉 후보의 첫 재현은3 FAIL/2 PASS였다. 개설/직접 등록/학생 신청의 자정
+경계를 수정한 뒤 관련60 PASS/10 SQLite SKIP, 리마인더·연속 예약43 PASS/1 SKIP를
+확인했다. 새0022 제약은 기존 행을 보존하는 확장이지만 contract annotation을
+유지한다. 운영은 호환성·PostgreSQL 잠금/rollback 증거를 확인한 exact main에서
+`workflow_dispatch allow_contract_migrations=true` 게이트를 사용한다. 자동 push의
+contract 차단을 우회하지 않는다. 두 시간 범위 write 플래그의 실제 활성화와 전체
+API/worker reader 수렴, PC/390px 실사용이 끝나기 전에는 자정 민원 완료로 표시하지 않는다.
+
+테스트만 수정한 PR480이 제품 배포로 분류된 재발 원인도 수리한다. 표준tests 디렉터리와
+tests.py를 push 및 누적 이미지 diff에서 제외하되 제품 변경이 섞이면 기존 분류를
+유지한다. 실행 가능한 분류/인프라 계약132 PASS 뒤 BASE 입력의 별도 경계 assertion
+1건을 정정했고, Windows cp949 출력 해석 오류2건은 UTF-8 환경에서 재확인했다.
+변경·실패3건은 모두 PASS이며 동일 입력의132개 성공 증거를 재사용한다.

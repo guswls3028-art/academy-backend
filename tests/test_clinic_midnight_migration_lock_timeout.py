@@ -18,6 +18,7 @@ class ClinicMidnightMigrationLockTimeoutTests(TransactionTestCase, ClinicAPITest
     migrate_to = ("clinic", "0021_allow_booking_range_to_end_at_midnight")
     constraint_name = "clinic_participant_booking_range_order"
     table_name = "clinic_sessionparticipant"
+    permitted_end_time = datetime.time(0, 0)
 
     def _migrate(self, target):
         MigrationExecutor(connection).migrate([target])
@@ -138,11 +139,12 @@ class ClinicMidnightMigrationLockTimeoutTests(TransactionTestCase, ClinicAPITest
             self.assertEqual(participant.booking_end_time, datetime.time(11, 0))
 
             participant.booking_start_time = datetime.time(21, 0)
-            participant.booking_end_time = datetime.time(0, 0)
+            participant.booking_end_time = self.permitted_end_time
             participant.save(
                 update_fields=["booking_start_time", "booking_end_time", "updated_at"]
             )
             participant.refresh_from_db()
-            self.assertEqual(participant.booking_end_time, datetime.time(0, 0))
+            self.assertEqual(participant.booking_end_time, self.permitted_end_time)
         finally:
-            self._migrate(self.migrate_to)
+            executor = MigrationExecutor(connection)
+            executor.migrate(executor.loader.graph.leaf_nodes())

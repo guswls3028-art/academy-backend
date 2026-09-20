@@ -72,6 +72,12 @@ development-canary와 tenant/user cleanup zero, 플랫폼 승인·공유 잠금�
 
 ## 2. CI 자동 배포 (push=서버 반영)
 
+표준 `tests/` 디렉터리·`tests.py`만 바꾼 push는 제품 배포를 시작하지 않는다.
+이 경계는 push 필터뿐 아니라 각 이미지의 마지막 성공 source부터 누적한 diff와
+공통 변경 판정에도 적용한다. 따라서 이후 제품 변경이 과거 테스트 수정을 다시
+이미지 변경으로 계산하지 않는다. 테스트와 제품 코드가 함께 바뀌면 제품 코드의
+영향을 그대로 배포하고, Required Quality Gate는 테스트 전용 PR에도 유지한다.
+
 공통 앱 코드(`academy/`, `libs/` 등) 변경은 다섯 runtime을 모두 빌드하지만,
 앱 소스를 포함하지 않는 `academy-base`까지 다시 컴파일하지 않는다. base Dockerfile,
 native 보안 빌드, 공통 requirements/constraints, `.dockerignore`가 변경되면 기존대로

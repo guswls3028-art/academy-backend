@@ -524,6 +524,7 @@ def _send_due_range_clinic_reminders(*, session, minutes_before, current, window
 
     from apps.domains.clinic.contracts import is_clinic_booking_reminder_active
     from apps.domains.clinic.models import SessionParticipant
+    from apps.domains.clinic.time_ranges import booking_window
     from apps.domains.messaging.models import ScheduledNotification
     from apps.domains.messaging.services.notification_service import send_event_notification
 
@@ -545,7 +546,10 @@ def _send_due_range_clinic_reminders(*, session, minutes_before, current, window
         created_at__gte=current - timedelta(days=2),
     ).values_list("origin_id", flat=True))
     for participant in participants:
-        start = timezone.make_aware(datetime.combine(session.date, participant.booking_start_time))
+        booking_start, _ = booking_window(
+            session=session, start_time=participant.booking_start_time, end_time=participant.booking_end_time,
+        )
+        start = timezone.make_aware(booking_start)
         if not current - window <= start - timedelta(minutes=minutes_before) <= current:
             continue
         origin = f"clinic_booking:{participant.id}:{session.id}:{start:%Y%m%d:%H%M}"
@@ -564,6 +568,7 @@ def _send_due_range_clinic_reminders(*, session, minutes_before, current, window
             session=session, domain_object_id=origin, source_use_case="clinic.booking_reminder",
         )
         context["시간"] = start.strftime("%H:%M")
+        context["날짜"] = start.date().isoformat()
         if send_event_notification(
             tenant=session.tenant, trigger="clinic_reminder", student=participant.student,
             send_to="student", context=context,
@@ -643,7 +648,7 @@ def send_due_clinic_reminders(
             ClinicSession.objects
             .filter(
                 tenant_id=config.tenant_id,
-                date__gte=earliest_start.date(),
+                date__gte=earliest_start.date() - timedelta(days=1),
                 date__lte=latest_start.date(),
             )
             .annotate(
