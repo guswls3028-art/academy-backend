@@ -208,7 +208,7 @@ development storage 객체를 검증한다. 그림 대역을 CDN/처리 성공�
 frontend base `d33c4c6458`이다. 이전 작업공간은 닫혔으며 canonical의 외부 변경은 보존한다.
 실행 영수증은 `C:\academy\_artifacts\stability-completion-0920`에 남긴다.
 
-### 현재 실행 상태 — 2026-09-20 23:45 KST
+### 현재 실행 상태 — 2026-09-21 00:38 KST
 
 - Backend 활성화 PR [485](https://github.com/guswls3028-art/academy-backend/pull/485)는
   exact head `680ed5cae8a52ce074fcfad0c055d1eb4d9362f5`의 필수 CI
@@ -239,8 +239,9 @@ frontend base `d33c4c6458`이다. 이전 작업공간은 닫혔으며 canonical�
   산출물의 PC/390px mock 생성 검사는 통과했고 나머지는 좁은 격리 진단 중이다.
   검사 보완 후속 PR [561](https://github.com/guswls3028-art/academy-frontend/pull/561),
   `4c54bf220787087d947791429b539bfaa9d534b3`를 draft로 올려 필수 CI와 전체
-  E2E를 시작했다. 필수 Quality35515069050은 성공했고 전체 E2E35515069234는
-  진행 중이다. 제품 코드와 빌드 입력은 바꾸지 않았으며, 과제390/1366px
+  E2E를 실행했다. 필수 Quality35515069050과 전체 E2E35515069234는 모두 성공했다
+  (route mock732·iPhone WebKit36·운영 조회6·bundle/theme smoke 각1;
+  기존 Chromium 전용1개는 WebKit 미실행). 제품 코드와 빌드 입력은 바꾸지 않았으며, 과제390/1366px
   입력 모드별 저장·재조회와 수학 정답 검증의 로컬 재현도 통과했다.
   정확한 후속 후보의 전체 PR E2E·21개 실사용·추가 QA·정리0 모두
   성공하기 전 운영 승인은 보류한다. main push가 별도 전체 E2E를 자동 실행한다고
@@ -261,8 +262,26 @@ frontend base `d33c4c6458`이다. 이전 작업공간은 닫혔으며 canonical�
   false여서 이 실행도 진단 완료 false다. 별도 로컬 검사에서 정상 zero seal 뒤
   이미 닫힌 stdin에 STOP을 쓰는 경합을 재현하고 수정 후보를 검증했다. 원본
   실행 결과를 사후 성공으로 바꾸지 않는다. 개발 서버에 직접 보낸 미인증
-  동일 경로의 빈 POST/JSON 요청은401·37–45ms로 정상 거부됐다. 다음 단계는
-  임시 계정 생성 없이 서버 직접 요청과 SSM 전달 경로를 분리하는 검사다.
+  동일 경로의 빈 POST/JSON 요청은401·37–45ms로 정상 거부됐다. 후속 미인증
+  SSM 전달 검사도 같은 guard의 API/browser6개 모두401·55–73ms, 재시도0으로
+  통과했다. 정리 검사가 종료 상태를 과도하게 제한해 남긴 원본 false는 보존하고,
+  정확한 세션의 비활성·EndDate·Terminating 읽기로 기존 종료 계약 충족을 별도 기록했다.
+  실제 빌드 안내창의 요청도 빈 본문/Content-Length·Content-Type 없음으로 확인했다.
+  이 음성 대조 검사들은 실제 인증 흐름의 실패 원인을 확정하지 않는다.
+  원본 첫 클리닉 테스트1개·재시도0을 두 번 좁게 관측했고, 두 실행 모두 같은
+  안내 확인 실패다. 최신 양끝 관측은 새 Node 연결·정상 CL0/완결 헤더1017바이트를
+  개발 API의 TCP가 모두 수신·ACK한 뒤 약2초 후 응답 없이 서버가 FIN을 먼저
+  보내는 것을 입증했다. 이 요청에서는 Node 연결 재사용·헤더 미완결·SSM 전달
+  손실 가설을 제외한다. Gunicorn26/gevent의 첫 요청 파싱 keepalive timeout과
+  부합하지만 실제 parser 내부 대기 원인은 아직 미확정이다. `gunicorn_h1c`는
+  설치되지 않았고 worker는 gevent·keepalive 기본2초다. WSGI 도달 여부도 미확정이다.
+  tenant376/377와 관련 자원 정리0·포트0은 확인했으나 로컬 tunnel STOP이 종료
+  이벤트 처리 전에 EPIPE를 내므로 두 실행의 aggregate 완료 false는 보존한다.
+  최신 실행은 해당 실패 이벤트도 고정 필드로 기록했다. 정리 기준을 낮추지 않고
+  로컬 Job 종료·zero 확인을 원격 SSM 종료보다 먼저 수행하는 별도 순서 수정 후보를
+  검토 중이다. 서버 관측은150초 후 정상 종료·socket close·kernel/local drop0을
+  확인했다. 요청/Agent 변경과 원문 packet/인증값/본문 저장은 없으며, 어느 별도
+  진단도 운영 승격 증거로 사용하지 않는다.
 - 빌드의 `/version.json`과 일반/빈 점수 점유 해제 요청의 `X-Client-Version`이
   달라지던 경로를 하나의 빌드 식별자로 통일했다. 실제 빌드 HTTP 비교에서 수정 전
   `dev` 불일치, 수정 후 일치를 확인했다. 인증·tenant·keepalive·요청 본문은 유지한다.
