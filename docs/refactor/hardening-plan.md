@@ -260,9 +260,14 @@ PostgreSQL5436 PASS/5 SKIP/629 subtests, Django5265 PASS/148 SKIP/619 subtests,
 static/migration PASS를 확인했다. 선행481 배포 완료 후 두 배포 보고서만 바뀐 main을
 공식 update-branch로 반영했다. 새 exact head는 `1f28cceca3e54e99eb4f6c964e0d4e59753c4e8d`이고,
 필수 CI[35504765481](https://github.com/guswls3028-art/academy-backend/actions/runs/35504765481)가
-진행 중이다. 최신 branch 보호를 우회하지 않으며 새 head의 CI 성공 후에 병합한다.
-그 뒤 모든 API/worker의 reader와0022 수렴을 확인해야 기본값true인 별도 활성화
-release를 승격할 수 있다. 명시적 환경false는 유지하며 두 runtime 설정을 확인한다.
+통과 후 main `07597fc6837e3274516c597be4355344327b3307`에 병합했다.
+자동 push35505463274의 contract 차단 뒤 공식 dispatch
+[35505492422](https://github.com/guswls3028-art/academy-backend/actions/runs/35505492422)에
+`allow_contract_migrations=true`를 명시했다. exact production review의 자격 확인·승인·
+pending 해소와 보호 job 시작을 확인했으며 현재 immutable image 단계다.
+모든 API/worker의 reader와0022 수렴 및 두 write 플래그false를 확인해야
+별도 활성화 PR[485](https://github.com/guswls3028-art/academy-backend/pull/485)를
+병합·승격할 수 있다. 명시적 환경false는 활성화 후에도 우선한다.
 활성화 후보의 자정 전용·자정 이후 API 검사는15 PASS/11 subtests다. 기존 자정 전용
 테스트는 overnight=false를 명시하고, 자정 이후 정상 경로는 설정 override 없이
 실제 활성화 기본값으로 검사한다. 이 로컬 결과는 reader 배포 완료 조건을 해제하지 않는다.
@@ -271,6 +276,18 @@ Frontend 고정 build의 점수 회귀는44 PASS/0 FAIL/0 SKIP, native/auth/play
 추가 transport 계약3 PASS와 기존 refactor budget/typecheck/lint/build PASS다.
 실제 reload 검사에서 PC/390 모두 종료 요청 HTTP 수신은0회였고 명시적 본인 빈 점유
 재개→22 입력→저장→reload는 성공했다. 종료 전송을 보장한다고 서술하지 않는다.
-공식 격리 실사용의 staff 주관식 복구, 가입/승인, 정답·만점 변경 재채점, 조교 숙제
-UI 채점 및 자정 클리닉은 추가 검사 코드와 독립 검토를 마쳤거나 진행 중이며,
-실제 실행·cleanup0·배포 후 결과가 나오기 전에는 완료로 표시하지 않는다.
+Frontend PR[556](https://github.com/guswls3028-art/academy-frontend/pull/556)의
+`c4c8135d8`은 staff 주관식 복구, 가입/승인, 정답·만점 변경 재채점, 조교 숙제
+UI 채점 및 자정 클리닉의 실제 UI 검사와 독립 검토를 포함한다. 클리닉 고유72개
+브라우저 회귀와 runner 계약126개가 통과했고, 클릭부터 응답·목록 반영까지 숫자만
+공식 보고서에 보존한다. 개발 의존성 최소 수정4건은 전체audit0, lint/type/API/build
+및 새 bundle 부팅을 통과했다. Backend 활성화 release와 두 플래그true readback 뒤에만
+FE를 병합한다. 동일 산출물21개 실사용·cleanup0·운영 확인 전에는 완료로 표시하지 않는다.
+
+추가로 발견한 backend DRF 경고4개는 동일한 두 advisory가 manifest별로 중복된
+것이다. 최소 수정3.17.2를 High 독립 검토했고, 기존3.16.1의 과대 JSON/Form
+HTTP200을 재현했다. 새 버전의 정상 한국어 JSON·과대 요청HTTP400·3 MiB multipart
+파일 스풀, PPT 제한과 검수 보고서 검사27 PASS/2 subtests를 확인했다.
+기존 venv를 바꾸지 않고 별도 패키지 경로에서 실행했고, 의존성 check와 OpenAPI
+일치 검사가 통과했다. 실제 테넌트/인증/업로드 완료는 필수 전체 CI·실사용의 별도
+증거를 요구한다. 파서 단독 테스트를 해당 경계의 성공으로 확대 해석하지 않는다.

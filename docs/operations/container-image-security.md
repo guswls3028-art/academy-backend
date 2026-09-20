@@ -7,6 +7,13 @@
 
 ## 빌드 입력과 런타임 패키지
 
+- `requirements/constraints.txt`의 DRF는 3.17.2로 고정한다. 두 공개 보안 수정
+  ([공식 릴리스](https://www.django-rest-framework.org/community/release-notes/#3172))은
+  JSON/URL-encoded 요청의 Django 본문 크기 제한 적용과 AdminRenderer의 GET 권한
+  보호다. Python 3.11과 기존 drf-spectacular/drf-yasg를 유지한다. JSON의 기본
+  2.5 MiB 제한을 해제하지 않으며 multipart 파일은 별도 업로드 검증·디스크 스풀
+  경계를 유지한다. `tests/test_drf_request_size_boundary.py`는 정상 한국어 JSON,
+  과대 JSON/Form의 HTTP 400, 3 MiB multipart 파일 성공·스풀을 검증한다.
 - 공통 Python 이미지는 `docker/Dockerfile.base`의 두 stage 모두 같은 upstream
   OCI index digest로 고정한다. 태그가 이동해도 승인되지 않은 OS 변경이 빌드에
   섞이지 않는다.
