@@ -228,8 +228,11 @@ Backend PR[481](https://github.com/guswls3028-art/academy-backend/pull/481)의 e
 CI[35499929254](https://github.com/guswls3028-art/academy-backend/actions/runs/35499929254)를
 통과했다. main `6c566cf7fa357fc5ddee71c7175c270cde08cab8`에 병합했고 공식 배포
 [35501517908](https://github.com/guswls3028-art/academy-backend/actions/runs/35501517908)가
-진행 중이다. exact run의 production review는 eligible readback 후 공식 API로
-승인했으며 pending 해소와 보호 job 시작을 확인했다. 아직 운영 완료 증거는 아니다.
+최종 성공했다. exact run의 production review는 eligible readback 후 공식 API로
+승인했고 개발·preprod·임시 서버 정리·rolling·실제 digest 검증을 모두 통과했다.
+성공 manifest는 같은 source SHA와 여섯 candidate digest를 보존하며
+`verifiedAt=2026-09-20T19:16:15+09:00`, `complete=true`다. 여섯 ECR scan 모두
+critical=0/acceptedCritical=0/high=0을 확인했다.
 주관식 API 독립 검토에서 추가 결함은 없었다.
 Frontend 실제 native 종료 검사는 라우트 mock이 fetch keepalive를 관측하지 못하는
 한계를 확인해 실제 HTTP 수신으로 보강했다. 해당 관측 한계를 제품 실패로 계산하지 않는다.
@@ -249,3 +252,93 @@ tests.py를 push 및 누적 이미지 diff에서 제외하되 제품 변경이 �
 유지한다. 실행 가능한 분류/인프라 계약132 PASS 뒤 BASE 입력의 별도 경계 assertion
 1건을 정정했고, Windows cp949 출력 해석 오류2건은 UTF-8 환경에서 재확인했다.
 변경·실패3건은 모두 PASS이며 동일 입력의132개 성공 증거를 재사용한다.
+
+클리닉 reader PR[482](https://github.com/guswls3028-art/academy-backend/pull/482)의
+exact `e746b34b42ed592b72c1b27dab67d118d9e34c2d`는
+CI[35501775489](https://github.com/guswls3028-art/academy-backend/actions/runs/35501775489)에서
+PostgreSQL5436 PASS/5 SKIP/629 subtests, Django5265 PASS/148 SKIP/619 subtests,
+static/migration PASS를 확인했다. 선행481 배포 완료 후 두 배포 보고서만 바뀐 main을
+공식 update-branch로 반영했다. 새 exact head는 `1f28cceca3e54e99eb4f6c964e0d4e59753c4e8d`이고,
+필수 CI[35504765481](https://github.com/guswls3028-art/academy-backend/actions/runs/35504765481)가
+통과 후 main `07597fc6837e3274516c597be4355344327b3307`에 병합했다.
+자동 push35505463274의 contract 차단 뒤 공식 dispatch
+[35505492422](https://github.com/guswls3028-art/academy-backend/actions/runs/35505492422)에
+`allow_contract_migrations=true`를 명시했다. exact production review의 자격 확인·승인·
+pending 해소 뒤 전체 workflow가 성공했다. 성공 manifest의 source는07597fc6,
+`verifiedAt=2026-09-20T20:48:00+09:00`, `complete=true`다. 모든 API/worker의
+정확한 digest, 격리 개발·preprod·임시 서버 정리, 운영 migration·rolling·검증과
+image 정리를 통과했다. 추가 read-only SSM에서 운영 API의 manifest digest 일치,
+DRF3.16.1, migration0022, 서로 다른 시작/종료 시각을 허용하는 실제 DB 제약,
+두 write 플래그false를 확인했다. 별도 활성화
+PR[485](https://github.com/guswls3028-art/academy-backend/pull/485)의 reader 선행 HOLD는
+해제됐고 최신 main 병합 뒤 필수 CI를 다시 통과해야 한다.
+명시적 환경false는 활성화 후에도 우선한다.
+활성화 후보의 자정 전용·자정 이후 API 검사는15 PASS/11 subtests다. 기존 자정 전용
+테스트는 overnight=false를 명시하고, 자정 이후 정상 경로는 설정 override 없이
+실제 활성화 기본값으로 검사한다. 이 로컬 결과는 reader 배포 완료 조건을 해제하지 않는다.
+
+Frontend 고정 build의 점수 회귀는44 PASS/0 FAIL/0 SKIP, native/auth/playback56 PASS,
+추가 transport 계약3 PASS와 기존 refactor budget/typecheck/lint/build PASS다.
+실제 reload 검사에서 PC/390 모두 종료 요청 HTTP 수신은0회였고 명시적 본인 빈 점유
+재개→22 입력→저장→reload는 성공했다. 종료 전송을 보장한다고 서술하지 않는다.
+Frontend PR[556](https://github.com/guswls3028-art/academy-frontend/pull/556)의
+`c4c8135d8`은 staff 주관식 복구, 가입/승인, 정답·만점 변경 재채점, 조교 숙제
+UI 채점 및 자정 클리닉의 실제 UI 검사와 독립 검토를 포함한다. 클리닉 고유72개
+브라우저 회귀와 runner 계약126개가 통과했고, 클릭부터 응답·목록 반영까지 숫자만
+공식 보고서에 보존한다. 개발 의존성 최소 수정4건은 전체audit0, lint/type/API/build
+및 새 bundle 부팅을 통과했다. Backend 활성화 release와 두 플래그true readback 뒤에만
+FE를 병합한다. 동일 산출물21개 실사용·cleanup0·운영 확인 전에는 완료로 표시하지 않는다.
+
+추가로 발견한 backend DRF 경고4개는 동일한 두 advisory가 manifest별로 중복된
+것이다. 최소 수정3.17.2를 High 독립 검토했고, 기존3.16.1의 과대 JSON/Form
+HTTP200을 재현했다. 새 버전의 정상 한국어 JSON·과대 요청HTTP400·3 MiB multipart
+파일 스풀, PPT 제한과 검수 보고서 검사27 PASS/2 subtests를 확인했다.
+기존 venv를 바꾸지 않고 별도 패키지 경로에서 실행했고, 의존성 check와 OpenAPI
+일치 검사가 통과했다. 실제 테넌트/인증/업로드 완료는 필수 전체 CI·실사용의 별도
+증거를 요구한다. 파서 단독 테스트를 해당 경계의 성공으로 확대 해석하지 않는다.
+
+§5 대조에서 수동 통과 취소 API는 있었지만 화면 호출자가 없음을 확인했다.
+새 버튼의 회귀가 아니라 복구 편의성·실사용 공백이다. 해결 완료 포함 목록에
+직접 수동 통과만 취소하는 경로를 연결하고, 원문 처리 시각을 보내 서비스 행 잠금
+안에서 같은 판단인지 확인한다. 시각 변경·자동 통과·성적 교정·이미 취소된 결과는
+409로 보호하며 기존 token 없는 내부/API 계약은 유지한다. 관련 서버 검사
+11 PASS/10 subtests와 schema 갱신을 확인했다. 실제 조교 UI와 학생 결과/reload,
+PC/390px 실패·재시도 및 최종 전체 CI는 후속 후보에서 검증한다.
+
+### 통합 후보와 남은 실행 증거
+
+수동 통과 취소의 frontend 구현은 `3036e673f`에 기록했다. 직접 수동 처리만
+취소할 수 있고, 실패 시 선택을 보존해 재시도하며, 다른 판단으로 바뀐409는
+목록을 새로 읽고 재확인을 요구한다. PC/390px mock16개와 변경 경계2개가
+통과했다. 실제 조교 UI→학생 원점수20·교정대기 상태→reload 검사는 기존
+공식21개 안에 추가했으며 아직 해당 후보의 실사용 실행 증거는 없다.
+Backend `fd5844322`의 필수 CI[35506971044](https://github.com/guswls3028-art/academy-backend/actions/runs/35506971044)는 성공했다.
+
+동시에 진행되던 메시지·공용 컨트롤 작업과 최종 frontend 배포 소유자를
+`stability-completion-0920`으로 합의했다. 다른 작업은 별도 main 병합·배포·
+상시 개발 환경 QA를 중단하고 exact SHA와 검증 결과를 인계한다.
+메시지 PR554의 main `5b31523b5`와 PR558의 초기 검증 변경, 공용 컨트롤
+PR555의 `cf512ddde`를 충돌 없이 통합했다. PR555는 Quality 성공·전체 E2E
+진행 중이며 PR558의 붙여넣기 race 수정은 추가 인계 대기다. 원본 PR 통과를
+통합 산출물의 통과로 대신하지 않는다. 공용 컨트롤의 테마 검증 workflow도 보존한다.
+
+PR554의 development[35506200780 attempt2](https://github.com/guswls3028-art/academy-frontend/actions/runs/35506200780)는
+21개 중18개 성공·3개 실패로 운영 승격되지 않았고 두 QA tenant/user 및
+객체·프로세스·포트 정리는0을 확인했다. OMR 답안 버튼, viewport 변경 뒤 편집기,
+영상 bootstrap이 실패했다. OMR은 같은 버튼을 사용하는30문항 스캔·수정·저장·
+원복 mock과 기존 진입6개가 통과해 원인이 아직 확정되지 않았다. viewport 변경은
+AppLayout 재마운트에 맞게 실제 편집기를 다시 여는 검증으로 보강했다.
+영상 POST는 두 화면에서 약8초에 timeout됐으며 재생 성공으로 보고하지 않는다.
+다른 작업의 격리 QA는10:34 UTC에 끝났고 실패 실행은10:56–11:08 UTC였으므로
+동시 작업 경합을 원인으로 단정할 근거가 없다.
+
+추가 전체 회귀에서 발견한 급여 검색어 소실은 검색 직후 필터를 누를 때
+Router 전환 전의 오래된 query를 복사하던 race였다. 조작 시점 URL을 합치는
+frontend `c89c6544c`로 동일 조작 실패→성공과 상세5탭·reload·390px 복귀를
+검증했다. 학생 HTML 제목 회귀의 클리닉 일정은 고정된8월10일 fixture라
+현재 시각에 종료되어 노출되지 않았다. fixture 시각을 고정한 원래 여정이
+통과했으며 실제 제품의 종료 일정 제외 정책은 바꾸지 않았다.
+
+운영 frontend는 여전히 `d33c4c645868b8924719507524e2f03ea8d02d96`이며
+위 모든 변경의 최종 exact 후보 필수 CI, backend 활성화 수렴, 동일 산출물
+21개 실사용·cleanup0, 운영 두 도메인 version/assets와 영향 화면 확인이 남았다.

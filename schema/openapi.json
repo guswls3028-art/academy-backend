@@ -1081,6 +1081,15 @@
         ],
         "type": "string"
       },
+      "ClinicLinkUnresolveRequest": {
+        "properties": {
+          "expected_resolved_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "ClinicNotificationRetryRequestRequest": {
         "properties": {
           "log_id": {
@@ -38762,21 +38771,20 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ClinicLinkRequest"
+                "$ref": "#/components/schemas/ClinicLinkUnresolveRequest"
               }
             },
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/ClinicLinkRequest"
+                "$ref": "#/components/schemas/ClinicLinkUnresolveRequest"
               }
             },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/ClinicLinkRequest"
+                "$ref": "#/components/schemas/ClinicLinkUnresolveRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {

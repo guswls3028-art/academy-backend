@@ -531,14 +531,14 @@ TOOLS_SQS_QUEUE_NAME = os.getenv("TOOLS_SQS_QUEUE_NAME", "academy-v1-tools-queue
 # 메시지 발송 SQS 큐 (워커가 소비). SSOT: academy-v1-messaging-queue
 MESSAGING_SQS_QUEUE_NAME = os.getenv("MESSAGING_SQS_QUEUE_NAME", "academy-v1-messaging-queue")
 
-# Reader-first rollout gate. Keep midnight time-range writes disabled until every
-# API/worker instance runs code that interprets 00:00 as the next-day boundary.
+# Activation release follows the compatible reader/0022 deployment on every
+# API/worker. Explicit false remains the write-only rollback switch; keep readers.
 CLINIC_MIDNIGHT_TIME_RANGE_WRITES_ENABLED = os.getenv(
     "CLINIC_MIDNIGHT_TIME_RANGE_WRITES_ENABLED",
-    "",
+    "true",
 ).lower() in ("1", "true", "yes")
 CLINIC_OVERNIGHT_TIME_RANGE_WRITES_ENABLED = os.getenv(
-    "CLINIC_OVERNIGHT_TIME_RANGE_WRITES_ENABLED", "",
+    "CLINIC_OVERNIGHT_TIME_RANGE_WRITES_ENABLED", "true",
 ).lower() in ("1", "true", "yes")
 
 # ==================================================

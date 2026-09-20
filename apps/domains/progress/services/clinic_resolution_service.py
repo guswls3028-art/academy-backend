@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Iterable, Optional
 
 from django.db import transaction
@@ -36,6 +37,10 @@ from apps.support.progress.session_calculator_dependencies import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class ClinicResolutionConflict(ValueError):
+    """A manual undo no longer matches the decision the operator reviewed."""
 
 
 def _append_history(link, *, action: str, at=None) -> None:
@@ -841,6 +846,7 @@ class ClinicResolutionService:
     def unresolve(
         *,
         clinic_link_id: int,
+        expected_resolved_at: Optional[datetime] = None,
     ) -> Optional[ClinicLink]:
         """
         해소 취소 (되돌리기). 재시험 실패 시 등에 사용.
@@ -849,6 +855,16 @@ class ClinicResolutionService:
             link = ClinicLink.objects.select_for_update().get(id=clinic_link_id)
         except ClinicLink.DoesNotExist:
             return None
+
+        if expected_resolved_at is not None:
+            evidence = link.resolution_evidence
+            if (
+                link.resolved_at != expected_resolved_at
+                or link.resolution_type != ClinicLink.ResolutionType.MANUAL_OVERRIDE
+                or (evidence is not None and not isinstance(evidence, dict))
+                or (isinstance(evidence, dict) and "assessment_correction_id" in evidence)
+            ):
+                raise ClinicResolutionConflict("처리 결과가 변경되었습니다. 새로고침 후 다시 확인해 주세요.")
 
         if not link.resolved_at:
             return link  # already unresolved

@@ -2,6 +2,26 @@
 
 ## 목적과 사용자 흐름
 
+### 수동 통과 복구와 점수 보존
+
+교직원은 전체 미통과 목록의 **해결 완료 포함**에서 직접 수동 통과한 항목을
+다시 찾아 취소할 수 있다. 원점수·기존 처리 이력은 보존하고 해당 학생/차시의
+클리닉 필요 여부와 학생 성적의 보충 완료 표시를 다시 계산한다. 자동 시험/숙제
+통과와 성적 교정에서 만들어진 해소는 이 복구 버튼의 대상이 아니다.
+
+UI는 `POST /progress/clinic-links/{id}/unresolve/`에 목록에서 읽은 원문
+`expected_resolved_at`을 보낸다. tenant/교직원 권한 검증 뒤 서비스의 행 잠금 안에서
+처리 시각, `MANUAL_OVERRIDE`, 성적 교정 근거 부재를 확인한다. 다른 처리로 바뀌었거나
+이미 취소된 항목은 데이터·이력·후속 계산을 바꾸지 않고 `409 clinic_resolution_conflict`를
+반환한다. 화면은 새 결과를 조회해 사용자가 다시 확인하도록 안내한다. 잘못된 시각이나
+null은400이다. 기존 내부 재시험 처리와 token 없는 API 호출은 기존 계약을 유지한다.
+
+`tests/test_clinic_resolution_progress.py`는 조교의 정상 취소, 원점수/학생 결과/
+다른 학생 보존, 반복 요청·자동 통과·성적 교정·시각 변경의 거부, 학생/다른 tenant
+차단을 검증한다. 프런트의 PC/390px 흐름과 공식 격리 실사용은 별도 검증한다.
+
+### 개설과 예약
+
 클리닉을 새로 만들 때 교직원은 세부 입력보다 먼저 두 개설 방식 중 하나를
 명시적으로 고른다.
 
@@ -112,17 +132,21 @@
   예약할 수 있다. 예약 시작이 세션 시작 시각보다 이르면 다음 날이고, 종료가
   예약 시작보다 이르면 그 다음 날짜다. 같은 시작·종료 시각은 빈 구간으로 거절한다.
   이 해석으로 시간만 저장한 기존 데이터는 보존하며 날짜는 세션에서 파생한다.
-- 자정 종료 write는 reader-first 배포 경계다. 새 reader와 DB 제약을 먼저 배포하는
-  동안 `CLINIC_MIDNIGHT_TIME_RANGE_WRITES_ENABLED` 기본값은 `false`이며, 단일·일괄
-  세션 생성과 학생/교직원 예약 모두 새 `00:00` write를 거절한다. 모든 API/worker가
-  자정 reader가 포함된 정확한 release로 수렴한 것을 확인한 뒤 같은 설정을 `true`로
-  활성화하고 health-gated refresh를 완료해야만 write와 limglish 전환을 진행한다.
+- 자정 종료 write는 reader-first 배포 경계다. 첫 reader/DB 배포는
+  `CLINIC_MIDNIGHT_TIME_RANGE_WRITES_ENABLED=false`로 단일·일괄 세션 생성과
+  학생/교직원 예약의 새 `00:00` write를 차단한다. 모든 API/worker가 호환 reader와
+  0022 제약을 사용하는 정확한 release로 수렴한 뒤에만 별도 활성화 release를 승격한다.
+  활성화 release의 기본값은 `true`이며 기존 환경의 명시적인 `false`는 우선한다.
+  같은 immutable candidate의 개발·preprod·health-gated rolling 배포와 runtime 설정
+  readback을 완료해야만 write와 limglish 전환을 진행한다.
   이미 저장된 자정 세션의 읽기와 비시간 필드 수정은 플래그를 다시 내린 상태에서도
   막지 않는다.
 - 다음 날00:00 이후 종료에는 별도 `CLINIC_OVERNIGHT_TIME_RANGE_WRITES_ENABLED`
-  reader-first 경계를 적용한다. 기본값false로 새 reader와0022 제약 확장을 배포한 뒤,
-  모든 API/worker의 exact digest 수렴을 확인하고 설정을true로 바꾸어 health-gated
-  refresh한다. 두 플래그가 활성화되어야 자정 종료를 포함한 전체 예약 흐름을 검증할 수 있다.
+  reader-first 경계를 적용한다. 첫 reader release는 기본값false로 새 reader와0022
+  제약 확장을 배포한다. 모든 API/worker의 exact digest 수렴을 확인한 다음 활성화
+  release에서 기본값true로 바꾼다. 이미 명시된false는 보존하므로 runtime의 두 플래그가
+  실제true인지 확인해야 한다. 두 플래그가 활성화되어야 자정 종료를 포함한 전체 예약
+  흐름을 검증할 수 있다. 활성화 release를 reader release보다 먼저 배포하지 않는다.
   플래그가 꺼져 있으면 새 단일·일괄 개설과 예약을 거절하되 기존 읽기·비시간 수정은
   유지한다. 활성화 후 rollback은 writer를 차단하고 새 reader/확장 제약을 유지한다.
   다음 날 예약을 저장한 상태에서 구 reader나 좁은 제약으로 내리지 않는다.

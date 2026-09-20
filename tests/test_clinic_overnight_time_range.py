@@ -15,10 +15,6 @@ from apps.domains.clinic.services.passcard_state import passcard_confirmed_stude
 from apps.domains.clinic.tests import ClinicAPITestMixin
 
 
-@override_settings(
-    CLINIC_MIDNIGHT_TIME_RANGE_WRITES_ENABLED=True,
-    CLINIC_OVERNIGHT_TIME_RANGE_WRITES_ENABLED=True,
-)
 class ClinicOvernightTimeRangeTests(APITestCase, ClinicAPITestMixin):
     def setUp(self):
         self.data = self.setup_api_tenant("clinic_overnight", student_count=2)
