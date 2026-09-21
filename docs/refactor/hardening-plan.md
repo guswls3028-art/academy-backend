@@ -252,8 +252,11 @@ frontend base `d33c4c6458`이다. 이전 작업공간은 닫혔으며 canonical�
   첫 응답의 지연 중 다음404 조건을 켜던 fixture 경합이었다. 첫 popup URL 완료를
   기다리도록 수정한 뒤 오류 popup 종료·안내와 명시적 다시 열기가 통과했다.
   제품 미리보기 코드는 변경하지 않았다. 전체 lint/API·E2E·배포·복구 guard는
-  통과했고 최종 Quality35547658057/E2E35547658053은 진행 중이다.
-- 다음 실행은 수정 모달의 필수 CI·전체 E2E와 새 공식 same-artifact21개 검사다. 최종 v3
+  통과했고 최종 Quality35547658057/E2E35547658053도 성공했다. 전체 route738개,
+  iPhone36개(기존 플랫폼 전용1개 skip), 운영 읽기 전용6개, bundle/theme 각1개를
+  확인한 뒤 일반 병합으로 main `3fecd57111ab72c94c7a381fd29e0fe206be3162`에 반영했다.
+- 새 공식 [35549919257](https://github.com/guswls3028-art/academy-frontend/actions/runs/35549919257)의
+  same-artifact21개 검사가 진행 중이다. 최종 v3
   pins는 실행 false로 유지한다. 새 공식21개 성공 뒤 source/run/artifact/backend manifest에 묶인
   일회용 v3 pins로 최종 QA를 실행한다. 기존 실패한3efc 증거를 승격에 재사용하지 않는다.
   메시지·공용 컨트롤 작업의 별도 병합·runtime HOLD는 유지한다.
