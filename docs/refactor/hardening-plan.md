@@ -225,7 +225,13 @@ frontend base `d33c4c6458`이다. 이전 작업공간은 닫혔으며 canonical�
   자료함 DELETE ECONNREFUSED는 실제 SSM Port 세션이23:07:01.012Z부터
   23:32:01.167Z까지 정확히25분 뒤 종료된 시각과 일치한다. 로컬 suite30/tunnel35분과
   서버 max25분의 불일치는 backend PR490의 고정35분 수정으로 처리하며 관련42개
-  검사가 통과했다. 아직 merge/실제 문서 적용 전이다. 두 QA tenant389/390 및
+  검사와 필수 CI35545425719가 통과했다. PR490은 main `c2fd5a682086ca9d27ad6d92c96485d3831bedcc`에
+  병합됐고, exact clean source·기존 hash·활성 세션 부재·공유 잠금을 확인해
+  Port 문서 version2/default2 Active로 적용했다. canonical SHA256은
+  `373e62348d13b81b5c83b7a1fb78b674902d86c11402793b6facdf0a56f1f516`이며
+  idle5/포트/권한은 유지하고 rollback version1을 보존했다. 개발 설정만 바뀐 자동
+  app 실행35546727893은 잠금 획득·배포 전에 취소했다. 성공 app manifest는057403이며,
+  새35분 연결의 전체 실사용 성공은 아직 대기한다. 두 QA tenant389/390 및
   user/R2/process/listener 정리0, PC/모바일690초 재생·갱신·진도 저장·오류0이나
   postPlayback Inspect는 전체 실패로 실행하지 않았다. 운영 frontend는 아직 d33c다.
 - 별도1회 OMR 진단은 원본49512 화면 산출물·시험 흐름을 유지하고 점수 관측만
@@ -235,7 +241,13 @@ frontend base `d33c4c6458`이다. 이전 작업공간은 닫혔으며 canonical�
   조사한다. tenant391/R2/process/listener 정리0,5개 세션 종료, 산출물 불변,
   임시 실행 파일 제거를 확인했다. 원본469 assertion은 완화하지 않았고 실행 pins는
   false·전용 latch 소비 완료다. 추가 실행 전에 새 근거·범위를 검토한다.
-- 다음 실행은 OMR 실패의 합성 점수 진단과 PR490 CI/문서 버전 적용이다. 최종 v3
+- 실제49512 모달의 기존 답안 지연 응답으로 저장 key `1,2`를 재현했다.
+  초기 조회 전에 빈 선택지를 노출하고 뒤늦은 응답이 사용자 입력을 덮어쓰는 문제다.
+  수정 후보는 처음 조회를 기다려 답안을 표시하고, 이후 재조회는 작성 중 입력을
+  보존하며, 조회 실패에는 제한된 재시도와 명시적인 복구 버튼을 제공한다.
+  PC1366/390의 지연·즉시·오류 후 빈 답안 등록 6개 검사가 성공했다. 정답2→1,
+  배점11→1, 저장·재조회·재오픈과 백그라운드 입력 보존을 확인했다.
+- 다음 실행은 수정 모달의 필수 CI·전체 E2E와 새 공식 same-artifact21개 검사다. 최종 v3
   pins는 실행 false로 유지한다. 새 공식21개 성공 뒤 source/run/artifact/backend manifest에 묶인
   일회용 v3 pins로 최종 QA를 실행한다. 기존 실패한3efc 증거를 승격에 재사용하지 않는다.
   메시지·공용 컨트롤 작업의 별도 병합·runtime HOLD는 유지한다.
