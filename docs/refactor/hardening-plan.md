@@ -263,7 +263,14 @@ frontend base `d33c4c6458`이다. 이전 작업공간은 닫혔으며 canonical�
   이는 p95나 운영 SLO가 아니다. PC/모바일 각690초 재생·갱신·진도 저장·오류0이나
   전체 실패로 postPlayback Inspect는 실행되지 않았다. 두 소유 tenant/user 및
   R2/process/listener 정리0을 확인했다. 운영 배포는 skipped이며 승인하지 않았다.
-  다음 단계는 조교 화면의 경로·로그인 준비·권한/표시 상태를 구분해 수리하는 것이다. 최종 v3
+  실제3fecd 앱과 원본 헬퍼에서 뒤늦은 출근 선택창이 점수 화면 클릭을 막는 경로를
+  재현했지만514 locator timeout 자체를 동일 재현한 것은 아니다. 후속 PR564
+  `b363d47e90c2b95d2c056e223e39d89ae1e9b299`는 제품 소스 변경 없이 조교 로그인 자동
+  이동·초기 안내·출근 선택·정확한 점수 URL/시험 meta 준비를 확인한다. 수정 헬퍼
+  PC/390 GREEN, 신규 mock2개·인접 기존2개와 최종 High 검토·정리0을 통과했다.
+  Quality35552522321/E2E35552522200은 진행 중이다. 실제 필수2개 CI와 strict 최신
+  base를 충족한 일반 병합 후 전체 PR E2E를 유지하며 새 main21과 병행할 수 있으나,
+  둘 다 성공하고 cleanup0·최종 QA를 통과하기 전 운영 승인하지 않는다. 최종 v3
   pins는 실행 false로 유지한다. 새 공식21개 성공 뒤 source/run/artifact/backend manifest에 묶인
   일회용 v3 pins로 최종 QA를 실행한다. 기존 실패한3efc 증거를 승격에 재사용하지 않는다.
   메시지·공용 컨트롤 작업의 별도 병합·runtime HOLD는 유지한다.
