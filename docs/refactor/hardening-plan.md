@@ -214,8 +214,13 @@ frontend base `d33c4c6458`이다. 이전 작업공간은 닫혔으며 canonical�
 - **Frontend 운영 배포 보류:** 운영 버전은 `d33c4c6458`. 후보 `8c9af5258b`의
   공식 실행35552807996은 20 PASS/1 FAIL/0 SKIP/0 flaky로 종료됐다.
   남은 실패는 `omr-review-realuse.spec.ts:569:45`에서 조교 점수 응답의 JSON을
-  읽는 단계다. 화면 이동 뒤 응답 본문이 유실되는지 로컬 재현 중이며,
-  원인을 확정하거나 점수 저장·잠금 복구 성공으로 간주하지 않는다.
+  읽는 단계다. 동일 앱·기존 호출 코드에서 새로고침 후 이전 응답 본문을 읽는
+  `Network.getResponseBody` 실패를 재현했다. 응답 도착 즉시 본문을 읽는
+  [PR565](https://github.com/guswls3028-art/academy-frontend/pull/565)의
+  `db56b34e34efc0583c23896f2b33b0f97f52bf4d`는 실제 앱 PC/390 검사와
+  수정된 mock2개·lint·High 검토·로컬 정리0을 통과했다. 제품 코드는 유지하며
+  기존 점수 저장·잠금 복구 단언은 새 공식 검사에서 검증한다. 최신
+  Quality35555019633/E2E35555019666은 진행 중이다.
 - **정리 완료:** 두 소유 QA tenant/user 및 R2 객체·프로세스·포트 잔여0,
   배포 소스/digest 일치를 확인했다. 최종 v3 QA는 실행하지 않았으며
   실패 후보의 실행 pins는 false로 차단했다.
