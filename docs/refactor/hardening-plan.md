@@ -255,8 +255,15 @@ frontend base `d33c4c6458`이다. 이전 작업공간은 닫혔으며 canonical�
   통과했고 최종 Quality35547658057/E2E35547658053도 성공했다. 전체 route738개,
   iPhone36개(기존 플랫폼 전용1개 skip), 운영 읽기 전용6개, bundle/theme 각1개를
   확인한 뒤 일반 병합으로 main `3fecd57111ab72c94c7a381fd29e0fe206be3162`에 반영했다.
-- 새 공식 [35549919257](https://github.com/guswls3028-art/academy-frontend/actions/runs/35549919257)의
-  same-artifact21개 검사가 진행 중이다. 최종 v3
+- 새 공식 [35549919257](https://github.com/guswls3028-art/academy-frontend/actions/runs/35549919257)은
+  20 PASS/1 FAIL/0 SKIP/0 flaky로 종료됐다. 기존 재채점469·학생/부모 결과·수동 점수
+  보존 단언 이후 조교의 점수 입력 화면에서514 `표시 옵션` locator timeout이 남았다.
+  자료함 삭제는 통과했고, 새 Port 세션은 이전25분 경계를 넘겨 Connected 상태였다.
+  새 클리닉 단일 관측은390px 수동등록345ms/목록660ms, 통과600ms/목록633ms다.
+  이는 p95나 운영 SLO가 아니다. PC/모바일 각690초 재생·갱신·진도 저장·오류0이나
+  전체 실패로 postPlayback Inspect는 실행되지 않았다. 두 소유 tenant/user 및
+  R2/process/listener 정리0을 확인했다. 운영 배포는 skipped이며 승인하지 않았다.
+  다음 단계는 조교 화면의 경로·로그인 준비·권한/표시 상태를 구분해 수리하는 것이다. 최종 v3
   pins는 실행 false로 유지한다. 새 공식21개 성공 뒤 source/run/artifact/backend manifest에 묶인
   일회용 v3 pins로 최종 QA를 실행한다. 기존 실패한3efc 증거를 승격에 재사용하지 않는다.
   메시지·공용 컨트롤 작업의 별도 병합·runtime HOLD는 유지한다.
