@@ -268,8 +268,11 @@ frontend base `d33c4c6458`이다. 이전 작업공간은 닫혔으며 canonical�
   `b363d47e90c2b95d2c056e223e39d89ae1e9b299`는 제품 소스 변경 없이 조교 로그인 자동
   이동·초기 안내·출근 선택·정확한 점수 URL/시험 meta 준비를 확인한다. 수정 헬퍼
   PC/390 GREEN, 신규 mock2개·인접 기존2개와 최종 High 검토·정리0을 통과했다.
-  Quality35552522321/E2E35552522200은 진행 중이다. 실제 필수2개 CI와 strict 최신
-  base를 충족한 일반 병합 후 전체 PR E2E를 유지하며 새 main21과 병행할 수 있으나,
+  Quality35552522321은 성공했고, 필수2개 CI·strict 최신 base·정확한 head를 확인해
+  일반 병합한 main은 `8c9af5258b967e49bf7e01aac5be5ba632998f08`다. E2E35552522200은
+  취소 없이 계속 실행 중이며 새 main35552807996의 전체21개 검사와 병행한다.
+  새 산출물 fingerprint는 `166a9bd37db3c70f458c170351208f22a8f93e17e773d2cb374e087c57861eac`다.
+  빌드·preview·오프라인23진입점/43필수파일 확인은 통과했다. 두 검증이
   둘 다 성공하고 cleanup0·최종 QA를 통과하기 전 운영 승인하지 않는다. 최종 v3
   pins는 실행 false로 유지한다. 새 공식21개 성공 뒤 source/run/artifact/backend manifest에 묶인
   일회용 v3 pins로 최종 QA를 실행한다. 기존 실패한3efc 증거를 승격에 재사용하지 않는다.
