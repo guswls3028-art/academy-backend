@@ -71,6 +71,7 @@ def submission_status_map_for_student_exams(*, tenant, student, exams) -> dict[i
 
     submission_status_map: dict[int, dict[str, int | bool]] = {}
     subs = Submission.objects.filter(
+        tenant=tenant,
         enrollment_id__in=enrollment_ids,
         target_type=Submission.TargetType.EXAM,
         target_id__in=exam_ids,
@@ -78,11 +79,19 @@ def submission_status_map_for_student_exams(*, tenant, student, exams) -> dict[i
     for target_id, sub_status in subs:
         entry = submission_status_map.setdefault(
             int(target_id),
-            {"has_result": False, "attempt_count": 0},
+            {"has_result": False, "attempt_count": 0, "submission_pending": False},
         )
         entry["attempt_count"] = int(entry["attempt_count"]) + 1
         if sub_status == Submission.Status.DONE:
             entry["has_result"] = True
+        if sub_status in {
+            Submission.Status.SUBMITTED,
+            Submission.Status.DISPATCHED,
+            Submission.Status.EXTRACTING,
+            Submission.Status.ANSWERS_READY,
+            Submission.Status.GRADING,
+        }:
+            entry["submission_pending"] = True
     return submission_status_map
 
 

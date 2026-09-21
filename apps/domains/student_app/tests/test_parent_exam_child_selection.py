@@ -497,6 +497,44 @@ class ParentExamChildSelectionTests(TestCase):
         self.assertEqual(submission.payload["answers"][0]["answer"], "7")
         mock_dispatch.assert_called_once()
 
+        # A persisted submission is an attempt before the grading worker finishes.
+        # Both student and selected-child reads drive the dashboard's remaining work.
+        student_request = self.factory.get("/student/exams/")
+        force_authenticate(student_request, user=self.student_a.user)
+        student_request.tenant = self.tenant
+        for request in (
+            student_request,
+            self._request("/student/exams/", student=self.student_a),
+        ):
+            refreshed = StudentExamListView.as_view()(request)
+            self.assertEqual(refreshed.status_code, 200, refreshed.data)
+            row = next(item for item in refreshed.data["items"] if item["id"] == self.exam_a.id)
+            self.assertEqual(row["attempt_count"], 1)
+            self.assertFalse(row["has_result"])
+            self.assertTrue(row["submission_pending"])
+        other_child = StudentExamListView.as_view()(
+            self._request("/student/exams/", student=self.student_b)
+        )
+        self.assertEqual(other_child.data["items"][0]["attempt_count"], 0)
+        self.assertFalse(other_child.data["items"][0]["submission_pending"])
+
+        for status in (Submission.Status.DISPATCHED, Submission.Status.EXTRACTING,
+                       Submission.Status.ANSWERS_READY, Submission.Status.GRADING,
+                       Submission.Status.FAILED, Submission.Status.SUPERSEDED,
+                       Submission.Status.NEEDS_IDENTIFICATION, Submission.Status.DONE):
+            with self.subTest(status=status):
+                # Fixture transition only: production writers use the submission lifecycle.
+                Submission.objects.filter(pk=submission.pk).update(status=status)
+                detail = StudentExamDetailView.as_view()(
+                    self._request(f"/student/exams/{self.exam_a.id}/", student=self.student_a),
+                    pk=self.exam_a.id,
+                )
+                self.assertEqual(detail.data["submission_pending"], status in {
+                    Submission.Status.DISPATCHED, Submission.Status.EXTRACTING,
+                    Submission.Status.ANSWERS_READY, Submission.Status.GRADING,
+                })
+                self.assertEqual(detail.data["has_result"], status == Submission.Status.DONE)
+
     @patch("apps.domains.submissions.services.dispatcher.dispatch_submission")
     def test_parent_can_submit_same_exam_for_each_selected_child(self, mock_dispatch):
         lecture = Lecture.objects.create(

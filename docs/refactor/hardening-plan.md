@@ -201,6 +201,55 @@ Django 검사는5226 PASS/3 FAIL/147 SKIP였다. UTC 날짜 변경 후 두 역�
 development storage 객체를 검증한다. 그림 대역을 CDN/처리 성공으로, API 채점을
 조교 채점 UI 성공으로 바꿔 서술하지 않는다.
 
+## 9. 추가 제출·서술형 저장 민원 — 2026-09-21 (진행 중)
+
+소유 세션은 `complaint-followup-0921`이며 backend base `b550d7bbae`, frontend
+base `8c329a1a69`다. 증거는 `C:\academy\_artifacts\complaint-followup-0921`에 둔다.
+이전 완료 증거는 §8에 보존하며, 이 추가 민원의 해결 증거로 대신하지 않는다.
+Memo/DS 작업 `01a0be43-7495-7e51-aee3-5368244c74c8`이 현재 배포와 공유 QA를
+소유한다. 이 세션은 로컬 수정·검증을 진행하고 소유권 조율 전 공유 환경을 변경하지 않는다.
+
+1. 온라인 제출 뒤 학생 할 일 잔류: 시험/과제 구분과 대상·시각을 사용자에게
+   확인 중이다. 시험 목록은 제출 뒤 `attempt_count>0`이면 응시완료지만 홈은
+   `has_result`만 확인하므로 채점 전에도 예정 시험 할 일에 남는 차이를 확인했다.
+   과제는 무점수 제출을 검사 전으로 처리하지만 기존 미통과 점수가 있는 재제출은
+   점수 이력을 먼저 투영한다. 제출과 교사 판정을 분리해 조사하며 제출만으로
+   통과 처리하거나 기존 점수를 수정하지 않는다. 원민원과의 동일 원인은 미확정이다.
+2. 서술형 전체 입력 뒤 저장 실패: `written+score`의 문항별 manual-grading
+   preview/apply 경로를 담당 검토자가 재현한다. 기존 주관식 합계/OMR 수정과
+   구분하며 정상 apply·reload·학생 결과와 오류 시 입력 보존을 검증한다.
+3. 재현 실패→수정 후 성공, tenant/역할 경계, desktop/390px와 필수 CI를 기록한
+   뒤 정확한 후보로 격리 실사용·cleanup0·배포·런타임/영향 흐름을 확인한다.
+   실행하지 않은 검증은 완료로 기록하지 않는다.
+
+로컬 증거: 시험 홈 RED는1100/390px에서 제출1·미제출1을 모두 ‘다가오는 시험2건’으로
+표시했다. PC1366 최초 실행은 Vite 초기 navigation timeout이라 제품 실패 근거에서
+제외한다. 정상 로드 기준으로 수정 뒤1366/1100/390px3개가 모두 통과했으며 홈
+새로고침과 시험 목록의 응시완료 유지도 포함한다(`dashboard-red.log`, `dashboard-green.log`).
+서버는 실제 제출201 뒤 학생·선택 자녀 재조회에서 `attempt_count=1`,
+`has_result=false`, 다른 자녀0을 검증했다(`exam-submission-status.log`,14PASS).
+기존 과제 성적 요약28개도 통과했다(`homework-summary-baseline.log`).
+이 검증은 로컬 SQLite/API와 route-mock이며 새 후보의 운영 검증은 아직 미실행이다.
+
+후속 검토에서 시도 횟수만으로 제외하면 처리 실패도 숨길 수 있음을 확인해 초기
+frontend-only 후보는 폐기했다. 최종 수리 방향은 additive `submission_pending`
+API로 실제 접수·처리 중만 구분하며 실패·식별 필요는 기존 할 일에 남긴다.
+해당 최종 후보의 추가 상태 경계 테스트를 실행 중이며 위 초기3PASS와 구분한다.
+
+최종 pending 경계는 `exam-submission-pending.log`14PASS와
+`dashboard-pending-red.log`의3건 오표시→`dashboard-pending-green.log`의
+1366/1100/390px3PASS로 확인했다. 미응시·처리 실패는 남고 처리 중·완료는
+예정 시험에서 빠진다. backend check/마이그레이션 변경 없음/Ruff/제출 lifecycle
+경계/strict-touched 경계와 smoke27개·subtest5개가 통과했다.
+서술형은100점÷6문항의 입력 배점 반올림이 실제 API 상한을 초과하는 경계를
+수리 중이며 실제 조교 권한 API12개가 통과했다. 원민원과 동일 원인인지는 미확정이다.
+
+과제 재제출의 검사 대기를 `HomeworkScore.updated_at`만으로 추정하는 방안은
+채택하지 않았다. `homework_results/services/policy_recalc.py`가 검수 없이 정책
+재계산만으로 그 시각을 바꾸므로 대기 상태를 잘못 해제할 수 있다. 기존 점수와
+교사 판정은 보존하며, 실제 과제 민원이면 대상·시각과 명시적인 검수 근거를
+확인한 뒤 처리한다. 사용자 확인 질문에 아직 답변이 없어 이 항목은 해결로 표기하지 않는다.
+
 ## 8. 안정화 계속 실행 — 2026-09-20
 
 사용자는 1차 종료가 아니라 남은 안정화까지 계속 진행하도록 명시했다.

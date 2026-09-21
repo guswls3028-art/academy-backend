@@ -3,6 +3,7 @@ from __future__ import annotations
 from django.apps import apps as django_apps
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.enrollment.models import Enrollment
@@ -22,6 +23,9 @@ from apps.domains.results.services.manual_exam_grading import (
     plan_manual_grading,
 )
 from apps.domains.results.utils.ranking import compute_exam_rankings
+from apps.domains.results.views.admin_exam_manual_grading_view import (
+    AdminExamManualGradingView,
+)
 from apps.domains.students.models import Student
 
 
@@ -280,6 +284,119 @@ class ManualExamGradingTests(TestCase):
         self.assertTrue(plan.can_apply, plan.errors)
         self.assertEqual(plan.rows[0].total_score, 90.0)
         self.assertEqual(plan.rows[0].wrong_question_numbers, (1,))
+
+    def test_staff_score_preview_publish_reload_and_invalid_score_recovery(self):
+        exam, first, second = self._exam(
+            grading_mode=Exam.GradingMode.WRITTEN,
+            manual_method=Exam.ManualGradingMethod.SCORE,
+        )
+        staff = User.objects.create_user(
+            username="manual-grading-assistant",
+            password="pw1234",
+            tenant=self.tenant,
+        )
+        TenantMembership.ensure_active(
+            tenant=self.tenant, user=staff, role="staff",
+        )
+        factory = APIRequestFactory()
+        view = AdminExamManualGradingView.as_view()
+
+        def request(method, payload=None):
+            make_request = getattr(factory, method)
+            raw = make_request(
+                f"/api/v1/results/admin/exams/{exam.id}/manual-grading/",
+                data=payload,
+                format="json",
+            )
+            raw.tenant = self.tenant
+            force_authenticate(raw, user=staff)
+            return view(raw, exam_id=exam.id)
+
+        sheet = request("get")
+        self.assertEqual(sheet.status_code, 200)
+        row = {
+            "enrollment_id": self.enrollment.id,
+            "expected_version": sheet.data["rows"][0]["expected_version"],
+            "attendance": "present",
+            "cells": {
+                str(first.id): {"score": 30.5},
+                str(second.id): {"score": 60},
+            },
+        }
+        preview = request("post", {"rows": [row], "apply": False})
+        self.assertEqual(preview.status_code, 200)
+        self.assertTrue(preview.data["ok"], preview.data)
+        self.assertEqual(preview.data["rows"][0]["total_score"], 90.5)
+        self.assertFalse(Result.objects.filter(target_id=exam.id).exists())
+
+        applied = request("post", {"rows": [row], "apply": True})
+        self.assertEqual(applied.status_code, 200, applied.data)
+        self.assertTrue(applied.data["applied"])
+        result = Result.objects.get(target_type="exam", target_id=exam.id)
+        self.assertEqual(result.total_score, 90.5)
+        self.assertEqual(result.attempt.status, "done")
+        reloaded = request("get")
+        saved_row = reloaded.data["rows"][0]
+        self.assertEqual(saved_row["cells"][str(first.id)]["score"], 30.5)
+        self.assertEqual(saved_row["cells"][str(second.id)]["score"], 60)
+
+        row["expected_version"] = saved_row["expected_version"]
+        row["cells"][str(second.id)]["score"] = 61
+        rejected = request("post", {"rows": [row], "apply": True})
+        self.assertEqual(rejected.status_code, 400)
+        self.assertFalse(rejected.data["ok"])
+        result.refresh_from_db()
+        self.assertEqual(result.total_score, 90.5)
+        self.assertEqual(result.updated_at.isoformat(), row["expected_version"])
+
+        row["cells"][str(first.id)]["score"] = 0
+        row["cells"][str(second.id)]["score"] = 60
+        recovered = request("post", {"rows": [row], "apply": True})
+        self.assertEqual(recovered.status_code, 200, recovered.data)
+        result.refresh_from_db()
+        self.assertEqual(result.total_score, 60)
+        reloaded = request("get")
+        self.assertEqual(reloaded.data["rows"][0]["cells"][str(first.id)]["score"], 0)
+
+    def test_score_publish_preserves_repeating_decimal_question_maximum(self):
+        exam, first, second = self._exam(
+            grading_mode=Exam.GradingMode.WRITTEN,
+            manual_method=Exam.ManualGradingMethod.SCORE,
+        )
+        first.score = 100 / 6
+        second.score = 100 - first.score
+        first.save(update_fields=["score"])
+        second.save(update_fields=["score"])
+        sheet = build_manual_grading_sheet(exam=exam, tenant=self.tenant)
+        payload = {
+            "rows": [{
+                "enrollment_id": self.enrollment.id,
+                "expected_version": sheet["rows"][0]["expected_version"],
+                "attendance": "present",
+                "cells": {
+                    str(question["question_id"]): {"score": round(question["max_score"], 4)}
+                    for question in sheet["questions"]
+                },
+            }],
+        }
+        rounded = plan_manual_grading(exam=exam, tenant=self.tenant, payload=payload)
+        self.assertFalse(rounded.can_apply)
+        self.assertEqual(rounded.errors[0]["field"], "question_1")
+        self.assertFalse(Result.objects.filter(target_id=exam.id).exists())
+
+        payload["rows"][0]["cells"] = {
+            str(question["question_id"]): {"score": question["max_score"]}
+            for question in sheet["questions"]
+        }
+        exact = plan_manual_grading(exam=exam, tenant=self.tenant, payload=payload)
+        self.assertTrue(exact.can_apply, exact.errors)
+        apply_manual_grading(plan=exact, user_id=self.admin.id)
+        result = Result.objects.get(target_type="exam", target_id=exam.id)
+        self.assertEqual(result.total_score, 100)
+        reloaded = build_manual_grading_sheet(exam=exam, tenant=self.tenant)
+        self.assertEqual(reloaded["rows"][0]["cells"][str(first.id)]["score"], first.score)
+        first.refresh_from_db()
+        self.assertEqual(first.score, 100 / 6)
 
     def test_mixed_exam_preserves_omr_choice_item(self):
         exam, choice, essay = self._exam(
