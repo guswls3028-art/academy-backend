@@ -24,8 +24,26 @@ Persistent isolated development Excel/PPT/R2, isolated preprod database denial/C
 confirmed temporary instance termination, production migration and healthy rolling
 replacement, actual service digests, student playback chain, manifest promotion and
 shared lock release passed. The candidate includes the paper OMR subjective-score
-boundary fix and patched native/Python XML parsers. Frontend promotion and expanded
-same-artifact UI verification remain tracked in the handoff below.
+boundary fix and patched native/Python XML parsers.
+
+On 2026-09-21 KST, frontend
+[35555250585](https://github.com/guswls3028-art/academy-frontend/actions/runs/35555250585)
+completed production deployment at `8f1d580dc4901631bed5a50eccc60628968c7667`, after
+21 isolated real-use tests with no skips/flaky results and cleanup zero, latest PR E2E,
+and additional same-artifact final UI QA with cleanup zero. Production login, tenant
+availability and assessment read-only checks passed. Three public readback rounds on
+godmin.kr and hakwonplus.com matched this revision and the exact bytes/hashes of 23
+entry files and 43 critical assets; this is not a network check of all 611 bundle files.
+Authenticated clinic read-only checks passed at 1366/390px on hakwonplus.com only:
+four read API categories returned 200, UI validation/recovery/reload passed, and business
+write attempts/forwarding were zero. One login was accepted; observation writes were zero.
+No godmin credentials were reused, and production create/book/undo writes were not tested.
+Those isolated writable journeys, staff lock recovery, manual-grade preservation and
+690-second desktop/mobile video renewal are covered by the official real-use run.
+See the [current stabilization handoff](../refactor/hardening-plan.md#현재-실행-상태--2026-09-21-kst)
+for evidence limits, documentation/worktree handoff procedures, notification configuration
+and the separate Messaging/DS HOLDs. This deployment does not refresh the older
+infrastructure inventory below.
 
 Previously, on 2026-09-20, activation rollout
 [35509622551](https://github.com/guswls3028-art/academy-backend/actions/runs/35509622551)
@@ -34,8 +52,8 @@ completed at `2026-09-20T22:04:28+09:00`, source
 An additional read-only check confirmed the manifest's exact API digest, migration 0022,
 the expanded clinic time constraint, DRF 3.17.2 and both clinic write flags true.
 All six candidate images passed ECR scanning with critical=0, acceptedCritical=0 and high=0.
-The [stabilization handoff](../refactor/hardening-plan.md#8-안정화-계속-실행--2026-09-20)
-records the remaining same-artifact and affected-flow checks.
+This is historical backend activation evidence; the newer deployment and UI verification
+above supersede its then-pending stabilization checks.
 
 ## Compute Baseline
 
