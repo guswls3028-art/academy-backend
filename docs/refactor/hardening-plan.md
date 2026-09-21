@@ -223,11 +223,18 @@ frontend base `d33c4c6458`이다. 이전 작업공간은 닫혔으며 canonical�
   재채점 HTTP200·graded>0·failed[] 이후 학생 점수 assertion469에서 실패했다.
   실제 수신 점수는 안전한 보고서에 없어 동일 합성 시나리오의 제한된 진단이 필요하다.
   자료함 DELETE ECONNREFUSED는 실제 SSM Port 세션이23:07:01.012Z부터
- 23:32:01.167Z까지 정확히25분 뒤 종료된 시각과 일치한다. 로컬 suite30/tunnel35분과
+  23:32:01.167Z까지 정확히25분 뒤 종료된 시각과 일치한다. 로컬 suite30/tunnel35분과
   서버 max25분의 불일치는 backend PR490의 고정35분 수정으로 처리하며 관련42개
   검사가 통과했다. 아직 merge/실제 문서 적용 전이다. 두 QA tenant389/390 및
   user/R2/process/listener 정리0, PC/모바일690초 재생·갱신·진도 저장·오류0이나
   postPlayback Inspect는 전체 실패로 실행하지 않았다. 운영 frontend는 아직 d33c다.
+- 별도1회 OMR 진단은 원본49512 화면 산출물·시험 흐름을 유지하고 점수 관측만
+  추가했다. changed=true에서 학생46/60·객관식29·수동 주관식8+9를 확인했으므로
+  공식469 실패를 같은 숫자 불일치로 재현했다고 주장하지 않는다. 이후 assertion은
+  실패했으며, 정답2 단독 선택 조작과 달리 저장 key가 `1,2`여서 선택·저장 상태를
+  조사한다. tenant391/R2/process/listener 정리0,5개 세션 종료, 산출물 불변,
+  임시 실행 파일 제거를 확인했다. 원본469 assertion은 완화하지 않았고 실행 pins는
+  false·전용 latch 소비 완료다. 추가 실행 전에 새 근거·범위를 검토한다.
 - 다음 실행은 OMR 실패의 합성 점수 진단과 PR490 CI/문서 버전 적용이다. 최종 v3
   pins는 실행 false로 유지한다. 새 공식21개 성공 뒤 source/run/artifact/backend manifest에 묶인
   일회용 v3 pins로 최종 QA를 실행한다. 기존 실패한3efc 증거를 승격에 재사용하지 않는다.
