@@ -2716,6 +2716,15 @@
           "lecture": {
             "type": "integer"
           },
+          "lecture_memo": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "lecture_memo_updated_at": {
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
+          },
           "status": {
             "$ref": "#/components/schemas/Status2d4Enum"
           },
@@ -2742,6 +2751,8 @@
           "enrolled_at",
           "id",
           "lecture",
+          "lecture_memo",
+          "lecture_memo_updated_at",
           "student",
           "tenant",
           "updated_at"
@@ -4997,6 +5008,176 @@
         ],
         "type": "object"
       },
+      "LectureAttendance": {
+        "properties": {
+          "enrollment_id": {
+            "type": "integer"
+          },
+          "id": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "lecture_color": {
+            "default": "#3b82f6",
+            "readOnly": true,
+            "type": "string"
+          },
+          "lecture_memo": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "lecture_memo_updated_at": {
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
+          },
+          "lecture_title": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "memo": {
+            "type": "string"
+          },
+          "name": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "name_highlight_clinic_target": {
+            "readOnly": true,
+            "type": "boolean"
+          },
+          "parent_phone": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "phone": {
+            "nullable": true,
+            "readOnly": true,
+            "type": "string"
+          },
+          "planned_arrival_date": {
+            "description": "보강 학생의 예정 등원 날짜. 값이 있을 때 등원 예정으로 집계한다.",
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
+          "planned_arrival_time": {
+            "description": "보강 학생의 예정 등원 시간. 날짜만 정해진 경우 비워둘 수 있다.",
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
+          "profile_photo_url": {
+            "nullable": true,
+            "readOnly": true,
+            "type": "string"
+          },
+          "session": {
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/LectureAttendanceStatusEnum"
+          },
+          "student_id": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "student_memo": {
+            "readOnly": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "id",
+          "lecture_color",
+          "lecture_memo",
+          "lecture_memo_updated_at",
+          "lecture_title",
+          "name",
+          "name_highlight_clinic_target",
+          "parent_phone",
+          "phone",
+          "profile_photo_url",
+          "session",
+          "student_id",
+          "student_memo"
+        ],
+        "type": "object"
+      },
+      "LectureAttendanceRequest": {
+        "properties": {
+          "enrollment_id": {
+            "type": "integer"
+          },
+          "memo": {
+            "type": "string"
+          },
+          "planned_arrival_date": {
+            "description": "보강 학생의 예정 등원 날짜. 값이 있을 때 등원 예정으로 집계한다.",
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
+          "planned_arrival_time": {
+            "description": "보강 학생의 예정 등원 시간. 날짜만 정해진 경우 비워둘 수 있다.",
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
+          "session": {
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/LectureAttendanceStatusEnum"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "session"
+        ],
+        "type": "object"
+      },
+      "LectureAttendanceStatusEnum": {
+        "description": "* `UNSET` - 미입력\n* `PRESENT` - 출석\n* `LATE` - 지각\n* `ONLINE` - 온라인\n* `SUPPLEMENT` - 보강\n* `EARLY_LEAVE` - 조퇴\n* `ABSENT` - 결석\n* `RUNAWAY` - 출튀\n* `MATERIAL` - 자료\n* `INACTIVE` - 부재\n* `SECESSION` - 탈퇴",
+        "enum": [
+          "UNSET",
+          "PRESENT",
+          "LATE",
+          "ONLINE",
+          "SUPPLEMENT",
+          "EARLY_LEAVE",
+          "ABSENT",
+          "RUNAWAY",
+          "MATERIAL",
+          "INACTIVE",
+          "SECESSION"
+        ],
+        "type": "string"
+      },
+      "LectureMemoResult": {
+        "properties": {
+          "id": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "lecture_memo": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "lecture_memo_updated_at": {
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "lecture_memo",
+          "lecture_memo_updated_at"
+        ],
+        "type": "object"
+      },
       "LectureProgress": {
         "properties": {
           "completed_sessions": {
@@ -6781,6 +6962,37 @@
         ],
         "type": "object"
       },
+      "PaginatedLectureAttendanceList": {
+        "properties": {
+          "count": {
+            "example": 123,
+            "type": "integer"
+          },
+          "next": {
+            "example": "http://api.example.org/accounts/?page=4",
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "previous": {
+            "example": "http://api.example.org/accounts/?page=2",
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/LectureAttendance"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "count",
+          "results"
+        ],
+        "type": "object"
+      },
       "PaginatedLectureProgressList": {
         "properties": {
           "count": {
@@ -8430,6 +8642,44 @@
           },
           "teacher_approved": {
             "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "PatchedLectureAttendanceRequest": {
+        "properties": {
+          "enrollment_id": {
+            "type": "integer"
+          },
+          "memo": {
+            "type": "string"
+          },
+          "planned_arrival_date": {
+            "description": "보강 학생의 예정 등원 날짜. 값이 있을 때 등원 예정으로 집계한다.",
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
+          "planned_arrival_time": {
+            "description": "보강 학생의 예정 등원 시간. 날짜만 정해진 경우 비워둘 수 있다.",
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
+          "session": {
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/LectureAttendanceStatusEnum"
+          }
+        },
+        "type": "object"
+      },
+      "PatchedLectureMemoRequest": {
+        "properties": {
+          "lecture_memo": {
+            "maxLength": 2000,
+            "type": "string"
           }
         },
         "type": "object"
@@ -13065,6 +13315,15 @@
             "readOnly": true,
             "type": "integer"
           },
+          "lecture_memo": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "lecture_memo_updated_at": {
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
+          },
           "session": {
             "type": "integer"
           },
@@ -13076,6 +13335,10 @@
           "student_id": {
             "readOnly": true,
             "type": "integer"
+          },
+          "student_memo": {
+            "readOnly": true,
+            "type": "string"
           },
           "student_name": {
             "readOnly": true,
@@ -13095,9 +13358,12 @@
           "enrollment",
           "enrollment_status",
           "id",
+          "lecture_memo",
+          "lecture_memo_updated_at",
           "session",
           "student_grade",
           "student_id",
+          "student_memo",
           "student_name",
           "student_school",
           "tenant"
@@ -26038,6 +26304,71 @@
         ]
       }
     },
+    "/api/v1/enrollments/{id}/lecture-memo/": {
+      "patch": {
+        "operationId": "enrollments_lecture_memo_partial_update",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Expected-Updated-At",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedLectureMemoRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedLectureMemoRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedLectureMemoRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LectureMemoResult"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "enrollments"
+        ]
+      }
+    },
     "/api/v1/exams/": {
       "get": {
         "description": "Exam 생성/조회/수정/삭제 API (봉인)\n\n봉인 규칙:\n- create/update/delete는 Teacher/Admin만\n- template: subject 필수, session_id/template_exam_id 입력 금지\n- regular: session_id 필수, template_exam_id는 양식 연결용 옵션\n- update/patch에서 exam_type/subject/template_exam 변경 시도는 즉시 400\n- template 삭제: derived regular 존재 시 금지",
@@ -32693,7 +33024,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PaginatedAttendanceList"
+                  "$ref": "#/components/schemas/PaginatedLectureAttendanceList"
                 }
               }
             },
@@ -32719,17 +33050,17 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             },
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             }
           },
@@ -32740,7 +33071,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Attendance"
+                  "$ref": "#/components/schemas/LectureAttendance"
                 }
               }
             },
@@ -32769,7 +33100,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Attendance"
+                  "$ref": "#/components/schemas/LectureAttendance"
                 }
               }
             },
@@ -32797,17 +33128,17 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             },
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             }
           },
@@ -32818,7 +33149,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Attendance"
+                  "$ref": "#/components/schemas/LectureAttendance"
                 }
               }
             },
@@ -32846,17 +33177,17 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             },
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             }
           },
@@ -32867,7 +33198,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Attendance"
+                  "$ref": "#/components/schemas/LectureAttendance"
                 }
               }
             },
@@ -32895,17 +33226,17 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             },
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             }
           },
@@ -32916,7 +33247,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Attendance"
+                  "$ref": "#/components/schemas/LectureAttendance"
                 }
               }
             },
@@ -32944,17 +33275,17 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             },
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             }
           },
@@ -32965,7 +33296,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Attendance"
+                  "$ref": "#/components/schemas/LectureAttendance"
                 }
               }
             },
@@ -32994,7 +33325,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Attendance"
+                  "$ref": "#/components/schemas/LectureAttendance"
                 }
               }
             },
@@ -33065,7 +33396,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Attendance"
+                  "$ref": "#/components/schemas/LectureAttendance"
                 }
               }
             },
@@ -33102,17 +33433,17 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/PatchedAttendanceRequest"
+                "$ref": "#/components/schemas/PatchedLectureAttendanceRequest"
               }
             },
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/PatchedAttendanceRequest"
+                "$ref": "#/components/schemas/PatchedLectureAttendanceRequest"
               }
             },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/PatchedAttendanceRequest"
+                "$ref": "#/components/schemas/PatchedLectureAttendanceRequest"
               }
             }
           }
@@ -33122,7 +33453,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Attendance"
+                  "$ref": "#/components/schemas/LectureAttendance"
                 }
               }
             },
@@ -33159,17 +33490,17 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             },
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             }
           },
@@ -33180,7 +33511,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Attendance"
+                  "$ref": "#/components/schemas/LectureAttendance"
                 }
               }
             },
