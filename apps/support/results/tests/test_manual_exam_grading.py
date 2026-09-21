@@ -398,6 +398,52 @@ class ManualExamGradingTests(TestCase):
         first.refresh_from_db()
         self.assertEqual(first.score, 100 / 6)
 
+    def test_explicit_fractional_weight_edit_persists_and_rejects_stale_snapshot(self):
+        exam, first, second = self._exam(
+            grading_mode=Exam.GradingMode.WRITTEN,
+            manual_method=Exam.ManualGradingMethod.SCORE,
+        )
+        first.score = 100 / 6
+        second.score = 100 - first.score
+        first.save(update_fields=["score"])
+        second.save(update_fields=["score"])
+        original = first.score
+        payload = {
+            "question_scores": {str(first.id): 16.6667},
+            "expected_question_scores": {str(first.id): original},
+            "rows": [{
+                "enrollment_id": self.enrollment.id,
+                "expected_version": None,
+                "attendance": "present",
+                "cells": {
+                    str(first.id): {"score": 16.6667},
+                    str(second.id): {"score": second.score},
+                },
+            }],
+        }
+        plan = plan_manual_grading(exam=exam, tenant=self.tenant, payload=payload)
+        self.assertTrue(plan.can_apply, plan.errors)
+        self.assertEqual(plan.question_score_updates, {first.id: 16.6667})
+        # A concurrent sub-millipoint edit must not be silently overwritten.
+        first.score = original + 0.00001
+        first.save(update_fields=["score"])
+        stale = plan_manual_grading(exam=exam, tenant=self.tenant, payload=payload)
+        self.assertFalse(stale.can_apply)
+        self.assertIn("다른 화면에서 변경", str(stale.errors))
+        with self.assertRaisesMessage(ManualExamGradingError, "다른 화면에서 변경"):
+            apply_manual_grading(plan=plan, user_id=self.admin.id)
+        self.assertFalse(Result.objects.filter(target_id=exam.id).exists())
+        first.score = original
+        first.save(update_fields=["score"])
+        fresh = plan_manual_grading(exam=exam, tenant=self.tenant, payload=payload)
+        apply_manual_grading(plan=fresh, user_id=self.admin.id)
+        first.refresh_from_db()
+        self.assertEqual(first.score, 16.6667)
+        reloaded = build_manual_grading_sheet(exam=exam, tenant=self.tenant)
+        self.assertEqual(reloaded["questions"][0]["max_score"], 16.6667)
+        self.assertEqual(reloaded["rows"][0]["cells"][str(first.id)]["score"], 16.6667)
+        self.assertEqual(Result.objects.get(target_id=exam.id).total_score, 100)
+
     def test_mixed_exam_preserves_omr_choice_item(self):
         exam, choice, essay = self._exam(
             grading_mode=Exam.GradingMode.MIXED,

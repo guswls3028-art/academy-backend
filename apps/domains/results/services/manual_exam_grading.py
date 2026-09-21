@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -779,15 +780,10 @@ def _question_score_overrides(
             )
             continue
         try:
-            score = round(float(raw_score), 2)
-            expected_score = round(
-                float(
-                    raw_expected.get(
-                        str(question_id),
-                        raw_expected.get(question_id),
-                    )
-                ),
-                2,
+            # Individual bounds and their optimistic snapshot must round-trip exactly.
+            score = float(raw_score)
+            expected_score = float(
+                raw_expected.get(str(question_id), raw_expected.get(question_id))
             )
         except (TypeError, ValueError):
             errors.append(
@@ -798,7 +794,7 @@ def _question_score_overrides(
                 )
             )
             continue
-        if score < 0:
+        if not math.isfinite(score) or not math.isfinite(expected_score) or score < 0:
             errors.append(
                 _error(
                     None,
@@ -807,7 +803,7 @@ def _question_score_overrides(
                 )
             )
             continue
-        if abs(expected_score - float(question.max_score)) > 0.001:
+        if expected_score != float(question.max_score):
             errors.append(
                 _error(
                     None,
@@ -819,7 +815,7 @@ def _question_score_overrides(
                 )
             )
             continue
-        if abs(score - float(question.max_score)) > 0.001:
+        if score != float(question.max_score):
             updates[question_id] = score
             originals[question_id] = expected_score
 
@@ -879,7 +875,7 @@ def _apply_question_score_updates(*, plan: ManualGradePlan) -> None:
     for question_id, next_score in plan.question_score_updates.items():
         question = locked_questions[question_id]
         expected_score = plan.original_question_scores[question_id]
-        if abs(float(question.score or 0.0) - expected_score) > 0.001:
+        if float(question.score or 0.0) != expected_score:
             raise ManualExamGradingError(
                 (
                     f"{question.number}번 배점이 다른 화면에서 변경됐습니다. "
