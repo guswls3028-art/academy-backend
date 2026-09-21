@@ -1,6 +1,10 @@
 #!/bin/sh
 set -eu
 
+test "$(dpkg-query -W -f='${Version}' libexpat1)" = '2.8.4+academy1-1'
+test "$(dpkg-query -W -f='${Source}' libexpat1)" = 'expat'
+python /usr/local/bin/verify-expat.py --library libexpat.so.1 --python --package
+
 dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libc6)" ge '2.41-12+deb13u4'
 dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libc-bin)" ge '2.41-12+deb13u4'
 dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libsqlite3-0)" ge '3.46.1-7+deb13u2'

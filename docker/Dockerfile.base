@@ -39,6 +39,7 @@ RUN test -n "${APT_REFRESH_TOKEN}" \
 WORKDIR /build
 
 COPY docker/native-security/build-fixed-libs.sh /usr/local/bin/build-fixed-libs.sh
+COPY docker/native-security/build-python-xml.py docker/native-security/verify-expat.py /usr/local/bin/
 RUN sh /usr/local/bin/build-fixed-libs.sh /build/native-security/out
 
 # 의존성 파일 복사 및 설치 (pip 업그레이드와 단일 RUN으로 레이어 최소화)
@@ -72,6 +73,11 @@ RUN test -n "${APT_REFRESH_TOKEN}" \
     util-linux \
     && dpkg -i /tmp/academy-native-security/*.deb \
     && ldconfig \
+    && test "$(dpkg-query -W -f='${Version}' libexpat1)" = '2.8.4+academy1-1' \
+    && test "$(dpkg-query -W -f='${Source}' libexpat1)" = 'expat' \
+    && test "$(find /tmp/academy-native-security/python-xml -maxdepth 1 -type f -name '*.so' | wc -l)" -eq 2 \
+    && cp /tmp/academy-native-security/python-xml/*.so /usr/local/lib/python3.11/lib-dynload/ \
+    && install -D -m 0644 /tmp/academy-native-security/python-xml-build.json /usr/local/share/academy/native-security/python-xml-build.json \
     && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libc6)" ge "2.41-12+deb13u4" \
     && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libc-bin)" ge "2.41-12+deb13u4" \
     && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libsqlite3-0)" ge "3.46.1-7+deb13u2" \
@@ -99,6 +105,9 @@ RUN test -n "${APT_REFRESH_TOKEN}" \
     && ! dpkg-query -W perl-base >/dev/null 2>&1 \
     && for package in perl 'perl-modules-*' 'libperl*' libdpkg-perl liberror-perl; do ! dpkg-query -W "$package" >/dev/null 2>&1; done \
     && ! command -v perl >/dev/null 2>&1
+
+COPY docker/native-security/verify-expat.py /usr/local/bin/verify-expat.py
+RUN python /usr/local/bin/verify-expat.py --library libexpat.so.1 --python --package
 
 # non-root 사용자 (보안·감사 대비, CMD/경로 규칙 유지)
 RUN groupadd --gid 1000 appuser \

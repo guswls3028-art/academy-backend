@@ -63,7 +63,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get check \
     && ! dpkg-query -W perl-base >/dev/null 2>&1 \
     && for package in perl 'perl-modules-*' 'libperl*' libdpkg-perl liberror-perl; do ! dpkg-query -W "$package" >/dev/null 2>&1; done \
-    && ! command -v perl >/dev/null 2>&1
+    && ! command -v perl >/dev/null 2>&1 \
+    && python /usr/local/bin/verify-expat.py --library libexpat.so.1 --python --package
 COPY --from=ffmpeg-builder /opt/academy-ffmpeg /opt/academy-ffmpeg
 RUN set -eux; \
     test "$(cat /opt/academy-ffmpeg/academy-source-commit)" = "${FFMPEG_COMMIT}"; \
