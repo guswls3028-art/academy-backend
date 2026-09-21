@@ -1,10 +1,59 @@
 # Current Production Runtime SSOT
 
-**Verified:** 2026-08-20T13:34:28+09:00
+**Infrastructure snapshot verified:** 2026-08-20T13:34:28+09:00
 **Scope:** Academy V1 production, AWS account `809466760795`, region `ap-northeast-2`.
 **Truth sources:** AWS `describe-*` reads with profile `default`, `docs/ssot/params.yaml`, `docs/reports/drift.latest.md`, `docs/reports/resource-cleanup.latest.md`, `docs/reports/cost-waste-audit.latest.md`.
 
-This document records the verified current runtime shape. `params.yaml` remains the executable desired-state SSOT; this file is the operator-facing current-state SSOT and must be refreshed after infra/cost/deploy changes.
+This document records the dated infrastructure snapshot below and separately identifies
+deployment evidence. `params.yaml` remains the executable desired-state SSOT. Fresh AWS
+readback takes precedence over this snapshot; a later application deployment does not
+reverify every inventory or cost figure below.
+
+## Deployment Identity
+
+The [successful release manifest](../reports/release-manifest.latest.json) owns backend
+source SHA, immutable service digests, release status and verification time. Each frontend
+production domain's `/version.json` owns its built revision. The release notes' `CURRENT`
+label identifies the last sealed notes, not an independently verified live build.
+
+On 2026-09-21 KST, stabilization rollout
+[35540757110](https://github.com/guswls3028-art/academy-backend/actions/runs/35540757110)
+completed successfully, source `057403c653f4c5f26fc43dc524b974895a4ba432`.
+All six new immutable images passed ECR with critical=0, acceptedCritical=0 and high=0.
+Persistent isolated development Excel/PPT/R2, isolated preprod database denial/CDN,
+confirmed temporary instance termination, production migration and healthy rolling
+replacement, actual service digests, student playback chain, manifest promotion and
+shared lock release passed. The candidate includes the paper OMR subjective-score
+boundary fix and patched native/Python XML parsers.
+
+On 2026-09-21 KST, frontend
+[35555250585](https://github.com/guswls3028-art/academy-frontend/actions/runs/35555250585)
+completed production deployment at `8f1d580dc4901631bed5a50eccc60628968c7667`, after
+21 isolated real-use tests with no skips/flaky results and cleanup zero, latest PR E2E,
+and additional same-artifact final UI QA with cleanup zero. Production login, tenant
+availability and assessment read-only checks passed. Three public readback rounds on
+godmin.kr and hakwonplus.com matched this revision and the exact bytes/hashes of 23
+entry files and 43 critical assets; this is not a network check of all 611 bundle files.
+Authenticated clinic read-only checks passed at 1366/390px on hakwonplus.com only:
+four read API categories returned 200, UI validation/recovery/reload passed, and business
+write attempts/forwarding were zero. One login was accepted; observation writes were zero.
+No godmin credentials were reused, and production create/book/undo writes were not tested.
+Those isolated writable journeys, staff lock recovery, manual-grade preservation and
+690-second desktop/mobile video renewal are covered by the official real-use run.
+See the [current stabilization handoff](../refactor/hardening-plan.md#현재-실행-상태--2026-09-21-kst)
+for evidence limits, documentation/worktree handoff procedures, notification configuration
+and the separate Messaging/DS HOLDs. This deployment does not refresh the older
+infrastructure inventory below.
+
+Previously, on 2026-09-20, activation rollout
+[35509622551](https://github.com/guswls3028-art/academy-backend/actions/runs/35509622551)
+completed at `2026-09-20T22:04:28+09:00`, source
+`c88038d47a05e50ec7e8fd095698f88c910e080f`, with all service digests verified.
+An additional read-only check confirmed the manifest's exact API digest, migration 0022,
+the expanded clinic time constraint, DRF 3.17.2 and both clinic write flags true.
+All six candidate images passed ECR scanning with critical=0, acceptedCritical=0 and high=0.
+This is historical backend activation evidence; the newer deployment and UI verification
+above supersede its then-pending stabilization checks.
 
 ## Compute Baseline
 
@@ -65,15 +114,15 @@ instance. Batch-managed ASGs should have desired 0 when no Batch job is active.
 
 ## Verification
 
-Latest verification after the runtime-audit hardening release:
+Historical evidence for the infrastructure snapshot above (not the latest application release):
 
 - GitHub run `32330381855`, source
   `fc4f748dfbf47575eb9424ee301f6771c47116de`, passed immutable builds, exact
   ECR scan identity, persistent development, isolated preprod, migration,
   launch-before-terminate API/worker refreshes, runtime digest verification,
   Video Batch verification, and successful release-manifest promotion.
-- `docs/reports/release-manifest.latest.json` is `complete=true`,
-  `status=successful`, and records the same source SHA and run-bound image tag.
+- At that verification, the release manifest was `complete=true`,
+  `status=successful`, and recorded the same source SHA and run-bound image tag.
 - `pwsh scripts/v1/run-production-canary.ps1 -Mode PostDeploy -AwsProfile default -StrictWarnings -WriteReport`
   -> `PASS=30 WARN=0 FAIL=0`; API/worker ASGs were 1/1 healthy, ALB 1/1,
   RDS/Redis available, all three queues and DLQs empty, Batch valid, Django
