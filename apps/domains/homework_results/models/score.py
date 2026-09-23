@@ -95,6 +95,12 @@ class HomeworkScore(TimestampModel):
         related_name="updated_homework_scores",
     )
 
+    # Last explicitly reviewed submission evidence. Policy recalculation must not
+    # advance this marker: a later student upload needs a fresh teacher review.
+    reviewed_submission_revision = models.CharField(
+        max_length=64, null=True, blank=True,
+    )
+
     # ✅ 확장 필드(마이그레이션 없이): meta.status 만 사용
     meta = models.JSONField(null=True, blank=True)
 

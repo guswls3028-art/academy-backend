@@ -53,6 +53,7 @@ from apps.domains.results.contracts import (
     require_homework_score_edit_lease,
 )
 from apps.support.homework.review_lock import lock_homework_review_target
+from apps.support.submissions.dependencies import homework_submission_revisions
 from apps.support.homework_results.score_dependencies import (
     calc_homework_passed_and_clinic,
     dispatch_progress_pipeline,
@@ -150,7 +151,13 @@ def _apply_score_and_policy(
     obj.clinic_required = bool(clinic_required)
     obj.updated_by_user_id = _safe_user_id(request)
 
-    obj.save(update_fields=save_fields + ["updated_at"])
+    obj.reviewed_submission_revision = homework_submission_revisions(
+        tenant=request.tenant,
+        enrollment_ids=[obj.enrollment_id],
+        homework_ids=[obj.homework_id],
+    ).get((obj.enrollment_id, obj.homework_id), "")
+
+    obj.save(update_fields=save_fields + ["reviewed_submission_revision", "updated_at"])
     return obj
 
 
@@ -511,7 +518,12 @@ class HomeworkScoreViewSet(ModelViewSet):
                     )
                     obj.passed = bool(passed)
                     obj.clinic_required = bool(clinic_required)
-                    obj.save(update_fields=["meta", "score", "max_score", "passed", "clinic_required", "updated_by_user_id", "updated_at"])
+                    obj.reviewed_submission_revision = homework_submission_revisions(
+                        tenant=request.tenant,
+                        enrollment_ids=[enrollment_id],
+                        homework_ids=[homework_id],
+                    ).get((enrollment_id, homework_id), "")
+                    obj.save(update_fields=["meta", "score", "max_score", "passed", "clinic_required", "updated_by_user_id", "reviewed_submission_revision", "updated_at"])
                 else:
                     obj = _apply_score_and_policy(
                         obj=obj,

@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 import hashlib
 import json
+import uuid
 
 from django.contrib.auth import get_user_model
 from django.apps import apps as django_apps
@@ -18,9 +19,12 @@ from apps.domains.homework_results.models import Homework, HomeworkScore
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.student_app.results.views import MyExamResultView, MyGradesSummaryView
 from apps.domains.students.models import Student
+from apps.support.submissions.dependencies import homework_submission_revisions
 
 
 User = get_user_model()
+Submission = django_apps.get_model("submissions", "Submission")
+SubmissionMedia = django_apps.get_model("submissions", "SubmissionMedia")
 
 
 def _exam_correction_fingerprint(result) -> str:
@@ -502,6 +506,33 @@ class MyGradesSummaryHomeworkTests(TestCase):
         self.assertEqual(response.data["exam_trend"], [])
         self.assertEqual(response.data["exam_summary"]["scored_count"], 0)
 
+    def test_reexam_submission_pending_is_separate_from_prior_failed_grade(self):
+        result = self._score_exam(
+            title="재제출 시험",
+            order=1,
+            score=40,
+            max_score=100,
+        )
+        exam = self.Exam.objects.get(id=result.target_id)
+        before = self._call().data["exams"][0]
+        self.assertEqual(before["achievement"], "FAIL")
+        self.assertFalse(before["submission_pending"])
+        submission = Submission.objects.create(
+            tenant=self.tenant,
+            user=self.user,
+            enrollment=self.enrollment,
+            target_type=Submission.TargetType.EXAM,
+            target_id=exam.id,
+            source=Submission.Source.ONLINE,
+            status=Submission.Status.SUBMITTED,
+        )
+        during = self._call().data["exams"][0]
+        self.assertEqual(during["achievement"], "FAIL")
+        self.assertTrue(during["submission_pending"])
+        submission.status = Submission.Status.FAILED
+        submission.save(update_fields=["status"])
+        self.assertFalse(self._call().data["exams"][0]["submission_pending"])
+
     def test_duplicate_results_collapse_to_latest_exam_point(self):
         first = self._score_exam(
             title="중복 결과 시험",
@@ -790,6 +821,142 @@ class MyGradesSummaryHomeworkTests(TestCase):
         self.assertIsNone(row["score"])
         self.assertIsNone(row["passed"])
         self.assertIsNone(row["achievement"])
+
+    def test_failed_homework_submission_waits_for_review_then_requires_retry(self):
+        homework = Homework.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title="재제출 과제",
+            meta={"default_max_score": 20},
+        )
+        HomeworkAssignment.objects.create(
+            tenant=self.tenant,
+            homework=homework,
+            session=self.session,
+            enrollment=self.enrollment,
+        )
+        score = HomeworkScore.objects.create(
+            enrollment=self.enrollment,
+            session=self.session,
+            homework=homework,
+            attempt_index=1,
+            score=5,
+            max_score=20,
+            passed=False,
+            reviewed_submission_revision="",
+        )
+        self.assertEqual(self._call().data["homeworks"][0]["submission_state"], "needs_submission")
+        submission = Submission.objects.create(
+            tenant=self.tenant,
+            user=self.user,
+            enrollment=self.enrollment,
+            target_type=Submission.TargetType.HOMEWORK,
+            target_id=homework.id,
+            source=Submission.Source.HOMEWORK_IMAGE,
+            status=Submission.Status.SUBMITTED,
+        )
+        media = SubmissionMedia.objects.create(
+            tenant=self.tenant,
+            submission=submission,
+            client_upload_id=uuid.uuid4(),
+            upload_batch_id=uuid.uuid4(),
+            fingerprint="a" * 64,
+            object_key="tenant/test/homework.jpg",
+            original_filename="풀이.jpg",
+            media_kind=SubmissionMedia.Kind.IMAGE,
+            mime_type="image/jpeg",
+            size=100,
+            position=0,
+            status=SubmissionMedia.Status.FAILED,
+        )
+        self.assertEqual(self._call().data["homeworks"][0]["submission_state"], "needs_submission")
+        media.status = SubmissionMedia.Status.UPLOADED
+        media.uploaded_at = timezone.now()
+        media.save(update_fields=["status", "uploaded_at"])
+        waiting = self._call().data["homeworks"][0]
+        self.assertEqual(waiting["achievement"], "FAIL")
+        self.assertEqual(waiting["submission_state"], "awaiting_review")
+        revision = homework_submission_revisions(
+            tenant=self.tenant,
+            enrollment_ids=[self.enrollment.id],
+            homework_ids=[homework.id],
+        )[(self.enrollment.id, homework.id)]
+        score.reviewed_submission_revision = revision
+        score.save(update_fields=["reviewed_submission_revision"])
+        self.assertEqual(self._call().data["homeworks"][0]["submission_state"], "needs_submission")
+        media.removed_at = timezone.now()
+        media.status = SubmissionMedia.Status.REMOVED
+        media.save(update_fields=["removed_at", "status"])
+        self.assertEqual(self._call().data["homeworks"][0]["submission_state"], "needs_submission")
+
+    def test_explicit_not_submitted_review_requires_new_evidence(self):
+        homework = Homework.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title="미제출 재검토 과제",
+            meta={"default_max_score": 20},
+        )
+        HomeworkAssignment.objects.create(
+            tenant=self.tenant,
+            homework=homework,
+            session=self.session,
+            enrollment=self.enrollment,
+        )
+        Submission.objects.create(
+            tenant=self.tenant,
+            user=self.user,
+            enrollment=self.enrollment,
+            target_type=Submission.TargetType.HOMEWORK,
+            target_id=homework.id,
+            source=Submission.Source.ONLINE,
+            status=Submission.Status.DONE,
+        )
+        revision = homework_submission_revisions(
+            tenant=self.tenant,
+            enrollment_ids=[self.enrollment.id],
+            homework_ids=[homework.id],
+        )[(self.enrollment.id, homework.id)]
+        HomeworkScore.objects.create(
+            enrollment=self.enrollment,
+            session=self.session,
+            homework=homework,
+            attempt_index=1,
+            score=None,
+            max_score=None,
+            passed=False,
+            meta={"status": HomeworkScore.MetaStatus.NOT_SUBMITTED},
+            reviewed_submission_revision=revision,
+        )
+        reviewed = self._call().data["homeworks"][0]
+        self.assertEqual(reviewed["achievement"], "NOT_SUBMITTED")
+        self.assertEqual(reviewed["submission_state"], "needs_submission")
+
+        submission = Submission.objects.create(
+            tenant=self.tenant,
+            user=self.user,
+            enrollment=self.enrollment,
+            target_type=Submission.TargetType.HOMEWORK,
+            target_id=homework.id,
+            source=Submission.Source.HOMEWORK_IMAGE,
+            status=Submission.Status.SUBMITTED,
+        )
+        SubmissionMedia.objects.create(
+            tenant=self.tenant,
+            submission=submission,
+            client_upload_id=uuid.uuid4(),
+            upload_batch_id=uuid.uuid4(),
+            fingerprint="b" * 64,
+            object_key="tenant/test/retry.jpg",
+            original_filename="보완.jpg",
+            media_kind=SubmissionMedia.Kind.IMAGE,
+            mime_type="image/jpeg",
+            size=100,
+            position=0,
+            status=SubmissionMedia.Status.UPLOADED,
+        )
+        waiting = self._call().data["homeworks"][0]
+        self.assertIsNone(waiting["achievement"])
+        self.assertEqual(waiting["submission_state"], "awaiting_review")
 
     def test_retake_pass_exposes_submission_media_lock_without_changing_initial_grade(self):
         homework = Homework.objects.create(
