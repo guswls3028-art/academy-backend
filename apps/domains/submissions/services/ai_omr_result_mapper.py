@@ -48,9 +48,27 @@ def _extract_worker_result(payload: Dict[str, Any]) -> Dict[str, Any]:
     return {k: v for k, v in payload.items() if k not in exclude}
 
 
+def _is_latest_done_ai_job_for_submission(submission: Submission, job_id: Any) -> bool:
+    if not job_id:
+        return False
+    from apps.domains.ai.models import AIJobModel
+
+    latest_job = (
+        AIJobModel.objects.filter(
+            tenant_id=str(submission.tenant_id),
+            source_domain="submissions",
+            source_id=str(submission.id),
+        ).order_by("-created_at", "-id").first()
+    )
+    return bool(
+        latest_job and latest_job.job_id == str(job_id) and latest_job.status == "DONE"
+    )
+
+
 def _can_hydrate_late_ai_answers(
     *,
     submission: Submission,
+    payload: Dict[str, Any],
     result: Dict[str, Any],
 ) -> bool:
     """
@@ -70,6 +88,9 @@ def _can_hydrate_late_ai_answers(
         if (
             recovered_from not in STUCK_RECOVERABLE_STATUSES
             or submission.error_message != f"stuck:{recovered_from}_timeout"
+            or not _is_latest_done_ai_job_for_submission(
+                submission, payload.get("job_id"),
+            )
         ):
             return False
     elif submission.status not in (
@@ -109,25 +130,11 @@ def _can_resume_recovered_unmatched_submission(
         or not result["answers"]
     ):
         return False
-    job_id = str(payload.get("job_id") or "")
-    if not job_id:
-        return False
-
-    from apps.domains.ai.models import AIJobModel
     from apps.domains.submissions.models import SubmissionAnswer
 
     if SubmissionAnswer.objects.filter(submission=submission).exists():
         return False
-    latest_job = (
-        AIJobModel.objects.filter(
-            tenant_id=str(submission.tenant_id),
-            source_domain="submissions",
-            source_id=str(submission.id),
-        ).order_by("-created_at", "-id").first()
-    )
-    return bool(
-        latest_job and latest_job.job_id == job_id and latest_job.status == "DONE"
-    )
+    return _is_latest_done_ai_job_for_submission(submission, payload.get("job_id"))
 
 
 def _validate_worker_contract(
@@ -216,6 +223,7 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
 
     late_answer_hydration = _can_hydrate_late_ai_answers(
         submission=submission,
+        payload=payload,
         result=result,
     )
     late_unmatched_resume = _can_resume_recovered_unmatched_submission(

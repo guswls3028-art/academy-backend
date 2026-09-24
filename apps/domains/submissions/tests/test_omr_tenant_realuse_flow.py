@@ -2099,6 +2099,46 @@ class StateRecoveryTests(TestCase):
         self.assertEqual(submission.status, Submission.Status.FAILED)
         self.assertFalse(SubmissionAnswer.objects.filter(submission=submission).exists())
 
+    def test_late_ai_callback_preserves_matched_scan_after_newer_job(self):
+        from django.apps import apps
+
+        from apps.domains.ai.callbacks import dispatch_ai_result_to_domain
+
+        submission, _, _ = self._make_done_zero_answer_submission()
+        Submission.objects.filter(pk=submission.pk).update(
+            status=Submission.Status.FAILED,
+            error_message="stuck:dispatched_timeout",
+            meta={"state_recovery": {"from_status": Submission.Status.DISPATCHED}},
+        )
+        old_job = self._create_late_ai_result(submission)
+        AIJobModel = apps.get_model("ai_domain", "AIJobModel")
+        AIJobModel.objects.create(
+            job_id=f"newer-matched-ai-{submission.id}",
+            job_type="omr_grading",
+            status="PENDING",
+            tenant_id=str(submission.tenant_id),
+            source_domain="submissions",
+            source_id=str(submission.id),
+        )
+        result_payload = apps.get_model("ai_domain", "AIResultModel").objects.get(
+            job=old_job,
+        ).payload
+
+        handled = dispatch_ai_result_to_domain(
+            job_id=old_job.job_id,
+            status="DONE",
+            result_payload=result_payload,
+            error=None,
+            source_domain="submissions",
+            source_id=str(submission.id),
+            tier="basic",
+        )
+
+        self.assertTrue(handled)
+        submission.refresh_from_db()
+        self.assertEqual(submission.status, Submission.Status.FAILED)
+        self.assertFalse(SubmissionAnswer.objects.filter(submission=submission).exists())
+
     def test_late_ai_recovery_dry_run_does_not_write(self):
         from academy.application.use_cases.omr.late_answer_recovery import (
             recover_late_ai_answers,
