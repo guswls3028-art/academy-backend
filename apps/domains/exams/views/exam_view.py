@@ -21,6 +21,7 @@ from apps.domains.exams.services.structure_copy_service import (
     ensure_regular_exam_owns_structure,
 )
 from apps.domains.exams.services.template_resolver import resolve_structure_exam
+from apps.support.submissions.dependencies import regrade_exam_submissions
 from apps.support.exams.view_dependencies import (
     IsTeacherOrAdmin,
     active_enrollment_ids_for_exam_assignment,
@@ -267,6 +268,7 @@ class ExamViewSet(ModelViewSet):
             self.check_object_permissions(request, obj)
             assert_expected_updated_at(request=request, instance=obj)
             prev_pass = float(getattr(obj, "pass_score", 0) or 0)
+            prev_max = float(getattr(obj, "max_score", 0) or 0)
 
             serializer = self.get_serializer(
                 obj,
@@ -297,19 +299,20 @@ class ExamViewSet(ModelViewSet):
                     context=self.get_serializer_context(),
                 ).data
             )
-
-        try:
-            new_pass = response.data.get("pass_score") if hasattr(response, "data") else None
-            if prev_pass is not None and new_pass is not None and float(new_pass) != prev_pass:
-                exam_id_for_pipeline = int(response.data.get("id") or kwargs.get("pk") or 0)
-                if exam_id_for_pipeline:
-                    dispatch_progress_for_exam(exam_id=exam_id_for_pipeline)
-        except Exception:
-            # progress pipeline 실패해도 update 자체는 유지 (응답 반영됨)
-            import logging
-            logging.getLogger(__name__).exception(
-                "ExamViewSet update: progress dispatch after pass_score change failed"
-            )
+            max_changed = float(updated.max_score or 0) != prev_max
+            pass_changed = float(updated.pass_score or 0) != prev_pass
+            if obj.exam_type == Exam.ExamType.REGULAR and max_changed:
+                summary = regrade_exam_submissions(
+                    tenant=request.tenant, exam_id=int(updated.id), actor="ExamViewSet",
+                )
+                if summary["failed"]:
+                    raise ValidationError({
+                        "detail": "만점 변경 후 재채점에 실패해 변경을 취소했습니다. 재시도해 주세요.",
+                        "regrade": summary,
+                    })
+                response.data["regrade"] = summary
+            if obj.exam_type == Exam.ExamType.REGULAR and (pass_changed or max_changed):
+                dispatch_progress_for_exam(exam_id=int(updated.id))
 
         return response
 
