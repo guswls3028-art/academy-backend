@@ -998,6 +998,7 @@ class MyGradesSummaryHomeworkTests(TestCase):
         self.assertEqual(row["achievement"], "FAIL")
         self.assertEqual(row["retake_count"], 2)
         self.assertTrue(row["submission_media_locked"])
+        self.assertEqual(row["submission_state"], "reviewed")
 
     def test_latest_retake_failure_keeps_media_unlocked_after_initial_pass(self):
         homework = Homework.objects.create(
@@ -1038,6 +1039,7 @@ class MyGradesSummaryHomeworkTests(TestCase):
         self.assertTrue(row["passed"])
         self.assertEqual(row["retake_count"], 2)
         self.assertFalse(row["submission_media_locked"])
+        self.assertEqual(row["submission_state"], "needs_submission")
 
     def test_homeworks_are_session_ordered_and_expose_regular_supplement_scope(self):
         supplement_session = Session.objects.create(
