@@ -219,6 +219,20 @@ PostgreSQL `test_clinic_overnight_migration_lock_timeout.py`. 실제 사용자 P
 추정하지 않는다. tenant나 session을 현재 요청 범위에서 확인할 수 없으면 다른
 tenant를 추정하지 않고 실패 폐쇄한다.
 
+### 일정 tree 날짜 범위 조회
+
+교직원 전용 `GET /api/v1/clinic/sessions/tree/`는 기존 `year`+`month` 조회와
+`date_from`+`date_to` inclusive 조회 중 정확히 하나만 받는다. 날짜 범위는 최대
+31일이며 일부 누락, 역순, 잘못된 날짜, 월 조회와의 혼합을 `400`으로 거부한다.
+범위는 tenant-scoped `Session.date`에 직접 적용하므로 8월 31일~9월 6일처럼
+월말·월초를 건너도 양 끝 날짜를 모두 포함하고 서버 시각대 변환을 하지 않는다.
+
+이 조회는 존재하는 세션 행을 반환한다. 참가자의 `cancelled` 여부는 세션 자체를
+숨기지 않으며 예약·출결 수치는 상태별 집계로만 구분한다. 삭제된 세션 행과 다른
+tenant의 세션은 반환하지 않는다. 이전 주 복사에 필요한 제목·날짜·시간·장소·정원,
+대상 학년/학교유형/강의/반, 희망시간 접수, 다중 시간대, 예약 방식·간격·최대 체류
+snapshot을 함께 반환하지만 참가자 명단은 반환하거나 복사하지 않는다.
+
 ## limglish 현재·미래 일정 전환
 
 기존 limglish 일정은 일반 migration에서 모든 tenant와 함께 추정 변환하지 않는다.
@@ -412,6 +426,8 @@ bulk 모두 `409`로 거부하고 요청 전체를 롤백한다. 일정 변경�
 - 집중 API 회귀: `tests/test_clinic_multi_slot_booking_api.py`
 - 직접 취소·부작용 0·학생/학부모·PostgreSQL 동시성 회귀:
   `tests/test_clinic_self_cancellation.py`
+- 월 경계·tenant·복사 설정 범위 회귀:
+  `tests/test_clinic_session_tree_date_range_api.py`
 - 시간 범위·권한·연락처·알림 이력 회귀: `tests/test_clinic_time_range_policy_api.py`
 - 자정 종료·구간 정원·리마인더·DB 제약 회귀:
   `tests/test_clinic_time_range_midnight_api.py`
