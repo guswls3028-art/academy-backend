@@ -70,6 +70,15 @@ try {
     $frontendWorktree = Join-Path $fixtureRoot "_worktrees\sessions\contract-test\frontend"
     Assert-True (Test-Path -LiteralPath $backendWorktree) "Backend session worktree is missing."
     Assert-True (Test-Path -LiteralPath $frontendWorktree) "Frontend session worktree is missing."
+    $inspectOutput = @(& $scriptUnderTest `
+        -Action Inspect `
+        -Session contract-test `
+        -Repository both `
+        -WorkspaceRoot $fixtureRoot `
+        -SkipFetch)
+    Assert-True (
+        @($inspectOutput -match "SESSION_WORKTREE_STATUS").Count -eq 2
+    ) "Scoped Inspect must report only the requested paired worktrees."
 
     Set-Content -LiteralPath (Join-Path $backendWorktree "dirty.txt") -Value "dirty" -Encoding UTF8
     $dirtyRefused = $false
@@ -110,6 +119,47 @@ try {
     ))[0]
     [void](Invoke-Git -Root $backendRoot -Arguments @("merge", "--ff-only", $backendBranch))
     [void](Invoke-Git -Root $backendRoot -Arguments @("push", "origin", "main"))
+
+    $frontendExclude = Join-Path $fixtureRoot "frontend\.git\info\exclude"
+    Add-Content -LiteralPath $frontendExclude -Value "node_modules/`n.env.local" -Encoding UTF8
+    $generatedDir = Join-Path $frontendWorktree "node_modules"
+    [void](New-Item -ItemType Directory -Path $generatedDir)
+    Set-Content -LiteralPath (Join-Path $generatedDir "package.txt") -Value "rebuildable" -Encoding UTF8
+    $privateFile = Join-Path $frontendWorktree ".env.local"
+    Set-Content -LiteralPath $privateFile -Value "preserve" -Encoding UTF8
+    $ignoredRefused = $false
+    try {
+        & $scriptUnderTest `
+            -Action Close `
+            -Session contract-test `
+            -Repository both `
+            -WorkspaceRoot $fixtureRoot *> $null
+    } catch {
+        $ignoredRefused = $_.Exception.Message.Contains("ignored local data")
+    }
+    Assert-True $ignoredRefused "Close must refuse ignored local data."
+    Assert-True (Test-Path -LiteralPath $backendWorktree) "Ignored-data preflight must preserve paired worktrees."
+    Assert-True (Test-Path -LiteralPath $privateFile) "Close must preserve ignored local data."
+    Remove-Item -LiteralPath $privateFile
+    $generatedRefused = $false
+    try {
+        & $scriptUnderTest `
+            -Action Close `
+            -Session contract-test `
+            -Repository both `
+            -WorkspaceRoot $fixtureRoot *> $null
+    } catch {
+        $generatedRefused = $_.Exception.Message.Contains("ignored local data")
+    }
+    Assert-True $generatedRefused "Close must refuse generated ignored data before Git can leave an orphan."
+    Assert-True (Test-Path -LiteralPath $backendWorktree) "Generated-data preflight must preserve paired worktrees."
+    Remove-Item -LiteralPath $generatedDir -Recurse
+
+    $backendExclude = Join-Path $fixtureRoot "backend\.git\info\exclude"
+    Add-Content -LiteralPath $backendExclude -Value ".ruff_cache/" -Encoding UTF8
+    $backendCache = Join-Path $backendWorktree ".ruff_cache"
+    [void](New-Item -ItemType Directory -Path $backendCache)
+    Set-Content -LiteralPath (Join-Path $backendCache "cache.txt") -Value "rebuildable" -Encoding UTF8
 
     $closeOutput = @(& $scriptUnderTest `
         -Action Close `

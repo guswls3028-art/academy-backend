@@ -122,12 +122,21 @@ function Get-IntegrationState([string]$Root) {
 }
 
 function Invoke-Inspect {
+    if ($Session) { Assert-SessionName }
     $total = 0
     $dirty = 0
     foreach ($name in Get-RepositoryNames) {
         $root = Get-RepositoryRoot $name
         Update-MainReference $root
         foreach ($path in Get-WorktreePaths $root) {
+            if ($Session) {
+                $expected = Join-Path $WorkspaceRoot "_worktrees\sessions\$Session\$name"
+                if (-not [string]::Equals(
+                    [IO.Path]::GetFullPath($path),
+                    [IO.Path]::GetFullPath($expected),
+                    [StringComparison]::OrdinalIgnoreCase
+                )) { continue }
+            }
             $total++
             $status = @(Invoke-GitChecked -Root $path -Arguments @(
                 "status", "--porcelain=v1", "--untracked-files=normal"
@@ -157,6 +166,10 @@ function Invoke-Inspect {
 
 function Invoke-Start {
     Assert-SessionName
+    $volume = [IO.DriveInfo]::new([IO.Path]::GetPathRoot($WorkspaceRoot))
+    if ($volume.AvailableFreeSpace -lt 10GB) {
+        Write-Warning ('Academy workspace disk has {0:N1} GB free; close completed sessions before large installs or builds.' -f ($volume.AvailableFreeSpace / 1GB))
+    }
     $names = @(Get-RepositoryNames)
     $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
     $sessionRoot = Join-Path $WorkspaceRoot "_worktrees\sessions\$Session"
@@ -275,17 +288,41 @@ function Invoke-Close {
         if ($integration -eq "unmerged") {
             throw "Session branch is not merged into origin/main and will be preserved: $branch"
         }
+        $ignored = @(Invoke-GitChecked -Root $path -Arguments @(
+            "status", "--ignored", "--porcelain=v1", "--untracked-files=normal"
+        ) | Where-Object { [string]$_ -like "!! *" })
+        $ignoredPaths = @($ignored | ForEach-Object { ([string]$_).Substring(3) })
+        $unexpected = @($ignoredPaths | Where-Object {
+            $name -ne "backend" -or (
+                $_ -notin @(".pytest_cache/", ".ruff_cache/") -and
+                $_ -notmatch '(^|/)__pycache__/$'
+            )
+        })
+        if ($unexpected.Count -gt 0) {
+            throw "Session has ignored local data and will be preserved: $path ($($unexpected -join ', '))"
+        }
         [void]$plans.Add([pscustomobject]@{
             Name = $name
             Root = $root
             Path = $path
             Branch = $branch
             Integration = $integration
+            IgnoredPaths = $ignoredPaths
         })
     }
 
     foreach ($plan in $plans) {
         if ($PSCmdlet.ShouldProcess($plan.Path, "remove merged clean Academy session worktree")) {
+            if ($plan.IgnoredPaths.Count -gt 0) {
+                $cleanArguments = @("clean", "-fdX", "--") + @($plan.IgnoredPaths)
+                [void](Invoke-GitChecked -Root $plan.Path -Arguments $cleanArguments)
+                $remainingIgnored = @(Invoke-GitChecked -Root $plan.Path -Arguments @(
+                    "status", "--ignored", "--porcelain=v1", "--untracked-files=normal"
+                ) | Where-Object { [string]$_ -like "!! *" })
+                if ($remainingIgnored.Count -gt 0) {
+                    throw "Generated cache cleanup was incomplete; preserving worktree: $($plan.Path)"
+                }
+            }
             [void](Invoke-GitChecked -Root $plan.Root -Arguments @(
                 "worktree", "remove", $plan.Path
             ))
