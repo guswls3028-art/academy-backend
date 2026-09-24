@@ -42,8 +42,9 @@ acceptance criteria, scoped HOLDs, required CI and delivery ownership still appl
 
 ### Reasoning by actual change impact
 
-Keep the user defaults at the chosen model and `medium` for normal and Plan
-work. Never copy the current task's `ultra` into new-task/subagent defaults.
+Keep the primary Codex model and effort as selected by the user. Web subagent
+defaults are independent; the table below guides local work and deliberate
+exceptions to the Web Pro delegation preference.
 
 | Actual work | Reasoning choice |
 |---|---|
@@ -59,11 +60,10 @@ not a larger reasoning setting.
 
 Instructions saying "think at high" do not change runtime effort. When actual
 risk requires High or above and the primary effort is lower or unverified, use
-the supported scoped delegation below at that effort before consequential
-implementation. This policy authorizes that request; no repeat user request is
-needed. A primary
-task already at the required effort can perform the analysis itself; do not add
-a duplicate reviewer solely for effort coverage.
+a scoped Web Pro reviewer before consequential implementation if the review is
+independent. This policy authorizes that request; no repeat user request is
+needed. A primary task already at the required effort need not add a duplicate
+reviewer solely for effort coverage.
 
 If delegation is unavailable, select the required effort in the app's
 model/reasoning picker before the relevant work; an existing selection applies to
@@ -80,18 +80,26 @@ evidence that `medium` preserves its quality.
 
 ### Valuable delegation and context
 
-Keep one concurrent subagent and default subagent effort `medium`. This limits
-simultaneously open subagents, not lifetime agent count, total tokens or cost.
-Small tasks need no agent. Reuse completed findings or the existing agent for a
-new bounded question instead of sequentially spawning near-duplicate workers.
+Keep one concurrent subagent. The global Codex `[agents]` settings select
+`chatgpt-web/pro` at `ultra` for spawned agents; keep the primary Codex model
+unchanged. Start one useful, bounded Web task early for meaningful independent
+implementation, research, diagnosis, architecture or review while Codex handles
+non-overlapping work. Use a lower Web model only for genuinely trivial tasks.
+If Pro is at capacity, retry once; do not silently downgrade consequential
+work. Check bridge `doctor --json` and `browser check` before calling a generic
+spawn failure an account limit: a failed `browser-host` check means the local
+launcher cannot verify its ChatGPT browser. Continue locally if the retry fails
+and report the limitation. Simple one-step work may stay local when delegation
+adds more work than it saves.
+Reuse completed findings or the existing agent for a new bounded question
+instead of spawning near-duplicate workers.
 
 Supply the objective, exact paths/symbols/SHA, relevant constraints/invariants,
 expected result, and established facts/failure evidence. Omit unrelated history
 and whole documents/logs; do not omit evidence essential for correct review.
-With the available collaboration tool, `fork_turns: "none"` excludes surrounding
-conversation history. A positive integer string carries that many recent turns,
-not a token allowance. Runtime/project/tool instructions still occupy context,
-and files remain shared: a short prompt does not prove a small actual input.
+With the current collaboration tool, `fork_context: false` omits the current
+thread history. Runtime/project/tool instructions still occupy context, and
+files remain shared: a short prompt does not prove a small actual input.
 If the interface cannot control inheritance, record that limit instead of
 promising reduced context.
 
@@ -100,17 +108,15 @@ check the proposed approach, invariants and failure boundaries before the risky
 implementation, then incorporate its findings. Continue independent work while
 it runs. Reuse that reviewer for the resulting relevant diff/evidence when
 needed; send only the changes and new evidence, not a second full investigation.
-Where supported, use
-`spawn_agent(task_name="focused_review", fork_turns="none", reasoning_effort="high", message=<bounded brief>)`.
-The actual effort argument matters. Omitted/`all` history forks inherit the
-parent's model/effort and cannot accept these overrides; avoid them when they
-would carry `ultra`. Keep the model choice unchanged unless separately assigned.
+Check the current spawn tool contract and actual selected model. An explicit
+`model="chatgpt-web/pro"` and `reasoning_effort="ultra"` may be used when the
+saved defaults have not loaded into an existing task. A configured default does
+not itself spawn an agent or prove that a Web request succeeded.
 
-Verified with Codex 0.154.0-alpha.6.2: `multiAgentMode` input is deprecated/ignored
-and the response always says `explicitRequestOnly`; this field does not prove
-delegation behavior. The model catalog associates Ultra with automatic task
-delegation. A saved medium default alone does not arrange review: the agent must
-invoke the explicit request under this policy and check the current tool contract.
+This Web model setting belongs to the local Codex host. Codex Cloud currently
+does not allow changing its default cloud-chat model, and an SSH remote project
+uses the remote host's configuration. Verify the bridge on the execution host
+before claiming that remote development uses Web Pro.
 
 ### Output recovery and complete review
 
