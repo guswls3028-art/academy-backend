@@ -797,7 +797,7 @@ expired → {active}
 
 **전이 SSOT:** `apps/billing/services/subscription_service.py`
 
-- `BILLING_GRACE_PERIOD_DAYS`(기본 7일)는 유료 기간 종료일 다음 날부터
+- `BILLING_GRACE_PERIOD_DAYS`(기본 30일)는 유료 기간 종료일 다음 날부터
   적용하며, `service_access_expires_at = subscription_expires_at + grace days`다.
 - `process_billing`이 `active → grace → expired`를 수행하고
   `sync_subscription`은 누락 복구 안전망이다. 장기간 배치가 누락돼 유예
@@ -807,6 +807,10 @@ expired → {active}
   기간보다 뒤처진 경우를 릴리스 차단 오류로 보고한다.
 - 402 접근 판정과 구독 API의 `days_remaining`은 유예 상태에서 실제 서비스
   접근 종료일을 기준으로 한다.
+- 유료 기간이 지난 비해지 `active`도 배치 전부터 같은 유예 접근을 허용한다.
+  저장 상태 전이는 배치가 소유하며 조회가 DB 상태를 변경하지 않는다.
+  명시적 해지 예약과 `expired`는 자동 복구하지 않는다. 직원 로그인 안내의
+  공개 범위와 갱신 흐름은 [결제 운영 계약](../operations/billing-go-live-checklist.md)을 따른다.
 
 ---
 

@@ -387,8 +387,16 @@ class Program(TimestampModel):
     @property
     def grace_expires_at(self):
         if (
-            self.subscription_status != self.SubscriptionStatus.GRACE
-            or self.subscription_expires_at is None
+            self.subscription_expires_at is None
+            or self.cancel_at_period_end
+            or self.subscription_status not in (
+                self.SubscriptionStatus.ACTIVE, self.SubscriptionStatus.GRACE,
+            )
+        ):
+            return None
+        if (
+            self.subscription_status == self.SubscriptionStatus.ACTIVE
+            and timezone.localdate() <= self.subscription_expires_at
         ):
             return None
         return self.subscription_expires_at + timedelta(days=self.grace_period_days)
@@ -396,9 +404,7 @@ class Program(TimestampModel):
     @property
     def service_access_expires_at(self):
         """Last date on which service access is allowed for the current state."""
-        if self.subscription_status == self.SubscriptionStatus.GRACE:
-            return self.grace_expires_at
-        return self.subscription_expires_at
+        return self.grace_expires_at or self.subscription_expires_at
 
     @property
     def is_subscription_active(self) -> bool:
@@ -425,6 +431,26 @@ class Program(TimestampModel):
             return None
         delta = (access_expires_at - timezone.localdate()).days
         return max(0, delta)
+
+    @property
+    def subscription_notice(self):
+        """Minimal overdue notice; callers must require active staff membership."""
+        if (
+            self.tenant_id in settings.BILLING_EXEMPT_TENANT_IDS
+            or self.subscription_expires_at is None
+            or self.cancel_at_period_end
+            or not self.is_subscription_active
+        ):
+            return None
+        days_overdue = (timezone.localdate() - self.subscription_expires_at).days
+        if days_overdue <= 0:
+            return None
+        return {
+            "subscription_expires_at": self.subscription_expires_at.isoformat(),
+            "service_access_expires_at": self.service_access_expires_at.isoformat(),
+            "days_overdue": days_overdue,
+            "days_remaining": self.days_remaining,
+        }
 
     def __str__(self) -> str:
         return f"Program<{self.tenant.code}>:{self.display_name}"
