@@ -11,6 +11,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from apps.core.models import Tenant
+from apps.domains.ai.models import AIJobModel
 from apps.domains.submissions.models import Submission
 from apps.domains.submissions.omr_pipeline.services.state_recovery import (
     detect_stuck_submissions,
@@ -66,6 +67,58 @@ class StateRecoveryTransitionTests(TestCase):
             (stuck.meta or {}).get("state_recovery", {}).get("from_status"),
             Submission.Status.EXTRACTING,
         )
+
+    def test_live_ai_lease_defers_recovery_until_worker_window_expires(self):
+        stuck = self._make_submission(
+            status=Submission.Status.DISPATCHED, updated_minutes_ago=45,
+        )
+        now = timezone.now()
+        job = AIJobModel.objects.create(
+            job_id=f"recovery-live-{stuck.id}",
+            job_type="omr_grading",
+            status="RUNNING",
+            tenant_id=str(self.tenant.id),
+            source_domain="submissions",
+            source_id=str(stuck.id),
+            started_at=now - timedelta(minutes=40),
+            lease_expires_at=now + timedelta(minutes=19),
+        )
+
+        report = recover_stuck_submissions(actor="test")
+        self.assertIn(stuck.id, report.skipped)
+        self.assertNotIn(stuck.id, report.recovered)
+        stuck.refresh_from_db()
+        self.assertEqual(stuck.status, Submission.Status.DISPATCHED)
+
+        AIJobModel.objects.filter(pk=job.pk).update(
+            started_at=now - timedelta(minutes=70),
+            lease_expires_at=now - timedelta(minutes=5),
+        )
+        report = recover_stuck_submissions(actor="test")
+        self.assertIn(stuck.id, report.recovered)
+        stuck.refresh_from_db()
+        self.assertEqual(stuck.status, Submission.Status.FAILED)
+
+    def test_foreign_ai_lease_cannot_hold_this_tenant_submission(self):
+        stuck = self._make_submission(
+            status=Submission.Status.DISPATCHED, updated_minutes_ago=45,
+        )
+        foreign_tenant = Tenant.objects.create(
+            name="Foreign Recovery Tenant", code="foreign-state-recovery", is_active=True,
+        )
+        AIJobModel.objects.create(
+            job_id=f"foreign-recovery-{stuck.id}",
+            job_type="omr_grading",
+            status="RUNNING",
+            tenant_id=str(foreign_tenant.id),
+            source_domain="submissions",
+            source_id=str(stuck.id),
+            started_at=timezone.now(),
+            lease_expires_at=timezone.now() + timedelta(minutes=30),
+        )
+
+        report = recover_stuck_submissions(actor="test")
+        self.assertIn(stuck.id, report.recovered)
 
     def test_rechecks_each_status_version_after_detection(self):
         timeouts = {

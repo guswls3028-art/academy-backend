@@ -221,10 +221,12 @@ EventBridge 규칙 `academy-v1-recover-stuck-omr`은 5분마다
 
 복구는 후보 조회 결과를 그대로 신뢰하지 않는다. 각 Submission row를 잠근 뒤
 현재 상태와 탐지 당시 상태, `source=omr_scan`, 탐지 당시 `updated_at` 버전,
-현재 상태에 해당하는 cutoff를 한 번 더 모두 확인한다. 후보 조회 뒤 워커가
-heartbeat를 남기거나 다음 상태로 진행해 이 중 하나라도 달라졌으면 그 실행은
-skip하고, 다음 5분 실행이 새 상태와 버전으로 다시 판단한다. 따라서 늦게 row lock을
-얻은 recovery가 살아 있는 worker 상태를 `FAILED`로 덮어쓰지 않는다.
+현재 상태에 해당하는 cutoff를 한 번 더 모두 확인한다. 후보 조회 뒤 상태나
+`updated_at`이 달라졌으면 skip하고 다음 5분 실행이 새 버전으로 다시 판단한다.
+또한 같은 tenant·Submission의 AI job에 유효한 RUNNING lease나 최근 65분 내
+시작한 RUNNING/대기 job이 있으면 실패 전이를 건너뛴다. AI 워커는 최대 60분
+추론할 수 있으므로 Submission 자체의 30분 무변경만으로 살아 있는 작업을
+`FAILED`로 만들지 않는다.
 
 `DONE`과 기존 `FAILED`는 이 recovery의 후보가 아니므로 변경하지 않는다. 동일한
 EventBridge 실행이 반복되어도 첫 성공만 `meta.state_recovery`를 기록하고 후속 실행은
@@ -232,6 +234,12 @@ EventBridge 실행이 반복되어도 첫 성공만 `meta.state_recovery`를 기
 `stuck:<status>_timeout`과 actor를 기록한다. 일반 재처리는 기존 retry lifecycle을
 따른다. 단, 이미 학생이 확정되었고 답안이 아직 없는 복구 실패 제출에 정상 AI 결과가
 늦게 도착하면 기존 콜백이 row lock 아래 답안을 저장하고 재채점을 진행할 수 있다.
+아직 학생이 확정되지 않은 복구 실패 제출도 답안이 비어 있고, 같은 tenant·Submission의
+가장 최근 AI job이 `DONE`이며 결과에 답안이 있을 때만 보호된
+`FAILED → SUBMITTED → DISPATCHED` 전이를 거쳐 결과를 저장한다. 식별이 안 되면
+`NEEDS_IDENTIFICATION`으로 교직원 확인을 기다린다. 다른 tenant나 뒤이은 job의
+낡은 콜백은 답안과 사용자 데이터를 변경하지 않는다. 이 경계는
+`test_state_recovery.py`와 `test_omr_tenant_realuse_flow.py`에서 확인한다.
 
 단일정답 문항에서 워커가 강한 복수마킹을 `status=ok, marking=multi`로 보내더라도
 정답과 완전히 일치하는 다중정답 키가 아니면 `ANSWER_SCORE_AMBIGUOUS`로 검토를

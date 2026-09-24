@@ -729,8 +729,11 @@ python manage.py reconcile_stale_ai_jobs --older-than-hours 24 --job-id <job-id>
 
 실행 transaction은 job의 tenant/type/source/status/lock/lease/`updated_at`과 source의
 tenant/status/current job snapshot이 전부 동일할 때만 전이한다. 사이에 heartbeat나
-소유권 변경이 있으면 오류로 닫아 새 dry-run을 요구한다. tenant 관계가 없거나 다르면
-`manual_review`로만 출력하며 실행하지 않는다. `--execute`만으로 bulk 정합화할 수 없고,
+소유권 변경이 있으면 오류로 닫아 새 dry-run을 요구한다. source 조회와 재시도는
+처음부터 job의 tenant로 범위를 제한한다. tenant가 없는 job은 source를 읽지 않고
+`manual_review`로 남긴다. 같은 tenant에서 source가 없거나 범위를 벗어나면
+`orphan_source`로 job만 실패 처리하며 다른 tenant의 source 상태·job ID를
+dry-run에 출력하거나 source를 변경하지 않는다. `--execute`만으로 bulk 정합화할 수 없고,
 명령은 SQS 메시지, 운영 source 파일이나 결과 payload를 삭제하지 않는다. processing
 source의 재시도는 별도 `--include-processing-source`를 명시하고 같은 exact-target
 규칙을 따른다. 실제 전이가 commit된 뒤에는 일반 worker와 같은 공용 Redis cache 경계로

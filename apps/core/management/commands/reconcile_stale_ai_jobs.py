@@ -100,18 +100,15 @@ def iter_stale_matchup_candidates(
             candidates.append(_candidate(job, reason="invalid_source_id"))
             continue
 
-        doc = MatchupDocument.objects.filter(id=int(source_id)).only("id", "status", "ai_job_id").first()
+        if not job.tenant_id:
+            candidates.append(_candidate(job, reason="missing_tenant_scope", action="manual_review"))
+            continue
+
+        doc = MatchupDocument.objects.filter(
+            id=int(source_id), tenant_id=job.tenant_id,
+        ).only("id", "status", "ai_job_id").first()
         if doc is None:
             candidates.append(_candidate(job, reason="orphan_source"))
-            continue
-        if not job.tenant_id or str(doc.tenant_id) != str(job.tenant_id):
-            candidates.append(_candidate(
-                job,
-                reason="source_tenant_scope_mismatch",
-                action="manual_review",
-                source_status=str(doc.status),
-                source_job_id=str(doc.ai_job_id or ""),
-            ))
             continue
 
         current_job_id = str(doc.ai_job_id or "")
@@ -238,6 +235,7 @@ def reconcile_candidates(candidates: Iterable[ReconcileCandidate], *, execute: b
             if candidate.action == "retry_processing_source" and str(job.source_id or "").isdigit():
                 doc = MatchupDocument.objects.select_for_update().filter(
                     id=int(str(job.source_id)),
+                    tenant_id=job.tenant_id,
                     ai_job_id=job.job_id,
                     status="processing",
                 ).first()
@@ -247,14 +245,18 @@ def reconcile_candidates(candidates: Iterable[ReconcileCandidate], *, execute: b
                     doc.save(update_fields=["status", "error_message", "updated_at"])
             updated += 1
             if candidate.action == "retry_processing_source" and str(job.source_id or "").isdigit():
-                transaction.on_commit(lambda doc_id=int(str(job.source_id)): _retry_failed_matchup_document(doc_id))
+                transaction.on_commit(
+                    lambda doc_id=int(str(job.source_id)), tenant_id=job.tenant_id: (
+                        _retry_failed_matchup_document(doc_id, tenant_id)
+                    )
+                )
     return updated
 
 
-def _retry_failed_matchup_document(doc_id: int) -> None:
+def _retry_failed_matchup_document(doc_id: int, tenant_id: str) -> None:
     from apps.domains.matchup.services import retry_document
 
-    doc = MatchupDocument.objects.get(id=doc_id)
+    doc = MatchupDocument.objects.get(id=doc_id, tenant_id=tenant_id)
     retry_document(doc, require_failed=True)
 
 

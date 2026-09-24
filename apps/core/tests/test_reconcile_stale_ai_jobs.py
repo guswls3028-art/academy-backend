@@ -168,6 +168,76 @@ class ReconcileStaleAIJobsTests(TestCase):
         job.refresh_from_db()
         self.assertEqual(job.status, "RUNNING")
 
+    def test_foreign_source_is_invisible_and_never_mutated(self):
+        foreign_tenant = Tenant.objects.create(
+            code="ai-reconcile-foreign", name="Foreign AI Reconcile", is_active=True,
+        )
+        foreign_inventory = InventoryFile.objects.create(
+            tenant=foreign_tenant,
+            scope="admin",
+            display_name="foreign.pdf",
+            r2_key=f"tests/{uuid.uuid4()}.pdf",
+            original_name="foreign.pdf",
+            content_type="application/pdf",
+        )
+        foreign_doc = MatchupDocument.objects.create(
+            tenant=foreign_tenant,
+            inventory_file=foreign_inventory,
+            title="Foreign private source",
+            r2_key=f"tests/{uuid.uuid4()}.pdf",
+            original_name="foreign.pdf",
+            status="done",
+            ai_job_id="foreign-private-job-id",
+        )
+        expired_at = timezone.now() - timedelta(hours=3)
+        job = AIJobModel.objects.create(
+            job_id=str(uuid.uuid4()),
+            job_type="matchup_analysis",
+            status="RUNNING",
+            tenant_id=str(self.tenant.id),
+            source_domain="matchup",
+            source_id=str(foreign_doc.id),
+            locked_by="ai-sqs-worker",
+            locked_at=expired_at,
+            lease_expires_at=expired_at,
+            started_at=expired_at,
+        )
+
+        candidates = iter_stale_matchup_candidates(older_than_hours=1, limit=10)
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].reason, "orphan_source")
+        self.assertIsNone(candidates[0].observed_source_status)
+        self.assertIsNone(candidates[0].observed_source_job_id)
+        with patch(
+            "apps.core.management.commands.reconcile_stale_ai_jobs.cache_terminal_job_status"
+        ):
+            with self.captureOnCommitCallbacks(execute=True):
+                self.assertEqual(reconcile_candidates(candidates, execute=True), 1)
+        job.refresh_from_db()
+        foreign_doc.refresh_from_db()
+        self.assertEqual(job.status, "FAILED")
+        self.assertEqual(foreign_doc.status, "done")
+        self.assertEqual(foreign_doc.ai_job_id, "foreign-private-job-id")
+
+    def test_missing_job_tenant_scope_requires_manual_review(self):
+        expired_at = timezone.now() - timedelta(hours=3)
+        job = AIJobModel.objects.create(
+            job_id=str(uuid.uuid4()),
+            job_type="matchup_analysis",
+            status="RUNNING",
+            tenant_id=None,
+            source_domain="matchup",
+            source_id="999999997",
+            lease_expires_at=expired_at,
+            started_at=expired_at,
+        )
+        candidates = iter_stale_matchup_candidates(older_than_hours=1, limit=10)
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].job_id, job.job_id)
+        self.assertEqual(candidates[0].reason, "missing_tenant_scope")
+        self.assertEqual(candidates[0].action, "manual_review")
+        self.assertIsNone(candidates[0].observed_source_status)
+
         with self.assertRaisesRegex(CommandError, "requires exact"):
             call_command(
                 "reconcile_stale_ai_jobs",

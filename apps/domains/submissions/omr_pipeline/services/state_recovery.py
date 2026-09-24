@@ -25,8 +25,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
+from apps.domains.ai.models import AIJobModel
 from apps.domains.submissions.models import Submission
 from apps.domains.submissions.services.lifecycle import (
     InvalidTransitionError,
@@ -43,6 +45,23 @@ logger = logging.getLogger(__name__)
 RECOVERY_TIMEOUTS_MIN: dict[str, int] = {
     status: 30 for status in STUCK_RECOVERABLE_STATUSES
 }
+
+# The worker can spend up to 60 minutes in inference. Give its live lease and
+# recently started/queued jobs time to finish before failing the submission.
+ACTIVE_OMR_JOB_GRACE = timedelta(minutes=65)
+
+
+def _has_live_omr_job(submission: Submission, now: datetime) -> bool:
+    recent = now - ACTIVE_OMR_JOB_GRACE
+    return AIJobModel.objects.filter(
+        tenant_id=str(submission.tenant_id),
+        source_domain="submissions",
+        source_id=str(submission.id),
+    ).filter(
+        Q(status="RUNNING")
+        & (Q(lease_expires_at__gt=now) | Q(started_at__gte=recent))
+        | Q(status__in=("PENDING", "VALIDATING", "RETRYING"), updated_at__gte=recent)
+    ).exists()
 
 
 @dataclass(frozen=True)
@@ -158,6 +177,13 @@ def recover_stuck_submissions(
                     )
                 except Submission.DoesNotExist:
                     report.skipped.append(alert.submission_id)
+                    continue
+                if _has_live_omr_job(sub, recovery_now):
+                    report.skipped.append(alert.submission_id)
+                    logger.info(
+                        "OMR_STATE_RECOVERY_SKIP_LIVE_AI_JOB | sub=%s | tenant=%s",
+                        sub.id, sub.tenant_id,
+                    )
                     continue
                 try:
                     fail_submission(
