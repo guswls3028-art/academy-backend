@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+import uuid
 from unittest import skipUnless
 from unittest.mock import patch
 
@@ -15,10 +16,13 @@ from apps.domains.homework_results.models import Homework, HomeworkScore
 from apps.domains.homework_results.views.homework_score_viewset import HomeworkScoreViewSet
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.students.models import Student
+from apps.support.submissions.dependencies import homework_submission_revisions
 
 
 User = get_user_model()
 ScoreEditDraft = apps.get_model("results", "ScoreEditDraft")
+Submission = apps.get_model("submissions", "Submission")
+SubmissionMedia = apps.get_model("submissions", "SubmissionMedia")
 
 
 class HomeworkQuickPatchScopeTests(TestCase):
@@ -205,6 +209,64 @@ class HomeworkQuickPatchScopeTests(TestCase):
         )
         self.assertEqual(response.data["id"], score.id)
         self.assertEqual(score.score, 80)
+        self.assertEqual(score.reviewed_submission_revision, "")
+
+    def test_explicit_score_review_captures_current_submission_revision(self):
+        submission = Submission.objects.create(
+            tenant=self.tenant,
+            user=self.assigned_enrollment.student.user,
+            enrollment=self.assigned_enrollment,
+            target_type=Submission.TargetType.HOMEWORK,
+            target_id=self.homework.id,
+            source=Submission.Source.HOMEWORK_IMAGE,
+            status=Submission.Status.SUBMITTED,
+        )
+        media = SubmissionMedia.objects.create(
+            tenant=self.tenant,
+            submission=submission,
+            client_upload_id=uuid.uuid4(),
+            upload_batch_id=uuid.uuid4(),
+            fingerprint="a" * 64,
+            object_key="tenant/test/graded.jpg",
+            original_filename="풀이.jpg",
+            media_kind=SubmissionMedia.Kind.IMAGE,
+            mime_type="image/jpeg",
+            size=100,
+            position=0,
+            status=SubmissionMedia.Status.UPLOADED,
+        )
+        self._quick_patch({
+            "session_id": self.session.id,
+            "homework_id": self.homework.id,
+            "enrollment_id": self.assigned_enrollment.id,
+            "score": 30,
+        })
+        score = HomeworkScore.objects.get(homework=self.homework, enrollment=self.assigned_enrollment)
+        reviewed = homework_submission_revisions(
+            tenant=self.tenant,
+            enrollment_ids=[self.assigned_enrollment.id],
+            homework_ids=[self.homework.id],
+        )[(self.assigned_enrollment.id, self.homework.id)]
+        self.assertEqual(score.reviewed_submission_revision, reviewed)
+        self._quick_patch({
+            "session_id": self.session.id,
+            "homework_id": self.homework.id,
+            "enrollment_id": self.assigned_enrollment.id,
+            "meta_status": HomeworkScore.MetaStatus.NOT_SUBMITTED,
+        })
+        score.refresh_from_db()
+        self.assertEqual(score.reviewed_submission_revision, reviewed)
+        media.removed_at = score.updated_at
+        media.status = SubmissionMedia.Status.REMOVED
+        media.save(update_fields=["removed_at", "status"])
+        self.assertEqual(
+            homework_submission_revisions(
+                tenant=self.tenant,
+                enrollment_ids=[self.assigned_enrollment.id],
+                homework_ids=[self.homework.id],
+            ),
+            {},
+        )
 
     def test_quick_patch_uses_cell_version_cas_and_preserves_server_value_on_conflict(self):
         first = self._quick_patch(

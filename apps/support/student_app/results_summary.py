@@ -10,6 +10,7 @@ from django.db.models import F, Max
 from apps.domains.enrollment.selectors import learning_history_enrollments_for_student
 from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.homework_results.models import HomeworkScore
+from apps.domains.submissions.models import Submission
 from apps.core.services.student_grade_report_layout import (
     get_student_grade_report_layout,
 )
@@ -25,9 +26,7 @@ from apps.support.results.student_grade_history import (
     build_student_exam_history,
     empty_exam_summary,
 )
-from apps.support.results.admin_student_grades_dependencies import (
-    submitted_homework_keys_for_grades,
-)
+from apps.support.submissions.dependencies import homework_submission_revisions
 
 
 def get_student_exam_result_data(request: Any, exam_id: int, *, tenant: Any):
@@ -235,6 +234,22 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
         enrollment_ids=enrollment_ids,
         published_results_only=True,
     )
+    pending_exam_keys = set(
+        Submission.objects.filter(
+            tenant=tenant,
+            enrollment_id__in=enrollment_ids,
+            enrollment__tenant=tenant,
+            target_type=Submission.TargetType.EXAM,
+            target_id__in=[int(exam["exam_id"]) for exam in exam_list],
+            status__in=[
+                Submission.Status.SUBMITTED,
+                Submission.Status.DISPATCHED,
+                Submission.Status.EXTRACTING,
+                Submission.Status.ANSWERS_READY,
+                Submission.Status.GRADING,
+            ],
+        ).values_list("enrollment_id", "target_id")
+    ) if exam_list else set()
     ready_exams = [
         exam
         for exam in exam_list
@@ -300,6 +315,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
         current_exam_max_score = float(exam.pop("_current_max_score"))
         exam_id = int(exam["exam_id"])
         enrollment_id = int(exam["enrollment_id"])
+        exam["submission_pending"] = (enrollment_id, exam_id) in pending_exam_keys
         if exam.get("grading_status") == "subjective_pending":
             exam.update({
                 "rank": None,
@@ -368,7 +384,6 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             homework__session_id=F("session_id"),
             attempt_index=1,
         )
-        .exclude(score__isnull=True)
         .exclude(homework__meta__removed_from_session_at__isnull=False)
         .exclude(session__lecture__is_system=True)
         .select_related("homework", "session", "session__lecture")
@@ -393,6 +408,11 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
     assigned_homework_ids = {assignment.homework_id for assignment in assigned_homeworks}
     homework_ids = list(
         {score.homework_id for score in homework_scores} | assigned_homework_ids
+    )
+    submitted_revisions = homework_submission_revisions(
+        tenant=tenant,
+        enrollment_ids=enrollment_ids,
+        homework_ids=homework_ids,
     )
     submission_media_lock_keys = _homework_submission_media_lock_keys(
         tenant=tenant,
@@ -438,9 +458,15 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
 
     homework_list = []
     seen_homework_key = set()
+    unscored_reviewed_revisions = {}
     for score in homework_scores:
         safe_score = _safe_homework_number(score.score)
         if safe_score is None:
+            meta = score.meta if isinstance(score.meta, dict) else {}
+            if meta.get("status") == HomeworkScore.MetaStatus.NOT_SUBMITTED:
+                unscored_reviewed_revisions[
+                    (score.homework_id, score.session_id, score.enrollment_id)
+                ] = score.reviewed_submission_revision
             continue
         key = (score.homework_id, score.session_id, score.enrollment_id)
         if key in seen_homework_key:
@@ -459,6 +485,16 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
         else:
             achievement = "FAIL"
 
+        submitted_revision = submitted_revisions.get((score.enrollment_id, score.homework_id))
+        submission_state = (
+            "reviewed"
+            if resolution in ("EXAM_PASS", "HOMEWORK_PASS", "MANUAL_OVERRIDE")
+            or (score.enrollment_id, score.homework_id) in submission_media_lock_keys
+            else "awaiting_review"
+            if submitted_revision and submitted_revision != score.reviewed_submission_revision
+            else "needs_submission"
+        )
+
         effective_max = _safe_homework_number(score.max_score, positive=True)
         if effective_max is None and score.homework:
             effective_max = _default_homework_max_score(score.homework)
@@ -472,6 +508,7 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             "max_score": effective_max,
             "passed": is_pass_1st,
             "achievement": achievement,
+            "submission_state": submission_state,
             "teacher_resolved": resolution == "MANUAL_OVERRIDE",
             "submission_media_locked": (
                 score.enrollment_id,
@@ -487,13 +524,6 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             **session_metadata,
         })
 
-    submitted_homework_keys = set()
-    if assigned_homework_ids:
-        submitted_homework_keys = submitted_homework_keys_for_grades(
-            tenant=tenant,
-            enrollment_ids=enrollment_ids,
-            homework_ids=list(assigned_homework_ids),
-        )
     for assignment in assigned_homeworks:
         homework = assignment.homework
         session = assignment.session
@@ -504,10 +534,14 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
 
         effective_max = _default_homework_max_score(homework)
         assignment_session_title, assignment_lecture_title = _session_titles(session)
-        was_submitted = (
+        submitted_revision = submitted_revisions.get((
             assignment.enrollment_id,
             assignment.homework_id,
-        ) in submitted_homework_keys
+        ))
+        awaiting_review = bool(submitted_revision) and (
+            key not in unscored_reviewed_revisions
+            or submitted_revision != unscored_reviewed_revisions[key]
+        )
         resolution = resolved_homework_links.get((
             assignment.enrollment_id,
             assignment.homework_id,
@@ -521,11 +555,15 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             "title": homework.title if homework else f"과제 #{assignment.homework_id}",
             "score": None,
             "max_score": effective_max,
-            "passed": None if was_submitted else False,
+            "passed": None if awaiting_review else False,
             "achievement": (
                 "REMEDIATED"
                 if teacher_resolved
-                else None if was_submitted else "NOT_SUBMITTED"
+                else None if awaiting_review else "NOT_SUBMITTED"
+            ),
+            "submission_state": (
+                "reviewed" if teacher_resolved else
+                "awaiting_review" if awaiting_review else "needs_submission"
             ),
             "teacher_resolved": teacher_resolved,
             "submission_media_locked": (

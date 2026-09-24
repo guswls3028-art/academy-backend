@@ -274,38 +274,13 @@ def submitted_homework_keys_for_grades(
     homework_ids: list[int],
 ) -> set[tuple[int, int]]:
     """Return tenant-safe (enrollment, homework) keys with a submission record."""
-    from django.db.models import Q
+    from apps.support.submissions.dependencies import homework_submission_revisions
 
-    from apps.domains.submissions.models import Submission
-
-    return set(
-        Submission.objects.filter(
-            tenant=tenant,
-            enrollment_id__in=enrollment_ids,
-            enrollment__tenant=tenant,
-            target_type=Submission.TargetType.HOMEWORK,
-            target_id__in=homework_ids,
-        )
-        .filter(
-            Q(
-                media_files__status="uploaded",
-                media_files__removed_at__isnull=True,
-            )
-            | ~Q(
-                source__in=[
-                    Submission.Source.HOMEWORK_IMAGE,
-                    Submission.Source.HOMEWORK_VIDEO,
-                ]
-            )
-            | (
-                Q(file_key__isnull=False)
-                & ~Q(file_key="")
-                & Q(meta__homework_media_legacy_removed_at__isnull=True)
-            )
-        )
-        .values_list("enrollment_id", "target_id")
-        .distinct()
-    )
+    return set(homework_submission_revisions(
+        tenant=tenant,
+        enrollment_ids=enrollment_ids,
+        homework_ids=homework_ids,
+    ))
 
 
 def resolved_homework_link_types(

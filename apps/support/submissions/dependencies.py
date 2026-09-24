@@ -6,11 +6,82 @@ lifecycle while cross-domain lookups stay behind this support boundary.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from dataclasses import dataclass
 from typing import Any
 
+from django.db.models import Prefetch
+
 logger = logging.getLogger(__name__)
+
+
+def homework_submission_revisions(
+    *,
+    tenant: Any,
+    enrollment_ids: list[int] | set[int],
+    homework_ids: list[int] | set[int],
+) -> dict[tuple[int, int], str]:
+    """Hash only accepted, still-active homework evidence per authorized target.
+
+    File identity (rather than an update timestamp) survives duplicate retries
+    and avoids treating failed/in-progress uploads as a completed submission.
+    Missing keys have no submitted evidence.
+    """
+    if not enrollment_ids or not homework_ids:
+        return {}
+
+    from apps.domains.homework_results.models import Homework
+    from apps.domains.submissions.models import Submission, SubmissionMedia
+
+    tenant_homework_ids = Homework.objects.filter(
+        tenant=tenant,
+        id__in=homework_ids,
+    ).values("id")
+
+    evidence = {}
+    parents = (
+        Submission.objects.filter(
+            tenant=tenant,
+            enrollment_id__in=enrollment_ids,
+            enrollment__tenant=tenant,
+            target_type=Submission.TargetType.HOMEWORK,
+            target_id__in=tenant_homework_ids,
+        )
+        .exclude(status__in=[Submission.Status.FAILED, Submission.Status.SUPERSEDED])
+        .prefetch_related(Prefetch(
+            "media_files",
+            queryset=SubmissionMedia.objects.filter(
+                status=SubmissionMedia.Status.UPLOADED,
+                removed_at__isnull=True,
+            ),
+            to_attr="uploaded_media_files",
+        ))
+    )
+    for parent in parents:
+        key = (int(parent.enrollment_id), int(parent.target_id))
+        parts = evidence.setdefault(key, [])
+        if parent.source not in {
+            Submission.Source.HOMEWORK_IMAGE,
+            Submission.Source.HOMEWORK_VIDEO,
+        }:
+            parts.append(("submission", int(parent.id)))
+        meta = parent.meta if isinstance(parent.meta, dict) else {}
+        if parent.file_key and not meta.get("homework_media_legacy_removed_at"):
+            parts.append(("legacy", int(parent.id)))
+        parts.extend(
+            ("media", int(media.id))
+            for media in parent.uploaded_media_files
+        )
+
+    return {
+        key: hashlib.sha256(
+            json.dumps(sorted(parts), separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        for key, parts in evidence.items()
+        if parts
+    }
 
 
 @dataclass(frozen=True)
