@@ -37,14 +37,18 @@ class AIJobRepository(Protocol):
         now: datetime,
     ) -> bool:
         """
-        PENDING → RUNNING 전이 (멱등: 이미 RUNNING이면 True).
+        PENDING/RETRYING 또는 lease가 만료된 RUNNING → RUNNING 전이.
+        유효 lease의 중복 RUNNING claim은 False.
         Returns: 성공 여부.
         """
         ...
 
     @abstractmethod
-    def mark_done(self, job_id: str, now: datetime, result_payload: Optional[dict] = None) -> bool:
-        """RUNNING → DONE. result_payload 있으면 결과 저장. 이미 DONE이면 True (멱등)."""
+    def mark_done(
+        self, job_id: str, now: datetime, result_payload: Optional[dict] = None,
+        *, expected_locked_at: Optional[datetime] = None,
+    ) -> bool:
+        """RUNNING → DONE CAS; expected_locked_at fences an SQS worker claim."""
         ...
 
     @abstractmethod
@@ -54,6 +58,9 @@ class AIJobRepository(Protocol):
         error_message: str,
         tier: str,
         now: datetime,
+        *,
+        expected_locked_at: Optional[datetime] = None,
+        preflight_only: bool = False,
     ) -> bool:
-        """RUNNING → 최종 상태 (tier에 따라 DONE/FAILED 등). 이미 최종 상태면 True (멱등)."""
+        """Failure CAS; preflight_only excludes a claimed RUNNING job."""
         ...
