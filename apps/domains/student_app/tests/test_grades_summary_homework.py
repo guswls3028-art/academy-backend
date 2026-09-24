@@ -958,6 +958,43 @@ class MyGradesSummaryHomeworkTests(TestCase):
         self.assertIsNone(waiting["achievement"])
         self.assertEqual(waiting["submission_state"], "awaiting_review")
 
+    def test_submission_revision_rejects_foreign_homework_target(self):
+        foreign_tenant = Tenant.objects.create(
+            code="foreign-homework-target",
+            name="Foreign Homework Target",
+            is_active=True,
+        )
+        foreign_lecture = Lecture.objects.create(
+            tenant=foreign_tenant,
+            title="Foreign Lecture",
+            name="Foreign Lecture",
+            subject="MATH",
+        )
+        foreign_session = Session.objects.create(
+            lecture=foreign_lecture,
+            order=1,
+            title="Foreign Session",
+        )
+        foreign_homework = Homework.objects.create(
+            tenant=foreign_tenant,
+            session=foreign_session,
+            title="Foreign Homework",
+        )
+        Submission.objects.create(
+            tenant=self.tenant,
+            user=self.user,
+            enrollment=self.enrollment,
+            target_type=Submission.TargetType.HOMEWORK,
+            target_id=foreign_homework.id,
+            source=Submission.Source.ONLINE,
+            status=Submission.Status.SUBMITTED,
+        )
+        self.assertEqual(homework_submission_revisions(
+            tenant=self.tenant,
+            enrollment_ids=[self.enrollment.id],
+            homework_ids=[foreign_homework.id],
+        ), {})
+
     def test_retake_pass_exposes_submission_media_lock_without_changing_initial_grade(self):
         homework = Homework.objects.create(
             tenant=self.tenant,

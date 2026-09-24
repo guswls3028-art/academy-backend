@@ -32,7 +32,13 @@ def homework_submission_revisions(
     if not enrollment_ids or not homework_ids:
         return {}
 
+    from apps.domains.homework_results.models import Homework
     from apps.domains.submissions.models import Submission, SubmissionMedia
+
+    tenant_homework_ids = Homework.objects.filter(
+        tenant=tenant,
+        id__in=homework_ids,
+    ).values("id")
 
     evidence = {}
     parents = (
@@ -41,7 +47,7 @@ def homework_submission_revisions(
             enrollment_id__in=enrollment_ids,
             enrollment__tenant=tenant,
             target_type=Submission.TargetType.HOMEWORK,
-            target_id__in=homework_ids,
+            target_id__in=tenant_homework_ids,
         )
         .exclude(status__in=[Submission.Status.FAILED, Submission.Status.SUPERSEDED])
         .prefetch_related(Prefetch(
