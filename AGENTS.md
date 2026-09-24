@@ -14,6 +14,14 @@ Self-contained instructions for the backend Git root.
   useful bounded independent work with minimal context; delegation is optional.
 - For risk-based effort, review delegation, truncated-output recovery or evidence
   reuse, read `docs/operations/concurrent-codex-sessions.md` → Execution efficiency.
+- In this owner's local sessions, use the installed ChatGPT Web bridge for
+  meaningful independent work:
+  `chatgpt-web/pro` at `ultra` is the default subagent. Start one bounded Web
+  task early; use a lower Web model only for genuinely trivial work. Preserve
+  the primary Codex model, tenant/security boundaries, and Codex ownership of
+  integration, checks, and release. Retry Pro once on capacity errors; do not
+  silently downgrade consequential work. If the bridge is unavailable, continue
+  locally and report that once.
 
 ## Scope and authority
 
