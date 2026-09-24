@@ -209,12 +209,14 @@ pwsh C:\academy\backend\scripts\codex\session-worktree.ps1 `
 `Start` fetches `origin/main` and creates a unique branch and worktree for each
 selected repository. Use `backend`, `frontend`, or `both` to match the actual
 scope. If a foreign dirty tree already exists, leave it untouched and still
-start from current `origin/main` in the owned worktree.
+start from current `origin/main` in the owned worktree. `Start` warns when its
+volume has less than 10 GB free before a large install or build adds pressure.
 
 Before editing, record the emitted base SHA and confirm the intended paths with:
 
 ```powershell
-pwsh C:\academy\backend\scripts\codex\session-worktree.ps1 -Action Inspect
+pwsh C:\academy\backend\scripts\codex\session-worktree.ps1 `
+  -Action Inspect -Session attendance-019fb78c -Repository both
 ```
 
 ## Work and integration
@@ -249,7 +251,12 @@ one explicit terminal state:
 For the merged state, the close command performs a full preflight and refuses
 dirty, foreign, or unmerged worktrees before deleting anything. A squash or
 cherry-pick merge is accepted only when `git cherry origin/main HEAD` contains
-no `+` commit; any unique commit preserves the branch:
+no `+` commit; any unique commit preserves the branch. `Close` clears only
+ignored backend Python caches (`.pytest_cache/`, `.ruff_cache/`, and
+`__pycache__/`) after verifying every ignored path. It refuses other ignored
+local files and directories before Git can unregister a worktree and leave an
+incomplete directory. Clear only confirmed regenerable outputs in the exact
+session, then close a merged session promptly:
 
 ```powershell
 pwsh C:\academy\backend\scripts\codex\session-worktree.ps1 `
@@ -271,6 +278,35 @@ rebases, force-checks out, or deletes user work.
 possibly stale canonical checkout. After that fail-closed preflight succeeds it
 removes the exact session branch even when concurrent work intentionally keeps
 the canonical `main` behind the remote.
+
+## Local disk capacity
+
+Check free space before large dependency installs or worktree batches:
+
+```powershell
+Get-PSDrive C | Select-Object @{Name='FreeGB';Expression={[math]::Round($_.Free/1GB,1)}}
+```
+
+When free space falls below 10 GB, inspect and close old merged, clean sessions
+first. Preserve unmerged branches, dirty worktrees, ignored local data outside
+confirmed regenerable outputs, and `_artifacts/` evidence. A failed `Close`
+may leave a directory after Git unregisters the worktree; inspect its remaining
+files before any manual cleanup. `pnpm` hardlinks package files across many
+worktrees, so directory totals can overstate physical disk use. Use volume free
+space before and after maintenance to measure actual savings.
+
+On NTFS, mark the session and artifact parent directories as compressed so new
+children inherit compression without deleting data:
+
+```powershell
+compact /C /Q C:\academy\_worktrees\sessions C:\academy\_artifacts
+Get-Item C:\academy\_worktrees\sessions, C:\academy\_artifacts |
+  Select-Object FullName,Attributes
+```
+
+Both parent directories must report `Compressed`. This does not compress
+existing descendants. Compression can add CPU cost to builds, so measure it
+locally before extending it to existing dependency trees.
 
 ## Verification
 
