@@ -13,6 +13,7 @@ class UserSerializer(serializers.ModelSerializer):
     tenantRole = serializers.SerializerMethodField()
     linkedStudents = serializers.SerializerMethodField()
     first_login_guide_required = serializers.SerializerMethodField()
+    subscription_notice = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -27,6 +28,7 @@ class UserSerializer(serializers.ModelSerializer):
             "linkedStudents",
             "must_change_password",
             "first_login_guide_required",
+            "subscription_notice",
         ]
 
     def get_tenantRole(self, user):
@@ -67,6 +69,13 @@ class UserSerializer(serializers.ModelSerializer):
             return False
         membership = core_repo.membership_get(tenant=tenant, user=user, is_active=True)
         return bool(membership and user.first_login_guide_completed_at is None)
+
+    def get_subscription_notice(self, user):
+        if self.get_tenantRole(user) not in {"owner", "admin", "teacher", "staff"}:
+            return None
+        tenant = self.context["request"].tenant
+        program = core_repo.program_get_by_tenant(tenant)
+        return program.subscription_notice if program else None
 
 
 class ProgramPublicSerializer(serializers.ModelSerializer):
