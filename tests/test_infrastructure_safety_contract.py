@@ -1600,6 +1600,25 @@ def test_development_only_workflow_cannot_reach_preprod_or_update_main() -> None
     assert "inputs.deployment_scope != 'development_only'" in preprod_block
 
 
+def test_full_release_requires_same_candidate_wrong_note_canary_before_preprod() -> None:
+    workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    development_block = _job_block(workflow, "verify-api-development")
+    preprod_block = _job_block(workflow, "verify-api-preprod")
+
+    assert (
+        "if: github.event_name == 'push' || inputs.deployment_scope == 'full' || "
+        "inputs.run_wrong_note_canary == true"
+    ) in development_block
+    assert development_block.index("deploy-api-development.ps1") < development_block.index(
+        "run-wrong-note-development-canary.ps1"
+    )
+    assert "-ExpectedApiDigest ([string]$candidate.images.'academy-api'.digest)" in development_block
+    assert "-ExpectedToolsDigest ([string]$candidate.images.'academy-tools-worker'.digest)" in development_block
+    assert "needs: [detect-changes, build-and-push, verify-api-development]" in preprod_block
+    assert "needs.verify-api-development.result == 'success'" in preprod_block
+    assert "needs.verify-api-development.result == 'skipped'" not in preprod_block
+
+
 def test_wrong_note_development_canary_is_real_and_fail_closed() -> None:
     script = WRONG_NOTE_DEVELOPMENT_CANARY.read_text(encoding="utf-8")
 

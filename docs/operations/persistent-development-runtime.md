@@ -427,8 +427,9 @@ lock/mutation job은 environment subject를 사용한다.
 4. `run-api-development-smoke.ps1`이 합성 학생 XLSX 파싱, 1장 PPTX 생성·재열기,
    API와 AI worker 설정 경로 각각에서 개발 R2 객체 put/get/delete를 실행하고
    각 처리시간을 기록한다.
-   오답노트 callback 경계 변경은 `run-wrong-note-development-canary.ps1`도
-   실행한다. 이 스크립트는 exact digest의 API/Tools 컨테이너에서만 두 개의
+   모든 full release 후보는 preprod 전에 `run-wrong-note-development-canary.ps1`도
+   실행한다. development-only 검증은 `run_wrong_note_canary=true`일 때 실행한다.
+   이 스크립트는 같은 후보의 exact digest API/Tools 컨테이너에서만 두 개의
    `qa-ymath-realuse-wn-*` 테넌트를 만들고 실제 HTTP API → development Tools
    SQS worker → `academy-development-artifacts` PDF 흐름을 수행한다. 선행 active
    job의 409, 5분 경과 후 retry, 늦은 성공·도메인 실패·transport 실패 callback의

@@ -32,7 +32,7 @@ on:
           - full
           - development_only
       run_wrong_note_canary:
-        description: "Run the disposable wrong-note API to tools queue to R2 canary"
+        description: "Also run the wrong-note canary in development-only review; full releases always run it"
         required: true
         default: false
         type: boolean
@@ -127,10 +127,6 @@ jobs:
           # A development-only review builds only the API and deterministic tools
           # worker changed by the candidate, then structurally stops before preprod.
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            if [ "${{ inputs.run_wrong_note_canary }}" = "true" ] && [ "${{ inputs.deployment_scope }}" != "development_only" ]; then
-              echo "::error::run_wrong_note_canary requires deployment_scope=development_only"
-              exit 1
-            fi
             if [ "${{ inputs.deployment_scope }}" = "development_only" ]; then
               echo "workflow_dispatch — isolated development API/tools build only"
               echo "build_all=false" >> $GITHUB_OUTPUT
@@ -1185,7 +1181,7 @@ jobs:
             -Ci
 
       - name: Verify wrong-note callback fencing through the real development queue
-        if: inputs.run_wrong_note_canary == true
+        if: github.event_name == 'push' || inputs.deployment_scope == 'full' || inputs.run_wrong_note_canary == true
         shell: pwsh
         run: |
           $candidate = Get-Content `
@@ -1213,10 +1209,7 @@ jobs:
       always() &&
       inputs.deployment_scope != 'development_only' &&
       needs.build-and-push.result == 'success' &&
-      (
-        needs.verify-api-development.result == 'success' ||
-        needs.verify-api-development.result == 'skipped'
-      )
+      needs.verify-api-development.result == 'success'
     steps:
       - name: Checkout deployment scripts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

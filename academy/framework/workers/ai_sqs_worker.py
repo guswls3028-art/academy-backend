@@ -41,6 +41,11 @@ _TERMINAL_AI_JOB_STATUSES = {
     "FALLBACK_TO_GPU",
     "REVIEW_REQUIRED",
 }
+_WRONG_NOTE_PREFLIGHT_TENANT_ERRORS = frozenset({
+    "missing_tenant_id_in_sqs_message",
+    "tenant_mismatch_in_sqs_message",
+    "payload_tenant_mismatch_in_sqs_message",
+})
 
 # 상수 (기존 sqs_main_cpu와 동일)
 SQS_WAIT_TIME_SECONDS = 20
@@ -244,6 +249,22 @@ def _dispatch_terminal_callback_from_message(job_id: str, message: dict, tier_fr
 
         job = AIJobModel.objects.filter(job_id=job_id).first()
         if not job or job.status not in _TERMINAL_AI_JOB_STATUSES:
+            return True
+
+        # A preflight scope rejection has no trustworthy wrong-note target to
+        # update. Acknowledge that poison envelope without touching any tenant's
+        # PDF row; ordinary terminal jobs still retry their domain callback.
+        if (
+            job.source_domain == "results_wrong_note_pdf"
+            and job.status == "FAILED"
+            and job.error_message == job.last_error
+            and job.error_message in _WRONG_NOTE_PREFLIGHT_TENANT_ERRORS
+        ):
+            logger.warning(
+                "AI_JOB_WRONG_NOTE_PREFLIGHT_SCOPE_REJECTED | job_id=%s | reason=%s",
+                job_id,
+                job.error_message,
+            )
             return True
 
         source_domain = job.source_domain or message.get("source_domain")

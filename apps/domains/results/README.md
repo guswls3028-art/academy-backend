@@ -101,6 +101,9 @@ Wrong-note PDF / HWPX
   worker가 선택한 PDF/HWPX를 R2에 저장하고 callback이 `PENDING|RUNNING`에서만
   `DONE` 또는 `FAILED`를 원자적으로 확정한다. stale retry로 닫힌 이전 job과 이미
   종결된 job은 늦거나 중복된 callback에도 상태·파일 경로가 변하지 않는다.
+  tenant 정보가 없거나 DB job과 맞지 않아 preflight에서 닫힌 큐 메시지는
+  PDF callback 없이 삭제한다. 다른 tenant의 PDF 행은 건드리지 않으며, 남은
+  `PENDING` 행은 기존 5분 stale retry 경로에서 실패 처리 후 다시 요청할 수 있다.
   상태 API는 형식·파일명에 맞는 attachment presigned URL을 반환하고 기존 PDF
   경로는 호환 별칭으로 유지한다.
   운영 형태의 positive/retry/duplicate/tenant 회귀는
