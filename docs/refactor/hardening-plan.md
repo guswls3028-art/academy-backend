@@ -227,24 +227,45 @@ player error0이었다. 특정 격리 시나리오의 성공이며 실제 모든
 `/version.json`을 별도로 읽어 모두 `735053b94ae104212c7fa4a87c73a6fffc922f34`를
 확인했다. 이는 버전 경로의 현재 readback이며 전체 자산의 재검사는 아니다.
 
-**추가 민원과 수리 후보 (2026-09-24):** 사용자는 시험·과제 구분과 무관하게
+**추가 민원과 수리 (2026-09-24):** 사용자는 시험·과제 구분과 무관하게
 학생이 정상 제출을 마쳤는데 학생 앱의 제출 할 일에 남는 것이 문제라고 명확히 했다.
 제출 완료와 채점 통과를 분리한다. 이미 배포된 시험의 최초 제출 접수 처리는
 유지하고, 새 재응시 처리 중에는 과거 미통과 결과가 남아 있어도 별도
 `submission_pending`으로 제출 할 일을 숨기는 backend
 [#494](https://github.com/guswls3028-art/academy-backend/pull/494)와 frontend
-[#570](https://github.com/guswls3028-art/academy-frontend/pull/570)을 준비했다.
+[#570](https://github.com/guswls3028-art/academy-frontend/pull/570)으로 수리했다.
 과제는 현재 유효한 업로드·온라인 제출의 증거 지문과 교사의 명시적 검토 지문을
 비교해 `needs_submission`/`awaiting_review`/`reviewed`를 제공한다. 새 제출은
 교사 검토 중 할 일에서 빠지고, 교사가 실패·미제출을 확정하면 재제출 할 일로
 돌아온다. 채점 결과와 기존 학생 제출물은 자동 변경하지 않는다. 과거 채점 행에는
 검토 지문이 없어 실제 검토 선후를 소급 판정할 수 없으므로 활성 제출 증거가
-있으면 검토 대기로 표시하고 교사 재저장으로 확정한다. 집중 backend 테스트,
-desktop/390px mock, 두 PR의 필수 CI는 앞선 후보에서 통과했으며 최신
-frontend `00ab6ee2` 기준 #570 CI와 두 PR의 운영 실사용 검증·배포는 진행 중이다.
-신고 학생·대상·시각은 특정되지 않았으므로 원 신고 1건의 운영 원인은 단정하지
-않는다. 수리의 최종 완료는 동일 산출물의 제출→할 일 제거→새로고침→교사
-검토/재제출 경계와 정리0, 운영 버전·자산 readback 후에만 기록한다.
+있으면 검토 대기로 표시하고 교사 재저장으로 확정한다. backend #494는
+main `db47bf461bb80067867b19fbe590cc9264fa4260`으로 병합돼 공식
+[배포 35948537649](https://github.com/guswls3028-art/academy-backend/actions/runs/35948537649)의
+격리 개발·preprod·운영 migration/rolling 교체·runtime 검증이 모두 성공했다.
+성공 manifest는 main `a57dda68bc1536acd4fae3feda4453a0a9f30bc5`, API digest
+`sha256:64419c8d949e0af7854c929e24929ff51685876b03594081b8349ceb07b92fc6`다.
+frontend #570의 desktop/390px mock과 필수 PR CI도 통과했다. 학부모 후속
+화면과 OMR 경계에서 발견한 실사용 검증 실패는 운영 승격 전에 막았고,
+진단·테스트 보강 [#571](https://github.com/guswls3028-art/academy-frontend/pull/571),
+[#572](https://github.com/guswls3028-art/academy-frontend/pull/572),
+[#574](https://github.com/guswls3028-art/academy-frontend/pull/574),
+[#575](https://github.com/guswls3028-art/academy-frontend/pull/575),
+[#578](https://github.com/guswls3028-art/academy-frontend/pull/578)을 반영했다.
+최종 frontend main `daa2c47dcfa644dab0a4e802116ffb06e54fbb24`의 공식
+[배포 36004978368](https://github.com/guswls3028-art/academy-frontend/actions/runs/36004978368)은
+동일 산출물 격리 개발 21 PASS/0 SKIP/0 unexpected/0 flaky, 학생 제출→API
+`awaiting_review`→홈 할 일 제거·새로고침, 학부모 두 파일 후속·새로고침과 OMR
+재채점 경계를 통과했다. 양 QA tenant/user와 R2/process/listener 잔여0 및
+브라우저 결함0 확인 후 공식 production 승인을 거쳐 Cloudflare 배포·읽기 전용
+검증까지 성공했다. `godmin.kr`와 `hakwonplus.com`의 apex/www
+`/version.json`은 이 frontend SHA, 진입 JS는 배포 산출물의 SHA256과 일치한다.
+격리 개발의 backend API digest는
+`sha256:c739f7dce09408db46d2ea67a310fecf5ae296c84ff019975f295d96d92d36b2`였다.
+원 신고 학생·대상·시각은 특정되지 않아 그 1건의 과거 원인은 단정하지 않는다.
+운영 읽기 검증은 실제 모든 학생의 제출 재현을 뜻하지 않으며, 역할별 쓰기·재제출
+경계의 증거는 위 격리 QA에 한정된다. 상세 실패 이력과 정리·운영 영수증은
+`C:\academy\_artifacts\complaint-followup-0921\verification.md`에 보존한다.
 
 **별도 메모 검증 완료:** 2026-09-24에 frontend `735053b9`의 공식 동일 산출물과
 위 backend release/digest로 격리 개발 환경에서 실제 관리자·조교·학생·학부모
