@@ -424,7 +424,9 @@ class OMRPdfRenderer:
         logo_max = _mm(min(h * 0.38, 24))
         cursor = logo_ceil
 
-        if doc.logo_bytes:
+        if doc.logo_variant == "movementhui-print":
+            cursor = self._movementhui_print_logo(c, cx, logo_ceil) - _mm(GAP_LOGO_TITLE)
+        elif doc.logo_bytes:
             try:
                 img = ImageReader(io.BytesIO(doc.logo_bytes))
                 ow, oh = img.getSize()
@@ -454,6 +456,35 @@ class OMRPdfRenderer:
             c.setFont(_FN, 7); c.setFillColor(CT3)
             sub_y = cursor - len(title_lines) * (title_pt + 1.2) - _mm(1.5)
             c.drawCentredString(cx, sub_y, " / ".join(parts))
+
+    @staticmethod
+    def _movementhui_print_logo(c, cx, top_y):
+        """흰 답안지에 맞춘 이동휘 기본 로고. 원본 남색 사각 배경은 그리지 않는다."""
+        navy = HexColor("#1a253b")
+        gold = HexColor("#9b7200")
+        cy = top_y - _mm(7.8)
+        c.saveState()
+        c.setStrokeColor(gold)
+        c.setLineWidth(_mm(0.48))
+        for angle in (0, 60, 120):
+            c.saveState()
+            c.translate(cx, cy)
+            c.rotate(angle)
+            c.ellipse(-_mm(7.2), -_mm(2.7), _mm(7.2), _mm(2.7), stroke=1, fill=0)
+            c.restoreState()
+        c.setFillColor(navy)
+        c.circle(cx, cy, _mm(1.35), stroke=0, fill=1)
+        c.setFillColor(gold)
+        for dx, dy in ((-7.2, 0), (3.6, 6.3), (3.6, -6.3)):
+            c.circle(cx + _mm(dx), cy + _mm(dy), _mm(0.68), stroke=0, fill=1)
+        c.setFillColor(navy)
+        c.setFont(_FB, 13.2)
+        c.drawCentredString(cx, top_y - _mm(19.5), "동휘원소")
+        c.setFillColor(HexColor("#5c4827"))
+        c.setFont(_FB, 5.5)
+        c.drawCentredString(cx, top_y - _mm(22.5), "과학연구소")
+        c.restoreState()
+        return top_y - _mm(24)
 
     def _phone(self, c, x, w, top):
         """전화번호 쓰기 칸 + 버블 그리드 — 동일 칼럼 그리드 사용."""

@@ -101,7 +101,8 @@ class OMRDocumentService:
         # 로고 & 브랜드 컬러 resolve
         logo_url = OMRDocumentService._resolve_logo_url(tenant)
         logo_key = OMRDocumentService._resolve_logo_key(tenant)
-        if not logo_url:
+        logo_variant = OMRDocumentService._print_logo_variant(tenant, logo_url, logo_key)
+        if not logo_url and not logo_variant:
             logo_url = OMRDocumentService._resolve_static_logo_data_uri(tenant)
         brand_color = OMRDocumentService._resolve_brand_color(tenant)
 
@@ -117,6 +118,7 @@ class OMRDocumentService:
             essay_question_numbers=tuple(resolved_essay_numbers or ()),
             logo_url=logo_url,
             logo_key=logo_key,
+            logo_variant=logo_variant,
             brand_color=brand_color,
         )
 
@@ -137,7 +139,8 @@ class OMRDocumentService:
         """도구 페이지용. 시험 없이 직접 파라미터로 OMRDocument 생성."""
         logo_url = OMRDocumentService._resolve_logo_url(tenant)
         logo_key = OMRDocumentService._resolve_logo_key(tenant)
-        if not logo_url:
+        logo_variant = OMRDocumentService._print_logo_variant(tenant, logo_url, logo_key)
+        if not logo_url and not logo_variant:
             logo_url = OMRDocumentService._resolve_static_logo_data_uri(tenant)
         brand_color = OMRDocumentService._resolve_brand_color(tenant)
 
@@ -153,6 +156,7 @@ class OMRDocumentService:
             essay_question_numbers=tuple(essay_question_numbers or ()),
             logo_url=logo_url,
             logo_key=logo_key,
+            logo_variant=logo_variant,
             brand_color=brand_color,
         )
 
@@ -182,6 +186,15 @@ class OMRDocumentService:
         except Exception:
             logger.warning("OMR 로고 resolve 실패", exc_info=True)
             return None
+
+    @staticmethod
+    def _print_logo_variant(tenant, logo_url: Optional[str], logo_key: Optional[str]) -> Optional[str]:
+        """배경이 합성된 이동휘 기본 이미지만 종이용 투명 벡터로 대체한다."""
+        if (getattr(tenant, "code", None) == "movementhui"
+                and not logo_key
+                and logo_url in (None, "/tenants/movementhui/logo.png")):
+            return "movementhui-print"
+        return None
 
     @staticmethod
     def _resolve_static_logo_data_uri(tenant) -> Optional[str]:
@@ -252,6 +265,9 @@ class OMRDocumentService:
         PDF 렌더링용: logo_url에서 이미지 바이너리를 다운로드하여 OMRDocument에 추가.
         로고가 없거나 다운로드 실패 시 테넌트 정적 로고 → 기본 로고 순서로 폴백.
         """
+        if doc.logo_variant == "movementhui-print":
+            return doc
+
         # 1) 업로드 원본 키가 있으면 Admin 버킷에서 직접 읽는다. HTML preview가
         #    가리키는 것과 동일한 객체이므로 presigned HTTP 실패로 다른 로고가
         #    출력되는 일을 막는다.

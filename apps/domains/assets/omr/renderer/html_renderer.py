@@ -68,6 +68,7 @@ class OMRHtmlRenderer:
             "logical_essay_count": doc.essay_count,
             "n_choices": doc.n_choices,
             "logo_url": doc.logo_url,
+            "logo_variant": doc.logo_variant,
             "brand_color": doc.brand_color,
             "title_font_pt": title_font_pt,
             "mc_columns": mc_columns,

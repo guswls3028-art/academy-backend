@@ -52,6 +52,33 @@ class OMRPdfViewTests(TestCase):
         request.tenant = self.tenant
         return request
 
+    def test_movementhui_stock_logo_uses_background_free_print_mark(self):
+        self.tenant.code = "movementhui"
+        self.tenant.save(update_fields=["code"])
+        program = Program.objects.get(tenant=self.tenant)
+        program.ui_config = {"logo_url": "/tenants/movementhui/logo.png"}
+        program.save(update_fields=["ui_config"])
+
+        for doc in (
+            OMRDocumentService.from_exam(exam=self.exam, tenant=self.tenant),
+            OMRDocumentService.from_params(tenant=self.tenant, exam_title="Exam"),
+        ):
+            self.assertEqual(doc.logo_variant, "movementhui-print")
+            html = OMRHtmlRenderer().render(doc).decode("utf-8")
+            self.assertIn('class="print-logo"', html)
+            self.assertIn("동휘원소", html)
+            self.assertNotIn('src="/tenants/movementhui/logo.png"', html)
+            pdf_doc = OMRDocumentService.fetch_logo_bytes(doc, tenant=self.tenant)
+            self.assertIsNone(pdf_doc.logo_bytes)
+            self.assertTrue(OMRPdfRenderer().render(pdf_doc).startswith(b"%PDF"))
+
+        program.ui_config = {"logo_key": f"tenant-logos/{self.tenant.id}/custom.png"}
+        program.save(update_fields=["ui_config"])
+        with patch("apps.infrastructure.storage.r2.resolve_admin_logo_url", return_value="https://signed.example.test/custom.png"):
+            custom_doc = OMRDocumentService.from_params(tenant=self.tenant, exam_title="Exam")
+        self.assertIsNone(custom_doc.logo_variant)
+        self.assertEqual(custom_doc.logo_key, f"tenant-logos/{self.tenant.id}/custom.png")
+
     @patch("apps.domains.assets.omr.views.omr_pdf_views.generate_presigned_get_url")
     def test_redirects_to_omr_asset_file_key(self, generate_url):
         generate_url.return_value = "https://example.test/omr.pdf"

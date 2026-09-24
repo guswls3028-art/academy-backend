@@ -50,6 +50,7 @@ body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;colo
 }
 .lp-kicker{font-size:5.2pt;font-weight:800;color:var(--brand);letter-spacing:0.35px;margin-bottom:1.6mm;padding-bottom:1.2mm;border-bottom:0.25mm solid #e6e8eb;width:47mm;text-align:center}
 .lp-top img{max-width:92%;max-height:24mm;object-fit:contain;margin-bottom:2.5mm}
+.lp-top .print-logo{width:35mm;height:24mm;margin-bottom:2.5mm}
 .lp-ttl-exam{font-weight:800;line-height:1.4;overflow-wrap:break-word;word-break:break-all;text-align:center}
 .lp-ttl-sub{font-size:6.5pt;color:#555;margin-top:0.8mm;line-height:1.3;text-align:center}
 .lp-bottom{
@@ -181,7 +182,21 @@ body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;colo
       <div class="lp-brand"></div>
       <div class="lp-top">
         <div class="lp-kicker">OMR ANSWER SHEET</div>
-        {% if logo_url %}<img src="{{ logo_url }}" alt="" onerror="this.style.display='none'">{% endif %}
+        {% if logo_variant == 'movementhui-print' %}
+        <svg class="print-logo" viewBox="0 0 200 160" role="img" aria-label="동휘원소 과학연구소" xmlns="http://www.w3.org/2000/svg">
+          <g fill="none" stroke="#9b7200" stroke-width="3.2">
+            <ellipse cx="100" cy="52" rx="48" ry="18"/>
+            <ellipse cx="100" cy="52" rx="48" ry="18" transform="rotate(60 100 52)"/>
+            <ellipse cx="100" cy="52" rx="48" ry="18" transform="rotate(120 100 52)"/>
+          </g>
+          <circle cx="100" cy="52" r="9" fill="#1a253b"/>
+          <circle cx="52" cy="52" r="4.5" fill="#9b7200"/>
+          <circle cx="124" cy="10" r="4.5" fill="#9b7200"/>
+          <circle cx="124" cy="94" r="4.5" fill="#9b7200"/>
+          <text x="100" y="130" text-anchor="middle" fill="#1a253b" font-family="Noto Sans KR, Malgun Gothic, sans-serif" font-size="31" font-weight="900" letter-spacing="-2">동휘원소</text>
+          <text x="100" y="150" text-anchor="middle" fill="#5c4827" font-family="Noto Sans KR, Malgun Gothic, sans-serif" font-size="13" font-weight="700" letter-spacing="1">과학연구소</text>
+        </svg>
+        {% elif logo_url %}<img src="{{ logo_url }}" alt="" onerror="this.style.display='none'">{% endif %}
         <div class="lp-ttl-exam" style="font-size:{{ title_font_pt }}pt">{{ exam_title }}</div>
         {% if sub_line %}<div class="lp-ttl-sub">{{ sub_line }}</div>{% endif %}
       </div>

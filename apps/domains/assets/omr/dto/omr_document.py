@@ -41,6 +41,7 @@ class OMRDocument:
     logo_key: Optional[str] = None  # R2 Admin 원본 키 (PDF가 preview와 같은 원본을 사용)
     logo_bytes: Optional[bytes] = None  # 로고 바이너리 (PDF 렌더용)
     logo_mime: Optional[str] = None  # "image/png" 등
+    logo_variant: Optional[str] = None  # 코드로 그리는 인쇄용 브랜드 로고
     brand_color: Optional[str] = None  # 테넌트 프라이머리 컬러 (e.g. "#3B82F6")
 
     def with_logo_bytes(
