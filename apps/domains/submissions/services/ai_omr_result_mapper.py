@@ -18,6 +18,7 @@ from apps.domains.submissions.services.lifecycle import (
     reopen_for_regrade_in_memory,
     resume_auto_recovered_submission_in_memory,
 )
+from apps.support.submissions.dependencies import latest_done_submission_ai_job_matches
 from apps.support.omr.exam_structure import load_submission_exam_structure
 
 logger = logging.getLogger(__name__)
@@ -28,7 +29,6 @@ _ALREADY_PROCESSED_STATUSES = frozenset({
     Submission.Status.GRADING,
     Submission.Status.DONE,
     Submission.Status.SUPERSEDED,
-    Submission.Status.FAILED,
 })
 
 
@@ -49,19 +49,10 @@ def _extract_worker_result(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _is_latest_done_ai_job_for_submission(submission: Submission, job_id: Any) -> bool:
-    if not job_id:
-        return False
-    from apps.domains.ai.models import AIJobModel
-
-    latest_job = (
-        AIJobModel.objects.filter(
-            tenant_id=str(submission.tenant_id),
-            source_domain="submissions",
-            source_id=str(submission.id),
-        ).order_by("-created_at", "-id").first()
-    )
-    return bool(
-        latest_job and latest_job.job_id == str(job_id) and latest_job.status == "DONE"
+    return latest_done_submission_ai_job_matches(
+        submission_id=int(submission.id),
+        tenant_id=int(submission.tenant_id),
+        job_id=str(job_id or ""),
     )
 
 
@@ -229,7 +220,9 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     late_unmatched_resume = _can_resume_recovered_unmatched_submission(
         submission=submission, payload=payload, result=result,
     )
-    if submission.status in _ALREADY_PROCESSED_STATUSES:
+    # FAILED is conditionally recoverable, so keep it outside the terminal
+    # idempotency set while rejecting callbacks that lack a safe recovery path.
+    if submission.status in _ALREADY_PROCESSED_STATUSES or submission.status == Submission.Status.FAILED:
         if not late_answer_hydration and not late_unmatched_resume:
             logger.info(
                 "apply_omr_ai_result: submission %s already %s, skipping (idempotent)",

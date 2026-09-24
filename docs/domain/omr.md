@@ -240,6 +240,9 @@ EventBridge 실행이 반복되어도 첫 성공만 `meta.state_recovery`를 기
 `NEEDS_IDENTIFICATION`으로 교직원 확인을 기다린다. 다른 tenant나 뒤이은 job의
 낡은 콜백은 답안과 사용자 데이터를 변경하지 않는다. 이 경계는
 `test_state_recovery.py`와 `test_omr_tenant_realuse_flow.py`에서 확인한다.
+운영자의 `reconcile_dispatched_submissions`도 각 제출과 같은 tenant의 AI job만
+읽고 그 결과만 재적용한다. 다른 tenant가 같은 `source_id`를 주장해도 감지 출력과
+복구 대상에서 제외한다.
 
 단일정답 문항에서 워커가 강한 복수마킹을 `status=ok, marking=multi`로 보내더라도
 정답과 완전히 일치하는 다중정답 키가 아니면 `ANSWER_SCORE_AMBIGUOUS`로 검토를

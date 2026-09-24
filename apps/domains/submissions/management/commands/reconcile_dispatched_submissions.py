@@ -80,7 +80,9 @@ class Command(BaseCommand):
         # 각 submission에 대한 AI job 상태 수집
         entries = []
         for sub in stuck:
-            ai_job = latest_ai_job_for_submission(submission_id=int(sub.id))
+            ai_job = latest_ai_job_for_submission(
+                submission_id=int(sub.id), tenant_id=int(sub.tenant_id),
+            )
             entries.append({
                 "submission": sub,
                 "ai_job": ai_job,

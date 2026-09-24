@@ -5,13 +5,13 @@ from datetime import timedelta
 from io import StringIO
 from unittest.mock import patch
 
+from django.apps import apps as django_apps
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.test import TestCase
 from django.utils import timezone
 
 from apps.core.models import Tenant
-from apps.domains.ai.models import AIJobModel
 from apps.domains.submissions.models import Submission
 from apps.domains.submissions.omr_pipeline.services.state_recovery import (
     detect_stuck_submissions,
@@ -69,6 +69,7 @@ class StateRecoveryTransitionTests(TestCase):
         )
 
     def test_live_ai_lease_defers_recovery_until_worker_window_expires(self):
+        AIJobModel = django_apps.get_model("ai_domain", "AIJobModel")
         stuck = self._make_submission(
             status=Submission.Status.DISPATCHED, updated_minutes_ago=45,
         )
@@ -100,6 +101,7 @@ class StateRecoveryTransitionTests(TestCase):
         self.assertEqual(stuck.status, Submission.Status.FAILED)
 
     def test_foreign_ai_lease_cannot_hold_this_tenant_submission(self):
+        AIJobModel = django_apps.get_model("ai_domain", "AIJobModel")
         stuck = self._make_submission(
             status=Submission.Status.DISPATCHED, updated_minutes_ago=45,
         )
@@ -119,6 +121,42 @@ class StateRecoveryTransitionTests(TestCase):
 
         report = recover_stuck_submissions(actor="test")
         self.assertIn(stuck.id, report.recovered)
+
+    def test_dispatched_reconciler_ignores_foreign_job_for_same_submission_id(self):
+        AIJobModel = django_apps.get_model("ai_domain", "AIJobModel")
+        stuck = self._make_submission(
+            status=Submission.Status.DISPATCHED, updated_minutes_ago=45,
+        )
+        foreign_tenant = Tenant.objects.create(
+            name="Foreign Reconcile Tenant", code="foreign-reconcile", is_active=True,
+        )
+        foreign_job = AIJobModel.objects.create(
+            job_id=f"foreign-dispatched-{stuck.id}",
+            job_type="omr_grading",
+            status="DONE",
+            tenant_id=str(foreign_tenant.id),
+            source_domain="submissions",
+            source_id=str(stuck.id),
+        )
+
+        output = StringIO()
+        call_command("reconcile_dispatched_submissions", detect_only=True, stdout=output)
+        self.assertIn("no_ai_job=1", output.getvalue())
+        self.assertNotIn(foreign_job.job_id, output.getvalue())
+
+        own_job = AIJobModel.objects.create(
+            job_id=f"own-dispatched-{stuck.id}",
+            job_type="omr_grading",
+            status="DONE",
+            tenant_id=str(self.tenant.id),
+            source_domain="submissions",
+            source_id=str(stuck.id),
+        )
+        output = StringIO()
+        call_command("reconcile_dispatched_submissions", detect_only=True, stdout=output)
+        self.assertIn("recoverable=1", output.getvalue())
+        self.assertIn(own_job.job_id, output.getvalue())
+        self.assertNotIn(foreign_job.job_id, output.getvalue())
 
     def test_rechecks_each_status_version_after_detection(self):
         timeouts = {
