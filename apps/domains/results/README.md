@@ -175,6 +175,8 @@ objective + subjective 합산과 문항별 만점 검증을 깨면 안 된다.
 있는 시험은 해당 학생의 정확한 배정 행이 있어야 한다. 명시 배정이
 전혀 없는 legacy 시험만 차시 roster를 대상으로 계속 사용한다. 과제는
 현재 정규 원본과 정확한 `HomeworkAssignment` 쌍이 모두 필요하다.
+서술형 OMR 채점 대기 중인 시험 링크는 화면에서 일시적으로 숨기되,
+배정·원본 관계가 유효하면 상태 복구 명령은 해당 링크를 닫지 않는다.
 
 이 판정은 `apps.domains.results.utils.clinic.classify_source_links`가 소유하며,
 성적표의 `clinic_required`/이름 하이라이트, 관리자 대상 목록·요약·통계,
