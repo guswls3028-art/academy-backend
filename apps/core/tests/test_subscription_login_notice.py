@@ -7,6 +7,8 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Program, Tenant, TenantMembership
 from apps.core.views.auth import MeView
+from apps.domains.parents.models import Parent
+from apps.domains.students.test_support import create_student_fixture
 
 
 @override_settings(BILLING_GRACE_PERIOD_DAYS=30, BILLING_EXEMPT_TENANT_IDS=set())
@@ -26,6 +28,12 @@ class SubscriptionLoginNoticeTests(TestCase):
             tenant=tenant, is_staff=is_staff,
         )
         TenantMembership.objects.create(tenant=tenant, user=user, role=role, is_active=True)
+        if role == "student":
+            create_student_fixture(
+                tenant=tenant, user=user, name="Notice student", ps_number="notice-student",
+            )
+        elif role == "parent":
+            Parent.objects.create(tenant=tenant, user=user, name="Notice parent", phone="01000001234")
         return user
 
     def me(self, user, *, tenant=None):
