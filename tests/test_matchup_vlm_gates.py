@@ -742,6 +742,101 @@ def test_vlm_underfilled_page_fill_appends_missing_and_skips_existing(monkeypatc
     assert questions[1]["meta_extra"]["vlm_reason"] == "underfilled_page_fallback"
 
 
+def test_vlm_replaces_merged_numberless_photo_boxes(monkeypatch):
+    """Observed photo crops can be replaced by four validated mock VLM cuts."""
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+
+    page = {
+        "page_index": 0,
+        "image_path": "/fake/photo.jpg",
+        # Shared photo-01 current OpenCV output: Q12/Q14 cross-column merge,
+        # a Q12 fragment, then Q13/Q15 merge.
+        "boxes": [(0, 21, 1920, 902), (0, 943, 1920, 223), (0, 1349, 1920, 1211)],
+        "numbers": [None, None, None],
+        "paper_type": "student_answer_photo",
+    }
+    previous = {"number": 11, "page_index": -1, "bbox": [0, 0, 100, 100]}
+    questions = [previous] + [
+        {
+            "number": n, "page_index": 0, "bbox": list(box),
+            "meta_extra": {"number_source": "counter_fallback"},
+        }
+        for n, box in zip((1, 2, 3), page["boxes"])
+    ]
+    monkeypatch.setenv("MATCHUP_VLM_AUTO_SPLIT", "1")
+    monkeypatch.setenv("MATCHUP_VLM_FILL_UNDERFILLED_PAGES", "1")
+    monkeypatch.setenv("MATCHUP_VLM_VISION_ADAPTER", "gemini_flash")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(
+        matchup_pipeline, "_try_vlm_problem_bboxes",
+        lambda page_arg, document_id, tenant_id=None: (
+            _bbox_result(problems=[
+                (12, 175, 120, 760, 1050), (14, 990, 120, 800, 750),
+                (13, 175, 1370, 760, 850), (15, 990, 1370, 800, 850),
+            ]),
+            "student_answer_photo",
+        ),
+    )
+
+    stats = matchup_pipeline._augment_questions_with_vlm_for_underfilled_pages(
+        [page], questions, source_type="student_exam_photo",
+        document_id=123, tenant_id=1,
+    )
+
+    assert stats["replacement_pages"] == 1
+    assert stats["replaced_auto"] == 3
+    assert stats["added"] == 4
+    assert questions[0] is previous
+    assert {q["number"] for q in questions[1:]} == {12, 13, 14, 15}
+    assert all(
+        q["meta_extra"]["vlm_reason"] == "numberless_photo_replacement"
+        for q in questions[1:]
+    )
+    assert set(page["numbers"]) == {12, 13, 14, 15}
+    assert len(page["boxes"]) == 4
+
+
+@pytest.mark.parametrize("reason", [
+    "uncovered", "number_collision", "manual", "pinned", "low_confidence",
+    "too_few_cuts", "same_page_manual",
+])
+def test_vlm_photo_replacement_preserves_existing_on_unsafe_result(reason):
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+
+    old = {
+        "number": 1, "page_index": 0, "bbox": [0, 100, 1000, 500],
+        "meta_extra": {"number_source": "counter_fallback"},
+    }
+    reserved = {"number": 12, "page_index": 1, "bbox": [0, 0, 100, 100]}
+    questions = [old, reserved]
+    page = {"page_index": 0, "image_path": "/fake/photo.jpg", "boxes": [old["bbox"]], "numbers": [None]}
+    boxes = [(12, 50, 120, 400, 450), (13, 550, 120, 400, 450)]
+    if reason == "uncovered":
+        boxes[1] = (13, 2000, 2000, 400, 450)
+    if reason == "number_collision":
+        boxes[1] = (12, 550, 120, 400, 450)
+    if reason == "manual":
+        old["meta_extra"]["manual"] = True
+    if reason == "pinned":
+        old["meta_extra"]["manual_owner_pinned"] = True
+    if reason == "too_few_cuts":
+        boxes = boxes[:1]
+    if reason == "same_page_manual":
+        questions.insert(1, {
+            "number": 9, "page_index": 0, "bbox": [1000, 100, 500, 500],
+            "meta_extra": {"manual": True},
+        })
+    result = _bbox_result(problems=boxes)
+    if reason == "low_confidence":
+        result.problems[0].confidence = 0.5
+
+    assert matchup_pipeline._replace_numberless_photo_page(page, questions, result) == (0, 0)
+    assert questions[0] is old
+    assert questions[-1] is reserved
+    assert len(questions) == (3 if reason == "same_page_manual" else 2)
+    assert page["numbers"] == [None]
+
+
 def test_mock_vision_adapter_paper_type_default():
     """MockVLMVisionAdapter도 paper_type 필드 보유 (하위호환)."""
     from academy.adapters.ai.detection.vlm_fallback import MockVLMVisionAdapter
