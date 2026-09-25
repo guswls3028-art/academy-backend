@@ -28,14 +28,20 @@ Self-contained instructions for the backend Git root.
 Diagnosis/explanation/review is read-only unless a change is requested. Unless
 local-only/no-deploy/draft/PR-only/read-only, implementation/change/build and
 release/operations/cleanup authorize their full in-scope workflow: commit, push,
-PR, merge, explicitly authorized messaging, deployment, production verification,
-cleanup. No repeated
-permission for these steps.
+PR, merge, deployment, production verification, cleanup. No repeated permission
+for these steps. The same user's Academy tasks and owned subagents may coordinate
+scope and hand off non-sensitive paths, SHAs, PR/CI state, and verification
+evidence without per-message approval. External recipients, account
+authentication, secret transfers, and ambiguous destructive targets require
+exact authorization.
 
 `모든권한`, `모든권한 있음`, `모든권한o`, and equivalents retain that authority
 until narrowed/revoked; finish the earliest assignment first. Never expand scope,
 guess destructive targets, waive data protection/current HOLDs/gates, override
 higher-priority action-time confirmation, or infer platform approval.
+Check ownership and target read-only when needed. Give formal approval review
+the current user instruction and exact impact; never work around a denial.
+These instructions do not override managed session permissions.
 
 Explicit deploy/release/production/continue instructions authorize that exact
 run's GitHub `production` review via official authenticated API; verify approval
