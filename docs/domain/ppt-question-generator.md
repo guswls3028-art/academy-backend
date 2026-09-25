@@ -48,6 +48,14 @@ API는 업로드를 `tenants/<tenant_id>/tools/ppt/tmp/` 아래에 두고
 디렉터리에 내려받아 분할·렌더·PPTX 조립을 수행한 뒤 로컬 임시 디렉터리를
 정리한다. 결과는 `tenants/<tenant_id>/tools/ppt/`에 저장하고 1시간 유효한
 다운로드 URL, 파일명, 슬라이드 수, 바이트 수를 작업 결과로 반환한다.
+새 작업은 제출한 사용자 ID를 작업 메타에 기록한다. 완료 결과의 R2 키는 서버
+결과에만 보관하고 공개 작업 응답에서는 제거한다. 같은 테넌트의 현재 스태프이자
+제출자인 사용자만 새 작업의 `GET /api/v1/jobs/<job_id>/` 및
+`/progress/`를 읽을 수 있다. 완료 작업을 조회할 때 서버가 저장된 정확한
+테넌트 PPTX 키를 검증하고 1시간짜리 다운로드 URL을 다시 발급한다. 따라서
+첫 URL이 만료돼도 같은 작업 ID로 재조회해 내려받을 수 있다. 키 형식이
+맞지 않으면 원래 URL도 공개하지 않는다. 소유자 메타가 없는 배포 전 작업은
+기존 스태프 조회 권한을 유지하며, 원래 URL만 반환한다.
 
 진행 상태는 파일 다운로드, 문항 분리/PPT 생성, 파일 저장, 완료 순서로 기록한다.
 작업 실패 시 내부 경로나 저장 키를 사용자 화면에 노출하지 않고 일반화된 오류로
@@ -62,6 +70,8 @@ API는 업로드를 `tenants/<tenant_id>/tools/ppt/tmp/` 아래에 두고
 
 - 업로드·권한·작업 발행: `apps/domains/tools/ppt/views.py`
 - 작업 실행·R2 결과: `academy/application/use_cases/ai/pipelines/ppt_handler.py`
+- 완료 작업 소유권·다운로드 재발급: `apps/domains/ai/views/job_status_view.py`,
+  `apps/domains/ai/views/job_progress_view.py`, `apps/domains/tools/ppt/result_download.py`
 - PDF 계획·렌더 크롭: `academy/application/use_cases/tools/generate_ppt.py`
 - 문항·공통 자료 좌표: `academy/domain/tools/question_splitter.py`
 - PPTX 배치: `academy/adapters/tools/pptx_writer.py`
@@ -69,7 +79,7 @@ API는 업로드를 `tenants/<tenant_id>/tools/ppt/tmp/` 아래에 두고
 집중 회귀는 다음 명령으로 확인한다.
 
 ```powershell
-python -m pytest tests/test_ppt_pdf_question_plan.py tests/test_pptx_writer_crop.py tests/test_question_splitter_t2_fixes.py -q
+python -m pytest tests/test_ppt_pdf_question_plan.py tests/test_pptx_writer_crop.py tests/test_question_splitter_t2_fixes.py apps/domains/ai/tests/test_ppt_job_recovery.py -q
 ```
 
 실사용 검증은 2단 PDF에서 공통 자료와 반대쪽 시작 문항이 함께 보이는지,

@@ -8,7 +8,7 @@ from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.ai.redis_status_cache import get_job_status_from_redis
 from academy.adapters.db.django.repositories_ai import get_job_model_for_status
 from academy.adapters.cache.redis_progress_adapter import RedisProgressAdapter
-from apps.domains.ai.services.job_access import user_can_read_job
+from apps.domains.ai.services.job_access import user_can_read_job, user_can_read_ppt_job
 
 
 class JobProgressView(APIView):
@@ -37,6 +37,11 @@ class JobProgressView(APIView):
             job_model = get_job_model_for_status(job_id, tenant_id)
             if job_model:
                 if not user_can_read_job(user=request.user, tenant=tenant, job_type=job_model.job_type):
+                    return Response(
+                        {"detail": "해당 job을 찾을 수 없습니다."},
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
+                if job_model.job_type == "ppt_generation" and not user_can_read_ppt_job(user=request.user, job=job_model):
                     return Response(
                         {"detail": "해당 job을 찾을 수 없습니다."},
                         status=status.HTTP_404_NOT_FOUND,
@@ -71,6 +76,14 @@ class JobProgressView(APIView):
                 {"detail": "해당 job을 찾을 수 없습니다."},
                 status=status.HTTP_404_NOT_FOUND,
             )
+        ppt_job = None
+        if cached_status.get("job_type") == "ppt_generation":
+            ppt_job = get_job_model_for_status(job_id, tenant_id, job_type="ppt_generation")
+            if not ppt_job or not user_can_read_ppt_job(user=request.user, job=ppt_job):
+                return Response(
+                    {"detail": "해당 job을 찾을 수 없습니다."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
 
         # ✅ 진행률은 Redis에서 조회 (tenant_id 전달 필수)
         progress = None
@@ -104,6 +117,10 @@ class JobProgressView(APIView):
                         job_model,
                         include_excel_credentials=True,
                     ).get("result")
+            elif ppt_job and job_status == "DONE":
+                from apps.domains.ai.services.job_status_response import build_job_status_response
+
+                response_data["result"] = build_job_status_response(ppt_job).get("result")
             elif "result" in cached_status:
                 response_data["result"] = cached_status["result"]
             # status_for_exception 정책상 Lite/Basic 실패가 status=DONE으로 마킹돼도
