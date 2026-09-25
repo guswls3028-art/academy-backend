@@ -9,14 +9,22 @@ continuity gates.
 
 Unless the user explicitly limits the task to local-only, no-deploy,
 draft/PR-only, or read-only work, an assigned implementation, change, or build
-includes the normal in-scope commit, push, PR, merge, messaging, deployment,
-production verification, and residue cleanup steps. GitHub publication and
+includes the normal in-scope commit, push, PR, merge, internal task handoffs,
+deployment, production verification, and residue cleanup steps. GitHub publication and
 production deployment do not require a separate request. Release, operations,
 and cleanup assignments carry the same standing authority. Do not pause for a
 second approval at each step; record the exact source SHA, target, checks, and
 readback instead. This does not broaden the task, make an ambiguous destructive
 target safe, waive tenant or user-data protection, bypass an explicitly applicable change window or
 continuity gate, or make an external approval true without platform readback.
+Same-user Academy tasks and owned subagents can share non-sensitive paths,
+SHAs, PR/CI state, and verification evidence without per-message approval.
+External recipients, account authentication, secret transfers, ambiguous
+destructive targets, and higher-priority action-time approvals remain separate.
+Confirm target and impact read-only when needed. Present the exact current user
+instruction to formal approval review; never route around a denial. Managed
+session permissions and release gates still apply.
+
 An explicit instruction to deploy, release, apply to production, or continue a
 specific rollout includes authority to submit that rollout's GitHub
 `production` environment approval through the official authenticated API; do
