@@ -316,6 +316,56 @@ Both parent directories must report `Compressed`. This does not compress
 existing descendants. Compression can add CPU cost to builds, so measure it
 locally before extending it to existing dependency trees.
 
+## Remote development when local space is low
+
+When C: has under 10 GB free, run new dependency-heavy development in a GitHub
+Codespace created from `academy-backend/main`. This moves its working files,
+package installs, builds, and owned worktrees to remote storage; Git alone is
+source control and does not execute builds. Use the existing Codespace if it is
+available. Keep its idle timeout short and stop it after work; review its
+compute and storage usage in GitHub. A stopped Codespace retains files until its
+retention deadline, so push completed branches and PRs before that deadline.
+
+In the Codespace, keep `/workspaces/academy-backend` and, for frontend work,
+`/workspaces/academy-frontend` as clean canonical checkouts. Clone the frontend
+only when needed:
+
+```bash
+git clone --filter=blob:none --single-branch --branch main \
+  https://github.com/guswls3028-art/academy-frontend.git \
+  /workspaces/academy-frontend
+```
+
+Install dependencies only for the current task.
+Authenticate the remote Codex CLI with the user's account; never commit its
+authentication file. The local ChatGPT Web bridge configuration does not carry
+over to the Codespace. Verify the selected remote model and runtime before
+claiming Web Pro delegation there.
+
+The Windows `session-worktree.ps1` uses `C:\academy` paths and does not run in
+the Linux Codespace. Preserve the same ownership and release rules with Git's
+native worktree commands. From a clean canonical repository, for each needed
+repository:
+
+```bash
+slug=example-01a0d31f
+repo=/workspaces/academy-backend # or /workspaces/academy-frontend
+git -C "$repo" fetch origin main
+mkdir -p "/workspaces/_sessions/$slug"
+git -C "$repo" worktree add -b "codex/$slug" \
+  "/workspaces/_sessions/$slug/$(basename "$repo")" origin/main
+git -C "$repo" rev-parse origin/main
+git -C "/workspaces/_sessions/$slug/$(basename "$repo")" status --short
+```
+
+Use a unique slug and record the base SHA. Work, commit, push, and run focused
+checks inside only that owned remote worktree. Hand off exact SHA and CI to the
+release owner; the production source and gates are unchanged. Keep review-pending
+worktrees. After integration, fetch `origin/main`, verify the worktree is clean
+and `git cherry origin/main HEAD` has no `+` commits, then remove only the exact
+owned worktree and branch. Preserve unmerged or dirty work. Stop the Codespace
+with `gh codespace stop -c <name>` after remote commands finish.
+
 ## Verification
 
 ```powershell
