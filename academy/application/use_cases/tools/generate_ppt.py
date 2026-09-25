@@ -31,6 +31,7 @@ class _PdfQuestionPlan:
     use_whole_page: bool
     regions_per_page: List[List[Any]]
     workbook_doc: bool = False
+    allow_image_segmentation: bool = True
 
 
 class GeneratePptUseCase:
@@ -156,7 +157,7 @@ class GeneratePptFromPdfUseCase:
             use_whole_page = question_plan.use_whole_page
             segmented_question_mode = False
 
-            if use_whole_page:
+            if use_whole_page and question_plan.allow_image_segmentation:
                 if on_progress:
                     on_progress(0, "이미지 문항 영역 분석")
                 segmented_slide_count = _add_segmented_pdf_slides_to_composer(
@@ -347,6 +348,22 @@ def _build_pdf_question_plan(doc: Any) -> _PdfQuestionPlan:
             regions_per_page=[[] for _ in range(page_count)],
         )
 
+    # A mixed PDF can have valid question anchors on every text page while
+    # image-only pages disappear from the question-mode output. Preserve all
+    # pages; fully image-only PDFs above still use image segmentation.
+    textless_pages = sum(not page["text_blocks"] for page in phase1)
+    if textless_pages:
+        logger.warning(
+            "PPT_PDF_MIXED_TEXT_IMAGE_PAGES pages=%d textless=%d; using pages",
+            page_count,
+            textless_pages,
+        )
+        return _PdfQuestionPlan(
+            use_whole_page=True,
+            regions_per_page=[[] for _ in range(page_count)],
+            allow_image_segmentation=False,
+        )
+
     eligible_pages = 0
     pages_with_marginal = 0
     for page in phase1:
@@ -410,6 +427,22 @@ def _build_pdf_question_plan(doc: Any) -> _PdfQuestionPlan:
         if {r.number for r in regions} & {1, 2, 3}
     )
     eligible_with_anchors = sum(1 for regions in first_pass_regions if regions)
+    # A few plausible anchors can produce a non-empty PPT while silently dropping
+    # most of a worksheet. Preserve every page when text-based detection has not
+    # established coverage across the document; image segmentation would make
+    # another unreviewed partial result from the same ambiguous source.
+    if eligible_pages >= 3 and eligible_with_anchors * 2 < eligible_pages:
+        logger.warning(
+            "PPT_PDF_LOW_ANCHOR_COVERAGE pages=%d eligible=%d anchored=%d; using pages",
+            page_count,
+            eligible_pages,
+            eligible_with_anchors,
+        )
+        return _PdfQuestionPlan(
+            use_whole_page=True,
+            regions_per_page=[[] for _ in range(page_count)],
+            allow_image_segmentation=False,
+        )
     pages_per_number: dict[int, int] = {}
     for regions in first_pass_regions:
         for number in {r.number for r in regions}:

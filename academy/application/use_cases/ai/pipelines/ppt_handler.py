@@ -274,6 +274,7 @@ def handle_ppt_generation_job(job: AIJob) -> AIResult:
 
         result_payload = {
             "download_url": download_url,
+            "r2_key": r2_key,
             "filename": filename,
             "slide_count": slide_count,
             "size_bytes": len(pptx_bytes),
