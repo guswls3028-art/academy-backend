@@ -876,6 +876,95 @@ class TestC2AdminInboxesGuard(_SecurityFixtureMixin, TestCase):
                           user=self.student_user, exam_id=self.exam.id)
         self.assertEqual(resp.status_code, 403)
 
+    def test_exam_review_issues_find_old_unidentified_scan_beyond_latest_200(self):
+        old = Submission.objects.create(
+            tenant=self.tenant, user=self.teacher, enrollment=None,
+            target_type=Submission.TargetType.EXAM, target_id=self.exam.id,
+            source=Submission.Source.OMR_SCAN,
+            status=Submission.Status.NEEDS_IDENTIFICATION,
+            meta={"identifier_status": "no_match"},
+        )
+        Submission.objects.bulk_create([
+            Submission(
+                tenant=self.tenant, user=self.teacher, enrollment=self.enrollment,
+                target_type=Submission.TargetType.EXAM, target_id=self.exam.id,
+                source=Submission.Source.OMR_SCAN, status=Submission.Status.DONE,
+            ) for _ in range(201)
+        ])
+        foreign_tenant = _make_tenant("OtherAcademy", "other_review_issue")
+        foreign_user = _make_admin(foreign_tenant, "foreign_review_owner")
+        foreign = Submission.objects.create(
+            tenant=foreign_tenant, user=foreign_user, enrollment=None,
+            target_type=Submission.TargetType.EXAM, target_id=self.exam.id,
+            source=Submission.Source.OMR_SCAN,
+            status=Submission.Status.NEEDS_IDENTIFICATION,
+        )
+        path = f"/api/v1/submissions/submissions/exams/{self.exam.id}/"
+        view = ExamSubmissionsListView.as_view()
+        recent = self._call(lambda: view, "get", path, user=self.teacher, exam_id=self.exam.id)
+        self.assertEqual(len(recent.data), 200)
+        self.assertNotIn(old.id, [row["id"] for row in recent.data])
+        issues = self._call(lambda: view, "get", path + "?review_issues=1&enrollment_ids=" + str(self.enrollment.id), user=self.teacher, exam_id=self.exam.id)
+        self.assertEqual(issues.status_code, 200, issues.data)
+        self.assertEqual(issues.data["total"], 1)
+        self.assertEqual([row["id"] for row in issues.data["items"]], [old.id])
+        self.assertIsNone(issues.data["next_cursor"])
+        without_unbound = self._call(lambda: view, "get", path + "?review_issues=1&enrollment_ids=" + str(self.enrollment.id) + "&include_unbound=0", user=self.teacher, exam_id=self.exam.id)
+        self.assertEqual(without_unbound.data["total"], 0)
+        focus = self._call(lambda: view, "get", path + f"?review_issues=1&focus_id={old.id}", user=self.teacher, exam_id=self.exam.id)
+        self.assertEqual([row["id"] for row in focus.data["items"]], [old.id])
+        foreign_focus = self._call(lambda: view, "get", path + f"?review_issues=1&focus_id={foreign.id}", user=self.teacher, exam_id=self.exam.id)
+        self.assertEqual(foreign_focus.data["items"], [])
+        wrong_exam = self._call(lambda: view, "get", f"/api/v1/submissions/submissions/exams/{self.exam.id + 999}/?review_issues=1&focus_id={old.id}", user=self.teacher, exam_id=self.exam.id + 999)
+        self.assertEqual(wrong_exam.data["items"], [])
+
+    def test_exam_review_issues_pagination_filter_and_invalid_cursor(self):
+        view = ExamSubmissionsListView.as_view()
+        path = f"/api/v1/submissions/submissions/exams/{self.exam.id}/?review_issues=1"
+        older = Submission.objects.create(
+            tenant=self.tenant, user=self.teacher, enrollment=self.enrollment,
+            target_type=Submission.TargetType.EXAM, target_id=self.exam.id,
+            source=Submission.Source.OMR_SCAN, status=Submission.Status.FAILED,
+        )
+        Submission.objects.bulk_create([
+            Submission(
+                tenant=self.tenant, user=self.teacher, enrollment=self.enrollment,
+                target_type=Submission.TargetType.EXAM, target_id=self.exam.id,
+                source=Submission.Source.OMR_SCAN, status=Submission.Status.ANSWERS_READY,
+            ) for _ in range(50)
+        ])
+        discarded = Submission.objects.create(
+            tenant=self.tenant, user=self.teacher, enrollment=self.enrollment,
+            target_type=Submission.TargetType.EXAM, target_id=self.exam.id,
+            source=Submission.Source.OMR_SCAN, status=Submission.Status.FAILED,
+            error_message="discarded:duplicate",
+        )
+        page1 = self._call(lambda: view, "get", path, user=self.teacher, exam_id=self.exam.id)
+        self.assertEqual(page1.data["total"], 52)  # fixture submission + older + 50
+        self.assertEqual(len(page1.data["items"]), 50)
+        self.assertNotIn(discarded.id, [row["id"] for row in page1.data["items"]])
+        page2 = self._call(lambda: view, "get", path + f"&cursor={page1.data['next_cursor']}", user=self.teacher, exam_id=self.exam.id)
+        self.assertEqual(page2.data["total"], 52)
+        self.assertEqual([row["id"] for row in page2.data["items"]], [older.id, self.peer_submission.id])
+        self.assertIsNone(page2.data["next_cursor"])
+        invalid = self._call(lambda: view, "get", path + "&cursor=oops", user=self.teacher, exam_id=self.exam.id)
+        self.assertEqual(invalid.status_code, 400)
+        invalid_ids = self._call(lambda: view, "get", path + "&enrollment_ids=1,", user=self.teacher, exam_id=self.exam.id)
+        self.assertEqual(invalid_ids.status_code, 400)
+        student = self._call(lambda: view, "get", path, user=self.student_user, exam_id=self.exam.id)
+        self.assertEqual(student.status_code, 403)
+
+    def test_exam_review_issue_clears_after_student_identification(self):
+        view = ExamSubmissionsListView.as_view()
+        path = f"/api/v1/submissions/submissions/exams/{self.exam.id}/?review_issues=1"
+        before = self._call(lambda: view, "get", path, user=self.teacher, exam_id=self.exam.id)
+        self.assertEqual(before.data["total"], 1)
+        self.peer_submission.status = Submission.Status.DONE
+        self.peer_submission.meta = {"identifier_status": "matched", "manual_review": {"required": False}}
+        self.peer_submission.save(update_fields=["status", "meta"])
+        after = self._call(lambda: view, "get", path, user=self.teacher, exam_id=self.exam.id)
+        self.assertEqual(after.data, {"items": [], "total": 0, "next_cursor": None})
+
     def test_homework_submissions_list_student_blocked(self):
         view = HomeworkSubmissionsListView.as_view()
         resp = self._call(lambda: view, "get",

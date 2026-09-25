@@ -328,6 +328,13 @@ def regrade_exam_submissions(*, tenant, exam_id: int, actor: str) -> dict[str, A
                 if submission.status not in regradable_statuses:
                     skipped += 1
                     continue
+                if submission.enrollment_id is None:
+                    needs_review.append({
+                        "submission_id": int(submission_id),
+                        "detail": "학생이 식별되지 않아 정답 변경 후 재채점을 보류했습니다.",
+                    })
+                    skipped += 1
+                    continue
                 enrollment = Enrollment.objects.select_for_update().get(
                     id=int(submission.enrollment_id),
                     tenant=tenant,

@@ -209,7 +209,9 @@ def preview_manual_answers(
     if max_score <= 0 or total_score > max_score + 0.0001:
         raise ValidationError({"detail": "문항 배점·만점 구성이 점수와 맞지 않습니다. 시험 설정을 확인해 주세요."})
     preview_token = hashlib.sha256(json.dumps([
-        exam.id, enrollment_id, _version(result), _version(exam), note,
+        exam.id, enrollment_id, _version(result),
+        _answer_fingerprint(result) if result is not None else None,
+        _version(exam), note,
         key_answers, [item.__dict__ for item in scored], total_score, max_score,
     ], sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")).hexdigest()
     return ({
