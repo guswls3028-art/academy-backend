@@ -383,6 +383,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Download current verified release baseline
+        if: github.event_name == 'push'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-baseline-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-baseline
+
       - name: Set up Python 3.11
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -421,17 +428,23 @@ jobs:
       - name: Expand/contract migration guard
         env:
           EVENT_NAME: ${{ github.event_name }}
-          EVENT_BEFORE: ${{ github.event.before }}
           ALLOW_CONTRACT_MIGRATIONS: ${{ inputs.allow_contract_migrations || false }}
         run: |
           set -euo pipefail
           python -m unittest scripts.lint.test_check_expand_contract_migrations
-          BASE_REF="HEAD^"
-          if [ "$EVENT_NAME" = "push" ] && \
-             [ -n "$EVENT_BEFORE" ] && \
-             [ "$EVENT_BEFORE" != "0000000000000000000000000000000000000000" ]; then
-            BASE_REF="$EVENT_BEFORE"
+          MANIFEST="docs/reports/release-manifest.latest.json"
+          if [ "$EVENT_NAME" = "push" ]; then
+            MANIFEST="$RUNNER_TEMP/release-baseline/release-manifest.latest.json"
           fi
+          # Include migrations from any failed release that preceded this push.
+          BASE_REF="$(jq -er '
+            select(.schemaVersion == 1 and .status == "successful" and .complete == true)
+            | .gitSha | select(type == "string" and test("^[0-9a-f]{40}$"))
+          ' "$MANIFEST")"
+          git merge-base --is-ancestor "$BASE_REF" HEAD || {
+            echo "::error::Verified release baseline is not an ancestor of this candidate" >&2
+            exit 1
+          }
           ARGS=(--base-ref "$BASE_REF")
           if [ "$EVENT_NAME" = "workflow_dispatch" ] && \
              [ "$ALLOW_CONTRACT_MIGRATIONS" = "true" ]; then
