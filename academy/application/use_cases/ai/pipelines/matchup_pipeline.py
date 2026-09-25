@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import io
 import logging
+import math
 import os
 import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -1672,7 +1673,95 @@ def _is_numberless_scan_page(page: Dict[str, Any], source_type: str) -> bool:
 
 def _is_counter_fallback_question(question: Dict[str, Any]) -> bool:
     meta = question.get("meta_extra") or {}
-    return meta.get("number_source") == "counter_fallback"
+    return (
+        meta.get("number_source") == "counter_fallback"
+        and not meta.get("manual")
+        and not meta.get("manual_owner_pinned")
+    )
+
+
+def _bbox_coverage_of_smaller(a: Any, b: Any) -> float:
+    """Overlap relative to the smaller box, so a merged crop can cover two cuts."""
+    try:
+        ax, ay, aw, ah = [float(v) for v in a]
+        bx, by, bw, bh = [float(v) for v in b]
+    except (TypeError, ValueError):
+        return 0.0
+    if not all(math.isfinite(v) for v in (ax, ay, aw, ah, bx, by, bw, bh)):
+        return 0.0
+    if min(aw, ah, bw, bh) <= 0:
+        return 0.0
+    iw = max(0.0, min(ax + aw, bx + bw) - max(ax, bx))
+    ih = max(0.0, min(ay + ah, by + bh) - max(ay, by))
+    return iw * ih / min(aw * ah, bw * bh)
+
+
+def _replace_numberless_photo_page(
+    page: Dict[str, Any], questions: List[Dict[str, Any]], vlm: Any,
+) -> tuple[int, int]:
+    """Prefer validated VLM cuts only when they account for every auto crop."""
+    page_idx = page.get("page_index")
+    old = [q for q in questions if q.get("page_index") == page_idx and q.get("bbox")]
+    if not old or not all(_is_counter_fallback_question(q) for q in old):
+        return 0, 0
+    old_ids = {id(q) for q in old}
+
+    proposals = list(vlm.problems)
+    if len(proposals) < max(2, len(old)):
+        return 0, 0
+    try:
+        numbers = [p.number for p in proposals]
+        confidences = [float(p.confidence) for p in proposals]
+    except (AttributeError, TypeError, ValueError):
+        return 0, 0
+    reserved_numbers = {q.get("number") for q in questions if id(q) not in old_ids}
+    if (
+        any(
+            not isinstance(n, int) or isinstance(n, bool)
+            or n <= 0 or n in reserved_numbers
+            for n in numbers
+        )
+        or len(set(numbers)) != len(numbers)
+        or any(not math.isfinite(c) or c < 0.80 for c in confidences)
+    ):
+        return 0, 0
+
+    old_boxes = [q["bbox"] for q in old]
+    new_boxes = [p.bbox for p in proposals]
+    if not all(
+        any(_bbox_coverage_of_smaller(old_box, new_box) >= 0.30 for new_box in new_boxes)
+        for old_box in old_boxes
+    ) or not all(
+        any(_bbox_coverage_of_smaller(new_box, old_box) >= 0.50 for old_box in old_boxes)
+        for new_box in new_boxes
+    ):
+        return 0, 0
+
+    replacements = [
+        {
+            "number": number,
+            "page_index": page_idx,
+            "image_path": page["image_path"],
+            "bbox": list(prob.bbox),
+            "meta_extra": {
+                "engine": "vlm",
+                "vlm_reason": "numberless_photo_replacement",
+                "replaced_auto_boxes": len(old),
+            },
+        }
+        for number, prob in zip(numbers, proposals)
+    ]
+    first = next(i for i, q in enumerate(questions) if q is old[0])
+    questions[:] = (
+        questions[:first] + replacements
+        + [q for q in questions[first:] if id(q) not in old_ids]
+    )
+    page["boxes"] = new_boxes
+    page["numbers"] = numbers
+    page.setdefault("paper_type_debug", {})["vlm_replaced_numberless_photo"] = {
+        "old_boxes": len(old), "new_boxes": len(replacements),
+    }
+    return len(old), len(replacements)
 
 
 def _augment_questions_with_vlm_for_underfilled_pages(
@@ -1686,8 +1775,8 @@ def _augment_questions_with_vlm_for_underfilled_pages(
     """스캔/학생촬영 페이지가 일부만 잘린 경우 Gemini bbox로 누락 문항을 보강한다.
 
     Empty-page 보강만으로는 운영 T1 학생 촬영 시험지처럼 Q4/Q6/Q8만 잡히고
-    Q1/Q2/Q3/Q5/Q7이 빠지는 under-cut을 복구할 수 없다. 이 경로는 기존 box를
-    지우지 않고 VLM이 찾은 missing number만 추가한다.
+    Q1/Q2/Q3/Q5/Q7이 빠지는 under-cut을 복구할 수 없다. 번호 없는 사진의
+    자동 후보가 병합된 경우 검증된 VLM 컷으로 교체하고, 그 외에는 누락만 추가한다.
     """
     if not _env_flag("MATCHUP_VLM_AUTO_SPLIT", True):
         return None
@@ -1750,6 +1839,8 @@ def _augment_questions_with_vlm_for_underfilled_pages(
     relabeled_overlaps = 0
     pages_used = 0
     paper_type_updates = 0
+    replaced_auto = 0
+    replacement_pages = 0
 
     def _next_free_number() -> int:
         nonlocal next_number
@@ -1776,6 +1867,20 @@ def _augment_questions_with_vlm_for_underfilled_pages(
 
         page_idx = page.get("page_index")
         page_reason = candidate_reasons.get(int(page_idx or 0), "underfilled_page")
+        if source_type == "student_exam_photo" and page_reason == "numberless_scan_page":
+            replaced, replacement_count = _replace_numberless_photo_page(
+                page, questions, vlm,
+            )
+            if replaced:
+                used_numbers = {
+                    int(q["number"]) for q in questions
+                    if str(q.get("number", "")).lstrip("-").isdigit()
+                }
+                replaced_auto += replaced
+                replacement_pages += 1
+                added += replacement_count
+                pages_used += 1
+                continue
         existing_page_questions = [
             q for q in questions
             if q.get("page_index") == page_idx and q.get("bbox")
@@ -1849,6 +1954,8 @@ def _augment_questions_with_vlm_for_underfilled_pages(
         "overlap_skips": overlap_skips,
         "relabeled_overlaps": relabeled_overlaps,
         "paper_type_updates": paper_type_updates,
+        "replaced_auto": replaced_auto,
+        "replacement_pages": replacement_pages,
     }
 
 
