@@ -82,9 +82,11 @@ and supporting verification.
 ## Delivery and isolation
 
 Keep canonical `C:\academy\backend` and `C:\academy\frontend` on clean `main`.
-Create/inspect an owned current-`origin/main` worktree with
-`scripts/codex/session-worktree.ps1`; never mutate a foreign tree. One task owns
-release; others hand off exact committed SHA/CI. Close only clean, merged/patch-
+For local Windows work, create/inspect an owned current-`origin/main` worktree
+with `scripts/codex/session-worktree.ps1`. For GitHub Codespace Linux work, use
+the remote Git worktree procedure in `docs/operations/concurrent-codex-sessions.md`.
+Never mutate a foreign tree. One task owns release; others hand off exact
+committed SHA/CI. Close only clean, merged/patch-
 equivalent branches; intentional WIP needs a named recovery commit. Sync after
 active tasks/releases finish. Owner: `docs/operations/concurrent-codex-sessions.md`.
 
