@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+from django.db.models import Q
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -35,26 +36,62 @@ class ExamSubmissionsListView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def get(self, request, exam_id: int):
+        issues_only = request.query_params.get("review_issues") == "1"
         tenant = getattr(request, "tenant", None)
         if not tenant:
-            return Response([], status=200)
+            return Response({"items": [], "total": 0, "next_cursor": None} if issues_only else [], status=200)
 
         # 테넌트 격리: exam이 해당 테넌트 소속이거나, 혹은 tenant 소속 submission이
         # 최소 1건 있으면 노출. 세션 연결만으로 필터링할 경우 session에서 떼어진(고아)
         # exam은 submission이 있어도 리스트가 비어 운영자가 존재 자체를 모름.
         # 아래 queryset에서 tenant=tenant로 최종 스코프를 거므로 격리는 유지된다.
         if not exam_submission_list_allowed(tenant=tenant, exam_id=int(exam_id)):
-            return Response([], status=200)
+            return Response({"items": [], "total": 0, "next_cursor": None} if issues_only else [], status=200)
 
-        qs = list(
-            Submission.objects
-            .filter(
-                tenant=tenant,
-                target_type=Submission.TargetType.EXAM,
-                target_id=int(exam_id),
-            )
-            .order_by("-id")[:200]
+        base = Submission.objects.filter(
+            tenant=tenant,
+            target_type=Submission.TargetType.EXAM,
+            target_id=int(exam_id),
         )
+        total = None
+        next_cursor = None
+        if issues_only:
+            # 보고서 사전 점검은 최신 200건 바깥의 미해결 OMR도 놓치면 안 된다.
+            # 폐기/대체된 스캔은 조치 대상이 아니므로 제외한다.
+            base = base.exclude(status=Submission.Status.SUPERSEDED).exclude(
+                status=Submission.Status.FAILED, error_message__startswith="discarded:"
+            ).filter(
+                ~Q(status=Submission.Status.DONE)
+                | Q(enrollment_id__isnull=True)
+                | Q(meta__manual_review__required=True)
+                | Q(meta__identifier_status__in=["no_match", "missing"])
+            )
+            raw_ids = request.query_params.get("enrollment_ids")
+            if raw_ids is not None:
+                parts = raw_ids.split(",")
+                if not parts or len(parts) > 1000 or any(not part.isdecimal() or int(part) <= 0 for part in parts):
+                    return Response({"detail": "enrollment_ids must contain 1-1000 positive IDs"}, status=400)
+                selected = Q(enrollment_id__in=[int(part) for part in parts])
+                if request.query_params.get("include_unbound", "1") != "0":
+                    selected |= Q(enrollment_id__isnull=True)
+                base = base.filter(selected)
+            focus_id = request.query_params.get("focus_id")
+            if focus_id is not None:
+                if not focus_id.isdecimal() or int(focus_id) <= 0:
+                    return Response({"detail": "focus_id must be a positive ID"}, status=400)
+                base = base.filter(id=int(focus_id))
+            total = base.count()
+            raw_cursor = request.query_params.get("cursor")
+            if raw_cursor is not None:
+                if not raw_cursor.isdecimal() or int(raw_cursor) <= 0:
+                    return Response({"detail": "cursor must be a positive ID"}, status=400)
+                base = base.filter(id__lt=int(raw_cursor))
+            qs = list(base.order_by("-id")[:51])
+            if len(qs) > 50:
+                qs = qs[:50]
+                next_cursor = qs[-1].id
+        else:
+            qs = list(base.order_by("-id")[:200])
 
         # N+1 방지: enrollment/result 를 bulk 조회해 dict 로 lookup.
         # 과거에는 행마다 Enrollment.filter / Result.filter 로 2회씩 쿼리가 발생해
@@ -121,4 +158,6 @@ class ExamSubmissionsListView(APIView):
                 }
             )
 
+        if issues_only:
+            return Response({"items": items, "total": total, "next_cursor": next_cursor}, status=200)
         return Response(items, status=200)

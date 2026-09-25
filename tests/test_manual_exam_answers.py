@@ -232,11 +232,100 @@ class ManualExamAnswersTests(TestCase):
         )
         self.assertEqual(ResultFact.objects.filter(target_id=self.exam.id, source="manual").count(), 4)
 
+    @patch("apps.domains.results.services.manual_exam_answers.dispatch_progress_pipeline")
+    def test_unidentified_ready_omr_does_not_block_answer_key_correction(self, _dispatch):
+        saved = self._post(apply=True)
+        self.assertEqual(saved.status_code, 200, saved.data)
+        unidentified = Submission.objects.create(
+            tenant=self.tenant, user=self.admin, enrollment=None,
+            target_type=Submission.TargetType.EXAM, target_id=self.exam.id,
+            source=Submission.Source.OMR_SCAN, status=Submission.Status.ANSWERS_READY,
+        )
+        key = AnswerKey.objects.get(exam=self.exam)
+        request = self.factory.put(
+            f"/api/v1/exams/answer-keys/{key.id}/",
+            data={"exam": self.exam.id, "answers": {
+                str(self.first.id): "4", str(self.second.id): "3",
+            }}, format="json",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        response = AnswerKeyViewSet.as_view({"put": "update"})(request, pk=key.id)
+        self.assertEqual(response.status_code, 200, response.data)
+        summary = response.data["regrade"][0]
+        self.assertEqual(summary["manual_graded"], 1)
+        self.assertEqual(summary["skipped"], 1)
+        self.assertEqual(summary["needs_review"][0]["submission_id"], unidentified.id)
+        self.assertEqual(Result.objects.get(target_type="exam", target_id=self.exam.id).total_score, 10)
+        unidentified.refresh_from_db()
+        self.assertEqual(unidentified.status, Submission.Status.ANSWERS_READY)
+
+    @patch("apps.domains.results.services.manual_exam_answers.dispatch_progress_pipeline")
+    def test_stale_preview_rejects_score_edit_without_updated_at_change(self, _dispatch):
+        saved = self._post(apply=True)
+        self.assertEqual(saved.status_code, 200, saved.data)
+        version = saved.data["expected_version"]
+        preview = self._post(expected_version=version)
+        self.assertEqual(preview.status_code, 200, preview.data)
+        result = Result.objects.get(target_type="exam", target_id=self.exam.id)
+        result.total_score = 6
+        result.save(update_fields=["total_score"])
+        self.assertEqual(result.updated_at.isoformat(), version)
+
+        response = self._post(
+            expected_version=version, apply=True,
+            preview_token=preview.data["preview_token"],
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("preview_token", response.data)
+        result.refresh_from_db()
+        self.assertEqual(result.total_score, 6)
+
+    def test_foreign_enrollment_on_ready_omr_still_blocks_key_change(self):
+        foreign_tenant = Tenant.objects.create(name="Foreign", code="foreign-regrade", is_active=True)
+        foreign_user = User.objects.create_user(
+            username="foreign-regrade-student", password="pw1234", tenant=foreign_tenant,
+        )
+        foreign_student = Student.objects.create(
+            tenant=foreign_tenant, user=foreign_user, name="외부 학생",
+            ps_number="FOREIGN-REGR", omr_code="00000002",
+        )
+        foreign_lecture = Lecture.objects.create(
+            tenant=foreign_tenant, title="외부 강의", name="외부 강의", subject="MATH",
+        )
+        foreign_enrollment = Enrollment.objects.create(
+            tenant=foreign_tenant, lecture=foreign_lecture,
+            student=foreign_student, status="ACTIVE",
+        )
+        Submission.objects.create(
+            tenant=self.tenant, user=self.admin, enrollment=foreign_enrollment,
+            target_type=Submission.TargetType.EXAM, target_id=self.exam.id,
+            source=Submission.Source.OMR_SCAN, status=Submission.Status.ANSWERS_READY,
+        )
+        key = AnswerKey.objects.get(exam=self.exam)
+        request = self.factory.put(
+            f"/api/v1/exams/answer-keys/{key.id}/",
+            data={"exam": self.exam.id, "answers": {
+                str(self.first.id): "4", str(self.second.id): "3",
+            }}, format="json",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        response = AnswerKeyViewSet.as_view({"put": "update"})(request, pk=key.id)
+        self.assertEqual(response.status_code, 400)
+        key.refresh_from_db()
+        self.assertEqual(key.answers[str(self.second.id)], "2")
+
     @patch("apps.domains.exams.views.exam_view.dispatch_progress_for_exam")
     @patch("apps.domains.results.services.manual_exam_answers.dispatch_progress_pipeline")
     def test_max_score_correction_refreshes_manual_denominator(self, _manual_dispatch, _exam_dispatch):
         saved = self._post(apply=True)
         self.assertEqual(saved.status_code, 200, saved.data)
+        unidentified = Submission.objects.create(
+            tenant=self.tenant, user=self.admin, enrollment=None,
+            target_type=Submission.TargetType.EXAM, target_id=self.exam.id,
+            source=Submission.Source.OMR_SCAN, status=Submission.Status.ANSWERS_READY,
+        )
         request = self.factory.patch(
             f"/api/v1/exams/{self.exam.id}/", data={"max_score": 12}, format="json",
         )
@@ -245,6 +334,7 @@ class ManualExamAnswersTests(TestCase):
         response = ExamViewSet.as_view({"patch": "partial_update"})(request, pk=self.exam.id)
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["regrade"]["manual_graded"], 1)
+        self.assertEqual(response.data["regrade"]["needs_review"][0]["submission_id"], unidentified.id)
         result = Result.objects.get(target_type="exam", target_id=self.exam.id)
         self.assertEqual(result.total_score, 5)
         self.assertEqual(result.max_score, 12)

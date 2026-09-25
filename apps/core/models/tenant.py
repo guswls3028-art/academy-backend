@@ -94,7 +94,7 @@ class Tenant(models.Model):
     )
     # 매일 날짜별로 임의의 3가지 색상 자동 부여 (True 시 저장 색상 대신 사용)
     clinic_use_daily_random = models.BooleanField(
-        default=False,
+        default=True,
         help_text="매일 자동 3색 사용 시 True",
     )
     # 예약 신청 시 자동 승인 (학생 신청이 pending 대신 booked로 저장)

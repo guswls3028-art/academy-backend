@@ -9,14 +9,22 @@ continuity gates.
 
 Unless the user explicitly limits the task to local-only, no-deploy,
 draft/PR-only, or read-only work, an assigned implementation, change, or build
-includes the normal in-scope commit, push, PR, merge, messaging, deployment,
-production verification, and residue cleanup steps. GitHub publication and
+includes the normal in-scope commit, push, PR, merge, internal task handoffs,
+deployment, production verification, and residue cleanup steps. GitHub publication and
 production deployment do not require a separate request. Release, operations,
 and cleanup assignments carry the same standing authority. Do not pause for a
 second approval at each step; record the exact source SHA, target, checks, and
 readback instead. This does not broaden the task, make an ambiguous destructive
 target safe, waive tenant or user-data protection, bypass an explicitly applicable change window or
 continuity gate, or make an external approval true without platform readback.
+Same-user Academy tasks and owned subagents can share non-sensitive paths,
+SHAs, PR/CI state, and verification evidence without per-message approval.
+External recipients, account authentication, secret transfers, ambiguous
+destructive targets, and higher-priority action-time approvals remain separate.
+Confirm target and impact read-only when needed. Present the exact current user
+instruction to formal approval review; never route around a denial. Managed
+session permissions and release gates still apply.
+
 An explicit instruction to deploy, release, apply to production, or continue a
 specific rollout includes authority to submit that rollout's GitHub
 `production` environment approval through the official authenticated API; do
@@ -81,14 +89,16 @@ evidence that `medium` preserves its quality.
 ### Valuable delegation and context
 
 Keep one concurrent subagent. The global Codex `[agents]` settings select
-`chatgpt-web/pro` at `ultra` for spawned agents; keep the primary Codex model
+`chatgpt-web/gpt-6-pro` at `max` for spawned agents; keep the primary Codex model
 unchanged. Start one useful, bounded Web task early for meaningful independent
 implementation, research, diagnosis, architecture or review while Codex handles
 non-overlapping work. Use a lower Web model only for genuinely trivial tasks.
 If Pro is at capacity, retry once; do not silently downgrade consequential
 work. Check bridge `doctor --json` and `browser check` before calling a generic
 spawn failure an account limit: a failed `browser-host` check means the local
-launcher cannot verify its ChatGPT browser. Continue locally if the retry fails
+launcher cannot verify its ChatGPT browser. If another Codex turn owns the
+shared launcher, defer the Web task until it is idle; do not cancel another
+task's turn or restart the shared runtime. Continue locally if the retry fails
 and report the limitation. Simple one-step work may stay local when delegation
 adds more work than it saves.
 Reuse completed findings or the existing agent for a new bounded question
@@ -109,7 +119,7 @@ implementation, then incorporate its findings. Continue independent work while
 it runs. Reuse that reviewer for the resulting relevant diff/evidence when
 needed; send only the changes and new evidence, not a second full investigation.
 Check the current spawn tool contract and actual selected model. An explicit
-`model="chatgpt-web/pro"` and `reasoning_effort="ultra"` may be used when the
+`model="chatgpt-web/gpt-6-pro"` and `reasoning_effort="max"` may be used when the
 saved defaults have not loaded into an existing task. A configured default does
 not itself spawn an agent or prove that a Web request succeeded.
 
@@ -313,6 +323,56 @@ Get-Item C:\academy\_worktrees\sessions, C:\academy\_artifacts |
 Both parent directories must report `Compressed`. This does not compress
 existing descendants. Compression can add CPU cost to builds, so measure it
 locally before extending it to existing dependency trees.
+
+## Remote development when local space is low
+
+When C: has under 10 GB free, run new dependency-heavy development in a GitHub
+Codespace created from `academy-backend/main`. This moves its working files,
+package installs, builds, and owned worktrees to remote storage; Git alone is
+source control and does not execute builds. Use the existing Codespace if it is
+available. Keep its idle timeout short and stop it after work; review its
+compute and storage usage in GitHub. A stopped Codespace retains files until its
+retention deadline, so push completed branches and PRs before that deadline.
+
+In the Codespace, keep `/workspaces/academy-backend` and, for frontend work,
+`/workspaces/academy-frontend` as clean canonical checkouts. Clone the frontend
+only when needed:
+
+```bash
+git clone --filter=blob:none --single-branch --branch main \
+  https://github.com/guswls3028-art/academy-frontend.git \
+  /workspaces/academy-frontend
+```
+
+Install dependencies only for the current task.
+Authenticate the remote Codex CLI with the user's account; never commit its
+authentication file. The local ChatGPT Web bridge configuration does not carry
+over to the Codespace. Verify the selected remote model and runtime before
+claiming Web Pro delegation there.
+
+The Windows `session-worktree.ps1` uses `C:\academy` paths and does not run in
+the Linux Codespace. Preserve the same ownership and release rules with Git's
+native worktree commands. From a clean canonical repository, for each needed
+repository:
+
+```bash
+slug=example-01a0d31f
+repo=/workspaces/academy-backend # or /workspaces/academy-frontend
+git -C "$repo" fetch origin main
+mkdir -p "/workspaces/_sessions/$slug"
+git -C "$repo" worktree add -b "codex/$slug" \
+  "/workspaces/_sessions/$slug/$(basename "$repo")" origin/main
+git -C "$repo" rev-parse origin/main
+git -C "/workspaces/_sessions/$slug/$(basename "$repo")" status --short
+```
+
+Use a unique slug and record the base SHA. Work, commit, push, and run focused
+checks inside only that owned remote worktree. Hand off exact SHA and CI to the
+release owner; the production source and gates are unchanged. Keep review-pending
+worktrees. After integration, fetch `origin/main`, verify the worktree is clean
+and `git cherry origin/main HEAD` has no `+` commits, then remove only the exact
+owned worktree and branch. Preserve unmerged or dirty work. Stop the Codespace
+with `gh codespace stop -c <name>` after remote commands finish.
 
 ## Verification
 
