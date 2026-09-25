@@ -5750,6 +5750,153 @@
         ],
         "type": "string"
       },
+      "ManualAnswerQuestion": {
+        "properties": {
+          "answer": {
+            "type": "string"
+          },
+          "is_correct": {
+            "type": "boolean"
+          },
+          "max_score": {
+            "format": "double",
+            "type": "number"
+          },
+          "number": {
+            "type": "integer"
+          },
+          "question_id": {
+            "type": "integer"
+          },
+          "score": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "answer",
+          "is_correct",
+          "max_score",
+          "number",
+          "question_id",
+          "score"
+        ],
+        "type": "object"
+      },
+      "ManualAnswersDraft": {
+        "properties": {
+          "answers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "enrollment_id": {
+            "type": "integer"
+          },
+          "exam_id": {
+            "type": "integer"
+          },
+          "expected_version": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "answers",
+          "enrollment_id",
+          "exam_id",
+          "expected_version"
+        ],
+        "type": "object"
+      },
+      "ManualAnswersInputRequest": {
+        "properties": {
+          "answers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "apply": {
+            "type": "boolean"
+          },
+          "expected_version": {
+            "minLength": 1,
+            "nullable": true,
+            "type": "string"
+          },
+          "note": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "preview_token": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "answers",
+          "apply",
+          "expected_version",
+          "note"
+        ],
+        "type": "object"
+      },
+      "ManualAnswersPreview": {
+        "properties": {
+          "applied": {
+            "type": "boolean"
+          },
+          "enrollment_id": {
+            "type": "integer"
+          },
+          "exam_id": {
+            "type": "integer"
+          },
+          "expected_version": {
+            "nullable": true,
+            "type": "string"
+          },
+          "max_score": {
+            "format": "double",
+            "type": "number"
+          },
+          "objective_score": {
+            "format": "double",
+            "type": "number"
+          },
+          "preview_token": {
+            "type": "string"
+          },
+          "questions": {
+            "items": {
+              "$ref": "#/components/schemas/ManualAnswerQuestion"
+            },
+            "type": "array"
+          },
+          "subjective_pending": {
+            "type": "boolean"
+          },
+          "total_score": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "applied",
+          "enrollment_id",
+          "exam_id",
+          "expected_version",
+          "max_score",
+          "objective_score",
+          "preview_token",
+          "questions",
+          "subjective_pending",
+          "total_score"
+        ],
+        "type": "object"
+      },
       "ManualGradingMethodEnum": {
         "description": "* `correctness` - 정오 입력\n* `score` - 점수 입력",
         "enum": [
@@ -40907,6 +41054,118 @@
         "responses": {
           "200": {
             "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/api/v1/results/admin/exams/{exam_id}/enrollments/{enrollment_id}/manual-answers/": {
+      "get": {
+        "description": "Preview or atomically confirm one student's offline objective answers.",
+        "operationId": "results_admin_exams_enrollments_manual_answers_retrieve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "enrollment_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "exam_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManualAnswersDraft"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      },
+      "post": {
+        "description": "Preview or atomically confirm one student's offline objective answers.",
+        "operationId": "results_admin_exams_enrollments_manual_answers_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "enrollment_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "exam_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualAnswersInputRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualAnswersInputRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualAnswersInputRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManualAnswersPreview"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [
