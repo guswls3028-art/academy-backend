@@ -16,7 +16,7 @@ Self-contained instructions for the backend Git root.
   reuse, read `docs/operations/concurrent-codex-sessions.md` → Execution efficiency.
 - In this owner's local sessions, use the installed ChatGPT Web bridge for
   meaningful independent work:
-  `chatgpt-web/pro` at `ultra` is the default subagent. Start one bounded Web
+  `chatgpt-web/gpt-6-pro` at `max` is the default subagent. Start one bounded Web
   task early; use a lower Web model only for genuinely trivial work. Preserve
   the primary Codex model, tenant/security boundaries, and Codex ownership of
   integration, checks, and release. Retry Pro once on capacity errors; do not

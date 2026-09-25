@@ -81,14 +81,16 @@ evidence that `medium` preserves its quality.
 ### Valuable delegation and context
 
 Keep one concurrent subagent. The global Codex `[agents]` settings select
-`chatgpt-web/pro` at `ultra` for spawned agents; keep the primary Codex model
+`chatgpt-web/gpt-6-pro` at `max` for spawned agents; keep the primary Codex model
 unchanged. Start one useful, bounded Web task early for meaningful independent
 implementation, research, diagnosis, architecture or review while Codex handles
 non-overlapping work. Use a lower Web model only for genuinely trivial tasks.
 If Pro is at capacity, retry once; do not silently downgrade consequential
 work. Check bridge `doctor --json` and `browser check` before calling a generic
 spawn failure an account limit: a failed `browser-host` check means the local
-launcher cannot verify its ChatGPT browser. Continue locally if the retry fails
+launcher cannot verify its ChatGPT browser. If another Codex turn owns the
+shared launcher, defer the Web task until it is idle; do not cancel another
+task's turn or restart the shared runtime. Continue locally if the retry fails
 and report the limitation. Simple one-step work may stay local when delegation
 adds more work than it saves.
 Reuse completed findings or the existing agent for a new bounded question
@@ -109,7 +111,7 @@ implementation, then incorporate its findings. Continue independent work while
 it runs. Reuse that reviewer for the resulting relevant diff/evidence when
 needed; send only the changes and new evidence, not a second full investigation.
 Check the current spawn tool contract and actual selected model. An explicit
-`model="chatgpt-web/pro"` and `reasoning_effort="ultra"` may be used when the
+`model="chatgpt-web/gpt-6-pro"` and `reasoning_effort="max"` may be used when the
 saved defaults have not loaded into an existing task. A configured default does
 not itself spawn an agent or prove that a Web request succeeded.
 
