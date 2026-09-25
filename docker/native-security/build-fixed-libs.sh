@@ -201,14 +201,13 @@ download \
     'https://github.com/libexpat/libexpat/releases/download/R_2_8_4/expat-2.8.4.tar.xz' \
     "${expat_archive}" \
     '656ae1cc8da3b4ea513bb4e254f33e6243938084c0ec6239da873376b09985a7'
-download \
-    'https://github.com/libexpat/libexpat/commit/0cfd15bdf4b2c22d6b0df73610709dfb60921091.patch' \
-    "${expat_fix}" \
-    '87b8095c3b348dc855ee21dd43ef2705a95269acac650db51f5c2df40cb9f307'
-download \
-    'https://github.com/libexpat/libexpat/commit/28fcfba540f6933aa8904a1514c4811713d2ab72.patch' \
-    "${expat_tests}" \
-    '7a470c152b8c0dbb2a32cff790445a905b81cf1d8894cd1bf7112e7754e1bc13'
+# GitHub-generated commit patches can change bytes without changing the commit.
+# Keep the verified upstream patches in the image build context and check their
+# exact bytes before applying them.
+cp /usr/local/share/academy-native-security/0cfd15bdf4b2c22d6b0df73610709dfb60921091.patch "${expat_fix}"
+printf '%s  %s\n' 'c17ecebf947aed83a577c708f17f3437e2f3964dbf62954d05882fc9354f29b1' "${expat_fix}" | sha256sum --check
+cp /usr/local/share/academy-native-security/28fcfba540f6933aa8904a1514c4811713d2ab72.patch "${expat_tests}"
+printf '%s  %s\n' '4d179a59e86668f35fefd2ac0b43b7878e4b597af507f3b4decdac9f680c8a25' "${expat_tests}" | sha256sum --check
 tar -xJf "${expat_archive}" -C "${work_root}"
 expat_source="${work_root}/expat-2.8.4"
 # Only patch context changes: 2.8.4 still has FASTCALL, unlike upstream main.
