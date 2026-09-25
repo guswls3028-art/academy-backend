@@ -49,11 +49,28 @@ try {
         ))
     }
 
+    $freeBytes = [IO.DriveInfo]::new([IO.Path]::GetPathRoot($fixtureRoot)).AvailableFreeSpace
+    if ($freeBytes -lt 10GB) {
+        $lowDiskRefused = $false
+        try {
+            & $scriptUnderTest `
+                -Action Start `
+                -Session low-disk-test `
+                -Repository both `
+                -WorkspaceRoot $fixtureRoot *> $null
+        } catch {
+            $lowDiskRefused = $_.Exception.Message.Contains("new local sessions require 10 GB")
+        }
+        Assert-True $lowDiskRefused "Start must refuse a new session below 10 GB."
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $fixtureRoot "_worktrees\sessions\low-disk-test"))) "Low-disk refusal must not create a worktree."
+    }
+
     & $scriptUnderTest `
         -Action Start `
         -Session dry-run-test `
         -Repository both `
         -WorkspaceRoot $fixtureRoot `
+        -AllowLowDisk `
         -WhatIf *> $null
     Assert-True (
         -not (Test-Path -LiteralPath (Join-Path $fixtureRoot "_worktrees\sessions\dry-run-test"))
@@ -63,7 +80,8 @@ try {
         -Action Start `
         -Session contract-test `
         -Repository both `
-        -WorkspaceRoot $fixtureRoot)
+        -WorkspaceRoot $fixtureRoot `
+        -AllowLowDisk)
     Assert-True (@($startOutput -match "SESSION_WORKTREE_CREATED").Count -gt 0) "Start did not create paired worktrees."
 
     $backendWorktree = Join-Path $fixtureRoot "_worktrees\sessions\contract-test\backend"
@@ -174,7 +192,8 @@ try {
         -Action Start `
         -Session stale-main-test `
         -Repository backend `
-        -WorkspaceRoot $fixtureRoot)
+        -WorkspaceRoot $fixtureRoot `
+        -AllowLowDisk)
     $staleMainWorktree = Join-Path $fixtureRoot "_worktrees\sessions\stale-main-test\backend"
     Set-Content -LiteralPath (Join-Path $staleMainWorktree "remote-only.txt") -Value "remote" -Encoding UTF8
     [void](Invoke-Git -Root $staleMainWorktree -Arguments @("add", "remote-only.txt"))
@@ -203,7 +222,8 @@ try {
         -Action Start `
         -Session patch-test `
         -Repository backend `
-        -WorkspaceRoot $fixtureRoot)
+        -WorkspaceRoot $fixtureRoot `
+        -AllowLowDisk)
     $patchWorktree = Join-Path $fixtureRoot "_worktrees\sessions\patch-test\backend"
     Set-Content -LiteralPath (Join-Path $patchWorktree "equivalent.txt") -Value "same patch" -Encoding UTF8
     [void](Invoke-Git -Root $patchWorktree -Arguments @("add", "equivalent.txt"))

@@ -6,7 +6,8 @@ param(
     [ValidateSet("backend", "frontend", "both")]
     [string]$Repository = "both",
     [string]$WorkspaceRoot = "",
-    [switch]$SkipFetch
+    [switch]$SkipFetch,
+    [switch]$AllowLowDisk
 )
 
 $ErrorActionPreference = "Stop"
@@ -168,7 +169,9 @@ function Invoke-Start {
     Assert-SessionName
     $volume = [IO.DriveInfo]::new([IO.Path]::GetPathRoot($WorkspaceRoot))
     if ($volume.AvailableFreeSpace -lt 10GB) {
-        Write-Warning ('Academy workspace disk has {0:N1} GB free; close completed sessions before large installs or builds.' -f ($volume.AvailableFreeSpace / 1GB))
+        $message = 'Academy workspace disk has {0:N1} GB free; new local sessions require 10 GB. Use a Codespace or close completed sessions.' -f ($volume.AvailableFreeSpace / 1GB)
+        if (-not $AllowLowDisk) { throw $message }
+        Write-Warning "$message AllowLowDisk permits only lightweight recovery work; keep installs and builds remote."
     }
     $names = @(Get-RepositoryNames)
     $stamp = Get-Date -Format "yyyyMMdd-HHmmss"

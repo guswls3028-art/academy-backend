@@ -225,8 +225,11 @@ pwsh C:\academy\backend\scripts\codex\session-worktree.ps1 `
 `Start` fetches `origin/main` and creates a unique branch and worktree for each
 selected repository. Use `backend`, `frontend`, or `both` to match the actual
 scope. If a foreign dirty tree already exists, leave it untouched and still
-start from current `origin/main` in the owned worktree. `Start` warns when its
-volume has less than 10 GB free before a large install or build adds pressure.
+start from current `origin/main` in the owned worktree. `Start` refuses a new
+local session when its volume has less than 10 GB free, before fetching or
+creating a branch. Use a Codespace for new dependency installs and builds.
+For a small recovery task that needs a local worktree, `-AllowLowDisk` explicitly
+permits `Start`; keep installs and builds remote and close the worktree afterward.
 
 Before editing, record the emitted base SHA and confirm the intended paths with:
 
