@@ -348,6 +348,22 @@ def _build_pdf_question_plan(doc: Any) -> _PdfQuestionPlan:
             regions_per_page=[[] for _ in range(page_count)],
         )
 
+    # A mixed PDF can have valid question anchors on every text page while
+    # image-only pages disappear from the question-mode output. Preserve all
+    # pages; fully image-only PDFs above still use image segmentation.
+    textless_pages = sum(not page["text_blocks"] for page in phase1)
+    if textless_pages:
+        logger.warning(
+            "PPT_PDF_MIXED_TEXT_IMAGE_PAGES pages=%d textless=%d; using pages",
+            page_count,
+            textless_pages,
+        )
+        return _PdfQuestionPlan(
+            use_whole_page=True,
+            regions_per_page=[[] for _ in range(page_count)],
+            allow_image_segmentation=False,
+        )
+
     eligible_pages = 0
     pages_with_marginal = 0
     for page in phase1:

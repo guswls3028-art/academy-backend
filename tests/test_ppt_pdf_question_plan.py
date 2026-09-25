@@ -46,7 +46,33 @@ def test_ppt_pdf_plan_uses_whole_page_for_scan_pdf_without_text():
     plan = _build_pdf_question_plan(_FakeDoc([[], []]))
 
     assert plan.use_whole_page is True
+    assert plan.allow_image_segmentation is True
     assert plan.regions_per_page == [[], []]
+
+
+def test_ppt_pdf_plan_preserves_image_only_pages_between_anchored_text_pages(monkeypatch):
+    from academy.domain.tools import paper_type, question_splitter
+
+    pages = [
+        [_Block(f"{index}. lesson question", 40, 80, 560, 150)] if index in (1, 2, 7) else []
+        for index in range(1, 8)
+    ]
+    monkeypatch.setattr(
+        paper_type,
+        "classify_paper_type",
+        lambda **_kwargs: SimpleNamespace(is_non_question=False),
+    )
+    monkeypatch.setattr(
+        question_splitter,
+        "split_questions",
+        lambda blocks, *_args, **_kwargs: [SimpleNamespace(number=1)] if blocks else [],
+    )
+
+    plan = _build_pdf_question_plan(_FakeDoc(pages))
+
+    assert plan.use_whole_page is True
+    assert plan.allow_image_segmentation is False
+    assert plan.regions_per_page == [[] for _ in range(7)]
 
 
 def test_ppt_pdf_plan_preserves_pages_when_anchors_cover_only_one_of_seven(monkeypatch):
