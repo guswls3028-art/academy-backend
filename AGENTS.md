@@ -56,6 +56,13 @@ an executable contract changes.
 
 ## Product boundaries and evidence
 
+For backend work motivated by a UI/UX or user-journey complaint, inspect the
+current affected journey and data/API boundary before changing behavior. Treat
+the suggested fix as a hypothesis, consider relevant empty/error/retry,
+interruption, duplicate-action, role, and tenant cases, then verify the normal
+journey and recovery with the frontend owner. Keep the review proportional;
+the frontend review method is in `../frontend/docs/REAL-USE-REVIEW-MANUAL.md`.
+
 - Resolve tenant at request/job entry and scope every business query. Missing/
   ambiguous context fails closed: no default, hostname override, cross-tenant
   fallback. Keep business decisions in the owning domain.
