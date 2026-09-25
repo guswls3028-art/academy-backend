@@ -46,6 +46,92 @@ def _bbox_result(
     )
 
 
+def test_gemini_request_keeps_key_out_of_url_and_errors(monkeypatch, caplog):
+    """The provider key travels in a header and is redacted from failures."""
+    import logging
+    import traceback
+
+    import requests
+
+    from academy.adapters.ai.detection.vlm_fallback import _gemini_request
+
+    key = "synthetic-provider-key"
+    monkeypatch.setenv("GEMINI_API_KEY", key)
+    calls = []
+
+    def success(url, **kwargs):
+        calls.append((url, kwargs))
+        response = MagicMock(status_code=200)
+        response.json.return_value = {
+            "candidates": [{"content": {"parts": [{"text": "{}"}]}}]
+        }
+        return response
+
+    monkeypatch.setattr(requests, "post", success)
+    assert _gemini_request(model="gemini-2.5-flash", parts=[{"text": "test"}]) == {}
+    assert key not in calls[0][0]
+    assert "?key=" not in calls[0][0]
+    assert "params" not in calls[0][1]
+    assert calls[0][1]["headers"]["x-goog-api-key"] == key
+
+    def provider_error(url, **kwargs):
+        response = MagicMock(status_code=400)
+        response.text = f"request rejected: {key}"
+        return response
+
+    monkeypatch.setattr(requests, "post", provider_error)
+    with pytest.raises(RuntimeError) as provider_exc:
+        _gemini_request(model="gemini-2.5-flash", parts=[{"text": "test"}])
+    assert key not in str(provider_exc.value)
+
+    def transport_error(url, **kwargs):
+        raise requests.ConnectionError(f"request failed: {key}")
+
+    monkeypatch.setattr(requests, "post", transport_error)
+    with pytest.raises(RuntimeError) as transport_exc:
+        _gemini_request(model="gemini-2.5-flash", parts=[{"text": "test"}])
+    assert key not in str(transport_exc.value)
+
+    def invalid_json(url, **kwargs):
+        response = MagicMock(status_code=200)
+        response.json.side_effect = ValueError(f"invalid response: {key}")
+        return response
+
+    monkeypatch.setattr(requests, "post", invalid_json)
+    with pytest.raises(RuntimeError) as json_exc:
+        _gemini_request(model="gemini-2.5-flash", parts=[{"text": "test"}])
+    assert key not in str(json_exc.value)
+
+    def timeout(url, **kwargs):
+        raise requests.Timeout(f"timed out: {key}")
+
+    monkeypatch.setattr(requests, "post", timeout)
+    with pytest.raises(RuntimeError) as timeout_exc:
+        _gemini_request(model="gemini-2.5-flash", parts=[{"text": "test"}])
+
+    for error in (provider_exc.value, transport_exc.value, json_exc.value, timeout_exc.value):
+        assert key not in repr(error)
+        assert key not in "".join(traceback.format_exception(error))
+        logging.getLogger(__name__).error(
+            "Gemini failure: %s", error,
+            exc_info=(type(error), error, error.__traceback__),
+        )
+    assert key not in caplog.text
+
+
+def test_gemini_request_without_key_does_not_call_provider(monkeypatch):
+    import requests
+
+    from academy.adapters.ai.detection.vlm_fallback import _gemini_request
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    post = MagicMock()
+    monkeypatch.setattr(requests, "post", post)
+    with pytest.raises(RuntimeError, match="GEMINI_API_KEY not set"):
+        _gemini_request(model="gemini-2.5-flash", parts=[{"text": "test"}])
+    post.assert_not_called()
+
+
 def _make_image(monkeypatch, w: int = 2000, h: int = 2800):
     """cv2.imread mock — 지정한 dim의 가짜 이미지 반환.
 
@@ -740,6 +826,101 @@ def test_vlm_underfilled_page_fill_appends_missing_and_skips_existing(monkeypatc
     assert [q["number"] for q in questions] == [4, 1, 2]
     assert questions[1]["meta_extra"]["engine"] == "vlm"
     assert questions[1]["meta_extra"]["vlm_reason"] == "underfilled_page_fallback"
+
+
+def test_vlm_replaces_merged_numberless_photo_boxes(monkeypatch):
+    """Observed photo crops can be replaced by four validated mock VLM cuts."""
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+
+    page = {
+        "page_index": 0,
+        "image_path": "/fake/photo.jpg",
+        # Shared photo-01 current OpenCV output: Q12/Q14 cross-column merge,
+        # a Q12 fragment, then Q13/Q15 merge.
+        "boxes": [(0, 21, 1920, 902), (0, 943, 1920, 223), (0, 1349, 1920, 1211)],
+        "numbers": [None, None, None],
+        "paper_type": "student_answer_photo",
+    }
+    previous = {"number": 11, "page_index": -1, "bbox": [0, 0, 100, 100]}
+    questions = [previous] + [
+        {
+            "number": n, "page_index": 0, "bbox": list(box),
+            "meta_extra": {"number_source": "counter_fallback"},
+        }
+        for n, box in zip((1, 2, 3), page["boxes"])
+    ]
+    monkeypatch.setenv("MATCHUP_VLM_AUTO_SPLIT", "1")
+    monkeypatch.setenv("MATCHUP_VLM_FILL_UNDERFILLED_PAGES", "1")
+    monkeypatch.setenv("MATCHUP_VLM_VISION_ADAPTER", "gemini_flash")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(
+        matchup_pipeline, "_try_vlm_problem_bboxes",
+        lambda page_arg, document_id, tenant_id=None: (
+            _bbox_result(problems=[
+                (12, 175, 120, 760, 1050), (14, 990, 120, 800, 750),
+                (13, 175, 1370, 760, 850), (15, 990, 1370, 800, 850),
+            ]),
+            "student_answer_photo",
+        ),
+    )
+
+    stats = matchup_pipeline._augment_questions_with_vlm_for_underfilled_pages(
+        [page], questions, source_type="student_exam_photo",
+        document_id=123, tenant_id=1,
+    )
+
+    assert stats["replacement_pages"] == 1
+    assert stats["replaced_auto"] == 3
+    assert stats["added"] == 4
+    assert questions[0] is previous
+    assert {q["number"] for q in questions[1:]} == {12, 13, 14, 15}
+    assert all(
+        q["meta_extra"]["vlm_reason"] == "numberless_photo_replacement"
+        for q in questions[1:]
+    )
+    assert set(page["numbers"]) == {12, 13, 14, 15}
+    assert len(page["boxes"]) == 4
+
+
+@pytest.mark.parametrize("reason", [
+    "uncovered", "number_collision", "manual", "pinned", "low_confidence",
+    "too_few_cuts", "same_page_manual",
+])
+def test_vlm_photo_replacement_preserves_existing_on_unsafe_result(reason):
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+
+    old = {
+        "number": 1, "page_index": 0, "bbox": [0, 100, 1000, 500],
+        "meta_extra": {"number_source": "counter_fallback"},
+    }
+    reserved = {"number": 12, "page_index": 1, "bbox": [0, 0, 100, 100]}
+    questions = [old, reserved]
+    page = {"page_index": 0, "image_path": "/fake/photo.jpg", "boxes": [old["bbox"]], "numbers": [None]}
+    boxes = [(12, 50, 120, 400, 450), (13, 550, 120, 400, 450)]
+    if reason == "uncovered":
+        boxes[1] = (13, 2000, 2000, 400, 450)
+    if reason == "number_collision":
+        boxes[1] = (12, 550, 120, 400, 450)
+    if reason == "manual":
+        old["meta_extra"]["manual"] = True
+    if reason == "pinned":
+        old["meta_extra"]["manual_owner_pinned"] = True
+    if reason == "too_few_cuts":
+        boxes = boxes[:1]
+    if reason == "same_page_manual":
+        questions.insert(1, {
+            "number": 9, "page_index": 0, "bbox": [1000, 100, 500, 500],
+            "meta_extra": {"manual": True},
+        })
+    result = _bbox_result(problems=boxes)
+    if reason == "low_confidence":
+        result.problems[0].confidence = 0.5
+
+    assert matchup_pipeline._replace_numberless_photo_page(page, questions, result) == (0, 0)
+    assert questions[0] is old
+    assert questions[-1] is reserved
+    assert len(questions) == (3 if reason == "same_page_manual" else 2)
+    assert page["numbers"] == [None]
 
 
 def test_mock_vision_adapter_paper_type_default():

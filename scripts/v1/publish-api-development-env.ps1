@@ -181,6 +181,7 @@ function Set-IsolatedDevelopmentValues {
         '^VAPID_PRIVATE_KEY$',
         '^OPENAI_',
         '^ANTHROPIC_',
+        '^GEMINI_',
         '^AWS_ACCESS_KEY_ID$',
         '^AWS_SECRET_ACCESS_KEY$',
         '^AWS_SESSION_TOKEN$',

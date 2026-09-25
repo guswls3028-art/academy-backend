@@ -121,6 +121,33 @@ def test_image_invalid_adjustment_rejected_before_r2_upload(monkeypatch):
     assert upload_calls == []
 
 
+@pytest.mark.parametrize("mode", ["pdf", "images"])
+def test_ppt_dispatch_records_submitting_user_for_recovery(monkeypatch, mode):
+    captured = {}
+    monkeypatch.setattr(
+        "apps.infrastructure.storage.r2.upload_fileobj_to_r2_storage",
+        lambda **kwargs: None,
+    )
+
+    def fake_dispatch(**kwargs):
+        captured.update(kwargs)
+        return {"ok": True, "job_id": "ppt-owner-job"}
+
+    monkeypatch.setattr("apps.domains.tools.ppt.views.dispatch_ppt_generation_job", fake_dispatch)
+    request = RequestFactory().post("/api/v1/tools/ppt/generate/", data={})
+    request.user = SimpleNamespace(id=73)
+    view = PptGenerateView()
+    if mode == "pdf":
+        file = SimpleUploadedFile("source.pdf", b"%PDF-1.4\n%%EOF", content_type="application/pdf")
+        response = view._handle_pdf_mode(request, file, tenant_id="1")
+    else:
+        file = SimpleUploadedFile("source.png", b"\x89PNG\r\n\x1a\nvalid-magic", content_type="image/png")
+        response = view._handle_images_mode(request, [file], tenant_id="1")
+
+    assert response.status_code == 200
+    assert captured["payload"]["owner_user_id"] == "73"
+
+
 def test_ppt_worker_accepts_single_image_archive(monkeypatch, tmp_path):
     download_dir = tmp_path / "download"
     download_dir.mkdir()
@@ -189,3 +216,4 @@ def test_ppt_worker_accepts_single_image_archive(monkeypatch, tmp_path):
     assert captured["total_count"] == 2
     assert captured["upload"][1] == "application/vnd.openxmlformats-officedocument.presentationml.presentation"
     assert result.result["slide_count"] == 2
+    assert result.result["r2_key"] == captured["upload"][0]
