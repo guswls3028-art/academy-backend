@@ -420,7 +420,9 @@ lock/mutation job은 environment subject를 사용한다.
 2. `publish-api-development-env.ps1`이 운영 형태의 값을 복사하되 DB·큐·R2·발송/결제를
    개발 경계로 치환한다. 메시징은 dry-run 조기 종료를 쓰지 않고 durable outbox와
    전용 개발 SQS를 통과하며, API와 Messaging worker의 `SOLAPI_MOCK=true`가 외부
-   공급자 호출과 비용을 차단한다.
+   공급자 호출과 비용을 차단한다. Gemini를 포함한 운영 외부 AI 자격증명도 제거한다.
+   별도 개발 Gemini 키의 생성·주입은 현재 미구현이며, 실제 Matchup VLM 검증에는
+   [candidate 준비 설계](../refactor/candidate-prepare-gate-plan.md)의 독립 키가 필요하다.
 3. `deploy-api-development.ps1`이 새 candidate 인스턴스를 만들고 migration, DB 역할,
    운영 DB 접근 거부, 개발 큐, 개발 R2와 운영 R2 접근 거부, Redis, `/healthz`,
    `/health`, 정확한 API/Tools/AI digest를 검증한다.

@@ -20,6 +20,7 @@ $source = [pscustomobject]@{
     TOSS_AUTO_BILLING_ENABLED = "true"
     OPENAI_API_KEY = "external-ai-secret"
     ANTHROPIC_API_KEY = "external-ai-secret"
+    GEMINI_API_KEY = "production-gemini-secret"
     AWS_ACCESS_KEY_ID = "static-key"
     AWS_SECRET_ACCESS_KEY = "static-secret"
     SECRET_KEY = "production-django-secret"
@@ -56,9 +57,10 @@ if (
 }
 if (
     [string]$source.SECRET_KEY -eq "production-django-secret" -or
-    [string]$source.MESSAGING_TENANT_BINDING_KEY -eq "production-binding-secret"
+    [string]$source.MESSAGING_TENANT_BINDING_KEY -eq "production-binding-secret" -or
+    [string]$source.GEMINI_API_KEY
 ) {
-    throw "Preprod sanitizer must replace production signing secrets."
+    throw "Preprod sanitizer must replace production signing secrets and remove Gemini."
 }
 
 Write-Host "CANDIDATE_ENV_CONTRACT_PASS" -ForegroundColor Green
