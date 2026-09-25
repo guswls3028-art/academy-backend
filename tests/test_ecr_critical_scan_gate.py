@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import sys
@@ -412,8 +413,22 @@ def test_base_image_backports_new_native_library_fixes_without_acceptance() -> N
     )
     assert "60d74a257d1ccec0475e749cba2f21559e48139efba6ff28224357c7c798dfee" in build_script
     assert "autoreconf --force --install" in build_script
-    assert build_script.count("sha256sum --check") == 1
-    assert build_script.count("download \\") == 9
+    assert build_script.count("sha256sum --check") == 3
+    assert build_script.count("download \\") == 7
+    assert "COPY docker/native-security/patches/" in dockerfile
+    for commit, checksum in (
+        (
+            "0cfd15bdf4b2c22d6b0df73610709dfb60921091",
+            "c17ecebf947aed83a577c708f17f3437e2f3964dbf62954d05882fc9354f29b1",
+        ),
+        (
+            "28fcfba540f6933aa8904a1514c4811713d2ab72",
+            "4d179a59e86668f35fefd2ac0b43b7878e4b597af507f3b4decdac9f680c8a25",
+        ),
+    ):
+        patch = repository / "docker" / "native-security" / "patches" / f"{commit}.patch"
+        assert hashlib.sha256(patch.read_bytes()).hexdigest() == checksum
+        assert checksum in build_script
     assert (
         'dpkg --compare-versions "${zlib_version}" '
         'gt "1:1.3.dfsg+really1.3.1-1"'
