@@ -119,6 +119,12 @@ Gemini VLM을 먼저 운영 실험할 때는 전체 문서를 VLM primary로 바
 4. 품질 게이트: 빈 페이지, 과잉 박스, 조각 박스, 비문항 박스는 조용히 인덱싱하지 않고 skip 또는 검수 후보로 남긴다.
 5. 운영 평가: 대표 PDF golden set에서 page-role, 문항 수, 박스 위치, false-positive/false-negative 페이지 목록을 비교한다.
 
+[CURRENT 2026-09-25] `student_exam_photo`의 번호 없는 OCR/OpenCV 결과는 Gemini VLM이 설정되어 있고 해당 테넌트의 호출 게이트가 허용될 때 문항별 검증 박스로 보강한다. 기존 자동 박스가 두 단의 여러 문항을 하나로 묶은 경우에는 단순 IoU 중복 제거만으로 새 문항이 모두 버려질 수 있다.
+
+VLM 결과의 페이지 역할·전체 신뢰도·박스 형상 검사를 먼저 통과하고, 제안 문항이 기존 자동 문항 수 이상이며 각 문항 신뢰도가 0.80 이상이고, 제안 번호가 문서의 다른 문항과 충돌하지 않으며, 기존 박스와 새 박스가 서로의 영역을 설명할 때만 **그 페이지의 번호 없는 자동 후보**를 VLM 후보로 교체한다. 교체 수와 후보 수는 `vlm_underfilled_page_fill` 통계에 남기고 페이지 박스/번호 요약도 함께 갱신한다. 수동 컷과 강사 고정 문항은 재분석 저장 단계의 보호 대상이며, 이 보강은 그 저장 흐름을 변경하지 않는다.
+
+VLM 미설정·호출 실패·게이트 거절·커버리지/번호 충돌 시 기존 후보와 저신뢰 검수 경로가 유지된다. 검증은 `tests/test_matchup_vlm_gates.py`의 손촬영 병합 박스·충돌·수동 보호 회귀 및 격리된 실사용 사진에서 결과 저장→새로고침→리포트 확인으로 한다. 로컬 공유 사진 7장에서는 기존 비전 fallback만으로 물리 문항 수와 경계가 안정적이지 않았으므로 이 변경만으로 사진 유형의 무인 분리 완료를 선언하지 않는다.
+
 [PROPOSED] 실사용 기준까지 올리려면 golden set 평가 runner가 필요하다. 최소 세트는 `academy_workbook`, `commercial_workbook`, `school_exam_pdf`, `student_exam_photo`, `scan_dual`, `clean_pdf_dual`, `concept/explanation`, `answer_key`, `cover/index`를 각각 포함해야 한다. 평가는 모델 mAP가 아니라 문서별 검수 부담을 줄이는 지표로 본다: 문제 페이지 누락, 비문항 페이지 오인식, 문항 수 차이, bbox IoU, low-quality 비율, 수동 수정 필요 페이지 목록.
 
 [PROPOSED] 수동 보정 이력은 학습 데이터로 연결해야 한다. 자동 후보 bbox와 강사 최종 bbox를 같이 저장해야 같은 양식의 다음 업로드에서 fingerprint/profile 기반 재사용이나 모델 재학습이 가능하다.
