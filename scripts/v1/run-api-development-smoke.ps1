@@ -6,6 +6,7 @@ param(
     [string]$InstanceId = "",
     [ValidateRange(60, 600)]
     [int]$TimeoutSec = 180,
+    [switch]$IsolatedQa = $false,
     [switch]$Ci = $false,
     [string]$AwsProfile = "default"
 )
@@ -25,6 +26,12 @@ $script:PlanMode = $false
 . (Join-Path $ScriptRoot "core\aws.ps1")
 Assert-AwsMutationIdentity | Out-Null
 Load-SSOT -Env prod | Out-Null
+
+if ($IsolatedQa) {
+    $script:ApiDevelopmentInstanceProfileName = "academy-api-qa"
+    $script:ApiDevelopmentRoleName = "academy-api-qa-role"
+}
+
 
 if (-not $script:ApiDevelopmentEnabled) {
     throw "Persistent API development environment is disabled in params.yaml."
@@ -107,12 +114,14 @@ with tempfile.TemporaryDirectory(prefix="academy-development-smoke-") as temp_di
     assert pptx_bytes.startswith(b"PK")
     assert len(pptx_bytes) > 1_000
 
+assert not Path(temp_dir).exists()
 total_seconds = time.perf_counter() - started
 assert excel_seconds < 30
 assert ppt_seconds < 30
 assert total_seconds < 60
 print(json.dumps({
     "status": "TOOLS_SMOKE_PASS",
+    "cleanup_zero": True,
     "excel_seconds": round(excel_seconds, 3),
     "ppt_seconds": round(ppt_seconds, 3),
     "total_seconds": round(total_seconds, 3),
@@ -127,6 +136,7 @@ import uuid
 
 import boto3
 from django.conf import settings
+from botocore.exceptions import ClientError
 
 assert settings.R2_STORAGE_BUCKET.startswith("academy-development-")
 client = boto3.client(
@@ -145,10 +155,17 @@ try:
     assert response["Body"].read() == body
 finally:
     client.delete_object(Bucket=settings.R2_STORAGE_BUCKET, Key=key)
+    try:
+        client.head_object(Bucket=settings.R2_STORAGE_BUCKET, Key=key)
+    except ClientError as exc:
+        assert str(exc.response["Error"]["Code"]) in {"404", "NoSuchKey", "NotFound"}
+    else:
+        raise AssertionError("Smoke object remains after cleanup")
 elapsed = time.perf_counter() - started
 assert elapsed < 30
 print(json.dumps({
     "status": "R2_SMOKE_PASS",
+    "cleanup_zero": True,
     "round_trip_seconds": round(elapsed, 3),
 }, sort_keys=True))
 '@

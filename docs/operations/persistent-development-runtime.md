@@ -4,6 +4,8 @@
 게이트다. 운영과 같은 API 인스턴스 유형·AMI와 동일한 digest-pinned API/Tools/AI 이미지를
 사용하지만, 운영 ASG·ALB·DB 사용자·큐·R2 버킷에는 연결하지 않는다.
 
+새 opt-in PR QA/독립 환경 구성/후보 승격은 [candidate preparation](candidate-preparation.md)를 따른다. 기존 기본 배포 경로는 그대로 유지한다.
+
 ## 자원 경계
 
 - EC2 이름은 `academy-v1-api-development`이며 외부 inbound가 없는 전용 보안그룹을 쓴다.

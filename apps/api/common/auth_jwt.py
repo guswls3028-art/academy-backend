@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import time
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -10,6 +11,7 @@ from academy.adapters.db.django import repositories_core as core_repo
 from rest_framework_simplejwt.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer, TokenRefreshSerializer
 from rest_framework_simplejwt.settings import api_settings
+from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from rest_framework import serializers
 
@@ -18,6 +20,90 @@ from apps.core.services.password import (
     pending_password_reset_matches,
 )
 from apps.core.services.login_identifier import normalize_login_identifier
+from apps.api.middleware.candidate_qa_admission import _qa_requested
+
+
+def _qa_lease_for_auth(request):
+    """Use only the lease attached by QA admission, never caller input."""
+    if not _qa_requested():
+        return None
+    raw_request = getattr(request, "_request", request)
+    lease = getattr(raw_request, "candidate_qa_lease", None)
+    if not isinstance(lease, Mapping):
+        raise AuthenticationFailed("QA 인증 기간이 종료되었습니다.", code="qa_window_closed")
+    try:
+        if lease["state"] != "active" or int(lease["expires_at"]) - 30 <= int(time.time()):
+            raise ValueError("QA authentication admission closed")
+    except (KeyError, TypeError, ValueError) as exc:
+        raise AuthenticationFailed("QA 인증 기간이 종료되었습니다.", code="qa_window_closed") from exc
+    return lease
+
+
+def _qa_expected_claims(lease, tenant_id):
+    try:
+        binding = lease.get("binding_sha256")
+        if binding is None:
+            from apps.infrastructure.qa_lease import binding_sha256
+
+            binding = binding_sha256(lease)
+        claims = {
+            "qa_lease_id": lease["lease_id"],
+            "qa_revision": lease["revision"],
+            "qa_lock_owner": lease["lock_owner"],
+            "qa_binding_sha256": binding,
+            "qa_source_sha": lease["source_sha"],
+            "qa_api_digest": lease["images"]["api"],
+        }
+        allowed_tenants = lease["tenant_ids"]
+        if (
+            type(tenant_id) is not int
+            or not isinstance(allowed_tenants, (list, tuple))
+            or tenant_id not in allowed_tenants
+            or not all(isinstance(value, (str, int)) and value for value in claims.values())
+        ):
+            raise ValueError("QA tenant or binding is incomplete")
+        return claims
+    except (KeyError, TypeError, ValueError) as exc:
+        raise AuthenticationFailed("QA 인증 기간이 종료되었습니다.", code="qa_window_closed") from exc
+
+
+def _qa_bound_token(token, lease, tenant_id):
+    claims = _qa_expected_claims(lease, tenant_id)
+    try:
+        deadline = int(lease["expires_at"])
+        if deadline - 30 <= int(time.time()):
+            raise ValueError("admission margin elapsed")
+        for key, value in claims.items():
+            token[key] = value
+        token["exp"] = min(int(token["exp"]), deadline)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise AuthenticationFailed("QA 인증 기간이 종료되었습니다.", code="qa_window_closed") from exc
+    return token
+
+
+def _qa_token_matches(token, lease, tenant_id):
+    expected = _qa_expected_claims(lease, tenant_id)
+    if any(token.get(key) != value for key, value in expected.items()):
+        raise AuthenticationFailed("QA 인증 기간이 종료되었습니다.", code="qa_window_closed")
+
+
+def _qa_single_membership(user, tenant, lease):
+    _qa_expected_claims(lease, tenant.id)
+    memberships = core_repo.membership_list_active_for_user(user)
+    if len(memberships) != 1 or memberships[0].tenant_id != tenant.id:
+        raise AuthenticationFailed("로그인할 수 없는 계정입니다.", code="no_active_account")
+
+
+def _qa_recheck_auth(lease, tenant_id):
+    """Close a drain/renewal race immediately before returning fresh tokens."""
+    try:
+        from apps.infrastructure.qa_lease import get_admission_gate
+
+        fresh = get_admission_gate("api").admit()
+        if fresh is None or _qa_expected_claims(fresh, tenant_id) != _qa_expected_claims(lease, tenant_id):
+            raise ValueError("QA authentication lease changed")
+    except Exception as exc:
+        raise AuthenticationFailed("QA 인증 기간이 종료되었습니다.", code="qa_window_closed") from exc
 
 
 def _extract_tenant_code(*sources) -> str:
@@ -150,11 +236,16 @@ class TenantAwareTokenObtainPairSerializer(TokenObtainPairSerializer):
                 {"detail": "비활성화된 계정입니다."},
                 code="authorization",
             )
+        qa_lease = _qa_lease_for_auth(request)
+        if qa_lease is not None:
+            _qa_single_membership(user, tenant, qa_lease)
         if not self._password_matches(user, password):
             raise serializers.ValidationError(
                 {"detail": "로그인 아이디 또는 비밀번호가 올바르지 않습니다."},
                 code="authorization",
             )
+        if qa_lease is not None:
+            _qa_recheck_auth(qa_lease, tenant.id)
 
         refresh = self.get_token(user)
         # JWT에 tenant_id 클레임 추가 — 크로스테넌트 헤더 조작 방어
@@ -169,12 +260,17 @@ class TenantAwareTokenObtainPairSerializer(TokenObtainPairSerializer):
         mcp = bool(getattr(user, "must_change_password", False))
         refresh["mcp"] = mcp
         refresh.access_token["mcp"] = mcp
+        if qa_lease is not None:
+            _qa_bound_token(refresh, qa_lease, tenant.id)
+        access = refresh.access_token
+        if qa_lease is not None:
+            _qa_bound_token(access, qa_lease, tenant.id)
         from apps.domains.students.services.activity import record_student_login
 
         record_student_login(request=request, tenant=tenant, user=user)
         return {
             "refresh": str(refresh),
-            "access": str(refresh.access_token),
+            "access": str(access),
         }
 
 
@@ -197,6 +293,10 @@ class TenantAwareTokenRefreshSerializer(TokenRefreshSerializer):
         token_version = refresh.payload.get("token_version")
         if user_id is None or tenant_id is None or token_version is None:
             raise AuthenticationFailed("유효하지 않은 로그인 세션입니다.", code="invalid_session")
+        request = self.context.get("request")
+        qa_lease = _qa_lease_for_auth(request)
+        if qa_lease is not None:
+            _qa_token_matches(refresh, qa_lease, tenant_id)
 
         User = get_user_model()
         user = User.objects.filter(**{api_settings.USER_ID_FIELD: user_id}).first()
@@ -216,7 +316,19 @@ class TenantAwareTokenRefreshSerializer(TokenRefreshSerializer):
         if not user_has_active_tenant_access(user, tenant):
             raise AuthenticationFailed("로그인할 수 없는 계정입니다.", code="no_active_account")
 
-        return super().validate(attrs)
+        if qa_lease is not None:
+            _qa_single_membership(user, tenant, qa_lease)
+        result = super().validate(attrs)
+        if qa_lease is not None:
+            _qa_recheck_auth(qa_lease, tenant.id)
+            access = AccessToken(result["access"])
+            _qa_bound_token(access, qa_lease, tenant.id)
+            result["access"] = str(access)
+            if "refresh" in result:
+                rotated = RefreshToken(result["refresh"])
+                _qa_bound_token(rotated, qa_lease, tenant.id)
+                result["refresh"] = str(rotated)
+        return result
 
 
 class TenantAwareTokenRefreshView(TokenRefreshView):

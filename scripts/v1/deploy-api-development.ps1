@@ -5,16 +5,16 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidatePattern('^[0-9]+\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/academy-api@sha256:[0-9a-fA-F]{64}$')]
+    [ValidatePattern('^[0-9]+\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/academy-(?:qa-)?api@sha256:[0-9a-fA-F]{64}$')]
     [string]$ApiImageUri,
     [Parameter(Mandatory = $true)]
-    [ValidatePattern('^[0-9]+\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/academy-tools-worker@sha256:[0-9a-fA-F]{64}$')]
+    [ValidatePattern('^[0-9]+\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/academy-(?:qa-)?tools-worker@sha256:[0-9a-fA-F]{64}$')]
     [string]$ToolsImageUri,
     [Parameter(Mandatory = $true)]
-    [ValidatePattern('^[0-9]+\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/academy-ai-worker-cpu@sha256:[0-9a-fA-F]{64}$')]
+    [ValidatePattern('^[0-9]+\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/academy-(?:qa-)?ai-worker-cpu@sha256:[0-9a-fA-F]{64}$')]
     [string]$AiImageUri,
     [Parameter(Mandatory = $true)]
-    [ValidatePattern('^[0-9]+\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/academy-messaging-worker@sha256:[0-9a-fA-F]{64}$')]
+    [ValidatePattern('^[0-9]+\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/academy-(?:qa-)?messaging-worker@sha256:[0-9a-fA-F]{64}$')]
     [string]$MessagingImageUri,
     [Parameter(Mandatory = $true)]
     [ValidateRange(1, 100000)]
@@ -30,6 +30,12 @@ param(
     [string]$ExpectedProductionDatabaseName,
     [ValidateRange(300, 1800)]
     [int]$TimeoutSec = 900,
+    [string]$EvidencePath = "",
+    [ValidatePattern('^$|^[a-zA-Z0-9][a-zA-Z0-9:._-]{2,120}$')]
+    [string]$SlotOwner = "",
+    [string]$RecoverySnapshot = "",
+    [string]$RecoverySha256 = "",
+    [switch]$IsolatedQa = $false,
     [switch]$Ci = $false,
     [string]$AwsProfile = "default"
 )
@@ -54,6 +60,26 @@ $script:PlanMode = $false
 Assert-AwsMutationIdentity | Out-Null
 Load-SSOT -Env prod | Out-Null
 
+if ($IsolatedQa) {
+    $script:ApiDevelopmentInstanceProfileName = "academy-api-qa"
+    $script:ApiDevelopmentRoleName = "academy-api-qa-role"
+}
+
+
+if ($IsolatedQa -or $SlotOwner -or $env:CANDIDATE_ENABLED -eq "true") {
+    if ($IsolatedQa -and -not $SlotOwner) { throw "Isolated QA requires its named slot owner." }
+    $python = if (Get-Command python3 -ErrorAction SilentlyContinue) { "python3" } else { "python" }
+    if ($RecoverySnapshot) {
+        if ($IsolatedQa -or -not $RecoverySha256) { throw "Restoration requires trusted baseline coordinates." }
+        & $python (Join-Path $ScriptRoot "deployment_lock.py") assert-owned --owner $env:ACADEMY_DEPLOY_LOCK_OWNER
+        if ($LASTEXITCODE -ne 0) { throw "Restoration lock ownership failed." }
+        & $python (Join-Path $ScriptRoot "candidate_slot.py") assess --snapshot $RecoverySnapshot --sha256 $RecoverySha256
+    } else {
+        & $python (Join-Path $ScriptRoot "candidate_slot.py") guard --owner $SlotOwner
+    }
+    if ($LASTEXITCODE -ne 0) { throw "Development slot is owned, busy or not safely inspectable." }
+}
+
 if (-not $script:ApiDevelopmentEnabled) {
     throw "Persistent API development environment is disabled in params.yaml."
 }
@@ -62,6 +88,19 @@ if ($script:ApiDevelopmentAccessMode -ne "ssm-only") {
 }
 if (-not $script:ApiDevelopmentMatchProductionCompute) {
     throw "API development must match the production compute contract."
+}
+$imagePrefix = if ($IsolatedQa) { "academy-qa-" } else { "academy-" }
+$imageRoles = @{
+    api = $ApiImageUri
+    "tools-worker" = $ToolsImageUri
+    "ai-worker-cpu" = $AiImageUri
+    "messaging-worker" = $MessagingImageUri
+}
+foreach ($entry in $imageRoles.GetEnumerator()) {
+    $expected = "809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/$imagePrefix$($entry.Key)@sha256:"
+    if (-not $entry.Value.StartsWith($expected, [StringComparison]::Ordinal)) {
+        throw "Image URI crosses the selected development/QA account or repository boundary."
+    }
 }
 Assert-ImmutableEcrImageUri -ImageUri $ApiImageUri
 Assert-ImmutableEcrImageUri -ImageUri $ToolsImageUri
@@ -299,11 +338,29 @@ $oldResult = Invoke-AwsJson @(
     "--region", $script:Region,
     "--output", "json"
 )
+foreach ($oldInstance in @($oldResult.Reservations.Instances)) {
+    $lease = [string]($oldInstance.Tags | Where-Object { $_.Key -eq "SlotLeaseOwner" } | Select-Object -First 1 -ExpandProperty Value)
+    if ($lease -and $lease -ne $SlotOwner) {
+        throw "Development slot is leased by another task; refusing replacement."
+    }
+}
 $oldInstanceIds = @(
     $oldResult.Reservations.Instances |
         ForEach-Object { [string]$_.InstanceId } |
         Where-Object { $_ }
 )
+
+$coordinateTags = ",{Key=ApiImageUri,Value=$ApiImageUri}" +
+    ",{Key=ToolsImageUri,Value=$ToolsImageUri}" +
+    ",{Key=AiImageUri,Value=$AiImageUri}" +
+    ",{Key=MessagingImageUri,Value=$MessagingImageUri}" +
+    ",{Key=ApiEnvVersion,Value=$ExpectedEnvVersion}" +
+    ",{Key=WorkersEnvVersion,Value=$ExpectedWorkersEnvVersion}" +
+    ",{Key=ProductionDatabase,Value=$ExpectedProductionDatabaseName}"
+$tagSpec = $tagSpec.Substring(0, $tagSpec.Length - 1) + $coordinateTags + "]"
+if ($IsolatedQa) {
+    $tagSpec = $tagSpec.Replace("Tags=[", "Tags=[{Key=QaMode,Value=isolated-qa},{Key=SlotLeaseOwner,Value=$SlotOwner},")
+}
 
 $instanceId = ""
 $promoted = $false
@@ -506,6 +563,7 @@ echo DEVELOPMENT_RUNTIME_PASS
 
     & (Join-Path $ScriptRoot "run-api-development-smoke.ps1") `
         -InstanceId $instanceId `
+        -IsolatedQa:$IsolatedQa `
         -TimeoutSec ([Math]::Min($TimeoutSec, 600)) `
         -Ci:$Ci `
         -AwsProfile $AwsProfile
@@ -552,6 +610,19 @@ echo DEVELOPMENT_RUNTIME_PASS
             "--instance-ids", $oldInstanceIds,
             "--region", $script:Region
         ) -ErrorMessage "wait for prior API development termination" | Out-Null
+    }
+    if ($EvidencePath) {
+        $evidence = @{
+            release_id = $ExpectedReleaseId
+            stage = "development"
+            api = $ApiImageUri
+            tools = $ToolsImageUri
+            ai = $AiImageUri
+            messaging = $MessagingImageUri
+            syntheticSmokeCleanupZero = $true
+            instance_id = $instanceId
+        }
+        $evidence | ConvertTo-Json | Set-Content -LiteralPath $EvidencePath
     }
     Write-Host (
         "API_DEVELOPMENT_DEPLOY_PASS instance={0} release={1} api={2} tools={3} ai={4}" -f

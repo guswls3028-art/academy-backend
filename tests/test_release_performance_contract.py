@@ -205,7 +205,7 @@ def test_runtime_images_build_in_parallel_before_candidate_assembly() -> None:
     assert runtime_build.count("repository: academy-") == 5
     assert runtime_build.count("uses: docker/build-push-action@") == 1
     assert "build-args: BASE_IMAGE=${{ needs.prepare-build.outputs.base_image_uri }}" in runtime_build
-    assert "needs: [detect-changes, prepare-build, build-runtime-images]" in assembly
+    assert "needs: [detect-changes, prepare-build, build-runtime-images, acquire-production-lock, verify-release-freshness, verify-runtime-iam]" in assembly
     assert "Gate all candidate images on completed ECR critical scan" in assembly
 
 

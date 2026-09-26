@@ -80,6 +80,12 @@ def _record_user_facing_server_error(request, response) -> None:
     status_code = int(getattr(response, "status_code", 0) or 0)
     if status_code < 500 or _is_health_check_path(path):
         return
+    marker = getattr(request, "_candidate_qa_admission_denied", None)
+    if marker is not None:
+        from apps.api.middleware.candidate_qa_admission import DENIAL_MARKER
+
+        if marker is DENIAL_MARKER:
+            return
     if any(path.startswith(prefix) for prefix in USER_INCIDENT_SKIP_PREFIXES):
         return
 

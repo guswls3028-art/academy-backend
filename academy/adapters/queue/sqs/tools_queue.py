@@ -41,3 +41,7 @@ class SQSToolsQueueAdapter:
             tier=tier,
             visibility_timeout=visibility_timeout_seconds,
         )
+
+    def release_unstarted(self, receipt_handle: str, tier: str = "tools") -> bool:
+        """Return an unstarted QA receipt to the queue without acknowledging it."""
+        return self.extend_visibility(receipt_handle, tier, 0)

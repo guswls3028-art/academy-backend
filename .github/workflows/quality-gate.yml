@@ -80,7 +80,9 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install static tooling
-        run: python -m pip install --disable-pip-version-check --quiet ruff
+        run: python -m pip install --disable-pip-version-check --quiet ruff PyYAML==6.0.3
+      - name: Candidate source/provenance/retention boundaries (offline)
+        run: python -B -m unittest scripts.v1.test_candidate_foundation scripts.v1.test_candidate_qa_baseline -v
       - name: Ruff and architecture boundaries
         run: |
           python -m ruff check apps/ academy/
