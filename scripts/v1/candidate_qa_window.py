@@ -28,12 +28,12 @@ def require(condition, message):
 
 
 def binding(record):
-    fields = ("lease_id","owner_task","lock_owner","source_sha","images","endpoint","profile","scope","baseline_sha256")
+    fields = ("lease_id","owner_task","lock_owner","source_sha","images","endpoint","profile","scope","baseline_sha256","tenant_ids","message_key_version")
     return hashlib.sha256(json.dumps({k:record[k] for k in fields},sort_keys=True,separators=(",",":")).encode()).hexdigest()
 
 
 def specification(*, lease_id, owner_task, lock_owner, source_sha, images, endpoint,
-                  profile, scope, baseline_sha256):
+                  profile, scope, baseline_sha256, tenant_ids, message_key_version):
     require(re.fullmatch(r"[0-9a-f]{32}",lease_id), "Invalid lease ID")
     require(re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}",owner_task), "Exact owner task ID required")
     require(re.fullmatch(r"candidate:[1-9][0-9]*:[1-9][0-9]*",lock_owner), "Workflow lock owner required")
@@ -44,7 +44,11 @@ def specification(*, lease_id, owner_task, lock_owner, source_sha, images, endpo
     require(profile == PROFILE, "Isolated QA profile required")
     require(bool(scope) and set(scope) <= {509,511} and len(scope) == len(set(scope)), "Unapproved acceptance scope")
     require(re.fullmatch(r"[0-9a-f]{64}",baseline_sha256), "Rollback snapshot required")
-    return dict(lease_id=lease_id, owner_task=owner_task, lock_owner=lock_owner, source_sha=source_sha,
+    require(isinstance(tenant_ids,list) and tenant_ids and
+            all(type(v) is int and v > 0 for v in tenant_ids) and len(set(tenant_ids)) == len(tenant_ids),
+            "Exact disposable QA tenant IDs required")
+    require(type(message_key_version) is int and message_key_version > 0, "Pinned QA signing key version required")
+    return dict(tenant_ids=sorted(tenant_ids), message_key_version=message_key_version, lease_id=lease_id, owner_task=owner_task, lock_owner=lock_owner, source_sha=source_sha,
                 images=copy.deepcopy(images), endpoint=endpoint, profile=profile, scope=sorted(scope),
                 baseline_sha256=baseline_sha256)
 
@@ -108,6 +112,7 @@ class LeaseStore:
              "ConditionExpression":"attribute_not_exists(videoId)" if expected_revision is None else
                                    "revision = :revision AND leaseId = :lease"}
         put["Item"]["leaseId"]={"S":record["lease_id"]}
+        put["Item"]["state"]={"S":record["state"]}
         if expected_revision is not None:
             put["ExpressionAttributeValues"]={":revision":{"N":str(expected_revision)},":lease":{"S":record["lease_id"]}}
         self.client.transact_write_items(TransactItems=[

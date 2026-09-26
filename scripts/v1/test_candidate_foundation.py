@@ -535,7 +535,7 @@ class BoundedWindowTests(unittest.TestCase):
             lock_owner="candidate:123:1",source_sha=SHA,
             images={k:DIGEST for k in ("api","tools","ai","messaging")},
             endpoint="ssm://i-0123456789abcdef0:8001",profile=window.PROFILE,
-            scope=[509,511],baseline_sha256="c"*64)
+            scope=[509,511],baseline_sha256="c"*64,tenant_ids=[101],message_key_version=1)
         class Store:
             record=None
             def read(inner):

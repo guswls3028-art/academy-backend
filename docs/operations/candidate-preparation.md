@@ -310,3 +310,45 @@ One bounded external provisioning approval must identify:
 Do not create projects/keys, retrieve credentials, call providers or mutate
 tenant/user data merely to complete this package. Those actions remain pending
 until their exact approved scope exists.
+
+
+### Runtime helper integration contract (stacked admission work)
+
+The shared apps/infrastructure/qa_lease.py helper is opt-in only. Normal
+development/production creates no QA client/thread. A partial QA configuration
+fails closed. ACADEMY_QA_MODE=isolated-qa, runtime environment development,
+pinned lease ID and binding SHA256 are required. The binding now also includes
+exact disposable tenant_ids and message_key_version. The live lease and
+shared lock are read atomically; every admission uses the committed revision.
+
+Use get_admission_gate(kind) for one process-local gate, not a new instance per
+job. admit() returns fresh lease metadata; assert_tenant() accepts only an
+authoritative resolved tenant in that lease. begin(operation_id, tenant_id=...,
+message=..., job_id=...) records only a hash of the full job/receipt identity,
+lease revision, tenant and signed message ID. The API's exact authentication
+bootstrap may use purpose='auth' without a tenant only before the separately
+owned post-auth membership/token-binding gate. This does not authorize enqueue.
+
+Producers call stamp_message(payload, tenant_id, job_id=..., queue_kind=...)
+using the authoritative job tenant. Caller stamps are overwritten. The signature
+covers the canonical body hash, job/destination, lease/owner/attempt/revision,
+candidate images/source, tenant, random message ID, issue time and expiry.
+validate_message requires exact current revision and matching authoritative
+job/tenant before processing. Existing in-flight work may finish after expiry;
+new receipts must be released without execution. Invalid/stale receipts create
+nonsecret HOLD evidence, stop new admissions for that process and remain visible
+for owned recovery rather than being silently deleted.
+
+Nonce claims use conditional DynamoDB transactions, including the current lease
+revision. Same-identity in-flight duplicates raise QaMessageInFlight; completed
+duplicates raise QaMessageCompleted. A successful handler/callback explicitly
+calls complete_message(payload); otherwise context exit records retryable so
+legitimate callback retries can redeliver. An uncertain claim/outcome retains
+HOLD evidence. No crashed in-flight claim is reclaimed by an assumed timeout.
+
+The runtime reads only the pinned SecureString version at
+/academy/qa-leases/<lease-id>/message-signing-key:<version> for signing/verification.
+No key is logged or stored in the activity/journal artifacts. Offline fixtures
+inject a synthetic key. No actual key or IAM grant has been created. Runtime
+readback must match fresh process files to the actual expected containers/process
+inventory; a file alone or missing worker is not evidence of idle capacity.
