@@ -11,8 +11,10 @@ from apps.domains.results.models import (
     ExamAttempt,
     ExamResult,
     Result,
-    ResultFact,
     ResultItem,
+)
+from apps.domains.results.services.manual_subjective_score import (
+    latest_subjective_grading_facts,
 )
 from apps.support.omr.score_shape import get_exam_score_shape
 from apps.support.results.exam_policy_dependencies import effective_exam_pass_score
@@ -136,20 +138,9 @@ def omr_subjective_completion_states(
     completed_by_result: dict[int, set[int]] = defaultdict(set)
     for result_id, question_id in ResultItem.objects.filter(
         result_id__in=omr_result_ids,
+        source__in=("manual", "manual_grid"),
     ).values_list("result_id", "question_id"):
         completed_by_result[int(result_id)].add(int(question_id))
-
-    omr_attempt_ids = {
-        int(result.attempt_id)
-        for result in result_rows
-        if int(result.id) in omr_result_ids and result.attempt_id
-    }
-    aggregate_attempt_ids = set(
-        ResultFact.objects.filter(
-            attempt_id__in=omr_attempt_ids,
-            source__in=("manual_subjective", "manual_total"),
-        ).values_list("attempt_id", flat=True)
-    )
 
     required_by_exam: dict[int, frozenset[int]] = {}
     for exam_id, exam in exams.items():
@@ -160,6 +151,11 @@ def omr_subjective_completion_states(
             if kind == "essay" and score_shape.subjective_max_score > 0
         )
 
+    latest_facts = latest_subjective_grading_facts(
+        [row for row in result_rows if int(row.id) in omr_result_ids],
+        essay_question_ids=set().union(*required_by_exam.values()),
+        include_total=True,
+    )
     states: dict[int, OmrSubjectiveCompletionState] = {}
     for result in result_rows:
         attempt = attempts.get(int(result.attempt_id or 0))
@@ -195,12 +191,11 @@ def omr_subjective_completion_states(
             and isinstance(submission.meta.get("manual_review"), dict)
             else {}
         )
-        aggregate_recorded = bool(
-            attempt is not None
-            and (
-                int(attempt.id) in aggregate_attempt_ids
-                or _attempt_has_aggregate_subjective_score(attempt)
-            )
+        latest_fact = latest_facts.get(int(result.attempt_id or 0))
+        aggregate_recorded = (
+            latest_fact.source in {"manual_subjective", "manual_total"}
+            if latest_fact is not None
+            else bool(attempt and _attempt_has_aggregate_subjective_score(attempt))
         )
         states[int(result.id)] = OmrSubjectiveCompletionState(
             result_id=int(result.id),
@@ -291,19 +286,6 @@ def finalize_omr_result_if_ready(*, result_id: int) -> OmrFinalizationDecision:
             transitioned=False,
             pending_reason="invalid_omr_scope",
         )
-    if state.manual_review_required:
-        return OmrFinalizationDecision(
-            projection_ready=False,
-            transitioned=False,
-            pending_reason="manual_review_required",
-        )
-    if not state.subjective_complete:
-        return OmrFinalizationDecision(
-            projection_ready=False,
-            transitioned=False,
-            pending_reason="subjective_pending",
-        )
-
     legacy = (
         ExamResult.objects.select_for_update()
         .filter(
@@ -312,6 +294,22 @@ def finalize_omr_result_if_ready(*, result_id: int) -> OmrFinalizationDecision:
         )
         .first()
     )
+    pending_reason = (
+        "manual_review_required" if state.manual_review_required
+        else "subjective_pending" if not state.subjective_complete
+        else None
+    )
+    if pending_reason:
+        transitioned = bool(legacy and legacy.status == ExamResult.Status.FINAL)
+        if transitioned:
+            legacy.status = ExamResult.Status.DRAFT
+            legacy.finalized_at = None
+            legacy.save(update_fields=["status", "finalized_at", "updated_at"])
+        return OmrFinalizationDecision(
+            projection_ready=False,
+            transitioned=transitioned,
+            pending_reason=pending_reason,
+        )
     if legacy is None:
         return OmrFinalizationDecision(
             projection_ready=False,

@@ -59,6 +59,9 @@ def _serialize_exam(exam, *, submission_status_map=None):
     return StudentExamSerializer({
         "id": exam.id,
         "title": exam.title,
+        "grading_mode": exam.grading_mode,
+        "choice_question_count": exam.choice_question_count,
+        "essay_numbering": exam.essay_numbering,
         "description": getattr(exam, "description", "") or "",
         "open_at": exam.open_at,
         "close_at": exam.close_at,
