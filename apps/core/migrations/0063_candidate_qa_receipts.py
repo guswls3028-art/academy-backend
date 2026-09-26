@@ -85,6 +85,8 @@ class Migration(migrations.Migration):
             ],
             options={
                 'db_table': 'candidate_qa_action',
+                'indexes': [models.Index(fields=['run', 'domain', 'tenant_id'], name='candidate_qa_action_scope_idx')],
+                'constraints': [models.UniqueConstraint(fields=('run', 'action_id'), name='uniq_candidate_qa_action')],
             },
         ),
         migrations.CreateModel(
@@ -107,14 +109,6 @@ class Migration(migrations.Migration):
                 'indexes': [models.Index(fields=['action', 'id'], name='candidate_qa_receipt_order_idx')],
                 'constraints': [models.UniqueConstraint(fields=('action', 'event_id'), name='uniq_candidate_qa_receipt')],
             },
-        ),
-        migrations.AddIndex(
-            model_name='candidateqaaction',
-            index=models.Index(fields=['run', 'domain', 'tenant_id'], name='candidate_qa_action_scope_idx'),
-        ),
-        migrations.AddConstraint(
-            model_name='candidateqaaction',
-            constraint=models.UniqueConstraint(fields=('run', 'action_id'), name='uniq_candidate_qa_action'),
         ),
         migrations.RunPython(protect_receipts, unprotect_receipts),
     ]
