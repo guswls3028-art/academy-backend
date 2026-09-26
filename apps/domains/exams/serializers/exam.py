@@ -44,6 +44,7 @@ class ExamSerializer(serializers.ModelSerializer):
             "grading_mode",
             "manual_grading_method",
             "choice_question_count",
+            "essay_numbering",
             "segmentation_status",
             "source_filename",
             "display_order",

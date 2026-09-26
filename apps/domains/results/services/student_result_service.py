@@ -260,6 +260,7 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
         show_answers = False
     data["answer_visibility"] = getattr(exam, "answer_visibility", "hidden")
     data["answers_visible"] = show_answers
+    data["essay_numbering"] = getattr(exam, "essay_numbering", "continuous")
 
     # question_id → question_number 매핑 (ExamQuestion.number 사용)
     item_question_ids = [
@@ -272,6 +273,26 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
         exam_id=template_exam_id,
         tenant=tenant,
     )
+    essay_index_by_id = {}
+    if data["essay_numbering"] == "separate" and item_question_ids:
+        from apps.support.omr.score_shape import get_exam_score_shape
+
+        score_shape = get_exam_score_shape(exam)
+        essay_question_numbers = exams_repo.exam_question_number_map(
+            [
+                question_id for question_id, kind in score_shape.question_kind_by_id.items()
+                if kind == "essay"
+            ],
+            exam_id=template_exam_id,
+            tenant=tenant,
+        )
+        essay_ids = sorted(
+            essay_question_numbers,
+            key=lambda question_id: essay_question_numbers[question_id],
+        )
+        essay_index_by_id = {
+            question_id: index for index, question_id in enumerate(essay_ids, start=1)
+        }
     data["items"] = [
         item for item in (data.get("items") or [])
         if item.get("question_id") in question_number_map
@@ -288,6 +309,8 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
     for item in data.get("items") or []:
         q_id = item.get("question_id")
         item["question_number"] = question_number_map.get(q_id)
+        if q_id in essay_index_by_id:
+            item["essay_index"] = essay_index_by_id[q_id]
         item.setdefault("student_answer", item.get("answer"))
         if show_answers:
             correct = correct_answer_map.get(str(q_id or ""))

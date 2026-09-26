@@ -120,6 +120,7 @@ def student_exam_questions(exam):
         answers=getattr(answer_key, "answers", None),
     )
     for question in questions:
+        question["question_kind"] = score_shape.question_kind(int(question["id"]))
         question["answer_format"] = (
             NUMERIC_SHORT_ANSWER_FORMAT
             if int(question["id"]) in numeric_question_ids

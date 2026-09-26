@@ -671,7 +671,7 @@ class OMRPdfRenderer:
             essay_start = doc.mc_count + 1 if doc.essay_count > 0 else 1
             sections.append(('essay', ex, ew, ew, essay_start, essay_start + ec - 1))
             question_numbers_by_section[ex] = (
-                doc.resolved_essay_question_numbers
+                doc.display_essay_question_numbers
                 if doc.essay_count > 0
                 else tuple(range(1, ec + 1))
             )

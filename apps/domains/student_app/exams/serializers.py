@@ -5,6 +5,9 @@ from rest_framework import serializers
 class StudentExamSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     title = serializers.CharField()
+    grading_mode = serializers.CharField(read_only=True)
+    choice_question_count = serializers.IntegerField(read_only=True)
+    essay_numbering = serializers.CharField(read_only=True)
     open_at = serializers.DateTimeField(allow_null=True)
     close_at = serializers.DateTimeField(allow_null=True)
     allow_retake = serializers.BooleanField()

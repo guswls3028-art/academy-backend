@@ -50,6 +50,10 @@ def _parse_omr_params(data: dict) -> dict:
             min_value=0,
             max_value=MAX_ESSAY_QUESTIONS,
         ).run_validation(data["essay_count"])
+    if "essay_numbering" in data:
+        params["essay_numbering"] = serializers.ChoiceField(
+            choices=("continuous", "separate"),
+        ).run_validation(data["essay_numbering"])
     if "n_choices" in data:
         params["n_choices"] = serializers.ChoiceField(
             choices=[5],
@@ -102,6 +106,7 @@ def _build_exam_doc(*, request, exam_id: int) -> tuple[OMRDocument | None, Respo
     """시험 기반 OMRDocument 생성. validation error는 DRF Response로 반환."""
     exam = _get_exam(request.tenant, exam_id)
     params = _parse_omr_params(request.data)
+    params.pop("essay_numbering", None)  # Exam setting owns its printed labels.
     doc = OMRDocumentService.from_exam(
         exam=exam, tenant=request.tenant, **params
     )

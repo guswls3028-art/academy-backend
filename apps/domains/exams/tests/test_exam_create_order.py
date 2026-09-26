@@ -87,6 +87,7 @@ class ExamCreateOrderTests(TestCase):
             exam_type=Exam.ExamType.REGULAR,
             max_score=80,
             pass_score=64,
+            essay_numbering=Exam.EssayNumbering.SEPARATE,
         )
         source_sheet = Sheet.objects.create(
             exam=source,
@@ -115,6 +116,7 @@ class ExamCreateOrderTests(TestCase):
         self.assertEqual(response.status_code, 201, response.data)
         copied = Exam.objects.get(id=response.data["id"])
         self.assertIsNone(copied.template_exam_id)
+        self.assertEqual(copied.essay_numbering, Exam.EssayNumbering.SEPARATE)
         copied_questions = list(copied.sheet.questions.order_by("number"))
         self.assertEqual(
             [(question.number, question.score) for question in copied_questions],

@@ -27,6 +27,7 @@ class ExamUpdateSerializer(serializers.ModelSerializer):
             "grading_mode",
             "manual_grading_method",
             "choice_question_count",
+            "essay_numbering",
             "display_order",
             "open_at",
             "close_at",

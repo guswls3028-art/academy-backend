@@ -13,6 +13,9 @@ class StudentExamListSerializer(serializers.ModelSerializer):
             "id",
             "title",
             "description",
+            "grading_mode",
+            "choice_question_count",
+            "essay_numbering",
             "open_at",
             "close_at",
         ]
