@@ -130,7 +130,7 @@ class OMRHtmlRenderer:
         rows = []
         for i in range(1, render_essay_count + 1):
             group_idx = (i - 1) // 5
-            number = doc.resolved_essay_question_numbers[i - 1] if doc.essay_count > 0 else i
+            number = doc.display_essay_question_numbers[i - 1] if doc.essay_count > 0 else i
             rows.append({
                 "number": number,
                 "is_g5": (i % 5 == 0 and i != render_essay_count),

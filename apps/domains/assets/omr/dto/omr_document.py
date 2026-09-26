@@ -35,6 +35,7 @@ class OMRDocument:
     decorative_essay_count: int = DECORATIVE_ESSAY_COUNT
     choice_question_numbers: tuple[int, ...] = ()
     essay_question_numbers: tuple[int, ...] = ()
+    essay_numbering: str = "continuous"
 
     # -- 테넌트 브랜딩 --
     logo_url: Optional[str] = None  # presigned URL (HTML preview용)
@@ -69,6 +70,13 @@ class OMRDocument:
         return self.essay_question_numbers or tuple(
             range(self.mc_count + 1, self.mc_count + self.essay_count + 1)
         )
+
+    @property
+    def display_essay_question_numbers(self) -> tuple[int, ...]:
+        """Print labels only; resolved numbers remain the scanning/grading contract."""
+        if self.essay_numbering == "separate":
+            return tuple(range(1, self.essay_count + 1))
+        return self.resolved_essay_question_numbers
 
     @property
     def can_include_optional_essay_area(self) -> bool:
@@ -110,6 +118,8 @@ class OMRDocument:
             errors.append("문항이 최소 1개 이상이어야 합니다.")
         if self.n_choices != 5:
             errors.append("보기 수는 5여야 합니다.")
+        if self.essay_numbering not in {"continuous", "separate"}:
+            errors.append("서술형 번호 방식은 continuous 또는 separate여야 합니다.")
         if self.choice_question_numbers and len(self.choice_question_numbers) != self.mc_count:
             errors.append("객관식 문항 번호 수가 객관식 문항 수와 일치해야 합니다.")
         if self.essay_question_numbers and len(self.essay_question_numbers) != self.essay_count:
@@ -134,6 +144,7 @@ class OMRDocument:
             "session_name": self.session_name,
             "mc_count": self.mc_count,
             "essay_count": self.essay_count,
+            "essay_numbering": self.essay_numbering,
             "include_optional_essay_area": self.include_optional_essay_area,
             "can_include_optional_essay_area": self.can_include_optional_essay_area,
             "render_essay_count": self.render_essay_count,

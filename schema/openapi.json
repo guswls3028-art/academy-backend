@@ -2822,6 +2822,14 @@
         ],
         "type": "object"
       },
+      "EssayNumberingEnum": {
+        "description": "* `continuous` - 이어서 표시\n* `separate` - 서술형 1번부터 표시",
+        "enum": [
+          "continuous",
+          "separate"
+        ],
+        "type": "string"
+      },
       "EventProtocolVersionEnum": {
         "description": "* `1` - 1\n* `2` - 2",
         "enum": [
@@ -2888,6 +2896,14 @@
             "maximum": 9223372036854775807,
             "minimum": 0,
             "type": "integer"
+          },
+          "essay_numbering": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EssayNumberingEnum"
+              }
+            ],
+            "description": "서술형 표시 번호 방식. 저장된 문항 번호와 채점·OMR 인식 계약은 변경하지 않는다.\n\n* `continuous` - 이어서 표시\n* `separate` - 서술형 1번부터 표시"
           },
           "exam_type": {
             "$ref": "#/components/schemas/ExamTypeEnum"
@@ -3103,6 +3119,14 @@
           "description": {
             "type": "string"
           },
+          "essay_numbering": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EssayNumberingEnum"
+              }
+            ],
+            "description": "서술형 표시 번호 방식. 저장된 문항 번호와 채점·OMR 인식 계약은 변경하지 않는다.\n\n* `continuous` - 이어서 표시\n* `separate` - 서술형 1번부터 표시"
+          },
           "exam_type": {
             "type": "string"
           },
@@ -3184,6 +3208,14 @@
           },
           "description": {
             "type": "string"
+          },
+          "essay_numbering": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EssayNumberingEnum"
+              }
+            ],
+            "description": "서술형 표시 번호 방식. 저장된 문항 번호와 채점·OMR 인식 계약은 변경하지 않는다.\n\n* `continuous` - 이어서 표시\n* `separate` - 서술형 1번부터 표시"
           },
           "exam_type": {
             "minLength": 1,
@@ -3301,6 +3333,14 @@
             "minimum": 0,
             "type": "integer"
           },
+          "essay_numbering": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EssayNumberingEnum"
+              }
+            ],
+            "description": "서술형 표시 번호 방식. 저장된 문항 번호와 채점·OMR 인식 계약은 변경하지 않는다.\n\n* `continuous` - 이어서 표시\n* `separate` - 서술형 1번부터 표시"
+          },
           "grading_mode": {
             "allOf": [
               {
@@ -3400,6 +3440,14 @@
             "maximum": 9223372036854775807,
             "minimum": 0,
             "type": "integer"
+          },
+          "essay_numbering": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EssayNumberingEnum"
+              }
+            ],
+            "description": "서술형 표시 번호 방식. 저장된 문항 번호와 채점·OMR 인식 계약은 변경하지 않는다.\n\n* `continuous` - 이어서 표시\n* `separate` - 서술형 1번부터 표시"
           },
           "grading_mode": {
             "allOf": [
@@ -6224,6 +6272,18 @@
             },
             "type": "array"
           },
+          "grading_complete": {
+            "type": "boolean"
+          },
+          "grading_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          "grading_status": {
+            "type": "string"
+          },
           "id": {
             "format": "uuid",
             "type": "string"
@@ -6263,6 +6323,12 @@
             },
             "type": "array"
           },
+          "subjective_pending_ordinals": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          },
           "terminal": {
             "type": "boolean"
           },
@@ -6282,6 +6348,9 @@
           "duplicate_ordinals",
           "exam_id",
           "failed_ordinals",
+          "grading_complete",
+          "grading_counts",
+          "grading_status",
           "id",
           "lecture_id",
           "overall_status",
@@ -6290,6 +6359,7 @@
           "retried_ordinals",
           "session_id",
           "skipped_ordinals",
+          "subjective_pending_ordinals",
           "terminal",
           "total_count",
           "updated_at"
@@ -6332,6 +6402,18 @@
             },
             "type": "array"
           },
+          "grading_complete": {
+            "type": "boolean"
+          },
+          "grading_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          "grading_status": {
+            "type": "string"
+          },
           "id": {
             "format": "uuid",
             "type": "string"
@@ -6353,6 +6435,12 @@
             "nullable": true,
             "type": "integer"
           },
+          "subjective_pending_ordinals": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          },
           "terminal": {
             "type": "boolean"
           },
@@ -6372,11 +6460,15 @@
           "duplicate_ordinals",
           "exam_id",
           "failed_ordinals",
+          "grading_complete",
+          "grading_counts",
+          "grading_status",
           "id",
           "lecture_id",
           "overall_status",
           "pending_admission_ordinals",
           "session_id",
+          "subjective_pending_ordinals",
           "terminal",
           "total_count",
           "updated_at"
@@ -6422,6 +6514,18 @@
             },
             "type": "array"
           },
+          "grading_complete": {
+            "type": "boolean"
+          },
+          "grading_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          "grading_status": {
+            "type": "string"
+          },
           "id": {
             "format": "uuid",
             "type": "string"
@@ -6442,6 +6546,12 @@
           "session_id": {
             "nullable": true,
             "type": "integer"
+          },
+          "subjective_pending_ordinals": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
           },
           "submission_ids": {
             "items": {
@@ -6469,11 +6579,15 @@
           "duplicate_ordinals",
           "exam_id",
           "failed_ordinals",
+          "grading_complete",
+          "grading_counts",
+          "grading_status",
           "id",
           "lecture_id",
           "overall_status",
           "pending_admission_ordinals",
           "session_id",
+          "subjective_pending_ordinals",
           "submission_ids",
           "terminal",
           "total_count",
@@ -8541,6 +8655,14 @@
             "maximum": 9223372036854775807,
             "minimum": 0,
             "type": "integer"
+          },
+          "essay_numbering": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EssayNumberingEnum"
+              }
+            ],
+            "description": "서술형 표시 번호 방식. 저장된 문항 번호와 채점·OMR 인식 계약은 변경하지 않는다.\n\n* `continuous` - 이어서 표시\n* `separate` - 서술형 1번부터 표시"
           },
           "grading_mode": {
             "allOf": [
