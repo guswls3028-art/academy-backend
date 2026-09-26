@@ -52,6 +52,8 @@ class AdmissionTests(unittest.TestCase):
             "ACADEMY_QA_LEASE_ID":"a"*32,"ACADEMY_QA_BINDING_SHA256":binding_sha256(self.record),
             "ACADEMY_QA_MESSAGE_KEY_VERSION":"1","ACADEMY_QA_MESSAGE_SIGNING_KEY":"e"*64,
         }
+        self.metadata={"job_type":"synthetic","tier":"basic","source_domain":"qa","source_id":"one",
+                       "created_at":"2026-09-26T00:00:00Z","attempt":0}
         self.claims=FakeClaims()
         self.gates=[]
 
@@ -66,7 +68,7 @@ class AdmissionTests(unittest.TestCase):
 
     def payload(self,gate=None):
         return (gate or self.gate()).stamp_message({"question":"synthetic","_qa_lease":{"untrusted":True}},
-                                                  101,job_id="job-123")
+                                                  101,job_id="job-123",job_metadata=self.metadata)
 
     def test_default_runtime_never_reads_or_tracks(self):
         reader=Mock(side_effect=AssertionError("AWS must not be used"))
@@ -85,62 +87,87 @@ class AdmissionTests(unittest.TestCase):
 
     def test_producer_overwrites_untrusted_stamp_and_checks_authoritative_tenant(self):
         gate=self.gate();payload=self.payload(gate)
-        stamp=gate.validate_message(payload,tenant_id=101,job_id="job-123")
+        stamp=gate.validate_message(payload,tenant_id=101,job_id="job-123",job_metadata=self.metadata)
         self.assertNotIn("untrusted",stamp)
         self.assertEqual(stamp["tenant_id"],101)
         self.assertEqual(stamp["queue_kind"],"ai")
         for tenant in (102,None,True,101.2):
-            with self.assertRaises(QaLeaseClosed):gate.stamp_message({},tenant,job_id="job-123")
+            with self.assertRaises(QaLeaseClosed):gate.stamp_message({},tenant,job_id="job-123",job_metadata=self.metadata)
 
     def test_cross_tenant_wrong_job_and_wrong_worker_rejected(self):
         payload=self.payload()
         for tenant,job in ((102,"job-123"),(None,"job-123"),(101,"other-job")):
             with self.assertRaises(QaLeaseClosed):
-                self.gate().validate_message(payload,tenant_id=tenant,job_id=job)
+                self.gate().validate_message(payload,tenant_id=tenant,job_id=job,job_metadata=self.metadata)
         with self.assertRaises(QaLeaseClosed):
-            self.gate("tools").validate_message(payload,tenant_id=101,job_id="job-123")
+            self.gate("tools").validate_message(payload,tenant_id=101,job_id="job-123",job_metadata=self.metadata)
 
     def test_signature_body_and_stamp_tampering_fail(self):
         for field,value in (("question","changed"),("_qa_lease",{})):
             payload=self.payload();payload[field]=value
             with self.assertRaises(QaLeaseClosed):
-                self.gate().validate_message(payload,tenant_id=101,job_id="job-123")
+                self.gate().validate_message(payload,tenant_id=101,job_id="job-123",job_metadata=self.metadata)
         for field,value in (("tenant_id",102),("lease_id","f"*32),("revision",2),
                             ("source_sha","f"*40),("issued_at",800)):
             payload=self.payload();payload["_qa_lease"][field]=value
             with self.assertRaises(QaLeaseClosed):
-                self.gate().validate_message(payload,tenant_id=101,job_id="job-123")
+                self.gate().validate_message(payload,tenant_id=101,job_id="job-123",job_metadata=self.metadata)
+
+    def test_unsigned_or_changed_outer_metadata_is_rejected_before_claim(self):
+        gate=self.gate();payload=self.payload(gate)
+        with self.assertRaises(QaLeaseClosed):
+            gate.validate_message(payload,tenant_id=101,job_id="job-123")
+        changed=dict(self.metadata,job_type="another_handler")
+        with self.assertRaises(QaLeaseClosed):
+            with gate.begin("receipt",tenant_id=101,message=payload,job_id="job-123",job_metadata=changed):
+                self.fail("Tampered envelope reached the handler")
+        self.assertFalse(self.claims.rows)
+        with self.assertRaises(QaLeaseClosed):
+            gate.stamp_message({},101,job_id="job-123")
+
+    def test_canonical_types_duplicate_keys_and_nonfinite_json(self):
+        from apps.infrastructure.qa_lease import decode_qa_json
+        for raw in ('{"tier":"basic","tier":"premium"}', '{"nested":{"x":1,"x":2}}', '{"x":NaN}', '{"x":Infinity}'):
+            with self.assertRaises(QaLeaseClosed):decode_qa_json(raw)
+        self.assertEqual(decode_qa_json('{"b":2,"a":1}'),{"a":1,"b":2})
+        gate=self.gate();payload=self.payload(gate)
+        for value in (False,0.0,"0"):
+            changed=dict(self.metadata,attempt=value)
+            with self.assertRaises(QaLeaseClosed):
+                gate.validate_message(payload,tenant_id=101,job_id="job-123",job_metadata=changed)
+        reversed_metadata=dict(reversed(list(self.metadata.items())))
+        gate.validate_message(payload,tenant_id=101,job_id="job-123",job_metadata=reversed_metadata)
 
     def test_revision_and_digest_change_reject_old_receipt(self):
         payload=self.payload();self.record["revision"]=2
         with self.assertRaises(QaLeaseClosed):
-            self.gate().validate_message(payload,tenant_id=101,job_id="job-123")
+            self.gate().validate_message(payload,tenant_id=101,job_id="job-123",job_metadata=self.metadata)
         self.record["revision"]=1;self.record["images"]["ai"]="sha256:"+"f"*64
         with self.assertRaises(QaLeaseClosed):self.gate().admit()
 
     def test_clock_expiry_and_rotation_fail_closed(self):
         gate=self.gate();payload=self.payload(gate)
         self.now=999
-        with self.assertRaises(QaLeaseClosed):gate.validate_message(payload,tenant_id=101,job_id="job-123")
+        with self.assertRaises(QaLeaseClosed):gate.validate_message(payload,tenant_id=101,job_id="job-123",job_metadata=self.metadata)
         self.now=1570
         with self.assertRaises(QaLeaseClosed):gate.admit()
         self.now=1000
         gate.context["ACADEMY_QA_MESSAGE_KEY_VERSION"]="2"
-        with self.assertRaises(QaLeaseClosed):gate.validate_message(payload,tenant_id=101,job_id="job-123")
+        with self.assertRaises(QaLeaseClosed):gate.validate_message(payload,tenant_id=101,job_id="job-123",job_metadata=self.metadata)
         gate.context["ACADEMY_QA_MESSAGE_KEY_VERSION"]="1"
         gate.context["ACADEMY_QA_MESSAGE_SIGNING_KEY"]="invalid"
-        with self.assertRaises(QaLeaseClosed):gate.stamp_message({},101,job_id="job-123")
+        with self.assertRaises(QaLeaseClosed):gate.stamp_message({},101,job_id="job-123",job_metadata=self.metadata)
 
     def test_unavailable_lease_and_missing_key_fail_before_processing(self):
         gate=self.gate();gate._reader=Mock(side_effect=RuntimeError("service unavailable"))
         with self.assertRaises(QaLeaseClosed):gate.admit()
         self.assertFalse(gate.snapshot()["lease_verified"])
         gate=self.gate();gate._key=Mock(side_effect=QaLeaseClosed("key unavailable"))
-        with self.assertRaises(QaLeaseClosed):gate.stamp_message({},101,job_id="job-123")
+        with self.assertRaises(QaLeaseClosed):gate.stamp_message({},101,job_id="job-123",job_metadata=self.metadata)
 
     def test_receipt_hash_identity_and_expiry_do_not_interrupt_existing_work(self):
         gate=self.gate();payload=self.payload(gate)
-        with gate.begin("job-123:receipt-one",tenant_id=101,message=payload,job_id="job-123"):
+        with gate.begin("job-123:receipt-one",tenant_id=101,message=payload,job_id="job-123",job_metadata=self.metadata):
             item=gate.snapshot()["inflight"][0]
             self.assertEqual(item["operation_sha256"],hashlib.sha256(b"job-123:receipt-one").hexdigest())
             self.assertEqual(item["tenant_id"],101)
@@ -155,14 +182,14 @@ class AdmissionTests(unittest.TestCase):
 
     def test_same_message_retry_inflight_and_completed_dispositions(self):
         gate=self.gate();other=self.gate();payload=self.payload(gate)
-        with gate.begin("receipt1",tenant_id=101,message=payload,job_id="job-123"):
+        with gate.begin("receipt1",tenant_id=101,message=payload,job_id="job-123",job_metadata=self.metadata):
             with self.assertRaises(QaMessageInFlight):
-                with other.begin("receipt2",tenant_id=101,message=payload,job_id="job-123"):pass
+                with other.begin("receipt2",tenant_id=101,message=payload,job_id="job-123",job_metadata=self.metadata):pass
             # No explicit completion: callback retry remains legal.
-        with other.begin("receipt3",tenant_id=101,message=payload,job_id="job-123"):
+        with other.begin("receipt3",tenant_id=101,message=payload,job_id="job-123",job_metadata=self.metadata):
             other.complete_message(payload)
         with self.assertRaises(QaMessageCompleted):
-            with gate.begin("receipt4",tenant_id=101,message=payload,job_id="job-123"):pass
+            with gate.begin("receipt4",tenant_id=101,message=payload,job_id="job-123",job_metadata=self.metadata):pass
         self.assertFalse(gate.snapshot()["holds"])
 
     def test_rejection_is_identifiable_hold_and_not_queue_delete(self):
@@ -180,6 +207,12 @@ class AdmissionTests(unittest.TestCase):
         self.assertEqual(record["drain_from_revision"],1)
         self.assertEqual(record["binding_sha256"],binding_sha256(self.record))
         with self.assertRaises(QaLeaseClosed):gate.admit()
+
+    def test_control_hold_blocks_both_admission_and_auth_inspection(self):
+        gate=self.gate("api");self.record["control_hold"]=True
+        with self.assertRaises(QaLeaseClosed):gate.admit()
+        with self.assertRaises(QaLeaseClosed):gate.inspect_lease()
+        self.assertTrue(gate.snapshot()["control_hold"])
 
     def test_auth_purpose_is_api_only_and_never_grants_enqueue_tenant(self):
         gate=self.gate("api")

@@ -118,8 +118,25 @@ class MessageClaims:
 
 
 def _canonical(value):
-    return json.dumps(value,sort_keys=True,separators=(",",":"),ensure_ascii=False)
+    return json.dumps(value,sort_keys=True,separators=(",",":"),ensure_ascii=False,allow_nan=False)
 
+
+
+def decode_qa_json(raw):
+    """Reject duplicate keys and non-finite numbers before any QA side effect."""
+    def object_pairs(pairs):
+        value={}
+        for key,item in pairs:
+            if key in value:
+                raise QaLeaseClosed("Duplicate QA JSON key")
+            value[key]=item
+        return value
+    def constant(_value):
+        raise QaLeaseClosed("Non-finite QA JSON number")
+    try:
+        return json.loads(raw,object_pairs_hook=object_pairs,parse_constant=constant)
+    except (ValueError,TypeError):
+        raise QaLeaseClosed("Invalid canonical QA JSON") from None
 
 class AdmissionGate:
     def __init__(self, kind, *, context=None, reader=None, clock=time.time,
@@ -230,7 +247,7 @@ class AdmissionGate:
         return record
 
     def _is_open(self):
-        return (not self._holds and self._valid and self._record is not None and self._record["state"] == "active"
+        return (not self._holds and self._valid and self._record is not None and not self._record.get("control_hold") and self._record["state"] == "active"
                 and int(self.clock()) < self._record["expires_at"] - MARGIN)
 
     def inspect_lease(self):
@@ -240,6 +257,8 @@ class AdmissionGate:
         with self._mutex:
             record=self._observe()
             self._persist()
+            if record.get("control_hold"):
+                raise QaLeaseClosed("QA control-plane HOLD")
             return dict(record,binding_sha256=binding_sha256(record))
 
     def admit(self, pull_request=None):
@@ -255,7 +274,7 @@ class AdmissionGate:
 
     @contextmanager
     def begin(self, operation_id, *, pull_request=None, tenant_id=None,
-              message=None, job_id=None, purpose=None):
+              message=None, job_id=None, purpose=None, job_metadata=None):
         if not self.enabled:
             yield None
             return
@@ -269,7 +288,7 @@ class AdmissionGate:
             else:
                 tenant=self.assert_tenant(record,tenant_id)
             if message is not None:
-                stamp=self.validate_message(message,record,tenant_id=tenant,job_id=job_id)
+                stamp=self.validate_message(message,record,tenant_id=tenant,job_id=job_id,job_metadata=job_metadata)
                 claim=self._claim_store().claim(stamp)
                 self._claim_context[stamp["message_id"]]={"claim":claim,"completed":False}
             self._active[ticket]={"operation_sha256":operation_hash,
@@ -333,21 +352,34 @@ class AdmissionGate:
             raise QaLeaseClosed("QA signing key invalid")
         return bytes.fromhex(key)
 
-    def stamp_message(self, payload, tenant_id, *, job_id, queue_kind=None):
+    def stamp_message(self, payload, tenant_id, *, job_id, queue_kind=None, job_metadata=None):
         if not self.enabled:
             return payload
         lease = self.admit()
         tenant = self.assert_tenant(lease,tenant_id)
-        if not isinstance(payload,dict) or not str(job_id).strip():
+        if not isinstance(payload,dict) or not isinstance(job_id,str) or not job_id.strip():
             raise QaLeaseClosed("Canonical job payload and ID required")
         queue_kind = queue_kind or self.kind
         if queue_kind not in {"ai","tools","messaging"}:
             raise QaLeaseClosed("Exact QA destination worker required")
+        if queue_kind in {"ai","tools"}:
+            fields={"job_type","tier","source_domain","source_id","created_at","attempt"}
+            if (not isinstance(job_metadata,dict) or set(job_metadata)!=fields
+                    or not isinstance(job_metadata["job_type"],str) or not job_metadata["job_type"]
+                    or not isinstance(job_metadata["tier"],str) or not job_metadata["tier"]
+                    or not isinstance(job_metadata["created_at"],str)
+                    or type(job_metadata["attempt"]) is not int or job_metadata["attempt"] < 0
+                    or any(job_metadata[k] is not None and not isinstance(job_metadata[k],str)
+                           for k in ("source_domain","source_id"))):
+                raise QaLeaseClosed("Canonical AI/Tools envelope metadata required")
+        elif job_metadata is not None:
+            raise QaLeaseClosed("Messaging provenance binds its complete body")
         body = copy.deepcopy(payload)
         body.pop("_qa_lease",None)
         stamp = {k:copy.deepcopy(lease[k]) for k in (
             "lease_id","owner_task","lock_owner","revision","source_sha","images","message_key_version")}
-        stamp.update(binding_sha256=binding_sha256(lease), tenant_id=tenant, job_id=str(job_id),
+        stamp.update(schema_version=1,binding_sha256=binding_sha256(lease), tenant_id=tenant, job_id=str(job_id),
+                     job_metadata=copy.deepcopy(job_metadata),
                      queue_kind=queue_kind,message_id=uuid.uuid4().hex,
                      issued_at=int(self.clock()),expires_at=lease["expires_at"],
                      payload_sha256=hashlib.sha256(_canonical(body).encode()).hexdigest())
@@ -355,7 +387,7 @@ class AdmissionGate:
         body["_qa_lease"]=stamp
         return body
 
-    def validate_message(self, payload, lease=None, *, tenant_id=None, job_id=None):
+    def validate_message(self, payload, lease=None, *, tenant_id=None, job_id=None, job_metadata=None):
         if not self.enabled:
             return None
         # Always compare to a fresh committed record, even when caller supplies
@@ -375,7 +407,8 @@ class AdmissionGate:
         for field in ("lease_id","owner_task","lock_owner","revision","source_sha","images","message_key_version"):
             if stamp.get(field) != lease[field]:
                 raise QaLeaseClosed("QA message belongs to another lease revision/candidate")
-        if (stamp.get("binding_sha256") != binding_sha256(lease)
+        if (type(stamp.get("schema_version")) is not int or stamp["schema_version"] != 1
+                or stamp.get("binding_sha256") != binding_sha256(lease)
                 or stamp.get("payload_sha256") != hashlib.sha256(_canonical(body).encode()).hexdigest()
                 or stamp.get("queue_kind") != self.kind
                 or not re.fullmatch(r"[0-9a-f]{32}",stamp.get("message_id",""))
@@ -384,10 +417,15 @@ class AdmissionGate:
                 or stamp.get("expires_at") != lease["expires_at"]
                 or int(self.clock()) >= stamp["expires_at"]-MARGIN):
             raise QaLeaseClosed("QA message provenance or freshness differs")
+        if self.kind in {"ai","tools"}:
+            if not isinstance(job_metadata,dict) or _canonical(stamp.get("job_metadata")) != _canonical(job_metadata):
+                raise QaLeaseClosed("QA envelope metadata differs")
+        elif job_metadata is not None:
+            raise QaLeaseClosed("Unexpected messaging envelope metadata")
         tenant=self.assert_tenant(lease,stamp.get("tenant_id"))
         if tenant_id is None or tenant != self.assert_tenant(lease,tenant_id):
             raise QaLeaseClosed("Authoritative job tenant differs")
-        if job_id is None or stamp.get("job_id") != str(job_id):
+        if not isinstance(job_id,str) or stamp.get("job_id") != job_id:
             raise QaLeaseClosed("Authoritative job ID differs")
         return stamp
 
@@ -429,6 +467,7 @@ class AdmissionGate:
                     "revision": self._record["revision"] if self._record else None,
                     "enforcement_expires_at": self._record["expires_at"] if self._record else None,
                     "lease_verified": self._valid,
+                    "control_hold": bool(self._record and self._record.get("control_hold")),
                     "admission": "open" if self._is_open() else "closed",
                     "inflight": list(self._active.values()), "holds": list(self._holds)}
 

@@ -20,7 +20,7 @@ from typing import Callable, Optional
 
 from libs.queue import get_queue_client, QueueUnavailableError
 from apps.infrastructure.qa_lease import (
-    get_admission_gate, QaLeaseClosed, QaMessageCompleted, QaMessageInFlight,
+    get_admission_gate, decode_qa_json, QaLeaseClosed, QaMessageCompleted, QaMessageInFlight,
 )
 from libs.redis.idempotency import acquire_job_lock, release_job_lock, RedisLockUnavailableError
 
@@ -749,7 +749,7 @@ def main() -> int:
                 job_id = f"messaging:{message_id}"
                 if qa_gate.enabled:
                     try:
-                        qa_payload = json.loads(body) if isinstance(body, str) else body
+                        qa_payload = decode_qa_json(body) if isinstance(body, str) else body
                         if not isinstance(qa_payload, dict):
                             raise QaLeaseClosed("Canonical messaging payload required")
                         qa_tenant = qa_payload.get("source_tenant_id")
