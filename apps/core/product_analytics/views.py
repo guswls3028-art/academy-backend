@@ -7,11 +7,11 @@ from django.db import DatabaseError
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers, status
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.api.common.query_params import parse_query_int
 from apps.core.permissions import IsPlatformAdmin
 from apps.core.product_analytics.constants import MAX_BATCH_BYTES, SURFACES
 from apps.core.product_analytics.queries import build_overview
@@ -144,7 +144,9 @@ class ProductUsageOverviewView(APIView):
                 {"detail": "조회 조건은 JSON 객체여야 합니다."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        days = parse_query_int(filters, "days", default=28)
+        days = filters.get("days", 28)
+        if type(days) is not int:
+            raise ValidationError({"days": "정수 값을 입력해 주세요."})
         if days not in (7, 28, 90):
             return Response(
                 {"detail": "days는 7, 28, 90 중 하나여야 합니다."},
@@ -152,16 +154,13 @@ class ProductUsageOverviewView(APIView):
             )
 
         tenant_id = filters.get("tenant_id")
-        if tenant_id not in (None, ""):
-            try:
-                tenant_id = int(tenant_id)
-            except (TypeError, ValueError, OverflowError):
-                return Response(
-                    {"detail": "tenant_id가 올바르지 않습니다."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-        else:
-            tenant_id = None
+        if tenant_id is not None and (
+            type(tenant_id) is not int or not 1 <= tenant_id <= 2**63 - 1
+        ):
+            return Response(
+                {"detail": "tenant_id가 올바르지 않습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         valid_roles = {"owner", "admin", "teacher", "staff", "student", "parent"}
         role = filters.get("role")

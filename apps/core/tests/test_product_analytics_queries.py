@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
@@ -111,14 +112,23 @@ class ProductUsageOverviewTests(TestCase):
         self.assertIsNone(response.data["summary"]["active_actors"])
         self.assertEqual(response.data["features"], [])
 
-    def test_zero_tenant_filter_does_not_expand_to_all_tenants(self):
-        self.daily(actor="a" * 64, event_type="screen_view", count=1)
-
-        response = self.request({"days": 28, "tenant_id": 0})
-
-        self.assertEqual(response.status_code, 200, response.data)
-        self.assertEqual(response.data["filters"]["tenant_id"], 0)
-        self.assertEqual(response.data["summary"]["active_actors"], 0)
+    def test_invalid_numeric_filters_never_query_or_audit(self):
+        with (
+            patch("apps.core.product_analytics.views.build_overview") as overview,
+            patch("apps.core.product_analytics.views.record_audit") as audit,
+        ):
+            invalid_filters = [
+                {"days": value} for value in (True, 7.9, "7", None)
+            ] + [
+                {"days": 28, "tenant_id": value}
+                for value in (True, 1.9, 0, -1, 2**63, "1", "")
+            ]
+            for filters in invalid_filters:
+                with self.subTest(filters=filters):
+                    response = self.request(filters)
+                    self.assertEqual(response.status_code, 400, response.data)
+            overview.assert_not_called()
+            audit.assert_not_called()
 
     def test_non_platform_tenant_is_forbidden(self):
         outsider = get_user_model().objects.create_user(
