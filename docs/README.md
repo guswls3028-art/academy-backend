@@ -70,6 +70,7 @@ backend/docs/
 | 배포 아키텍처 | [infrastructure/deployment-architecture.md](infrastructure/deployment-architecture.md) |
 | 배포 경로 비교 | [operations/deployment-modes.md](operations/deployment-modes.md) |
 | 컨테이너 이미지 보안 | [operations/container-image-security.md](operations/container-image-security.md) |
+| PR 후보 이미지 빌드 전용 경로 | [operations/candidate-build-only.md](operations/candidate-build-only.md) |
 | 상시 개발 런타임 | [operations/persistent-development-runtime.md](operations/persistent-development-runtime.md) |
 | 수동 정식 배포 | [operations/formal-deploy.md](operations/formal-deploy.md) |
 | Codex 추론·위임·출력 복구·검증 재사용 / 세션 격리·정리 | [operations/concurrent-codex-sessions.md](operations/concurrent-codex-sessions.md) |

@@ -17,6 +17,9 @@ on:
       - 'docs/reports/**'
       - 'docs/ssot/runtime-current.md'
       - 'scripts/codex/**'
+      - '.github/workflows/candidate-build-only.yml'
+      - 'scripts/v1/candidate_build_only.py'
+      - 'scripts/v1/test_candidate_build_only.py'
       - '**/tests/**'
       - '**/tests.py'
       - '.gitignore'
@@ -193,10 +196,11 @@ jobs:
           # Avoid echo|grep -q under GitHub's `bash -o pipefail`: on a large
           # multi-commit diff, grep can exit early and make echo fail with SIGPIPE.
           changed_matches() { grep -qE "$1" <<< "$CHANGED"; }
-          # Local tooling and test suites do not change product behavior.
+          # Local tooling, candidate-only controller code and test suites do
+          # not change product behavior.
           # Exclude them from accumulated per-image diffs as well as push triggers,
           # otherwise a later workflow-file change would reclassify it as API/AI.
-          runtime_changes() { grep -vE '^scripts/codex/|(^|/)tests(/|\.py$)' <<< "$1" || true; }
+          runtime_changes() { grep -vE '^scripts/codex/|^scripts/v1/(candidate_build_only|test_candidate_build_only)\.py$|^\.github/workflows/candidate-build-only\.yml$|(^|/)tests(/|\.py$)' <<< "$1" || true; }
 
           # Base contains dependencies only, not academy/apps/libs source. Compare
           # its actual inputs separately; old base source must not reintroduce
