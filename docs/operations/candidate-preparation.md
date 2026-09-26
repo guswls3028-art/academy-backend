@@ -497,3 +497,12 @@ Focused offline tests cover ordinary/partial QA,
 wrong tenant and route, stale revision, expiry margin, adapter denial, response
 lifetime, 503 audit side effects and unchanged production settings. Live user
 journeys and cleanup0 remain release gates, not established by these tests.
+
+### Process-local identity cache boundary
+
+The singleton admission factory reuses a gate only under its pinned QA identity.
+A cached ordinary-development gate cannot suppress validation when QA markers
+appear later, and a live QA gate cannot be rebound to another lease/key/runtime
+in the same process. Configuration changes fail closed and require a process
+restart; existing in-flight activity stays on its original gate. Normal
+development/production with no QA markers retains its inactive path.

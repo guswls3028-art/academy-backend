@@ -85,6 +85,53 @@ class AdmissionTests(unittest.TestCase):
                         dict(self.context,ACADEMY_QA_MODE="unknown")):
             with self.assertRaises(QaLeaseClosed):AdmissionGate("api",context=context)
 
+    def test_cached_disabled_gate_cannot_bypass_later_partial_qa_configuration(self):
+        import os
+        from unittest.mock import patch
+        from apps.infrastructure.qa_lease import get_admission_gate, _process_admission_gate
+
+        _process_admission_gate.cache_clear()
+        self.addCleanup(_process_admission_gate.cache_clear)
+        with patch.dict(os.environ, {"ACADEMY_RUNTIME_ENV": "development"}, clear=True):
+            ordinary = get_admission_gate("api")
+            self.assertFalse(ordinary.enabled)
+            self.assertIs(get_admission_gate("api"), ordinary)
+            for key, value in (
+                ("CANDIDATE_LEASE_REQUIRED", "true"),
+                ("ACADEMY_QA_MODE", "isolated-qa"),
+                ("CANDIDATE_LEASE_REQUIRED", "no"),
+                ("ACADEMY_QA_LEASE_ID", "a" * 32),
+            ):
+                with patch.dict(os.environ, {key: value}):
+                    with self.assertRaises(QaLeaseClosed):
+                        get_admission_gate("api")
+            self.assertIs(get_admission_gate("api"), ordinary)
+
+    def test_cached_qa_gate_rejects_rebinding_without_replacing_activity(self):
+        import os
+        from unittest.mock import patch
+        from apps.infrastructure.qa_lease import get_admission_gate
+
+        gate = self.gate("api")
+        with patch("apps.infrastructure.qa_lease._process_admission_gate", return_value=gate), \
+             patch.dict(os.environ, self.context, clear=True):
+            self.assertIs(get_admission_gate("api"), gate)
+            with gate.begin("already-admitted", tenant_id=101):
+                for key, value in (
+                    ("ACADEMY_QA_LEASE_ID", "f" * 32),
+                    ("ACADEMY_QA_BINDING_SHA256", "f" * 64),
+                    ("ACADEMY_QA_MESSAGE_KEY_VERSION", "2"),
+                    ("CANDIDATE_LEASE_REQUIRED", "false"),
+                    ("ACADEMY_QA_MODE", ""),
+                    ("ACADEMY_RUNTIME_ENV", "production"),
+                ):
+                    with patch.dict(os.environ, {key: value}):
+                        with self.assertRaises(QaLeaseClosed):
+                            get_admission_gate("api")
+                        self.assertEqual(len(gate.snapshot()["inflight"]), 1)
+            self.assertEqual(gate.snapshot()["inflight"], [])
+            self.assertIs(get_admission_gate("api"), gate)
+
     def test_producer_overwrites_untrusted_stamp_and_checks_authoritative_tenant(self):
         gate=self.gate();payload=self.payload(gate)
         stamp=gate.validate_message(payload,tenant_id=101,job_id="job-123",job_metadata=self.metadata)

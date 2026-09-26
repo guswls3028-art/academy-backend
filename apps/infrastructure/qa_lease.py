@@ -504,6 +504,28 @@ class AdmissionGate:
 
 
 @lru_cache(maxsize=4)
-def get_admission_gate(kind):
-    """One gate/heartbeat per process kind; callers must not create one per job."""
+def _process_admission_gate(kind):
     return AdmissionGate(kind)
+
+
+def get_admission_gate(kind):
+    """Reuse one process gate only while its QA identity remains unchanged."""
+    gate = _process_admission_gate(kind)
+    identity_keys = (
+        "CANDIDATE_LEASE_REQUIRED", "ACADEMY_QA_MODE",
+        "ACADEMY_QA_LEASE_ID", "ACADEMY_QA_BINDING_SHA256",
+        "ACADEMY_RUNTIME_ENV", "ACADEMY_QA_MESSAGE_KEY_VERSION",
+    )
+    required = os.environ.get("CANDIDATE_LEASE_REQUIRED", "").strip().lower()
+    configured = required not in ("", "false", "0") or any(
+        os.environ.get(key, "").strip() for key in (
+            "ACADEMY_QA_MODE", "ACADEMY_QA_LEASE_ID", "ACADEMY_QA_BINDING_SHA256",
+        )
+    )
+    if (gate.enabled or configured) and any(
+        os.environ.get(key, "") != gate.context.get(key, "") for key in identity_keys
+    ):
+        # Never replace a gate that may own in-flight work or silently reuse a
+        # disabled instance after QA configuration appears. Restart is required.
+        raise QaLeaseClosed("QA process identity changed; restart with pinned configuration")
+    return gate
