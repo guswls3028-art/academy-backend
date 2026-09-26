@@ -13,6 +13,7 @@ from .platform_push_outbox import PlatformPushOutbox
 from .worker_heartbeat import WorkerHeartbeatModel
 from .login_throttle import LoginThrottleBucket
 from .product_analytics import ProductUsageDailyActor, ProductUsageEvent
+from .candidate_qa_receipts import CandidateQaRun, CandidateQaAction, CandidateQaReceipt
 
 __all__ = [
     "Tenant",
@@ -33,4 +34,7 @@ __all__ = [
     "LoginThrottleBucket",
     "ProductUsageEvent",
     "ProductUsageDailyActor",
+    "CandidateQaRun",
+    "CandidateQaAction",
+    "CandidateQaReceipt",
 ]
