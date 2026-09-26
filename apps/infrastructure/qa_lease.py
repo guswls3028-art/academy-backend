@@ -26,7 +26,7 @@ TABLE = "academy-v1-video-job-lock"
 KINDS = frozenset({"api", "ai", "tools", "messaging"})
 MARGIN = 30
 BINDING_FIELDS = ("lease_id", "owner_task", "lock_owner", "source_sha", "images",
-                  "endpoint", "profile", "scope", "baseline_sha256", "tenant_ids", "message_key_version")
+                  "endpoint", "profile", "scope", "baseline_sha256", "tenant_ids", "message_key_version", "resource_manifest_sha256")
 
 
 class QaLeaseClosed(RuntimeError):
@@ -232,6 +232,8 @@ class AdmissionGate:
             record, lock = self._read()
             if (record["lease_id"] != self.context["ACADEMY_QA_LEASE_ID"]
                     or binding_sha256(record) != self.context["ACADEMY_QA_BINDING_SHA256"]
+                    or not isinstance(record["resource_manifest_sha256"], str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", record["resource_manifest_sha256"])
                     or record["profile"] != "arn:aws:iam::809466760795:instance-profile/academy-api-qa"
                     or record["lock_owner"] != lock["owner"] or lock["expires_at"] <= now
                     or type(record["revision"]) is not int or record["revision"] < 1

@@ -264,7 +264,9 @@ baseline SHA256 and started/expires/renewed timestamps. Duration is at most
 lease revision advance in one DynamoDB transaction. Replayed IDs, losing CAS
 renewals and unapproved scopes fail. Expiration never deletes the lease or
 permits inferred restoration. Fresh readback includes all three queues,
-all three worker in-flight ID sets, active sessions and cleanup0. Completion
+all three worker in-flight ID sets and active sessions. Opening requires the
+exact approved initial fixture inventory with zero unexpected residue; final
+completion/restoration requires cleanup0 including the initial fixtures. Completion
 also requires exact-bound immutable evidence for actual roles, save/reload,
 tenant/permission and failure/recovery. Residual activity records HOLD and keeps
 rollback coordinates. Queue0 by itself is insufficient.
@@ -332,7 +334,8 @@ The shared apps/infrastructure/qa_lease.py helper is opt-in only. Normal
 development/production creates no QA client/thread. A partial QA configuration
 fails closed. ACADEMY_QA_MODE=isolated-qa, runtime environment development,
 pinned lease ID and binding SHA256 are required. The binding now also includes
-exact disposable tenant_ids and message_key_version. The live lease and
+exact disposable tenant_ids, message_key_version and the creator-emitted
+resource_manifest_sha256. The live lease and
 shared lock are read atomically; every admission uses the committed revision.
 
 Use get_admission_gate(kind) for one process-local gate, not a new instance per
@@ -403,7 +406,7 @@ mutations and worker receive, but lets fully configured processes prove that the
 read the correct lease. The hard deadline starts at preparation, so bootstrap
 does not silently extend the bounded window.
 
-Only fresh, complete closed-admission idle/cleanup proof may transition PREPARED
+Only fresh, complete closed-admission idle/initial-fixture preflight proof may transition PREPARED
 to ACTIVE. A second active readback must pass before publishing the endpoint; a
 failed active readback records HOLD. Missing live adapter never creates a lease.
 The trusted launcher must independently prove baseline/QA queue competition is
@@ -591,3 +594,37 @@ module so their typed evidence and exceptions have one identity. A connected
 prepare test covers the observer-to-controller handoff, in addition to observer
 identity/replay, nonzero activity, stale evidence and partial-inventory tests.
 These offline checks do not establish live QA, IAM access or domain cleanup.
+
+
+### Initial fixture preflight versus final cleanup
+
+The required `resource_manifest_sha256` is part of the lease specification and
+the shared API/worker binding. Missing or malformed digests are rejected before
+preparation; changing the manifest invalidates runtime pins and existing
+authentication/message bindings. A hex-shaped hash alone is not a creator
+receipt: the owner must load the exact immutable manifest, verify its source,
+images, tenants/users and owned resources, and compare live observations.
+
+`Window.open` calls `observe_preflight` for both PREPARED and the newly committed
+ACTIVE revision. It requires `preflight_ready=True`, idle workers/queues/sessions
+and the expected admission state. A final cleanup boolean cannot substitute for
+initial fixture ownership. Expected auth fixtures may be present at opening.
+`finish` and restoration retain their full `cleanup_zero=True` requirement,
+including removal/readback of those initial fixtures. The default preflight
+adapter is closed until the trusted creator/observer connection exists.
+
+The baseline consumer helper verifies the replacement's PREPARED bootstrap,
+durably records original container IDs/images/restart policies, signals only
+the three exact worker PID1 processes cooperatively, and returns a fresh
+baseline-worker absence proof. It keeps the baseline API and instance. Resume
+requires CLOSED/restore_ready, fresh full cleanup and queue zero, then restores
+the same containers and verifies health. It never hard-kills or terminates them.
+ACTIVE/DRAINING exclusivity observations allow candidate queue activity;
+PREPARED/CLOSED transitions require empty queues.
+
+**Live QA remains HOLD.** The domain creator receipts and authoritative readers
+for PPT/Matchup/OMR have not been implemented. Baseline API production of new
+unsigned jobs into shared development queues must also be prevented and proven,
+or those queues must be isolated before admission. Stopped baseline consumers
+alone do not establish producer isolation. Per-lease key lifecycle, exact IAM
+activation/restore and workflow wiring remain separate unfinished gates.

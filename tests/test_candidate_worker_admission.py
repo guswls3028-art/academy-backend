@@ -324,7 +324,7 @@ def _real_gate_config(qa_lease):
         "endpoint": "ssm://i-0123456789abcdef0:8001",
         "profile": "arn:aws:iam::809466760795:instance-profile/academy-api-qa",
         "scope": [509, 511], "baseline_sha256": "d" * 64,
-        "tenant_ids": [17], "message_key_version": 1,
+        "tenant_ids": [17], "message_key_version": 1, "resource_manifest_sha256": "e"*64,
         "state": "active", "revision": 1,
         "started_at": 900, "renewed_at": 900, "expires_at": 1600,
     }

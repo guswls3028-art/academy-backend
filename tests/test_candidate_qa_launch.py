@@ -24,7 +24,7 @@ class LaunchTests(unittest.TestCase):
             lock_owner="candidate:123:1", source_sha="b"*40,
             images={k:"sha256:"+"c"*64 for k in launch.ROLE_NAMES},
             endpoint="ssm://i-0123456789abcdef0:8000", profile=window.PROFILE,
-            scope=[509,511], baseline_sha256="d"*64, tenant_ids=[101], message_key_version=1),
+            scope=[509,511], baseline_sha256="d"*64, tenant_ids=[101], message_key_version=1, resource_manifest_sha256="e"*64),
             state="prepared", control_hold=False, revision=1, started_at=1000,
             renewed_at=1000, expires_at=2000)
         self.release="sha-"+"b"*40+"-run-123-1"
@@ -63,7 +63,7 @@ class LaunchTests(unittest.TestCase):
         spec = {key:self.record[key] for key in (
             "lease_id", "owner_task", "lock_owner", "source_sha", "images",
             "endpoint", "profile", "scope", "baseline_sha256", "tenant_ids",
-            "message_key_version")}
+            "message_key_version", "resource_manifest_sha256")}
         prepared = controller.prepare(spec, 600)
         self.assertEqual(prepared["state"], "prepared")
         store.commit.assert_called_once_with(prepared, None, 1100)

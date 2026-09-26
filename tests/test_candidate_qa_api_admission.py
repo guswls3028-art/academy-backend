@@ -284,7 +284,7 @@ def test_committed_gate_denies_margin_drain_foreign_tenant_and_adapter_loss(
         "scope": [509, 511],
         "baseline_sha256": "d" * 64,
         "tenant_ids": [7],
-        "message_key_version": 1,
+        "message_key_version": 1, "resource_manifest_sha256": "e"*64,
         "state": "active",
         "revision": 1,
         "started_at": 900,

@@ -44,7 +44,7 @@ class AdmissionTests(unittest.TestCase):
             "endpoint":"ssm://i-0123456789abcdef0:8000",
             "profile":"arn:aws:iam::809466760795:instance-profile/academy-api-qa",
             "scope":[509,511],"baseline_sha256":"d"*64,"tenant_ids":[101],
-            "message_key_version":1,"state":"active","revision":1,
+            "message_key_version":1,"resource_manifest_sha256":"e"*64,"state":"active","revision":1,
             "started_at":900,"renewed_at":900,"expires_at":1600,
         }
         self.context={
@@ -69,6 +69,17 @@ class AdmissionTests(unittest.TestCase):
     def payload(self,gate=None):
         return (gate or self.gate()).stamp_message({"question":"synthetic","_qa_lease":{"untrusted":True}},
                                                   101,job_id="job-123",job_metadata=self.metadata)
+
+    def test_resource_manifest_cannot_change_under_pinned_runtime(self):
+        gate=self.gate()
+        gate.admit()
+        self.record["resource_manifest_sha256"]="f"*64
+        with self.assertRaises(QaLeaseClosed):
+            gate.admit()
+
+    def test_manifest_is_the_same_binding_in_controller_and_runtime(self):
+        from scripts.v1.candidate_qa_window import binding
+        self.assertEqual(binding(self.record),binding_sha256(self.record))
 
     def test_default_runtime_never_reads_or_tracks(self):
         reader=Mock(side_effect=AssertionError("AWS must not be used"))

@@ -130,7 +130,7 @@ def image_uris(images):
 def start_plan(record, *, release_id, api_version, workers_version):
     specification(**{key: record[key] for key in (
         "lease_id", "owner_task", "lock_owner", "source_sha", "images", "endpoint",
-        "profile", "scope", "baseline_sha256", "tenant_ids", "message_key_version")})
+        "profile", "scope", "baseline_sha256", "tenant_ids", "message_key_version", "resource_manifest_sha256")})
     require(record["state"] == "prepared" and not record.get("control_hold"), "Only PREPARED may bootstrap")
     require(re.fullmatch(r"sha-" + record["source_sha"] + r"-run-[1-9][0-9]*-[1-9][0-9]*", release_id),
             "Release/source provenance differs")

@@ -192,7 +192,7 @@ class BaselineConsumerTests(unittest.TestCase):
             "endpoint": f"ssm://{QA_ID}:8000",
             "profile": f"arn:aws:iam::{baseline.ACCOUNT}:instance-profile/academy-api-qa",
             "scope": [509, 511], "baseline_sha256": self.digest,
-            "tenant_ids": [17], "message_key_version": 1,
+            "tenant_ids": [17], "message_key_version": 1, "resource_manifest_sha256": "e"*64,
             "state": "prepared", "revision": 1, "started_at": 900,
             "renewed_at": 900, "expires_at": 1500,
         }

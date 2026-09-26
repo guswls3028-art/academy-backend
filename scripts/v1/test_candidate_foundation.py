@@ -535,7 +535,7 @@ class BoundedWindowTests(unittest.TestCase):
             lock_owner="candidate:123:1",source_sha=SHA,
             images={k:DIGEST for k in ("api","tools","ai","messaging")},
             endpoint="ssm://i-0123456789abcdef0:8000",profile=window.PROFILE,
-            scope=[509,511],baseline_sha256="c"*64,tenant_ids=[101],message_key_version=1)
+            scope=[509,511],baseline_sha256="c"*64,tenant_ids=[101],message_key_version=1,resource_manifest_sha256="e"*64)
         class Store:
             record=None
             def read(inner):
@@ -547,12 +547,13 @@ class BoundedWindowTests(unittest.TestCase):
         self.store=Store()
         self.adapter=Mock()
         self.adapter.observe.side_effect=self.proof
+        self.adapter.observe_preflight.side_effect=lambda record:self.adapter.observe(record)
         self.adapter.observe_inert.side_effect=lambda spec:window.InertReadback(
             binding_sha256=window.binding(spec),observed_at=self.now,
             instance_id="i-0123456789abcdef0",profile=window.PROFILE,
             managed=True,containers=0,active_sessions=0)
         self.window=window.Window(self.store,self.adapter,clock=lambda:self.now)
-        self.drained=False; self.busy=False; self.cleaned=True
+        self.drained=False; self.busy=False; self.cleaned=True; self.preflight=True
         self.adapter.drain.side_effect=lambda record:setattr(self,"drained",True)
 
     def open(self,seconds=600):
@@ -566,12 +567,38 @@ class BoundedWindowTests(unittest.TestCase):
             workers_inflight={k:("owned-job",) if self.busy else () for k in ("ai","tools","messaging")},
             queue_counts={k:dict(visible=0,inflight=0,delayed=0) for k in ("ai","tools","messaging")},
             active_sessions=(),enforcement_expires_at=record["expires_at"],cleanup_zero=self.cleaned,
-            lease_revision=record["revision"])
+            lease_revision=record["revision"],preflight_ready=self.preflight)
 
     def completion(self):
         return dict(binding_sha256=self.w.binding(self.spec),scope=[509,511],cleanup_zero=True,
                     evidence_sha256="d"*64,
                     **{k:{"actual-fixture":"pass"} for k in ("role_results","save_reload","tenant_permission","failure_recovery")})
+
+    def test_preflight_allows_owned_auth_fixtures_but_finish_requires_full_cleanup(self):
+        self.cleaned=False
+        record=self.open()
+        self.assertEqual(record["state"],"active")
+        with self.assertRaises(self.w.WindowHold):
+            self.window.finish(record["lease_id"],record["owner_task"],self.completion())
+        self.assertTrue(self.store.record["control_hold"])
+        self.assertNotEqual(self.store.record["state"],"closed")
+
+    def test_cleanup_zero_cannot_replace_initial_fixture_preflight(self):
+        self.preflight=False
+        self.window.prepare(self.spec,600)
+        with self.assertRaises(self.w.WindowHold):
+            self.window.open(self.spec,600)
+        self.assertEqual(self.store.record["state"],"prepared")
+
+    def test_manifest_is_required_and_pinned_by_lease_binding(self):
+        for digest in ("", "*", "e"*63, None):
+            with self.assertRaises(self.w.WindowHold):
+                self.w.specification(**dict(self.spec,resource_manifest_sha256=digest))
+        changed=dict(self.spec,resource_manifest_sha256="f"*64)
+        self.assertNotEqual(self.w.binding(changed),self.w.binding(self.spec))
+        self.window.prepare(self.spec,600)
+        with self.assertRaises(self.w.WindowHold):
+            self.window.open(changed,600)
 
     def test_missing_runtime_adapter_cannot_open(self):
         window=self.w.Window(self.store,clock=lambda:self.now)

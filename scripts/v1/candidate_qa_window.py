@@ -28,12 +28,12 @@ def require(condition, message):
 
 
 def binding(record):
-    fields = ("lease_id","owner_task","lock_owner","source_sha","images","endpoint","profile","scope","baseline_sha256","tenant_ids","message_key_version")
+    fields = ("lease_id","owner_task","lock_owner","source_sha","images","endpoint","profile","scope","baseline_sha256","tenant_ids","message_key_version","resource_manifest_sha256")
     return hashlib.sha256(json.dumps({k:record[k] for k in fields},sort_keys=True,separators=(",",":")).encode()).hexdigest()
 
 
 def specification(*, lease_id, owner_task, lock_owner, source_sha, images, endpoint,
-                  profile, scope, baseline_sha256, tenant_ids, message_key_version):
+                  profile, scope, baseline_sha256, tenant_ids, message_key_version, resource_manifest_sha256):
     require(re.fullmatch(r"[0-9a-f]{32}",lease_id), "Invalid lease ID")
     require(re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}",owner_task), "Exact owner task ID required")
     require(re.fullmatch(r"candidate:[1-9][0-9]*:[1-9][0-9]*",lock_owner), "Workflow lock owner required")
@@ -48,7 +48,9 @@ def specification(*, lease_id, owner_task, lock_owner, source_sha, images, endpo
             all(type(v) is int and v > 0 for v in tenant_ids) and len(set(tenant_ids)) == len(tenant_ids),
             "Exact disposable QA tenant IDs required")
     require(type(message_key_version) is int and message_key_version > 0, "Pinned QA signing key version required")
-    return dict(tenant_ids=sorted(tenant_ids), message_key_version=message_key_version, lease_id=lease_id, owner_task=owner_task, lock_owner=lock_owner, source_sha=source_sha,
+    require(isinstance(resource_manifest_sha256,str) and re.fullmatch(r"[0-9a-f]{64}",resource_manifest_sha256),
+            "Exact creator resource manifest required")
+    return dict(resource_manifest_sha256=resource_manifest_sha256, tenant_ids=sorted(tenant_ids), message_key_version=message_key_version, lease_id=lease_id, owner_task=owner_task, lock_owner=lock_owner, source_sha=source_sha,
                 images=copy.deepcopy(images), endpoint=endpoint, profile=profile, scope=sorted(scope),
                 baseline_sha256=baseline_sha256)
 
@@ -76,6 +78,7 @@ class Readback:
     enforcement_expires_at: int
     cleanup_zero: bool
     lease_revision: int
+    preflight_ready: bool = False
 
 
 @dataclass(frozen=True)
@@ -92,6 +95,9 @@ class RuntimeAdapter:
     def observe_inert(self, record):
         raise WindowHold("Trusted inert instance identity adapter not installed")
 
+    def observe_preflight(self, record):
+        raise WindowHold("Trusted initial fixture preflight adapter not installed")
+
     def observe(self, record):
         raise WindowHold("QA API admission / worker in-flight adapter not installed")
 
@@ -102,7 +108,7 @@ class RuntimeAdapter:
         raise WindowHold("Trusted prepared-key/resource cleanup adapter not installed")
 
 
-def verify_readback(record, proof, now, *, idle=False, drained=False):
+def verify_readback(record, proof, now, *, idle=False, drained=False, preflight=False):
     require(isinstance(proof,Readback), "Typed runtime readback required")
     require(proof.binding_sha256 == binding(record), "Runtime belongs to another lease/candidate")
     require(0 <= now-proof.observed_at <= 10, "Stale runtime readback")
@@ -119,7 +125,10 @@ def verify_readback(record, proof, now, *, idle=False, drained=False):
                 all(type(v) is int and v >= 0 for v in counts.values()), "Queue readback malformed")
     require(all(isinstance(v,tuple) for v in proof.workers_inflight.values()), "Exact in-flight IDs required")
     if idle:
-        require(proof.cleanup_zero is True, "QA cleanup not verified")
+        if preflight:
+            require(proof.preflight_ready is True, "QA initial fixture preflight not verified")
+        else:
+            require(proof.cleanup_zero is True, "QA cleanup not verified")
         require(not proof.active_sessions and not any(proof.workers_inflight.values())
                 and all(not any(v.values()) for v in proof.queue_counts.values()),
                 "Active session, queue or worker remains; HOLD")
@@ -185,12 +194,12 @@ class Window:
                 "No exact unexpired prepared lease")
         # Containers have validated the committed PREPARED record but cannot
         # authenticate, mutate or poll queues until this atomic transition.
-        verify_readback(record,self.runtime.observe(record),int(self.clock()),idle=True,drained=True)
+        verify_readback(record,self.runtime.observe_preflight(record),int(self.clock()),idle=True,drained=True,preflight=True)
         revision=record["revision"]
         record.update(state="active",revision=revision+1)
         self.store.commit(record,revision,now)
         try:
-            verify_readback(record,self.runtime.observe(record),int(self.clock()),idle=True)
+            verify_readback(record,self.runtime.observe_preflight(record),int(self.clock()),idle=True,preflight=True)
         except Exception:
             revision=record["revision"]
             record.update(control_hold=True,revision=revision+1)
