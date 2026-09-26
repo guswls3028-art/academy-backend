@@ -296,11 +296,11 @@ class AWSRuntimeAdapter(RuntimeAdapter):
                 and _fresh(proof.observed_at, int(self.clock()))
                 and set(proof.residual_by_domain) == self.cleanup_domains
                 and all(set(value) >= {"db_rows", "r2_objects", "pending_outboxes"}
-                        and all(_safe_count(count) and count == 0
-                                      for count in value.values())
+                        and all(_safe_count(count) for count in value.values())
                         for value in proof.residual_by_domain.values()),
-                "Domain cleanup-zero proof missing or nonzero")
-        return True
+                "Domain cleanup proof missing or malformed")
+        return all(count == 0 for value in proof.residual_by_domain.values()
+                   for count in value.values())
 
     def observe_inert(self, record):
         try:
@@ -491,9 +491,15 @@ class AWSRuntimeAdapter(RuntimeAdapter):
             require(isinstance(inflight, list), "QA in-flight list missing")
             for operation in inflight:
                 hashed = operation.get("operation_sha256")
+                admission_revision = operation.get("lease_revision")
+                started_at = operation.get("started_at")
                 require(isinstance(hashed, str) and re.fullmatch(r"[0-9a-f]{64}", hashed)
-                        and operation.get("lease_revision") == record["revision"],
-                        "QA in-flight identity or revision differs")
+                        and type(admission_revision) is int
+                        and 2 <= admission_revision <= record["revision"]
+                        and type(started_at) is int
+                        and record["started_at"] <= started_at <= now
+                        and started_at < record["expires_at"],
+                        "QA in-flight identity, admission revision or start time differs")
                 message_id = operation.get("message_id")
                 if kind != "api":
                     require(isinstance(message_id, str) and re.fullmatch(r"[0-9a-f]{32}", message_id),
