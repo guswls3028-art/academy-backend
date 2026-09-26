@@ -11083,6 +11083,25 @@
         ],
         "type": "object"
       },
+      "ProductUsageOverviewRequestRequest": {
+        "properties": {
+          "days": {
+            "description": "7, 28, 90 중 하나",
+            "type": "integer"
+          },
+          "role": {
+            "type": "string"
+          },
+          "surface": {
+            "type": "string"
+          },
+          "tenant_id": {
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
       "ProgressPolicy": {
         "properties": {
           "created_at": {
@@ -23891,11 +23910,38 @@
       }
     },
     "/api/v1/core/dev/product-analytics/overview/": {
-      "get": {
-        "operationId": "core_dev_product_analytics_overview_retrieve",
+      "post": {
+        "operationId": "core_dev_product_analytics_overview_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProductUsageOverviewRequestRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/ProductUsageOverviewRequestRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/ProductUsageOverviewRequestRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "No response body"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {},
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [

@@ -36,7 +36,11 @@ class NumericQueryBoundaryTests(SimpleTestCase):
             (NotificationLogListView().get, _request("page=first"), ()),
             (VideoPlaybackEventViewSet().risk, _request("video=nope"), ()),
             (AdminPostViewSet().list, _request("lecture_id=nope"), ()),
-            (ProductUsageOverviewView().get, _request("days=often"), ()),
+            (
+                ProductUsageOverviewView().post,
+                SimpleNamespace(data={"days": "often"}, tenant=1),
+                (),
+            ),
             (PublicCommunityStatsView().get, _request("days=forever"), ()),
             (PlatformInboxListView().get, _request("page=first"), ()),
             (WrongNoteView().get, _request("enrollment_id=nope"), ()),
