@@ -33,6 +33,15 @@ def resolve(mode, source, controller, pr):
                 and record.get("head", {}).get("sha") == source
                 and record.get("head", {}).get("repo", {}).get("full_name") == REPOSITORY,
                 "Isolated QA must bind the exact open same-repository PR head")
+        checks = github(f"repos/{REPOSITORY}/actions/workflows/quality-gate.yml/runs"
+                        f"?head_sha={source}&event=pull_request&per_page=1")
+        runs = checks.get("workflow_runs", [])
+        require(len(runs) == 1 and runs[0].get("head_sha") == source
+                and runs[0].get("path") == ".github/workflows/quality-gate.yml"
+                and runs[0].get("event") == "pull_request"
+                and runs[0].get("status") == "completed"
+                and runs[0].get("conclusion") == "success",
+                "Exact PR head has not passed the trusted backend quality workflow")
     return source
 
 

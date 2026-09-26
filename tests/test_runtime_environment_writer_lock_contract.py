@@ -83,7 +83,7 @@ def test_python_and_workflow_direct_runtime_writers_are_explicit() -> None:
     python_writers = {
         path.relative_to(ROOT).as_posix()
         for path in SCRIPTS.rglob("*.py")
-        if (
+        if not path.name.startswith("test_") and (
             "put_parameter" in _text(path)
             or "runtime.put_environment(" in _text(path)
         )

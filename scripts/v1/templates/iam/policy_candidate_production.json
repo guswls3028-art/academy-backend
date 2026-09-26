@@ -322,6 +322,24 @@
         "arn:aws:sqs:ap-northeast-2:809466760795:academy-v1-development-tools-queue",
         "arn:aws:sqs:ap-northeast-2:809466760795:academy-v1-development-messaging-queue"
       ]
+    },
+    {
+      "Sid": "OwnCandidatePublicationJournal",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:ConditionCheckItem"
+      ],
+      "Resource": "arn:aws:dynamodb:ap-northeast-2:809466760795:table/academy-v1-video-job-lock",
+      "Condition": {
+        "ForAllValues:StringLike": {
+          "dynamodb:LeadingKeys": [
+            "__deployment_control_v2__",
+            "__candidate_publication__:candidate:*"
+          ]
+        }
+      }
     }
   ]
 }

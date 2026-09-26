@@ -104,6 +104,16 @@ class RuntimeBoundaryTests(unittest.TestCase):
         with self.assertRaises(runtime.BoundaryError):
             runtime.source_names("preprod", True)
 
+    def test_credential_cannot_inject_an_extra_environment_line(self):
+        source=values()
+        source["db_credentials"]["DB_PASSWORD"]="x"*40+"\nAWS_ACCESS_KEY_ID=unapproved"
+        with self.assertRaises(runtime.BoundaryError):
+            runtime.assemble("development",RELEASE,source,"postgres")
+        source=values()
+        source["r2_credentials"]["R2_SECRET_KEY"]="x"*40+"\x00"
+        with self.assertRaises(runtime.BoundaryError):
+            runtime.assemble("development",RELEASE,source,"postgres")
+
     def test_pinned_source_read_rejects_drift(self):
         ssm = Mock()
         names = runtime.source_names("development")
@@ -252,8 +262,13 @@ class ProvenanceTests(unittest.TestCase):
                 prepare.resolve("production", SHA, "c" * 40, "")
         pr = {"state": "open", "base": {"ref": "main"},
               "head": {"sha": "b" * 40, "repo": {"full_name": manifest.REPOSITORY}}}
-        with patch.object(prepare, "github", side_effect=[main, pr]):
+        checks={"workflow_runs":[{"head_sha":"b"*40,"path":".github/workflows/quality-gate.yml",
+               "event":"pull_request","status":"completed","conclusion":"success"}]}
+        with patch.object(prepare, "github", side_effect=[main, pr, checks]):
             prepare.resolve("isolated-qa", "b" * 40, SHA, "509")
+        with patch.object(prepare, "github", side_effect=[main, pr, {"workflow_runs":[]}]):
+            with self.assertRaises(ValueError):
+                prepare.resolve("isolated-qa", "b" * 40, SHA, "509")
         pr["head"]["repo"]["full_name"] = "foreign/fork"
         with patch.object(prepare, "github", side_effect=[main, pr]):
             with self.assertRaises(ValueError):
@@ -388,6 +403,13 @@ class SlotLifecycleTests(unittest.TestCase):
         with patch.object(slot,"aws",side_effect=self.fake_aws([original])):
             self.assertTrue(slot.assess(snapshot,require_restored=True)["restored"])
 
+    def test_baseline_compute_drift_is_not_silently_restored(self):
+        original=self.baseline_instance()
+        original["InstanceType"]="t4g.large"
+        with patch.object(slot,"aws",side_effect=self.fake_aws([original])):
+            with self.assertRaises(ValueError):
+                slot.capture("task-fixture","candidate:123:1")
+
     def test_missing_baseline_coordinates_or_unconfirmed_capacity_blocks(self):
         original=self.baseline_instance()
         original["Tags"]=[t for t in original["Tags"] if t["Key"]!="ApiEnvVersion"]
@@ -397,6 +419,230 @@ class SlotLifecycleTests(unittest.TestCase):
         with patch.object(slot,"aws",side_effect=self.fake_aws([self.baseline_instance(),self.baseline_instance()])):
             with self.assertRaises(ValueError):
                 slot.guard("task-fixture",require_baseline=True)
+
+
+class DurableRecoveryTests(unittest.TestCase):
+    fake = PublicationTests.fake
+    class MemoryJournal:
+        def __init__(self):
+            self.saved = None
+        def read(self):
+            return copy.deepcopy(self.saved)
+        def save(self, receipt):
+            self.saved = copy.deepcopy(receipt)
+
+    def test_partial_failure_survives_runner_receipt_loss(self):
+        ssm, history, outputs = self.fake(fail_worker=True)
+        journal = self.MemoryJournal()
+        with self.assertRaises(runtime.BoundaryError):
+            runtime.publish(ssm,"development",RELEASE,"postgres",journal=journal)
+        # Known successful API write is restored; uncertain workers write stays HOLD.
+        self.assertEqual(journal.saved["restored_versions"][outputs[0]],3)
+        self.assertEqual(journal.saved["pending"],{outputs[1]:"publish"})
+        self.assertEqual(history[outputs[0]][3],"old-isolated-environment")
+        with self.assertRaises(runtime.BoundaryError):
+            runtime.rollback(ssm,journal.read(),journal=journal)
+
+    def test_rollback_retry_recognizes_own_restoration(self):
+        ssm, history, outputs = self.fake()
+        journal = self.MemoryJournal()
+        receipt = runtime.publish(ssm,"development",RELEASE,"postgres",journal=journal)
+        runtime.rollback(ssm,receipt,journal=journal)
+        calls = ssm.put_parameter.call_count
+        runtime.rollback(ssm,journal.read(),journal=journal)
+        self.assertEqual(ssm.put_parameter.call_count,calls)
+        history[outputs[0]][4] = "foreign-value"
+        with self.assertRaises(runtime.BoundaryError):
+            runtime.rollback(ssm,journal.read(),journal=journal)
+        self.assertEqual(ssm.put_parameter.call_count,calls)
+
+    def test_failed_compensation_retains_known_publication_coordinates(self):
+        ssm, history, outputs = self.fake()
+        journal = self.MemoryJournal()
+        put = ssm.put_parameter.side_effect
+        def failure(**kwargs):
+            if kwargs["Name"] == outputs[1] or kwargs["Value"] == "old-isolated-environment":
+                raise RuntimeError("service unavailable")
+            return put(**kwargs)
+        ssm.put_parameter.side_effect = failure
+        with self.assertRaises(RuntimeError):
+            runtime.publish(ssm,"development",RELEASE,"postgres",journal=journal)
+        self.assertEqual(journal.saved["outputs"],{outputs[0]:2})
+        self.assertEqual(journal.saved["previous_versions"],{name:1 for name in outputs})
+        self.assertEqual(journal.saved["pending"],{outputs[0]:"restore",outputs[1]:"publish"})
+
+    def test_journal_and_lock_are_one_atomic_transaction(self):
+        import candidate_journal
+        client=Mock()
+        client.get_item.return_value={}
+        journal=candidate_journal.Journal(client,"candidate:123:1","candidate:123:2")
+        self.assertIsNone(journal.read())
+        doc={"stage":"development","outputs":{},"previous_versions":{"/academy/api/development/env":1}}
+        journal.save(doc)
+        transaction=client.transact_write_items.call_args.kwargs["TransactItems"]
+        self.assertEqual(len(transaction),2)
+        self.assertIn("#ttl > :now",transaction[0]["ConditionCheck"]["ConditionExpression"])
+        self.assertEqual(transaction[1]["Put"]["ConditionExpression"],"attribute_not_exists(videoId)")
+        journal.save(doc)
+        self.assertEqual(client.transact_write_items.call_args.kwargs["TransactItems"][1]["Put"]["ExpressionAttributeValues"],
+                         {":revision":{"N":"1"}})
+        with self.assertRaises(ValueError):
+            candidate_journal.Journal(client,"candidate:123:1","candidate:999:1")
+
+
+class InterruptedRecoveryTests(unittest.TestCase):
+    baseline_instance = SlotLifecycleTests.baseline_instance
+    fake_aws = SlotLifecycleTests.fake_aws
+    def test_partial_qa_capacity_does_not_prevent_lock_recovery(self):
+        original=self.baseline_instance()
+        with patch.object(slot,"aws",side_effect=self.fake_aws([original])):
+            snapshot=slot.capture("task-fixture","candidate:123:1")
+        qa=copy.deepcopy(original)
+        qa["InstanceId"]="i-0fedcba9876543210"
+        qa["IamInstanceProfile"]["Arn"]="arn:aws:iam::809466760795:instance-profile/academy-api-qa"
+        qa["Tags"] += [{"Key":"SlotLeaseOwner","Value":"task-fixture"},{"Key":"QaMode","Value":"isolated-qa"}]
+        for state in ("pending","stopped","stopping","running"):
+            qa["State"]["Name"]=state
+            with self.subTest(state=state), patch.object(slot,"aws",side_effect=self.fake_aws([original,qa],sessions=True)), patch.object(slot.subprocess,"run") as run:
+                run.return_value.returncode=1
+                slot.restore_lock(snapshot,"candidate:123:1")
+                self.assertEqual(run.call_count,2)
+                self.assertIn("acquire",run.call_args.args[0])
+                with self.assertRaises(ValueError):
+                    slot.assess(snapshot)
+        qa["Tags"][-2]["Value"]="foreign-task"
+        with patch.object(slot,"aws",side_effect=self.fake_aws([qa])), patch.object(slot.subprocess,"run") as run:
+            with self.assertRaises(ValueError):
+                slot.restore_lock(snapshot,"candidate:123:2")
+            run.assert_not_called()
+
+    def test_no_healthy_baseline_cannot_cleanup_owned_capacity(self):
+        original=self.baseline_instance()
+        with patch.object(slot,"aws",side_effect=self.fake_aws([original])):
+            snapshot=slot.capture("task-fixture","candidate:123:1")
+        original["State"]["Name"]="stopped"
+        with patch.object(slot,"aws",side_effect=self.fake_aws([original])) as aws:
+            with self.assertRaises(ValueError):
+                slot.cleanup_recovery(snapshot)
+            self.assertFalse(any("terminate-instances" in call.args for call in aws.call_args_list))
+
+
+class BoundedWindowTests(unittest.TestCase):
+    def setUp(self):
+        import candidate_qa_window as window
+        self.w=window; self.now=1000
+        self.spec=window.specification(lease_id="a"*32,owner_task="01a0d04a-d64f-7473-9f58-61a8e983dcc0",
+            lock_owner="candidate:123:1",source_sha=SHA,
+            images={k:DIGEST for k in ("api","tools","ai","messaging")},
+            endpoint="ssm://i-0123456789abcdef0:8001",profile=window.PROFILE,
+            scope=[509,511],baseline_sha256="c"*64)
+        class Store:
+            record=None
+            def read(inner):
+                return copy.deepcopy(inner.record)
+            def commit(inner,record,revision,now):
+                actual=inner.record["revision"] if inner.record else None
+                if revision != actual: raise RuntimeError("conditional race")
+                inner.record=copy.deepcopy(record)
+        self.store=Store()
+        self.adapter=Mock()
+        self.adapter.observe.side_effect=self.proof
+        self.window=window.Window(self.store,self.adapter,clock=lambda:self.now)
+        self.drained=False; self.busy=False; self.cleaned=True
+        self.adapter.drain.side_effect=lambda record:setattr(self,"drained",True)
+
+    def proof(self,record):
+        return self.w.Readback(binding_sha256=self.w.binding(record),observed_at=self.now,
+            api_admission="closed" if self.drained else "lease-bound",
+            workers_receiving=not self.drained,
+            workers_inflight={k:("owned-job",) if self.busy else () for k in ("ai","tools","messaging")},
+            queue_counts={k:dict(visible=0,inflight=0,delayed=0) for k in ("ai","tools","messaging")},
+            active_sessions=(),enforcement_expires_at=record["expires_at"],cleanup_zero=self.cleaned)
+
+    def completion(self):
+        return dict(binding_sha256=self.w.binding(self.spec),scope=[509,511],cleanup_zero=True,
+                    evidence_sha256="d"*64,
+                    **{k:{"actual-fixture":"pass"} for k in ("role_results","save_reload","tenant_permission","failure_recovery")})
+
+    def test_missing_runtime_adapter_cannot_open(self):
+        window=self.w.Window(self.store,clock=lambda:self.now)
+        with self.assertRaises(self.w.WindowHold):window.open(self.spec,600)
+        self.assertIsNone(self.store.read())
+
+    def test_forged_replayed_and_unapproved_work_rejected(self):
+        self.window.open(self.spec,600)
+        for lease,owner,scope in (("b"*32,self.spec["owner_task"],509),
+                                  (self.spec["lease_id"],"foreign",509),
+                                  (self.spec["lease_id"],self.spec["owner_task"],512)):
+            with self.assertRaises(self.w.WindowHold):self.window.admit(lease,owner,scope)
+        self.assertEqual(self.window.admit(self.spec["lease_id"],self.spec["owner_task"],511),self.w.binding(self.spec))
+        self.window.finish(self.spec["lease_id"],self.spec["owner_task"],self.completion())
+        with self.assertRaises(self.w.WindowHold):
+            self.window.finish(self.spec["lease_id"],self.spec["owner_task"],self.completion())
+
+    def test_renewal_cas_race_does_not_extend_losing_lease(self):
+        record=self.window.open(self.spec,600); self.now=1100
+        before=self.store.read()
+        def race(value,revision,now):
+            self.store.record["revision"]+=1
+            raise RuntimeError("conditional race")
+        with patch.object(self.store,"commit",side_effect=race):
+            with self.assertRaises(RuntimeError):
+                self.window.renew(record["lease_id"],record["owner_task"],900)
+        self.assertEqual(self.store.record["expires_at"],before["expires_at"])
+
+    def test_expiry_blocks_admission_before_deadline_and_busy_restore(self):
+        record=self.window.open(self.spec,600); self.now=1570
+        with self.assertRaises(self.w.WindowHold):
+            self.window.admit(record["lease_id"],record["owner_task"],509)
+        with self.assertRaises(self.w.WindowHold):
+            self.window.renew(record["lease_id"],record["owner_task"],60)
+        self.now=1601; self.busy=True
+        with self.assertRaises(self.w.WindowHold):
+            self.window.finish(record["lease_id"],record["owner_task"])
+        self.assertEqual(self.store.record["state"],"hold")
+        with self.assertRaises(self.w.WindowHold):
+            self.window.restore_admission(record["lease_id"],record["owner_task"])
+        self.assertEqual(self.store.record["baseline_sha256"],"c"*64)
+
+    def test_incomplete_cleanup_and_stale_evidence_block(self):
+        record=self.window.open(self.spec,600)
+        completion=self.completion(); completion["cleanup_zero"]=False
+        with self.assertRaises(self.w.WindowHold):
+            self.window.finish(record["lease_id"],record["owner_task"],completion)
+        self.cleaned=False;self.now=1601
+        with self.assertRaises(self.w.WindowHold):
+            self.window.finish(record["lease_id"],record["owner_task"])
+        self.assertEqual(self.store.record["state"],"hold")
+
+    def test_missing_runtime_adapter_blocks_renew_complete_and_restore(self):
+        record=self.window.open(self.spec,600); self.now=1100
+        window=self.w.Window(self.store,clock=lambda:self.now)
+        with self.assertRaises(self.w.WindowHold):
+            window.renew(record["lease_id"],record["owner_task"],900)
+        with self.assertRaises(self.w.WindowHold):
+            window.finish(record["lease_id"],record["owner_task"],self.completion())
+        self.store.record["state"]="ready_for_restore"
+        with self.assertRaises(self.w.WindowHold):
+            window.restore_admission(record["lease_id"],record["owner_task"])
+
+    def test_safe_completion_requires_fresh_idle_restore_readback(self):
+        record=self.window.open(self.spec,600)
+        self.window.finish(record["lease_id"],record["owner_task"],self.completion())
+        self.assertEqual(self.window.restore_admission(record["lease_id"],record["owner_task"]),"c"*64)
+        self.busy=True
+        with self.assertRaises(self.w.WindowHold):
+            self.window.restore_admission(record["lease_id"],record["owner_task"])
+
+    def test_atomic_lock_lease_transaction_and_revision_guard(self):
+        client=Mock();store=self.w.LeaseStore(client)
+        record=dict(self.spec,state="active",revision=2,started_at=1000,renewed_at=1100,expires_at=1700)
+        store.commit(record,1,1100)
+        tx=client.transact_write_items.call_args.kwargs["TransactItems"]
+        self.assertEqual(len(tx),2)
+        self.assertIn("#owner = :owner AND #ttl > :now",tx[0]["Update"]["ConditionExpression"])
+        self.assertIn("revision = :revision AND leaseId = :lease",tx[1]["Put"]["ConditionExpression"])
+        self.assertNotIn("ttl",tx[1]["Put"]["Item"])
 
 class PolicyAndWorkflowTests(unittest.TestCase):
     def test_qa_has_no_production_image_or_parameter_allow(self):

@@ -207,10 +207,16 @@ def assemble(stage, release, values, production_database, provider=False):
         workers["DJANGO_SETTINGS_MODULE"] = "apps.api.config.settings.worker"
         if provider:
             workers["GEMINI_API_KEY"] = values["gemini_key"]
+    for environment in (api, workers):
+        if environment is not None and any(
+            not isinstance(value, str) or any(c in value for c in ("\n", "\r", "\x00"))
+            for value in environment.values()
+        ):
+            raise BoundaryError("Runtime values must be single-line strings without NUL")
     return api, workers
 
 
-def publish(ssm, stage, release, production_database, provider=False, receipt_path=None):
+def publish(ssm, stage, release, production_database, provider=False, receipt_path=None, journal=None):
     versions = metadata(ssm, stage, provider)
     values = read_sources(ssm, stage, versions, provider)
     api, workers = assemble(stage, release, values, production_database, provider)
@@ -228,60 +234,91 @@ def publish(ssm, stage, release, production_database, provider=False, receipt_pa
         if len(found) != 1 or type(found[0].get("Version")) is not int:
             raise BoundaryError("Existing isolated output is required for rollback")
         receipt["previous_versions"][name] = found[0]["Version"]
+    if journal and journal.read() is not None:
+        raise BoundaryError("Publication journal already exists; restore it before another publication")
+    def persist():
+        if receipt_path:
+            receipt_path.parent.mkdir(parents=True, exist_ok=True)
+            receipt_path.write_text(json.dumps(receipt, indent=2) + "\n")
+        if journal:
+            journal.save(receipt)
+    persist()
     try:
         for name, value in targets:
             serialized = json.dumps(value, separators=(",", ":"), sort_keys=True)
             if "/workers/" in name:
                 serialized = base64.b64encode(serialized.encode()).decode()
+            if journal:
+                receipt.setdefault("pending", {})[name] = "publish"
+                persist()
             result = ssm.put_parameter(Name=name, Type="SecureString", Tier="Advanced", Value=serialized, Overwrite=True)
             version = result.get("Version")
             if type(version) is not int or version < 1:
                 raise BoundaryError("Publisher returned no pinned output version")
             receipt["outputs"][name] = version
-            if receipt_path:
-                receipt_path.parent.mkdir(parents=True, exist_ok=True)
-                receipt_path.write_text(json.dumps(receipt, indent=2) + "\n")
+            receipt.get("pending", {}).pop(name, None)
+            persist()
             actual = ssm.get_parameter(Name=f"{name}:{version}", WithDecryption=True)["Parameter"]
             if actual.get("Version") != version or actual.get("Value") != serialized:
                 raise BoundaryError("Published environment readback mismatch")
             receipt["outputs"][name] = version
     except Exception:
         if receipt["outputs"]:
-            partial = dict(receipt)
-            partial["previous_versions"] = {n: receipt["previous_versions"][n] for n in receipt["outputs"]}
-            rollback(ssm, partial)
+            rollback(ssm, receipt, receipt_path=receipt_path, journal=journal)
         raise
     return receipt
 
 
-def rollback(ssm, receipt):
-    """Restore only this publication, preserving any newer owner's versions."""
+def rollback(ssm, receipt, receipt_path=None, journal=None):
+    """Retry only acknowledged own versions; ambiguous writes remain HOLD."""
     stage = receipt.get("stage")
     expected = {f"/academy/api/{stage}/env"}
     if stage == "development":
         expected.add("/academy/workers/development/env")
-    if stage not in STAGES or not set(receipt.get("outputs", {})) or not set(receipt.get("outputs", {})) <= expected or set(receipt.get("previous_versions", {})) != set(receipt.get("outputs", {})):
+    outputs = receipt.get("outputs", {})
+    prior = receipt.get("previous_versions", {})
+    restored = receipt.setdefault("restored_versions", {})
+    if stage not in STAGES or not prior or not set(prior) <= expected or not set(outputs) <= set(prior) or not set(restored) <= set(outputs):
         raise BoundaryError("Invalid rollback receipt")
+    def persist():
+        if receipt_path:
+            receipt_path.write_text(json.dumps(receipt, indent=2) + "\n")
+        if journal:
+            journal.save(receipt)
     previous = {}
-    for name, version in receipt["outputs"].items():
+    for name, old_version in prior.items():
+        if name in receipt.get("pending", {}):
+            continue  # Never guess whether an unacknowledged service write committed.
+        wanted = restored.get(name, outputs.get(name, old_version))
         current = ssm.get_parameter(Name=name, WithDecryption=False)["Parameter"]
-        if current.get("Version") != version:
+        if current.get("Version") != wanted:
             raise BoundaryError("Newer environment publication exists; rollback refused")
-        old_version = receipt["previous_versions"][name]
-        if type(old_version) is not int or not 0 < old_version < version:
+        if type(old_version) is not int or old_version < 1 or (name in outputs and old_version >= outputs[name]):
             raise BoundaryError("Invalid rollback source version")
         old = ssm.get_parameter(Name=f"{name}:{old_version}", WithDecryption=True)["Parameter"]
         if old.get("Version") != old_version or old.get("Type") != "SecureString":
             raise BoundaryError("Rollback source readback differs")
-        previous[name] = old["Value"]
-    restored = {}
+        if name in restored:
+            actual = ssm.get_parameter(Name=f"{name}:{restored[name]}", WithDecryption=True)["Parameter"]
+            if actual.get("Value") != old["Value"]:
+                raise BoundaryError("Already restored value differs")
+        elif name in outputs:
+            previous[name] = old["Value"]
     for name, value in previous.items():
+        if journal:
+            receipt.setdefault("pending", {})[name] = "restore"
+            persist()
         version = ssm.put_parameter(Name=name, Type="SecureString", Tier="Advanced", Value=value, Overwrite=True)["Version"]
+        restored[name] = version
+        receipt.get("pending", {}).pop(name, None)
+        persist()
         actual = ssm.get_parameter(Name=f"{name}:{version}", WithDecryption=True)["Parameter"]
         if actual.get("Value") != value or actual.get("Version") != version:
             raise BoundaryError("Rollback publication readback failed")
-        restored[name] = version
+    if receipt.get("pending"):
+        raise BoundaryError("Unacknowledged publication remains; retain journal and HOLD")
     return {"stage": stage, "restored_versions": restored}
+
 
 
 def main():
@@ -293,17 +330,34 @@ def main():
     parser.add_argument("--production-database")
     parser.add_argument("--receipt", type=Path)
     parser.add_argument("--github-output", type=Path)
+    parser.add_argument("--journal-owner")
+    parser.add_argument("--baseline", type=Path)
     args = parser.parse_args()
     import boto3
     ssm = boto3.client("ssm", region_name=REGION)
     try:
+        journal = None
+        if args.journal_owner:
+            from candidate_journal import Journal
+            journal = Journal(boto3.client("dynamodb", region_name=REGION),
+                              args.journal_owner, os.environ["ACADEMY_DEPLOY_LOCK_OWNER"])
         if args.command != "preflight":
             subprocess.run(["python3", str(Path(__file__).with_name("deployment_lock.py")), "assert-owned",
                             "--owner", os.environ["ACADEMY_DEPLOY_LOCK_OWNER"]], check=True)
         if args.command == "rollback":
-            if not args.receipt:
-                raise BoundaryError("Rollback requires an exact receipt")
-            result = rollback(ssm, json.loads(args.receipt.read_text()))
+            saved = journal.read() if journal else None
+            if journal and saved is None:
+                if not args.baseline:
+                    raise BoundaryError("Missing publication journal and baseline")
+                baseline = json.loads(args.baseline.read_text())
+                prior = {"/academy/api/development/env": baseline["api_version"],
+                         "/academy/workers/development/env": baseline["workers_version"]}
+                saved = {"stage":"development","outputs":{},"previous_versions":prior}
+            elif not journal:
+                if not args.receipt:
+                    raise BoundaryError("Rollback requires an exact receipt")
+                saved = json.loads(args.receipt.read_text())
+            result = rollback(ssm, saved, receipt_path=args.receipt, journal=journal)
         elif args.command == "preflight":
             if not args.production_database or not re.fullmatch(r"[a-z][a-z0-9_]{2,62}", args.production_database) or args.production_database == f"academy_api_{args.stage}":
                 raise BoundaryError("Preflight requires the reviewed production database denial target")
@@ -311,7 +365,7 @@ def main():
         else:
             if not args.release or not args.production_database or not args.receipt:
                 raise BoundaryError("Publication requires release, denial target and receipt path")
-            result = publish(ssm, args.stage, args.release, args.production_database, args.provider, args.receipt)
+            result = publish(ssm, args.stage, args.release, args.production_database, args.provider, args.receipt, journal)
             if args.github_output:
                 outputs = {
                     "receipt_json": json.dumps(result, separators=(",", ":")),

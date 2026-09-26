@@ -88,7 +88,7 @@ jobs:
           role-duration-seconds: 10800
           allowed-account-ids: '809466760795'
       - name: Install pinned AWS SDK
-        run: python3 -m pip install -c control/requirements/constraints.txt boto3
+        run: python3 -m pip install -c control/requirements/constraints.txt boto3 PyYAML==6.0.3
       - name: Verify active OIDC and runtime policy boundaries
         run: |
           python3 control/scripts/v1/converge_candidate_prerequisites.py --readback \
@@ -139,6 +139,7 @@ jobs:
           python3 control/scripts/v1/deployment_lock.py renew --owner "$ACADEMY_DEPLOY_LOCK_OWNER" --ttl-seconds 10800
           ARGS=()
           if [ "$PROVIDER_QA" = true ]; then ARGS+=(--provider); fi
+          if [ "$MODE" = isolated-qa ]; then ARGS+=(--journal-owner "$ACADEMY_DEPLOY_LOCK_OWNER"); fi
           python3 control/scripts/v1/candidate_runtime.py publish --stage development \
             --release "$RELEASE_IMAGE_TAG" --production-database "$PRODUCTION_DATABASE" \
             --receipt "$RUNNER_TEMP/candidate/environment-receipt.json" --github-output "$GITHUB_OUTPUT" "${ARGS[@]}"
@@ -243,7 +244,6 @@ jobs:
           python3 scripts/v1/candidate_slot.py restore-lock \
             --snapshot "$RUNNER_TEMP/baseline/baseline.json" --sha256 "$BASELINE_SHA256"
       - name: Install pinned restoration SDK
-        if: needs.prepare.outputs.environment_receipt != ''
         run: python3 -m pip install -c requirements/constraints.txt boto3
       - name: Restore using the same health gate and verify cleanup
         shell: pwsh
@@ -253,12 +253,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Baseline/session/owner readback failed; no forced replacement." }
           $assessment = $assessmentText | ConvertFrom-Json
           $baseline = Get-Content $snapshot -Raw | ConvertFrom-Json
-          if ($env:ENVIRONMENT_RECEIPT) {
-            $receiptPath = "$env:RUNNER_TEMP/baseline/environment-rollback.json"
-            $env:ENVIRONMENT_RECEIPT | Set-Content $receiptPath
-            python3 scripts/v1/candidate_runtime.py rollback --stage development --receipt $receiptPath
-            if ($LASTEXITCODE -ne 0) { throw "Owned environment rollback failed; refuse baseline mutation." }
-          }
+          python3 scripts/v1/candidate_runtime.py rollback --stage development --baseline $snapshot --journal-owner $baseline.lock_owner
+          if ($LASTEXITCODE -ne 0) { throw "Durable environment recovery incomplete; HOLD before baseline mutation." }
 
           if ($assessment.replace) {
             ./scripts/v1/deploy-api-development.ps1 `
@@ -270,12 +266,12 @@ jobs:
               -ExpectedWorkersEnvVersion $baseline.workers_version `
               -ExpectedReleaseId $baseline.release `
               -ExpectedProductionDatabaseName $baseline.production_database `
-              -SlotOwner $env:SLOT_OWNER `
+              -SlotOwner $env:SLOT_OWNER -RecoverySnapshot $snapshot -RecoverySha256 $env:BASELINE_SHA256 `
               -EvidencePath "$env:RUNNER_TEMP/baseline/restoration-evidence.json" -Ci
           } else {
             ./scripts/v1/run-api-development-smoke.ps1 -InstanceId $assessment.instance_id -Ci
           }
-          python3 scripts/v1/candidate_slot.py verify --snapshot $snapshot --sha256 $env:BASELINE_SHA256
+          python3 scripts/v1/candidate_slot.py cleanup --snapshot $snapshot --sha256 $env:BASELINE_SHA256
           if ($LASTEXITCODE -ne 0) { throw "Baseline restoration or temporary QA cleanup readback failed." }
       - name: Release own shared lock after restoration attempt
         if: always() && steps.restoration-lock.outcome == 'success'

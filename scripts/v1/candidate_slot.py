@@ -41,18 +41,22 @@ def tags(instance):
     return {v["Key"]: v["Value"] for v in instance.get("Tags", [])}
 
 
-def guard(owner="", require_baseline=False):
+def guard(owner="", require_baseline=False, recovery=None):
     """Never stop a session, drain queues or take another owner's slot."""
     if owner:
         require(re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9:._-]{2,120}", owner), "Invalid slot owner")
     current = instances()
-    require(len(current) <= 1, "Multiple or incomplete development capacities need owner review")
+    if recovery is None:
+        require(len(current) <= 1, "Multiple or incomplete development capacities need owner review")
+    else:
+        recovery_inventory(recovery, current)
     if require_baseline:
         require(len(current) == 1, "An exact development baseline is required")
     for instance in current:
         t = tags(instance)
-        require(instance["State"]["Name"] == "running" and t.get("Lifecycle") == "active",
-                "Development slot is not an idle active baseline")
+        if recovery is None:
+            require(instance["State"]["Name"] == "running" and t.get("Lifecycle") == "active",
+                    "Development slot is not an idle active baseline")
         lease = t.get("SlotLeaseOwner", "")
         require(not lease or (owner and lease == owner), "Development slot belongs to another owner")
         sessions = aws("ssm", "describe-sessions", "--state", "Active", "--filters",
@@ -99,6 +103,11 @@ def capture(owner, lock_owner):
     require(bool(owner), "A named QA slot owner is required")
     current = guard(owner, require_baseline=True)
     instance = current[0]; t = tags(instance)
+    import yaml
+    config = yaml.safe_load((Path(__file__).resolve().parents[2] / "docs/ssot/params.yaml").read_text())
+    require(instance.get("ImageId") == config["api"]["amiId"]
+            and instance.get("InstanceType") == config["api"]["instanceType"],
+            "Baseline compute does not match the immutable restoration controller")
     require(not t.get("SlotLeaseOwner"), "Nested QA cannot replace another QA baseline")
     snapshot = {
         "schemaVersion": 1, "owner": owner, "lock_owner": lock_owner, "capacity": 1, "instance_id": instance["InstanceId"],
@@ -119,31 +128,86 @@ def load_snapshot(path, digest):
     return validate_snapshot(json.loads(raw))
 
 
+def baseline_matches(snapshot, instance):
+    t = tags(instance)
+    return (instance.get("ImageId") == snapshot["ami"]
+            and instance.get("InstanceType") == snapshot["instance_type"]
+            and instance.get("IamInstanceProfile", {}).get("Arn") == snapshot["profile"]
+            and t.get("ReleaseId") == snapshot["release"]
+            and t.get("ApiEnvVersion") == str(snapshot["api_version"])
+            and t.get("WorkersEnvVersion") == str(snapshot["workers_version"])
+            and all(t.get(k) == v for k,v in snapshot["images"].items())
+            and not t.get("SlotLeaseOwner") and not t.get("QaMode"))
+
+
+def recovery_inventory(snapshot, current):
+    """Recognize interrupted own capacity without requiring it to be running/idle."""
+    require(len(current) <= 3, "Unexpected development capacity; retain for review")
+    run, attempt = snapshot["lock_owner"].split(":")[1:]
+    for instance in current:
+        t = tags(instance)
+        own_qa = (t.get("SlotLeaseOwner") == snapshot["owner"]
+                  and t.get("QaMode") == "isolated-qa"
+                  and t.get("ReleaseId", "").endswith(f"-run-{run}-{attempt}")
+                  and instance.get("IamInstanceProfile", {}).get("Arn")
+                      == f"arn:aws:iam::{ACCOUNT}:instance-profile/academy-api-qa")
+        require(baseline_matches(snapshot, instance) or own_qa,
+                "Foreign capacity cannot enter this restoration")
+    return current
+
+
+def restore_lock(snapshot, current_owner):
+    require(re.fullmatch(r"candidate:[1-9][0-9]*:[1-9][0-9]*", current_owner),
+            "Invalid restoration lock owner")
+    previous = snapshot["lock_owner"]
+    require(current_owner.split(":")[1] == previous.split(":")[1]
+            and int(current_owner.split(":")[2]) >= int(previous.split(":")[2]),
+            "Restoration belongs to another run or older attempt")
+    recovery_inventory(snapshot, instances())
+    command = ["python3",str(Path(__file__).with_name("deployment_lock.py"))]
+    renewed = subprocess.run(command + ["renew","--owner",current_owner,"--ttl-seconds","10800"],
+                             capture_output=True)
+    if renewed.returncode:
+        subprocess.run(command + ["acquire","--owner",current_owner,"--ttl-seconds","10800"],check=True)
+    # Activity checks run AFTER lock acquisition, allowing a HOLD to release its
+    # owned lock even when queues or an SSM session prevent restoration.
+
+
 def assess(snapshot, require_restored=False):
-    current = guard(snapshot["owner"], require_baseline=True)
-    instance = current[0]; t = tags(instance)
-    exact = (instance.get("IamInstanceProfile", {}).get("Arn") == snapshot["profile"]
-             and t.get("ReleaseId") == snapshot["release"]
-             and t.get("ApiEnvVersion") == str(snapshot["api_version"])
-             and t.get("WorkersEnvVersion") == str(snapshot["workers_version"])
-             and all(t.get(k) == v for k,v in snapshot["images"].items())
-             and not t.get("SlotLeaseOwner") and not t.get("QaMode"))
-    if not exact:
-        require(t.get("SlotLeaseOwner") == snapshot["owner"] and t.get("QaMode") == "isolated-qa",
-                "A foreign baseline replaced this QA; restoration refused")
+    current = guard(snapshot["owner"], recovery=snapshot)
+    healthy = [v for v in current if baseline_matches(snapshot,v)
+               and v["State"]["Name"] == "running" and tags(v).get("Lifecycle") == "active"]
+    require(len(healthy) <= 1, "Multiple healthy baselines require review")
     if require_restored:
-        require(exact, "Baseline restoration readback differs")
+        require(len(current) == len(healthy) == 1, "Baseline restoration readback differs")
         leftovers = aws("ec2", "describe-instances", "--filters",
                         "Name=tag:SlotLeaseOwner,Values=" + snapshot["owner"],
                         "Name=instance-state-name,Values=pending,running,stopping,stopped,shutting-down")
         require(not leftovers.get("NextToken") and not any(r.get("Instances") for r in leftovers.get("Reservations", [])),
                 "Owned temporary QA capacity remains")
-    return {"replace": not exact, "instance_id": instance["InstanceId"], "restored": exact}
+    return {"replace": not healthy, "instance_id": healthy[0]["InstanceId"] if healthy else None,
+            "restored": len(current) == len(healthy) == 1}
+
+
+def cleanup_recovery(snapshot):
+    """Called only after the trusted baseline passed its health/smoke gate."""
+    assessment = assess(snapshot)
+    require(not assessment["replace"], "No healthy baseline; retain QA capacity")
+    retained = assessment["instance_id"]
+    current = guard(snapshot["owner"], recovery=snapshot)
+    targets = [v["InstanceId"] for v in current if v["InstanceId"] != retained]
+    for target in targets:
+        aws("ec2","modify-instance-attribute","--instance-id",target,"--disable-api-termination","Value=false")
+        aws("ec2","terminate-instances","--instance-ids",target)
+    if targets:
+        aws("ec2","wait","instance-terminated","--instance-ids",*targets)
+    return assess(snapshot, require_restored=True)
+
 
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument("command",choices=("guard","capture","assess","verify","restore-lock"))
+    p.add_argument("command",choices=("guard","capture","assess","verify","restore-lock","cleanup"))
     p.add_argument("--owner",default="")
     p.add_argument("--snapshot",type=Path)
     p.add_argument("--sha256")
@@ -166,18 +230,15 @@ def main():
         else:
             require(a.snapshot is not None and a.sha256,"Exact snapshot coordinates required")
             snapshot=load_snapshot(a.snapshot,a.sha256)
-            result=assess(snapshot,a.command=="verify")
             if a.command=="restore-lock":
-                current=os.environ["ACADEMY_DEPLOY_LOCK_OWNER"]
-                previous=snapshot["lock_owner"]
-                require(re.fullmatch(r"candidate:[1-9][0-9]*:[1-9][0-9]*",current),
-                        "Invalid restoration lock owner")
-                require(current.split(":")[1] == previous.split(":")[1]
-                        and int(current.split(":")[2]) >= int(previous.split(":")[2]),
-                        "Restoration belongs to another run or older attempt")
-                action="renew" if current==previous else "acquire"
-                subprocess.run(["python3",str(Path(__file__).with_name("deployment_lock.py")),action,
-                                "--owner",current,"--ttl-seconds","10800"],check=True)
+                restore_lock(snapshot, os.environ["ACADEMY_DEPLOY_LOCK_OWNER"])
+                result={"lock":"owned"}
+            elif a.command=="cleanup":
+                subprocess.run(["python3",str(Path(__file__).with_name("deployment_lock.py")),"assert-owned",
+                                "--owner",os.environ["ACADEMY_DEPLOY_LOCK_OWNER"]],check=True)
+                result=cleanup_recovery(snapshot)
+            else:
+                result=assess(snapshot,a.command=="verify")
         print(json.dumps(result,sort_keys=True))
     except Exception:
         p.exit(2,"CANDIDATE_SLOT_BLOCKED: owner, session, queue or immutable baseline verification failed\n")

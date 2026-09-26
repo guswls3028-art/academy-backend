@@ -33,6 +33,8 @@ param(
     [string]$EvidencePath = "",
     [ValidatePattern('^$|^[a-zA-Z0-9][a-zA-Z0-9:._-]{2,120}$')]
     [string]$SlotOwner = "",
+    [string]$RecoverySnapshot = "",
+    [string]$RecoverySha256 = "",
     [switch]$IsolatedQa = $false,
     [switch]$Ci = $false,
     [string]$AwsProfile = "default"
@@ -67,7 +69,14 @@ if ($IsolatedQa) {
 if ($IsolatedQa -or $SlotOwner -or $env:CANDIDATE_ENABLED -eq "true") {
     if ($IsolatedQa -and -not $SlotOwner) { throw "Isolated QA requires its named slot owner." }
     $python = if (Get-Command python3 -ErrorAction SilentlyContinue) { "python3" } else { "python" }
-    & $python (Join-Path $ScriptRoot "candidate_slot.py") guard --owner $SlotOwner
+    if ($RecoverySnapshot) {
+        if ($IsolatedQa -or -not $RecoverySha256) { throw "Restoration requires trusted baseline coordinates." }
+        & $python (Join-Path $ScriptRoot "deployment_lock.py") assert-owned --owner $env:ACADEMY_DEPLOY_LOCK_OWNER
+        if ($LASTEXITCODE -ne 0) { throw "Restoration lock ownership failed." }
+        & $python (Join-Path $ScriptRoot "candidate_slot.py") assess --snapshot $RecoverySnapshot --sha256 $RecoverySha256
+    } else {
+        & $python (Join-Path $ScriptRoot "candidate_slot.py") guard --owner $SlotOwner
+    }
     if ($LASTEXITCODE -ne 0) { throw "Development slot is owned, busy or not safely inspectable." }
 }
 

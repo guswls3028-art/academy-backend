@@ -80,7 +80,7 @@ or failed restoration blocks completion. Do not force recovery or claim cleanup0
 Keep the QA lease and alert the owner for exact recovery. A cancelled/failed
 finalization can be retried as the restoration job: download by the immutable
 artifact ID, verify the original snapshot hash, then acquire a new attempt's
-lock only after owner/session/queue readback. Never reconstruct an artifact name
+lock after exact capacity ownership readback, then check sessions/queues under that lock. Never reconstruct an artifact name
 from the retry attempt or release an older/different holder's lock. Main workflow
 concurrency and the explicit lease guard prevent a following deployment from
 silently replacing that held QA slot.
@@ -171,7 +171,7 @@ provider access, or product QA have passed. Keep those states explicit.
 
 Dispatch from main with mode=isolated-qa, exact PR source_sha and pull_request,
 or mode=production and exact main source_sha (no PR input). The trusted controller
-checks source identity before AWS authentication and rechecks before publication.
+checks source identity and the exact-head successful backend quality workflow before AWS authentication and rechecks before publication.
 Docker sources come from the explicit candidate checkout; controller scripts
 come only from main. Runtime builds use the freshly built base digest; the base
 Dockerfile already pins its upstream image digest. This is immutable artifact
@@ -219,6 +219,70 @@ legacy deployment path. Do not delete shared queues, development DB/user data,
 or unexpired artifacts/images as rollback. Production rollback continues to use
 the existing last-successful release procedure and retains old capacity until
 replacement health proves continuity.
+
+
+### Durable publication recovery (review fixes)
+
+Isolated QA persists metadata in DynamoDB under
+__candidate_publication__:candidate:<run>:<original-attempt>.
+The record contains version coordinates, source versions, acknowledged restore
+versions and unresolved write intents; no environment values or credential hashes.
+Every journal write uses one transaction with a live shared-lock ownership check
+and a revision compare-and-swap. The restoration job addresses the original
+snapshot's run/attempt, including on a later job retry. A missing record is not
+assumed safe: both current SSM output versions must match the captured baseline.
+A pending write with an uncertain acknowledgement stays HOLD. Known acknowledged
+outputs can be restored, but no baseline activation follows an unresolved intent.
+Successful restoration versions are recorded before readback; retry verifies
+their values against the exact old versions without republishing them. Any
+genuinely newer version still blocks rollback. Journals have no automatic TTL;
+retain unresolved journals with their baseline coordinates.
+
+Recovery lock acquisition recognizes the captured baseline and this exact run's
+QA capacity even when replacement stopped midway (pending/stopped/multiple).
+It tries renewal and then conditional acquisition for an expired/absent lock;
+it cannot replace another live lock. Session/queue checks run after acquisition,
+so a busy-slot HOLD does not strand an otherwise releasable shared lock.
+Only after baseline health/smoke succeeds may owned residual capacity be removed.
+Foreign capacity, active sessions, unresolved queues or unknown writes stay HOLD.
+
+### Bounded QA window protocol — inactive pending runtime connection
+
+candidate_qa_window.py is an offline-tested control-plane protocol, not an
+enabled QA endpoint. No workflow calls it and no live adapter or window IAM grant
+is provisioned. RuntimeAdapter fails closed: open, renew, completion and restore
+authorization cannot succeed without trusted runtime observations. The A workflow
+still performs infrastructure smoke and restores immediately. Do not hand that
+ephemeral runtime to product acceptance owners.
+
+A lease binds a random ID, exact owner task ID, workflow lock owner, source SHA,
+all four runtime digests, QA-only SSM endpoint/profile, approved PR scope (509/511),
+baseline SHA256 and started/expires/renewed timestamps. Duration is at most
+90 minutes total; new admissions stop 30 seconds before expiry. Lock renewal and
+lease revision advance in one DynamoDB transaction. Replayed IDs, losing CAS
+renewals and unapproved scopes fail. Expiration never deletes the lease or
+permits inferred restoration. Fresh readback includes all three queues,
+all three worker in-flight ID sets, active sessions and cleanup0. Completion
+also requires exact-bound immutable evidence for actual roles, save/reload,
+tenant/permission and failure/recovery. Residual activity records HOLD and keeps
+rollback coordinates. Queue0 by itself is insufficient.
+
+Required execution-layer handoff (product files are not modified by #513):
+
+| Owner | Exact file/interface | Acceptance |
+| --- | --- | --- |
+| Existing API/exam owner, 01a0d377-52af-7233-b3e0-422bd561c8c1 | New apps/api/middleware/candidate_qa_admission.py; registration in apps/api/config/settings/development.py; shared lease schema from scripts/v1/candidate_qa_window.py | QA-only enablement. Bind request to committed lease ID/revision, owner, candidate SHA/digests and permitted scope. Reject new mutation at expiry/drain with an explicit recoverable QA_WINDOW_CLOSED response. Direct-port or missing/forged lease must not bypass admission. Reads needed for recovery remain safe. Production behavior unchanged. |
+| PPT + Matchup owners jointly, one designated writer | academy/framework/workers/ai_sqs_worker.py, academy/adapters/queue/sqs/ai_queue.py, academy/adapters/queue/sqs/tools_queue.py | Stop new receive before expiry/drain. Recheck lease after long polling, safely release unstarted receipts, allow already-started jobs to finish. Expose exact current job/receipt identity and freshly observed idle state for AI and Tools; do not infer idle from queue metrics. Existing source-owned output/data rules remain. |
+| Release foundation owner, coordinated with messaging owner | apps/worker/messaging_worker/sqs_main.py | Equivalent admission/drain and in-flight readback for development messaging, keeping mock/no-provider boundary. No forced stop of an active job. |
+| Release foundation owner after those commits | scripts/v1/candidate_qa_window.py RuntimeAdapter.observe/drain; scripts/v1/candidate_slot.py; .github/workflows/candidate-prepare.yml; candidate IAM templates | Read exact trusted runtime, enforce revision/expiry at API and workers, publish endpoint only after gates. Retest renewal race, expiry during work, connection loss, incomplete cleanup, foreign/replayed lease and all live accepted flows. Restore only after fresh closed-admission/session/worker/queue/cleanup0 readback; healthy baseline before QA termination. |
+
+The runtime adapter must query a trusted control channel. User-supplied JSON,
+route mocks, a successful health check or a typed Readback fixture is not live
+proof. Runtime renewal must not allow a staged expiry to grant admission before
+the corresponding DDB CAS succeeds. Endpoint access must be limited to the
+admission-protected port, including SSM forwarding. Shared product-file changes
+require the listed owners' coordinated commits, followed by exact-artifact
+integration; #513 remains draft/HOLD until these connections and required CI pass.
 
 ## Verification and external approval package
 
