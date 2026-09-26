@@ -534,7 +534,7 @@ class BoundedWindowTests(unittest.TestCase):
         self.spec=window.specification(lease_id="a"*32,owner_task="01a0d04a-d64f-7473-9f58-61a8e983dcc0",
             lock_owner="candidate:123:1",source_sha=SHA,
             images={k:DIGEST for k in ("api","tools","ai","messaging")},
-            endpoint="ssm://i-0123456789abcdef0:8001",profile=window.PROFILE,
+            endpoint="ssm://i-0123456789abcdef0:8000",profile=window.PROFILE,
             scope=[509,511],baseline_sha256="c"*64,tenant_ids=[101],message_key_version=1)
         class Store:
             record=None
@@ -565,7 +565,8 @@ class BoundedWindowTests(unittest.TestCase):
             workers_receiving=not self.drained and record["state"]!="prepared",
             workers_inflight={k:("owned-job",) if self.busy else () for k in ("ai","tools","messaging")},
             queue_counts={k:dict(visible=0,inflight=0,delayed=0) for k in ("ai","tools","messaging")},
-            active_sessions=(),enforcement_expires_at=record["expires_at"],cleanup_zero=self.cleaned)
+            active_sessions=(),enforcement_expires_at=record["expires_at"],cleanup_zero=self.cleaned,
+            lease_revision=record["revision"])
 
     def completion(self):
         return dict(binding_sha256=self.w.binding(self.spec),scope=[509,511],cleanup_zero=True,
@@ -598,6 +599,45 @@ class BoundedWindowTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 self.window.renew(record["lease_id"],record["owner_task"],900)
         self.assertEqual(self.store.record["expires_at"],before["expires_at"])
+
+    def test_current_deployment_port_and_stale_runtime_revision(self):
+        from dataclasses import replace
+        with self.assertRaises(self.w.WindowHold):
+            self.w.specification(**dict(self.spec, endpoint="ssm://i-0123456789abcdef0:8001"))
+        record=self.open()
+        stale=replace(self.proof(record),lease_revision=record["revision"]-1)
+        with self.assertRaises(self.w.WindowHold):
+            self.w.verify_readback(record,stale,self.now)
+
+    def test_renewal_observes_committed_state_before_and_after_cas(self):
+        record=self.open();self.now=1100
+        observed=[]
+        def committed_proof(expected):
+            committed=self.store.read()
+            observed.append(committed["revision"])
+            return self.proof(committed)
+        self.adapter.observe.side_effect=committed_proof
+        renewed=self.window.renew(record["lease_id"],record["owner_task"],900)
+        self.assertEqual(observed,[record["revision"],record["revision"]+1])
+        self.assertEqual(renewed["expires_at"],2000)
+        self.assertFalse(renewed["control_hold"])
+
+    def test_failed_renewal_readback_retains_bound_expiry_and_sets_hold(self):
+        from dataclasses import replace
+        record=self.open();self.now=1100
+        old_revision=record["revision"]
+        def stale_proof(expected):
+            proof=self.proof(self.store.read())
+            return replace(proof,lease_revision=old_revision)
+        self.adapter.observe.side_effect=stale_proof
+        with self.assertRaises(self.w.WindowHold):
+            self.window.renew(record["lease_id"],record["owner_task"],900)
+        held=self.store.read()
+        self.assertEqual(held["state"],"active")
+        self.assertEqual(held["expires_at"],2000)
+        self.assertTrue(held["control_hold"])
+        with self.assertRaises(self.w.WindowHold):
+            self.window.admit(record["lease_id"],record["owner_task"],509)
 
     def test_expiry_blocks_admission_before_deadline_and_busy_restore(self):
         record=self.open(); self.now=1570

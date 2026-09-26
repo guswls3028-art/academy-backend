@@ -41,7 +41,7 @@ class AdmissionTests(unittest.TestCase):
             "lease_id":"a"*32,"owner_task":"01a0d04a-d64f-7473-9f58-61a8e983dcc0",
             "lock_owner":"candidate:123:1","source_sha":"b"*40,
             "images":{k:"sha256:"+"c"*64 for k in ("api","ai","tools","messaging")},
-            "endpoint":"ssm://i-0123456789abcdef0:8001",
+            "endpoint":"ssm://i-0123456789abcdef0:8000",
             "profile":"arn:aws:iam::809466760795:instance-profile/academy-api-qa",
             "scope":[509,511],"baseline_sha256":"d"*64,"tenant_ids":[101],
             "message_key_version":1,"state":"active","revision":1,

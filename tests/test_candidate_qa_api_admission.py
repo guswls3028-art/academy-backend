@@ -279,7 +279,7 @@ def test_committed_gate_denies_margin_drain_foreign_tenant_and_adapter_loss(
         "lock_owner": "candidate:123:1",
         "source_sha": "b" * 40,
         "images": {kind: "sha256:" + "c" * 64 for kind in ("api", "ai", "tools", "messaging")},
-        "endpoint": "ssm://i-0123456789abcdef0:8001",
+        "endpoint": "ssm://i-0123456789abcdef0:8000",
         "profile": "arn:aws:iam::809466760795:instance-profile/academy-api-qa",
         "scope": [509, 511],
         "baseline_sha256": "d" * 64,

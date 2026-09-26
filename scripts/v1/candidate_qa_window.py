@@ -40,7 +40,7 @@ def specification(*, lease_id, owner_task, lock_owner, source_sha, images, endpo
     require(re.fullmatch(r"[0-9a-f]{40}",source_sha), "Exact candidate source required")
     require(set(images) == {"api","tools","ai","messaging"}, "All runtime digests required")
     require(all(re.fullmatch(r"sha256:[0-9a-f]{64}",v) for v in images.values()), "Immutable digests required")
-    require(re.fullmatch(r"ssm://i-[0-9a-f]{17}:8001",endpoint), "QA-only admission endpoint required")
+    require(re.fullmatch(r"ssm://i-[0-9a-f]{17}:8000",endpoint), "QA-only admission endpoint required")
     require(profile == PROFILE, "Isolated QA profile required")
     require(bool(scope) and set(scope) <= {509,511} and len(scope) == len(set(scope)), "Unapproved acceptance scope")
     require(re.fullmatch(r"[0-9a-f]{64}",baseline_sha256), "Rollback snapshot required")
@@ -75,6 +75,7 @@ class Readback:
     active_sessions: tuple
     enforcement_expires_at: int
     cleanup_zero: bool
+    lease_revision: int
 
 
 @dataclass(frozen=True)
@@ -105,6 +106,8 @@ def verify_readback(record, proof, now, *, idle=False, drained=False):
     require(isinstance(proof,Readback), "Typed runtime readback required")
     require(proof.binding_sha256 == binding(record), "Runtime belongs to another lease/candidate")
     require(0 <= now-proof.observed_at <= 10, "Stale runtime readback")
+    require(type(proof.lease_revision) is int and proof.lease_revision == record["revision"],
+            "Runtime lease revision differs")
     require(proof.enforcement_expires_at == record["expires_at"], "Runtime expiry differs")
     require(proof.api_admission == ("closed" if drained else "lease-bound"),
             "Runtime API admission is not enforced")
@@ -182,12 +185,12 @@ class Window:
                 "No exact unexpired prepared lease")
         # Containers have validated the committed PREPARED record but cannot
         # authenticate, mutate or poll queues until this atomic transition.
-        verify_readback(record,self.runtime.observe(record),now,idle=True,drained=True)
+        verify_readback(record,self.runtime.observe(record),int(self.clock()),idle=True,drained=True)
         revision=record["revision"]
         record.update(state="active",revision=revision+1)
         self.store.commit(record,revision,now)
         try:
-            verify_readback(record,self.runtime.observe(record),now,idle=True)
+            verify_readback(record,self.runtime.observe(record),int(self.clock()),idle=True)
         except Exception:
             revision=record["revision"]
             record.update(control_hold=True,revision=revision+1)
@@ -206,7 +209,7 @@ class Window:
         require(record["state"] == "active" and not record.get("control_hold") and now < record["expires_at"]-ADMISSION_MARGIN,
                 "QA window closing; new work rejected, retain existing results")
         require(pull_request in record["scope"], "Action outside approved acceptance scope")
-        verify_readback(record,self.runtime.observe(record),now)
+        verify_readback(record,self.runtime.observe(record),int(self.clock()))
         return binding(record)
 
     def renew(self, lease_id, owner_task, seconds):
@@ -215,12 +218,19 @@ class Window:
                 "Expired or draining leases cannot be renewed")
         require(type(seconds) is int and seconds > 0 and now+seconds <= record["started_at"]+MAX_SECONDS
                 and now+seconds > record["expires_at"], "Renewal exceeds bounded window")
+        # Runtime gates can observe only committed leases. Verify the current
+        # revision first, then require every runtime to observe the winning CAS.
+        verify_readback(record,self.runtime.observe(record),int(self.clock()))
         revision=record["revision"]
         record.update(revision=revision+1,renewed_at=now,expires_at=now+seconds)
-        # Adapter must stage matching expiry before CAS; API still requires the
-        # committed DDB revision. A losing renewal cannot grant extra admission.
-        verify_readback(record,self.runtime.observe(record),now)
         self.store.commit(record,revision,now)
+        try:
+            verify_readback(record,self.runtime.observe(record),int(self.clock()))
+        except Exception:
+            revision=record["revision"]
+            record.update(control_hold=True,revision=revision+1)
+            self.store.commit(record,revision,int(self.clock()))
+            raise WindowHold("Renewed runtime revision unverified; admissions held") from None
         return record
 
     def begin_drain(self, lease_id, owner_task):
@@ -253,7 +263,7 @@ class Window:
         try:
             record=self.begin_drain(lease_id,owner_task)
             revision=record["revision"]
-            verify_readback(record,self.runtime.observe(record),now,idle=True,drained=True)
+            verify_readback(record,self.runtime.observe(record),int(self.clock()),idle=True,drained=True)
         except Exception:
             record=self.owned(lease_id,owner_task)
             revision=record["revision"]
@@ -288,5 +298,5 @@ class Window:
         record=self.owned(lease_id,owner_task); now=int(self.clock())
         require(record["state"]=="closed" and record.get("restore_ready") is True and not record.get("control_hold"),
                 "QA completion/timeout is not reconciled")
-        verify_readback(record,self.runtime.observe(record),now,idle=True,drained=True)
+        verify_readback(record,self.runtime.observe(record),int(self.clock()),idle=True,drained=True)
         return record["baseline_sha256"]

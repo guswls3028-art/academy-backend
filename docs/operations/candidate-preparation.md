@@ -288,8 +288,9 @@ Focused offline verification uses `tests/test_candidate_worker_admission.py` tog
 
 The runtime adapter must query a trusted control channel. User-supplied JSON,
 route mocks, a successful health check or a typed Readback fixture is not live
-proof. Runtime renewal must not allow a staged expiry to grant admission before
-the corresponding DDB CAS succeeds. Endpoint access must be limited to the
+proof. Runtime renewal first verifies the committed revision, then advances it by CAS
+and verifies that every process observes the new revision and bounded expiry.
+Failed post-CAS readback records control HOLD; a losing CAS never extends expiry. Endpoint access must be limited to the
 admission-protected port, including SSM forwarding. Shared product-file changes
 require the listed owners' coordinated commits, followed by exact-artifact
 integration; #513 remains draft/HOLD until these connections and required CI pass.
@@ -506,3 +507,13 @@ appear later, and a live QA gate cannot be rebound to another lease/key/runtime
 in the same process. Configuration changes fail closed and require a process
 restart; existing in-flight activity stays on its original gate. Normal
 development/production with no QA markers retains its inactive path.
+
+### Runtime port and committed-revision readback
+
+The QA endpoint pins port 8000, matching the existing API image and development
+executor. Isolation comes from the exact QA instance/profile, SSM-only access
+and the required admission middleware, not an unconfigured alternate port.
+Every runtime readback must contain the current committed lease revision. A
+heartbeat at an older revision cannot authorize endpoint publication or renewal.
+These protocol checks remain offline until the trusted adapter and two-stage
+launcher are connected and verified; no endpoint is enabled by this change.
