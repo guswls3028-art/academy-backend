@@ -6224,6 +6224,18 @@
             },
             "type": "array"
           },
+          "grading_complete": {
+            "type": "boolean"
+          },
+          "grading_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          "grading_status": {
+            "type": "string"
+          },
           "id": {
             "format": "uuid",
             "type": "string"
@@ -6263,6 +6275,12 @@
             },
             "type": "array"
           },
+          "subjective_pending_ordinals": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          },
           "terminal": {
             "type": "boolean"
           },
@@ -6282,6 +6300,9 @@
           "duplicate_ordinals",
           "exam_id",
           "failed_ordinals",
+          "grading_complete",
+          "grading_counts",
+          "grading_status",
           "id",
           "lecture_id",
           "overall_status",
@@ -6290,6 +6311,7 @@
           "retried_ordinals",
           "session_id",
           "skipped_ordinals",
+          "subjective_pending_ordinals",
           "terminal",
           "total_count",
           "updated_at"
@@ -6332,6 +6354,18 @@
             },
             "type": "array"
           },
+          "grading_complete": {
+            "type": "boolean"
+          },
+          "grading_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          "grading_status": {
+            "type": "string"
+          },
           "id": {
             "format": "uuid",
             "type": "string"
@@ -6353,6 +6387,12 @@
             "nullable": true,
             "type": "integer"
           },
+          "subjective_pending_ordinals": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          },
           "terminal": {
             "type": "boolean"
           },
@@ -6372,11 +6412,15 @@
           "duplicate_ordinals",
           "exam_id",
           "failed_ordinals",
+          "grading_complete",
+          "grading_counts",
+          "grading_status",
           "id",
           "lecture_id",
           "overall_status",
           "pending_admission_ordinals",
           "session_id",
+          "subjective_pending_ordinals",
           "terminal",
           "total_count",
           "updated_at"
@@ -6422,6 +6466,18 @@
             },
             "type": "array"
           },
+          "grading_complete": {
+            "type": "boolean"
+          },
+          "grading_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          "grading_status": {
+            "type": "string"
+          },
           "id": {
             "format": "uuid",
             "type": "string"
@@ -6442,6 +6498,12 @@
           "session_id": {
             "nullable": true,
             "type": "integer"
+          },
+          "subjective_pending_ordinals": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
           },
           "submission_ids": {
             "items": {
@@ -6469,11 +6531,15 @@
           "duplicate_ordinals",
           "exam_id",
           "failed_ordinals",
+          "grading_complete",
+          "grading_counts",
+          "grading_status",
           "id",
           "lecture_id",
           "overall_status",
           "pending_admission_ordinals",
           "session_id",
+          "subjective_pending_ordinals",
           "submission_ids",
           "terminal",
           "total_count",
