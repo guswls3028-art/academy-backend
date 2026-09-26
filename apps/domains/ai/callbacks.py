@@ -909,15 +909,18 @@ def _handle_matchup_ai_result(
                 return
 
     if status == "FAILED":
-        doc.status = "failed"
-        doc.error_message = error or "AI 분석 실패"
-        doc.save(update_fields=["status", "error_message", "updated_at"])
+        from django.db import transaction
+
+        with transaction.atomic():
+            doc.status = "failed"
+            doc.error_message = error or "AI 분석 실패"
+            doc.save(update_fields=["status", "error_message", "updated_at"])
+            schedule_unreferenced_matchup_artifacts(
+                tenant_id=doc.tenant_id, document_id=doc.id, job_id=job_id,
+            )
         logger.warning(
             "AI_CALLBACK_MATCHUP_FAILED_STATUS | job_id=%s | doc_id=%s | error=%s",
             job_id, source_id, error,
-        )
-        schedule_unreferenced_matchup_artifacts(
-            tenant_id=doc.tenant_id, document_id=doc.id, job_id=job_id,
         )
         return
 

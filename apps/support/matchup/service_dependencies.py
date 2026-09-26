@@ -21,6 +21,12 @@ def matchup_analysis_job_exists(*, tenant_id: int, document_id: int, job_id: str
     ).exists()
 
 
+def process_matchup_artifact_scans(*, limit: int = 100) -> dict[str, int]:
+    from apps.domains.matchup.analysis_artifacts import process_artifact_scan_intents
+
+    return process_artifact_scan_intents(limit=limit)
+
+
 def inventory_file_for_r2_key(*, tenant: Any, r2_key: str) -> Any | None:
     from apps.domains.inventory.models import InventoryFile
 

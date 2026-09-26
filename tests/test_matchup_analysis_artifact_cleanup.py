@@ -12,8 +12,8 @@ from apps.core.models import Tenant
 from apps.domains.ai.callbacks import _handle_matchup_ai_result
 from apps.domains.ai.models import AIJobModel
 from apps.domains.inventory.models import InventoryFile
-from apps.domains.matchup.analysis_artifacts import analysis_artifact_prefix
-from apps.domains.matchup.models import MatchupDocument, MatchupProblem
+from apps.domains.matchup.analysis_artifacts import analysis_artifact_prefix, process_artifact_scan_intents
+from apps.domains.matchup.models import MatchupArtifactScanIntent, MatchupDocument, MatchupProblem
 from apps.domains.matchup.services import retry_document
 from apps.domains.submissions.models import SubmissionStorageCleanupIntent
 
@@ -156,6 +156,89 @@ class AnalysisArtifactCleanupTests(TestCase):
         self.assertEqual(self.doc.status, "failed")
         self.assertEqual(self._intent_keys(), {key})
 
+    def test_failed_callback_retries_scoped_listing_after_r2_recovers(self):
+        from apps.domains.submissions.services.lifecycle import process_submission_storage_cleanup_intents
+
+        job_id = "job-listing-outage"
+        self.doc.ai_job_id = job_id
+        self.doc.save(update_fields=["ai_job_id"])
+        AIJobModel.objects.create(
+            job_id=job_id, job_type="matchup_analysis", tenant_id=str(self.tenant.id),
+            source_domain="matchup", source_id=str(self.doc.id),
+        )
+        prefix = analysis_artifact_prefix(tenant_id=self.tenant.id, job_id=job_id)
+        key = prefix + "problems/run/1.png"
+        foreign = f"tenants/{self.other_tenant.id}/matchup/jobs/foreign/problems/1.png"
+        with patch(
+            "academy.adapters.storage.r2_objects.iter_r2_objects",
+            side_effect=RuntimeError("R2 listing unavailable"),
+        ):
+            _handle_matchup_ai_result(
+                job_id=job_id, status="FAILED", source_id=str(self.doc.id),
+                result_payload={}, error="worker failed after upload",
+            )
+
+        scan = MatchupArtifactScanIntent.objects.get(
+            tenant=self.tenant,
+            document_id=self.doc.id,
+            job_id=job_id,
+        )
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.status, "failed")
+        self.assertEqual(scan.status, MatchupArtifactScanIntent.Status.PENDING)
+        with patch("apps.infrastructure.storage.r2.delete_object_r2_storage") as delete:
+            old_consumer = process_submission_storage_cleanup_intents()
+        self.assertEqual(old_consumer.cleaned, 0)
+        delete.assert_not_called()
+        scan.refresh_from_db()
+        self.assertEqual(scan.status, MatchupArtifactScanIntent.Status.PENDING)
+
+        with patch(
+            "academy.adapters.storage.r2_objects.iter_r2_objects",
+            side_effect=RuntimeError("R2 still unavailable"),
+        ):
+            failed = process_artifact_scan_intents(intent_ids=[scan.id])
+        self.assertEqual(failed["failed"], 1)
+        scan.refresh_from_db()
+        self.assertEqual(scan.status, MatchupArtifactScanIntent.Status.FAILED)
+
+        with patch(
+            "academy.adapters.storage.r2_objects.iter_r2_objects",
+            return_value=[{"Key": key}, {"Key": foreign}],
+        ), patch("apps.infrastructure.storage.r2.delete_object_r2_storage") as delete, self.captureOnCommitCallbacks(execute=True):
+            result = process_artifact_scan_intents(intent_ids=[scan.id])
+
+        self.assertEqual(result["cleaned"], 1)
+        scan.refresh_from_db()
+        self.assertEqual(scan.status, MatchupArtifactScanIntent.Status.CLEANED)
+        self.assertEqual(self._intent_keys(), {key})
+        delete.assert_called_once_with(key=key)
+        self.assertFalse(SubmissionStorageCleanupIntent.objects.filter(object_key=foreign).exists())
+
+    def test_failed_callback_scan_intent_write_failure_rolls_back_status(self):
+        job_id = "job-scan-ledger-outage"
+        self.doc.ai_job_id = job_id
+        self.doc.save(update_fields=["ai_job_id"])
+        AIJobModel.objects.create(
+            job_id=job_id, job_type="matchup_analysis", tenant_id=str(self.tenant.id),
+            source_domain="matchup", source_id=str(self.doc.id),
+        )
+        with patch(
+            "academy.adapters.storage.r2_objects.iter_r2_objects",
+            side_effect=RuntimeError("R2 listing unavailable"),
+        ), patch(
+            "apps.domains.matchup.analysis_artifacts.schedule_artifact_scan_intent",
+            side_effect=RuntimeError("cleanup ledger unavailable"),
+        ), pytest.raises(RuntimeError, match="cleanup ledger unavailable"):
+            _handle_matchup_ai_result(
+                job_id=job_id, status="FAILED", source_id=str(self.doc.id),
+                result_payload={}, error="worker failed after upload",
+            )
+
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.status, "processing")
+        self.assertFalse(MatchupArtifactScanIntent.objects.filter(tenant=self.tenant).exists())
+
     def test_cleanup_schedule_failure_rolls_back_auto_replacement(self):
         original = self._problem(
             1, f"tenants/{self.tenant.id}/matchup/legacy/problems/1.png", {},
@@ -258,6 +341,24 @@ class AnalysisArtifactCleanupTests(TestCase):
             ), 0)
         list_objects.assert_not_called()
         self.assertEqual(self._intent_keys(), set())
+
+    def test_scan_intent_rejects_job_owned_by_another_tenant(self):
+        job_id = "other-tenant-job"
+        AIJobModel.objects.create(
+            job_id=job_id, job_type="matchup_analysis", tenant_id=str(self.other_tenant.id),
+            source_domain="matchup", source_id=str(self.doc.id),
+        )
+        scan = MatchupArtifactScanIntent.objects.create(
+            tenant=self.tenant,
+            document_id=self.doc.id,
+            job_id=job_id,
+        )
+        with patch("academy.adapters.storage.r2_objects.iter_r2_objects") as list_objects:
+            result = process_artifact_scan_intents(intent_ids=[scan.id])
+        self.assertEqual(result["failed"], 1)
+        list_objects.assert_not_called()
+        scan.refresh_from_db()
+        self.assertEqual(scan.status, MatchupArtifactScanIntent.Status.FAILED)
 
     def test_inventory_cascade_rejects_approved_problem(self):
         from apps.domains.inventory.services.deletion import delete_file

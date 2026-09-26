@@ -1,4 +1,5 @@
 from datetime import timedelta
+from unittest.mock import patch
 
 import pytest
 from django.utils import timezone
@@ -6,7 +7,7 @@ from django.utils import timezone
 from apps.core.models import Tenant
 from apps.domains.ai.models import AIJobModel
 from apps.domains.inventory.models import InventoryFile, InventoryFolder
-from apps.domains.matchup.models import MatchupDocument
+from apps.domains.matchup.models import MatchupArtifactScanIntent, MatchupDocument
 from apps.domains.matchup.views import _reconcile_document_from_ai_job
 
 pytestmark = pytest.mark.django_db
@@ -59,7 +60,11 @@ def test_reconcile_marks_expired_running_matchup_job_failed():
     job.source_id = str(doc.id)
     job.save(update_fields=["source_id", "updated_at"])
 
-    assert _reconcile_document_from_ai_job(doc) is True
+    with patch(
+        "academy.adapters.storage.r2_objects.iter_r2_objects",
+        side_effect=RuntimeError("R2 listing unavailable"),
+    ):
+        assert _reconcile_document_from_ai_job(doc) is True
 
     doc.refresh_from_db()
     job.refresh_from_db()
@@ -67,3 +72,9 @@ def test_reconcile_marks_expired_running_matchup_job_failed():
     assert doc.error_message == "AI 작업이 중단되었습니다. 다시 시도해 주세요."
     assert job.status == "FAILED"
     assert job.lease_expires_at is None
+    assert MatchupArtifactScanIntent.objects.filter(
+        tenant=tenant,
+        document_id=doc.id,
+        job_id=job.job_id,
+        status=MatchupArtifactScanIntent.Status.PENDING,
+    ).exists()
