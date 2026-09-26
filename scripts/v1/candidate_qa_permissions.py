@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 import re
 
-from candidate_qa_window import require
+from scripts.v1.candidate_qa_window import require
 
 ACCOUNT = "809466760795"
 REGION = "ap-northeast-2"

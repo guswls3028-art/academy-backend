@@ -6,7 +6,7 @@ import unittest
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"scripts/v1"))
 from candidate_qa_permissions import runtime_policy, activation_plan
-from candidate_qa_window import WindowHold
+from scripts.v1.candidate_qa_window import WindowHold
 
 
 class PermissionTests(unittest.TestCase):

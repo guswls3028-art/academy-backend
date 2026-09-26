@@ -14,7 +14,7 @@ from contextlib import redirect_stdout
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts/v1"))
 import candidate_qa_launch as launch
-import candidate_qa_window as window
+from scripts.v1 import candidate_qa_window as window
 
 
 class LaunchTests(unittest.TestCase):
@@ -50,6 +50,25 @@ class LaunchTests(unittest.TestCase):
 
     def plan(self):
         return launch.start_plan(self.record,release_id=self.release,api_version=7,workers_version=8)
+
+    def test_observer_proofs_use_the_controller_window_contract(self):
+        from scripts.v1.candidate_qa_observer import InertReadback
+        runtime = Mock()
+        runtime.observe_inert.side_effect = lambda spec: InertReadback(
+            window.binding(spec), 1100, "i-0123456789abcdef0",
+            window.PROFILE, True, 0, 0)
+        store = Mock()
+        store.read.return_value = None
+        controller = window.Window(store, runtime=runtime, clock=lambda:1100)
+        spec = {key:self.record[key] for key in (
+            "lease_id", "owner_task", "lock_owner", "source_sha", "images",
+            "endpoint", "profile", "scope", "baseline_sha256", "tenant_ids",
+            "message_key_version")}
+        prepared = controller.prepare(spec, 600)
+        self.assertEqual(prepared["state"], "prepared")
+        store.commit.assert_called_once_with(prepared, None, 1100)
+        with self.assertRaises(window.WindowHold):
+            launch.require(False, "shared exception identity")
 
     def test_stage_one_never_starts_product_or_fetches_environment(self):
         script=launch.INERT_USER_DATA

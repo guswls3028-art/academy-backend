@@ -12,7 +12,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from candidate_qa_window import PROFILE, binding, require, specification
+from scripts.v1.candidate_qa_window import PROFILE, binding, require, specification
 
 ACCOUNT = "809466760795"
 REGION = "ap-northeast-2"

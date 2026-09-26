@@ -529,7 +529,7 @@ class InterruptedRecoveryTests(unittest.TestCase):
 
 class BoundedWindowTests(unittest.TestCase):
     def setUp(self):
-        import candidate_qa_window as window
+        from scripts.v1 import candidate_qa_window as window
         self.w=window; self.now=1000
         self.spec=window.specification(lease_id="a"*32,owner_task="01a0d04a-d64f-7473-9f58-61a8e983dcc0",
             lock_owner="candidate:123:1",source_sha=SHA,

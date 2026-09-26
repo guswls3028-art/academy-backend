@@ -249,8 +249,10 @@ Foreign capacity, active sessions, unresolved queues or unknown writes stay HOLD
 ### Bounded QA window protocol — inactive pending runtime connection
 
 candidate_qa_window.py is an offline-tested control-plane protocol, not an
-enabled QA endpoint. No workflow calls it and no live adapter or window IAM grant
-is provisioned. RuntimeAdapter fails closed: open, renew, completion and restore
+enabled QA endpoint. No workflow calls it and no window IAM grant is provisioned.
+The concrete candidate_qa_observer.AWSRuntimeAdapter is implemented, but its
+trusted domain cleanup and baseline exclusivity providers must be owner-wired.
+The default RuntimeAdapter remains closed: open, renew, completion and restore
 authorization cannot succeed without trusted runtime observations. The A workflow
 still performs infrastructure smoke and restores immediately. Do not hand that
 ephemeral runtime to product acceptance owners.
@@ -267,7 +269,8 @@ also requires exact-bound immutable evidence for actual roles, save/reload,
 tenant/permission and failure/recovery. Residual activity records HOLD and keeps
 rollback coordinates. Queue0 by itself is insufficient.
 
-Required execution-layer handoff (product files are not modified by #513):
+Execution-layer ownership (API and worker changes are now included in the
+integration candidate; live acceptance remains pending):
 
 | Owner | Exact file/interface | Acceptance |
 | --- | --- | --- |
@@ -551,8 +554,9 @@ required before activation and again before restoring the original policy.
 Offline launch/boot tests cover partial/foreign state, exact source/attempt and
 environment versions, baseline preservation, idempotent launch recovery, inbound
 network rejection and credential-free command arguments. Structural policy tests
-are not IAM simulator or live access evidence. Trusted runtime observation,
-baseline consumer exclusion/restoration, exact domain cleanup manifests, key
+are not IAM simulator or live access evidence. The trusted runtime observer is
+implemented as described below; baseline consumer exclusion/restoration, exact
+domain cleanup manifests, key
 creation/revocation, IAM application and workflow wiring remain unfinished. No
 actual candidate resources or credentials were created by these code changes.
 
@@ -562,3 +566,28 @@ policy-write denial remains intact. Per-lease runtime IAM activation must theref
 use a separately reviewed, exact-policy apply path under the shared lock; the
 launcher does not gain arbitrary IAM management. That apply/restore path is not
 implemented or approved by the plan renderer.
+
+
+### Trusted runtime observer and controller interoperability
+
+The owner-controlled `candidate_qa_observer.AWSRuntimeAdapter` reads the exact
+committed lease and shared lock, EC2 profile/tags, sole inbound-free security
+group, SSM registration/sessions, and all four immutable Docker images. Its fixed
+host probe compares actual process identities/start times with fresh private
+heartbeats; API access remains on the existing host-network port 8000.
+Only allowlisted metadata leaves the host, never container environment secrets.
+
+`observe_bootstrap` returns a distinct `BootstrapEvidence` for a closed, idle
+PREPARED runtime before baseline consumers are paused. It grants no admission
+and cannot be passed as the Window's completion readback. Full observations
+require fresh baseline-consumer exclusivity and a complete domain resource
+manifest. During ACTIVE work, a valid nonzero cleanup inventory yields
+`cleanup_zero=False`; opening and finishing still require zero. Operations
+already admitted in a prior ACTIVE revision remain visible across renew/drain,
+with bounded start times and no future or PREPARED admission revision accepted.
+
+Controller libraries share the canonical `scripts.v1.candidate_qa_window`
+module so their typed evidence and exceptions have one identity. A connected
+prepare test covers the observer-to-controller handoff, in addition to observer
+identity/replay, nonzero activity, stale evidence and partial-inventory tests.
+These offline checks do not establish live QA, IAM access or domain cleanup.
