@@ -558,7 +558,7 @@ Offline launch/boot tests cover partial/foreign state, exact source/attempt and
 environment versions, baseline preservation, idempotent launch recovery, inbound
 network rejection and credential-free command arguments. Structural policy tests
 are not IAM simulator or live access evidence. The trusted runtime observer is
-implemented as described below; baseline consumer exclusion/restoration, exact
+implemented as described below, as is baseline consumer pause/restoration. Exact
 domain cleanup manifests, key
 creation/revocation, IAM application and workflow wiring remain unfinished. No
 actual candidate resources or credentials were created by these code changes.
@@ -607,7 +607,10 @@ images, tenants/users and owned resources, and compare live observations.
 
 `Window.open` calls `observe_preflight` for both PREPARED and the newly committed
 ACTIVE revision. It requires `preflight_ready=True`, idle workers/queues/sessions
-and the expected admission state. A final cleanup boolean cannot substitute for
+and the expected admission state. The concrete observer requires a separate typed, fresh `PreflightEvidence`
+from an owner-wired provider: exact lease/source/root manifest and tenant IDs,
+matching approved/observed initial fixture hashes, and zero unexpected residue
+for every required domain. A final cleanup boolean cannot substitute for
 initial fixture ownership. Expected auth fixtures may be present at opening.
 `finish` and restoration retain their full `cleanup_zero=True` requirement,
 including removal/readback of those initial fixtures. The default preflight
@@ -628,3 +631,14 @@ unsigned jobs into shared development queues must also be prevented and proven,
 or those queues must be isolated before admission. Stopped baseline consumers
 alone do not establish producer isolation. Per-lease key lifecycle, exact IAM
 activation/restore and workflow wiring remain separate unfinished gates.
+
+
+Domain inventory has confirmed that tenant deletion alone is insufficient:
+PPT AI job tenant identifiers are strings rather than tenant foreign keys;
+job/results, Redis status/progress and upload-before-dispatch orphan R2 objects
+need their own authoritative readback. OMR's UI cleanup may leave archived
+exam/session/lecture and batch records for official fixture teardown.
+The immutable creator scope/initial-fixture receipt must be distinguished from
+action-level created-resource receipts attached to that root. Final inspection
+must include unrecorded orphans inside the exact proven-owned namespace.
+No entire shared queue purge or deletion of foreign/user-authored data is allowed.
