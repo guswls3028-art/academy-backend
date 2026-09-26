@@ -63,6 +63,28 @@ class CleanupEvidence:
 
 
 @dataclass(frozen=True)
+class PreflightEvidence:
+    """Trusted manifest and live fixture comparison before QA admission."""
+
+    lease_id: str
+    binding_sha256: str
+    source_sha: str
+    resource_manifest_sha256: str
+    tenant_ids: tuple[int, ...]
+    observed_at: int
+    approved_initial_fixtures_sha256: str
+    observed_initial_fixtures_sha256: str
+    unexpected_residual_by_domain: dict[str, dict[str, int]]
+
+
+@dataclass(frozen=True)
+class PreflightReadback(Readback):
+    """Runtime readback that can satisfy only the explicit preflight gate."""
+
+    preflight_ready: bool = True
+
+
+@dataclass(frozen=True)
 class BootstrapEvidence:
     """PREPARED runtime only; never an admission, cleanup or open-window proof."""
 
@@ -81,6 +103,13 @@ def _fresh(observed_at, now):
 
 def _safe_count(value):
     return type(value) is int and value >= 0
+
+
+def _manifest_sha256(record):
+    value = record.get("resource_manifest_sha256")
+    require(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value),
+            "Exact QA resource manifest required")
+    return value
 
 
 class FixedSsmProbe:
@@ -136,7 +165,8 @@ class AWSRuntimeAdapter(RuntimeAdapter):
     """
 
     def __init__(self, *, expected_slot_owner, ec2=None, ssm=None, sqs=None, ddb=None,
-                 probe=None, cleanup_probe=None, queue_exclusivity_probe=None,
+                 probe=None, cleanup_probe=None, preflight_probe=None,
+                 queue_exclusivity_probe=None,
                  cleanup_domains=(), clock=time.time, sleeper=time.sleep):
         require(isinstance(expected_slot_owner, str) and bool(expected_slot_owner),
                 "Exact QA slot owner required")
@@ -144,6 +174,7 @@ class AWSRuntimeAdapter(RuntimeAdapter):
         self._clients = {"ec2": ec2, "ssm": ssm, "sqs": sqs, "dynamodb": ddb}
         self._probe = probe
         self.cleanup_probe = cleanup_probe
+        self.preflight_probe = preflight_probe
         self.queue_exclusivity_probe = queue_exclusivity_probe
         self.cleanup_domains = frozenset(cleanup_domains)
         self.clock = clock
@@ -286,13 +317,13 @@ class AWSRuntimeAdapter(RuntimeAdapter):
     def _cleanup(self, record):
         require(callable(self.cleanup_probe) and self.cleanup_domains,
                 "Trusted domain cleanup proof is not wired")
+        manifest_sha256 = _manifest_sha256(record)
         proof = self.cleanup_probe(record)
         require(isinstance(proof, CleanupEvidence)
                 and proof.lease_id == record["lease_id"]
                 and proof.binding_sha256 == binding(record)
                 and proof.tenant_ids == tuple(sorted(record["tenant_ids"]))
-                and isinstance(proof.resource_manifest_sha256, str)
-                and re.fullmatch(r"[0-9a-f]{64}", proof.resource_manifest_sha256)
+                and proof.resource_manifest_sha256 == manifest_sha256
                 and _fresh(proof.observed_at, int(self.clock()))
                 and set(proof.residual_by_domain) == self.cleanup_domains
                 and all(set(value) >= {"db_rows", "r2_objects", "pending_outboxes"}
@@ -301,6 +332,30 @@ class AWSRuntimeAdapter(RuntimeAdapter):
                 "Domain cleanup proof missing or malformed")
         return all(count == 0 for value in proof.residual_by_domain.values()
                    for count in value.values())
+
+    def _preflight(self, record):
+        # The callback must independently read the immutable creator receipt and
+        # compare its approved fixture inventory with live DB/R2/outbox state.
+        # A typed object or caller-supplied zero count is not that proof.
+        require(callable(self.preflight_probe) and self.cleanup_domains,
+                "Trusted QA fixture preflight proof is not wired")
+        manifest_sha256 = _manifest_sha256(record)
+        proof = self.preflight_probe(record)
+        require(isinstance(proof, PreflightEvidence)
+                and proof.lease_id == record["lease_id"]
+                and proof.binding_sha256 == binding(record)
+                and proof.source_sha == record["source_sha"]
+                and proof.resource_manifest_sha256 == manifest_sha256
+                and proof.tenant_ids == tuple(sorted(record["tenant_ids"]))
+                and _fresh(proof.observed_at, int(self.clock()))
+                and isinstance(proof.approved_initial_fixtures_sha256, str)
+                and re.fullmatch(r"[0-9a-f]{64}", proof.approved_initial_fixtures_sha256)
+                and proof.observed_initial_fixtures_sha256 == proof.approved_initial_fixtures_sha256
+                and set(proof.unexpected_residual_by_domain) == self.cleanup_domains
+                and all(set(value) >= {"db_rows", "r2_objects", "pending_outboxes"}
+                        and all(_safe_count(count) and count == 0 for count in value.values())
+                        for value in proof.unexpected_residual_by_domain.values()),
+                "QA approved fixture preflight proof missing, mismatched or nonzero")
 
     def observe_inert(self, record):
         try:
@@ -387,6 +442,38 @@ class AWSRuntimeAdapter(RuntimeAdapter):
                 self.sleeper(2)
             except Exception:
                 raise WindowHold("Trusted PREPARED runtime bootstrap unavailable") from None
+        raise WindowHold("QA heartbeat revision pending")
+
+    def observe_preflight(self, record):
+        """PREPARED/ACTIVE idle check with exact approved initial fixtures only."""
+        require(record.get("state") in {"prepared", "active"} and not record.get("control_hold"),
+                "QA fixture preflight requires unheld PREPARED or ACTIVE lease")
+        for attempt in range(4):
+            try:
+                _, sessions, _, active, api_inflight, workers = self._inventory(record)
+                require(active is (record["state"] == "active")
+                        and not sessions and not api_inflight
+                        and all(not identifiers for identifiers in workers.values()),
+                        "QA preflight runtime is not idle or in the expected admission state")
+                self._exclusivity(record)
+                counts = self._queue_counts()
+                require(all(not any(value.values()) for value in counts.values()),
+                        "QA preflight development queues are not empty")
+                self._preflight(record)
+                return PreflightReadback(
+                    binding_sha256=binding(record), observed_at=int(self.clock()),
+                    api_admission="lease-bound" if active else "closed",
+                    workers_receiving=active, workers_inflight=workers,
+                    queue_counts=counts, active_sessions=(),
+                    enforcement_expires_at=record["expires_at"],
+                    cleanup_zero=False, lease_revision=record["revision"],
+                )
+            except WindowHold as exc:
+                if str(exc) != "QA heartbeat revision pending" or attempt == 3:
+                    raise
+                self.sleeper(2)
+            except Exception:
+                raise WindowHold("Trusted QA fixture preflight readback unavailable") from None
         raise WindowHold("QA heartbeat revision pending")
 
     def observe(self, record):

@@ -2,13 +2,15 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import replace
 import json
 
 import pytest
 
 from scripts.v1.candidate_qa_observer import (
     ACCOUNT, REGION, AWSRuntimeAdapter, BootstrapEvidence, CleanupEvidence, CONTAINERS,
-    FixedSsmProbe, QueueExclusivityEvidence, QUEUE_ATTRS, QUEUE_NAMES,
+    FixedSsmProbe, PreflightEvidence, PreflightReadback, QueueExclusivityEvidence,
+    QUEUE_ATTRS, QUEUE_NAMES,
 )
 from scripts.v1.candidate_qa_probe import INSIDE_CODE
 from scripts.v1.candidate_qa_window import WindowHold, binding, verify_readback
@@ -25,8 +27,9 @@ def _record(state="active"):
         "endpoint": "ssm://i-0123456789abcdef0:8000",
         "profile": f"arn:aws:iam::{ACCOUNT}:instance-profile/academy-api-qa",
         "scope": [509, 511], "baseline_sha256": "d" * 64,
+        "resource_manifest_sha256": "e" * 64,
         "tenant_ids": [101], "message_key_version": 1,
-        "state": state, "revision": 2, "started_at": 900,
+        "state": state, "revision": 1 if state == "prepared" else 2, "started_at": 900,
         "renewed_at": 900, "expires_at": 1600, "control_hold": False,
     }
 
@@ -169,7 +172,7 @@ class FakeDdb:
         ]}
 
 
-def _adapter(record, probe, *, cleanup=True, exclusivity=True):
+def _adapter(record, probe, *, cleanup=True, exclusivity=True, preflight=False):
     def cleanup_proof(_record):
         return CleanupEvidence(record["lease_id"], binding(record), NOW,
                                tuple(record["tenant_ids"]), "e" * 64,
@@ -181,11 +184,20 @@ def _adapter(record, probe, *, cleanup=True, exclusivity=True):
                                         record["baseline_sha256"], "i-11111111111111111",
                                         {kind: () for kind in QUEUE_NAMES})
 
+    def preflight_proof(_record):
+        return PreflightEvidence(
+            record["lease_id"], binding(record), record["source_sha"],
+            record["resource_manifest_sha256"], tuple(record["tenant_ids"]), NOW,
+            "f" * 64, "f" * 64,
+            {"exam": {"db_rows": 0, "r2_objects": 0, "pending_outboxes": 0}},
+        )
+
     ec2, ssm, sqs, ddb = FakeEc2(record), FakeSsm(), FakeSqs(), FakeDdb(record)
     adapter = AWSRuntimeAdapter(
         expected_slot_owner=record["owner_task"], ec2=ec2, ssm=ssm, sqs=sqs, ddb=ddb,
         probe=lambda instance_id: probe,
         cleanup_probe=cleanup_proof if cleanup else None,
+        preflight_probe=preflight_proof if preflight else None,
         queue_exclusivity_probe=exclusivity_proof if exclusivity else None,
         cleanup_domains=("exam",), clock=lambda: NOW, sleeper=lambda seconds: None,
     )
@@ -254,6 +266,78 @@ def test_missing_owned_proof_is_hold_not_implicit_zero(missing):
                            exclusivity=missing != "exclusivity")
     with pytest.raises(WindowHold):
         adapter.observe(record)
+
+
+@pytest.mark.parametrize("state", ["prepared", "active"])
+def test_preflight_accepts_only_exact_idle_initial_fixtures_without_final_cleanup(state):
+    record = _record(state)
+    adapter, *_ = _adapter(record, _probe(record), cleanup=False, preflight=True)
+    proof = adapter.observe_preflight(record)
+    assert isinstance(proof, PreflightReadback)
+    assert proof.preflight_ready is True and proof.cleanup_zero is False
+    assert proof.lease_revision == record["revision"]
+    assert proof.api_admission == ("closed" if state == "prepared" else "lease-bound")
+    with pytest.raises(WindowHold, match="cleanup"):
+        verify_readback(record, proof, NOW, idle=True, drained=state == "prepared")
+    with pytest.raises(WindowHold, match="cleanup proof"):
+        adapter.observe(record)
+
+
+def test_preflight_without_trusted_receipt_reader_remains_hold():
+    record = _record("prepared")
+    adapter, *_ = _adapter(record, _probe(record), cleanup=False, preflight=False)
+    with pytest.raises(WindowHold, match="preflight proof is not wired"):
+        adapter.observe_preflight(record)
+
+
+@pytest.mark.parametrize("change", [
+    lambda proof: replace(proof, resource_manifest_sha256="a" * 64),
+    lambda proof: replace(proof, source_sha="a" * 40),
+    lambda proof: replace(proof, tenant_ids=(999,)),
+    lambda proof: replace(proof, observed_at=NOW - 11),
+    lambda proof: replace(proof, observed_initial_fixtures_sha256="a" * 64),
+    lambda proof: replace(proof, unexpected_residual_by_domain={
+        "exam": {"db_rows": 1, "r2_objects": 0, "pending_outboxes": 0}}),
+])
+def test_preflight_rejects_foreign_stale_or_unexpected_residue(change):
+    record = _record("prepared")
+    adapter, *_ = _adapter(record, _probe(record), cleanup=False, preflight=True)
+    trusted = adapter.preflight_probe
+    adapter.preflight_probe = lambda candidate: change(trusted(candidate))
+    with pytest.raises(WindowHold, match="preflight proof"):
+        adapter.observe_preflight(record)
+
+
+def test_preflight_rejects_busy_queue_or_wrong_admission():
+    record = _record("prepared")
+    probe = _probe(record)
+    adapter, _, _, sqs, _ = _adapter(record, probe, preflight=True)
+    sqs.values["tools"] = ["1", "0", "0"]
+    with pytest.raises(WindowHold, match="queues are not empty"):
+        adapter.observe_preflight(record)
+    sqs.values["tools"] = ["0", "0", "0"]
+    probe["containers"]["api"]["inside"]["snapshots"][0]["data"]["admission"] = "open"
+    with pytest.raises(WindowHold):
+        adapter.observe_preflight(record)
+
+
+def test_final_cleanup_rejects_manifest_from_another_creator_receipt():
+    record = _record()
+    adapter, *_ = _adapter(record, _probe(record))
+    adapter.cleanup_probe = lambda candidate: CleanupEvidence(
+        candidate["lease_id"], binding(candidate), NOW, (101,), "a" * 64,
+        {"exam": {"db_rows": 0, "r2_objects": 0, "pending_outboxes": 0}},
+    )
+    with pytest.raises(WindowHold, match="cleanup proof"):
+        adapter.observe(record)
+
+
+def test_malformed_committed_manifest_cannot_be_accepted_by_matching_callback():
+    record = _record("prepared")
+    record["resource_manifest_sha256"] = "not-a-manifest"
+    adapter, *_ = _adapter(record, _probe(record), preflight=True)
+    with pytest.raises(WindowHold, match="resource manifest"):
+        adapter.observe_preflight(record)
 
 
 def test_nonzero_domain_manifest_is_valid_during_active_work_but_blocks_idle():
