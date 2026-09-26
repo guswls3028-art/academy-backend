@@ -380,3 +380,49 @@ and mock provider before consuming. The two-stage launch must resolve the exact
 new instance identity before binding publication and container startup. Images,
 live adapter and IAM activation remain pending the exact API/worker integration
 heads and their gates; no cloud changes were performed for this code.
+
+
+### Two-stage preparation before opening admissions
+
+A trusted inert-instance observation must match the exact instance ID/profile,
+SSM managed identity, binding hash and zero containers/sessions before prepare()
+conditionally commits the PREPARED lease. PREPARED is closed to product auth,
+mutations and worker receive, but lets fully configured processes prove that they
+read the correct lease. The hard deadline starts at preparation, so bootstrap
+does not silently extend the bounded window.
+
+Only fresh, complete closed-admission idle/cleanup proof may transition PREPARED
+to OPEN. A second active readback must pass before publishing the endpoint; a
+failed active readback records HOLD. Missing live adapter never creates a lease.
+The trusted launcher must independently prove baseline/QA queue competition is
+absent before this transition. The actual adapter and two-stage EC2 executor
+remain disabled until the owned API/worker integration heads and gates exist.
+
+
+### Monotonic phases, HOLD and signed execution metadata
+
+The normal phase order is prepared → active → draining → closed. HOLD is a
+separate control_hold flag, never a backwards transition or permission to reopen.
+Admission and product-auth inspection reject that flag. A closed lease grants
+restoration only with restore_ready and a fresh idle/cleanup readback.
+An unopened prepared lease may close directly only after trusted key-revocation,
+owned-resource cleanup0 and unchanged-baseline evidence; missing evidence retains
+PREPARED+HOLD. No timeout alone proves resource cleanup.
+
+AI/Tools signatures additionally bind job_metadata with exactly job_type, tier,
+source_domain, source_id, created_at and attempt. Producer fields come from the
+authoritative job; consumer compares them before the conditional nonce claim and
+before any ORM/Redis/provider access. Signed schema_version is 1, job IDs are
+strings, and metadata comparison uses canonical JSON rather than Python numeric
+coercion. decode_qa_json rejects duplicate keys at every depth and non-finite
+numbers; key order is irrelevant, but bool/integer/float/string are distinct.
+Routing/retry-affecting envelope fields must be signed or recomputed from verified
+server state; unknown such fields are rejected. Messaging continues to sign the
+entire existing body and uses the same strict QA-only JSON decoder.
+
+Changed-input offline evidence for this phase/envelope delta: 48 foundation
+protocol/recovery cases and 24 common-helper/messaging cases pass. This includes
+stale inert identities, missing processes, activation CAS races, route-before-
+active rejection, monotonic drain/close, incomplete key/resource cleanup,
+control HOLD, duplicate/type-confused JSON and unsigned metadata rejection.
+Actual instances, keys, IAM and provider calls remain unprovisioned/unverified.

@@ -547,14 +547,22 @@ class BoundedWindowTests(unittest.TestCase):
         self.store=Store()
         self.adapter=Mock()
         self.adapter.observe.side_effect=self.proof
+        self.adapter.observe_inert.side_effect=lambda spec:window.InertReadback(
+            binding_sha256=window.binding(spec),observed_at=self.now,
+            instance_id="i-0123456789abcdef0",profile=window.PROFILE,
+            managed=True,containers=0,active_sessions=0)
         self.window=window.Window(self.store,self.adapter,clock=lambda:self.now)
         self.drained=False; self.busy=False; self.cleaned=True
         self.adapter.drain.side_effect=lambda record:setattr(self,"drained",True)
 
+    def open(self,seconds=600):
+        self.window.prepare(self.spec,seconds)
+        return self.window.open(self.spec,seconds)
+
     def proof(self,record):
         return self.w.Readback(binding_sha256=self.w.binding(record),observed_at=self.now,
-            api_admission="closed" if self.drained else "lease-bound",
-            workers_receiving=not self.drained,
+            api_admission="closed" if self.drained or record["state"]=="prepared" else "lease-bound",
+            workers_receiving=not self.drained and record["state"]!="prepared",
             workers_inflight={k:("owned-job",) if self.busy else () for k in ("ai","tools","messaging")},
             queue_counts={k:dict(visible=0,inflight=0,delayed=0) for k in ("ai","tools","messaging")},
             active_sessions=(),enforcement_expires_at=record["expires_at"],cleanup_zero=self.cleaned)
@@ -570,7 +578,7 @@ class BoundedWindowTests(unittest.TestCase):
         self.assertIsNone(self.store.read())
 
     def test_forged_replayed_and_unapproved_work_rejected(self):
-        self.window.open(self.spec,600)
+        self.open()
         for lease,owner,scope in (("b"*32,self.spec["owner_task"],509),
                                   (self.spec["lease_id"],"foreign",509),
                                   (self.spec["lease_id"],self.spec["owner_task"],512)):
@@ -581,7 +589,7 @@ class BoundedWindowTests(unittest.TestCase):
             self.window.finish(self.spec["lease_id"],self.spec["owner_task"],self.completion())
 
     def test_renewal_cas_race_does_not_extend_losing_lease(self):
-        record=self.window.open(self.spec,600); self.now=1100
+        record=self.open(); self.now=1100
         before=self.store.read()
         def race(value,revision,now):
             self.store.record["revision"]+=1
@@ -592,7 +600,7 @@ class BoundedWindowTests(unittest.TestCase):
         self.assertEqual(self.store.record["expires_at"],before["expires_at"])
 
     def test_expiry_blocks_admission_before_deadline_and_busy_restore(self):
-        record=self.window.open(self.spec,600); self.now=1570
+        record=self.open(); self.now=1570
         with self.assertRaises(self.w.WindowHold):
             self.window.admit(record["lease_id"],record["owner_task"],509)
         with self.assertRaises(self.w.WindowHold):
@@ -600,34 +608,36 @@ class BoundedWindowTests(unittest.TestCase):
         self.now=1601; self.busy=True
         with self.assertRaises(self.w.WindowHold):
             self.window.finish(record["lease_id"],record["owner_task"])
-        self.assertEqual(self.store.record["state"],"hold")
+        self.assertTrue(self.store.record["control_hold"])
+        self.assertEqual(self.store.record["state"],"draining")
         with self.assertRaises(self.w.WindowHold):
             self.window.restore_admission(record["lease_id"],record["owner_task"])
         self.assertEqual(self.store.record["baseline_sha256"],"c"*64)
 
     def test_incomplete_cleanup_and_stale_evidence_block(self):
-        record=self.window.open(self.spec,600)
+        record=self.open()
         completion=self.completion(); completion["cleanup_zero"]=False
         with self.assertRaises(self.w.WindowHold):
             self.window.finish(record["lease_id"],record["owner_task"],completion)
         self.cleaned=False;self.now=1601
         with self.assertRaises(self.w.WindowHold):
             self.window.finish(record["lease_id"],record["owner_task"])
-        self.assertEqual(self.store.record["state"],"hold")
+        self.assertTrue(self.store.record["control_hold"])
+        self.assertEqual(self.store.record["state"],"draining")
 
     def test_missing_runtime_adapter_blocks_renew_complete_and_restore(self):
-        record=self.window.open(self.spec,600); self.now=1100
+        record=self.open(); self.now=1100
         window=self.w.Window(self.store,clock=lambda:self.now)
         with self.assertRaises(self.w.WindowHold):
             window.renew(record["lease_id"],record["owner_task"],900)
         with self.assertRaises(self.w.WindowHold):
             window.finish(record["lease_id"],record["owner_task"],self.completion())
-        self.store.record["state"]="ready_for_restore"
+        self.store.record.update(state="closed",control_hold=False,restore_ready=True)
         with self.assertRaises(self.w.WindowHold):
             window.restore_admission(record["lease_id"],record["owner_task"])
 
     def test_safe_completion_requires_fresh_idle_restore_readback(self):
-        record=self.window.open(self.spec,600)
+        record=self.open()
         self.window.finish(record["lease_id"],record["owner_task"],self.completion())
         self.assertEqual(self.window.restore_admission(record["lease_id"],record["owner_task"]),"c"*64)
         self.busy=True
@@ -643,6 +653,71 @@ class BoundedWindowTests(unittest.TestCase):
         self.assertIn("#owner = :owner AND #ttl > :now",tx[0]["Update"]["ConditionExpression"])
         self.assertIn("revision = :revision AND leaseId = :lease",tx[1]["Put"]["ConditionExpression"])
         self.assertNotIn("ttl",tx[1]["Put"]["Item"])
+
+
+    def test_prepared_blocks_admission_and_rejects_stale_inert_identity(self):
+        from dataclasses import replace
+        valid=self.adapter.observe_inert(self.spec)
+        for proof in (replace(valid,observed_at=989),replace(valid,containers=1),
+                      replace(valid,instance_id="i-0fedcba9876543210"),replace(valid,active_sessions=1)):
+            self.adapter.observe_inert.side_effect=None
+            self.adapter.observe_inert.return_value=proof
+            with self.assertRaises(self.w.WindowHold):self.window.prepare(self.spec,600)
+            self.assertIsNone(self.store.read())
+        self.adapter.observe_inert.return_value=valid
+        record=self.window.prepare(self.spec,600)
+        self.assertEqual(record["state"],"prepared")
+        with self.assertRaises(self.w.WindowHold):
+            self.window.admit(record["lease_id"],record["owner_task"],509)
+
+    def test_partial_process_and_activation_race_never_open_endpoint(self):
+        from dataclasses import replace
+        record=self.window.prepare(self.spec,600)
+        self.adapter.observe.side_effect=lambda record:replace(self.proof(record),workers_inflight={"ai":(),"tools":()})
+        with self.assertRaises(self.w.WindowHold):self.window.open(self.spec,600)
+        self.assertEqual(self.store.record["state"],"prepared")
+        self.adapter.observe.side_effect=self.proof
+        with patch.object(self.store,"commit",side_effect=RuntimeError("CAS race")):
+            with self.assertRaises(RuntimeError):self.window.open(self.spec,600)
+        self.assertEqual(self.store.record["revision"],record["revision"])
+
+    def test_failed_active_revision_readback_sets_hold_without_backwards_transition(self):
+        from dataclasses import replace
+        self.window.prepare(self.spec,600)
+        self.adapter.observe.side_effect=lambda record:(
+            replace(self.proof(record),api_admission="closed") if record["state"]=="active" else self.proof(record))
+        with self.assertRaises(self.w.WindowHold):self.window.open(self.spec,600)
+        self.assertEqual(self.store.record["state"],"active")
+        self.assertTrue(self.store.record["control_hold"])
+        with self.assertRaises(self.w.WindowHold):
+            self.window.admit(self.spec["lease_id"],self.spec["owner_task"],509)
+
+    def test_prepared_abort_requires_revocation_cleanup_and_baseline_preservation(self):
+        self.window.prepare(self.spec,600)
+        proof=self.w.PreparedCleanup(self.w.binding(self.spec),self.now,False,True,True)
+        self.adapter.abort_prepared.return_value=proof
+        with self.assertRaises(self.w.WindowHold):
+            self.window.abort_prepared(self.spec["lease_id"],self.spec["owner_task"])
+        self.assertEqual(self.store.record["state"],"prepared")
+        self.assertTrue(self.store.record["control_hold"])
+        self.adapter.abort_prepared.return_value=self.w.PreparedCleanup(self.w.binding(self.spec),self.now,True,True,True)
+        self.window.abort_prepared(self.spec["lease_id"],self.spec["owner_task"])
+        self.assertEqual(self.store.record["state"],"closed")
+        self.assertFalse(self.store.record["restore_ready"])
+
+    def test_phase_order_and_drain_revision_are_monotonic(self):
+        record=self.open()
+        active_revision=record["revision"]
+        record=self.window.begin_drain(record["lease_id"],record["owner_task"])
+        self.assertEqual(record["state"],"draining")
+        self.assertEqual(record["drain_from_revision"],active_revision)
+        with self.assertRaises(self.w.WindowHold):
+            self.window.renew(record["lease_id"],record["owner_task"],900)
+        record=self.window.finish(record["lease_id"],record["owner_task"],self.completion())
+        self.assertEqual(record["state"],"closed")
+        self.assertTrue(record["restore_ready"])
+        with self.assertRaises(self.w.WindowHold):
+            self.window.begin_drain(record["lease_id"],record["owner_task"])
 
 class PolicyAndWorkflowTests(unittest.TestCase):
     def test_qa_has_no_production_image_or_parameter_allow(self):

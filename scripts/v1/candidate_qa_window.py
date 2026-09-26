@@ -54,6 +54,17 @@ def specification(*, lease_id, owner_task, lock_owner, source_sha, images, endpo
 
 
 @dataclass(frozen=True)
+class InertReadback:
+    binding_sha256: str
+    observed_at: int
+    instance_id: str
+    profile: str
+    managed: bool
+    containers: int
+    active_sessions: int
+
+
+@dataclass(frozen=True)
 class Readback:
     binding_sha256: str
     observed_at: int
@@ -66,13 +77,28 @@ class Readback:
     cleanup_zero: bool
 
 
+@dataclass(frozen=True)
+class PreparedCleanup:
+    binding_sha256: str
+    observed_at: int
+    key_revoked: bool
+    resources_zero: bool
+    baseline_unchanged: bool
+
+
 class RuntimeAdapter:
     """Must query the exact runtime via a trusted channel; caller JSON is not proof."""
+    def observe_inert(self, record):
+        raise WindowHold("Trusted inert instance identity adapter not installed")
+
     def observe(self, record):
         raise WindowHold("QA API admission / worker in-flight adapter not installed")
 
     def drain(self, record):
         raise WindowHold("QA API admission / worker drain adapter not installed")
+
+    def abort_prepared(self, record):
+        raise WindowHold("Trusted prepared-key/resource cleanup adapter not installed")
 
 
 def verify_readback(record, proof, now, *, idle=False, drained=False):
@@ -131,14 +157,42 @@ class Window:
         self.runtime=runtime or RuntimeAdapter()
         self.clock=clock
 
-    def open(self, spec, seconds):
+    def prepare(self, spec, seconds):
         spec=specification(**spec)
         now=int(self.clock())
         require(type(seconds) is int and 60 <= seconds <= MAX_SECONDS, "Window duration outside bound")
         require(self.store.read() is None, "Existing lease or HOLD must be reconciled first")
-        record=dict(spec, state="active",revision=1,started_at=now,renewed_at=now,expires_at=now+seconds)
-        verify_readback(record,self.runtime.observe(record),now,idle=True)
+        proof=self.runtime.observe_inert(spec)
+        require(isinstance(proof,InertReadback) and proof.binding_sha256 == binding(spec)
+                and 0 <= now-proof.observed_at <= 10
+                and proof.instance_id == spec["endpoint"].split("//",1)[1].split(":")[0]
+                and proof.profile == spec["profile"] and proof.managed is True
+                and proof.containers == 0 and proof.active_sessions == 0,
+                "Inert instance identity, sessions or container inventory differs")
+        record=dict(spec,state="prepared",control_hold=False,revision=1,started_at=now,renewed_at=now,expires_at=now+seconds)
         self.store.commit(record,None,now)
+        return record
+
+    def open(self, spec, seconds):
+        spec=specification(**spec);now=int(self.clock())
+        record=self.owned(spec["lease_id"],spec["owner_task"])
+        require(record["state"] == "prepared" and not record.get("control_hold") and binding(record) == binding(spec)
+                and record["expires_at"]-record["started_at"] == seconds
+                and now < record["expires_at"]-ADMISSION_MARGIN,
+                "No exact unexpired prepared lease")
+        # Containers have validated the committed PREPARED record but cannot
+        # authenticate, mutate or poll queues until this atomic transition.
+        verify_readback(record,self.runtime.observe(record),now,idle=True,drained=True)
+        revision=record["revision"]
+        record.update(state="active",revision=revision+1)
+        self.store.commit(record,revision,now)
+        try:
+            verify_readback(record,self.runtime.observe(record),now,idle=True)
+        except Exception:
+            revision=record["revision"]
+            record.update(control_hold=True,revision=revision+1)
+            self.store.commit(record,revision,now)
+            raise WindowHold("Active runtime readback failed; endpoint must remain unpublished")
         return record
 
     def owned(self, lease_id, owner_task):
@@ -149,7 +203,7 @@ class Window:
 
     def admit(self, lease_id, owner_task, pull_request):
         record=self.owned(lease_id,owner_task); now=int(self.clock())
-        require(record["state"] == "active" and now < record["expires_at"]-ADMISSION_MARGIN,
+        require(record["state"] == "active" and not record.get("control_hold") and now < record["expires_at"]-ADMISSION_MARGIN,
                 "QA window closing; new work rejected, retain existing results")
         require(pull_request in record["scope"], "Action outside approved acceptance scope")
         verify_readback(record,self.runtime.observe(record),now)
@@ -157,7 +211,7 @@ class Window:
 
     def renew(self, lease_id, owner_task, seconds):
         record=self.owned(lease_id,owner_task); now=int(self.clock())
-        require(record["state"]=="active" and now < record["expires_at"]-ADMISSION_MARGIN,
+        require(record["state"]=="active" and not record.get("control_hold") and now < record["expires_at"]-ADMISSION_MARGIN,
                 "Expired or draining leases cannot be renewed")
         require(type(seconds) is int and seconds > 0 and now+seconds <= record["started_at"]+MAX_SECONDS
                 and now+seconds > record["expires_at"], "Renewal exceeds bounded window")
@@ -171,7 +225,7 @@ class Window:
 
     def begin_drain(self, lease_id, owner_task):
         record=self.owned(lease_id,owner_task); now=int(self.clock())
-        require(record["state"] in ("active","draining","hold"), "Closed lease cannot drain again")
+        require(record["state"] in ("active","draining"), "Closed lease cannot drain again")
         if record["state"] != "draining":
             revision=record["revision"]
             record.update(state="draining",revision=revision+1,
@@ -182,7 +236,7 @@ class Window:
 
     def finish(self, lease_id, owner_task, completion=None):
         record=self.owned(lease_id,owner_task); now=int(self.clock())
-        require(record["state"] in ("active","draining","hold"), "Lease already completed; replay rejected")
+        require(record["state"] in ("active","draining"), "Lease already completed; replay rejected")
         expired=now >= record["expires_at"]
         require(completion is not None or expired, "Owner completion or actual timeout required")
         if completion is not None:
@@ -203,16 +257,36 @@ class Window:
         except Exception:
             record=self.owned(lease_id,owner_task)
             revision=record["revision"]
-            record.update(state="hold",revision=revision+1)
+            record.update(control_hold=True,revision=revision+1)
             self.store.commit(record,revision,now)
             raise WindowHold("Admission/drain/cleanup unverified; retain rollback coordinates")
-        record.update(state="ready_for_restore",revision=revision+1,
+        record.update(state="closed",control_hold=False,restore_ready=True,revision=revision+1,
                       completion=completion,closed_at=now)
+        self.store.commit(record,revision,now)
+        return record
+
+    def abort_prepared(self, lease_id, owner_task):
+        record=self.owned(lease_id,owner_task);now=int(self.clock())
+        require(record["state"]=="prepared", "Only an unopened lease can use inert cleanup")
+        revision=record["revision"]
+        try:
+            proof=self.runtime.abort_prepared(record)
+            require(isinstance(proof,PreparedCleanup) and proof.binding_sha256==binding(record)
+                    and 0 <= now-proof.observed_at <= 10 and proof.key_revoked is True
+                    and proof.resources_zero is True and proof.baseline_unchanged is True,
+                    "Prepared cleanup/revocation readback incomplete")
+        except Exception:
+            record.update(control_hold=True,revision=revision+1)
+            self.store.commit(record,revision,now)
+            raise WindowHold("Prepared cleanup incomplete; baseline and journal retained") from None
+        record.update(state="closed",control_hold=False,restore_ready=False,
+                      revision=revision+1,closed_at=now)
         self.store.commit(record,revision,now)
         return record
 
     def restore_admission(self, lease_id, owner_task):
         record=self.owned(lease_id,owner_task); now=int(self.clock())
-        require(record["state"]=="ready_for_restore", "QA completion/timeout is not reconciled")
+        require(record["state"]=="closed" and record.get("restore_ready") is True and not record.get("control_hold"),
+                "QA completion/timeout is not reconciled")
         verify_readback(record,self.runtime.observe(record),now,idle=True,drained=True)
         return record["baseline_sha256"]
