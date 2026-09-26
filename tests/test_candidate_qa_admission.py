@@ -100,6 +100,8 @@ class AdmissionTests(unittest.TestCase):
                 ("CANDIDATE_LEASE_REQUIRED", "true"),
                 ("ACADEMY_QA_MODE", "isolated-qa"),
                 ("CANDIDATE_LEASE_REQUIRED", "no"),
+                ("CANDIDATE_LEASE_REQUIRED", " false "),
+                ("ACADEMY_QA_MODE", " "),
                 ("ACADEMY_QA_LEASE_ID", "a" * 32),
             ):
                 with patch.dict(os.environ, {key: value}):

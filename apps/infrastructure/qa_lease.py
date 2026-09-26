@@ -516,9 +516,9 @@ def get_admission_gate(kind):
         "ACADEMY_QA_LEASE_ID", "ACADEMY_QA_BINDING_SHA256",
         "ACADEMY_RUNTIME_ENV", "ACADEMY_QA_MESSAGE_KEY_VERSION",
     )
-    required = os.environ.get("CANDIDATE_LEASE_REQUIRED", "").strip().lower()
+    required = os.environ.get("CANDIDATE_LEASE_REQUIRED", "").lower()
     configured = required not in ("", "false", "0") or any(
-        os.environ.get(key, "").strip() for key in (
+        os.environ.get(key, "") for key in (
             "ACADEMY_QA_MODE", "ACADEMY_QA_LEASE_ID", "ACADEMY_QA_BINDING_SHA256",
         )
     )
