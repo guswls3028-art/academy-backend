@@ -1,5 +1,7 @@
 # apps/core/authentication.py
 
+import os
+import time
 import uuid
 
 from rest_framework.authentication import SessionAuthentication
@@ -14,6 +16,12 @@ class TenantAwareSessionAuthentication(SessionAuthentication):
         authenticated = super().authenticate(request)
         if authenticated is None:
             return None
+        from apps.api.middleware.candidate_qa_admission import _qa_requested
+
+        if _qa_requested():
+            raise AuthenticationFailed(
+                "QA에서는 JWT 로그인이 필요합니다.", code="qa_session_forbidden"
+            )
         user, auth = authenticated
         tenant = getattr(request, "tenant", None)
         if tenant is None:
@@ -96,6 +104,51 @@ class TokenVersionJWTAuthentication(JWTAuthentication):
         if authenticated is None:
             return None
         user, token = authenticated
+        from apps.api.middleware.candidate_qa_admission import _qa_requested, _qa_required
+
+        if _qa_requested():
+            from apps.api.common.auth_jwt import _qa_single_membership, _qa_token_matches
+            from apps.infrastructure.qa_lease import get_admission_gate
+
+            if (
+                os.environ.get("ACADEMY_RUNTIME_ENV") != "development"
+                or not _qa_required()
+                or not os.environ.get("ACADEMY_QA_LEASE_ID")
+                or not os.environ.get("ACADEMY_QA_BINDING_SHA256")
+                or token.get("qa_lease_id") != os.environ.get("ACADEMY_QA_LEASE_ID")
+                or token.get("qa_binding_sha256") != os.environ.get("ACADEMY_QA_BINDING_SHA256")
+            ):
+                raise AuthenticationFailed(
+                    "QA 인증 기간이 종료되었습니다.", code="qa_window_closed"
+                )
+            try:
+                lease = get_admission_gate("api").inspect_lease()
+                if lease is None or int(time.time()) >= int(lease["expires_at"]):
+                    raise ValueError("QA lease closed")
+                state = lease["state"]
+                safe = request.method.upper() in {"GET", "HEAD", "OPTIONS"}
+                if state == "draining" and safe:
+                    lease = dict(lease, revision=lease["drain_from_revision"])
+                elif state != "active":
+                    raise ValueError("QA lease not active")
+                _qa_token_matches(token, lease, token.get("tenant_id"))
+                from academy.adapters.db.django import repositories_core as core_repo
+
+                tenant = core_repo.tenant_get_by_id(token.get("tenant_id"))
+                if tenant is None:
+                    raise ValueError("QA tenant unavailable")
+                _qa_single_membership(user, tenant, lease)
+                if not safe:
+                    # begin() already admitted this exact revision and tenant.
+                    # A concurrent drain/renewal must not switch them mid-view.
+                    raw_request = getattr(request, "_request", request)
+                    admitted = getattr(raw_request, "candidate_qa_lease", None)
+                    if admitted is None or admitted["revision"] != lease["revision"]:
+                        raise ValueError("QA mutation admission changed")
+            except Exception as exc:
+                raise AuthenticationFailed(
+                    "QA 인증 기간이 종료되었습니다.", code="qa_window_closed"
+                ) from exc
         if not token.get("support_preview"):
             return authenticated
 
