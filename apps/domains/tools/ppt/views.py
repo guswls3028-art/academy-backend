@@ -175,6 +175,15 @@ def _build_images_archive(ordered_files):
     return archive
 
 
+def _cleanup_unaccepted_upload(key: str) -> None:
+    from apps.infrastructure.storage.r2 import delete_object_r2_storage
+
+    try:
+        delete_object_r2_storage(key=key)
+    except Exception:
+        logger.exception("PPT source cleanup failed after submission error")
+
+
 @method_decorator([csrf_exempt, require_POST], name="dispatch")
 class PptGenerateView(View):
     """POST: 이미지/PDF 업로드 → R2 임시 저장 → 워커 job 발행 → job_id 반환."""
@@ -325,29 +334,31 @@ class PptGenerateView(View):
                 key=archive_key,
                 content_type="application/zip",
             )
+            result = dispatch_ppt_generation_job(
+                job_type="ppt_generation",
+                payload={
+                    "mode": "images",
+                    "r2_archive_key": archive_key,
+                    "config": {
+                        "aspect_ratio": aspect_ratio,
+                        "background": background,
+                        "fit_mode": fit_mode,
+                    },
+                    "settings": image_settings,
+                    "tenant_id": tenant_id,
+                    "owner_user_id": str(request.user.id),
+                },
+                tenant_id=tenant_id,
+                source_domain="tools",
+            )
+        except Exception:
+            _cleanup_unaccepted_upload(archive_key)
+            raise
         finally:
             archive_file.close()
 
-        # Dispatch job
-        result = dispatch_ppt_generation_job(
-            job_type="ppt_generation",
-            payload={
-                "mode": "images",
-                "r2_archive_key": archive_key,
-                "config": {
-                    "aspect_ratio": aspect_ratio,
-                    "background": background,
-                    "fit_mode": fit_mode,
-                },
-                "settings": image_settings,
-                "tenant_id": tenant_id,
-                "owner_user_id": str(request.user.id),
-            },
-            tenant_id=tenant_id,
-            source_domain="tools",
-        )
-
         if not result.get("ok"):
+            _cleanup_unaccepted_upload(archive_key)
             return JsonResponse(
                 {"detail": result.get("error", "작업 등록 실패"), "code": "dispatch_failed"},
                 status=500,
@@ -421,32 +432,35 @@ class PptGenerateView(View):
         job_unique = uuid.uuid4().hex[:12]
         tmp_key = f"tenants/{tenant_id}/tools/ppt/tmp/{job_unique}/source.pdf"
 
-        upload_fileobj_to_r2_storage(
-            fileobj=pdf_file,
-            key=tmp_key,
-            content_type="application/pdf",
-        )
-
-        # Dispatch job
-        result = dispatch_ppt_generation_job(
-            job_type="ppt_generation",
-            payload={
-                "mode": "pdf",
-                "r2_key": tmp_key,
-                "config": {
-                    "aspect_ratio": aspect_ratio,
-                    "background": background,
-                    "fit_mode": fit_mode,
+        try:
+            upload_fileobj_to_r2_storage(
+                fileobj=pdf_file,
+                key=tmp_key,
+                content_type="application/pdf",
+            )
+            result = dispatch_ppt_generation_job(
+                job_type="ppt_generation",
+                payload={
+                    "mode": "pdf",
+                    "r2_key": tmp_key,
+                    "config": {
+                        "aspect_ratio": aspect_ratio,
+                        "background": background,
+                        "fit_mode": fit_mode,
+                    },
+                    "settings": image_settings,
+                    "tenant_id": tenant_id,
+                    "owner_user_id": str(request.user.id),
                 },
-                "settings": image_settings,
-                "tenant_id": tenant_id,
-                "owner_user_id": str(request.user.id),
-            },
-            tenant_id=tenant_id,
-            source_domain="tools",
-        )
+                tenant_id=tenant_id,
+                source_domain="tools",
+            )
+        except Exception:
+            _cleanup_unaccepted_upload(tmp_key)
+            raise
 
         if not result.get("ok"):
+            _cleanup_unaccepted_upload(tmp_key)
             return JsonResponse(
                 {"detail": result.get("error", "작업 등록 실패"), "code": "dispatch_failed"},
                 status=500,
