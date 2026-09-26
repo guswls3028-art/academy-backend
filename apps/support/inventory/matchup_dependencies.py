@@ -103,7 +103,16 @@ def inventory_matchup_delete_plan(*, tenant: Any, inventory_file_ids: list[int])
     ).order_by("id"))
     if any(row.tenant_id != tenant.id for row in [*problems, *proposals]):
         raise ValueError("matchup image tenant does not match inventory")
-    if any((problem.meta or {}).get("manual") is True or (problem.meta or {}).get("manual_owner_pinned") is True for problem in problems):
+    if any(
+        (meta := problem.meta if isinstance(problem.meta, dict) else {}).get("manual") is True
+        or meta.get("manual_owner_pinned") is True
+        or meta.get("confirmation_status") == "confirmed"
+        or (
+            isinstance(meta.get("public_cleanup"), dict)
+            and meta["public_cleanup"].get("status") == "approved"
+        )
+        for problem in problems
+    ):
         return len(documents), set(), {
             "ok": False,
             "detail": protected_matchup_document_delete_detail(),

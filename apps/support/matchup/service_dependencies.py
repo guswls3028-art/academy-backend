@@ -11,6 +11,16 @@ def dispatch_ai_job(**kwargs: Any) -> Any:
     return dispatch_job(**kwargs)
 
 
+def matchup_analysis_job_exists(*, tenant_id: int, document_id: int, job_id: str) -> bool:
+    from apps.domains.ai.models import AIJobModel
+
+    return AIJobModel.objects.filter(
+        job_id=job_id, tenant_id=str(tenant_id),
+        source_domain="matchup", source_id=str(document_id),
+        job_type="matchup_analysis",
+    ).exists()
+
+
 def inventory_file_for_r2_key(*, tenant: Any, r2_key: str) -> Any | None:
     from apps.domains.inventory.models import InventoryFile
 
