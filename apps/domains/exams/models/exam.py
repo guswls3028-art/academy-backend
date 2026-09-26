@@ -132,6 +132,7 @@ class Exam(BaseModel):
         max_length=10,
         choices=EssayNumbering.choices,
         default=EssayNumbering.CONTINUOUS,
+        db_default=EssayNumbering.CONTINUOUS,
         help_text="서술형 표시 번호 방식. 저장된 문항 번호와 채점·OMR 인식 계약은 변경하지 않는다.",
     )
     segmentation_status = models.CharField(
