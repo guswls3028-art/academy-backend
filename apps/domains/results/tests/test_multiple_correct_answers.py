@@ -41,6 +41,15 @@ class AnswerMatchingTests(SimpleTestCase):
         self.assertFalse(answer_matches("3", "1,3"))
         self.assertFalse(answer_matches("1,2,3", "1,3"))
 
+    def test_exception_choices_accept_either_or_both_without_accepting_other_marks(self):
+        key = "3|5|3,5"
+        for answer in ("3", "5", "3,5", "5,3"):
+            self.assertTrue(answer_matches(answer, key), answer)
+        for answer in ("", "1", "3,4", "3,4,5"):
+            self.assertFalse(answer_matches(answer, key), answer)
+        self.assertEqual(format_answer_for_display(key), "3·5 중 하나 이상")
+        self.assertEqual(format_answer_for_display("3|5"), "3|5")
+
     def test_single_answer_exact_match_stays_unchanged(self):
         self.assertTrue(answer_matches(" a ", "A"))
         self.assertFalse(answer_matches("B", "A"))
