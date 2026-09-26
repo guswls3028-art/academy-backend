@@ -37,7 +37,7 @@ $requiredProductionMarkers = @(
     "prepare-build:",
     "tests/test_critical_academy_journey.py",
     "build-runtime-images:",
-    "needs: [detect-changes, prepare-build, build-runtime-images]",
+    "needs: [detect-changes, prepare-build, build-runtime-images, acquire-production-lock, verify-release-freshness, verify-runtime-iam]",
     "fail-fast: false",
     "Gate all candidate images on completed ECR critical scan",
     "scripts/v1/ecr-critical-scan-gate.py",

@@ -513,26 +513,48 @@ def parse_pushed_at(img: dict) -> datetime:
 
 
 def resolve_child_digests(repo: str, index_digest: str) -> list[str]:
-    """Fetch child manifest digests from an index manifest."""
+    """Resolve the entire index closure; incomplete manifests block deletion."""
     raw = aws_ecr(
-        "batch-get-image",
-        "--repository-name", repo,
+        "batch-get-image", "--repository-name", repo,
         "--image-ids", json.dumps([{"imageDigest": index_digest}]),
         "--accepted-media-types", json.dumps(list(INDEX_TYPES)),
     )
     data = json.loads(raw)
-    children = []
-    for image in data.get("images", []):
-        manifest_str = image.get("imageManifest", "{}")
-        try:
-            manifest = json.loads(manifest_str)
-        except json.JSONDecodeError:
+    images = data.get("images", [])
+    if data.get("failures") or len(images) != 1:
+        raise RuntimeError("Protected manifest discovery was incomplete")
+    image = images[0]
+    if image.get("imageId", {}).get("imageDigest") != index_digest:
+        raise RuntimeError("Protected manifest digest readback mismatch")
+    manifest = json.loads(image["imageManifest"])
+    entries = manifest.get("manifests")
+    if not isinstance(entries, list) or not entries:
+        raise RuntimeError("Protected index is malformed or empty")
+    children = set()
+    for entry in entries:
+        digest = entry.get("digest", "")
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+            raise RuntimeError("Protected child digest is malformed")
+        children.add(digest)
+        if entry.get("mediaType") in INDEX_TYPES:
+            children.update(resolve_child_digests(repo, digest))
+        elif entry.get("mediaType") not in MANIFEST_TYPES:
+            raise RuntimeError("Protected child media type is unknown")
+    return sorted(children)
+
+
+def candidate_retained(image: dict, now: int | None = None) -> bool:
+    """Candidate tags protect old sha-tagged images, independently of keep-N."""
+    now = int(time.time()) if now is None else now
+    protected = False
+    for tag in image.get("imageTags", []):
+        if not tag.startswith("candidate-"):
             continue
-        for m in manifest.get("manifests", []):
-            child_digest = m.get("digest", "")
-            if child_digest:
-                children.append(child_digest)
-    return children
+        match = re.fullmatch(r"candidate-until-([1-9][0-9]*)-[1-9][0-9]*-[1-9][0-9]*", tag)
+        if not match:
+            raise RuntimeError("Malformed candidate retention tag; refusing cleanup")
+        protected |= int(match[1]) > now
+    return protected
 
 
 def identify_protected_set(
@@ -562,7 +584,7 @@ def identify_protected_set(
 
     for img in tagged_images:
         tags = set(img.get("imageTags", []))
-        if tags & ALWAYS_KEEP_TAGS:
+        if tags & ALWAYS_KEEP_TAGS or candidate_retained(img):
             always_keep.append(img)
         elif any(t.startswith("sha-") for t in tags):
             sha_tagged.append(img)

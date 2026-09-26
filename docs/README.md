@@ -71,6 +71,7 @@ backend/docs/
 | 배포 경로 비교 | [operations/deployment-modes.md](operations/deployment-modes.md) |
 | 컨테이너 이미지 보안 | [operations/container-image-security.md](operations/container-image-security.md) |
 | 상시 개발 런타임 | [operations/persistent-development-runtime.md](operations/persistent-development-runtime.md) |
+| PR 격리 QA·불변 후보 준비/승격 | [operations/candidate-preparation.md](operations/candidate-preparation.md) |
 | 수동 정식 배포 | [operations/formal-deploy.md](operations/formal-deploy.md) |
 | Codex 추론·위임·출력 복구·검증 재사용 / 세션 격리·정리 | [operations/concurrent-codex-sessions.md](operations/concurrent-codex-sessions.md) |
 | 변경 위험 라우팅·교차 저장소 릴리스 증거 | [operations/change-risk-and-release-bundle.md](operations/change-risk-and-release-bundle.md) |

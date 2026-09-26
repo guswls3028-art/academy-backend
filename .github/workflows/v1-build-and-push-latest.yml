@@ -23,6 +23,21 @@ on:
       - 'LICENSE'
   workflow_dispatch:
     inputs:
+      candidate_artifact_id:
+        description: Optional protected candidate artifact ID; empty preserves normal build
+        required: false
+        default: ''
+        type: string
+      candidate_artifact_digest:
+        description: Exact sha256-prefixed archive digest from preparation
+        required: false
+        default: ''
+        type: string
+      candidate_release_id:
+        description: Exact releaseImageTag from the same candidate
+        required: false
+        default: ''
+        type: string
       allow_contract_migrations:
         description: "Allow an annotated contract migration after its expand release is fully deployed"
         required: true
@@ -42,7 +57,12 @@ env:
   API_PUBLIC_URL: https://api.hakwonplus.com
   # A tag is never reused, including workflow reruns or a second manual run for
   # the same commit. ECR permits only `latest` to move.
-  RELEASE_IMAGE_TAG: sha-${{ github.sha }}-run-${{ github.run_id }}-${{ github.run_attempt }}
+  RELEASE_IMAGE_TAG: ${{ inputs.candidate_release_id || format('sha-{0}-run-{1}-{2}', github.sha, github.run_id, github.run_attempt) }}
+  CANDIDATE_ARTIFACT_ID: ${{ inputs.candidate_artifact_id }}
+  CANDIDATE_ARTIFACT_DIGEST: ${{ inputs.candidate_artifact_digest }}
+  CANDIDATE_RELEASE_ID: ${{ inputs.candidate_release_id }}
+  CANDIDATE_ENABLED: ${{ vars.ACADEMY_CANDIDATE_ENABLED }}
+  PRODUCTION_DATABASE: ${{ vars.ACADEMY_PRODUCTION_DATABASE_NAME }}
   # docker/build-push-action@v6 uploads a *.dockerbuild summary artifact per build
   # (separate from provenance/sbom). Disable to stop UI clutter — we already have
   # CloudWatch logs + ci-build-report for build observability.
@@ -71,6 +91,22 @@ jobs:
       force_full: ${{ steps.base-reuse.outputs.rebuild == 'true' || steps.changes.outputs.build_all == 'true' }}
       short_sha: ${{ steps.meta.outputs.short_sha }}
     steps:
+      - name: Validate optional promotion inputs before authentication
+        run: |
+          python3 - <<'PY'
+          import os,re
+          artifact=os.environ.get("CANDIDATE_ARTIFACT_ID","")
+          digest=os.environ.get("CANDIDATE_ARTIFACT_DIGEST","")
+          release=os.environ.get("CANDIDATE_RELEASE_ID","")
+          if artifact:
+              assert os.environ.get("CANDIDATE_ENABLED") == "true"
+              assert os.environ["GITHUB_REF"] == "refs/heads/main"
+              assert re.fullmatch(r"[1-9][0-9]*",artifact)
+              assert re.fullmatch(r"sha256:[0-9a-f]{64}",digest)
+              assert re.fullmatch(r"sha-"+os.environ["GITHUB_SHA"]+r"-run-[1-9][0-9]*-[1-9][0-9]*",release)
+          else:
+              assert not digest and not release
+          PY
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -664,6 +700,7 @@ jobs:
       id-token: write
     needs: [detect-changes, run-lint, run-tests, acquire-production-lock, verify-release-freshness, verify-runtime-iam]
     if: |
+      !inputs.candidate_artifact_id && (
       needs.detect-changes.outputs.build_base == 'true' ||
       needs.detect-changes.outputs.build_api == 'true' ||
       needs.detect-changes.outputs.build_video == 'true' ||
@@ -671,6 +708,7 @@ jobs:
       needs.detect-changes.outputs.build_ai == 'true' ||
       needs.detect-changes.outputs.build_tools == 'true' ||
       needs.detect-changes.outputs.force_full == 'true'
+      )
     env:
       # Job-level env guarantees docker/build-push-action sees these regardless of
       # workflow-vs-step env precedence subtleties. RECORD_UPLOAD=false stops the
@@ -796,12 +834,14 @@ jobs:
       id-token: write
     needs: [detect-changes, prepare-build]
     if: |
+      !inputs.candidate_artifact_id && (
       needs.detect-changes.outputs.build_api == 'true' ||
       needs.detect-changes.outputs.build_video == 'true' ||
       needs.detect-changes.outputs.build_messaging == 'true' ||
       needs.detect-changes.outputs.build_ai == 'true' ||
       needs.detect-changes.outputs.build_tools == 'true' ||
       needs.detect-changes.outputs.force_full == 'true'
+      )
     strategy:
       fail-fast: false
       max-parallel: 5
@@ -908,16 +948,18 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: read
       id-token: write
-    needs: [detect-changes, prepare-build, build-runtime-images]
+    needs: [detect-changes, prepare-build, build-runtime-images, acquire-production-lock, verify-release-freshness, verify-runtime-iam]
     if: |
-      needs.detect-changes.outputs.build_base == 'true' ||
-      needs.detect-changes.outputs.build_api == 'true' ||
-      needs.detect-changes.outputs.build_video == 'true' ||
-      needs.detect-changes.outputs.build_messaging == 'true' ||
-      needs.detect-changes.outputs.build_ai == 'true' ||
-      needs.detect-changes.outputs.build_tools == 'true' ||
-      needs.detect-changes.outputs.force_full == 'true'
+      always() && needs.detect-changes.result == 'success' &&
+      needs.acquire-production-lock.result == 'success' &&
+      needs.verify-release-freshness.result == 'success' &&
+      needs.verify-runtime-iam.result == 'success' &&
+      (
+        inputs.candidate_artifact_id != '' ||
+        (needs.prepare-build.result == 'success' && needs.build-runtime-images.result == 'success')
+      )
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -942,9 +984,21 @@ jobs:
       - name: Renew shared mutation lock before candidate assembly
         run: python3 scripts/v1/deployment_lock.py renew --owner "$ACADEMY_DEPLOY_LOCK_OWNER" --ttl-seconds 10800
 
+      - name: Restore protected immutable candidate without rebuilding
+        if: inputs.candidate_artifact_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/v1/candidate_manifest.py restore --artifact-id "$CANDIDATE_ARTIFACT_ID" \
+            --digest "$CANDIDATE_ARTIFACT_DIGEST" --sha "$GITHUB_SHA" \
+            --output docs/reports/release-manifest.candidate.json
+          test "$(jq -r .releaseImageTag docs/reports/release-manifest.candidate.json)" = "$RELEASE_IMAGE_TAG"
+          printf 'Promotion of verified candidate %s from artifact %s\n' "$RELEASE_IMAGE_TAG" "$CANDIDATE_ARTIFACT_ID" > docs/reports/ci-build.latest.md
+
       # ── Build report + complete release candidate ──
       - name: Collect exact release digests and write candidate manifest
         id: digests
+        if: inputs.candidate_artifact_id == ''
         run: |
           set -euo pipefail
           BUILD_TIME=$(date -Iseconds)
@@ -1055,9 +1109,10 @@ jobs:
           path: |
             docs/reports/ci-build.latest.md
             docs/reports/release-manifest.candidate.json
-          retention-days: 7
+          retention-days: 30
 
       - name: Commit and push ci-build.latest.md
+        if: inputs.candidate_artifact_id == ''
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -1120,14 +1175,25 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           action-timeout-s: 180
 
+      - name: Install candidate publisher SDK
+        if: inputs.candidate_artifact_id != ''
+        run: python3 -m pip install -c requirements/constraints.txt boto3
+
       - name: Publish release-bound isolated development environment
         id: development-env
         shell: pwsh
         run: |
-          ./scripts/v1/publish-api-development-env.ps1 `
-            -ReleaseId "${{ env.RELEASE_IMAGE_TAG }}" `
-            -GithubOutputPath $env:GITHUB_OUTPUT `
-            -Ci
+          if ($env:CANDIDATE_ARTIFACT_ID) {
+            python3 scripts/v1/candidate_runtime.py publish --stage development `
+              --release $env:RELEASE_IMAGE_TAG --production-database $env:PRODUCTION_DATABASE `
+              --receipt "$env:RUNNER_TEMP/development-receipt.json" --github-output $env:GITHUB_OUTPUT
+            if ($LASTEXITCODE -ne 0) { throw "Independent development publication failed" }
+          } else {
+            ./scripts/v1/publish-api-development-env.ps1 `
+              -ReleaseId "${{ env.RELEASE_IMAGE_TAG }}" `
+              -GithubOutputPath $env:GITHUB_OUTPUT `
+              -Ci
+          }
 
       - name: Blue/green candidate review on persistent development runtime
         shell: pwsh
@@ -1199,14 +1265,25 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           action-timeout-s: 180
 
+      - name: Install candidate publisher SDK
+        if: inputs.candidate_artifact_id != ''
+        run: python3 -m pip install -c requirements/constraints.txt boto3
+
       - name: Publish release-bound preprod environment
         id: preprod-env
         shell: pwsh
         run: |
-          ./scripts/v1/publish-api-preprod-env.ps1 `
-            -ReleaseId "${{ env.RELEASE_IMAGE_TAG }}" `
-            -GithubOutputPath $env:GITHUB_OUTPUT `
-            -Ci
+          if ($env:CANDIDATE_ARTIFACT_ID) {
+            python3 scripts/v1/candidate_runtime.py publish --stage preprod `
+              --release $env:RELEASE_IMAGE_TAG --production-database $env:PRODUCTION_DATABASE `
+              --receipt "$env:RUNNER_TEMP/preprod-receipt.json" --github-output $env:GITHUB_OUTPUT
+            if ($LASTEXITCODE -ne 0) { throw "Independent preprod publication failed" }
+          } else {
+            ./scripts/v1/publish-api-preprod-env.ps1 `
+              -ReleaseId "${{ env.RELEASE_IMAGE_TAG }}" `
+              -GithubOutputPath $env:GITHUB_OUTPUT `
+              -Ci
+          }
 
       - name: Run isolated server, migration, and health gate
         run: |
@@ -1234,6 +1311,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read
       id-token: write
     needs: [detect-changes, build-and-push, verify-api-preprod]
     if: |
@@ -1254,6 +1332,15 @@ jobs:
 
       - name: Renew shared mutation lock before migration
         run: python3 scripts/v1/deployment_lock.py renew --owner "$ACADEMY_DEPLOY_LOCK_OWNER" --ttl-seconds 10800
+
+      - name: Revalidate prepared artifact and current main before production mutation
+        if: inputs.candidate_artifact_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/v1/candidate_manifest.py restore --artifact-id "$CANDIDATE_ARTIFACT_ID" \
+            --digest "$CANDIDATE_ARTIFACT_DIGEST" --sha "$GITHUB_SHA" \
+            --output "$RUNNER_TEMP/revalidated-candidate.json"
 
       - name: Run Django migrate via SSM
         id: migrate
