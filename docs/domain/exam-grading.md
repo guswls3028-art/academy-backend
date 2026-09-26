@@ -615,7 +615,8 @@ AI OMR 성공 콜백은 인식 fact를 저장한 뒤 같은 worker 프로세스�
 `ExamResult`도 확정 준비 상태를 검사한다. 현재 점수 구조에 답변형 문항이 없을 때만
 즉시 `FINAL`로 확정하고 진행도와 수업 분석을 갱신한다. 답변형 문항이 있으면
 객관식 OMR 점수는 교직원 입력 화면에만 보존하고, 현재 대표 attempt의 모든 답변형
-`ResultItem` 또는 명시적인 `manual_subjective`/`manual_total` 합산 근거가 채워질 때까지
+수기 `ResultItem`(`manual`/`manual_grid`) 또는 명시적인
+`manual_subjective`/`manual_total` 합산 근거가 채워질 때까지
 `ExamResult=DRAFT`, `grading_status=subjective_pending`으로 유지한다. 이 상태는
 학생·학부모 결과, 석차·평균, 합불·진척, 클리닉 생성·해소, 오답 후속, 성적 알림과
 외부 성적 출력에 사용하지 않는다. 시험의 `grading_mode`가 과거 값으로 남아 있어도
@@ -632,6 +633,24 @@ AI OMR 성공 콜백은 인식 fact를 저장한 뒤 같은 worker 프로세스�
 `grading_status`를 함께 반환하므로, 검토 화면은 부분 점수를 최종 채점 완료로 알리지
 않는다.
 
+서술형 빠른 합산 입력과 문항별 수기 채점이 함께 있으면 같은 시험·수강·현재 attempt의
+append-only Fact ID 순서로 최근 명시 입력 방식을 선택한다. 최근 `manual_subjective`가
+문항 입력보다 뒤라면 이전 문항 snapshot을 지우지 않고 합산값을 사용한다. 명시한 0점도
+완료된 합산 입력이다. 이후 `manual`/`manual_grid` 답변형 문항 입력은 현재 수기 문항 합을
+사용하며, 과거 합산 Fact나 `attempt.meta.subjective_score`가 미채점 문항을 완료로 만들지
+않는다. 객관식 문항만 고치는 동작은 이 선택을 바꾸지 않는다. 직접 채점 표를 발행하면
+문항값이 이전과 같더라도 합산 입력 이후의 명시적 문항 채점 Fact를 남긴다. 같은 표를
+다시 발행하는 것만으로 동일 Fact를 반복 추가하지 않는다. OMR 재동기화·재채점에도 이
+선택이 유지되며 기존 교사 입력 이력은 보존된다. `manual_total`은 기존의 독립된 전체
+합계/완료 근거로 유지하고, 전체 합계에서 객관식 점수를 빼 새 서술형 입력으로 추측하지
+않는다. 대표 전환의 합계 이벤트 재생 계약도 그대로 유지한다.
+
+합산 완료 뒤 일부 답변형만 문항 채점하면 남은 문항은 다시 `subjective_pending`이다.
+같은 transaction에서 legacy `FINAL`을 `DRAFT`로 되돌리고 `finalized_at`을 비우며,
+진행도 파이프라인을 실행해 이전 확정 투영을 회수한다. 모든 필수 답변형 문항을 채점하거나
+합산값을 다시 명시하면 재확정한다. 자동 OMR/온라인 출처의 답변형 snapshot만으로는
+교사 채점 완료로 판정하지 않는다.
+
 서술형 입력이 끝나면 같은 transaction에서 legacy 결과를 정확히 한 번 `FINAL`로
 전환하고 commit 뒤 진행도 파이프라인을 한 번만 실행한다. 같은 attempt를 재채점할 때는
 수기 답변형 `ResultItem`을 보존하지만, 대표 attempt가 바뀌면 이전 attempt의 수기
@@ -642,6 +661,12 @@ attempt 중 하나라도 현재 결과와 맞지 않거나 수동 검토가 남�
 `score_edit_lease_state`를 사용한다. worker 이미지 빌드와
 `tests/test_worker_entrypoint_imports.py`는 DRF가 없는 환경에서
 `grading_service` import가 성공해야 통과한다.
+
+회귀 검증은 `apps/domains/results/tests/test_mixed_omr_subjective_projection_pg.py`와
+`apps/support/results/tests/test_manual_exam_grading.py`에서 합산↔문항 입력 순서,
+0점, 동일 표 재발행, 객관식 재채점 후 재조회, 부분 채점 확정 회수/복구와 tenant 경계를
+확인한다. batch의 처리 완료와 교사 채점 완료를 분리하는 API 계약은
+[OMR batch 진행 상태](omr.md)에 둔다. 기존 DB 열이나 저장된 Fact를 바꾸는 migration은 없다.
 
 과거 버전에서 이미 `FINAL` 또는 진행도·자동 클리닉으로 투영된 부분 채점은 기본
 dry-run 명령으로 테넌트와 정확한 대상 수를 먼저 확인한다.

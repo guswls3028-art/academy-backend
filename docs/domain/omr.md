@@ -238,9 +238,28 @@ attempt를 잠그기 전에 같은 `Exam` -> `Session` 순서를 따른다. 공�
    `admission_failed_ordinals`로 미접수 파일만 다시 선택한다. 이미 성공한 ordinal은
    재전송하지 않는다.
 5. batch 진행 상태는 기존 Submission/AI worker 상태를 집계한다. 파일 수신은
-   `received`, AI 작업 중은 `processing`, 채점 완료는 `completed`, 학생 확인 필요는
+   `received`, AI 작업 중은 `processing`, OMR 처리 완료는 `completed`, 학생 확인 필요는
    `needs_identification`, 처리 실패는 `failed`로 서로 구분한다. 업로드 성공을 AI 완료로
    표시하지 않는다.
+
+`counts.completed`, `terminal`, `overall_status`는 기존 파일 접수·OMR 처리 계약을
+유지한다. 따라서 혼합 시험은 객관식 인식이 끝나면 `overall_status=completed`이면서
+서술형 교사 채점은 남을 수 있다. 목록·상세와 batch summary 응답에는 별도 필드를 추가한다.
+
+| 필드 | 의미 |
+|---|---|
+| `grading_complete` | terminal이며 DONE 제출이 하나 이상 있고, 실패/학생 확인 대기가 없으며 그 DONE 제출 모두 현재 대표 결과의 최종 채점이 완료됨 |
+| `grading_status` | 최종 채점 완료는 `completed`, 남은 서술형이 있으면 `subjective_pending`, 그 밖은 `pending` |
+| `grading_counts` | DONE 제출을 `completed`, `subjective_pending`, `manual_review_required`, `grading_pending`으로 구분한 개수 |
+| `subjective_pending_ordinals` | 교사가 서술형 점수를 입력해야 하는 batch 내 ordinal 목록 |
+
+상태는 tenant·시험·수강·attempt·submission 연결과 legacy FINAL을 함께 검증한다.
+수동 검토 표시, 현재 대표 결과 누락, 다른 시험 연결은 최종 채점 완료가 아니다.
+중복·교체된 ordinal은 기존 `duplicate`/`superseded` 개수에만 남고 새 채점 대상으로
+세지 않으므로 이 항목들만 있는 batch는 `grading_complete=false`다. 기존 클라이언트의
+필드는 제거하거나 의미를 변경하지 않으며, 최종 성적 완료 안내는 새 grading 필드를
+사용해야 한다. 서술형 합산/문항별 입력의 보존과 재채점 정책은
+[시험 채점](exam-grading.md)을 따른다.
 
 Batch와 item에는 tenant, 생성 직원, 시험/차시/강의 id, 총수, ordinal, Submission 연결,
 동일 파일 판정용 SHA-256, 안전한 실패 코드만 저장한다. 파일명, 학생 이름·전화번호, R2 raw key는 batch 모델이나
@@ -268,7 +287,11 @@ item 전환도 row lock 아래에서 현재 상태를 다시 확인하며, 이�
 복구한다. 이 GET들은 `completion_notice_claimed_at`을 포함해 어떤 값도 쓰지 않는다.
 완료 알림 소유권은 별도 `claim-completion` POST가 batch row를 잠근 transaction 안에서
 획득하며, terminal 이후 최초 호출만 `notify=true`, 이후 호출과 동시 탭은 `false`다.
-처리 중 claim은 409로 실패한다.
+처리 중 claim은 409로 실패한다. 이 알림은 OMR 처리 완료에 대한 것이므로 서술형 채점이
+남아 있어도 terminal이면 claim할 수 있다. GET은 점수 확정이나 알림 claim을 실행하지
+않고, 목록의 채점 상태는 batch별 반복 조회 대신 전체 대상 submission을 모아 조회한다.
+혼합 시험의 처리 완료→서술형 0점 저장→최종 채점 완료, 읽기 무변경, 생성 직원/tenant/역할
+격리, 목록 조회 수는 `test_mixed_omr_subjective_projection_pg.py`에서 회귀 검증한다.
 
 재시도 POST는 요청된 ordinal만 처리한다. 원본 key가 남아 있는 실패 Submission은 기존
 retry lifecycle로 다시 dispatch한다. Batch item을 ordinal 순으로 잠근 뒤 연결된 Submission을

@@ -332,7 +332,7 @@ class AdminExamItemScoreView(APIView):
         choice_items_sum = 0.0
         essay_items_sum = 0.0
         has_choice_items = False
-        has_essay_items = False
+        has_automatic_essay_items = False
         has_unknown_items = False
         for score_item in agg_items:
             kind = score_shape.question_kind(int(score_item.question_id))
@@ -341,7 +341,8 @@ class AdminExamItemScoreView(APIView):
                 has_choice_items = True
             elif kind == "essay":
                 essay_items_sum += float(score_item.score or 0.0)
-                has_essay_items = True
+                if score_item.source not in {"manual", "manual_grid"}:
+                    has_automatic_essay_items = True
             else:
                 has_unknown_items = True
 
@@ -356,7 +357,7 @@ class AdminExamItemScoreView(APIView):
                 score_shape=score_shape,
             )
             objective_score = choice_items_sum if has_choice_items else previous_objective
-            subjective_score = essay_items_sum if has_essay_items else explicit_subjective
+            subjective_score = essay_items_sum if has_automatic_essay_items else explicit_subjective
             total_score = objective_score + subjective_score
 
         max_total = float(getattr(exam, "max_score", 100.0) or 100.0)
@@ -388,7 +389,7 @@ class AdminExamItemScoreView(APIView):
             enrollment_id=enrollment_id,
             exam_id=exam_id,
         )
-        if finalization.projection_ready:
+        if finalization.projection_ready or finalization.transitioned:
             if submission_id:
                 dispatch_progress_pipeline(submission_id=submission_id)
             else:

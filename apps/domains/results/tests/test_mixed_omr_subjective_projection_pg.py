@@ -9,7 +9,9 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.management import call_command
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from rest_framework.test import APIClient, APIRequestFactory, force_authenticate
 
@@ -23,6 +25,15 @@ from apps.domains.results.models import (
     ScoreEditDraft,
 )
 from apps.domains.results.services.grading_service import grade_submission
+from apps.domains.results.services.manual_exam_grading import (
+    apply_manual_grading,
+    build_manual_grading_sheet,
+    plan_manual_grading,
+)
+from apps.domains.results.services.omr_subjective_completion import (
+    finalize_omr_result_if_ready,
+    omr_subjective_completion_states,
+)
 from apps.domains.results.services.student_result_service import (
     get_my_exam_result_data,
 )
@@ -75,6 +86,11 @@ from apps.support.results.tests.omr_subjective_completion_fixtures import (
     ExamEnrollment,
     ExamQuestion,
     Lecture,
+    OmrUploadBatch,
+    OmrUploadBatchItem,
+    OmrUploadBatchCompletionClaimView,
+    OmrUploadBatchDetailView,
+    OmrUploadBatchListView,
     ProgressPolicy,
     Session,
     SessionEnrollment,
@@ -1385,6 +1401,322 @@ class MixedOmrSubjectiveProjectionPostgresTests(TestCase):
         self.assertEqual(float(canonical.objective_score), 0.0)
         self.assertEqual(float(canonical.total_score), 20.0)
         dispatch.assert_called_once_with(submission_id=self.submission.id)
+
+    def _acquire_score_lease(self):
+        ScoreEditDraft.objects.update_or_create(
+            tenant=self.tenant,
+            session=self.session,
+            defaults={
+                "editor_user": self.staff,
+                "client_id": "mixed-omr-browser",
+                "payload": {"client_id": "mixed-omr-browser", "changes": []},
+            },
+        )
+
+    def _patch_aggregate_score(self, score, *, view=AdminExamSubjectiveScoreView):
+        self._acquire_score_lease()
+        request = self.factory.patch(
+            "/results/admin/exams/subjective/",
+            {"score": score},
+            format="json",
+            HTTP_X_SCORE_EDITOR_CLIENT="mixed-omr-browser",
+            HTTP_X_SCORE_SESSION_ID=str(self.session.id),
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.staff)
+        response = view.as_view()(
+            request, exam_id=self.exam.id, enrollment_id=self.enrollment.id,
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data["projection_ready"], response.data)
+        return response
+
+    def _regrade_with_wrong_objective(self):
+        SubmissionAnswer.objects.filter(
+            submission=self.submission, exam_question_id=self.choice.id,
+        ).update(answer="2")
+        Submission.objects.filter(pk=self.submission.pk).update(
+            status=Submission.Status.ANSWERS_READY,
+        )
+        return grade_submission(self.submission.id, force_regrade=True)
+
+    def _publish_grid_score(self, score):
+        # Release this test client's quick-entry lease before using the grid.
+        ScoreEditDraft.objects.filter(
+            tenant=self.tenant, session=self.session, editor_user=self.staff,
+        ).delete()
+        sheet = build_manual_grading_sheet(exam=self.exam, tenant=self.tenant)
+        row = next(
+            row for row in sheet["rows"]
+            if row["enrollment_id"] == self.enrollment.id
+        )
+        plan = plan_manual_grading(
+            exam=self.exam,
+            tenant=self.tenant,
+            payload={"rows": [{
+                "enrollment_id": self.enrollment.id,
+                "expected_version": row["expected_version"],
+                "attendance": "present",
+                "cells": {str(self.essay.id): {"score": score}},
+            }]},
+        )
+        self.assertTrue(plan.can_apply, plan.errors)
+        return apply_manual_grading(plan=plan, user_id=self.staff.id)
+
+    def test_latest_aggregate_replaces_old_item_through_objective_edit_and_regrade(self):
+        _legacy, canonical = self._grade_objective_only()
+        for subjective_score in (18, 0):
+            with self.subTest(subjective_score=subjective_score):
+                self._acquire_score_lease()
+                response = self._patch_item_score(question=self.essay, score=5)
+                self.assertEqual(response.status_code, 200, response.data)
+                self._patch_aggregate_score(subjective_score)
+                aggregate = ResultFact.objects.filter(
+                    attempt_id=canonical.attempt_id, source="manual_subjective",
+                ).latest("id")
+
+                response = self._patch_item_score(question=self.choice, score=75)
+                self.assertEqual(response.status_code, 200, response.data)
+                canonical.refresh_from_db()
+                self.assertEqual(float(canonical.total_score), 75 + subjective_score)
+                regraded = self._regrade_with_wrong_objective()
+                canonical.refresh_from_db()
+                self.assertEqual(regraded.status, ExamResult.Status.FINAL)
+                self.assertEqual(float(regraded.subjective_score), subjective_score)
+                self.assertEqual(float(canonical.total_score), subjective_score)
+                self.assertEqual(
+                    float(ResultItem.objects.get(result=canonical, question=self.essay).score), 5,
+                )
+                aggregate.refresh_from_db()
+                self.assertEqual(float(aggregate.score), subjective_score)
+
+    def test_latest_subjective_item_replaces_aggregate_through_regrade(self):
+        _legacy, canonical = self._grade_objective_only()
+        self._patch_aggregate_score(18)
+        response = self._patch_item_score(question=self.essay, score=7)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data["projection_ready"])
+        canonical.refresh_from_db()
+        self.assertEqual(float(canonical.total_score), 87)
+        regraded = self._regrade_with_wrong_objective()
+        canonical.refresh_from_db()
+        self.assertEqual(regraded.status, ExamResult.Status.FINAL)
+        self.assertEqual(float(regraded.subjective_score), 7)
+        self.assertEqual(float(canonical.total_score), 7)
+        self.assertTrue(ResultFact.objects.filter(
+            attempt_id=canonical.attempt_id, source="manual_subjective", score=18,
+        ).exists())
+
+    def test_unchanged_grid_publish_replaces_aggregate_and_survives_regrade(self):
+        self.exam.grading_mode = Exam.GradingMode.MIXED
+        self.exam.manual_grading_method = Exam.ManualGradingMethod.SCORE
+        self.exam.save(update_fields=["grading_mode", "manual_grading_method", "updated_at"])
+        _legacy, canonical = self._grade_objective_only()
+        self._publish_grid_score(6)
+        self._patch_aggregate_score(19)
+        aggregate_id = ResultFact.objects.filter(
+            attempt_id=canonical.attempt_id, source="manual_subjective",
+        ).latest("id").id
+        self._publish_grid_score(6)
+        canonical.refresh_from_db()
+        self.assertEqual(float(canonical.total_score), 86)
+        latest = ResultFact.objects.filter(attempt_id=canonical.attempt_id).latest("id")
+        self.assertEqual(latest.source, "manual_grid")
+        self.assertGreater(latest.id, aggregate_id)
+        count = ResultFact.objects.filter(attempt_id=canonical.attempt_id).count()
+        self._publish_grid_score(6)
+        self.assertEqual(ResultFact.objects.filter(attempt_id=canonical.attempt_id).count(), count)
+        regraded = self._regrade_with_wrong_objective()
+        canonical.refresh_from_db()
+        self.assertEqual(regraded.status, ExamResult.Status.FINAL)
+        self.assertEqual(float(canonical.total_score), 6)
+        self.assertEqual(float(regraded.subjective_score), 6)
+
+    def test_partial_item_after_aggregate_retracts_final_until_all_essays_are_scored(self):
+        self.essay.score = 10
+        self.essay.save(update_fields=["score"])
+        second_essay = ExamQuestion.objects.create(
+            sheet=self.sheet, number=3, score=10,
+            question_kind=ExamQuestion.QuestionKind.ESSAY,
+        )
+        legacy, canonical = self._grade_objective_only()
+        self._patch_aggregate_score(20)
+        with patch(
+            "apps.domains.results.views.admin_exam_item_score_view.dispatch_progress_pipeline"
+        ) as dispatch, self.captureOnCommitCallbacks(execute=True):
+            response = self._patch_item_score(question=self.essay, score=7)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data["saved"])
+        self.assertFalse(response.data["projection_ready"])
+        self.assertEqual(response.data["grading_status"], "subjective_pending")
+        dispatch.assert_called_once_with(submission_id=self.submission.id)
+        legacy.refresh_from_db()
+        self.assertEqual(legacy.status, ExamResult.Status.DRAFT)
+        self.assertIsNone(legacy.finalized_at)
+        self.assertEqual(compute_exam_rankings(
+            exam_id=self.exam.id, tenant=self.tenant, lecture_ids={self.lecture.id},
+        ), {})
+        regraded = self._regrade_with_wrong_objective()
+        canonical.refresh_from_db()
+        self.assertEqual(regraded.status, ExamResult.Status.DRAFT)
+        self.assertEqual(float(canonical.total_score), 7)
+        state = omr_subjective_completion_states([canonical])[canonical.id]
+        self.assertFalse(state.aggregate_score_recorded)
+        self.assertTrue(state.pending)
+        self._acquire_score_lease()
+        response = self._patch_item_score(question=second_essay, score=5)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data["projection_ready"])
+        legacy.refresh_from_db()
+        self.assertEqual(legacy.status, ExamResult.Status.FINAL)
+        self.assertEqual(float(legacy.total_score), 12)
+
+    def test_subjective_item_after_total_override_survives_objective_regrade(self):
+        _legacy, canonical = self._grade_objective_only()
+        self._acquire_score_lease()
+        response = self._patch_item_score(question=self.essay, score=5)
+        self.assertEqual(response.status_code, 200, response.data)
+        self._patch_aggregate_score(95, view=AdminExamTotalScoreView)
+        response = self._patch_item_score(question=self.essay, score=7)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data["projection_ready"])
+        regraded = self._regrade_with_wrong_objective()
+        canonical.refresh_from_db()
+        self.assertEqual(regraded.status, ExamResult.Status.FINAL)
+        self.assertEqual(float(canonical.total_score), 7)
+        self.assertEqual(float(regraded.subjective_score), 7)
+        self.assertTrue(ResultFact.objects.filter(
+            attempt_id=canonical.attempt_id, source="manual_total", score=95,
+        ).exists())
+
+    def test_automatic_essay_and_mismatched_aggregate_are_not_manual_completion(self):
+        legacy, canonical = self._grade_objective_only()
+        ResultItem.objects.create(
+            result=canonical, question=self.essay, score=20, max_score=20,
+            source="omr", answer="", is_correct=True,
+        )
+        ResultFact.objects.create(
+            target_type="exam", target_id=self.exam.id + 1,
+            enrollment=self.enrollment, submission_id=self.submission.id,
+            attempt_id=canonical.attempt_id, question_id=0, score=20, max_score=20,
+            source="manual_subjective", answer="", is_correct=True,
+        )
+        decision = finalize_omr_result_if_ready(result_id=canonical.id)
+        self.assertFalse(decision.projection_ready)
+        self.assertEqual(decision.pending_reason, "subjective_pending")
+        legacy.refresh_from_db()
+        self.assertEqual(legacy.status, ExamResult.Status.DRAFT)
+        regraded = self._regrade_with_wrong_objective()
+        canonical.refresh_from_db()
+        self.assertEqual(regraded.status, ExamResult.Status.DRAFT)
+        self.assertEqual(float(canonical.total_score), 0)
+
+    def _batch_for_submission(self, submission):
+        batch = OmrUploadBatch.objects.create(
+            tenant=self.tenant, created_by=self.staff, exam_id=self.exam.id,
+            session_id=self.session.id, total_count=1,
+        )
+        OmrUploadBatchItem.objects.create(
+            tenant=self.tenant, exam_id=self.exam.id, batch=batch, ordinal=1,
+            submission=submission, admission_status=OmrUploadBatchItem.AdmissionStatus.RECEIVED,
+        )
+        return batch
+
+    def _read_batch(self, batch=None, *, user=None, tenant=None):
+        request = self.factory.get("/submissions/omr/batches/")
+        request.tenant = tenant or self.tenant
+        force_authenticate(request, user=user or self.staff)
+        if batch:
+            return OmrUploadBatchDetailView.as_view()(request, batch_id=batch.id)
+        return OmrUploadBatchListView.as_view()(request)
+
+    def test_batch_processing_completion_is_separate_from_subjective_completion(self):
+        legacy, _canonical = self._grade_objective_only()
+        batch = self._batch_for_submission(self.submission)
+        with CaptureQueriesContext(connection) as queries:
+            pending = self._read_batch(batch)
+        self.assertEqual(pending.status_code, 200, pending.data)
+        self.assertTrue(pending.data["terminal"])
+        self.assertEqual(pending.data["overall_status"], "completed")
+        self.assertEqual(pending.data["counts"]["completed"], 1)
+        self.assertFalse(pending.data["grading_complete"])
+        self.assertEqual(pending.data["grading_status"], "subjective_pending")
+        self.assertEqual(pending.data["subjective_pending_ordinals"], [1])
+        self.assertEqual(pending.data["grading_counts"]["subjective_pending"], 1)
+        self.assertFalse(any(
+            query["sql"].lstrip().split()[0].upper() in {"INSERT", "UPDATE", "DELETE"}
+            for query in queries
+        ))
+        request = self.factory.post("/submissions/omr/batches/claim/", {}, format="json")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.staff)
+        claimed = OmrUploadBatchCompletionClaimView.as_view()(request, batch_id=batch.id)
+        self.assertEqual(claimed.status_code, 200, claimed.data)
+        batch.refresh_from_db()
+        self.assertIsNotNone(batch.completion_notice_claimed_at)
+
+        self._patch_aggregate_score(0)
+        completed = self._read_batch(batch)
+        self.assertEqual(completed.status_code, 200, completed.data)
+        self.assertTrue(completed.data["grading_complete"])
+        self.assertEqual(completed.data["grading_status"], "completed")
+        self.assertEqual(completed.data["grading_counts"]["completed"], 1)
+        self.assertEqual(completed.data["subjective_pending_ordinals"], [])
+        legacy.refresh_from_db()
+        self.assertEqual(legacy.status, ExamResult.Status.FINAL)
+
+    def test_batch_status_remains_owner_scoped_and_bulk_loaded(self):
+        self._grade_objective_only()
+        batch = self._batch_for_submission(self.submission)
+        with CaptureQueriesContext(connection) as single_queries:
+            single = self._read_batch()
+        self.assertEqual(len(single.data), 1)
+        missing_result = self._new_omr_submission()
+        Submission.objects.filter(pk=missing_result.pk).update(status=Submission.Status.DONE)
+        second = self._batch_for_submission(missing_result)
+        with CaptureQueriesContext(connection) as multi_queries:
+            multiple = self._read_batch()
+        self.assertEqual(multiple.status_code, 200, multiple.data)
+        self.assertEqual(len(multiple.data), 2)
+        self.assertEqual(len(single_queries), len(multi_queries))
+        missing = next(row for row in multiple.data if row["id"] == str(second.id))
+        self.assertFalse(missing["grading_complete"])
+        self.assertEqual(missing["grading_counts"]["grading_pending"], 1)
+        other = User.objects.create_user(
+            username="other-omr-owner", tenant=self.tenant, is_staff=True,
+        )
+        TenantMembership.ensure_active(tenant=self.tenant, user=other, role="admin")
+        self.assertEqual(self._read_batch(user=other).data, [])
+        self.assertEqual(self._read_batch(batch, user=other).status_code, 404)
+        foreign = Tenant.objects.create(code="foreign-batch", name="Foreign batch")
+        self.assertEqual(self._read_batch(batch, tenant=foreign).status_code, 403)
+        self.assertEqual(self._read_batch(batch, user=self.student.user).status_code, 403)
+
+    def test_batch_manual_review_and_wrong_exam_never_report_grading_complete(self):
+        legacy, _canonical = self._grade_objective_only()
+        self._patch_aggregate_score(20)
+        batch = self._batch_for_submission(self.submission)
+        Submission.objects.filter(pk=self.submission.pk).update(
+            meta={"manual_review": {"required": True}},
+        )
+        response = self._read_batch(batch)
+        self.assertFalse(response.data["grading_complete"])
+        self.assertEqual(response.data["grading_counts"]["manual_review_required"], 1)
+        Submission.objects.filter(pk=self.submission.pk).update(meta={})
+        other_exam = Exam.objects.create(
+            tenant=self.tenant, title="Unrelated legacy result exam",
+            exam_type=Exam.ExamType.REGULAR,
+        )
+        ExamResult.objects.filter(pk=legacy.pk).update(exam=other_exam)
+        response = self._read_batch(batch)
+        self.assertFalse(response.data["grading_complete"])
+        self.assertEqual(response.data["grading_counts"]["grading_pending"], 1)
+        ExamResult.objects.filter(pk=legacy.pk).update(exam=self.exam)
+        batch.exam_id = self.exam.id + 1
+        batch.save(update_fields=["exam_id", "updated_at"])
+        response = self._read_batch(batch)
+        self.assertFalse(response.data["grading_complete"])
+        self.assertEqual(response.data["grading_counts"]["grading_pending"], 1)
 
     def test_new_omr_attempt_does_not_reuse_prior_attempt_manual_essay_item(self):
         self.exam.allow_retake = True
