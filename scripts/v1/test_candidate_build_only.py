@@ -227,6 +227,7 @@ class ProductionChangeDetectionTests(unittest.TestCase):
             "scripts/v1/test_candidate_build_only.py",
         ]
         self.assertEqual(filtered(candidate_paths), [])
+        self.assertEqual(filtered(candidate_paths + ["docs/README.md"]), ["docs/README.md"])
         self.assertEqual(
             filtered(candidate_paths + ["apps/domains/exams/views/exam_view.py",
                                         "scripts/v1/deploy.ps1",
