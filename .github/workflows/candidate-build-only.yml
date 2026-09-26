@@ -51,7 +51,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          persist-credentials: false
+          # This main-only controller needs GitHub read credentials to fetch a
+          # private same-repository PR commit; it never builds or runs PR code.
+          persist-credentials: true
       - name: Fetch exact PR source for input equivalence
         env:
           SOURCE_SHA: ${{ inputs.source_sha }}
