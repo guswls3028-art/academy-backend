@@ -10,7 +10,7 @@ from rest_framework.request import Request
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.exams.models import Exam, Sheet
+from apps.domains.exams.models import Exam, ExamQuestion, Sheet
 from apps.domains.exams.serializers.exam import ExamSerializer
 from apps.domains.exams.serializers.exam_update import ExamUpdateSerializer
 from apps.domains.exams.views.exam_view import ExamViewSet
@@ -20,6 +20,7 @@ Enrollment = apps.get_model("enrollment", "Enrollment")
 Lecture = apps.get_model("lectures", "Lecture")
 ExamAttempt = apps.get_model("results", "ExamAttempt")
 Result = apps.get_model("results", "Result")
+ResultItem = apps.get_model("results", "ResultItem")
 Student = apps.get_model("students", "Student")
 
 
@@ -103,6 +104,17 @@ class ExamPolicyUpdateTests(TestCase):
         self.assertTrue(response.data["updated_at"])
 
     def test_essay_numbering_is_saved_without_changing_grading_shape(self):
+        sheet = Sheet.objects.create(exam=self.exam, total_questions=1, choice_count=0, essay_count=1)
+        question = ExamQuestion.objects.create(sheet=sheet, number=1, score=8)
+        result = Result.objects.create(
+            target_type="exam", target_id=self.exam.id, enrollment=self.enrollment,
+            total_score=6, max_score=8,
+        )
+        result_item = ResultItem.objects.create(
+            result=result, question=question, answer="answer", is_correct=True,
+            score=6, max_score=8, source="manual",
+        )
+        original_question_id = question.id
         expected_updated_at = ExamSerializer(self.exam).data["updated_at"]
         response = self.patch(
             {"essay_numbering": "separate"},
@@ -113,6 +125,18 @@ class ExamPolicyUpdateTests(TestCase):
         self.assertEqual(self.exam.essay_numbering, "separate")
         self.assertEqual(response.data["essay_numbering"], "separate")
         self.assertEqual(self.exam.grading_mode, Exam.GradingMode.CHOICE)
+        request = self.factory.get(f"/api/v1/exams/{self.exam.id}/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.user)
+        readback = ExamViewSet.as_view({"get": "retrieve"})(request, pk=self.exam.id)
+        self.assertEqual(readback.status_code, 200, readback.data)
+        self.assertEqual(readback.data["essay_numbering"], "separate")
+        question.refresh_from_db()
+        result.refresh_from_db()
+        result_item.refresh_from_db()
+        self.assertEqual((question.id, question.number, question.score), (original_question_id, 1, 8))
+        self.assertEqual((result.total_score, result.max_score), (6, 8))
+        self.assertEqual((result_item.question_id, result_item.score, result_item.max_score), (original_question_id, 6, 8))
 
     def test_invalid_essay_numbering_keeps_current_setting(self):
         expected_updated_at = ExamSerializer(self.exam).data["updated_at"]
