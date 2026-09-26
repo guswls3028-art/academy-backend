@@ -370,3 +370,13 @@ readback, retained artifacts and owned cleanup/restoration remain. Missing
 acceptance evidence at the cutoff is FAIL/HOLD. No recovery credential extends
 product access. Completion must precede trusted restoration and requires the
 closed-admission, worker/session/queue and cleanup0 proofs described above.
+
+
+Both ACADEMY_QA_MODE=isolated-qa and CANDIDATE_LEASE_REQUIRED=true must be
+fixed by the inert launch template. A missing/malformed marker fails startup;
+neither application routing nor an incomplete environment may silently disable
+the lease guard. Messaging additionally requires its exact development queue
+and mock provider before consuming. The two-stage launch must resolve the exact
+new instance identity before binding publication and container startup. Images,
+live adapter and IAM activation remain pending the exact API/worker integration
+heads and their gates; no cloud changes were performed for this code.

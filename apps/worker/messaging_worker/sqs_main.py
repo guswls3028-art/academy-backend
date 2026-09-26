@@ -683,8 +683,11 @@ def main() -> int:
     cfg = load_config()
     queue_client = get_queue_client()
     qa_gate = get_admission_gate("messaging")
-    if qa_gate.enabled and os.environ.get("SOLAPI_MOCK", "").lower() != "true":
-        raise QaLeaseClosed("Isolated QA messaging requires the existing mock provider")
+    if qa_gate.enabled and (
+        os.environ.get("SOLAPI_MOCK", "").lower() != "true"
+        or cfg.MESSAGING_SQS_QUEUE_NAME != "academy-v1-development-messaging-queue"
+    ):
+        raise QaLeaseClosed("Isolated QA messaging requires its development queue and mock provider")
 
     # Long Polling 10~20초: 빈 큐에 반복 요청 방지 → AWS 비용·CPU 절약
     logger.info(
