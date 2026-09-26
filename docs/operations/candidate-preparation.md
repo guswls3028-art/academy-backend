@@ -642,3 +642,29 @@ The immutable creator scope/initial-fixture receipt must be distinguished from
 action-level created-resource receipts attached to that root. Final inspection
 must include unrecorded orphans inside the exact proven-owned namespace.
 No entire shared queue purge or deletion of foreign/user-authored data is allowed.
+
+
+### Immutable root metadata contract
+
+`candidate_qa_manifest.py` defines `academy-candidate-qa-root/v1`. Its exact fields
+are schema, lease ID, owner task, source SHA, four image digests, approved PR scope,
+official creator identifier, disposable tenant/user IDs and creation-seal hashes,
+initial fixture model/IDs/state hashes, complete domain inventory, and exact
+development bucket/tenant prefixes. Passwords, capabilities, payloads and the
+derived lease binding are not root fields.
+
+The creator first emits this nonsecret root; its byte SHA256 is committed in
+`resource_manifest_sha256`; only then is the lease binding computed. Embedding
+that binding in the root would create a circular hash and is rejected.
+`load_root` checks the committed byte digest and exact lease/owner/source/images,
+scope, tenants and trusted configured bucket. Initial fixture comparison uses
+the normalized fixture projection hash returned by `RootManifest`.
+The decoded data is returned as a copy so callers cannot mutate the validated
+stored representation.
+
+Metadata validation does not prove creation ownership. The live provider must
+independently compare each creator seal and approved fixture projection against
+authoritative state. Dynamic action receipts reference this root SHA plus exact
+action/job/object identities; they do not rewrite the immutable root.
+Actual creator emission, dynamic receipt persistence and live DB/R2/Redis/outbox
+queries remain unconnected. No callback may substitute this loader for them.
