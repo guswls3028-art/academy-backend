@@ -282,7 +282,8 @@ jobs:
   publish:
     name: Push and scan immutable QA ${{ matrix.service }}
     needs: [validate, build-runtime]
-    if: needs.validate.result == 'success' && needs.build-runtime.result == 'success'
+    # The unused base branch is skipped; override inherited success() explicitly.
+    if: ${{ !cancelled() && needs.validate.result == 'success' && needs.build-runtime.result == 'success' }}
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 90
     environment: production
@@ -398,7 +399,7 @@ jobs:
   finalize:
     name: Verify complete QA image set
     needs: [validate, publish]
-    if: needs.validate.result == 'success' && needs.publish.result == 'success'
+    if: ${{ !cancelled() && needs.validate.result == 'success' && needs.publish.result == 'success' }}
     runs-on: ubuntu-latest
     environment: production
     permissions:
@@ -488,3 +489,21 @@ jobs:
           path: receipt/candidate-build-only.json
           if-no-files-found: error
           retention-days: 1
+
+  completion:
+    name: Require complete QA image receipt
+    needs: [validate, publish, finalize]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Reject a skipped or incomplete candidate
+        env:
+          VALIDATION_RESULT: ${{ needs.validate.result }}
+          PUBLICATION_RESULT: ${{ needs.publish.result }}
+          FINALIZATION_RESULT: ${{ needs.finalize.result }}
+        run: |
+          set -euo pipefail
+          test "$VALIDATION_RESULT" = success
+          test "$PUBLICATION_RESULT" = success
+          test "$FINALIZATION_RESULT" = success
