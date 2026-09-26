@@ -131,6 +131,12 @@ class CandidateQaReceiptLedgerTests(TestCase):
             with _effect(self.ledger):
                 pass
         self.ledger.action_policy = lambda *args: True
+        self.ledger.settlement_authorizer = None
+        with self.assertRaisesRegex(receipts.QaReceiptHold, "result recording"):
+            with _effect(self.ledger):
+                pass
+        self.assertFalse(CandidateQaAction.objects.exists())
+        self.ledger.settlement_authorizer = lambda *args: True
         self.ledger.gate_provider = None
         with self.assertRaisesRegex(receipts.QaReceiptHold, "gate"):
             with _effect(self.ledger):

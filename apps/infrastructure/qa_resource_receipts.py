@@ -191,6 +191,8 @@ class CandidateQaReceiptLedger:
                  and type(tenant_id) is int and tenant_id > 0,
                  "Canonical QA action metadata required")
         _require(callable(self.action_policy), "Exact QA action policy is not wired")
+        _require(callable(self.settlement_authorizer),
+                 "Trusted QA result recording is not wired")
         gate = self._gate(origin_kind)
         with gate.begin(f"candidate-qa:{action_id}", tenant_id=tenant_id) as record:
             _require(record.get("state") == "active" and not record.get("control_hold")
