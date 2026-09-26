@@ -340,6 +340,36 @@
           ]
         }
       }
+    },
+    {
+      "Sid": "QaPreparePassRole",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::809466760795:role/academy-api-qa-role",
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "ec2.amazonaws.com"
+        }
+      }
+    },
+    {
+      "Sid": "CandidateQaLeaseControl",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:PutItem"
+      ],
+      "Resource": "arn:aws:dynamodb:ap-northeast-2:809466760795:table/academy-v1-video-job-lock",
+      "Condition": {
+        "ForAllValues:StringEquals": {
+          "dynamodb:LeadingKeys": [
+            "__candidate_qa_window__"
+          ]
+        },
+        "Null": {
+          "dynamodb:LeadingKeys": "false"
+        }
+      }
     }
   ]
 }

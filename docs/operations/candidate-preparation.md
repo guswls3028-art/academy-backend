@@ -517,3 +517,48 @@ Every runtime readback must contain the current committed lease revision. A
 heartbeat at an older revision cannot authorize endpoint publication or renewal.
 These protocol checks remain offline until the trusted adapter and two-stage
 launcher are connected and verified; no endpoint is enabled by this change.
+
+### Inert launcher and PREPARED container boot (not wired to a live workflow)
+
+candidate_qa_launch.py supplies the two controller steps. Launch requires a clean
+exact-main controller, candidate-production OIDC identity, live owned shared lock,
+exact captured baseline and trusted SSOT compute/network. It keeps the baseline,
+uses one deterministic EC2 client token per lease, and recovers only the exact
+matching tagged instance after an uncertain acknowledgement. Userdata installs
+Docker and writes root-only required QA markers; it fetches no environment/key,
+starts no container and performs no migration or tenant work.
+
+After the existing Window.prepare has committed the bound lease, start rechecks
+that exact PREPARED record, owner, source/attempt, profile and instance. Its fixed
+SSM program reads pinned development environment versions into root-only files,
+validates their runtime/database/queue/mock boundaries, adds mandatory lease pins
+and starts the four exact QA images. Signing-key values are never command
+arguments or output. A partial boot stays HOLD with the baseline and resources
+retained; it does not delete/restart containers to disguise uncertain work.
+No endpoint is published and no baseline worker is stopped by these helpers.
+
+candidate_qa_permissions.py renders a plan-only full runtime policy with an exact
+per-lease signing-key exception and item-scoped DynamoDB control reads, lease
+condition checks and own nonce writes. Control-record writes, foreign nonce
+access, bulk reads/deletes and other parameter access stay outside these grants.
+It retains the existing production-repository and path/history denies.
+Transaction grants use the underlying item permissions described in the
+[AWS transaction IAM contract](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/transaction-apis-iam.html).
+This renderer does not apply IAM: sole inert capacity, complete role inventory,
+shared lock, exact policy fingerprints and actual principal simulation remain
+required before activation and again before restoring the original policy.
+
+Offline launch/boot tests cover partial/foreign state, exact source/attempt and
+environment versions, baseline preservation, idempotent launch recovery, inbound
+network rejection and credential-free command arguments. Structural policy tests
+are not IAM simulator or live access evidence. Trusted runtime observation,
+baseline consumer exclusion/restoration, exact domain cleanup manifests, key
+creation/revocation, IAM application and workflow wiring remain unfinished. No
+actual candidate resources or credentials were created by these code changes.
+
+The candidate-production controller template adds only PassRole for the exact QA
+instance role and Get/Put on the single QA lease control key. Its blanket IAM
+policy-write denial remains intact. Per-lease runtime IAM activation must therefore
+use a separately reviewed, exact-policy apply path under the shared lock; the
+launcher does not gain arbitrary IAM management. That apply/restore path is not
+implemented or approved by the plan renderer.
