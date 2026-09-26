@@ -26,6 +26,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _candidate_qa_requested() -> bool:
+    required = os.environ.get("CANDIDATE_LEASE_REQUIRED", "").strip().lower()
+    if required not in ("", "0", "false", "no"):
+        return True
+    return any(os.environ.get(name) for name in (
+        "ACADEMY_QA_MODE", "ACADEMY_QA_LEASE_ID", "ACADEMY_QA_BINDING_SHA256",
+    ))
+
+
 class AISQSQueue:
     """
     SQS 기반 AI Job Queue (3-Tier 시스템)
@@ -168,11 +177,38 @@ class AISQSQueue:
             logger.warning("Invalid tier %s for job %s, using basic", tier, job.job_id)
             tier = "basic"
         
+        payload = job.payload or {}
+        if _candidate_qa_requested():
+            # QA provenance is issued at the server-owned job boundary. Never
+            # trust a client-supplied _qa_lease already present in the payload.
+            if not isinstance(payload, dict) or not job.tenant_id:
+                raise ValueError("Candidate QA job requires a tenant and object payload")
+            if self.queue_name_override:
+                if self.queue_name_override != getattr(settings, "TOOLS_SQS_QUEUE_NAME", None):
+                    raise ValueError("Candidate QA queue override is not the tools queue")
+                kind = "tools"
+            else:
+                kind = "ai"
+            from apps.infrastructure.qa_lease import get_admission_gate
+
+            gate = get_admission_gate("api")
+            if not gate.enabled:
+                raise RuntimeError("Candidate QA admission is not available")
+            gate.admit()
+            payload = gate.stamp_message(
+                dict(payload), str(job.tenant_id), job_id=str(job.job_id),
+                queue_kind=kind,
+            )
+            # A received SQS body must match the authoritative DB job, including
+            # a fresh nonce for this enqueue attempt. Save before publication.
+            job.payload = payload
+            job.save(update_fields=["payload"])
+
         message = {
             "job_id": str(job.job_id),
             "job_type": str(job.job_type),
             "tier": tier,
-            "payload": job.payload or {},
+            "payload": payload,
             "tenant_id": str(job.tenant_id) if job.tenant_id else None,
             "source_domain": str(job.source_domain) if job.source_domain else None,
             "source_id": str(job.source_id) if job.source_id else None,
@@ -243,6 +279,12 @@ class AISQSQueue:
                 try:
                     job_data = json.loads(body)
                 except json.JSONDecodeError:
+                    if _candidate_qa_requested():
+                        logger.error("Invalid JSON in candidate QA message")
+                        return {
+                            "receipt_handle": receipt_handle, "tier": tier,
+                            "payload": {}, "_qa_malformed": True,
+                        }
                     logger.error("Invalid JSON in message: %s", body)
                     if receipt_handle:
                         try:
@@ -255,6 +297,12 @@ class AISQSQueue:
             
             # 메시지 형식 검증 — 잘못된 메시지는 삭제하여 큐 블로킹 방지
             if not isinstance(job_data, dict) or "job_id" not in job_data:
+                if _candidate_qa_requested():
+                    logger.error("Invalid candidate QA message format")
+                    return {
+                        "receipt_handle": receipt_handle, "tier": tier,
+                        "payload": {}, "_qa_malformed": True,
+                    }
                 logger.error("Invalid message format (deleting): %s", job_data)
                 if receipt_handle:
                     try:
