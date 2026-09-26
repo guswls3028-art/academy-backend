@@ -80,7 +80,7 @@ _current_receipt_handle: Optional[str] = None
 
 def _qa_gate_requested() -> bool:
     required = os.environ.get("CANDIDATE_LEASE_REQUIRED", "").strip().lower()
-    if required not in ("", "0", "false", "no"):
+    if required not in ("", "0", "false"):
         return True
     return any(os.environ.get(name) for name in (
         "ACADEMY_QA_MODE", "ACADEMY_QA_LEASE_ID", "ACADEMY_QA_BINDING_SHA256",
@@ -103,29 +103,34 @@ def _worker_admission_gate(worker_kind: str, supplied: Any = None) -> Any:
     return gate if gate.enabled else None
 
 
-def _qa_job_for_receipt(message: dict, gate: Any, lease: Any) -> Any:
-    """Check the signed receipt against the authoritative job before any write."""
+def _qa_message_metadata(message: dict) -> dict:
+    return {field: message.get(field) for field in (
+        "job_type", "tier", "source_domain", "source_id", "created_at", "attempt",
+    )}
+
+
+def _qa_job_for_receipt(message: dict, stamp: dict) -> Any:
+    """Compare the claimed, signed receipt with the authoritative job."""
     from apps.domains.ai.models import AIJobModel
 
-    job_id = message.get("job_id")
-    tenant_id = message.get("tenant_id")
-    if not job_id or not tenant_id or not message.get("receipt_handle"):
-        raise ValueError("Incomplete QA job receipt")
-    job = AIJobModel.objects.filter(job_id=job_id, tenant_id=str(tenant_id)).only(
+    job = AIJobModel.objects.filter(
+        job_id=stamp["job_id"], tenant_id=str(stamp["tenant_id"]),
+    ).only(
         "job_id", "job_type", "tier", "tenant_id", "source_domain", "source_id",
         "payload", "status",
     ).first()
     if job is None or not isinstance(job.payload, dict):
         raise ValueError("QA job or tenant does not match receipt")
     if (
-        job.payload != message.get("payload")
+        str(job.job_id) != stamp["job_id"]
+        or str(job.tenant_id) != str(stamp["tenant_id"])
+        or job.payload != message.get("payload")
         or job.job_type != message.get("job_type")
         or job.tier != message.get("tier")
         or (str(job.source_domain) if job.source_domain else None) != message.get("source_domain")
         or (str(job.source_id) if job.source_id else None) != message.get("source_id")
     ):
         raise ValueError("QA receipt differs from persisted job")
-    gate.validate_message(job.payload, lease, tenant_id=str(job.tenant_id), job_id=str(job_id))
     return job
 
 
@@ -462,7 +467,9 @@ def run_ai_sqs_worker(
     try:
         qa_gate = _worker_admission_gate(worker_kind, admission_gate)
         if qa_gate:
-            from apps.infrastructure.qa_lease import QaMessageCompleted, QaMessageInFlight
+            from apps.infrastructure.qa_lease import (
+                QaLeaseClosed, QaMessageCompleted, QaMessageInFlight,
+            )
     except Exception:
         logger.exception("QA_WORKER_ADMISSION_UNAVAILABLE | worker=%s", worker_kind)
         return 1
@@ -471,18 +478,30 @@ def run_ai_sqs_worker(
     max_consecutive_errors = 10
     last_job_finished_at = 0.0
     empty_polls = 0
+    qa_holding = False
 
     try:
         while not _shutdown:
             qa_scope = ExitStack()
+            db_boundary_entered = False
             try:
+                if qa_holding:
+                    time.sleep(2)
+                    continue
                 if qa_gate:
                     try:
                         qa_gate.admit()
+                    except QaLeaseClosed:
+                        # PREPARED, DRAINING and expired windows keep the process
+                        # and its trusted heartbeat alive without polling SQS.
+                        time.sleep(2)
+                        continue
                     except Exception:
                         logger.exception("QA_WORKER_RECEIVE_CLOSED | worker=%s", worker_kind)
-                        return 1
+                        time.sleep(2)
+                        continue
                 # 워커 루프 경계에서 stale DB 커넥션 정리 (누수/반납 지연 보호)
+                db_boundary_entered = True
                 close_old_connections()
                 # Heartbeat — worker family별 이름으로 기록. 실패는 silent.
                 try:
@@ -508,11 +527,13 @@ def run_ai_sqs_worker(
                     except Exception:
                         if message:
                             _qa_hold_and_release(
-                                qa_gate, queue, message, message.get("tier", tier),
+                                qa_gate, queue, message, tier,
                                 "qa_after_poll_closed",
                             )
+                            qa_holding = True
                         logger.exception("QA_WORKER_AFTER_POLL_CLOSED | worker=%s", worker_kind)
-                        return 1
+                        time.sleep(2)
+                        continue
 
                 if not message:
                     consecutive_errors = 0
@@ -542,14 +563,23 @@ def run_ai_sqs_worker(
                 payload = message.get("payload", {})
 
                 if qa_gate:
+                    stamp = None
                     try:
-                        qa_job = _qa_job_for_receipt(message, qa_gate, qa_lease)
+                        if not receipt_handle or not job_id or not message.get("tenant_id"):
+                            raise ValueError("Incomplete QA job receipt")
+                        metadata = _qa_message_metadata(message)
+                        stamp = qa_gate.validate_message(
+                            payload, qa_lease,
+                            tenant_id=str(message["tenant_id"]), job_id=str(job_id),
+                            job_metadata=metadata,
+                        )
                         qa_scope.enter_context(qa_gate.begin(
-                            f"{job_id}:{receipt_handle}",
-                            tenant_id=str(qa_job.tenant_id),
-                            message=qa_job.payload,
-                            job_id=str(job_id),
+                            f"{stamp['job_id']}:{receipt_handle}",
+                            tenant_id=str(stamp["tenant_id"]),
+                            message=payload,
+                            job_id=stamp["job_id"], job_metadata=metadata,
                         ))
+                        qa_job = _qa_job_for_receipt(message, stamp)
                     except QaMessageInFlight:
                         # Another worker owns this exact signed delivery attempt.
                         # Defer rather than hot-loop or acknowledge its receipt.
@@ -558,26 +588,32 @@ def run_ai_sqs_worker(
                         ):
                             qa_gate.hold_message(payload, reason="qa_inflight_defer_failed")
                             logger.error("QA_INFLIGHT_RECEIPT_DEFER_FAILED | job_id=%s", job_id)
-                            return 1
+                            qa_holding = True
                         continue
                     except QaMessageCompleted:
                         # The persisted handler/callback already completed; only
                         # the SQS acknowledgement was lost.
-                        if qa_job.status not in _TERMINAL_AI_JOB_STATUSES:
+                        try:
+                            qa_job = _qa_job_for_receipt(message, stamp)
+                        except Exception:
+                            qa_job = None
+                        if qa_job is None or qa_job.status not in _TERMINAL_AI_JOB_STATUSES:
                             _qa_hold_and_release(
-                                qa_gate, queue, message, tier_from_msg,
+                                qa_gate, queue, message, tier,
                                 "qa_completed_disposition_without_terminal_job",
                             )
-                            return 1
+                            qa_holding = True
+                            continue
                         if receipt_handle and not queue.delete(receipt_handle, tier_from_msg):
                             logger.error("QA_COMPLETED_RECEIPT_ACK_FAILED | job_id=%s", job_id)
                         continue
                     except Exception:
                         _qa_hold_and_release(
-                            qa_gate, queue, message, tier_from_msg, "qa_message_rejected",
+                            qa_gate, queue, message, tier, "qa_message_rejected",
                         )
                         logger.exception("QA_WORKER_MESSAGE_REJECTED | worker=%s", worker_kind)
-                        return 1
+                        qa_holding = True
+                        continue
 
                 if not receipt_handle or not job_id or not job_type:
                     logger.error("Invalid message: job_id=%s receipt_handle=%s", job_id, bool(receipt_handle))
@@ -601,7 +637,12 @@ def run_ai_sqs_worker(
                     )
                     if qa_gate:
                         if not unsupported_failed:
-                            return 1
+                            _qa_hold_and_release(
+                                qa_gate, queue, message, tier,
+                                "qa_unsupported_job_failure_unconfirmed",
+                            )
+                            qa_holding = True
+                            continue
                     _qa_complete_before_ack(qa_gate, qa_scope, payload)
                     queue.delete(receipt_handle, tier_from_msg)
                     continue
@@ -635,16 +676,18 @@ def run_ai_sqs_worker(
                         status = _qa_job_status(str(job_id), str(qa_job.tenant_id))
                         if status is None:
                             _qa_hold_and_release(
-                                qa_gate, queue, message, tier_from_msg,
+                                qa_gate, queue, message, tier,
                                 "qa_job_missing_after_prepare",
                             )
-                            return 1
+                            qa_holding = True
+                            continue
                         if status not in _TERMINAL_AI_JOB_STATUSES:
                             # Another delivery may hold the DB lease. Keep this
                             # signed nonce retryable; do not lose its callback.
                             if not queue.extend_visibility(receipt_handle, tier_from_msg, 30):
                                 qa_gate.hold_message(payload, reason="qa_nonterminal_defer_failed")
-                                return 1
+                                qa_holding = True
+                                continue
                             continue
                     # 이미 완료/실패된 job의 재배달은 저장된 결과로 domain callback만 재시도한다.
                     # callback 성공 또는 callback 대상 없음일 때만 SQS message를 삭제한다.
@@ -838,11 +881,18 @@ def run_ai_sqs_worker(
                     return 1
                 time.sleep(5)
             finally:
-                qa_scope.close()
+                try:
+                    qa_scope.close()
+                except Exception:
+                    if not qa_gate:
+                        raise
+                    qa_holding = True
+                    logger.exception("QA_WORKER_INFLIGHT_EVIDENCE_HOLD | worker=%s", worker_kind)
                 # 작업 1건 처리 종료 후 커넥션을 RDS에 즉시 반납한다.
                 # close_old_connections()는 정상 persistent connection을 유지할 수 있어
                 # 대량 OCR/매치업 배치에서 connection slot 고갈을 막기엔 부족하다.
-                _release_db_connections()
+                if db_boundary_entered:
+                    _release_db_connections()
 
         return 0
     finally:
