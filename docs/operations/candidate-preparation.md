@@ -353,7 +353,6 @@ inject a synthetic key. No actual key or IAM grant has been created. Runtime
 readback must match fresh process files to the actual expected containers/process
 inventory; a file alone or missing worker is not evidence of idle capacity.
 
-
 ### QA state and acceptance cutoff
 
 OPEN is stored as active. It permits fresh bound authentication, mutations and
@@ -371,7 +370,6 @@ acceptance evidence at the cutoff is FAIL/HOLD. No recovery credential extends
 product access. Completion must precede trusted restoration and requires the
 closed-admission, worker/session/queue and cleanup0 proofs described above.
 
-
 Both ACADEMY_QA_MODE=isolated-qa and CANDIDATE_LEASE_REQUIRED=true must be
 fixed by the inert launch template. A missing/malformed marker fails startup;
 neither application routing nor an incomplete environment may silently disable
@@ -380,3 +378,66 @@ and mock provider before consuming. The two-stage launch must resolve the exact
 new instance identity before binding publication and container startup. Images,
 live adapter and IAM activation remain pending the exact API/worker integration
 heads and their gates; no cloud changes were performed for this code.
+
+### API admission and QA authentication (implementation pending live wiring)
+
+Development settings register `CandidateQaAdmissionMiddleware` after tenant
+resolution. Each QA API worker initializes its process-local gate/heartbeat
+at middleware startup, before its first request. Ordinary development has no QA gate; production does not register
+this middleware. The inert candidate launch fixes `CANDIDATE_LEASE_REQUIRED=true`;
+that marker alone activates the gate, and malformed/missing QA mode or pins fail
+process startup. When any QA identity variable is present, every POST/PUT/PATCH/
+DELETE uses the process-local trusted `AdmissionGate.begin()` before its view.
+The gate reads the committed lease and shared lock, checks its exact binding,
+revision, state, 30-second admission margin and disposable `tenant_ids`, and
+records activity until the response (including streaming) finishes. Request
+headers, body and query values are never lease proof. Unresolved or foreign
+tenants and expired/draining/held leases or adapter failures return JSON
+`503 QA_WINDOW_CLOSED` without running the handler. The response
+is not cached and its expected 503 does not enqueue the generic incident-audit
+DB write; a nonsecret runtime warning remains. Anonymous health and OPTIONS
+preflight remain available. Completed-result GET/HEAD requires fresh bound JWT
+authentication. Every tenant-resolved GET/HEAD also reads the committed lease,
+requires that tenant in its allowlist and accepts only active/draining before
+hard expiry; an unavailable adapter or held/closed lease blocks even a public
+read. The existing safe-method DB write guard prevents SQL mutation.
+Tenantless GET/HEAD is allowed only at
+the exact health paths; OPTIONS preflight remains available. Admin, internal,
+session-login and health-prefix lookalikes cannot use the tenantless read path.
+
+Only the exact named POST token-obtain and token-refresh routes may start
+tenantless admission (`purpose='auth'`). JWT issuance then requires one active
+authoritative membership matching the resolved login tenant and lease tenant
+allowlist. QA access and refresh tokens carry the lease ID, revision, workflow
+attempt, source SHA, API image digest, binding hash and tenant ID; both expire
+by the lease's hard expiry. Refresh rejects a changed lease revision or
+attempt, out-of-scope tenant, expired window or absent admission. Login and
+refresh recheck fresh active admission before returning a new token, closing a
+drain/renewal race. Mutation
+authentication compares the token with the current committed request lease;
+safe result reads may use a still-valid token from `drain_from_revision` while
+the lease is draining before hard expiry. Authenticated safe reads use a fresh
+`inspect_lease()` identity/lock check and reject HOLD, CLOSED, expiry or adapter
+loss; this readback alone never admits a mutation. Preexisting DRF sessions,
+tenantless DRF session login and all other bypass routes remain closed in QA.
+Default/production token and session behavior is unchanged.
+
+This is code-level protection only. The QA endpoint remains a HOLD until the
+release owner proves that the exact isolated port always receives QA identity,
+the process has the least-privilege trusted lease reader and admission activity
+readback, and no direct port bypass exists. A fully missing QA identity cannot
+be distinguished from ordinary development by this middleware alone. After
+JWT expiry, the owner uses control-plane readback and retained artifacts;
+product-role access does not continue. Acceptance save/reload and cross-role evidence
+must finish before hard expiry; otherwise the run is FAIL/HOLD.
+
+| Lease/runtime state | New mutation, login, refresh | Existing-token safe GET |
+| --- | --- | --- |
+| OPEN, before `expires_at - 30s` | Fresh gate + tenant/token checks | Allowed within token expiry and tenant authorization |
+| DRAINING or margin reached, before hard expiry | `QA_WINDOW_CLOSED` | Allowed while the existing token is valid; no new work |
+| CLOSED, expired, missing adapter or identity | `QA_WINDOW_CLOSED` | Product JWT expires by hard expiry; owner uses control-plane readback and retained artifacts |
+
+Focused offline tests cover ordinary/partial QA,
+wrong tenant and route, stale revision, expiry margin, adapter denial, response
+lifetime, 503 audit side effects and unchanged production settings. Live user
+journeys and cleanup0 remain release gates, not established by these tests.
