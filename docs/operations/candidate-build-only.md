@@ -56,6 +56,10 @@ base/Messaging은 기존 성공 태그와 digest를 그대로 표시한다. 신�
 archive SHA-256, ECR digest와 대조한 뒤에만
 `candidate-complete-<runID>-<attempt>` QA 전용 receipt를
 발행한다. 개별 push 성공 또는 부분 receipt는 완전한 이미지 세트가 아니다.
+선택되지 않은 base 빌드 또는 export의 건너뜀은 게시·최종 검증까지 전파되지
+않도록 두 단계의 조건에 명시적인 취소 검사를 둔다. 실제 검증·빌드·게시 성공
+조건은 유지한다. 마지막 무권한 완료 검사는 게시나 receipt 발행이 건너뛰어져도
+실행을 실패로 판정한다. workflow의 녹색 상태만 보고 부분 이미지를 사용하지 않는다.
 Video worker는 이 작업의 빌드 대상이 아니며, 이 receipt는 여섯 이미지
 production 후보 manifest나 정식 릴리스 게이트를 대체하지 않는다. 후속 QA는
 해당 receipt의 정확한 digest만 사용하고 정식 배포는 기존 immutable 후보 →

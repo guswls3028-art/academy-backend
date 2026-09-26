@@ -6,6 +6,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import tarfile
 import tempfile
@@ -13,6 +14,8 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+
+import yaml
 
 from scripts.v1 import candidate_build_only as candidate
 
@@ -235,6 +238,49 @@ class ProductionChangeDetectionTests(unittest.TestCase):
             ["apps/domains/exams/views/exam_view.py", "scripts/v1/deploy.ps1",
              "scripts/v1/candidate_build_only_extra.py"],
         )
+
+
+class WorkflowCompletionTests(unittest.TestCase):
+    def test_completion_shell_rejects_every_non_success_result(self):
+        shell = ("C:/Program Files/Git/bin/bash.exe" if os.name == "nt" else shutil.which("bash"))
+        if not shell or not Path(shell).is_file():
+            self.skipTest("Bash is required to execute the exact workflow completion step")
+        workflow = yaml.safe_load((Path(__file__).resolve().parents[2] /
+                                  ".github/workflows/candidate-build-only.yml").read_text(encoding="utf-8"))
+        step = workflow["jobs"]["completion"]["steps"][0]
+        successful = dict.fromkeys(step["env"], "success")
+        cases = [successful]
+        for variable in successful:
+            for result in ("skipped", "failure", "cancelled", ""):
+                cases.append({**successful, variable: result})
+        for values in cases:
+            with self.subTest(values=values):
+                result = subprocess.run([shell, "-c", step["run"]], env={**os.environ, **values},
+                                        capture_output=True, timeout=10, check=False)
+                self.assertEqual(result.returncode == 0, values == successful)
+
+    def test_optional_base_skip_cannot_suppress_publication_or_hide_missing_receipt(self):
+        workflow = yaml.safe_load((Path(__file__).resolve().parents[2] /
+                                  ".github/workflows/candidate-build-only.yml").read_text(encoding="utf-8"))
+        jobs = workflow["jobs"]
+        # A status function is required even when the direct dependency passed:
+        # the intentionally skipped base ancestor otherwise injects success().
+        for job_id, upstream in (("publish", "build-runtime"), ("finalize", "publish")):
+            condition = jobs[job_id]["if"]
+            self.assertIn("!cancelled()", condition)
+            self.assertIn("needs.validate.result == 'success'", condition)
+            self.assertIn(f"needs.{upstream}.result == 'success'", condition)
+        completion = jobs["completion"]
+        self.assertIn("always()", completion["if"])
+        self.assertEqual(set(completion["needs"]), {"validate", "publish", "finalize"})
+        self.assertEqual(completion["permissions"], {})
+        self.assertNotIn("environment", completion)
+        step = completion["steps"][0]
+        for variable, upstream in (("VALIDATION_RESULT", "validate"),
+                                   ("PUBLICATION_RESULT", "publish"),
+                                   ("FINALIZATION_RESULT", "finalize")):
+            self.assertEqual(step["env"][variable], "${{ needs." + upstream + ".result }}")
+            self.assertIn(f'test "${variable}" = success', step["run"])
 
 
 class CompleteReceiptTests(unittest.TestCase):
