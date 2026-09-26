@@ -947,7 +947,7 @@ class MixedOmrSubjectiveProjectionPostgresTests(TestCase):
 
     def test_legacy_pending_exam_clinic_link_is_hidden_without_hiding_other_exam(self):
         self._grade_objective_only()
-        ClinicLink.objects.create(
+        pending_link = ClinicLink.objects.create(
             tenant=self.tenant,
             enrollment=self.enrollment,
             session=self.session,
@@ -977,6 +977,22 @@ class MixedOmrSubjectiveProjectionPostgresTests(TestCase):
 
         pending_only_row = session_score_row()
         self.assertFalse(pending_only_row["clinic_required"])
+
+        out = StringIO()
+        call_command(
+            "repair_assessment_state_drift",
+            "--tenant",
+            str(self.tenant.id),
+            "--apply",
+            "--json",
+            stdout=out,
+        )
+        pending_link.refresh_from_db()
+        self.assertIsNone(pending_link.resolved_at)
+        self.assertEqual(
+            json.loads(out.getvalue())["resolved_non_live_source_clinic_link_count"],
+            0,
+        )
 
         other_exam = Exam.objects.create(
             tenant=self.tenant,
