@@ -355,7 +355,7 @@ class SlotLifecycleTests(unittest.TestCase):
     def test_capture_idle_baseline_and_untouched_failure_restoration(self):
         original=self.baseline_instance()
         with patch.object(slot,"aws",side_effect=self.fake_aws([original])):
-            snapshot=slot.capture("task-fixture")
+            snapshot=slot.capture("task-fixture","candidate:123:1")
             self.assertEqual(snapshot["images"]["ApiImageUri"],prepare.REGISTRY+"/academy-api@"+DIGEST)
             self.assertFalse(slot.assess(snapshot,require_restored=True)["replace"])
 
@@ -364,16 +364,16 @@ class SlotLifecycleTests(unittest.TestCase):
         for option in ("sessions","busy"):
             with self.subTest(option=option), patch.object(slot,"aws",side_effect=self.fake_aws([original],**{option:True})):
                 with self.assertRaises(ValueError):
-                    slot.capture("task-fixture")
+                    slot.capture("task-fixture","candidate:123:1")
         original["Tags"].append({"Key":"SlotLeaseOwner","Value":"other-task"})
         with patch.object(slot,"aws",side_effect=self.fake_aws([original])):
             with self.assertRaises(ValueError):
-                slot.capture("task-fixture")
+                slot.capture("task-fixture","candidate:123:1")
 
     def test_owned_qa_requires_restore_then_exact_cleanup_readback(self):
         original=self.baseline_instance()
         with patch.object(slot,"aws",side_effect=self.fake_aws([original])):
-            snapshot=slot.capture("task-fixture")
+            snapshot=slot.capture("task-fixture","candidate:123:1")
         qa=copy.deepcopy(original)
         qa["InstanceId"]="i-0fedcba9876543210"
         qa["IamInstanceProfile"]["Arn"]="arn:aws:iam::809466760795:instance-profile/academy-api-qa"
@@ -393,7 +393,7 @@ class SlotLifecycleTests(unittest.TestCase):
         original["Tags"]=[t for t in original["Tags"] if t["Key"]!="ApiEnvVersion"]
         with patch.object(slot,"aws",side_effect=self.fake_aws([original])):
             with self.assertRaises(ValueError):
-                slot.capture("task-fixture")
+                slot.capture("task-fixture","candidate:123:1")
         with patch.object(slot,"aws",side_effect=self.fake_aws([self.baseline_instance(),self.baseline_instance()])):
             with self.assertRaises(ValueError):
                 slot.guard("task-fixture",require_baseline=True)

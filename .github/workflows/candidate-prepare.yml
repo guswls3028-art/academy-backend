@@ -234,10 +234,14 @@ jobs:
       - name: Download immutable pre-QA baseline snapshot
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: development-baseline-${{ github.run_id }}-${{ github.run_attempt }}
+          artifact-ids: ${{ needs.prepare.outputs.baseline_artifact_id }}
+          merge-multiple: true
           path: ${{ runner.temp }}/baseline
-      - name: Renew same owner before restoration
-        run: python3 scripts/v1/deployment_lock.py renew --owner "$ACADEMY_DEPLOY_LOCK_OWNER" --ttl-seconds 10800
+      - name: Bind restoration to the original snapshot and current attempt
+        id: restoration-lock
+        run: |
+          python3 scripts/v1/candidate_slot.py restore-lock \
+            --snapshot "$RUNNER_TEMP/baseline/baseline.json" --sha256 "$BASELINE_SHA256"
       - name: Install pinned restoration SDK
         if: needs.prepare.outputs.environment_receipt != ''
         run: python3 -m pip install -c requirements/constraints.txt boto3
@@ -274,5 +278,5 @@ jobs:
           python3 scripts/v1/candidate_slot.py verify --snapshot $snapshot --sha256 $env:BASELINE_SHA256
           if ($LASTEXITCODE -ne 0) { throw "Baseline restoration or temporary QA cleanup readback failed." }
       - name: Release own shared lock after restoration attempt
-        if: always()
+        if: always() && steps.restoration-lock.outcome == 'success'
         run: python3 scripts/v1/deployment_lock.py release --owner "$ACADEMY_DEPLOY_LOCK_OWNER"

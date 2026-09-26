@@ -77,7 +77,11 @@ data cleanup remains a separate acceptance gate.
 
 An expired/lost lock, another owner, active session, failed candidate termination
 or failed restoration blocks completion. Do not force recovery or claim cleanup0.
-Keep the QA lease and alert the owner for exact recovery. Main workflow
+Keep the QA lease and alert the owner for exact recovery. A cancelled/failed
+finalization can be retried as the restoration job: download by the immutable
+artifact ID, verify the original snapshot hash, then acquire a new attempt's
+lock only after owner/session/queue readback. Never reconstruct an artifact name
+from the retry attempt or release an older/different holder's lock. Main workflow
 concurrency and the explicit lease guard prevent a following deployment from
 silently replacing that held QA slot.
 

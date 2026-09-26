@@ -75,6 +75,8 @@ def guard(owner="", require_baseline=False):
 
 
 def validate_snapshot(snapshot):
+    require(re.fullmatch(r"candidate:[1-9][0-9]*:[1-9][0-9]*", snapshot.get("lock_owner", "")),
+            "Baseline lock provenance missing")
     require(snapshot.get("schemaVersion") == 1 and snapshot.get("capacity") == 1,
             "Invalid baseline snapshot")
     require(re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9:._-]{2,120}", snapshot.get("owner", "")),
@@ -93,13 +95,13 @@ def validate_snapshot(snapshot):
     return snapshot
 
 
-def capture(owner):
+def capture(owner, lock_owner):
     require(bool(owner), "A named QA slot owner is required")
     current = guard(owner, require_baseline=True)
     instance = current[0]; t = tags(instance)
     require(not t.get("SlotLeaseOwner"), "Nested QA cannot replace another QA baseline")
     snapshot = {
-        "schemaVersion": 1, "owner": owner, "capacity": 1, "instance_id": instance["InstanceId"],
+        "schemaVersion": 1, "owner": owner, "lock_owner": lock_owner, "capacity": 1, "instance_id": instance["InstanceId"],
         "profile": instance.get("IamInstanceProfile", {}).get("Arn"),
         "ami": instance["ImageId"], "instance_type": instance["InstanceType"],
         "release": t.get("ReleaseId"), "images": {k:t.get(k) for k in ROLES},
@@ -141,7 +143,7 @@ def assess(snapshot, require_restored=False):
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument("command",choices=("guard","capture","assess","verify"))
+    p.add_argument("command",choices=("guard","capture","assess","verify","restore-lock"))
     p.add_argument("--owner",default="")
     p.add_argument("--snapshot",type=Path)
     p.add_argument("--sha256")
@@ -155,7 +157,7 @@ def main():
             # Capture only under the mutation lock, after the pre-lock idle check.
             subprocess.run(["python3",str(Path(__file__).with_name("deployment_lock.py")),"assert-owned",
                             "--owner",os.environ["ACADEMY_DEPLOY_LOCK_OWNER"]],check=True)
-            result=capture(a.owner)
+            result=capture(a.owner, os.environ["ACADEMY_DEPLOY_LOCK_OWNER"])
             raw=(json.dumps(result,indent=2)+"\n").encode()
             a.snapshot.parent.mkdir(parents=True,exist_ok=True);a.snapshot.write_bytes(raw)
             if a.github_output:
@@ -163,7 +165,19 @@ def main():
                     f.write("sha256="+hashlib.sha256(raw).hexdigest()+"\n")
         else:
             require(a.snapshot is not None and a.sha256,"Exact snapshot coordinates required")
-            result=assess(load_snapshot(a.snapshot,a.sha256),a.command=="verify")
+            snapshot=load_snapshot(a.snapshot,a.sha256)
+            result=assess(snapshot,a.command=="verify")
+            if a.command=="restore-lock":
+                current=os.environ["ACADEMY_DEPLOY_LOCK_OWNER"]
+                previous=snapshot["lock_owner"]
+                require(re.fullmatch(r"candidate:[1-9][0-9]*:[1-9][0-9]*",current),
+                        "Invalid restoration lock owner")
+                require(current.split(":")[1] == previous.split(":")[1]
+                        and int(current.split(":")[2]) >= int(previous.split(":")[2]),
+                        "Restoration belongs to another run or older attempt")
+                action="renew" if current==previous else "acquire"
+                subprocess.run(["python3",str(Path(__file__).with_name("deployment_lock.py")),action,
+                                "--owner",current,"--ttl-seconds","10800"],check=True)
         print(json.dumps(result,sort_keys=True))
     except Exception:
         p.exit(2,"CANDIDATE_SLOT_BLOCKED: owner, session, queue or immutable baseline verification failed\n")
