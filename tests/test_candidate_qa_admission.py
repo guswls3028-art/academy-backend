@@ -48,7 +48,7 @@ class AdmissionTests(unittest.TestCase):
             "started_at":900,"renewed_at":900,"expires_at":1600,
         }
         self.context={
-            "ACADEMY_RUNTIME_ENV":"development","ACADEMY_QA_MODE":"isolated-qa",
+            "ACADEMY_RUNTIME_ENV":"development","ACADEMY_QA_MODE":"isolated-qa","CANDIDATE_LEASE_REQUIRED":"true",
             "ACADEMY_QA_LEASE_ID":"a"*32,"ACADEMY_QA_BINDING_SHA256":binding_sha256(self.record),
             "ACADEMY_QA_MESSAGE_KEY_VERSION":"1","ACADEMY_QA_MESSAGE_SIGNING_KEY":"e"*64,
         }
@@ -77,7 +77,8 @@ class AdmissionTests(unittest.TestCase):
         reader.assert_not_called()
 
     def test_partial_qa_configuration_and_production_qa_flag_fail(self):
-        for context in ({"ACADEMY_QA_LEASE_ID":"a"*32},
+        for context in ({"ACADEMY_QA_LEASE_ID":"a"*32},{"CANDIDATE_LEASE_REQUIRED":"true"},
+                        dict(self.context,CANDIDATE_LEASE_REQUIRED="false"),
                         dict(self.context,ACADEMY_RUNTIME_ENV="production"),
                         dict(self.context,ACADEMY_QA_MODE="unknown")):
             with self.assertRaises(QaLeaseClosed):AdmissionGate("api",context=context)
@@ -335,4 +336,9 @@ class MessagingProducerTests(unittest.TestCase):
             with self.assertRaises(QaLeaseClosed):
                 producer.enqueue(tenant_id=1,source_tenant_id=102,
                     to="01000000000",text="synthetic",message_mode="alimtalk")
+            producer.queue_client.send_message.assert_not_called()
+            with override_settings(MESSAGING_SQS_QUEUE_NAME="academy-v1-messaging-queue"):
+                with self.assertRaises(QaLeaseClosed):
+                    producer.enqueue(tenant_id=1,source_tenant_id=101,
+                        to="01000000000",text="synthetic",message_mode="alimtalk")
             producer.queue_client.send_message.assert_not_called()

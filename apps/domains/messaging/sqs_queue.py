@@ -224,6 +224,9 @@ class MessagingSQSQueue:
         from apps.infrastructure.qa_lease import get_admission_gate
         qa_gate = get_admission_gate("api")
         if qa_gate.enabled:
+            from apps.infrastructure.qa_lease import QaLeaseClosed
+            if self._get_queue_name() != "academy-v1-development-messaging-queue":
+                raise QaLeaseClosed("Isolated QA messaging queue differs")
             qa_tenant = int(source_tenant_id) if source_tenant_id is not None else int(tenant_id)
             message = qa_gate.stamp_message(
                 message, qa_tenant,

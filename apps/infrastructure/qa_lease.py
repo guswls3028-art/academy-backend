@@ -130,8 +130,14 @@ class AdmissionGate:
         self.context = dict(os.environ if context is None else context)
         self.clock = clock
         self.enabled = self.context.get("ACADEMY_QA_MODE", "") == "isolated-qa"
-        configured = any(self.context.get(k) for k in (
+        required_raw = self.context.get("CANDIDATE_LEASE_REQUIRED", "").lower()
+        if required_raw not in ("", "true", "false", "1", "0"):
+            raise QaLeaseClosed("Invalid required-lease marker")
+        required = required_raw in ("true", "1")
+        configured = required or any(self.context.get(k) for k in (
             "ACADEMY_QA_MODE", "ACADEMY_QA_LEASE_ID", "ACADEMY_QA_BINDING_SHA256"))
+        if self.enabled and not required:
+            raise QaLeaseClosed("Isolated QA must require its committed lease")
         if configured and not self.enabled:
             raise QaLeaseClosed("Invalid QA runtime configuration")
         if self.enabled:
