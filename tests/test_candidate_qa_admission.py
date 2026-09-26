@@ -171,6 +171,15 @@ class AdmissionTests(unittest.TestCase):
         self.assertNotIn("sensitive",json.dumps(gate.snapshot()))
         with self.assertRaises(QaLeaseClosed):gate.admit()
 
+    def test_draining_inspection_is_metadata_only_and_admission_stays_closed(self):
+        gate=self.gate("api")
+        self.record.update(state="draining",revision=2,drain_from_revision=1)
+        record=gate.inspect_lease()
+        self.assertEqual(record["state"],"draining")
+        self.assertEqual(record["drain_from_revision"],1)
+        self.assertEqual(record["binding_sha256"],binding_sha256(self.record))
+        with self.assertRaises(QaLeaseClosed):gate.admit()
+
     def test_auth_purpose_is_api_only_and_never_grants_enqueue_tenant(self):
         gate=self.gate("api")
         with gate.begin("auth-bootstrap",purpose="auth"):
@@ -212,3 +221,118 @@ class ClaimJournalTests(unittest.TestCase):
         client=Mock();client.get_item.return_value={"Item":{"identity":{"S":"different"}}}
         with self.assertRaises(QaLeaseClosed):MessageClaims(client).claim(self.stamp())
         client.transact_write_items.assert_not_called()
+
+class MessagingAdmissionTests(unittest.TestCase):
+    setUp=AdmissionTests.setUp
+    gate=AdmissionTests.gate
+
+    def message(self,gate):
+        return gate.stamp_message({"tenant_id":101,"to":"synthetic-recipient","text":"synthetic",
+                                   "business_idempotency_key":"job-123"},101,job_id="job-123")
+
+    def run_worker(self,gate,payload,*,expired_in_poll=False,redis_available=True):
+        import os
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from apps.worker.messaging_worker import sqs_main as worker
+        queue=Mock()
+        def receive(**kwargs):
+            worker._shutdown=True
+            if expired_in_poll:self.now=1570
+            return {"Body":json.dumps(payload),"ReceiptHandle":"synthetic-receipt","MessageId":"synthetic-id"}
+        queue.receive_message.side_effect=receive
+        def sleep(seconds):
+            worker._shutdown=True
+        cfg=SimpleNamespace(MESSAGING_SQS_QUEUE_NAME="academy-v1-development-messaging-queue",
+                            SQS_WAIT_TIME_SECONDS=0,TEST_TENANT_ID=101)
+        with patch.dict(os.environ,{"DJANGO_SETTINGS_MODULE":"","SOLAPI_MOCK":"true","REDIS_HOST":""}), \
+             patch.object(worker,"get_admission_gate",return_value=gate), \
+             patch.object(worker,"get_queue_client",return_value=queue), \
+             patch.object(worker,"load_config",return_value=cfg), \
+             patch.object(worker.signal,"signal"), \
+             patch.object(worker.time,"sleep",side_effect=sleep), \
+             patch.object(worker,"release_job_lock") as release, \
+             patch.object(worker,"_get_solapi_client") as provider, \
+             patch.object(worker,"acquire_job_lock",return_value=True) as acquire:
+            if not redis_available:
+                acquire.side_effect=worker.RedisLockUnavailableError("synthetic outage")
+            worker._shutdown=False
+            try:
+                self.assertEqual(worker.main(),0)
+            finally:
+                worker._shutdown=False
+            provider.assert_not_called()
+        return queue,acquire,release
+
+    def test_valid_mock_message_completes_and_duplicate_acks_without_reexecution(self):
+        gate=self.gate("messaging");payload=self.message(gate)
+        queue,acquire,release=self.run_worker(gate,payload)
+        acquire.assert_called_once();release.assert_called_once()
+        queue.delete_message.assert_called_once()
+        self.assertEqual(self.claims.rows[payload["_qa_lease"]["message_id"]]["state"],"completed")
+        queue,acquire,release=self.run_worker(gate,payload)
+        queue.delete_message.assert_called_once();acquire.assert_not_called()
+        self.assertFalse(gate.snapshot()["holds"])
+
+    def test_journal_failure_cannot_ack_message(self):
+        gate=self.gate("messaging");payload=self.message(gate)
+        self.claims.finish=Mock(side_effect=QaLeaseClosed("outcome uncertain"))
+        queue,acquire,_=self.run_worker(gate,payload)
+        queue.delete_message.assert_not_called()
+        self.assertTrue(gate.snapshot()["holds"])
+        self.assertTrue(gate.snapshot()["inflight"])
+
+    def test_tampered_and_expired_after_poll_never_reach_job_lock_or_delete(self):
+        gate=self.gate("messaging");payload=self.message(gate);payload["tenant_id"]=102
+        queue,acquire,_=self.run_worker(gate,payload)
+        acquire.assert_not_called();queue.delete_message.assert_not_called()
+        self.assertEqual(queue.change_message_visibility.call_args.kwargs["visibility_timeout"],0)
+        self.assertTrue(gate.snapshot()["holds"])
+        gate=self.gate("messaging");payload=self.message(gate)
+        queue,acquire,_=self.run_worker(gate,payload,expired_in_poll=True)
+        acquire.assert_not_called();queue.delete_message.assert_not_called()
+
+    def test_inflight_duplicate_releases_without_hold_then_retry_succeeds(self):
+        gate=self.gate("messaging");payload=self.message(gate)
+        with gate.begin("other-receipt",tenant_id=101,message=payload,job_id="job-123"):
+            queue,acquire,_=self.run_worker(gate,payload)
+            acquire.assert_not_called();queue.delete_message.assert_not_called()
+            self.assertEqual(queue.change_message_visibility.call_args.kwargs["visibility_timeout"],10)
+            self.assertFalse(gate.snapshot()["holds"])
+        queue,acquire,_=self.run_worker(gate,payload,redis_available=False)
+        self.assertEqual(self.claims.rows[payload["_qa_lease"]["message_id"]]["state"],"retryable")
+        queue,acquire,_=self.run_worker(gate,payload)
+        queue.delete_message.assert_called_once()
+        self.assertEqual(self.claims.rows[payload["_qa_lease"]["message_id"]]["state"],"completed")
+
+
+class MessagingProducerTests(unittest.TestCase):
+    setUp=AdmissionTests.setUp
+    gate=AdmissionTests.gate
+
+    def test_authoritative_source_tenant_is_stamped_before_sqs_send(self):
+        from django.conf import settings
+        from django.test import override_settings
+        from unittest.mock import patch
+        if not settings.configured:
+            settings.configure(USE_TZ=True,SECRET_KEY="offline-synthetic-test")
+        from apps.domains.messaging.sqs_queue import MessagingSQSQueue
+        producer=MessagingSQSQueue.__new__(MessagingSQSQueue)
+        producer.queue_client=Mock()
+        producer.wake_messaging_workers=False
+        gate=self.gate("api")
+        with override_settings(MESSAGING_TENANT_BINDING_KEY="synthetic-test-key",
+                               MESSAGING_SQS_QUEUE_NAME="academy-v1-development-messaging-queue"), \
+             patch("apps.infrastructure.qa_lease.get_admission_gate",return_value=gate):
+            self.assertTrue(producer.enqueue(tenant_id=1,source_tenant_id=101,
+                to="01000000000",text="synthetic",message_mode="alimtalk"))
+            sent=producer.queue_client.send_message.call_args.kwargs["message"]
+            self.assertEqual(sent["_qa_lease"]["tenant_id"],101)
+            self.assertEqual(sent["_qa_lease"]["queue_kind"],"messaging")
+            self.gate("messaging").validate_message(
+                sent,tenant_id=101,job_id=sent["business_idempotency_key"])
+            producer.queue_client.reset_mock()
+            with self.assertRaises(QaLeaseClosed):
+                producer.enqueue(tenant_id=1,source_tenant_id=102,
+                    to="01000000000",text="synthetic",message_mode="alimtalk")
+            producer.queue_client.send_message.assert_not_called()

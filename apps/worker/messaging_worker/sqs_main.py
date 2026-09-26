@@ -19,6 +19,9 @@ import time
 from typing import Callable, Optional
 
 from libs.queue import get_queue_client, QueueUnavailableError
+from apps.infrastructure.qa_lease import (
+    get_admission_gate, QaLeaseClosed, QaMessageCompleted, QaMessageInFlight,
+)
 from libs.redis.idempotency import acquire_job_lock, release_job_lock, RedisLockUnavailableError
 
 from apps.worker.messaging_worker.config import load_config
@@ -679,6 +682,9 @@ def main() -> int:
 
     cfg = load_config()
     queue_client = get_queue_client()
+    qa_gate = get_admission_gate("messaging")
+    if qa_gate.enabled and os.environ.get("SOLAPI_MOCK", "").lower() != "true":
+        raise QaLeaseClosed("Isolated QA messaging requires the existing mock provider")
 
     # Long Polling 10~20초: 빈 큐에 반복 요청 방지 → AWS 비용·CPU 절약
     logger.info(
@@ -689,10 +695,26 @@ def main() -> int:
 
     consecutive_errors = 0
     max_consecutive_errors = 10
+    qa_scope = None
+    qa_payload = None
+
+    def delete_message(**kwargs):
+        nonlocal qa_scope
+        # Persist terminal nonce outcome BEFORE acknowledging the SQS receipt.
+        # A journal failure preserves the receipt and active HOLD evidence.
+        if qa_scope is not None:
+            qa_gate.complete_message(qa_payload)
+            ending = qa_scope
+            qa_scope = None
+            ending.__exit__(None, None, None)
+        return queue_client.delete_message(**kwargs)
 
     try:
         while not _shutdown:
+            qa_scope = None
+            qa_payload = None
             try:
+                qa_gate.admit()
                 # Heartbeat — 매 polling cycle 1회. 실패는 silent (워커 차단 X).
                 try:
                     from apps.shared.utils.heartbeat import beat as _beat
@@ -722,6 +744,41 @@ def main() -> int:
                     continue
 
                 job_id = f"messaging:{message_id}"
+                if qa_gate.enabled:
+                    try:
+                        qa_payload = json.loads(body) if isinstance(body, str) else body
+                        if not isinstance(qa_payload, dict):
+                            raise QaLeaseClosed("Canonical messaging payload required")
+                        qa_tenant = qa_payload.get("source_tenant_id")
+                        if qa_tenant is None:
+                            qa_tenant = qa_payload.get("tenant_id")
+                        qa_job_id = qa_payload.get("business_idempotency_key")
+                        qa_gate.validate_message(qa_payload, tenant_id=qa_tenant, job_id=qa_job_id)
+                        entering = qa_gate.begin(
+                            f"{job_id}:{receipt_handle}", tenant_id=qa_tenant,
+                            message=qa_payload, job_id=qa_job_id,
+                        )
+                        entering.__enter__()
+                        qa_scope = entering
+                    except QaMessageCompleted:
+                        # Previously completed identical nonce: ACK without rerunning.
+                        delete_message(
+                            queue_name=cfg.MESSAGING_SQS_QUEUE_NAME, receipt_handle=receipt_handle,
+                        )
+                        continue
+                    except QaMessageInFlight:
+                        queue_client.change_message_visibility(
+                            queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
+                            receipt_handle=receipt_handle, visibility_timeout=10,
+                        )
+                        continue
+                    except (QaLeaseClosed, ValueError, TypeError):
+                        qa_gate.hold_message(qa_payload, reason="qa_message_rejected")
+                        queue_client.change_message_visibility(
+                            queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
+                            receipt_handle=receipt_handle, visibility_timeout=0,
+                        )
+                        raise QaLeaseClosed("Messaging receipt rejected; preserved for owned QA recovery") from None
                 try:
                     lock_acquired = acquire_job_lock(job_id)
                 except RedisLockUnavailableError:
@@ -742,7 +799,7 @@ def main() -> int:
                             data = json.loads(body)
                         except json.JSONDecodeError:
                             logger.error("Invalid JSON in message body")
-                            queue_client.delete_message(
+                            delete_message(
                                 queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                                 receipt_handle=receipt_handle,
                             )
@@ -759,7 +816,7 @@ def main() -> int:
                             payload_shape["payload_type"],
                             payload_shape["keys"],
                         )
-                        queue_client.delete_message(
+                        delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
@@ -773,7 +830,7 @@ def main() -> int:
                             "deleting message_id=%s",
                             message_id,
                         )
-                        queue_client.delete_message(
+                        delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
@@ -788,7 +845,7 @@ def main() -> int:
                             tenant_id,
                             message_id,
                         )
-                        queue_client.delete_message(
+                        delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
@@ -801,7 +858,7 @@ def main() -> int:
                             "Message skipped: tenant_id=%s is test tenant (messaging disabled)",
                             raw_tenant_id_int,
                         )
-                        queue_client.delete_message(
+                        delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
@@ -836,7 +893,7 @@ def main() -> int:
                                 )
                             except Exception as exc:
                                 logger.warning("tenant binding failure log creation failed: %s", exc)
-                        queue_client.delete_message(
+                        delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
@@ -859,7 +916,7 @@ def main() -> int:
                             message_id,
                             exc,
                         )
-                        queue_client.delete_message(
+                        delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
@@ -871,7 +928,7 @@ def main() -> int:
                             "Message skipped: source_tenant_id=%s is test tenant (messaging disabled)",
                             source_tenant_id_msg,
                         )
-                        queue_client.delete_message(
+                        delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
@@ -899,7 +956,7 @@ def main() -> int:
                                     ),
                                 )
                                 continue
-                            queue_client.delete_message(
+                            delete_message(
                                 queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                                 receipt_handle=receipt_handle,
                             )
@@ -929,7 +986,7 @@ def main() -> int:
                             from apps.domains.messaging.services import is_reservation_cancelled
                             if is_reservation_cancelled(int(reservation_id), tenant_id=business_tenant_id):
                                 logger.info("reservation_id=%s cancelled, skip send", reservation_id)
-                                queue_client.delete_message(
+                                delete_message(
                                     queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                                     receipt_handle=receipt_handle,
                                 )
@@ -1006,7 +1063,7 @@ def main() -> int:
                                     "recipient policy block log creation failed: %s",
                                     exc,
                                 )
-                        queue_client.delete_message(
+                        delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
@@ -1077,7 +1134,7 @@ def main() -> int:
                                 )
                             except Exception as e:
                                 logger.warning("create_notification_log failed: %s", e)
-                        queue_client.delete_message(
+                        delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
@@ -1168,7 +1225,7 @@ def main() -> int:
                                     "Failed to record blocked tenant channel route"
                                 )
                                 continue
-                            queue_client.delete_message(
+                            delete_message(
                                 queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                                 receipt_handle=receipt_handle,
                             )
@@ -1228,7 +1285,7 @@ def main() -> int:
                                     "Business dedup: key=%s already claimed, skipping (tenant=%s)",
                                     business_key[:16], tenant_id,
                                 )
-                                queue_client.delete_message(
+                                delete_message(
                                     queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                                     receipt_handle=receipt_handle,
                                 )
@@ -1255,7 +1312,7 @@ def main() -> int:
                                         "DB dedup: message_id=%s already sent successfully, skipping",
                                         message_id,
                                     )
-                                    queue_client.delete_message(
+                                    delete_message(
                                         queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                                         receipt_handle=receipt_handle,
                                     )
@@ -1302,7 +1359,7 @@ def main() -> int:
                                 target_id=target_id_msg,
                                 target_name=target_name,
                             )
-                        queue_client.delete_message(
+                        delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
@@ -1389,7 +1446,7 @@ def main() -> int:
                                 target_id=target_id_msg,
                                 target_name=target_name,
                             )
-                        queue_client.delete_message(
+                        delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                             receipt_handle=receipt_handle,
                         )
@@ -1600,7 +1657,7 @@ def main() -> int:
                             consecutive_errors += 1
                         elif send_succeeded:
                             _record_progress(job_id, "done", 100, step_index=4, step_percent=100, tenant_id=tenant_id_str)
-                            queue_client.delete_message(
+                            delete_message(
                                 queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                                 receipt_handle=receipt_handle,
                             )
@@ -1612,7 +1669,7 @@ def main() -> int:
                                     "send permanently failed (non-retryable), deleting message: reason=%s to=%s tenant=%s",
                                     raw_reason, to[:4] if to else "?", tenant_id,
                                 )
-                                queue_client.delete_message(
+                                delete_message(
                                     queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                                     receipt_handle=receipt_handle,
                                 )
@@ -1626,7 +1683,7 @@ def main() -> int:
                                     tenant_id,
                                     claim_log_id,
                                 )
-                                queue_client.delete_message(
+                                delete_message(
                                     queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                                     receipt_handle=receipt_handle,
                                 )
@@ -1666,6 +1723,12 @@ def main() -> int:
                         release_job_lock(job_id)
                     # else: 발송 실패 → 잠금 유지 (TTL 만료까지 중복 차단)
 
+            except QaLeaseClosed:
+                # Keep the process/evidence alive; never consume another receipt
+                # while its lease or an owned rejection remains unresolved.
+                logger.warning("QA_WINDOW_CLOSED: messaging admissions paused")
+                time.sleep(5)
+                continue
             except KeyboardInterrupt:
                 break
             except QueueUnavailableError:
@@ -1678,6 +1741,9 @@ def main() -> int:
                 if consecutive_errors >= max_consecutive_errors:
                     return 1
                 time.sleep(5)
+            finally:
+                if qa_scope is not None:
+                    qa_scope.__exit__(None, None, None)
 
         logger.info("Messaging Worker shutdown complete")
         return 0

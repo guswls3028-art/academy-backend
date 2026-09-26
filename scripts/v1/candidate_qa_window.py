@@ -169,9 +169,20 @@ class Window:
         self.store.commit(record,revision,now)
         return record
 
+    def begin_drain(self, lease_id, owner_task):
+        record=self.owned(lease_id,owner_task); now=int(self.clock())
+        require(record["state"] in ("active","draining","hold"), "Closed lease cannot drain again")
+        if record["state"] != "draining":
+            revision=record["revision"]
+            record.update(state="draining",revision=revision+1,
+                          drain_from_revision=record.get("drain_from_revision",revision))
+            self.store.commit(record,revision,now)
+        self.runtime.drain(record)
+        return record
+
     def finish(self, lease_id, owner_task, completion=None):
         record=self.owned(lease_id,owner_task); now=int(self.clock())
-        require(record["state"] in ("active","hold"), "Lease already completed; replay rejected")
+        require(record["state"] in ("active","draining","hold"), "Lease already completed; replay rejected")
         expired=now >= record["expires_at"]
         require(completion is not None or expired, "Owner completion or actual timeout required")
         if completion is not None:
@@ -186,9 +197,12 @@ class Window:
                     "Cleanup or immutable evidence missing")
         revision=record["revision"]
         try:
-            self.runtime.drain(record)
+            record=self.begin_drain(lease_id,owner_task)
+            revision=record["revision"]
             verify_readback(record,self.runtime.observe(record),now,idle=True,drained=True)
         except Exception:
+            record=self.owned(lease_id,owner_task)
+            revision=record["revision"]
             record.update(state="hold",revision=revision+1)
             self.store.commit(record,revision,now)
             raise WindowHold("Admission/drain/cleanup unverified; retain rollback coordinates")

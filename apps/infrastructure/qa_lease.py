@@ -227,6 +227,15 @@ class AdmissionGate:
         return (not self._holds and self._valid and self._record is not None and self._record["state"] == "active"
                 and int(self.clock()) < self._record["expires_at"] - MARGIN)
 
+    def inspect_lease(self):
+        """Fresh identity/lock proof, NOT permission to authenticate or mutate."""
+        if not self.enabled:
+            return None
+        with self._mutex:
+            record=self._observe()
+            self._persist()
+            return dict(record,binding_sha256=binding_sha256(record))
+
     def admit(self, pull_request=None):
         if not self.enabled:
             return None

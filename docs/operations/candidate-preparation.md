@@ -352,3 +352,21 @@ No key is logged or stored in the activity/journal artifacts. Offline fixtures
 inject a synthetic key. No actual key or IAM grant has been created. Runtime
 readback must match fresh process files to the actual expected containers/process
 inventory; a file alone or missing worker is not evidence of idle capacity.
+
+
+### QA state and acceptance cutoff
+
+OPEN is stored as active. It permits fresh bound authentication, mutations and
+new jobs before the 30-second admission cutoff. All role/result, save/reload and
+cross-role evidence must finish by the hard expiry. begin_drain records draining
+atomically and preserves drain_from_revision for previously issued JWTs. While
+draining and before hard expiry, only safe GET with an existing valid bound JWT
+is permitted; no login, refresh, mutation or new receive. The API owner enforces
+post-auth tenant membership and bounds token TTL by the lease hard expiry.
+inspect_lease() is fresh metadata, not admission or authentication permission.
+
+CLOSED/expired permits no product authentication. Only trusted control-plane
+readback, retained artifacts and owned cleanup/restoration remain. Missing
+acceptance evidence at the cutoff is FAIL/HOLD. No recovery credential extends
+product access. Completion must precede trusted restoration and requires the
+closed-admission, worker/session/queue and cleanup0 proofs described above.
