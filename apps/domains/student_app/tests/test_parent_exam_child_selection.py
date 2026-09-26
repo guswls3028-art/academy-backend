@@ -295,6 +295,25 @@ class ParentExamChildSelectionTests(TestCase):
         mock_dispatch.assert_not_called()
 
     def test_ended_lecture_hides_active_exam_but_preserves_published_result(self):
+        self.exam_a.essay_numbering = Exam.EssayNumbering.SEPARATE
+        self.exam_a.save(update_fields=["essay_numbering"])
+        sheet = self.question_a.sheet
+        sheet.total_questions = 3
+        sheet.choice_count = 1
+        sheet.essay_count = 2
+        sheet.save(update_fields=["total_questions", "choice_count", "essay_count"])
+        self.question_a.question_kind = ExamQuestion.QuestionKind.CHOICE
+        self.question_a.save(update_fields=["question_kind"])
+        ExamQuestion.objects.create(
+            sheet=sheet, number=2, question_kind=ExamQuestion.QuestionKind.ESSAY,
+        )
+        last_essay = ExamQuestion.objects.create(
+            sheet=sheet, number=3, question_kind=ExamQuestion.QuestionKind.ESSAY,
+        )
+        ResultItem.objects.create(
+            result=self.result_a, question=last_essay, answer="essay",
+            is_correct=True, score=0, max_score=0, source="online",
+        )
         lecture = self.enrollment_a.lecture
         lecture.is_active = False
         lecture.save(update_fields=["is_active", "updated_at"])
@@ -317,12 +336,18 @@ class ParentExamChildSelectionTests(TestCase):
         )
         self.assertEqual(result_response.status_code, 200, result_response.data)
         self.assertEqual(result_response.data["total_score"], 10)
+        self.assertEqual(result_response.data["essay_numbering"], "separate")
+        self.assertEqual(
+            next(item for item in result_response.data["items"] if item["question_number"] == 3)["essay_index"],
+            2,
+        )
 
     def test_exam_list_can_include_upcoming_dashboard_window(self):
         view = StudentExamListView.as_view()
         future_exam, _, _ = self._exam_for_student(self.student_a, "Upcoming Exam")
+        future_exam.essay_numbering = future_exam.EssayNumbering.SEPARATE
         future_exam.open_at = timezone.now() + timedelta(days=3)
-        future_exam.save(update_fields=["open_at"])
+        future_exam.save(update_fields=["open_at", "essay_numbering"])
 
         default_response = view(self._request("/student/exams/", student=self.student_a))
         upcoming_response = view(
@@ -333,6 +358,8 @@ class ParentExamChildSelectionTests(TestCase):
         self.assertNotIn(future_exam.id, [row["id"] for row in default_response.data["items"]])
         self.assertEqual(upcoming_response.status_code, 200)
         self.assertIn(future_exam.id, [row["id"] for row in upcoming_response.data["items"]])
+        upcoming_row = next(row for row in upcoming_response.data["items"] if row["id"] == future_exam.id)
+        self.assertEqual(upcoming_row["essay_numbering"], "separate")
 
     def test_exam_list_excludes_ended_lecture_from_ongoing_count(self):
         self.enrollment_a.lecture.is_active = False
@@ -463,6 +490,7 @@ class ParentExamChildSelectionTests(TestCase):
             ),
             pk=self.exam_a.id,
         )
+        self.assertEqual(questions_response.data[0]["question_kind"], "essay")
         invalid_response = StudentExamSubmitView.as_view()(
             self._post_request(
                 f"/student/exams/{self.exam_a.id}/submit/",

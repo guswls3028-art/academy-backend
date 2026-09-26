@@ -45,6 +45,10 @@ class Exam(BaseModel):
         CORRECTNESS = "correctness", "정오 입력"
         SCORE = "score", "점수 입력"
 
+    class EssayNumbering(models.TextChoices):
+        CONTINUOUS = "continuous", "이어서 표시"
+        SEPARATE = "separate", "서술형 1번부터 표시"
+
     class SegmentationStatus(models.TextChoices):
         NONE = "none", "원본 없음"
         PROCESSING = "processing", "문항 분리 중"
@@ -123,6 +127,13 @@ class Exam(BaseModel):
     choice_question_count = models.PositiveIntegerField(
         default=0,
         help_text="혼합형 시험에서 앞쪽 선택형 문항 수.",
+    )
+    essay_numbering = models.CharField(
+        max_length=10,
+        choices=EssayNumbering.choices,
+        default=EssayNumbering.CONTINUOUS,
+        db_default=EssayNumbering.CONTINUOUS,
+        help_text="서술형 표시 번호 방식. 저장된 문항 번호와 채점·OMR 인식 계약은 변경하지 않는다.",
     )
     segmentation_status = models.CharField(
         max_length=24,

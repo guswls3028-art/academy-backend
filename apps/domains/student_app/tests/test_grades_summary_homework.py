@@ -158,6 +158,9 @@ class MyGradesSummaryHomeworkTests(TestCase):
             is_active=True,
             max_score=100,
             pass_score=60,
+            grading_mode=self.Exam.GradingMode.MIXED,
+            choice_question_count=18,
+            essay_numbering=self.Exam.EssayNumbering.SEPARATE,
         )
         exam.sessions.add(self.session)
         self.ExamEnrollment.objects.create(exam=exam, enrollment=self.enrollment)
@@ -182,6 +185,8 @@ class MyGradesSummaryHomeworkTests(TestCase):
         row = next(item for item in summary.data["exams"] if item["exam_id"] == exam.id)
         self.assertFalse(row["is_pass"])
         self.assertEqual(row["achievement"], "FAIL")
+        self.assertEqual(row["essay_numbering"], "separate")
+        self.assertEqual(row["choice_question_count"], 18)
 
     def test_student_grades_excludes_result_for_explicit_non_target_exam(self):
         target_exam = self.Exam.objects.create(

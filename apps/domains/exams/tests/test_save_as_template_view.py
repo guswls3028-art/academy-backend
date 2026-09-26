@@ -50,6 +50,8 @@ class SaveAsTemplateViewTests(TestCase):
         self.exam.sessions.add(self.session)
 
     def test_uses_requested_template_title(self):
+        self.exam.essay_numbering = Exam.EssayNumbering.SEPARATE
+        self.exam.save(update_fields=["essay_numbering"])
         request = self.factory.post(
             f"/exams/{self.exam.id}/save-as-template/",
             {"title": "운영 템플릿명"},
@@ -64,6 +66,7 @@ class SaveAsTemplateViewTests(TestCase):
         self.exam.refresh_from_db()
         self.assertIsNotNone(self.exam.template_exam_id)
         self.assertEqual(self.exam.template_exam.title, "운영 템플릿명")
+        self.assertEqual(self.exam.template_exam.essay_numbering, Exam.EssayNumbering.SEPARATE)
 
     def test_copies_regular_exam_structure_before_linking_template(self):
         self.exam.allow_retake = True

@@ -2822,6 +2822,14 @@
         ],
         "type": "object"
       },
+      "EssayNumberingEnum": {
+        "description": "* `continuous` - 이어서 표시\n* `separate` - 서술형 1번부터 표시",
+        "enum": [
+          "continuous",
+          "separate"
+        ],
+        "type": "string"
+      },
       "EventProtocolVersionEnum": {
         "description": "* `1` - 1\n* `2` - 2",
         "enum": [
@@ -2888,6 +2896,14 @@
             "maximum": 9223372036854775807,
             "minimum": 0,
             "type": "integer"
+          },
+          "essay_numbering": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EssayNumberingEnum"
+              }
+            ],
+            "description": "서술형 표시 번호 방식. 저장된 문항 번호와 채점·OMR 인식 계약은 변경하지 않는다.\n\n* `continuous` - 이어서 표시\n* `separate` - 서술형 1번부터 표시"
           },
           "exam_type": {
             "$ref": "#/components/schemas/ExamTypeEnum"
@@ -3103,6 +3119,14 @@
           "description": {
             "type": "string"
           },
+          "essay_numbering": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EssayNumberingEnum"
+              }
+            ],
+            "description": "서술형 표시 번호 방식. 저장된 문항 번호와 채점·OMR 인식 계약은 변경하지 않는다.\n\n* `continuous` - 이어서 표시\n* `separate` - 서술형 1번부터 표시"
+          },
           "exam_type": {
             "type": "string"
           },
@@ -3184,6 +3208,14 @@
           },
           "description": {
             "type": "string"
+          },
+          "essay_numbering": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EssayNumberingEnum"
+              }
+            ],
+            "description": "서술형 표시 번호 방식. 저장된 문항 번호와 채점·OMR 인식 계약은 변경하지 않는다.\n\n* `continuous` - 이어서 표시\n* `separate` - 서술형 1번부터 표시"
           },
           "exam_type": {
             "minLength": 1,
@@ -3301,6 +3333,14 @@
             "minimum": 0,
             "type": "integer"
           },
+          "essay_numbering": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EssayNumberingEnum"
+              }
+            ],
+            "description": "서술형 표시 번호 방식. 저장된 문항 번호와 채점·OMR 인식 계약은 변경하지 않는다.\n\n* `continuous` - 이어서 표시\n* `separate` - 서술형 1번부터 표시"
+          },
           "grading_mode": {
             "allOf": [
               {
@@ -3400,6 +3440,14 @@
             "maximum": 9223372036854775807,
             "minimum": 0,
             "type": "integer"
+          },
+          "essay_numbering": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EssayNumberingEnum"
+              }
+            ],
+            "description": "서술형 표시 번호 방식. 저장된 문항 번호와 채점·OMR 인식 계약은 변경하지 않는다.\n\n* `continuous` - 이어서 표시\n* `separate` - 서술형 1번부터 표시"
           },
           "grading_mode": {
             "allOf": [
@@ -8541,6 +8589,14 @@
             "maximum": 9223372036854775807,
             "minimum": 0,
             "type": "integer"
+          },
+          "essay_numbering": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EssayNumberingEnum"
+              }
+            ],
+            "description": "서술형 표시 번호 방식. 저장된 문항 번호와 채점·OMR 인식 계약은 변경하지 않는다.\n\n* `continuous` - 이어서 표시\n* `separate` - 서술형 1번부터 표시"
           },
           "grading_mode": {
             "allOf": [

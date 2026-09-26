@@ -44,8 +44,23 @@ API 오류 모양으로 구분할 수 없다.
 | `manual_grading_method` | `correctness` | 답변형을 정오로 입력한다. |
 |  | `score` | 답변형을 문항별 부분점수로 입력한다. |
 | `choice_question_count` | 0 이상의 정수 | 원본 자동 분리 시 앞에서부터 선택형으로 만들 문항 수. 혼합형은 1 이상이어야 한다. |
+| `essay_numbering` | `continuous` (기본), `separate` | 시험별 서술형 표시 번호. 기존 시험은 연속 번호를 유지하고, 별도 모드는 서술형을 1번부터 보여 준다. |
 | `segmentation_status` | `none`, `processing`, `review_required`, `ready`, `failed`, `conversion_required` | 원본 문항 분리와 교직원 검수 상태다. |
 | `student_results_published` | `true`, `false` | 학생·학부모 성적 공개 여부다. 기본값 `true`는 기존 시험 노출을 유지한다. |
+
+교직원은 기존 tenant·역할 범위와 `updated_at` 동시 수정 조건을 따르는
+`PATCH /exams/{id}/`로 번호 표시를 저장한다. `GET /exams/{id}/`, 학생의
+tenant·응시 대상 범위에 한정된 시험 목록·상세, 성적 요약과 공개된 결과는 같은 설정을 반환한다.
+결과 문항에는 서술형 `essay_index`를 함께 반환하므로 종료된 강의의 결과도
+시험 목록 조회 없이 원래 표시 번호로 볼 수 있다. 비공개 결과에는 문항·표시 정보가 없다.
+잘못된 값은 400으로 거부하며, 프런트엔드는 입력을 보존하고 최신 설정을 다시
+불러와 재시도한다. 기존 시험과 요청에서 값을 생략한 신규 시험의 기본값은
+`continuous`다. 시험 복사·템플릿 저장·가져오기는 원본 설정을 복사하며,
+기존 문항 번호·답안·성적 데이터에는 마이그레이션이 없다. 표시 변경은
+채점, 재채점, OMR 인식의 입력이 아니므로 결과를 다시 계산하지 않는다.
+검증: `test_exam_policy_update.py`, `test_exam_create_order.py`,
+`test_save_as_template_view.py`, `test_parent_exam_child_selection.py`,
+`test_essay_numbering.py`.
 
 ### 설정 정정과 오프라인 답안 복구
 

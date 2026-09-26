@@ -59,6 +59,7 @@ class RegularExamFactory:
             subject=template_exam.subject,
             exam_type=Exam.ExamType.REGULAR,
             template_exam=template_exam,
+            essay_numbering=template_exam.essay_numbering,
             is_active=True,
             tenant=tenant,
         )

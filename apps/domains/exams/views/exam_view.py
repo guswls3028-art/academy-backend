@@ -208,13 +208,17 @@ class ExamViewSet(ModelViewSet):
                 .aggregate(value=Max("display_order"))
                 .get("value")
             )
-            exam = serializer.save(
-                exam_type=Exam.ExamType.REGULAR,
-                subject=subject,
-                template_exam=template_exam,
-                tenant=tenant,
-                display_order=int(max_order or 0) + 1,
-            )
+            save_kwargs = {
+                "exam_type": Exam.ExamType.REGULAR,
+                "subject": subject,
+                "template_exam": template_exam,
+                "tenant": tenant,
+                "display_order": int(max_order or 0) + 1,
+            }
+            source_numbering_exam = template_exam or source_exam
+            if source_numbering_exam and "essay_numbering" not in serializer.validated_data:
+                save_kwargs["essay_numbering"] = source_numbering_exam.essay_numbering
+            exam = serializer.save(**save_kwargs)
 
             with refresh_exam_target_projections(exam=exam):
                 exam.sessions.add(session)
