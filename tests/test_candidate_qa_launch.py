@@ -13,7 +13,7 @@ from unittest.mock import Mock, patch
 from contextlib import redirect_stdout
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts/v1"))
-import candidate_qa_launch as launch
+from scripts.v1 import candidate_qa_launch as launch
 from scripts.v1 import candidate_qa_window as window
 
 
@@ -50,6 +50,18 @@ class LaunchTests(unittest.TestCase):
 
     def plan(self):
         return launch.start_plan(self.record,release_id=self.release,api_version=7,workers_version=8)
+
+    def test_controller_dependency_import_works_in_a_fresh_package_process(self):
+        import subprocess
+        check = """from unittest.mock import patch
+from scripts.v1.candidate_qa_launch import assert_main_controller
+with patch('scripts.v1.candidate_manifest.github', return_value={'object': {'sha': 'a'*40}}), patch('scripts.v1.candidate_qa_launch.subprocess.check_output', side_effect=['a'*40, '']):
+    assert assert_main_controller() == 'a'*40
+"""
+        completed = subprocess.run([sys.executable, "-c", check],
+            cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True,
+            timeout=15)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def test_observer_proofs_use_the_controller_window_contract(self):
         from scripts.v1.candidate_qa_observer import InertReadback
@@ -191,9 +203,9 @@ class LaunchTests(unittest.TestCase):
             owner_task=self.record["owner_task"],lease_id=self.record["lease_id"],
             source_sha=self.record["source_sha"],images=self.record["images"],
             release_id=self.release,api_version=7,workers_version=8)
-        with patch("candidate_slot.load_snapshot",return_value=baseline), \
-             patch("candidate_slot.guard",return_value=[original]), \
-             patch("candidate_slot.baseline_matches",return_value=True):
+        with patch("scripts.v1.candidate_slot.load_snapshot",return_value=baseline), \
+             patch("scripts.v1.candidate_slot.guard",return_value=[original]), \
+             patch("scripts.v1.candidate_slot.baseline_matches",return_value=True):
             self.assertEqual(self.launcher.launch(**args),self.instance["InstanceId"])
             request=self.ec2.run_instances.call_args.kwargs
             self.assertEqual(request["ClientToken"],self.record["lease_id"])
@@ -223,9 +235,9 @@ class LaunchTests(unittest.TestCase):
         self.ec2.describe_instances.return_value={"Reservations":[]}
         self.ec2.describe_security_groups.return_value={"SecurityGroups":[{
             "GroupId":"sg-0123456789abcdef0","VpcId":original["VpcId"],"IpPermissions":[{"IpProtocol":"-1"}]}]}
-        with patch("candidate_slot.load_snapshot",return_value=baseline), \
-             patch("candidate_slot.guard",return_value=[original]), \
-             patch("candidate_slot.baseline_matches",return_value=True), self.assertRaises(window.WindowHold):
+        with patch("scripts.v1.candidate_slot.load_snapshot",return_value=baseline), \
+             patch("scripts.v1.candidate_slot.guard",return_value=[original]), \
+             patch("scripts.v1.candidate_slot.baseline_matches",return_value=True), self.assertRaises(window.WindowHold):
             self.launcher.launch(baseline_path="synthetic-snapshot.json",baseline_sha256="d"*64,
                 owner_task=self.record["owner_task"],lease_id=self.record["lease_id"],
                 source_sha=self.record["source_sha"],images=self.record["images"],

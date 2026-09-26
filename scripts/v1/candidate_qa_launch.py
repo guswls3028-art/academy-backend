@@ -158,7 +158,7 @@ def start_command(plan):
 
 
 def assert_main_controller(root=None):
-    from candidate_manifest import github, REPOSITORY
+    from scripts.v1.candidate_manifest import github, REPOSITORY
     root = root or Path(__file__).resolve().parents[2]
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
     dirty = subprocess.check_output(["git", "status", "--porcelain"], cwd=root, text=True).strip()
@@ -214,7 +214,7 @@ class InertLauncher:
     def launch(self, *, baseline_path, baseline_sha256, owner_task, lease_id,
                source_sha, images, release_id, api_version, workers_version):
         """Retain the existing healthy baseline; create only inert owned capacity."""
-        from candidate_slot import load_snapshot, guard, baseline_matches
+        from scripts.v1.candidate_slot import load_snapshot, guard, baseline_matches
         import yaml
         baseline = load_snapshot(Path(baseline_path), baseline_sha256)
         require(baseline["owner"] == owner_task
