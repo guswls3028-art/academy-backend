@@ -19,7 +19,17 @@ from apps.domains.progress.models import (
 )
 from apps.domains.progress.services.session_calculator import SessionProgressCalculator
 from apps.domains.students.models import Student
-from apps.domains.submissions.models import Submission, SubmissionAnswer
+from apps.domains.submissions.models import (
+    OmrUploadBatch,
+    OmrUploadBatchItem,
+    Submission,
+    SubmissionAnswer,
+)
+from apps.domains.submissions.views.exam_omr_batch_upload_view import (
+    OmrUploadBatchCompletionClaimView,
+    OmrUploadBatchDetailView,
+    OmrUploadBatchListView,
+)
 from apps.domains.submissions.views.submission_view import SubmissionViewSet
 
 __all__ = [
@@ -32,6 +42,11 @@ __all__ = [
     "ExamQuestion",
     "ExamRecalculateView",
     "Lecture",
+    "OmrUploadBatch",
+    "OmrUploadBatchItem",
+    "OmrUploadBatchCompletionClaimView",
+    "OmrUploadBatchDetailView",
+    "OmrUploadBatchListView",
     "ProgressPolicy",
     "Session",
     "SessionEnrollment",

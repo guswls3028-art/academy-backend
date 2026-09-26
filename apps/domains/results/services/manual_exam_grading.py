@@ -15,6 +15,9 @@ from apps.domains.results.guards.score_edit_lease_guard import (
     require_score_edit_scope_available_for_exam,
 )
 from apps.domains.results.models import ExamAttempt, Result, ResultFact, ResultItem
+from apps.domains.results.services.manual_subjective_score import (
+    latest_subjective_grading_facts,
+)
 from apps.domains.results.services.omr_subjective_completion import (
     finalize_omr_result_if_ready,
 )
@@ -582,6 +585,19 @@ def apply_manual_grading(
             )
             continue
 
+        latest_subjective = latest_subjective_grading_facts(
+            [result],
+            essay_question_ids={
+                question.question_id
+                for question in plan.questions
+                if question.kind == "essay"
+            },
+            include_total=True,
+        ).get(int(attempt.id))
+        replaces_aggregate = (
+            latest_subjective is None
+            or latest_subjective.source in {"manual_subjective", "manual_total"}
+        )
         for question_id, mark in planned_row.marks.items():
             question = questions_by_id[question_id]
             existing_item = (
@@ -592,6 +608,7 @@ def apply_manual_grading(
             earned = float(mark.earned_score or 0.0)
             changed = (
                 existing_item is None
+                or (replaces_aggregate and question.kind == "essay")
                 or bool(existing_item.is_correct) != mark.is_correct
                 or bool(existing_item.include_in_wrong_note)
                 != mark.include_in_wrong_note
