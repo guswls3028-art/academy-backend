@@ -33,6 +33,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      pull-requests: read
     outputs:
       source_sha: ${{ steps.plan.outputs.source_sha }}
       reuse_base: ${{ steps.plan.outputs.reuse_base }}
@@ -83,6 +84,7 @@ jobs:
       contents: read
       id-token: write
       actions: read
+      pull-requests: read
     steps:
       - name: Checkout trusted main controller only
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -110,7 +112,8 @@ jobs:
           inline-session-policy: >-
             {"Version":"2012-10-17","Statement":[
               {"Effect":"Allow","Action":"ecr:GetAuthorizationToken","Resource":"*"},
-              {"Effect":"Allow","Action":["ecr:DescribeImages","ecr:BatchGetImage","ecr:GetDownloadUrlForLayer"],"Resource":["arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-base","arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-messaging-worker"]}
+              {"Effect":"Allow","Action":["ecr:DescribeImages","ecr:BatchGetImage","ecr:GetDownloadUrlForLayer","ecr:DescribeImageScanFindings","ecr:StartImageScan"],"Resource":"arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-base"},
+              {"Effect":"Allow","Action":"ecr:DescribeImages","Resource":"arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-messaging-worker"}
             ]}
       - name: Read back approved base digest and export
         env:
@@ -131,11 +134,15 @@ jobs:
               --query 'imageDetails[0].imageDigest' --output text)
             test "$ACTUAL_MESSAGING" = "$MESSAGING_DIGEST"
           fi
+          python3 scripts/v1/candidate_build_only.py scan --repo-dir . --region "$AWS_REGION" \
+            --services base --digests "{\"base\":\"$BASE_DIGEST\"}"
           aws ecr get-login-password --region "$AWS_REGION" |
             docker login --username AWS --password-stdin "$ECR_REGISTRY"
           docker pull --platform linux/arm64 "$ECR_REGISTRY/academy-base@$BASE_DIGEST"
           docker tag "$ECR_REGISTRY/academy-base@$BASE_DIGEST" academy-base:candidate
           mkdir -p image
+          python3 scripts/v1/candidate_build_only.py check-capacity \
+            --image academy-base:candidate --directory image
           docker save academy-base:candidate | gzip -1 > image/image.tar.gz
           python3 scripts/v1/candidate_build_only.py receipt \
             --service base --source-sha "$BASE_SOURCE_SHA" \
@@ -180,6 +187,8 @@ jobs:
             --build-arg "APT_REFRESH_TOKEN=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
             -t academy-base:candidate source
           mkdir -p image
+          python3 control/scripts/v1/candidate_build_only.py check-capacity \
+            --image academy-base:candidate --directory image
           docker save academy-base:candidate | gzip -1 > image/image.tar.gz
           python3 control/scripts/v1/candidate_build_only.py receipt \
             --service base --source-sha "$SOURCE_SHA" \
@@ -253,6 +262,8 @@ jobs:
             --build-arg BASE_IMAGE=academy-base:candidate \
             -t "$REPOSITORY:candidate" source
           mkdir -p image
+          python3 control/scripts/v1/candidate_build_only.py check-capacity \
+            --image "$REPOSITORY:candidate" --directory image
           docker save "$REPOSITORY:candidate" | gzip -1 > image/image.tar.gz
           python3 control/scripts/v1/candidate_build_only.py receipt \
             --service "$SERVICE" --source-sha "$SOURCE_SHA" \
@@ -279,6 +290,7 @@ jobs:
       contents: read
       actions: read
       id-token: write
+      pull-requests: read
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.validate.outputs.publish_matrix) }}
@@ -335,7 +347,7 @@ jobs:
           inline-session-policy: >-
             {"Version":"2012-10-17","Statement":[
               {"Effect":"Allow","Action":"ecr:GetAuthorizationToken","Resource":"*"},
-              {"Effect":"Allow","Action":["ecr:DescribeRepositories","ecr:DescribeImages","ecr:BatchCheckLayerAvailability","ecr:InitiateLayerUpload","ecr:UploadLayerPart","ecr:CompleteLayerUpload","ecr:PutImage","ecr:BatchGetImage","ecr:GetDownloadUrlForLayer","ecr:DescribeImageScanFindings","ecr:StartImageScan"],"Resource":["arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-base","arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-api","arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-ai-worker-cpu","arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-tools-worker","arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-messaging-worker"]}
+              {"Effect":"Allow","Action":["ecr:DescribeRepositories","ecr:DescribeImages","ecr:BatchCheckLayerAvailability","ecr:InitiateLayerUpload","ecr:UploadLayerPart","ecr:CompleteLayerUpload","ecr:PutImage","ecr:BatchGetImage","ecr:GetDownloadUrlForLayer","ecr:DescribeImageScanFindings","ecr:StartImageScan"],"Resource":"arn:aws:ecr:ap-northeast-2:809466760795:repository/${{ matrix.repository }}"}
             ]}
       - name: Push once to existing immutable ECR QA tag and scan
         if: (matrix.service != 'base' || needs.validate.outputs.reuse_base != 'true') && (matrix.service != 'messaging' || needs.validate.outputs.reuse_messaging != 'true')
@@ -372,14 +384,14 @@ jobs:
             --argjson run "$GITHUB_RUN_ID" --argjson attempt "$GITHUB_RUN_ATTEMPT" \
             --slurpfile artifact image/receipt.json \
             '{sourceSha:$source,repository:$repo,digest:$digest,tag:$tag,baseBaselineDigest:$base,runId:$run,runAttempt:$attempt,artifact:$artifact[0]}' \
-            > image/published.json
+            > "image/published-$SERVICE.json"
           echo "$REPOSITORY@$DIGEST from $SOURCE_SHA ($QA_TAG)" >> "$GITHUB_STEP_SUMMARY"
       - name: Upload readback receipt
         if: (matrix.service != 'base' || needs.validate.outputs.reuse_base != 'true') && (matrix.service != 'messaging' || needs.validate.outputs.reuse_messaging != 'true')
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: candidate-published-${{ matrix.service }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: image/published.json
+          path: image/published-${{ matrix.service }}.json
           if-no-files-found: error
           retention-days: 1
 
@@ -393,6 +405,7 @@ jobs:
       contents: read
       actions: read
       id-token: write
+      pull-requests: read
     steps:
       - name: Checkout trusted main controller only
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -411,6 +424,12 @@ jobs:
             --pr "$PR_NUMBER" --source-sha "$SOURCE_SHA" --main-sha "$MAIN_SHA" \
             --expected-quality-run-id "$QUALITY_RUN_ID" \
             --expected-quality-run-attempt "$QUALITY_RUN_ATTEMPT"
+      - name: Download all individual publication receipts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: candidate-published-*-${{ github.run_id }}-${{ github.run_attempt }}
+          merge-multiple: true
+          path: published
       - name: Configure existing ECR role with readback-only session policy
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
         with:
@@ -452,12 +471,15 @@ jobs:
               '.[$service]={repository:$repo,digest:$digest,tag:$tag}' receipt/images.json > receipt/images.tmp
             mv receipt/images.tmp receipt/images.json
           done
-          jq -n --arg source "$SOURCE_SHA" --arg main "$GITHUB_SHA" \
-            --argjson pr "$PR_NUMBER" --argjson run "$GITHUB_RUN_ID" \
-            --argjson attempt "$GITHUB_RUN_ATTEMPT" --argjson quality "$QUALITY_RUN_ID" \
-            --argjson qualityAttempt "$QUALITY_RUN_ATTEMPT" --slurpfile images receipt/images.json \
-            '{schemaVersion:1,kind:"candidate-build-only-qa-images",complete:true,sourceSha:$source,controllerMainSha:$main,prNumber:$pr,runId:$run,runAttempt:$attempt,qualityRunId:$quality,qualityRunAttempt:$qualityAttempt,images:$images[0]}' \
-            > receipt/candidate-build-only.json
+          python3 scripts/v1/candidate_build_only.py seal \
+            --images receipt/images.json --published-dir published \
+            --source-sha "$SOURCE_SHA" --main-sha "$GITHUB_SHA" --pr "$PR_NUMBER" \
+            --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --quality-run-id "$QUALITY_RUN_ID" \
+            --quality-run-attempt "$QUALITY_RUN_ATTEMPT" --qa-tag "$QA_TAG" \
+            --reuse-base "$REUSE_BASE" --reuse-messaging "$REUSE_MESSAGING" \
+            --base-digest "$BASE_DIGEST" --messaging-digest "$MESSAGING_DIGEST" \
+            --output receipt/candidate-build-only.json
           cat receipt/candidate-build-only.json >> "$GITHUB_STEP_SUMMARY"
       - name: Upload complete QA-only receipt
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

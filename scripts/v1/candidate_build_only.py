@@ -9,6 +9,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -43,6 +44,7 @@ MESSAGING_INPUTS = (
     "requirements/worker-messaging.txt", "academy", "apps", "libs", "manage.py",
 )
 MAX_ARCHIVE_BYTES = 12 * 1024**3
+ARCHIVE_DISK_RESERVE = 2 * 1024**3
 MAX_MEMBERS = 2000
 
 
@@ -236,6 +238,21 @@ def receipt(args: argparse.Namespace) -> None:
     args.output.write_text(json.dumps(data, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def check_capacity(args: argparse.Namespace) -> None:
+    info = json.loads(subprocess.check_output(
+        ["docker", "image", "inspect", args.image], text=True
+    ))[0]
+    virtual_bytes = info.get("Size")
+    if not isinstance(virtual_bytes, int) or virtual_bytes <= 0:
+        raise CandidateError("cannot bound Docker image size before archive export")
+    free_bytes = shutil.disk_usage(args.directory).free
+    if virtual_bytes > MAX_ARCHIVE_BYTES or free_bytes < virtual_bytes + ARCHIVE_DISK_RESERVE:
+        raise CandidateError(
+            f"insufficient runner space before archive export: image={virtual_bytes} free={free_bytes}"
+        )
+    print(f"archive capacity OK image={virtual_bytes} free={free_bytes}")
+
+
 def inspect_archive(archive: Path, expected_tag: str) -> str:
     manifest_data = None
     configs: dict[str, bytes] = {}
@@ -314,6 +331,62 @@ def scan(args: argparse.Namespace) -> None:
         print(f"ECR_SCAN_PASS repo={repository} digest={digest}")
 
 
+def seal(args: argparse.Namespace) -> None:
+    images = json.loads(args.images.read_text(encoding="utf-8"))
+    if not isinstance(images, dict) or set(images) != set(SERVICES):
+        raise CandidateError("complete QA receipt requires exactly five image identities")
+    expected_tag = (
+        f"qa-pr-{args.pr}-{require_sha(args.source_sha)}-run-{int(args.run_id)}-{int(args.run_attempt)}"
+    )
+    if args.qa_tag != expected_tag:
+        raise CandidateError("QA tag does not bind the exact PR, source and workflow run")
+    reuse = {"base": args.reuse_base == "true", "messaging": args.reuse_messaging == "true"}
+    for service, repository in SERVICES.items():
+        image = images[service]
+        if not (isinstance(image, dict) and image.get("repository") == repository
+                and DIGEST.fullmatch(image.get("digest", ""))):
+            raise CandidateError(f"invalid final ECR readback for {service}")
+        if reuse.get(service):
+            expected_digest = args.base_digest if service == "base" else args.messaging_digest
+            if image["digest"] != expected_digest or not TAG.fullmatch(image.get("tag", "")):
+                raise CandidateError(f"reused {service} differs from verified baseline")
+            image["reused"] = True
+            image["sourceSha"] = TAG.fullmatch(image["tag"]).group(1)
+            continue
+        if image.get("tag") != args.qa_tag:
+            raise CandidateError(f"built {service} lacks exact run-unique QA tag")
+        path = args.published_dir / f"published-{service}.json"
+        published = json.loads(path.read_text(encoding="utf-8"))
+        artifact = published.get("artifact")
+        if not (published.get("sourceSha") == require_sha(args.source_sha)
+                and published.get("repository") == repository
+                and published.get("digest") == image["digest"]
+                and published.get("tag") == args.qa_tag
+                and published.get("runId") == int(args.run_id)
+                and published.get("runAttempt") == int(args.run_attempt)
+                and isinstance(artifact, dict)
+                and artifact.get("schemaVersion") == 1
+                and artifact.get("service") == service
+                and artifact.get("sourceSha") == args.source_sha
+                and artifact.get("runId") == args.run_id
+                and artifact.get("runAttempt") == args.run_attempt
+                and artifact.get("imageTag") == f"{repository}:candidate"
+                and DIGEST.fullmatch(artifact.get("imageId", ""))
+                and re.fullmatch(r"[0-9a-f]{64}", artifact.get("archiveSha256", ""))):
+            raise CandidateError(f"{service} publication receipt differs from ECR readback")
+        image["reused"] = False
+        image["sourceSha"] = args.source_sha
+        image["artifactSha256"] = artifact["archiveSha256"]
+        image["imageId"] = artifact["imageId"]
+    result = {"schemaVersion": 1, "kind": "candidate-build-only-qa-images",
+              "complete": True, "sourceSha": args.source_sha,
+              "controllerMainSha": require_sha(args.main_sha), "prNumber": args.pr,
+              "runId": int(args.run_id), "runAttempt": int(args.run_attempt),
+              "qualityRunId": int(args.quality_run_id),
+              "qualityRunAttempt": int(args.quality_run_attempt), "images": images}
+    args.output.write_text(json.dumps(result, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
@@ -336,6 +409,9 @@ def main() -> None:
     p.add_argument("--run-attempt", required=True)
     p.add_argument("--archive", type=Path, required=True)
     p.add_argument("--output", type=Path, required=True)
+    p = sub.add_parser("check-capacity")
+    p.add_argument("--image", required=True)
+    p.add_argument("--directory", type=Path, required=True)
     p = sub.add_parser("verify-archive")
     p.add_argument("--service", choices=SERVICES, required=True)
     p.add_argument("--source-sha", required=True)
@@ -349,13 +425,30 @@ def main() -> None:
     p.add_argument("--region", required=True)
     p.add_argument("--services", choices=SERVICES, nargs="+", required=True)
     p.add_argument("--digests", type=json.loads, required=True)
+    p = sub.add_parser("seal")
+    p.add_argument("--images", type=Path, required=True)
+    p.add_argument("--published-dir", type=Path, required=True)
+    p.add_argument("--source-sha", required=True)
+    p.add_argument("--main-sha", required=True)
+    p.add_argument("--pr", type=pr_arg, required=True)
+    p.add_argument("--run-id", required=True)
+    p.add_argument("--run-attempt", required=True)
+    p.add_argument("--quality-run-id", required=True)
+    p.add_argument("--quality-run-attempt", required=True)
+    p.add_argument("--qa-tag", required=True)
+    p.add_argument("--reuse-base", choices=("true", "false"), required=True)
+    p.add_argument("--reuse-messaging", choices=("true", "false"), required=True)
+    p.add_argument("--base-digest", required=True)
+    p.add_argument("--messaging-digest", required=True)
+    p.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:
         {"plan": plan, "verify-source": lambda a: verify_source(
             a.pr, a.source_sha, a.main_sha, a.expected_quality_run_id,
             a.expected_quality_run_attempt),
-         "receipt": receipt, "verify-archive": verify_archive,
-         "scan": scan}[args.command](args)
+         "receipt": receipt, "check-capacity": check_capacity,
+         "verify-archive": verify_archive,
+         "scan": scan, "seal": seal}[args.command](args)
     except (CandidateError, OSError, ValueError, KeyError, TypeError, tarfile.TarError) as exc:
         print(f"::error::{exc}", file=sys.stderr)
         raise SystemExit(1) from exc

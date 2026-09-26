@@ -27,6 +27,8 @@ PR 스크립트, 이미지 entrypoint를 실행하지 않는다. archive의 경�
 기존 `production` 환경 OIDC 역할에 ECR repository 범위의 inline session policy를
 적용한다. 이 정책은 발급된 세션의 권한을 줄이지만 별도 IAM trust boundary는
 아니다. 따라서 main workflow와 Docker/archive parser의 보안이 여전히 중요하다.
+`docker save` 전에는 이미지 virtual size보다 2 GiB 이상 추가 여유 공간을
+확인하고, 출력 archive 크기 상한도 검사한다.
 
 공통 base와 Messaging은 마지막 **성공·완전한** production manifest의 immutable
 tag/digest를 출처로 삼는다. base 입력은 Dockerfile, native-security,
@@ -37,18 +39,30 @@ Messaging도 재빌드한다. 재사용하는 경우 ECR에서 원본 tag의 dig
 읽어 manifest와 같아야만 base를 export하고 Messaging을 유지한다. 증명이
 불가능하면 안전하게 중단하거나 PR 소스에서 다시 빌드한다.
 
+기존 production push workflow는 이 경로의 workflow 파일과 두 controller
+Python 파일만 정확히 변경 감지에서 제외한다. 성공 매니페스트가 유효하고
+다른 런타임 차이가 없는 push에서는 이 파일들 때문에 API/AI 교체가 일어나지
+않는다. 같은 push에 `apps/`, 다른 `scripts/` 등 실제
+런타임 입력이 섞이면 기존 선택 빌드와 정식 릴리스 게이트가 계속 적용된다.
+
 ## 결과와 사용 범위
 
-API, AI CPU, Tools와 필요한 base/Messaging만 기존 ECR 저장소에
-`qa-pr-<PR>-<headSHA>-run-<runID>-<attempt>` 고유 태그로 푸시한다. 각 태그의
+API, AI CPU, Tools와 새로 빌드가 필요한 base/Messaging만 기존 ECR 저장소에
+`qa-pr-<PR>-<headSHA>-run-<runID>-<attempt>` 고유 태그로 푸시한다. 재사용
+base/Messaging은 기존 성공 태그와 digest를 그대로 표시한다. 신규 태그의
 저장소 불변성·scanOnPush를 readback하고, 기존 ECR Critical/High 정책으로
 완료 스캔을 통과해야 한다. 최종 작업은 다섯 이미지의 태그와 digest를 전부
-재조회한 뒤에만 `candidate-complete-<runID>-<attempt>` QA 전용 receipt를
+재조회하고, 각 신규 이미지의 개별 publish 영수증에 기록된 source/run,
+archive SHA-256, ECR digest와 대조한 뒤에만
+`candidate-complete-<runID>-<attempt>` QA 전용 receipt를
 발행한다. 개별 push 성공 또는 부분 receipt는 완전한 이미지 세트가 아니다.
 Video worker는 이 작업의 빌드 대상이 아니며, 이 receipt는 여섯 이미지
 production 후보 manifest나 정식 릴리스 게이트를 대체하지 않는다. 후속 QA는
 해당 receipt의 정확한 digest만 사용하고 정식 배포는 기존 immutable 후보 →
 persistent development → preprod → production 절차를 별도로 통과한다.
+재사용 Messaging은 마지막 성공 매니페스트의 스캔 판정을 사용한다. 새로운
+취약점이나 만료된 예외에 대한 재검사는 정식 여섯 이미지 릴리스 게이트에서
+수행한다.
 
 ## 실패와 정리
 

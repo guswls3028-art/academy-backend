@@ -5,6 +5,8 @@ import hashlib
 import io
 import json
 import os
+import re
+import subprocess
 import tarfile
 import tempfile
 import unittest
@@ -138,6 +140,13 @@ class SourceTests(unittest.TestCase):
 
 
 class ArchiveTests(unittest.TestCase):
+    def test_capacity_preflight_requires_image_size_plus_reserved_space(self):
+        args = SimpleNamespace(image="academy-api:candidate", directory=Path("."))
+        with (patch.object(candidate.subprocess, "check_output", return_value='[{"Size":4294967296}]'),
+              patch.object(candidate.shutil, "disk_usage", return_value=SimpleNamespace(free=5 * 1024**3))):
+            with self.assertRaisesRegex(candidate.CandidateError, "insufficient runner space"):
+                candidate.check_capacity(args)
+
     def make_archive(self, path, tag="academy-api:candidate", architecture="arm64",
                      extra_name=None):
         config = json.dumps({"os": "linux", "architecture": architecture}).encode()
@@ -188,6 +197,83 @@ class ArchiveTests(unittest.TestCase):
                                    run_attempt="1", archive=path, receipt=receipt, loaded=False)
             with self.assertRaisesRegex(candidate.CandidateError, "receipt"):
                 candidate.verify_archive(args)
+
+
+class ProductionChangeDetectionTests(unittest.TestCase):
+    def test_candidate_controller_only_is_excluded_but_runtime_changes_still_build(self):
+        workflow = (Path(__file__).resolve().parents[2] /
+                    ".github/workflows/v1-build-and-push-latest.yml").read_text(encoding="utf-8")
+        for exact_path in (
+            ".github/workflows/candidate-build-only.yml",
+            "scripts/v1/candidate_build_only.py",
+            "scripts/v1/test_candidate_build_only.py",
+        ):
+            self.assertIn(f"      - '{exact_path}'", workflow)
+        self.assertNotIn("      - 'scripts/v1/**'", workflow)
+        function = re.search(r"^\s*runtime_changes\(\) \{[^\n]+\}", workflow, re.MULTILINE)
+        self.assertIsNotNone(function)
+
+        def filtered(paths):
+            result = subprocess.run(
+                ["bash", "-c", function.group(0) + '\nruntime_changes "$CHANGED"'],
+                env={**os.environ, "CHANGED": "\n".join(paths)},
+                capture_output=True, text=True, check=True,
+            )
+            return result.stdout.strip().splitlines() if result.stdout.strip() else []
+
+        candidate_paths = [
+            ".github/workflows/candidate-build-only.yml",
+            "scripts/v1/candidate_build_only.py",
+            "scripts/v1/test_candidate_build_only.py",
+        ]
+        self.assertEqual(filtered(candidate_paths), [])
+        self.assertEqual(
+            filtered(candidate_paths + ["apps/domains/exams/views/exam_view.py",
+                                        "scripts/v1/deploy.ps1",
+                                        "scripts/v1/candidate_build_only_extra.py"]),
+            ["apps/domains/exams/views/exam_view.py", "scripts/v1/deploy.ps1",
+             "scripts/v1/candidate_build_only_extra.py"],
+        )
+
+
+class CompleteReceiptTests(unittest.TestCase):
+    def test_seal_requires_every_published_digest_to_match_final_ecr_readback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            digest = "sha256:" + "d" * 64
+            qa_tag = f"qa-pr-509-{SOURCE}-run-10-1"
+            old_tag = f"sha-{MAIN}-run-1-1"
+            images = {
+                service: {"repository": repo, "digest": digest,
+                          "tag": old_tag if service in ("base", "messaging") else qa_tag}
+                for service, repo in candidate.SERVICES.items()
+            }
+            image_path = root / "images.json"
+            image_path.write_text(json.dumps(images))
+            for service in ("api", "ai", "tools"):
+                (root / f"published-{service}.json").write_text(json.dumps({
+                    "sourceSha": SOURCE, "repository": candidate.SERVICES[service],
+                    "digest": digest, "tag": qa_tag, "runId": 10, "runAttempt": 1,
+                    "artifact": {"schemaVersion": 1, "service": service,
+                                 "sourceSha": SOURCE, "runId": "10", "runAttempt": "1",
+                                 "imageTag": candidate.SERVICES[service] + ":candidate",
+                                 "imageId": digest, "archiveSha256": "e" * 64},
+                }))
+            args = SimpleNamespace(images=image_path, published_dir=root, source_sha=SOURCE,
+                                   main_sha=MAIN, pr=509, run_id="10", run_attempt="1",
+                                   quality_run_id="42", quality_run_attempt="1",
+                                   qa_tag=qa_tag, reuse_base="true", reuse_messaging="true",
+                                   base_digest=digest, messaging_digest=digest,
+                                   output=root / "complete.json")
+            candidate.seal(args)
+            result = json.loads(args.output.read_text())
+            self.assertTrue(result["complete"])
+            self.assertEqual(result["images"]["api"]["artifactSha256"], "e" * 64)
+            self.assertTrue(result["images"]["base"]["reused"])
+            images["api"]["digest"] = "sha256:" + "f" * 64
+            image_path.write_text(json.dumps(images))
+            with self.assertRaisesRegex(candidate.CandidateError, "publication receipt"):
+                candidate.seal(args)
 
 
 if __name__ == "__main__":
