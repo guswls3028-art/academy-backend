@@ -193,6 +193,57 @@ class AnalysisArtifactCleanupTests(TestCase):
         self.assertTrue(self.doc.problems.filter(id=original.id).exists())
         self.assertFalse(self.doc.problems.filter(number=2).exists())
 
+    def test_retry_cleanup_schedule_failure_keeps_previous_auto_row(self):
+        original = self._problem(
+            1, f"tenants/{self.tenant.id}/matchup/legacy/problems/1.png", {},
+        )
+        self.doc.status = "failed"
+        self.doc.save(update_fields=["status"])
+        with patch(
+            "apps.domains.matchup.analysis_artifacts.schedule_detached_auto_images",
+            side_effect=RuntimeError("cleanup ledger unavailable"),
+        ), patch("apps.domains.matchup.services.dispatch_ai_job") as dispatch, pytest.raises(
+            RuntimeError, match="cleanup ledger unavailable",
+        ):
+            retry_document(self.doc, require_failed=True)
+
+        dispatch.assert_not_called()
+        self.assertTrue(self.doc.problems.filter(id=original.id).exists())
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.status, "failed")
+        self.assertEqual(self.doc.ai_job_id, "")
+
+    def test_provider_failure_retains_job_scoped_intent_for_retry(self):
+        from apps.domains.matchup.analysis_artifacts import schedule_unreferenced_analysis_artifacts
+        from apps.domains.submissions.services.lifecycle import process_submission_storage_cleanup_intents
+
+        job_id = "job-provider-retry"
+        AIJobModel.objects.create(
+            job_id=job_id, job_type="matchup_analysis", tenant_id=str(self.tenant.id),
+            source_domain="matchup", source_id=str(self.doc.id),
+        )
+        key = analysis_artifact_prefix(tenant_id=self.tenant.id, job_id=job_id) + "problems/run/1.png"
+        with patch(
+            "academy.adapters.storage.r2_objects.iter_r2_objects",
+            return_value=[{"Key": key}],
+        ), patch(
+            "apps.infrastructure.storage.r2.delete_object_r2_storage",
+            side_effect=RuntimeError("provider unavailable"),
+        ), self.captureOnCommitCallbacks(execute=True):
+            scheduled = schedule_unreferenced_analysis_artifacts(
+                tenant_id=self.tenant.id, document_id=self.doc.id, job_id=job_id,
+            )
+
+        self.assertEqual(scheduled, 1)
+        intent = SubmissionStorageCleanupIntent.objects.get(tenant=self.tenant, object_key=key)
+        self.assertEqual(intent.status, "failed")
+        with patch("apps.infrastructure.storage.r2.delete_object_r2_storage") as delete:
+            result = process_submission_storage_cleanup_intents(intent_ids=[intent.id])
+        self.assertEqual(result.cleaned, 1)
+        delete.assert_called_once_with(key=key)
+        intent.refresh_from_db()
+        self.assertEqual(intent.status, "cleaned")
+
     def test_forged_job_cannot_claim_another_tenant_namespace(self):
         job_id = "foreign-job"
         AIJobModel.objects.create(
