@@ -46,11 +46,34 @@ $requiredProductionMarkers = @(
     "needs.build-and-push.result == 'success'",
     "contents: read",
     'ssh-key: ${{ secrets.ACADEMY_RELEASE_DEPLOY_KEY }}'
+    "deployment_scope:"
+    "development_only"
+    "run_wrong_note_canary:"
+    "run-wrong-note-development-canary.ps1"
+    "inputs.deployment_scope != 'development_only'"
+    '--deployment-scope "$ACADEMY_DEPLOYMENT_SCOPE"'
 )
 foreach ($marker in $requiredProductionMarkers) {
     if (-not $productionWorkflow.Contains($marker)) {
         $failures += "Production workflow is missing governance marker: $marker"
     }
+}
+$developmentGate = [regex]::Match(
+    $productionWorkflow,
+    '(?ms)^  verify-api-development:\r?\n.*?(?=^  verify-api-preprod:)'
+).Value
+$preprodGate = [regex]::Match(
+    $productionWorkflow,
+    '(?ms)^  verify-api-preprod:\r?\n.*?(?=^  run-migrations:)'
+).Value
+if (-not $developmentGate.Contains(
+    "if: github.event_name == 'push' || inputs.deployment_scope == 'full' || inputs.run_wrong_note_canary == true"
+)) {
+    $failures += "Full release candidates must run the wrong-note canary in development."
+}
+if (-not $preprodGate.Contains("needs.verify-api-development.result == 'success'") -or
+    $preprodGate.Contains("needs.verify-api-development.result == 'skipped'")) {
+    $failures += "Preprod must require successful development verification, including the wrong-note canary."
 }
 foreach ($marker in @(
     "Backend static and migration contract",

@@ -16,7 +16,9 @@ from apps.domains.submissions.services.lifecycle import (
     mark_answers_ready_in_memory,
     mark_needs_identification,
     reopen_for_regrade_in_memory,
+    resume_auto_recovered_submission_in_memory,
 )
+from apps.support.submissions.dependencies import latest_done_submission_ai_job_matches
 from apps.support.omr.exam_structure import load_submission_exam_structure
 
 logger = logging.getLogger(__name__)
@@ -46,9 +48,18 @@ def _extract_worker_result(payload: Dict[str, Any]) -> Dict[str, Any]:
     return {k: v for k, v in payload.items() if k not in exclude}
 
 
+def _is_latest_done_ai_job_for_submission(submission: Submission, job_id: Any) -> bool:
+    return latest_done_submission_ai_job_matches(
+        submission_id=int(submission.id),
+        tenant_id=int(submission.tenant_id),
+        job_id=str(job_id or ""),
+    )
+
+
 def _can_hydrate_late_ai_answers(
     *,
     submission: Submission,
+    payload: Dict[str, Any],
     result: Dict[str, Any],
 ) -> bool:
     """
@@ -68,6 +79,9 @@ def _can_hydrate_late_ai_answers(
         if (
             recovered_from not in STUCK_RECOVERABLE_STATUSES
             or submission.error_message != f"stuck:{recovered_from}_timeout"
+            or not _is_latest_done_ai_job_for_submission(
+                submission, payload.get("job_id"),
+            )
         ):
             return False
     elif submission.status not in (
@@ -85,6 +99,33 @@ def _can_hydrate_late_ai_answers(
     from apps.domains.submissions.models import SubmissionAnswer
 
     return not SubmissionAnswer.objects.filter(submission=submission).exists()
+
+
+def _can_resume_recovered_unmatched_submission(
+    *, submission: Submission, payload: Dict[str, Any], result: Dict[str, Any],
+) -> bool:
+    """Accept a late result only from the latest same-tenant job for this scan."""
+    if (
+        submission.source != Submission.Source.OMR_SCAN
+        or submission.status != Submission.Status.FAILED
+        or submission.enrollment_id
+        or payload.get("status") != "DONE"
+    ):
+        return False
+    recovery = (submission.meta or {}).get("state_recovery") or {}
+    recovered_from = str(recovery.get("from_status") or "")
+    if (
+        recovered_from not in STUCK_RECOVERABLE_STATUSES
+        or submission.error_message != f"stuck:{recovered_from}_timeout"
+        or not isinstance(result.get("answers"), list)
+        or not result["answers"]
+    ):
+        return False
+    from apps.domains.submissions.models import SubmissionAnswer
+
+    if SubmissionAnswer.objects.filter(submission=submission).exists():
+        return False
+    return _is_latest_done_ai_job_for_submission(submission, payload.get("job_id"))
 
 
 def _validate_worker_contract(
@@ -173,10 +214,16 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
 
     late_answer_hydration = _can_hydrate_late_ai_answers(
         submission=submission,
+        payload=payload,
         result=result,
     )
-    if submission.status in _ALREADY_PROCESSED_STATUSES:
-        if not late_answer_hydration:
+    late_unmatched_resume = _can_resume_recovered_unmatched_submission(
+        submission=submission, payload=payload, result=result,
+    )
+    # FAILED is conditionally recoverable, so keep it outside the terminal
+    # idempotency set while rejecting callbacks that lack a safe recovery path.
+    if submission.status in _ALREADY_PROCESSED_STATUSES or submission.status == Submission.Status.FAILED:
+        if not late_answer_hydration and not late_unmatched_resume:
             logger.info(
                 "apply_omr_ai_result: submission %s already %s, skipping (idempotent)",
                 submission_id, submission.status,
@@ -184,9 +231,7 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
             return submission.id
         logger.warning(
             "OMR_LATE_AI_RESULT_HYDRATE | submission_id=%s | status=%s | enrollment_id=%s",
-            submission.id,
-            submission.status,
-            submission.enrollment_id,
+            submission.id, submission.status, submission.enrollment_id,
         )
 
     meta = dict(submission.meta or {})
@@ -199,7 +244,16 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     }
     submission.meta = meta
 
-    if status == "FAILED":
+    if late_unmatched_resume:
+        recovery = dict(meta.get("state_recovery") or {})
+        recovery["late_callback_at"] = datetime.now(timezone.utc).isoformat()
+        recovery["late_job_id"] = str(job_id)
+        meta["state_recovery"] = recovery
+        resume_auto_recovered_submission_in_memory(
+            submission, actor="ai_omr_mapper.late_result",
+        )
+
+    if status in {"FAILED", "REJECTED_BAD_INPUT", "FALLBACK_TO_GPU"} or error:
         fail_submission_in_memory(
             submission,
             error_message=error or "AI worker failed",

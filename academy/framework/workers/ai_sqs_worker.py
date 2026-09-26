@@ -41,6 +41,11 @@ _TERMINAL_AI_JOB_STATUSES = {
     "FALLBACK_TO_GPU",
     "REVIEW_REQUIRED",
 }
+_WRONG_NOTE_PREFLIGHT_TENANT_ERRORS = frozenset({
+    "missing_tenant_id_in_sqs_message",
+    "tenant_mismatch_in_sqs_message",
+    "payload_tenant_mismatch_in_sqs_message",
+})
 
 # 상수 (기존 sqs_main_cpu와 동일)
 SQS_WAIT_TIME_SECONDS = 20
@@ -246,6 +251,22 @@ def _dispatch_terminal_callback_from_message(job_id: str, message: dict, tier_fr
         if not job or job.status not in _TERMINAL_AI_JOB_STATUSES:
             return True
 
+        # A preflight scope rejection has no trustworthy wrong-note target to
+        # update. Acknowledge that poison envelope without touching any tenant's
+        # PDF row; ordinary terminal jobs still retry their domain callback.
+        if (
+            job.source_domain == "results_wrong_note_pdf"
+            and job.status == "FAILED"
+            and job.error_message == job.last_error
+            and job.error_message in _WRONG_NOTE_PREFLIGHT_TENANT_ERRORS
+        ):
+            logger.warning(
+                "AI_JOB_WRONG_NOTE_PREFLIGHT_SCOPE_REJECTED | job_id=%s | reason=%s",
+                job_id,
+                job.error_message,
+            )
+            return True
+
         source_domain = job.source_domain or message.get("source_domain")
         source_id = job.source_id or message.get("source_id")
         if not source_domain or not source_id:
@@ -254,7 +275,6 @@ def _dispatch_terminal_callback_from_message(job_id: str, message: dict, tier_fr
         result_row = AIResultModel.objects.filter(job=job).first()
         result_payload = result_row.payload if result_row and isinstance(result_row.payload, dict) else {}
         error = job.error_message or job.last_error or None
-        callback_status = "FAILED" if error else job.status
         prepared = PreparedJob(
             job_id=job.job_id,
             job_type=job.job_type,
@@ -267,7 +287,7 @@ def _dispatch_terminal_callback_from_message(job_id: str, message: dict, tier_fr
         )
         return _dispatch_domain_callback(
             prepared,
-            status=callback_status,
+            status=job.status,
             result_payload=result_payload,
             error=error,
         )
@@ -451,6 +471,7 @@ def run_ai_sqs_worker(
                         job_id,
                         f"unsupported_job_type_for_{worker_kind}_worker:{job_type}",
                         tier_from_msg,
+                        preflight_only=True,
                     )
                     queue.delete(receipt_handle, tier_from_msg)
                     continue
@@ -482,12 +503,23 @@ def run_ai_sqs_worker(
                 if prepared is None:
                     # 이미 완료/실패된 job의 재배달은 저장된 결과로 domain callback만 재시도한다.
                     # callback 성공 또는 callback 대상 없음일 때만 SQS message를 삭제한다.
+                    message_deleted = False
                     callback_ok = _dispatch_terminal_callback_from_message(job_id, message, tier_from_msg)
                     if callback_ok:
-                        queue.delete(receipt_handle, tier_from_msg)
-                    else:
+                        message_deleted = queue.delete(receipt_handle, tier_from_msg)
+                        if not message_deleted:
+                            logger.error(
+                                "AI_JOB_IDEMPOTENT_DELETE_FAILED | job_id=%s",
+                                job_id,
+                            )
+                    if not callback_ok or not message_deleted:
                         consecutive_errors += 1
-                    logger.info("AI_JOB_IDEMPOTENT_SKIP | job_id=%s", job_id)
+                    logger.info(
+                        "AI_JOB_IDEMPOTENT_SKIP | job_id=%s callback_ok=%s message_deleted=%s",
+                        job_id,
+                        str(callback_ok).lower(),
+                        str(message_deleted).lower(),
+                    )
                     _current_receipt_handle = None
                     if _shutdown:
                         break
@@ -531,18 +563,23 @@ def run_ai_sqs_worker(
                             "SQS_JOB_TIMEOUT_60MIN | request_id=%s | job_id=%s | hard exit after cleanup",
                             request_id, job_id,
                         )
-                        ok = fail_ai_job(uow_factory(), job_id, "inference_timeout_60min", tier_from_msg)
+                        ok = fail_ai_job(
+                            uow_factory(), job_id, "inference_timeout_60min", tier_from_msg,
+                            expected_locked_at=prepared.claim_locked_at,
+                        )
                         if not ok:
                             logger.error(
-                                "AI_JOB_STATE_TRANSITION_FAILED | step=fail_timeout | job_id=%s | "
-                                "DB still RUNNING — manual cleanup required", job_id,
+                                "AI_JOB_STATE_TRANSITION_REJECTED | step=fail_timeout | job_id=%s | "
+                                "state changed or missing; persisted state wins",
+                                job_id,
                             )
                         callback_ok = False
                         if ok:
                             _cleanup_terminal_artifacts(prepared)
-                            callback_ok = _dispatch_domain_callback(
-                                prepared, status="FAILED", result_payload=None,
-                                error="inference_timeout_60min",
+                            callback_ok = _dispatch_terminal_callback_from_message(
+                                job_id,
+                                message,
+                                tier_from_msg,
                             )
                         try:
                             if ok and callback_ok and not queue.delete(receipt_handle, tier_from_msg):
@@ -560,18 +597,23 @@ def run_ai_sqs_worker(
                     # SQS message는 삭제되지만 DB는 RUNNING으로 남아 운영 알람 대상.
                     result = result_container[0] if result_container else None
                     if result is None:
-                        ok = fail_ai_job(uow_factory(), job_id, "inference_error_no_result", tier_from_msg)
+                        ok = fail_ai_job(
+                            uow_factory(), job_id, "inference_error_no_result", tier_from_msg,
+                            expected_locked_at=prepared.claim_locked_at,
+                        )
                         if not ok:
                             logger.error(
-                                "AI_JOB_STATE_TRANSITION_FAILED | step=fail | job_id=%s | "
-                                "DB still RUNNING — manual cleanup required", job_id,
+                                "AI_JOB_STATE_TRANSITION_REJECTED | step=fail | job_id=%s | "
+                                "state changed or missing; message retained for readback",
+                                job_id,
                             )
                             consecutive_errors += 1
                             continue
                         _cleanup_terminal_artifacts(prepared)
-                        callback_ok = _dispatch_domain_callback(
-                            prepared, status="FAILED", result_payload=None,
-                            error="inference_error_no_result",
+                        callback_ok = _dispatch_terminal_callback_from_message(
+                            job_id,
+                            message,
+                            tier_from_msg,
                         )
                         if not callback_ok:
                             logger.error(
@@ -588,19 +630,23 @@ def run_ai_sqs_worker(
                             )
                         consecutive_errors += 1
                     elif result.status == "DONE":
-                        ok = complete_ai_job(uow_factory(), job_id, result.result)
+                        ok = complete_ai_job(
+                            uow_factory(), job_id, result.result,
+                            expected_locked_at=prepared.claim_locked_at,
+                        )
                         if not ok:
                             logger.error(
-                                "AI_JOB_STATE_TRANSITION_FAILED | step=complete | job_id=%s | "
-                                "DB still RUNNING — manual cleanup required", job_id,
+                                "AI_JOB_STATE_TRANSITION_REJECTED | step=complete | job_id=%s | "
+                                "state changed or missing; message retained for readback",
+                                job_id,
                             )
                             consecutive_errors += 1
                             continue
                         _cleanup_terminal_artifacts(prepared)
-                        callback_ok = _dispatch_domain_callback(
-                            prepared, status="DONE",
-                            result_payload=result.result if isinstance(result.result, dict) else {},
-                            error=None,
+                        callback_ok = _dispatch_terminal_callback_from_message(
+                            job_id,
+                            message,
+                            tier_from_msg,
                         )
                         if not callback_ok:
                             logger.error(
@@ -618,18 +664,23 @@ def run_ai_sqs_worker(
                         logger.info("SQS_JOB_COMPLETED | request_id=%s | job_id=%s", request_id, job_id)
                         consecutive_errors = 0
                     else:
-                        ok = fail_ai_job(uow_factory(), job_id, result.error or "failed", tier_from_msg)
+                        ok = fail_ai_job(
+                            uow_factory(), job_id, result.error or "failed", tier_from_msg,
+                            expected_locked_at=prepared.claim_locked_at,
+                        )
                         if not ok:
                             logger.error(
-                                "AI_JOB_STATE_TRANSITION_FAILED | step=fail | job_id=%s | "
-                                "DB still RUNNING — manual cleanup required", job_id,
+                                "AI_JOB_STATE_TRANSITION_REJECTED | step=fail | job_id=%s | "
+                                "state changed or missing; message retained for readback",
+                                job_id,
                             )
                             consecutive_errors += 1
                             continue
                         _cleanup_terminal_artifacts(prepared)
-                        callback_ok = _dispatch_domain_callback(
-                            prepared, status="FAILED", result_payload=None,
-                            error=result.error or "failed",
+                        callback_ok = _dispatch_terminal_callback_from_message(
+                            job_id,
+                            message,
+                            tier_from_msg,
                         )
                         if not callback_ok:
                             logger.error(

@@ -33,6 +33,11 @@ from apps.support.ai.callback_dependencies import (
 logger = logging.getLogger(__name__)
 
 
+def _is_failed_terminal(status: str, error: Optional[str]) -> bool:
+    """Interpret DB status and error together without rewriting the status."""
+    return status in {"FAILED", "REJECTED_BAD_INPUT", "FALLBACK_TO_GPU"} or bool(error)
+
+
 def _close_old_connections_if_safe() -> None:
     """Release worker connections without closing an active transaction."""
     if not connection.in_atomic_block:
@@ -187,6 +192,7 @@ def dispatch_ai_result_to_domain(
                 job_id=job_id,
                 status=status,
                 result_payload=result_payload or {},
+                error=error,
                 source_id=source_id,
             )
         except Exception:
@@ -251,6 +257,7 @@ def _handle_wrong_note_pdf_result(
 ) -> None:
     """Apply a tools-worker result to the tenant-scoped WrongNotePDF record."""
     from django.db import transaction
+    from django.utils import timezone
 
     from apps.domains.ai.models import AIJobModel
     WrongNotePDF, wrong_note_pdf_storage_key = (
@@ -276,16 +283,19 @@ def _handle_wrong_note_pdf_result(
             .select_related("enrollment__tenant")
             .get(id=pdf_job_id, enrollment__tenant_id=int(ai_job.tenant_id))
         )
-        if pdf_job.status == WrongNotePDF.Status.DONE:
+        if pdf_job.status in {
+            WrongNotePDF.Status.DONE,
+            WrongNotePDF.Status.FAILED,
+        }:
             return
 
         outcome = str(result_payload.get("outcome") or "")
-        if status == "FAILED":
-            pdf_job.status = WrongNotePDF.Status.FAILED
-            pdf_job.error_message = str(
+        if _is_failed_terminal(status, error):
+            next_status = WrongNotePDF.Status.FAILED
+            file_path = ""
+            error_message = str(
                 error or "PDF를 만들지 못했습니다. 잠시 후 다시 시도해 주세요."
             )
-            pdf_job.file_path = ""
         elif outcome == WrongNotePDF.Status.DONE:
             file_path = str(result_payload.get("file_path") or "")
             expected_path = wrong_note_pdf_storage_key(
@@ -294,9 +304,8 @@ def _handle_wrong_note_pdf_result(
             )
             if file_path != expected_path:
                 raise ValueError("Wrong-note PDF callback file path mismatch.")
-            pdf_job.status = WrongNotePDF.Status.DONE
-            pdf_job.file_path = file_path
-            pdf_job.error_message = ""
+            next_status = WrongNotePDF.Status.DONE
+            error_message = ""
         elif outcome == WrongNotePDF.Status.FAILED:
             file_path = str(result_payload.get("file_path") or "")
             if file_path:
@@ -306,17 +315,26 @@ def _handle_wrong_note_pdf_result(
                 )
                 if file_path != expected_path:
                     raise ValueError("Wrong-note PDF failed callback file path mismatch.")
-            pdf_job.status = WrongNotePDF.Status.FAILED
-            pdf_job.file_path = file_path
-            pdf_job.error_message = str(
+            next_status = WrongNotePDF.Status.FAILED
+            error_message = str(
                 result_payload.get("error_message")
                 or "PDF를 만들지 못했습니다. 잠시 후 다시 시도해 주세요."
             )
         else:
             raise ValueError("Wrong-note PDF callback outcome is invalid.")
 
-        pdf_job.save(
-            update_fields=["status", "file_path", "error_message", "updated_at"]
+        WrongNotePDF.objects.filter(
+            id=pdf_job.id,
+            enrollment__tenant_id=int(ai_job.tenant_id),
+            status__in=[
+                WrongNotePDF.Status.PENDING,
+                WrongNotePDF.Status.RUNNING,
+            ],
+        ).update(
+            status=next_status,
+            file_path=file_path,
+            error_message=error_message,
+            updated_at=timezone.now(),
         )
 
 
@@ -423,7 +441,7 @@ def _handle_exam_ai_result(
     결과에서 문항 박스 추출 → Sheet/ExamQuestion 자동 생성.
     해설이 포함되어 있으면 QuestionExplanation도 생성.
     """
-    if status == "FAILED":
+    if _is_failed_terminal(status, error):
         try:
             from apps.domains.ai.models import AIJobModel
 
@@ -893,7 +911,7 @@ def _handle_matchup_ai_result(
                 )
                 return
 
-    if status == "FAILED":
+    if _is_failed_terminal(status, error):
         doc.status = "failed"
         doc.error_message = error or "AI 분석 실패"
         doc.save(update_fields=["status", "error_message", "updated_at"])
@@ -1236,10 +1254,11 @@ def _handle_qna_matchup_search_result(
     job_id: str,
     status: str,
     result_payload: Dict[str, Any],
+    error: Optional[str],
     source_id: Optional[str],
 ) -> None:
     """Q&A 매치업 검색 결과를 PostEntity.meta에 저장."""
-    if status == "FAILED":
+    if _is_failed_terminal(status, error):
         logger.warning("AI_CALLBACK_QNA_MATCHUP_FAILED | job_id=%s | post_id=%s", job_id, source_id)
         return
 
@@ -1297,7 +1316,7 @@ def _handle_matchup_index_result(
 
     _close_old_connections_if_safe()
 
-    if status == "FAILED":
+    if _is_failed_terminal(status, error):
         logger.warning(
             "AI_CALLBACK_MATCHUP_INDEX_FAILED | job_id=%s | exam_id=%s | error=%s",
             job_id, source_id, error,
@@ -1377,7 +1396,7 @@ def _handle_matchup_manual_result(
     from apps.domains.ai.models import AIJobModel
     MatchupProblem = get_matchup_problem_model()
 
-    if status == "FAILED":
+    if _is_failed_terminal(status, error):
         logger.warning(
             "AI_CALLBACK_MATCHUP_MANUAL_FAILED | job_id=%s | problem_id=%s | error=%s",
             job_id, source_id, error,

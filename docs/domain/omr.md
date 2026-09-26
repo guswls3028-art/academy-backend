@@ -212,6 +212,38 @@ attempt를 잠그기 전에 같은 `Exam` -> `Session` 순서를 따른다. 공�
 이 순서를 바꾸면 최초 결과의 FK 생성이나 공개 재채점과 수기 입력이 서로의 잠금을
 기다리는 교착이 생길 수 있으므로 각 경로를 PostgreSQL 동시성 회귀로 고정한다.
 
+### 5분 상태 복구 안전 계약
+
+EventBridge 규칙 `academy-v1-recover-stuck-omr`은 5분마다
+`recover_stuck_omr_submissions`를 실행한다. `SUBMITTED`, `DISPATCHED`,
+`EXTRACTING`, `GRADING`에서 상태별 timeout을 넘긴 OMR만 실패 복구 후보이며,
+탐지는 read-only다.
+
+복구는 후보 조회 결과를 그대로 신뢰하지 않는다. 각 Submission row를 잠근 뒤
+현재 상태와 탐지 당시 상태, `source=omr_scan`, 탐지 당시 `updated_at` 버전,
+현재 상태에 해당하는 cutoff를 한 번 더 모두 확인한다. 후보 조회 뒤 상태나
+`updated_at`이 달라졌으면 skip하고 다음 5분 실행이 새 버전으로 다시 판단한다.
+또한 같은 tenant·Submission의 AI job에 유효한 RUNNING lease나 최근 65분 내
+시작한 RUNNING/대기 job이 있으면 실패 전이를 건너뛴다. AI 워커는 최대 60분
+추론할 수 있으므로 Submission 자체의 30분 무변경만으로 살아 있는 작업을
+`FAILED`로 만들지 않는다.
+
+`DONE`과 기존 `FAILED`는 이 recovery의 후보가 아니므로 변경하지 않는다. 동일한
+EventBridge 실행이 반복되어도 첫 성공만 `meta.state_recovery`를 기록하고 후속 실행은
+같은 Submission을 다시 전이하지 않는다. 실제 실패 복구는
+`stuck:<status>_timeout`과 actor를 기록한다. 일반 재처리는 기존 retry lifecycle을
+따른다. 단, 이미 학생이 확정되었고 답안이 아직 없는 복구 실패 제출에 정상 AI 결과가
+늦게 도착하면 기존 콜백이 row lock 아래 답안을 저장하고 재채점을 진행할 수 있다.
+아직 학생이 확정되지 않은 복구 실패 제출도 답안이 비어 있고, 같은 tenant·Submission의
+가장 최근 AI job이 `DONE`이며 결과에 답안이 있을 때만 보호된
+`FAILED → SUBMITTED → DISPATCHED` 전이를 거쳐 결과를 저장한다. 식별이 안 되면
+`NEEDS_IDENTIFICATION`으로 교직원 확인을 기다린다. 다른 tenant나 뒤이은 job의
+낡은 콜백은 답안과 사용자 데이터를 변경하지 않는다. 이 경계는
+`test_state_recovery.py`와 `test_omr_tenant_realuse_flow.py`에서 확인한다.
+운영자의 `reconcile_dispatched_submissions`도 각 제출과 같은 tenant의 AI job만
+읽고 그 결과만 재적용한다. 다른 tenant가 같은 `source_id`를 주장해도 감지 출력과
+복구 대상에서 제외한다.
+
 단일정답 문항에서 워커가 강한 복수마킹을 `status=ok, marking=multi`로 보내더라도
 정답과 완전히 일치하는 다중정답 키가 아니면 `ANSWER_SCORE_AMBIGUOUS`로 검토를
 요구한다. 재채점은 DONE 제출을 `ANSWERS_READY`로 되돌리는 데서 끝나지 않고
@@ -367,6 +399,7 @@ HTML·PDF 출력 및 사용자 업로드 우선순위를 회귀 검사한다.
 
 | 버전 | 날짜 | 변경 |
 |------|------|------|
+| v17.4 | 2026-09-07 | 5분 stale recovery가 탐지 후 worker heartbeat/상태 전이를 덮지 않도록 row lock 획득 시 상태·source·상태별 cutoff·탐지 `updated_at` 버전을 모두 재검사. DONE/FAILED 불변과 반복 실행 멱등성을 PostgreSQL barrier 및 command 회귀로 고정. |
 | v17.3 | 2026-09-07 | 종료된 시험의 종이 OMR도 교사가 미식별 학생을 확정하고 재채점할 수 있도록 온라인 응시 시간창과 사후 OMR 채점 경계를 분리. 학생 온라인 응시 시간, tenant, 대상자, 재응시, 중복 보호는 유지하고 예상 밖 재채점 실패는 원자 rollback과 운영 로그 및 재시도 가능한 안내를 제공. |
 | v17.2 | 2026-08-30 | 이미 연결된 fuzzy match를 답안 변경 없이 현재 학생으로 확정하는 OMR 검토 동작을 추가. 객관식 전용 수기 결과가 OMR의 학생·문항·답안·정오·점수와 완전히 같을 때만 기존 attempt를 원자적으로 연결하며, 불일치·혼합형은 기존 재응시 보호로 fail-closed. |
 | v17.1 | 2026-08-30 | OMR의 미사용 0~999 숫자 버블을 제거하고 모든 비객관식 문항을 번호가 붙은 서술형 빈 작성칸으로 통일. 종이 OMR AI 인식·자동판정은 객관식만 수행하며 기존 답안키/성적 데이터와 온라인 숫자 단답 자동채점은 유지. |

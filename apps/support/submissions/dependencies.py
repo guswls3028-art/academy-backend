@@ -10,9 +10,10 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any
 
-from django.db.models import Prefetch
+from django.db.models import Prefetch, Q
 
 logger = logging.getLogger(__name__)
 
@@ -842,14 +843,56 @@ def question_id_map_for_exam(*, exam_id: int) -> ExamQuestionIdMap | None:
     )
 
 
-def latest_ai_job_for_submission(*, submission_id: int) -> Any | None:
+def latest_ai_job_for_submission(*, submission_id: int, tenant_id: int) -> Any | None:
     from apps.domains.ai.models import AIJobModel
 
     return (
         AIJobModel.objects
-        .filter(source_domain="submissions", source_id=str(submission_id))
-        .order_by("-created_at")
+        .filter(
+            tenant_id=str(tenant_id),
+            source_domain="submissions",
+            source_id=str(submission_id),
+        )
+        .order_by("-created_at", "-id")
         .first()
+    )
+
+
+def active_submission_ai_job_exists(
+    *, submission_id: int, tenant_id: int, now: datetime, grace: timedelta,
+) -> bool:
+    """Check a submission's live worker lease within its exact tenant scope."""
+    from apps.domains.ai.models import AIJobModel
+
+    recent = now - grace
+    return AIJobModel.objects.filter(
+        tenant_id=str(tenant_id),
+        source_domain="submissions",
+        source_id=str(submission_id),
+    ).filter(
+        Q(status="RUNNING")
+        & (Q(lease_expires_at__gt=now) | Q(started_at__gte=recent))
+        | Q(status__in=("PENDING", "VALIDATING", "RETRYING"), updated_at__gte=recent)
+    ).exists()
+
+
+def latest_done_submission_ai_job_matches(
+    *, submission_id: int, tenant_id: int, job_id: str,
+) -> bool:
+    """Require a terminal callback from the newest job of this tenant's scan."""
+    if not job_id:
+        return False
+    from apps.domains.ai.models import AIJobModel
+
+    latest_job = (
+        AIJobModel.objects.filter(
+            tenant_id=str(tenant_id),
+            source_domain="submissions",
+            source_id=str(submission_id),
+        ).order_by("-created_at", "-id").first()
+    )
+    return bool(
+        latest_job and latest_job.job_id == str(job_id) and latest_job.status == "DONE"
     )
 
 

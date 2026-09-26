@@ -653,6 +653,12 @@ def retry_failed_submission(submission: Submission, *, actor: str) -> None:
     transit_save(submission, S.SUBMITTED, actor=actor)
 
 
+def resume_auto_recovered_submission_in_memory(submission: Submission, *, actor: str) -> None:
+    """Resume only a verified late AI callback through ordinary guarded states."""
+    transit(submission, S.SUBMITTED, actor=actor)
+    transit(submission, S.DISPATCHED, actor=actor)
+
+
 def reopen_for_regrade(submission: Submission, *, actor: str) -> None:
     mark_answers_ready(submission, actor=actor, admin_override=True)
 
