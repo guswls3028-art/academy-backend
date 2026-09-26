@@ -120,6 +120,7 @@ class SaveAsTemplateView(APIView):
                 pass_score=exam.pass_score,
                 max_score=exam.max_score,
                 answer_visibility=exam.answer_visibility,
+                essay_numbering=exam.essay_numbering,
             )
             question_id_map = _copy_sheet(exam, template)
             _copy_answer_key(exam, template, question_id_map)

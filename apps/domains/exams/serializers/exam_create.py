@@ -33,6 +33,7 @@ class ExamCreateSerializer(serializers.ModelSerializer):
             "grading_mode",
             "manual_grading_method",
             "choice_question_count",
+            "essay_numbering",
             "answer_visibility",
             "open_at",
             "close_at",

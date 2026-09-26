@@ -102,6 +102,28 @@ class ExamPolicyUpdateTests(TestCase):
         self.assertEqual(response.data["pass_score"], 75)
         self.assertTrue(response.data["updated_at"])
 
+    def test_essay_numbering_is_saved_without_changing_grading_shape(self):
+        expected_updated_at = ExamSerializer(self.exam).data["updated_at"]
+        response = self.patch(
+            {"essay_numbering": "separate"},
+            expected_updated_at=expected_updated_at,
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.exam.refresh_from_db()
+        self.assertEqual(self.exam.essay_numbering, "separate")
+        self.assertEqual(response.data["essay_numbering"], "separate")
+        self.assertEqual(self.exam.grading_mode, Exam.GradingMode.CHOICE)
+
+    def test_invalid_essay_numbering_keeps_current_setting(self):
+        expected_updated_at = ExamSerializer(self.exam).data["updated_at"]
+        response = self.patch(
+            {"essay_numbering": "unknown"},
+            expected_updated_at=expected_updated_at,
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        self.exam.refresh_from_db()
+        self.assertEqual(self.exam.essay_numbering, "continuous")
+
     def test_patch_accepts_zero_pass_score_with_postgresql_compatible_lock_query(self):
         raw_request = self.factory.get(f"/api/v1/exams/{self.exam.id}/")
         request = Request(raw_request)
