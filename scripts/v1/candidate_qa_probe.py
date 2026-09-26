@@ -87,7 +87,7 @@ for path in directory.iterdir():
     safe = {key: row.get(key) for key in allowed}
     if isinstance(safe["inflight"], list):
         safe["inflight"] = [
-            {key: item.get(key) for key in ("operation_sha256", "lease_revision", "message_id")}
+            {key: item.get(key) for key in ("operation_sha256", "lease_revision", "started_at", "message_id")}
             if isinstance(item, dict) else None for item in safe["inflight"]
         ]
     if isinstance(safe["holds"], list):

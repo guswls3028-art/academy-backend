@@ -256,14 +256,28 @@ def test_missing_owned_proof_is_hold_not_implicit_zero(missing):
         adapter.observe(record)
 
 
-def test_nonzero_domain_manifest_or_baseline_worker_remains_hold():
+def test_nonzero_domain_manifest_is_valid_during_active_work_but_blocks_idle():
     record = _record()
     adapter, *_ = _adapter(record, _probe(record))
     adapter.cleanup_probe = lambda _record: CleanupEvidence(
         record["lease_id"], binding(record), NOW, (101,), "e" * 64,
         {"exam": {"db_rows": 0, "r2_objects": 1, "pending_outboxes": 0}},
     )
-    with pytest.raises(WindowHold, match="cleanup-zero"):
+    result = adapter.observe(record)
+    assert result.cleanup_zero is False
+    verify_readback(record, result, NOW)
+    with pytest.raises(WindowHold, match="cleanup"):
+        verify_readback(record, result, NOW, idle=True)
+
+
+def test_malformed_domain_manifest_or_baseline_worker_remains_hold():
+    record = _record()
+    adapter, *_ = _adapter(record, _probe(record))
+    adapter.cleanup_probe = lambda _record: CleanupEvidence(
+        record["lease_id"], binding(record), NOW, (101,), "e" * 64,
+        {"exam": {"db_rows": 0, "r2_objects": -1, "pending_outboxes": 0}},
+    )
+    with pytest.raises(WindowHold, match="cleanup proof"):
         adapter.observe(record)
 
     adapter, *_ = _adapter(record, _probe(record))
@@ -272,6 +286,46 @@ def test_nonzero_domain_manifest_or_baseline_worker_remains_hold():
         "i-11111111111111111", {"ai": (88,), "tools": (), "messaging": ()},
     )
     with pytest.raises(WindowHold, match="exclusivity"):
+        adapter.observe(record)
+
+
+@pytest.mark.parametrize("state,revision", [("active", 4), ("draining", 5)])
+@pytest.mark.parametrize("kind,pid", [("api", 2), ("ai", 1)])
+def test_prior_admission_revision_remains_inflight_across_renew_and_drain(state, revision, kind, pid):
+    record = _record(state)
+    record["revision"] = revision
+    record["renewed_at"] = 975
+    if state == "draining":
+        record["drain_from_revision"] = revision - 1
+    probe = _probe(record)
+    operation = {"operation_sha256": "f" * 64, "lease_revision": 2,
+                 "started_at": 950, "message_id": "e" * 32 if kind == "ai" else None}
+    probe["containers"][kind]["inside"]["snapshots"][0]["data"]["inflight"] = [operation]
+    adapter, *_ = _adapter(record, probe)
+    result = adapter.observe(record) if state == "active" else adapter.drain(record)
+    if kind == "ai":
+        assert result.workers_inflight["ai"] == ("1:" + "e" * 32,)
+    else:
+        assert result.active_sessions == ("api:2:" + "f" * 64,)
+    verify_readback(record, result, NOW, drained=state == "draining")
+
+
+@pytest.mark.parametrize("change", [
+    lambda op, record: op.update(lease_revision=1),
+    lambda op, record: op.update(lease_revision=record["revision"] + 1),
+    lambda op, record: op.update(started_at=record["started_at"] - 1),
+    lambda op, record: op.update(started_at=NOW + 1),
+    lambda op, record: op.pop("started_at"),
+])
+def test_forged_inflight_revision_or_start_time_holds(change):
+    record = _record()
+    probe = _probe(record)
+    operation = {"operation_sha256": "f" * 64, "lease_revision": 2,
+                 "started_at": 950, "message_id": "e" * 32}
+    change(operation, record)
+    probe["containers"]["ai"]["inside"]["snapshots"][0]["data"]["inflight"] = [operation]
+    adapter, *_ = _adapter(record, probe)
+    with pytest.raises(WindowHold, match="in-flight"):
         adapter.observe(record)
 
 
