@@ -31,6 +31,7 @@ class PreparedJob:
     tenant_id: Optional[str] = None
     source_domain: Optional[str] = None
     source_id: Optional[str] = None
+    claim_locked_at: Optional[datetime] = None
 
 
 def prepare_ai_job(
@@ -68,7 +69,10 @@ def prepare_ai_job(
                 job_id, source_domain, source_id,
             )
             if not existing.is_terminal():
-                repo.mark_failed(job_id, "missing_tenant_id_in_sqs_message", tier, now)
+                repo.mark_failed(
+                    job_id, "missing_tenant_id_in_sqs_message", tier, now,
+                    preflight_only=True,
+                )
             return None
         if str(existing.tenant_id or "") != str(tenant_id):
             logger.error(
@@ -76,7 +80,10 @@ def prepare_ai_job(
                 job_id, tenant_id, existing.tenant_id,
             )
             if not existing.is_terminal():
-                repo.mark_failed(job_id, "tenant_mismatch_in_sqs_message", tier, now)
+                repo.mark_failed(
+                    job_id, "tenant_mismatch_in_sqs_message", tier, now,
+                    preflight_only=True,
+                )
             return None
         payload_tenant_id = payload.get("tenant_id") if isinstance(payload, dict) else None
         if payload_tenant_id is not None and str(payload_tenant_id) != str(tenant_id):
@@ -86,7 +93,10 @@ def prepare_ai_job(
                 job_id, tenant_id, payload_tenant_id,
             )
             if not existing.is_terminal():
-                repo.mark_failed(job_id, "payload_tenant_mismatch_in_sqs_message", tier, now)
+                repo.mark_failed(
+                    job_id, "payload_tenant_mismatch_in_sqs_message", tier, now,
+                    preflight_only=True,
+                )
             return None
         if not repo.mark_running(job_id, worker_id, lease_expires_at, now):
             return None
@@ -99,6 +109,7 @@ def prepare_ai_job(
         tenant_id=tenant_id,
         source_domain=source_domain,
         source_id=source_id,
+        claim_locked_at=now,
     )
 
 
@@ -107,13 +118,18 @@ def complete_ai_job(
     job_id: str,
     result_payload: Optional[dict] = None,
     now: Optional[datetime] = None,
+    *,
+    expected_locked_at: Optional[datetime] = None,
 ) -> bool:
-    """RUNNING → DONE. 이미 DONE이면 True (멱등)."""
+    """RUNNING → DONE. 동일한 성공 DONE만 True로 멱등 복구."""
     if now is None:
         from datetime import timezone
         now = datetime.now(timezone.utc)
     with uow:
-        return uow.ai_jobs.mark_done(job_id, now, result_payload=result_payload)
+        return uow.ai_jobs.mark_done(
+            job_id, now, result_payload=result_payload,
+            expected_locked_at=expected_locked_at,
+        )
 
 
 def fail_ai_job(
@@ -122,10 +138,17 @@ def fail_ai_job(
     error_message: str,
     tier: str = "basic",
     now: Optional[datetime] = None,
+    *,
+    expected_locked_at: Optional[datetime] = None,
+    preflight_only: bool = False,
 ) -> bool:
-    """RUNNING → 최종 상태 (tier에 따라 DONE/FAILED). 이미 최종 상태면 True (멱등)."""
+    """시작 가능 상태/RUNNING → tier별 실패 결과. 동일 결과는 멱등 복구."""
     if now is None:
         from datetime import timezone
         now = datetime.now(timezone.utc)
     with uow:
-        return uow.ai_jobs.mark_failed(job_id, error_message, tier, now)
+        return uow.ai_jobs.mark_failed(
+            job_id, error_message, tier, now,
+            expected_locked_at=expected_locked_at,
+            preflight_only=preflight_only,
+        )

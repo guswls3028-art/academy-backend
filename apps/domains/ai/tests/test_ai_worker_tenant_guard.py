@@ -24,6 +24,43 @@ class AIWorkerTenantGuardTests(TestCase):
             source_id="1",
         )
 
+    def test_mismatched_redelivery_cannot_fail_an_active_claim(self):
+        job = self._job("1")
+        claim = prepare_ai_job(
+            DjangoUnitOfWork(),
+            job_id=job.job_id,
+            receipt_handle="valid-receipt",
+            tier="basic",
+            payload={"tenant_id": "1"},
+            job_type="ocr",
+            tenant_id="1",
+            source_domain="submissions",
+            source_id="1",
+            worker_id="ai-sqs-worker",
+        )
+        self.assertIsNotNone(claim)
+        job.refresh_from_db()
+        locked_at = job.locked_at
+
+        rejected = prepare_ai_job(
+            DjangoUnitOfWork(),
+            job_id=job.job_id,
+            receipt_handle="mismatched-receipt",
+            tier="basic",
+            payload={"tenant_id": "2"},
+            job_type="ocr",
+            tenant_id="2",
+            source_domain="submissions",
+            source_id="1",
+            worker_id="ai-sqs-worker",
+        )
+
+        self.assertIsNone(rejected)
+        job.refresh_from_db()
+        self.assertEqual(job.status, "RUNNING")
+        self.assertEqual(job.locked_at, locked_at)
+        self.assertEqual(job.error_message, "")
+
     def test_prepare_ai_job_rejects_missing_message_tenant_id(self):
         now = timezone.now()
         job = self._job("1")
