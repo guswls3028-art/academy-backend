@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 def _candidate_qa_requested() -> bool:
     required = os.environ.get("CANDIDATE_LEASE_REQUIRED", "").strip().lower()
-    if required not in ("", "0", "false", "no"):
+    if required not in ("", "0", "false"):
         return True
     return any(os.environ.get(name) for name in (
         "ACADEMY_QA_MODE", "ACADEMY_QA_LEASE_ID", "ACADEMY_QA_BINDING_SHA256",
@@ -178,6 +178,12 @@ class AISQSQueue:
             tier = "basic"
         
         payload = job.payload or {}
+        metadata = {
+            "job_type": str(job.job_type), "tier": tier,
+            "source_domain": str(job.source_domain) if job.source_domain else None,
+            "source_id": str(job.source_id) if job.source_id else None,
+            "created_at": timezone.now().isoformat(), "attempt": 1,
+        }
         if _candidate_qa_requested():
             # QA provenance is issued at the server-owned job boundary. Never
             # trust a client-supplied _qa_lease already present in the payload.
@@ -197,7 +203,7 @@ class AISQSQueue:
             gate.admit()
             payload = gate.stamp_message(
                 dict(payload), str(job.tenant_id), job_id=str(job.job_id),
-                queue_kind=kind,
+                queue_kind=kind, job_metadata=metadata,
             )
             # A received SQS body must match the authoritative DB job, including
             # a fresh nonce for this enqueue attempt. Save before publication.
@@ -206,14 +212,9 @@ class AISQSQueue:
 
         message = {
             "job_id": str(job.job_id),
-            "job_type": str(job.job_type),
-            "tier": tier,
             "payload": payload,
             "tenant_id": str(job.tenant_id) if job.tenant_id else None,
-            "source_domain": str(job.source_domain) if job.source_domain else None,
-            "source_id": str(job.source_id) if job.source_id else None,
-            "created_at": timezone.now().isoformat(),
-            "attempt": 1,
+            **metadata,
         }
         
         queue_name = self._get_queue_name(tier=tier)
@@ -273,18 +274,55 @@ class AISQSQueue:
             # SQS 메시지 형식에 따라 파싱
             body = message.get("Body", "")
             receipt_handle = message.get("ReceiptHandle")
+            qa_requested = _candidate_qa_requested()
+            if qa_requested:
+                from apps.infrastructure.qa_lease import QaLeaseClosed, decode_qa_json
+
+                try:
+                    if not isinstance(body, str):
+                        raise ValueError("QA SQS body must be JSON text")
+                    job_data = decode_qa_json(body)
+                    expected = {
+                        "job_id", "job_type", "tier", "payload", "tenant_id",
+                        "source_domain", "source_id", "created_at", "attempt",
+                    }
+                    if not isinstance(job_data, dict) or set(job_data) != expected:
+                        raise ValueError("QA SQS envelope fields differ")
+                    if (
+                        not isinstance(job_data["job_id"], str)
+                        or not job_data["job_id"]
+                        or not isinstance(job_data["tenant_id"], str)
+                        or not isinstance(job_data["job_type"], str)
+                        or not job_data["job_type"]
+                        or not isinstance(job_data["tier"], str)
+                        or not isinstance(job_data["payload"], dict)
+                        or not isinstance(job_data["created_at"], str)
+                        or type(job_data["attempt"]) is not int
+                        or job_data["attempt"] < 0
+                        or any(
+                            value is not None and not isinstance(value, str)
+                            for value in (job_data["source_domain"], job_data["source_id"])
+                        )
+                        or (not self.queue_name_override and job_data["tier"] != tier)
+                    ):
+                        raise ValueError("QA SQS envelope types or route differ")
+                except (QaLeaseClosed, ValueError, TypeError):
+                    logger.error("Invalid candidate QA message format")
+                    return {
+                        "receipt_handle": receipt_handle, "tier": tier,
+                        "payload": {}, "_qa_malformed": True,
+                    }
+                return {
+                    **job_data,
+                    "receipt_handle": receipt_handle,
+                    "message_id": message.get("MessageId"),
+                }
             
             # Body는 항상 JSON 문자열
             if isinstance(body, str):
                 try:
                     job_data = json.loads(body)
                 except json.JSONDecodeError:
-                    if _candidate_qa_requested():
-                        logger.error("Invalid JSON in candidate QA message")
-                        return {
-                            "receipt_handle": receipt_handle, "tier": tier,
-                            "payload": {}, "_qa_malformed": True,
-                        }
                     logger.error("Invalid JSON in message: %s", body)
                     if receipt_handle:
                         try:
@@ -297,12 +335,6 @@ class AISQSQueue:
             
             # 메시지 형식 검증 — 잘못된 메시지는 삭제하여 큐 블로킹 방지
             if not isinstance(job_data, dict) or "job_id" not in job_data:
-                if _candidate_qa_requested():
-                    logger.error("Invalid candidate QA message format")
-                    return {
-                        "receipt_handle": receipt_handle, "tier": tier,
-                        "payload": {}, "_qa_malformed": True,
-                    }
                 logger.error("Invalid message format (deleting): %s", job_data)
                 if receipt_handle:
                     try:
