@@ -646,14 +646,18 @@ No entire shared queue purge or deletion of foreign/user-authored data is allowe
 
 ### Immutable root metadata contract
 
-`candidate_qa_manifest.py` defines `academy-candidate-qa-root/v1`. Its exact fields
+`apps/infrastructure/qa_resource_manifest.py` defines
+`academy-candidate-qa-root/v1`; `scripts/v1/candidate_qa_manifest.py` preserves
+the controller entry point. The shared implementation ships with API/worker
+images and has no controller-script or Django dependency. Its exact fields
 are schema, lease ID, owner task, source SHA, four image digests, approved PR scope,
 official creator identifier, disposable tenant/user IDs and creation-seal hashes,
 initial fixture model/IDs/state hashes, complete domain inventory, and exact
 development bucket/tenant prefixes. Passwords, capabilities, payloads and the
 derived lease binding are not root fields.
 
-The creator first emits this nonsecret root; its byte SHA256 is committed in
+The creator first emits this nonsecret root in the canonical encoding returned
+by the shared helper (noncanonical rehashed input is rejected); its byte SHA256 is committed in
 `resource_manifest_sha256`; only then is the lease binding computed. Embedding
 that binding in the root would create a circular hash and is rejected.
 `load_root` checks the committed byte digest and exact lease/owner/source/images,

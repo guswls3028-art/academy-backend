@@ -123,6 +123,15 @@ class RootManifestTests(unittest.TestCase):
         self.save()
         self.assertNotEqual(self.load().initial_fixtures_sha256,before)
 
+    def test_shared_runtime_contract_and_noncanonical_rehash(self):
+        from apps.infrastructure.qa_resource_manifest import load_root as shared_load
+        self.assertEqual(shared_load(self.path,self.record,expected_bucket=BUCKET).sha256,
+                         self.load().sha256)
+        raw=self.path.read_bytes()+b" "
+        self.path.write_bytes(raw)
+        self.record["resource_manifest_sha256"]=hashlib.sha256(raw).hexdigest()
+        with self.assertRaises(WindowHold):self.load()
+
     def test_null_identity_and_boolean_tenant_reference_are_rejected(self):
         for key in ("lease_id","owner_task","source_sha"):
             value=root();value[key]=None
