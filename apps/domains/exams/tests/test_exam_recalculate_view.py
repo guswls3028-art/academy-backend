@@ -9,6 +9,7 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.exams.models import AnswerKey, Exam, ExamEnrollment, ExamQuestion, Sheet
+from apps.domains.exams.views.answer_key_view import AnswerKeyViewSet
 from apps.domains.exams.views.exam_recalculate_view import ExamRecalculateView
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.results.models import ExamResult, Result, ResultItem
@@ -134,6 +135,50 @@ class ExamRecalculateViewTests(TestCase):
         )
         self.assertEqual(float(result.total_score), 5.0)
         mock_dispatch.assert_called_once_with(submission_id=submission.id)
+
+    @patch("apps.domains.results.services.grading_service.dispatch_progress_pipeline")
+    def test_exception_answer_edit_regrades_existing_submission(self, mock_dispatch):
+        submission = self._create_submission()
+        SubmissionAnswer.objects.filter(
+            submission=submission,
+            exam_question_id=self.q2.id,
+        ).update(answer="2,3")
+
+        initial_request = self.factory.post(f"/api/v1/exams/{self.exam.id}/recalculate/")
+        initial_request.tenant = self.tenant
+        force_authenticate(initial_request, user=self.admin)
+        initial = ExamRecalculateView.as_view()(initial_request, exam_id=self.exam.id)
+        self.assertEqual(initial.status_code, 200, initial.data)
+        self.assertEqual(float(ExamResult.objects.get(submission=submission).total_score), 5.0)
+
+        request = self.factory.put(
+            f"/api/v1/exams/answer-keys/{self.answer_key.id}/",
+            {"exam": self.exam.id, "answers": {
+                str(self.q1.id): "1", str(self.q2.id): "2|3|2,3",
+            }},
+            format="json",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        response = AnswerKeyViewSet.as_view({"put": "update"})(
+            request, pk=self.answer_key.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["regrade"][0]["failed"], [])
+        self.answer_key.refresh_from_db()
+        self.assertEqual(self.answer_key.answers[str(self.q2.id)], "2|3|2,3")
+        exam_result = ExamResult.objects.get(submission=submission)
+        self.assertEqual(float(exam_result.total_score), 10.0)
+        self.assertTrue(exam_result.breakdown["2"]["correct"])
+
+        result = Result.objects.get(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment_id=self.enrollment.id,
+        )
+        self.assertEqual(float(result.total_score), 10.0)
+        self.assertEqual(mock_dispatch.call_count, 2)
 
     @patch("apps.domains.results.services.grading_service.dispatch_progress_pipeline")
     def test_recalculate_preserves_confirmed_not_submitted_override(self, mock_dispatch):
