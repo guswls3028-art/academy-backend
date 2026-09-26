@@ -99,7 +99,7 @@ Gemini VLM을 먼저 운영 실험할 때는 전체 문서를 VLM primary로 바
 - `MATCHUP_VLM_PAGE_ROLE_USE_VISION_FALLBACK=0`: role-only 판별에서 비싼 vision bbox 호출을 기본 차단
 
 실제 호출에는 `GEMINI_API_KEY`, `MATCHUP_VLM_TEXT_ADAPTER=gemini_flash_lite`, `MATCHUP_VLM_VISION_ADAPTER=gemini_flash` 설정이 필요하다.
-Gemini REST 요청은 키를 URL에 넣지 않고 `x-goog-api-key` 헤더로 전송하며, 오류·로그에서 키 원문을 지운다. 개발·preprod env는 운영 Gemini 키를 복사하지 않는다. 현재 별도 개발 Gemini 키가 없으므로 실제 VLM 7장 검증은 [candidate 준비 설계](../refactor/candidate-prepare-gate-plan.md)의 비운영 자격증명과 격리 게이트가 준비될 때까지 완료로 기록하지 않는다.
+Gemini REST 요청은 키를 URL에 넣지 않고 `x-goog-api-key` 헤더로 전송하며, 오류·로그에서 키 원문을 지운다. 사용자 승인에 따라 기존 Gemini 인증·과금 경로를 격리된 개발 worker에서 재사용한다. 새 프로젝트나 별도 개발 키는 필수 선행조건이 아니다. API와 preprod에서는 Gemini 자격증명을 제거한다. 승인 fixture와 일회용 QA tenant만 사용하고 변경 없는 검증은 재사용해 호출 비용을 최소화한다. 실제 VLM 7장 검증은 정확한 후보 이미지, 테넌트별 호출 게이트, 보존·재조회 및 DB/R2/Redis/큐 정리가 확인되어야 완료이며 키 설정 여부만으로 통과하지 않는다. 절차는 [상시 개발 런타임](../operations/persistent-development-runtime.md)을 따른다.
 
 ## 7. 운영상 주의
 
