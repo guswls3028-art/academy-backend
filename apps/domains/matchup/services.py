@@ -57,7 +57,10 @@ def protected_matchup_problem_ids(problem_queryset) -> list[int]:
 
     return list(
         problem_queryset.filter(
-            Q(meta__manual=True) | Q(meta__manual_owner_pinned=True)
+            Q(meta__manual=True)
+            | Q(meta__manual_owner_pinned=True)
+            | Q(meta__confirmation_status="confirmed")
+            | Q(meta__public_cleanup__status="approved")
         ).values_list("id", flat=True)
     )
 
@@ -1571,7 +1574,7 @@ def retry_document(document: MatchupDocument, *, require_failed: bool = False) -
         if require_failed and document.status != "failed":
             raise RuntimeError("재시도는 실패 상태에서만 가능합니다.")
 
-        # 기존 문제 삭제 — 단, manual=true는 학원장 직접 작업이라 보존.
+        # 기존 자동 문제 삭제 — 수동/고정/승인 문항은 보존.
         # JSONB NULL semantics 회피 (운영 사고 2026-05-03): manual 키 없는 row가
         # exclude에서 빠지는 PostgreSQL NULL semantics로 skeleton row가 영구히 살아남는
         # 결함. ID 기반 명시 exclude로 우회. 자세한 분석은 callbacks.py:_handle_matchup_ai_result.
@@ -1602,14 +1605,14 @@ def retry_document(document: MatchupDocument, *, require_failed: bool = False) -
                 problem_ids=list(legacy_curated_ids),
             )
 
-        manual_ids = list(
-            document.problems.filter(meta__manual=True).values_list("id", flat=True)
+        protected_ids = protected_matchup_problem_ids(document.problems.all())
+        auto_rows = list(document.problems.exclude(id__in=protected_ids).values_list("id", "image_key", "meta"))
+        document.problems.filter(id__in=[row_id for row_id, _, _ in auto_rows]).delete()
+        from .analysis_artifacts import detached_auto_image_keys, schedule_detached_auto_images
+        schedule_detached_auto_images(
+            tenant_id=document.tenant_id,
+            image_keys=detached_auto_image_keys(auto_rows),
         )
-        pinned_ids = list(
-            document.problems.filter(meta__manual_owner_pinned=True).values_list("id", flat=True)
-        )
-        protected_ids = list(set(manual_ids) | set(pinned_ids))
-        document.problems.exclude(id__in=protected_ids).delete()
 
         # presigned URL 6시간 — 큐 적체 시 워커가 1시간 후 picking하면 만료되어
         # 403 Forbidden으로 doc.status='failed' 반복 사이클 발생 (운영 사고 2026-04-29).

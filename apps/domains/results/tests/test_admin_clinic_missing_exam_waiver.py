@@ -24,6 +24,7 @@ class AdminClinicMissingExamWaiverTests(TestCase):
         self.Lecture = django_apps.get_model("lectures", "Lecture")
         self.Session = django_apps.get_model("lectures", "Session")
         self.ClinicLink = django_apps.get_model("progress", "ClinicLink")
+        self.SessionProgress = django_apps.get_model("progress", "SessionProgress")
         self.Student = django_apps.get_model("students", "Student")
         self.factory = APIRequestFactory()
         self.tenant = Tenant.objects.create(
@@ -48,9 +49,14 @@ class AdminClinicMissingExamWaiverTests(TestCase):
             name="과학",
             subject="SCIENCE",
         )
-        self.session = self.Session.objects.create(
+        self.Session.objects.create(
             lecture=self.lecture,
             order=1,
+            title="완료 대상과 무관한 선행 차시",
+        )
+        self.session = self.Session.objects.create(
+            lecture=self.lecture,
+            order=2,
             title="결시 확인 차시",
         )
         student_user = User.objects.create_user(
@@ -182,6 +188,65 @@ class AdminClinicMissingExamWaiverTests(TestCase):
         )
         self.assertEqual(response.status_code, 404, response.data)
         self.assertEqual(self.ClinicLink.objects.count(), 0)
+
+    def test_completed_session_is_not_a_current_absence_or_waivable(self):
+        self.assertNotEqual(self.session.id, self.enrollment.id)
+        self.SessionProgress.objects.create(
+            enrollment=self.enrollment,
+            session=self.session,
+            completed=True,
+        )
+
+        current = AdminClinicTargetsView.as_view()(
+            self._request("get", "/results/admin/clinic-targets/")
+        )
+        self.assertEqual(current.data, [])
+
+        waived = AdminClinicMissingExamWaiveView.as_view()(
+            self._request("post", "/results/admin/clinic-targets/waive-missing/", {
+                "session_id": self.session.id,
+                "enrollment_id": self.enrollment.id,
+                "exam_id": self.exam.id,
+                "memo": "이미 완료된 차시",
+            })
+        )
+        self.assertEqual(waived.status_code, 404, waived.data)
+        self.assertFalse(self.ClinicLink.objects.exists())
+
+    def test_ended_lecture_is_hidden_and_restored_without_rewriting_results(self):
+        self.lecture.is_active = False
+        self.lecture.save(update_fields=["is_active", "updated_at"])
+
+        current = AdminClinicTargetsView.as_view()(
+            self._request("get", "/results/admin/clinic-targets/")
+        )
+        self.assertEqual(current.data, [])
+        waived = AdminClinicMissingExamWaiveView.as_view()(
+            self._request("post", "/results/admin/clinic-targets/waive-missing/", {
+                "session_id": self.session.id,
+                "enrollment_id": self.enrollment.id,
+                "exam_id": self.exam.id,
+                "memo": "종료 강의 결시",
+            })
+        )
+        self.assertEqual(waived.status_code, 404, waived.data)
+        self.assertFalse(self.ClinicLink.objects.exists())
+
+        self.lecture.is_active = True
+        self.lecture.save(update_fields=["is_active", "updated_at"])
+        restored = AdminClinicTargetsView.as_view()(
+            self._request("get", "/results/admin/clinic-targets/")
+        )
+        self.assertEqual(len(restored.data), 1)
+
+    def test_inactive_enrollment_is_not_a_current_absence(self):
+        self.enrollment.status = "INACTIVE"
+        self.enrollment.save(update_fields=["status", "updated_at"])
+
+        current = AdminClinicTargetsView.as_view()(
+            self._request("get", "/results/admin/clinic-targets/")
+        )
+        self.assertEqual(current.data, [])
 
     def test_old_absence_does_not_override_a_newer_scored_result(self):
         self.attempt.attempt_index = 2

@@ -121,6 +121,77 @@ def test_image_invalid_adjustment_rejected_before_r2_upload(monkeypatch):
     assert upload_calls == []
 
 
+@pytest.mark.parametrize("mode", ["pdf", "images"])
+def test_ppt_dispatch_records_submitting_user_for_recovery(monkeypatch, mode):
+    captured = {}
+    monkeypatch.setattr(
+        "apps.infrastructure.storage.r2.upload_fileobj_to_r2_storage",
+        lambda **kwargs: None,
+    )
+
+    def fake_dispatch(**kwargs):
+        captured.update(kwargs)
+        return {"ok": True, "job_id": "ppt-owner-job"}
+
+    monkeypatch.setattr("apps.domains.tools.ppt.views.dispatch_ppt_generation_job", fake_dispatch)
+    request = RequestFactory().post("/api/v1/tools/ppt/generate/", data={})
+    request.user = SimpleNamespace(id=73)
+    view = PptGenerateView()
+    if mode == "pdf":
+        file = SimpleUploadedFile("source.pdf", b"%PDF-1.4\n%%EOF", content_type="application/pdf")
+        response = view._handle_pdf_mode(request, file, tenant_id="1")
+    else:
+        file = SimpleUploadedFile("source.png", b"\x89PNG\r\n\x1a\nvalid-magic", content_type="image/png")
+        response = view._handle_images_mode(request, [file], tenant_id="1")
+
+    assert response.status_code == 200
+    assert captured["payload"]["owner_user_id"] == "73"
+
+
+@pytest.mark.parametrize("mode", ["pdf", "images"])
+@pytest.mark.parametrize("failure", ["upload", "dispatch"])
+def test_ppt_unaccepted_upload_is_removed(monkeypatch, mode, failure):
+    uploaded = []
+    deleted = []
+
+    def fake_upload(**kwargs):
+        uploaded.append(kwargs["key"])
+        if failure == "upload":
+            raise RuntimeError("partial upload")
+
+    monkeypatch.setattr("apps.infrastructure.storage.r2.upload_fileobj_to_r2_storage", fake_upload)
+    monkeypatch.setattr(
+        "apps.infrastructure.storage.r2.delete_object_r2_storage",
+        lambda *, key: deleted.append(key),
+    )
+    monkeypatch.setattr(
+        "apps.domains.tools.ppt.views.dispatch_ppt_generation_job",
+        lambda **_kwargs: {"ok": False, "error": "dispatch failed"},
+    )
+    request = RequestFactory().post("/api/v1/tools/ppt/generate/", data={})
+    request.user = SimpleNamespace(id=73)
+    view = PptGenerateView()
+
+    if mode == "pdf":
+        file = SimpleUploadedFile("source.pdf", b"%PDF-1.4\n%%EOF", content_type="application/pdf")
+        handler = view._handle_pdf_mode
+        expected_suffix = "/source.pdf"
+    else:
+        file = SimpleUploadedFile("source.png", b"\x89PNG\r\n\x1a\nvalid-magic", content_type="image/png")
+        handler = view._handle_images_mode
+        expected_suffix = "/images.zip"
+
+    if failure == "upload":
+        with pytest.raises(RuntimeError, match="partial upload"):
+            handler(request, file if mode == "pdf" else [file], tenant_id="1")
+    else:
+        assert handler(request, file if mode == "pdf" else [file], tenant_id="1").status_code == 500
+    assert len(uploaded) == 1
+    assert uploaded[0].startswith("tenants/1/tools/ppt/tmp/")
+    assert uploaded[0].endswith(expected_suffix)
+    assert deleted == uploaded
+
+
 def test_ppt_worker_accepts_single_image_archive(monkeypatch, tmp_path):
     download_dir = tmp_path / "download"
     download_dir.mkdir()
@@ -189,3 +260,60 @@ def test_ppt_worker_accepts_single_image_archive(monkeypatch, tmp_path):
     assert captured["total_count"] == 2
     assert captured["upload"][1] == "application/vnd.openxmlformats-officedocument.presentationml.presentation"
     assert result.result["slide_count"] == 2
+    assert result.result["r2_key"] == captured["upload"][0]
+
+
+def test_ppt_worker_removes_output_when_download_link_fails(monkeypatch, tmp_path):
+    download_dir = tmp_path / "download"
+    download_dir.mkdir()
+    pdf_path = download_dir / "source.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n%%EOF")
+    uploaded = []
+    deleted = []
+
+    monkeypatch.setattr(
+        "academy.adapters.ai.storage.downloader.download_r2_key_to_tmp",
+        lambda **_kwargs: str(pdf_path),
+    )
+
+    class FakeGeneratePptFromPdfUseCase:
+        def execute(self, *_args, **_kwargs):
+            return SimpleNamespace(pptx_bytes=b"PK fake pptx", slide_count=1, mode="page")
+
+    monkeypatch.setattr(
+        "academy.application.use_cases.tools.generate_ppt.GeneratePptFromPdfUseCase",
+        FakeGeneratePptFromPdfUseCase,
+    )
+    monkeypatch.setattr(
+        "apps.infrastructure.storage.r2.upload_fileobj_to_r2_storage",
+        lambda **kwargs: uploaded.append(kwargs["key"]),
+    )
+
+    def fail_presign(**_kwargs):
+        raise RuntimeError("presign failed")
+
+    monkeypatch.setattr(
+        "apps.infrastructure.storage.r2.generate_presigned_get_url_storage",
+        fail_presign,
+    )
+    monkeypatch.setattr(
+        "apps.infrastructure.storage.r2.delete_object_r2_storage",
+        lambda *, key: deleted.append(key),
+    )
+    monkeypatch.setattr(
+        "academy.application.use_cases.ai.pipelines.ppt_handler._record_progress",
+        lambda *_args, **_kwargs: None,
+    )
+    job = AIJob(
+        id="job-output-failure",
+        type="ppt_generation",
+        tenant_id="1",
+        payload={"mode": "pdf", "r2_key": "tenants/1/tools/ppt/tmp/input/source.pdf", "tenant_id": "1"},
+    )
+
+    result = handle_ppt_generation_job(job)
+
+    assert result.status == "FAILED"
+    assert len(uploaded) == 1
+    assert uploaded[0].startswith("tenants/1/tools/ppt/")
+    assert deleted == uploaded

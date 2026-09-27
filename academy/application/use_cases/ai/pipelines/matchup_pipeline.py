@@ -16,8 +16,11 @@ import os
 import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from django.db import transaction
+
 from apps.shared.contracts.ai_job import AIJob
 from apps.shared.contracts.ai_result import AIResult
+from apps.domains.matchup.analysis_artifacts import analysis_artifact_prefix
 
 logger = logging.getLogger(__name__)
 
@@ -2645,19 +2648,7 @@ def _upload_page_images_for_modal_cache(
     if not document_id or not tenant_id:
         return [], []
 
-    # prefix는 _upload_cropped_images와 동일 규칙 — 첫 problem image_key에서 추출.
-    # 자동분리 결과의 image_key는 "tenants/{tid}/matchup/{uuid}/problems/{n}.png" 패턴.
-    prefix = ""
-    try:
-        from apps.domains.matchup.models import MatchupDocument as _MD
-        doc = _MD.objects.only("r2_key").get(id=int(document_id))
-        parts = (doc.r2_key or "").split("/")
-        if len(parts) >= 4 and parts[2] == "matchup":
-            prefix = parts[3]
-    except Exception:
-        pass
-    if not prefix:
-        prefix = f"manual-{document_id}"
+    prefix = analysis_artifact_prefix(tenant_id=tenant_id, job_id=job_id)
 
     page_keys: List[str] = []
     page_dimensions: List[Tuple[int, int]] = []
@@ -2679,7 +2670,7 @@ def _upload_page_images_for_modal_cache(
                 buf = _io.BytesIO()
                 im.save(buf, "PNG", optimize=True)
                 buf.seek(0)
-            key = f"tenants/{tenant_id}/matchup/{prefix}/pages/{idx:03d}.png"
+            key = f"{prefix}pages/{idx:03d}.png"
             upload_fileobj_to_r2_storage(
                 fileobj=buf, key=key, content_type="image/png",
             )
@@ -2828,6 +2819,7 @@ def _upload_cropped_images(
         return
 
     uuid_prefix = str(_uuid.uuid4())
+    artifact_prefix = analysis_artifact_prefix(tenant_id=tenant_id, job_id=job_id)
     total = len(questions)
 
     # Column-aware padding: paper_type 기반 column_count 산출.
@@ -2906,10 +2898,7 @@ def _upload_cropped_images(
             if not success:
                 continue
 
-            r2_key = (
-                f"tenants/{tenant_id}/matchup/{uuid_prefix}"
-                f"/problems/{q['number']}.png"
-            )
+            r2_key = f"{artifact_prefix}problems/{uuid_prefix}/{q['number']}.png"
 
             upload_fileobj_to_r2_storage(
                 fileobj=io.BytesIO(buf.tobytes()),
@@ -2939,6 +2928,7 @@ def _upload_cropped_images(
                 pass
 
 
+@transaction.atomic
 def _insert_skeleton_problems(
     questions: List[Dict],
     document_id: str,
@@ -2972,27 +2962,22 @@ def _insert_skeleton_problems(
         return
 
     # 재시도 케이스 — auto/partial rows만 새 skeleton으로 갈음한다.
-    # 사용자 수동 편집 또는 학원장 curated row는 skeleton 단계에서도 보존해야
+    # 사용자 수동 편집, 승인 또는 학원장 curated row는 skeleton 단계에서도 보존해야
     # 워커 재시도 중 실제 운영 데이터가 사라지지 않는다.
-    manual_ids = list(
-        MatchupProblem.objects.filter(
-            tenant_id=doc.tenant_id,
-            document=doc,
-            meta__manual=True,
-        ).values_list("id", flat=True)
-    )
-    pinned_ids = list(
-        MatchupProblem.objects.filter(
-            tenant_id=doc.tenant_id,
-            document=doc,
-            meta__manual_owner_pinned=True,
-        ).values_list("id", flat=True)
-    )
-    protected_ids = list(set(manual_ids) | set(pinned_ids))
-    MatchupProblem.objects.filter(
+    from apps.domains.matchup.analysis_artifacts import detached_auto_image_keys, schedule_detached_auto_images
+    from apps.domains.matchup.services import protected_matchup_problem_ids
+
+    problems = MatchupProblem.objects.filter(
         tenant_id=doc.tenant_id,
         document=doc,
-    ).exclude(id__in=protected_ids).delete()
+    )
+    protected_ids = protected_matchup_problem_ids(problems)
+    old_auto_rows = list(problems.exclude(id__in=protected_ids).values_list("id", "image_key", "meta"))
+    problems.filter(id__in=[row_id for row_id, _, _ in old_auto_rows]).delete()
+    schedule_detached_auto_images(
+        tenant_id=doc.tenant_id,
+        image_keys=detached_auto_image_keys(old_auto_rows),
+    )
 
     rows = [
         MatchupProblem(

@@ -65,6 +65,7 @@ def resolve_removed_source_clinic_links(
     source_type: str,
     source_id: int,
     enrollment_ids: Optional[Iterable[int]] = None,
+    link_ids: Optional[Iterable[int]] = None,
     user_id: Optional[int] = None,
     reason: str = "source_removed_from_session",
 ) -> int:
@@ -82,6 +83,7 @@ def resolve_removed_source_clinic_links(
         source_type=source_type,
         source_id=source_id,
         enrollment_ids=enrollment_ids,
+        link_ids=link_ids,
         user_id=user_id,
         reason=reason,
     )

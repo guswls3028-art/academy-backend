@@ -38,6 +38,32 @@ def get_matchup_page_state_model():
     return MatchupPageState
 
 
+def protected_matchup_problem_ids(problem_queryset):
+    from apps.domains.matchup.services import protected_matchup_problem_ids as get_ids
+
+    return get_ids(problem_queryset)
+
+
+def schedule_detached_matchup_auto_images(*, tenant_id, image_keys):
+    from apps.domains.matchup.analysis_artifacts import schedule_detached_auto_images
+
+    return schedule_detached_auto_images(tenant_id=tenant_id, image_keys=image_keys)
+
+
+def detached_matchup_auto_image_keys(rows):
+    from apps.domains.matchup.analysis_artifacts import detached_auto_image_keys
+
+    return detached_auto_image_keys(rows)
+
+
+def schedule_unreferenced_matchup_artifacts(*, tenant_id, document_id, job_id):
+    from apps.domains.matchup.analysis_artifacts import schedule_unreferenced_analysis_artifacts
+
+    return schedule_unreferenced_analysis_artifacts(
+        tenant_id=tenant_id, document_id=document_id, job_id=job_id,
+    )
+
+
 def handle_matchup_proposal_path(**kwargs):
     from apps.domains.matchup.services_proposal import (
         handle_matchup_proposal_path as handle,

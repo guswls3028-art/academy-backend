@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import io
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 from academy.application.use_cases.tools.generate_ppt import (
     _add_segmented_pdf_slides_to_composer,
@@ -44,7 +46,93 @@ def test_ppt_pdf_plan_uses_whole_page_for_scan_pdf_without_text():
     plan = _build_pdf_question_plan(_FakeDoc([[], []]))
 
     assert plan.use_whole_page is True
+    assert plan.allow_image_segmentation is True
     assert plan.regions_per_page == [[], []]
+
+
+def test_ppt_pdf_plan_preserves_image_only_pages_between_anchored_text_pages(monkeypatch):
+    from academy.domain.tools import paper_type, question_splitter
+
+    pages = [
+        [_Block(f"{index}. lesson question", 40, 80, 560, 150)] if index in (1, 2, 7) else []
+        for index in range(1, 8)
+    ]
+    monkeypatch.setattr(
+        paper_type,
+        "classify_paper_type",
+        lambda **_kwargs: SimpleNamespace(is_non_question=False),
+    )
+    monkeypatch.setattr(
+        question_splitter,
+        "split_questions",
+        lambda blocks, *_args, **_kwargs: [SimpleNamespace(number=1)] if blocks else [],
+    )
+
+    plan = _build_pdf_question_plan(_FakeDoc(pages))
+
+    assert plan.use_whole_page is True
+    assert plan.allow_image_segmentation is False
+    assert plan.regions_per_page == [[] for _ in range(7)]
+
+
+def test_ppt_pdf_plan_preserves_pages_when_anchors_cover_only_one_of_seven(monkeypatch):
+    from academy.domain.tools import paper_type, question_splitter
+
+    pages = [[_Block(f"page {index} lesson text", 40, 80, 560, 150)] for index in range(7)]
+    monkeypatch.setattr(
+        paper_type,
+        "classify_paper_type",
+        lambda **_kwargs: SimpleNamespace(is_non_question=False),
+    )
+    monkeypatch.setattr(question_splitter, "count_marginal_anchor_candidates", lambda *_args: 1)
+    monkeypatch.setattr(
+        question_splitter,
+        "split_questions",
+        lambda blocks, *_args, **_kwargs: [SimpleNamespace(number=1)]
+        if "page 0" in blocks[0].text else [],
+    )
+
+    plan = _build_pdf_question_plan(_FakeDoc(pages))
+
+    assert plan.use_whole_page is True
+    assert plan.allow_image_segmentation is False
+    assert plan.regions_per_page == [[] for _ in range(7)]
+
+
+def test_low_coverage_pdf_result_contains_every_page_without_image_segmentation(tmp_path, monkeypatch):
+    import fitz
+    from pptx import Presentation
+
+    from academy.application.use_cases.tools import generate_ppt
+
+    source = tmp_path / "low-coverage.pdf"
+    document = fitz.open()
+    for number in range(3):
+        page = document.new_page()
+        page.insert_text((72, 72), f"Original page {number + 1}")
+    document.save(source)
+    document.close()
+
+    monkeypatch.setattr(
+        generate_ppt,
+        "_build_pdf_question_plan",
+        lambda _doc: generate_ppt._PdfQuestionPlan(
+            use_whole_page=True,
+            regions_per_page=[[], [], []],
+            allow_image_segmentation=False,
+        ),
+    )
+    monkeypatch.setattr(
+        generate_ppt,
+        "_add_segmented_pdf_slides_to_composer",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("segmentation must not run")),
+    )
+
+    result = generate_ppt.GeneratePptFromPdfUseCase().execute(str(source))
+
+    assert result.mode == "page"
+    assert result.slide_count == 3
+    assert len(Presentation(io.BytesIO(result.pptx_bytes)).slides) == 3
 
 
 def test_ppt_pdf_plan_attempts_split_for_short_text_pdf():

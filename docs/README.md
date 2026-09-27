@@ -64,6 +64,7 @@ backend/docs/
 | 학생 성적표 오답 상태·학원별 성장 그래프 구성 | [domain/student-grade-report.md](domain/student-grade-report.md) |
 | 교직원 저장소·학생 인벤토리 파일과 R2 보상 정리 | [domain/inventory-storage.md](domain/inventory-storage.md) |
 | 보강·클리닉 등원 예정 운영 | [domain/arrival-operations.md](domain/arrival-operations.md) |
+| 현재 클리닉 대상·강의 종료·학생 예약 자격 | [domain/clinic-targets.md](domain/clinic-targets.md) |
 | 알림톡 발송 기록의 역할별 조회·상태·개인정보 경계 | [domain/messaging-delivery-log.md](domain/messaging-delivery-log.md) |
 | 시험 원본→회차 범위 HWPX 오답노트 계획 | [refactor/exam-wrong-note-hwpx-plan.md](refactor/exam-wrong-note-hwpx-plan.md) |
 | OMR 출력·인식 | [domain/omr.md](domain/omr.md) |
@@ -76,6 +77,7 @@ backend/docs/
 | Codex 추론·위임·출력 복구·검증 재사용 / 세션 격리·정리 | [operations/concurrent-codex-sessions.md](operations/concurrent-codex-sessions.md) |
 | 변경 위험 라우팅·교차 저장소 릴리스 증거 | [operations/change-risk-and-release-bundle.md](operations/change-risk-and-release-bundle.md) |
 | 현재 안정화·사용 편의성 실행 순서와 인수인계 | [refactor/hardening-plan.md](refactor/hardening-plan.md) |
+| Candidate prepare IAM·비운영 설정 분리 설계 (미활성) | [refactor/candidate-prepare-gate-plan.md](refactor/candidate-prepare-gate-plan.md) |
 | 실패 은폐·정상 이용 복구 후보와 수리 상태 | [refactor/failure-transparency-stabilization.md](refactor/failure-transparency-stabilization.md) |
 | 운영 canary·E2E 잔재 정리 | [operations/production-canary.md](operations/production-canary.md) |
 | 개발자 문의 운영함 | [operations/dev-console-inbox.md](operations/dev-console-inbox.md) |

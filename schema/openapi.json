@@ -1528,6 +1528,10 @@
             "readOnly": true,
             "type": "string"
           },
+          "lecture_current": {
+            "readOnly": true,
+            "type": "boolean"
+          },
           "lecture_title": {
             "readOnly": true,
             "type": "string"
@@ -1676,6 +1680,7 @@
           "id",
           "lecture_chip_label",
           "lecture_color",
+          "lecture_current",
           "lecture_title",
           "name_highlight_clinic_target",
           "planned_clinic_link_ids",
@@ -11083,6 +11088,25 @@
         ],
         "type": "object"
       },
+      "ProductUsageOverviewRequestRequest": {
+        "properties": {
+          "days": {
+            "description": "7, 28, 90 중 하나",
+            "type": "integer"
+          },
+          "role": {
+            "type": "string"
+          },
+          "surface": {
+            "type": "string"
+          },
+          "tenant_id": {
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
       "ProgressPolicy": {
         "properties": {
           "created_at": {
@@ -18485,6 +18509,13 @@
           "correct_answer": {
             "type": "string"
           },
+          "essay_index": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "essay_numbering": {
+            "$ref": "#/components/schemas/EssayNumberingEnum"
+          },
           "exam_id": {
             "type": "integer"
           },
@@ -20626,8 +20657,40 @@
     },
     "/api/v1/clinic/sessions/tree/": {
       "get": {
-        "description": "GET /clinic/sessions/tree/?year=YYYY&month=MM\n- 운영 페이지 좌측 트리 전용\n- serializer 우회 (UI 최적화 목적)",
+        "description": "GET /clinic/sessions/tree/?year=YYYY&month=MM\nGET /clinic/sessions/tree/?date_from=YYYY-MM-DD&date_to=YYYY-MM-DD\n- 운영 페이지 좌측 트리 전용\n- 날짜 범위 모드는 이전 주 복사처럼 월 경계를 건너는 최대 31일 조회용\n- serializer 우회 (UI 최적화 목적)",
         "operationId": "clinic_sessions_tree_retrieve",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "date_from",
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date_to",
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "month",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "year",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -23891,11 +23954,38 @@
       }
     },
     "/api/v1/core/dev/product-analytics/overview/": {
-      "get": {
-        "operationId": "core_dev_product_analytics_overview_retrieve",
+      "post": {
+        "operationId": "core_dev_product_analytics_overview_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProductUsageOverviewRequestRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/ProductUsageOverviewRequestRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/ProductUsageOverviewRequestRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "No response body"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {},
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [

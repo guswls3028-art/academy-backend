@@ -13,14 +13,16 @@ Fast-path (자동 accept):
 ENV flag MATCHUP_PROPOSAL_FIRST_TENANTS 매치 시만 호출. legacy path 와 동시 운영 X
 (점진 rollout: T1 sandbox 검증 → 사용자 명시 승인 → T2).
 
-manual / pinned 보호:
-  callback path 와 동일 — manual=True / manual_owner_pinned=True problem 은 그대로.
+manual / pinned / approved 보호:
+  callback path 와 동일 — 사용자 작업과 승인된 problem 은 그대로.
   legacy path 의 NULL semantics 사고 회피 (manual_ids ∪ pinned_ids exclude).
 """
 from __future__ import annotations
 
 import logging
 from typing import Any, Dict, List
+
+from django.db import transaction
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +32,7 @@ FAST_PATH_PAPER_TYPES = {"clean_pdf_dual", "clean_pdf_single"}
 FAST_PATH_MIN_CONFIDENCE = 0.75
 
 
+@transaction.atomic
 def handle_matchup_proposal_path(
     *,
     job_id: str,
@@ -51,28 +54,25 @@ def handle_matchup_proposal_path(
       problems_data: callback 가 받은 problems list (worker 결과)
       result_payload: callback 의 raw payload (paper_type_summary 등 메타)
     """
-    from django.db import transaction
-
     from apps.domains.matchup.models import (
         MatchupProblem,
         ProblemSegmentationProposal,
     )
+    from apps.domains.matchup.analysis_artifacts import detached_auto_image_keys, schedule_detached_auto_images
+    from apps.domains.matchup.services import protected_matchup_problem_ids
 
-    # === Step 1: manual / pinned 보호 + 비-protected 삭제 ===
-    manual_ids = list(
-        doc.problems.filter(meta__manual=True).values_list("id", flat=True)
-    )
-    pinned_ids = list(
-        doc.problems.filter(meta__manual_owner_pinned=True).values_list("id", flat=True)
-    )
-    protected_ids = list(set(manual_ids) | set(pinned_ids))
-    doc.problems.exclude(id__in=protected_ids).delete()
+    # === Step 1: manual / pinned / approved 보호 + 자동 문항 삭제 ===
+    protected_ids = protected_matchup_problem_ids(doc.problems.all())
+    old_auto_rows = list(doc.problems.exclude(id__in=protected_ids).values_list("id", "image_key", "meta"))
+    doc.problems.filter(id__in=[row_id for row_id, _, _ in old_auto_rows]).delete()
 
     # === Step 2: 이전 reanalyze 의 stale pending Proposal 정리 ===
     # 학원장이 이미 검수 완료한 (approved/rejected) 는 audit 보존.
-    ProblemSegmentationProposal.objects.filter(
+    stale_proposals = ProblemSegmentationProposal.objects.filter(
         document=doc, status__in=("pending", "needs_review", "auto_passed"),
-    ).delete()
+    )
+    old_proposal_keys = list(stale_proposals.values_list("image_key", flat=True))
+    stale_proposals.delete()
 
     # === Step 3 + 4: 각 cut → Proposal 생성 + fast-path ===
     paper_type_summary = result_payload.get("paper_type_summary") or {}
@@ -168,6 +168,10 @@ def handle_matchup_proposal_path(
     doc.save(update_fields=[
         "status", "problem_count", "error_message", "meta", "updated_at",
     ])
+    schedule_detached_auto_images(
+        tenant_id=doc.tenant_id,
+        image_keys=detached_auto_image_keys(old_auto_rows) + [key for key in old_proposal_keys if key],
+    )
 
     # 검색 캐시 무효화 (P1 fix 2026-05-11): proposal path 도 protected_ids 제외
     # bulk_create 로 problem 풀 재구성. legacy callback path 와 일관 정책.

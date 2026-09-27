@@ -243,7 +243,7 @@ class AISQSQueue:
                 try:
                     job_data = json.loads(body)
                 except json.JSONDecodeError:
-                    logger.error("Invalid JSON in message: %s", body)
+                    logger.error("Invalid JSON in SQS message: queue=%s", queue_name)
                     if receipt_handle:
                         try:
                             self.queue_client.delete_message(queue_name=queue_name, receipt_handle=receipt_handle)
@@ -255,7 +255,7 @@ class AISQSQueue:
             
             # 메시지 형식 검증 — 잘못된 메시지는 삭제하여 큐 블로킹 방지
             if not isinstance(job_data, dict) or "job_id" not in job_data:
-                logger.error("Invalid message format (deleting): %s", job_data)
+                logger.error("Invalid SQS message format: queue=%s", queue_name)
                 if receipt_handle:
                     try:
                         self.queue_client.delete_message(queue_name=queue_name, receipt_handle=receipt_handle)
@@ -279,6 +279,7 @@ class AISQSQueue:
                 "source_id": job_data.get("source_id"),
                 "receipt_handle": receipt_handle,
                 "message_id": message.get("MessageId"),
+                "queue_name": queue_name,
                 "created_at": job_data.get("created_at"),  # SQS 메시지 수명 추적용
             }
 
@@ -307,7 +308,10 @@ class AISQSQueue:
                 receipt_handle=receipt_handle,
             )
         except Exception as e:
-            logger.exception("Error deleting message: receipt_handle=%s, error=%s", receipt_handle, e)
+            logger.error(
+                "Error deleting SQS message: queue=%s tier=%s error_type=%s",
+                queue_name, tier, type(e).__name__,
+            )
             return False
 
     def change_message_visibility(
@@ -332,9 +336,9 @@ class AISQSQueue:
                 visibility_timeout=visibility_timeout,
             )
         except Exception as e:
-            logger.exception(
-                "Error changing message visibility: receipt_handle=%s tier=%s error=%s",
-                receipt_handle, tier, e,
+            logger.error(
+                "Error changing SQS message visibility: queue=%s tier=%s error_type=%s",
+                queue_name, tier, type(e).__name__,
             )
             return False
 

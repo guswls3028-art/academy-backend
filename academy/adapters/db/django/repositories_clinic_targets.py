@@ -26,7 +26,9 @@ def explicit_not_submitted_exam_results(*, tenant):
         target_id=F("attempt__exam_id"),
         enrollment__tenant=tenant,
         enrollment__student__tenant=tenant,
+        enrollment__student__deleted_at__isnull=True,
         enrollment__lecture__tenant=tenant,
+        enrollment__lecture__is_active=True,
         enrollment__status="ACTIVE",
         attempt__meta__status="NOT_SUBMITTED",
         attempt__exam__tenant=tenant,
@@ -46,7 +48,7 @@ def explicit_not_submitted_exam_targets(*, tenant, section_id: int | None = None
     from apps.domains.enrollment.models import SessionEnrollment
     from apps.domains.lectures.models import Session
     from apps.domains.progress.models import ClinicLink
-    from django.db.models import Q
+    from django.db.models import F, Q
 
     results = list(
         explicit_not_submitted_exam_results(tenant=tenant).select_related(
@@ -83,10 +85,18 @@ def explicit_not_submitted_exam_targets(*, tenant, section_id: int | None = None
             tenant=tenant,
             enrollment_id__in=enrollment_ids,
             session__lecture__tenant=tenant,
+            session__lecture__is_active=True,
+            session__lecture_id=F("enrollment__lecture_id"),
+            enrollment__status="ACTIVE",
+            enrollment__lecture__is_active=True,
             session__exams__id__in=exam_ids,
         ).values_list("enrollment_id", "session_id", "session__exams__id").distinct()
     )
     session_ids = {int(session_id) for _, session_id, _ in roster_links}
+    completed_pairs = completed_progress_pairs(
+        session_ids=list(session_ids),
+        enrollment_ids=list(enrollment_ids),
+    )
     sessions = {
         int(session.id): session
         for session in Session.objects.filter(
@@ -114,6 +124,8 @@ def explicit_not_submitted_exam_targets(*, tenant, section_id: int | None = None
         session = sessions.get(int(session_id))
         if not result or not session:
             continue
+        if (int(session_id), int(enrollment_id)) in completed_pairs:
+            continue
         if (int(enrollment_id), int(session_id), int(exam_id)) in existing:
             continue
         targets.append((result, session))
@@ -132,11 +144,21 @@ def clinic_links_for_admin_targets(*, tenant, include_resolved: bool):
             enrollment__lecture__tenant=tenant,
             session__lecture__tenant=tenant,
         )
-        .select_related("session__lecture__tenant", "session__homework_policy")
+        .select_related(
+            "session__lecture__tenant",
+            "session__homework_policy",
+            "enrollment__student",
+            "enrollment__lecture",
+        )
         .order_by("-created_at")
     )
     if not include_resolved:
-        links = links.filter(resolved_at__isnull=True)
+        links = links.filter(
+            resolved_at__isnull=True,
+            enrollment__student__deleted_at__isnull=True,
+            enrollment__lecture__is_active=True,
+            session__lecture__is_active=True,
+        )
     return links.filter(enrollment__status="ACTIVE")
 
 

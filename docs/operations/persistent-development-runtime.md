@@ -420,7 +420,14 @@ lock/mutation job은 environment subject를 사용한다.
 2. `publish-api-development-env.ps1`이 운영 형태의 값을 복사하되 DB·큐·R2·발송/결제를
    개발 경계로 치환한다. 메시징은 dry-run 조기 종료를 쓰지 않고 durable outbox와
    전용 개발 SQS를 통과하며, API와 Messaging worker의 `SOLAPI_MOCK=true`가 외부
-   공급자 호출과 비용을 차단한다.
+   공급자 호출과 비용을 차단한다. API의 외부 AI 자격증명은 제거한다. 개발 worker는
+   사용자가 승인한 기존 `GEMINI_API_KEY`를 재사용할 수 있으며 새 프로젝트·결제·별도
+   개발 키를 필수로 요구하지 않는다. 다른 외부 AI·정적 AWS 자격증명은 계속 제거한다.
+   provider 호출은 고정한 합성/승인 fixture와 일회용 QA tenant에 한정하고 기존 통과
+   증거를 재사용한다. 혼합 7쪽 PDF의 전체 쪽 PPT와 직접 자르기 경로는 Gemini 호출이
+   없으며, Matchup만 필요한 최소 fixture 호출을 수행한다. 키 값은 로그·Git·보고서에
+   남기지 않는다. DB·R2·큐·Redis 격리와 정확한 생성물 정리 검증은 그대로 필수다.
+   이 개발 worker 예외는 preprod에 적용하지 않으며 preprod는 Gemini도 제거한다.
 3. `deploy-api-development.ps1`이 새 candidate 인스턴스를 만들고 migration, DB 역할,
    운영 DB 접근 거부, 개발 큐, 개발 R2와 운영 R2 접근 거부, Redis, `/healthz`,
    `/health`, 정확한 API/Tools/AI digest를 검증한다.

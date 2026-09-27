@@ -18,6 +18,7 @@ from django.db import close_old_connections, connection
 
 from apps.support.ai.callback_dependencies import (
     get_auto_segmentation_snapshot_model,
+    detached_matchup_auto_image_keys,
     get_exam_question_proposal_model,
     get_exam_segmentation_models,
     get_matchup_document_models,
@@ -28,6 +29,9 @@ from apps.support.ai.callback_dependencies import (
     get_wrong_note_pdf_callback_dependencies,
     handle_matchup_proposal_path,
     invalidate_matchup_tenant_similar_cache,
+    protected_matchup_problem_ids,
+    schedule_detached_matchup_auto_images,
+    schedule_unreferenced_matchup_artifacts,
 )
 
 logger = logging.getLogger(__name__)
@@ -855,7 +859,6 @@ def _handle_matchup_ai_result(
     MatchupDocument 상태를 업데이트한다.
     """
     MatchupDocument, MatchupProblem = get_matchup_document_models()
-
     _close_old_connections_if_safe()
 
     if not source_id:
@@ -869,6 +872,15 @@ def _handle_matchup_ai_result(
             "AI_CALLBACK_MATCHUP_DOC_NOT_FOUND | job_id=%s | source_id=%s (deleted?)",
             job_id, source_id,
         )
+        from apps.domains.ai.models import AIJobModel
+        job = AIJobModel.objects.filter(
+            job_id=job_id, source_domain="matchup", source_id=str(source_id),
+            job_type="matchup_analysis",
+        ).only("tenant_id").first()
+        if job and str(job.tenant_id or "").isdecimal():
+            schedule_unreferenced_matchup_artifacts(
+                tenant_id=int(job.tenant_id), document_id=int(source_id), job_id=job_id,
+            )
         return
 
     current_job_id = str(doc.ai_job_id or "")
@@ -877,6 +889,9 @@ def _handle_matchup_ai_result(
         logger.warning(
             "AI_CALLBACK_MATCHUP_STALE_JOB_SKIP | doc_id=%s | incoming_job_id=%s | current_job_id=%s | status=%s",
             doc.id, incoming_job_id, current_job_id, status,
+        )
+        schedule_unreferenced_matchup_artifacts(
+            tenant_id=doc.tenant_id, document_id=doc.id, job_id=job_id,
         )
         return
 
@@ -894,9 +909,15 @@ def _handle_matchup_ai_result(
                 return
 
     if status == "FAILED":
-        doc.status = "failed"
-        doc.error_message = error or "AI 분석 실패"
-        doc.save(update_fields=["status", "error_message", "updated_at"])
+        from django.db import transaction
+
+        with transaction.atomic():
+            doc.status = "failed"
+            doc.error_message = error or "AI 분석 실패"
+            doc.save(update_fields=["status", "error_message", "updated_at"])
+            schedule_unreferenced_matchup_artifacts(
+                tenant_id=doc.tenant_id, document_id=doc.id, job_id=job_id,
+            )
         logger.warning(
             "AI_CALLBACK_MATCHUP_FAILED_STATUS | job_id=%s | doc_id=%s | error=%s",
             job_id, source_id, error,
@@ -985,10 +1006,12 @@ def _handle_matchup_ai_result(
             )
             # fail-soft: helper 실패 시 legacy path 로 대체 (운영 흐름 보호)
         else:
+            schedule_unreferenced_matchup_artifacts(
+                tenant_id=doc.tenant_id, document_id=doc.id, job_id=job_id,
+            )
             return  # proposal path 성공 — legacy bulk_create skip
 
-    # 기존 문제 삭제 (재시도 시 중복 방지). manual=true / manual_owner_pinned=true 둘 다
-    # 보호 — 학원장이 ManualCropModal 또는 적중보고서에서 직접 자른/별 토글한 problem 보존.
+    # 기존 자동 문제 삭제 (재시도 시 중복 방지). 수동/고정/승인 problem은 보존.
     # 아래 bulk_create(ignore_conflicts=True)가 unique(document, number) 충돌을
     # silent drop하므로, 같은 번호의 자동 결과는 자연스럽게 manual에 우선권을 양보.
     #
@@ -1003,33 +1026,34 @@ def _handle_matchup_ai_result(
     # manual_ids ∪ pinned_ids 둘 다 protected, 그러나 callback 은 manual_ids 만 보호
     # 하던 결함. 학원장이 적중 보고서에서 별 토글한 problem (manual_owner_pinned=true)
     # 이 reanalyze 후 callback 단계에서 손실되는 위험 차단.
-    manual_ids = list(
-        doc.problems.filter(meta__manual=True).values_list("id", flat=True)
-    )
-    pinned_ids = list(
-        doc.problems.filter(meta__manual_owner_pinned=True).values_list("id", flat=True)
-    )
-    protected_ids = list(set(manual_ids) | set(pinned_ids))
-    doc.problems.exclude(id__in=protected_ids).delete()
+    from django.db import transaction
+    with transaction.atomic():
+        protected_ids = protected_matchup_problem_ids(doc.problems.all())
+        auto_rows = list(doc.problems.exclude(id__in=protected_ids).values_list("id", "image_key", "meta"))
+        doc.problems.filter(id__in=[row_id for row_id, _, _ in auto_rows]).delete()
 
-    # bulk create
-    problem_objs = []
-    for idx, p in enumerate(problems_data, start=1):
-        problem_objs.append(MatchupProblem(
+        # Publish the replacement and its detached-key cleanup together.
+        problem_objs = []
+        for idx, p in enumerate(problems_data, start=1):
+            problem_objs.append(MatchupProblem(
+                tenant_id=doc.tenant_id,
+                document=doc,
+                number=p.get("number", 0),
+                text=p.get("text", ""),
+                image_key=p.get("image_key", ""),
+                embedding=p.get("embedding"),
+                image_embedding=p.get("image_embedding"),
+                meta=p.get("meta", {}),
+            ))
+            if idx % 50 == 0:
+                _close_old_connections_if_safe()
+
+        if problem_objs:
+            MatchupProblem.objects.bulk_create(problem_objs, ignore_conflicts=True)
+        schedule_detached_matchup_auto_images(
             tenant_id=doc.tenant_id,
-            document=doc,
-            number=p.get("number", 0),
-            text=p.get("text", ""),
-            image_key=p.get("image_key", ""),
-            embedding=p.get("embedding"),
-            image_embedding=p.get("image_embedding"),
-            meta=p.get("meta", {}),
-        ))
-        if idx % 50 == 0:
-            _close_old_connections_if_safe()
-
-    if problem_objs:
-        MatchupProblem.objects.bulk_create(problem_objs, ignore_conflicts=True)
+            image_keys=detached_matchup_auto_image_keys(auto_rows),
+        )
 
     # AutoSegmentationSnapshot instrument (V11 BOTTLENECK §7.1, 2026-05-10) —
     # 자동 cut audit 행. ManualCorrectionDelta hook 이 이후 IoU 매칭으로
@@ -1186,6 +1210,9 @@ def _handle_matchup_ai_result(
     doc.save(update_fields=[
         "status", "problem_count", "error_message", "meta", "updated_at",
     ])
+    schedule_unreferenced_matchup_artifacts(
+        tenant_id=doc.tenant_id, document_id=doc.id, job_id=job_id,
+    )
 
     # Stage 6.3V — LayoutFingerprint 측정 누적 (운영 영향 0 instrumentation).
     #   본 호출은 read-only measurement + UPSERT 만. 어떤 예외도 본 흐름에 전파되지

@@ -28,6 +28,8 @@ def _public_job_result(
     *,
     include_excel_credentials: bool = False,
 ) -> Optional[dict]:
+    if job_type == "ppt_generation" and isinstance(stored_payload, dict):
+        return {key: value for key, value in stored_payload.items() if key != "r2_key"}
     if job_type != "excel_parsing" or not isinstance(stored_payload, dict):
         return stored_payload
     from apps.domains.ai.services.excel_job_secrets import public_excel_result
@@ -376,11 +378,16 @@ class DjangoAIJobRepository:
         row = AIResultModel.objects.filter(job=job_model).first()
         if not row:
             return None
-        return _public_job_result(
+        public_result = _public_job_result(
             job_model.job_type,
             row.payload,
             include_excel_credentials=include_excel_credentials,
         )
+        if job_model.job_type == "ppt_generation" and job_model.status == "DONE":
+            from apps.domains.tools.ppt.result_download import refreshed_ppt_result
+
+            return refreshed_ppt_result(job_model, row.payload, public_result)
+        return public_result
 
 
 # ---------------------------------------------------------------------------
