@@ -688,7 +688,7 @@ def run_ai_sqs_worker(
             except KeyboardInterrupt:
                 break
             except Exception as e:
-                logger.exception("Unexpected error: %s", e)
+                logger.error("Unexpected worker error: error_type=%s", type(e).__name__)
                 consecutive_errors += 1
                 if consecutive_errors >= max_consecutive_errors:
                     return 1
