@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Tuple
 from unittest.mock import MagicMock, patch
 
@@ -44,6 +45,295 @@ def _bbox_result(
         confidence=confidence,
         debug={"adapter": "gemini"},
     )
+
+
+def test_photo_vlm_column_boxes_require_a_visible_unambiguous_divider(tmp_path):
+    """Photo corrections recover line ends without touching unproven layouts."""
+    import cv2
+    import numpy as np
+
+    from academy.application.use_cases.ai.pipelines.matchup_pipeline import (
+        _photo_vlm_column_boxes,
+    )
+
+    image_path = tmp_path / "photo.png"
+    image = np.full((1000, 1000), 255, dtype=np.uint8)
+    boxes = [(60, 120, 410, 300), (480, 120, 440, 300),
+             (60, 500, 410, 350), (480, 500, 440, 350)]
+    assert cv2.imwrite(str(image_path), image)
+    assert _photo_vlm_column_boxes(str(image_path), boxes) == boxes
+
+    cv2.line(image, (500, 40), (530, 960), 0, 3)
+    assert cv2.imwrite(str(image_path), image)
+    refined = _photo_vlm_column_boxes(str(image_path), boxes)
+    assert len(refined) == 4
+    assert refined[0][0] == boxes[0][0]
+    assert refined[0][0] + refined[0][2] > boxes[0][0] + boxes[0][2]
+    assert refined[1][0] > boxes[1][0]
+    assert refined[1][0] + refined[1][2] > boxes[1][0] + boxes[1][2]
+    assert refined[0][1] < boxes[0][1]
+    assert refined[2][1] > boxes[0][1] + boxes[0][3]
+    overlapping = [boxes[0], boxes[1], (60, 400, 410, 350), boxes[3]]
+    assert _photo_vlm_column_boxes(str(image_path), overlapping) == overlapping
+
+    cv2.line(image, (600, 40), (600, 960), 0, 3)
+    assert cv2.imwrite(str(image_path), image)
+    assert _photo_vlm_column_boxes(str(image_path), boxes) == boxes
+
+    image.fill(255)
+    cv2.line(image, (530, 40), (500, 960), 0, 3)
+    assert cv2.imwrite(str(image_path), image)
+    reverse_tilt = _photo_vlm_column_boxes(str(image_path), boxes)
+    assert reverse_tilt[0][0] + reverse_tilt[0][2] > boxes[0][0] + boxes[0][2]
+    assert reverse_tilt[1][0] > boxes[1][0]
+
+
+def test_photo_numberless_gate_uses_upload_source_when_vlm_relabels_page():
+    from academy.application.use_cases.ai.pipelines.matchup_pipeline import (
+        _is_numberless_scan_page,
+    )
+
+    page = {"boxes": [(10, 10, 100, 100)] * 5,
+            "numbers": [None] * 5, "paper_type": "clean_pdf_dual"}
+    assert _is_numberless_scan_page(page, "student_exam_photo")
+    assert not _is_numberless_scan_page(page, "school_exam_pdf")
+
+
+def test_photo_geometry_keeps_line_ends_and_uses_same_boundary_for_ocr_and_png(
+    tmp_path, monkeypatch,
+):
+    import cv2
+    import numpy as np
+
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline as pipeline
+
+    path = tmp_path / "photo.png"
+    image = np.full((1000, 1000, 3), 255, dtype=np.uint8)
+    cv2.line(image, (530, 40), (500, 960), (0, 0, 0), 3)
+    cv2.rectangle(image, (475, 195), (490, 210), (0, 0, 0), -1)
+    cv2.rectangle(image, (520, 295), (524, 310), (0, 0, 0), -1)
+    assert cv2.imwrite(str(path), image)
+
+    def block(text, x0, y0, x1, y1):
+        return type("Block", (), dict(text=text, x0=x0, y0=y0, x1=x1, y1=y1))()
+
+    blocks = [
+        block("1. 왼쪽 문항", 75, 90, 300, 120),
+        block("왼쪽 선택지", 435, 190, 493, 220),
+        block("2. 오른쪽 문항", 560, 90, 800, 120),
+        block("오른쪽 선택지", 505, 285, 700, 320),
+    ]
+    monkeypatch.setattr(pipeline, "_load_ocr_blocks_backend", lambda: lambda _: blocks)
+    original = [(60, 120, 410, 300), (480, 120, 440, 300)]
+    refined, boundaries = pipeline._photo_vlm_ocr_geometry(
+        str(path), original, [1, 2],
+    )
+    left, right = refined
+    assert boundaries[0]["side"] == "left"
+    assert boundaries[1]["side"] == "right"
+    assert left[0] + left[2] > original[0][0] + original[0][2]
+    assert left[1] < original[0][1]
+
+    questions = [{"number": n, "page_index": 0, "image_path": str(path),
+                  "bbox": list(box),
+                  "meta_extra": {"photo_column_boundary": boundary}}
+                 for n, box, boundary in zip((1, 2), refined, boundaries)]
+    pipeline._extract_texts(questions, "synthetic-photo")
+    assert "왼쪽 선택지" in questions[0]["text"]
+    assert "오른쪽 선택지" not in questions[0]["text"]
+    blocks[:] = [block("오른쪽만", 570, 190, 800, 220)]
+    pipeline._extract_texts(questions, "synthetic-photo-empty")
+    assert questions[0]["text"] == ""
+    assert questions[0]["meta_extra"]["photo_ocr_empty"] is True
+
+    uploaded = {}
+    from apps.infrastructure.storage import r2
+
+    def capture_upload(*, fileobj, key, **kwargs):
+        uploaded[key] = cv2.imdecode(
+            np.frombuffer(fileobj.read(), dtype=np.uint8), cv2.IMREAD_COLOR,
+        )
+
+    monkeypatch.setattr(r2, "upload_fileobj_to_r2_storage", capture_upload)
+    monkeypatch.setenv("MATCHUP_OVER_CROP_PADDING", "1")
+    try:
+        pipeline._upload_cropped_images(questions, "1", "doc", "job")
+        crop = uploaded[questions[0]["image_key"]]
+        x, y, _, _ = left
+        assert crop.shape[:2] == (left[3], left[2])
+        assert np.all(crop[200-y, 480-x] == 0)
+        # This pixel is inside the rectangular bbox, beyond the divider.
+        assert np.all(crop[300-y, 523-x] == 255)
+    finally:
+        for question in questions:
+            Path(question["cropped_image_path"]).unlink(missing_ok=True)
+
+
+def test_photo_geometry_no_divider_uses_opposite_label_and_ambiguous_lines_do_not(
+    tmp_path, monkeypatch,
+):
+    import cv2
+    import numpy as np
+
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline as pipeline
+
+    path = tmp_path / "photo.png"
+    image = np.full((1000, 1000), 255, dtype=np.uint8)
+    boxes = [(60, 120, 410, 300), (480, 120, 440, 300)]
+    blocks = [
+        type("Block", (), dict(text=text, x0=x, y0=100, x1=x+80, y1=125))()
+        for text, x in (("1. 왼쪽", 75), ("2. 오른쪽", 520))
+    ]
+    monkeypatch.setattr(pipeline, "_load_ocr_blocks_backend", lambda: lambda _: blocks)
+    assert cv2.imwrite(str(path), image)
+    refined, boundaries = pipeline._photo_vlm_ocr_geometry(
+        str(path), boxes, [1, 2],
+    )
+    assert refined[0][0] + refined[0][2] == 515  # before Q2's printed label
+    assert boundaries == [None, None]
+    oversized = [(60, 120, 500, 300), boxes[1]]
+    clipped, _ = pipeline._photo_vlm_ocr_geometry(
+        str(path), oversized, [1, 2],
+    )
+    assert clipped[0][0] + clipped[0][2] == 515
+    blocks.append(type("Block", (), dict(
+        text="left text crosses separator", x0=450, y0=190, x1=550, y1=220,
+    ))())
+    refused, _ = pipeline._photo_vlm_ocr_geometry(
+        str(path), oversized, [1, 2],
+    )
+    assert refused == oversized
+    blocks.pop()
+
+    from apps.infrastructure.storage import r2
+
+    uploads = {}
+    monkeypatch.setenv("MATCHUP_OVER_CROP_PADDING", "1")
+    monkeypatch.setattr(r2, "upload_fileobj_to_r2_storage", lambda *, fileobj, key,
+                        **_: uploads.setdefault(key, cv2.imdecode(
+                            np.frombuffer(fileobj.read(), dtype=np.uint8),
+                            cv2.IMREAD_COLOR,
+                        )))
+    question = {"number": 1, "page_index": 0, "image_path": str(path),
+                "bbox": list(refined[0]),
+                "meta_extra": {"photo_crop_refined": True}}
+    try:
+        pipeline._upload_cropped_images(
+            [question], "1", "doc", "job",
+            paper_type_summary={"primary": "clean_pdf_dual"},
+        )
+        crop = uploads[question["image_key"]]
+        assert crop.shape[:2] == (refined[0][3], refined[0][2])
+    finally:
+        Path(question["cropped_image_path"]).unlink(missing_ok=True)
+
+    cv2.line(image, (500, 40), (530, 960), 0, 3)
+    cv2.line(image, (600, 40), (600, 960), 0, 3)
+    assert cv2.imwrite(str(path), image)
+    refined, boundaries = pipeline._photo_vlm_ocr_geometry(
+        str(path), boxes, [1, 2],
+    )
+    assert refined == boxes
+    assert boundaries == [None, None]
+
+
+def test_photo_footer_trim_preserves_last_choice_when_ocr_confirms_footer(
+    tmp_path, monkeypatch,
+):
+    import cv2
+    import numpy as np
+
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline as pipeline
+
+    path = tmp_path / "photo.png"
+    image = np.full((1000, 1000), 255, dtype=np.uint8)
+    cv2.rectangle(image, (100, 934), (300, 944), 0, -1)
+    assert cv2.imwrite(str(path), image)
+
+    def block(text, x0, y0, x1, y1):
+        return type("Block", (), dict(text=text, x0=x0, y0=y0, x1=x1, y1=y1))()
+
+    blocks = [block("3. 왼쪽", 75, 530, 200, 550),
+              block("4. 오른쪽", 520, 530, 700, 550),
+              block("본 시험 문제의 저작권", 100, 950, 450, 975)]
+    monkeypatch.setattr(pipeline, "_load_ocr_blocks_backend", lambda: lambda _: blocks)
+    refined, _ = pipeline._photo_vlm_ocr_geometry(
+        str(path), [(60, 550, 410, 350), (480, 550, 440, 350)], [3, 4],
+    )
+    left = refined[0]
+    assert 945 <= left[1] + left[3] < 950
+
+
+def test_photo_fragmented_divider_requires_long_supported_line_and_printed_labels(
+    tmp_path, monkeypatch,
+):
+    import cv2
+    import numpy as np
+
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline as pipeline
+
+    path = tmp_path / "photo.png"
+    boxes = [(60, 100, 460, 350), (530, 100, 400, 350),
+             (60, 520, 460, 350), (550, 520, 380, 350)]
+    blocks = [
+        type("Block", (), dict(text=text, x0=x, y0=y, x1=x+90, y1=y+25))()
+        for text, x, y in (("2. 오른쪽", 540, 110), ("4. 오른쪽", 565, 530))
+    ]
+    monkeypatch.setattr(pipeline, "_load_ocr_blocks_backend", lambda: lambda _: blocks)
+    monkeypatch.setattr(cv2, "HoughLinesP", lambda *args, **kwargs: None)
+    image = np.full((1000, 1000), 255, dtype=np.uint8)
+    cv2.line(image, (500, 0), (550, 999), 0, 3)
+    assert cv2.imwrite(str(path), image)
+    refined, boundaries = pipeline._photo_vlm_ocr_geometry(
+        str(path), boxes, [1, 2, 3, 4],
+    )
+    assert len(refined) == 4
+    assert all(boundary and boundary["line"] for boundary in boundaries)
+
+    image.fill(255)
+    cv2.line(image, (520, 400), (530, 600), 0, 3)
+    assert cv2.imwrite(str(path), image)
+    _, boundaries = pipeline._photo_vlm_ocr_geometry(
+        str(path), boxes, [1, 2, 3, 4],
+    )
+    assert boundaries == [None] * 4
+
+
+def test_numberless_photo_replacement_preserves_shared_stem_group(tmp_path):
+    """The replacement path must keep the VLM shared-group metadata."""
+    import cv2
+    import numpy as np
+
+    from academy.application.use_cases.ai.pipelines.matchup_pipeline import (
+        _replace_numberless_photo_page,
+    )
+
+    image_path = tmp_path / "photo.jpg"
+    assert cv2.imwrite(str(image_path), np.full((1000, 1000), 255, dtype=np.uint8))
+    old_boxes = [(100, 100, 400, 300), (100, 400, 400, 300)]
+    page = {"page_index": 0, "image_path": str(image_path),
+            "boxes": old_boxes, "numbers": [None, None],
+            "paper_type": "student_answer_photo"}
+    questions = [
+        {"number": number, "page_index": 0, "bbox": box,
+         "meta_extra": {"number_source": "counter_fallback"}}
+        for number, box in zip((1, 2), old_boxes)
+    ]
+    shared_box = (100, 100, 400, 600)
+    vlm = ProblemBboxResult(
+        page_role=PageRole.PROBLEM, should_skip=False,
+        problems=[
+            ProblemBbox(number=7, bbox=shared_box, confidence=0.95,
+                        shared_with=[8]),
+            ProblemBbox(number=8, bbox=shared_box, confidence=0.95,
+                        shared_with=[7]),
+        ],
+        confidence=0.95,
+    )
+    assert _replace_numberless_photo_page(page, questions, vlm) == (2, 2)
+    assert [q["number"] for q in questions] == [7, 8]
+    assert [q["bbox"] for q in questions] == [list(shared_box)] * 2
+    assert [q["shared_with"] for q in questions] == [[8], [7]]
 
 
 def test_gemini_request_keeps_key_out_of_url_and_errors(monkeypatch, caplog):
@@ -826,6 +1116,361 @@ def test_vlm_underfilled_page_fill_appends_missing_and_skips_existing(monkeypatc
     assert [q["number"] for q in questions] == [4, 1, 2]
     assert questions[1]["meta_extra"]["engine"] == "vlm"
     assert questions[1]["meta_extra"]["vlm_reason"] == "underfilled_page_fallback"
+
+
+def test_vlm_replaces_merged_numberless_photo_boxes(monkeypatch):
+    """Observed photo crops can be replaced by four validated mock VLM cuts."""
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+
+    page = {
+        "page_index": 0,
+        "image_path": "/fake/photo.jpg",
+        # Shared photo-01 current OpenCV output: Q12/Q14 cross-column merge,
+        # a Q12 fragment, then Q13/Q15 merge.
+        "boxes": [(0, 21, 1920, 902), (0, 943, 1920, 223), (0, 1349, 1920, 1211)],
+        "numbers": [None, None, None],
+        "paper_type": "student_answer_photo",
+    }
+    previous = {"number": 11, "page_index": -1, "bbox": [0, 0, 100, 100]}
+    questions = [previous] + [
+        {
+            "number": n, "page_index": 0, "bbox": list(box),
+            "meta_extra": {"number_source": "counter_fallback"},
+        }
+        for n, box in zip((1, 2, 3), page["boxes"])
+    ]
+    monkeypatch.setenv("MATCHUP_VLM_AUTO_SPLIT", "1")
+    monkeypatch.setenv("MATCHUP_VLM_FILL_UNDERFILLED_PAGES", "1")
+    monkeypatch.setenv("MATCHUP_VLM_VISION_ADAPTER", "gemini_flash")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(
+        matchup_pipeline, "_try_vlm_problem_bboxes",
+        lambda page_arg, document_id, tenant_id=None: (
+            _bbox_result(problems=[
+                (12, 175, 120, 760, 1050), (14, 990, 120, 800, 750),
+                (13, 175, 1370, 760, 850), (15, 990, 1370, 800, 850),
+            ]),
+            "student_answer_photo",
+        ),
+    )
+
+    stats = matchup_pipeline._augment_questions_with_vlm_for_underfilled_pages(
+        [page], questions, source_type="student_exam_photo",
+        document_id=123, tenant_id=1,
+    )
+
+    assert stats["replacement_pages"] == 1
+    assert stats["replaced_auto"] == 3
+    assert stats["added"] == 4
+    assert questions[0] is previous
+    assert {q["number"] for q in questions[1:]} == {12, 13, 14, 15}
+    assert all(
+        q["meta_extra"]["vlm_reason"] == "numberless_photo_replacement"
+        for q in questions[1:]
+    )
+    assert set(page["numbers"]) == {12, 13, 14, 15}
+    assert len(page["boxes"]) == 4
+
+
+def test_photo_normalized_gemini_boxes_replace_observed_counter_fallbacks(
+    monkeypatch, tmp_path,
+):
+    """A 1920x2560 photo must retain bottom-row questions after VLM conversion."""
+    from PIL import Image
+
+    from academy.adapters.ai.detection import vlm_fallback
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+
+    image_path = tmp_path / "photo.jpg"
+    Image.new("RGB", (1920, 2560), "white").save(image_path)
+    monkeypatch.setattr(vlm_fallback, "_gemini_request", lambda **kwargs: {
+        "page_role": "problem", "should_skip": False,
+        "paper_type": "student_answer_photo", "confidence": 0.95,
+        "problems": [
+            {"number": 12, "box_2d": [55, 100, 470, 480], "confidence": 0.95},
+            {"number": 14, "box_2d": [55, 510, 400, 930], "confidence": 0.95},
+            {"number": 13, "box_2d": [545, 100, 875, 480], "confidence": 0.95},
+            {"number": 15, "box_2d": [545, 510, 875, 930], "confidence": 0.95},
+        ],
+    })
+    vlm = vlm_fallback.GeminiVLMVisionAdapter().detect_problems(
+        image_path=str(image_path),
+    )
+    assert vlm.debug["coordinate_system"] == "normalized_1000_yxyx"
+    assert vlm.problems[3].bbox == (979, 1395, 807, 845)
+
+    page = {
+        "page_index": 0, "image_path": str(image_path),
+        "boxes": [(0, 163, 1920, 1237), (0, 1385, 1920, 1175)],
+        "numbers": [None, None], "paper_type": "student_answer_photo",
+    }
+    questions = [
+        {"number": n, "page_index": 0, "bbox": list(box),
+         "meta_extra": {"number_source": "counter_fallback"}}
+        for n, box in zip((4, 5), page["boxes"])
+    ]
+    monkeypatch.setenv("MATCHUP_VLM_AUTO_SPLIT", "1")
+    monkeypatch.setenv("MATCHUP_VLM_FILL_UNDERFILLED_PAGES", "1")
+    monkeypatch.setenv("MATCHUP_VLM_VISION_ADAPTER", "gemini_flash")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(
+        matchup_pipeline, "_try_vlm_problem_bboxes",
+        lambda *args, **kwargs: (vlm, "student_answer_photo"),
+    )
+    stats = matchup_pipeline._augment_questions_with_vlm_for_underfilled_pages(
+        [page], questions, source_type="student_exam_photo",
+        document_id=123, tenant_id=1,
+    )
+    assert stats["replacement_pages"] == 1
+    assert stats["replaced_auto"] == 2
+    assert {q["number"] for q in questions} == {12, 13, 14, 15}
+    assert all(q["meta_extra"]["vlm_reason"] == "numberless_photo_replacement"
+               for q in questions)
+    assert min(q["bbox"][1] for q in questions if q["number"] in (13, 15)) >= 1385
+
+
+def test_numberless_photo_replaces_recorded_five_crops_with_four_questions(monkeypatch):
+    """The QA photo's 146px Q12 strip is not a fifth printed question."""
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+
+    old_boxes = [
+        (958, 163, 962, 1222), (0, 312, 962, 146),
+        (0, 458, 962, 942), (958, 1385, 962, 1175),
+        (0, 1400, 962, 1160),
+    ]
+    page = {
+        "page_index": 0, "image_path": "/fake/photo.jpg",
+        "boxes": old_boxes, "numbers": [None] * len(old_boxes),
+        "paper_type": "clean_pdf_dual",
+    }
+    previous = {"number": 11, "page_index": 1, "bbox": [0, 0, 100, 100]}
+    questions = [previous] + [
+        {"number": n, "page_index": 0, "bbox": list(box),
+         "meta_extra": {"number_source": "counter_fallback"}}
+        for n, box in zip((4, 1, 2, 5, 3), old_boxes)
+    ]
+    proposals = [
+        (12, 140, 150, 800, 1210), (14, 990, 150, 800, 1080),
+        (13, 140, 1390, 800, 900), (15, 990, 1390, 800, 900),
+    ]
+    monkeypatch.setenv("MATCHUP_VLM_AUTO_SPLIT", "1")
+    monkeypatch.setenv("MATCHUP_VLM_FILL_UNDERFILLED_PAGES", "1")
+    monkeypatch.setenv("MATCHUP_VLM_VISION_ADAPTER", "gemini_flash")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(
+        matchup_pipeline, "_try_vlm_problem_bboxes",
+        lambda *args, **kwargs: (_bbox_result(problems=proposals), "clean_pdf_dual"),
+    )
+
+    stats = matchup_pipeline._augment_questions_with_vlm_for_underfilled_pages(
+        [page], questions, source_type="student_exam_photo",
+        document_id=123, tenant_id=1,
+    )
+
+    assert questions[0] is previous
+    assert stats["replaced_auto"] == 5
+    assert stats["replacement_pages"] == 1
+    assert stats["relabeled_overlaps"] == 0
+    assert {q["number"] for q in questions[1:]} == {12, 13, 14, 15}
+    assert {q["number"]: q["bbox"] for q in questions[1:]} == {
+        n: [x, y, w, h] for n, x, y, w, h in proposals
+    }
+    assert all(q["meta_extra"]["vlm_reason"] == "numberless_photo_replacement"
+               for q in questions[1:])
+
+
+def test_numberless_photo_replaces_merged_crops_with_new_question_in_uncovered_region(
+    monkeypatch, tmp_path,
+):
+    """QA photo 02: a missing top-right question must not block the full recut."""
+    from PIL import Image
+
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+
+    image_path = tmp_path / "photo.jpg"
+    Image.new("RGB", (1920, 2560), "white").save(image_path)
+    old_boxes = [
+        (0, 108, 962, 1049), (0, 1157, 962, 1403),
+        (958, 826, 962, 774), (958, 1600, 962, 960),
+    ]
+    page = {"page_index": 0, "image_path": str(image_path),
+            "boxes": old_boxes, "numbers": [None] * 4,
+            "paper_type": "student_answer_photo"}
+    previous = {"number": 12, "page_index": 1, "bbox": [0, 0, 100, 100]}
+    questions = [previous] + [
+        {"number": n, "page_index": 0, "bbox": list(box),
+         "meta_extra": {"number_source": "counter_fallback"}}
+        for n, box in zip((1, 2, 4, 5), old_boxes)
+    ]
+    # Q9's bounds are the observed persisted VLM crop. The other proposal
+    # bounds are offline mock cuts within their visually numbered regions.
+    proposals = [
+        (6, 120, 130, 780, 700), (7, 120, 840, 780, 770),
+        (8, 120, 1640, 780, 760), (9, 960, 154, 845, 660),
+        (10, 1000, 850, 780, 700), (11, 1000, 1660, 780, 760),
+    ]
+    monkeypatch.setenv("MATCHUP_VLM_AUTO_SPLIT", "1")
+    monkeypatch.setenv("MATCHUP_VLM_FILL_UNDERFILLED_PAGES", "1")
+    monkeypatch.setenv("MATCHUP_VLM_VISION_ADAPTER", "gemini_flash")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(
+        matchup_pipeline, "_try_vlm_problem_bboxes",
+        lambda *args, **kwargs: (_bbox_result(problems=proposals), "student_answer_photo"),
+    )
+
+    stats = matchup_pipeline._augment_questions_with_vlm_for_underfilled_pages(
+        [page], questions, source_type="student_exam_photo",
+        document_id=123, tenant_id=1,
+    )
+
+    assert stats["replaced_auto"] == 4
+    assert stats["replacement_pages"] == 1
+    assert stats["added"] == 6
+    assert questions[0] is previous
+    assert {q["number"] for q in questions[1:]} == {6, 7, 8, 9, 10, 11}
+    assert all(q["meta_extra"]["vlm_reason"] == "numberless_photo_replacement"
+               for q in questions[1:])
+    assert page["numbers"] == [6, 7, 8, 9, 10, 11]
+
+
+@pytest.mark.parametrize("uncovered_box", [
+    (960, 600, 845, 430),  # Ambiguous partial overlap with an old crop.
+    (1850, 154, 500, 660),  # Outside the photographed page.
+])
+def test_numberless_photo_rejects_unsafe_new_region(tmp_path, uncovered_box):
+    from PIL import Image
+
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+
+    image_path = tmp_path / "photo.jpg"
+    Image.new("RGB", (1920, 2560), "white").save(image_path)
+    old_boxes = [
+        (0, 108, 962, 1049), (0, 1157, 962, 1403),
+        (958, 826, 962, 774), (958, 1600, 962, 960),
+    ]
+    page = {"page_index": 0, "image_path": str(image_path),
+            "boxes": old_boxes[:], "numbers": [None] * 4}
+    questions = [
+        {"number": n, "page_index": 0, "bbox": list(box),
+         "meta_extra": {"number_source": "counter_fallback"}}
+        for n, box in zip((1, 2, 4, 5), old_boxes)
+    ]
+    result = _bbox_result(problems=[
+        (6, 120, 130, 780, 700), (7, 120, 840, 780, 770),
+        (8, 120, 1640, 780, 760), (9, *uncovered_box),
+        (10, 1000, 850, 780, 700), (11, 1000, 1660, 780, 760),
+    ])
+
+    assert matchup_pipeline._replace_numberless_photo_page(page, questions, result) == (0, 0)
+    assert [q["number"] for q in questions] == [1, 2, 4, 5]
+    assert page["boxes"] == old_boxes
+
+
+def test_numberless_photo_keeps_old_crops_when_new_region_cannot_be_checked():
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+
+    old = {"number": 1, "page_index": 0, "bbox": [0, 100, 1000, 500],
+           "meta_extra": {"number_source": "counter_fallback"}}
+    page = {"page_index": 0, "image_path": "/missing/photo.jpg",
+            "boxes": [old["bbox"]], "numbers": [None]}
+    questions = [old]
+    proposals = _bbox_result(problems=[
+        (12, 50, 120, 400, 450),
+        (13, 1100, 120, 400, 450),
+    ])
+
+    assert matchup_pipeline._replace_numberless_photo_page(page, questions, proposals) == (0, 0)
+    assert questions == [old]
+    assert page["numbers"] == [None]
+
+
+@pytest.mark.parametrize("fifth_box", [
+    (0, 150, 962, 308), (0, 180, 962, 146),
+])
+def test_numberless_photo_preserves_separate_fifth_crop_when_vlm_finds_four(fifth_box):
+    """A substantial or separated fifth area must survive a four-box proposal."""
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+
+    old_boxes = [
+        (958, 163, 962, 1222), fifth_box,
+        (0, 458, 962, 942), (958, 1385, 962, 1175),
+        (0, 1400, 962, 1160),
+    ]
+    page = {"page_index": 0, "image_path": "/fake/photo.jpg",
+            "boxes": old_boxes, "numbers": [None] * len(old_boxes)}
+    questions = [
+        {"number": n, "page_index": 0, "bbox": list(box),
+         "meta_extra": {"number_source": "counter_fallback"}}
+        for n, box in enumerate(old_boxes, start=1)
+    ]
+    proposals = _bbox_result(problems=[
+        (12, 140, 150, 800, 1210), (14, 990, 150, 800, 1080),
+        (13, 140, 1390, 800, 900), (15, 990, 1390, 800, 900),
+    ])
+
+    assert matchup_pipeline._replace_numberless_photo_page(page, questions, proposals) == (0, 0)
+    assert {q["number"] for q in questions} == {1, 2, 3, 4, 5}
+    assert page["numbers"] == [None] * 5
+
+
+def test_gemini_vision_discards_missing_number_and_out_of_range_box(monkeypatch, tmp_path):
+    from PIL import Image
+
+    from academy.adapters.ai.detection import vlm_fallback
+
+    image_path = tmp_path / "page.jpg"
+    Image.new("RGB", (100, 100), "white").save(image_path)
+    monkeypatch.setattr(vlm_fallback, "_gemini_request", lambda **kwargs: {
+        "problems": [
+            {"box_2d": [100, 100, 500, 500], "confidence": 0.99},
+            {"number": 2, "box_2d": [100, 100, 1001, 500], "confidence": 0.99},
+        ],
+    })
+    result = vlm_fallback.GeminiVLMVisionAdapter().detect_problems(
+        image_path=str(image_path),
+    )
+    assert result.problems == []
+
+
+@pytest.mark.parametrize("reason", [
+    "uncovered", "number_collision", "manual", "pinned", "low_confidence",
+    "too_few_cuts", "same_page_manual",
+])
+def test_vlm_photo_replacement_preserves_existing_on_unsafe_result(reason):
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+
+    old = {
+        "number": 1, "page_index": 0, "bbox": [0, 100, 1000, 500],
+        "meta_extra": {"number_source": "counter_fallback"},
+    }
+    reserved = {"number": 12, "page_index": 1, "bbox": [0, 0, 100, 100]}
+    questions = [old, reserved]
+    page = {"page_index": 0, "image_path": "/fake/photo.jpg", "boxes": [old["bbox"]], "numbers": [None]}
+    boxes = [(12, 50, 120, 400, 450), (13, 550, 120, 400, 450)]
+    if reason == "uncovered":
+        boxes[1] = (13, 2000, 2000, 400, 450)
+    if reason == "number_collision":
+        boxes[1] = (12, 550, 120, 400, 450)
+    if reason == "manual":
+        old["meta_extra"]["manual"] = True
+    if reason == "pinned":
+        old["meta_extra"]["manual_owner_pinned"] = True
+    if reason == "too_few_cuts":
+        boxes = boxes[:1]
+    if reason == "same_page_manual":
+        questions.insert(1, {
+            "number": 9, "page_index": 0, "bbox": [1000, 100, 500, 500],
+            "meta_extra": {"manual": True},
+        })
+    result = _bbox_result(problems=boxes)
+    if reason == "low_confidence":
+        result.problems[0].confidence = 0.5
+
+    assert matchup_pipeline._replace_numberless_photo_page(page, questions, result) == (0, 0)
+    assert questions[0] is old
+    assert questions[-1] is reserved
+    assert len(questions) == (3 if reason == "same_page_manual" else 2)
+    assert page["numbers"] == [None]
 
 
 def test_mock_vision_adapter_paper_type_default():
