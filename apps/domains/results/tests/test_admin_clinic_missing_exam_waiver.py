@@ -49,9 +49,14 @@ class AdminClinicMissingExamWaiverTests(TestCase):
             name="과학",
             subject="SCIENCE",
         )
-        self.session = self.Session.objects.create(
+        self.Session.objects.create(
             lecture=self.lecture,
             order=1,
+            title="완료 대상과 무관한 선행 차시",
+        )
+        self.session = self.Session.objects.create(
+            lecture=self.lecture,
+            order=2,
             title="결시 확인 차시",
         )
         student_user = User.objects.create_user(
@@ -185,6 +190,7 @@ class AdminClinicMissingExamWaiverTests(TestCase):
         self.assertEqual(self.ClinicLink.objects.count(), 0)
 
     def test_completed_session_is_not_a_current_absence_or_waivable(self):
+        self.assertNotEqual(self.session.id, self.enrollment.id)
         self.SessionProgress.objects.create(
             enrollment=self.enrollment,
             session=self.session,

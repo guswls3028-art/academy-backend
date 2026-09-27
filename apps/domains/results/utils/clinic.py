@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any, Iterable, Set
 
 from django.apps import apps
+from django.db.models import QuerySet
 
 from apps.support.results.progress_read_dependencies import (
     clinic_link_queryset_for_session,
@@ -217,12 +218,44 @@ def filter_live_source_links(
 
 def filter_current_clinic_links(clinic_links: Iterable[Any], *, tenant: Any) -> list[Any]:
     """Apply the shared current-target source and completed-progress contract."""
+    if isinstance(clinic_links, QuerySet):
+        clinic_links = clinic_links.select_related(
+            "enrollment__student", "enrollment__lecture", "session__lecture"
+        )
     live_links = filter_live_source_links(clinic_links, tenant=tenant)
     if not live_links:
         return []
 
     session_ids = list({int(link.session_id or 0) for link in live_links} - {0})
     enrollment_ids = list({int(link.enrollment_id or 0) for link in live_links} - {0})
+    completed_pairs = completed_session_progress_pairs(
+        session_ids=session_ids,
+        enrollment_ids=enrollment_ids,
+    )
+    if all(
+        (enrollment := getattr(link._state, "fields_cache", {}).get("enrollment")) is not None
+        and (session := getattr(link._state, "fields_cache", {}).get("session")) is not None
+        and "student" in enrollment._state.fields_cache
+        and "lecture" in enrollment._state.fields_cache
+        and "lecture" in session._state.fields_cache
+        for link in live_links
+    ):
+        tenant_id = getattr(tenant, "pk", None)
+        return [
+            link
+            for link in live_links
+            if tenant_id is not None
+            and link.enrollment.tenant_id == tenant_id
+            and link.enrollment.status == "ACTIVE"
+            and link.enrollment.student.tenant_id == tenant_id
+            and link.enrollment.student.deleted_at is None
+            and link.enrollment.lecture.tenant_id == tenant_id
+            and link.enrollment.lecture.is_active
+            and link.session.lecture.tenant_id == tenant_id
+            and link.session.lecture.is_active
+            and link.enrollment.lecture_id == link.session.lecture_id
+            and (int(link.enrollment_id), int(link.session_id)) not in completed_pairs
+        ]
     Enrollment = apps.get_model("enrollment", "Enrollment")
     Session = apps.get_model("lectures", "Session")
     active_enrollment_lectures = dict(
@@ -242,10 +275,6 @@ def filter_current_clinic_links(clinic_links: Iterable[Any], *, tenant: Any) -> 
             lecture__tenant=tenant,
             lecture__is_active=True,
         ).values_list("id", "lecture_id")
-    )
-    completed_pairs = completed_session_progress_pairs(
-        session_ids=session_ids,
-        enrollment_ids=enrollment_ids,
     )
     return [
         link
