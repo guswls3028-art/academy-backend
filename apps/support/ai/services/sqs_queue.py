@@ -279,6 +279,7 @@ class AISQSQueue:
                 "source_id": job_data.get("source_id"),
                 "receipt_handle": receipt_handle,
                 "message_id": message.get("MessageId"),
+                "queue_name": queue_name,
                 "created_at": job_data.get("created_at"),  # SQS 메시지 수명 추적용
             }
 
