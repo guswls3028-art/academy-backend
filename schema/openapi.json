@@ -18504,6 +18504,13 @@
           "correct_answer": {
             "type": "string"
           },
+          "essay_index": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "essay_numbering": {
+            "$ref": "#/components/schemas/EssayNumberingEnum"
+          },
           "exam_id": {
             "type": "integer"
           },

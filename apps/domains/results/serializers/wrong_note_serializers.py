@@ -22,7 +22,10 @@ class WrongNoteItemSerializer(serializers.Serializer):
 
     question_id = serializers.IntegerField()
     question_number = serializers.IntegerField(required=False, allow_null=True)
-    essay_numbering = serializers.ChoiceField(choices=("continuous", "separate"), required=False)
+    essay_numbering = serializers.ChoiceField(
+        choices=(("continuous", "이어서 표시"), ("separate", "서술형 1번부터 표시")),
+        required=False,
+    )
     essay_index = serializers.IntegerField(required=False, allow_null=True)
     answer_type = serializers.CharField(required=False, allow_blank=True)
     question_image_url = serializers.CharField(required=False, allow_blank=True)
