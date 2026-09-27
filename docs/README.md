@@ -64,6 +64,7 @@ backend/docs/
 | 학생 성적표 오답 상태·학원별 성장 그래프 구성 | [domain/student-grade-report.md](domain/student-grade-report.md) |
 | 교직원 저장소·학생 인벤토리 파일과 R2 보상 정리 | [domain/inventory-storage.md](domain/inventory-storage.md) |
 | 보강·클리닉 등원 예정 운영 | [domain/arrival-operations.md](domain/arrival-operations.md) |
+| 현재 클리닉 대상·강의 종료·학생 예약 자격 | [domain/clinic-targets.md](domain/clinic-targets.md) |
 | 알림톡 발송 기록의 역할별 조회·상태·개인정보 경계 | [domain/messaging-delivery-log.md](domain/messaging-delivery-log.md) |
 | 시험 원본→회차 범위 HWPX 오답노트 계획 | [refactor/exam-wrong-note-hwpx-plan.md](refactor/exam-wrong-note-hwpx-plan.md) |
 | OMR 출력·인식 | [domain/omr.md](domain/omr.md) |

@@ -24,8 +24,8 @@ from ..filters import SessionFilter
 from apps.core.permissions import TenantResolvedAndMember, TenantResolvedAndStaff
 from apps.api.common.query_params import parse_query_int
 from apps.support.clinic.session_dependencies import (
+    active_enrolled_lecture_ids_for_student,
     cancel_pending_clinic_participant_reminders,
-    enrollments_for_clinic_tenant,
     get_student_for_clinic_request,
     lectures_for_tenant,
     sections_for_tenant,
@@ -205,17 +205,15 @@ class SessionViewSet(viewsets.ModelViewSet):
             else:
                 qs = qs.filter(_no_school_restrict)
             # 강의 필터: 수강 중인 강의가 대상에 포함되거나 대상 강의가 비어있는 경우
-            enrolled_lecture_ids = list(
-                enrollments_for_clinic_tenant(tenant).filter(
-                    student=student, status="ACTIVE"
-                ).values_list("lecture_id", flat=True)
+            enrolled_lecture_ids = active_enrolled_lecture_ids_for_student(
+                tenant, student,
             )
             if enrolled_lecture_ids:
                 qs = qs.filter(
                     Q(target_lectures__isnull=True) | Q(target_lectures__id__in=enrolled_lecture_ids)
                 ).distinct()
             else:
-                qs = qs.filter(target_lectures__isnull=True)
+                qs = qs.none()
 
         return qs
 
