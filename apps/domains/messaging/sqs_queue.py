@@ -219,6 +219,19 @@ class MessagingSQSQueue:
         if not message["to"] or not message["text"]:
             logger.warning("enqueue skipped: to or text empty")
             return False
+        # QA provenance is stamped from authoritative producer arguments, never
+        # from a caller-supplied payload/header. Default/production is unchanged.
+        from apps.infrastructure.qa_lease import get_admission_gate
+        qa_gate = get_admission_gate("api")
+        if qa_gate.enabled:
+            from apps.infrastructure.qa_lease import QaLeaseClosed
+            if self._get_queue_name() != "academy-v1-development-messaging-queue":
+                raise QaLeaseClosed("Isolated QA messaging queue differs")
+            qa_tenant = int(source_tenant_id) if source_tenant_id is not None else int(tenant_id)
+            message = qa_gate.stamp_message(
+                message, qa_tenant,
+                job_id=message["business_idempotency_key"], queue_kind="messaging",
+            )
         try:
             ok = self.queue_client.send_message(
                 queue_name=self._get_queue_name(),

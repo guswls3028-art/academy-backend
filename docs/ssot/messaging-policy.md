@@ -181,3 +181,16 @@ preview→confirm 경로에서 선생이 명시적으로 확인한 경우에만 
 - 2026-03-28: 설정 콘솔 재정렬 (정책 배지, 템플릿 읽기 전용, DISABLED 숨김)
 - 2026-03-28: 일반 강의 출결 자동 발송 코드 완전 제거
 - 2026-03-28: 행정 화면 AutoSendToggle 전면 제거
+
+
+## 격리 QA 메시지 사용 기간과 provenance
+
+명시적 isolated-qa 런타임에서만 producer는 authoritative 업무 tenant
+(source_tenant_id가 있으면 해당 값, 아니면 tenant_id)로 공통 QA stamp를 생성한다.
+메시지 본문·job/destination·tenant·lease/candidate/revision·발급/만료가 서명에
+결속된다. worker는 long poll 전과 수신 후 검증하며, 기존 SOLAPI_MOCK=true 경계를
+필수로 유지한다. 변조·다른 tenant·만료·다른 후보 메시지는 실행/삭제하지 않고
+비민감 HOLD 증거와 재수신 차단을 남긴다. 동일 메시지의 처리 중·완료·재시도 가능
+상태는 구분하여 정상 SQS 재전달을 보존한다. 운영/일반 개발 기본 동작과 알림톡
+정책은 바뀌지 않는다. 실행 계약과 실제 활성화 제한은
+[격리 후보 준비](../operations/candidate-preparation.md)를 따른다.

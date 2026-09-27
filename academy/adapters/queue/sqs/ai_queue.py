@@ -34,5 +34,9 @@ class SQSAIQueueAdapter:
             visibility_timeout=visibility_timeout_seconds,
         )
 
+    def release_unstarted(self, receipt_handle: str, tier: str) -> bool:
+        """Return an unstarted QA receipt to the queue without acknowledging it."""
+        return self.extend_visibility(receipt_handle, tier, 0)
+
     def get_counts(self, tier: str = "basic") -> dict[str, int]:
         return self._get_impl().get_queue_counts(tier=tier)

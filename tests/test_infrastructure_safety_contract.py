@@ -1087,7 +1087,7 @@ def test_ecr_repositories_are_latest_only_mutable_and_verified() -> None:
         assert "filterType=WILDCARD,filter=latest" in source
         assert "put-image-tag-mutability" in source
         assert "imageTagMutabilityExclusionFilters" in source
-    assert "RELEASE_IMAGE_TAG: sha-${{ github.sha }}-run-${{ github.run_id }}-${{ github.run_attempt }}" in workflow
+    assert "RELEASE_IMAGE_TAG: ${{ inputs.candidate_release_id || format('sha-{0}-run-{1}-{2}', github.sha, github.run_id, github.run_attempt) }}" in workflow
     assert "academy-video-worker@${IMAGE_DIGEST}" in _job_block(
         workflow, "deploy-video"
     )

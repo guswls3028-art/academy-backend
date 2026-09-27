@@ -254,3 +254,10 @@ mutation 스크립트를 실행할 수 없으며 일반 CI 배포는 GitHub OIDC
   - **방법 1**: `aws configure` 로 default 프로파일 저장 → 어떤 셸에서든 동작.  
   - **방법 2**: named 프로파일(또는 SSO) 사용 시 `pwsh scripts/v1/deploy.ps1 -Env prod -AwsProfile prod`, `pwsh scripts/v1/verify.ps1 -AwsProfile prod`.
 - **상세**: [docs/infrastructure/deployment-architecture.md](../../docs/infrastructure/deployment-architecture.md)
+
+## 독립 후보 준비와 승격
+
+신규 opt-in 실행기 `candidate_prepare.py`, `candidate_runtime.py`, `candidate_manifest.py`,
+`converge_candidate_prerequisites.py`의 자원/권한/복구/승인 계약은
+[후보 준비 운영 문서](../../docs/operations/candidate-preparation.md)를 따른다.
+기본 배포는 새 소스나 provider key 없이 기존 경로를 유지한다.

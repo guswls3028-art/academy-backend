@@ -1,0 +1,375 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "BoundLaunchInstance",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": "arn:aws:ec2:ap-northeast-2:809466760795:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/Name": "academy-v1-api-development",
+          "aws:RequestTag/Project": "academy",
+          "aws:RequestTag/ManagedBy": "academy-api-development"
+        },
+        "StringLike": {
+          "aws:RequestTag/ReleaseId": "sha-*-run-*-*"
+        }
+      }
+    },
+    {
+      "Sid": "DevelopmentRunInstances",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": [
+        "arn:aws:ec2:ap-northeast-2::image/ami-0885e191a9bcf28b0",
+        "arn:aws:ec2:ap-northeast-2:809466760795:network-interface/*",
+        "arn:aws:ec2:ap-northeast-2:809466760795:volume/*",
+        "arn:aws:ec2:ap-northeast-2:809466760795:security-group/sg-06eb15b57827b0f2b",
+        "arn:aws:ec2:ap-northeast-2:809466760795:subnet/subnet-0548571ac21b3bbf3",
+        "arn:aws:ec2:ap-northeast-2:809466760795:subnet/subnet-07a8427d3306ce910"
+      ]
+    },
+    {
+      "Sid": "DevelopmentRunInstanceTags",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": "arn:aws:ec2:ap-northeast-2:809466760795:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:CreateAction": "RunInstances"
+        }
+      }
+    },
+    {
+      "Sid": "DevelopmentPassRole",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::809466760795:role/academy-api-development-role",
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "ec2.amazonaws.com"
+        }
+      }
+    },
+    {
+      "Sid": "DevelopmentRead",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeImages",
+        "ec2:DescribeInstances",
+        "ec2:DescribeInstanceStatus",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeSubnets"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DevelopmentLifecycle",
+      "Effect": "Allow",
+      "Action": "ec2:TerminateInstances",
+      "Resource": "arn:aws:ec2:ap-northeast-2:809466760795:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:ResourceTag/Name": "academy-v1-api-development",
+          "ec2:ResourceTag/Project": "academy",
+          "ec2:ResourceTag/ManagedBy": "academy-api-development"
+        }
+      }
+    },
+    {
+      "Sid": "DevelopmentProfileRead",
+      "Effect": "Allow",
+      "Action": "iam:GetInstanceProfile",
+      "Resource": "arn:aws:iam::809466760795:instance-profile/academy-api-development"
+    },
+    {
+      "Sid": "DevelopmentSsmSend",
+      "Effect": "Allow",
+      "Action": "ssm:SendCommand",
+      "Resource": "arn:aws:ec2:ap-northeast-2:809466760795:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "ssm:resourceTag/Name": "academy-v1-api-development",
+          "ssm:resourceTag/Project": "academy",
+          "ssm:resourceTag/ManagedBy": "academy-api-development"
+        }
+      }
+    },
+    {
+      "Sid": "CandidateImages",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:InitiateLayerUpload",
+        "ecr:UploadLayerPart",
+        "ecr:CompleteLayerUpload",
+        "ecr:PutImage",
+        "ecr:DescribeRepositories",
+        "ecr:DescribeImages",
+        "ecr:GetLifecyclePolicy"
+      ],
+      "Resource": [
+        "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-base",
+        "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-api",
+        "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-video-worker",
+        "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-messaging-worker",
+        "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-ai-worker-cpu",
+        "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-tools-worker"
+      ]
+    },
+    {
+      "Sid": "EcrLogin",
+      "Effect": "Allow",
+      "Action": "ecr:GetAuthorizationToken",
+      "Resource": "*"
+    },
+    {
+      "Sid": "SourceMetadata",
+      "Effect": "Allow",
+      "Action": "ssm:DescribeParameters",
+      "Resource": "*"
+    },
+    {
+      "Sid": "SourceTags",
+      "Effect": "Allow",
+      "Action": "ssm:ListTagsForResource",
+      "Resource": [
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/api/development/base-env",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/workers/development/base-env",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/api/development/db-credentials",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/r2/development/credentials",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/providers/development/gemini-api-key",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/api/development/env",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/workers/development/env"
+      ]
+    },
+    {
+      "Sid": "ExactSourceRead",
+      "Effect": "Allow",
+      "Action": "ssm:GetParameter",
+      "Resource": [
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/api/development/base-env",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/workers/development/base-env",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/api/development/db-credentials",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/r2/development/credentials",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/providers/development/gemini-api-key",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/api/development/env",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/workers/development/env"
+      ]
+    },
+    {
+      "Sid": "VersionedOutputWrite",
+      "Effect": "Allow",
+      "Action": "ssm:PutParameter",
+      "Resource": [
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/api/development/env",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/workers/development/env"
+      ]
+    },
+    {
+      "Sid": "RunShellDocument",
+      "Effect": "Allow",
+      "Action": "ssm:SendCommand",
+      "Resource": "arn:aws:ssm:ap-northeast-2::document/AWS-RunShellScript"
+    },
+    {
+      "Sid": "CommandReadback",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetCommandInvocation",
+        "ssm:ListCommandInvocations",
+        "ssm:DescribeInstanceInformation"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ComputeContractRead",
+      "Effect": "Allow",
+      "Action": "autoscaling:DescribeAutoScalingGroups",
+      "Resource": "*"
+    },
+    {
+      "Sid": "SharedDeploymentLock",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem"
+      ],
+      "Resource": "arn:aws:dynamodb:ap-northeast-2:809466760795:table/academy-v1-video-job-lock",
+      "Condition": {
+        "ForAllValues:StringEquals": {
+          "dynamodb:LeadingKeys": [
+            "__deployment_control_v2__"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "DenyOtherParameters",
+      "Effect": "Deny",
+      "Action": [
+        "ssm:GetParameter",
+        "ssm:GetParameters",
+        "ssm:PutParameter"
+      ],
+      "NotResource": [
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/api/development/base-env",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/workers/development/base-env",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/api/development/db-credentials",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/r2/development/credentials",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/providers/development/gemini-api-key",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/api/development/env",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/workers/development/env"
+      ]
+    },
+    {
+      "Sid": "DenyPathAndHistory",
+      "Effect": "Deny",
+      "Action": [
+        "ssm:GetParametersByPath",
+        "ssm:GetParameterHistory"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyProductionControl",
+      "Effect": "Deny",
+      "Action": [
+        "autoscaling:UpdateAutoScalingGroup",
+        "autoscaling:StartInstanceRefresh",
+        "elasticloadbalancing:RegisterTargets",
+        "elasticloadbalancing:DeregisterTargets",
+        "batch:RegisterJobDefinition",
+        "batch:SubmitJob",
+        "iam:CreateRole",
+        "iam:PutRolePolicy"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ReadCandidatePolicyBoundary",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetRole",
+        "iam:GetRolePolicy",
+        "iam:ListRolePolicies",
+        "iam:ListAttachedRolePolicies"
+      ],
+      "Resource": [
+        "arn:aws:iam::809466760795:role/academy-gha-candidate-qa",
+        "arn:aws:iam::809466760795:role/academy-gha-candidate-production",
+        "arn:aws:iam::809466760795:role/academy-api-qa-role"
+      ]
+    },
+    {
+      "Sid": "DevelopmentLifecycleTags",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": "arn:aws:ec2:ap-northeast-2:809466760795:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:ResourceTag/Name": "academy-v1-api-development",
+          "ec2:ResourceTag/Project": "academy",
+          "ec2:ResourceTag/ManagedBy": "academy-api-development"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": [
+            "Lifecycle",
+            "VerifiedReleaseId"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "DevelopmentTerminationProtection",
+      "Effect": "Allow",
+      "Action": "ec2:ModifyInstanceAttribute",
+      "Resource": "arn:aws:ec2:ap-northeast-2:809466760795:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:ResourceTag/Name": "academy-v1-api-development",
+          "ec2:ResourceTag/Project": "academy",
+          "ec2:ResourceTag/ManagedBy": "academy-api-development"
+        },
+        "Bool": {
+          "ec2:Attribute/DisableApiTermination": [
+            "true",
+            "false"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "ReadDevelopmentSessions",
+      "Effect": "Allow",
+      "Action": "ssm:DescribeSessions",
+      "Resource": "*"
+    },
+    {
+      "Sid": "ReadDevelopmentQueueIdle",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:GetQueueUrl",
+        "sqs:GetQueueAttributes"
+      ],
+      "Resource": [
+        "arn:aws:sqs:ap-northeast-2:809466760795:academy-v1-development-ai-queue",
+        "arn:aws:sqs:ap-northeast-2:809466760795:academy-v1-development-tools-queue",
+        "arn:aws:sqs:ap-northeast-2:809466760795:academy-v1-development-messaging-queue"
+      ]
+    },
+    {
+      "Sid": "OwnCandidatePublicationJournal",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:ConditionCheckItem"
+      ],
+      "Resource": "arn:aws:dynamodb:ap-northeast-2:809466760795:table/academy-v1-video-job-lock",
+      "Condition": {
+        "ForAllValues:StringLike": {
+          "dynamodb:LeadingKeys": [
+            "__deployment_control_v2__",
+            "__candidate_publication__:candidate:*"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "QaPreparePassRole",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::809466760795:role/academy-api-qa-role",
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "ec2.amazonaws.com"
+        }
+      }
+    },
+    {
+      "Sid": "CandidateQaLeaseControl",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:PutItem"
+      ],
+      "Resource": "arn:aws:dynamodb:ap-northeast-2:809466760795:table/academy-v1-video-job-lock",
+      "Condition": {
+        "ForAllValues:StringEquals": {
+          "dynamodb:LeadingKeys": [
+            "__candidate_qa_window__"
+          ]
+        },
+        "Null": {
+          "dynamodb:LeadingKeys": "false"
+        }
+      }
+    }
+  ]
+}

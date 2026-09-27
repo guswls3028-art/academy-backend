@@ -1,0 +1,88 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "EcrLogin",
+      "Effect": "Allow",
+      "Action": "ecr:GetAuthorizationToken",
+      "Resource": "*"
+    },
+    {
+      "Sid": "QaImages",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer"
+      ],
+      "Resource": [
+        "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-qa-base",
+        "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-qa-api",
+        "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-qa-video-worker",
+        "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-qa-messaging-worker",
+        "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-qa-ai-worker-cpu",
+        "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-qa-tools-worker"
+      ]
+    },
+    {
+      "Sid": "PinnedDevelopmentEnvs",
+      "Effect": "Allow",
+      "Action": "ssm:GetParameter",
+      "Resource": [
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/api/development/env",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/workers/development/env"
+      ]
+    },
+    {
+      "Sid": "DevelopmentQueues",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:GetQueueUrl",
+        "sqs:GetQueueAttributes",
+        "sqs:SendMessage",
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:ChangeMessageVisibility"
+      ],
+      "Resource": [
+        "arn:aws:sqs:ap-northeast-2:809466760795:academy-v1-development-ai-queue",
+        "arn:aws:sqs:ap-northeast-2:809466760795:academy-v1-development-tools-queue",
+        "arn:aws:sqs:ap-northeast-2:809466760795:academy-v1-development-messaging-queue"
+      ]
+    },
+    {
+      "Sid": "DenyOtherParameters",
+      "Effect": "Deny",
+      "Action": [
+        "ssm:GetParameter",
+        "ssm:GetParameters"
+      ],
+      "NotResource": [
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/api/development/env",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/workers/development/env"
+      ]
+    },
+    {
+      "Sid": "DenyPathAndHistory",
+      "Effect": "Deny",
+      "Action": [
+        "ssm:GetParametersByPath",
+        "ssm:GetParameterHistory"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyProductionRepositories",
+      "Effect": "Deny",
+      "Action": "ecr:*",
+      "Resource": [
+        "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-base",
+        "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-api",
+        "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-video-worker",
+        "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-messaging-worker",
+        "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-ai-worker-cpu",
+        "arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-tools-worker"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "IndependentSourceMetadata",
+      "Effect": "Allow",
+      "Action": "ssm:DescribeParameters",
+      "Resource": "*"
+    },
+    {
+      "Sid": "IndependentSourceRead",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetParameter",
+        "ssm:ListTagsForResource"
+      ],
+      "Resource": [
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/api/development/base-env",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/api/development/db-credentials",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/r2/development/credentials",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/api/preprod/base-env",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/api/preprod/db-credentials",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/r2/preprod/credentials",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/workers/development/base-env",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/api/preprod/cdn-credentials",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/api/development/env",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/api/preprod/env",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/workers/development/env"
+      ]
+    },
+    {
+      "Sid": "IndependentOutputWrite",
+      "Effect": "Allow",
+      "Action": "ssm:PutParameter",
+      "Resource": [
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/api/development/env",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/api/preprod/env",
+        "arn:aws:ssm:ap-northeast-2:809466760795:parameter/academy/workers/development/env"
+      ]
+    },
+    {
+      "Sid": "ReadDevelopmentSessions",
+      "Effect": "Allow",
+      "Action": "ssm:DescribeSessions",
+      "Resource": "*"
+    },
+    {
+      "Sid": "ReadDevelopmentQueueIdle",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:GetQueueUrl",
+        "sqs:GetQueueAttributes"
+      ],
+      "Resource": [
+        "arn:aws:sqs:ap-northeast-2:809466760795:academy-v1-development-ai-queue",
+        "arn:aws:sqs:ap-northeast-2:809466760795:academy-v1-development-tools-queue",
+        "arn:aws:sqs:ap-northeast-2:809466760795:academy-v1-development-messaging-queue"
+      ]
+    }
+  ]
+}

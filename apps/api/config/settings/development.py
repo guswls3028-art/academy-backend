@@ -11,6 +11,14 @@ from .base import *  # noqa: F403
 
 from django.core.exceptions import ImproperlyConfigured
 
+# Keep admission in the development stack even when QA is not configured. A
+# partially configured isolated QA runtime then fails closed at request time.
+MIDDLEWARE = [  # noqa: F405
+    *MIDDLEWARE[: MIDDLEWARE.index("apps.core.middleware.tenant_db_usage.TenantDatabaseUsageMiddleware") + 1],  # noqa: F405
+    "apps.api.middleware.candidate_qa_admission.CandidateQaAdmissionMiddleware",
+    *MIDDLEWARE[MIDDLEWARE.index("apps.core.middleware.tenant_db_usage.TenantDatabaseUsageMiddleware") + 1 :],  # noqa: F405
+]
+
 
 if os.getenv("ACADEMY_RUNTIME_ENV", "").strip().lower() != "development":
     raise ImproperlyConfigured(

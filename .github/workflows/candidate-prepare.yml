@@ -1,0 +1,278 @@
+name: Isolated QA and production candidate preparation
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        options: [isolated-qa, production]
+        default: isolated-qa
+        required: true
+        description: PR QA cannot be promoted; production requires exact main
+      source_sha:
+        type: string
+        required: true
+        description: Exact 40-character PR head or current main commit
+      pull_request:
+        type: string
+        default: ''
+        description: Open same-repository PR number, only for isolated-qa
+      slot_owner:
+        type: string
+        default: ''
+        description: Named task owner for isolated QA; required for isolated-qa
+      provider_qa:
+        type: boolean
+        default: false
+        description: Enable separately approved development Gemini capability
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: academy-production-mutation
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.ref == 'refs/heads/main' && vars.ACADEMY_CANDIDATE_ENABLED == 'true'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 150
+    environment: ${{ inputs.mode == 'isolated-qa' && 'candidate-qa' || 'candidate-production' }}
+    outputs:
+      environment_receipt: ${{ steps.development.outputs.receipt_json }}
+      baseline_sha256: ${{ steps.baseline.outputs.sha256 }}
+      baseline_artifact_id: ${{ steps.baseline-artifact.outputs.artifact-id }}
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      AWS_REGION: ap-northeast-2
+      ACADEMY_DEPLOY_LOCK_TABLE: academy-v1-video-job-lock
+      ACADEMY_DEPLOY_LOCK_OWNER: candidate:${{ github.run_id }}:${{ github.run_attempt }}
+      GH_TOKEN: ${{ github.token }}
+      MODE: ${{ inputs.mode }}
+      SLOT_OWNER: ${{ inputs.slot_owner }}
+      CANDIDATE_ENABLED: 'true'
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      PR_NUMBER: ${{ inputs.pull_request }}
+      CONTROLLER_SHA: ${{ github.sha }}
+      PROVIDER_QA: ${{ inputs.provider_qa }}
+      PRODUCTION_DATABASE: ${{ vars.ACADEMY_PRODUCTION_DATABASE_NAME }}
+    steps:
+      - name: Checkout trusted controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: control
+          persist-credentials: false
+      - name: Bind exact source before AWS authentication
+        id: source
+        run: |
+          python3 control/scripts/v1/candidate_prepare.py source --mode "$MODE" \
+            --sha "$SOURCE_SHA" --controller "$CONTROLLER_SHA" --pr "$PR_NUMBER" \
+            --github-output "$GITHUB_OUTPUT"
+          echo "RELEASE_IMAGE_TAG=sha-$SOURCE_SHA-run-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+      - name: Checkout exact candidate source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+          path: source
+          persist-credentials: false
+      - name: Configure scoped candidate identity
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c
+        with:
+          role-to-assume: arn:aws:iam::809466760795:role/academy-gha-candidate-${{ inputs.mode == 'isolated-qa' && 'qa' || 'production' }}
+          aws-region: ap-northeast-2
+          role-duration-seconds: 10800
+          allowed-account-ids: '809466760795'
+      - name: Install pinned AWS SDK
+        run: python3 -m pip install -c control/requirements/constraints.txt boto3 PyYAML==6.0.3
+      - name: Verify active OIDC and runtime policy boundaries
+        run: |
+          python3 control/scripts/v1/converge_candidate_prerequisites.py --readback \
+            --output "$RUNNER_TEMP/candidate-policy-readback.json"
+      - name: Validate independent source metadata
+        run: |
+          ARGS=()
+          if [ "$PROVIDER_QA" = true ]; then ARGS+=(--provider); fi
+          python3 control/scripts/v1/candidate_runtime.py preflight --stage development --production-database "$PRODUCTION_DATABASE" "${ARGS[@]}"
+      - name: Check active owner sessions and queue idleness before locking
+        run: |
+          if [ "$MODE" = isolated-qa ] && [ -z "$SLOT_OWNER" ]; then
+            echo "::error::Isolated QA requires a named task owner"
+            exit 1
+          fi
+          python3 control/scripts/v1/candidate_slot.py guard --owner "$SLOT_OWNER"
+      - name: Acquire shared mutation lock
+        id: lock
+        run: python3 control/scripts/v1/deployment_lock.py acquire --owner "$ACADEMY_DEPLOY_LOCK_OWNER" --ttl-seconds 10800
+      - name: Capture immutable baseline after acquiring the lock
+        if: inputs.mode == 'isolated-qa'
+        id: baseline
+        run: |
+          python3 control/scripts/v1/candidate_slot.py capture --owner "$SLOT_OWNER" \
+            --snapshot "$RUNNER_TEMP/baseline/baseline.json" --github-output "$GITHUB_OUTPUT"
+      - name: Preserve exact baseline for failure or success restoration
+        if: inputs.mode == 'isolated-qa'
+        id: baseline-artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: development-baseline-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/baseline/baseline.json
+          retention-days: 30
+          if-no-files-found: error
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
+      - name: Login to scoped ECR
+        uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64
+      - name: Build all six immutable images
+        run: |
+          ARGS=()
+          if [ "$PROVIDER_QA" = true ]; then ARGS+=(--provider); fi
+          python3 control/scripts/v1/candidate_prepare.py build --source "$GITHUB_WORKSPACE/source" \
+            --mode "$MODE" --release "$RELEASE_IMAGE_TAG" --output "$RUNNER_TEMP/candidate/images.json" "${ARGS[@]}"
+      - name: Publish pinned independent development environment
+        id: development
+        run: |
+          python3 control/scripts/v1/deployment_lock.py renew --owner "$ACADEMY_DEPLOY_LOCK_OWNER" --ttl-seconds 10800
+          ARGS=()
+          if [ "$PROVIDER_QA" = true ]; then ARGS+=(--provider); fi
+          if [ "$MODE" = isolated-qa ]; then ARGS+=(--journal-owner "$ACADEMY_DEPLOY_LOCK_OWNER"); fi
+          python3 control/scripts/v1/candidate_runtime.py publish --stage development \
+            --release "$RELEASE_IMAGE_TAG" --production-database "$PRODUCTION_DATABASE" \
+            --receipt "$RUNNER_TEMP/candidate/environment-receipt.json" --github-output "$GITHUB_OUTPUT" "${ARGS[@]}"
+      - name: Verify development runtime and synthetic cleanup
+        id: runtime
+        shell: pwsh
+        env:
+          API_VERSION: ${{ steps.development.outputs.parameter_version }}
+          WORKER_VERSION: ${{ steps.development.outputs.workers_parameter_version }}
+        run: |
+          $images = Get-Content "$env:RUNNER_TEMP/candidate/images.json" -Raw | ConvertFrom-Json
+          function ImageUri($role) {
+            $image = $images.$role
+            return "809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/$($image.repository)@$($image.digest)"
+          }
+          ./control/scripts/v1/deploy-api-development.ps1 `
+            -ApiImageUri (ImageUri "academy-api") `
+            -ToolsImageUri (ImageUri "academy-tools-worker") `
+            -AiImageUri (ImageUri "academy-ai-worker-cpu") `
+            -MessagingImageUri (ImageUri "academy-messaging-worker") `
+            -ExpectedEnvVersion $env:API_VERSION `
+            -ExpectedWorkersEnvVersion $env:WORKER_VERSION `
+            -ExpectedReleaseId $env:RELEASE_IMAGE_TAG `
+            -ExpectedProductionDatabaseName $env:PRODUCTION_DATABASE `
+            -EvidencePath "$env:RUNNER_TEMP/candidate/development-evidence.json" `
+            -IsolatedQa:($env:MODE -eq "isolated-qa") -SlotOwner $env:SLOT_OWNER -Ci
+      - name: Revalidate source and register evidence
+        run: |
+          python3 control/scripts/v1/candidate_prepare.py source --mode "$MODE" \
+            --sha "$SOURCE_SHA" --controller "$CONTROLLER_SHA" --pr "$PR_NUMBER" --github-output "$GITHUB_OUTPUT"
+          ARGS=()
+          if [ "$PROVIDER_QA" = true ]; then ARGS+=(--provider); fi
+          python3 control/scripts/v1/candidate_manifest.py create \
+            --images "$RUNNER_TEMP/candidate/images.json" --evidence "$RUNNER_TEMP/candidate/development-evidence.json" \
+            --mode "$MODE" --sha "$SOURCE_SHA" --controller-sha "$CONTROLLER_SHA" \
+            --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" "${ARGS[@]}" \
+            --output "$RUNNER_TEMP/candidate/release-manifest.candidate.json"
+          python3 control/scripts/v1/candidate_manifest.py retain "$RUNNER_TEMP/candidate/release-manifest.candidate.json"
+      - name: Preserve immutable candidate for thirty days
+        id: artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: academy-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/candidate/release-manifest.candidate.json
+          retention-days: 30
+          if-no-files-found: error
+      - name: Publish nonsecret promotion coordinates
+        env:
+          ARTIFACT_ID: ${{ steps.artifact.outputs.artifact-id }}
+          ARTIFACT_DIGEST: ${{ steps.artifact.outputs.artifact-digest }}
+        run: |
+          printf 'Mode: %s\nSource: %s\nArtifact: %s\nArchive SHA256: %s\nRelease: %s\nProvider-specific QA: pending/unavailable; never inferred from infrastructure smoke.\n' \
+            "$MODE" "$SOURCE_SHA" "$ARTIFACT_ID" "$ARTIFACT_DIGEST" "$RELEASE_IMAGE_TAG" >> "$GITHUB_STEP_SUMMARY"
+      - name: Restore prior environment after failed runtime activation
+        if: failure() && inputs.mode != 'isolated-qa' && steps.development.outcome == 'success' && steps.runtime.outcome != 'success'
+        run: |
+          python3 control/scripts/v1/candidate_runtime.py rollback --stage development \
+            --receipt "$RUNNER_TEMP/candidate/environment-receipt.json"
+      - name: Release own shared lock
+        if: always() && steps.lock.outcome == 'success' && (inputs.mode != 'isolated-qa' || steps.baseline-artifact.outcome != 'success')
+        run: python3 control/scripts/v1/deployment_lock.py release --owner "$ACADEMY_DEPLOY_LOCK_OWNER"
+
+  restore-qa-baseline:
+    name: Restore exact development baseline after isolated QA
+    needs: prepare
+    if: always() && inputs.mode == 'isolated-qa' && needs.prepare.outputs.baseline_artifact_id != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: candidate-production
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      AWS_REGION: ap-northeast-2
+      ACADEMY_DEPLOY_LOCK_TABLE: academy-v1-video-job-lock
+      ACADEMY_DEPLOY_LOCK_OWNER: candidate:${{ github.run_id }}:${{ github.run_attempt }}
+      BASELINE_SHA256: ${{ needs.prepare.outputs.baseline_sha256 }}
+      ENVIRONMENT_RECEIPT: ${{ needs.prepare.outputs.environment_receipt }}
+      SLOT_OWNER: ${{ inputs.slot_owner }}
+      CANDIDATE_ENABLED: 'true'
+    steps:
+      - name: Checkout trusted restoration controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Configure baseline-only restoration identity
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c
+        with:
+          role-to-assume: arn:aws:iam::809466760795:role/academy-gha-candidate-production
+          aws-region: ap-northeast-2
+          allowed-account-ids: '809466760795'
+      - name: Download immutable pre-QA baseline snapshot
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ needs.prepare.outputs.baseline_artifact_id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/baseline
+      - name: Bind restoration to the original snapshot and current attempt
+        id: restoration-lock
+        run: |
+          python3 scripts/v1/candidate_slot.py restore-lock \
+            --snapshot "$RUNNER_TEMP/baseline/baseline.json" --sha256 "$BASELINE_SHA256"
+      - name: Install pinned restoration SDK
+        run: python3 -m pip install -c requirements/constraints.txt boto3
+      - name: Restore using the same health gate and verify cleanup
+        shell: pwsh
+        run: |
+          $snapshot = "$env:RUNNER_TEMP/baseline/baseline.json"
+          $assessmentText = python3 scripts/v1/candidate_slot.py assess --snapshot $snapshot --sha256 $env:BASELINE_SHA256
+          if ($LASTEXITCODE -ne 0) { throw "Baseline/session/owner readback failed; no forced replacement." }
+          $assessment = $assessmentText | ConvertFrom-Json
+          $baseline = Get-Content $snapshot -Raw | ConvertFrom-Json
+          python3 scripts/v1/candidate_runtime.py rollback --stage development --baseline $snapshot --journal-owner $baseline.lock_owner
+          if ($LASTEXITCODE -ne 0) { throw "Durable environment recovery incomplete; HOLD before baseline mutation." }
+
+          if ($assessment.replace) {
+            ./scripts/v1/deploy-api-development.ps1 `
+              -ApiImageUri $baseline.images.ApiImageUri `
+              -ToolsImageUri $baseline.images.ToolsImageUri `
+              -AiImageUri $baseline.images.AiImageUri `
+              -MessagingImageUri $baseline.images.MessagingImageUri `
+              -ExpectedEnvVersion $baseline.api_version `
+              -ExpectedWorkersEnvVersion $baseline.workers_version `
+              -ExpectedReleaseId $baseline.release `
+              -ExpectedProductionDatabaseName $baseline.production_database `
+              -SlotOwner $env:SLOT_OWNER -RecoverySnapshot $snapshot -RecoverySha256 $env:BASELINE_SHA256 `
+              -EvidencePath "$env:RUNNER_TEMP/baseline/restoration-evidence.json" -Ci
+          } else {
+            ./scripts/v1/run-api-development-smoke.ps1 -InstanceId $assessment.instance_id -Ci
+          }
+          python3 scripts/v1/candidate_slot.py cleanup --snapshot $snapshot --sha256 $env:BASELINE_SHA256
+          if ($LASTEXITCODE -ne 0) { throw "Baseline restoration or temporary QA cleanup readback failed." }
+      - name: Release own shared lock after restoration attempt
+        if: always() && steps.restoration-lock.outcome == 'success'
+        run: python3 scripts/v1/deployment_lock.py release --owner "$ACADEMY_DEPLOY_LOCK_OWNER"
