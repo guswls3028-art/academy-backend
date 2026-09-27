@@ -2392,6 +2392,243 @@ def _replace_numberless_photo_page(
     return len(old), len(replacements)
 
 
+def _recover_numberless_photo_from_ocr(
+    page: Dict[str, Any], questions: List[Dict[str, Any]],
+    ocr_blocks: Optional[List[Any]] = None,
+) -> tuple[int, int]:
+    """Recover a two-column photo only when OCR proves each question boundary.
+
+    One obscured first number may be inferred from four consecutive printed
+    labels, its own stem/number fragment, and its own answer row. Ambiguous
+    layouts retain the original review candidate.
+    """
+    import cv2
+
+    page_idx = page.get("page_index")
+    old = [q for q in questions if q.get("page_index") == page_idx and q.get("bbox")]
+    if not old:
+        return 0, 0
+    for q in old:
+        meta = q.get("meta_extra")
+        if not isinstance(meta, dict):
+            return 0, 0
+        public = meta.get("public_cleanup")
+        if (not _is_counter_fallback_question(q) or q.get("shared_with")
+                or meta.get("manual") or meta.get("manual_owner_pinned")
+                or meta.get("confirmation_status") == "confirmed"
+                or (public is not None and not isinstance(public, dict))
+                or (isinstance(public, dict) and public.get("status") == "approved")):
+            return 0, 0
+    try:
+        image = cv2.imread(page["image_path"], cv2.IMREAD_GRAYSCALE)
+    except (KeyError, TypeError, ValueError):
+        return 0, 0
+    if image is None:
+        return 0, 0
+    height, width = image.shape[:2]
+    if min(height, width) < 400:
+        return 0, 0
+    if ocr_blocks is None:
+        backend = _load_ocr_blocks_backend()
+        if backend is None:
+            return 0, 0
+        try:
+            ocr_blocks = backend(page["image_path"])
+        except Exception:
+            logger.warning("MATCHUP_PHOTO_ANCHOR_OCR_FAIL", exc_info=True)
+            return 0, 0
+    if not ocr_blocks:
+        return 0, 0
+
+    numbered = []
+    for block in ocr_blocks:
+        match = re.match(
+            r"^\s*(\d{1,3})(?:(\s*[.．](?!\d))|\s+[가-힣])",
+            block.text or "",
+        )
+        if not match or len(block.text or "") < 20 or block.x1-block.x0 < width*.15:
+            continue
+        side = "left" if block.x0 < width*.40 else (
+            "right" if width*.52 <= block.x0 <= width*.65 else None
+        )
+        if side:
+            numbered.append((int(match.group(1)), bool(match.group(2)), side, block))
+    left = sorted(
+        (row for row in numbered if row[1] and row[2] == "left"
+         and row[3].y0 > height*.05),
+        key=lambda row: row[3].y0,
+    )
+    if len(left) != 2 or left[0][0] <= 1 or left[1][0] != left[0][0]+1:
+        return 0, 0
+    right = []
+    for number in (left[1][0]+1, left[1][0]+2):
+        matches = [row for row in numbered if row[0] == number and row[2] == "right"]
+        if len(matches) != 1:
+            return 0, 0
+        right.append(matches[0])
+    if not (right[0][3].y0 < right[1][3].y0 and right[1][1]):
+        return 0, 0
+    numbers = [left[0][0]-1, left[0][0], left[1][0], right[0][0], right[1][0]]
+    old_ids = {id(q) for q in old}
+    reserved = {
+        int(q["number"]) for q in questions if id(q) not in old_ids
+        and str(q.get("number", "")).isdigit()
+    }
+    if any(number in reserved for number in numbers):
+        return 0, 0
+
+    # Extra 1., 2. lines after the final right-column question may be numbered
+    # experiment steps. They are safe only without a choice-row boundary before
+    # them and while the final question still has its own choices below.
+    selected = {id(row[3]) for row in (*left, *right)}
+    extras = sorted(
+        (row for row in numbered if id(row[3]) not in selected),
+        key=lambda row: row[3].y0,
+    )
+    if extras and (
+        any(row[2] != "right" or row[3].y0 <= right[1][3].y0
+            or row[0] != index or row[0] >= numbers[0]
+            for index, row in enumerate(extras, 1))
+        or any(
+            re.search(r"[①②③④⑤]", block.text or "")
+            and right[1][3].y0 < block.y0 < extras[-1][3].y0
+            and block.x0 >= width*.52
+            for block in ocr_blocks
+        )
+    ):
+        return 0, 0
+
+    stems = [
+        block for block in ocr_blocks
+        if height*.05 < block.y0 < left[0][3].y0-height*.15
+        and width*.15 < block.x0 < width*.50
+        and block.x1-block.x0 > width*.25
+        and len(block.text or "") >= 20
+    ]
+    if not stems:
+        return 0, 0
+    stem = min(stems, key=lambda block: block.y0)
+    fragments = [
+        block for block in ocr_blocks
+        if abs(block.y0-stem.y0) < height*.01
+        and stem.x0-width*.05 < block.x0 < stem.x0-10
+        and block.x1 < stem.x0-5 and len((block.text or "").strip()) <= 3
+    ]
+    if len(fragments) != 1:
+        return 0, 0
+    fragment = fragments[0]
+    mark = image[max(0, round(fragment.y0)):min(height, round(fragment.y1)),
+                 max(0, round(fragment.x0)):min(width, round(fragment.x1))]
+    if mark.size == 0 or int((mark < 125).sum()) < mark.size*.03:
+        return 0, 0
+
+    footer = [
+        block for block in ocr_blocks
+        if block.y0 > height*.85 and block.x0 < width/2 < block.x1
+        and len(block.text or "") >= 20 and re.search(
+            r"저작권|다음\s*면.{0,8}계속|뒷면.{0,8}계속", block.text or ""
+        )
+    ]
+    if not footer:
+        return 0, 0
+    footer_top = min(block.y0 for block in footer)
+    if footer_top <= max(left[1][3].y0, right[1][3].y0):
+        return 0, 0
+    anchors = [fragment, left[0][3], left[1][3], right[0][3], right[1][3]]
+    starts = [max(0, round(block.y0-height*.008)) for block in anchors]
+    bottoms = [starts[1]-2, starts[2]-2,
+               round(footer_top-height*.004), starts[4]-2,
+               round(footer_top-height*.004)]
+    if any(bottom <= start for start, bottom in zip(starts, bottoms)):
+        return 0, 0
+
+    choice_rows = []
+    for index, (start, bottom) in enumerate(zip(starts, bottoms)):
+        side = index < 3
+        choices = [
+            block for block in ocr_blocks
+            if start < block.y0 < bottom and
+            ((block.x0+block.x1)/2 < width/2) == side
+            and re.search(r"[①②③④⑤]", block.text or "")
+        ]
+        if not choices:
+            return 0, 0
+        last = max(choices, key=lambda block: block.y1)
+        if not (last.y1+height*.004 < bottom
+                and bottom-last.y1 < height*.10):
+            return 0, 0
+        choice_rows.append(choices)
+    first_choices = choice_rows[0]
+    if (len(set("".join(block.text or "" for block in first_choices))
+            & set("①②③④⑤")) < 2
+            or max(block.x0 for block in first_choices)
+            - min(block.x0 for block in first_choices) < width*.15):
+        return 0, 0
+
+    left_blocks = [
+        block for block in ocr_blocks
+        if starts[0] <= block.y0 < footer_top
+        and (block.x0+block.x1)/2 < width/2
+    ]
+    right_blocks = [
+        block for block in ocr_blocks
+        if starts[3] <= block.y0 < footer_top
+        and (block.x0+block.x1)/2 >= width/2
+    ]
+    if not left_blocks or not right_blocks:
+        return 0, 0
+    left_x = max(0, round(min(block.x0 for block in left_blocks)-width*.008))
+    left_x2 = min(width, round(max(block.x1 for block in left_blocks)+width*.005))
+    right_x = max(0, round(min(row[3].x0 for row in right)-width*.008))
+    right_x2 = min(width, round(max(block.x1 for block in right_blocks)+width*.005))
+    if left_x2 >= right_x+width*.015 or right_x2 <= right_x:
+        return 0, 0
+    boxes = [
+        (left_x if index < 3 else right_x, starts[index],
+         (left_x2-left_x) if index < 3 else (right_x2-right_x),
+         bottoms[index]-starts[index])
+        for index in range(5)
+    ]
+    refined, boundaries = _photo_vlm_ocr_geometry(
+        page["image_path"], boxes, numbers, ocr_blocks,
+    )
+    if len(boundaries) != 5 or not all(boundaries):
+        return 0, 0
+    final = []
+    for index, box in enumerate(refined):
+        x, y, w, h = map(int, box)
+        end = min(y+h, bottoms[index]) if index in (2, 4) else y+h
+        if min(w, end-y) <= 0 or x < 0 or x+w > width or end > height:
+            return 0, 0
+        if max(block.y1 for block in choice_rows[index]) >= end-height*.004:
+            return 0, 0
+        final.append([x, y, w, end-y])
+
+    replacements = [
+        {
+            "number": number, "page_index": page_idx,
+            "image_path": page["image_path"], "bbox": box,
+            "meta_extra": {
+                "engine": "ocr_anchor", "photo_crop_refined": True,
+                "photo_column_boundary": boundary,
+                "ocr_anchor_recovered": True,
+            },
+        }
+        for number, box, boundary in zip(numbers, final, boundaries)
+    ]
+    first = next(i for i, q in enumerate(questions) if q is old[0])
+    questions[:] = (
+        questions[:first] + replacements
+        + [q for q in questions[first:] if id(q) not in old_ids]
+    )
+    page["boxes"] = final
+    page["numbers"] = numbers
+    page.setdefault("paper_type_debug", {})["ocr_anchor_replaced_numberless_photo"] = {
+        "old_boxes": len(old), "new_boxes": len(replacements),
+    }
+    return len(old), len(replacements)
+
+
 def _augment_questions_with_vlm_for_underfilled_pages(
     pages: List[Dict],
     questions: List[Dict],
@@ -2469,6 +2706,8 @@ def _augment_questions_with_vlm_for_underfilled_pages(
     paper_type_updates = 0
     replaced_auto = 0
     replacement_pages = 0
+    ocr_anchor_replaced_auto = 0
+    ocr_anchor_questions = 0
 
     def _next_free_number() -> int:
         nonlocal next_number
@@ -2491,6 +2730,17 @@ def _augment_questions_with_vlm_for_underfilled_pages(
             }
             paper_type_updates += 1
         if vlm is None:
+            if source_type == "student_exam_photo" and candidate_reasons.get(
+                int(page.get("page_index") or 0)
+            ) == "numberless_scan_page":
+                recovered, count = _recover_numberless_photo_from_ocr(page, questions)
+                ocr_anchor_replaced_auto += recovered
+                ocr_anchor_questions += count
+                if recovered:
+                    used_numbers = {
+                        int(q["number"]) for q in questions
+                        if str(q.get("number", "")).isdigit()
+                    }
             continue
 
         page_idx = page.get("page_index")
@@ -2508,6 +2758,15 @@ def _augment_questions_with_vlm_for_underfilled_pages(
                 replacement_pages += 1
                 added += replacement_count
                 pages_used += 1
+                continue
+            recovered, count = _recover_numberless_photo_from_ocr(page, questions)
+            if recovered:
+                used_numbers = {
+                    int(q["number"]) for q in questions
+                    if str(q.get("number", "")).isdigit()
+                }
+                ocr_anchor_replaced_auto += recovered
+                ocr_anchor_questions += count
                 continue
         existing_page_questions = [
             q for q in questions
@@ -2584,6 +2843,8 @@ def _augment_questions_with_vlm_for_underfilled_pages(
         "paper_type_updates": paper_type_updates,
         "replaced_auto": replaced_auto,
         "replacement_pages": replacement_pages,
+        "ocr_anchor_replaced_auto": ocr_anchor_replaced_auto,
+        "ocr_anchor_questions": ocr_anchor_questions,
     }
 
 

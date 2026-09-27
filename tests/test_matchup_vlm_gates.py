@@ -420,6 +420,152 @@ def test_photo_unreadable_number_start_requires_choices_gap_stem_and_margin_ink(
     assert no_choices[2][1] == 600
 
 
+def _two_column_ocr_recovery_case(tmp_path):
+    """Synthetic OCR geometry matching the marked first-label failure shape."""
+    from types import SimpleNamespace
+
+    import cv2
+    import numpy as np
+
+    image_path = tmp_path / "photo.png"
+    image = np.full((2560, 1920), 255, dtype=np.uint8)
+    cv2.line(image, (1061, 433), (1026, 2456), 0, 3)
+    cv2.rectangle(image, (331, 146), (343, 163), 0, -1)
+    assert cv2.imwrite(str(image_path), image)
+
+    def block(text, x0, y0, x1, y1):
+        return SimpleNamespace(text=text, x0=x0, y0=y0, x1=x1, y1=y1)
+
+    blocks = [
+        block("1", 331, 146, 343, 163),
+        block("다음은 탄소의 여러 가지 결합 방식이다.", 388, 149, 1035, 184),
+        block("①", 292, 851, 373, 874),
+        block("④", 741, 862, 822, 884),
+        block("17. 다음은 효소가 사용되는 예이다.", 265, 938, 687, 974),
+        block("④⑤", 580, 1461, 1002, 1488),
+        block("18. 그림은 반응의 에너지 변화를 나타낸 것이다.", 212, 1547, 1019, 1587),
+        block("②", 329, 2361, 394, 2385),
+        block("③④", 498, 2366, 790, 2398),
+        block("⑤", 858, 2373, 934, 2402),
+        block("19 그림은 효소 X에 의한 반응을 나타낸 것이다.", 1085, 94, 1844, 181),
+        block("⑤", 1685, 899, 1835, 919),
+        block("20. 다음은 과산화 수소 분해 반응을 활용한 실험이다.", 1075, 965, 1858, 996),
+        block("1. 실험 과정의 첫 번째 단계 설명이다.", 1098, 1271, 1837, 1308),
+        block("2. 실험 과정의 두 번째 단계 설명이다.", 1094, 1586, 1842, 1630),
+        block("②", 1237, 2348, 1295, 2367),
+        block("④", 1561, 2350, 1677, 2376),
+        block("③", 1728, 2350, 1889, 2378),
+        block("이 시험문제의 저작권은 학교에 있습니다.", 541, 2430, 1517, 2480),
+    ]
+    page = {"page_index": 0, "image_path": str(image_path),
+            "boxes": [[0, 936, 1920, 1624]], "numbers": [None],
+            "paper_type": "student_answer_photo"}
+    questions = [{"number": 1, "page_index": 0, "bbox": [0, 936, 1920, 1624],
+                  "meta_extra": {"number_source": "counter_fallback"}}]
+    return image_path, page, questions, blocks
+
+
+def test_photo_ocr_recovers_obscured_first_number_without_vlm(tmp_path, monkeypatch):
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline as pipeline
+
+    _, page, questions, blocks = _two_column_ocr_recovery_case(tmp_path)
+    monkeypatch.setattr(pipeline, "_load_ocr_blocks_backend", lambda: lambda _: blocks)
+    monkeypatch.setattr(pipeline, "_real_vlm_vision_configured", lambda: True)
+    monkeypatch.setattr(pipeline, "_tenant_gate_allows", lambda *args: True)
+    monkeypatch.setattr(pipeline, "_try_vlm_problem_bboxes", lambda *args, **kwargs: (None, None))
+    stats = pipeline._augment_questions_with_vlm_for_underfilled_pages(
+        [page], questions, source_type="student_exam_photo", document_id=123, tenant_id=456,
+    )
+    assert stats["ocr_anchor_replaced_auto"] == 1
+    assert stats["ocr_anchor_questions"] == 5
+    assert stats["replaced_auto"] == 0
+    assert [q["number"] for q in questions] == [16, 17, 18, 19, 20]
+    assert all(q["meta_extra"]["engine"] == "ocr_anchor" for q in questions)
+    assert all(q["meta_extra"]["photo_column_boundary"] for q in questions)
+    for i, j in ((0, 1), (1, 2), (3, 4)):
+        first, second = questions[i]["bbox"], questions[j]["bbox"]
+        assert first[1] + first[3] < second[1]
+    for index in (2, 4):
+        box = questions[index]["bbox"]
+        assert box[1] + box[3] < 2430  # Footer is outside the final cuts.
+    pipeline._extract_texts(questions, "offline-ocr-anchor")
+    for question in questions:
+        for other in (17, 18, 19, 20):
+            if other != question["number"]:
+                assert f"{other}. " not in question["text"]
+        assert "저작권" not in question["text"]
+    assert "20. " in questions[-1]["text"]
+
+
+def test_photo_ocr_recovery_rejects_ambiguous_and_protected_inputs(tmp_path):
+    import cv2
+    import numpy as np
+
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline as pipeline
+
+    path, page, questions, blocks = _two_column_ocr_recovery_case(tmp_path)
+
+    def rejected(changed_blocks=None, *, meta=None, shared=False, reserved=False):
+        original = [dict(questions[0], meta_extra={"number_source": "counter_fallback", **(meta or {})})]
+        if shared:
+            original[0]["shared_with"] = [2]
+        if reserved:
+            original.append({"number": "16", "page_index": 1, "bbox": [1, 1, 2, 2]})
+        original_page = dict(page, boxes=list(page["boxes"]), numbers=[None])
+        assert pipeline._recover_numberless_photo_from_ocr(
+            original_page, original, blocks if changed_blocks is None else changed_blocks,
+        ) == (0, 0)
+        assert original[0]["number"] == 1
+        assert original_page["numbers"] == [None]
+
+    rejected([b for b in blocks if not b.text.startswith("20.")])
+    rejected([b for b in blocks if not (b.x0 == 331 and b.y0 == 146)])
+    rejected([b for b in blocks if "저작권" not in b.text])
+    from types import SimpleNamespace
+    rejected([*blocks[:-1], SimpleNamespace(
+        text=blocks[-1].text, x0=1100, y0=2430, x1=1800, y1=2480,
+    )])
+    rejected([b for b in blocks if b.text != "④" or b.y0 != 862])
+    rejected([*blocks, SimpleNamespace(text="21. 이것은 별도의 독립된 문항 본문입니다.",
+                                       x0=1080, y0=1800, x1=1830, y1=1840)])
+    rejected(meta={"manual": True})
+    rejected(meta={"confirmation_status": "confirmed"})
+    rejected(meta={"public_cleanup": {"status": "approved"}})
+    rejected(meta={"public_cleanup": "unrecognized"})
+    rejected(shared=True)
+    rejected(reserved=True)
+
+    image = np.full((2560, 1920), 255, dtype=np.uint8)
+    cv2.rectangle(image, (331, 146), (343, 163), 0, -1)
+    assert cv2.imwrite(str(path), image)
+    rejected()
+
+
+def test_photo_ocr_recovery_reserves_numbers_for_following_pages(tmp_path, monkeypatch):
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline as pipeline
+
+    _, first, questions, blocks = _two_column_ocr_recovery_case(tmp_path)
+    second = dict(first, page_index=1, boxes=[[0, 936, 1920, 1624]], numbers=[None])
+    questions.append({"number": 2, "page_index": 1, "bbox": [0, 936, 1920, 1624],
+                      "meta_extra": {"number_source": "counter_fallback"}})
+    monkeypatch.setattr(pipeline, "_load_ocr_blocks_backend", lambda: lambda _: blocks)
+    monkeypatch.setattr(pipeline, "_real_vlm_vision_configured", lambda: True)
+    monkeypatch.setattr(pipeline, "_tenant_gate_allows", lambda *args: True)
+    duplicate = _bbox_result(problems=[(16, 0, 936, 1920, 1624)])
+    monkeypatch.setattr(
+        pipeline, "_try_vlm_problem_bboxes",
+        lambda page, *args, **kwargs: (None, None) if page["page_index"] == 0
+        else (duplicate, None),
+    )
+    stats = pipeline._augment_questions_with_vlm_for_underfilled_pages(
+        [first, second], questions, source_type="student_exam_photo",
+        document_id=123, tenant_id=456,
+    )
+    assert stats["ocr_anchor_questions"] == 5
+    assert stats["duplicate_number_skips"] == 1
+    assert [q["number"] for q in questions] == [16, 17, 18, 19, 20, 2]
+
+
 def test_numberless_photo_replacement_preserves_shared_stem_group(tmp_path):
     """The replacement path must keep the VLM shared-group metadata."""
     import cv2
