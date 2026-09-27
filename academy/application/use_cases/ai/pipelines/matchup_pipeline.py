@@ -1699,6 +1699,107 @@ def _bbox_coverage_of_smaller(a: Any, b: Any) -> float:
     return iw * ih / min(aw * ah, bw * bh)
 
 
+def _photo_vlm_column_boxes(image_path: str, boxes: List[Any]) -> List[Any]:
+    """Finish VLM photo cuts at a visible central divider, if unambiguous.
+
+    Phone perspective tilts the printed divider. VLM can stop both columns
+    near the image midpoint and cut off the last words or answer choices.
+    Only a long, central printed line plus cuts on both sides authorizes this
+    correction; other layouts keep their original VLM boxes.
+    """
+    import cv2
+
+    image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if image is None:
+        return boxes
+    image_h, image_w = image.shape[:2]
+    if image_h < 400 or image_w < 400:
+        return boxes
+    lines = cv2.HoughLinesP(
+        cv2.Canny(image, 80, 180), 1, math.pi / 180,
+        threshold=max(60, round(image_h * 0.06)),
+        minLineLength=round(image_h * 0.22),
+        maxLineGap=round(image_h * 0.035),
+    )
+    if lines is None:
+        return boxes
+
+    candidates = []
+    for line in lines.reshape(-1, 4):
+        x1, y1, x2, y2 = (int(value) for value in line)
+        span = abs(y2 - y1)
+        middle_x = (x1 + x2) / 2
+        if (span >= image_h * 0.45 and abs(x2 - x1) <= image_w * 0.05
+                and image_w * 0.40 <= middle_x <= image_w * 0.62):
+            candidates.append((x1, y1, x2, y2, span))
+    if not any(line[4] >= image_h * 0.70 for line in candidates):
+        return boxes
+    candidates.sort(key=lambda line: line[4], reverse=True)
+    if any(abs((line[0] + line[2] - candidates[0][0] - candidates[0][2]) / 2)
+           > image_w * 0.03 for line in candidates[1:]):
+        return boxes
+    x1, y1, x2, y2, _ = candidates[0]
+    if y1 > y2:
+        x1, y1, x2, y2 = x2, y2, x1, y1
+
+    def divider_x(y: float) -> float:
+        return x1 + (x2 - x1) * (y - y1) / (y2 - y1)
+
+    try:
+        parsed = [[int(value) for value in box] for box in boxes]
+    except (TypeError, ValueError):
+        return boxes
+    if any(len(box) != 4 or min(box[2:]) <= 0
+           or box[2] > image_w * 0.60 for box in parsed):
+        return boxes
+    sides = [
+        (x + w / 2) < divider_x(y + h / 2)
+        for x, y, w, h in parsed
+    ]
+    if not any(sides) or all(sides):
+        return boxes
+    for i, first in enumerate(parsed):
+        for j in range(i + 1, len(parsed)):
+            second = parsed[j]
+            if (sides[i] == sides[j] and first != second
+                    and max(first[1], second[1])
+                    < min(first[1] + first[3], second[1] + second[3])):
+                return boxes
+
+    refined = []
+    for (x, y, w, h), is_left in zip(parsed, sides):
+        prior_bottom = max(
+            (other_y + other_h for (other_x, other_y, other_w, other_h), other_left
+             in zip(parsed, sides)
+             if other_left == is_left and other_y + other_h <= y),
+            default=0,
+        )
+        top_pad = (round(image_h * 0.025) if not prior_bottom
+                   else min(24, max(12, round(h * 0.03))))
+        top = max(prior_bottom + 1 if prior_bottom else 0, y - top_pad)
+        next_top = min(
+            (other_y for (other_x, other_y, other_w, other_h), other_left
+             in zip(parsed, sides)
+             if other_left == is_left and other_y >= y + h),
+            default=image_h + 1,
+        )
+        bottom = min(image_h, next_top - 1,
+                     y + h + min(round(h * 0.03), round(image_h * 0.02)))
+        padded_h = bottom - top
+        if is_left:
+            # A midpoint bound preserves line ends while limiting how far a
+            # rectangular crop reaches past the tilted divider at either end.
+            right = min(image_w, max(x + w, round(divider_x(y + h / 2) - 5)))
+            refined.append((x, top, right - x, padded_h))
+        else:
+            left = max(x, round(divider_x(y) - 5))
+            right = min(image_w, x + w + max(round(image_w * 0.06), round(w * 0.14)))
+            if right <= left:
+                return boxes
+            refined.append((left, top, right - left, padded_h))
+    return refined
+
+
 def _replace_numberless_photo_page(
     page: Dict[str, Any], questions: List[Dict[str, Any]], vlm: Any,
 ) -> tuple[int, int]:
@@ -1796,19 +1897,25 @@ def _replace_numberless_photo_page(
                     or x + w > page_width or y + h > page_height):
                 return 0, 0
 
+    # Refine display/embedding cuts only after the source-coverage safety
+    # checks have accepted the original VLM result.
+    if page.get("paper_type") == "student_answer_photo":
+        new_boxes = _photo_vlm_column_boxes(page["image_path"], new_boxes)
+
     replacements = [
         {
             "number": number,
             "page_index": page_idx,
             "image_path": page["image_path"],
-            "bbox": list(prob.bbox),
+            "bbox": list(box),
             "meta_extra": {
                 "engine": "vlm",
                 "vlm_reason": "numberless_photo_replacement",
                 "replaced_auto_boxes": len(old),
             },
+            **({"shared_with": list(prob.shared_with)} if prob.shared_with else {}),
         }
-        for number, prob in zip(numbers, proposals)
+        for number, prob, box in zip(numbers, proposals, new_boxes)
     ]
     first = next(i for i, q in enumerate(questions) if q is old[0])
     questions[:] = (

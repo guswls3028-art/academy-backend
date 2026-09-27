@@ -46,6 +46,84 @@ def _bbox_result(
     )
 
 
+def test_photo_vlm_column_boxes_require_a_visible_unambiguous_divider(tmp_path):
+    """Photo corrections recover line ends without touching unproven layouts."""
+    import cv2
+    import numpy as np
+
+    from academy.application.use_cases.ai.pipelines.matchup_pipeline import (
+        _photo_vlm_column_boxes,
+    )
+
+    image_path = tmp_path / "photo.png"
+    image = np.full((1000, 1000), 255, dtype=np.uint8)
+    boxes = [(60, 120, 410, 300), (480, 120, 440, 300),
+             (60, 500, 410, 350), (480, 500, 440, 350)]
+    assert cv2.imwrite(str(image_path), image)
+    assert _photo_vlm_column_boxes(str(image_path), boxes) == boxes
+
+    cv2.line(image, (500, 40), (530, 960), 0, 3)
+    assert cv2.imwrite(str(image_path), image)
+    refined = _photo_vlm_column_boxes(str(image_path), boxes)
+    assert len(refined) == 4
+    assert refined[0][0] == boxes[0][0]
+    assert refined[0][0] + refined[0][2] > boxes[0][0] + boxes[0][2]
+    assert refined[1][0] > boxes[1][0]
+    assert refined[1][0] + refined[1][2] > boxes[1][0] + boxes[1][2]
+    assert refined[0][1] < boxes[0][1]
+    assert refined[2][1] > boxes[0][1] + boxes[0][3]
+    overlapping = [boxes[0], boxes[1], (60, 400, 410, 350), boxes[3]]
+    assert _photo_vlm_column_boxes(str(image_path), overlapping) == overlapping
+
+    cv2.line(image, (600, 40), (600, 960), 0, 3)
+    assert cv2.imwrite(str(image_path), image)
+    assert _photo_vlm_column_boxes(str(image_path), boxes) == boxes
+
+    image.fill(255)
+    cv2.line(image, (530, 40), (500, 960), 0, 3)
+    assert cv2.imwrite(str(image_path), image)
+    reverse_tilt = _photo_vlm_column_boxes(str(image_path), boxes)
+    assert reverse_tilt[0][0] + reverse_tilt[0][2] > boxes[0][0] + boxes[0][2]
+    assert reverse_tilt[1][0] > boxes[1][0]
+
+
+def test_numberless_photo_replacement_preserves_shared_stem_group(tmp_path):
+    """The replacement path must keep the VLM shared-group metadata."""
+    import cv2
+    import numpy as np
+
+    from academy.application.use_cases.ai.pipelines.matchup_pipeline import (
+        _replace_numberless_photo_page,
+    )
+
+    image_path = tmp_path / "photo.jpg"
+    assert cv2.imwrite(str(image_path), np.full((1000, 1000), 255, dtype=np.uint8))
+    old_boxes = [(100, 100, 400, 300), (100, 400, 400, 300)]
+    page = {"page_index": 0, "image_path": str(image_path),
+            "boxes": old_boxes, "numbers": [None, None],
+            "paper_type": "student_answer_photo"}
+    questions = [
+        {"number": number, "page_index": 0, "bbox": box,
+         "meta_extra": {"number_source": "counter_fallback"}}
+        for number, box in zip((1, 2), old_boxes)
+    ]
+    shared_box = (100, 100, 400, 600)
+    vlm = ProblemBboxResult(
+        page_role=PageRole.PROBLEM, should_skip=False,
+        problems=[
+            ProblemBbox(number=7, bbox=shared_box, confidence=0.95,
+                        shared_with=[8]),
+            ProblemBbox(number=8, bbox=shared_box, confidence=0.95,
+                        shared_with=[7]),
+        ],
+        confidence=0.95,
+    )
+    assert _replace_numberless_photo_page(page, questions, vlm) == (2, 2)
+    assert [q["number"] for q in questions] == [7, 8]
+    assert [q["bbox"] for q in questions] == [list(shared_box)] * 2
+    assert [q["shared_with"] for q in questions] == [[8], [7]]
+
+
 def test_gemini_request_keeps_key_out_of_url_and_errors(monkeypatch, caplog):
     """The provider key travels in a header and is redacted from failures."""
     import logging
