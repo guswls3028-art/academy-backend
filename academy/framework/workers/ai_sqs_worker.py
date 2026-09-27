@@ -82,8 +82,11 @@ def _delete_with_ack(queue, message: dict, tier: str) -> bool:
     job_id = message["job_id"]
     try:
         deleted = queue.delete(message["receipt_handle"], tier)
-    except Exception:
-        logger.exception("AI_JOB_SQS_DELETE_FAILED | job_id=%s | delete raised", job_id)
+    except Exception as exc:
+        logger.error(
+            "AI_JOB_SQS_DELETE_FAILED | job_id=%s | error_type=%s",
+            job_id, type(exc).__name__,
+        )
         raise
     if deleted:
         queue_name = message.get("queue_name")
