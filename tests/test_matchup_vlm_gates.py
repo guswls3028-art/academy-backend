@@ -882,6 +882,82 @@ def test_vlm_replaces_merged_numberless_photo_boxes(monkeypatch):
     assert len(page["boxes"]) == 4
 
 
+def test_photo_normalized_gemini_boxes_replace_observed_counter_fallbacks(
+    monkeypatch, tmp_path,
+):
+    """A 1920x2560 photo must retain bottom-row questions after VLM conversion."""
+    from PIL import Image
+
+    from academy.adapters.ai.detection import vlm_fallback
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+
+    image_path = tmp_path / "photo.jpg"
+    Image.new("RGB", (1920, 2560), "white").save(image_path)
+    monkeypatch.setattr(vlm_fallback, "_gemini_request", lambda **kwargs: {
+        "page_role": "problem", "should_skip": False,
+        "paper_type": "student_answer_photo", "confidence": 0.95,
+        "problems": [
+            {"number": 12, "box_2d": [55, 100, 470, 480], "confidence": 0.95},
+            {"number": 14, "box_2d": [55, 510, 400, 930], "confidence": 0.95},
+            {"number": 13, "box_2d": [545, 100, 875, 480], "confidence": 0.95},
+            {"number": 15, "box_2d": [545, 510, 875, 930], "confidence": 0.95},
+        ],
+    })
+    vlm = vlm_fallback.GeminiVLMVisionAdapter().detect_problems(
+        image_path=str(image_path),
+    )
+    assert vlm.debug["coordinate_system"] == "normalized_1000_yxyx"
+    assert vlm.problems[3].bbox == (979, 1395, 807, 845)
+
+    page = {
+        "page_index": 0, "image_path": str(image_path),
+        "boxes": [(0, 163, 1920, 1237), (0, 1385, 1920, 1175)],
+        "numbers": [None, None], "paper_type": "student_answer_photo",
+    }
+    questions = [
+        {"number": n, "page_index": 0, "bbox": list(box),
+         "meta_extra": {"number_source": "counter_fallback"}}
+        for n, box in zip((4, 5), page["boxes"])
+    ]
+    monkeypatch.setenv("MATCHUP_VLM_AUTO_SPLIT", "1")
+    monkeypatch.setenv("MATCHUP_VLM_FILL_UNDERFILLED_PAGES", "1")
+    monkeypatch.setenv("MATCHUP_VLM_VISION_ADAPTER", "gemini_flash")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(
+        matchup_pipeline, "_try_vlm_problem_bboxes",
+        lambda *args, **kwargs: (vlm, "student_answer_photo"),
+    )
+    stats = matchup_pipeline._augment_questions_with_vlm_for_underfilled_pages(
+        [page], questions, source_type="student_exam_photo",
+        document_id=123, tenant_id=1,
+    )
+    assert stats["replacement_pages"] == 1
+    assert stats["replaced_auto"] == 2
+    assert {q["number"] for q in questions} == {12, 13, 14, 15}
+    assert all(q["meta_extra"]["vlm_reason"] == "numberless_photo_replacement"
+               for q in questions)
+    assert min(q["bbox"][1] for q in questions if q["number"] in (13, 15)) >= 1385
+
+
+def test_gemini_vision_discards_missing_number_and_out_of_range_box(monkeypatch, tmp_path):
+    from PIL import Image
+
+    from academy.adapters.ai.detection import vlm_fallback
+
+    image_path = tmp_path / "page.jpg"
+    Image.new("RGB", (100, 100), "white").save(image_path)
+    monkeypatch.setattr(vlm_fallback, "_gemini_request", lambda **kwargs: {
+        "problems": [
+            {"box_2d": [100, 100, 500, 500], "confidence": 0.99},
+            {"number": 2, "box_2d": [100, 100, 1001, 500], "confidence": 0.99},
+        ],
+    })
+    result = vlm_fallback.GeminiVLMVisionAdapter().detect_problems(
+        image_path=str(image_path),
+    )
+    assert result.problems == []
+
+
 @pytest.mark.parametrize("reason", [
     "uncovered", "number_collision", "manual", "pinned", "low_confidence",
     "too_few_cuts", "same_page_manual",
