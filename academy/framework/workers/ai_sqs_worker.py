@@ -77,6 +77,30 @@ _shutdown = False
 _current_receipt_handle: Optional[str] = None
 
 
+def _delete_with_ack(queue, message: dict, tier: str) -> bool:
+    """Log an exact ACK only after the SQS adapter confirms DeleteMessage."""
+    job_id = message["job_id"]
+    try:
+        deleted = queue.delete(message["receipt_handle"], tier)
+    except Exception as exc:
+        logger.error(
+            "AI_JOB_SQS_DELETE_FAILED | job_id=%s | error_type=%s",
+            job_id, type(exc).__name__,
+        )
+        raise
+    if deleted:
+        queue_name = message.get("queue_name")
+        message_id = message.get("message_id")
+        if queue_name and message_id:
+            logger.info(
+                "AI_JOB_SQS_ACK | job_id=%s | queue=%s | message_id=%s",
+                job_id, queue_name, message_id,
+            )
+        else:
+            logger.error("AI_JOB_SQS_ACK_IDENTITY_MISSING | job_id=%s", job_id)
+    return deleted
+
+
 def _release_db_connections() -> None:
     """SQS worker는 요청/응답 수명주기가 없으므로 작업 경계에서 DB 세션을 명시 반납한다."""
     try:
@@ -484,7 +508,11 @@ def run_ai_sqs_worker(
                     # callback 성공 또는 callback 대상 없음일 때만 SQS message를 삭제한다.
                     callback_ok = _dispatch_terminal_callback_from_message(job_id, message, tier_from_msg)
                     if callback_ok:
-                        queue.delete(receipt_handle, tier_from_msg)
+                        if not _delete_with_ack(queue, message, tier_from_msg):
+                            logger.error(
+                                "AI_JOB_SQS_DELETE_FAILED | job_id=%s | terminal redelivery",
+                                job_id,
+                            )
                     else:
                         consecutive_errors += 1
                     logger.info("AI_JOB_IDEMPOTENT_SKIP | job_id=%s", job_id)
@@ -545,7 +573,7 @@ def run_ai_sqs_worker(
                                 error="inference_timeout_60min",
                             )
                         try:
-                            if ok and callback_ok and not queue.delete(receipt_handle, tier_from_msg):
+                            if ok and callback_ok and not _delete_with_ack(queue, message, tier_from_msg):
                                 logger.error(
                                     "AI_JOB_SQS_DELETE_FAILED | job_id=%s | timeout path", job_id,
                                 )
@@ -580,7 +608,7 @@ def run_ai_sqs_worker(
                             )
                             consecutive_errors += 1
                             continue
-                        if not queue.delete(receipt_handle, tier_from_msg):
+                        if not _delete_with_ack(queue, message, tier_from_msg):
                             logger.error(
                                 "AI_JOB_SQS_DELETE_FAILED | job_id=%s | "
                                 "message will redeliver — idempotency relies on prepare_ai_job",
@@ -609,7 +637,7 @@ def run_ai_sqs_worker(
                             )
                             consecutive_errors += 1
                             continue
-                        if not queue.delete(receipt_handle, tier_from_msg):
+                        if not _delete_with_ack(queue, message, tier_from_msg):
                             logger.error(
                                 "AI_JOB_SQS_DELETE_FAILED | job_id=%s | "
                                 "completed in DB but SQS delete failed — message will redeliver "
@@ -640,7 +668,7 @@ def run_ai_sqs_worker(
                             continue
                         # DB 종단(FAILED) 전이 후 SQS message 삭제 — 재배달돼도 mark_running이
                         # idempotent skip 처리하므로 재시도 무의미 + DLQ 도달 방지.
-                        if not queue.delete(receipt_handle, tier_from_msg):
+                        if not _delete_with_ack(queue, message, tier_from_msg):
                             logger.error(
                                 "AI_JOB_SQS_DELETE_FAILED | job_id=%s | failed path", job_id,
                             )
