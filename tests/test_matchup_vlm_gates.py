@@ -989,6 +989,111 @@ def test_numberless_photo_replaces_recorded_five_crops_with_four_questions(monke
                for q in questions[1:])
 
 
+def test_numberless_photo_replaces_merged_crops_with_new_question_in_uncovered_region(
+    monkeypatch, tmp_path,
+):
+    """QA photo 02: a missing top-right question must not block the full recut."""
+    from PIL import Image
+
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+
+    image_path = tmp_path / "photo.jpg"
+    Image.new("RGB", (1920, 2560), "white").save(image_path)
+    old_boxes = [
+        (0, 108, 962, 1049), (0, 1157, 962, 1403),
+        (958, 826, 962, 774), (958, 1600, 962, 960),
+    ]
+    page = {"page_index": 0, "image_path": str(image_path),
+            "boxes": old_boxes, "numbers": [None] * 4,
+            "paper_type": "student_answer_photo"}
+    previous = {"number": 12, "page_index": 1, "bbox": [0, 0, 100, 100]}
+    questions = [previous] + [
+        {"number": n, "page_index": 0, "bbox": list(box),
+         "meta_extra": {"number_source": "counter_fallback"}}
+        for n, box in zip((1, 2, 4, 5), old_boxes)
+    ]
+    # Q9's bounds are the observed persisted VLM crop. The other proposal
+    # bounds are offline mock cuts within their visually numbered regions.
+    proposals = [
+        (6, 120, 130, 780, 700), (7, 120, 840, 780, 770),
+        (8, 120, 1640, 780, 760), (9, 960, 154, 845, 660),
+        (10, 1000, 850, 780, 700), (11, 1000, 1660, 780, 760),
+    ]
+    monkeypatch.setenv("MATCHUP_VLM_AUTO_SPLIT", "1")
+    monkeypatch.setenv("MATCHUP_VLM_FILL_UNDERFILLED_PAGES", "1")
+    monkeypatch.setenv("MATCHUP_VLM_VISION_ADAPTER", "gemini_flash")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(
+        matchup_pipeline, "_try_vlm_problem_bboxes",
+        lambda *args, **kwargs: (_bbox_result(problems=proposals), "student_answer_photo"),
+    )
+
+    stats = matchup_pipeline._augment_questions_with_vlm_for_underfilled_pages(
+        [page], questions, source_type="student_exam_photo",
+        document_id=123, tenant_id=1,
+    )
+
+    assert stats["replaced_auto"] == 4
+    assert stats["replacement_pages"] == 1
+    assert stats["added"] == 6
+    assert questions[0] is previous
+    assert {q["number"] for q in questions[1:]} == {6, 7, 8, 9, 10, 11}
+    assert all(q["meta_extra"]["vlm_reason"] == "numberless_photo_replacement"
+               for q in questions[1:])
+    assert page["numbers"] == [6, 7, 8, 9, 10, 11]
+
+
+@pytest.mark.parametrize("uncovered_box", [
+    (960, 600, 845, 430),  # Ambiguous partial overlap with an old crop.
+    (1850, 154, 500, 660),  # Outside the photographed page.
+])
+def test_numberless_photo_rejects_unsafe_new_region(tmp_path, uncovered_box):
+    from PIL import Image
+
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+
+    image_path = tmp_path / "photo.jpg"
+    Image.new("RGB", (1920, 2560), "white").save(image_path)
+    old_boxes = [
+        (0, 108, 962, 1049), (0, 1157, 962, 1403),
+        (958, 826, 962, 774), (958, 1600, 962, 960),
+    ]
+    page = {"page_index": 0, "image_path": str(image_path),
+            "boxes": old_boxes[:], "numbers": [None] * 4}
+    questions = [
+        {"number": n, "page_index": 0, "bbox": list(box),
+         "meta_extra": {"number_source": "counter_fallback"}}
+        for n, box in zip((1, 2, 4, 5), old_boxes)
+    ]
+    result = _bbox_result(problems=[
+        (6, 120, 130, 780, 700), (7, 120, 840, 780, 770),
+        (8, 120, 1640, 780, 760), (9, *uncovered_box),
+        (10, 1000, 850, 780, 700), (11, 1000, 1660, 780, 760),
+    ])
+
+    assert matchup_pipeline._replace_numberless_photo_page(page, questions, result) == (0, 0)
+    assert [q["number"] for q in questions] == [1, 2, 4, 5]
+    assert page["boxes"] == old_boxes
+
+
+def test_numberless_photo_keeps_old_crops_when_new_region_cannot_be_checked():
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+
+    old = {"number": 1, "page_index": 0, "bbox": [0, 100, 1000, 500],
+           "meta_extra": {"number_source": "counter_fallback"}}
+    page = {"page_index": 0, "image_path": "/missing/photo.jpg",
+            "boxes": [old["bbox"]], "numbers": [None]}
+    questions = [old]
+    proposals = _bbox_result(problems=[
+        (12, 50, 120, 400, 450),
+        (13, 1100, 120, 400, 450),
+    ])
+
+    assert matchup_pipeline._replace_numberless_photo_page(page, questions, proposals) == (0, 0)
+    assert questions == [old]
+    assert page["numbers"] == [None]
+
+
 @pytest.mark.parametrize("fifth_box", [
     (0, 150, 962, 308), (0, 180, 962, 146),
 ])

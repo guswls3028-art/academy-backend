@@ -1702,7 +1702,7 @@ def _bbox_coverage_of_smaller(a: Any, b: Any) -> float:
 def _replace_numberless_photo_page(
     page: Dict[str, Any], questions: List[Dict[str, Any]], vlm: Any,
 ) -> tuple[int, int]:
-    """Prefer validated VLM cuts only when they account for every auto crop."""
+    """Prefer validated VLM cuts that cover every old auto crop."""
     page_idx = page.get("page_index")
     old = [q for q in questions if q.get("page_index") == page_idx and q.get("bbox")]
     if not old or not all(_is_counter_fallback_question(q) for q in old):
@@ -1767,11 +1767,34 @@ def _replace_numberless_photo_page(
     if not all(
         any(_bbox_coverage_of_smaller(old_box, new_box) >= 0.30 for new_box in new_boxes)
         for old_box in old_boxes
-    ) or not all(
-        any(_bbox_coverage_of_smaller(new_box, old_box) >= 0.50 for old_box in old_boxes)
-        for new_box in new_boxes
     ):
         return 0, 0
+
+    # A question missed by OpenCV has no old crop to overlap. Partial overlap
+    # is ambiguous; a genuinely separate cut needs verified source dimensions.
+    coverages = [
+        max(_bbox_coverage_of_smaller(new_box, old_box) for old_box in old_boxes)
+        for new_box in new_boxes
+    ]
+    if any(0.05 < coverage < 0.50 for coverage in coverages):
+        return 0, 0
+    if any(coverage <= 0.05 for coverage in coverages):
+        from PIL import Image
+
+        try:
+            with Image.open(page["image_path"]) as source_image:
+                page_width, page_height = source_image.size
+        except (KeyError, OSError):
+            return 0, 0
+        for new_box in new_boxes:
+            try:
+                x, y, w, h = [float(v) for v in new_box]
+            except (TypeError, ValueError):
+                return 0, 0
+            if (not all(math.isfinite(v) for v in (x, y, w, h))
+                    or min(w, h) <= 0 or x < 0 or y < 0
+                    or x + w > page_width or y + h > page_height):
+                return 0, 0
 
     replacements = [
         {
