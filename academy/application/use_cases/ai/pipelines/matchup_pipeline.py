@@ -1831,49 +1831,9 @@ def _photo_vlm_ocr_geometry(
         groups.setdefault(box, []).append(number)
     if len(groups) < 2:
         return unchanged()
-
-    lines = cv2.HoughLinesP(
-        cv2.Canny(image, 80, 180), 1, math.pi / 180,
-        threshold=max(60, round(height * .06)),
-        minLineLength=round(height * .22), maxLineGap=round(height * .035),
-    )
-    divider = None
-    if lines is not None:
-        candidates = []
-        for x1, y1, x2, y2 in lines.reshape(-1, 4):
-            span = abs(int(y2) - int(y1))
-            mid = (int(x1) + int(x2)) / 2
-            if (span >= height * .45 and abs(int(x2) - int(x1)) <= width * .05
-                    and width * .40 <= mid <= width * .62):
-                candidates.append((int(x1), int(y1), int(x2), int(y2), span))
-        candidates.sort(key=lambda line: line[4], reverse=True)
-        if candidates and any(
-            abs((line[0] + line[2] - candidates[0][0] - candidates[0][2]) / 2)
-            > width * .03 for line in candidates[1:]
-        ):
-            return unchanged()
-        if candidates:
-            x1, y1, x2, y2, _ = candidates[0]
-            divider = ((x1, y1, x2, y2) if y1 < y2 else (x2, y2, x1, y1))
-
-    def boundary(y: float) -> float:
-        x1, y1, x2, y2 = divider
-        return x1 + (x2 - x1) * (y - y1) / (y2 - y1)
-
-    side_by_box = {
-        box: (box[0] + box[2] / 2 <
-              (boundary(box[1] + box[3] / 2) if divider else width / 2))
-        for box in groups
-    }
-    if not any(side_by_box.values()) or all(side_by_box.values()):
+    rough_sides = [box[0] + box[2]/2 < width/2 for box in groups]
+    if not any(rough_sides) or all(rough_sides):
         return unchanged()
-    # The VLM must have separated questions vertically within each column.
-    for first in groups:
-        for second in groups:
-            if first == second or side_by_box[first] != side_by_box[second]:
-                continue
-            if max(first[1], second[1]) < min(first[1]+first[3], second[1]+second[3]):
-                return unchanged()
 
     backend = _load_ocr_blocks_backend()
     if backend is None:
@@ -1899,6 +1859,128 @@ def _photo_vlm_ocr_geometry(
                 matches.append(block)
         return min(matches, key=lambda block:
                    abs(block.y0-y) + .3*abs(block.x0-x), default=None)
+
+    edges = cv2.Canny(image, 80, 180)
+    lines = cv2.HoughLinesP(
+        edges, 1, math.pi / 180,
+        threshold=max(60, round(height * .06)),
+        minLineLength=round(height * .22), maxLineGap=round(height * .035),
+    )
+    divider = None
+    if lines is not None:
+        candidates = []
+        for x1, y1, x2, y2 in lines.reshape(-1, 4):
+            span = abs(int(y2) - int(y1))
+            mid = (int(x1) + int(x2)) / 2
+            if (span >= height * .45 and abs(int(x2) - int(x1)) <= width * .05
+                    and width * .40 <= mid <= width * .62):
+                candidates.append((int(x1), int(y1), int(x2), int(y2), span))
+        candidates.sort(key=lambda line: line[4], reverse=True)
+        if candidates and any(
+            abs((line[0] + line[2] - candidates[0][0] - candidates[0][2]) / 2)
+            > width * .03 for line in candidates[1:]
+        ):
+            return unchanged()
+        if candidates:
+            x1, y1, x2, y2, _ = candidates[0]
+            divider = ((x1, y1, x2, y2) if y1 < y2 else (x2, y2, x1, y1))
+
+    if divider is None:
+        # Re-encoding or resizing a phone image can fragment the printed line
+        # below HoughLinesP's minimum segment length. HoughLines votes across
+        # those fragments; printed right-column labels then disambiguate it.
+        right_labels = [
+            match for box, group_numbers in groups.items()
+            if box[0] + box[2]/2 >= width/2
+            for number in group_numbers
+            if (match := anchor(number, box, len(group_numbers) > 1)) is not None
+        ]
+        if len(right_labels) >= 2:
+            raw_lines = cv2.HoughLines(
+                edges, 1, math.pi / 180,
+                threshold=max(80, round(height*.15)),
+            )
+            possible = []
+            dominant_is_flat = None
+            dominant_rank = None
+            if raw_lines is not None:
+                for rank, (rho, theta) in enumerate(raw_lines[:, 0]):
+                    if min(abs(theta), abs(theta-math.pi)) > math.pi/24:
+                        continue
+                    cos_theta, sin_theta = math.cos(theta), math.sin(theta)
+                    top_x = rho/cos_theta
+                    bottom_x = (rho-sin_theta*height)/cos_theta
+                    middle_x = (top_x+bottom_x)/2
+                    if not (width*.40 <= middle_x <= width*.62
+                            and abs(bottom_x-top_x) <= width*.12):
+                        continue
+                    if dominant_is_flat is None:
+                        dominant_is_flat = abs(bottom_x-top_x) < width*.015
+                        dominant_rank = rank
+                    if abs(bottom_x-top_x) >= width*.015:
+                        possible.append((top_x, bottom_x, middle_x))
+            # A weak central line behind many stronger page edges is not
+            # enough evidence to mask a column that may have no divider.
+            if dominant_is_flat or dominant_rank is None or dominant_rank > 15:
+                possible = []
+            if possible:
+                scored = []
+                for top_x, bottom_x, middle_x in possible:
+                    slacks = [
+                        block.x0 - (top_x + (bottom_x-top_x)*block.y0/height)
+                        for block in right_labels
+                    ]
+                    good = [slack for slack in slacks
+                            if width*.005 <= slack <= width*.08]
+                    if len(good) >= 2:
+                        scored.append((len(good),
+                                       -abs(sum(good)/len(good)-width*.012),
+                                       top_x, bottom_x, middle_x))
+                if scored:
+                    best = max(scored, key=lambda item: item[:2])
+                    peers = [item for item in scored if item[0] == best[0]
+                             and abs(item[1]-best[1]) < width*.01]
+                    if not any(abs(item[4]-best[4]) > width*.03 for item in peers):
+                        supported = []
+                        for band in range(10):
+                            first_y = round(height*band/10)
+                            last_y = round(height*(band+1)/10)
+                            sampled = range(first_y, last_y,
+                                            max(1, round(height/500)))
+                            hits = 0
+                            count = 0
+                            for row_y in sampled:
+                                line_x = round(best[2] + (best[3]-best[2])*row_y/height)
+                                count += 1
+                                if (0 <= line_x < width and edges[
+                                    max(0, row_y-1):min(height, row_y+2),
+                                    max(0, line_x-5):min(width, line_x+6),
+                                ].any()):
+                                    hits += 1
+                            if count and hits/count >= .25:
+                                supported.append(band)
+                        if (len(supported) >= 5
+                                and supported[-1]-supported[0] >= 4):
+                            divider = (round(best[2]), 0, round(best[3]), height)
+
+    def boundary(y: float) -> float:
+        x1, y1, x2, y2 = divider
+        return x1 + (x2 - x1) * (y - y1) / (y2 - y1)
+
+    side_by_box = {
+        box: (box[0] + box[2] / 2 <
+              (boundary(box[1] + box[3] / 2) if divider else width / 2))
+        for box in groups
+    }
+    if not any(side_by_box.values()) or all(side_by_box.values()):
+        return unchanged()
+    # The VLM must have separated questions vertically within each column.
+    for first in groups:
+        for second in groups:
+            if first == second or side_by_box[first] != side_by_box[second]:
+                continue
+            if max(first[1], second[1]) < min(first[1]+first[3], second[1]+second[3]):
+                return unchanged()
 
     corrected: Dict[tuple[int, ...], List[int]] = {}
     starts: Dict[tuple[int, ...], tuple[float, float] | None] = {}

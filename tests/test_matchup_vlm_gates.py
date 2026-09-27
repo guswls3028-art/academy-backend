@@ -264,6 +264,41 @@ def test_photo_footer_trim_preserves_last_choice_when_ocr_confirms_footer(
     assert 945 <= left[1] + left[3] < 950
 
 
+def test_photo_fragmented_divider_requires_long_supported_line_and_printed_labels(
+    tmp_path, monkeypatch,
+):
+    import cv2
+    import numpy as np
+
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline as pipeline
+
+    path = tmp_path / "photo.png"
+    boxes = [(60, 100, 460, 350), (530, 100, 400, 350),
+             (60, 520, 460, 350), (550, 520, 380, 350)]
+    blocks = [
+        type("Block", (), dict(text=text, x0=x, y0=y, x1=x+90, y1=y+25))()
+        for text, x, y in (("2. 오른쪽", 540, 110), ("4. 오른쪽", 565, 530))
+    ]
+    monkeypatch.setattr(pipeline, "_load_ocr_blocks_backend", lambda: lambda _: blocks)
+    monkeypatch.setattr(cv2, "HoughLinesP", lambda *args, **kwargs: None)
+    image = np.full((1000, 1000), 255, dtype=np.uint8)
+    cv2.line(image, (500, 0), (550, 999), 0, 3)
+    assert cv2.imwrite(str(path), image)
+    refined, boundaries = pipeline._photo_vlm_ocr_geometry(
+        str(path), boxes, [1, 2, 3, 4],
+    )
+    assert len(refined) == 4
+    assert all(boundary and boundary["line"] for boundary in boundaries)
+
+    image.fill(255)
+    cv2.line(image, (520, 400), (530, 600), 0, 3)
+    assert cv2.imwrite(str(path), image)
+    _, boundaries = pipeline._photo_vlm_ocr_geometry(
+        str(path), boxes, [1, 2, 3, 4],
+    )
+    assert boundaries == [None] * 4
+
+
 def test_numberless_photo_replacement_preserves_shared_stem_group(tmp_path):
     """The replacement path must keep the VLM shared-group metadata."""
     import cv2
