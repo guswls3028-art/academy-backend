@@ -198,7 +198,9 @@ python manage.py repair_assessment_state_drift --tenant <tenant-id> --apply --js
 ```
 
 복구는 기본 dry-run이며 `--apply`에서만 유령 링크를 동일한
-`SOURCE_REMOVED` 서비스로 감사 해소한다. 이 명령은 기존 계약대로 비활성/
+`SOURCE_REMOVED` 서비스로 감사 해소한다. 적용 시 원본과 자동 링크를 잠근 뒤
+현재 배정을 다시 확인하고 정확한 링크 ID만 전이한다. 수동 링크와 복원된 배정,
+채점 대기 중인 유효 OMR 링크는 보존한다. 이 명령은 기존 계약대로 비활성/
 template 시험의 잘못된 차시 연결도 함께 분리하므로, 운영 apply 전에는 반드시
 정확한 tenant와 dry-run의 건수·샘플 ID를 대조한다. 적용 후 같은 detector의
 건수가 0인지 재확인한다.

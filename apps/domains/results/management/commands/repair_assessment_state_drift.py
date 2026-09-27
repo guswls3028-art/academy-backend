@@ -90,42 +90,78 @@ class Command(BaseCommand):
             "meta",
             "resolution_history",
         ).order_by("id"))
-        links_by_tenant: dict[int, list[Any]] = defaultdict(list)
-        for link in links:
-            links_by_tenant[int(link.tenant_id)].append(link)
-        tenants = Tenant.objects.in_bulk(links_by_tenant.keys())
-        non_live_reasons: dict[int, str] = {}
-        for link_tenant_id, tenant_links in links_by_tenant.items():
-            for link, reason in classify_source_links(
-                tenant_links,
-                tenant=tenants.get(link_tenant_id),
-            ):
-                if reason is not None:
-                    non_live_reasons[int(link.id)] = reason
+        def classify_ghost_links(candidate_links):
+            links_by_tenant: dict[int, list[Any]] = defaultdict(list)
+            for link in candidate_links:
+                links_by_tenant[int(link.tenant_id)].append(link)
+            tenants = Tenant.objects.in_bulk(links_by_tenant.keys())
+            ghost_links = []
+            for link_tenant_id, tenant_links in links_by_tenant.items():
+                for link, reason in classify_source_links(
+                    tenant_links, tenant=tenants.get(link_tenant_id),
+                ):
+                    if reason is None:
+                        continue
+                    exam_id = source_id(link, "exam")
+                    if exam_id is not None:
+                        ghost_links.append((link, "exam", exam_id, reason))
+                        continue
+                    homework_id = source_id(link, "homework")
+                    if homework_id is not None:
+                        ghost_links.append((link, "homework", homework_id, reason))
+            return ghost_links
 
-        ghost_links = []
-        for link in links:
-            non_live_reason = non_live_reasons.get(int(link.id))
-            if non_live_reason is None:
-                continue
-            exam_id = source_id(link, "exam")
-            if exam_id is not None:
-                ghost_links.append((link, "exam", exam_id, non_live_reason))
-                continue
-
-            homework_id = source_id(link, "homework")
-            if homework_id is not None:
-                ghost_links.append((link, "homework", homework_id, non_live_reason))
+        ghost_links = classify_ghost_links(links)
 
         resolved_link_ids: list[int] = []
         if apply:
             with transaction.atomic():
-                for exam in [*inactive_linked_exams, *template_linked_exams]:
+                # Target editors lock the owning source before editing assignments
+                # and then clinic links. Follow the same order before rechecking.
+                exam_ids = {
+                    int(exam.id) for exam in [*inactive_linked_exams, *template_linked_exams]
+                } | {
+                    int(source_id_value)
+                    for _, source_type, source_id_value, _ in ghost_links
+                    if source_type == "exam"
+                }
+                homework_ids = {
+                    int(source_id_value)
+                    for _, source_type, source_id_value, _ in ghost_links
+                    if source_type == "homework"
+                }
+                locked_exams = list(
+                    exam_qs.select_for_update().filter(id__in=exam_ids).order_by("id")
+                )
+                list(homework_qs.select_for_update().filter(id__in=homework_ids).order_by("id"))
+                current_links = list(
+                    link_qs.select_for_update()
+                    .filter(id__in=[int(link.id) for link, _, _, _ in ghost_links])
+                    .only(
+                        "id", "tenant_id", "session_id", "enrollment_id",
+                        "source_type", "source_id", "meta",
+                    )
+                    .order_by("id")
+                )
+                ghost_links = classify_ghost_links(current_links)
+
+                detached_pairs = []
+                for exam in locked_exams:
+                    if not (
+                        (exam.exam_type == "regular" and not exam.is_active)
+                        or exam.exam_type == "template"
+                    ):
+                        continue
                     session_ids = list(exam.sessions.values_list("id", flat=True))
                     if session_ids:
+                        detached_pairs.extend({
+                            "exam_id": int(exam.id),
+                            "session_id": int(session_id),
+                            "tenant_id": int(exam.tenant_id),
+                        } for session_id in session_ids)
                         exam.sessions.remove(*session_ids)
 
-                repair_groups: dict[tuple[int, int, str, int], set[int]] = defaultdict(set)
+                repair_groups: dict[tuple[int, int, str, int], list[Any]] = defaultdict(list)
                 for link, source_type, source_id_value, _ in ghost_links:
                     repair_groups[
                         (
@@ -134,30 +170,27 @@ class Command(BaseCommand):
                             source_type,
                             int(source_id_value),
                         )
-                    ].add(int(link.enrollment_id))
+                    ].append(link)
                 for (
                     link_tenant_id,
                     link_session_id,
                     source_type,
                     source_id_value,
-                ), enrollment_ids in sorted(repair_groups.items()):
-                    resolve_removed_source_clinic_links(
+                ), group_links in sorted(repair_groups.items()):
+                    exact_ids = sorted(int(link.id) for link in group_links)
+                    resolved_count = resolve_removed_source_clinic_links(
                         tenant_id=link_tenant_id,
                         session_id=link_session_id,
                         source_type=source_type,
                         source_id=source_id_value,
-                        enrollment_ids=sorted(enrollment_ids),
+                        enrollment_ids=sorted({int(link.enrollment_id) for link in group_links}),
+                        link_ids=exact_ids,
                         reason="assessment_state_drift_repair",
                     )
-                resolved_link_ids = list(
-                    ClinicLink.objects.filter(
-                        id__in=[int(link.id) for link, _, _, _ in ghost_links],
-                        resolved_at__isnull=False,
-                        resolution_type=ClinicLink.ResolutionType.SOURCE_REMOVED,
-                    )
-                    .order_by("id")
-                    .values_list("id", flat=True)
-                )
+                    if resolved_count != len(exact_ids):
+                        raise RuntimeError("assessment drift repair target changed during apply")
+                    resolved_link_ids.extend(exact_ids)
+                resolved_link_ids.sort()
 
         report = {
             "tenant": tenant_id if tenant_id is not None else "all",

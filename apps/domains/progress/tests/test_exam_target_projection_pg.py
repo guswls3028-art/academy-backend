@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import json
 from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier
+from io import StringIO
+from threading import Barrier, Event
 from unittest import skipUnless
 from unittest.mock import patch
 
 from django.apps import apps
+from django.core.management import call_command
 from django.db import close_old_connections, connection, transaction
 from django.test import TransactionTestCase
 from django.utils import timezone
@@ -168,6 +171,16 @@ class ExamTargetProjectionPostgresTests(TransactionTestCase):
             source_type="exam",
             source_id=missing.id,
         )
+        manual_link = self.ClinicLink.objects.create(
+            tenant=self.tenant,
+            enrollment=removed,
+            session=self.session_a,
+            reason=self.ClinicLink.Reason.MANUAL_REQUEST,
+            is_auto=False,
+            source_type="exam",
+            source_id=missing.id,
+            cycle_no=2,
+        )
         delivery_before = {
             label: list(apps.get_model(label).objects.order_by("pk").values())
             for label in (
@@ -185,6 +198,7 @@ class ExamTargetProjectionPostgresTests(TransactionTestCase):
         self.assertEqual(response.data["removed_clinic_link_count"], 1)
         removed_link.refresh_from_db()
         retained_link.refresh_from_db()
+        manual_link.refresh_from_db()
         self.assertEqual(removed_link.resolution_type, self.ClinicLink.ResolutionType.SOURCE_REMOVED)
         self.assertIsNotNone(removed_link.resolved_at)
         self.assertEqual(
@@ -203,6 +217,7 @@ class ExamTargetProjectionPostgresTests(TransactionTestCase):
             "resolve_source_removed",
         )
         self.assertIsNone(retained_link.resolved_at)
+        self.assertIsNone(manual_link.resolved_at)
         self.assertEqual(
             {
                 label: list(apps.get_model(label).objects.order_by("pk").values())
@@ -509,3 +524,59 @@ class ExamTargetProjectionPostgresTests(TransactionTestCase):
         selected = set(self.ExamEnrollment.objects.filter(exam=missing, enrollment__lecture=self.lecture_a).values_list("enrollment_id", flat=True))
         self.assertIn(selected, [{self.enrollments_a[0].id}, {self.enrollments_a[1].id}])
         self.assert_canonical()
+
+    @skipUnless(connection.vendor == "postgresql", "PostgreSQL row-lock concurrency contract")
+    def test_repair_preserves_link_when_target_restore_commits_after_scan(self):
+        exam = self.missing_exam([self.enrollments_a[1], *self.enrollments_b])
+        removed = self.enrollments_a[0]
+        link = self.ClinicLink.objects.create(
+            tenant=self.tenant, enrollment=removed, session=self.session_a,
+            reason=self.ClinicLink.Reason.AUTO_FAILED, is_auto=True,
+            source_type="exam", source_id=exam.id,
+        )
+        scanned = Event()
+        restored = Event()
+        from apps.domains.results.utils.clinic import classify_source_links as classify
+
+        def pause_after_scan(candidate_links, **kwargs):
+            result = classify(candidate_links, **kwargs)
+            if not scanned.is_set():
+                scanned.set()
+                if not restored.wait(timeout=30):
+                    raise TimeoutError("target restore did not finish")
+            return result
+
+        def repair():
+            close_old_connections()
+            try:
+                out = StringIO()
+                with patch(
+                    "apps.domains.results.management.commands.repair_assessment_state_drift.classify_source_links",
+                    side_effect=pause_after_scan,
+                ):
+                    call_command(
+                        "repair_assessment_state_drift", "--tenant", str(self.tenant.id),
+                        "--apply", "--json", stdout=out,
+                    )
+                return json.loads(out.getvalue())
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(repair)
+            try:
+                self.assertTrue(scanned.wait(timeout=30))
+                response = self.put_targets(
+                    exam, [enrollment.id for enrollment in self.enrollments_a],
+                )
+            finally:
+                restored.set()
+            report = future.result(timeout=60)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(report["resolved_non_live_source_clinic_link_count"], 0)
+        link.refresh_from_db()
+        self.assertIsNone(link.resolved_at)
+        self.assertTrue(self.ExamEnrollment.objects.filter(
+            exam=exam, enrollment=removed,
+        ).exists())
