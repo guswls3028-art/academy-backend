@@ -190,6 +190,26 @@ def filter_current_clinic_links(clinic_links: Iterable[Any], *, tenant: Any) -> 
 
     session_ids = list({int(link.session_id or 0) for link in live_links} - {0})
     enrollment_ids = list({int(link.enrollment_id or 0) for link in live_links} - {0})
+    Enrollment = apps.get_model("enrollment", "Enrollment")
+    Session = apps.get_model("lectures", "Session")
+    active_enrollment_lectures = dict(
+        Enrollment.objects.filter(
+            id__in=enrollment_ids,
+            tenant=tenant,
+            status="ACTIVE",
+            student__tenant=tenant,
+            student__deleted_at__isnull=True,
+            lecture__tenant=tenant,
+            lecture__is_active=True,
+        ).values_list("id", "lecture_id")
+    )
+    active_session_lectures = dict(
+        Session.objects.filter(
+            id__in=session_ids,
+            lecture__tenant=tenant,
+            lecture__is_active=True,
+        ).values_list("id", "lecture_id")
+    )
     completed_pairs = completed_session_progress_pairs(
         session_ids=session_ids,
         enrollment_ids=enrollment_ids,
@@ -197,7 +217,10 @@ def filter_current_clinic_links(clinic_links: Iterable[Any], *, tenant: Any) -> 
     return [
         link
         for link in live_links
-        if (int(link.enrollment_id), int(link.session_id)) not in completed_pairs
+        if active_enrollment_lectures.get(int(link.enrollment_id))
+        == active_session_lectures.get(int(link.session_id))
+        and active_enrollment_lectures.get(int(link.enrollment_id)) is not None
+        and (int(link.enrollment_id), int(link.session_id)) not in completed_pairs
     ]
 
 

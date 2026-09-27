@@ -188,8 +188,17 @@ class ClinicTargetService:
                 links_list,
                 tenant=tenant,
             )
-        if not include_resolved and links_list:
-            links_list = filter_current_clinic_links(links_list, tenant=tenant)
+        if links_list:
+            current_links = filter_current_clinic_links(
+                (link for link in links_list if link.resolved_at is None),
+                tenant=tenant,
+            )
+            links_list = (
+                [link for link in links_list if link.resolved_at is not None]
+                + current_links
+                if include_resolved
+                else current_links
+            )
 
         # ✅ enrollment 일괄 조회 (N+1 방지 + 학생 SSOT 표시 필드)
         # 🔐 tenant 강제 — links는 tenant 스코프이지만 enrollment_id 참조는 강제 제약 없음.

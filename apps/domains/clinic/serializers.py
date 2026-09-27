@@ -294,6 +294,7 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
     lecture_title = serializers.SerializerMethodField()
     lecture_color = serializers.SerializerMethodField()
     lecture_chip_label = serializers.SerializerMethodField()
+    lecture_current = serializers.SerializerMethodField()
     name_highlight_clinic_target = serializers.SerializerMethodField()
     profile_photo_url = serializers.SerializerMethodField()
 
@@ -472,6 +473,11 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
         enrollment = getattr(obj, "enrollment", None)
         lecture = getattr(enrollment, "lecture", None) if enrollment else None
         return getattr(lecture, "chip_label", None) if lecture else None
+
+    def get_lecture_current(self, obj):
+        enrollment = getattr(obj, "enrollment", None)
+        lecture = getattr(enrollment, "lecture", None) if enrollment else None
+        return bool(enrollment and enrollment.status == "ACTIVE" and lecture and lecture.is_active)
 
     def _get_clinic_highlight_map(self) -> dict[int, bool]:
         """list 직렬화 시 패스카드와 동일한 하이라이트 맵을 1회 계산한다.

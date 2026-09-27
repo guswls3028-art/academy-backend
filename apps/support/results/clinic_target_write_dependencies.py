@@ -24,7 +24,8 @@ def waive_explicit_missing_exam_target(
     """Validate exact roster/source ownership and create or reuse a WAIVED link."""
     from apps.domains.enrollment.models import SessionEnrollment
     from apps.domains.exams.models import Exam
-    from apps.domains.progress.models import ClinicLink
+    from apps.domains.progress.models import ClinicLink, SessionProgress
+    from django.db.models import F
     from apps.domains.progress.services.clinic_resolution_service import (
         ClinicResolutionService,
     )
@@ -33,10 +34,13 @@ def waive_explicit_missing_exam_target(
         tenant=tenant,
         session_id=session_id,
         session__lecture__tenant=tenant,
+        session__lecture__is_active=True,
+        session__lecture_id=F("enrollment__lecture_id"),
         session__exams__id=exam_id,
         enrollment_id=enrollment_id,
         enrollment__tenant=tenant,
         enrollment__status="ACTIVE",
+        enrollment__lecture__is_active=True,
     ).exists()
     exam_exists = Exam.objects.filter(
         id=exam_id,
@@ -44,7 +48,12 @@ def waive_explicit_missing_exam_target(
         exam_type=Exam.ExamType.REGULAR,
         is_active=True,
     ).exists()
-    if not roster_exists or not exam_exists:
+    completed = SessionProgress.objects.filter(
+        session_id=session_id,
+        enrollment_id=enrollment_id,
+        completed=True,
+    ).exists()
+    if not roster_exists or not exam_exists or completed:
         return ClinicWaiverOutcome("NOT_FOUND")
 
     links = list(

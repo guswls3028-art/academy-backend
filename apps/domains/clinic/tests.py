@@ -1553,6 +1553,29 @@ class ParticipantStatusTransitionAPITest(APITestCase, ClinicAPITestMixin):
         self.student.user.tenant = self.tenant
         self.student.user.save(update_fields=["tenant"])
 
+    def test_ended_lecture_keeps_booking_history_without_current_chip(self):
+        self.client.force_authenticate(user=self.admin)
+        enrollment = self.data["enrollments"][0]
+        participant = self.make_participant(
+            self.tenant,
+            self.data["clinic_session"],
+            self.student,
+            enrollment=enrollment,
+        )
+        url = f"/api/v1/clinic/participants/{participant.id}/"
+        before = self.client.get(url, **self._headers(self.tenant))
+        self.assertEqual(before.status_code, 200, before.data)
+        self.assertTrue(before.data["lecture_current"])
+        self.assertEqual(before.data["lecture_title"], enrollment.lecture.title)
+
+        enrollment.lecture.is_active = False
+        enrollment.lecture.save(update_fields=["is_active"])
+        after = self.client.get(url, **self._headers(self.tenant))
+        self.assertEqual(after.status_code, 200, after.data)
+        self.assertFalse(after.data["lecture_current"])
+        self.assertEqual(after.data["lecture_title"], enrollment.lecture.title)
+        self.assertEqual(after.data["id"], participant.id)
+
     def test_staff_can_mark_booked_as_no_show(self):
         self.client.force_authenticate(user=self.admin)
         participant = self.make_participant(
@@ -1798,6 +1821,109 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
         participant = SessionParticipant.objects.get(id=resp.data["id"])
         self.assertEqual(participant.enrollment_id, target_enrollment.id)
         self.assertEqual(participant.clinic_reason, "exam")
+
+    def test_ended_target_lecture_disappears_from_student_calendar_and_cannot_be_booked(self):
+        lecture = self.data["lecture"]
+        session = self.data["clinic_session"]
+        session.target_lectures.set([lecture])
+
+        def visible_session_ids():
+            response = self.client.get(
+                "/api/v1/clinic/sessions/", **self._headers(self.tenant)
+            )
+            self.assertEqual(response.status_code, 200, response.data)
+            return {row["id"] for row in response.data.get("results", response.data)}
+
+        self.assertIn(session.id, visible_session_ids())
+        lecture.is_active = False
+        lecture.save(update_fields=["is_active", "updated_at"])
+        self.assertNotIn(session.id, visible_session_ids())
+
+        booking = self.client.post(
+            "/api/v1/clinic/participants/",
+            {"session": session.id},
+            format="json",
+            **self._headers(self.tenant),
+        )
+        self.assertEqual(booking.status_code, 403, booking.data)
+        self.assertFalse(SessionParticipant.objects.filter(session=session).exists())
+
+        lecture.is_active = True
+        lecture.save(update_fields=["is_active", "updated_at"])
+        self.assertIn(session.id, visible_session_ids())
+
+    def test_unrestricted_booking_ignores_newer_ended_enrollment(self):
+        current_enrollment = self.data["enrollments"][0]
+        ended_lecture = self.make_lecture(
+            self.tenant, title="종료 과학", name="종료 과학", subject="science"
+        )
+        ended_enrollment = self.make_enrollment(
+            self.tenant, self.student, ended_lecture
+        )
+        self.assertGreater(ended_enrollment.id, current_enrollment.id)
+        ended_lecture.is_active = False
+        ended_lecture.save(update_fields=["is_active", "updated_at"])
+
+        response = self.client.post(
+            "/api/v1/clinic/participants/",
+            {"session": self.data["clinic_session"].id},
+            format="json",
+            **self._headers(self.tenant),
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(
+            SessionParticipant.objects.get(id=response.data["id"]).enrollment_id,
+            current_enrollment.id,
+        )
+
+    def test_current_middle_school_class_calendar_survives_old_course_end(self):
+        self.student.school_type = "MIDDLE"
+        self.student.grade = 3
+        self.student.save(update_fields=["school_type", "grade", "updated_at"])
+        current_lecture = self.make_lecture(
+            self.tenant, title="중3 정규 생물", name="중3 정규 생물", subject="science"
+        )
+        current_enrollment = self.make_enrollment(
+            self.tenant, self.student, current_lecture
+        )
+        clinic_session = self.data["clinic_session"]
+        clinic_session.target_grade = 3
+        clinic_session.target_school_type = "MIDDLE"
+        clinic_session.save(update_fields=["target_grade", "target_school_type", "updated_at"])
+        clinic_session.target_lectures.set([current_lecture])
+        old_lecture = self.data["lecture"]
+        old_lecture.is_active = False
+        old_lecture.save(update_fields=["is_active", "updated_at"])
+
+        listed = self.client.get(
+            "/api/v1/clinic/sessions/", **self._headers(self.tenant)
+        )
+        self.assertEqual(listed.status_code, 200, listed.data)
+        self.assertIn(
+            clinic_session.id,
+            {row["id"] for row in listed.data.get("results", listed.data)},
+        )
+        booked = self.client.post(
+            "/api/v1/clinic/participants/",
+            {"session": clinic_session.id},
+            format="json",
+            **self._headers(self.tenant),
+        )
+        self.assertEqual(booked.status_code, 201, booked.data)
+        self.assertEqual(
+            SessionParticipant.objects.get(id=booked.data["id"]).enrollment_id,
+            current_enrollment.id,
+        )
+
+    def test_unrestricted_calendar_requires_an_active_course(self):
+        self.data["lecture"].is_active = False
+        self.data["lecture"].save(update_fields=["is_active", "updated_at"])
+
+        listed = self.client.get(
+            "/api/v1/clinic/sessions/", **self._headers(self.tenant)
+        )
+        self.assertEqual(listed.status_code, 200, listed.data)
+        self.assertEqual(listed.data.get("results", listed.data), [])
 
     def test_idcard_aggregates_targets_from_all_active_enrollments(self):
         target_enrollment = self.data["enrollments"][0]
