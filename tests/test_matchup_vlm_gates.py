@@ -939,6 +939,85 @@ def test_photo_normalized_gemini_boxes_replace_observed_counter_fallbacks(
     assert min(q["bbox"][1] for q in questions if q["number"] in (13, 15)) >= 1385
 
 
+def test_numberless_photo_replaces_recorded_five_crops_with_four_questions(monkeypatch):
+    """The QA photo's 146px Q12 strip is not a fifth printed question."""
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+
+    old_boxes = [
+        (958, 163, 962, 1222), (0, 312, 962, 146),
+        (0, 458, 962, 942), (958, 1385, 962, 1175),
+        (0, 1400, 962, 1160),
+    ]
+    page = {
+        "page_index": 0, "image_path": "/fake/photo.jpg",
+        "boxes": old_boxes, "numbers": [None] * len(old_boxes),
+        "paper_type": "student_answer_photo",
+    }
+    previous = {"number": 11, "page_index": 1, "bbox": [0, 0, 100, 100]}
+    questions = [previous] + [
+        {"number": n, "page_index": 0, "bbox": list(box),
+         "meta_extra": {"number_source": "counter_fallback"}}
+        for n, box in zip((4, 1, 2, 5, 3), old_boxes)
+    ]
+    proposals = [
+        (12, 140, 150, 800, 1210), (14, 990, 150, 800, 1080),
+        (13, 140, 1390, 800, 900), (15, 990, 1390, 800, 900),
+    ]
+    monkeypatch.setenv("MATCHUP_VLM_AUTO_SPLIT", "1")
+    monkeypatch.setenv("MATCHUP_VLM_FILL_UNDERFILLED_PAGES", "1")
+    monkeypatch.setenv("MATCHUP_VLM_VISION_ADAPTER", "gemini_flash")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(
+        matchup_pipeline, "_try_vlm_problem_bboxes",
+        lambda *args, **kwargs: (_bbox_result(problems=proposals), "student_answer_photo"),
+    )
+
+    stats = matchup_pipeline._augment_questions_with_vlm_for_underfilled_pages(
+        [page], questions, source_type="student_exam_photo",
+        document_id=123, tenant_id=1,
+    )
+
+    assert questions[0] is previous
+    assert stats["replaced_auto"] == 5
+    assert stats["replacement_pages"] == 1
+    assert stats["relabeled_overlaps"] == 0
+    assert {q["number"] for q in questions[1:]} == {12, 13, 14, 15}
+    assert {q["number"]: q["bbox"] for q in questions[1:]} == {
+        n: [x, y, w, h] for n, x, y, w, h in proposals
+    }
+    assert all(q["meta_extra"]["vlm_reason"] == "numberless_photo_replacement"
+               for q in questions[1:])
+
+
+@pytest.mark.parametrize("fifth_box", [
+    (0, 150, 962, 308), (0, 180, 962, 146),
+])
+def test_numberless_photo_preserves_separate_fifth_crop_when_vlm_finds_four(fifth_box):
+    """A substantial or separated fifth area must survive a four-box proposal."""
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+
+    old_boxes = [
+        (958, 163, 962, 1222), fifth_box,
+        (0, 458, 962, 942), (958, 1385, 962, 1175),
+        (0, 1400, 962, 1160),
+    ]
+    page = {"page_index": 0, "image_path": "/fake/photo.jpg",
+            "boxes": old_boxes, "numbers": [None] * len(old_boxes)}
+    questions = [
+        {"number": n, "page_index": 0, "bbox": list(box),
+         "meta_extra": {"number_source": "counter_fallback"}}
+        for n, box in enumerate(old_boxes, start=1)
+    ]
+    proposals = _bbox_result(problems=[
+        (12, 140, 150, 800, 1210), (14, 990, 150, 800, 1080),
+        (13, 140, 1390, 800, 900), (15, 990, 1390, 800, 900),
+    ])
+
+    assert matchup_pipeline._replace_numberless_photo_page(page, questions, proposals) == (0, 0)
+    assert {q["number"] for q in questions} == {1, 2, 3, 4, 5}
+    assert page["numbers"] == [None] * 5
+
+
 def test_gemini_vision_discards_missing_number_and_out_of_range_box(monkeypatch, tmp_path):
     from PIL import Image
 

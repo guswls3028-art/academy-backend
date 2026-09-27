@@ -1710,7 +1710,7 @@ def _replace_numberless_photo_page(
     old_ids = {id(q) for q in old}
 
     proposals = list(vlm.problems)
-    if len(proposals) < max(2, len(old)):
+    if len(proposals) < 2:
         return 0, 0
     try:
         numbers = [p.number for p in proposals]
@@ -1731,6 +1731,39 @@ def _replace_numberless_photo_page(
 
     old_boxes = [q["bbox"] for q in old]
     new_boxes = [p.bbox for p in proposals]
+    if len(proposals) < len(old):
+        # OpenCV can split one photo question into a thin full-column strip and
+        # an adjacent body.  Permit fewer VLM cuts only when the surplus old
+        # cuts have that shape and both pieces belong to the same VLM box.
+        def is_explained_fragment(fragment: Any, neighbor: Any) -> bool:
+            try:
+                fx, fy, fw, fh = [float(v) for v in fragment]
+                nx, ny, nw, nh = [float(v) for v in neighbor]
+            except (TypeError, ValueError):
+                return False
+            if not all(math.isfinite(v) for v in (fx, fy, fw, fh, nx, ny, nw, nh)):
+                return False
+            if min(fw, fh, nw, nh) <= 0 or fh > nh * 0.20:
+                return False
+            if max(abs(fx - nx), abs(fx + fw - nx - nw)) > nw * 0.05:
+                return False
+            if max(0.0, ny - fy - fh, fy - ny - nh) > nh * 0.02:
+                return False
+            return any(
+                _bbox_coverage_of_smaller(fragment, new_box) >= 0.60
+                and _bbox_coverage_of_smaller(neighbor, new_box) >= 0.30
+                for new_box in new_boxes
+            )
+
+        fragments = sum(
+            any(
+                i != j and is_explained_fragment(old_box, other)
+                for j, other in enumerate(old_boxes)
+            )
+            for i, old_box in enumerate(old_boxes)
+        )
+        if fragments < len(old) - len(proposals):
+            return 0, 0
     if not all(
         any(_bbox_coverage_of_smaller(old_box, new_box) >= 0.30 for new_box in new_boxes)
         for old_box in old_boxes
