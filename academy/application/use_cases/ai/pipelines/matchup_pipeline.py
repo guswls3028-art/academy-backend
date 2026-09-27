@@ -1800,8 +1800,86 @@ def _photo_vlm_column_boxes(image_path: str, boxes: List[Any]) -> List[Any]:
     return refined
 
 
+def _photo_vlm_verified_numbers(
+    image_path: str, boxes: List[Any], numbers: List[int],
+    ocr_blocks: Optional[List[Any]] = None,
+) -> tuple[List[int], bool]:
+    """Correct one contradicted photo label only with independent margin evidence."""
+    from PIL import Image
+
+    if len(boxes) != len(numbers) or len(set(tuple(box) for box in boxes)) != len(boxes):
+        return numbers, True  # Shared-stem boxes cannot be relabeled separately.
+    try:
+        with Image.open(image_path) as image:
+            width, height = image.size
+        parsed = [tuple(int(v) for v in box) for box in boxes]
+    except (OSError, TypeError, ValueError):
+        return numbers, True
+    if min(width, height) < 400 or not (
+        any(x + w/2 < width/2 for x, _, w, _ in parsed)
+        and any(x + w/2 >= width/2 for x, _, w, _ in parsed)
+    ):
+        return numbers, True
+    if ocr_blocks is None:
+        backend = _load_ocr_blocks_backend()
+        if backend is None:
+            return numbers, True
+        try:
+            blocks = backend(image_path)
+        except Exception:
+            logger.warning("MATCHUP_PHOTO_NUMBER_OCR_FAIL", exc_info=True)
+            return numbers, True
+    else:
+        blocks = ocr_blocks
+
+    found: List[tuple[int, bool] | None] = []
+    for x, y, w, h in parsed:
+        candidates = []
+        for block in blocks:
+            match = re.match(
+                r"^\s*(\d{1,3})(?:(\s*[.．](?!\d))|\s+[가-힣])",
+                block.text or "",
+            )
+            if not match or not (
+                x-width*.04 <= block.x0 <= x+width*.08
+                and y-height*.02 <= block.y0 <= y+height*.08
+            ):
+                continue
+            candidates.append((int(match.group(1)), bool(match.group(2)), block.y0))
+        if candidates:
+            first_y = min(candidate[2] for candidate in candidates)
+            candidates = [candidate for candidate in candidates
+                          if candidate[2] <= first_y+height*.025]
+        distinct = {number for number, _, _ in candidates}
+        found.append((next(iter(distinct)), any(strict for _, strict, _ in candidates))
+                     if len(distinct) == 1 else None)
+        if len(distinct) > 1 and any(
+            strict and number not in numbers for number, strict, _ in candidates
+        ):
+            return numbers, False
+
+    contradictions = [i for i, match in enumerate(found)
+                      if match and match[1] and match[0] != numbers[i]]
+    if not contradictions:
+        return numbers, True
+    if len(contradictions) != 1:
+        return numbers, False
+    index = contradictions[0]
+    replacement = found[index][0]
+    supporters = sum(match is not None and match[0] == numbers[i]
+                     for i, match in enumerate(found) if i != index)
+    corrected = list(numbers)
+    corrected[index] = replacement
+    if (replacement in numbers or supporters < 2
+            or len(set(corrected)) != len(corrected)
+            or max(corrected)-min(corrected)+1 != len(corrected)):
+        return numbers, False
+    return corrected, True
+
+
 def _photo_vlm_ocr_geometry(
     image_path: str, boxes: List[Any], numbers: List[int],
+    ocr_blocks: Optional[List[Any]] = None,
 ) -> tuple[List[Any], List[Dict[str, Any] | None]]:
     """Refine accepted phone-photo proposals using printed OCR labels and a divider.
 
@@ -1835,13 +1913,18 @@ def _photo_vlm_ocr_geometry(
     if not any(rough_sides) or all(rough_sides):
         return unchanged()
 
-    backend = _load_ocr_blocks_backend()
-    if backend is None:
-        return unchanged()
-    try:
-        blocks = backend(image_path)
-    except Exception:
-        logger.warning("MATCHUP_PHOTO_ANCHOR_OCR_FAIL", exc_info=True)
+    if ocr_blocks is None:
+        backend = _load_ocr_blocks_backend()
+        if backend is None:
+            return unchanged()
+        try:
+            blocks = backend(image_path)
+        except Exception:
+            logger.warning("MATCHUP_PHOTO_ANCHOR_OCR_FAIL", exc_info=True)
+            return unchanged()
+    else:
+        blocks = ocr_blocks
+    if not blocks:
         return unchanged()
 
     def anchor(number: int, box: tuple[int, ...], shared: bool):
@@ -2011,6 +2094,57 @@ def _photo_vlm_ocr_geometry(
             x2 = width
         corrected[box] = [x, y, min(width, x2), y2]
         starts[box] = (top_match.x0, top_match.y0) if top_match else None
+
+    # A marked-up printed number can disappear from OCR even when its following
+    # question stem is read. Recover that start only after the preceding
+    # question's final ①–⑤ row, a clear gap, and ink in the new stem's margin.
+    for box, rect in corrected.items():
+        if starts[box] or len(groups[box]) != 1:
+            continue
+        previous = [other for other in groups if other != box
+                    and side_by_box[other] == side_by_box[box]
+                    and corrected[other][1] < rect[1]]
+        if not previous:
+            continue
+        previous_box = max(previous, key=lambda other: corrected[other][1])
+        if rect[1] - corrected[previous_box][1] < height*.25:
+            continue
+
+        def same_column(block: Any) -> bool:
+            middle = (block.x0 + block.x1) / 2
+            return (middle < (boundary(block.y0) if divider else width/2)) == side_by_box[box]
+
+        choice_blocks = [block for block in blocks
+                         if block.y0 >= max(corrected[previous_box][1], rect[1]-height*.20)
+                         and block.y0 < rect[1]-height*.05
+                         and same_column(block)
+                         and re.search(r"[①②③④⑤]", block.text or "")]
+        choice_rows = []
+        for choice in choice_blocks:
+            peers = [block for block in choice_blocks
+                     if abs(block.y0-choice.y0) <= height*.015]
+            symbols = set("".join(block.text or "" for block in peers)) & set("①②③④⑤")
+            if len(symbols) >= 3 and "⑤" in symbols:
+                choice_rows.append(max(block.y1 for block in peers))
+        if not choice_rows:
+            continue
+        row_bottom = max(choice_rows)
+        stems = [block for block in blocks
+                 if row_bottom+height*.012 <= block.y0 <= row_bottom+height*.05
+                 and block.y0 < rect[1]-height*.05
+                 and rect[0]-width*.02 <= block.x0 <= rect[0]+width*.12
+                 and block.x1-block.x0 >= width*.15
+                 and same_column(block)]
+        if not stems:
+            continue
+        stem = min(stems, key=lambda block: block.y0)
+        margin = image[
+            max(0, round(stem.y0-height*.004)):min(height, round(stem.y0+height*.012)),
+            max(0, round(stem.x0-width*.04)):max(0, round(stem.x0-width*.008)),
+        ]
+        if margin.size == 0 or int((margin < 125).sum()) < margin.size*.12:
+            continue
+        rect[1] = max(0, round(stem.y0-height*.008))
 
     if not divider:
         # When the printed line is invisible, a nearby right-column label is
@@ -2197,10 +2331,28 @@ def _replace_numberless_photo_page(
                     or x + w > page_width or y + h > page_height):
                 return 0, 0
 
+    photo_blocks = []
+    backend = _load_ocr_blocks_backend()
+    if backend is not None:
+        try:
+            photo_blocks = backend(page["image_path"])
+        except Exception:
+            logger.warning("MATCHUP_PHOTO_ANCHOR_OCR_FAIL", exc_info=True)
+    original_numbers = numbers
+    numbers, printed_numbers_proven = _photo_vlm_verified_numbers(
+        page["image_path"], new_boxes, numbers, photo_blocks,
+    )
+    if not printed_numbers_proven or any(
+        number in reserved_numbers for number in numbers
+    ) or (numbers != original_numbers and any(
+        prob.shared_with for prob in proposals
+    )):
+        return 0, 0
+
     # Refine display/embedding cuts only after the source-coverage safety
     # checks have accepted the original VLM result.
     new_boxes, photo_boundaries = _photo_vlm_ocr_geometry(
-        page["image_path"], new_boxes, numbers,
+        page["image_path"], new_boxes, numbers, photo_blocks,
     )
     photo_crop_refined = any(photo_boundaries) or any(
         tuple(before) != tuple(after)

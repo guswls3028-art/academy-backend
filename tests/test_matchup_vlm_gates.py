@@ -299,6 +299,127 @@ def test_photo_fragmented_divider_requires_long_supported_line_and_printed_label
     assert boundaries == [None] * 4
 
 
+def test_photo_printed_margin_label_corrects_single_vlm_number_without_guessing(
+    tmp_path, monkeypatch,
+):
+    import cv2
+    import numpy as np
+
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline as pipeline
+
+    path = tmp_path / "photo.png"
+    assert cv2.imwrite(str(path), np.full((1000, 1000), 255, dtype=np.uint8))
+    boxes = [(520, 40, 450, 600), (80, 100, 420, 330),
+             (80, 620, 420, 200), (80, 840, 420, 140)]
+
+    def block(text, x, y):
+        return type("Block", (), dict(text=text, x0=x, y0=y,
+                                      x1=x+220, y1=y+25))()
+
+    blocks = [block("24 다음은", 540, 98), block("24. 다음은", 540, 100),
+              block("21 다음은", 100, 120),
+              block("23. 다음은", 100, 860)]
+    monkeypatch.setattr(pipeline, "_load_ocr_blocks_backend", lambda: lambda _: blocks)
+    assert pipeline._photo_vlm_verified_numbers(
+        str(path), boxes, [20, 21, 22, 23],
+    ) == ([24, 21, 22, 23], True)
+    blocks.append(block("1. 문항 내부 자료", 100, 310))
+    assert pipeline._photo_vlm_verified_numbers(
+        str(path), boxes, [20, 21, 22, 23],
+    ) == ([24, 21, 22, 23], True)
+
+    old = [{"number": n, "page_index": 0, "bbox": box,
+            "meta_extra": {"number_source": "counter_fallback"}}
+           for n, box in zip((1, 2, 3, 4), boxes)]
+    page = {"page_index": 0, "image_path": str(path), "boxes": boxes,
+            "numbers": [None] * 4}
+    proposals = _bbox_result(problems=[(n, *box) for n, box in
+                                      zip((20, 21, 22, 23), boxes)])
+    reads = []
+    monkeypatch.setattr(pipeline, "_load_ocr_blocks_backend",
+                        lambda: lambda image: (reads.append(image), blocks)[1])
+    assert pipeline._replace_numberless_photo_page(page, old, proposals) == (4, 4)
+    assert [row["number"] for row in old] == [24, 21, 22, 23]
+    assert reads == [str(path)]  # Number and crop checks share one OCR result.
+
+    shared_proposals = _bbox_result(problems=[(n, *box) for n, box in
+                                             zip((20, 21, 22, 23), boxes)])
+    shared_proposals.problems[1].shared_with = [20]
+    old_shared = [{"number": n, "page_index": 0, "bbox": box,
+                   "meta_extra": {"number_source": "counter_fallback"}}
+                  for n, box in zip((1, 2, 3, 4), boxes)]
+    assert pipeline._replace_numberless_photo_page(
+        page, old_shared, shared_proposals,
+    ) == (0, 0)
+    assert [row["number"] for row in old_shared] == [1, 2, 3, 4]
+
+    blocks[:] = [block("24. table value", 750, 100),
+                 block("21 다음은", 100, 120), block("23. 다음은", 100, 860)]
+    assert pipeline._photo_vlm_verified_numbers(
+        str(path), boxes, [20, 21, 22, 23],
+    ) == ([20, 21, 22, 23], True)
+    blocks[:] = [block("24. 다음은", 540, 100)]
+    assert pipeline._photo_vlm_verified_numbers(
+        str(path), boxes, [20, 21, 22, 23],
+    ) == ([20, 21, 22, 23], False)
+    blocks[:] = [block("20 다음은", 540, 98), block("20. 다음은", 540, 100),
+                 block("22 다음은", 100, 120), block("23. 다음은", 100, 640),
+                 block("24. 다음은", 100, 860)]
+    assert pipeline._photo_vlm_verified_numbers(
+        str(path), boxes, [21, 22, 23, 24],
+    ) == ([21, 22, 23, 24], False)
+
+
+def test_photo_unreadable_number_start_requires_choices_gap_stem_and_margin_ink(
+    tmp_path, monkeypatch,
+):
+    import cv2
+    import numpy as np
+
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline as pipeline
+
+    path = tmp_path / "photo.png"
+    image = np.full((1000, 1000), 255, dtype=np.uint8)
+    cv2.line(image, (500, 20), (500, 980), 0, 3)
+    cv2.rectangle(image, (130, 465), (145, 490), 0, -1)
+    assert cv2.imwrite(str(path), image)
+
+    def block(text, x0, y0, x1, y1):
+        return type("Block", (), dict(text=text, x0=x0, y0=y0,
+                                      x1=x1, y1=y1))()
+
+    blocks = [block("21 다음은", 100, 70, 300, 95),
+              block("24. 다음은", 540, 90, 800, 115),
+              block("②", 180, 420, 205, 440),
+              block("③", 260, 422, 285, 441),
+              block("④⑤", 340, 424, 410, 444),
+              block("다음은 문항 본문", 160, 470, 460, 500),
+              block("23. 다음은", 100, 890, 300, 915)]
+    monkeypatch.setattr(pipeline, "_load_ocr_blocks_backend", lambda: lambda _: blocks)
+    boxes = [(520, 40, 450, 570), (80, 50, 420, 400),
+             (80, 600, 420, 250), (80, 870, 420, 110)]
+    refined, _ = pipeline._photo_vlm_ocr_geometry(
+        str(path), boxes, [24, 21, 22, 23],
+    )
+    assert refined[2][1] == 462
+    assert refined[1][1] + refined[1][3] < refined[2][1]
+
+    image[465:491, 130:146] = 255
+    assert cv2.imwrite(str(path), image)
+    no_margin, _ = pipeline._photo_vlm_ocr_geometry(
+        str(path), boxes, [24, 21, 22, 23],
+    )
+    assert no_margin[2][1] == 600
+    blocks.pop(4)  # Only two distinct choice symbols: no boundary proof.
+    blocks.append(block("①", 120, 421, 145, 441))
+    cv2.rectangle(image, (130, 465), (145, 490), 0, -1)
+    assert cv2.imwrite(str(path), image)
+    no_choices, _ = pipeline._photo_vlm_ocr_geometry(
+        str(path), boxes, [24, 21, 22, 23],
+    )
+    assert no_choices[2][1] == 600
+
+
 def test_numberless_photo_replacement_preserves_shared_stem_group(tmp_path):
     """The replacement path must keep the VLM shared-group metadata."""
     import cv2
