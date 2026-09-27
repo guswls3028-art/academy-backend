@@ -485,8 +485,7 @@ _PROBLEM_BBOX_PROMPT = """당신은 한국어 시험지·교재 페이지의 문
 - unknown: 분류 불명
 
 문항 박스 작성 규칙 (필수):
-- 각 박스는 인쇄된 독립 문항 번호(예: "1.", "(1)", "[서답형 1]")부터 본문, 보기, 답란까지 모두 포함하도록 잡으세요.
-- 객관식 선택지 ①②③④⑤, 문항 안의 소문항 번호, 손글씨 번호는 독립 문항 번호가 아닙니다.
+- 각 박스는 문항 번호(예: "1.", "(1)", "①")부터 본문, 보기, 답란까지 모두 포함하도록 잡으세요.
 - 박스 안에 실제 본문 텍스트가 반드시 있어야 합니다. 빈 영역에 박스를 만들지 마세요.
 - 페이지 상단의 헤더(과목명·학교명·학년·시험회차·로고·페이지 번호)는 박스에 포함하지 마세요.
 - 페이지 하단의 푸터(페이지 번호·"다음 면에 계속"·저작권 문구)도 박스에 포함하지 마세요.
@@ -509,11 +508,9 @@ _PROBLEM_BBOX_PROMPT = """당신은 한국어 시험지·교재 페이지의 문
   - 서술형 답안 영역 = problem 페이지의 일부 (학생이 푸는 곳, 정답 X)
 - 서술형 페이지를 answer_key/non_question으로 분류하지 마세요. should_skip=false, page_role=problem.
 
-bbox 좌표 (Gemini의 정규화 좌표계):
-- box_2d = [ymin, xmin, ymax, xmax], 각 값은 0~1000 범위의 정수입니다.
-- 페이지 좌상단이 (0, 0), 우하단이 (1000, 1000)입니다.
-- 이미지의 실제 픽셀 크기나 압축된 픽셀 크기를 좌표로 사용하지 마세요.
-- 각 박스의 ymin/xmin은 인쇄된 독립 문항 번호를 포함해야 합니다.
+bbox 좌표 (반드시 페이지 이미지 픽셀 기준):
+- [x, y, w, h] = 박스 왼쪽 위 모서리(x, y) + 너비(w) + 높이(h).
+- 페이지 좌상단이 (0, 0).
 
 JSON schema (이 외 키는 추가하지 마세요):
 {
@@ -521,7 +518,7 @@ JSON schema (이 외 키는 추가하지 마세요):
   "should_skip": <bool>,
   "layout": "single_column|dual_column|quadrant|mixed|other",
   "paper_type": "clean_pdf_single|clean_pdf_dual|scan_single|scan_dual|quadrant|student_answer_photo|side_notes|non_question|unknown",
-  "problems": [{"number": <int>, "box_2d": [ymin, xmin, ymax, xmax], "confidence": <0.0~1.0>, "shared_with": [<int>, ...]}],
+  "problems": [{"number": <int>, "bbox": [x, y, w, h], "confidence": <0.0~1.0>, "shared_with": [<int>, ...]}],
   "confidence": <0.0~1.0>
 }
 """
@@ -620,9 +617,9 @@ class GeminiVLMVisionAdapter:
             raise RuntimeError(f"VLM vision 이미지 읽기 실패: {e}") from e
 
         # Gemini 서버 deadline(~30s) 차단을 위해 큰 이미지를 1600px / JPEG 85로 압축.
-        # Gemini bbox는 0~1000 정규화 좌표이므로 원본 이미지 크기로 각각 환산한다.
+        # bbox 좌표는 모델이 원본 픽셀 기준으로 응답하므로, 압축 비율을 추적해서 응답 후
+        # 원본 좌표계로 역변환한다.
         scale = 1.0
-        orig_w = orig_h = 0
         try:
             from PIL import Image  # type: ignore
             _orig = Image.open(_io.BytesIO(img_bytes))
@@ -650,9 +647,6 @@ class GeminiVLMVisionAdapter:
             mime, _ = mimetypes.guess_type(image_path)
             mime = mime or "image/png"
 
-        if not orig_w or not orig_h:
-            raise RuntimeError("VLM vision 원본 이미지 크기를 읽을 수 없습니다")
-
         b64 = base64.b64encode(img_bytes).decode("ascii")
 
         try:
@@ -678,27 +672,23 @@ class GeminiVLMVisionAdapter:
 
         problems_raw = data.get("problems") or []
         problems: List[ProblemBbox] = []
-        for p in problems_raw:
+        # 압축한 경우 bbox 좌표를 원본 px로 역변환 (모델 응답이 압축 이미지 기준일 수 있음).
+        inv = (1.0 / scale) if scale and scale != 1.0 else 1.0
+        for i, p in enumerate(problems_raw, start=1):
             try:
-                box = p.get("box_2d") or []
-                ymin, xmin, ymax, xmax = (int(box[0]), int(box[1]), int(box[2]), int(box[3]))
-                if not (0 <= ymin < ymax <= 1000 and 0 <= xmin < xmax <= 1000):
-                    continue
-                x0 = round(xmin * orig_w / 1000)
-                y0 = round(ymin * orig_h / 1000)
-                x1 = round(xmax * orig_w / 1000)
-                y1 = round(ymax * orig_h / 1000)
-                if x1 <= x0 or y1 <= y0:
-                    continue
+                bbox = p.get("bbox") or []
+                x, y, w, h = (int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3]))
+                if inv != 1.0:
+                    x, y, w, h = (int(x * inv), int(y * inv), int(w * inv), int(h * inv))
                 shared_raw = p.get("shared_with") or []
                 shared_with = [int(s) for s in shared_raw if isinstance(s, (int, str)) and str(s).lstrip("-").isdigit()]
                 problems.append(ProblemBbox(
-                    number=int(p["number"]),
-                    bbox=(x0, y0, x1 - x0, y1 - y0),
+                    number=int(p.get("number", i)),
+                    bbox=(x, y, w, h),
                     confidence=float(p.get("confidence", 0.7)),
                     shared_with=shared_with,
                 ))
-            except (TypeError, ValueError, IndexError, KeyError):
+            except (TypeError, ValueError, IndexError):
                 continue
 
         return ProblemBboxResult(
@@ -711,7 +701,6 @@ class GeminiVLMVisionAdapter:
                 "adapter": "gemini", "model": self.model,
                 "raw_count": len(problems_raw),
                 "scale": round(scale, 3),
-                "coordinate_system": "normalized_1000_yxyx",
                 "layout": str(data.get("layout", "")),
             },
         )
