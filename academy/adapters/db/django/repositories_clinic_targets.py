@@ -124,7 +124,7 @@ def explicit_not_submitted_exam_targets(*, tenant, section_id: int | None = None
         session = sessions.get(int(session_id))
         if not result or not session:
             continue
-        if (int(enrollment_id), int(session_id)) in completed_pairs:
+        if (int(session_id), int(enrollment_id)) in completed_pairs:
             continue
         if (int(enrollment_id), int(session_id), int(exam_id)) in existing:
             continue
@@ -144,7 +144,12 @@ def clinic_links_for_admin_targets(*, tenant, include_resolved: bool):
             enrollment__lecture__tenant=tenant,
             session__lecture__tenant=tenant,
         )
-        .select_related("session__lecture__tenant", "session__homework_policy")
+        .select_related(
+            "session__lecture__tenant",
+            "session__homework_policy",
+            "enrollment__student",
+            "enrollment__lecture",
+        )
         .order_by("-created_at")
     )
     if not include_resolved:
