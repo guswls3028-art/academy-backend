@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Tuple
 from unittest.mock import MagicMock, patch
 
@@ -85,6 +86,144 @@ def test_photo_vlm_column_boxes_require_a_visible_unambiguous_divider(tmp_path):
     reverse_tilt = _photo_vlm_column_boxes(str(image_path), boxes)
     assert reverse_tilt[0][0] + reverse_tilt[0][2] > boxes[0][0] + boxes[0][2]
     assert reverse_tilt[1][0] > boxes[1][0]
+
+
+def test_photo_numberless_gate_uses_upload_source_when_vlm_relabels_page():
+    from academy.application.use_cases.ai.pipelines.matchup_pipeline import (
+        _is_numberless_scan_page,
+    )
+
+    page = {"boxes": [(10, 10, 100, 100)] * 5,
+            "numbers": [None] * 5, "paper_type": "clean_pdf_dual"}
+    assert _is_numberless_scan_page(page, "student_exam_photo")
+    assert not _is_numberless_scan_page(page, "school_exam_pdf")
+
+
+def test_photo_geometry_keeps_line_ends_and_uses_same_boundary_for_ocr_and_png(
+    tmp_path, monkeypatch,
+):
+    import cv2
+    import numpy as np
+
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline as pipeline
+
+    path = tmp_path / "photo.png"
+    image = np.full((1000, 1000, 3), 255, dtype=np.uint8)
+    cv2.line(image, (530, 40), (500, 960), (0, 0, 0), 3)
+    cv2.rectangle(image, (475, 195), (490, 210), (0, 0, 0), -1)
+    cv2.rectangle(image, (520, 295), (524, 310), (0, 0, 0), -1)
+    assert cv2.imwrite(str(path), image)
+
+    def block(text, x0, y0, x1, y1):
+        return type("Block", (), dict(text=text, x0=x0, y0=y0, x1=x1, y1=y1))()
+
+    blocks = [
+        block("1. 왼쪽 문항", 75, 90, 300, 120),
+        block("왼쪽 선택지", 435, 190, 493, 220),
+        block("2. 오른쪽 문항", 560, 90, 800, 120),
+        block("오른쪽 선택지", 505, 285, 700, 320),
+    ]
+    monkeypatch.setattr(pipeline, "_load_ocr_blocks_backend", lambda: lambda _: blocks)
+    original = [(60, 120, 410, 300), (480, 120, 440, 300)]
+    refined, boundaries = pipeline._photo_vlm_ocr_geometry(
+        str(path), original, [1, 2],
+    )
+    left, right = refined
+    assert boundaries[0]["side"] == "left"
+    assert boundaries[1]["side"] == "right"
+    assert left[0] + left[2] > original[0][0] + original[0][2]
+    assert left[1] < original[0][1]
+
+    questions = [{"number": n, "page_index": 0, "image_path": str(path),
+                  "bbox": list(box), "meta_extra": {"photo_column_boundary": boundary}}
+                 for n, box, boundary in zip((1, 2), refined, boundaries)]
+    pipeline._extract_texts(questions, "synthetic-photo")
+    assert "왼쪽 선택지" in questions[0]["text"]
+    assert "오른쪽 선택지" not in questions[0]["text"]
+    blocks[:] = [block("오른쪽만", 570, 190, 800, 220)]
+    pipeline._extract_texts(questions, "synthetic-photo-empty")
+    assert questions[0]["text"] == ""
+    assert questions[0]["meta_extra"]["photo_ocr_empty"] is True
+
+    uploaded = {}
+    from apps.infrastructure.storage import r2
+
+    def capture_upload(*, fileobj, key, **kwargs):
+        uploaded[key] = cv2.imdecode(
+            np.frombuffer(fileobj.read(), dtype=np.uint8), cv2.IMREAD_COLOR,
+        )
+
+    monkeypatch.setattr(r2, "upload_fileobj_to_r2_storage", capture_upload)
+    try:
+        pipeline._upload_cropped_images(questions, "1", "doc", "job")
+        crop = uploaded[questions[0]["image_key"]]
+        x, y, _, _ = left
+        assert np.all(crop[200-y, 480-x] == 0)
+        # This pixel is inside the rectangular bbox, beyond the divider.
+        assert np.all(crop[300-y, 523-x] == 255)
+    finally:
+        for question in questions:
+            Path(question["cropped_image_path"]).unlink(missing_ok=True)
+
+
+def test_photo_geometry_no_divider_uses_opposite_label_and_ambiguous_lines_do_not(
+    tmp_path, monkeypatch,
+):
+    import cv2
+    import numpy as np
+
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline as pipeline
+
+    path = tmp_path / "photo.png"
+    image = np.full((1000, 1000), 255, dtype=np.uint8)
+    boxes = [(60, 120, 410, 300), (480, 120, 440, 300)]
+    blocks = [
+        type("Block", (), dict(text=text, x0=x, y0=100, x1=x+80, y1=125))()
+        for text, x in (("1. 왼쪽", 75), ("2. 오른쪽", 520))
+    ]
+    monkeypatch.setattr(pipeline, "_load_ocr_blocks_backend", lambda: lambda _: blocks)
+    assert cv2.imwrite(str(path), image)
+    refined, boundaries = pipeline._photo_vlm_ocr_geometry(
+        str(path), boxes, [1, 2],
+    )
+    assert refined[0][0] + refined[0][2] == 515  # before Q2's printed label
+    assert boundaries == [None, None]
+
+    cv2.line(image, (500, 40), (530, 960), 0, 3)
+    cv2.line(image, (600, 40), (600, 960), 0, 3)
+    assert cv2.imwrite(str(path), image)
+    refined, boundaries = pipeline._photo_vlm_ocr_geometry(
+        str(path), boxes, [1, 2],
+    )
+    assert refined == boxes
+    assert boundaries == [None, None]
+
+
+def test_photo_footer_trim_preserves_last_choice_when_ocr_confirms_footer(
+    tmp_path, monkeypatch,
+):
+    import cv2
+    import numpy as np
+
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline as pipeline
+
+    path = tmp_path / "photo.png"
+    image = np.full((1000, 1000), 255, dtype=np.uint8)
+    cv2.rectangle(image, (100, 934), (300, 944), 0, -1)
+    assert cv2.imwrite(str(path), image)
+
+    def block(text, x0, y0, x1, y1):
+        return type("Block", (), dict(text=text, x0=x0, y0=y0, x1=x1, y1=y1))()
+
+    blocks = [block("3. 왼쪽", 75, 530, 200, 550),
+              block("4. 오른쪽", 520, 530, 700, 550),
+              block("본 시험 문제의 저작권", 100, 950, 450, 975)]
+    monkeypatch.setattr(pipeline, "_load_ocr_blocks_backend", lambda: lambda _: blocks)
+    refined, _ = pipeline._photo_vlm_ocr_geometry(
+        str(path), [(60, 550, 410, 350), (480, 550, 440, 350)], [3, 4],
+    )
+    left = refined[0]
+    assert 945 <= left[1] + left[3] < 950
 
 
 def test_numberless_photo_replacement_preserves_shared_stem_group(tmp_path):
@@ -1029,7 +1168,7 @@ def test_numberless_photo_replaces_recorded_five_crops_with_four_questions(monke
     page = {
         "page_index": 0, "image_path": "/fake/photo.jpg",
         "boxes": old_boxes, "numbers": [None] * len(old_boxes),
-        "paper_type": "student_answer_photo",
+        "paper_type": "clean_pdf_dual",
     }
     previous = {"number": 11, "page_index": 1, "bbox": [0, 0, 100, 100]}
     questions = [previous] + [
@@ -1047,7 +1186,7 @@ def test_numberless_photo_replaces_recorded_five_crops_with_four_questions(monke
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     monkeypatch.setattr(
         matchup_pipeline, "_try_vlm_problem_bboxes",
-        lambda *args, **kwargs: (_bbox_result(problems=proposals), "student_answer_photo"),
+        lambda *args, **kwargs: (_bbox_result(problems=proposals), "clean_pdf_dual"),
     )
 
     stats = matchup_pipeline._augment_questions_with_vlm_for_underfilled_pages(
