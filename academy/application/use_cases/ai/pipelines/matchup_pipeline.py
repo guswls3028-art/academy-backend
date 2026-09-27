@@ -1942,7 +1942,15 @@ def _photo_vlm_ocr_geometry(
             if peers:
                 peer = min(peers, key=lambda other:
                            abs(corrected[other][1]-rect[1]))
-                rect[2] = max(rect[2], round(starts[peer][0]-width*.005))
+                right_limit = round(starts[peer][0]-width*.005)
+                if any(
+                    block.x0 < right_limit < block.x1-width*.01
+                    and block.x0 >= rect[0]
+                    and block.y0 < rect[3] and block.y1 > rect[1]
+                    for block in blocks
+                ):
+                    return unchanged()
+                rect[2] = right_limit
 
     def last_bottom(rect: List[int], left: bool) -> int:
         x, _, x2, raw_bottom = rect
@@ -2112,7 +2120,7 @@ def _replace_numberless_photo_page(
     new_boxes, photo_boundaries = _photo_vlm_ocr_geometry(
         page["image_path"], new_boxes, numbers,
     )
-    photo_crop_refined = any(
+    photo_crop_refined = any(photo_boundaries) or any(
         tuple(before) != tuple(after)
         for before, after in zip((p.bbox for p in proposals), new_boxes)
     )
@@ -3360,7 +3368,7 @@ def _upload_cropped_images(
                 # ENV flag default off → T1 점진 → T2.
                 photo_meta = q.get("meta_extra") or {}
                 photo_boundary = photo_meta.get("photo_column_boundary")
-                if (not photo_meta.get("photo_crop_refined") and
+                if (not photo_boundary and not photo_meta.get("photo_crop_refined") and
                         os.environ.get("MATCHUP_OVER_CROP_PADDING", "0") == "1"):
                     # 자가 검수 (2026-05-10 doc 615 num=1 보기 ㄴ 잘림) 결과 padding
                     # 부족 발견. pad_y_bottom h*7%→15% min 12→30px (~1줄) 강화.

@@ -135,10 +135,8 @@ def test_photo_geometry_keeps_line_ends_and_uses_same_boundary_for_ocr_and_png(
     assert left[1] < original[0][1]
 
     questions = [{"number": n, "page_index": 0, "image_path": str(path),
-                  "bbox": list(box), "meta_extra": {
-                      "photo_crop_refined": True,
-                      "photo_column_boundary": boundary,
-                  }}
+                  "bbox": list(box),
+                  "meta_extra": {"photo_column_boundary": boundary}}
                  for n, box, boundary in zip((1, 2), refined, boundaries)]
     pipeline._extract_texts(questions, "synthetic-photo")
     assert "왼쪽 선택지" in questions[0]["text"]
@@ -157,10 +155,12 @@ def test_photo_geometry_keeps_line_ends_and_uses_same_boundary_for_ocr_and_png(
         )
 
     monkeypatch.setattr(r2, "upload_fileobj_to_r2_storage", capture_upload)
+    monkeypatch.setenv("MATCHUP_OVER_CROP_PADDING", "1")
     try:
         pipeline._upload_cropped_images(questions, "1", "doc", "job")
         crop = uploaded[questions[0]["image_key"]]
         x, y, _, _ = left
+        assert crop.shape[:2] == (left[3], left[2])
         assert np.all(crop[200-y, 480-x] == 0)
         # This pixel is inside the rectangular bbox, beyond the divider.
         assert np.all(crop[300-y, 523-x] == 255)
@@ -191,6 +191,19 @@ def test_photo_geometry_no_divider_uses_opposite_label_and_ambiguous_lines_do_no
     )
     assert refined[0][0] + refined[0][2] == 515  # before Q2's printed label
     assert boundaries == [None, None]
+    oversized = [(60, 120, 500, 300), boxes[1]]
+    clipped, _ = pipeline._photo_vlm_ocr_geometry(
+        str(path), oversized, [1, 2],
+    )
+    assert clipped[0][0] + clipped[0][2] == 515
+    blocks.append(type("Block", (), dict(
+        text="left text crosses separator", x0=450, y0=190, x1=550, y1=220,
+    ))())
+    refused, _ = pipeline._photo_vlm_ocr_geometry(
+        str(path), oversized, [1, 2],
+    )
+    assert refused == oversized
+    blocks.pop()
 
     from apps.infrastructure.storage import r2
 
