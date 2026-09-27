@@ -1528,6 +1528,10 @@
             "readOnly": true,
             "type": "string"
           },
+          "lecture_current": {
+            "readOnly": true,
+            "type": "boolean"
+          },
           "lecture_title": {
             "readOnly": true,
             "type": "string"
@@ -1676,6 +1680,7 @@
           "id",
           "lecture_chip_label",
           "lecture_color",
+          "lecture_current",
           "lecture_title",
           "name_highlight_clinic_target",
           "planned_clinic_link_ids",

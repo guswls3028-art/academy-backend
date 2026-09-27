@@ -474,6 +474,7 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
         lecture = getattr(enrollment, "lecture", None) if enrollment else None
         return getattr(lecture, "chip_label", None) if lecture else None
 
+    @extend_schema_field(OpenApiTypes.BOOL)
     def get_lecture_current(self, obj):
         enrollment = getattr(obj, "enrollment", None)
         lecture = getattr(enrollment, "lecture", None) if enrollment else None
