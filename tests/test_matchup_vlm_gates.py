@@ -135,7 +135,10 @@ def test_photo_geometry_keeps_line_ends_and_uses_same_boundary_for_ocr_and_png(
     assert left[1] < original[0][1]
 
     questions = [{"number": n, "page_index": 0, "image_path": str(path),
-                  "bbox": list(box), "meta_extra": {"photo_column_boundary": boundary}}
+                  "bbox": list(box), "meta_extra": {
+                      "photo_crop_refined": True,
+                      "photo_column_boundary": boundary,
+                  }}
                  for n, box, boundary in zip((1, 2), refined, boundaries)]
     pipeline._extract_texts(questions, "synthetic-photo")
     assert "왼쪽 선택지" in questions[0]["text"]
@@ -188,6 +191,28 @@ def test_photo_geometry_no_divider_uses_opposite_label_and_ambiguous_lines_do_no
     )
     assert refined[0][0] + refined[0][2] == 515  # before Q2's printed label
     assert boundaries == [None, None]
+
+    from apps.infrastructure.storage import r2
+
+    uploads = {}
+    monkeypatch.setenv("MATCHUP_OVER_CROP_PADDING", "1")
+    monkeypatch.setattr(r2, "upload_fileobj_to_r2_storage", lambda *, fileobj, key,
+                        **_: uploads.setdefault(key, cv2.imdecode(
+                            np.frombuffer(fileobj.read(), dtype=np.uint8),
+                            cv2.IMREAD_COLOR,
+                        )))
+    question = {"number": 1, "page_index": 0, "image_path": str(path),
+                "bbox": list(refined[0]),
+                "meta_extra": {"photo_crop_refined": True}}
+    try:
+        pipeline._upload_cropped_images(
+            [question], "1", "doc", "job",
+            paper_type_summary={"primary": "clean_pdf_dual"},
+        )
+        crop = uploads[question["image_key"]]
+        assert crop.shape[:2] == (refined[0][3], refined[0][2])
+    finally:
+        Path(question["cropped_image_path"]).unlink(missing_ok=True)
 
     cv2.line(image, (500, 40), (530, 960), 0, 3)
     cv2.line(image, (600, 40), (600, 960), 0, 3)

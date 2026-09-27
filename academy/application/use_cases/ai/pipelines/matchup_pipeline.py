@@ -2112,6 +2112,10 @@ def _replace_numberless_photo_page(
     new_boxes, photo_boundaries = _photo_vlm_ocr_geometry(
         page["image_path"], new_boxes, numbers,
     )
+    photo_crop_refined = any(
+        tuple(before) != tuple(after)
+        for before, after in zip((p.bbox for p in proposals), new_boxes)
+    )
 
     replacements = [
         {
@@ -2123,6 +2127,7 @@ def _replace_numberless_photo_page(
                 "engine": "vlm",
                 "vlm_reason": "numberless_photo_replacement",
                 "replaced_auto_boxes": len(old),
+                **({"photo_crop_refined": True} if photo_crop_refined else {}),
                 **({"photo_column_boundary": photo_boundary}
                    if photo_boundary else {}),
             },
@@ -2720,7 +2725,8 @@ def _extract_texts(questions: List[Dict], job_id: str) -> None:
     for q in questions:
         if q.get("text"):
             continue
-        if (q.get("meta_extra") or {}).get("photo_column_boundary"):
+        photo_meta = q.get("meta_extra") or {}
+        if photo_meta.get("photo_crop_refined") or photo_meta.get("photo_column_boundary"):
             # A full-page fallback would mix both photographed columns.
             q.setdefault("meta_extra", {})["photo_ocr_empty"] = True
             continue
@@ -3352,8 +3358,9 @@ def _upload_cropped_images(
                 # 사용자 directive: '작게 잘라 손상 = 실패. 조금 크게 잘라 여백/출처 = 허용'.
                 # 추가 directive: '2분할 / 4분할 자료에서 다른 문항 침범 X'.
                 # ENV flag default off → T1 점진 → T2.
-                photo_boundary = (q.get("meta_extra") or {}).get("photo_column_boundary")
-                if (not photo_boundary and
+                photo_meta = q.get("meta_extra") or {}
+                photo_boundary = photo_meta.get("photo_column_boundary")
+                if (not photo_meta.get("photo_crop_refined") and
                         os.environ.get("MATCHUP_OVER_CROP_PADDING", "0") == "1"):
                     # 자가 검수 (2026-05-10 doc 615 num=1 보기 ㄴ 잘림) 결과 padding
                     # 부족 발견. pad_y_bottom h*7%→15% min 12→30px (~1줄) 강화.
