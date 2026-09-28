@@ -14,6 +14,7 @@ from apps.domains.results.models import (
     ResultItem,
 )
 from apps.domains.results.services.manual_subjective_score import (
+    is_consumed_manual_total_placeholder,
     latest_subjective_grading_facts,
 )
 from apps.support.omr.score_shape import get_exam_score_shape
@@ -197,6 +198,10 @@ def omr_subjective_completion_states(
             if latest_fact is not None
             else bool(attempt and _attempt_has_aggregate_subjective_score(attempt))
         )
+        if latest_fact is not None and is_consumed_manual_total_placeholder(
+            fact=latest_fact, attempt=attempt,
+        ):
+            aggregate_recorded = False
         states[int(result.id)] = OmrSubjectiveCompletionState(
             result_id=int(result.id),
             submission_id=int(submission.id) if submission is not None else None,

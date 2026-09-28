@@ -25,6 +25,9 @@ from apps.domains.results.models import (
     ScoreEditDraft,
 )
 from apps.domains.results.services.grading_service import grade_submission
+from apps.domains.results.services.manual_subjective_score import (
+    explicit_manual_total_score_for_result,
+)
 from apps.domains.results.services.manual_exam_grading import (
     apply_manual_grading,
     build_manual_grading_sheet,
@@ -1409,6 +1412,63 @@ class MixedOmrSubjectiveProjectionPostgresTests(TestCase):
                         result=canonical, question=self.essay,
                     ).exists())
 
+    def test_not_submitted_invalidates_total_override_until_explicit_total_resume(self):
+        _legacy, canonical = self._grade_objective_only()
+        self._patch_aggregate_score(95, view=AdminExamTotalScoreView)
+        override = ResultFact.objects.filter(
+            attempt_id=canonical.attempt_id, source="manual_total",
+        ).latest("id")
+        self._acquire_score_lease()
+        request = self.factory.patch(
+            "/results/admin/exams/total/",
+            {"meta_status": "NOT_SUBMITTED"},
+            format="json",
+            HTTP_X_SCORE_EDITOR_CLIENT="mixed-omr-browser",
+            HTTP_X_SCORE_SESSION_ID=str(self.session.id),
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.staff)
+        response = AdminExamTotalScoreView.as_view()(
+            request, exam_id=self.exam.id, enrollment_id=self.enrollment.id,
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        canonical.refresh_from_db()
+        attempt = ExamAttempt.objects.get(pk=canonical.attempt_id)
+        absence = ResultFact.objects.filter(
+            attempt=attempt, source="manual_not_submitted",
+        ).latest("id")
+        self.assertGreater(absence.id, override.id)
+        self.assertEqual(attempt.meta["status"], "NOT_SUBMITTED")
+        self.assertEqual(float(canonical.total_score), 0)
+        self.assertFalse(ResultItem.objects.filter(result=canonical).exists())
+        self.assertIsNone(explicit_manual_total_score_for_result(
+            result=canonical,
+            attempt=attempt,
+            score_shape=SimpleNamespace(question_kind_by_id={
+                self.choice.id: "choice", self.essay.id: "essay",
+            }),
+        ))
+        override.refresh_from_db()
+        self.assertEqual(float(override.score), 95)
+
+        # A teacher's new score explicitly resumes grading; automatic regrading
+        # must preserve that new input, not the cancelled 95-point total.
+        self._patch_aggregate_score(70, view=AdminExamTotalScoreView)
+        attempt.refresh_from_db()
+        self.assertNotEqual(attempt.meta.get("status"), "NOT_SUBMITTED")
+        for _ in range(2):
+            Submission.objects.filter(pk=self.submission.pk).update(
+                status=Submission.Status.ANSWERS_READY,
+            )
+            regraded = grade_submission(self.submission.id, force_regrade=True)
+            canonical.refresh_from_db()
+            self.assertEqual(canonical.attempt_id, attempt.id)
+            self.assertEqual(float(canonical.total_score), 70)
+            self.assertEqual(float(regraded.total_score), 70)
+            self.assertEqual(regraded.status, ExamResult.Status.FINAL)
+        absence.refresh_from_db()
+        self.assertEqual(absence.meta["status"], "NOT_SUBMITTED")
+
     def test_attached_zero_placeholder_is_replaced_but_later_explicit_zero_survives(self):
         attempt = ExamAttempt.objects.create(
             exam=self.exam, enrollment=self.enrollment, submission_id=0,
@@ -1430,10 +1490,15 @@ class MixedOmrSubjectiveProjectionPostgresTests(TestCase):
             Submission.objects.filter(pk=self.submission.pk).update(
                 status=Submission.Status.ANSWERS_READY,
             )
-            grade_submission(self.submission.id, force_regrade=True)
+            regraded = grade_submission(self.submission.id, force_regrade=True)
             canonical.refresh_from_db()
             self.assertEqual(canonical.attempt_id, attempt.id)
             self.assertEqual(float(canonical.total_score), 80)
+            regraded.refresh_from_db()
+            self.assertEqual(regraded.status, ExamResult.Status.DRAFT)
+            state = omr_subjective_completion_states([canonical])[canonical.id]
+            self.assertFalse(state.aggregate_score_recorded)
+            self.assertFalse(state.projection_ready)
         self._patch_aggregate_score(0, view=AdminExamTotalScoreView)
         Submission.objects.filter(pk=self.submission.pk).update(
             status=Submission.Status.ANSWERS_READY,
@@ -1443,6 +1508,37 @@ class MixedOmrSubjectiveProjectionPostgresTests(TestCase):
         self.assertEqual(regraded.status, ExamResult.Status.FINAL)
         self.assertEqual(float(canonical.total_score), 0)
         self.assertEqual(float(regraded.total_score), 0)
+        state = omr_subjective_completion_states([canonical])[canonical.id]
+        self.assertTrue(state.aggregate_score_recorded)
+        self.assertTrue(state.projection_ready)
+
+    def test_total_placeholder_completion_uses_strict_attachment_time_boundary(self):
+        _legacy, canonical = self._grade_objective_only()
+        self._patch_aggregate_score(0, view=AdminExamTotalScoreView)
+        attempt = ExamAttempt.objects.get(pk=canonical.attempt_id)
+        override = ResultFact.objects.filter(
+            attempt=attempt, source="manual_total",
+        ).latest("id")
+        for offset, consumed in ((1, True), (0, False), (-1, False)):
+            with self.subTest(attachment_offset_microseconds=offset):
+                attempt.meta["manual_score_placeholder"] = {
+                    "attached_submission_id": self.submission.id,
+                    "attached_at": (
+                        override.created_at + timedelta(microseconds=offset)
+                    ).isoformat(),
+                }
+                attempt.save(update_fields=["meta", "updated_at"])
+                total = explicit_manual_total_score_for_result(
+                    result=canonical,
+                    attempt=attempt,
+                    score_shape=SimpleNamespace(question_kind_by_id={
+                        self.choice.id: "choice", self.essay.id: "essay",
+                    }),
+                )
+                self.assertEqual(total, None if consumed else 0)
+                state = omr_subjective_completion_states([canonical])[canonical.id]
+                self.assertEqual(state.aggregate_score_recorded, not consumed)
+                self.assertEqual(state.projection_ready, not consumed)
 
     def test_latest_total_override_preserves_old_essay_item_without_using_its_score(self):
         _legacy, canonical = self._grade_objective_only()
