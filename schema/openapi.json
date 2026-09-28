@@ -38710,8 +38710,28 @@
       }
     },
     "/api/v1/messaging/provision-defaults/": {
+      "get": {
+        "description": "GET: 복원 가능 기본 문구. POST: 미설정 트리거 초기화/선택 복원.",
+        "operationId": "messaging_provision_defaults_retrieve",
+        "responses": {
+          "200": {
+            "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "messaging"
+        ]
+      },
       "post": {
-        "description": "POST: 기본 템플릿 + 자동발송 config 일괄 생성/리셋.\n- 기존 기본 템플릿(이름이 DEFAULT_TEMPLATES와 동일)은 누락된 config만 연결\n- 학원장이 편집한 제목/본문은 덮어쓰지 않음\n- 사용자가 새로 만든 템플릿은 그대로 유지",
+        "description": "GET: 복원 가능 기본 문구. POST: 미설정 트리거 초기화/선택 복원.",
         "operationId": "messaging_provision_defaults_create",
         "responses": {
           "200": {

@@ -16,9 +16,10 @@ class Migration(migrations.Migration):
                 ("created_at", models.DateTimeField(auto_now_add=True)),
                 ("tenant", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="suppressed_message_defaults", to="core.tenant")),
             ],
-        ),
-        migrations.AddConstraint(
-            model_name="defaulttemplatesuppression",
-            constraint=models.UniqueConstraint(fields=("tenant", "default_key"), name="uniq_suppressed_message_default"),
+            options={
+                "constraints": [
+                    models.UniqueConstraint(fields=("tenant", "default_key"), name="uniq_suppressed_message_default"),
+                ],
+            },
         ),
     ]
