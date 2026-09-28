@@ -112,6 +112,18 @@ reuse its useful findings rather than repeating the investigation. A worker that
 already occupies the one Web slot must execute its assignment directly, not spawn
 another Web worker to satisfy the same delegation preference.
 
+If a Web follow-up fails with `MissingTrustedCodexEnvironmentError` / missing
+`cwd` in trusted context, preserve its diff and stop sending the same request.
+The native bridge could not establish the current turn's trusted workspace;
+healthy browser/proxy checks and explicit model selection do not prove that
+workspace context is present. Create one fresh bounded worker through the native
+agent interface and verify a harmless file operation in the genuine workspace
+before continuing. Carry forward relevant paths and commits, not full history.
+Never forge environment-context text, weaken trusted-context validation, or
+restart a healthy shared launcher for this error. The 2026-09-29 failure was
+recovered through a fresh Web Pro worker's successful native read; the exact
+historical omission/compaction cause and any released bridge fix were not proven.
+
 For a launcher-backed installation, HTTP `/healthz` alone proves only the proxy
 listener. Recovery must also pass `doctor --json`, `browser check`, and one actual
 connector file/tool operation. Do not start standalone `serve` as a replacement
