@@ -16,7 +16,8 @@ from apps.domains.messaging.views.config_views import (
     ProvisionDefaultTemplatesView,
 )
 from apps.domains.messaging.views.template_views import (
-    MessageTemplateDetailView, MessageTemplateListCreateView,
+    MessageTemplateDetailView, MessageTemplateDuplicateView,
+    MessageTemplateListCreateView, MessageTemplateSetDefaultView,
 )
 
 
@@ -307,6 +308,21 @@ class ProvisionDefaultTemplatesTests(TestCase):
         self.assertEqual(hidden.status_code, 404)
         self.assertTrue(MessageTemplate.objects.filter(pk=system.id).exists())
         self.assertTrue(MessageTemplate.objects.filter(pk=foreign.id).exists())
+
+    def test_template_mutation_responses_keep_actor_delete_permission(self):
+        system = MessageTemplate.objects.create(
+            tenant=self.tenant, category="default", name="제공 문구", body="본문", is_system=True,
+        )
+        toggled = MessageTemplateSetDefaultView.as_view()(
+            self._request("post", f"/api/v1/messaging/templates/{system.id}/set-default/"), pk=system.id,
+        )
+        self.assertEqual(toggled.status_code, 200)
+        self.assertTrue(toggled.data["can_delete"])
+        duplicated = MessageTemplateDuplicateView.as_view()(
+            self._request("post", f"/api/v1/messaging/templates/{system.id}/duplicate/"), pk=system.id,
+        )
+        self.assertEqual(duplicated.status_code, 201)
+        self.assertTrue(duplicated.data["can_delete"])
 
     def test_restore_keys_validation_does_not_write(self):
         before = MessageTemplate.objects.filter(tenant=self.tenant).count()

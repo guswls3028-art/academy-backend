@@ -161,7 +161,10 @@ class MessageTemplateSetDefaultView(APIView):
         ).exclude(pk=pk).update(is_user_default=False)
         template.is_user_default = not template.is_user_default
         template.save(update_fields=["is_user_default"])
-        return Response(MessageTemplateSerializer(template).data)
+        return Response(MessageTemplateSerializer(
+            template,
+            context={"can_manage_system": can_manage_messaging_settings(request, request.tenant)},
+        ).data)
 
 
 class MessageTemplateDuplicateView(APIView):
@@ -190,7 +193,10 @@ class MessageTemplateDuplicateView(APIView):
             is_system=False,
             is_user_default=False,
         )
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(MessageTemplateSerializer(
+            serializer.instance,
+            context={"can_manage_system": can_manage_messaging_settings(request, request.tenant)},
+        ).data, status=status.HTTP_201_CREATED)
 
 
 class MessageTemplateSubmitReviewView(APIView):
