@@ -541,11 +541,14 @@ def test_photo_ocr_recovery_rejects_ambiguous_and_protected_inputs(tmp_path):
     rejected()
 
 
-def test_photo_ocr_recovery_reserves_numbers_for_following_pages(tmp_path, monkeypatch):
+@pytest.mark.parametrize("second_number, duplicate_skips", [(None, 0), (2, 1)])
+def test_photo_ocr_recovery_reserves_numbers_for_following_pages(
+    tmp_path, monkeypatch, second_number, duplicate_skips,
+):
     from academy.application.use_cases.ai.pipelines import matchup_pipeline as pipeline
 
     _, first, questions, blocks = _two_column_ocr_recovery_case(tmp_path)
-    second = dict(first, page_index=1, boxes=[[0, 936, 1920, 1624]], numbers=[None])
+    second = dict(first, page_index=1, boxes=[[0, 936, 1920, 1624]], numbers=[second_number])
     questions.append({"number": 2, "page_index": 1, "bbox": [0, 936, 1920, 1624],
                       "meta_extra": {"number_source": "counter_fallback"}})
     monkeypatch.setattr(pipeline, "_load_ocr_blocks_backend", lambda: lambda _: blocks)
@@ -562,7 +565,10 @@ def test_photo_ocr_recovery_reserves_numbers_for_following_pages(tmp_path, monke
         document_id=123, tenant_id=456,
     )
     assert stats["ocr_anchor_questions"] == 5
-    assert stats["duplicate_number_skips"] == 1
+    # Numberless photos reject the whole proposal; numbered underfilled pages
+    # still exercise the generic duplicate-number boundary.
+    assert stats["duplicate_number_skips"] == duplicate_skips
+    assert stats["relabeled_overlaps"] == 0
     assert [q["number"] for q in questions] == [16, 17, 18, 19, 20, 2]
 
 
@@ -1631,6 +1637,43 @@ def test_numberless_photo_rejects_unsafe_new_region(tmp_path, uncovered_box):
     assert matchup_pipeline._replace_numberless_photo_page(page, questions, result) == (0, 0)
     assert [q["number"] for q in questions] == [1, 2, 4, 5]
     assert page["boxes"] == old_boxes
+
+
+def test_rejected_photo_proposal_is_not_reapplied_by_generic_overlap(monkeypatch):
+    from copy import deepcopy
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+
+    page = {"page_index": 0, "image_path": "/missing/photo.jpg",
+            "boxes": [[0, 100, 1000, 500]], "numbers": [None],
+            "paper_type": "student_answer_photo"}
+    questions = [{"number": 1, "page_index": 0, "bbox": page["boxes"][0][:],
+                  "meta_extra": {"number_source": "counter_fallback"}}]
+    original = deepcopy(questions)
+    proposals = _bbox_result(problems=[
+        (12, 0, 100, 1000, 500), (13, 1100, 120, 400, 450),
+    ])
+    # The new area cannot be validated. The entire replacement must stay rejected.
+    assert matchup_pipeline._replace_numberless_photo_page(page, questions, proposals) == (0, 0)
+    monkeypatch.setenv("MATCHUP_VLM_AUTO_SPLIT", "1")
+    monkeypatch.setenv("MATCHUP_VLM_FILL_UNDERFILLED_PAGES", "1")
+    monkeypatch.setenv("MATCHUP_VLM_VISION_ADAPTER", "gemini_flash")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(matchup_pipeline, "_try_vlm_problem_bboxes",
+                        lambda *args, **kwargs: (proposals, "student_answer_photo"))
+    recoveries = []
+    monkeypatch.setattr(matchup_pipeline, "_recover_numberless_photo_from_ocr",
+                        lambda *args: (recoveries.append(True) or 0, 0))
+
+    stats = matchup_pipeline._augment_questions_with_vlm_for_underfilled_pages(
+        [page], questions, source_type="student_exam_photo", document_id=123, tenant_id=1,
+    )
+
+    assert recoveries == [True]
+    assert questions == original
+    assert page["numbers"] == [None]
+    assert page["boxes"] == [[0, 100, 1000, 500]]
+    assert stats["relabeled_overlaps"] == 0
+    assert stats["added"] == 0
 
 
 def test_numberless_photo_keeps_old_crops_when_new_region_cannot_be_checked():

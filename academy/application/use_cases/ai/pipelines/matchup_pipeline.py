@@ -2767,7 +2767,9 @@ def _augment_questions_with_vlm_for_underfilled_pages(
                 }
                 ocr_anchor_replaced_auto += recovered
                 ocr_anchor_questions += count
-                continue
+            # A rejected photo replacement cannot be partially reapplied by the
+            # generic overlap path. OCR recovery is the independent alternative.
+            continue
         existing_page_questions = [
             q for q in questions
             if q.get("page_index") == page_idx and q.get("bbox")
