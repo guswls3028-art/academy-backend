@@ -365,3 +365,70 @@ class AdminClinicMissingExamWaiverTests(TestCase):
         )
         self.assertEqual(outcome.code, "NOT_FOUND")
         self.assertFalse(self.ClinicLink.objects.exists())
+
+
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
+from time import monotonic, sleep
+from django.db import close_old_connections, connection, transaction
+from django.test import TransactionTestCase, skipUnlessDBFeature
+
+
+@skipUnlessDBFeature("has_select_for_update_nowait")
+class ClinicWaiverLockOrderPostgresTests(TransactionTestCase):
+    setUp = AdminClinicMissingExamWaiverTests.setUp
+    _request = AdminClinicMissingExamWaiverTests._request
+
+    def test_waiting_waiver_does_not_lock_result_before_exam(self):
+        ready = Event()
+        worker_pid = []
+
+        def waive():
+            close_old_connections()
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT pg_backend_pid()")
+                    worker_pid.append(cursor.fetchone()[0])
+                ready.set()
+                response = AdminClinicMissingExamWaiveView.as_view()(self._request(
+                    "post", "/results/admin/clinic-targets/waive-missing/", {
+                        "session_id": self.session.id,
+                        "enrollment_id": self.enrollment.id,
+                        "exam_id": self.exam.id,
+                        "memo": "동시 채점과 면제",
+                    },
+                ))
+                return response.status_code
+            finally:
+                close_old_connections()
+
+        lock_error = None
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            try:
+                with transaction.atomic():
+                    self.Exam.objects.select_for_update().get(pk=self.exam.pk)
+                    with connection.cursor() as cursor:
+                        cursor.execute("SELECT pg_backend_pid()")
+                        owner_pid = cursor.fetchone()[0]
+                    future = pool.submit(waive)
+                    self.assertTrue(ready.wait(5))
+                    deadline = monotonic() + 5
+                    while True:
+                        with connection.cursor() as cursor:
+                            cursor.execute("SELECT pg_blocking_pids(%s)", [worker_pid[0]])
+                            blockers = cursor.fetchone()[0]
+                        if owner_pid in blockers:
+                            break
+                        self.assertLess(monotonic(), deadline, "Waiver did not wait on the exam")
+                        sleep(0.02)
+                    # A grader holding Exam must still be able to lock Result.
+                    # Otherwise the waiting waiver has inverted the lock order.
+                    Result.objects.select_for_update(nowait=True).get(
+                        target_type="exam", target_id=self.exam.id,
+                        enrollment=self.enrollment,
+                    )
+            except Exception as error:
+                lock_error = error
+            status = future.result(timeout=10)
+        self.assertIsNone(lock_error, type(lock_error).__name__)
+        self.assertEqual(status, 201)

@@ -45,6 +45,7 @@ from academy.adapters.db.django.repositories_clinic_targets import (
     explicit_not_submitted_exam_results,
 )
 from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.support.results.admin_exam_dependencies import lock_regular_active_exam_for_tenant
 from apps.domains.results.services.clinic_target_service import ClinicTargetService
 from apps.domains.results.serializers.admin_clinic_target import AdminClinicTargetSerializer
 from apps.support.results.clinic_target_write_dependencies import (
@@ -126,6 +127,9 @@ class AdminClinicMissingExamWaiveView(APIView):
         payload = WaiveMissingExamSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
         data = payload.validated_data
+
+        # Match the grading and target-replacement lock order: Exam before Result.
+        lock_regular_active_exam_for_tenant(exam_id=data["exam_id"], tenant=tenant)
 
         result = (
             explicit_not_submitted_exam_results(tenant=tenant)
