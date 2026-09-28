@@ -165,6 +165,18 @@ class ProvisionDefaultTemplatesTests(TestCase):
             tenant=self.tenant, default_key="freeform_general",
         ).exists())
 
+    def test_selected_restore_creates_only_requested_default(self):
+        provision = "/api/v1/messaging/provision-defaults/"
+        response = ProvisionDefaultTemplatesView.as_view()(
+            self._request("post", provision, {"restore_keys": ["clinic_reminder"]})
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["created_templates"], 1)
+        self.assertEqual(response.data["created_configs"], 1)
+        expected_name = get_default_templates(self.tenant.name)["clinic_reminder"]["name"]
+        self.assertEqual(list(MessageTemplate.objects.filter(tenant=self.tenant).values_list("name", flat=True)), [expected_name])
+        self.assertEqual(list(AutoSendConfig.objects.filter(tenant=self.tenant).values_list("trigger", flat=True)), ["clinic_reminder"])
+
     def test_linked_template_requires_reassignment_and_keeps_custom_selection(self):
         provision = "/api/v1/messaging/provision-defaults/"
         ProvisionDefaultTemplatesView.as_view()(self._request("post", provision))
@@ -182,8 +194,15 @@ class ProvisionDefaultTemplatesTests(TestCase):
             tenant=self.tenant, category="clinic", name="직접 쓴 클리닉 안내",
             body="사용자 본문", is_system=False,
         )
-        config.template = custom
-        config.save(update_fields=["template"])
+        reassigned = AutoSendConfigView.as_view()(
+            self._request("patch", "/api/v1/messaging/auto-send/", {
+                "configs": [{"trigger": "clinic_reminder", "template_id": custom.id, "enabled": False}],
+            })
+        )
+        self.assertEqual(reassigned.status_code, 200)
+        config.refresh_from_db()
+        self.assertEqual(config.template_id, custom.id)
+        self.assertFalse(config.enabled)
         deleted = MessageTemplateDetailView.as_view()(
             self._request("delete", f"/api/v1/messaging/templates/{original.id}/"),
             pk=original.id,
@@ -256,6 +275,38 @@ class ProvisionDefaultTemplatesTests(TestCase):
         )
         self.assertEqual(blocked.status_code, 409)
         self.assertTrue(MessageTemplate.objects.filter(pk=provider.id).exists())
+
+    def test_teacher_cannot_delete_system_default_and_other_tenant_is_hidden(self):
+        system = MessageTemplate.objects.create(
+            tenant=self.tenant, category="default", name="제공 문구", body="본문", is_system=True,
+        )
+        other_tenant = Tenant.objects.create(code="msg-provision-other", name="Other", is_active=True)
+        foreign = MessageTemplate.objects.create(
+            tenant=other_tenant, category="default", name="타 학원 문구", body="본문",
+        )
+        teacher = User.objects.create_user(
+            username="msg-provision-teacher", password="test1234", tenant=self.tenant,
+        )
+        TenantMembership.ensure_active(tenant=self.tenant, user=teacher, role="teacher")
+        self.user = teacher
+        listed = MessageTemplateListCreateView.as_view()(
+            self._request("get", "/api/v1/messaging/templates/")
+        )
+        self.assertEqual(listed.status_code, 200)
+        by_id = {item["id"]: item for item in listed.data}
+        self.assertFalse(by_id[system.id]["can_delete"])
+        self.assertEqual(by_id[system.id]["delete_block_reason"], "system_permission")
+        self.assertNotIn(foreign.id, by_id)
+        denied = MessageTemplateDetailView.as_view()(
+            self._request("delete", f"/api/v1/messaging/templates/{system.id}/"), pk=system.id,
+        )
+        self.assertEqual(denied.status_code, 403)
+        hidden = MessageTemplateDetailView.as_view()(
+            self._request("delete", f"/api/v1/messaging/templates/{foreign.id}/"), pk=foreign.id,
+        )
+        self.assertEqual(hidden.status_code, 404)
+        self.assertTrue(MessageTemplate.objects.filter(pk=system.id).exists())
+        self.assertTrue(MessageTemplate.objects.filter(pk=foreign.id).exists())
 
     def test_restore_keys_validation_does_not_write(self):
         before = MessageTemplate.objects.filter(tenant=self.tenant).count()

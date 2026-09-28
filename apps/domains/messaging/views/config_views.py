@@ -104,6 +104,8 @@ class AutoSendConfigView(APIView):
                 {"detail": "configs는 배열이어야 합니다."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        # Serialize selection changes with template deletion and default restore.
+        Tenant.objects.select_for_update().get(pk=tenant.pk)
         from apps.domains.messaging.policy import get_trigger_implementation_status
 
         def reject(payload):
@@ -333,6 +335,8 @@ class ProvisionDefaultTemplatesView(APIView):
         valid_triggers = {choice[0] for choice in AutoSendConfig.Trigger.choices}
 
         for trigger, defaults in templates.items():
+            if restore_keys and trigger not in restore_keys:
+                continue
             if trigger in suppressed:
                 continue
             tpl_name = defaults["name"]
