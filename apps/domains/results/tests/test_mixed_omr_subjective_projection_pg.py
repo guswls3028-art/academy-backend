@@ -25,6 +25,9 @@ from apps.domains.results.models import (
     ScoreEditDraft,
 )
 from apps.domains.results.services.grading_service import grade_submission
+from apps.domains.results.services.sync_result_from_submission import (
+    sync_result_from_exam_submission,
+)
 from apps.domains.results.services.manual_subjective_score import (
     explicit_manual_total_score_for_result,
 )
@@ -1412,12 +1415,7 @@ class MixedOmrSubjectiveProjectionPostgresTests(TestCase):
                         result=canonical, question=self.essay,
                     ).exists())
 
-    def test_not_submitted_invalidates_total_override_until_explicit_total_resume(self):
-        _legacy, canonical = self._grade_objective_only()
-        self._patch_aggregate_score(95, view=AdminExamTotalScoreView)
-        override = ResultFact.objects.filter(
-            attempt_id=canonical.attempt_id, source="manual_total",
-        ).latest("id")
+    def _mark_not_submitted(self):
         self._acquire_score_lease()
         request = self.factory.patch(
             "/results/admin/exams/total/",
@@ -1432,6 +1430,35 @@ class MixedOmrSubjectiveProjectionPostgresTests(TestCase):
             request, exam_id=self.exam.id, enrollment_id=self.enrollment.id,
         )
         self.assertEqual(response.status_code, 200, response.data)
+
+    def _exam_grading_snapshot(self, canonical):
+        return {
+            "result": Result.objects.filter(pk=canonical.pk).values().get(),
+            "items": list(ResultItem.objects.filter(result=canonical).order_by("id").values()),
+            "facts": list(ResultFact.objects.filter(
+                target_type="exam", target_id=self.exam.id, enrollment=self.enrollment,
+            ).order_by("id").values()),
+            "attempts": list(ExamAttempt.objects.filter(
+                exam=self.exam, enrollment=self.enrollment,
+            ).order_by("id").values()),
+            "legacy": list(ExamResult.objects.filter(
+                exam=self.exam, submission__enrollment=self.enrollment,
+            ).order_by("id").values()),
+            "progress": list(SessionProgress.objects.filter(
+                enrollment=self.enrollment,
+            ).order_by("id").values()),
+            "clinic": list(ClinicLink.objects.filter(
+                enrollment=self.enrollment,
+            ).order_by("id").values()),
+        }
+
+    def test_not_submitted_invalidates_total_override_until_explicit_total_resume(self):
+        _legacy, canonical = self._grade_objective_only()
+        self._patch_aggregate_score(95, view=AdminExamTotalScoreView)
+        override = ResultFact.objects.filter(
+            attempt_id=canonical.attempt_id, source="manual_total",
+        ).latest("id")
+        self._mark_not_submitted()
         canonical.refresh_from_db()
         attempt = ExamAttempt.objects.get(pk=canonical.attempt_id)
         absence = ResultFact.objects.filter(
@@ -1451,6 +1478,30 @@ class MixedOmrSubjectiveProjectionPostgresTests(TestCase):
         override.refresh_from_db()
         self.assertEqual(float(override.score), 95)
 
+        # Exercise the ordinary grading entry before the explicit resume.
+        # Repeated delivery must retain scores, items, audit and projections.
+        absent_snapshot = self._exam_grading_snapshot(canonical)
+        for _ in range(2):
+            retained = grade_submission(self.submission.id, force_regrade=True)
+            self.assertEqual(retained.pk, _legacy.pk)
+            self.assertEqual(self._exam_grading_snapshot(canonical), absent_snapshot)
+            canonical.refresh_from_db()
+            attempt.refresh_from_db()
+            self.assertEqual(float(canonical.total_score), 0)
+            self.assertEqual(float(canonical.objective_score), 0)
+            self.assertEqual(attempt.meta["status"], "NOT_SUBMITTED")
+            self.assertFalse(ResultItem.objects.filter(result=canonical).exists())
+
+        # A late callback may already have advanced to ANSWERS_READY. It must
+        # finish its normal lifecycle without resurrecting the cancelled score.
+        Submission.objects.filter(pk=self.submission.pk).update(
+            status=Submission.Status.ANSWERS_READY,
+        )
+        grade_submission(self.submission.id, force_regrade=True)
+        self.submission.refresh_from_db()
+        self.assertEqual(self.submission.status, Submission.Status.DONE)
+        self.assertEqual(self._exam_grading_snapshot(canonical), absent_snapshot)
+
         # A teacher's new score explicitly resumes grading; automatic regrading
         # must preserve that new input, not the cancelled 95-point total.
         self._patch_aggregate_score(70, view=AdminExamTotalScoreView)
@@ -1468,6 +1519,59 @@ class MixedOmrSubjectiveProjectionPostgresTests(TestCase):
             self.assertEqual(regraded.status, ExamResult.Status.FINAL)
         absence.refresh_from_db()
         self.assertEqual(absence.meta["status"], "NOT_SUBMITTED")
+
+    def test_direct_sync_preserves_not_submitted_result_without_writes(self):
+        _legacy, canonical = self._grade_objective_only()
+        self._patch_aggregate_score(95, view=AdminExamTotalScoreView)
+        self._mark_not_submitted()
+        canonical.refresh_from_db()
+        absent_snapshot = self._exam_grading_snapshot(canonical)
+
+        for _ in range(2):
+            synced = sync_result_from_exam_submission(self.submission.id)
+            self.assertEqual(synced.pk, canonical.pk)
+            self.assertEqual(self._exam_grading_snapshot(canonical), absent_snapshot)
+            self.assertEqual(float(synced.total_score), 0)
+            self.assertEqual(float(synced.objective_score), 0)
+            self.assertEqual(synced.attempt.meta["status"], "NOT_SUBMITTED")
+            self.assertFalse(ResultItem.objects.filter(result=synced).exists())
+
+    def test_new_attempt_after_absence_survives_old_submission_regrade(self):
+        _legacy, canonical = self._grade_objective_only()
+        self._patch_aggregate_score(95, view=AdminExamTotalScoreView)
+        self._mark_not_submitted()
+        canonical.refresh_from_db()
+        absent_attempt_id = canonical.attempt_id
+        self.exam.allow_retake = True
+        self.exam.max_attempts = 2
+        self.exam.save(update_fields=["allow_retake", "max_attempts"])
+
+        new_submission = self._new_omr_submission()
+        new_legacy = grade_submission(new_submission.id)
+        canonical.refresh_from_db()
+        self.assertNotEqual(canonical.attempt_id, absent_attempt_id)
+        self.assertEqual(float(canonical.total_score), 80)
+        self.assertEqual(new_legacy.status, ExamResult.Status.DRAFT)
+        self.assertNotEqual(canonical.attempt.meta.get("status"), "NOT_SUBMITTED")
+        self.assertTrue(ResultItem.objects.filter(result=canonical).exists())
+
+        self._patch_aggregate_score(70, view=AdminExamTotalScoreView)
+        current_snapshot = self._exam_grading_snapshot(canonical)
+        grade_submission(self.submission.id, force_regrade=True)
+        synced = sync_result_from_exam_submission(self.submission.id)
+        self.assertEqual(synced.attempt_id, canonical.attempt_id)
+        self.assertEqual(self._exam_grading_snapshot(canonical), current_snapshot)
+
+        Submission.objects.filter(pk=new_submission.pk).update(
+            status=Submission.Status.ANSWERS_READY,
+        )
+        regraded = grade_submission(new_submission.id, force_regrade=True)
+        canonical.refresh_from_db()
+        self.assertEqual(float(canonical.total_score), 70)
+        self.assertEqual(float(regraded.total_score), 70)
+        self.assertEqual(regraded.status, ExamResult.Status.FINAL)
+        absent_attempt = ExamAttempt.objects.get(pk=absent_attempt_id)
+        self.assertEqual(absent_attempt.meta["status"], "NOT_SUBMITTED")
 
     def test_attached_zero_placeholder_is_replaced_but_later_explicit_zero_survives(self):
         attempt = ExamAttempt.objects.create(

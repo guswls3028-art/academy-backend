@@ -649,6 +649,13 @@ Ymath의 `Program.feature_flags.assessment_status_display=wrong_completion`은
   확정이 동시에 실행되면 먼저 잠금을
   얻은 작업 뒤에 두 번째 작업이 최신 상태를 다시 읽어 최종 결시 상태를 보존한다.
 
+  개별 `grade_submission`과 직접 결과 동기화도 같은 잠금·결시 판정을 사용한다.
+  늦게 도착한 자동 채점은 결시 점수·문항·감사·진도·클리닉을 다시 만들지 않는다.
+  이미 `ANSWERS_READY`에 들어온 접수는 기존 lifecycle을 통해 `DONE`으로 닫아
+  처리 중으로 남기지 않는다. 기존 완료 접수의 반복 호출은 저장 결과를 유지한다.
+  명시적인 새 점수 입력이나 새 응시는 정상적으로 진행되며, 과거 결시 접수의
+  재전달이 새 대표 성적을 덮어쓰지 않는다. 이 변경은 기존 데이터를 일괄 수정하지 않는다.
+
 AI OMR 성공 콜백은 인식 fact를 저장한 뒤 같은 worker 프로세스에서 채점과
 `Result` 동기화를 닫는다. 이 동기화는 문항별 최신 `ResultItem`과 append-only
 `ResultFact`를 같은 transaction에서 함께 저장하므로 점수 목록과 문항 분석이

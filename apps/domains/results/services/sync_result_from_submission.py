@@ -41,6 +41,8 @@ from apps.support.exams.numeric_short_answer import (
 from apps.support.results.grading_dependencies import (
     get_exam_for_result_sync,
     get_submission_for_result_sync,
+    lock_exam_submission_regrade_state,
+    lock_score_edit_scope_before_submission_grading,
 )
 
 
@@ -160,12 +162,21 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
     if submission.target_type != "exam":
         return None
 
+    lock_score_edit_scope_before_submission_grading(submission=submission)
+    submission, locked_result, not_submitted = lock_exam_submission_regrade_state(
+        submission_id=int(submission.id),
+        exam_id=int(submission.target_id),
+        tenant_id=int(submission.tenant_id),
+    )
     exam = get_exam_for_result_sync(exam_id=int(submission.target_id))
     enrollment_id = getattr(submission, "enrollment_id", None)
     if not enrollment_id:
         return None
     enrollment = validate_exam_submission_scope(submission=submission, exam=exam)
     enrollment_id = int(enrollment.id)
+
+    if not_submitted:
+        return locked_result
 
     try:
         sheet, answer_key = GradingContractGuard.validate_exam_for_grading(exam)
