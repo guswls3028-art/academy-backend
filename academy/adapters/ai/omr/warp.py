@@ -21,6 +21,8 @@ import numpy as np  # type: ignore
 from academy.adapters.ai.omr.marker_detector import (
     detect_markers,
 )
+from academy.adapters.ai.omr.anchor_detector import detect_filled_anchor_square
+from academy.adapters.ai.omr.meta_px import build_page_scale_from_meta
 
 logger = logging.getLogger(__name__)
 
@@ -423,6 +425,33 @@ def _try_rotated_marker_homography(
     return best
 
 
+def _local_anchor_support(image_bgr: np.ndarray, meta: Dict[str, Any]) -> int:
+    """Count printed anchors agreeing on one translation, independent of marks."""
+    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    scale = build_page_scale_from_meta(
+        meta=meta, image_size_px=(gray.shape[1], gray.shape[0])
+    )
+    groups = [meta.get("identifier") or {}, *meta.get("columns", [])]
+    offsets = []
+    detected = set()
+    for group in groups:
+        for anchor in (group.get("anchors") or {}).values():
+            center = anchor.get("center", anchor)
+            x, y = scale.mm_to_px_point(float(center["x"]), float(center["y"]))
+            point = detect_filled_anchor_square(
+                gray=gray, expected_x=x, expected_y=y, scale=scale
+            )
+            if point is not None and point not in detected:
+                detected.add(point)
+                offsets.append((point[0] - x, point[1] - y))
+    if not offsets:
+        return 0
+    shifts = np.asarray(offsets)
+    median = np.median(shifts, axis=0)
+    tolerance = np.array([scale.mm_to_px_len_x(2), scale.mm_to_px_len_y(2)])
+    return int(np.count_nonzero(np.all(np.abs(shifts - median) <= tolerance, axis=1)))
+
+
 def _try_rotation_only(
     image_bgr: np.ndarray,
     meta: Dict[str, Any],
@@ -460,12 +489,22 @@ def _try_rotation_only(
     if h <= w:
         return None
 
-    # 최후: portrait → landscape 단순 회전 + resize. 방향을 알 수 없는 경우라
-    # 기존 운영 동작과 동일하게 90° CW를 우선한다.
+    # Missing corner markers do not establish which way a portrait scan faces.
+    # Compare the printed local anchors in both landscape orientations. Require
+    # three coherent anchors and a clear margin; unknown/tied scans retain CW.
     correction = 90
     rotated = rotate_cardinal_cw(image_bgr, correction)
     resized = cv2.resize(rotated, (out_w, out_h), interpolation=cv2.INTER_LINEAR)
-    logger.info("warp: rotation_only (portrait -> landscape, no marker/contour)")
+    opposite = cv2.rotate(resized, cv2.ROTATE_180)
+    cw_support = _local_anchor_support(resized, meta)
+    ccw_support = _local_anchor_support(opposite, meta)
+    if ccw_support >= 3 and ccw_support >= cw_support + 2:
+        correction = 270
+        resized = opposite
+    logger.info(
+        "warp: rotation_only correction=%d local_anchors_cw=%d local_anchors_ccw=%d",
+        correction, cw_support, ccw_support,
+    )
     return AlignmentResult(
         image=resized,
         success=True,
