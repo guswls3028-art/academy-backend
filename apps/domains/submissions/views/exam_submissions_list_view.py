@@ -136,6 +136,13 @@ class ExamSubmissionsListView(APIView):
                     "enrollment_id": int(enrollment_id) if enrollment_id else 0,
                     "student_name": _extract_name_from_enrollment(enrollment),
                     "status": str(getattr(s, "status", "")),
+                    "archived": bool(
+                        s.status == Submission.Status.SUPERSEDED
+                        or (
+                            s.status == Submission.Status.FAILED
+                            and s.error_message.startswith("discarded:")
+                        )
+                    ),
                     "source": str(getattr(s, "source", "")),
                     "score": score_map.get(int(s.id)),
                     "created_at": s.created_at.isoformat(),
