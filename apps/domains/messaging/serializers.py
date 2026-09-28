@@ -14,6 +14,16 @@ from apps.domains.messaging.models import (
 )
 
 
+def template_delete_block_reason(template, *, can_manage_system=False):
+    if template.solapi_template_id or template.solapi_status:
+        return "provider_bound"
+    if bool(template.auto_send_configs.all()):
+        return "auto_send_linked"
+    if template.is_system and not can_manage_system:
+        return "system_permission"
+    return ""
+
+
 class MessagingInfoSerializer(serializers.ModelSerializer):
     """GET/PATCH 응답: 테넌트 메시징 정보"""
 
@@ -113,6 +123,8 @@ class MessageTemplateSerializer(serializers.ModelSerializer):
     has_content_var = serializers.SerializerMethodField()
     alimtalk_envelope_type = serializers.SerializerMethodField()
     alimtalk_readiness = serializers.SerializerMethodField()
+    can_delete = serializers.SerializerMethodField()
+    delete_block_reason = serializers.SerializerMethodField()
 
     class Meta:
         model = MessageTemplate
@@ -129,6 +141,8 @@ class MessageTemplateSerializer(serializers.ModelSerializer):
             "has_content_var",
             "alimtalk_envelope_type",
             "alimtalk_readiness",
+            "can_delete",
+            "delete_block_reason",
             "created_at",
             "updated_at",
         ]
@@ -138,9 +152,19 @@ class MessageTemplateSerializer(serializers.ModelSerializer):
             "solapi_template_id",
             "solapi_status",
             "has_content_var",
+            "can_delete",
+            "delete_block_reason",
             "created_at",
             "updated_at",
         ]
+
+    def get_delete_block_reason(self, obj) -> str:
+        return template_delete_block_reason(
+            obj, can_manage_system=bool(self.context.get("can_manage_system")),
+        )
+
+    def get_can_delete(self, obj) -> bool:
+        return not self.get_delete_block_reason(obj)
 
     @staticmethod
     def _alimtalk_envelope(obj) -> tuple[str, str]:

@@ -173,7 +173,7 @@ def create_synthetic_omr(meta, marks=None):
 
     for q in meta["questions"]:
         q_num = q["question_number"]
-        for c in q["choices"]:
+        for c in q.get("choices", []):  # Essay rows have no printed bubbles.
             cx = int(round(float(c["center"]["x"]) * sx))
             cy = int(round(float(c["center"]["y"]) * sy))
             rx = int(round(float(c["radius_x"]) * sx))

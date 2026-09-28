@@ -437,5 +437,18 @@ def get_default_templates(academy_name: str) -> dict[str, dict]:
     return result
 
 
+def default_template_key_for_name(academy_name: str, name: str) -> str:
+    """Identify a provided content template, including three older freeform names."""
+    for key, definition in get_default_templates(academy_name).items():
+        if definition["name"] == name:
+            return key
+    legacy_names = {
+        f"[{academy_name}] 학원 안내": "freeform_general",
+        f"[{academy_name}] 결제 안내": "freeform_payment",
+        f"[{academy_name}] 클리닉 안내": "freeform_clinic",
+    }
+    return legacy_names.get(name, "")
+
+
 # 하위 호환: academy_name 없이 import 하는 코드용 (플레이스홀더 그대로 유지)
 DEFAULT_TEMPLATES = _TEMPLATE_DEFINITIONS
