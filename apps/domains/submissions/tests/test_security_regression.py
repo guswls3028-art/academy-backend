@@ -876,6 +876,36 @@ class TestC2AdminInboxesGuard(_SecurityFixtureMixin, TestCase):
                           user=self.student_user, exam_id=self.exam.id)
         self.assertEqual(resp.status_code, 403)
 
+    def test_exam_submission_archive_marker_preserves_history_and_active_failures(self):
+        expected = {}
+        for status, error, archived in (
+            (Submission.Status.FAILED, "recognition failed", False),
+            (Submission.Status.FAILED, "discarded:incident_recovered", True),
+            (Submission.Status.SUPERSEDED, "", True),
+            (Submission.Status.NEEDS_IDENTIFICATION, "discarded:old_attempt", False),
+            (Submission.Status.DONE, "", False),
+        ):
+            row = Submission.objects.create(
+                tenant=self.tenant, user=self.teacher, enrollment=self.enrollment,
+                target_type=Submission.TargetType.EXAM, target_id=self.exam.id,
+                source=Submission.Source.OMR_SCAN, status=status, error_message=error,
+                meta={"manual_review": {"required": True}},
+            )
+            expected[row.id] = archived
+        view = ExamSubmissionsListView.as_view()
+        path = f"/api/v1/submissions/submissions/exams/{self.exam.id}/"
+        response = self._call(lambda: view, "get", path, user=self.teacher, exam_id=self.exam.id)
+        self.assertEqual(response.status_code, 200)
+        actual = {row["id"]: row for row in response.data}
+        for sid, archived in expected.items():
+            self.assertIs(actual[sid]["archived"], archived)
+            self.assertTrue(actual[sid]["manual_review_required"])
+        issues = self._call(lambda: view, "get", path + "?review_issues=1", user=self.teacher, exam_id=self.exam.id)
+        issue_ids = {row["id"] for row in issues.data["items"]}
+        self.assertTrue(all(row["archived"] is False for row in issues.data["items"]))
+        for sid, archived in expected.items():
+            self.assertEqual(sid in issue_ids, not archived)
+
     def test_exam_review_issues_find_old_unidentified_scan_beyond_latest_200(self):
         old = Submission.objects.create(
             tenant=self.tenant, user=self.teacher, enrollment=None,

@@ -4,6 +4,8 @@ import io
 from dataclasses import dataclass
 from types import SimpleNamespace
 
+import pytest
+
 from academy.application.use_cases.tools.generate_ppt import (
     _add_segmented_pdf_slides_to_composer,
     _build_pdf_question_plan,
@@ -28,6 +30,9 @@ class _FakeDoc:
     def page_count(self) -> int:
         return len(self._pages)
 
+    def is_blank_page(self, _page_index: int) -> bool:
+        return False  # An absent text layer alone does not establish blankness.
+
     def extract_text_blocks(self, page_index: int) -> list[_Block]:
         return self._pages[page_index]
 
@@ -40,6 +45,41 @@ def _question_text(n: int) -> str:
         f"{n}. 다음 중 옳은 것은? ① 보기 하나 ② 보기 둘 ③ 보기 셋 "
         "풀이 과정과 자료를 충분히 포함한 문항 본문입니다."
     )
+
+
+@pytest.mark.parametrize("middle_content", ["blank", "image", "vector", "annotation"])
+def test_blank_separator_preserves_question_crops_but_visible_textless_pages_are_kept(tmp_path, middle_content):
+    import fitz
+    from PIL import Image
+    from pptx import Presentation
+
+    from academy.application.use_cases.tools.generate_ppt import GeneratePptFromPdfUseCase
+
+    source = tmp_path / "questions-with-separator.pdf"
+    with fitz.open() as document:
+        for page_index in range(3):
+            page = document.new_page(width=595, height=842)
+            if page_index != 1:
+                number = 1 if page_index == 0 else 2
+                page.insert_text((40, 80), f"{number}. 다음 중 옳은 것은?", fontname="korea")
+                page.insert_text((40, 105), "① 보기 하나 ② 보기 둘 ③ 보기 셋 ④ 보기 넷", fontname="korea")
+            elif middle_content == "image":
+                image = io.BytesIO()
+                Image.new("RGB", (30, 30), "black").save(image, format="PNG")
+                page.insert_image(fitz.Rect(40, 80, 140, 180), stream=image.getvalue())
+            elif middle_content == "vector":
+                page.draw_rect(fitz.Rect(40, 80, 140, 180), color=(0, 0, 0))
+            elif middle_content == "annotation":
+                page.add_rect_annot(fitz.Rect(40, 80, 140, 180)).update()
+        document.save(source)
+
+    result = GeneratePptFromPdfUseCase().execute(str(source))
+    expected_count = 2 if middle_content == "blank" else 3
+    assert result.mode == ("question" if middle_content == "blank" else "page")
+    assert result.slide_count == expected_count
+    presentation = Presentation(io.BytesIO(result.pptx_bytes))
+    assert len(presentation.slides) == expected_count
+    assert all(len(slide.shapes) == 1 for slide in presentation.slides)
 
 
 def test_ppt_pdf_plan_uses_whole_page_for_scan_pdf_without_text():

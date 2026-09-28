@@ -329,6 +329,16 @@ event로 다시 연결하고 `omr_scan_replacements`에 이전/신규 submission
 남긴다. 그 뒤 이전 DONE 제출을 SUPERSEDED로 전환하고 강제 재채점한다. 실제 재시험 정책과
 최대 응시 횟수는 이 좁은 교체 경로에 소비되지 않는다.
 
+시험 제출 목록의 각 행은 읽기 전용 `archived` boolean을 제공한다. `SUPERSEDED` 또는
+`FAILED`이면서 기존 공식 폐기 표식인 `error_message`의 `discarded:` 접두사가 있는 행만
+true다. 일반 인식 실패와 식별 대기, 다시 처리 중인 접수는 false이며, 과거 review flag나
+discard metadata만으로 활성 접수를 숨기지 않는다. 일반 목록은 이력 행을 그대로 반환하고
+`review_issues=1`은 기존과 같이 비활성 행을 제외한다. 클라이언트는 이력을 보존하되 현재
+검토 건수와 편집 대상에서 `archived=true`를 제외할 수 있다. 새 필드는 tenant/교직원
+권한, 원본·답안·검토 기록과 점수, 기존 필드의 의미를 변경하지 않는다. 필드가 없는 구버전
+응답은 활성 상태로 취급해 rolling 배포 중 실제 실패를 숨기지 않는다. 일반 실패/폐기/
+대체/재처리 구분과 이력 보존은 `test_security_regression.py`에서 검증한다.
+
 ## 문항 구성
 
 | 문항 수 | 컬럼 분할 |
