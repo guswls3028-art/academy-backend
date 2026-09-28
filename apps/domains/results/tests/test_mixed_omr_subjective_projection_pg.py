@@ -1552,7 +1552,7 @@ class MixedOmrSubjectiveProjectionPostgresTests(TestCase):
         self.assertNotEqual(canonical.attempt_id, absent_attempt_id)
         self.assertEqual(float(canonical.total_score), 80)
         self.assertEqual(new_legacy.status, ExamResult.Status.DRAFT)
-        self.assertNotEqual(canonical.attempt.meta.get("status"), "NOT_SUBMITTED")
+        self.assertNotEqual((canonical.attempt.meta or {}).get("status"), "NOT_SUBMITTED")
         self.assertTrue(ResultItem.objects.filter(result=canonical).exists())
 
         self._patch_aggregate_score(70, view=AdminExamTotalScoreView)
