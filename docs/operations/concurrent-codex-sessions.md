@@ -104,6 +104,24 @@ adds more work than it saves.
 Reuse completed findings or the existing agent for a new bounded question
 instead of spawning near-duplicate workers.
 
+After reconnecting or resuming a failed worker, verify its actual model and effort
+again. A resumed worker can inherit the primary model even when its first turn
+explicitly selected Web Pro. If the interface cannot retain the override, close
+the failed worker and start one fresh bounded worker with the explicit Web model;
+reuse its useful findings rather than repeating the investigation. A worker that
+already occupies the one Web slot must execute its assignment directly, not spawn
+another Web worker to satisfy the same delegation preference.
+
+For a launcher-backed installation, HTTP `/healthz` alone proves only the proxy
+listener. Recovery must also pass `doctor --json`, `browser check`, and one actual
+connector file/tool operation. Do not start standalone `serve` as a replacement
+for a missing launcher browser. An owned orphan proxy may be gracefully drained
+and shut down only after the official control endpoint confirms zero HTTP and
+browser turns; resume it if idleness cannot be proved. Preserve an active launcher,
+unknown listener and other tasks. Start the installed launcher hidden, retain its
+existing authentication/model/approval settings, then verify the browser, proxy,
+tunnel and actual selected Web model before dispatching consequential work.
+
 Supply the objective, exact paths/symbols/SHA, relevant constraints/invariants,
 expected result, and established facts/failure evidence. Omit unrelated history
 and whole documents/logs; do not omit evidence essential for correct review.

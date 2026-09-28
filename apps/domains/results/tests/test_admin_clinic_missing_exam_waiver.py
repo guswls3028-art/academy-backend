@@ -1,7 +1,7 @@
 from django.contrib.auth import get_user_model
 from django.apps import apps as django_apps
 from django.test import TestCase
-from rest_framework.test import APIRequestFactory, force_authenticate
+from rest_framework.test import APIClient, APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.results.models import ExamAttempt, Result
@@ -280,3 +280,88 @@ class AdminClinicMissingExamWaiverTests(TestCase):
         )
         self.assertEqual(response.status_code, 404, response.data)
         self.assertEqual(self.ClinicLink.objects.count(), 0)
+
+    def _remove_explicit_exam_target(self):
+        ExamEnrollment = django_apps.get_model("exams", "ExamEnrollment")
+
+        other_user = User.objects.create_user(
+            username="missing_exam_other", tenant=self.tenant,
+        )
+        other = self.Student.objects.create(
+            tenant=self.tenant, user=other_user, name="다른 대상 학생",
+            ps_number="MISS002", omr_code="MISS002", parent_phone="01000000000",
+        )
+        other_enrollment = self.Enrollment.objects.create(
+            tenant=self.tenant, student=other, lecture=self.lecture, status="ACTIVE",
+        )
+        self.SessionEnrollment.objects.create(
+            tenant=self.tenant, session=self.session, enrollment=other_enrollment,
+        )
+        ExamEnrollment.objects.create(exam=self.exam, enrollment=self.enrollment)
+        ExamEnrollment.objects.create(exam=self.exam, enrollment=other_enrollment)
+        client = APIClient()
+        client.force_authenticate(user=self.admin)
+        response = client.put(
+            f"/api/v1/exams/{self.exam.id}/enrollments/?session_id={self.session.id}",
+            {"enrollment_ids": [other_enrollment.id]}, format="json",
+            HTTP_HOST="localhost", HTTP_X_TENANT_CODE=self.tenant.code,
+        )
+        self.assertEqual(response.status_code, 200, response.json())
+        # Another unresolved assessment may keep this session actionable; its
+        # completion must not conceal the removed exam's stale absence marker.
+        self.SessionProgress.objects.update_or_create(
+            session=self.session, enrollment=self.enrollment,
+            defaults={"completed": False},
+        )
+
+    def test_removed_exam_target_is_not_projected_after_lecture_restoration(self):
+        self._remove_explicit_exam_target()
+        preserved = list(Result.objects.values())
+        for active in (True, False, True):
+            with self.subTest(active=active):
+                self.lecture.is_active = active
+                self.lecture.save(update_fields=["is_active", "updated_at"])
+                response = AdminClinicTargetsView.as_view()(
+                    self._request("get", "/results/admin/clinic-targets/")
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.data, [])
+        self.assertEqual(list(Result.objects.values()), preserved)
+        self.assertFalse(self.ClinicLink.objects.exists())
+
+    def test_removed_exam_target_cannot_be_waived_and_reassignment_recovers(self):
+        ExamEnrollment = django_apps.get_model("exams", "ExamEnrollment")
+
+        self._remove_explicit_exam_target()
+        payload = {"session_id": self.session.id, "enrollment_id": self.enrollment.id,
+                   "exam_id": self.exam.id, "memo": "결시 확인"}
+        denied = AdminClinicMissingExamWaiveView.as_view()(
+            self._request("post", "/results/admin/clinic-targets/waive-missing/", payload)
+        )
+        self.assertEqual(denied.status_code, 404, denied.data)
+        self.assertFalse(self.ClinicLink.objects.exists())
+        ExamEnrollment.objects.create(exam=self.exam, enrollment=self.enrollment)
+        restored = AdminClinicTargetsView.as_view()(
+            self._request("get", "/results/admin/clinic-targets/")
+        )
+        self.assertEqual(len(restored.data), 1)
+        waived = AdminClinicMissingExamWaiveView.as_view()(
+            self._request("post", "/results/admin/clinic-targets/waive-missing/", payload)
+        )
+        self.assertEqual(waived.status_code, 201, waived.data)
+        self.assertEqual(self.ClinicLink.objects.count(), 1)
+        self.assertEqual(Result.objects.get().total_score, 0)
+
+    def test_removed_exam_target_rejected_at_waiver_write_boundary(self):
+        from apps.support.results.clinic_target_write_dependencies import (
+            waive_explicit_missing_exam_target,
+        )
+
+        self._remove_explicit_exam_target()
+        outcome = waive_explicit_missing_exam_target(
+            tenant=self.tenant, session_id=self.session.id,
+            enrollment_id=self.enrollment.id, exam_id=self.exam.id,
+            result_id=Result.objects.get().id, user_id=self.admin.id, memo="결시 확인",
+        )
+        self.assertEqual(outcome.code, "NOT_FOUND")
+        self.assertFalse(self.ClinicLink.objects.exists())
