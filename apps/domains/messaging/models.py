@@ -327,6 +327,25 @@ class MessageTemplate(models.Model):
             )
 
 
+class DefaultTemplateSuppression(models.Model):
+    """A tenant's explicit choice to keep a provided content template absent."""
+
+    tenant = models.ForeignKey(
+        "core.Tenant", on_delete=models.CASCADE, related_name="suppressed_message_defaults",
+    )
+    default_key = models.CharField(max_length=64)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        app_label = "messaging"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "default_key"],
+                name="uniq_suppressed_message_default",
+            ),
+        ]
+
+
 class AutoSendConfig(models.Model):
     """
     자동발송 설정 — 이벤트(트리거)별 템플릿·발송 조건.

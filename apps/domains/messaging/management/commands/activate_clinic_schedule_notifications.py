@@ -7,7 +7,9 @@ from apps.domains.messaging.alimtalk_content_builders import (
     get_template_type,
 )
 from apps.domains.messaging.default_templates import get_default_templates
-from apps.domains.messaging.models import AutoSendConfig, MessageTemplate
+from apps.domains.messaging.models import (
+    AutoSendConfig, DefaultTemplateSuppression, MessageTemplate,
+)
 
 
 TARGET_TRIGGERS = (
@@ -127,6 +129,18 @@ class Command(BaseCommand):
         )
 
     def _preflight(self, tenants):
+        suppressed = list(DefaultTemplateSuppression.objects.filter(
+            tenant__in=tenants, default_key__in=TARGET_TRIGGERS,
+        ).values_list("tenant_id", "default_key"))
+        if suppressed:
+            raise CommandError(f"삭제한 기본 문구는 명시 복원 후 활성화해야 합니다: {suppressed}")
+
+        unlinked = list(AutoSendConfig.objects.filter(
+            tenant__in=tenants, trigger__in=TARGET_TRIGGERS, template__isnull=True,
+        ).values_list("tenant_id", "trigger"))
+        if unlinked:
+            raise CommandError(f"연결 해제한 자동발송 문구를 먼저 선택해야 합니다: {unlinked}")
+
         unavailable = [
             trigger
             for trigger in TARGET_TRIGGERS

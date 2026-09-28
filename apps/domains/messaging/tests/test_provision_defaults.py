@@ -8,10 +8,15 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.messaging.default_templates import get_default_templates
-from apps.domains.messaging.models import AutoSendConfig, MessageTemplate
+from apps.domains.messaging.models import (
+    AutoSendConfig, DefaultTemplateSuppression, MessageTemplate,
+)
 from apps.domains.messaging.views.config_views import (
     AutoSendConfigView,
     ProvisionDefaultTemplatesView,
+)
+from apps.domains.messaging.views.template_views import (
+    MessageTemplateDetailView, MessageTemplateListCreateView,
 )
 
 
@@ -121,6 +126,186 @@ class ProvisionDefaultTemplatesTests(TestCase):
         self.assertFalse(template.is_system)
         self.assertEqual(template.subject, "직접 수정한 제목")
         self.assertEqual(template.body, "직접 수정한 본문")
+
+    def test_deleted_freeform_default_stays_absent_until_selected_restore(self):
+        provision = "/api/v1/messaging/provision-defaults/"
+        first = ProvisionDefaultTemplatesView.as_view()(self._request("post", provision))
+        self.assertEqual(first.status_code, 200)
+        name = get_default_templates(self.tenant.name)["freeform_general"]["name"]
+        template = MessageTemplate.objects.get(tenant=self.tenant, name=name)
+        self.assertTrue(template.is_system)
+
+        deleted = MessageTemplateDetailView.as_view()(
+            self._request("delete", f"/api/v1/messaging/templates/{template.id}/"),
+            pk=template.id,
+        )
+        self.assertEqual(deleted.status_code, 204)
+        self.assertTrue(DefaultTemplateSuppression.objects.filter(
+            tenant=self.tenant, default_key="freeform_general",
+        ).exists())
+        second = ProvisionDefaultTemplatesView.as_view()(self._request("post", provision))
+        self.assertEqual(second.status_code, 200)
+        self.assertFalse(MessageTemplate.objects.filter(tenant=self.tenant, name=name).exists())
+        self.assertIn("freeform_general", {
+            item["key"] for item in second.data["suppressed_defaults"]
+        })
+
+        readback = ProvisionDefaultTemplatesView.as_view()(self._request("get", provision))
+        self.assertEqual(readback.status_code, 200)
+        self.assertIn("freeform_general", {
+            item["key"] for item in readback.data["suppressed_defaults"]
+        })
+        restored = ProvisionDefaultTemplatesView.as_view()(
+            self._request("post", provision, {"restore_keys": ["freeform_general"]})
+        )
+        self.assertEqual(restored.status_code, 200)
+        self.assertEqual(restored.data["created_templates"], 1)
+        self.assertTrue(MessageTemplate.objects.filter(tenant=self.tenant, name=name).exists())
+        self.assertFalse(DefaultTemplateSuppression.objects.filter(
+            tenant=self.tenant, default_key="freeform_general",
+        ).exists())
+
+    def test_linked_template_requires_reassignment_and_keeps_custom_selection(self):
+        provision = "/api/v1/messaging/provision-defaults/"
+        ProvisionDefaultTemplatesView.as_view()(self._request("post", provision))
+        config = AutoSendConfig.objects.select_related("template").get(
+            tenant=self.tenant, trigger="clinic_reminder",
+        )
+        original = config.template
+        blocked = MessageTemplateDetailView.as_view()(
+            self._request("delete", f"/api/v1/messaging/templates/{original.id}/"),
+            pk=original.id,
+        )
+        self.assertEqual(blocked.status_code, 409)
+        self.assertEqual(blocked.data["code"], "auto_send_linked")
+        custom = MessageTemplate.objects.create(
+            tenant=self.tenant, category="clinic", name="직접 쓴 클리닉 안내",
+            body="사용자 본문", is_system=False,
+        )
+        config.template = custom
+        config.save(update_fields=["template"])
+        deleted = MessageTemplateDetailView.as_view()(
+            self._request("delete", f"/api/v1/messaging/templates/{original.id}/"),
+            pk=original.id,
+        )
+        self.assertEqual(deleted.status_code, 204)
+        self.assertTrue(DefaultTemplateSuppression.objects.filter(
+            tenant=self.tenant, default_key="clinic_reminder",
+        ).exists())
+        again = ProvisionDefaultTemplatesView.as_view()(self._request("post", provision))
+        self.assertEqual(again.status_code, 200)
+        config.refresh_from_db()
+        self.assertEqual(config.template_id, custom.id)
+        self.assertFalse(MessageTemplate.objects.filter(pk=original.id).exists())
+        self.assertFalse(MessageTemplate.objects.filter(
+            tenant=self.tenant, name=original.name,
+        ).exists())
+        restored = ProvisionDefaultTemplatesView.as_view()(
+            self._request("post", provision, {"restore_keys": ["clinic_reminder"]})
+        )
+        self.assertEqual(restored.status_code, 200)
+        config.refresh_from_db()
+        self.assertEqual(config.template_id, custom.id)
+        self.assertTrue(MessageTemplate.objects.filter(
+            tenant=self.tenant, name=original.name,
+        ).exists())
+
+    def test_legacy_absence_and_empty_selection_do_not_recreate_defaults(self):
+        provision = "/api/v1/messaging/provision-defaults/"
+        config = AutoSendConfig.objects.create(
+            tenant=self.tenant, trigger="clinic_reminder", template=None,
+            enabled=False, message_mode="alimtalk",
+        )
+        custom = MessageTemplate.objects.create(
+            tenant=self.tenant, category="default", name="사용자 전용", body="본문",
+        )
+        response = ProvisionDefaultTemplatesView.as_view()(self._request("post", provision))
+        self.assertEqual(response.status_code, 200)
+        config.refresh_from_db()
+        self.assertIsNone(config.template_id)
+        self.assertFalse(config.enabled)
+        freeform_name = get_default_templates(self.tenant.name)["freeform_general"]["name"]
+        self.assertFalse(MessageTemplate.objects.filter(
+            tenant=self.tenant, name=freeform_name,
+        ).exists())
+        self.assertTrue(MessageTemplate.objects.filter(pk=custom.id).exists())
+        keys = {item["key"] for item in response.data["suppressed_defaults"]}
+        self.assertIn("clinic_reminder", keys)
+        self.assertIn("freeform_general", keys)
+
+    def test_delete_projection_and_provider_boundary(self):
+        plain = MessageTemplate.objects.create(
+            tenant=self.tenant, category="default", name="삭제 가능", body="본문",
+        )
+        provider = MessageTemplate.objects.create(
+            tenant=self.tenant, category="default", name="공급사 승인", body="본문",
+            solapi_template_id="SID_APPROVED", solapi_status="APPROVED",
+        )
+        listed = MessageTemplateListCreateView.as_view()(
+            self._request("get", "/api/v1/messaging/templates/")
+        )
+        self.assertEqual(listed.status_code, 200)
+        by_id = {item["id"]: item for item in listed.data}
+        self.assertTrue(by_id[plain.id]["can_delete"])
+        self.assertEqual(by_id[plain.id]["delete_block_reason"], "")
+        self.assertFalse(by_id[provider.id]["can_delete"])
+        self.assertEqual(by_id[provider.id]["delete_block_reason"], "provider_bound")
+        blocked = MessageTemplateDetailView.as_view()(
+            self._request("delete", f"/api/v1/messaging/templates/{provider.id}/"),
+            pk=provider.id,
+        )
+        self.assertEqual(blocked.status_code, 409)
+        self.assertTrue(MessageTemplate.objects.filter(pk=provider.id).exists())
+
+    def test_restore_keys_validation_does_not_write(self):
+        before = MessageTemplate.objects.filter(tenant=self.tenant).count()
+        response = ProvisionDefaultTemplatesView.as_view()(
+            self._request("post", "/api/v1/messaging/provision-defaults/",
+                          {"restore_keys": ["invalid-default"]})
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(MessageTemplate.objects.filter(tenant=self.tenant).count(), before)
+
+    def test_deleted_old_freeform_name_does_not_return_under_new_name(self):
+        legacy = MessageTemplate.objects.create(
+            tenant=self.tenant, category="default",
+            name=f"[{self.tenant.name}] 학원 안내", body="예전 사용자 본문",
+        )
+        deleted = MessageTemplateDetailView.as_view()(
+            self._request("delete", f"/api/v1/messaging/templates/{legacy.id}/"),
+            pk=legacy.id,
+        )
+        self.assertEqual(deleted.status_code, 204)
+        self.assertTrue(DefaultTemplateSuppression.objects.filter(
+            tenant=self.tenant, default_key="freeform_general",
+        ).exists())
+        response = ProvisionDefaultTemplatesView.as_view()(
+            self._request("post", "/api/v1/messaging/provision-defaults/")
+        )
+        self.assertEqual(response.status_code, 200)
+        current_name = get_default_templates(self.tenant.name)["freeform_general"]["name"]
+        self.assertFalse(MessageTemplate.objects.filter(
+            tenant=self.tenant, name=current_name,
+        ).exists())
+
+    def test_custom_trigger_selection_prevents_unused_default_creation(self):
+        custom = MessageTemplate.objects.create(
+            tenant=self.tenant, category="clinic", name="선택한 문구", body="사용자 본문",
+        )
+        config = AutoSendConfig.objects.create(
+            tenant=self.tenant, trigger="clinic_reminder", template=custom,
+            enabled=True, message_mode="alimtalk",
+        )
+        response = ProvisionDefaultTemplatesView.as_view()(
+            self._request("post", "/api/v1/messaging/provision-defaults/")
+        )
+        self.assertEqual(response.status_code, 200)
+        default_name = get_default_templates(self.tenant.name)["clinic_reminder"]["name"]
+        self.assertFalse(MessageTemplate.objects.filter(
+            tenant=self.tenant, name=default_name,
+        ).exists())
+        config.refresh_from_db()
+        self.assertEqual(config.template_id, custom.id)
 
     def test_autosend_patch_enabled_only_preserves_template_and_timing(self):
         template = MessageTemplate.objects.create(

@@ -11,11 +11,15 @@ from rest_framework.permissions import IsAuthenticated
 
 from apps.core.parsing import parse_bool
 from apps.core.permissions import TenantResolvedAndStaff
+from apps.core.models import Tenant
+from apps.domains.messaging.default_templates import get_default_templates
 from apps.domains.messaging.effective_templates import (
     prime_effective_owner_templates,
     resolve_effective_template_status,
 )
-from apps.domains.messaging.models import MessageTemplate, AutoSendConfig
+from apps.domains.messaging.models import (
+    MessageTemplate, AutoSendConfig, DefaultTemplateSuppression,
+)
 from apps.domains.messaging.permissions import can_manage_messaging_settings
 from apps.domains.messaging.policy import is_auto_send_enabled_by_default
 from apps.domains.messaging.serializers import AutoSendConfigSerializer
@@ -245,86 +249,120 @@ class AutoSendConfigView(APIView):
 
 
 class ProvisionDefaultTemplatesView(APIView):
-    """POST: 기본 템플릿 + 자동발송 config 일괄 생성/리셋.
-    - 기존 기본 템플릿(이름이 DEFAULT_TEMPLATES와 동일)은 누락된 config만 연결
-    - 학원장이 편집한 제목/본문은 덮어쓰지 않음
-    - 사용자가 새로 만든 템플릿은 그대로 유지
-    """
+    """GET: 복원 가능 기본 문구. POST: 미설정 트리거 초기화/선택 복원."""
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
-    def post(self, request):
-        from ..default_templates import get_default_templates
+    @staticmethod
+    def _suppressed_defaults(tenant, definitions):
+        academy_name = tenant.name or "학원"
+        saved = set(DefaultTemplateSuppression.objects.filter(
+            tenant=tenant,
+        ).values_list("default_key", flat=True))
+        templates = list(MessageTemplate.objects.filter(tenant=tenant).only("name"))
+        configs = list(AutoSendConfig.objects.filter(tenant=tenant).only("trigger", "template_id"))
+        names = {template.name for template in templates}
+        present = {key for key, definition in definitions.items() if definition["name"] in names}
+        present.update(key for key, old_name in {
+            "freeform_general": f"[{academy_name}] 학원 안내",
+            "freeform_payment": f"[{academy_name}] 결제 안내",
+            "freeform_clinic": f"[{academy_name}] 클리닉 안내",
+        }.items() if old_name in names)
+        configured = {config.trigger for config in configs}
+        existing_setup = bool(templates or configs)
+        return [
+            {"key": key, "name": definition["name"], "category": definition["category"]}
+            for key, definition in definitions.items()
+            if key in saved or (
+                key not in present and (
+                    key in configured or (key.startswith("freeform_") and existing_setup)
+                )
+            )
+        ]
 
+    def get(self, request):
         tenant = request.tenant
         if not _can_manage_auto_send(request, tenant):
             return _auto_send_write_forbidden_response()
+        definitions = get_default_templates(tenant.name or "학원")
+        return Response({"suppressed_defaults": self._suppressed_defaults(tenant, definitions)})
 
+    @transaction.atomic
+    def post(self, request):
+        tenant = request.tenant
+        if not _can_manage_auto_send(request, tenant):
+            return _auto_send_write_forbidden_response()
+        restore_keys = request.data.get("restore_keys", [])
         templates = get_default_templates(tenant.name or "학원")
+        if (not isinstance(restore_keys, list) or
+                any(not isinstance(key, str) or key not in templates for key in restore_keys) or
+                len(set(restore_keys)) != len(restore_keys)):
+            return Response(
+                {"restore_keys": "복원할 기본 문구 키를 중복 없이 선택해 주세요."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        Tenant.objects.select_for_update().get(pk=tenant.pk)
+        restore_keys = set(restore_keys)
+        if restore_keys:
+            DefaultTemplateSuppression.objects.filter(
+                tenant=tenant, default_key__in=restore_keys,
+            ).delete()
+        suppressed = set(DefaultTemplateSuppression.objects.filter(
+            tenant=tenant,
+        ).values_list("default_key", flat=True))
         existing_configs = {
             c.trigger: c
-            for c in AutoSendConfig.objects.filter(tenant=tenant).select_related("template").defer("delay_mode", "delay_value")
+            for c in AutoSendConfig.objects.filter(tenant=tenant).select_related("template")
+            .defer("delay_mode", "delay_value")
         }
+        existing_templates = {
+            template.name: template
+            for template in MessageTemplate.objects.filter(tenant=tenant).order_by("updated_at")
+        }
+        existing_setup = bool(existing_configs or existing_templates)
         created_templates = 0
         created_configs = 0
         reset_templates = 0
         linked = 0
 
-        # 자유양식 템플릿 이름 변경 마이그레이션 (구 이름 → 신 이름)
         academy_name = tenant.name or "학원"
-        _freeform_name_migrations = {
-            f"[{academy_name}] 학원 안내": f"[{academy_name}] 공지사항 안내",
-            f"[{academy_name}] 결제 안내": f"[{academy_name}] 수납 안내",
-            f"[{academy_name}] 클리닉 안내": f"[{academy_name}] 보충수업 안내",
+        legacy_freeform_names = {
+            "freeform_general": f"[{academy_name}] 학원 안내",
+            "freeform_payment": f"[{academy_name}] 결제 안내",
+            "freeform_clinic": f"[{academy_name}] 클리닉 안내",
         }
-        _old_to_new = {v: k for k, v in _freeform_name_migrations.items()}  # new → old
+        valid_triggers = {choice[0] for choice in AutoSendConfig.Trigger.choices}
 
         for trigger, defaults in templates.items():
+            if trigger in suppressed:
+                continue
             tpl_name = defaults["name"]
-            tpl_category = defaults["category"]
-            tpl_subject = defaults.get("subject", "")
-            tpl_body = defaults["body"]
-
-            existing_tpl = MessageTemplate.objects.filter(
-                tenant=tenant, name=tpl_name,
-            ).first()
-
-            # 이름 변경된 자유양식: 구 이름으로도 검색하여 rename
-            if not existing_tpl and tpl_name in _old_to_new:
-                old_name = _old_to_new[tpl_name]
-                existing_tpl = MessageTemplate.objects.filter(
-                    tenant=tenant, name=old_name,
-                ).first()
-                if existing_tpl:
-                    existing_tpl.name = tpl_name
-                    existing_tpl.save(update_fields=["name", "updated_at"])
-
-            if existing_tpl:
-                # 기본 템플릿 연결은 복구하되 학원장 작성 본문/제목은 덮어쓰지 않는다.
-                changed = False
-                if existing_tpl.category != tpl_category:
-                    existing_tpl.category = tpl_category
-                    changed = True
-                if changed:
-                    existing_tpl.save(update_fields=["category", "updated_at"])
-                    reset_templates += 1
-                tpl = existing_tpl
-            else:
+            existing = existing_configs.get(trigger) if trigger in valid_triggers else None
+            # An existing trigger's chosen content (or explicit empty selection)
+            # is authoritative. Provision never silently rewires that choice.
+            if existing and trigger not in restore_keys:
+                continue
+            tpl = existing_templates.get(tpl_name) or existing_templates.get(
+                legacy_freeform_names.get(trigger, "")
+            )
+            # Existing tenants may have removed an older freeform default before
+            # deletion tracking existed. Keep that absence until a named restore.
+            if (tpl is None and trigger.startswith("freeform_")
+                    and existing_setup and trigger not in restore_keys):
+                continue
+            if tpl is None:
                 tpl = MessageTemplate.objects.create(
                     tenant=tenant,
                     name=tpl_name,
-                    category=tpl_category,
-                    subject=tpl_subject,
-                    body=tpl_body,
+                    category=defaults["category"],
+                    subject=defaults.get("subject", ""),
+                    body=defaults["body"],
                     is_system=True,
                 )
+                existing_templates[tpl_name] = tpl
                 created_templates += 1
 
-            # 자유양식 템플릿 등 유효한 트리거가 아니면 AutoSendConfig 스킵
-            valid_triggers = {c[0] for c in AutoSendConfig.Trigger.choices}
             if trigger not in valid_triggers:
                 continue
-
-            existing = existing_configs.get(trigger)
             if existing:
                 if not existing.template_id:
                     existing.template = tpl
@@ -356,4 +394,5 @@ class ProvisionDefaultTemplatesView(APIView):
             "submitted_reviews": submitted_reviews,
             "review_errors": review_errors,
             "review_note": "",
+            "suppressed_defaults": self._suppressed_defaults(tenant, templates),
         }, status=status.HTTP_200_OK)

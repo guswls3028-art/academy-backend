@@ -2,14 +2,20 @@
 
 import re
 
+from django.db import transaction
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.permissions import TenantResolvedAndStaff
-from apps.domains.messaging.models import MessageTemplate
-from apps.domains.messaging.serializers import MessageTemplateSerializer
+from apps.core.models import Tenant
+from apps.domains.messaging.default_templates import default_template_key_for_name
+from apps.domains.messaging.models import DefaultTemplateSuppression, MessageTemplate
+from apps.domains.messaging.permissions import can_manage_messaging_settings
+from apps.domains.messaging.serializers import (
+    MessageTemplateSerializer, template_delete_block_reason,
+)
 
 
 COPY_PREFIX = "복사 - "
@@ -30,18 +36,26 @@ class MessageTemplateListCreateView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def get(self, request):
-        queryset = MessageTemplate.objects.filter(tenant=request.tenant).order_by("-updated_at")
+        queryset = MessageTemplate.objects.filter(tenant=request.tenant).prefetch_related(
+            "auto_send_configs"
+        ).order_by("-updated_at")
         category = (request.query_params.get("category") or "").strip().lower()
         valid_categories = {choice.value for choice in MessageTemplate.Category}
         if category and category in valid_categories:
             queryset = queryset.filter(category=category)
-        return Response(MessageTemplateSerializer(queryset, many=True).data)
+        return Response(MessageTemplateSerializer(
+            queryset, many=True,
+            context={"can_manage_system": can_manage_messaging_settings(request, request.tenant)},
+        ).data)
 
     def post(self, request):
         serializer = MessageTemplateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save(tenant=request.tenant, is_system=False)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(MessageTemplateSerializer(
+            serializer.instance,
+            context={"can_manage_system": can_manage_messaging_settings(request, request.tenant)},
+        ).data, status=status.HTTP_201_CREATED)
 
 
 class MessageTemplateDetailView(APIView):
@@ -57,7 +71,10 @@ class MessageTemplateDetailView(APIView):
         template = self._get_template(request, pk)
         if not template:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-        return Response(MessageTemplateSerializer(template).data)
+        return Response(MessageTemplateSerializer(
+            template,
+            context={"can_manage_system": can_manage_messaging_settings(request, request.tenant)},
+        ).data)
 
     def patch(self, request, pk):
         template = self._get_template(request, pk)
@@ -68,7 +85,10 @@ class MessageTemplateDetailView(APIView):
                 {"detail": "시스템 기본 문구는 수정할 수 없습니다. '복제' 후 수정해 주세요."},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        serializer = MessageTemplateSerializer(template, data=request.data, partial=True)
+        serializer = MessageTemplateSerializer(
+            template, data=request.data, partial=True,
+            context={"can_manage_system": can_manage_messaging_settings(request, request.tenant)},
+        )
         serializer.is_valid(raise_exception=True)
         serializer.save()
         data = serializer.data
@@ -91,14 +111,35 @@ class MessageTemplateDetailView(APIView):
             ]
         return Response(data)
 
+    @transaction.atomic
     def delete(self, request, pk):
-        template = self._get_template(request, pk)
+        Tenant.objects.select_for_update().get(pk=request.tenant.pk)
+        template = MessageTemplate.objects.select_for_update().filter(
+            tenant=request.tenant, pk=pk,
+        ).first()
         if not template:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-        if template.is_system:
+        reason = template_delete_block_reason(
+            template,
+            can_manage_system=can_manage_messaging_settings(request, request.tenant),
+        )
+        if reason:
+            details = {
+                "provider_bound": "공급사 검수 문구는 삭제할 수 없습니다.",
+                "auto_send_linked": "자동발송에서 사용 중입니다. 다른 문구를 선택하거나 연결을 해제한 뒤 삭제해 주세요.",
+                "system_permission": "시스템 제공 문구는 대표 또는 관리자만 삭제할 수 있습니다.",
+            }
             return Response(
-                {"detail": "시스템 기본 문구는 삭제할 수 없습니다."},
-                status=status.HTTP_403_FORBIDDEN,
+                {"detail": details[reason], "code": reason},
+                status=(status.HTTP_403_FORBIDDEN if reason == "system_permission"
+                        else status.HTTP_409_CONFLICT),
+            )
+        default_key = default_template_key_for_name(
+            request.tenant.name or "학원", template.name,
+        )
+        if default_key:
+            DefaultTemplateSuppression.objects.get_or_create(
+                tenant=request.tenant, default_key=default_key,
             )
         template.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
