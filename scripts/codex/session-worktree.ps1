@@ -7,11 +7,16 @@ param(
     [string]$Repository = "both",
     [string]$WorkspaceRoot = "",
     [switch]$SkipFetch,
-    [switch]$AllowLowDisk
+    [switch]$AllowLowDisk,
+    [string]$ExpectedBranch = ""
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+
+if ($ExpectedBranch -and ($Action -ne "Close" -or $Repository -eq "both")) {
+    throw "ExpectedBranch requires Close and one exact repository."
+}
 
 if (-not $WorkspaceRoot) {
     $scriptRepository = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
@@ -278,7 +283,11 @@ function Invoke-Close {
             throw "Session path is not the exact registered $name worktree: $path"
         }
         $branch = Get-BranchName $path
-        if ($branch -notlike "codex/$Session-$name-*") {
+        if ($ExpectedBranch) {
+            if ($branch -cne $ExpectedBranch -or $branch -cnotlike "codex/*") {
+                throw "ExpectedBranch does not match the exact owned Codex branch: $path ($branch)"
+            }
+        } elseif ($branch -notlike "codex/$Session-$name-*") {
             throw "Refusing to close a worktree owned by another session: $path ($branch)"
         }
         $status = @(Invoke-GitChecked -Root $path -Arguments @(

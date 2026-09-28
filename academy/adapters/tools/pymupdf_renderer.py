@@ -101,6 +101,24 @@ class PdfDocument:
         """Get total number of pages."""
         return len(self._doc)
 
+    def is_blank_page(self, page_index: int) -> bool:
+        """Prove a page is empty without mistaking raster/vector content for blank."""
+        import fitz
+
+        page = self._doc[page_index]
+        if (
+            page.get_text("words")
+            or page.get_images(full=True)
+            or page.get_drawings()
+            or any(page.annots() or [])
+        ):
+            return False
+        zoom = min(1.0, 1200 / max(page.rect.width, page.rect.height, 1))
+        pixels = page.get_pixmap(
+            matrix=fitz.Matrix(zoom, zoom), colorspace=fitz.csGRAY, alpha=False
+        ).samples
+        return bool(pixels) and min(pixels) == 255
+
     def page_dimensions(self, page_index: int) -> Tuple[float, float]:
         """Get page dimensions (width, height) in PDF points."""
         if page_index < 0 or page_index >= len(self._doc):

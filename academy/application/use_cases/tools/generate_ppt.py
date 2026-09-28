@@ -330,6 +330,13 @@ def _build_pdf_question_plan(doc: Any) -> _PdfQuestionPlan:
                     exc,
                 )
 
+        is_blank_page = False
+        if not splitter_blocks:
+            try:
+                is_blank_page = doc.is_blank_page(page_idx)
+            except Exception:  # Unverified textless pages must remain protected.
+                logger.warning("PPT_PDF_BLANK_CHECK_FAILED page=%d", page_idx)
+
         phase1.append({
             "page_index": page_idx,
             "text_blocks": splitter_blocks,
@@ -337,6 +344,7 @@ def _build_pdf_question_plan(doc: Any) -> _PdfQuestionPlan:
             "page_height": page_h,
             "paper_type_result": paper_type_result,
             "is_skip_page": is_skip_page,
+            "is_blank_page": is_blank_page,
         })
 
     # 스캔/사진 PDF는 text layer가 없어서 문항 split이 불가능하다. 페이지 단위 fallback.
@@ -351,7 +359,9 @@ def _build_pdf_question_plan(doc: Any) -> _PdfQuestionPlan:
     # A mixed PDF can have valid question anchors on every text page while
     # image-only pages disappear from the question-mode output. Preserve all
     # pages; fully image-only PDFs above still use image segmentation.
-    textless_pages = sum(not page["text_blocks"] for page in phase1)
+    textless_pages = sum(
+        not page["text_blocks"] and not page["is_blank_page"] for page in phase1
+    )
     if textless_pages:
         logger.warning(
             "PPT_PDF_MIXED_TEXT_IMAGE_PAGES pages=%d textless=%d; using pages",

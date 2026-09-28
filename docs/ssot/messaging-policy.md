@@ -79,8 +79,10 @@ ON 한다.
 - `clinic_cancelled`
 
 다른 `AutoSendConfig`, 학원 전체 메시징 스위치, 메시지 본문과 발송 시점은 변경하지
-않는다. 기존 템플릿이 연결되어 있으면 그대로 보존하고, 누락된 경우에만 해당
-트리거의 기본 클리닉 템플릿을 생성·연결한다. 대상 config 중 비알림톡 모드가 한
+않는다. 기존 템플릿이 연결되어 있으면 그대로 보존하고, 새 config에만 해당
+트리거의 기본 클리닉 템플릿을 생성·연결한다. 삭제 보류 기본 문구나 연결이 빈 기존
+config가 있으면 사용자가 명시적으로 문구를 복원·선택할 때까지 전체 적용을 거절한다.
+대상 config 중 비알림톡 모드가 한
 건이라도 있거나 공용 승인 알림톡 매핑이 없으면 전체 적용을 실패 폐쇄한다. 설정
 활성화 자체는 메시지를 발송하거나 과거 이벤트를 재발송하지 않는다.
 
@@ -97,6 +99,7 @@ preview→confirm 경로에서 선생이 명시적으로 확인한 경우에만 
 - tenant별 AutoSendConfig는 enabled/delay/본문 메모 등 업무 설정으로만 사용한다. 과거 `Tenant.kakao_pfid`, `messaging_provider`, 자체 Solapi/Ppurio 키와 MessageTemplate 승인 흔적은 새 binding의 출처가 될 수 없다.
 - 공급자·API 키·발신번호는 공용 Solapi 설정만 사용하며 tenant별 credential/provider 분기는 복구하지 않는다.
 - `send_alimtalk_via_owner()`는 `OWNER_TENANT_ID`의 exact trigger AutoSendConfig에 연결된 APPROVED 템플릿만 사용한다.
+- 학원별 기본 **문구**의 삭제·선택 복원은 [메시징 도메인](../domain/messaging.md#기본-문구의-삭제와-복원)을 따른다. 삭제 의도와 기존 자동발송 연결을 보존하며, 이 콘텐츠 관리 작업은 공용 승인 봉투·owner exact 템플릿·공급사 검수 정책을 바꾸지 않는다.
 - `password_reset_*` 또는 `password_find_otp`가 `registration_approved_*` 템플릿으로 대체되는 fallback은 금지한다.
 - 2026-07-08 Solapi 실등록 감사 기준 `notice_payment` SID는 provider에 없으므로 결제 트리거는 논리 매핑을 유지하되 fail-closed다.
 - Community/Q&A 외부 알림톡은 owner의 exact `qna_answered` 고정 문구 템플릿만 사용한다. 학생 이름과 사이트 링크 외 자유문구를 넣지 않으며, provider와 DB가 모두 `APPROVED`가 아니면 발송하지 않는다. 자유양식·출석·성적 봉투로 fallback하지 않고 기존 답변도 소급 발송하지 않는다.
