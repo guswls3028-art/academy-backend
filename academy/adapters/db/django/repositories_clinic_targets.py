@@ -8,8 +8,9 @@ from typing import Any
 
 def explicit_not_submitted_exam_results(*, tenant):
     """Latest exam result per enrollment, only when it is explicitly absent."""
+    from apps.domains.exams.models import ExamEnrollment
     from apps.domains.results.models import Result
-    from django.db.models import F, OuterRef, Subquery
+    from django.db.models import Exists, F, OuterRef, Q, Subquery
 
     latest_result_id = (
         Result.objects.filter(
@@ -20,7 +21,16 @@ def explicit_not_submitted_exam_results(*, tenant):
         .order_by("-id")
         .values("id")[:1]
     )
-    return Result.objects.filter(
+    exam_targets = ExamEnrollment.objects.filter(exam_id=OuterRef("target_id"))
+    return Result.objects.alias(
+        has_explicit_exam_targets=Exists(exam_targets),
+        is_current_exam_target=Exists(
+            exam_targets.filter(enrollment_id=OuterRef("enrollment_id"))
+        ),
+    ).filter(
+        # Explicit targets are authoritative; legacy exams without target rows
+        # still use the linked session roster below.
+        Q(has_explicit_exam_targets=False) | Q(is_current_exam_target=True),
         id=Subquery(latest_result_id),
         target_type="exam",
         target_id=F("attempt__exam_id"),

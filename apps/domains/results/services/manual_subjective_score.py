@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from django.db.models import Max, Q
+from django.utils.dateparse import parse_datetime
 
 from apps.domains.results.models import Result, ResultFact, ResultItem
 
@@ -46,6 +47,52 @@ def safe_float(value) -> float:
         return float(value or 0.0)
     except (TypeError, ValueError):
         return 0.0
+
+
+def is_consumed_manual_total_placeholder(*, fact: ResultFact, attempt) -> bool:
+    """A total entered before scan attachment supplies neither score nor completion."""
+    if fact.source != "manual_total" or attempt is None:
+        return False
+    meta = attempt.meta if isinstance(attempt.meta, dict) else {}
+    placeholder = meta.get("manual_score_placeholder")
+    attached_at = (
+        parse_datetime(str(placeholder.get("attached_at") or ""))
+        if isinstance(placeholder, dict) else None
+    )
+    return attached_at is not None and fact.created_at < attached_at
+
+
+def explicit_manual_total_score_for_result(
+    *,
+    result: Result,
+    attempt,
+    score_shape,
+) -> float | None:
+    """Keep an explicit total only until the next manual score edit."""
+    fact = ResultFact.objects.filter(
+        target_type="exam",
+        target_id=result.target_id,
+        enrollment_id=result.enrollment_id,
+        attempt_id=result.attempt_id,
+    ).filter(
+        Q(
+            source__in=(
+                "manual_total", "manual_subjective", "manual_objective", "manual_not_submitted",
+            ),
+            question_id=0,
+        )
+        | Q(
+            source__in=("manual", "manual_grid"),
+            question_id__in=score_shape.question_kind_by_id,
+        )
+    ).order_by("-id").first()
+    if fact and fact.source == "manual_total":
+        # A temporary zero entered before the scan was attached was consumed
+        # by that attachment. A later explicit zero remains a valid override.
+        if is_consumed_manual_total_placeholder(fact=fact, attempt=attempt):
+            return None
+        return max(0.0, safe_float(fact.score))
+    return None
 
 
 def manual_subjective_score_from_attempt_meta(attempt) -> float | None:
