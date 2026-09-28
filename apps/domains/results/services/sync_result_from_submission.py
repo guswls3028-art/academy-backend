@@ -21,6 +21,7 @@ from apps.domains.results.services.answer_matching import (
 )
 from apps.domains.results.services.manual_subjective_score import (
     explicit_manual_subjective_score_for_result,
+    explicit_manual_total_score_for_result,
 )
 from apps.domains.results.services.submission_answer_map import (
     build_submission_answers_map,
@@ -313,13 +314,24 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
         and int(existing_result_prev.attempt_id) == int(attempt.id)
     )
     existing_subjective = 0.0
+    existing_manual_total = None
     if preserve_existing_subjective:
         existing_subjective = explicit_manual_subjective_score_for_result(
             result=existing_result_prev,
             attempt=attempt,
             score_shape=score_shape,
         )
-    result_total = round(float(total) + float(existing_subjective), 2)
+        if is_omr_scan_submission(submission):
+            existing_manual_total = explicit_manual_total_score_for_result(
+                result=existing_result_prev,
+                attempt=attempt,
+                score_shape=score_shape,
+            )
+    result_total = (
+        existing_manual_total
+        if existing_manual_total is not None
+        else round(float(total) + float(existing_subjective), 2)
+    )
 
     attempt.status = "done"
     if int(attempt.attempt_index) == 1 and (created_attempt or attached_placeholder):
