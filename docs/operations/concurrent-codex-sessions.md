@@ -293,6 +293,12 @@ pwsh C:\academy\backend\scripts\codex\session-worktree.ps1 -Action Sync
 `Sync` refuses dirty, non-`main`, or divergent canonical roots. It never resets,
 rebases, force-checks out, or deletes user work.
 
+A reused owned worktree may have a later `codex/*` branch that no longer matches
+its original session name. After confirming the exact registered path and that
+no active task/process needs it, pass `-ExpectedBranch <exact-current-branch>`
+with `Close` and one repository. A missing or mismatched explicit branch still
+refuses a reused checkout; dirty, unmerged, ignored-data and remote-integration
+checks remain unchanged. This does not authorize closing another task's checkout.
 `Close` validates integration against freshly fetched `origin/main`, not the
 possibly stale canonical checkout. After that fail-closed preflight succeeds it
 removes the exact session branch even when concurrent work intentionally keeps

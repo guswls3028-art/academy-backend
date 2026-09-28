@@ -242,6 +242,39 @@ try {
     ) "Close did not recognize a fully patch-equivalent branch."
     Assert-True (-not (Test-Path -LiteralPath $patchWorktree)) "Patch-equivalent worktree remains after close."
 
+    [void](& $scriptUnderTest -Action Start -Session reused-test -Repository backend `
+        -WorkspaceRoot $fixtureRoot -AllowLowDisk)
+    $reusedWorktree = Join-Path $fixtureRoot "_worktrees\sessions\reused-test\backend"
+    $reusedBranch = "codex/later-owned-task"
+    [void](Invoke-Git -Root $reusedWorktree -Arguments @("branch", "-m", $reusedBranch))
+    foreach ($expected in @("", "codex/wrong-task")) {
+        $refused = $false
+        try {
+            & $scriptUnderTest -Action Close -Session reused-test -Repository backend `
+                -WorkspaceRoot $fixtureRoot -ExpectedBranch $expected *> $null
+        } catch { $refused = $true }
+        Assert-True $refused "A reused branch requires its exact explicit identity."
+        Assert-True (Test-Path -LiteralPath $reusedWorktree) "Branch mismatch removed the worktree."
+    }
+    Set-Content -LiteralPath (Join-Path $reusedWorktree "unique.txt") -Value "owned" -Encoding UTF8
+    foreach ($committed in @($false, $true)) {
+        if ($committed) {
+            [void](Invoke-Git -Root $reusedWorktree -Arguments @("add", "unique.txt"))
+            [void](Invoke-Git -Root $reusedWorktree -Arguments @("commit", "-m", "owned unique change"))
+        }
+        $refused = $false
+        try {
+            & $scriptUnderTest -Action Close -Session reused-test -Repository backend `
+                -WorkspaceRoot $fixtureRoot -ExpectedBranch $reusedBranch *> $null
+        } catch { $refused = $true }
+        Assert-True $refused "Exact branch must still reject dirty or unmerged work."
+        Assert-True (Test-Path -LiteralPath $reusedWorktree) "Unique work was removed."
+    }
+    [void](Invoke-Git -Root $reusedWorktree -Arguments @("push", "origin", "HEAD:main"))
+    [void](& $scriptUnderTest -Action Close -Session reused-test -Repository backend `
+        -WorkspaceRoot $fixtureRoot -ExpectedBranch $reusedBranch)
+    Assert-True (-not (Test-Path -LiteralPath $reusedWorktree)) "Merged reused worktree remains."
+
     $frontendRoot = Join-Path $fixtureRoot "frontend"
     Set-Content -LiteralPath (Join-Path $frontendRoot "dirty-sync.txt") -Value "dirty" -Encoding UTF8
     $dirtySyncRefused = $false
