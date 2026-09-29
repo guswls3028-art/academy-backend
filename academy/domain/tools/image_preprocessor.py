@@ -95,6 +95,57 @@ def trim_bottom_whitespace(img: Image.Image, padding_px: int = 12) -> Image.Imag
     return img
 
 
+def compact_internal_whitespace(img: Image.Image) -> Image.Image:
+    """Shorten proven empty bands in tall question crops without removing ink.
+
+    A portrait question with its choices near the bottom is otherwise shrunk to
+    an unreadable width on a landscape slide. Only full-width white bands
+    between visible rows are shortened; the question, figures and choices stay
+    together and in their original order.
+    """
+    width, height = img.size
+    if width <= 0 or height < width * 1.6:
+        return img
+
+    gray = img.convert("L")
+    ink = gray.point(lambda value: 255 if value < 245 else 0)
+    # Find candidates cheaply, then verify every pixel before removing a band.
+    row_density = list(ink.resize((1, height), Image.Resampling.BOX).getdata())
+    min_gap = max(120, int(height * 0.12))
+    keep_gap = max(48, min(120, int(width * 0.10)))
+    gaps: list[tuple[int, int]] = []
+    start = None
+    for row, density in enumerate([*row_density, 255]):
+        if density <= 2:
+            if start is None:
+                start = row
+        elif start is not None:
+            if (
+                row - start > max(min_gap, keep_gap)
+                and start > 0
+                and row < height
+                and ink.crop((0, start, width, row)).getbbox() is None
+            ):
+                gaps.append((start, row))
+            start = None
+
+    if not gaps:
+        return img
+
+    pieces = []
+    cursor = 0
+    for start, end in gaps:
+        pieces.append(img.crop((0, cursor, width, start + keep_gap)))
+        cursor = end
+    pieces.append(img.crop((0, cursor, width, height)))
+    result = Image.new(img.mode, (width, sum(piece.height for piece in pieces)))
+    top = 0
+    for piece in pieces:
+        result.paste(piece, (0, top))
+        top += piece.height
+    return result
+
+
 def preprocess_for_detect(img: Image.Image) -> Image.Image:
     """Aggressive preprocessing for question boundary detection.
 
