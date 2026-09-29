@@ -281,8 +281,7 @@ def complete_submission_after_auto_grade(submission, *, actor: str) -> None:
 def regrade_exam_submissions(*, tenant, exam_id: int, actor: str) -> dict[str, Any]:
     from django.db import transaction
 
-    from apps.domains.enrollment.models import Enrollment
-    from apps.domains.results.models import ExamAttempt, Result, ResultItem
+    from apps.domains.results.models import ResultItem
     from apps.domains.results.services.manual_exam_answers import regrade_manual_exam_answers
     from apps.domains.submissions.models import Submission
     from apps.domains.submissions.services.lifecycle import reopen_for_regrade
@@ -290,6 +289,7 @@ def regrade_exam_submissions(*, tenant, exam_id: int, actor: str) -> dict[str, A
     from apps.support.omr.score_shape import get_exam_score_shape
     from apps.support.results.grading_dependencies import (
         lock_exam_and_score_edit_scope_for_grading,
+        lock_exam_submission_regrade_state,
     )
 
     regradable_statuses = {
@@ -324,7 +324,11 @@ def regrade_exam_submissions(*, tenant, exam_id: int, actor: str) -> dict[str, A
                     exam_id=int(exam_id),
                     tenant_id=int(tenant.id),
                 )
-                submission = Submission.objects.select_for_update().get(id=int(submission_id))
+                submission, result, not_submitted = lock_exam_submission_regrade_state(
+                    submission_id=int(submission_id),
+                    exam_id=int(exam_id),
+                    tenant_id=int(tenant.id),
+                )
                 if submission.status not in regradable_statuses:
                     skipped += 1
                     continue
@@ -335,15 +339,6 @@ def regrade_exam_submissions(*, tenant, exam_id: int, actor: str) -> dict[str, A
                     })
                     skipped += 1
                     continue
-                enrollment = Enrollment.objects.select_for_update().get(
-                    id=int(submission.enrollment_id),
-                    tenant=tenant,
-                )
-                result = Result.objects.select_for_update().filter(
-                    target_type="exam",
-                    target_id=int(exam_id),
-                    enrollment_id=int(enrollment.id),
-                ).first()
                 manual_question_ids = (
                     ResultItem.objects.filter(result=result, source="manual")
                     .values_list("question_id", flat=True)
@@ -357,20 +352,7 @@ def regrade_exam_submissions(*, tenant, exam_id: int, actor: str) -> dict[str, A
                     })
                     skipped += 1
                     continue
-                attempt = (
-                    ExamAttempt.objects.select_for_update()
-                    .filter(
-                        exam_id=int(exam_id),
-                        submission_id=int(submission_id),
-                        enrollment__tenant=tenant,
-                    )
-                    .first()
-                )
-                if (
-                    attempt is not None
-                    and isinstance(attempt.meta, dict)
-                    and attempt.meta.get("status") == "NOT_SUBMITTED"
-                ):
+                if not_submitted:
                     skipped += 1
                     continue
                 if submission.status != Submission.Status.ANSWERS_READY:

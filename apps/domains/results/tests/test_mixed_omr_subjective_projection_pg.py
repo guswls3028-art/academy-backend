@@ -25,6 +25,12 @@ from apps.domains.results.models import (
     ScoreEditDraft,
 )
 from apps.domains.results.services.grading_service import grade_submission
+from apps.domains.results.services.sync_result_from_submission import (
+    sync_result_from_exam_submission,
+)
+from apps.domains.results.services.manual_subjective_score import (
+    explicit_manual_total_score_for_result,
+)
 from apps.domains.results.services.manual_exam_grading import (
     apply_manual_grading,
     build_manual_grading_sheet,
@@ -1373,6 +1379,328 @@ class MixedOmrSubjectiveProjectionPostgresTests(TestCase):
         self.assertEqual(float(legacy.total_score), 95.0)
         self.assertEqual(float(legacy.subjective_score), 15.0)
         dispatch.assert_called_once_with(submission_id=self.submission.id)
+
+    def test_latest_total_override_survives_repeated_same_submission_regrades(self):
+        _legacy, canonical = self._grade_objective_only()
+        for total_score in (95, 0):
+            self._patch_aggregate_score(total_score, view=AdminExamTotalScoreView)
+            override = ResultFact.objects.filter(
+                attempt_id=canonical.attempt_id, source="manual_total",
+            ).latest("id")
+            for answer, objective_score in (("1", 80), ("2", 0), ("1", 80)):
+                with self.subTest(total_score=total_score, answer=answer):
+                    SubmissionAnswer.objects.filter(
+                        submission=self.submission, exam_question_id=self.choice.id,
+                    ).update(answer=answer)
+                    Submission.objects.filter(pk=self.submission.pk).update(
+                        status=Submission.Status.ANSWERS_READY,
+                    )
+                    regraded = grade_submission(self.submission.id, force_regrade=True)
+                    canonical.refresh_from_db()
+                    regraded.refresh_from_db()
+                    self.assertEqual(regraded.status, ExamResult.Status.FINAL)
+                    self.assertEqual(float(canonical.total_score), total_score)
+                    self.assertEqual(float(regraded.total_score), total_score)
+                    self.assertEqual(float(canonical.objective_score), objective_score)
+                    self.assertEqual(float(regraded.objective_score), objective_score)
+                    self.assertEqual(
+                        float(regraded.subjective_score), max(0, total_score - objective_score),
+                    )
+                    state = omr_subjective_completion_states([canonical])[canonical.id]
+                    self.assertTrue(state.aggregate_score_recorded)
+                    self.assertTrue(state.projection_ready)
+                    override.refresh_from_db()
+                    self.assertEqual(float(override.score), total_score)
+                    self.assertFalse(ResultItem.objects.filter(
+                        result=canonical, question=self.essay,
+                    ).exists())
+
+    def _mark_not_submitted(self):
+        self._acquire_score_lease()
+        request = self.factory.patch(
+            "/results/admin/exams/total/",
+            {"meta_status": "NOT_SUBMITTED"},
+            format="json",
+            HTTP_X_SCORE_EDITOR_CLIENT="mixed-omr-browser",
+            HTTP_X_SCORE_SESSION_ID=str(self.session.id),
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.staff)
+        response = AdminExamTotalScoreView.as_view()(
+            request, exam_id=self.exam.id, enrollment_id=self.enrollment.id,
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+
+    def _exam_grading_snapshot(self, canonical):
+        return {
+            "result": Result.objects.filter(pk=canonical.pk).values().get(),
+            "items": list(ResultItem.objects.filter(result=canonical).order_by("id").values()),
+            "facts": list(ResultFact.objects.filter(
+                target_type="exam", target_id=self.exam.id, enrollment=self.enrollment,
+            ).order_by("id").values()),
+            "attempts": list(ExamAttempt.objects.filter(
+                exam=self.exam, enrollment=self.enrollment,
+            ).order_by("id").values()),
+            "legacy": list(ExamResult.objects.filter(
+                exam=self.exam, submission__enrollment=self.enrollment,
+            ).order_by("id").values()),
+            "progress": list(SessionProgress.objects.filter(
+                enrollment=self.enrollment,
+            ).order_by("id").values()),
+            "clinic": list(ClinicLink.objects.filter(
+                enrollment=self.enrollment,
+            ).order_by("id").values()),
+        }
+
+    def test_not_submitted_invalidates_total_override_until_explicit_total_resume(self):
+        _legacy, canonical = self._grade_objective_only()
+        self._patch_aggregate_score(95, view=AdminExamTotalScoreView)
+        override = ResultFact.objects.filter(
+            attempt_id=canonical.attempt_id, source="manual_total",
+        ).latest("id")
+        self._mark_not_submitted()
+        canonical.refresh_from_db()
+        attempt = ExamAttempt.objects.get(pk=canonical.attempt_id)
+        absence = ResultFact.objects.filter(
+            attempt=attempt, source="manual_not_submitted",
+        ).latest("id")
+        self.assertGreater(absence.id, override.id)
+        self.assertEqual(attempt.meta["status"], "NOT_SUBMITTED")
+        self.assertEqual(float(canonical.total_score), 0)
+        self.assertFalse(ResultItem.objects.filter(result=canonical).exists())
+        self.assertIsNone(explicit_manual_total_score_for_result(
+            result=canonical,
+            attempt=attempt,
+            score_shape=SimpleNamespace(question_kind_by_id={
+                self.choice.id: "choice", self.essay.id: "essay",
+            }),
+        ))
+        override.refresh_from_db()
+        self.assertEqual(float(override.score), 95)
+
+        # Exercise the ordinary grading entry before the explicit resume.
+        # Repeated delivery must retain scores, items, audit and projections.
+        absent_snapshot = self._exam_grading_snapshot(canonical)
+        for _ in range(2):
+            retained = grade_submission(self.submission.id, force_regrade=True)
+            self.assertEqual(retained.pk, _legacy.pk)
+            self.assertEqual(self._exam_grading_snapshot(canonical), absent_snapshot)
+            canonical.refresh_from_db()
+            attempt.refresh_from_db()
+            self.assertEqual(float(canonical.total_score), 0)
+            self.assertEqual(float(canonical.objective_score), 0)
+            self.assertEqual(attempt.meta["status"], "NOT_SUBMITTED")
+            self.assertFalse(ResultItem.objects.filter(result=canonical).exists())
+
+        # A late callback may already have advanced to ANSWERS_READY. It must
+        # finish its normal lifecycle without resurrecting the cancelled score.
+        Submission.objects.filter(pk=self.submission.pk).update(
+            status=Submission.Status.ANSWERS_READY,
+        )
+        grade_submission(self.submission.id, force_regrade=True)
+        self.submission.refresh_from_db()
+        self.assertEqual(self.submission.status, Submission.Status.DONE)
+        self.assertEqual(self._exam_grading_snapshot(canonical), absent_snapshot)
+
+        # A teacher's new score explicitly resumes grading; automatic regrading
+        # must preserve that new input, not the cancelled 95-point total.
+        self._patch_aggregate_score(70, view=AdminExamTotalScoreView)
+        attempt.refresh_from_db()
+        self.assertNotEqual(attempt.meta.get("status"), "NOT_SUBMITTED")
+        for _ in range(2):
+            Submission.objects.filter(pk=self.submission.pk).update(
+                status=Submission.Status.ANSWERS_READY,
+            )
+            regraded = grade_submission(self.submission.id, force_regrade=True)
+            canonical.refresh_from_db()
+            self.assertEqual(canonical.attempt_id, attempt.id)
+            self.assertEqual(float(canonical.total_score), 70)
+            self.assertEqual(float(regraded.total_score), 70)
+            self.assertEqual(regraded.status, ExamResult.Status.FINAL)
+        absence.refresh_from_db()
+        self.assertEqual(absence.meta["status"], "NOT_SUBMITTED")
+
+    def test_direct_sync_preserves_not_submitted_result_without_writes(self):
+        _legacy, canonical = self._grade_objective_only()
+        self._patch_aggregate_score(95, view=AdminExamTotalScoreView)
+        self._mark_not_submitted()
+        canonical.refresh_from_db()
+        absent_snapshot = self._exam_grading_snapshot(canonical)
+
+        for _ in range(2):
+            synced = sync_result_from_exam_submission(self.submission.id)
+            self.assertEqual(synced.pk, canonical.pk)
+            self.assertEqual(self._exam_grading_snapshot(canonical), absent_snapshot)
+            self.assertEqual(float(synced.total_score), 0)
+            self.assertEqual(float(synced.objective_score), 0)
+            self.assertEqual(synced.attempt.meta["status"], "NOT_SUBMITTED")
+            self.assertFalse(ResultItem.objects.filter(result=synced).exists())
+
+    def test_new_attempt_after_absence_survives_old_submission_regrade(self):
+        _legacy, canonical = self._grade_objective_only()
+        self._patch_aggregate_score(95, view=AdminExamTotalScoreView)
+        self._mark_not_submitted()
+        canonical.refresh_from_db()
+        absent_attempt_id = canonical.attempt_id
+        self.exam.allow_retake = True
+        self.exam.max_attempts = 2
+        self.exam.save(update_fields=["allow_retake", "max_attempts"])
+
+        new_submission = self._new_omr_submission()
+        new_legacy = grade_submission(new_submission.id)
+        canonical.refresh_from_db()
+        self.assertNotEqual(canonical.attempt_id, absent_attempt_id)
+        self.assertEqual(float(canonical.total_score), 80)
+        self.assertEqual(new_legacy.status, ExamResult.Status.DRAFT)
+        self.assertNotEqual((canonical.attempt.meta or {}).get("status"), "NOT_SUBMITTED")
+        self.assertTrue(ResultItem.objects.filter(result=canonical).exists())
+
+        self._patch_aggregate_score(70, view=AdminExamTotalScoreView)
+        current_snapshot = self._exam_grading_snapshot(canonical)
+        grade_submission(self.submission.id, force_regrade=True)
+        synced = sync_result_from_exam_submission(self.submission.id)
+        self.assertEqual(synced.attempt_id, canonical.attempt_id)
+        self.assertEqual(self._exam_grading_snapshot(canonical), current_snapshot)
+
+        Submission.objects.filter(pk=new_submission.pk).update(
+            status=Submission.Status.ANSWERS_READY,
+        )
+        regraded = grade_submission(new_submission.id, force_regrade=True)
+        canonical.refresh_from_db()
+        self.assertEqual(float(canonical.total_score), 70)
+        self.assertEqual(float(regraded.total_score), 70)
+        self.assertEqual(regraded.status, ExamResult.Status.FINAL)
+        absent_attempt = ExamAttempt.objects.get(pk=absent_attempt_id)
+        self.assertEqual(absent_attempt.meta["status"], "NOT_SUBMITTED")
+
+    def test_attached_zero_placeholder_is_replaced_but_later_explicit_zero_survives(self):
+        attempt = ExamAttempt.objects.create(
+            exam=self.exam, enrollment=self.enrollment, submission_id=0,
+            attempt_index=1, is_representative=True, status="done",
+            meta={"initial_snapshot": {
+                "source": "admin_manual_total", "total_score": 0, "max_score": 100,
+            }},
+        )
+        canonical = Result.objects.create(
+            target_type="exam", target_id=self.exam.id, enrollment=self.enrollment,
+            attempt=attempt, total_score=0, objective_score=0, max_score=100,
+        )
+        ResultFact.objects.create(
+            target_type="exam", target_id=self.exam.id, enrollment=self.enrollment,
+            attempt=attempt, submission_id=self.submission.id, question_id=0,
+            score=0, max_score=100, source="manual_total",
+        )
+        for _ in range(2):
+            Submission.objects.filter(pk=self.submission.pk).update(
+                status=Submission.Status.ANSWERS_READY,
+            )
+            regraded = grade_submission(self.submission.id, force_regrade=True)
+            canonical.refresh_from_db()
+            self.assertEqual(canonical.attempt_id, attempt.id)
+            self.assertEqual(float(canonical.total_score), 80)
+            regraded.refresh_from_db()
+            self.assertEqual(regraded.status, ExamResult.Status.DRAFT)
+            state = omr_subjective_completion_states([canonical])[canonical.id]
+            self.assertFalse(state.aggregate_score_recorded)
+            self.assertFalse(state.projection_ready)
+        self._patch_aggregate_score(0, view=AdminExamTotalScoreView)
+        Submission.objects.filter(pk=self.submission.pk).update(
+            status=Submission.Status.ANSWERS_READY,
+        )
+        regraded = grade_submission(self.submission.id, force_regrade=True)
+        canonical.refresh_from_db()
+        self.assertEqual(regraded.status, ExamResult.Status.FINAL)
+        self.assertEqual(float(canonical.total_score), 0)
+        self.assertEqual(float(regraded.total_score), 0)
+        state = omr_subjective_completion_states([canonical])[canonical.id]
+        self.assertTrue(state.aggregate_score_recorded)
+        self.assertTrue(state.projection_ready)
+
+    def test_total_placeholder_completion_uses_strict_attachment_time_boundary(self):
+        _legacy, canonical = self._grade_objective_only()
+        self._patch_aggregate_score(0, view=AdminExamTotalScoreView)
+        attempt = ExamAttempt.objects.get(pk=canonical.attempt_id)
+        override = ResultFact.objects.filter(
+            attempt=attempt, source="manual_total",
+        ).latest("id")
+        for offset, consumed in ((1, True), (0, False), (-1, False)):
+            with self.subTest(attachment_offset_microseconds=offset):
+                attempt.meta["manual_score_placeholder"] = {
+                    "attached_submission_id": self.submission.id,
+                    "attached_at": (
+                        override.created_at + timedelta(microseconds=offset)
+                    ).isoformat(),
+                }
+                attempt.save(update_fields=["meta", "updated_at"])
+                total = explicit_manual_total_score_for_result(
+                    result=canonical,
+                    attempt=attempt,
+                    score_shape=SimpleNamespace(question_kind_by_id={
+                        self.choice.id: "choice", self.essay.id: "essay",
+                    }),
+                )
+                self.assertEqual(total, None if consumed else 0)
+                state = omr_subjective_completion_states([canonical])[canonical.id]
+                self.assertEqual(state.aggregate_score_recorded, not consumed)
+                self.assertEqual(state.projection_ready, not consumed)
+
+    def test_latest_total_override_preserves_old_essay_item_without_using_its_score(self):
+        _legacy, canonical = self._grade_objective_only()
+        self._acquire_score_lease()
+        response = self._patch_item_score(question=self.essay, score=5)
+        self.assertEqual(response.status_code, 200, response.data)
+        self._patch_aggregate_score(95, view=AdminExamTotalScoreView)
+        regraded = self._regrade_with_wrong_objective()
+        canonical.refresh_from_db()
+        self.assertEqual(regraded.status, ExamResult.Status.FINAL)
+        self.assertEqual(float(canonical.total_score), 95)
+        self.assertEqual(float(regraded.total_score), 95)
+        self.assertEqual(float(ResultItem.objects.get(
+            result=canonical, question=self.essay,
+        ).score), 5)
+
+    def test_new_subjective_aggregate_supersedes_total_override_through_regrade(self):
+        _legacy, canonical = self._grade_objective_only()
+        self._patch_aggregate_score(95, view=AdminExamTotalScoreView)
+        self._patch_aggregate_score(7)
+        regraded = self._regrade_with_wrong_objective()
+        canonical.refresh_from_db()
+        self.assertEqual(regraded.status, ExamResult.Status.FINAL)
+        self.assertEqual(float(canonical.total_score), 7)
+        self.assertEqual(float(regraded.total_score), 7)
+
+    def test_new_objective_item_does_not_resurrect_old_total_override_on_regrade(self):
+        _legacy, canonical = self._grade_objective_only()
+        self._acquire_score_lease()
+        response = self._patch_item_score(question=self.essay, score=5)
+        self.assertEqual(response.status_code, 200, response.data)
+        self._patch_aggregate_score(95, view=AdminExamTotalScoreView)
+        response = self._patch_item_score(question=self.choice, score=75)
+        self.assertEqual(response.status_code, 200, response.data)
+        canonical.refresh_from_db()
+        self.assertEqual(float(canonical.total_score), 80)
+        regraded = self._regrade_with_wrong_objective()
+        canonical.refresh_from_db()
+        self.assertEqual(regraded.status, ExamResult.Status.FINAL)
+        self.assertEqual(float(canonical.total_score), 5)
+        self.assertEqual(float(regraded.total_score), 5)
+
+    def test_new_attempt_does_not_inherit_prior_total_override(self):
+        self.exam.allow_retake = True
+        self.exam.max_attempts = 2
+        self.exam.save(update_fields=["allow_retake", "max_attempts", "updated_at"])
+        _legacy, canonical = self._grade_objective_only()
+        self._patch_aggregate_score(95, view=AdminExamTotalScoreView)
+        prior_attempt_id = canonical.attempt_id
+        second_submission = self._new_omr_submission()
+        regraded = grade_submission(second_submission.id)
+        canonical.refresh_from_db()
+        self.assertNotEqual(canonical.attempt_id, prior_attempt_id)
+        self.assertEqual(regraded.status, ExamResult.Status.DRAFT)
+        self.assertEqual(float(canonical.total_score), 80)
+        self.assertTrue(ResultFact.objects.filter(
+            attempt_id=prior_attempt_id, source="manual_total", score=95,
+        ).exists())
 
     def test_completed_subjective_score_survives_objective_regrade(self):
         legacy, canonical = self._grade_objective_only()
