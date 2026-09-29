@@ -2,7 +2,7 @@
 
 **Status:** Active · V1.1.2
 **Owners:** Backend
-**Last reviewed:** 2026-08-05
+**Last reviewed:** 2026-09-30
 
 `backend/academy/`(헥사고날) 와 `backend/apps/`(Django apps) 가 공존한다. 이 문서는 **신규 코드의 배치 규칙**과 **기존 코드의 이관 정책**을 정의한다.
 
@@ -29,7 +29,7 @@
 | **Worker entry** | `backend/apps/worker/{ai_worker,video_worker,messaging_worker}/` | SQS poll loop, batch entrypoint, daemon main | → academy.application.use_cases, academy.adapters |
 | **Core platform** | `backend/apps/core/` | tenant 미들웨어, 인증, 기본 권한, 시그널, parsing | (no upward import — 모든 곳에서 import 가능) |
 | **Shared (no models)** | `backend/apps/shared/{contracts,utils}/` | DTO·계약·순수 유틸 (Django model 금지) | (의존 없음) |
-| **Infrastructure shim** | `backend/apps/infrastructure/storage/` | 레거시 R2 어댑터 (점진 이관 대상 → `academy/adapters/storage/`) | → academy.adapters |
+| **Infrastructure shim** | `backend/apps/infrastructure/storage/` | 기존 R2 함수(`r2.py`)의 호환 경계; 객체 스토리지 어댑터는 `academy/adapters/storage/`가 소유 | → academy.adapters |
 | **Domain (pure)** | `backend/academy/domain/` | 프레임워크-자유 엔티티·VO·도메인 에러 | (Django/외부 라이브러리 import 금지) |
 | **Application ports** | `backend/academy/application/ports/` | 인터페이스(추상). DIP 경계 | → academy.domain |
 | **Application services / use cases** | `backend/academy/application/{services,use_cases,video}/` | 오케스트레이션, 트랜잭션 경계 | → academy.domain, academy.application.ports |
@@ -82,7 +82,7 @@
 ## 4. 이관(Migration) 정책
 
 **Freeze 대상** (신규 진입 금지, 점진 이관):
-- `backend/apps/infrastructure/storage/r2_adapter.py` → 사용처는 `academy/adapters/storage/r2_adapter.py`로 이관 후 제거.
+- 객체 스토리지 어댑터의 Python 사용처 두 곳과 AI 워커 Dockerfile의 import 검사를 `academy/adapters/storage/r2_adapter.py`로 이관하고 중복 `backend/apps/infrastructure/storage/r2_adapter.py`를 제거했다(2026-09-30). 기존 `r2.py` 함수의 사용처는 별도 이관 대상으로 남는다.
 - `backend/apps/domains/<x>/services/` 중 외부 인프라(R2/AI/SQS)를 직접 호출하는 모듈 → `academy/adapters/`로 어댑터 이관 후 use case 호출 패턴으로 변경.
 
 **유지 대상** (영구 공존):
