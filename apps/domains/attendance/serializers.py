@@ -14,7 +14,7 @@ def attendance_status_choices():
     return Attendance._meta.get_field("status").choices
 
 
-@extend_schema_serializer(component_name="SessionAttendance")
+@extend_schema_serializer(component_name="LectureAttendance")
 class AttendanceSerializer(serializers.ModelSerializer):
     student_memo = serializers.SerializerMethodField()
     lecture_memo = serializers.CharField(source="enrollment.lecture_memo", read_only=True)
