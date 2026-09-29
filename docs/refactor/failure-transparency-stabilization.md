@@ -13,7 +13,8 @@ frontend `a13ad36ed7d4a8e976c3d0d2874da73e825d21a0`.
 재현됐다는 기록이 아니다.
 성공 기준은 [변경 위험·실사용 감사 계약](../operations/change-risk-and-release-bundle.md),
 배포 시점은 [배포 시점과 연속성](../operations/deployment-modes.md)을 따른다.
-현재 실행 순서·인수인계는 [hardening-plan.md](hardening-plan.md)가 소유한다.
+Academy 전체 실행 순서는 [실행 계획](../PLAN.md), 안정화 상세 인수인계는
+[hardening-plan.md](hardening-plan.md)가 소유한다.
 아래 최초 발견 당시의 파일 위치·상태는 현재 코드와 구분한다.
 
 ## 확인한 후보
