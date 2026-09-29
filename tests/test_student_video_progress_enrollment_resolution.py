@@ -2264,8 +2264,16 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
             status="ONLINE",
         )
 
-        now = int(timezone.now().timestamp())
-        response = self._get_playback(enrollment_id=self.target_enrollment.id)
+        access_now = timezone.now().replace(microsecond=900_000)
+        now = int(access_now.timestamp())
+        with (
+            patch("apps.support.student_app.video_media._playback_access_now", return_value=access_now),
+            patch(
+                "apps.domains.video.services.playback_session._session_now",
+                return_value=access_now + timedelta(milliseconds=200),
+            ),
+        ):
+            response = self._get_playback(enrollment_id=self.target_enrollment.id)
 
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["video"]["access_mode"], AccessMode.PROCTORED_CLASS.value)
