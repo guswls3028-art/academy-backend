@@ -222,6 +222,7 @@ def _inspect_row(progress, *, tenant_id, cutoff, sources=None):
                 row.exam_id for row in attempts
                 if row.is_representative and isinstance(row.meta, dict) and row.meta.get("status") == "NOT_SUBMITTED"
             },
+            pending_result_ids=sources.pending_result_ids,
         ) if sources is not None else None,
     )
     return "checked", None if bool(progress.exam_passed) == expected else [bool(progress.exam_passed), expected]

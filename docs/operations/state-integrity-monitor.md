@@ -77,7 +77,7 @@ PostgreSQL snapshot은 전체 페이지를 감싸는 REPEATABLE READ / READ ONLY
 쿼리별 timeout은 5초다. 페이지 원본 조회 전후, 행 사이 및 검사 종료 시 30초
 전체 budget을 확인한다. 실행 중인 쿼리는 최대 statement timeout까지 걸릴 수
 있지만 초과 결과를 성공으로 취급하지 않는다. ORM SQL 쓰기도 별도 거부한다.
-`state_detector_page.py`는 페이지 안에서 정책·대상·결과·attempt·제출·클리닉·
+`state_detector_page.py`는 페이지 안에서 정책·대상·결과·attempt·제출·클리닉·OMR 대기 상태·
 강의별 기준을 묶어 읽으며 tenant/page/snapshot 사이에 cache를 공유하지 않는다.
 개별 원본 묶음은 기존처럼 500행, 페이지의 원본 종류별 총 메모리 상한은 10000행이다.
 초과는 `source_limit_exceeded`/`page_source_limit_exceeded`로 실패하며 샘플 성공으로

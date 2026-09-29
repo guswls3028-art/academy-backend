@@ -31,6 +31,7 @@ class ExamAggregationReadSources:
     lecture_pass_scores: dict[int, float]
     attempt_counts: dict[int, int]
     not_submitted_exam_ids: set[int]
+    pending_result_ids: set[int]
 
 
 class SessionProgressCalculator:
@@ -119,7 +120,10 @@ class SessionProgressCalculator:
                 target_id__in=[int(x) for x in exam_ids],
             )
         )
-        pending_result_ids = pending_omr_result_ids(results)
+        pending_result_ids = (
+            {result.id for result in results if result.id in read_sources.pending_result_ids}
+            if read_sources is not None else pending_omr_result_ids(results)
+        )
 
         if not results:
             meta = {

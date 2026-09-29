@@ -6,6 +6,7 @@ import time
 from apps.domains.exams.models import ExamEnrollment, ExamLecturePolicy
 from apps.domains.progress.models import ClinicLink, ProgressPolicy
 from apps.domains.results.models import ExamAttempt, Result
+from apps.domains.results.services.omr_subjective_completion import pending_omr_result_ids
 from apps.domains.results.utils.session_exam import get_all_exams_for_session, get_exam_ids_for_session
 from apps.domains.submissions.models import Submission
 from apps.support.progress.session_calculator_dependencies import target_exam_ids_from_rows
@@ -54,6 +55,11 @@ class StateDetectorPage:
             self._read(Result.objects.filter(enrollment_id__in=enrollment_ids, target_type="exam", target_id__in=exam_ids).select_related("attempt").order_by("id")),
             lambda row: row.enrollment_id,
         )
+        self._check_budget()
+        self.pending_result_ids = pending_omr_result_ids(
+            [row for group in self.results.values() for row in group]
+        )
+        self._check_budget()
         self.overrides = self._group(
             self._read(ExamLecturePolicy.objects.filter(lecture_id__in=lecture_ids, exam_id__in=exam_ids).order_by("id")),
             lambda row: row.lecture_id,
