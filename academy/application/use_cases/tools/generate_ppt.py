@@ -552,6 +552,7 @@ def _add_segmented_pdf_slides_to_composer(
         segment_questions_multipage,
     )
     from academy.domain.tools.image_preprocessor import (
+        compact_internal_whitespace,
         preprocess_for_export,
         trim_bottom_whitespace,
     )
@@ -585,7 +586,9 @@ def _add_segmented_pdf_slides_to_composer(
                     if px1 - px0 < 10 or py1 - py0 < 10:
                         continue
                     crop = page_img.crop((px0, py0, px1, py1))
-                    crop = trim_bottom_whitespace(crop, padding_px=12)
+                    crop = compact_internal_whitespace(
+                        trim_bottom_whitespace(crop, padding_px=12)
+                    )
                     export_img = preprocess_for_export(crop)
                     img_bytes = _image_to_bytes(export_img)
                     img_bytes = apply_user_settings(img_bytes)

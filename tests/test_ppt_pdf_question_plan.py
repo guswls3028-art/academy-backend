@@ -340,6 +340,41 @@ def test_ppt_pdf_image_segmentation_fallback_adds_question_slides(tmp_path, monk
     assert cleanup_calls == [["seg-tmp"]]
 
 
+def test_ppt_scanned_question_shortens_only_empty_middle(tmp_path, monkeypatch):
+    from io import BytesIO
+
+    from PIL import Image, ImageDraw
+
+    from academy.adapters.ai.detection import segment_dispatcher
+
+    image_path = tmp_path / "scanned-question.png"
+    image = Image.new("RGB", (320, 900), "white")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((20, 20, 120, 80), fill="black")
+    draw.rectangle((20, 700, 120, 760), fill="black")
+    image.save(image_path)
+    monkeypatch.setattr(segment_dispatcher, "segment_questions_multipage", lambda _path: {
+        "pages": [{"image_path": str(image_path), "boxes": [(0, 0, 320, 900)]}],
+        "tmp_dirs": [],
+    })
+    monkeypatch.setattr(segment_dispatcher, "cleanup_pdf_seg_tmp_dirs", lambda _paths: None)
+
+    class Composer:
+        slides: list[bytes] = []
+
+        def add_slide(self, image_bytes: bytes):
+            self.slides.append(image_bytes)
+
+    composer = Composer()
+    assert _add_segmented_pdf_slides_to_composer(
+        "source.pdf", composer=composer, apply_user_settings=lambda data: data,
+    ) == 1
+    with Image.open(BytesIO(composer.slides[0])) as slide:
+        assert slide.width == 320
+        assert slide.height < 350
+        assert slide.convert("L").point(lambda pixel: 255 if pixel < 100 else 0).getbbox()
+
+
 def test_ppt_pdf_shared_range_keeps_opposite_column_question_body():
     """A shared [7~8] context must not replace the actual right-column Q7."""
     from academy.domain.tools.paper_type import PaperType, PaperTypeResult
