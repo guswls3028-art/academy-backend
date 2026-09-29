@@ -497,6 +497,35 @@ def test_photo_ocr_recovers_obscured_first_number_without_vlm(tmp_path, monkeypa
     assert "20. " in questions[-1]["text"]
 
 
+@pytest.mark.parametrize("vlm_proposed", [False, True])
+def test_photo_ocr_recovery_preserves_unexplained_auto_crop(
+    tmp_path, monkeypatch, vlm_proposed,
+):
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline as pipeline
+
+    _, page, questions, blocks = _two_column_ocr_recovery_case(tmp_path)
+    extra = [1500, 20, 200, 40]
+    page["boxes"].append(extra)
+    page["numbers"].append(None)
+    questions.append({"number": 2, "page_index": 0, "bbox": extra,
+                      "meta_extra": {"number_source": "counter_fallback"}})
+    original_boxes = [list(q["bbox"]) for q in questions]
+    proposal = _bbox_result(problems=[(16, 200, 120, 700, 700)]) if vlm_proposed else None
+    monkeypatch.setattr(pipeline, "_load_ocr_blocks_backend", lambda: lambda _: blocks)
+    monkeypatch.setattr(pipeline, "_real_vlm_vision_configured", lambda: True)
+    monkeypatch.setattr(pipeline, "_tenant_gate_allows", lambda *args: True)
+    monkeypatch.setattr(pipeline, "_try_vlm_problem_bboxes",
+                        lambda *args, **kwargs: (proposal, None))
+
+    stats = pipeline._augment_questions_with_vlm_for_underfilled_pages(
+        [page], questions, source_type="student_exam_photo", document_id=123, tenant_id=456,
+    )
+    assert stats["ocr_anchor_replaced_auto"] == 0
+    assert stats["ocr_anchor_questions"] == 0
+    assert [q["bbox"] for q in questions] == original_boxes
+    assert page["boxes"] == original_boxes
+
+
 def test_photo_ocr_recovery_rejects_ambiguous_and_protected_inputs(tmp_path):
     import cv2
     import numpy as np

@@ -2604,6 +2604,16 @@ def _recover_numberless_photo_from_ocr(
             return 0, 0
         final.append([x, y, w, end-y])
 
+    # Printed anchors prove the five new cuts, but not that an extra automatic
+    # crop was redundant. Preserve the review candidates when one is unexplained.
+    page_boxes = page.get("boxes") or []
+    old_boxes = [q["bbox"] for q in old] + list(page_boxes)
+    if max(len(old), len(page_boxes)) > len(final) or not all(
+        any(_bbox_coverage_of_smaller(old_box, box) >= 0.30 for box in final)
+        for old_box in old_boxes
+    ):
+        return 0, 0
+
     replacements = [
         {
             "number": number, "page_index": page_idx,
