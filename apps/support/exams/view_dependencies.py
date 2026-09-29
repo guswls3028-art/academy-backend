@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 from django.shortcuts import get_object_or_404
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
@@ -212,6 +214,50 @@ def dispatch_progress_for_exam(*, exam_id: int) -> None:
     dispatch_progress_pipeline(exam_id=exam_id)
 
 
+def highest_current_or_initial_exam_score(*, exam) -> float | None:
+    """Return the highest live representative or preserved first-attempt score."""
+    from apps.domains.results.models import ExamAttempt, Result
+
+    current_results = list(
+        Result.objects.filter(
+            target_type="exam",
+            target_id=int(exam.id),
+            enrollment__tenant=exam.tenant,
+        ).only("enrollment_id", "total_score")
+    )
+    first_attempts = list(
+        ExamAttempt.objects.filter(
+            exam=exam,
+            attempt_index=1,
+            enrollment__tenant=exam.tenant,
+        ).only("meta")
+    )
+    candidates = [result.total_score for result in current_results]
+    for attempt in first_attempts:
+        meta = attempt.meta if isinstance(attempt.meta, dict) else {}
+        if meta.get("status") == "NOT_SUBMITTED":
+            continue
+        snapshot = (
+            meta.get("initial_snapshot")
+            if isinstance(meta.get("initial_snapshot"), dict)
+            else {}
+        )
+        candidates.append(
+            snapshot.get("total_score")
+            if snapshot
+            else meta.get("total_score")
+        )
+    normalized = []
+    for value in candidates:
+        try:
+            score = float(value)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if math.isfinite(score) and score >= 0:
+            normalized.append(score)
+    return max(normalized) if normalized else None
+
+
 def refresh_exam_target_projections(*, exam):
     from apps.domains.progress.dispatcher import refresh_exam_target_projections as refresh
 
@@ -244,7 +290,9 @@ def resolve_removed_exam_clinic_links(
     tenant_id: int,
     session_id: int,
     exam_id: int,
+    enrollment_ids=None,
     user_id: int | None,
+    reason: str = "exam_removed_from_session",
 ) -> int:
     from apps.domains.progress.dispatcher import resolve_removed_source_clinic_links
 
@@ -253,6 +301,7 @@ def resolve_removed_exam_clinic_links(
         session_id=session_id,
         source_type="exam",
         source_id=exam_id,
+        enrollment_ids=enrollment_ids,
         user_id=user_id,
-        reason="exam_removed_from_session",
+        reason=reason,
     )

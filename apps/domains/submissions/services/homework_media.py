@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import json
 import logging
 import mimetypes
 from pathlib import PurePath
@@ -16,6 +17,10 @@ from rest_framework.exceptions import APIException, ValidationError
 
 from apps.core.r2_paths import ai_submission_key
 from apps.domains.submissions.models import Submission, SubmissionMedia
+from apps.domains.submissions.services.lifecycle import (
+    ensure_ai_submission_key_attachable,
+    schedule_unreferenced_ai_object_cleanup,
+)
 from apps.infrastructure.storage.r2 import upload_fileobj_to_r2
 
 
@@ -178,7 +183,14 @@ def _parse_position(value) -> int:
     return position
 
 
-def _ensure_parent_submission(*, tenant, user, enrollment_id: int, homework_id: int) -> Submission:
+def _ensure_parent_submission(
+    *,
+    tenant,
+    user,
+    submitted_by_user,
+    enrollment_id: int,
+    homework_id: int,
+) -> Submission:
     parent = (
         Submission.objects.filter(
             tenant=tenant,
@@ -193,10 +205,19 @@ def _ensure_parent_submission(*, tenant, user, enrollment_id: int, homework_id: 
         .first()
     )
     if parent:
+        if getattr(user, "id", None) != getattr(submitted_by_user, "id", None):
+            meta = dict(parent.meta or {})
+            if meta.get("submitted_by_user_id") != submitted_by_user.id:
+                meta["submitted_by_user_id"] = submitted_by_user.id
+                parent.meta = meta
+                parent.save(update_fields=["meta", "updated_at"])
         return parent
 
     try:
         with transaction.atomic():
+            submission_meta = None
+            if getattr(user, "id", None) != getattr(submitted_by_user, "id", None):
+                submission_meta = {"submitted_by_user_id": submitted_by_user.id}
             return Submission.objects.create(
                 tenant=tenant,
                 user=user,
@@ -206,6 +227,7 @@ def _ensure_parent_submission(*, tenant, user, enrollment_id: int, homework_id: 
                 # Keep the existing single-file source contract so the active-parent
                 # uniqueness constraint remains valid for old and new API instances.
                 source=Submission.Source.HOMEWORK_IMAGE,
+                meta=submission_meta,
                 status=Submission.Status.SUBMITTED,
             )
     except IntegrityError:
@@ -226,6 +248,12 @@ def _ensure_parent_submission(*, tenant, user, enrollment_id: int, homework_id: 
                 code="HOMEWORK_MEDIA_PARENT_CONFLICT",
                 detail="현재 제출 정보를 다시 불러온 뒤 시도해 주세요.",
             )
+        if getattr(user, "id", None) != getattr(submitted_by_user, "id", None):
+            meta = dict(parent.meta or {})
+            if meta.get("submitted_by_user_id") != submitted_by_user.id:
+                meta["submitted_by_user_id"] = submitted_by_user.id
+                parent.meta = meta
+                parent.save(update_fields=["meta", "updated_at"])
         return parent
 
 
@@ -354,6 +382,7 @@ def store_homework_media(
     *,
     tenant,
     user,
+    submitted_by_user,
     enrollment_id: int,
     homework_id: int,
     upload_file,
@@ -368,6 +397,7 @@ def store_homework_media(
     parent = _ensure_parent_submission(
         tenant=tenant,
         user=user,
+        submitted_by_user=submitted_by_user,
         enrollment_id=enrollment_id,
         homework_id=homework_id,
     )
@@ -395,21 +425,54 @@ def store_homework_media(
         raise HomeworkMediaUploadFailed()
 
     uploaded_at = timezone.now()
+    cleanup_required = False
     try:
-        updated = SubmissionMedia.objects.filter(pk=media.pk).update(
-            status=SubmissionMedia.Status.UPLOADED,
-            error_message="",
-            uploaded_at=uploaded_at,
-            failed_at=None,
-            updated_at=uploaded_at,
-        )
-        if updated != 1:
-            raise RuntimeError("homework media row disappeared during upload finalization")
+        with transaction.atomic():
+            locked = (
+                SubmissionMedia.objects.select_for_update()
+                .filter(pk=media.pk, tenant=tenant, submission=parent)
+                .first()
+            )
+            if locked is None:
+                cleanup_required = True
+            else:
+                try:
+                    ensure_ai_submission_key_attachable(
+                        tenant_id=tenant.id,
+                        key=media.object_key,
+                    )
+                except ValueError:
+                    cleanup_required = True
+                if not cleanup_required:
+                    if (
+                        locked.status != SubmissionMedia.Status.UPLOADING
+                        or locked.object_key != media.object_key
+                    ):
+                        raise RuntimeError("homework media upload lease is no longer owned")
+                    updated = SubmissionMedia.objects.filter(
+                        pk=locked.pk,
+                        status=SubmissionMedia.Status.UPLOADING,
+                        object_key=media.object_key,
+                    ).update(
+                        status=SubmissionMedia.Status.UPLOADED,
+                        error_message="",
+                        uploaded_at=uploaded_at,
+                        failed_at=None,
+                        updated_at=uploaded_at,
+                    )
+                    if updated != 1:
+                        raise RuntimeError("homework media upload lease is no longer owned")
     except Exception:
         # The object is not deleted blindly: it remains under this row's deterministic
         # immutable key, so the same client id can safely overwrite/reconcile it on retry.
         logger.exception("Homework media finalization failed media_id=%s", media.id)
         _best_effort_mark_failed(media_id=media.pk, message="파일 저장 확인 실패")
+        raise HomeworkMediaUploadFailed()
+    if cleanup_required:
+        schedule_unreferenced_ai_object_cleanup(
+            tenant_id=tenant.id,
+            key=media.object_key,
+        )
         raise HomeworkMediaUploadFailed()
     media.refresh_from_db()
     return media, False
@@ -492,6 +555,84 @@ def serialize_legacy_homework_media(submission: Submission) -> dict:
         "removed_at": removed_at,
         "created_at": submission.created_at.isoformat() if submission.created_at else None,
     }
+
+
+def homework_media_set_fingerprint_for_submissions(submissions) -> str:
+    """Fingerprint the active media evidence represented by submission rows."""
+    evidence: list[dict] = []
+    for submission in submissions:
+        if (
+            submission.source not in _HOMEWORK_MEDIA_SOURCES
+            or submission.status == Submission.Status.SUPERSEDED
+        ):
+            continue
+        if _legacy_is_active(submission):
+            evidence.append(
+                {
+                    "kind": "legacy",
+                    "submission_id": int(submission.id),
+                    "source": str(submission.source),
+                    "object_key": str(submission.file_key),
+                    "file_type": str(submission.file_type or ""),
+                    "file_size": int(submission.file_size or 0),
+                    "status": str(submission.status),
+                }
+            )
+        for media in submission.media_files.all():
+            if media.removed_at is not None:
+                continue
+            evidence.append(
+                {
+                    "kind": "media",
+                    "submission_id": int(submission.id),
+                    "media_id": int(media.id),
+                    "client_upload_id": str(media.client_upload_id),
+                    "fingerprint": str(media.fingerprint),
+                    "object_key": str(media.object_key),
+                    "original_filename": str(media.original_filename),
+                    "media_kind": str(media.media_kind),
+                    "mime_type": str(media.mime_type),
+                    "size": int(media.size),
+                    "position": int(media.position),
+                    "status": str(media.status),
+                }
+            )
+    evidence.sort(
+        key=lambda item: (
+            int(item["submission_id"]),
+            0 if item["kind"] == "legacy" else 1,
+            int(item.get("position", 0)),
+            int(item.get("media_id", 0)),
+        )
+    )
+    encoded = json.dumps(
+        evidence,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def homework_media_set_fingerprint(
+    *,
+    tenant,
+    enrollment_id: int,
+    homework_id: int,
+) -> str:
+    submissions = list(
+        Submission.objects.filter(
+            tenant=tenant,
+            enrollment_id=int(enrollment_id),
+            target_type=Submission.TargetType.HOMEWORK,
+            target_id=int(homework_id),
+            source__in=_HOMEWORK_MEDIA_SOURCES,
+        )
+        .exclude(status=Submission.Status.SUPERSEDED)
+        .prefetch_related("media_files")
+        .order_by("id")
+    )
+    return homework_media_set_fingerprint_for_submissions(submissions)
 
 
 def homework_media_limits_payload() -> dict:

@@ -111,6 +111,8 @@ def send_parent_account_credentials_notice(
     parent_password: str | None = None,
     student_password: str | None = None,
     to: str | None = None,
+    origin_type: str = "system_account",
+    origin_id: str | None = None,
 ) -> bool:
     """Send parent login information, including the linked student account ID."""
 
@@ -137,6 +139,8 @@ def send_parent_account_credentials_notice(
         replacements=replacements,
         log_target_id=_parent_target_id(student),
         log_target_name=student.name or "",
+        origin_type=origin_type,
+        origin_id=origin_id,
     )
 
 
@@ -169,7 +173,7 @@ def send_parent_password_changed_notice(*, parent: Any, password: str, student: 
     if not parent_phone:
         logger.info("parent password notice skipped: no recipient parent_id=%s", getattr(parent, "id", None))
         return False
-    linked_student = student or parent.students.filter(deleted_at__isnull=True).order_by("-id").first()
+    linked_student = student
     student_name = getattr(linked_student, "name", "") or ""
     parent_username = user_display_username(getattr(parent, "user", None)) or parent_phone
     replacements = {

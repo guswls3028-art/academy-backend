@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from django.utils import timezone
 
 from apps.domains.clinic.models import SessionParticipant
+from apps.domains.clinic.time_ranges import booking_window, session_window
 
 
 def is_clinic_participant_reminder_active(*, participant_id: int, tenant_id: int) -> bool:
@@ -34,7 +35,7 @@ def is_clinic_booking_reminder_active(*, tenant_id: int, origin_id: str, now=Non
     participant = SessionParticipant.objects.select_related("session").filter(
         id=int(participant_id), tenant_id=tenant_id,
         session_id=int(session_id), session__tenant_id=tenant_id,
-        session__date=start.date(), session__booking_mode="time_range",
+        session__booking_mode="time_range",
         booking_start_time=start.time(), booking_end_time__isnull=False,
         status=SessionParticipant.Status.BOOKED,
         student__tenant_id=tenant_id, student__deleted_at__isnull=True,
@@ -43,10 +44,13 @@ def is_clinic_booking_reminder_active(*, tenant_id: int, origin_id: str, now=Non
     if not participant:
         return False
     session = participant.session
-    opening = datetime.combine(session.date, session.start_time)
-    closing = opening + timedelta(minutes=session.duration_minutes)
-    ending = datetime.combine(session.date, participant.booking_end_time)
-    return opening <= start.replace(tzinfo=None) < ending <= closing
+    opening, closing = session_window(session)
+    booking_start, ending = booking_window(
+        session=session,
+        start_time=participant.booking_start_time,
+        end_time=participant.booking_end_time,
+    )
+    return booking_start == start.replace(tzinfo=None) and opening <= booking_start < ending <= closing
 
 
 __all__ = ["is_clinic_participant_reminder_active", "is_clinic_booking_reminder_active"]

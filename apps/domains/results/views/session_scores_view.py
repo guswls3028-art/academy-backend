@@ -49,7 +49,11 @@ from apps.domains.results.utils.result_queries import (
     latest_results_per_enrollment,
 )
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement_bulk
+from apps.domains.results.services.omr_subjective_completion import (
+    pending_omr_result_ids,
+)
 from apps.domains.results.utils.exam_absence import current_exam_absence_counts
+from apps.domains.results.utils.clinic import filter_live_source_links
 from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
 from apps.domains.results.services.assessment_correction_status import (
     assessment_correction_payload,
@@ -67,12 +71,15 @@ from apps.support.results.exam_policy_dependencies import (
     exam_pass_score_overrides,
 )
 from apps.support.results.assessment_correction_dependencies import (
+    homework_media_set_fingerprint,
     set_teacher_assessment_resolution,
 )
+from apps.support.homework.review_lock import lock_homework_review_target
 from apps.support.results.session_scores_dependencies import (
     AssessmentCorrection,
     ClinicLink,
     Enrollment,
+    Exam,
     ExamEnrollment,
     ExamQuestion,
     Homework,
@@ -168,33 +175,6 @@ def _clinic_source_id(row: Dict[str, Any], source_type: str) -> Optional[int]:
     if row.get("source_type") is None:
         return _int_or_none(meta.get(f"{source_type}_id"))
     return None
-
-
-def _is_live_session_clinic_link(
-    row: Dict[str, Any],
-    *,
-    live_exam_ids: Set[int],
-    live_homework_ids: Set[int],
-    homework_assigned_set: Set[tuple[int, int]],
-) -> bool:
-    enrollment_id = _int_or_none(row.get("enrollment_id"))
-    if enrollment_id is None:
-        return False
-
-    exam_id = _clinic_source_id(row, "exam")
-    if exam_id is not None:
-        return exam_id in live_exam_ids
-
-    homework_id = _clinic_source_id(row, "homework")
-    if homework_id is not None:
-        return (
-            homework_id in live_homework_ids
-            and (enrollment_id, homework_id) in homework_assigned_set
-        )
-
-    # Legacy automatic links without source metadata are already session-scoped.
-    # Keep them visible rather than silently hiding an ambiguous historical target.
-    return row.get("source_type") is None
 
 
 def _build_exam_attempt_summary(
@@ -450,28 +430,28 @@ class SessionScoresView(APIView):
             .distinct()
         )
 
-        clinic_link_rows = list(
+        clinic_links = list(
             ClinicLink.objects.filter(
+                tenant=tenant,
                 session=session,
                 enrollment_id__in=enrollment_ids,
                 is_auto=True,
                 resolved_at__isnull=True,
             )
-            .values("enrollment_id", "source_type", "source_id", "meta")
+            .only("id", "enrollment_id", "session_id", "source_type", "source_id", "meta")
             .order_by("id")
         )
-        live_exam_ids = set(exam_ids)
-        live_homework_ids = set(homework_ids)
-        raw_clinic_ids: Set[int] = {
-            int(row["enrollment_id"])
-            for row in clinic_link_rows
-            if _is_live_session_clinic_link(
-                row,
-                live_exam_ids=live_exam_ids,
-                live_homework_ids=live_homework_ids,
-                homework_assigned_set=hw_assigned_set,
-            )
-        }
+        live_clinic_links = filter_live_source_links(clinic_links, tenant=tenant)
+        clinic_link_rows = [
+            {
+                "enrollment_id": int(link.enrollment_id),
+                "source_type": link.source_type,
+                "source_id": link.source_id,
+                "meta": link.meta,
+            }
+            for link in live_clinic_links
+        ]
+        raw_clinic_ids: Set[int] = {int(link.enrollment_id) for link in live_clinic_links}
         # 최종 완료 상태가 SSOT다. 과거/특례 등록으로 남은 미해소 ClinicLink가 있어도
         # SessionProgress.completed=True면 현재 클리닉 대상에서 제외한다.
         clinic_ids: Set[int] = raw_clinic_ids - progress_completed_ids
@@ -521,7 +501,7 @@ class SessionScoresView(APIView):
             int(exid): {}
             for exid in exam_ids
         }
-        latest_results = (
+        latest_results = list(
             latest_results_for_targets_per_enrollment(
                 target_type="exam",
                 target_ids=exam_ids,
@@ -529,6 +509,17 @@ class SessionScoresView(APIView):
             .filter(enrollment_id__in=enrollment_ids)
             .prefetch_related("items")
         )
+        pending_result_ids = pending_omr_result_ids(latest_results)
+        pending_exam_pairs = {
+            (int(result.enrollment_id), int(result.target_id))
+            for result in latest_results
+            if int(result.id) in pending_result_ids
+        }
+        clinic_highlight_map = {
+            enrollment_id: value
+            for enrollment_id, value in clinic_highlight_map.items()
+            if int(enrollment_id) in clinic_ids
+        }
         for result in latest_results:
             result_map[int(result.target_id)][int(result.enrollment_id)] = result
 
@@ -756,7 +747,7 @@ class SessionScoresView(APIView):
                     omr_review_meta = omr_review_map.get((exid, eid))
                     block = {
                         "score": None,
-                        "max_score": None,
+                        "max_score": exam_max_score_map.get(exid, 100.0),
                         "passed": None,
                         "clinic_required": clinic_required,
                         "is_locked": False,
@@ -768,6 +759,7 @@ class SessionScoresView(APIView):
                     updated_at = None
                     source_fingerprint = None
                 else:
+                    subjective_pending = int(r.id) in pending_result_ids
                     attempt_status = (
                         attempt_status_map.get(int(r.attempt_id), "")
                         if r.attempt_id is not None
@@ -846,19 +838,32 @@ class SessionScoresView(APIView):
 
                     block = {
                         "score": None if is_not_submitted else float(initial_score or 0.0),
-                        "max_score": float(initial_max_score or 0.0),
+                        # 현재 성적표의 분모는 시험 정책을 따른다. 1차/재시험의
+                        # 당시 분모는 attempts에 별도 보존해 이력 의미를 잃지 않는다.
+                        "max_score": exam_max_score_map.get(
+                            exid,
+                            float(initial_max_score or 0.0),
+                        ),
                         "passed": passed,
-                        "clinic_required": clinic_required,
+                        "clinic_required": clinic_required and not subjective_pending,
                         "is_locked": locked,
                         "lock_reason": "GRADING" if locked else None,
                         "objective_score": None if is_not_submitted else objective_val,
-                        "subjective_score": None if is_not_submitted else subjective_val,
+                        "subjective_score": (
+                            None
+                            if is_not_submitted or subjective_pending
+                            else subjective_val
+                        ),
                         "meta": {"status": "NOT_SUBMITTED"} if is_not_submitted else None,
+                        "grading_status": (
+                            "subjective_pending" if subjective_pending else None
+                        ),
                     }
                     updated_at = r.updated_at
                     source_fingerprint = exam_correction_fingerprint(
                         result=r,
                         items=items_list,
+                        current_max_score=block.get("max_score"),
                     )
 
                 if updated_at:
@@ -877,7 +882,11 @@ class SessionScoresView(APIView):
                 block.update(
                     assessment_correction_payload(
                         source_type=AssessmentCorrection.SourceType.EXAM,
-                        score=block.get("score"),
+                        score=(
+                            None
+                            if block.get("grading_status") == "subjective_pending"
+                            else block.get("score")
+                        ),
                         max_score=block.get("max_score"),
                         source_fingerprint=source_fingerprint,
                         correction=correction_map.get((eid, "exam", exid)),
@@ -909,7 +918,11 @@ class SessionScoresView(APIView):
                             exam_attempt_count_map.get((exid, eid), 0),
                             1 if r is not None else 0,
                         ),
-                        "clinic_link_id": exam_clinic_link_map.get((exid, eid)),
+                        "clinic_link_id": (
+                            None
+                            if (eid, exid) in pending_exam_pairs
+                            else exam_clinic_link_map.get((exid, eid))
+                        ),
                         "attempts": exam_attempts_by_key.get((exid, eid), []),
                     }
                 )
@@ -1063,6 +1076,7 @@ class SessionScoreCorrectionView(APIView):
         serializer = AssessmentCorrectionUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         payload = serializer.validated_data
+        completed = bool(payload["completed"])
 
         session = get_object_or_404(
             Session.objects.select_related("lecture"),
@@ -1094,6 +1108,10 @@ class SessionScoreCorrectionView(APIView):
                 raise ValidationError(
                     {"source_id": "이 차시에 등록된 시험이 아닙니다."}
                 )
+            exam = Exam.objects.select_for_update().get(
+                id=source_id,
+                tenant=tenant,
+            )
             # Lock only the representative Result row. Joining the nullable
             # attempt FK here makes PostgreSQL reject FOR UPDATE because the
             # nullable side of an outer join cannot be locked.
@@ -1116,12 +1134,17 @@ class SessionScoreCorrectionView(APIView):
                 raise ValidationError(
                     {"source_id": "점수가 입력된 시험만 오답 확인 상태를 바꿀 수 있습니다."}
                 )
+            if int(result.id) in pending_omr_result_ids([result]):
+                raise ValidationError(
+                    {"source_id": "서술형 채점을 완료한 뒤 오답 확인 상태를 바꿀 수 있습니다."}
+                )
             score = _float_or_none(result.total_score)
-            max_score = _float_or_none(result.max_score)
+            max_score = _float_or_none(exam.max_score)
             source_updated_at = result.updated_at
             source_fingerprint = exam_correction_fingerprint(
                 result=result,
                 items=result.items.all(),
+                current_max_score=max_score,
             )
         else:
             homework = (
@@ -1136,17 +1159,11 @@ class SessionScoreCorrectionView(APIView):
             )
             homework_assignment = None
             if homework is not None:
-                homework_assignment = (
-                    HomeworkAssignment.objects
-                    .select_for_update()
-                    .only("id")
-                    .filter(
-                        tenant=tenant,
-                        session=session,
-                        homework_id=source_id,
-                        enrollment_id=enrollment_id,
-                    )
-                    .first()
+                homework_assignment = lock_homework_review_target(
+                    tenant=tenant,
+                    session_id=int(session.id),
+                    homework_id=source_id,
+                    enrollment_id=enrollment_id,
                 )
             if homework is None or homework_assignment is None:
                 raise ValidationError(
@@ -1167,6 +1184,12 @@ class SessionScoreCorrectionView(APIView):
                 score = _float_or_none(homework_score.score)
                 max_score = _float_or_none(homework_score.max_score)
                 source_updated_at = homework_score.updated_at
+            if completed:
+                source_fingerprint = homework_media_set_fingerprint(
+                    tenant=tenant,
+                    enrollment_id=enrollment_id,
+                    homework_id=source_id,
+                )
 
         if source_type == AssessmentCorrection.SourceType.EXAM:
             if score is None or max_score is None or max_score <= 0:
@@ -1178,7 +1201,6 @@ class SessionScoreCorrectionView(APIView):
                     {"source_id": "오답이 없는 만점 결과는 확인 완료로 자동 처리됩니다."}
                 )
 
-        completed = bool(payload["completed"])
         existing_correction = (
             AssessmentCorrection.objects
             .select_for_update()

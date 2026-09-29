@@ -109,12 +109,17 @@
 
 ### 운영 조회
 
-`GET /api/v1/core/dev/product-analytics/overview/`
+`POST /api/v1/core/dev/product-analytics/overview/` (JSON body:
+`days`, `tenant_id`, `role`, `surface`)
 
 - `IsPlatformAdmin`만 허용한다.
 - 기간은 7·28·90일, 필터는 tenant, 원본 role, surface다.
-- 조회는 운영 감사 로그에 남지만 결과 데이터는 감사 payload에 넣지
-  않는다.
+- 조회와 운영 감사 기록을 한 POST 요청에서 수행한다. 결과 데이터는 감사
+  payload에 넣지 않는다. 잘못된 필터는 400, 권한 없는 요청은 403으로
+  거부하며 감사 기록을 만들지 않는다.
+- 이전 GET 클라이언트에는 `405 post_required`를 반환한다. 안전한 GET에서
+  DB 쓰기를 허용하지 않으므로 백엔드 POST를 먼저 배포한 뒤 프런트 호출을
+  전환한다. 전환 전 클라이언트는 명시적 오류와 재시도 화면을 본다.
 - 단일 테넌트 필터에서 고유 actor가 1~4명이면 summary와 세부 셀을
   숨긴다.
 

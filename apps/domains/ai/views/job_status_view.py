@@ -14,7 +14,7 @@ from rest_framework.views import APIView
 from apps.core.permissions import TenantResolvedAndMember
 from academy.adapters.db.django.repositories_ai import DjangoAIJobRepository
 from apps.domains.ai.services.job_status_response import build_job_status_response
-from apps.domains.ai.services.job_access import user_can_read_job
+from apps.domains.ai.services.job_access import user_can_read_job, user_can_read_ppt_job
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +49,11 @@ class JobStatusView(APIView):
                     status=status.HTTP_404_NOT_FOUND,
                 )
             if not user_can_read_job(user=request.user, tenant=tenant, job_type=job.job_type):
+                return Response(
+                    {"detail": "해당 job을 찾을 수 없습니다."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            if job.job_type == "ppt_generation" and not user_can_read_ppt_job(user=request.user, job=job):
                 return Response(
                     {"detail": "해당 job을 찾을 수 없습니다."},
                     status=status.HTTP_404_NOT_FOUND,

@@ -26,6 +26,7 @@ class PlaybackAccessGrant:
     access_mode: str | None = None
     monitoring_enabled: bool = False
     policy_version: int | None = None
+    event_protocol_version: int = 1
     error: str | None = None
     status_code: int = 403
 
@@ -47,6 +48,26 @@ def bounded_inactive_media_expiry(entitlement, *, now=None) -> int:
 def bounded_direct_media_expiry(entitlement, *, now=None) -> int:
     """Direct access is always re-signed within the same 600 second ceiling."""
     return bounded_inactive_media_expiry(entitlement, now=now)
+
+
+def bounded_ordinary_media_expiry(video, *, now=None) -> int:
+    """Keep ordinary playback credentials valid for one complete viewing."""
+    now = now or timezone.now()
+    access_grace_seconds = max(
+        1,
+        int(getattr(settings, "VIDEO_PLAYBACK_TTL_SECONDS", 600)),
+    )
+    try:
+        media_duration_seconds = max(0, int(video.duration or 0))
+    except (TypeError, ValueError):
+        media_duration_seconds = 0
+    if media_duration_seconds == 0:
+        media_duration_seconds = max(0, 24 * 60 * 60 - access_grace_seconds)
+    return (
+        int(now.timestamp())
+        + media_duration_seconds
+        + access_grace_seconds
+    )
 
 
 def build_thumbnail_url(video, *, expires_at: int | None = None) -> str | None:
@@ -146,22 +167,7 @@ def pick_video_urls(
         return None, None
 
     if expires_at is None:
-        access_grace_seconds = int(
-            getattr(settings, "VIDEO_PLAYBACK_TTL_SECONDS", 600)
-        )
-        try:
-            media_duration_seconds = max(0, int(video.duration or 0))
-        except (TypeError, ValueError):
-            media_duration_seconds = 0
-        if media_duration_seconds == 0:
-            # Processed media normally has duration metadata. Keep the historical
-            # 24-hour ceiling only for legacy READY rows without it.
-            media_duration_seconds = max(0, 24 * 60 * 60 - access_grace_seconds)
-        expires_at = (
-            int(timezone.now().timestamp())
-            + media_duration_seconds
-            + access_grace_seconds
-        )
+        expires_at = bounded_ordinary_media_expiry(video)
     user = getattr(request, "user", None) if request else None
     user_id = getattr(user, "id", 0) if user and getattr(user, "is_authenticated", False) else 0
 
@@ -220,6 +226,7 @@ def issue_playback_access_grant(
     user,
     device_id: str,
     request_id: str | None = None,
+    event_protocol_version: int = 1,
 ) -> PlaybackAccessGrant:
     """Atomically issue current access and a monitored session when required."""
     from academy.adapters.db.django import repositories_video as video_repo
@@ -237,6 +244,8 @@ def issue_playback_access_grant(
         issue_session,
     )
 
+    if type(event_protocol_version) is not int or event_protocol_version not in (1, 2):
+        raise ValueError("unsupported playback event protocol")
     lecture_id = getattr(getattr(video, "session", None), "lecture_id", None)
     tenant_id = getattr(video, "tenant_id", None) or getattr(enrollment, "tenant_id", None)
     if not lecture_id or not tenant_id:
@@ -286,6 +295,8 @@ def issue_playback_access_grant(
             return PlaybackAccessGrant(error="access_blocked")
 
         ttl = int(getattr(settings, "VIDEO_PLAYBACK_TTL_SECONDS", 600))
+        access_now = _playback_access_now()
+        expires_at = int(access_now.timestamp()) + ttl
         inactive_expires_at = None
         if locked_enrollment.status == "INACTIVE":
             from apps.domains.video.services.inactive_entitlements import (
@@ -298,7 +309,6 @@ def issue_playback_access_grant(
             )
             if entitlement is None:
                 return PlaybackAccessGrant(error="access_blocked")
-            access_now = _playback_access_now()
             now_timestamp = int(access_now.timestamp())
             inactive_expires_at = bounded_inactive_media_expiry(
                 entitlement,
@@ -309,11 +319,8 @@ def issue_playback_access_grant(
                 return PlaybackAccessGrant(error="access_expired")
         monitoring_enabled = access_mode == AccessMode.PROCTORED_CLASS
         playback_session_id = None
-        expires_at = (
-            inactive_expires_at
-            if inactive_expires_at is not None
-            else int(timezone.now().timestamp()) + ttl
-        )
+        if inactive_expires_at is not None:
+            expires_at = inactive_expires_at
         if monitoring_enabled:
             max_sessions, max_devices = get_tenant_session_limits(lecture.tenant)
             ok, session_payload, error = issue_session(
@@ -336,9 +343,9 @@ def issue_playback_access_grant(
                 )
 
             playback_session_id = session_payload["session_id"]
-            expires_at = int(session_payload["expires_at"])
-            expires_at_dt = timezone.datetime.fromtimestamp(
-                expires_at,
+            session_expires_at = int(session_payload["expires_at"])
+            session_expires_at_dt = timezone.datetime.fromtimestamp(
+                session_expires_at,
                 tz=datetime_timezone.utc,
             )
             video_repo.playback_session_create(
@@ -348,12 +355,14 @@ def issue_playback_access_grant(
                 device_id=str(device_id),
                 status=VideoPlaybackSession.Status.ACTIVE,
                 started_at=timezone.now(),
-                expires_at=expires_at_dt,
+                expires_at=session_expires_at_dt,
                 last_seen=timezone.now(),
                 violated_count=0,
                 total_count=0,
                 is_revoked=False,
+                event_protocol_version=event_protocol_version,
             )
+        selected_event_protocol = event_protocol_version if monitoring_enabled else 1
         token_payload = {
             "video_id": current_video.id,
             "enrollment_id": locked_enrollment.id,
@@ -363,26 +372,20 @@ def issue_playback_access_grant(
             "tenant_id": tenant_id,
             "access_mode": access_mode.value,
             "monitoring_enabled": monitoring_enabled,
+            "event_protocol_version": selected_event_protocol,
             "pv": int(getattr(current_video, "policy_version", 1) or 1),
         }
         if request_id:
             token_payload["rid"] = request_id
         try:
-            token = (
-                create_playback_token(
-                    payload=token_payload,
-                    expires_at=inactive_expires_at,
-                )
-                if inactive_expires_at is not None
-                else create_playback_token(
-                    payload=token_payload,
-                    ttl_seconds=ttl,
-                )
+            token = create_playback_token(
+                payload=token_payload,
+                expires_at=expires_at,
             )
         except ValueError:
             transaction.set_rollback(True)
             return PlaybackAccessGrant(error="access_expired")
-        if playback_session_id:
+        if playback_session_id and selected_event_protocol == 1:
             redis_ttl = ttl
             if inactive_expires_at is not None:
                 redis_ttl = inactive_expires_at - int(timezone.now().timestamp())
@@ -399,6 +402,7 @@ def issue_playback_access_grant(
             expires_at=expires_at,
             access_mode=access_mode.value,
             monitoring_enabled=monitoring_enabled,
+            event_protocol_version=selected_event_protocol,
             policy_version=int(getattr(current_video, "policy_version", 1) or 1),
         )
 

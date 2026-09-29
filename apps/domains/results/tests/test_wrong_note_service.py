@@ -19,12 +19,14 @@ from apps.domains.results.services.wrong_note_pdf_service import (
     build_wrong_note_pdf,
     build_wrong_note_hwpx,
     generate_and_store_wrong_note_pdf,
+    _display_question_label,
 )
 from apps.domains.results.services.wrong_note_service import (
     WrongNoteQuery,
     build_wrong_note_source_fingerprint,
     list_wrong_notes_for_enrollment,
 )
+from apps.domains.results.serializers.wrong_note_serializers import WrongNoteItemSerializer
 from apps.domains.results.views.wrong_note_view import WrongNoteView
 
 User = get_user_model()
@@ -123,6 +125,66 @@ class WrongNoteServiceSessionExamTests(TestCase):
             source="manual",
         )
         return regular, question
+
+    def test_essay_label_uses_full_exam_order_not_wrong_note_page(self):
+        template = Exam.objects.create(
+            tenant=self.tenant,
+            title="학교 모의고사 템플릿",
+            exam_type=Exam.ExamType.TEMPLATE,
+        )
+        sheet = Sheet.objects.create(
+            exam=template, total_questions=20, choice_count=18, essay_count=2,
+        )
+        questions = ExamQuestion.objects.bulk_create([
+            ExamQuestion(
+                sheet=sheet, number=number, score=1,
+                question_kind="choice" if number <= 18 else "essay",
+            )
+            for number in range(1, 21)
+        ])
+        regular = Exam.objects.create(
+            tenant=self.tenant,
+            title="학교 모의고사",
+            exam_type=Exam.ExamType.REGULAR,
+            template_exam=template,
+            essay_numbering=Exam.EssayNumbering.SEPARATE,
+        )
+        regular.sessions.add(self.session2)
+        result = Result.objects.create(
+            enrollment=self.enrollment, target_type="exam", target_id=regular.id,
+            total_score=0, max_score=20,
+        )
+        ResultItem.objects.create(
+            result=result, question=questions[19], answer="", is_correct=False,
+            score=0, max_score=1, source="manual",
+        )
+
+        _, items = list_wrong_notes_for_enrollment(
+            enrollment_id=self.enrollment.id,
+            q=WrongNoteQuery(exam_id=regular.id, offset=0, limit=1),
+        )
+        self.assertEqual(items[0]["question_number"], 20)
+        self.assertEqual(items[0]["essay_numbering"], "separate")
+        self.assertEqual(items[0]["essay_index"], 2)
+        self.assertEqual(WrongNoteItemSerializer(items[0]).data["essay_index"], 2)
+        self.assertEqual(_display_question_label(items[0]), "서술형 2번")
+
+        _, lecture_items = list_wrong_notes_for_enrollment(
+            enrollment_id=self.enrollment.id,
+            q=WrongNoteQuery(lecture_id=self.lecture.id, from_session_order=1, limit=1),
+        )
+        self.assertEqual(lecture_items[0]["essay_index"], 2)
+
+        regular.essay_numbering = Exam.EssayNumbering.CONTINUOUS
+        regular.save(update_fields=["essay_numbering"])
+        _, items = list_wrong_notes_for_enrollment(
+            enrollment_id=self.enrollment.id,
+            q=WrongNoteQuery(exam_id=regular.id, offset=0, limit=1),
+        )
+        self.assertEqual(items[0]["question_number"], 20)
+        self.assertEqual(items[0]["essay_numbering"], "continuous")
+        self.assertIsNone(items[0]["essay_index"])
+        self.assertEqual(_display_question_label(items[0]), "20번")
 
     def test_lecture_order_filter_uses_exam_sessions_m2m(self):
         early_exam, _ = self._create_wrong_result(title="1차시 시험", session=self.session1)

@@ -46,6 +46,92 @@ def _bbox_result(
     )
 
 
+def test_gemini_request_keeps_key_out_of_url_and_errors(monkeypatch, caplog):
+    """The provider key travels in a header and is redacted from failures."""
+    import logging
+    import traceback
+
+    import requests
+
+    from academy.adapters.ai.detection.vlm_fallback import _gemini_request
+
+    key = "synthetic-provider-key"
+    monkeypatch.setenv("GEMINI_API_KEY", key)
+    calls = []
+
+    def success(url, **kwargs):
+        calls.append((url, kwargs))
+        response = MagicMock(status_code=200)
+        response.json.return_value = {
+            "candidates": [{"content": {"parts": [{"text": "{}"}]}}]
+        }
+        return response
+
+    monkeypatch.setattr(requests, "post", success)
+    assert _gemini_request(model="gemini-2.5-flash", parts=[{"text": "test"}]) == {}
+    assert key not in calls[0][0]
+    assert "?key=" not in calls[0][0]
+    assert "params" not in calls[0][1]
+    assert calls[0][1]["headers"]["x-goog-api-key"] == key
+
+    def provider_error(url, **kwargs):
+        response = MagicMock(status_code=400)
+        response.text = f"request rejected: {key}"
+        return response
+
+    monkeypatch.setattr(requests, "post", provider_error)
+    with pytest.raises(RuntimeError) as provider_exc:
+        _gemini_request(model="gemini-2.5-flash", parts=[{"text": "test"}])
+    assert key not in str(provider_exc.value)
+
+    def transport_error(url, **kwargs):
+        raise requests.ConnectionError(f"request failed: {key}")
+
+    monkeypatch.setattr(requests, "post", transport_error)
+    with pytest.raises(RuntimeError) as transport_exc:
+        _gemini_request(model="gemini-2.5-flash", parts=[{"text": "test"}])
+    assert key not in str(transport_exc.value)
+
+    def invalid_json(url, **kwargs):
+        response = MagicMock(status_code=200)
+        response.json.side_effect = ValueError(f"invalid response: {key}")
+        return response
+
+    monkeypatch.setattr(requests, "post", invalid_json)
+    with pytest.raises(RuntimeError) as json_exc:
+        _gemini_request(model="gemini-2.5-flash", parts=[{"text": "test"}])
+    assert key not in str(json_exc.value)
+
+    def timeout(url, **kwargs):
+        raise requests.Timeout(f"timed out: {key}")
+
+    monkeypatch.setattr(requests, "post", timeout)
+    with pytest.raises(RuntimeError) as timeout_exc:
+        _gemini_request(model="gemini-2.5-flash", parts=[{"text": "test"}])
+
+    for error in (provider_exc.value, transport_exc.value, json_exc.value, timeout_exc.value):
+        assert key not in repr(error)
+        assert key not in "".join(traceback.format_exception(error))
+        logging.getLogger(__name__).error(
+            "Gemini failure: %s", error,
+            exc_info=(type(error), error, error.__traceback__),
+        )
+    assert key not in caplog.text
+
+
+def test_gemini_request_without_key_does_not_call_provider(monkeypatch):
+    import requests
+
+    from academy.adapters.ai.detection.vlm_fallback import _gemini_request
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    post = MagicMock()
+    monkeypatch.setattr(requests, "post", post)
+    with pytest.raises(RuntimeError, match="GEMINI_API_KEY not set"):
+        _gemini_request(model="gemini-2.5-flash", parts=[{"text": "test"}])
+    post.assert_not_called()
+
+
 def _make_image(monkeypatch, w: int = 2000, h: int = 2800):
     """cv2.imread mock — 지정한 dim의 가짜 이미지 반환.
 

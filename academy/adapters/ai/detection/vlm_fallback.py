@@ -319,7 +319,10 @@ def _gemini_request(
 
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        raise RuntimeError("GEMINI_API_KEY not set (SSM /academy/workers/env 확인)")
+        raise RuntimeError("GEMINI_API_KEY not set")
+
+    def safe_detail(value: object, limit: int = 300) -> str:
+        return str(value).replace(api_key, "[REDACTED]")[:limit]
 
     _check_tenant_quota(tenant_id)  # tenant cap 먼저 (광범위)
     if enforce_per_doc_cap:
@@ -341,7 +344,7 @@ def _gemini_request(
             "maxOutputTokens": _GEMINI_MAX_OUTPUT_TOKENS,
         },
     }
-    url = f"{_GEMINI_API_BASE}/models/{model}:generateContent?key={api_key}"
+    url = f"{_GEMINI_API_BASE}/models/{model}:generateContent"
 
     # 호출 + 429/503 단발 retry. 503 = Gemini 서버 deadline(~30s) 초과 (큰 vision payload).
     resp = None
@@ -349,12 +352,14 @@ def _gemini_request(
         try:
             resp = requests.post(
                 url, json=payload, timeout=_GEMINI_TIMEOUT,
-                headers={"Content-Type": "application/json"},
+                headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
             )
         except requests.Timeout as e:
-            raise RuntimeError(f"Gemini API timeout({_GEMINI_TIMEOUT}s): {e}") from e
+            raise RuntimeError(
+                f"Gemini API timeout({_GEMINI_TIMEOUT}s): {safe_detail(e)}"
+            ) from None
         except Exception as e:
-            raise RuntimeError(f"Gemini API 호출 실패: {e}") from e
+            raise RuntimeError(f"Gemini API 호출 실패: {safe_detail(e)}") from None
 
         if resp.status_code in (429, 503) and attempt == 0:
             _time.sleep(_GEMINI_RETRY_BACKOFF_SEC)
@@ -362,21 +367,26 @@ def _gemini_request(
         break
 
     if resp is None or resp.status_code != 200:
-        body = (resp.text[:300] if resp is not None else "no-response")
+        body = (safe_detail(resp.text) if resp is not None else "no-response")
         code = (resp.status_code if resp is not None else 0)
         raise RuntimeError(f"Gemini API {code}: {body}")
 
-    data = resp.json()
+    try:
+        data = resp.json()
+    except Exception as e:
+        raise RuntimeError(f"Gemini 응답 JSON 디코딩 실패: {safe_detail(e)}") from None
     candidates = data.get("candidates") or []
     if not candidates:
-        raise RuntimeError(f"Gemini 응답에 candidates 없음: {str(data)[:300]}")
+        raise RuntimeError(f"Gemini 응답에 candidates 없음: {safe_detail(data)}")
 
     cand0 = candidates[0]
     finish_reason = cand0.get("finishReason") or ""
     parts_out = (cand0.get("content") or {}).get("parts") or []
     text = "".join(p.get("text", "") for p in parts_out).strip()
     if not text:
-        raise RuntimeError(f"Gemini 응답 텍스트 비어있음 (finish={finish_reason})")
+        raise RuntimeError(
+            f"Gemini 응답 텍스트 비어있음 (finish={safe_detail(finish_reason)})"
+        )
 
     try:
         return _json.loads(text)
@@ -415,7 +425,8 @@ def _gemini_request(
                     pass
 
     raise RuntimeError(
-        f"Gemini 응답 JSON 파싱 실패 (finish={finish_reason}, len={len(text)}): {text[:200]}"
+        f"Gemini 응답 JSON 파싱 실패 (finish={safe_detail(finish_reason)}, "
+        f"len={len(text)}): {safe_detail(text, 200)}"
     )
 
 

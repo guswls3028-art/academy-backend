@@ -52,11 +52,10 @@ def clinic_enrollment_for_tenant(tenant, enrollment_id: int | None):
 
 
 def active_enrolled_lecture_ids_for_student(tenant, student) -> set[int]:
-    from apps.domains.enrollment.selectors import enrollments_for_tenant
+    from apps.domains.enrollment.selectors import active_enrollments_for_student
 
     return set(
-        enrollments_for_tenant(tenant)
-        .filter(student=student, status="ACTIVE")
+        active_enrollments_for_student(tenant=tenant, student=student)
         .values_list("lecture_id", flat=True)
     )
 
@@ -74,13 +73,10 @@ def preferred_active_enrollment_id_for_student_session(
     target and respect any lecture restriction on the destination session so a
     booking never points at the student's latest unrelated course.
     """
-    from apps.domains.enrollment.selectors import enrollments_for_tenant
+    from apps.domains.enrollment.selectors import active_enrollments_for_student
     from apps.domains.progress.models import ClinicLink
 
-    enrollments = enrollments_for_tenant(tenant).filter(
-        student=student,
-        status="ACTIVE",
-    )
+    enrollments = active_enrollments_for_student(tenant=tenant, student=student)
     if session is not None:
         target_lecture_ids = list(
             session.target_lectures.values_list("id", flat=True)
@@ -130,6 +126,34 @@ def active_students_for_clinic_tenant(tenant):
     return students_for_tenant(tenant, deleted="active")
 
 
+def student_has_current_required_clinic_target(*, tenant, student) -> bool:
+    """Return the passcard-equivalent current unresolved automatic target state."""
+    from apps.domains.enrollment.selectors import enrollments_for_tenant
+    from apps.domains.progress.models import ClinicLink
+    from apps.domains.results.utils.clinic import filter_current_clinic_links
+
+    enrollment_ids = list(
+        enrollments_for_tenant(tenant)
+        .filter(student=student, status="ACTIVE")
+        .values_list("id", flat=True)
+    )
+    if not enrollment_ids:
+        return False
+
+    links = (
+        ClinicLink.objects.filter(
+            tenant=tenant,
+            enrollment_id__in=enrollment_ids,
+            is_auto=True,
+            resolved_at__isnull=True,
+            session__lecture__tenant=tenant,
+        )
+        .select_related("session__lecture")
+        .order_by("-created_at", "-id")
+    )
+    return bool(filter_current_clinic_links(links, tenant=tenant))
+
+
 def get_student_for_clinic_request(request):
     from apps.domains.student_app.permissions import get_request_student
 
@@ -150,27 +174,53 @@ def clinic_highlight_map_for_enrollments(
     ) if ids else {}
 
 
+def clinic_reasons_for_unresolved_auto_links(
+    tenant,
+    enrollment_ids: Iterable[int],
+) -> dict[int, str | None]:
+    from apps.domains.progress.models import ClinicLink
+    from apps.domains.results.utils.clinic import filter_current_clinic_links
+
+    ids = {int(enrollment_id) for enrollment_id in enrollment_ids if enrollment_id}
+    if not ids:
+        return {}
+
+    links = filter_current_clinic_links(
+        ClinicLink.objects.filter(
+            tenant=tenant,
+            enrollment_id__in=ids,
+            is_auto=True,
+            resolved_at__isnull=True,
+        ).order_by("id"),
+        tenant=tenant,
+    )
+    source_types_by_enrollment: dict[int, set[str]] = {
+        enrollment_id: set() for enrollment_id in ids
+    }
+    for link in links:
+        if link.source_type in {"exam", "homework"}:
+            source_types_by_enrollment[int(link.enrollment_id)].add(link.source_type)
+
+    reasons: dict[int, str | None] = {}
+    for enrollment_id, source_types in source_types_by_enrollment.items():
+        if {"exam", "homework"}.issubset(source_types):
+            reasons[enrollment_id] = "both"
+        elif "exam" in source_types:
+            reasons[enrollment_id] = "exam"
+        elif "homework" in source_types:
+            reasons[enrollment_id] = "homework"
+        else:
+            reasons[enrollment_id] = None
+    return reasons
+
+
 def clinic_reason_for_unresolved_auto_links(tenant, enrollment_id: int | None) -> str | None:
     if not enrollment_id:
         return None
-
-    from apps.domains.progress.models import ClinicLink
-
-    links = ClinicLink.objects.filter(
-        tenant=tenant,
-        enrollment_id=enrollment_id,
-        is_auto=True,
-        resolved_at__isnull=True,
-    )
-    has_exam = links.filter(source_type="exam").exists()
-    has_homework = links.filter(source_type="homework").exists()
-    if has_exam and has_homework:
-        return "both"
-    if has_exam:
-        return "exam"
-    if has_homework:
-        return "homework"
-    return None
+    return clinic_reasons_for_unresolved_auto_links(
+        tenant,
+        [enrollment_id],
+    ).get(int(enrollment_id))
 
 
 def storage_presigned_get_url(r2_key: str, *, expires_in: int = 3600) -> str:
@@ -470,6 +520,7 @@ def _send_due_range_clinic_reminders(*, session, minutes_before, current, window
 
     from apps.domains.clinic.contracts import is_clinic_booking_reminder_active
     from apps.domains.clinic.models import SessionParticipant
+    from apps.domains.clinic.time_ranges import booking_window
     from apps.domains.messaging.models import ScheduledNotification
     from apps.domains.messaging.services.notification_service import send_event_notification
 
@@ -491,7 +542,10 @@ def _send_due_range_clinic_reminders(*, session, minutes_before, current, window
         created_at__gte=current - timedelta(days=2),
     ).values_list("origin_id", flat=True))
     for participant in participants:
-        start = timezone.make_aware(datetime.combine(session.date, participant.booking_start_time))
+        booking_start, _ = booking_window(
+            session=session, start_time=participant.booking_start_time, end_time=participant.booking_end_time,
+        )
+        start = timezone.make_aware(booking_start)
         if not current - window <= start - timedelta(minutes=minutes_before) <= current:
             continue
         origin = f"clinic_booking:{participant.id}:{session.id}:{start:%Y%m%d:%H%M}"
@@ -510,6 +564,7 @@ def _send_due_range_clinic_reminders(*, session, minutes_before, current, window
             session=session, domain_object_id=origin, source_use_case="clinic.booking_reminder",
         )
         context["시간"] = start.strftime("%H:%M")
+        context["날짜"] = start.date().isoformat()
         if send_event_notification(
             tenant=session.tenant, trigger="clinic_reminder", student=participant.student,
             send_to="student", context=context,
@@ -589,7 +644,7 @@ def send_due_clinic_reminders(
             ClinicSession.objects
             .filter(
                 tenant_id=config.tenant_id,
-                date__gte=earliest_start.date(),
+                date__gte=earliest_start.date() - timedelta(days=1),
                 date__lte=latest_start.date(),
             )
             .annotate(

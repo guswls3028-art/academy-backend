@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.utils import timezone
@@ -9,10 +10,18 @@ from rest_framework.request import Request
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.exams.models import Exam, Sheet
+from apps.domains.exams.models import Exam, ExamQuestion, Sheet
 from apps.domains.exams.serializers.exam import ExamSerializer
 from apps.domains.exams.serializers.exam_update import ExamUpdateSerializer
 from apps.domains.exams.views.exam_view import ExamViewSet
+
+
+Enrollment = apps.get_model("enrollment", "Enrollment")
+Lecture = apps.get_model("lectures", "Lecture")
+ExamAttempt = apps.get_model("results", "ExamAttempt")
+Result = apps.get_model("results", "Result")
+ResultItem = apps.get_model("results", "ResultItem")
+Student = apps.get_model("students", "Student")
 
 
 class ExamPolicyUpdateTests(TestCase):
@@ -40,6 +49,29 @@ class ExamPolicyUpdateTests(TestCase):
             exam_type=Exam.ExamType.REGULAR,
             max_score=100,
             pass_score=80,
+        )
+        self.lecture = Lecture.objects.create(
+            tenant=self.tenant,
+            title="시험 정책 강의",
+            name="시험 정책 강의",
+            subject="MATH",
+        )
+        student_user = get_user_model().objects.create_user(
+            username="exam-policy-student",
+            password="pw1234",
+            tenant=self.tenant,
+        )
+        student = Student.objects.create(
+            tenant=self.tenant,
+            user=student_user,
+            name="시험 정책 학생",
+            ps_number="EXAM-POLICY-1",
+        )
+        self.enrollment = Enrollment.objects.create(
+            tenant=self.tenant,
+            student=student,
+            lecture=self.lecture,
+            status="ACTIVE",
         )
 
     def patch(self, data, *, expected_updated_at: str | None = None):
@@ -70,6 +102,51 @@ class ExamPolicyUpdateTests(TestCase):
         self.assertEqual(response.data["title"], "중간 점검")
         self.assertEqual(response.data["pass_score"], 75)
         self.assertTrue(response.data["updated_at"])
+
+    def test_essay_numbering_is_saved_without_changing_grading_shape(self):
+        sheet = Sheet.objects.create(exam=self.exam, total_questions=1, choice_count=0, essay_count=1)
+        question = ExamQuestion.objects.create(sheet=sheet, number=1, score=8)
+        result = Result.objects.create(
+            target_type="exam", target_id=self.exam.id, enrollment=self.enrollment,
+            total_score=6, max_score=8,
+        )
+        result_item = ResultItem.objects.create(
+            result=result, question=question, answer="answer", is_correct=True,
+            score=6, max_score=8, source="manual",
+        )
+        original_question_id = question.id
+        expected_updated_at = ExamSerializer(self.exam).data["updated_at"]
+        response = self.patch(
+            {"essay_numbering": "separate"},
+            expected_updated_at=expected_updated_at,
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.exam.refresh_from_db()
+        self.assertEqual(self.exam.essay_numbering, "separate")
+        self.assertEqual(response.data["essay_numbering"], "separate")
+        self.assertEqual(self.exam.grading_mode, Exam.GradingMode.CHOICE)
+        request = self.factory.get(f"/api/v1/exams/{self.exam.id}/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.user)
+        readback = ExamViewSet.as_view({"get": "retrieve"})(request, pk=self.exam.id)
+        self.assertEqual(readback.status_code, 200, readback.data)
+        self.assertEqual(readback.data["essay_numbering"], "separate")
+        question.refresh_from_db()
+        result.refresh_from_db()
+        result_item.refresh_from_db()
+        self.assertEqual((question.id, question.number, question.score), (original_question_id, 1, 8))
+        self.assertEqual((result.total_score, result.max_score), (6, 8))
+        self.assertEqual((result_item.question_id, result_item.score, result_item.max_score), (original_question_id, 6, 8))
+
+    def test_invalid_essay_numbering_keeps_current_setting(self):
+        expected_updated_at = ExamSerializer(self.exam).data["updated_at"]
+        response = self.patch(
+            {"essay_numbering": "unknown"},
+            expected_updated_at=expected_updated_at,
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        self.exam.refresh_from_db()
+        self.assertEqual(self.exam.essay_numbering, "continuous")
 
     def test_patch_accepts_zero_pass_score_with_postgresql_compatible_lock_query(self):
         raw_request = self.factory.get(f"/api/v1/exams/{self.exam.id}/")
@@ -108,6 +185,118 @@ class ExamPolicyUpdateTests(TestCase):
 
                 self.assertEqual(response.status_code, 400, response.data)
                 self.assertIn(error_field, response.data)
+
+    def test_patch_rejects_max_below_current_score_until_score_is_corrected(self):
+        attempt = ExamAttempt.objects.create(
+            exam=self.exam,
+            enrollment=self.enrollment,
+            attempt_index=1,
+            is_retake=False,
+            is_representative=True,
+            status="done",
+            meta={
+                "initial_snapshot": {
+                    "total_score": 90.0,
+                    "max_score": 100.0,
+                }
+            },
+        )
+        result = Result.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.enrollment,
+            attempt=attempt,
+            total_score=90,
+            max_score=100,
+        )
+
+        rejected = self.patch({"max_score": 85, "pass_score": 80})
+
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertIn("max_score", rejected.data)
+        self.exam.refresh_from_db()
+        self.assertEqual(self.exam.max_score, 100)
+        result.total_score = 80
+        result.save(update_fields=["total_score", "updated_at"])
+        corrected_meta = dict(attempt.meta)
+        corrected_meta["initial_snapshot"] = {
+            **corrected_meta["initial_snapshot"],
+            "total_score": 80.0,
+        }
+        attempt.meta = corrected_meta
+        attempt.save(update_fields=["meta", "updated_at"])
+        accepted = self.patch({"max_score": 85, "pass_score": 80})
+
+        self.assertEqual(accepted.status_code, 200, accepted.data)
+        self.assertEqual(accepted.data["max_score"], 85)
+        attempt.refresh_from_db()
+        self.assertEqual(attempt.meta, corrected_meta)
+
+    def test_patch_rejects_max_below_preserved_first_attempt_score(self):
+        first_attempt = ExamAttempt.objects.create(
+            exam=self.exam,
+            enrollment=self.enrollment,
+            attempt_index=1,
+            is_retake=False,
+            is_representative=False,
+            status="done",
+            meta={
+                "initial_snapshot": {
+                    "total_score": 90.0,
+                    "max_score": 100.0,
+                }
+            },
+        )
+        representative_attempt = ExamAttempt.objects.create(
+            exam=self.exam,
+            enrollment=self.enrollment,
+            attempt_index=2,
+            is_retake=True,
+            is_representative=True,
+            status="done",
+            meta={"total_score": 80.0, "max_score": 100.0},
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.enrollment,
+            attempt=representative_attempt,
+            total_score=80,
+            max_score=100,
+        )
+
+        rejected = self.patch({"max_score": 85, "pass_score": 80})
+
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertIn("max_score", rejected.data)
+        self.exam.refresh_from_db()
+        self.assertEqual(self.exam.max_score, 100)
+        self.assertTrue(ExamAttempt.objects.filter(id=first_attempt.id).exists())
+        self.assertTrue(
+            ExamAttempt.objects.filter(id=representative_attempt.id).exists()
+        )
+
+        representative_attempt.is_representative = False
+        representative_attempt.save(update_fields=["is_representative"])
+        first_attempt.is_representative = True
+        first_attempt.save(update_fields=["is_representative"])
+        result = Result.objects.get(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.enrollment,
+        )
+        result.attempt = first_attempt
+        result.total_score = 80
+        result.save(update_fields=["attempt", "total_score", "updated_at"])
+
+        rejected_after_switch = self.patch({"max_score": 85, "pass_score": 80})
+
+        self.assertEqual(
+            rejected_after_switch.status_code,
+            400,
+            rejected_after_switch.data,
+        )
+        self.assertIn("max_score", rejected_after_switch.data)
 
     def test_student_result_publication_defaults_on_and_can_be_disabled(self):
         expected_updated_at = ExamSerializer(self.exam).data["updated_at"]

@@ -14,6 +14,8 @@ from academy.application.services.excel_parsing_service import ExcelParsingServi
 from apps.core.models import Tenant
 from apps.domains.ai.models import AIJobModel
 from apps.domains.ai.services.excel_job_secrets import (
+    EXCEL_CREDENTIALS_ENVELOPE_FIELD,
+    EXCEL_SECRET_PREFIX,
     decrypt_excel_job_secret,
     encrypt_excel_job_secret,
     public_excel_result,
@@ -59,7 +61,12 @@ class ExcelJobSecretTests(SimpleTestCase):
             now=now,
         )
 
-        self.assertNotIn(credentials[0]["password"], str(secured))
+        # Random ciphertext can contain a short PIN by chance; check its envelope.
+        self.assertEqual(set(secured), {"created", EXCEL_CREDENTIALS_ENVELOPE_FIELD})
+        envelope = secured[EXCEL_CREDENTIALS_ENVELOPE_FIELD]
+        self.assertEqual(set(envelope), {"ciphertext", "expires_at"})
+        self.assertTrue(envelope["ciphertext"].startswith(EXCEL_SECRET_PREFIX))
+        self.assertEqual(public_excel_result(secured), {"created": len(credentials)})
         self.assertEqual(
             public_excel_result(
                 secured,
@@ -147,7 +154,7 @@ class ExcelJobAtomicCompletionTests(TestCase):
             student.pending_account_notice_origin_id,
             self.job.job_id,
         )
-        self.assertEqual(result["credentials"][0]["password"], "0042")
+        self.assertEqual(result["credentials"][0]["password"], "000042")
         stored = DjangoAIJobRepository().get_result_payload_for_job(
             self.job,
             include_excel_credentials=True,
@@ -174,7 +181,8 @@ class ExcelJobAtomicCompletionTests(TestCase):
                     "file_key": "excel/test.xlsx",
                     "bucket": "academy-excel",
                     "tenant_id": self.tenant.id,
-                    "password_mode": "phone_last4",
+                    "password_mode": "fixed",
+                    "initial_password_secret": encrypt_excel_job_secret("selected-password"),
                 },
             )
 
@@ -200,7 +208,8 @@ class ExcelJobAtomicCompletionTests(TestCase):
                 "file_key": "excel/partial.xlsx",
                 "bucket": "academy-excel",
                 "tenant_id": self.tenant.id,
-                "password_mode": "phone_last4",
+                "password_mode": "fixed",
+                "initial_password_secret": encrypt_excel_job_secret("selected-password"),
             },
         )
 

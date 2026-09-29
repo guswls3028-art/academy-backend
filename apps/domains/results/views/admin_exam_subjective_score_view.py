@@ -31,11 +31,14 @@ from apps.domains.results.guards.exam_enrollment_guard import validate_exam_enro
 from apps.domains.results.guards.score_edit_lease_guard import (
     require_score_edit_lease_from_headers,
 )
+from apps.domains.results.services.omr_subjective_completion import (
+    finalize_omr_result_if_ready,
+)
 from apps.support.omr.score_shape import get_exam_score_shape
 from apps.support.results.admin_exam_dependencies import (
     dispatch_progress_pipeline,
     get_latest_exam_submission_id,
-    get_regular_active_exam_for_tenant,
+    lock_regular_active_exam_for_tenant,
 )
 from django.db.models import Max
 
@@ -48,11 +51,16 @@ class AdminExamSubjectiveScoreView(APIView):
         enrollment_id = int(enrollment_id)
 
         # ✅ tenant isolation: verify exam belongs to tenant
-        exam = get_regular_active_exam_for_tenant(
+        exam = lock_regular_active_exam_for_tenant(
             exam_id=exam_id,
             tenant=request.tenant,
         )
-        require_score_edit_lease_from_headers(request, exam_id=exam_id)
+        require_score_edit_lease_from_headers(
+            request,
+            exam_id=exam_id,
+            enrollment_id=enrollment_id,
+            sub="subjective",
+        )
 
         # ✅ tenant isolation: verify enrollment belongs to tenant
         from apps.domains.results.guards.enrollment_tenant_guard import validate_enrollment_belongs_to_tenant
@@ -68,11 +76,7 @@ class AdminExamSubjectiveScoreView(APIView):
             raise ValidationError({"detail": "score must be >= 0", "code": "INVALID"})
 
         score_shape = get_exam_score_shape(exam)
-        max_score = float(
-            score_shape.total_max_score
-            or getattr(exam, "max_score", 100.0)
-            or 100.0
-        )
+        max_score = float(getattr(exam, "max_score", 100.0) or 100.0)
         subjective_max = float(score_shape.subjective_max_score or 0.0)
         if subjective_max <= 0 and score_shape.shape_source != "no_sheet" and new_subjective > 0:
             raise ValidationError(
@@ -139,7 +143,11 @@ class AdminExamSubjectiveScoreView(APIView):
                 result.max_score = float(max_score)
                 result.save(update_fields=["attempt_id", "max_score", "updated_at"])
 
-        attempt = ExamAttempt.objects.filter(id=int(result.attempt_id)).first()
+        attempt = (
+            ExamAttempt.objects.select_for_update()
+            .filter(id=int(result.attempt_id))
+            .first()
+        )
         if not attempt:
             raise NotFound({"detail": "attempt not found", "code": "NOT_FOUND"})
         if attempt.status == "grading":
@@ -180,6 +188,11 @@ class AdminExamSubjectiveScoreView(APIView):
                 "manual_subjective": True,
                 "subjective_score": new_subjective,
                 "subjective_max_score": subjective_max,
+                "result_snapshot": {
+                    "total_score": new_total,
+                    "objective_score": objective,
+                    "max_score": max_score,
+                },
                 "edited_at": timezone.now().isoformat(),
             },
         )
@@ -196,6 +209,8 @@ class AdminExamSubjectiveScoreView(APIView):
             attempt.meta.pop("status", None)
             attempt.save(update_fields=["meta", "updated_at"])
 
+        finalization = finalize_omr_result_if_ready(result_id=int(result.id))
+
         _sid = int(submission_id) if submission_id else 0
         _eid = int(exam_id)
         def _dispatch_progress():
@@ -206,14 +221,17 @@ class AdminExamSubjectiveScoreView(APIView):
                     dispatch_progress_pipeline(exam_id=_eid)
             except Exception:
                 logger.exception("progress pipeline dispatch failed (exam=%s, submission=%s)", _eid, _sid)
-        transaction.on_commit(_dispatch_progress)
+        if finalization.projection_ready:
+            transaction.on_commit(_dispatch_progress)
 
         # 정책 SSOT: messaging-policy.md "저장과 발송은 분리" — 점수 저장 자체는 알림 트리거 아님.
         # exam_score_published = MANUAL_DEFAULT. 학원장이 명시적으로 발송 버튼 클릭(preview→confirm)할 때만 발송.
 
         return Response(
             {
-                "ok": True,
+                "ok": finalization.projection_ready,
+                "saved": True,
+                "projection_ready": finalization.projection_ready,
                 "exam_id": exam_id,
                 "enrollment_id": enrollment_id,
                 "objective_score": float(result.objective_score or 0.0),
@@ -221,6 +239,7 @@ class AdminExamSubjectiveScoreView(APIView):
                 "subjective_max_score": float(subjective_max),
                 "total_score": float(result.total_score or 0.0),
                 "max_score": float(result.max_score or 0.0),
+                "grading_status": finalization.pending_reason,
             },
             status=drf_status.HTTP_200_OK,
         )

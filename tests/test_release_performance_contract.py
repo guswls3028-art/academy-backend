@@ -5,6 +5,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).parents[1]
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "v1-build-and-push-latest.yml"
+QUALITY_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "quality-gate.yml"
 
 PRODUCTION_DOCKERFILES = {
     "api": REPO_ROOT / "docker" / "api" / "Dockerfile",
@@ -39,6 +40,28 @@ def test_selected_base_build_refreshes_apt_packages() -> None:
         "build-args: APT_REFRESH_TOKEN="
         "${{ github.run_id }}-${{ github.run_attempt }}"
     ) in workflow
+    assert 'changed_matches "^docker/native-security/" && BASE=true' in workflow
+
+
+def test_native_security_changes_build_and_run_the_arm64_base_in_pr() -> None:
+    workflow = _read(QUALITY_WORKFLOW)
+    verifier = _read(
+        REPO_ROOT / "docker" / "native-security" / "verify-fixed-libs.sh"
+    )
+
+    assert 'docker/Dockerfile.base docker/native-security/' in workflow
+    assert "name: Native security arm64 image contract" in workflow
+    assert "platforms: linux/arm64" in workflow
+    assert "load: true" in workflow
+    assert "verify-fixed-libs.sh:/tmp/verify-fixed-libs.sh:ro" in workflow
+    assert "academy-base:native-security-check sh /tmp/verify-fixed-libs.sh" in workflow
+    for package in ("zlib1g", "libpcre2-8-0", "libxml2", "libexpat1"):
+        assert f"dpkg-query -W -f='${{Version}}' {package}" in verifier
+    native_job = workflow.split("\n  native-security-image:\n", 1)[1].split("\n  static-contract:\n", 1)[0]
+    assert "runs-on: ubuntu-24.04-arm" in native_job
+    assert "setup-qemu-action" not in native_job
+    assert "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c" in workflow
+    assert "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a" in workflow
 
 
 def test_runtime_dependencies_precede_frequently_changed_source() -> None:
@@ -55,7 +78,12 @@ def test_headless_opencv_images_do_not_explicitly_install_system_glib() -> None:
     for service in ("ai", "video"):
         dockerfile = _read(PRODUCTION_DOCKERFILES[service])
 
-        assert "libglib2.0-0" not in dockerfile, service
+        # OCR may verify its transitive GLib dependency, but OpenCV must not
+        # introduce a direct system GLib installation (including version pins).
+        assert not any(
+            line.strip().startswith("libglib2.0-0")
+            for line in dockerfile.splitlines()
+        ), service
 
     ai_requirements = _read(REPO_ROOT / "requirements" / "worker-ai-cpu.txt")
     video_requirements = _read(REPO_ROOT / "requirements" / "worker-video.txt")
@@ -124,12 +152,12 @@ def test_reviewed_runtime_images_own_exact_high_budgets() -> None:
 
     assert document["schemaVersion"] == 3
     assert baseline == {
-        "academy-base": 3,
-        "academy-api": 16,
-        "academy-video-worker": 3,
-        "academy-messaging-worker": 3,
-        "academy-ai-worker-cpu": 16,
-        "academy-tools-worker": 16,
+        "academy-base": 0,
+        "academy-api": 0,
+        "academy-video-worker": 0,
+        "academy-messaging-worker": 0,
+        "academy-ai-worker-cpu": 0,
+        "academy-tools-worker": 0,
     }
     exact_counts = {repository: 0 for repository in baseline}
     assert "knownHighFindings" not in document
@@ -178,7 +206,7 @@ def test_runtime_images_build_in_parallel_before_candidate_assembly() -> None:
     assert runtime_build.count("uses: docker/build-push-action@") == 1
     assert "build-args: BASE_IMAGE=${{ needs.prepare-build.outputs.base_image_uri }}" in runtime_build
     assert "needs: [detect-changes, prepare-build, build-runtime-images]" in assembly
-    assert "Gate newly built images on completed ECR critical scan" in assembly
+    assert "Gate all candidate images on completed ECR critical scan" in assembly
 
 
 def test_production_source_copies_have_final_ownership() -> None:

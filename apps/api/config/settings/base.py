@@ -455,8 +455,14 @@ TENANT_DB_USAGE_SLOW_REQUEST_MS = int(
 )
 
 # /dev 운영 콘솔 알림 webhook (Slack incoming webhook URL).
-# 비어 있으면 전송 생략 — check_dev_alerts 커맨드는 조건 평가만 수행.
+# 비어 있으면 일반 운영 룰은 전송을 생략한다. 실제 user_incidents가 있으면
+# DEV_ALERTS_WEBHOOK_REQUIRED와 무관하게 check_dev_alerts가 실패한다.
 DEV_ALERTS_WEBHOOK_URL = os.getenv("DEV_ALERTS_WEBHOOK_URL", "")
+# 수신 채널을 운영 계약으로 활성화한 뒤에는 URL 누락을 실패로 처리한다.
+DEV_ALERTS_WEBHOOK_REQUIRED = os.getenv(
+    "DEV_ALERTS_WEBHOOK_REQUIRED",
+    "false",
+).lower() in ("1", "true", "yes")
 # 운영자 장애 알림은 Slack webhook만 사용한다.
 # Runtime 5xx responses must not wait for the incident audit insert.
 USER_INCIDENT_AUDIT_ASYNC = True
@@ -525,6 +531,16 @@ TOOLS_SQS_QUEUE_NAME = os.getenv("TOOLS_SQS_QUEUE_NAME", "academy-v1-tools-queue
 # 메시지 발송 SQS 큐 (워커가 소비). SSOT: academy-v1-messaging-queue
 MESSAGING_SQS_QUEUE_NAME = os.getenv("MESSAGING_SQS_QUEUE_NAME", "academy-v1-messaging-queue")
 
+# Activation release follows the compatible reader/0022 deployment on every
+# API/worker. Explicit false remains the write-only rollback switch; keep readers.
+CLINIC_MIDNIGHT_TIME_RANGE_WRITES_ENABLED = os.getenv(
+    "CLINIC_MIDNIGHT_TIME_RANGE_WRITES_ENABLED",
+    "true",
+).lower() in ("1", "true", "yes")
+CLINIC_OVERNIGHT_TIME_RANGE_WRITES_ENABLED = os.getenv(
+    "CLINIC_OVERNIGHT_TIME_RANGE_WRITES_ENABLED", "true",
+).lower() in ("1", "true", "yes")
+
 # ==================================================
 # BILLING / SUBSCRIPTION
 # ==================================================
@@ -569,7 +585,7 @@ BILLING_KEY_ENCRYPTION_FALLBACK_KEYS = tuple(
 )
 
 # 유예 기간 (일) — 결제 실패 후 서비스 유지 기간
-BILLING_GRACE_PERIOD_DAYS = int(os.getenv("BILLING_GRACE_PERIOD_DAYS", "7"))
+BILLING_GRACE_PERIOD_DAYS = int(os.getenv("BILLING_GRACE_PERIOD_DAYS", "30"))
 # 결제 재시도 정책
 BILLING_RETRY_MAX_ATTEMPTS = int(os.getenv("BILLING_RETRY_MAX_ATTEMPTS", "3"))
 BILLING_RETRY_INTERVAL_DAYS = int(os.getenv("BILLING_RETRY_INTERVAL_DAYS", "3"))

@@ -20,6 +20,49 @@
 [frontend/docs/HOMEWORK-SCORING.md](https://github.com/guswls3028-art/academy-frontend/blob/main/docs/HOMEWORK-SCORING.md)가
 소유한다.
 
+## 교사 완료 판정과 차시 진도
+
+**차시 → 성적 → 학생 → 과제 → 교사 완료 판정**에서 교직원이 사유를 입력해
+완료를 확정하거나 취소한다. 공개 `score-correction` API는 기존 교직원 권한,
+같은 tenant·차시·수강생·현재 과제 배정, `expected_updated_at` 충돌 검사를
+유지한다. 점수나 온라인 제출이 없는 종이 과제도 이 동선으로 직접 완료할 수 있다.
+
+- `ProgressPolicy.homework_pass_type=TEACHER_APPROVAL`은 화면과 같은
+  `AssessmentCorrection.completed`를 읽는다. 이 상태는 과제 점수와 독립적이다.
+  40점인 과제의 명시적 교사 완료도 인정하고, 그 뒤 점수를 입력·수정해도 완료를
+  임의로 취소하지 않는다. 반대로 100점 입력만으로 교사 승인을 만들지 않는다.
+- 현재 배정이 있으면 그 과제들만 대상으로 모두 승인되었는지 확인한다. 성적표에서
+  숨겨지고 완료 API로 처리할 수 없는 미배정 과거 점수를 필수 과제에 합치지 않는다.
+  현재 배정이 하나도 없을 때만 기존 레거시 1차 점수의 **하나 이상 승인** 호환을
+  유지한다. 과제별 명시적 판정 행이 없을 때만 기존
+  `HomeworkScore.teacher_approved`를 호환 값으로 읽는다. 판정 행의 `false`는
+  과거 승인 값보다 우선한다. 아직 점수가 없는 배정도 빠뜨리지 않으며, 다른
+  tenant·학생·차시 및 제거된 과제의 보존 기록은 승인하거나 차단하는 근거가 아니다.
+  대상 자체가 없는 경우는 기존처럼 승인된 것으로 간주하지 않는다.
+- 완료·취소 commit 후 기존 진도 파이프라인이 해당 학생×차시를 다시 계산하고
+  `SessionProgress`, 강의 진도, 차시 성적 요약을 갱신한다. 과거 점수 통과나
+  면제로 클리닉 링크가 이미 닫혔더라도 교사 판정은 진도에 전달한다. 이때 기존
+  클리닉 해소 사유·증거는 교사 토글로 덮어쓰거나 재개하지 않는다.
+- **과제 → 대상자 관리**의 `PUT /homework/assignments/`에서 현재 배정이 바뀌면
+  추가·제외된 학생의 진도도 commit 후 갱신한다. `DELETE /homeworks/{id}/`는
+  제거 전 배정·레거시 점수 이력의 대상과 기존 클리닉 링크 대상을 합쳐 갱신한다.
+  미해소 클리닉 링크가 없어도 갱신하며, 한 요청의 학생×차시는 한 번만 예약한다.
+  transaction rollback 시 callback도 취소한다. 변경되지 않은 학생, 숨겨진 비활성
+  학생의 배정과 보존된 점수·제출물은 이 재계산을 이유로 삭제하거나 승인하지 않는다.
+- 수동 점수, `teacher_approved` 과거 값, `Submission`을 만들거나 바꾸지 않는다.
+  `SUBMIT`·`SCORE` 정책과 학생 파일 잠금의 최신 점수 우선 규칙은 별개로 유지한다.
+  교사 과제 완료가 영상 시청이나 출석을 완료시키지 않으며, 차시 전체 완료는 기존
+  영상·시험·과제 조건을 모두 충족해야 한다. 재계산 실패는 기존 파이프라인 오류
+  로그에 남으므로 PATCH 성공만으로 후속 화면까지 완료되었다고 판정하지 않는다.
+
+공개 완료 → 성적표 재조회 → 진도·요약 저장 확인 → 취소와 공개 배정 추가·제외·과제
+삭제 → 재조회 회귀는
+`apps/domains/progress/tests/test_homework_approval_progress.py`가 담당한다. 낮은 점수,
+점수·제출 없음, 이후 점수 입력, 복수 배정, 레거시 승인, 권한·tenant 격리와
+기존 영상·출석·제출 값 보존을 함께 검사하며 기존 PostgreSQL 전체 회귀에도 포함된다.
+실사용 검증은 정상 교사 화면에서 같은 완료·새로고침·취소 흐름과 후속 진도 표시를
+확인해야 하며, 로컬 회귀만으로 모바일 화면이나 운영 반영을 통과 처리하지 않는다.
+
 ## 두 설정의 소유 범위
 
 | 설정 | 범위 | 저장·응답 계약 |
@@ -83,11 +126,13 @@ PostgreSQL에서는 `HomeworkScore` 본체 행만 잠그고, 선택적인 차시
   반영해 숨은 비활성 행과 변경 없는 행의 생성 시각을 보존한다. 차시 본행을
   `FOR NO KEY UPDATE`로 잠가 동시 완전 치환을 직렬화하되 자식 행 FK 확인과
   교착하지 않으며, 마지막으로 잠금을 얻은 요청을 정본으로 삼는다.
-- 학생·학부모 성적 요약과 관리자 학생 상세는 과제 행에 `session_order`,
-  `session_regular_order`, `session_type`, `display_order`를 함께 반환한다. 같은
-  강의에서는 최근 차시가 먼저 오고, 같은 차시의 여러 과제는 과제 표시 순서를
-  따른다. 이 정렬은 점수 수정 시각과 무관하므로 1차시가 목록 아래에 안정적으로
-  유지된다. 학생·학부모 요약도 tenant 범위의 `Submission`을 확인해 제출했지만
+- 관리자 학생 상세는 과제 행에 `session_order`, `session_regular_order`,
+  `session_type`, `session_date`, `display_order`를 함께 반환한다. 강의를 교체해
+  차시 번호가 다시 1부터 시작해도 응답은
+  실제 수업일 최신순으로 정렬한다. 같은 날짜에서는 차시 번호 내림차순, 강의명,
+  과제 표시 순서, 과제 ID 내림차순을 안정 동률 기준으로 사용하며 날짜가 없는 과거
+  행은 마지막에 둔다. 이 정렬은 점수 수정 시각과 무관하다. 학생·학부모 요약도
+  tenant 범위의 `Submission`을 확인해 제출했지만
   아직 채점하지 않은 과제를 `검사 전`으로, 제출 자체가 없는 과제를 `미제출`로
   구분한다.
 - 결과 행이 하나라도 생긴 과제는 채점 방식을 바꿀 수 없다. 기존 숫자 점수나
@@ -149,6 +194,18 @@ X를 나중에 다시 맞힌 뒤에도 남기려면 O·복습으로 바꾼다. �
 
 ### 학생 사진·동영상 다건 제출
 
+학생 제출 할 일은 성적 판정과 별도로 `GET /api/v1/student/grades/`의
+`submission_state`를 사용한다. 성공한 업로드·기존 단건 파일·온라인 제출 중
+현재 유효한 증거만 지문에 포함한다. 저장 중·실패·제거된 파일은 제출 완료로
+세지 않는다. `HomeworkScore.reviewed_submission_revision`은 교직원의 명시적
+점수 저장 시 같은 배정 잠금 안에서 현재 증거를 기록한다. 이 지문과 최신 활성
+증거가 다르면 이전 1차 불합격 점수를 보존하면서도 학생 홈은 검토 대기로 읽는다.
+재채점 정책만 적용할 때 이 지문은 갱신하지 않는다. 교직원이 불합격 점수를
+저장하면 그 제출 건은 검토된 것으로 바뀌어 재제출 할 일이 다시 표시된다.
+과거 점수의 지문은 비어 있을 수 있으므로 기존 활성 증거는 검토 대기로 표시하고,
+교직원이 해당 점수를 다시 저장하면 현재 상태가 확정된다. 이 변경은 원본 점수,
+제출 파일과 교사 승인 기록을 수정하거나 삭제하지 않는다.
+
 - 학생 과제 하나에는 활성 `Submission`을 정확히 한 행만 유지한다. 사진·동영상은
   순서가 있는 `SubmissionMedia` 자식 행이며, 파일마다 tenant, 서버가 정한 저장
   식별자, 안전한 원본 표시명, 종류·MIME·용량·순서·상태·오류·시각을 보존한다.
@@ -172,13 +229,54 @@ X를 나중에 다시 맞힌 뒤에도 남기려면 O·복습으로 바꾼다. �
   동일 키를 덮어쓰고 상태를 복구하게 한다. 실패 상태 기록도 best-effort로 시도하고
   API는 성공으로 응답하지 않는다. 따라서 DB 장애 중 이름 없는 orphan을 새로 만들지
   않으며 감사 행과 object identity의 연결이 유지된다.
+- 학생 업로드·삭제와 교사의 일반 점수 저장·직접 확인 완료는 tenant 안의 canonical
+  `HomeworkAssignment` 행을 먼저 잠근다. 공통 잠금 순서는
+  `HomeworkAssignment` → `HomeworkScore`/`AssessmentCorrection` 또는
+  `Submission`/`SubmissionMedia`다. 학생 쓰기는 assignment 잠금 뒤 현재
+  완료/통과 상태를 다시 확인한다. 교사 완료가 먼저 커밋됐으면 같은
+  `client_file_id` 재시도를 포함한 upload/delete를 object 저장이나 행 변경 전에
+  `409 HOMEWORK_MEDIA_REVIEWED`로 거부한다. 학생 변경이 먼저 잠금을 얻었으면 교사는
+  그 transaction이 끝날 때까지 기다린 뒤 확정된 media set만 검수 근거로 기록한다.
+- 업로드 transaction은 R2 원본 저장과 최종 `uploaded` 상태 확정까지 assignment
+  잠금을 유지한다. object 저장 실패는 transaction 안에서 해당 deterministic 행을
+  `failed`로 만든 뒤 transaction을 커밋하고 `503`을 반환하므로 같은
+  `client_file_id`와 object key로 재시도할 수 있다. 다른 파일의 앞선 성공은
+  rollback하지 않고 object를 추측 삭제하지 않는다.
+- 교직원 제출 목록은 학생별 현재 활성 media set의 timestamp 비의존 SHA-256인
+  `media_set_fingerprint`를 반환한다. 직접 확인 완료는 같은 assignment 잠금 안에서
+  다시 계산한 값을 `AssessmentCorrection.source_fingerprint`에 저장한다. 활성 legacy
+  object와 제거되지 않은 child의 identity, 내용 fingerprint, 순서, 종류·MIME·용량,
+  저장 상태를 포함하고 soft-remove된 파일은 제외한다.
 - 학생 삭제는 행과 object를 즉시 없애지 않고 `removed_at`, `removed_by`,
-  `removed` 상태를 기록한다. 점수 또는 완료된 교정 기록 뒤에도 보충 증거 파일은
-  계속 추가할 수 있지만, 이미 검수 근거가 된 파일 삭제는
-  `409 HOMEWORK_MEDIA_REVIEWED`로 막는다. soft-delete object는 감사·복구 근거로
-  보존하며, 향후 정리도 tenant·행·보존기간을 확정한 별도 exact-target 작업에서만
-  수행한다. 이번 expand migration은 child table만 만들며 기존 행, constraint,
-  object를 바꾸거나 지우지 않는다.
+  `removed` 상태를 기록한다. soft-delete object는 감사·복구 근거로 보존하며, 향후
+  정리도 tenant·행·보존기간을 확정한 별도 exact-target 작업에서만 수행한다. 이번
+  expand migration은 child table만 만들며 기존 행, constraint, object를 바꾸거나
+  지우지 않는다.
+- 학생 계정을 명시적으로 영구 삭제하거나 30일 보관 후 purge할 때는 예외다. 학생
+  lifecycle은 exact tenant/submission ID를 제출 도메인에 넘긴다. 제출 도메인은
+  `SubmissionMedia.object_key`와 legacy `Submission.file_key`를 AI 버킷 대상으로
+  분류하고, DB transaction 안에서는 `SubmissionStorageCleanupIntent`와 media 행
+  변경만 수행한다. parent submission과 학생 DB 삭제가 commit된 뒤에만 callback이
+  object 삭제를 시도하므로 이후 SQL 실패가 원본을 먼저 지우지 않는다.
+- cleanup intent identity는 `(tenant, bucket, object_key)`다. 제출물은 AI 버킷,
+  오답노트 PDF는 Storage 버킷으로 분리하며 동일 문자열 key가 두 버킷에 있어도 각
+  owning delete API만 호출한다. 실패 key는 고정 코드 `storage_delete_failed`만
+  기록하고 `process_submission_storage_cleanup` 또는 매일
+  `purge_deleted_students`가 재시도한다. 15분 지난 claim은 새 token으로 회수하며
+  이전 worker는 token이 달라진 상태를 완료/실패로 덮어쓸 수 없다.
+- 현재 writer는 신규 제출 key를
+  `tenants/{tenant}/ai/submissions/{submission_id}/{uuid}.{ext}`로 생성한다. 기존
+  tenant-scoped `tenants/{tenant}/ai/submissions/...`와 구 serializer의 exact-owner
+  `submissions/{submission_id}/...` key도 삭제 대상으로 인정하되,
+  다른 submission/media 및 등록된 AI 버킷 owner가 같은 key를 참조하면 object를
+  보존한다. 신규 caller-supplied key는 canonical tenant AI namespace만 허용하고
+  `submissions/...` legacy key의 새 연결은 거부한다. reused key writer와 cleanup은
+  같은 bucket+key advisory lock을 사용하며 cleanup intent가 생긴 key의 재연결도
+  거부한다. `SubmissionMedia.UPLOADING`은 1시간 lease 동안 영구삭제를 `409`로
+  중단하고, lease 만료 후에는 durable cleanup으로 회수한다. 늦게 끝난 PUT은 finalize
+  시 row/intent 소유권을 확인해 row를 되살리지 않고 다시 정리한다. 제출 업로드 뒤
+  DB 저장/입학 처리가 rollback 또는 commit 경계에서 실패하면 generic/admin/single
+  OMR caller도 uploaded key를 같은 durable intent로 넘겨 orphan object를 재시도한다.
 - 기존 `homework_image`·`homework_video` 단건 `Submission.file_key`는 그대로
   보존한다. 새 목록에서는 `legacy-{submission_id}`인 파일 하나로 투영하고, soft
   remove는 기존 행의 `meta`에 감사 시각을 기록한다. 구 단건 제출 생성 API도
@@ -198,6 +296,12 @@ X를 나중에 다시 맞힌 뒤에도 남기려면 O·복습으로 바꾼다. �
   완료/통과로 잠근다. 미입력, `NOT_SUBMITTED`, 미완료/불합격, 이전 통과 뒤 최신
   재시도가 불합격인 과제는 과거 검수 이력과 무관하게 학생이 파일을 추가·삭제해
   보완할 수 있다. 점수 행이 있으면 최신 시도 결과가 직접 확인보다 우선한다.
+
+PostgreSQL barrier 회귀는
+`apps/domains/results/tests/test_assessment_correction_concurrency_pg.py`에서 교사 선행
+거부와 학생 upload/delete 선행 직렬화를 검증한다. 학생 upload → reload → 교직원
+목록/fingerprint 확인 → 직접 완료 → 같은 파일 retry 및 delete 거부 journey는
+`apps/domains/submissions/tests/test_homework_media_submission.py`가 검증한다.
 
 | Method | Path | 역할 |
 |--------|------|------|
@@ -233,19 +337,55 @@ X를 나중에 다시 맞힌 뒤에도 남기려면 O·복습으로 바꾼다. �
 완료 여부, 점수형은 `점수/만점`을 표시하며 `NOT_SUBMITTED`와 미검사 `null`은
 모두 숫자 0으로 바꾸지 않는다.
 
+학생 상세는 `HomeworkAssignment` 도입 전 생성된 1차 `HomeworkScore`도 과거
+이력으로 보존한다. `/homework/scores/quick/`은 새 미배정 점수 생성은 계속
+거부하지만, 같은 tenant의 정확한 차시·수강·과제에 이미 존재하는 레거시 1차
+점수행은 그 행을 잠근 뒤 수정할 수 있다. 따라서 화면에 정상 이력으로 노출된
+과제가 배정행 부재만으로 저장 불가능해지지 않으며, 다른 tenant·차시·수강생이나
+점수행조차 없는 미배정 대상은 기존처럼 실패한다.
+
 차시 성적표의 편집 초안은 브라우저 편집기별로 유지한다. 같은 계정을 공유한
-여러 화면도 `X-Score-Editor-Client`로 구분한다. 시험 점수 변경은 같은 시험 공유
-차시 전체를 독점하지만, 과제만 편집하는 초안은 `(enrollment_id, homework_id)`
-셀 집합이 서로 겹치지 않으면 여러 직원·화면이 동시에 저장할 수 있다. 각 편집기는
-현재 선택한 과제 셀을 `active_cell`로 갱신하며, 다른 편집기는 응답의
-`active_editors`에서 편집자 이름과 선택 셀을 읽는다. 같은 학생의 같은 과제 셀과
-시험 변경이 섞인 초안만 `409 SCORE_EDIT_LOCKED`로 차단한다. 빈 초안은 다른
-직원의 입력을 막지 않는다. 과제 부분 저장은 현재 요청 셀에 대한 활성 초안
+여러 화면도 `X-Score-Editor-Client`로 구분한다. 시험과 과제 변경은 각각
+`(enrollment_id, exam_id, 입력 종류, question_id)`와
+`(enrollment_id, homework_id)`의 정확한 셀 집합이 겹칠 때만 충돌한다. 셀 집합이
+서로 겹치지 않으면 계정·기기와 관계없이 여러 직원·화면이 동시에 저장할 수 있다.
+각 편집기는 현재 선택한 성적 셀을 `active_cell`로 갱신하며, 다른 편집기는 응답의
+`active_editors`에서 편집자 이름과 선택 셀을 읽는다. 같은 셀만
+`409 SCORE_EDIT_LOCKED`로 차단하고 빈 초안은 다른 직원의 입력을 막지 않는다.
+충돌 응답이 와도 클라이언트의 로컬 초안은 삭제하거나 서버값으로 초기화하지 않는다.
+과제 부분 저장은 현재 요청 셀에 대한 활성 초안
 소유권을 다시 확인한 뒤 반영하므로 서로 다른 셀의 안전한 동시 작업과 같은 셀의
 덮어쓰기 방지가 함께 유지된다. 선택 표시와 lease는 마지막 갱신 후 2분이 지나면
-자동 만료된다. 같은 계정의 새 브라우저 편집기는 만료됐고 변경·선택 셀·무효화
-표시가 없는 빈 lease만 인계할 수 있다. 변경을 담았거나 서버 변경으로 무효화된
-초안은 만료 후에도 자동 덮어쓰기하지 않고 복구 대상으로 보존한다.
+자동 만료된다. 같은 계정의 새 브라우저 편집기는 만료된 빈 lease에 예전 선택 셀이나
+무효화 표시만 남아 있어도 변경값이 없으면 안전하게 재사용한다. 변경을 담은 같은
+계정의 활성 또는 만료 초안은 새 기기의 조회에 복구 대상으로 노출하고, 사용자가
+복원을 명시한 경우에만 새 client lease로 인계한다. 활성 초안은 정확한 같은
+차시·tenant·계정에서 최신 변경 초안 하나만 노출하며, 빈 초안이나 무효화된 초안은
+새 기기 복구 대상으로 선택하지 않는다. 이전 기기 행은 `SAME_ACCOUNT_HANDOFF`로
+무효화하되 payload를 보존한다. 다른 계정·tenant는 조회하거나 인계할 수 없다.
+
+새로고침 전 같은 계정의 빈 선택 점유가 남으면 `active_editors`의
+`has_pending_changes=false`로 변경 초안과 구분한다. 사용자가 해당 셀의 이어 입력을
+명시한 경우에만 `PUT score-draft`의 `take_over_same_user=true`, 빈 `changes`, 정확한
+`active_cell`로 점유를 인계한다. 서버는 충돌 행이 같은 계정의 빈 점유인지 잠금 안에서
+다시 확인하며, 다른 직원이나 점수를 담은 초안은 계속409로 보호한다. 이전 행은 삭제하지
+않고 `SAME_ACCOUNT_HANDOFF`로 무효화한다. 서버 성공 전에는 현재 화면을 편집 가능으로
+전환하지 않으며, 실패 시 입력과 안내·재시도를 유지한다.
+
+실제 문서 이탈 시 클라이언트의 점유/저장 요청이 모두 끝났고 미확정 입력도 없을 때만
+`POST score-draft/commit/`에 `release_lease=true`, `release_if_empty=true`를 보낼 수 있다.
+서버는 정확한 현재 client 행만 잠가 점수 변경이 없는 경우 `active_cell`만 지우고 행은
+보존한다. 점수 변경·다른 client·legacy 행·행 부재는 그대로 둔다. 대기 요청이 있는 이탈은
+이 요청을 보내지 않으며 기존 TTL 및 명시적 복구로 이어간다. 이는 일반 저장·잠금의 확정
+후 해제 계약을 대체하지 않는다. 회귀는 `test_score_draft_edit_lease.py`가 현재/다른 계정,
+주관식 선택, dirty 보존, 조건부 해제의 정확한 client와 flags를 검증한다.
+
+교사 모바일의 단건 점수 수정은 실제 대상 셀을 빈 lease보다 먼저 초안으로 등록한다.
+같은 계정의 다른 화면에 그 셀과 충돌하는 초안이 있으면 모바일 화면으로 편집권을
+인계하고 기존 초안은 `SAME_ACCOUNT_HANDOFF`로 무효화하되 입력값은 복구용으로
+보존한다. 따라서 새 기기의 저장은 기기 차이만으로 `409`가 되지 않고, 이전 화면은
+이후 저장에서 stale 안내와 복원 절차를 거친다. 다른 계정의 충돌 초안은 인계할 수
+없으며 기존 `409 SCORE_EDIT_LOCKED` 경계를 유지한다.
 
 차시 성적표 조회는 각 과제 점수 블록에 셀 version인 `updated_at`을 반환한다.
 새 클라이언트는 `/homework/scores/quick/`에 `expected_updated_at`을 함께 보내며,

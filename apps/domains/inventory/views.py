@@ -1,7 +1,9 @@
 # PATH: apps/domains/inventory/views.py
 # 저장소 API — R2 업로드 후 DB 메타데이터, 비어있지 않은 폴더 삭제 방지
 
-from django.http import JsonResponse
+import logging
+
+from django.http import HttpResponse, JsonResponse
 from django.views import View
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
@@ -17,17 +19,13 @@ from .services import (
     move_folder as do_move_folder,
     delete_folder_recursive as do_delete_folder_recursive,
 )
+from .services.deletion import InventoryDeleteScopeError, delete_file
 from apps.support.inventory.matchup_dependencies import (
-    cleanup_matchup_problem_images,
-    document_has_protected_matchup_problems,
-    get_matchup_document_for_inventory_file,
     promote_inventory_file_to_matchup,
     promoted_matchup_document_map,
-    protected_matchup_document_delete_detail,
 )
 from apps.support.results.student_reported_scores import (
     create_student_score_submissions,
-    inventory_file_has_reported_score,
     score_submission_map_for_inventory_files,
     serialize_reported_score,
     validate_student_score_submissions,
@@ -49,6 +47,7 @@ except ImportError:
 
 STORAGE_QUOTA_BYTES = 200 * 1024**3
 SCORE_EVIDENCE_MAX_BYTES = 20 * 1024**2
+logger = logging.getLogger(__name__)
 
 
 def _score_evidence_signature_matches(file_obj, content_type: str) -> bool:
@@ -104,8 +103,42 @@ def _is_tenant_staff(request):
     )
 
 
+def _requested_student_ps(request) -> str:
+    student_ps = (request.GET.get("student_ps") or "").strip()
+    if student_ps:
+        return student_ps
+    student_ps = (request.POST.get("student_ps") or "").strip()
+    if student_ps:
+        return student_ps
+    import json
+    try:
+        body = json.loads(request.body)
+    except Exception:
+        body = {}
+    return str(body.get("student_ps") or "").strip()
+
+
+def _student_scope_profile(request):
+    user = getattr(request, "user", None)
+    tenant = getattr(request, "tenant", None)
+    if not user or not tenant:
+        return None
+    if getattr(user, "parent_profile", None) is not None:
+        from apps.domains.student_app.permissions import get_request_student
+
+        return get_request_student(request)
+    student = getattr(user, "student_profile", None)
+    if (
+        student is not None
+        and student.tenant_id == tenant.id
+        and student.deleted_at is None
+    ):
+        return student
+    return None
+
+
 def _check_scope_permission(request, scope=None):
-    """admin scope 접근 시 스태프 권한 필수. 학생은 자기 scope만 접근."""
+    """Admin is staff-only; student scope is the exact student/selected child."""
     if scope is None:
         import json
         try:
@@ -116,18 +149,13 @@ def _check_scope_permission(request, scope=None):
     if scope == "admin" and not _is_tenant_staff(request):
         return JsonResponse({"detail": "관리자 권한이 필요합니다."}, status=403)
     if scope == "student" and not _is_tenant_staff(request):
-        # 학생은 자기 ps_number만 접근 가능
-        student_profile = getattr(request.user, "student_profile", None)
+        try:
+            student_profile = _student_scope_profile(request)
+        except Exception:
+            return JsonResponse({"detail": "선택한 자녀 정보를 확인할 수 없습니다."}, status=403)
         if not student_profile:
             return JsonResponse({"detail": "학생 정보가 없습니다."}, status=403)
-        student_ps = (request.GET.get("student_ps") or "").strip()
-        if not student_ps:
-            import json
-            try:
-                body = json.loads(request.body)
-            except Exception:
-                body = {}
-            student_ps = (body.get("student_ps") or "").strip()
+        student_ps = _requested_student_ps(request)
         if student_ps and student_ps != student_profile.ps_number:
             return JsonResponse({"detail": "다른 학생의 자료에 접근할 수 없습니다."}, status=403)
     return None  # OK
@@ -162,7 +190,10 @@ def _inventory_file_permission_error(request, inv_file):
     if _is_tenant_staff(request):
         return None
 
-    student_profile = getattr(request.user, "student_profile", None)
+    try:
+        student_profile = _student_scope_profile(request)
+    except Exception:
+        return JsonResponse({"detail": "선택한 자녀 정보를 확인할 수 없습니다."}, status=403)
     if not student_profile:
         return JsonResponse({"detail": "학생 정보가 없습니다."}, status=403)
     if inv_file.student_ps != student_profile.ps_number:
@@ -312,7 +343,6 @@ class FolderCreateView(View):
         perm_err = _check_scope_permission(request, scope)
         if perm_err:
             return perm_err
-
         tenant = request.tenant
         parent = None
         pid = None
@@ -358,6 +388,11 @@ class FileUploadView(View):
         perm_err = _check_scope_permission(request, scope)
         if perm_err:
             return perm_err
+        scope_student = (
+            _student_scope_profile(request)
+            if scope == "student" and not _is_tenant_staff(request)
+            else None
+        )
 
         folder_id = request.POST.get("folder_id")
         display_name = (request.POST.get("display_name") or "").strip()
@@ -413,6 +448,7 @@ class FileUploadView(View):
                     user=request.user,
                     student_ps=student_ps,
                     payload=request.POST,
+                    student=scope_student,
                 )
             except ValueError as exc:
                 return JsonResponse({"detail": str(exc)}, status=400)
@@ -488,19 +524,48 @@ class FileUploadView(View):
         except Exception as e:
             return JsonResponse({"detail": f"R2 upload failed: {e}"}, status=502)
 
-        inv_file = inv_repo.inventory_file_create(
-            tenant=tenant,
-            scope=scope,
-            student_ps=student_ps,
-            folder=folder,
-            display_name=display_name or file_obj.name,
-            description=description,
-            icon=icon,
-            r2_key=r2_key,
-            original_name=file_obj.name,
-            size_bytes=file_obj.size,
-            content_type=file_obj.content_type or "application/octet-stream",
-        )
+        try:
+            inv_file = inv_repo.inventory_file_create(
+                tenant=tenant,
+                scope=scope,
+                student_ps=student_ps,
+                folder=folder,
+                display_name=display_name or file_obj.name,
+                description=description,
+                icon=icon,
+                r2_key=r2_key,
+                original_name=file_obj.name,
+                size_bytes=file_obj.size,
+                content_type=file_obj.content_type or "application/octet-stream",
+            )
+        except Exception:
+            logger.exception(
+                "Inventory metadata creation failed after R2 upload tenant=%s scope=%s",
+                tenant.id,
+                scope,
+            )
+            try:
+                delete_object_r2_storage(key=r2_key)
+            except Exception:
+                logger.exception(
+                    "Inventory orphan cleanup failed tenant=%s scope=%s",
+                    tenant.id,
+                    scope,
+                )
+                return JsonResponse(
+                    {
+                        "detail": "파일 정보 저장과 원본 정리에 실패했습니다. 관리자에게 문의해 주세요.",
+                        "code": "inventory_storage_cleanup_failed",
+                    },
+                    status=502,
+                )
+            return JsonResponse(
+                {
+                    "detail": "파일 정보를 저장하지 못했습니다. 다시 시도해 주세요.",
+                    "code": "inventory_metadata_save_failed",
+                },
+                status=500,
+            )
 
         reported_scores = []
         if validated_scores is not None:
@@ -610,23 +675,16 @@ class FolderDeleteView(View):
         if folder.scope != scope or (scope == "student" and folder.student_ps != student_ps):
             return JsonResponse({"detail": "Forbidden"}, status=403)
 
-        if recursive:
-            # 하위 포함 한방 삭제 — 매치업 problem 이미지/원본 R2 객체/cascade DB 모두 정리
+        try:
             result = do_delete_folder_recursive(
-                tenant=tenant, folder=folder, scope=scope, student_ps=student_ps,
+                tenant=tenant, folder=folder, scope=scope, student_ps=student_ps, recursive=recursive,
             )
-            if result.get("ok") is False:
-                status = int(result.pop("status", 400))
-                return JsonResponse(result, status=status)
-            return JsonResponse(result, status=200)
-
-        if inv_repo.inventory_folder_has_children(tenant, folder):
-            return JsonResponse({"detail": "비어있지 않은 폴더는 지울 수 없습니다. 먼저 하위 파일·폴더를 비우거나 삭제하세요.", "code": "folder_not_empty"}, status=400)
-        if inv_repo.inventory_folder_has_files(tenant, folder):
-            return JsonResponse({"detail": "비어있지 않은 폴더는 지울 수 없습니다. 먼저 하위 파일·폴더를 비우거나 삭제하세요.", "code": "folder_not_empty"}, status=400)
-
-        folder.delete()
-        return JsonResponse({}, status=204)
+        except InventoryDeleteScopeError:
+            return JsonResponse({"detail": "삭제 범위를 확인할 수 없습니다.", "code": "inventory_delete_scope_invalid"}, status=409)
+        if result.get("ok") is False:
+            status = int(result.pop("status", 400))
+            return JsonResponse(result, status=status)
+        return JsonResponse(result, status=200) if recursive else HttpResponse(status=204)
 
     @method_decorator(_tenant_required)
     @method_decorator(_jwt_required)
@@ -680,84 +738,16 @@ class FileDeleteView(View):
         if perm_err:
             return perm_err
 
-        inv_file = inv_repo.inventory_file_get(tenant, file_id)
-        if not inv_file:
-            return JsonResponse({"detail": "Not found"}, status=404)
-        if inv_file.scope != scope or (scope == "student" and inv_file.student_ps != student_ps):
-            return JsonResponse({"detail": "Forbidden"}, status=403)
-
-        if inventory_file_has_reported_score(tenant=tenant, file_id=inv_file.id):
-            return JsonResponse(
-                {
-                    "detail": "검수 기록과 연결된 성적표 원본은 삭제할 수 없습니다.",
-                    "code": "reported_score_evidence_protected",
-                },
-                status=409,
-            )
-
-        r2_key = inv_file.r2_key
-
-        # 🔐 매치업 problem 이미지 R2 cleanup (cascade로 doc/problem 삭제 전)
-        # InventoryFile cascade → MatchupDocument → MatchupProblem만 일어남.
-        # MatchupProblem.image_key R2 객체는 누가 안 지움 → orphan 방지.
-        matchup_doc = get_matchup_document_for_inventory_file(inv_file)
-        if matchup_doc is not None:
-            try:
-                if document_has_protected_matchup_problems(matchup_doc):
-                    return JsonResponse(
-                        {
-                            "detail": protected_matchup_document_delete_detail(),
-                            "code": "protected_matchup_document",
-                        },
-                        status=409,
-                    )
-            except Exception:
-                import logging
-                logging.getLogger(__name__).exception(
-                    "matchup protected-delete check failed for inv_file %s", inv_file.id,
-                )
-                return JsonResponse(
-                    {
-                        "detail": "매치업 보호 상태 확인에 실패했습니다.",
-                        "code": "matchup_protection_check_failed",
-                    },
-                    status=500,
-                )
-            try:
-                cleanup_matchup_problem_images(matchup_doc)
-            except Exception:
-                import logging
-                logging.getLogger(__name__).warning(
-                    "matchup problem images cleanup failed for inv_file %s", inv_file.id,
-                    exc_info=True,
-                )
-
-        # 원본을 먼저 지우고 성공했을 때만 DB 연결을 해제한다. 실패를 삼키고
-        # 204를 반환하면 개인정보가 R2에 남은 채 마지막 key 참조가 사라진다.
-        if r2_key and delete_object_r2_storage is None:
-            return JsonResponse(
-                {"detail": "파일 저장소를 사용할 수 없습니다.", "code": "storage_unavailable"},
-                status=503,
-            )
-        if r2_key:
-            try:
-                delete_object_r2_storage(key=r2_key)
-            except Exception:
-                import logging
-                logging.getLogger(__name__).exception(
-                    "Failed to delete R2 object: %s", r2_key, exc_info=True
-                )
-                return JsonResponse(
-                    {
-                        "detail": "원본 파일 삭제에 실패했습니다. 잠시 후 다시 시도해 주세요.",
-                        "code": "storage_delete_failed",
-                    },
-                    status=502,
-                )
-
-        inv_file.delete()  # CASCADE: MatchupDocument → MatchupProblem 함께 삭제
-
-        return JsonResponse({}, status=204)
+        try:
+            result = delete_file(tenant=tenant, file_id=file_id, scope=scope, student_ps=student_ps)
+        except InventoryDeleteScopeError:
+            return JsonResponse({"detail": "삭제 범위를 확인할 수 없습니다.", "code": "inventory_delete_scope_invalid"}, status=409)
+        if result.get("ok") is False:
+            status = int(result.pop("status", 400))
+            if result.get("deleted"):
+                result["deleted"] = True
+            return JsonResponse(result, status=status)
+        return HttpResponse(status=204)
 
     @method_decorator(_tenant_required)
     @method_decorator(_jwt_required)

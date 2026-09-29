@@ -42,6 +42,7 @@ from apps.domains.video.services.inactive_entitlements import (
 from apps.domains.video.services.access_resolver import get_effective_access_mode
 from apps.domains.video.views.playback_views import (
     PlaybackHeartbeatView,
+    PlaybackRenewView,
     PlaybackStartView,
     _is_policy_token_valid,
 )
@@ -118,6 +119,9 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
             lecture=self.target_lecture,
             title="Target Session",
             order=1,
+        )
+        SessionEnrollment.objects.get_or_create(
+            tenant=self.tenant, session=self.target_session, enrollment=self.target_enrollment,
         )
         self.video = Video.objects.create(
             tenant=self.tenant,
@@ -272,6 +276,32 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
             school_type="HIGH",
         )
 
+    def _create_cross_tenant_student(self):
+        foreign_tenant = Tenant.objects.create(
+            name="Student Video Foreign",
+            code="student_video_progress_foreign",
+            is_active=True,
+        )
+        child_user = User.objects.create_user(
+            username="student-video-progress-foreign",
+            password="testpass123",
+            tenant=foreign_tenant,
+        )
+        TenantMembership.ensure_active(
+            tenant=foreign_tenant,
+            user=child_user,
+            role="student",
+        )
+        return Student.objects.create(
+            tenant=foreign_tenant,
+            user=child_user,
+            name="Foreign Video Student",
+            ps_number="SVP-FOREIGN",
+            omr_code="SVFOREI1",
+            parent_phone="01012345678",
+            school_type="HIGH",
+        )
+
     def test_invalid_parent_child_headers_fail_closed_across_media_reads(self):
         unowned_student = self._create_unowned_student()
 
@@ -313,8 +343,14 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
 
     def test_invalid_parent_child_headers_reject_media_writes_without_mutation(self):
         unowned_student = self._create_unowned_student()
+        foreign_student = self._create_cross_tenant_student()
 
-        for raw_student_id in ("not-a-student-id", unowned_student.id, ""):
+        for raw_student_id in (
+            "not-a-student-id",
+            unowned_student.id,
+            foreign_student.id,
+            "",
+        ):
             with self.subTest(raw_student_id=raw_student_id):
                 responses = [
                     self._post_progress(
@@ -467,7 +503,7 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         self.assertEqual(self.video.view_count, 0)
 
     def test_inactive_enrollment_without_exact_entitlement_denies_playback(self):
-        SessionEnrollment.objects.create(
+        SessionEnrollment.objects.get_or_create(
             tenant=self.tenant,
             session=self.target_session,
             enrollment=self.target_enrollment,
@@ -613,7 +649,7 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         self.assertEqual(public_video.view_count, 0)
 
     def test_inactive_entitlement_exposes_and_plays_only_the_exact_video(self):
-        SessionEnrollment.objects.create(
+        SessionEnrollment.objects.get_or_create(
             tenant=self.tenant,
             session=self.target_session,
             enrollment=self.target_enrollment,
@@ -713,7 +749,7 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         self.assertEqual(progress.forward_skip_seconds_used, 10)
 
     def test_inactive_entitlement_does_not_open_likes_or_comments(self):
-        SessionEnrollment.objects.create(
+        SessionEnrollment.objects.get_or_create(
             tenant=self.tenant,
             session=self.target_session,
             enrollment=self.target_enrollment,
@@ -753,7 +789,7 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
             user=staff,
             role="admin",
         )
-        SessionEnrollment.objects.create(
+        SessionEnrollment.objects.get_or_create(
             tenant=self.tenant,
             session=self.target_session,
             enrollment=self.target_enrollment,
@@ -823,7 +859,7 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
             user=staff,
             role="admin",
         )
-        SessionEnrollment.objects.create(
+        SessionEnrollment.objects.get_or_create(
             tenant=self.tenant,
             session=self.target_session,
             enrollment=self.target_enrollment,
@@ -917,7 +953,7 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
             user=staff,
             role="admin",
         )
-        SessionEnrollment.objects.create(
+        SessionEnrollment.objects.get_or_create(
             tenant=self.tenant,
             session=self.target_session,
             enrollment=self.target_enrollment,
@@ -964,6 +1000,28 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
             self.assertLessEqual(bounded_expiry, entitlement_expiry)
             self.assertLessEqual(bounded_expiry, now_timestamp + 600)
 
+        renew_request = self.factory.post(
+            "/api/v1/media/playback/renew/",
+            {"token": playback.data["playback_token"]},
+            format="json",
+        )
+        renew_request.tenant = self.tenant
+        force_authenticate(renew_request, user=self.user)
+        renewal = PlaybackRenewView.as_view()(renew_request)
+        self.assertEqual(renewal.status_code, 200, renewal.data)
+        self.assertIsNone(renewal.data["playback_session_id"])
+        self.assertTrue(renewal.data["play_url"])
+        renewed_ok, renewed_payload, renewed_error = verify_playback_token(
+            renewal.data["playback_token"]
+        )
+        self.assertTrue(renewed_ok, renewed_error)
+        renewed_url_expiry = int(
+            parse_qs(urlparse(renewal.data["play_url"]).query)["exp"][0]
+        )
+        self.assertEqual(renewed_url_expiry, int(renewed_payload["exp"]))
+        self.assertLessEqual(renewed_url_expiry, entitlement_expiry)
+        self.assertLessEqual(renewed_url_expiry, int(timezone.now().timestamp()) + 600)
+
         revoke_request = self.factory.post(
             f"/api/v1/media/inactive-video-entitlements/{entitlement.id}/revoke/",
             {"reason": "Stop new exact media grants"},
@@ -979,6 +1037,15 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
 
         self.assertEqual(revoke.status_code, 200, revoke.data)
         self.assertEqual(denied.status_code, 403, denied.data)
+        stale_renew_request = self.factory.post(
+            "/api/v1/media/playback/renew/",
+            {"token": playback.data["playback_token"]},
+            format="json",
+        )
+        stale_renew_request.tenant = self.tenant
+        force_authenticate(stale_renew_request, user=self.user)
+        stale_renewal = PlaybackRenewView.as_view()(stale_renew_request)
+        self.assertEqual(stale_renewal.status_code, 403, stale_renewal.data)
         self.video.refresh_from_db()
         self.assertEqual(self.video.policy_version, policy_version)
         self.assertFalse(_is_policy_token_valid(token_payload))
@@ -999,7 +1066,7 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
             tenant=self.tenant,
             is_staff=True,
         )
-        SessionEnrollment.objects.create(
+        SessionEnrollment.objects.get_or_create(
             tenant=self.tenant,
             session=self.target_session,
             enrollment=self.target_enrollment,
@@ -1088,7 +1155,7 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
             tenant=self.tenant,
             is_staff=True,
         )
-        SessionEnrollment.objects.create(
+        SessionEnrollment.objects.get_or_create(
             tenant=self.tenant,
             session=self.target_session,
             enrollment=self.target_enrollment,
@@ -1140,7 +1207,7 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         VIDEO_PLAYBACK_TTL_SECONDS=600,
     )
     def test_signed_media_query_and_token_are_never_logged(self):
-        SessionEnrollment.objects.create(
+        SessionEnrollment.objects.get_or_create(
             tenant=self.tenant,
             session=self.target_session,
             enrollment=self.target_enrollment,
@@ -1189,7 +1256,7 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         self.assertNotIn(response.data["playback_token"], captured)
 
     def test_revoked_expired_and_inactive_account_entitlements_fail_closed(self):
-        SessionEnrollment.objects.create(
+        SessionEnrollment.objects.get_or_create(
             tenant=self.tenant,
             session=self.target_session,
             enrollment=self.target_enrollment,
@@ -1256,7 +1323,7 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         self.assertEqual(inactive_membership.status_code, 403)
 
     def test_legacy_video_access_override_never_grants_inactive_enrollment(self):
-        SessionEnrollment.objects.create(
+        SessionEnrollment.objects.get_or_create(
             tenant=self.tenant,
             session=self.target_session,
             enrollment=self.target_enrollment,
@@ -1276,7 +1343,7 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         self.assertEqual(response.status_code, 403)
 
     def test_blocked_video_access_wins_over_inactive_entitlement(self):
-        SessionEnrollment.objects.create(
+        SessionEnrollment.objects.get_or_create(
             tenant=self.tenant,
             session=self.target_session,
             enrollment=self.target_enrollment,
@@ -1325,7 +1392,7 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
             user=staff,
             role="admin",
         )
-        SessionEnrollment.objects.create(
+        SessionEnrollment.objects.get_or_create(
             tenant=self.tenant,
             session=self.target_session,
             enrollment=self.target_enrollment,
@@ -1389,7 +1456,7 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
             user=staff,
             role="admin",
         )
-        SessionEnrollment.objects.create(
+        SessionEnrollment.objects.get_or_create(
             tenant=self.tenant,
             session=self.target_session,
             enrollment=self.target_enrollment,
@@ -1455,7 +1522,7 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
             user=staff,
             role="admin",
         )
-        SessionEnrollment.objects.create(
+        SessionEnrollment.objects.get_or_create(
             tenant=self.tenant,
             session=self.target_session,
             enrollment=self.target_enrollment,
@@ -1616,6 +1683,9 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
             force_authenticate(request, user=staff)
             return InactiveVideoEntitlementViewSet.as_view({"post": "create"})(request)
 
+        SessionEnrollment.objects.filter(
+            tenant=self.tenant, session=self.target_session, enrollment=self.target_enrollment,
+        ).delete()
         no_session_scope = post(self.tenant, self.video.id)
         wrong_lecture = post(self.tenant, wrong_video.id)
         other_tenant = Tenant.objects.create(
@@ -1717,7 +1787,7 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
             user=staff,
             role="admin",
         )
-        SessionEnrollment.objects.create(
+        SessionEnrollment.objects.get_or_create(
             tenant=self.tenant,
             session=self.target_session,
             enrollment=self.target_enrollment,
@@ -1873,7 +1943,7 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         self.target_lecture.save(update_fields=["is_system", "is_active"])
         self.video.visibility = Video.Visibility.PUBLIC
         self.video.save(update_fields=["visibility"])
-        SessionEnrollment.objects.create(
+        SessionEnrollment.objects.get_or_create(
             tenant=self.tenant,
             session=self.target_session,
             enrollment=self.target_enrollment,
@@ -2181,7 +2251,11 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         self.assertEqual(response.data["policy"]["playback_rate"]["max"], 2.0)
         self.assertFalse(response.data["policy"]["watermark"]["enabled"])
 
-    @override_settings(CDN_HLS_BASE_URL="https://cdn.example.test", CDN_HLS_SIGNING_SECRET="")
+    @override_settings(
+        CDN_HLS_BASE_URL="https://cdn.example.test",
+        CDN_HLS_SIGNING_SECRET="test-production-video-signing-secret",
+        VIDEO_PLAYBACK_TTL_SECONDS=600,
+    )
     def test_proctored_playback_issues_session_with_aware_expiry(self):
         Attendance.objects.create(
             tenant=self.tenant,
@@ -2190,6 +2264,7 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
             status="ONLINE",
         )
 
+        now = int(timezone.now().timestamp())
         response = self._get_playback(enrollment_id=self.target_enrollment.id)
 
         self.assertEqual(response.status_code, 200, response.data)
@@ -2202,10 +2277,26 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         self.assertEqual(response.data["policy"]["seek"]["remaining_seconds"], 20)
         self.assertIsNotNone(response.data["playback_session_id"])
         self.assertIsNotNone(response.data["playback_token"])
+        token_ok, token_payload, token_error = verify_playback_token(
+            response.data["playback_token"]
+        )
+        self.assertTrue(token_ok, token_error)
+        self.assertEqual(
+            int(token_payload["exp"]),
+            int(response.data["playback_expires_at"]),
+        )
+        self.assertGreaterEqual(int(token_payload["exp"]), now + 598)
+        self.assertLessEqual(int(token_payload["exp"]), now + 602)
+        media_expiry = int(
+            parse_qs(urlparse(response.data["play_url"]).query)["exp"][0]
+        )
+        self.assertGreaterEqual(media_expiry, now + self.video.duration + 598)
+        self.assertLessEqual(media_expiry, now + self.video.duration + 602)
         session = VideoPlaybackSession.objects.get(session_id=response.data["playback_session_id"])
         self.assertEqual(session.video_id, self.video.id)
         self.assertEqual(session.enrollment_id, self.target_enrollment.id)
         self.assertIsNotNone(session.expires_at.tzinfo)
+        self.assertEqual(int(session.expires_at.timestamp()), int(token_payload["exp"]))
 
     @override_settings(CDN_HLS_BASE_URL="https://cdn.example.test", CDN_HLS_SIGNING_SECRET="")
     def test_proctored_playback_honors_teacher_free_seek_setting(self):
@@ -2225,6 +2316,63 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         self.assertTrue(response.data["policy"]["monitoring_enabled"])
         self.assertTrue(response.data["policy"]["allow_seek"])
         self.assertEqual(response.data["policy"]["seek"]["mode"], "free")
+
+    @override_settings(CDN_HLS_BASE_URL="https://cdn.example.test", CDN_HLS_SIGNING_SECRET="")
+    def test_student_completion_upgrades_explicit_proctored_override(self):
+        Attendance.objects.create(
+            tenant=self.tenant, session=self.target_session,
+            enrollment=self.target_enrollment, status="ONLINE",
+        )
+        permission = VideoAccess.objects.create(
+            video=self.video, enrollment=self.target_enrollment,
+            rule="once", access_mode=AccessMode.PROCTORED_CLASS, is_override=True,
+        )
+        initial = self._get_playback(enrollment_id=self.target_enrollment.id)
+        self.assertEqual(initial.data["policy"]["seek"]["mode"], "budgeted_forward")
+
+        saved = self._post_progress({"progress": 0.9, "completed": True, "last_position": 90})
+        self.assertEqual(saved.status_code, 200, saved.data)
+        self.assertTrue(saved.data["completed"])
+        progress = VideoProgress.objects.get(video=self.video, enrollment=self.target_enrollment)
+        self.assertTrue(progress.completed)
+        for access_check in (True, False):
+            response = self._get_playback(
+                enrollment_id=self.target_enrollment.id, access_check=access_check,
+            )
+            self.assertEqual(response.status_code, 200, response.data)
+            policy = response.data if access_check else response.data["policy"]
+            self.assertEqual(policy["access_mode"], AccessMode.FREE_REVIEW.value)
+            self.assertFalse(policy["monitoring_enabled"])
+            if not access_check:
+                self.assertEqual(policy["seek"]["mode"], "free")
+
+        progress.delete()
+        permission.proctored_completed_at = timezone.now()
+        permission.save(update_fields=["proctored_completed_at"])
+        marker_review = self._get_playback(enrollment_id=self.target_enrollment.id)
+        self.assertEqual(marker_review.data["policy"]["access_mode"], AccessMode.FREE_REVIEW.value)
+        self.assertEqual(marker_review.data["policy"]["seek"]["mode"], "free")
+
+    @override_settings(CDN_HLS_BASE_URL="https://cdn.example.test", CDN_HLS_SIGNING_SECRET="")
+    def test_student_skip_override_preserves_explicit_seek_block(self):
+        Attendance.objects.create(
+            tenant=self.tenant, session=self.target_session,
+            enrollment=self.target_enrollment, status="ONLINE",
+        )
+        permission = VideoAccess.objects.create(
+            video=self.video, enrollment=self.target_enrollment,
+            rule="once", access_mode=AccessMode.PROCTORED_CLASS,
+            is_override=True, allow_skip_override=True,
+        )
+        allowed = self._get_playback(enrollment_id=self.target_enrollment.id)
+        self.assertEqual(allowed.data["policy"]["seek"]["mode"], "free")
+        permission.block_seek = True
+        permission.save(update_fields=["block_seek"])
+        self._post_progress({"progress": 0.9, "completed": True})
+        blocked = self._get_playback(enrollment_id=self.target_enrollment.id)
+        self.assertEqual(blocked.data["policy"]["access_mode"], AccessMode.FREE_REVIEW.value)
+        self.assertFalse(blocked.data["policy"]["allow_seek"])
+        self.assertEqual(blocked.data["policy"]["seek"]["mode"], "blocked")
 
     @override_settings(CDN_HLS_BASE_URL="https://cdn.example.test", CDN_HLS_SIGNING_SECRET="")
     def test_completed_proctored_progress_restores_free_seek(self):
@@ -2393,7 +2541,7 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertFalse(VideoProgress.objects.filter(video=self.video).exists())
 
-    def test_parent_progress_echo_uses_child_video_enrollment_without_saving(self):
+    def test_parent_progress_persists_for_selected_child_and_survives_reload(self):
         response = self._post_progress(
             {"progress": 90, "last_position": 90, "completed": True},
             user=self.parent_user,
@@ -2404,7 +2552,27 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         self.assertEqual(response.data["enrollment_id"], self.target_enrollment.id)
         self.assertEqual(response.data["progress_percent"], 90)
         self.assertTrue(response.data["completed"])
-        self.assertFalse(VideoProgress.objects.filter(video=self.video).exists())
+        progress = VideoProgress.objects.get(
+            video=self.video,
+            enrollment=self.target_enrollment,
+        )
+        self.assertEqual(progress.progress, 0.9)
+        self.assertTrue(progress.completed)
+        self.assertEqual(progress.last_position, 90)
+
+        reload_response = self._get_session_videos(
+            user=self.parent_user,
+            enrollment_id=self.target_enrollment.id,
+            selected_student_id=self.student.id,
+        )
+        self.assertEqual(reload_response.status_code, 200, reload_response.data)
+        reloaded = next(
+            row
+            for row in reload_response.data["items"]
+            if row["id"] == self.video.id
+        )
+        self.assertEqual(reloaded["progress"], 90)
+        self.assertTrue(reloaded["completed"])
 
     def test_parent_progress_echo_uses_domain_completion_threshold(self):
         response = self._post_progress(
@@ -2416,9 +2584,14 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["enrollment_id"], self.target_enrollment.id)
         self.assertTrue(response.data["completed"])
-        self.assertFalse(VideoProgress.objects.filter(video=self.video).exists())
+        progress = VideoProgress.objects.get(
+            video=self.video,
+            enrollment=self.target_enrollment,
+        )
+        self.assertEqual(progress.progress, 0.9)
+        self.assertFalse(progress.completed)
 
-    def test_parent_progress_echo_finds_child_enrollment_when_default_child_differs(self):
+    def test_parent_progress_requires_explicit_selected_child_when_multiple_children_exist(self):
         self._create_parent_child("002")
 
         response = self._post_progress(
@@ -2426,18 +2599,16 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
             user=self.parent_user,
         )
 
-        self.assertEqual(response.status_code, 200, response.data)
-        self.assertEqual(response.data["enrollment_id"], self.target_enrollment.id)
+        self.assertEqual(response.status_code, 403, response.data)
         self.assertFalse(VideoProgress.objects.filter(video=self.video).exists())
 
-    def test_parent_progress_echo_accepts_explicit_child_enrollment_without_saving(self):
+    def test_parent_progress_rejects_body_enrollment_without_selected_child_header(self):
         response = self._post_progress(
             {"enrollment_id": self.target_enrollment.id, "progress": 90, "completed": True},
             user=self.parent_user,
         )
 
-        self.assertEqual(response.status_code, 200, response.data)
-        self.assertEqual(response.data["enrollment_id"], self.target_enrollment.id)
+        self.assertEqual(response.status_code, 403, response.data)
         self.assertFalse(VideoProgress.objects.filter(video=self.video).exists())
 
     def test_parent_progress_echo_rejects_explicit_enrollment_for_different_selected_child(self):

@@ -1,8 +1,10 @@
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
 import runpy
+import sys
 
 from django.core.exceptions import ImproperlyConfigured
 import pytest
@@ -52,7 +54,7 @@ def _job_block(source: str, name: str) -> str:
     return block if next_job is None else block[: next_job.start()]
 
 
-def test_development_and_production_keep_tools_and_ai_workers_warm() -> None:
+def test_development_and_production_keep_workers_warm() -> None:
     params = yaml.safe_load(PARAMS.read_text(encoding="utf-8"))
     ai = params["aiWorker"]
     tools = params["toolsWorker"]
@@ -68,8 +70,10 @@ def test_development_and_production_keep_tools_and_ai_workers_warm() -> None:
     assert tools["maxSize"] == 2
     assert "academy-tools-development" in deploy
     assert "academy-ai-development" in deploy
+    assert "academy-messaging-development" in deploy
     assert "Development Tools worker stays a separate container/process" in deploy
     assert "Development AI worker stays a separate container/process" in deploy
+    assert "Development Messaging worker consumes only the dedicated development queue" in deploy
     assert "AI_WORKER_IDLE_SCALE_IN_ENABLED=0" in deploy
 
 
@@ -233,6 +237,10 @@ def test_development_settings_fail_closed_on_external_write_targets() -> None:
         "r2.cloudflarestorage.com",
         "SOLAPI_MOCK",
         "TOSS_AUTO_BILLING_ENABLED",
+        "CDN_HLS_BASE_URL",
+        "CDN_HLS_SIGNING_SECRET",
+        "CDN_HLS_SIGNING_KEY_ID",
+        "Development video playback requires an isolated signing secret.",
         'TENANT_HEADER_NAME = "X-Tenant-Code"',
         "TENANT_DEFAULT_CODE = None",
     ):
@@ -246,11 +254,19 @@ def test_development_settings_fail_closed_on_external_write_targets() -> None:
         "ApiDevelopmentR2BucketName",
         "R2_ENDPOINT = $r2Endpoint",
         'SOLAPI_MOCK = "true"',
+        'SOLAPI_KAKAO_PF_ID = "development-mock-pfid"',
+        'MESSAGING_DRY_RUN_TRIGGERS = ""',
         'TOSS_AUTO_BILLING_ENABLED = "false"',
         'VIDEO_BATCH_JOB_QUEUE = ""',
         'VIDEO_BATCH_JOB_DEFINITION = ""',
+        "New-Object byte[] 32",
+        "[System.Security.Cryptography.RandomNumberGenerator]::Fill($cdnSigningSecretBytes)",
+        'CDN_HLS_BASE_URL = "https://cdn.hakwonplus.com"',
+        "CDN_HLS_SIGNING_SECRET = $script:ApiDevelopmentCdnSigningSecret",
+        'CDN_HLS_SIGNING_KEY_ID = "v1"',
     ):
         assert token in publish
+    assert "academy-development-cdn-signing:$credentialPassword" not in publish
     assert "if VIDEO_BATCH_JOB_QUEUE or VIDEO_BATCH_JOB_DEFINITION" in settings
     assert (
         'os.getenv("ACADEMY_RUNTIME_ENV", "").strip().lower() == "development"'
@@ -259,13 +275,97 @@ def test_development_settings_fail_closed_on_external_write_targets() -> None:
     assert "Development video workers must not resolve production Batch resources" in (
         worker_settings
     )
+    assert 'CDN_HLS_SIGNING_SECRET = os.getenv("CDN_HLS_SIGNING_SECRET", "")' in worker_settings
+    assert 'CDN_HLS_SIGNING_KEY_ID = os.getenv("CDN_HLS_SIGNING_KEY_ID", "v1")' in worker_settings
     assert "assert not settings.VIDEO_BATCH_JOB_QUEUE" in deploy
     assert "assert not settings.VIDEO_BATCH_JOB_DEFINITION" in deploy
+    assert 'settings.CDN_HLS_BASE_URL.rstrip("/") == "https://cdn.hakwonplus.com"' in deploy
+    assert "len(settings.CDN_HLS_SIGNING_SECRET.strip()) >= 32" in deploy
+    assert 'settings.CDN_HLS_SIGNING_KEY_ID == "v1"' in deploy
+    assert 'os.environ.get("MESSAGING_DRY_RUN_TRIGGERS", "").strip() == ""' in deploy
+    assert deploy.count('docker exec academy-api python -c "$messaging_contract_code"') == 1
+    assert deploy.count(
+        'docker exec academy-messaging-development python -c "$messaging_contract_code"'
+    ) == 1
+    assert publish.count('[string]$actual.MESSAGING_DRY_RUN_TRIGGERS -ne ""') == 1
+    assert publish.count('[string]$actualWorkers.MESSAGING_DRY_RUN_TRIGGERS -ne ""') == 1
+    assert publish.count('[string]$actual.SOLAPI_MOCK -ne "true"') == 1
+    assert publish.count('[string]$actualWorkers.SOLAPI_MOCK -ne "true"') == 1
+    assert "api_cdn_signing_fingerprint=" in deploy
+    assert "worker_cdn_signing_fingerprint=" in deploy
     assert "d.get('VIDEO_BATCH_JOB_QUEUE') == ''" in deploy
     assert "d.get('VIDEO_BATCH_JOB_DEFINITION') == ''" in deploy
     assert "ApiPreprod" not in publish
     assert "amazonaws.com" not in publish
     assert "s3api" not in PREREQUISITES.read_text(encoding="utf-8-sig")
+    safe_outputs = publish.split("$safeOutputs = [ordered]@{", maxsplit=1)[1]
+    assert "CDN_HLS_SIGNING_SECRET" not in safe_outputs
+
+
+def _import_development_settings(
+    overrides: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env.update(
+        {
+            "ACADEMY_RUNTIME_ENV": "development",
+            "DB_NAME": "academy_api_development",
+            "DB_USER": "academy_api_development_app",
+            "AI_SQS_QUEUE_NAME_LITE": "academy-v1-development-ai-queue",
+            "AI_SQS_QUEUE_NAME_BASIC": "academy-v1-development-ai-queue",
+            "AI_SQS_QUEUE_NAME_PREMIUM": "academy-v1-development-ai-queue",
+            "TOOLS_SQS_QUEUE_NAME": "academy-v1-development-tools-queue",
+            "MESSAGING_SQS_QUEUE_NAME": "academy-v1-development-messaging-queue",
+            "R2_AI_BUCKET": "academy-development-artifacts",
+            "R2_VIDEO_BUCKET": "academy-development-artifacts",
+            "R2_STORAGE_BUCKET": "academy-development-artifacts",
+            "R2_EXCEL_BUCKET": "academy-development-artifacts",
+            "R2_ADMIN_BUCKET": "academy-development-artifacts",
+            "R2_ENDPOINT": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.r2.cloudflarestorage.com",
+            "R2_REGION": "auto",
+            "R2_ACCESS_KEY": "a" * 16,
+            "R2_SECRET_KEY": "a" * 32,
+            "SOLAPI_MOCK": "true",
+            "MESSAGING_DRY_RUN_TRIGGERS": "",
+            "TOSS_AUTO_BILLING_ENABLED": "false",
+            "VIDEO_BATCH_JOB_QUEUE": "",
+            "VIDEO_BATCH_JOB_DEFINITION": "",
+            "CDN_HLS_BASE_URL": "https://cdn.hakwonplus.com",
+            "CDN_HLS_SIGNING_SECRET": "a" * 32,
+            "CDN_HLS_SIGNING_KEY_ID": "v1",
+            "SENTRY_DSN": "",
+        }
+    )
+    env.update(overrides)
+    return subprocess.run(
+        [sys.executable, "-c", "import apps.api.config.settings.development"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_development_settings_require_isolated_signed_video_urls() -> None:
+    assert _import_development_settings({}).returncode == 0
+    for overrides, message in (
+        ({"CDN_HLS_SIGNING_SECRET": ""}, "isolated signing secret"),
+        ({"CDN_HLS_SIGNING_KEY_ID": "other"}, "active v1 signing key ID"),
+        ({"CDN_HLS_BASE_URL": "https://foreign.invalid"}, "canonical protected CDN URL"),
+    ):
+        rejected = _import_development_settings(overrides)
+        assert rejected.returncode != 0
+        assert message in rejected.stderr
+
+
+def test_development_settings_require_durable_mock_messaging_outboxes() -> None:
+    accepted = _import_development_settings({"MESSAGING_DRY_RUN_TRIGGERS": ""})
+    assert accepted.returncode == 0, accepted.stderr
+
+    rejected = _import_development_settings({"MESSAGING_DRY_RUN_TRIGGERS": "*"})
+    assert rejected.returncode != 0
+    assert "persist durable outboxes" in rejected.stderr
 
 
 def test_worker_settings_use_development_storage_bucket_from_env() -> None:
@@ -282,9 +382,14 @@ def test_worker_development_batch_boundary_executes_fail_closed(
     monkeypatch.setenv("ACADEMY_RUNTIME_ENV", "development")
     monkeypatch.setenv("VIDEO_BATCH_JOB_QUEUE", "")
     monkeypatch.setenv("VIDEO_BATCH_JOB_DEFINITION", "")
+    monkeypatch.setenv("CDN_HLS_BASE_URL", "https://cdn.hakwonplus.com")
+    monkeypatch.setenv("CDN_HLS_SIGNING_SECRET", "a" * 32)
+    monkeypatch.setenv("CDN_HLS_SIGNING_KEY_ID", "v1")
     values = runpy.run_path(str(WORKER_SETTINGS))
     assert values["VIDEO_BATCH_JOB_QUEUE"] == ""
     assert values["VIDEO_BATCH_JOB_DEFINITION"] == ""
+    assert values["CDN_HLS_SIGNING_SECRET"] == "a" * 32
+    assert values["CDN_HLS_SIGNING_KEY_ID"] == "v1"
 
     monkeypatch.setenv("VIDEO_BATCH_JOB_QUEUE", "academy-v1-video-batch-queue")
     with pytest.raises(
@@ -292,6 +397,23 @@ def test_worker_development_batch_boundary_executes_fail_closed(
         match="must not resolve production Batch resources",
     ):
         runpy.run_path(str(WORKER_SETTINGS))
+
+    monkeypatch.setenv("VIDEO_BATCH_JOB_QUEUE", "")
+    for key, invalid, message in (
+        ("CDN_HLS_BASE_URL", "https://foreign.invalid", "canonical protected CDN URL"),
+        ("CDN_HLS_SIGNING_SECRET", "", "isolated signing secret"),
+        ("CDN_HLS_SIGNING_KEY_ID", "other", "active v1 signing key ID"),
+    ):
+        valid = {
+            "CDN_HLS_BASE_URL": "https://cdn.hakwonplus.com",
+            "CDN_HLS_SIGNING_SECRET": "a" * 32,
+            "CDN_HLS_SIGNING_KEY_ID": "v1",
+        }
+        for name, value in valid.items():
+            monkeypatch.setenv(name, value)
+        monkeypatch.setenv(key, invalid)
+        with pytest.raises(ImproperlyConfigured, match=message):
+            runpy.run_path(str(WORKER_SETTINGS))
 
 
 def test_development_role_cannot_read_production_env_or_touch_prod_queues() -> None:
@@ -302,6 +424,7 @@ def test_development_role_cannot_read_production_env_or_touch_prod_queues() -> N
 
     assert "$script:EcrToolsRepo" in block
     assert "$script:EcrAiRepo" in block
+    assert "$script:EcrMessagingRepo" in block
     assert "EcrToolsWorkerRepo" not in block
     assert "EcrToolsWorkerRepo" not in INITIALIZE.read_text(encoding="utf-8-sig")
     assert "/academy/api/development/env" in block
@@ -374,6 +497,9 @@ def test_blue_green_development_deploy_preserves_old_instance_on_failure() -> No
     assert "DEVELOPMENT_RUNTIME_PASS" in source
     assert "__AI_IMAGE__" in source
     assert "academy-ai-development" in source
+    assert "__MESSAGING_IMAGE__" in source
+    assert "academy-messaging-development" in source
+    assert "development-mock-pfid" in source
     assert "start-instance-refresh" not in source
     assert "register-targets" not in source
     assert "academy-v1-api-asg" not in source
@@ -400,6 +526,7 @@ def test_workflow_enforces_development_then_preprod_then_production() -> None:
     assert "build-and-push" in development
     assert "publish-api-development-env.ps1" in development
     assert "deploy-api-development.ps1" in development
+    assert "-MessagingImageUri" in development
     assert "verify-api-development" in preprod
     assert "verify-api-preprod" in migrations
     assert "verify-api-preprod" in production_api

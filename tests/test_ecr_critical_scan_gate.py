@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
-from datetime import date
+import sys
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pytest
+
+
+HISTORICAL_POLICY_DIR = Path(__file__).parent / "fixtures" / "security-20260919"
 
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "v1" / "ecr-critical-scan-gate.py"
@@ -69,9 +74,48 @@ def _high_policy_document(*entries: dict[str, object]) -> dict[str, object]:
     }
 
 
-def test_current_acceptance_is_exact_and_time_bounded() -> None:
+@pytest.mark.parametrize("repository", gate.REPOSITORIES)
+def test_current_candidate_requires_zero_critical_and_high(repository: str) -> None:
+    policy_dir = Path(__file__).parents[1] / "docs" / "ssot"
     acceptances = gate.load_acceptances(
-        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-critical-risk-acceptance.json",
+        policy_dir / "ecr-critical-risk-acceptance.json", datetime.now(timezone.utc).date()
+    )
+    baselines, known = gate.load_high_baselines(policy_dir / "ecr-high-risk-baseline.json")
+    assert not acceptances
+    assert not known
+    assert baselines[repository] == 0
+    assert gate.evaluate_findings(repository, _scan(), acceptances) == []
+    assert gate.evaluate_high_budget(repository, _scan(), baselines, known) == 0
+
+
+@pytest.mark.parametrize(
+    ("cve", "package", "version", "severity"),
+    [
+        ("CVE-2026-5450", "glibc", "2.41-12+deb13u3", "CRITICAL"),
+        ("CVE-2026-5928", "glibc", "2.41-12+deb13u3", "HIGH"),
+        ("CVE-2026-11822", "sqlite3", "3.46.1-7+deb13u1", "HIGH"),
+        ("CVE-2026-11824", "sqlite3", "3.46.1-7+deb13u1", "HIGH"),
+        ("CVE-2026-58016", "glib2.0", "2.84.4-3~deb13u3", "CRITICAL"),
+    ],
+)
+def test_vendor_fixed_findings_are_no_longer_accepted(cve, package, version, severity) -> None:
+    policy_dir = Path(__file__).parents[1] / "docs" / "ssot"
+    findings = _scan(_finding(cve, package, version, severity))
+    if severity == "CRITICAL":
+        acceptances = gate.load_acceptances(
+            policy_dir / "ecr-critical-risk-acceptance.json", datetime.now(timezone.utc).date()
+        )
+        with pytest.raises(gate.GateError, match="unaccepted critical"):
+            gate.evaluate_findings("academy-api", findings, acceptances)
+    else:
+        baselines, known = gate.load_high_baselines(policy_dir / "ecr-high-risk-baseline.json")
+        with pytest.raises(gate.GateError, match="High"):
+            gate.evaluate_high_budget("academy-api", findings, baselines, known)
+
+
+def test_historical_acceptance_is_exact_and_time_bounded() -> None:
+    acceptances = gate.load_acceptances(
+        HISTORICAL_POLICY_DIR / "ecr-critical-risk-acceptance.json",
         date(2026, 7, 31),
     )
     accepted = gate.evaluate_findings(
@@ -85,9 +129,21 @@ def test_current_acceptance_is_exact_and_time_bounded() -> None:
     }
 
 
+@pytest.mark.parametrize("repository", gate.REPOSITORIES)
+@pytest.mark.parametrize("version", ["2.8.3-1~deb13u1", "2.8.4+academy1-1"])
+def test_expat_backport_does_not_override_actual_high_scan(repository, version):
+    policy = Path(__file__).parents[1] / "docs/ssot/ecr-high-risk-baseline.json"
+    baselines, known = gate.load_high_baselines(policy)
+    with pytest.raises(gate.GateError, match="High"):
+        gate.evaluate_high_budget(
+            repository, _scan(_finding("CVE-2026-93990", "expat", version, "HIGH")),
+            baselines, known,
+        )
+
+
 def test_removed_perl_findings_fail_closed() -> None:
     acceptances = gate.load_acceptances(
-        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-critical-risk-acceptance.json",
+        HISTORICAL_POLICY_DIR / "ecr-critical-risk-acceptance.json",
         date(2026, 7, 31),
     )
     with pytest.raises(gate.GateError, match="unaccepted critical ECR findings"):
@@ -103,6 +159,28 @@ def test_removed_perl_findings_fail_closed() -> None:
 
 
 @pytest.mark.parametrize(
+    "cve", ["CVE-2026-8924", "CVE-2026-8927"]
+)
+def test_fixed_curl_critical_findings_cannot_be_accepted(cve: str) -> None:
+    acceptances = gate.load_acceptances(
+        HISTORICAL_POLICY_DIR / "ecr-critical-risk-acceptance.json",
+        date(2026, 9, 5),
+    )
+
+    for repository in (
+        "academy-api",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker",
+    ):
+        with pytest.raises(gate.GateError, match="unaccepted critical"):
+            gate.evaluate_findings(
+                repository,
+                _scan(_finding(cve, "curl", "8.14.1-2+deb13u4")),
+                acceptances,
+            )
+
+
+@pytest.mark.parametrize(
     ("cve", "package", "version"),
     [
         ("CVE-2099-9999", "glibc", "2.41-12+deb13u3"),
@@ -114,7 +192,7 @@ def test_unknown_or_changed_critical_finding_fails_closed(
     cve: str, package: str, version: str
 ) -> None:
     acceptances = gate.load_acceptances(
-        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-critical-risk-acceptance.json",
+        HISTORICAL_POLICY_DIR / "ecr-critical-risk-acceptance.json",
         date(2026, 7, 31),
     )
     with pytest.raises(gate.GateError, match="unaccepted critical"):
@@ -126,9 +204,7 @@ def test_unknown_or_changed_critical_finding_fails_closed(
 def test_expired_acceptance_blocks_before_scanning() -> None:
     with pytest.raises(gate.GateError, match="expired"):
         gate.load_acceptances(
-            Path(__file__).parents[1]
-            / "docs"
-            / "ssot"
+            HISTORICAL_POLICY_DIR
             / "ecr-critical-risk-acceptance.json",
             date(2026, 9, 20),
         )
@@ -136,7 +212,7 @@ def test_expired_acceptance_blocks_before_scanning() -> None:
 
 def test_retired_mbedtls_critical_findings_fail_closed() -> None:
     acceptances = gate.load_acceptances(
-        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-critical-risk-acceptance.json",
+        HISTORICAL_POLICY_DIR / "ecr-critical-risk-acceptance.json",
         date(2026, 8, 20),
     )
 
@@ -157,7 +233,7 @@ def test_high_finding_does_not_consume_critical_acceptance() -> None:
 
 def test_high_baseline_is_exact_and_allows_non_increase() -> None:
     baselines, known = gate.load_high_baselines(
-        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json",
+        HISTORICAL_POLICY_DIR / "ecr-high-risk-baseline.json",
         date(2026, 8, 23),
     )
     findings = _scan(
@@ -171,44 +247,34 @@ def test_high_baseline_is_exact_and_allows_non_increase() -> None:
     assert gate.evaluate_high_budget("academy-base", findings, baselines, known) == 3
 
 
-def test_current_high_acceptances_are_exact_and_time_bounded() -> None:
-    path = Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json"
+@pytest.mark.parametrize("repository", sorted(gate.REPOSITORIES))
+def test_completed_candidate_scans_match_reduced_high_baseline(repository: str) -> None:
+    # Run 34687613434: all six exact candidate digests completed with these
+    # three High identities, not a fixture derived from the policy under test.
+    findings = _scan(
+        _finding("CVE-2026-11822", "sqlite3", "3.46.1-7+deb13u1", "HIGH"),
+        _finding("CVE-2026-11824", "sqlite3", "3.46.1-7+deb13u1", "HIGH"),
+        _finding("CVE-2026-5928", "glibc", "2.41-12+deb13u3", "HIGH"),
+    )
+    baselines, known = gate.load_high_baselines(
+        HISTORICAL_POLICY_DIR / "ecr-high-risk-baseline.json",
+        date(2026, 9, 12),
+    )
+
+    assert gate.evaluate_high_budget(repository, findings, baselines, known) == 3
+    assert baselines[repository] == 3
+
+
+def test_historical_high_acceptances_are_exact_and_time_bounded() -> None:
+    path = HISTORICAL_POLICY_DIR / "ecr-high-risk-baseline.json"
     document = json.loads(path.read_text(encoding="utf-8"))
     accepted = document["acceptedHighFindings"]
 
-    libssh2 = [entry for entry in accepted if entry["packageName"] == "libssh2"]
-    glib = [entry for entry in accepted if entry["packageName"] == "glib2.0"]
-    openssl = [entry for entry in accepted if entry["packageName"] == "openssl"]
-    assert len(accepted) == 16
-    assert {entry["cve"] for entry in libssh2} == {
-        "CVE-2026-58050",
-        "CVE-2026-58051",
-        "CVE-2026-66032",
-        "CVE-2026-66033",
-        "CVE-2026-66034",
-        "CVE-2026-66035",
-    }
+    assert len(accepted) == 3
     assert {entry["expiresOn"] for entry in accepted} == {"2026-09-19"}
     assert all(
-        entry["repositories"]
-        == ["academy-api", "academy-ai-worker-cpu", "academy-tools-worker"]
-        for entry in libssh2
+        set(entry["repositories"]) == gate.REPOSITORIES for entry in accepted
     )
-    assert {entry["cve"] for entry in glib} == {
-        "CVE-2026-16118",
-        "CVE-2026-58010",
-        "CVE-2026-58011",
-        "CVE-2026-58012",
-        "CVE-2026-58013",
-        "CVE-2026-58014",
-        "CVE-2026-58015",
-    }
-    assert all(
-        entry["repositories"]
-        == ["academy-api", "academy-ai-worker-cpu", "academy-tools-worker"]
-        for entry in glib
-    )
-    assert openssl == []
     assert all(
         entry["vendorTracker"]
         == f"https://security-tracker.debian.org/tracker/{entry['cve']}"
@@ -222,54 +288,51 @@ def test_current_high_acceptances_are_exact_and_time_bounded() -> None:
         ("CVE-2026-11822", "sqlite3", "3.46.1-7+deb13u1"),
         ("CVE-2026-11824", "sqlite3", "3.46.1-7+deb13u1"),
         ("CVE-2026-5928", "glibc", "2.41-12+deb13u3"),
+    }
+
+
+@pytest.mark.parametrize(
+    "repository", ["academy-api", "academy-ai-worker-cpu", "academy-tools-worker"]
+)
+@pytest.mark.parametrize(
+    ("cve", "package", "version"),
+    [
+        ("CVE-2026-16118", "glib2.0", "2.84.4-3~deb13u3"),
         ("CVE-2026-58010", "glib2.0", "2.84.4-3~deb13u3"),
         ("CVE-2026-58011", "glib2.0", "2.84.4-3~deb13u3"),
         ("CVE-2026-58012", "glib2.0", "2.84.4-3~deb13u3"),
         ("CVE-2026-58013", "glib2.0", "2.84.4-3~deb13u3"),
         ("CVE-2026-58014", "glib2.0", "2.84.4-3~deb13u3"),
         ("CVE-2026-58015", "glib2.0", "2.84.4-3~deb13u3"),
-        ("CVE-2026-16118", "glib2.0", "2.84.4-3~deb13u3"),
         ("CVE-2026-58050", "libssh2", "1.11.1-1+deb13u1"),
         ("CVE-2026-58051", "libssh2", "1.11.1-1+deb13u1"),
         ("CVE-2026-66032", "libssh2", "1.11.1-1+deb13u1"),
         ("CVE-2026-66033", "libssh2", "1.11.1-1+deb13u1"),
         ("CVE-2026-66034", "libssh2", "1.11.1-1+deb13u1"),
         ("CVE-2026-66035", "libssh2", "1.11.1-1+deb13u1"),
-    }
+    ],
+)
+def test_retired_ocr_high_identity_cannot_return_within_budget(
+    repository: str, cve: str, package: str, version: str
+) -> None:
+    baselines, known = gate.load_high_baselines(
+        HISTORICAL_POLICY_DIR / "ecr-high-risk-baseline.json",
+        date(2026, 9, 12),
+    )
+    findings = _scan(
+        _finding("CVE-2026-11822", "sqlite3", "3.46.1-7+deb13u1", "HIGH"),
+        _finding("CVE-2026-11824", "sqlite3", "3.46.1-7+deb13u1", "HIGH"),
+        _finding(cve, package, version, "HIGH"),
+    )
 
-    baselines, known = gate.load_high_baselines(path, date(2026, 8, 23))
-    api_findings = _scan(
-        *(
-            _finding(cve, package, version, "HIGH")
-            for repository, cve, package, version in sorted(known)
-            if repository == "academy-api"
-        )
-    )
-    assert gate.evaluate_high_budget("academy-api", api_findings, baselines, known) == 16
-    tools_findings = _scan(
-        *(
-            _finding(cve, package, version, "HIGH")
-            for repository, cve, package, version in sorted(known)
-            if repository == "academy-tools-worker"
-        )
-    )
-    assert (
-        gate.evaluate_high_budget(
-            "academy-tools-worker",
-            tools_findings,
-            baselines,
-            known,
-        )
-        == 16
-    )
+    with pytest.raises(gate.GateError, match="unreviewed High ECR finding"):
+        gate.evaluate_high_budget(repository, findings, baselines, known)
 
 
 def test_expired_high_acceptance_blocks_before_scanning() -> None:
     with pytest.raises(gate.GateError, match="High risk acceptance expired"):
         gate.load_high_baselines(
-            Path(__file__).parents[1]
-            / "docs"
-            / "ssot"
+            HISTORICAL_POLICY_DIR
             / "ecr-high-risk-baseline.json",
             date(2026, 9, 20),
         )
@@ -277,11 +340,11 @@ def test_expired_high_acceptance_blocks_before_scanning() -> None:
 
 def test_high_acceptance_remains_valid_through_expiry_day() -> None:
     baselines, reviewed = gate.load_high_baselines(
-        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json",
+        HISTORICAL_POLICY_DIR / "ecr-high-risk-baseline.json",
         date(2026, 9, 19),
     )
-    assert baselines["academy-api"] == 16
-    assert len([key for key in reviewed if key[0] == "academy-api"]) == 16
+    assert baselines["academy-api"] == 3
+    assert len([key for key in reviewed if key[0] == "academy-api"]) == 3
 
 
 def test_base_image_requires_security_fixed_openssl() -> None:
@@ -303,6 +366,160 @@ def test_base_image_requires_security_fixed_util_linux() -> None:
         'dpkg --compare-versions "$util_linux_version" ge "2.41.5-0+deb13u1"'
         in dockerfile
     )
+
+
+def test_base_image_backports_new_native_library_fixes_without_acceptance() -> None:
+    repository = Path(__file__).parents[1]
+    dockerfile = (repository / "docker" / "Dockerfile.base").read_text(
+        encoding="utf-8"
+    )
+    build_script = (
+        repository / "docker" / "native-security" / "build-fixed-libs.sh"
+    ).read_text(encoding="utf-8")
+    verifier = (
+        repository / "docker" / "native-security" / "verify-fixed-libs.sh"
+    ).read_text(encoding="utf-8")
+    baseline = json.loads(
+        (repository / "docs" / "ssot" / "ecr-high-risk-baseline.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert not {
+        "CVE-2026-85091",
+        "CVE-2026-86140",
+        "CVE-2026-86145",
+    } & {entry["cve"] for entry in baseline["acceptedHighFindings"]}
+    assert "COPY docker/native-security/build-fixed-libs.sh" in dockerfile
+    assert "sh /usr/local/bin/build-fixed-libs.sh /build/native-security" in dockerfile
+    assert "dpkg -i /tmp/academy-native-security/*.deb" in dockerfile
+    for build_tool in ("autoconf", "automake", "libtool"):
+        assert f"    {build_tool} \\" in dockerfile
+    for package, minimum in (
+        (
+            "zlib1g",
+            "1:1.3.dfsg+really1.3.2.1+academy.git20260904.e3dc0a8-1",
+        ),
+        ("libpcre2-8-0", "10.48-2~academy1"),
+        ("libxml2", "2.15.4+really2.9.14-2.1+deb13u3+academy1"),
+    ):
+        assert f"dpkg-query -W -f='${{Version}}' {package}" in dockerfile
+        assert f'ge "{minimum}"' in dockerfile
+    for cve in ("CVE-2026-85091", "CVE-2026-86140", "CVE-2026-86145"):
+        assert cve in build_script
+    assert (
+        "https://download.gnome.org/sources/libxml2/2.9/libxml2-2.9.14.tar.xz"
+        in build_script
+    )
+    assert "60d74a257d1ccec0475e749cba2f21559e48139efba6ff28224357c7c798dfee" in build_script
+    assert "autoreconf --force --install" in build_script
+    assert build_script.count("sha256sum --check") == 3
+    assert build_script.count("download \\") == 7
+    assert "COPY docker/native-security/patches/" in dockerfile
+    for commit, checksum in (
+        (
+            "0cfd15bdf4b2c22d6b0df73610709dfb60921091",
+            "c17ecebf947aed83a577c708f17f3437e2f3964dbf62954d05882fc9354f29b1",
+        ),
+        (
+            "28fcfba540f6933aa8904a1514c4811713d2ab72",
+            "4d179a59e86668f35fefd2ac0b43b7878e4b597af507f3b4decdac9f680c8a25",
+        ),
+    ):
+        patch = repository / "docker" / "native-security" / "patches" / f"{commit}.patch"
+        assert hashlib.sha256(patch.read_bytes()).hexdigest() == checksum
+        assert checksum in build_script
+    assert (
+        'dpkg --compare-versions "${zlib_version}" '
+        'gt "1:1.3.dfsg+really1.3.1-1"'
+    ) in verifier
+    assert (
+        'dpkg --compare-versions "${zlib_version}" '
+        'lt "1:1.3.dfsg+really1.3.3"'
+    ) in verifier
+    for runtime_contract in (
+        "dpkg -L zlib1g | grep -Ei '(py)?minizip'",
+        "zipOpenNewFileInZip4_64",
+    ):
+        assert runtime_contract in dockerfile
+        assert runtime_contract in verifier
+
+
+def test_zlib_package_remains_scanner_visible_but_excludes_minizip() -> None:
+    build_script = (
+        Path(__file__).parents[1]
+        / "docker"
+        / "native-security"
+        / "build-fixed-libs.sh"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        "zlib_version='1:1.3.dfsg+really1.3.2.1+academy.git20260904.e3dc0a8-1'"
+        in build_script
+    )
+    assert "zlib_version='1:1.3.3+really" not in build_script
+    assert "'zlib'" in build_script
+    assert "'academy-zlib-core'" not in build_script
+    assert '#define ZLIB_VERSION "1.3.2.1-motley"' in build_script
+    assert "strm->next_in == NULL" in build_script
+    assert "find \"${zlib_package}\"" in build_script
+    assert "-iname '*minizip*'" in build_script
+    assert "-iname '*pyminizip*'" in build_script
+    assert "zipOpenNewFileInZip4_64" in build_script
+
+
+def test_tesseract_runtimes_pin_security_fixed_libcurl() -> None:
+    repository = Path(__file__).parents[1]
+    affected = {
+        "api": repository / "docker" / "api" / "Dockerfile",
+        "ai": repository / "docker" / "ai-worker-cpu" / "Dockerfile",
+        "tools": repository / "docker" / "tools-worker" / "Dockerfile",
+    }
+
+    for service, path in affected.items():
+        dockerfile = path.read_text(encoding="utf-8")
+        assert "FROM ${BASE_IMAGE} AS curl-fixed-system" in dockerfile, service
+        assert "FROM curl-fixed-system AS base" in dockerfile, service
+        assert "ARG LIBCURL_VERSION=8.21.0-2~bpo13+1" in dockerfile, service
+        assert "ARG LIBNGHTTP3_VERSION=1.15.0-1~bpo13+1" in dockerfile, service
+        assert "ARG LIBNGTCP2_VERSION=1.22.1-1~bpo13+1" in dockerfile, service
+        assert (
+            "deb https://deb.debian.org/debian trixie-backports main" in dockerfile
+        ), service
+        assert 'libnghttp3-9="${LIBNGHTTP3_VERSION}"' in dockerfile, service
+        assert 'libngtcp2-16="${LIBNGTCP2_VERSION}"' in dockerfile, service
+        assert (
+            'libngtcp2-crypto-ossl0="${LIBNGTCP2_VERSION}"' in dockerfile
+        ), service
+        assert 'libcurl4t64="${LIBCURL_VERSION}"' in dockerfile, service
+        assert (
+            'test "$libcurl_version" = "${LIBCURL_VERSION}"' in dockerfile
+        ), service
+        assert (
+            'test "$libnghttp3_version" = "${LIBNGHTTP3_VERSION}"' in dockerfile
+        ), service
+        assert (
+            'test "$libngtcp2_version" = "${LIBNGTCP2_VERSION}"' in dockerfile
+        ), service
+        assert (
+            'test "$libngtcp2_crypto_version" = "${LIBNGTCP2_VERSION}"'
+            in dockerfile
+        ), service
+        assert (
+            "rm -f /etc/apt/sources.list.d/academy-trixie-backports.list"
+            in dockerfile
+        )
+
+    for path in (
+        repository / "docker" / "Dockerfile.base",
+        repository / "docker" / "video-worker" / "Dockerfile",
+        repository / "docker" / "messaging-worker" / "Dockerfile",
+    ):
+        dockerfile = path.read_text(encoding="utf-8")
+        assert "LIBCURL_VERSION" not in dockerfile
+        assert "LIBNGHTTP3_VERSION" not in dockerfile
+        assert "LIBNGTCP2_VERSION" not in dockerfile
+        assert "academy-trixie-backports.list" not in dockerfile
 
 
 def test_high_finding_regression_fails_closed() -> None:
@@ -341,8 +558,10 @@ def test_same_count_high_identity_substitution_fails_closed(
     replacement_cve: str,
     replacement_version: str,
 ) -> None:
+    # Evaluate identity against the reviewed snapshot; expiry is tested separately.
     baselines, known = gate.load_high_baselines(
-        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json"
+        HISTORICAL_POLICY_DIR / "ecr-high-risk-baseline.json",
+        date(2026, 9, 12),
     )
     expected = sorted(key for key in known if key[0] == "academy-base")
     findings = [
@@ -366,8 +585,10 @@ def test_same_count_high_identity_substitution_fails_closed(
 
 
 def test_removed_high_requires_reviewed_baseline_reduction() -> None:
+    # Evaluate budget against the reviewed snapshot; expiry is tested separately.
     baselines, known = gate.load_high_baselines(
-        Path(__file__).parents[1] / "docs" / "ssot" / "ecr-high-risk-baseline.json"
+        HISTORICAL_POLICY_DIR / "ecr-high-risk-baseline.json",
+        date(2026, 9, 12),
     )
     expected = sorted(key for key in known if key[0] == "academy-base")
     findings = _scan(
@@ -533,6 +754,24 @@ def test_video_source_build_uses_native_arm64_runner() -> None:
     )
 
 
+def test_base_source_builds_use_native_arm64_without_relaxing_deadline() -> None:
+    workflows = Path(__file__).parents[1] / ".github/workflows"
+    for file, job, next_job in [
+        ("quality-gate.yml", "native-security-image", "static-contract"),
+        ("v1-build-and-push-latest.yml", "prepare-build", "build-runtime-images"),
+    ]:
+        text = (workflows / file).read_text(encoding="utf-8")
+        section = text.split(f"\n  {job}:\n", 1)[1].split(f"\n  {next_job}:\n", 1)[0]
+        assert "runs-on: ubuntu-24.04-arm" in section
+        assert "setup-qemu-action" not in section
+        assert "setup-buildx-action" in section
+        assert "file: docker/Dockerfile.base" in section
+        assert "platforms: linux/arm64" in section
+        if job == "native-security-image":
+            assert "timeout-minutes: 45" in section
+            assert "Verify fixed package versions and runtime ABI" in section
+
+
 def test_missing_scan_result_is_started_then_polled(monkeypatch: pytest.MonkeyPatch) -> None:
     descriptions = iter(
         [
@@ -577,3 +816,49 @@ def test_scan_start_quota_still_requires_completed_readback(
     )
 
     assert completed["imageScanStatus"]["status"] == "COMPLETE"
+
+
+def _invoke_candidate_gate(tmp_path, monkeypatch, images):
+    candidate = tmp_path / "candidate.json"
+    candidate.write_text(json.dumps({"images": images}), encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", [
+        "ecr-critical-scan-gate.py", "--candidate", str(candidate),
+        "--acceptances", "test-acceptances.json", "--high-baseline", "test-high.json",
+        "--region", "ap-northeast-2",
+    ])
+    monkeypatch.setattr(gate, "load_acceptances", lambda *_: {})
+    monkeypatch.setattr(gate, "load_high_baselines", lambda *_: (
+        {repo: 0 for repo in gate.REPOSITORIES}, set()
+    ))
+    return gate.main()
+
+
+def test_prior_success_images_run_the_same_completed_scan_and_risk_gate(tmp_path, monkeypatch):
+    checked = []
+
+    def scan(repo, digest, *_):
+        checked.append((repo, digest))
+        return _scan()
+
+    monkeypatch.setattr(gate, "wait_for_completed_scan", scan)
+    images = {repo: {"source": "prior-success", "digest": "sha256:" + "c" * 64}
+              for repo in gate.REPOSITORIES}
+    assert _invoke_candidate_gate(tmp_path, monkeypatch, images) == 0
+    assert checked == [(repo, "sha256:" + "c" * 64) for repo in sorted(gate.REPOSITORIES)]
+
+
+def test_reused_base_with_new_unaccepted_critical_blocks_the_candidate(tmp_path, monkeypatch):
+    monkeypatch.setattr(gate, "wait_for_completed_scan", lambda repo, *_: (
+        _scan(_finding("CVE-2099-1234", "example", "1")) if repo == "academy-base" else _scan()
+    ))
+    images = {repo: {"source": "prior-success" if repo == "academy-base" else "built",
+                     "digest": "sha256:" + "c" * 64} for repo in gate.REPOSITORIES}
+    with pytest.raises(gate.GateError, match="unaccepted critical ECR findings repo=academy-base"):
+        _invoke_candidate_gate(tmp_path, monkeypatch, images)
+
+
+def test_unknown_source_cannot_silently_skip_scan(tmp_path, monkeypatch):
+    images = {repo: {"source": "unknown", "digest": "sha256:" + "c" * 64}
+              for repo in gate.REPOSITORIES}
+    with pytest.raises(gate.GateError, match="candidate image source is invalid"):
+        _invoke_candidate_gate(tmp_path, monkeypatch, images)

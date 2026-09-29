@@ -6,11 +6,82 @@ lifecycle while cross-domain lookups stay behind this support boundary.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from dataclasses import dataclass
 from typing import Any
 
+from django.db.models import Prefetch
+
 logger = logging.getLogger(__name__)
+
+
+def homework_submission_revisions(
+    *,
+    tenant: Any,
+    enrollment_ids: list[int] | set[int],
+    homework_ids: list[int] | set[int],
+) -> dict[tuple[int, int], str]:
+    """Hash only accepted, still-active homework evidence per authorized target.
+
+    File identity (rather than an update timestamp) survives duplicate retries
+    and avoids treating failed/in-progress uploads as a completed submission.
+    Missing keys have no submitted evidence.
+    """
+    if not enrollment_ids or not homework_ids:
+        return {}
+
+    from apps.domains.homework_results.models import Homework
+    from apps.domains.submissions.models import Submission, SubmissionMedia
+
+    tenant_homework_ids = Homework.objects.filter(
+        tenant=tenant,
+        id__in=homework_ids,
+    ).values("id")
+
+    evidence = {}
+    parents = (
+        Submission.objects.filter(
+            tenant=tenant,
+            enrollment_id__in=enrollment_ids,
+            enrollment__tenant=tenant,
+            target_type=Submission.TargetType.HOMEWORK,
+            target_id__in=tenant_homework_ids,
+        )
+        .exclude(status__in=[Submission.Status.FAILED, Submission.Status.SUPERSEDED])
+        .prefetch_related(Prefetch(
+            "media_files",
+            queryset=SubmissionMedia.objects.filter(
+                status=SubmissionMedia.Status.UPLOADED,
+                removed_at__isnull=True,
+            ),
+            to_attr="uploaded_media_files",
+        ))
+    )
+    for parent in parents:
+        key = (int(parent.enrollment_id), int(parent.target_id))
+        parts = evidence.setdefault(key, [])
+        if parent.source not in {
+            Submission.Source.HOMEWORK_IMAGE,
+            Submission.Source.HOMEWORK_VIDEO,
+        }:
+            parts.append(("submission", int(parent.id)))
+        meta = parent.meta if isinstance(parent.meta, dict) else {}
+        if parent.file_key and not meta.get("homework_media_legacy_removed_at"):
+            parts.append(("legacy", int(parent.id)))
+        parts.extend(
+            ("media", int(media.id))
+            for media in parent.uploaded_media_files
+        )
+
+    return {
+        key: hashlib.sha256(
+            json.dumps(sorted(parts), separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        for key, parts in evidence.items()
+        if parts
+    }
 
 
 @dataclass(frozen=True)
@@ -39,10 +110,26 @@ def request_is_parent(request: Any) -> bool:
     return is_request_parent(request)
 
 
+def request_student(request: Any):
+    from apps.domains.student_app.permissions import get_request_student
+
+    return get_request_student(request)
+
+
 def grade_submission_objective(submission_id: int, *, force_regrade: bool = False):
     from apps.domains.results.services.grading_service import grade_submission
 
     return grade_submission(int(submission_id), force_regrade=force_regrade)
+
+
+def lock_submission_score_edit_scope_before_write(*, submission) -> list[int]:
+    """Lock an exam submission's Exam -> Session scope before mutable rows."""
+
+    from apps.support.results.grading_dependencies import (
+        lock_score_edit_scope_before_submission_grading,
+    )
+
+    return lock_score_edit_scope_before_submission_grading(submission=submission)
 
 
 def rebind_representative_omr_submission(
@@ -194,15 +281,23 @@ def complete_submission_after_auto_grade(submission, *, actor: str) -> None:
 def regrade_exam_submissions(*, tenant, exam_id: int, actor: str) -> dict[str, Any]:
     from django.db import transaction
 
-    from apps.domains.enrollment.models import Enrollment
-    from apps.domains.results.models import ExamAttempt, Result
+    from apps.domains.results.models import ResultItem
+    from apps.domains.results.services.manual_exam_answers import regrade_manual_exam_answers
     from apps.domains.submissions.models import Submission
     from apps.domains.submissions.services.lifecycle import reopen_for_regrade
+    from apps.domains.exams.models import Exam
+    from apps.support.omr.score_shape import get_exam_score_shape
+    from apps.support.results.grading_dependencies import (
+        lock_exam_and_score_edit_scope_for_grading,
+        lock_exam_submission_regrade_state,
+    )
 
     regradable_statuses = {
         Submission.Status.DONE,
         Submission.Status.ANSWERS_READY,
     }
+    exam = Exam.objects.get(id=int(exam_id), tenant=tenant)
+    score_shape = get_exam_score_shape(exam)
     submissions = list(
         Submission.objects.filter(
             tenant=tenant,
@@ -217,6 +312,7 @@ def regrade_exam_submissions(*, tenant, exam_id: int, actor: str) -> dict[str, A
     graded = 0
     skipped = 0
     failed: list[dict[str, object]] = []
+    needs_review: list[dict[str, object]] = []
 
     for submission_id, current_status in submissions:
         if current_status not in regradable_statuses:
@@ -224,30 +320,39 @@ def regrade_exam_submissions(*, tenant, exam_id: int, actor: str) -> dict[str, A
             continue
         try:
             with transaction.atomic():
-                submission = Submission.objects.select_for_update().get(id=int(submission_id))
-                enrollment = Enrollment.objects.select_for_update().get(
-                    id=int(submission.enrollment_id),
-                    tenant=tenant,
+                lock_exam_and_score_edit_scope_for_grading(
+                    exam_id=int(exam_id),
+                    tenant_id=int(tenant.id),
                 )
-                Result.objects.select_for_update().filter(
-                    target_type="exam",
-                    target_id=int(exam_id),
-                    enrollment_id=int(enrollment.id),
-                ).first()
-                attempt = (
-                    ExamAttempt.objects.select_for_update()
-                    .filter(
-                        exam_id=int(exam_id),
-                        submission_id=int(submission_id),
-                        enrollment__tenant=tenant,
-                    )
-                    .first()
+                submission, result, not_submitted = lock_exam_submission_regrade_state(
+                    submission_id=int(submission_id),
+                    exam_id=int(exam_id),
+                    tenant_id=int(tenant.id),
                 )
-                if (
-                    attempt is not None
-                    and isinstance(attempt.meta, dict)
-                    and attempt.meta.get("status") == "NOT_SUBMITTED"
-                ):
+                if submission.status not in regradable_statuses:
+                    skipped += 1
+                    continue
+                if submission.enrollment_id is None:
+                    needs_review.append({
+                        "submission_id": int(submission_id),
+                        "detail": "학생이 식별되지 않아 정답 변경 후 재채점을 보류했습니다.",
+                    })
+                    skipped += 1
+                    continue
+                manual_question_ids = (
+                    ResultItem.objects.filter(result=result, source="manual")
+                    .values_list("question_id", flat=True)
+                    if result is not None else ()
+                )
+                if any(score_shape.question_kind(int(qid)) == "choice" for qid in manual_question_ids):
+                    # A teacher-owned item may differ from the scan; keep it intact.
+                    needs_review.append({
+                        "submission_id": int(submission_id),
+                        "detail": "수기 보정 문항이 있어 자동 재채점에서 제외했습니다.",
+                    })
+                    skipped += 1
+                    continue
+                if not_submitted:
                     skipped += 1
                     continue
                 if submission.status != Submission.Status.ANSWERS_READY:
@@ -263,12 +368,21 @@ def regrade_exam_submissions(*, tenant, exam_id: int, actor: str) -> dict[str, A
                 }
             )
 
+    manual = regrade_manual_exam_answers(exam=exam, tenant=tenant)
+    needs_review.extend(manual["needs_review"])
+    failed.extend({
+        "submission_id": 0, "enrollment_id": item["enrollment_id"],
+        "status": "manual_entry", "detail": item["detail"],
+    } for item in manual["failed"])
     return {
         "exam_id": int(exam_id),
         "total": len(submissions),
         "graded": graded,
         "skipped": skipped,
         "failed": failed,
+        "manual_total": manual["total"],
+        "manual_graded": manual["graded"],
+        "needs_review": needs_review,
     }
 
 
@@ -751,7 +865,12 @@ def dispatch_ai_result_to_submissions_domain(
     )
 
 
-def get_synced_exam_score(*, tenant, target_id: int, enrollment_id: int) -> tuple[float | None, float | None]:
+def get_synced_exam_score(
+    *,
+    tenant,
+    target_id: int,
+    enrollment_id: int,
+) -> tuple[int | None, float | None, float | None]:
     try:
         from apps.domains.results.models import Result
 
@@ -762,12 +881,26 @@ def get_synced_exam_score(*, tenant, target_id: int, enrollment_id: int) -> tupl
                 enrollment_id=int(enrollment_id),
                 enrollment__tenant=tenant,
             )
-            .only("total_score", "max_score")
+            .only("id", "total_score", "max_score")
             .order_by("-id")
             .first()
         )
         if result:
-            return float(result.total_score or 0.0), float(result.max_score or 0.0)
+            return (
+                int(result.id),
+                float(result.total_score or 0.0),
+                float(result.max_score or 0.0),
+            )
     except Exception:
-        return None, None
-    return None, None
+        return None, None, None
+    return None, None, None
+
+
+def finalize_omr_result_projection(*, result_id: int):
+    """Finalize an OMR result through the results-domain service boundary."""
+
+    from apps.domains.results.services.omr_subjective_completion import (
+        finalize_omr_result_if_ready,
+    )
+
+    return finalize_omr_result_if_ready(result_id=int(result_id))

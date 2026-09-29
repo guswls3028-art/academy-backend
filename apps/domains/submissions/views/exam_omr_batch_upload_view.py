@@ -22,7 +22,10 @@ from apps.domains.submissions.models import (
     OmrUploadBatchItem,
     Submission,
 )
-from apps.domains.submissions.serializers.submission import SubmissionCreateSerializer
+from apps.domains.submissions.serializers.submission import (
+    SubmissionCreateSerializer,
+    SubmissionUploadCleanupRequired,
+)
 from apps.domains.submissions.services.dispatcher import (
     dispatch_submission,
     resolve_omr_sheet_for_exam,
@@ -30,9 +33,11 @@ from apps.domains.submissions.services.dispatcher import (
 from apps.domains.submissions.services.lifecycle import (
     InvalidTransitionError,
     retry_failed_submission,
+    schedule_unreferenced_ai_object_cleanup,
 )
-from apps.infrastructure.storage.r2 import delete_object_r2_storage
+from apps.infrastructure.storage.r2 import delete_object_r2_ai
 from apps.support.submissions.dependencies import exam_belongs_to_tenant
+from apps.support.submissions.omr_grading_status import omr_grading_status_by_submission
 
 
 MAX_FILES = 100
@@ -126,6 +131,10 @@ class OmrUploadBatchSummarySerializer(serializers.Serializer):
     duplicate_ordinals = serializers.ListField(child=serializers.IntegerField())
     terminal = serializers.BooleanField()
     overall_status = serializers.CharField()
+    grading_complete = serializers.BooleanField()
+    grading_status = serializers.CharField()
+    grading_counts = serializers.DictField(child=serializers.IntegerField())
+    subjective_pending_ordinals = serializers.ListField(child=serializers.IntegerField())
     completion_notice_claimed = serializers.BooleanField()
     created_at = serializers.DateTimeField()
     updated_at = serializers.DateTimeField()
@@ -232,7 +241,7 @@ def _owned_batch(request, batch_id: str | UUID, *, exam_id: int | None = None):
         return None
 
 
-def _batch_summary(batch: OmrUploadBatch) -> dict:
+def _batch_summary(batch: OmrUploadBatch, *, grading_statuses=None) -> dict:
     prefetched_items = getattr(batch, "_prefetched_objects_cache", {}).get("items")
     items = (
         list(prefetched_items)
@@ -253,6 +262,21 @@ def _batch_summary(batch: OmrUploadBatch) -> dict:
     failed_ordinals: list[int] = []
     admission_failed_ordinals: list[int] = []
     duplicate_ordinals: list[int] = []
+    subjective_pending_ordinals: list[int] = []
+    grading_counts = {
+        "completed": 0,
+        "subjective_pending": 0,
+        "manual_review_required": 0,
+        "grading_pending": 0,
+    }
+    if grading_statuses is None:
+        grading_statuses = omr_grading_status_by_submission(
+            tenant_id=int(batch.tenant_id),
+            submission_ids={
+                int(item.submission_id) for item in items
+                if item.submission and item.submission.status == Submission.Status.DONE
+            },
+        )
 
     for item in items:
         submission = item.submission
@@ -277,6 +301,16 @@ def _batch_summary(batch: OmrUploadBatch) -> dict:
             counts["processing"] += 1
         elif submission_status == Submission.Status.DONE:
             counts["completed"] += 1
+            grading_status = "grading_pending"
+            if (
+                submission.tenant_id == batch.tenant_id
+                and submission.target_type == Submission.TargetType.EXAM
+                and submission.target_id == batch.exam_id
+            ):
+                grading_status = grading_statuses.get(int(submission.id), "grading_pending")
+            grading_counts[grading_status or "completed"] += 1
+            if grading_status == "subjective_pending":
+                subjective_pending_ordinals.append(int(item.ordinal))
         elif submission_status == Submission.Status.NEEDS_IDENTIFICATION:
             counts["needs_identification"] += 1
         elif submission_status == Submission.Status.SUPERSEDED:
@@ -302,6 +336,13 @@ def _batch_summary(batch: OmrUploadBatch) -> dict:
     else:
         overall_status = "completed"
 
+    grading_complete = bool(
+        terminal
+        and counts["completed"] > 0
+        and not counts["failed"]
+        and not counts["needs_identification"]
+        and grading_counts["completed"] == counts["completed"]
+    )
     return {
         "id": str(batch.id),
         "exam_id": int(batch.exam_id),
@@ -315,6 +356,14 @@ def _batch_summary(batch: OmrUploadBatch) -> dict:
         "duplicate_ordinals": duplicate_ordinals,
         "terminal": terminal,
         "overall_status": overall_status,
+        "grading_complete": grading_complete,
+        "grading_status": (
+            "completed" if grading_complete
+            else "subjective_pending" if subjective_pending_ordinals
+            else "pending"
+        ),
+        "grading_counts": grading_counts,
+        "subjective_pending_ordinals": subjective_pending_ordinals,
         "completion_notice_claimed": batch.completion_notice_claimed_at is not None,
         "created_at": batch.created_at,
         "updated_at": batch.updated_at,
@@ -426,13 +475,23 @@ def _mark_admission_failed(item_id: int, *, code: str, message: str) -> bool:
         return True
 
 
-def _delete_rolled_back_upload(*, key: str, batch_id: UUID, ordinal: int) -> None:
+def _delete_rolled_back_upload(
+    *,
+    tenant_id: int,
+    key: str,
+    batch_id: UUID,
+    ordinal: int,
+) -> None:
     try:
-        delete_object_r2_storage(key=key)
+        delete_object_r2_ai(key=key)
     except Exception:
         logger.exception(
             "Failed to compensate rolled-back OMR upload",
             extra={"batch_id": str(batch_id), "ordinal": int(ordinal)},
+        )
+        schedule_unreferenced_ai_object_cleanup(
+            tenant_id=tenant_id,
+            key=key,
         )
 
 
@@ -664,9 +723,24 @@ class ExamOMRBatchUploadView(APIView):
                     )
                     dispatch_submission(submission)
                     created_ids.append(int(submission.id))
+            except SubmissionUploadCleanupRequired as exc:
+                schedule_unreferenced_ai_object_cleanup(
+                    tenant_id=exc.tenant_id,
+                    key=exc.key,
+                )
+                logger.exception(
+                    "OMR upload compensation queued for retry",
+                    extra={"batch_id": str(batch.id), "ordinal": int(ordinal)},
+                )
+                _mark_admission_failed(
+                    item.id,
+                    code="upload_cleanup_pending",
+                    message="파일 저장 정리를 예약했습니다. 해당 항목만 다시 선택해 주세요.",
+                )
             except IntegrityError:
                 if uploaded_key:
                     _delete_rolled_back_upload(
+                        tenant_id=tenant.id,
                         key=uploaded_key,
                         batch_id=batch.id,
                         ordinal=int(ordinal),
@@ -690,6 +764,7 @@ class ExamOMRBatchUploadView(APIView):
             except Exception:
                 if uploaded_key:
                     _delete_rolled_back_upload(
+                        tenant_id=tenant.id,
                         key=uploaded_key,
                         batch_id=batch.id,
                         ordinal=int(ordinal),
@@ -727,7 +802,7 @@ class OmrUploadBatchListView(APIView):
         if tenant is None:
             return Response([], status=status.HTTP_200_OK)
         cutoff = timezone.now() - timedelta(days=7)
-        batches = (
+        batches = list(
             OmrUploadBatch.objects.filter(
                 tenant=tenant,
                 created_by=request.user,
@@ -736,7 +811,18 @@ class OmrUploadBatchListView(APIView):
             .prefetch_related("items__submission")
             .order_by("-created_at")[:100]
         )
-        return Response([_batch_summary(batch) for batch in batches], status=status.HTTP_200_OK)
+        grading_statuses = omr_grading_status_by_submission(
+            tenant_id=int(tenant.id),
+            submission_ids={
+                int(item.submission_id)
+                for batch in batches for item in batch.items.all()
+                if item.submission and item.submission.status == Submission.Status.DONE
+            },
+        )
+        return Response(
+            [_batch_summary(batch, grading_statuses=grading_statuses) for batch in batches],
+            status=status.HTTP_200_OK,
+        )
 
 
 class OmrUploadBatchDetailView(APIView):

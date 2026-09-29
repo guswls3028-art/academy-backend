@@ -14,6 +14,9 @@ from apps.core.permissions import TenantResolved
 from apps.domains.clinic.color_utils import get_effective_clinic_colors
 from apps.domains.clinic.models import SessionParticipant
 from apps.domains.clinic.services.passcard_state import (
+    passcard_booking_covers_requirements,
+    passcard_booking_is_scheduled,
+    passcard_required_booking_date,
     passcard_tenant_booking_q,
     passcard_visible_booking_q,
 )
@@ -24,6 +27,7 @@ from apps.support.clinic.idcard_dependencies import (
     student_for_idcard_user,
     unresolved_auto_clinic_links,
 )
+from apps.domains.clinic.time_ranges import booking_window
 
 
 BOOKING_STATUS_LABELS = {
@@ -38,6 +42,11 @@ BOOKING_STATUS_LABELS = {
 
 def _participant_schedule(participant):
     session = getattr(participant, "session", None)
+    if session and participant.booking_start_time is not None and participant.booking_end_time is not None:
+        start, _ = booking_window(
+            session=session, start_time=participant.booking_start_time, end_time=participant.booking_end_time,
+        )
+        return start.date(), start.time(), session.location, session.title or ""
     return (
         getattr(session, "date", None) or participant.requested_date,
         getattr(session, "start_time", None) or participant.requested_start_time,
@@ -46,7 +55,7 @@ def _participant_schedule(participant):
     )
 
 
-def _valid_booking_projection(*, tenant, student, local_date):
+def _valid_booking_projection(*, tenant, student, local_date, required_date=None):
     """Project pending/confirmed bookings that still affect the passcard."""
     participants = list(
         SessionParticipant.objects.filter(
@@ -60,15 +69,19 @@ def _valid_booking_projection(*, tenant, student, local_date):
     )
     projected = []
     for participant in participants:
+        if not passcard_booking_covers_requirements(
+            participant=participant, required_date=required_date,
+        ):
+            continue
         schedule_date, start_time, location, title = _participant_schedule(participant)
         if participant.status in (
             SessionParticipant.Status.PENDING,
             SessionParticipant.Status.BOOKED,
         ):
-            is_valid = bool(schedule_date and schedule_date >= local_date)
+            is_valid = passcard_booking_is_scheduled(participant=participant, local_date=local_date)
         else:
-            # Once a student checks in, the reservation state remains until
-            # the clinic work itself is marked complete, even after midnight.
+            # Existing work may remain in progress after midnight, but cannot
+            # cover an assessment newer than this clinic's scheduled date.
             is_valid = participant.completed_at is None
         if not is_valid:
             continue
@@ -182,18 +195,23 @@ class StudentClinicIdcardView(APIView):
         if not student:
             return Response(_response_payload(colors=colors, server_now=local_now))
 
-        valid_bookings = _valid_booking_projection(
-            tenant=tenant,
-            student=student,
-            local_date=local_now.date(),
-        )
-
         # tenant is guaranteed by TenantResolved permission
         # 활성 강의 전체를 기준으로 집계한다. 한 학생이 여러 강의를 수강해도
         # 다른 강의의 미해결 ClinicLink가 패스카드에서 누락되면 안 된다.
         enrollments = active_enrollments_for_student(
             tenant=tenant,
             student=student,
+        )
+        enrollment_ids = [int(enrollment.id) for enrollment in enrollments]
+        clinic_links = unresolved_auto_clinic_links(
+            tenant=tenant,
+            enrollment_ids=enrollment_ids,
+        )
+        valid_bookings = _valid_booking_projection(
+            tenant=tenant,
+            student=student,
+            local_date=local_now.date(),
+            required_date=passcard_required_booking_date(clinic_links),
         )
 
         if not enrollments:
@@ -207,11 +225,6 @@ class StudentClinicIdcardView(APIView):
                 )
             )
 
-        enrollment_ids = [int(enrollment.id) for enrollment in enrollments]
-        clinic_links = unresolved_auto_clinic_links(
-            tenant=tenant,
-            enrollment_ids=enrollment_ids,
-        )
         source_projection = clinic_link_source_projection(
             tenant=tenant,
             clinic_links=clinic_links,

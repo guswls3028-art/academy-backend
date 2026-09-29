@@ -504,6 +504,9 @@ def test_selective_build_graph_covers_shared_runtime_and_copied_inputs() -> None
     force_patterns = re.findall(
         r'changed_matches "([^"]+)" && FORCE_ALL=true', detect
     )
+    base_patterns = re.findall(
+        r'changed_matches "([^"]+)" && BASE=true', detect
+    )
     assert 'changed_matches() { grep -qE "$1" <<< "$CHANGED"; }' in detect
     assert 'echo "$CHANGED" | grep -qE' not in detect
 
@@ -527,7 +530,7 @@ def test_selective_build_graph_covers_shared_runtime_and_copied_inputs() -> None
         "requirements/constraints.txt",
     )
     for path in shared_runtime_changes:
-        assert any(re.search(pattern, path) for pattern in force_patterns), path
+        assert any(re.search(pattern, path) for pattern in force_patterns + base_patterns), path
 
     api_section = detect.split("# API:", maxsplit=1)[1].split(
         "# Video worker", maxsplit=1
@@ -554,7 +557,10 @@ def test_selective_build_diffs_from_each_last_verified_runtime_image() -> None:
     detect = _job_block(workflow, "detect-changes")
 
     assert "github.event.before" not in detect
-    assert 'MANIFEST="docs/reports/release-manifest.latest.json"' in detect
+    assert (
+        'MANIFEST="$RUNNER_TEMP/release-baseline/release-manifest.latest.json"'
+        in detect
+    )
     assert "resolve_image_base()" in detect
     assert 'git merge-base --is-ancestor "$resolved" HEAD' in detect
     assert 'CHANGED_RELEASE=$(git diff --name-only "$RELEASE_PREV" HEAD)' in detect
@@ -568,11 +574,36 @@ def test_selective_build_diffs_from_each_last_verified_runtime_image() -> None:
     }.items():
         assert f'{flag}_PREV=$(resolve_image_base "{repo}")' in detect
         assert f'CHANGED_{flag}=$(git diff --name-only "${flag}_PREV" HEAD)' in detect
-        if flag in {"API", "AI"}:
-            assert f'CHANGED="$(runtime_changes "$CHANGED_{flag}")"' in detect
+        if flag == "BASE":
+            assert 'CHANGED="$CHANGED_BASE"' in detect
         else:
-            assert f'CHANGED="$CHANGED_{flag}"' in detect
+            assert f'CHANGED="$(runtime_changes "$CHANGED_{flag}")"' in detect
     assert 'force_full_build "academy-tools-worker source commit is unavailable"' in detect
+
+
+def test_queued_release_uses_manifest_promoted_after_concurrency_wait() -> None:
+    workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    detect = _job_block(workflow, "detect-changes")
+    prepare = _job_block(workflow, "prepare-build")
+    assemble = _job_block(workflow, "build-and-push")
+
+    baseline = "$RUNNER_TEMP/release-baseline/release-manifest.latest.json"
+    assert "Capture current verified release baseline" in detect
+    assert "git fetch --no-tags origin main" in detect
+    assert (
+        'git show origin/main:docs/reports/release-manifest.latest.json '
+        f'> "{baseline}"'
+    ) in detect
+    assert f'MANIFEST="{baseline}"' in detect
+    assert "name: release-baseline" in detect
+    assert detect.index("Capture current verified release baseline") < detect.index(
+        "Detect changes"
+    )
+    for block in (prepare, assemble):
+        assert "Download current verified release baseline" in block
+        assert "name: release-baseline" in block
+        assert "path: ${{ runner.temp }}/release-baseline" in block
+    assert f'PRIOR="{baseline}"' in assemble
 
 
 def test_deploy_freshness_uses_immutable_runtime_evidence_not_latest() -> None:
@@ -1149,10 +1180,16 @@ def test_asg_pin_retries_only_the_expected_missing_runtime_container() -> None:
     )[1].split("$actual =", maxsplit=1)[0]
 
     assert "Start-Sleep -Seconds 15" in retry_block
-    assert '$isMissingExpectedContainer' in retry_block
+    assert '$isRuntimeNotReadyYet' in retry_block
     assert '[string]$result.Status -eq "Failed"' in retry_block
     assert "[string]::IsNullOrWhiteSpace($stdout)" in retry_block
     assert "No such (?:object|container)" in retry_block
+    # A freshly launched instance can be SSM-command-runnable before cloud-init
+    # finishes installing/starting Docker itself; these must retry too, not
+    # just "docker up, container not started yet".
+    assert "docker:\\s*command not found" in retry_block
+    assert "Cannot connect to the Docker daemon" in retry_block
+    assert "exit status 127" in retry_block
     assert "[Regex]::Escape($container)" in source
     assert "Runtime container did not become inspectable within 300s" in retry_block
     assert "Runtime verification command timed out" in retry_block
@@ -1480,7 +1517,12 @@ def test_workflow_checks_release_freshness_under_lock_and_always_releases() -> N
     assert "'docs/reports/**'" in workflow
     assert "'docs/ssot/runtime-current.md'" in workflow
     assert "'scripts/codex/**'" in workflow
-    assert "runtime_changes() { grep -vE '^scripts/codex/'" in workflow
+    assert (
+        r"runtime_changes() { grep -vE '^scripts/codex/"
+        r"|^scripts/v1/(candidate_build_only|test_candidate_build_only)\.py$"
+        r"|^\.github/workflows/candidate-build-only\.yml$"
+        r"|(^|/)tests(/|\.py$)'"
+    ) in workflow
     assert 'CHANGED="$(runtime_changes "$CHANGED_API")"' in workflow
     assert 'CHANGED="$(runtime_changes "$CHANGED_AI")"' in workflow
     for output in (

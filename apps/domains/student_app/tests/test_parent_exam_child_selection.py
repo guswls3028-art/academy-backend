@@ -147,6 +147,44 @@ class ParentExamChildSelectionTests(TestCase):
         self.assertEqual(response_b.status_code, 200)
         self.assertEqual([row["id"] for row in response_b.data["items"]], [self.exam_b.id])
 
+    def test_parent_request_without_selected_child_fails_closed(self):
+        request = self.factory.get("/student/exams/")
+        force_authenticate(request, user=self.parent_user)
+        request.tenant = self.tenant
+
+        response = StudentExamListView.as_view()(request)
+
+        self.assertEqual(response.status_code, 403, response.data)
+        self.assertEqual(response.data["detail"], "자녀를 선택한 뒤 다시 시도해 주세요.")
+
+    @patch("apps.domains.student_app.exams.views.dispatch_student_exam_submission")
+    def test_parent_stale_deleted_child_selection_cannot_submit(self, mock_dispatch):
+        self.student_b.deleted_at = timezone.now()
+        self.student_b.save(update_fields=["deleted_at", "updated_at"])
+
+        response = StudentExamSubmitView.as_view()(
+            self._post_request(
+                f"/student/exams/{self.exam_b.id}/submit/",
+                student=self.student_b,
+                data={
+                    "answers": [
+                        {"exam_question_id": self.question_b.id, "answer": "1"}
+                    ]
+                },
+            ),
+            pk=self.exam_b.id,
+        )
+
+        self.assertEqual(response.status_code, 403, response.data)
+        self.assertFalse(
+            Submission.objects.filter(
+                enrollment=self.enrollment_b,
+                target_type=Submission.TargetType.EXAM,
+                target_id=self.exam_b.id,
+            ).exists()
+        )
+        mock_dispatch.assert_not_called()
+
     @patch("apps.domains.student_app.exams.views.dispatch_student_exam_submission")
     def test_submit_rejects_max_attempts_before_superseding_current_done(self, mock_dispatch):
         self.exam_b.allow_retake = True
@@ -257,6 +295,25 @@ class ParentExamChildSelectionTests(TestCase):
         mock_dispatch.assert_not_called()
 
     def test_ended_lecture_hides_active_exam_but_preserves_published_result(self):
+        self.exam_a.essay_numbering = Exam.EssayNumbering.SEPARATE
+        self.exam_a.save(update_fields=["essay_numbering"])
+        sheet = self.question_a.sheet
+        sheet.total_questions = 3
+        sheet.choice_count = 1
+        sheet.essay_count = 2
+        sheet.save(update_fields=["total_questions", "choice_count", "essay_count"])
+        self.question_a.question_kind = ExamQuestion.QuestionKind.CHOICE
+        self.question_a.save(update_fields=["question_kind"])
+        ExamQuestion.objects.create(
+            sheet=sheet, number=2, question_kind=ExamQuestion.QuestionKind.ESSAY,
+        )
+        last_essay = ExamQuestion.objects.create(
+            sheet=sheet, number=3, question_kind=ExamQuestion.QuestionKind.ESSAY,
+        )
+        ResultItem.objects.create(
+            result=self.result_a, question=last_essay, answer="essay",
+            is_correct=True, score=0, max_score=0, source="online",
+        )
         lecture = self.enrollment_a.lecture
         lecture.is_active = False
         lecture.save(update_fields=["is_active", "updated_at"])
@@ -279,12 +336,18 @@ class ParentExamChildSelectionTests(TestCase):
         )
         self.assertEqual(result_response.status_code, 200, result_response.data)
         self.assertEqual(result_response.data["total_score"], 10)
+        self.assertEqual(result_response.data["essay_numbering"], "separate")
+        self.assertEqual(
+            next(item for item in result_response.data["items"] if item["question_number"] == 3)["essay_index"],
+            2,
+        )
 
     def test_exam_list_can_include_upcoming_dashboard_window(self):
         view = StudentExamListView.as_view()
         future_exam, _, _ = self._exam_for_student(self.student_a, "Upcoming Exam")
+        future_exam.essay_numbering = future_exam.EssayNumbering.SEPARATE
         future_exam.open_at = timezone.now() + timedelta(days=3)
-        future_exam.save(update_fields=["open_at"])
+        future_exam.save(update_fields=["open_at", "essay_numbering"])
 
         default_response = view(self._request("/student/exams/", student=self.student_a))
         upcoming_response = view(
@@ -295,6 +358,8 @@ class ParentExamChildSelectionTests(TestCase):
         self.assertNotIn(future_exam.id, [row["id"] for row in default_response.data["items"]])
         self.assertEqual(upcoming_response.status_code, 200)
         self.assertIn(future_exam.id, [row["id"] for row in upcoming_response.data["items"]])
+        upcoming_row = next(row for row in upcoming_response.data["items"] if row["id"] == future_exam.id)
+        self.assertEqual(upcoming_row["essay_numbering"], "separate")
 
     def test_exam_list_excludes_ended_lecture_from_ongoing_count(self):
         self.enrollment_a.lecture.is_active = False
@@ -425,6 +490,7 @@ class ParentExamChildSelectionTests(TestCase):
             ),
             pk=self.exam_a.id,
         )
+        self.assertEqual(questions_response.data[0]["question_kind"], "essay")
         invalid_response = StudentExamSubmitView.as_view()(
             self._post_request(
                 f"/student/exams/{self.exam_a.id}/submit/",
@@ -458,6 +524,44 @@ class ParentExamChildSelectionTests(TestCase):
         submission = Submission.objects.get(id=valid_response.data["submission_id"])
         self.assertEqual(submission.payload["answers"][0]["answer"], "7")
         mock_dispatch.assert_called_once()
+
+        # A persisted submission is an attempt before the grading worker finishes.
+        # Both student and selected-child reads drive the dashboard's remaining work.
+        student_request = self.factory.get("/student/exams/")
+        force_authenticate(student_request, user=self.student_a.user)
+        student_request.tenant = self.tenant
+        for request in (
+            student_request,
+            self._request("/student/exams/", student=self.student_a),
+        ):
+            refreshed = StudentExamListView.as_view()(request)
+            self.assertEqual(refreshed.status_code, 200, refreshed.data)
+            row = next(item for item in refreshed.data["items"] if item["id"] == self.exam_a.id)
+            self.assertEqual(row["attempt_count"], 1)
+            self.assertFalse(row["has_result"])
+            self.assertTrue(row["submission_pending"])
+        other_child = StudentExamListView.as_view()(
+            self._request("/student/exams/", student=self.student_b)
+        )
+        self.assertEqual(other_child.data["items"][0]["attempt_count"], 0)
+        self.assertFalse(other_child.data["items"][0]["submission_pending"])
+
+        for status in (Submission.Status.DISPATCHED, Submission.Status.EXTRACTING,
+                       Submission.Status.ANSWERS_READY, Submission.Status.GRADING,
+                       Submission.Status.FAILED, Submission.Status.SUPERSEDED,
+                       Submission.Status.NEEDS_IDENTIFICATION, Submission.Status.DONE):
+            with self.subTest(status=status):
+                # Fixture transition only: production writers use the submission lifecycle.
+                Submission.objects.filter(pk=submission.pk).update(status=status)
+                detail = StudentExamDetailView.as_view()(
+                    self._request(f"/student/exams/{self.exam_a.id}/", student=self.student_a),
+                    pk=self.exam_a.id,
+                )
+                self.assertEqual(detail.data["submission_pending"], status in {
+                    Submission.Status.DISPATCHED, Submission.Status.EXTRACTING,
+                    Submission.Status.ANSWERS_READY, Submission.Status.GRADING,
+                })
+                self.assertEqual(detail.data["has_result"], status == Submission.Status.DONE)
 
     @patch("apps.domains.submissions.services.dispatcher.dispatch_submission")
     def test_parent_can_submit_same_exam_for_each_selected_child(self, mock_dispatch):

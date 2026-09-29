@@ -20,6 +20,7 @@ from apps.domains.results.services.submission_answer_map import (
 from apps.support.results.exam_policy_dependencies import (
     effective_exam_pass_score,
 )
+from apps.support.results.submission_answer_dependencies import is_omr_scan_submission
 from apps.domains.results.services.submission_scope_guard import validate_exam_submission_scope
 from apps.support.omr.score_shape import get_exam_score_shape
 from apps.support.omr.score_adjustment import get_score_adjustment_from_answers
@@ -76,6 +77,7 @@ class ExamGradingService:
         sheet,
         answer_key,
         answers_map: dict[int, str],
+        numeric_short_answer_ids: set[int],
     ) -> Tuple[float, float, Dict]:
         """
         Returns:
@@ -89,12 +91,6 @@ class ExamGradingService:
         }
 
         score_shape = get_exam_score_shape(exam)
-        numeric_short_answer_ids = math_numeric_short_answer_question_ids(
-            exam=exam,
-            question_ids=(int(q.id) for q in sheet.questions.all()),
-            question_kind=score_shape.question_kind,
-            answers=answer_key.answers,
-        )
         questions = [
             q
             for q in sheet.questions.all().order_by("number")
@@ -174,7 +170,9 @@ class ExamGradingService:
 
         questions = list(sheet.questions.all().only("id", "number"))
         score_shape = get_exam_score_shape(exam)
-        numeric_short_answer_ids = math_numeric_short_answer_question_ids(
+        # Paper OMR recognizes choices only; numeric essay keys still belong to
+        # teacher grading. Online submissions retain numeric short-answer grading.
+        numeric_short_answer_ids = set() if is_omr_scan_submission(submission) else math_numeric_short_answer_question_ids(
             exam=exam,
             question_ids=(int(q.id) for q in questions),
             question_kind=score_shape.question_kind,
@@ -203,6 +201,7 @@ class ExamGradingService:
             sheet=sheet,
             answer_key=answer_key,
             answers_map=answers_map,
+            numeric_short_answer_ids=numeric_short_answer_ids,
         )
 
         enrollment = getattr(submission, "enrollment", None)

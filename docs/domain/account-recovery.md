@@ -1,7 +1,7 @@
 # 계정 복구 SSOT
 
 **상태:** Active
-**최종 점검:** 2026-08-27
+**최종 점검:** 2026-09-10
 **코드 기준:** `apps/core/views/account_recovery.py`, `apps/domains/students/services/account_recovery.py`, `apps/domains/students/views/account_notification_views.py`, `apps/core/services/password.py`, `apps/api/common/auth_jwt.py`, `apps/domains/students/views/password_views.py`
 
 ## 1. 정본 경로
@@ -86,7 +86,7 @@ Student(tenant, deleted_at is null, name__iexact)
 ```
 Student(tenant, deleted_at is null, name__iexact, parent_phone == 요청번호)
   exactly one match
-  Parent(tenant, phone) user exists or ensure_parent_for_student()로 생성/연결
+  Parent(tenant, phone)와 연결 User가 이미 존재
 ```
 
 학부모 공개 아이디는 전화번호다.
@@ -140,6 +140,7 @@ generate_temp_password() -> 숫자 6자리
 - 사용자별 pending reset은 1개만 유지한다. 새 요청은 이전 pending reset을 대체한다.
 - 공개 임시비밀번호 요청은 대상 User row를 잠근 트랜잭션 안에서 pending reset과 알림톡 예약을 함께 처리한다. 같은 계정의 동시 요청은 순서대로 처리되며, 발송 실패 요청이 다른 요청의 성공한 pending reset을 복원/덮어쓰지 않는다.
 - 관리자/선생님 또는 학생/학부모 본인이 인증된 상태에서 수행하는 학생/학부모 비밀번호 변경은 즉시 reset 경로를 사용한다.
+- 관리자/선생님 reset은 4자 이상 임시 비밀번호를 반드시 직접 입력한다. 빈값을 자동 생성하거나 전화번호에서 파생하지 않는다.
 - 본인 변경은 `change_password_with_notice()`가 User row를 잠근 뒤 현재 비밀번호를 다시 확인한다. 따라서 같은 기존 비밀번호를 사용한 동시 요청은 하나만 성공한다.
 - 본인 변경과 staff reset은 비밀번호 hash, `must_change_password`, `token_version`, pending reset 정리, durable 알림톡 예약을 한 DB 트랜잭션으로 처리한다. 알림톡 예약 실패 시 이 상태가 모두 이전 값으로 돌아가며 현재 세션도 유지된다.
 - 이미 발급된 pending 임시 비밀번호는 본인 비밀번호 변경이나 staff/owner 강제
@@ -154,6 +155,18 @@ generate_temp_password() -> 숫자 6자리
   계속 사용할 수 있다. `--cleanup-bare` 삭제는
   대체 계정 비밀번호·membership 갱신과 같은 트랜잭션이며, 학원 조회나 후속
   갱신이 실패하면 명령도 실패하고 삭제를 포함한 변경 전체를 롤백한다.
+
+### 로그인 비밀번호 입력 보존
+
+로그인 비밀번호는 본인 변경·관리자 초기화·pending 임시 비밀번호에 저장된 입력과
+정확히 같은 값으로 검증한다. `TenantAwareTokenObtainPairSerializer`는 SimpleJWT가
+동적으로 생성한 password 필드의 `trim_whitespace=False`를 설정해 앞뒤 공백·탭·
+유니코드 공백을 제거하지 않는다. 로그인 ID의 정규화와 비밀번호 처리는 별개다.
+기존 비밀번호 hash나 계정 상태는 수정하지 않으며, 입력값을 trim한 뒤 재시도하는
+fallback도 두지 않는다. 공백이 없는 비밀번호 앞뒤에 공백을 추가한 입력은 거절한다.
+실제 JWT 발급 → 본인 변경 → 기존 access/refresh 거절 → 새 비밀번호 재로그인 →
+사용자/학생 정보 조회 및 발송 실패 롤백은
+`apps/api/common/tests/test_password_login_roundtrip.py`에서 검증한다.
 
 ## 5.1 Refresh token 계정 상태 검증
 
@@ -209,10 +222,10 @@ legacy 공개 호환 규칙:
 
 - 비인증/비staff `password_reset_send` 요청은 정본 비밀번호 복구 서비스로 위임하며 pending reset을 사용한다.
 - `send_existing_credentials` 요청은 정본 비밀번호 복구 서비스로 위임하며 pending reset을 사용한다.
-- 인증된 관리자/선생님 `password_reset_send` 요청은 정본 계정복구 서비스의 staff reset 경로로 위임한다. 비밀번호는 즉시 변경하고, 알림톡 발송 실패 시 비밀번호와 pending reset을 롤백한다.
+- 인증된 관리자/선생님 `password_reset_send` 요청은 정본 계정복구 서비스의 staff reset 경로로 위임한다. `temp_password` 4자 이상이 필수이며 비밀번호는 즉시 변경하고, 알림톡 발송 실패 시 비밀번호와 pending reset을 롤백한다.
 - 공개 호환 요청의 발송 대상은 요청자가 증명한 전화번호다. 저장된 다른 학생/학부모 번호로 대체 발송하지 않는다.
 - 조회 실패, 다건 매칭, parent side-effect 차단 케이스는 generic 200으로 응답하고 비밀번호를 변경하지 않는다.
-- `temp_password`, `skip_notify`는 인증된 관리자/선생님 요청에서만 호환 입력으로 허용한다. `skip_notify`는 SYSTEM_AUTO 계정 알림 발송을 억제하지 않는다.
+- `temp_password`는 인증된 관리자/선생님 요청에서만 즉시 변경값으로 사용한다. `skip_notify` 옵션은 제거됐으며 계정 알림을 끄는 경로는 없다.
 
 계정 알림톡 로그:
 

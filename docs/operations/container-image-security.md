@@ -7,6 +7,13 @@
 
 ## 빌드 입력과 런타임 패키지
 
+- `requirements/constraints.txt`의 DRF는 3.17.2로 고정한다. 두 공개 보안 수정
+  ([공식 릴리스](https://www.django-rest-framework.org/community/release-notes/#3172))은
+  JSON/URL-encoded 요청의 Django 본문 크기 제한 적용과 AdminRenderer의 GET 권한
+  보호다. Python 3.11과 기존 drf-spectacular/drf-yasg를 유지한다. JSON의 기본
+  2.5 MiB 제한을 해제하지 않으며 multipart 파일은 별도 업로드 검증·디스크 스풀
+  경계를 유지한다. `tests/test_drf_request_size_boundary.py`는 정상 한국어 JSON,
+  과대 JSON/Form의 HTTP 400, 3 MiB multipart 파일 성공·스풀을 검증한다.
 - 공통 Python 이미지는 `docker/Dockerfile.base`의 두 stage 모두 같은 upstream
   OCI index digest로 고정한다. 태그가 이동해도 승인되지 않은 OS 변경이 빌드에
   섞이지 않는다.
@@ -69,13 +76,13 @@
   통과시킨다. checkout한 전체 SHA는 설치 디렉터리의
   `academy-source-commit` 마커에 기록하고 최종 stage에서 다시 대조한다.
   FFmpeg가 shallow checkout SHA를 자체 version 문자열에 노출하는지에는
-  의존하지 않는다. Video source build만 공개 저장소용 GitHub
-  `ubuntu-24.04-arm`에서 네이티브로 수행하며, 다른 runtime 이미지는 기존
-  x64 runner와 QEMU 경계를 유지한다. commit을 바꿀 때는 두 수정의 ancestry,
+  의존하지 않는다. Video source build와 공통 base의 빌드·native 보안 검사는
+  공개 저장소용 GitHub `ubuntu-24.04-arm`에서 수행한다. API·Messaging·AI·Tools
+  runtime 이미지는 기존 x64 runner와 QEMU 경계를 유지한다. commit을 바꿀 때는 두 수정의 ancestry,
   전체 SHA, 설치 마커, HLS smoke,
   ECR 완료 스캔과 기존 High 상한 비증가를 함께 확인한다. Debian FFmpeg와
-  전이 패키지를 제거한 뒤 Video 이미지의 High 상한은 공통 base와 같은 8로
-  즉시 낮추며, 이 수치를 넘는 후보는 다시 실패 폐쇄한다.
+  전이 패키지를 제거한 뒤 Video 이미지의 High 상한도 공통 base와 함께 낮췄다.
+  현재 상한은 아래 후보 정책과 SSOT JSON을 따른다.
   API의 upload-complete probe는 실패 허용 보조 검사이고 Video worker가 최종 검증과
   변환을 소유한다. AI frame extraction은 OpenCV wheel에 포함된 FFmpeg 지원을 쓰며,
   wheel이 그 기능을 잃으면 AI 이미지 빌드가 즉시 실패한다. AI와 Video 런타임은
@@ -84,10 +91,92 @@
   OCR 런타임은 Debian `tesseract-ocr`의 필수 전이 의존성으로만 정확한 GLib
   패키지를 포함한다. OpenCV import/FFmpeg smoke와 완료된 ECR scan이 이 경계를
   봉인한다.
+- Debian Tesseract 실행 파일과 `libtesseract5`는 `libcurl4t64`를 직접 요구한다.
+  따라서 이 패키지는 OCR을 소유하는 API·AI·Tools에만 존재하고 Base·Video·Messaging은
+  포함하지 않는다. Trixie stable의 `8.14.1-2+deb13u4`는
+  CVE-2026-8924와 CVE-2026-8927 수정 전 버전이므로 세 OCR Dockerfile은 공식
+  `trixie-backports`의 `8.21.0-2~bpo13+1`을 exact pin으로 설치한다. 빌드 중
+  필요한 backports 의존성 폐쇄도 `libnghttp3-9=1.15.0-1~bpo13+1`,
+  `libngtcp2-16=1.22.1-1~bpo13+1`,
+  `libngtcp2-crypto-ossl0=1.22.1-1~bpo13+1`로 함께 고정한다. 그렇지 않으면 APT가
+  stable의 이전 HTTP/3 라이브러리를 유지해 libcurl 설치를 거부한다. 각
+  `dpkg-query` 결과가 exact pin과 다르면 즉시 실패하고, backports source와 APT
+  index는 같은 패키지 경계가 끝날 때 제거한다. 이 예외는 Debian suite 전환이나
+  전체 backports upgrade가 아니며 Tesseract의 필수 공유 라이브러리 폐쇄만 올린다.
+  `tests/test_ecr_critical_scan_gate.py`가 세 affected image와 세 unaffected image의
+  exact 경계를 검사한다. 세 Dockerfile의 `curl-fixed-system` target은 공통 base와
+  실제 OCR APT 계층만 따로 빌드·실행·scan할 수 있게 하며 최종 runtime은 그 target을
+  그대로 상속한다. 완료 ECR scan은 두 CVE가 어떤 affected digest에도 남아 있으면
+  기존 Critical gate에서 계속 실패 폐쇄한다.
+
+## Expat UTF-16 경계와 Python XML 호환성
+
+`CVE-2026-93990`은 잘못된 UTF-16 surrogate pair를 허용하는 문제다.
+공식 배포35532553325/c2ee의 새 API·AI digest에서 Debian `expat`
+`2.8.3-1~deb13u1` High1이 확인되어 development 이전에 중단됐다.
+2026-09-21 확인 시 [Debian tracker](https://security-tracker.debian.org/tracker/CVE-2026-93990)는
+trixie와 sid 모두 미수정으로 표시한다. Expat2.8.4로 버전만 올려도 해결되지 않는다.
+
+공통 base는 실제 upstream2.8.4와
+[공식 수정0cfd15b](https://github.com/libexpat/libexpat/commit/0cfd15bdf4b2c22d6b0df73610709dfb60921091),
+[공식 회귀28fcfba](https://github.com/libexpat/libexpat/commit/28fcfba540f6933aa8904a1514c4811713d2ab72)를
+`docker/native-security/patches/`에 검증된 바이트로 보관하고 Docker COPY 뒤 SHA-256을
+재검사한다. 빌드 시 GitHub 생성 `.patch`를 다시 내려받지 않아 바이트 드리프트가
+같은 커밋의 재빌드를 중단시키지 않는다. 2.8.4 원본 tarball도 SHA-256으로 고정한다.
+2.8.4에 남은 `FASTCALL`과 맞추기 위해 patch의
+context 한 줄만 정확히 변환하고 fuzz 없는 적용을 요구한다. 패키지 정체성은
+`Package: libexpat1`, `Source: expat`, 실제 backport 버전 `2.8.4+academy1-1`이다.
+아직 발표되지 않은 버전을 주장하거나 scanner에서 패키지를 숨기지 않는다.
+Debian 패키지가 제공하는 `libexpat.so.1`·`libexpatw.so.1` ABI를 모두 보존하고
+원본 라이선스를 포함한다. 빌드 입력·검증의 정본은 `docker/native-security/`다.
+
+고정된 Python OCI의 Python3.11.15는 Expat2.7.4를 `pyexpat`에 내장하므로
+시스템 라이브러리만 교체하면 그 취약 경로가 남는다. 같은 Python3.11.15 원본과
+SOABI를 확인한 뒤 `pyexpat`·`_elementtree` 두 확장만 함께 재빌드한다.
+`_elementtree`는 `pyexpat`의 Expat major/minor/micro CAPI가 정확히 같아야 하므로
+한 모듈만 교체하지 않는다. `pyexpat`가 수정된 시스템 `libexpat.so.1`에 연결되고
+별도 Expat 구현이나 임시 빌드 경로를 내장하지 않는지 검사한다. 실행 이미지에는
+두 확장과 빌드 출처 기록만 복사하며 CPython 전체나 컴파일 도구를 교체하지 않는다.
+
+공식 arm64 native 이미지 검사는 아래 성공·실패 경계를 모두 요구한다.
+
+- 원본2.8.4에 회귀 테스트만 적용했을 때 normal·`XML_MIN_SIZE` 빌드에서 해당
+  테스트만 실패하고, 잘못된 UTF-16 허용을 별도 동작 검사에서도 재현한다.
+- 수정 뒤 normal·`XML_MIN_SIZE` 빌드의 upstream 테스트가 성공한다.
+  upstream 테스트는 ushort wide ABI를 명시적으로 지원하지 않으므로 wide
+  라이브러리는 실제 parser의 정상/비정상 UTF-16 입력 및 한글·emoji의
+  16비트 callback 출력 바이트를 검사한다. 테스트를 위해 libc와 호환되지 않는
+  `wchar_t` ABI로 바꾸지 않는다. 이 출력 검사도 최종 서비스 이미지에서 실행한다.
+  시스템 라이브러리와 Python XML 두 경로에서 UTF-16 LE/BE의 정상 한글·emoji·
+  유효 surrogate pair는 허용하고 비정상 pair는 거부한다.
+- CPython의 pyexpat·ElementTree·C accelerator·minidom·SAX 회귀와 실제로 로드한
+  확장의 경로·버전 검증이 성공한다. 검사 파일이나 소스 비교만으로 대체하지 않는다.
+- 공통 base와 API·Video·AI·Tools의 마지막 APT 설치 뒤에도 정확한 package/source와
+  실제 Python XML 동작을 재검증한다. Messaging은 검증한 공통 base를 상속한다.
+
+빌드·호환성 실패는 이미지를 중단시키며 운영 데이터의 재처리나 변경을 유발하지
+않는다. 실제 수정과 ECR scan의 판정은 별도 증거다. 이 backport가 동작 검사를
+통과해도 새 여섯 digest의 완료 스캔에서 Critical/High0을 확인하기 전에는 배포
+가능하다고 판단하지 않는다. scanner가 계속 High로 분류하면 실패 상태를 유지하며
+상한·acceptance를 추가하거나 package/source 이름을 바꾸어 넘기지 않는다.
+향후 공식 수정본으로 전환할 때는 이 취약점 수정 포함 여부, 두 ABI·Python CAPI,
+같은 정상/비정상 입력 회귀와 새 완료 scan을 확인하고 임시 backport를 제거한다.
+전체 배포에는 기존 격리 개발·preprod·운영 연속성·runtime readback 게이트도 적용한다.
+
+첫 검증35534369800/c95e의 x64/QEMU 빌드는 45분 제한으로 종료됐다. 공식 로그에서
+normal·`XML_MIN_SIZE`의 수정 전 실패 재현과 수정 후 upstream·UTF-16 검사는
+성공했지만 wide configure 도중 종료되어 Python 두 확장과 최종 이미지는
+검증하지 못했다. 컴파일·검사 실패를 관측한 결과로 혼동하지 않는다.
+반복 실행이나 한도 증가 대신 Quality의 `native-security-image`와 배포의
+`prepare-build`만 기존 Video와 같은 ARM runner로 실행한다. 이미지 목표
+`linux/arm64`, 고정된 소스·검사·OIDC·배포 잠금·스캔, Quality의 45분 한도는
+유지한다. 실제 완료 여부와 소요 시간은 이 변경 후의 공식 실행으로 확인한다.
 
 ## Critical 및 High 판정
 
-1. 후보 manifest에 `source=built`인 각 digest의 scan 결과가 없으면 CI가
+1. 후보 manifest의 여섯 digest 모두(`source=built`와 `source=prior-success`)에
+   같은 완료 scan/현재 정책 판정을 적용한다. 알 수 없는 source는 실패한다.
+   각 digest의 scan 결과가 없으면 CI가
    repository-scoped `ecr:StartImageScan` 권한으로 scan을 호출한다. 재사용
    digest라는 이유로 scan을 건너뛰지 않는다. ECR이 동일 digest scan quota가
    이미 소비됐다고 응답해도 기존 scan의 `COMPLETE` readback은 끝까지 요구한다.
@@ -111,6 +200,86 @@
    사라져도 기준선이 stale하다고 실패하므로, 운영 scan readback을 근거로 identity와
    상한을 같은 PR에서 내려야 한다. 알 수 없는 항목, 누락된 기존 항목,
    identity/count 불일치 중 어느 것도 development/preprod로 진행할 수 없다.
+
+### 2026-09-20 후보 정책: 수정 패키지 설치와 예외 제거
+
+Debian trixie에 기존 예외 다섯 건의 수정본이 공개되어 만료를 연장하지 않는다.
+공통 base는 `libc6`·`libc-bin`을 명시적으로 설치해 `2.41-12+deb13u4` 이상,
+`libsqlite3-0`을 `3.46.1-7+deb13u2` 이상으로 검증한다.
+근거는 Debian의 [glibc 5450](https://security-tracker.debian.org/tracker/CVE-2026-5450),
+[glibc 5928](https://security-tracker.debian.org/tracker/CVE-2026-5928),
+[SQLite 11822](https://security-tracker.debian.org/tracker/CVE-2026-11822),
+[SQLite 11824](https://security-tracker.debian.org/tracker/CVE-2026-11824) 수정 상태다.
+OCR API·AI·Tools는 Tesseract의 전이 의존성 `libglib2.0-0t64`를
+`2.84.4-3~deb13u4` 이상으로 검증한다
+([GLib 58016](https://security-tracker.debian.org/tracker/CVE-2026-58016)).
+상위 Python OCI digest와 stable suite는 유지하며, native 검증은 실제 libc 로드와
+SQLite FTS5 생성·쓰기·검색도 실행한다.
+
+두 SSOT의 허용 identity는 비우고 여섯 repository의 High 상한을 모두 0으로
+낮춘다. 이는 새 후보가 통과해야 할 조건이며 운영 이미지가 이미 교체됐다는
+증거가 아니다. 공식 후보 workflow의 여섯 immutable digest 완료 scan에서
+Critical/High 0을 확인해야 development 이후로 진행할 수 있다. 새 finding이
+나오면 후보를 중단하고 패키지 원인을 다시 확인한다.
+이전 만료일·identity 교체·stale 판정 테스트는 `tests/fixtures/security-20260919/`의
+명시적 과거 스냅샷으로 유지한다. 해당 fixture는 배포 허가에 사용하지 않는다.
+
+### 과거 기준선 증거: 2026-09-12 완료 스캔
+
+후보 run [`34687613434`](https://github.com/guswls3028-art/academy-backend/actions/runs/34687613434)
+(source `a36a02bf9fba1b24adf2d561598f2ebcd463404f`, immutable tag
+`sha-a36a02bf9fba1b24adf2d561598f2ebcd463404f-run-34687613434-1`)의 여섯
+이미지를 `ap-northeast-2` ECR에서 digest로 직접 조회했다. 아래 scan은 모두
+`COMPLETE`이며 각각 Critical 1건, High 3건이다. AI에서 먼저 검출한 stale
+baseline 때문에 release는 development/preprod/production을 모두 건너뛰었고
+shared lock 반환 job은 성공했다. 이 증거는 운영 적용이나 실제 업무 성공을
+뜻하지 않는다.
+
+| Repository | Exact digest | Scan completed (UTC, 2026-09-12) |
+|---|---|---|
+| academy-base | `sha256:9ba1411263ed92d1acf58f9e168b814f76882ca6d3f910eb8b1e5c9226c6d832` | 10:46:26 |
+| academy-api | `sha256:df46e15a3cab016f870866916e5330fad7ffae7816fa926184d0b39be26c16f9` | 10:52:49 |
+| academy-video-worker | `sha256:2a24151e539a35a2770bb4514f2edfa075627f22a357cbff268048128f578f6f` | 10:52:02 |
+| academy-messaging-worker | `sha256:75ff3977f70ddc58bdc50a44a712e2730991eca61a4c79701efc222228e3f5ca` | 10:48:27 |
+| academy-ai-worker-cpu | `sha256:32057ee189e939726cbcc67fde29bdc5d4f1eb65cbaef224c11a3f3bab427543` | 11:08:08 |
+| academy-tools-worker | `sha256:3bf3d7db489ef78912fbb6d0865f9a3e706ef47df0c635aff0e2d3463ede974a` | 10:51:16 |
+
+여섯 repository에 남은 High exact identity는 `sqlite3` `3.46.1-7+deb13u1`의
+`CVE-2026-11822`, `CVE-2026-11824`와 `glibc` `2.41-12+deb13u3`의
+`CVE-2026-5928`뿐이다. Critical도 기존 acceptance인 `CVE-2026-5450` / `glibc` /
+`2.41-12+deb13u3` 하나뿐이며 새 예외는 없다.
+
+API·AI·Tools 각각에서 기존 High 13개가 모두 사라졌다. 삭제 대상은
+`glib2.0` `2.84.4-3~deb13u3`의 `CVE-2026-16118`, `CVE-2026-58010`부터
+`CVE-2026-58015`까지 7개와, `libssh2` `1.11.1-1+deb13u1`의
+`CVE-2026-58050`, `CVE-2026-58051`, `CVE-2026-66032`부터 `CVE-2026-66035`까지
+6개다. 따라서 이 13개 acceptance를 제거하고 세 repository의 High 상한을
+16에서 3으로 낮춘다. Base·Video·Messaging의 상한 3, 남은 세 acceptance의
+identity·repository·근거·`2026-09-19` 만료일, Critical acceptance 및 판정 코드는
+그대로 유지한다. 삭제한 identity가 같은 총수 안에서 다시 나타나도 신규 High로
+실패하며, 감소·증가·다른 package/version·만료도 기존대로 실패 폐쇄한다.
+
+ECR basic finding 응답은 설치 패키지 inventory나 `fixedVersion`을 제공하지
+않으므로, finding 부재를 패키지 제거 또는 vendor 수정의 증거로 확대 해석하지
+않는다. 이는 완료된 exact 후보 scan에 근거한 기준선 축소이며 package/build
+입력 변경이 아니다. 회귀 검증은 baseline에서 생성하지 않은 세 High fixture를
+여섯 repository에 적용하고, 삭제한 13개 identity가 세 OCR repository 각각에
+재유입될 때 차단됨을 확인한다.
+
+수정 PR을 병합한 뒤 새 head의 공식 전체 release로 새로운 immutable 후보와
+완료 scan을 만들어야 한다. main push가 전체 build를 선택하고 migration gate도
+허용하는 후보만 그 run을 사용한다. contract migration이 포함되면 자동 push는
+계속 차단되며, [배포 방식](deployment-modes.md)의 구버전 호환성 조건을 확인한
+release owner가 기존 run 종료 뒤 정확한 main SHA에서
+`workflow_dispatch`와 `allow_contract_migrations=true`로 전체 release를 진행한다.
+그 밖에 전체 build가 선택되지 않은 경우도 겹치지 않는 새 dispatch를 사용한다.
+예전 run의 재실행은 예전 checkout의
+기준선을 다시 사용한다. 실패 job만 재실행하면 attempt별 baseline artifact와
+image tag도 이전 성공 build와 달라지므로 복구 경로로 사용하지 않는다. 새 run도
+기존 development, isolated preprod/종료, production continuity gate를 모두
+통과해야 하며 기준선 변경이나 과거 scan만으로 운영 적용을 완료 처리하지 않는다.
+
+### 이전 후보의 판단 근거
 
 2026-08-20 후보 `sha-31d3845d9...-run-32316780655-1`의 완료된 ECR scan을
 재검토했다. Base·Video·Messaging은 glibc 1건과 Perl 3건으로 Critical 4건,
@@ -275,6 +444,79 @@ Critical 3건과 High 5건도 SSOT에서 함께 삭제한다. 다음 후보는 B
 Messaging·AI·Tools 여섯 완료 scan에서 새 두 CVE와 기존 Perl identity가 모두
 사라지고 High exact identity가 새 상한과 일치해야만 release를 진행한다. 실패한
 run은 development/preprod/production을 변경하지 않았고 shared lock을 반환했다.
+
+2026-09-06 성적 편집 인계 후보 `sha-0134ce8c...-run-34013277396-1`은
+development 진입 전 ECR High 게이트에서 신규 공개된 native-library finding을
+차단했다. 여섯 새 digest의 완료 scan을 직접 재조회한 결과 `CVE-2026-86145`
+(`pcre2` `10.46-1~deb13u1`)와 `CVE-2026-85091` (`zlib`
+`1.3.dfsg+really1.3.1-1`)은 여섯 repository 모두에 있었고,
+`CVE-2026-86140` (`libxml2`
+`2.12.7+dfsg+really2.9.14-2.1+deb13u3`)은 API·Video·AI·Tools 네
+repository에만 있었다. 실패한 run은 development/preprod/production을 모두
+건너뛰고 shared lock을 반환했다.
+
+이 세 finding은 High 상한이나 acceptance를 늘리지 않고
+`docker/native-security/build-fixed-libs.sh`가 공통 base build에서 수정한다.
+모든 원본과 patch는 HTTPS URL과 SHA-256으로 고정한다. zlib은 공개된
+`e3dc0a85...` 수정 커밋을 기존 `zlib1g` ABI로 패키징하고, pcre2는 수정 릴리스
+10.48의 8-bit shared library만 기존 `libpcre2-8-0` ABI로 패키징한다. libxml2는
+새 SONAME으로 직접 교체하지 않는다. trixie `deb13u3` 전체 patch series를 먼저
+적용한 2.9.14 source에 공식 `d1686f91...` bounds-check patch만 backport하여
+`libxml2.so.2`를 유지한다. 세 package는 base runtime의 같은 Debian package
+이름을 원자적으로 upgrade하므로 이후 service `apt` layer가 취약 버전으로
+downgrade하지 않는다.
+
+libxml2 원본은 checksum-pinned GNOME 2.9.14 전체 tarball을 사용하고, Debian이
+`+dfsg` repack에서 제외한 upstream test fixture까지 builder 안에서만 실행한다.
+runtime 패키지에는 test fixture나 build tool을 포함하지 않는다. Base build는 세
+upstream test suite, exact package 최소 버전, Python zlib
+round-trip, libxml2 dynamic load, PCRE2 match를 모두 확인한다. base/security 파일이
+바뀐 PR은 `Native security arm64 image contract`가 production과 같은 arm64 이미지를
+실제로 build하고 같은 ABI 확인을 컨테이너 안에서 반복한다. 어떤 source hash,
+patch, build, ABI load 또는 version check가 달라도 이미지 생성 자체가 실패한다.
+다음 후보는 기존 상한 Base 3, API 16, Video 3, Messaging 3, AI 16, Tools 16을
+그대로 만족하면서 세 CVE가 여섯 완료 scan에 없음을 입증해야만 persistent
+development, isolated preprod, production 순서로 진행한다.
+
+첫 수정 후보 run `34024203103`은 여섯 이미지를 정상 build했지만 AI 완료
+scan에서 `CVE-2023-45853`을 Critical로 다시 탐지해 같은 위치에서 실패
+폐쇄했다. development 이후 단계는 실행되지 않았고 shared lock은 반환됐다.
+ECR이 보고한 package는 `zlib` / `1.3.3~academy.git20260904.e3dc0a8-1`이었다.
+그러나 이 CVE는 zlib core가 아니라 `contrib/MiniZip`에만 해당하고 Academy
+runtime package에는 `libz.so`만 들어간다. 또한 고정한 upstream commit의
+`zlib.h` 선언은 `1.3.2.1-motley`이며 같은 commit에 `CVE-2026-85091`의
+`gz_vacate` 수정이 존재한다.
+
+후속 package는 Debian의 `+really` 관례를 사용한
+`1:1.3.3+really1.3.2.1+academy.git20260904.e3dc0a8-1`로 scanner의 1.3.3
+수정 경계보다 뒤에 정렬하면서 실제 upstream snapshot 1.3.2.1도 함께 기록한다.
+source package는 계속 `zlib`으로 노출하여 이후의 실제 libz finding도 scanner가
+탐지할 수 있게 하고, binary package와 ABI도 `zlib1g` / `libz.so.1`로 유지한다.
+build와 runtime 검증은 upstream version 선언, `gz_vacate` 수정 줄, Debian version
+정렬 범위 `(1:1.3.3, 1:1.3.4)`, MiniZip·pyminizip 파일 부재, 취약 MiniZip symbol
+`zipOpenNewFileInZip4_64` 부재를 모두 확인한다. 이 변경은 finding acceptance나
+service별 High 상한을 추가하지 않는다. 다음 후보의 여섯 완료 scan이 두 zlib
+CVE의 부재와 기존 exact 상한을 모두 입증하기 전에는 release를 진행하지 않는다.
+
+후속 run `34029279591`도 모든 service image를 build했지만 ECR이 semver 형태의
+custom version을 upstream MiniZip package처럼 분류하여 같은 Critical finding을
+다시 반환했다. development, preprod, production은 모두 실행되지 않았고 shared
+lock은 반환됐다. 비교 대상으로 같은 ECR scanner가 Debian 기본 version
+`1.3.dfsg+really1.3.1-1`에는 실제 libz core finding인 `CVE-2026-85091`만
+반환하고 MiniZip finding은 반환하지 않은 것을 확인했다. 이 비교 readback은
+run `34013277396`의 `academy-ai-worker-cpu` digest
+`sha256:80e269750cd3676516e66f10d0c613b579e13ddb56f488299c980a1da510bf03`
+완료 scan이며, 전체 31개 finding 중 zlib finding은 해당 High 1개뿐이었다.
+
+따라서 fixed package는 source와 binary identity를 `zlib` / `zlib1g`로 계속
+노출하되 version을 Debian 계열과 같은
+`1:1.3.dfsg+really1.3.2.1+academy.git20260904.e3dc0a8-1`로 기록한다. 이는
+실제 upstream snapshot `1.3.2.1`을 숨기지 않고, 이전 Debian runtime
+`1:1.3.dfsg+really1.3.1-1`보다 뒤에 정렬되며 다음 upstream snapshot보다
+앞에 정렬된다. checksum-pinned source, `gz_vacate` 수정, MiniZip 파일·취약 symbol
+부재, zlib ABI 검증과 기존 acceptance·High 상한은 바꾸지 않는다. 다음 release는
+ECR 완료 scan에서 실제 core finding과 MiniZip 오분류가 모두 없는 것을 확인해야만
+development 이후 단계로 진행한다.
 
 집중 검증:
 

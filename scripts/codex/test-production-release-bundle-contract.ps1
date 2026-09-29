@@ -107,7 +107,7 @@ $evidence = [pscustomobject]@{
             workflowName = "Frontend Quality Gate"
             jobs = @(
                 [pscustomobject]@{ name = "Deploy to Cloudflare Pages"; status = "completed"; conclusion = "success" },
-                [pscustomobject]@{ name = "E2E 왕복 테스트 + tenant availability"; status = "completed"; conclusion = "success" }
+                [pscustomobject]@{ name = "Production read-only user flow + tenant availability"; status = "completed"; conclusion = "success" }
             )
         }
     }
@@ -145,6 +145,12 @@ $missingVerification.Backend.Run.jobs = @(
     [pscustomobject]@{ name = "Release shared production mutation lock"; status = "completed"; conclusion = "success" }
 )
 Assert-Throws { Assert-AcademyProductionReleaseBundle -Evidence $missingVerification } "Verify deployment"
+
+foreach ($invalidConclusion in @("skipped", "failure")) {
+    $failedReadOnly = $evidence | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    $failedReadOnly.Frontend.Run.jobs[1].conclusion = $invalidConclusion
+    Assert-Throws { Assert-AcademyProductionReleaseBundle -Evidence $failedReadOnly } "Production read-only user flow"
+}
 
 $staleFrontend = $evidence | ConvertTo-Json -Depth 12 | ConvertFrom-Json
 $staleFrontend.Frontend.LiveVersions[0].Version = "4444444444444444444444444444444444444444"

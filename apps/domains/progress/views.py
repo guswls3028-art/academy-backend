@@ -6,6 +6,7 @@ from rest_framework.viewsets import ReadOnlyModelViewSet
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.filters import SearchFilter, OrderingFilter
 from django_filters.rest_framework import DjangoFilterBackend
+from drf_spectacular.utils import extend_schema
 
 from apps.core.permissions import TenantResolvedAndMember, TenantResolvedAndStaff
 from .models import ProgressPolicy, SessionProgress, LectureProgress, ClinicLink, RiskLog
@@ -14,6 +15,7 @@ from .serializers import (
     SessionProgressSerializer,
     LectureProgressSerializer,
     ClinicLinkSerializer,
+    ClinicLinkUnresolveSerializer,
     RiskLogSerializer,
 )
 from .filters import (
@@ -23,7 +25,7 @@ from .filters import (
     ClinicLinkFilter,
     RiskLogFilter,
 )
-from .services.clinic_resolution_service import ClinicResolutionService
+from .services.clinic_resolution_service import ClinicResolutionConflict, ClinicResolutionService
 from .services.clinic_remediation_service import ClinicRemediationService
 
 
@@ -386,6 +388,7 @@ class ClinicLinkViewSet(ReadOnlyModelViewSet):
             "clinic_link_id": result.clinic_link_id,
         })
 
+    @extend_schema(request=ClinicLinkUnresolveSerializer, responses={200: ClinicLinkSerializer})
     @action(detail=True, methods=["post"])
     def unresolve(self, request, pk=None):
         """
@@ -393,13 +396,24 @@ class ClinicLinkViewSet(ReadOnlyModelViewSet):
         통과 취소 (되돌리기).
         """
         link = self.get_object()
-        if not link.resolved_at:
+        payload = ClinicLinkUnresolveSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        expected_resolved_at = payload.validated_data.get("expected_resolved_at")
+        if expected_resolved_at is None and not link.resolved_at:
             return Response(
                 {"detail": "미해소 상태입니다."},
                 status=drf_status.HTTP_400_BAD_REQUEST,
             )
 
-        result = ClinicResolutionService.unresolve(clinic_link_id=link.id)
+        try:
+            result = ClinicResolutionService.unresolve(
+                clinic_link_id=link.id, expected_resolved_at=expected_resolved_at,
+            )
+        except ClinicResolutionConflict as exc:
+            return Response(
+                {"detail": str(exc), "code": "clinic_resolution_conflict"},
+                status=drf_status.HTTP_409_CONFLICT,
+            )
         if not result:
             return Response(
                 {"detail": "해소 취소에 실패했습니다."},

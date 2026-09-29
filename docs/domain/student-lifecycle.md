@@ -1,7 +1,7 @@
 # 학생 생명주기 SSOT
 
 **상태:** Active
-**최종 점검:** 2026-08-27
+**최종 점검:** 2026-09-10
 **코드 기준:** `apps/domains/students/services/lifecycle.py`, `apps/domains/enrollment/services/lifecycle.py`, `apps/domains/students/views/student_views.py`
 
 ## 1. 상태
@@ -45,7 +45,7 @@ SSOT: `soft_delete_student(student, tenant=...)`
 
 ## 3. Restore
 
-SSOT: `restore_student(student, tenant=..., profile_data=None)`
+SSOT: `restore_student(student, tenant=..., profile_data=None, parent_initial_password=None)`
 
 - `_del_` 접두사에서 원래 `ps_number`를 복원한다.
 - 같은 테넌트 활성 학생과 아이디 충돌이 있으면 실패한다.
@@ -57,7 +57,13 @@ SSOT: `restore_student(student, tenant=..., profile_data=None)`
   `ACTIVE`/`PENDING`이어도 `INACTIVE`로 유지한다.
 - 활성으로 돌아온 enrollment의 수강료 연결은 다시 계산하지만, 기존 enrollment를
   복원하는 동작만으로 첫 계정 안내를 재발송하지 않는다.
-- 복원은 비밀번호를 재발급하지 않는다. 가입 안내 알림톡도 새 비밀번호처럼 보내지 않는다.
+- 정상 학부모 계정이 있으면 복원은 그 비밀번호를 바꾸거나 계정 안내를 재발송하지
+  않는다. legacy 데이터에 학부모 계정이 없거나 비밀번호를 사용할 수 없으면 임의값을
+  만들지 않고 `parent_account_password_required`로 실패한다.
+- 교직원 `bulk_restore`는 선택 입력 `parent_initial_password`를 받을 수 있다. 이 값은
+  누락·사용불가 학부모 계정에만 적용되며 정상 계정에는 적용되지 않는다. 새 자격 증명을
+  만든 경우 학부모 알림톡도 같은 transaction에서 예약하고, 예약 실패 시 해당 학생
+  복원과 계정 생성을 함께 rollback한다.
 
 `enrollment.0002_student_deletion_status_snapshot` 적용 전에 이미 삭제되어 있던 학생의
 원래 수강 상태는 과거 `INACTIVE` 덮어쓰기로 복원할 수 없다. 마이그레이션은 이를
@@ -100,6 +106,18 @@ SSOT: `permanently_delete_students(tenant=..., student_ids=[...])`
 - lecture section assignment
 - fees: `StudentFee`, `StudentInvoice`, `InvoiceItem`, `FeePayment`
 - submissions/results/homework/progress/video/clinic/community의 학생 참조
+  - `StudentReportedScore`, 학생 지원 세션, 비활성 수강·직접 영상 권한을
+    학생 행 삭제 전에 같은 tenant 범위로 정리한다.
+  - 수강이 먼저 삭제되어 `Submission.enrollment=NULL`인 제출도 삭제 대상
+    학생 전용 계정의 tenant-scoped submission이면 포함한다. 같은 tenant의
+    Parent/Staff/비학생 역할도 가진 계정은 `Submission.user`만으로 학생 owner를
+    추측하지 않고 삭제 대상 enrollment로 직접 귀속된 submission만 포함한다.
+    따라서 해당 계정이 다른 학생을 위해 만든 제출과 media는 보존한다.
+    제출 도메인이 `SubmissionMedia`/legacy `file_key` cleanup intent와 child 행을
+    먼저 기록한 뒤 부모 `Submission`을 삭제한다. OMR batch 이력은 보존하고 해당
+    submission 참조만 `NULL`로 바꾼다.
+  - `WrongNotePDF.file_path`도 같은 durable intent에 Storage 버킷 대상으로 기록한다.
+    제출 object는 AI 버킷 대상이므로 같은 문자열 key여도 버킷을 혼동하지 않는다.
 - 삭제 대상 테넌트의 student 멤버십과 pending password reset
 - 다른 활성 멤버십·Parent·Staff·staff-role 멤버십이 없는 orphan `User`
 
@@ -108,7 +126,24 @@ SSOT: `permanently_delete_students(tenant=..., student_ids=[...])`
 - 삭제 대상 학생은 반드시 같은 tenant의 soft-deleted 학생이어야 한다.
 - 같은 사용자가 다른 테넌트나 같은 테넌트의 비학생 역할로 남아 있으면 User와 해당 멤버십을 보존한다.
 - 보존되는 사용자가 과거 soft delete 때문에 비활성화되어 있고 활성 멤버십이 남아 있으면 재활성화한다.
-- tenant-owned child row가 다른 tenant로 깨져 있으면 조용히 삭제하지 않고 `cross_tenant_reference`로 중단한다.
+- Student, Enrollment, Submission reverse graph의 tenant-bearing 직접 FK와 소유
+  exam/session/lecture/video/batch tenant가 다르면 어떤 DB/R2 변경보다 먼저
+  `409 cross_tenant_reference`로 중단한다. legacy OMR batch item의 nullable
+  `tenant_id`는 parent batch가 exact tenant일 때만 허용하고 submission 참조만 비운다.
+- 삭제 대상 object key를 같은 owning bucket의 다른 submission/media 또는 등록된
+  inventory/exam/community/student/matchup/tools/public/video owner가 참조하면 R2 object를
+  보존한다. 대상 tenant·행·버킷을 키 문자열만으로 추측하지 않는다.
+- DB transaction은 object를 삭제하지 않는다. `(tenant, bucket, object_key)` cleanup
+  intent가 DB 삭제와 함께 commit된 다음 callback이 처리한다. provider 실패는 raw
+  예외 대신 `storage_delete_failed`를 남기며 pending/failed intent는 반복 실행해도
+  완료 key를 다시 처리하지 않는다. 15분 지난 PROCESSING claim만 token으로 회수한다.
+- 영구삭제 API 성공 응답은 `deleted`와
+  `storage_cleanup: {pending, failed}`를 반환한다. 저장 namespace 불일치 또는 진행 중
+  media upload는 `409 storage_cleanup_scope_mismatch`로 전체 mutation을 중단한다.
+- `SubmissionMedia.UPLOADING`은 1시간 upload lease 동안 같은 `409`로 보호한다.
+  lease가 지난 row는 중단된 업로드로 회수해 durable AI cleanup intent에 넣고 DB
+  삭제를 진행한다. 늦게 끝난 PUT의 finalize는 row와 cleanup intent를 다시 잠가
+  확인하며, 소유권을 잃었으면 row를 되살리지 않고 key를 동일 intent로 재정리한다.
 - 현재 cross-domain 정리는 guarded raw SQL graph다. 장기 목표는 각 도메인 cleanup hook/event로 분해하는 것이다.
 
 ## 5. Retention 운영
@@ -116,6 +151,10 @@ SSOT: `permanently_delete_students(tenant=..., student_ids=[...])`
 - soft-deleted 학생은 30일 보관 후 purge 대상이다.
 - 운영 스케줄은 EventBridge `academy-v1-purge-soft-deleted`: 매일 03:15 KST.
 - 실행 명령은 API 컨테이너에서 `python manage.py purge_deleted_students`.
+- cleanup intent만 재시도할 때는
+  `python manage.py process_submission_storage_cleanup --limit 1000`을 사용한다.
+  매일 purge 명령도 학생 대상 유무와 무관하게 pending/failed intent를 먼저·후에
+  재시도한다.
 - 수동 점검:
 
 ```powershell
@@ -129,7 +168,8 @@ python manage.py purge_deleted_students
 
 - soft delete, restore, permanent delete는 학생 생명주기 테스트에 포함되어야 한다.
 - soft delete/restore 변경 시 `ACTIVE`/`PENDING`/`INACTIVE` 보존, 삭제 중 종료된 강의
-  비활성 유지, 계정 안내 미발송, 삭제 학생 수강/차시 등록 차단을 함께 검증한다.
+  비활성 유지, 정상 계정의 안내 미발송, 명시 비밀번호로 복구한 학부모 계정의 필수
+  안내와 실패 rollback, 삭제 학생 수강/차시 등록 차단을 함께 검증한다.
 - PostgreSQL에서는 구 런타임 형태의 상태 일괄갱신→신 런타임 복원과, 역순으로 겹치는
   수강/차시 batch write가 교착 없이 끝나는지 함께 검증한다.
 - permanent delete 변경 시 최소 검증:
@@ -137,5 +177,11 @@ python manage.py purge_deleted_students
   - cross-tenant User 보존 및 재활성화
   - same-tenant parent/staff/teacher 계정 보존
   - fee/section/video-comment dependency cleanup
+  - reported score/support session/video entitlement cleanup
+  - detached submission media R2/row cleanup과 공유 object 보존
+  - AI/Storage bucket 분리, DB rollback 전 object 미삭제, 부분 실패 재시도
+  - 오답노트 PDF의 동일한 post-commit cleanup과 scheduled retry
+  - OMR batch submission 참조 nulling
+  - `Student`/`Enrollment`/`Submission` reverse FK graph 및 storage owner registry drift
   - corrupt cross-tenant child reference 차단
   - purge/duplicate cleanup command routing

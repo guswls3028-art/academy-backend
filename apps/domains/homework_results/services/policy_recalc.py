@@ -49,6 +49,8 @@ def _recalc_scores(*, queryset) -> int:
             changed.append(score_snapshot)
 
     if changed:
+        # Policy changes are not teacher reviews of newly submitted evidence.
+        # Preserve reviewed_submission_revision even though updated_at changes.
         HomeworkScore.objects.bulk_update(
             changed,
             fields=["max_score", "passed", "clinic_required", "updated_at"],

@@ -261,6 +261,25 @@ def list_wrong_notes_for_enrollment(
         ),
     )
 
+    # Derive display positions from the full exam, not the filtered wrong-note page.
+    from apps.support.omr.score_shape import get_exam_score_shape
+
+    essay_indexes_by_exam: dict[int, dict[int, int]] = {}
+    for exid, exam in exams_map.items():
+        if exam.essay_numbering != "separate":
+            continue
+        shape = get_exam_score_shape(exam)
+        essay_ids = sorted(
+            (
+                question_id for question_id, kind in shape.question_kind_by_id.items()
+                if kind == "essay"
+            ),
+            key=lambda question_id: shape.question_number_by_id[question_id],
+        )
+        essay_indexes_by_exam[exid] = {
+            question_id: index for index, question_id in enumerate(essay_ids, start=1)
+        }
+
     answer_key_cache: Dict[int, Dict[str, Any]] = {
         exid: _get_answer_key_map(exid, tenant_id=tenant_id)
         for exid in exam_ids
@@ -304,6 +323,8 @@ def list_wrong_notes_for_enrollment(
 
             "question_id": int(item.question_id),
             "question_number": _safe_int(question_number),
+            "essay_numbering": getattr(exam, "essay_numbering", "continuous"),
+            "essay_index": essay_indexes_by_exam.get(exid, {}).get(int(item.question_id)),
             "answer_type": str(answer_type),
             "question_image_url": (
                 question_image_url(question=qobj, tenant_id=tenant_id) if qobj else ""

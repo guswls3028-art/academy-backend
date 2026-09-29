@@ -4,10 +4,10 @@ from dataclasses import dataclass
 from typing import Mapping, Optional
 
 from rest_framework import status
+from academy.adapters.db.django import repositories_video as video_repo
 
 from apps.domains.enrollment.selectors import active_enrollments_for_students
 from apps.domains.student_app.permissions import get_request_student
-from apps.domains.students.selectors import active_students_for_parent, student_for_tenant_user
 from apps.domains.video.models import AccessMode
 from apps.domains.video.policy import (
     is_video_progress_complete,
@@ -59,23 +59,8 @@ def get_students_for_request(request):
     tenant = getattr(request, "tenant", None)
     if not tenant or not getattr(request.user, "is_active", False):
         return []
-
-    student = student_for_tenant_user(tenant, request.user, deleted="active")
-    if student:
-        return [student]
-
-    parent = getattr(request.user, "parent_profile", None)
-    if parent:
-        active_students = active_students_for_parent(tenant, parent)
-        if "HTTP_X_STUDENT_ID" in request.META:
-            header_id = request.META.get("HTTP_X_STUDENT_ID")
-            try:
-                selected = active_students.filter(id=int(header_id)).first()
-            except (TypeError, ValueError):
-                selected = None
-            return [selected] if selected else []
-        return list(active_students)
-    return []
+    student = get_request_student(request)
+    return [student] if student else []
 
 
 def direct_entitlements_for_request_student(request, *, student=None):
@@ -223,7 +208,11 @@ def student_can_access_session(request, session) -> bool:
     return active_enrollments_for_students(
         tenant=tenant,
         students=students,
-    ).filter(lecture=lecture).exists()
+    ).filter(
+        lecture=lecture,
+        session_enrollments__session=session,
+        session_enrollments__tenant=tenant,
+    ).exists()
 
 
 def _video_tenant_id(video) -> int | None:
@@ -301,6 +290,8 @@ def resolve_student_session_video_context(
     except StudentVideoAccessError as exc:
         active_error = exc
         enrollment = None
+    if enrollment is not None and not video_repo.session_enrollment_exists(session, enrollment):
+        raise StudentVideoAccessError("이 차시의 영상을 볼 수 있는 권한이 없습니다.")
     inactive_entitlements = {}
     direct_entitlements = {}
     if enrollment is None and not is_public:
@@ -519,6 +510,8 @@ def resolve_student_video_access_context(
     except StudentVideoAccessError as exc:
         active_error = exc
         enrollment = None
+    if enrollment is not None and not video_repo.session_enrollment_exists(video.session, enrollment):
+        raise StudentVideoAccessError("이 차시의 영상을 볼 수 있는 권한이 없습니다.")
     inactive_entitlement = None
     direct_entitlement = None
     if enrollment is None:

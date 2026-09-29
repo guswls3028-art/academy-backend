@@ -202,12 +202,25 @@ function Assert-PinState {
             }
             $stderr = [string]$result.StandardErrorContent
             $stdout = [string]$result.StandardOutputContent
-            $isMissingExpectedContainer = (
+            # A freshly launched instance can reach SSM-command-runnable before
+            # cloud-init finishes installing/starting Docker (the SSM agent
+            # routinely comes up first). Treat that startup race the same as
+            # "container not up yet" -- retry within the existing 300s budget
+            # instead of failing the deploy on a instance that just needs more
+            # boot time. The final digest-match assertion below is unchanged,
+            # so this only widens what counts as "not ready yet", never what
+            # counts as a real mismatch.
+            $isRuntimeNotReadyYet = (
                 [string]$result.Status -eq "Failed" -and
                 [string]::IsNullOrWhiteSpace($stdout) -and
-                $stderr -match "No such (?:object|container):\s*['`"]?$escapedContainer['`"]?"
+                (
+                    $stderr -match "No such (?:object|container):\s*['`"]?$escapedContainer['`"]?" -or
+                    $stderr -match "docker:\s*command not found" -or
+                    $stderr -match "Cannot connect to the Docker daemon" -or
+                    $stderr -match "exit status 127"
+                )
             )
-            if (-not $isMissingExpectedContainer) {
+            if (-not $isRuntimeNotReadyYet) {
                 throw "Runtime verification failed on $($instance.InstanceId): status=$($result.Status) stderr=$($stderr.Trim())"
             }
             if ($startupElapsed -ge 300) { break }

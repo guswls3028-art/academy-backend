@@ -1,8 +1,8 @@
 # Student Domain Core SSOT
 
 **Status:** Active
-**Last checked:** 2026-08-30 KST
-**Truth basis:** code inspection of `apps/domains/students/`, `apps/core/views/account_recovery.py`, `apps/core/services/password.py`, `apps/domains/results/services/submission_scope_guard.py`, `apps/domains/results/services/student_result_service.py`, and frontend shared student contracts.
+**Last checked:** 2026-09-20 KST
+**Truth basis:** code inspection of `apps/domains/students/`, `apps/domains/enrollment/`, staff attendance projections, `apps/core/views/account_recovery.py`, `apps/core/services/password.py`, `apps/domains/results/services/submission_scope_guard.py`, `apps/domains/results/services/student_result_service.py`, and frontend shared student contracts.
 
 This document is the integration SSOT for the student domain. More specific
 documents still own their detailed contracts:
@@ -41,6 +41,54 @@ equivalent native binary ordering. The shared list rules are owned by
 `data-list-ordering.md`.
 
 ## 1. Canonical Student Graph
+
+### Lecture handoff memo
+
+`Enrollment.lecture_memo` is a shared staff handoff note for exactly one
+tenant/student/lecture, for example “use video for every session of this course”.
+Every session roster of that lecture reads the same enrollment field; another
+lecture has a different enrollment and note. It does not change attendance or
+video entitlement automatically. There is no new session-specific or personal
+private memo. Existing `Student.memo` (student-wide) and `Attendance.memo`
+(session attendance) retain their data and behavior; neither is copied into the
+new field. Existing student/parent profile responses already expose `Student.memo`.
+
+Active tenant memberships with role `owner`, `admin`, `staff`, or `teacher` use
+the existing `TenantResolvedAndStaff` boundary. Parent/student roles cannot read
+or write this lecture memo, including their own enrollment. The student/parent
+profile API does not project the new field. Staff enrollment, session-enrollment,
+and attendance serializers expose `lecture_memo` and `lecture_memo_updated_at`
+(the enrollment's `updated_at`). The two roster serializers also expose
+read-only `student_memo`, converting a null existing student memo to an empty
+string without changing stored data. No per-row student fetch is needed.
+
+`PATCH /api/v1/enrollments/{id}/lecture-memo/` accepts exactly
+`{"lecture_memo": "text"}` plus required `X-Expected-Updated-At` from the last
+read. Text is at most 2,000 characters, retains whitespace, and an empty string
+clears it. Success returns `{id, lecture_memo, lecture_memo_updated_at}`.
+The endpoint locks the tenant-scoped enrollment before checking the timestamp;
+missing/malformed timestamps or invalid bodies return 400, stale writes return
+409 with `code: stale_resource` and `current_updated_at`, and a foreign/missing
+enrollment returns 404 for an otherwise authorized caller. On conflict, retain
+the draft and reload the current memo before deliberate retry; never retry
+silently with a new timestamp. Frontend interactions are owned by the frontend
+attendance module documentation.
+
+Only this endpoint writes the field. Generic enrollment updates cannot write
+memo fields or save a stale memo incidentally; memo updates do not run fee,
+account-notification, or enrollment-status side effects. The migration adds an
+empty column with a persistent database default so old runtime inserts remain
+compatible during rolling deployment. Old runtimes do not know or overwrite the
+new column. There is no data-copy migration or new identity graph.
+
+Inactivation/reactivation and student soft-delete/restore preserve the memo.
+An explicit hard deletion of its enrollment/student/lecture removes it with that
+enrollment; a fresh enrollment after hard deletion starts empty. Automated
+disposable-enrollment correction refuses a nonempty memo as authored data.
+Tests: `apps/domains/enrollment/tests/test_lecture_memo.py` covers distinct admin
+and staff actors, role/tenant denial, profile non-disclosure, shared session
+projections, other-lecture isolation, old notes, clear/reload, stale-write
+protection, lifecycle preservation, cleanup protection, and old-runtime inserts.
 
 The durable student graph is:
 
@@ -84,10 +132,14 @@ Required invariants:
 - active student means `Student.deleted_at IS NULL`.
 - `Student.user` is required.
 - `Student.ps_number` is tenant-unique and is the student login display ID.
+- When a student phone is supplied, it is the requested login ID and any collision
+  fails explicitly. A generated ID is used only when both the explicit ID and
+  student phone are absent; a collision never silently changes the saved ID.
 - A student login display ID must also be unique across every active login
   identity in the tenant, including parent accounts. If a no-phone student's
-  requested ID equals the parent phone, creation assigns a generated student
-  ID instead; profile changes reject the collision. This prevents a shared
+  requested ID equals the parent phone, creation and profile changes reject the
+  collision instead of silently assigning another ID. A generated student ID is
+  used only when the caller leaves the ID empty. This prevents a shared
   initial password from matching both the student and parent account and
   making login ambiguous.
 - `Student.ps_number` and the inventory copies that scope student files use the
@@ -133,7 +185,7 @@ Current canonical entry points:
 | Excel/worker import | `ExcelParsingService` -> `import_students_from_rows()` |
 | lecture/enrollment Excel import | `resolve_student_import_row()` |
 | signup approval | `approve_registration_request()` -> reuse exact active identity or `create_student_account(password_hash=...)` |
-| admin/student profile write | `update_student_profile()` |
+| admin/student profile write | `update_student_profile()`; student self-service cannot change `parent_phone`/Parent linkage |
 | deleted conflict restore/delete | `restore_student()` / `permanently_delete_students()` through import conflict resolver |
 
 New-student JSON/Excel import resolves each row inside the requested tenant in
@@ -302,8 +354,8 @@ Current rules:
 - staff/teacher password reset through `/students/password_reset_send/` is a
   privileged path:
   - authenticated active owner/admin/teacher/staff membership is required for
-    `temp_password`; `skip_notify` is accepted only as legacy input and does
-    not suppress SYSTEM_AUTO account notices;
+    `temp_password`; account-notice opt-out parameters are not part of the
+    contract and cannot suppress SYSTEM_AUTO account notices;
   - student target may resolve by `student_ps_number` or verified student phone;
   - parent target resolves by student name + parent phone;
   - password changes immediately;
@@ -415,7 +467,18 @@ The passcard keeps the unresolved `ClinicLink` verdict in `current_result` and r
 the separate `passcard_state` (`PASSED`, `CLINIC_REQUIRED`, or
 `BOOKING_CONFIRMED`). A future-or-today `booked` reservation yields
 `BOOKING_CONFIRMED` without resolving any `ClinicLink`. After check-in, `attended`
-keeps that state across local-date changes until `completed_at` is recorded. Completion
+keeps that state across local-date changes until `completed_at` is recorded, but only
+for assessments on or before the clinic's scheduled date. Every confirming or visible
+booking must be on or after the latest live unresolved assessment session date across
+the student's active enrollments. A session without a date uses the tenant-local date
+of its `ClinicLink.created_at`; an undated source must not permit unlimited reuse of
+old attendance. Same-date clinics remain supported because the assessment schedule
+owns a date, not an exam-end timestamp. An older attended clinic (including one with
+checkout recorded but no completion) cannot confirm a newer assessment. The API
+selects the next qualifying booking instead; no attendance, booking, score, or
+`ClinicLink` history is rewritten by this read projection. A future booking scheduled
+before a future assessment is also insufficient. Resolved, removed, or completed
+sources do not move the cutoff. Completion
 ends the booking state immediately: if any link is still unresolved, the student
 returns to `CLINIC_REQUIRED` until the next confirmed booking; if every link has been
 resolved, the state is `PASSED`. `cancelled`, `rejected`, and `no_show` never confirm
@@ -430,12 +493,19 @@ inherit this projection.
 `name_highlight_clinic_target` is the administrative projection of the same
 student-level state, not an independent attendance flag. It is `true` only while
 the student's passcard is `CLINIC_REQUIRED`. A confirmed future/today booking or an
-incomplete `attended` clinic changes the passcard to `BOOKING_CONFIRMED` and removes
+incomplete `attended` clinic that meets the same assessment-date cutoff changes the
+passcard to `BOOKING_CONFIRMED` and removes
 the yellow name highlight from every unresolved enrollment for that student.
 `pending` does not remove it. When clinic work receives `completed_at`, unresolved
 links make both the passcard and yellow highlight return immediately; resolving all
 links makes the passcard `PASSED` and keeps the highlight off. All projections use
 tenant-scoped student and enrollment relationships and fail closed on missing data.
+
+Regression entry: `apps.domains.clinic.tests.StudentClinicPermissionAPITest` exercises
+old attendance, a future booking before the assessment, same-day positive booking,
+reload consistency, and a later requirement in another active lecture. Both idcard
+and `compute_clinic_highlight_map` must agree while source and attendance rows remain
+unchanged.
 
 ### Staff student-support session and ended-lecture boundary
 
@@ -452,6 +522,28 @@ submission target, video list, playback, and progress paths must require an
 active lecture. Historical grades and video progress use the separate readonly
 history selector and may include ended lectures; they must not return a playable
 session or media URL.
+
+### Parent-selected learning submissions
+
+A parent may submit an online exam or homework media only for the active linked
+student named by `X-Student-Id`. The server never guesses a child when that header
+is absent and never falls back after an invalid, unlinked, deleted, or cross-tenant
+student ID. Enrollment, active lecture, and exact exam/homework assignment checks
+still run before any submission row or object-store write.
+
+The resulting `Submission.user` is the selected student's User so grades, pending
+work, teacher review, and reload projections remain identical to a student-authored
+submission. When the authenticated actor is the parent, the submission metadata
+records `submitted_by_user_id`.
+
+The same exact selected-child rule applies to community question/counsel writes,
+student inventory and reported-score evidence, and video progress. These writes
+persist to the selected child's ordinary rows so the parent, student, and staff
+reload projections agree. Reported scores preserve the parent as `submitted_by`;
+community posts preserve `author_role=parent`. A parent video progress POST no
+longer returns an unsaved echo. Missing, stale, sibling-selected, unlinked, deleted,
+or cross-tenant child context fails before mutation. Profile, account identity,
+password, and administrator-only settings remain outside delegated learning access.
 
 ## 7. Minimum Change Gate
 
@@ -485,6 +577,24 @@ python -m pytest apps\domains\students\tests\test_student_support.py -v --tb=sho
 
 ### Student video playback controls
 
+Tenant-resolved staff can change the default `allow_skip`, `max_speed`, and
+`show_watermark` values through the ordinary video detail PATCH. An actual
+default-policy change locks the video row and increments `Video.policy_version`
+exactly once; title/order-only or no-op PATCH requests do not increment it. This
+lets the student's periodic access check reject a stale playback grant while
+avoiding needless interruption when the effective defaults did not change.
+
+For one session, staff can update skip and/or speed defaults for selected videos
+with `POST /api/v1/media/videos/bulk-policy/`. The JSON body contains the exact
+positive `session_id`, one to 500 unique positive `video_ids`, and at least one
+of `allow_skip` or `max_speed`. The action first locks the tenant-owned session
+and all active requested video rows in deterministic order. Every ID must be an
+active video in that exact tenant and session; a missing, deleted, duplicate,
+cross-session, or cross-tenant ID rejects the whole request with no writes.
+Only rows whose saved value changes are written, and each changed row increments
+`policy_version` once. Student-level `VideoAccess` overrides continue to take
+precedence over these video defaults.
+
 `FREE_REVIEW` and `PROCTORED_CLASS` decide whether monitored playback sessions
 and event writes are required. They do not erase the teacher's saved video
 controls. In every non-blocked mode, `Video.allow_skip=True` (or a student-level
@@ -517,6 +627,22 @@ skip allowance. Once completed `VideoProgress` or
 seeking is restored; ordinary offline/review students receive the same free
 seeking without needing a prior per-video completion row. No review-mode rule
 overrides an explicit `block_seek=True`.
+Completion also releases an explicit `PROCTORED_CLASS`/legacy `once` override:
+the student's ordinary progress save is sufficient, and the completion marker
+works without a progress row. `BLOCKED`, inactive enrollment authorization and
+exact session membership checks still precede this completion rule.
+
+An already admitted monitored playback session may finish across that completion
+transition. With unchanged `policy_version`, current exact ACTIVE enrollment
+access and completed progress or a completion marker, its existing
+`PROCTORED_CLASS` token remains valid for refresh, heartbeat, renewal and final
+event delivery. Renewal retains the signed mode, session identity and event
+protocol; new playback bootstrap returns `FREE_REVIEW` without a monitored
+session. Late events use the current effective policy, so free review seeking
+does not become a violation, and protocol2 final receipts remain atomic and
+idempotent. This exception never revives an expired/revoked session or survives
+withdrawal, `BLOCKED`, a policy-version change or an unrelated access-mode change.
+The player can therefore adopt review controls without interrupting playback.
 The student player must consume the nested `policy` returned by
 `POST /api/v1/student/video/videos/{video_id}/playback/`; the flat video fields
 are display metadata, not a second policy source.
@@ -579,8 +705,26 @@ only `ok`, effective `access_mode`,
 sessions, activity records, or view counts. A full `POST .../playback/`
 bootstrap rechecks the
 lecture, enrollment, video, and effective mode under row locks before recording
-activity or view count. Every mode receives a short-lived current-access token;
-only `PROCTORED_CLASS` creates a monitored playback session.
+activity or view count. Every mode receives a bounded current-access token;
+only `PROCTORED_CLASS` creates a monitored playback session. For ordinary
+active playback, the current-access token and monitored session lease remain
+bounded to `VIDEO_PLAYBACK_TTL_SECONDS`; the signed HLS URL is separately
+bounded to the encoded video duration plus that grace period. Heartbeat extends
+the monitored lease, while token renewal rotates the short current-access
+credential. Keeping the media URL, token, and session lease separate prevents
+the player source from being replaced every 10 minutes while preserving
+revocation checks and 30-second access revalidation.
+
+Before a current-access token expires, the client renews it through
+`POST /api/v1/media/playback/renew/`. Renewal revalidates the exact current
+tenant, user, student, enrollment or direct entitlement, lecture, session,
+video, access mode, and policy version. It returns a new token and expiry while
+preserving the existing monitored `VideoPlaybackSession`; it does not create a
+new playback session or increment view/activity counters. Ordinary active
+enrollment media keeps its existing duration-bounded HLS URL. Direct and
+inactive-entitlement media receive a newly signed URL bounded by the renewed
+short expiry. A revoked, expired, cross-scope, ended-lecture, changed-policy, or
+inactive monitored session fails closed instead of being recreated by refresh.
 
 For inactive entitlements only, the playback token, HLS URL, and thumbnail URL
 expire at the earliest of the current access TTL (600 seconds by default) and
@@ -596,11 +740,12 @@ Therefore revoke immediately blocks new access checks, playback grants, and
 token validation, while an already issued CDN URL can remain usable until its
 bounded expiry (at most the access TTL). This contract does not claim immediate
 revocation of an already issued CDN signature. For active, system/public, and
-other ordinary playback, an HLS signature lasts at most the encoded video
-duration plus `VIDEO_PLAYBACK_TTL_SECONDS`; legacy READY rows without duration
-retain the historical 24-hour ceiling. This bounds already-issued ordinary
-media after a lecture close without changing the current-access token or
-session rules.
+other ordinary playback, the HLS signature lasts at most the encoded video
+duration plus `VIDEO_PLAYBACK_TTL_SECONDS`; the playback token remains
+short-lived and renewable. Legacy READY rows without duration retain the
+historical 24-hour media ceiling. This bounds already-issued ordinary media
+after a lecture close without extending the monitored session lease or token
+lifetime.
 Signed URL query parameters and playback tokens are bearer credentials and are
 never logged; playback logs retain only video id, safe status/path metadata,
 and expiry timestamps.
@@ -658,10 +803,131 @@ same transaction that marks every ACTIVE monitored playback session for that
 lecture `REVOKED`. A concurrent playback grant uses the same lecture-first lock,
 so it either commits before close and is revoked by that close transaction, or
 observes the committed close and issues no token/session. Refresh and heartbeat
-reject existing regular-lecture tokens after close. Client disposal may still
+reject existing regular-lecture tokens after close. Legacy protocol1 disposal may still
 flush final Redis violation/total counters, but its ACTIVE-only status update
 cannot downgrade a server `REVOKED` row to `ENDED`. System-library lectures are
 excluded from this close-time revocation compatibility path.
+
+### Receipt-aware playback audit and finalization (protocol2)
+
+The normal student/selected-child parent `POST .../playback/` bootstrap, and
+`POST /api/v1/media/playback/start/`, accept optional `event_protocol_version: 2`.
+Omission remains protocol1. The grant response, signed playback token, and
+monitored `VideoPlaybackSession.event_protocol_version` agree; renewal preserves
+the protocol and session identity. FREE_REVIEW/direct access stays protocol1
+without a monitored session. The existing GET access check remains read-only;
+GET without `access_check=true` is still not a playback bootstrap.
+
+Protocol1 retains its existing events/end and Redis write-behind semantics.
+Existing sessions and historical counters are not upgraded, rewritten or merged.
+Migration0023 adds a persistent database default1, not only a Python default:
+old API processes inserting without the column continue to create protocol1.
+A database CHECK allows only1/2. The new receipt table inherits exact tenant,
+student, enrollment and video scope through its playback-session FK.
+
+Protocol2 clients use distinct URLs so an old API cannot ignore the final event
+payload and return a misleading200:
+
+- `POST /api/v1/media/playback/v2/events/`: `{token, batch: {batch_id, events}}`.
+- `POST /api/v1/media/playback/v2/end/`: `{token, batches: [...]}`; `batches` is
+  required, with an explicit empty list when every prior event is acknowledged.
+
+Each batch has a stable UUID,1-50 events and at most8KiB of normalized UTF-8 JSON.
+Finalization accepts0-8 batches and at most200 events; the entire HTTP request,
+including token and framing, must fit48KiB. Unknown envelope/event fields,
+duplicate batch IDs, invalid JSON payloads, missing final batches and overflow
+fail before mutation. A v2 session cannot use legacy events/end, and a v1
+session cannot use the new URLs. This separation is intentional compatibility,
+not an unavailable generally offered feature: clients select only the protocol
+explicitly returned by their successful bootstrap.
+
+`VideoPlaybackEventBatch` stores exact session+UUID uniqueness, a normalized
+payload SHA256, event/violation counts and creation time. A token renewal or
+server timestamp does not change the immutable batch identity. Same ID and
+payload acknowledge the existing receipt without another write, including after
+ENDED/REVOKED/EXPIRED; another payload under that ID conflicts. A previously
+unknown batch after terminal status or expiry is rejected. All calls still
+require valid signed token, authenticated user, resolved tenant and the exact
+currently selected student/owned child; a duplicate is not a way to use another
+tenant, child, session or payload.
+
+The v2 service takes the existing lecture -> lesson -> enrollment -> video ->
+optional inactive-entitlement scope locks before the exact playback-session
+lock. It commits new receipts, audit rows, DB counters and final status in one
+transaction. An admitted batch holds the session lock until its audit is durable,
+so concurrent end cannot publish partial final counters. A final request carries
+the same still-unacknowledged batches as in-flight ordinary requests: whichever
+commits first stores the evidence, and the later request only acknowledges exact
+receipts. This closes pre-admission overtaking without accepting arbitrary events
+for an ended token. Current policy resolution must succeed; it cannot silently
+substitute an empty policy. The existing violation threshold may make finalization
+REVOKED, never falsely ENDED. Known receipts/empty disposal take only the exact
+session lock and do not reopen closed access or acquire upper locks afterward.
+
+For protocol2 the DB is also authoritative for the session lease, active state,
+violation counts and revocation. Grant/heartbeat/renewal do not create or refresh
+Redis session metadata, and events/end/revoke never import stale Redis counts.
+Heartbeat updates only `last_seen`; only the existing permission-revalidated
+renewal may extend `expires_at`. A heartbeat cannot outlive a short inactive
+entitlement or shrink a newer lease when an older still-valid token arrives late.
+Protocol2 generic lifecycle helpers identify the stored protocol before owner
+filtering so a wrong student cannot fall through to a legacy Redis path.
+Lecture-close and expiry remain status-only DB operations, preserving counters.
+These changes do not alter video progress, attendance or learning-completion policy.
+
+Successful events201/finalization200 return `protocol_version: 2`, current
+`session_status`, `inserted_count` and `acknowledgements` containing each exact
+`batch_id`, `event_count`, and `duplicate`. Inserted count is zero for a replay,
+not the number acknowledged. Validation/scope/conflict responses are not success.
+Unexpected policy/DB failures roll back the whole operation and return503 with
+`detail=playback_events_unavailable` and a correlation `request_id`; server logs
+retain the corresponding exception for investigation. Clients must keep immutable
+pending batches until these exact acknowledgements, preserve them on retryable
+failure, and show pending/retry rather than claiming a save. They must not drop
+the old300-event queue prefix, clear non409 failures, or fall back to token-only
+end for a protocol2 session.
+
+The coordinated frontend HLS/YouTube controllers must drain oversized pending
+queues during normal navigation and measure final request bytes, with at most
+48KiB of owned simultaneous keepalive bodies per document. Auth generation,
+tenant, selected-child and session isolation still apply; BFCache persisted
+pagehide is not a final end. No offline credential store, unbounded unload batch,
+arbitrary expired-token replay or guaranteed delivery after OS kill is provided.
+Backend support alone is not proof that the currently deployed frontend uses it.
+Frontend lifecycle ownership:
+`academy-frontend/src/app_student/domains/video/playback/player/HEADLESS_REFACTOR.md`.
+
+Migration0023 is explicitly classified as `contract`: the guard requires review
+for its CHECK constraints and the non-null FK on the newly created receipt table.
+Its compatibility is specific, not a guard exemption: existing/old-process session
+inserts retain database default1, only1/2 are allowed, the receipt table starts
+empty, and forward/reverse DDL remains atomic with bounded lock/statement timeouts.
+PR validation uses `--allow-contract-review`; an ordinary automatic main push must
+still refuse this migration. After rechecking these old/new API and database
+conditions on the exact release main SHA, the release owner must use the official
+`workflow_dispatch` with `allow_contract_migrations=true`, retaining all normal
+development/preproduction/rolling health and continuity gates. Follow
+[deployment modes](../operations/deployment-modes.md); metadata alone is not
+permission to execute or proof of safe current runtime conditions.
+
+Activation is reader-first: migrate and finish every serving BE instance before
+deploying a client that opts into2. There is no global activation flag. An old
+bootstrap response keeps that session on1; an accidentally old server receiving
+a v2 URL returns an error, not a silent legacy success. Once2 sessions are issued,
+BE rollback must retain v2 support until those sessions and renewable clients
+drain, or use a compatible roll-forward. FE rollback alone does not stop already
+open tabs; never force-reload them or assume a fixed TTL drains renewal.
+
+Focused verification: `tests/test_video_final_event_atomicity_pg.py` uses actual
+PostgreSQL connections and real DRF endpoints for both arrival orders, end lock
+waiting, concurrent duplicates, rollback/retry, scope/parent isolation, terminal
+state and DB-default compatibility. Redis-boundary mocks prove no-call/legacy
+routing, not a live Redis deployment. Preserve existing
+`tests/test_video_access_security.py`, inactive/direct-entitlement regressions,
+and full official PostgreSQL CI. Completion additionally requires the coordinated
+FE to perform actual fullscreen -> event acknowledgement -> finalization ->
+DB/readback through reload/navigation on desktop and390px in isolated development,
+followed by exact synthetic-data cleanup; APIRequestFactory is not HTTP-login E2E.
 
 Add for frontend account/student UI changes:
 
@@ -673,8 +939,9 @@ pnpm build
 pnpm exec playwright test e2e\auth\account-recovery-modal.spec.ts --reporter=list
 ```
 
-Launch-readiness and broader real-use gates are tracked in
-`../refactor/student-domain-launch-readiness.md`.
+Current real-use work is tracked in [hardening-plan.md](../refactor/hardening-plan.md)
+and follows the [release contract](../operations/change-risk-and-release-bundle.md).
+`../refactor/student-domain-launch-readiness.md` is the historical 2026-06-07 decision.
 
 ## 8. Do Not
 

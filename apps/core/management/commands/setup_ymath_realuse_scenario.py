@@ -5,15 +5,19 @@ import os
 import re
 from collections import defaultdict
 from datetime import date, timedelta
+from pathlib import Path
 
 from django.apps import apps
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
+from django.core.management.color import no_style
 from django.db import connection, transaction
+from django.db.models import Q
 from django.utils import timezone
+from rest_framework_simplejwt.token_blacklist.models import OutstandingToken
 
-from apps.core.models import Program, Tenant, TenantMembership
+from apps.core.models import OpsAuditLog, Program, Tenant, TenantMembership
 from apps.core.models.user import user_display_username, user_internal_username
 from apps.core.services.password import change_password
 from apps.domains.parents.services import ensure_parent_account_for_student
@@ -36,11 +40,48 @@ DEVELOPMENT_SETTINGS_MODULE = "apps.api.config.settings.development"
 DEVELOPMENT_DATABASE_NAME = "academy_api_development"
 DEVELOPMENT_DATABASE_USER = "academy_api_development_app"
 DEVELOPMENT_R2_BUCKET = "academy-development-artifacts"
+DEVELOPMENT_MOCK_ALIMTALK_PF_ID = "development-mock-pfid"
+DEVELOPMENT_MESSAGING_OWNER_CODE = "academy-development-owner"
+DEVELOPMENT_MESSAGING_OWNER_NAME = "Academy Development Owner"
+DEVELOPMENT_MOCK_ACCOUNT_TEMPLATE_DEFINITIONS = {
+    "password_reset_student": {
+        "name": "[DEVELOPMENT QA] 학생 비밀번호 재설정",
+        "subject": "학생 비밀번호가 변경되었습니다",
+        "body": (
+            "#{학생이름}학생님, 비밀번호가 변경되었습니다.\n"
+            "아이디: #{아이디}\n"
+            "임시 비밀번호: #{임시비밀번호}\n"
+            "#{비밀번호안내}\n"
+            "#{사이트링크}"
+        ),
+    },
+    "password_reset_parent": {
+        "name": "[DEVELOPMENT QA] 학부모 비밀번호 재설정",
+        "subject": "학부모 비밀번호가 변경되었습니다",
+        "body": (
+            "#{학생이름}학생 학부모님, 비밀번호가 변경되었습니다.\n"
+            "아이디: #{아이디}\n"
+            "임시 비밀번호: #{임시비밀번호}\n"
+            "#{비밀번호안내}\n"
+            "#{사이트링크}"
+        ),
+    },
+}
 LOGIN_UAT_RESERVED_USERNAME_PREFIXES = (
     "ymath-qa-student-",
     "ymath-qa-staff-",
     "staff-",
 )
+SCENARIO_ACTIVITY_AUDIT_ACTIONS = (
+    "student_activity.login",
+    "student_activity.screen_view",
+    "student_activity.target_open",
+)
+SCENARIO_PROVENANCE_ACTION = "development.qa.scenario"
+SYNTHETIC_LONG_VIDEO_DURATION_SECONDS = 900
+SYNTHETIC_LONG_VIDEO_HLS_PATH = "qa-fixtures/video-long/master.m3u8"
+SYNTHETIC_LONG_VIDEO_TITLE = "장시간 재생 갱신 실사용 검증"
+SYNTHETIC_LONG_VIDEO_ACCESS_MODE = "PROCTORED_CLASS"
 
 
 def assert_isolated_runtime() -> None:
@@ -102,6 +143,205 @@ def _ymath_program_contract() -> tuple[dict, dict]:
     return feature_flags, ui_config
 
 
+def _is_persistent_development_runtime() -> bool:
+    database = settings.DATABASES.get("default", {})
+    return (
+        str(os.environ.get("DJANGO_SETTINGS_MODULE") or "") == DEVELOPMENT_SETTINGS_MODULE
+        and str(database.get("NAME") or "") == DEVELOPMENT_DATABASE_NAME
+        and str(database.get("USER") or "") == DEVELOPMENT_DATABASE_USER
+    )
+
+
+def ensure_development_messaging_baseline() -> None:
+    """Converge exact owner templates needed by mock-only account real-use QA."""
+
+    if not _is_persistent_development_runtime():
+        raise CommandError("Development messaging fixtures require the persistent development runtime.")
+    if str(os.environ.get("SOLAPI_MOCK") or "").strip().lower() not in {"1", "true", "yes"}:
+        raise CommandError("Development messaging fixtures require SOLAPI_MOCK=true.")
+    if str(getattr(settings, "SOLAPI_KAKAO_PF_ID", "") or "").strip() != DEVELOPMENT_MOCK_ALIMTALK_PF_ID:
+        raise CommandError("Development messaging fixtures require the exact mock Alimtalk PFID.")
+
+    from apps.domains.messaging.default_templates import get_default_templates
+    from apps.domains.messaging.models import AutoSendConfig, MessageTemplate
+
+    owner_id = int(getattr(settings, "OWNER_TENANT_ID", 1))
+    if connection.vendor == "postgresql":
+        if not connection.in_atomic_block:
+            raise RuntimeError("Development messaging baseline requires transaction.atomic().")
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                ["development-messaging-owner"],
+            )
+
+    owner = Tenant.objects.select_for_update().filter(pk=owner_id).first()
+    if owner is None:
+        code_owner = (
+            Tenant.objects.select_for_update()
+            .filter(code=DEVELOPMENT_MESSAGING_OWNER_CODE)
+            .first()
+        )
+        if code_owner is not None:
+            raise CommandError("Development messaging owner code is assigned to an unexpected tenant ID.")
+        existing_tenant = (
+            Tenant.objects.select_for_update()
+            .only("id")
+            .order_by("id")
+            .first()
+        )
+        if existing_tenant is not None:
+            raise CommandError(
+                "Development messaging owner is missing from a non-empty development database."
+            )
+        owner = Tenant(
+            pk=owner_id,
+            code=DEVELOPMENT_MESSAGING_OWNER_CODE,
+            name=DEVELOPMENT_MESSAGING_OWNER_NAME,
+            is_active=True,
+        )
+        owner.full_clean()
+        owner.save(force_insert=True)
+        if connection.vendor == "postgresql":
+            with connection.cursor() as cursor:
+                for statement in connection.ops.sequence_reset_sql(no_style(), [Tenant]):
+                    cursor.execute(statement)
+    elif (
+        owner.code != DEVELOPMENT_MESSAGING_OWNER_CODE
+        or owner.name != DEVELOPMENT_MESSAGING_OWNER_NAME
+        or not owner.is_active
+    ):
+        raise CommandError("Development messaging owner tenant identity is not exact.")
+
+    defaults = get_default_templates(owner.name)
+    definitions = {
+        trigger: {
+            "name": defaults[trigger]["name"],
+            "subject": defaults[trigger]["subject"],
+            "body": defaults[trigger]["body"],
+        }
+        for trigger in ("registration_approved_student", "registration_approved_parent")
+    }
+    definitions.update(DEVELOPMENT_MOCK_ACCOUNT_TEMPLATE_DEFINITIONS)
+
+    for trigger, definition in definitions.items():
+        config = (
+            AutoSendConfig.objects.select_for_update()
+            .filter(tenant=owner, trigger=trigger)
+            .first()
+        )
+        configured_template = config.template if config else None
+        if (
+            configured_template is not None
+            and configured_template.tenant_id == owner.id
+            and str(configured_template.solapi_template_id or "").strip()
+            and configured_template.solapi_status == "APPROVED"
+        ):
+            config.enabled = True
+            config.message_mode = "alimtalk"
+            config.minutes_before = None
+            config.delay_mode = "immediate"
+            config.delay_value = None
+            config.full_clean()
+            config.save()
+            continue
+
+        mock_template_id = f"development-mock-{trigger}"
+        fixtures = list(
+            MessageTemplate.objects.select_for_update()
+            .filter(tenant=owner, solapi_template_id=mock_template_id)
+            .order_by("id")[:2]
+        )
+        if len(fixtures) > 1:
+            raise CommandError(f"Ambiguous development mock template for {trigger}.")
+        template = fixtures[0] if fixtures else MessageTemplate(tenant=owner)
+        template.category = MessageTemplate.Category.SIGNUP
+        template.name = definition["name"]
+        template.subject = definition["subject"]
+        template.body = definition["body"]
+        template.solapi_template_id = mock_template_id
+        template.solapi_status = "APPROVED"
+        template.is_system = True
+        template.is_user_default = False
+        template.full_clean()
+        template.save()
+
+        if config is None:
+            config = AutoSendConfig(tenant=owner, trigger=trigger)
+        config.template = template
+        config.enabled = True
+        config.message_mode = "alimtalk"
+        config.minutes_before = None
+        config.delay_mode = "immediate"
+        config.delay_value = None
+        config.full_clean()
+        config.save()
+
+
+def ensure_development_clinic_cancellation_fixture(tenant: Tenant) -> None:
+    """Provision the tenant-owned copy required by the clinic cancel real-use flow."""
+
+    if not _is_persistent_development_runtime():
+        raise CommandError("Development messaging fixtures require the persistent development runtime.")
+    if str(os.environ.get("SOLAPI_MOCK") or "").strip().lower() not in {"1", "true", "yes"}:
+        raise CommandError("Development messaging fixtures require SOLAPI_MOCK=true.")
+    if not SCENARIO_CODE_RE.fullmatch(str(tenant.code or "")):
+        raise CommandError("Development clinic messaging fixture requires an exact qa-* tenant.")
+    if not tenant.is_active or not tenant.messaging_is_active:
+        raise CommandError("Development clinic messaging fixture requires active tenant messaging.")
+
+    from apps.domains.messaging.alimtalk_content_builders import (
+        get_solapi_template_id,
+        get_template_type,
+    )
+    from apps.domains.messaging.default_templates import get_default_templates
+    from apps.domains.messaging.models import AutoSendConfig, MessageTemplate
+
+    trigger = "clinic_cancelled"
+    if not get_template_type(trigger) or not get_solapi_template_id(trigger):
+        raise CommandError("Development clinic cancellation requires an approved common template mapping.")
+
+    definition = get_default_templates(tenant.name or "학원")[trigger]
+    config = (
+        AutoSendConfig.objects.select_for_update()
+        .filter(tenant=tenant, trigger=trigger)
+        .first()
+    )
+    if config and (config.message_mode or "alimtalk").strip().lower() != "alimtalk":
+        raise CommandError("Development clinic cancellation fixture found a non-Alimtalk config.")
+    template = config.template if config else None
+    if template is not None and template.tenant_id != tenant.id:
+        raise CommandError("Development clinic cancellation fixture found a foreign template.")
+    if template is None:
+        templates = list(
+            MessageTemplate.objects.select_for_update()
+            .filter(tenant=tenant, name=definition["name"])
+            .order_by("id")[:2]
+        )
+        if len(templates) > 1:
+            raise CommandError("Ambiguous development clinic cancellation template.")
+        template = templates[0] if templates else MessageTemplate(tenant=tenant)
+        template.category = definition["category"]
+        template.name = definition["name"]
+        template.subject = definition.get("subject", "")
+        template.body = definition["body"]
+        template.is_system = True
+        template.is_user_default = False
+        template.full_clean()
+        template.save()
+
+    if config is None:
+        config = AutoSendConfig(tenant=tenant, trigger=trigger)
+    config.template = template
+    config.enabled = True
+    config.message_mode = "alimtalk"
+    config.minutes_before = definition.get("minutes_before")
+    config.delay_mode = "immediate"
+    config.delay_value = None
+    config.full_clean()
+    config.save()
+
+
 class Command(BaseCommand):
     help = (
         "Create an isolated Ymath-shaped teacher, roster, lectures, and sessions "
@@ -117,6 +357,14 @@ class Command(BaseCommand):
             "--login-uat",
             action="store_true",
             help="Create a secret-free 10 student + 10 parent + 10 staff login manifest.",
+        )
+        parser.add_argument(
+            "--synthetic-long-video",
+            action="store_true",
+            help=(
+                "Create one metadata-only 15-minute HLS fixture and exactly two "
+                "PROCTORED_CLASS student accesses in an isolated development/test runtime."
+            ),
         )
         lifecycle = parser.add_mutually_exclusive_group()
         lifecycle.add_argument("--reset", action="store_true")
@@ -136,6 +384,7 @@ class Command(BaseCommand):
         assert_isolated_runtime()
         if options["destroy"]:
             deleted = None
+            residue = {"activity_audits": 0, "outstanding_tokens": 0}
             with transaction.atomic():
                 self._lock_tenant_code(tenant_code)
                 existing = self._exact_tenant_or_fail_on_case_variant(tenant_code)
@@ -145,13 +394,21 @@ class Command(BaseCommand):
                         "counts": self._tenant_counts(existing),
                         "users": existing.users.count(),
                     }
-                    existing.delete()
+                    evidence = self._delete_scenario_tenant(existing)
+                    deleted.update(evidence["deleted"])
+                    residue = evidence["remaining"]
 
             remaining = self._remaining_for_code(tenant_code)
+            video_residue = self._video_residue_for_code(tenant_code)
             if any(remaining.values()):
                 raise CommandError(
                     "Isolated scenario cleanup found a same-code tenant or user residue: "
                     + json.dumps(remaining, ensure_ascii=False, sort_keys=True)
+                )
+            if any(video_residue.values()):
+                raise CommandError(
+                    "Isolated scenario cleanup found video residue: "
+                    + json.dumps(video_residue, sort_keys=True)
                 )
 
             if deleted is None:
@@ -161,6 +418,8 @@ class Command(BaseCommand):
                             "status": "YMATH_REALUSE_SCENARIO_ABSENT",
                             "tenant_code": tenant_code,
                             "remaining": {"tenants": 0, "users": 0},
+                            "residue": residue,
+                            "video_residue": video_residue,
                         },
                         ensure_ascii=False,
                         sort_keys=True,
@@ -174,8 +433,15 @@ class Command(BaseCommand):
                         "status": "YMATH_REALUSE_SCENARIO_DESTROYED",
                         "tenant_code": tenant_code,
                         "tenant_id": deleted["tenant_id"],
-                        "deleted": {**deleted["counts"], "users": deleted["users"]},
+                        "deleted": {
+                            **deleted["counts"],
+                            "users": deleted["users"],
+                            "activity_audits": deleted["activity_audits"],
+                            "outstanding_tokens": deleted["outstanding_tokens"],
+                        },
                         "remaining": remaining,
+                        "residue": residue,
+                        "video_residue": video_residue,
                     },
                     ensure_ascii=False,
                     sort_keys=True,
@@ -186,10 +452,13 @@ class Command(BaseCommand):
         login_uat = bool(options["login_uat"])
         student_count = LOGIN_UAT_ACCOUNT_COUNT_PER_ROLE if login_uat else int(options["student_count"])
         session_count = int(options["session_count"])
+        synthetic_long_video = bool(options["synthetic_long_video"])
         if not 1 <= student_count <= 30:
             raise CommandError("student-count must be between 1 and 30.")
         if not 1 <= session_count <= 80:
             raise CommandError("session-count must be between 1 and 80.")
+        if synthetic_long_video and student_count != 2:
+            raise CommandError("--synthetic-long-video requires --student-count=2.")
 
         password = str(os.environ.get(PASSWORD_ENV) or "")
         if not password:
@@ -203,14 +472,17 @@ class Command(BaseCommand):
                 raise CommandError("teacher-username conflicts with a generated parent login identifier.")
 
         reset_counts = None
+        synthetic_long_video_payload = None
         with transaction.atomic():
             self._lock_tenant_code(tenant_code)
+            if _is_persistent_development_runtime():
+                ensure_development_messaging_baseline()
             existing = self._exact_tenant_or_fail_on_case_variant(tenant_code)
             if login_uat and existing is not None and not options["reset"]:
                 raise CommandError("--login-uat requires --reset when the tenant already exists.")
             reset_counts = self._tenant_counts(existing) if existing and options["reset"] else None
             if existing and options["reset"]:
-                existing.delete()
+                self._delete_scenario_tenant(existing)
 
             tenant, _ = Tenant.objects.get_or_create(
                 code=tenant_code,
@@ -222,6 +494,9 @@ class Command(BaseCommand):
             tenant.name = "Ymath 실사용 복제 검증"
             tenant.is_active = True
             tenant.save(update_fields=["name", "is_active"])
+            if _is_persistent_development_runtime():
+                ensure_development_clinic_cancellation_fixture(tenant)
+            self._ensure_scenario_provenance(tenant)
 
             feature_flags, ui_config = _ymath_program_contract()
             program, _ = Program.objects.get_or_create(tenant=tenant)
@@ -316,6 +591,7 @@ class Command(BaseCommand):
                         tenant=tenant,
                         parent_phone=f"01099{index:06d}",
                         student_name=f"검증학생 {index:02d}",
+                        initial_password=password,
                     )
                     parent = parent_result.parent
                     change_password(parent.user, password)
@@ -380,6 +656,56 @@ class Command(BaseCommand):
                     )
                     login_staff.append(staff)
 
+            if synthetic_long_video:
+                Video = apps.get_model("video", "Video")
+                VideoAccess = apps.get_model("video", "VideoAccess")
+                video, _ = Video.objects.update_or_create(
+                    tenant=tenant,
+                    session=sessions[0],
+                    folder=None,
+                    order=1,
+                    defaults={
+                        "title": SYNTHETIC_LONG_VIDEO_TITLE,
+                        "source_type": Video.SourceType.UPLOADED,
+                        "file_key": "",
+                        "duration": SYNTHETIC_LONG_VIDEO_DURATION_SECONDS,
+                        "status": Video.Status.READY,
+                        "hls_path": SYNTHETIC_LONG_VIDEO_HLS_PATH,
+                        "allow_skip": False,
+                        "max_speed": 1.0,
+                        "show_watermark": True,
+                    },
+                )
+                fixture_enrollments = list(
+                    Enrollment.objects.filter(
+                        tenant=tenant,
+                        lecture=lectures[0],
+                        student__in=students,
+                        status="ACTIVE",
+                    ).order_by("student_id")
+                )
+                if len(fixture_enrollments) != 2:
+                    raise CommandError(
+                        "Synthetic long-video fixture requires exactly two active enrollments."
+                    )
+                for enrollment in fixture_enrollments:
+                    VideoAccess.objects.update_or_create(
+                        video=video,
+                        enrollment=enrollment,
+                        defaults={
+                            "access_mode": SYNTHETIC_LONG_VIDEO_ACCESS_MODE,
+                            "rule": "once",
+                            "is_override": True,
+                        },
+                    )
+                synthetic_long_video_payload = {
+                    "access_mode": SYNTHETIC_LONG_VIDEO_ACCESS_MODE,
+                    "duration_seconds": SYNTHETIC_LONG_VIDEO_DURATION_SECONDS,
+                    "hls_path": SYNTHETIC_LONG_VIDEO_HLS_PATH,
+                    "video_accesses": len(fixture_enrollments),
+                    "video_id": video.id,
+                }
+
             if login_uat:
                 self._validate_login_uat_contract(
                     tenant=tenant,
@@ -415,7 +741,10 @@ class Command(BaseCommand):
             "lecture_ids": [lecture.id for lecture in lectures],
             "session_ids": [session.id for session in sessions],
             "counts": self._tenant_counts(tenant),
+            "video_state": self._video_residue_for_code(tenant.code),
         }
+        if synthetic_long_video_payload is not None:
+            payload["synthetic_long_video"] = synthetic_long_video_payload
         if login_uat:
             accounts = [
                 {
@@ -503,6 +832,298 @@ class Command(BaseCommand):
             "tenants": Tenant.objects.filter(code__iexact=tenant_code).count(),
             "users": get_user_model().objects.filter(tenant__code__iexact=tenant_code).count(),
         }
+
+    @staticmethod
+    def _video_residue_for_code(tenant_code: str) -> dict[str, int]:
+        Video = apps.get_model("video", "Video")
+        return Command._video_state_for_scope(
+            Video.all_with_deleted.filter(tenant__code__iexact=tenant_code),
+            {"video__tenant__code__iexact": tenant_code},
+        )
+
+    @staticmethod
+    def _synthetic_long_video_state(tenant_code: str, tenant_id: int, video_id: int) -> dict[str, int]:
+        if any(type(value) is not int or not 0 < value <= 9223372036854775807 for value in (tenant_id, video_id)):
+            raise CommandError("Synthetic long-video target must use positive integer IDs.")
+        tenant = Command._exact_tenant_or_fail_on_case_variant(tenant_code)
+        if tenant is None or tenant.pk != tenant_id:
+            raise CommandError("Synthetic long-video tenant identity mismatch.")
+        Video = apps.get_model("video", "Video")
+        videos = Video.objects.filter(
+            pk=video_id, tenant_id=tenant_id, session__lecture__tenant_id=tenant_id,
+            source_type=Video.SourceType.UPLOADED, status=Video.Status.READY, file_key="",
+            hls_path=SYNTHETIC_LONG_VIDEO_HLS_PATH, duration=SYNTHETIC_LONG_VIDEO_DURATION_SECONDS,
+        )
+        if not videos.exists():
+            raise CommandError("Synthetic long-video fixture identity mismatch.")
+        return Command._video_state_for_scope(videos, {"video_id": video_id, "video__tenant_id": tenant_id})
+
+    @staticmethod
+    def _video_state_for_scope(videos, video_scope: dict) -> dict[str, int]:
+        VideoAccess = apps.get_model("video", "VideoAccess")
+        VideoProgress = apps.get_model("video", "VideoProgress")
+        VideoPlaybackSession = apps.get_model("video", "VideoPlaybackSession")
+        VideoPlaybackEvent = apps.get_model("video", "VideoPlaybackEvent")
+        events = VideoPlaybackEvent.objects.filter(**video_scope)
+        sessions = VideoPlaybackSession.objects.filter(**video_scope)
+        return {
+            "active_playback_sessions": sessions.filter(status="ACTIVE").count(),
+            "playback_events": events.count(),
+            "playback_sessions": sessions.count(),
+            "player_errors": events.filter(event_type="PLAYER_ERROR").count(),
+            "proctored_video_accesses": VideoAccess.objects.filter(
+                **video_scope,
+                access_mode="PROCTORED_CLASS",
+            ).count(),
+            "video_accesses": VideoAccess.objects.filter(**video_scope).count(),
+            "video_progresses": VideoProgress.objects.filter(**video_scope).count(),
+            "videos": videos.count(),
+            "violated_events": events.filter(violated=True).count(),
+        }
+
+    @staticmethod
+    def _delete_scenario_tenant(tenant) -> dict[str, dict[str, int]]:
+        """Remove owned payroll facts before their protected WorkType parent."""
+        if not connection.in_atomic_block:
+            raise RuntimeError("Scenario deletion requires transaction.atomic().")
+        # Hold parent rows against new FK links until tenant deletion commits.
+        for name in ("Staff", "WorkType"):
+            model = apps.get_model("staffs", name)
+            list(model.objects.filter(tenant=tenant).order_by("pk").select_for_update().values_list("pk", flat=True))
+        record_ids = []
+        payroll_relations = (
+            ("WorkRecord", ("staff", "work_type")),
+            ("StaffWorkType", ("staff", "work_type")),
+            ("ExpenseRecord", ("staff",)),
+            ("WorkMonthLock", ("staff",)),
+            ("PayrollSnapshot", ("staff",)),
+        )
+        for name, relations in payroll_relations:
+            model = apps.get_model("staffs", name)
+            owned_ids = list(
+                model.objects.filter(tenant=tenant).order_by("pk")
+                .select_for_update().values_list("pk", flat=True)
+            )
+            if name == "WorkRecord":
+                record_ids = owned_ids
+            related_scope = Q(tenant=tenant)
+            exact_scope = {"tenant": tenant}
+            for relation in relations:
+                related_scope |= Q(**{f"{relation}__tenant": tenant})
+                exact_scope[f"{relation}__tenant"] = tenant
+            if model.objects.filter(related_scope).exclude(**exact_scope).exists():
+                raise CommandError("Cross-tenant payroll references prevent scenario deletion.")
+        # Validate the whole bounded payroll graph before even token/audit deletion.
+        evidence = Command._cleanup_ephemeral_evidence(tenant)
+        # PROTECT is checked while Django collects the tenant cascade, before
+        # any collected WorkRecord is deleted. Keep the product FK unchanged.
+        WorkRecord = apps.get_model("staffs", "WorkRecord")
+        deleted, _ = WorkRecord.objects.filter(tenant=tenant, pk__in=record_ids).delete()
+        if deleted != len(record_ids):
+            raise CommandError("Scenario payroll deletion count mismatch.")
+        tenant.delete()
+        return evidence
+
+    @staticmethod
+    def _cleanup_ephemeral_evidence(tenant) -> dict[str, dict[str, int]]:
+        """Delete only transient evidence owned by one exact disposable scenario."""
+
+        user_ids = list(tenant.users.values_list("id", flat=True))
+        token_rows = OutstandingToken.objects.filter(user_id__in=user_ids)
+        token_ids = list(token_rows.values_list("id", flat=True))
+        activity_rows = Command._owned_activity_rows(tenant=tenant, user_ids=user_ids)
+        activity_ids = list(activity_rows.values_list("id", flat=True))
+
+        deleted = {
+            "activity_audits": len(activity_ids),
+            "outstanding_tokens": len(token_ids),
+        }
+        if activity_ids:
+            OpsAuditLog.objects.filter(id__in=activity_ids).delete()
+        if token_ids:
+            OutstandingToken.objects.filter(id__in=token_ids).delete()
+        remaining = {
+            "activity_audits": OpsAuditLog.objects.filter(id__in=activity_ids).count(),
+            "outstanding_tokens": OutstandingToken.objects.filter(id__in=token_ids).count(),
+        }
+        if any(remaining.values()):
+            raise CommandError(
+                "Isolated scenario cleanup left owned token or activity-audit residue: "
+                + json.dumps(remaining, sort_keys=True)
+            )
+        return {"deleted": deleted, "remaining": remaining}
+
+    @staticmethod
+    def _owned_database_residue(tenant) -> dict[str, int]:
+        user_ids = list(tenant.users.values_list("id", flat=True))
+        activity_rows = Command._owned_activity_rows(tenant=tenant, user_ids=user_ids)
+        return {
+            "activity_audits": activity_rows.count(),
+            "outstanding_tokens": OutstandingToken.objects.filter(user_id__in=user_ids).count(),
+        }
+
+    @staticmethod
+    def _owned_activity_rows(*, tenant, user_ids):
+        activity_rows = OpsAuditLog.objects.filter(
+            action__in=SCENARIO_ACTIVITY_AUDIT_ACTIONS,
+            target_tenant=tenant,
+            target_user_id__in=user_ids,
+            actor_user_id__in=user_ids,
+            created_at__lte=timezone.now(),
+        )
+        ownership_started_at = (
+            OpsAuditLog.objects.filter(
+                action="development.qa.setup",
+                target_tenant=tenant,
+                result="success",
+                payload__tenant_code=tenant.code,
+                payload__tenant_id=tenant.id,
+            )
+            .order_by("created_at")
+            .values_list("created_at", flat=True)
+            .first()
+        )
+        if ownership_started_at is None:
+            ownership_started_at = (
+                OpsAuditLog.objects.filter(
+                    action=SCENARIO_PROVENANCE_ACTION,
+                    target_tenant=tenant,
+                    result="success",
+                    payload__tenant_code=tenant.code,
+                    payload__tenant_id=tenant.id,
+                )
+                .order_by("created_at")
+                .values_list("created_at", flat=True)
+                .first()
+            )
+        if ownership_started_at is None:
+            if activity_rows.exists():
+                raise CommandError(
+                    "Refusing to delete scenario activity without an exact QA ownership provenance seal."
+                )
+            return activity_rows.none()
+        return activity_rows.filter(created_at__gte=ownership_started_at)
+
+    @staticmethod
+    def _ensure_scenario_provenance(tenant) -> None:
+        exact = {
+            "action": SCENARIO_PROVENANCE_ACTION,
+            "target_tenant": tenant,
+            "result": "success",
+            "payload__tenant_code": tenant.code,
+            "payload__tenant_id": tenant.id,
+        }
+        if not OpsAuditLog.objects.filter(**exact).exists():
+            OpsAuditLog.objects.create(
+                action=SCENARIO_PROVENANCE_ACTION,
+                actor_username="setup_ymath_realuse_scenario",
+                target_tenant=tenant,
+                payload={"tenant_code": tenant.code, "tenant_id": tenant.id},
+                result="success",
+            )
+
+    @staticmethod
+    def _qa_r2_prefixes(tenant_id: int) -> tuple[str, ...]:
+        if isinstance(tenant_id, bool) or not isinstance(tenant_id, int) or tenant_id <= 0:
+            raise CommandError("Frontend QA R2 cleanup requires an exact positive tenant ID.")
+        return (
+            f"tenants/{tenant_id}/",
+            f"excel/{tenant_id}/",
+            f"tenant-logos/{tenant_id}/",
+            f"landing-public/reviews/{tenant_id}/",
+            f"matchup-showcase-snapshots/tenant_{tenant_id}/",
+        )
+
+    @staticmethod
+    def _r2_storage_client():
+        import boto3
+        from botocore.config import Config
+
+        return boto3.client(
+            "s3",
+            endpoint_url=settings.R2_ENDPOINT,
+            region_name=settings.R2_REGION,
+            aws_access_key_id=settings.R2_ACCESS_KEY,
+            aws_secret_access_key=settings.R2_SECRET_KEY,
+            config=Config(
+                connect_timeout=10,
+                read_timeout=10,
+                retries={"total_max_attempts": 2},
+            ),
+        )
+
+    @staticmethod
+    def _cleanup_qa_r2_objects(*, tenant_id: int) -> dict[str, int]:
+        """Delete only exact disposable-tenant prefixes and prove a zero readback."""
+
+        assert_isolated_runtime()
+        client = Command._r2_storage_client()
+        deleted = 0
+        for prefix in Command._qa_r2_prefixes(tenant_id):
+            while True:
+                page = client.list_objects_v2(
+                    Bucket=settings.R2_STORAGE_BUCKET,
+                    Prefix=prefix,
+                    MaxKeys=1000,
+                )
+                keys = [item["Key"] for item in page.get("Contents") or []]
+                if any(not key.startswith(prefix) for key in keys):
+                    raise CommandError("R2 returned an object outside the exact QA prefix.")
+                if not keys:
+                    break
+                response = client.delete_objects(
+                    Bucket=settings.R2_STORAGE_BUCKET,
+                    Delete={"Objects": [{"Key": key} for key in keys], "Quiet": True},
+                )
+                errors = response.get("Errors") or []
+                if errors:
+                    raise CommandError(
+                        f"Frontend QA R2 cleanup failed for {len(errors)} object(s)."
+                    )
+                deleted += len(keys)
+        return {"deleted": deleted, "remaining": 0}
+
+    @staticmethod
+    def _non_database_residue(*, tenant_id: int | None, tenant_code: str) -> dict[str, int]:
+        client = Command._r2_storage_client()
+        r2_objects = 0
+        if tenant_id is not None:
+            for prefix in Command._qa_r2_prefixes(tenant_id):
+                continuation_token = None
+                while True:
+                    request = {
+                        "Bucket": settings.R2_STORAGE_BUCKET,
+                        "Prefix": prefix,
+                        "MaxKeys": 1000,
+                    }
+                    if continuation_token:
+                        request["ContinuationToken"] = continuation_token
+                    page = client.list_objects_v2(**request)
+                    r2_objects += len(page.get("Contents") or [])
+                    if not page.get("IsTruncated"):
+                        break
+                    continuation_token = page["NextContinuationToken"]
+
+        marker = f"QA_TENANT={tenant_code}".encode()
+        processes = 0
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit() or int(entry.name) == os.getpid():
+                continue
+            try:
+                environment = (entry / "environ").read_bytes().split(b"\0")
+            except (FileNotFoundError, PermissionError, ProcessLookupError):
+                continue
+            if marker in environment:
+                processes += 1
+
+        expected_port = f"{18000:04X}"
+        listeners = 0
+        for filename in ("/proc/net/tcp", "/proc/net/tcp6"):
+            for line in Path(filename).read_text().splitlines()[1:]:
+                columns = line.split()
+                if len(columns) >= 4 and columns[1].rsplit(":", 1)[-1] == expected_port and columns[3] == "0A":
+                    listeners += 1
+        return {"listeners": listeners, "processes": processes, "r2_objects": r2_objects}
 
     @staticmethod
     def _validate_login_uat_contract(*, tenant, teacher, students, parents, staffs) -> None:
@@ -608,6 +1229,7 @@ class Command(BaseCommand):
             "students": ("students", "Student"),
             "parents": ("parents", "Parent"),
             "staffs": ("staffs", "Staff"),
+            "work_records": ("staffs", "WorkRecord"),
             "lectures": ("lectures", "Lecture"),
             "sessions": ("lectures", "Session"),
             "enrollments": ("enrollment", "Enrollment"),

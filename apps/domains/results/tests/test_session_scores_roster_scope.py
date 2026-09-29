@@ -35,8 +35,13 @@ from apps.domains.results.views.session_scores_view import (
     SessionScoresView,
 )
 from apps.domains.results.views.admin_session_exams_summary_view import AdminSessionExamsSummaryView
+from apps.domains.results.views.admin_exam_results_view import AdminExamResultsView
+from apps.domains.results.services.student_result_service import get_my_exam_result_data
+from apps.support.progress.assessment_correction_dependencies import (
+    is_current_teacher_exam_resolution,
+)
 from apps.domains.students.models import Student
-from apps.domains.submissions.models import Submission
+from apps.domains.submissions.models import OMRStudentMatch, Submission
 from apps.domains.submissions.views.submission_view import SubmissionViewSet
 from apps.support.submissions.dependencies import validate_exam_enrollment_candidate
 
@@ -346,6 +351,133 @@ class SessionScoresRosterScopeTests(TestCase):
             43.0,
         )
 
+    def test_session_scores_uses_current_exam_max_and_preserves_attempt_history(self):
+        attempt = ExamAttempt.objects.create(
+            exam=self.exam,
+            enrollment=self.active_enrollment,
+            attempt_index=1,
+            is_retake=False,
+            is_representative=True,
+            status="done",
+            meta={
+                "initial_snapshot": {
+                    "total_score": 97.0,
+                    "max_score": 97.0,
+                    "source": "admin_manual_total",
+                },
+                "total_score": 97.0,
+                "max_score": 97.0,
+            },
+        )
+        result = Result.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.active_enrollment,
+            attempt=attempt,
+            total_score=97,
+            max_score=97,
+            objective_score=97,
+        )
+        self.exam.max_score = 105
+        self.exam.save(update_fields=["max_score", "updated_at"])
+
+        request = self.factory.get(f"/api/v1/results/admin/sessions/{self.session.id}/scores/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        response = SessionScoresView.as_view()(request, session_id=self.session.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        exam_meta = response.data["meta"]["exams"][0]
+        exam_row = response.data["rows"][0]["exams"][0]
+        self.assertEqual(exam_meta["max_score"], 105.0)
+        self.assertEqual(exam_row["block"]["max_score"], 105.0)
+        self.assertEqual(exam_row["attempts"][0]["max_score"], 97.0)
+        self.assertEqual(exam_row["block"]["correction_status"], "PENDING")
+
+        correction_request = self.factory.patch(
+            f"/api/v1/results/admin/sessions/{self.session.id}/score-correction/",
+            {
+                "enrollment_id": self.active_enrollment.id,
+                "source_type": "exam",
+                "source_id": self.exam.id,
+                "completed": True,
+                "note": "현재 만점 기준으로 오답 확인 완료",
+            },
+            format="json",
+        )
+        correction_request.tenant = self.tenant
+        force_authenticate(correction_request, user=self.admin)
+        completion = SessionScoreCorrectionView.as_view()(
+            correction_request,
+            session_id=self.session.id,
+        )
+
+        self.assertEqual(completion.status_code, 200, completion.data)
+        self.assertEqual(completion.data["correction_status"], "COMPLETED")
+
+        reload_request = self.factory.get(
+            f"/api/v1/results/admin/sessions/{self.session.id}/scores/"
+        )
+        reload_request.tenant = self.tenant
+        force_authenticate(reload_request, user=self.admin)
+        reloaded = SessionScoresView.as_view()(
+            reload_request,
+            session_id=self.session.id,
+        )
+        reloaded_block = reloaded.data["rows"][0]["exams"][0]["block"]
+        self.assertEqual(reloaded_block["max_score"], 105.0)
+        self.assertEqual(reloaded_block["correction_status"], "COMPLETED")
+        admin_results_request = self.factory.get(
+            f"/api/v1/results/admin/exams/{self.exam.id}/results/"
+        )
+        admin_results_request.tenant = self.tenant
+        force_authenticate(admin_results_request, user=self.admin)
+        admin_results = AdminExamResultsView.as_view()(
+            admin_results_request,
+            exam_id=self.exam.id,
+        )
+        self.assertEqual(admin_results.status_code, 200, admin_results.data)
+        self.assertEqual(
+            admin_results.data["results"][0]["correction_status"],
+            "COMPLETED",
+        )
+        student_request = self.factory.get(
+            f"/api/v1/results/me/exams/{self.exam.id}/"
+        )
+        TenantMembership.ensure_active(
+            tenant=self.tenant,
+            user=self.active_enrollment.student.user,
+            role="student",
+        )
+        student_request.tenant = self.tenant
+        student_request.user = self.active_enrollment.student.user
+        student_result = get_my_exam_result_data(
+            student_request,
+            self.exam.id,
+            tenant=self.tenant,
+        )
+        self.assertEqual(student_result["correction_status"], "COMPLETED")
+        correction = AssessmentCorrection.objects.get(
+            tenant=self.tenant,
+            enrollment=self.active_enrollment,
+            session=self.session,
+            source_type=AssessmentCorrection.SourceType.EXAM,
+            source_id=self.exam.id,
+        )
+        self.assertTrue(
+            is_current_teacher_exam_resolution(
+                tenant_id=self.tenant.id,
+                enrollment_id=self.active_enrollment.id,
+                session_id=self.session.id,
+                exam_id=self.exam.id,
+                correction_id=correction.id,
+            )
+        )
+        result.refresh_from_db()
+        self.assertEqual(result.max_score, 97.0)
+        attempt.refresh_from_db()
+        self.assertEqual(attempt.meta["initial_snapshot"]["max_score"], 97.0)
+
     def test_session_scores_exposes_homework_cell_version(self):
         score = HomeworkScore.objects.create(
             enrollment=self.active_enrollment,
@@ -518,8 +650,10 @@ class SessionScoresRosterScopeTests(TestCase):
             [self.exam.id],
         )
 
-    def test_omr_manual_match_registers_exam_target_and_score_appears(self):
+    def test_omr_incomplete_identifier_manual_match_after_exam_close_registers_target_and_score(self):
         ExamEnrollment.objects.filter(exam=self.exam).delete()
+        self.exam.close_at = timezone.now() - datetime.timedelta(minutes=1)
+        self.exam.save(update_fields=["close_at", "updated_at"])
         sheet = Sheet.objects.create(exam=self.exam, name="MAIN", total_questions=2)
         q1 = ExamQuestion.objects.create(sheet=sheet, number=1, score=5)
         q2 = ExamQuestion.objects.create(sheet=sheet, number=2, score=5)
@@ -533,7 +667,14 @@ class SessionScoresRosterScopeTests(TestCase):
             target_id=self.exam.id,
             source=Submission.Source.OMR_SCAN,
             status=Submission.Status.NEEDS_IDENTIFICATION,
-            meta={"manual_review": {"required": True, "reasons": ["NO_MATCH"]}},
+            meta={
+                "identifier_status": "incomplete",
+                "manual_review": {
+                    "required": True,
+                    "reasons": ["IDENTIFIER_INCOMPLETE"],
+                },
+                "omr": {"identifier": "01012??5678"},
+            },
         )
 
         request = self.factory.post(
@@ -557,6 +698,8 @@ class SessionScoresRosterScopeTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data["graded"], response.data)
+        self.assertEqual(response.data["enrollment_id"], self.active_enrollment.id)
         self.assertTrue(
             ExamEnrollment.objects.filter(
                 exam=self.exam,
@@ -570,6 +713,19 @@ class SessionScoresRosterScopeTests(TestCase):
         )
         self.assertEqual(float(result.total_score), 10.0)
 
+        submission.refresh_from_db()
+        self.assertEqual(submission.status, Submission.Status.DONE)
+        self.assertEqual(submission.enrollment_id, self.active_enrollment.id)
+        self.assertFalse(submission.meta["manual_review"]["required"])
+        self.assertEqual(submission.meta["identifier_status"], "matched")
+        current_match = OMRStudentMatch.objects.get(
+            submission=submission,
+            is_current=True,
+        )
+        self.assertEqual(current_match.enrollment_id, self.active_enrollment.id)
+        self.assertEqual(current_match.status, OMRStudentMatch.Status.CONFIRMED)
+        self.assertEqual(current_match.method, OMRStudentMatch.Method.MANUAL)
+
         score_request = self.factory.get(f"/api/v1/results/admin/sessions/{self.session.id}/scores/")
         score_request.tenant = self.tenant
         force_authenticate(score_request, user=self.admin)
@@ -580,6 +736,20 @@ class SessionScoresRosterScopeTests(TestCase):
         active_row = next(row for row in rows if row["enrollment_id"] == self.active_enrollment.id)
         self.assertEqual(len(active_row["exams"]), 1)
         self.assertEqual(active_row["exams"][0]["block"]["score"], 10.0)
+
+        detail_request = self.factory.get(
+            f"/api/v1/submissions/submissions/{submission.id}/manual-edit/"
+        )
+        detail_request.tenant = self.tenant
+        force_authenticate(detail_request, user=self.admin)
+        detail_response = SubmissionViewSet.as_view({"get": "manual_edit"})(
+            detail_request,
+            pk=submission.id,
+        )
+        self.assertEqual(detail_response.status_code, 200, detail_response.data)
+        self.assertEqual(detail_response.data["submission_status"], Submission.Status.DONE)
+        self.assertEqual(detail_response.data["enrollment_id"], self.active_enrollment.id)
+        self.assertEqual(detail_response.data["meta"]["identifier_status"], "matched")
 
     def test_session_scores_marks_omr_review_required_without_fail_score(self):
         Submission.objects.create(
@@ -1486,6 +1656,14 @@ class SessionScoresRosterScopeTests(TestCase):
         clinic_session.save(update_fields=["date", "updated_at"])
         participant.status = session_participant_model.Status.ATTENDED
         participant.save(update_fields=["status", "updated_at"])
+        newer_requirement_row = read_row()
+        self.assertTrue(newer_requirement_row["clinic_required"])
+        self.assertTrue(newer_requirement_row["name_highlight_clinic_target"])
+
+        # Ongoing attendance may survive midnight for its original assessment,
+        # but an older clinic cannot cover a requirement created after it.
+        self.session.date = timezone.localdate() - datetime.timedelta(days=2)
+        self.session.save(update_fields=["date", "updated_at"])
         self.assertFalse(read_row()["name_highlight_clinic_target"])
 
         participant.completed_at = timezone.now()
@@ -1525,6 +1703,36 @@ class SessionScoresRosterScopeTests(TestCase):
 
         self.assertEqual(response.status_code, 200, response.data)
         row = next(row for row in response.data["rows"] if row["enrollment_id"] == self.active_enrollment.id)
+        self.assertFalse(row["clinic_required"])
+        self.assertFalse(row["name_highlight_clinic_target"])
+
+        targets = ClinicTargetService.list_admin_targets(tenant=self.tenant)
+        self.assertFalse(any(target.get("clinic_link_id") == link.id for target in targets))
+
+    def test_session_scores_ignores_exam_clinic_link_when_student_is_unassigned(self):
+        ExamEnrollment.objects.filter(
+            exam=self.exam,
+            enrollment=self.active_enrollment,
+        ).delete()
+        link = ClinicLink.objects.create(
+            tenant=self.tenant,
+            enrollment=self.active_enrollment,
+            session=self.session,
+            reason=ClinicLink.Reason.AUTO_FAILED,
+            is_auto=True,
+            source_type="exam",
+            source_id=self.exam.id,
+            meta={"kind": "EXAM_FAILED", "exam_id": self.exam.id},
+        )
+
+        request = self.factory.get(f"/api/v1/results/admin/sessions/{self.session.id}/scores/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        response = SessionScoresView.as_view()(request, session_id=self.session.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        row = next(row for row in response.data["rows"] if row["enrollment_id"] == self.active_enrollment.id)
+        self.assertEqual(row["exams"], [])
         self.assertFalse(row["clinic_required"])
         self.assertFalse(row["name_highlight_clinic_target"])
 

@@ -67,6 +67,8 @@ class Enrollment(TimestampModel):
 
     enrolled_at = models.DateTimeField(auto_now_add=True)
 
+    lecture_memo = models.TextField(blank=True, default="", db_default="")
+
     class Meta:
         indexes = [
             models.Index(fields=["tenant", "created_at"]),  # ✅ 복합 인덱스 추가

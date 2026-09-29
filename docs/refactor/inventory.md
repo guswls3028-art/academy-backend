@@ -1,11 +1,12 @@
 # Refactor Inventory
 
-**Status:** [VERIFIED] repository snapshot with [INFERRED] risk notes  
+**Status:** [HISTORICAL SNAPSHOT] repository measurements and inferred risks captured below
 **Captured:** 2026-06-23
 **Purpose:** keep the large refactor grounded in measured code, not vibes.
 
-Numbers in this document are lightweight repository scans. Treat them as
-directional until replaced by semantic tooling.
+Numbers in this document are historical repository scans, not current debt or
+release measurements. Recheck the affected scope against current code when using
+an entry. Current execution and evidence limits are in [hardening-plan.md](hardening-plan.md).
 
 ## Workspace
 

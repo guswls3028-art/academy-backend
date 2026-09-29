@@ -322,7 +322,7 @@ class SessionParticipant(TimestampModel):
             models.CheckConstraint(
                 condition=(
                     models.Q(booking_start_time__isnull=True)
-                    | models.Q(booking_start_time__lt=models.F("booking_end_time"))
+                    | ~models.Q(booking_start_time=models.F("booking_end_time"))
                 ),
                 name="clinic_participant_booking_range_order",
             ),

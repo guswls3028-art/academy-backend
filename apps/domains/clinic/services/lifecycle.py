@@ -4,6 +4,7 @@ import datetime
 from dataclasses import dataclass
 from typing import Any
 
+from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -14,14 +15,25 @@ from apps.domains.clinic.models import (
     SessionParticipant,
     SessionParticipantPlanItem,
 )
+from apps.domains.clinic.time_ranges import (
+    booking_window,
+    ends_after_next_day_midnight_values,
+    is_supported_time_range_session,
+    ranges_overlap,
+    session_window,
+)
 from apps.support.clinic.session_dependencies import (
     active_students_for_clinic_tenant,
     active_enrolled_lecture_ids_for_student,
     cancel_pending_clinic_participant_reminders,
     clinic_enrollment_for_tenant,
     clinic_reason_for_unresolved_auto_links,
+    clinic_reasons_for_unresolved_auto_links,
+    enrollments_for_clinic_tenant,
     locked_clinic_links_for_participant_plan,
     preferred_active_enrollment_id_for_student_session,
+    send_clinic_event_notification,
+    student_has_current_required_clinic_target,
 )
 
 
@@ -29,6 +41,12 @@ class Conflict(APIException):
     status_code = 409
     default_detail = "요청이 현재 데이터 상태와 충돌합니다."
     default_code = "conflict"
+
+
+class ClinicNotificationOutboxUnavailable(APIException):
+    status_code = 503
+    default_detail = "취소 안내 접수를 완료하지 못했습니다. 잠시 후 다시 시도해 주세요."
+    default_code = "clinic_notification_outbox_unavailable"
 
 
 def cancel_active_participants_for_student(*, tenant, student, changed_at) -> int:
@@ -50,6 +68,7 @@ class ClinicNotificationEvent:
 class ParticipantTransitionResult:
     participant: SessionParticipant
     notification: ClinicNotificationEvent | None = None
+    notification_result: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -91,12 +110,108 @@ STUDENT_STATUS_TRANSITIONS = {
     SessionParticipant.Status.PENDING: {
         SessionParticipant.Status.CANCELLED,
     },
-    SessionParticipant.Status.BOOKED: set(),
+    SessionParticipant.Status.BOOKED: {
+        SessionParticipant.Status.CANCELLED,
+    },
     SessionParticipant.Status.ATTENDED: set(),
     SessionParticipant.Status.NO_SHOW: set(),
     SessionParticipant.Status.REJECTED: set(),
     SessionParticipant.Status.CANCELLED: set(),
 }
+
+SELF_CANCEL_ACTIVE_STATUSES = (
+    SessionParticipant.Status.PENDING,
+    SessionParticipant.Status.BOOKED,
+)
+
+
+@dataclass(frozen=True)
+class ParticipantSelfCancelPolicy:
+    allowed: bool
+    reason: str
+
+
+def _participant_booking_end_at(participant: SessionParticipant) -> datetime.datetime:
+    session = participant.session
+    session_start = datetime.datetime.combine(session.date, session.start_time)
+    if participant.booking_start_time is not None and participant.booking_end_time is not None:
+        _, end_at = booking_window(
+            session=session, start_time=participant.booking_start_time, end_time=participant.booking_end_time,
+        )
+    else:
+        end_at = session_start + datetime.timedelta(
+            minutes=int(session.duration_minutes or 0)
+        )
+    if timezone.is_naive(end_at):
+        end_at = timezone.make_aware(end_at, timezone.get_current_timezone())
+    return end_at
+
+
+def _has_remaining_active_week_booking(
+    *,
+    tenant,
+    participant: SessionParticipant,
+    at: datetime.datetime,
+) -> bool:
+    session_date = participant.session.date
+    week_start = session_date - datetime.timedelta(days=session_date.weekday())
+    week_end = week_start + datetime.timedelta(days=6)
+    candidates = SessionParticipant.objects.filter(
+        tenant=tenant,
+        student=participant.student,
+        student__deleted_at__isnull=True,
+        session__tenant=tenant,
+        session__date__range=(week_start, week_end),
+        status__in=SELF_CANCEL_ACTIVE_STATUSES,
+        checked_out_at__isnull=True,
+        completed_at__isnull=True,
+    ).exclude(pk=participant.pk).select_related("session")
+    return any(_participant_booking_end_at(candidate) > at for candidate in candidates)
+
+
+def participant_self_cancel_policy(
+    *,
+    tenant,
+    participant: SessionParticipant,
+    has_current_required_target: bool | None = None,
+) -> ParticipantSelfCancelPolicy:
+    if participant.status not in SELF_CANCEL_ACTIVE_STATUSES:
+        return ParticipantSelfCancelPolicy(
+            allowed=False,
+            reason="이미 종료된 예약은 취소할 수 없습니다.",
+        )
+    if not participant.session_id:
+        return ParticipantSelfCancelPolicy(
+            allowed=True,
+            reason="아직 확정 일정이 없는 예약 신청은 직접 취소할 수 있습니다.",
+        )
+    if has_current_required_target is None:
+        has_current_required_target = student_has_current_required_clinic_target(
+            tenant=tenant,
+            student=participant.student,
+        )
+    if not has_current_required_target:
+        return ParticipantSelfCancelPolicy(
+            allowed=True,
+            reason="직접 취소할 수 있습니다. 취소 시 학생과 학부모님께 안내됩니다.",
+        )
+
+    if _has_remaining_active_week_booking(
+        tenant=tenant,
+        participant=participant,
+        at=timezone.now(),
+    ):
+        return ParticipantSelfCancelPolicy(
+            allowed=True,
+            reason="같은 주의 다른 예약을 남기고 이 예약을 취소할 수 있습니다.",
+        )
+    return ParticipantSelfCancelPolicy(
+        allowed=False,
+        reason=(
+            "필수 클리닉 대상자는 같은 주에 예약을 최소 1개 유지해야 합니다. "
+            "다른 일정을 먼저 예약하면 이 예약을 취소할 수 있습니다."
+        ),
+    )
 
 COMPLETE_ALLOWED_STATUSES = {
     SessionParticipant.Status.ATTENDED,
@@ -493,6 +608,49 @@ def _status_notification(
     )
 
 
+def _persist_self_cancel_notification_outboxes(
+    *,
+    tenant,
+    event: ClinicNotificationEvent,
+) -> dict[str, Any]:
+    context = dict(event.context)
+    context.setdefault("_source_domain", "clinic")
+    context.setdefault("_source_use_case", "clinic.clinic_cancelled")
+    targets = []
+    for target in ("parent", "student"):
+        try:
+            requested = send_clinic_event_notification(
+                tenant=tenant,
+                trigger="clinic_cancelled",
+                student=event.student,
+                send_to=target,
+                context=context,
+            )
+        except Exception as exc:
+            raise ClinicNotificationOutboxUnavailable() from exc
+        if not requested:
+            raise ClinicNotificationOutboxUnavailable()
+        targets.append({"target": target, "requested": True})
+    return {
+        "requested": 2,
+        "failed": 0,
+        "send_to": "both",
+        "targets": targets,
+    }
+
+
+def _already_cancelled_notification_result() -> dict[str, Any]:
+    return {
+        "requested": 0,
+        "failed": 0,
+        "send_to": "both",
+        "targets": [
+            {"target": target, "requested": False, "already_requested": True}
+            for target in ("parent", "student")
+        ],
+    }
+
+
 def _complete_notification(participant: SessionParticipant) -> ClinicNotificationEvent:
     session = participant.session
     now = timezone.now()
@@ -551,7 +709,24 @@ def change_participant_status(
     if next_status not in allowed_statuses:
         raise ValidationError({"detail": f"Invalid status: {next_status}"})
 
+    if request_student:
+        request_student = (
+            active_students_for_clinic_tenant(tenant)
+            .select_for_update()
+            .get(pk=request_student.pk)
+        )
     participant = _locked_participant(tenant=tenant, participant_id=participant_id)
+    if request_student and participant.student_id != request_student.id:
+        raise PermissionDenied("다른 학생의 예약을 수정할 수 없습니다.")
+    if (
+        request_student
+        and next_status == SessionParticipant.Status.CANCELLED
+        and participant.status == SessionParticipant.Status.CANCELLED
+    ):
+        return ParticipantTransitionResult(
+            participant=participant,
+            notification_result=_already_cancelled_notification_result(),
+        )
     if participant.checked_out_at is not None:
         raise ValidationError({"detail": "하원 처리된 참가자의 등원 상태는 변경할 수 없습니다."})
     transitions = STUDENT_STATUS_TRANSITIONS if request_student else STAFF_STATUS_TRANSITIONS
@@ -562,12 +737,14 @@ def change_participant_status(
         )
 
     if request_student:
-        if participant.student_id != request_student.id:
-            raise PermissionDenied("다른 학생의 예약을 수정할 수 없습니다.")
-        if participant.status != SessionParticipant.Status.PENDING:
-            raise PermissionDenied("승인 대기 중인 예약만 취소할 수 있습니다.")
         if next_status != SessionParticipant.Status.CANCELLED:
             raise PermissionDenied("학생은 예약 취소만 가능합니다.")
+        cancel_policy = participant_self_cancel_policy(
+            tenant=tenant,
+            participant=participant,
+        )
+        if not cancel_policy.allowed:
+            raise Conflict(cancel_policy.reason)
 
     changed_at = timezone.now()
     participant.status = next_status
@@ -613,9 +790,20 @@ def change_participant_status(
             reason=f"booking_{next_status}",
             removed_at=changed_at,
         )
+    notification = _status_notification(participant, next_status, actor=actor)
+    if request_student and next_status == SessionParticipant.Status.CANCELLED:
+        if notification is None:
+            raise ClinicNotificationOutboxUnavailable()
+        return ParticipantTransitionResult(
+            participant=participant,
+            notification_result=_persist_self_cancel_notification_outboxes(
+                tenant=tenant,
+                event=notification,
+            ),
+        )
     return ParticipantTransitionResult(
         participant=participant,
-        notification=_status_notification(participant, next_status, actor=actor),
+        notification=notification,
     )
 
 
@@ -828,7 +1016,10 @@ def _validate_student_session_eligibility(*, tenant, student, session) -> None:
         return
     if getattr(session, "tenant_id", None) != getattr(tenant, "id", None):
         raise PermissionDenied("해당 세션에 접근할 권한이 없습니다.")
-    if session.date < timezone.localdate():
+    if (
+        session.date < timezone.localdate()
+        and session_window(session)[1] <= timezone.localtime().replace(tzinfo=None)
+    ):
         raise ValidationError({"detail": "지난 날짜의 클리닉은 예약할 수 없습니다."})
     if session.target_grade:
         if not student.grade or session.target_grade != student.grade:
@@ -860,13 +1051,13 @@ def _validated_time_preference(
             {"preferred_time": "이 클리닉은 희망 시간을 받지 않습니다."}
         )
 
-    session_start = datetime.datetime.combine(session.date, session.start_time)
-    session_end = session_start + datetime.timedelta(minutes=session.duration_minutes)
-    preferred_start = datetime.datetime.combine(session.date, preferred_start_time)
-    preferred_end = datetime.datetime.combine(session.date, preferred_end_time)
-    if session_end.date() != session.date:
+    session_start, session_end = session_window(session)
+    preferred_start, preferred_end = booking_window(
+        session=session, start_time=preferred_start_time, end_time=preferred_end_time,
+    )
+    if not is_supported_time_range_session(session):
         raise ValidationError(
-            {"preferred_time": "자정을 넘는 클리닉은 희망 시간 입력을 지원하지 않습니다."}
+            {"preferred_time": "24시간 이상 운영하는 클리닉은 희망 시간 입력을 지원하지 않습니다."}
         )
     if not session_start <= preferred_start < preferred_end <= session_end:
         raise ValidationError(
@@ -897,14 +1088,34 @@ def _validated_booking_range(
         raise ValidationError(
             {"booking_time": "예약 시작과 종료 시간을 함께 입력해 주세요."}
         )
+    if (
+        booking_start_time > datetime.time.min
+        and booking_end_time == datetime.time.min
+        and not settings.CLINIC_MIDNIGHT_TIME_RANGE_WRITES_ENABLED
+    ):
+        raise ValidationError({
+            "booking_time": "자정 종료 시간 범위 예약은 안전 배포 완료 후 활성화됩니다."
+        })
 
-    session_start = datetime.datetime.combine(session.date, session.start_time)
-    session_end = session_start + datetime.timedelta(minutes=session.duration_minutes)
-    booking_start = datetime.datetime.combine(session.date, booking_start_time)
-    booking_end = datetime.datetime.combine(session.date, booking_end_time)
-    if session_end.date() != session.date:
+    session_start, session_end = session_window(session)
+    if (
+        ends_after_next_day_midnight_values(
+            session_date=session.date, start_time=session.start_time,
+            duration_minutes=session.duration_minutes,
+        )
+        and not settings.CLINIC_OVERNIGHT_TIME_RANGE_WRITES_ENABLED
+    ):
+        raise ValidationError({
+            "booking_time": "다음 날까지 이어지는 예약은 안전 배포 완료 후 활성화됩니다."
+        })
+    booking_start, booking_end = booking_window(
+        session=session,
+        start_time=booking_start_time,
+        end_time=booking_end_time,
+    )
+    if not is_supported_time_range_session(session):
         raise ValidationError(
-            {"booking_time": "자정을 넘는 클리닉은 시간 범위 예약을 지원하지 않습니다."}
+            {"booking_time": "시간 범위 세션은 0분보다 길고 24시간보다 짧아야 합니다."}
         )
     if not session_start <= booking_start < booking_end <= session_end:
         raise ValidationError(
@@ -967,7 +1178,7 @@ def _assert_session_capacity(
 
     if booking_start_time is None or booking_end_time is None:
         raise ValidationError({"booking_time": "예약 시작과 종료 시간을 입력해 주세요."})
-    ranged_active = SessionParticipant.objects.filter(
+    ranged_active = list(SessionParticipant.objects.filter(
         tenant=tenant,
         session=session,
         status__in=(
@@ -975,16 +1186,31 @@ def _assert_session_capacity(
             SessionParticipant.Status.BOOKED,
             SessionParticipant.Status.ATTENDED,
         ),
+    ).only("booking_start_time", "booking_end_time"))
+    cursor, end = booking_window(
+        session=session,
+        start_time=booking_start_time,
+        end_time=booking_end_time,
     )
-    cursor = datetime.datetime.combine(session.date, booking_start_time)
-    end = datetime.datetime.combine(session.date, booking_end_time)
     step = datetime.timedelta(minutes=int(session.booking_interval_minutes))
     while cursor < end:
         next_cursor = min(cursor + step, end)
-        concurrent = ranged_active.filter(
-            booking_start_time__lt=next_cursor.time(),
-            booking_end_time__gt=cursor.time(),
-        ).count()
+        concurrent = 0
+        for participant in ranged_active:
+            if participant.booking_start_time is None or participant.booking_end_time is None:
+                concurrent += 1
+                continue
+            participant_start, participant_end = booking_window(
+                session=session,
+                start_time=participant.booking_start_time,
+                end_time=participant.booking_end_time,
+            )
+            concurrent += ranges_overlap(
+                participant_start,
+                participant_end,
+                cursor,
+                next_cursor,
+            )
         if concurrent >= session.max_participants:
             raise Conflict("해당 클리닉은 선택한 시간의 정원이 마감되었습니다.")
         cursor = next_cursor
@@ -994,8 +1220,7 @@ def booking_availability_for_session(*, tenant, session: Session) -> dict[str, A
     """Return tenant-scoped interval capacity without exposing participant identity."""
 
     interval = int(session.booking_interval_minutes)
-    start = datetime.datetime.combine(session.date, session.start_time)
-    end = start + datetime.timedelta(minutes=session.duration_minutes)
+    start, end = session_window(session)
     slots = []
     active = getattr(session, "booking_capacity_participants", None)
     if active is None or session.booking_mode == "fixed_slot":
@@ -1012,16 +1237,27 @@ def booking_availability_for_session(*, tenant, session: Session) -> dict[str, A
     while cursor < end:
         next_cursor = min(cursor + datetime.timedelta(minutes=interval), end)
         if session.booking_mode == "time_range":
-            used = sum(
-                participant.booking_start_time is not None
-                and participant.booking_end_time is not None
-                and participant.booking_start_time < next_cursor.time()
-                and participant.booking_end_time > cursor.time()
-                for participant in active
-            )
+            used = 0
+            for participant in active:
+                if participant.booking_start_time is None or participant.booking_end_time is None:
+                    used += 1
+                    continue
+                participant_start, participant_end = booking_window(
+                    session=session,
+                    start_time=participant.booking_start_time,
+                    end_time=participant.booking_end_time,
+                )
+                used += ranges_overlap(
+                    participant_start,
+                    participant_end,
+                    cursor,
+                    next_cursor,
+                )
         else:
             used = len(active)
         slots.append({
+            "start_date": cursor.date().isoformat(),
+            "end_date": next_cursor.date().isoformat(),
             "start_time": cursor.time().strftime("%H:%M"),
             "end_time": next_cursor.time().strftime("%H:%M"),
             "remaining_capacity": max(int(session.max_participants) - used, 0),
@@ -1032,6 +1268,8 @@ def booking_availability_for_session(*, tenant, session: Session) -> dict[str, A
         "interval_minutes": interval,
         "max_stay_minutes": int(session.booking_max_stay_minutes),
         "window": {
+            "start_date": start.date().isoformat(),
+            "end_date": end.date().isoformat(),
             "start_time": start.time().strftime("%H:%M"),
             "end_time": end.time().strftime("%H:%M"),
         },
@@ -1047,6 +1285,8 @@ def _assert_no_active_duplicate(
     requested_date=None,
     requested_start_time=None,
     exclude_participant_id=None,
+    booking_start_time=None,
+    booking_end_time=None,
 ) -> None:
     active_statuses = [
         SessionParticipant.Status.PENDING,
@@ -1067,6 +1307,21 @@ def _assert_no_active_duplicate(
         ).exists()
         if exists:
             raise Conflict("이미 해당 세션에 예약된 학생입니다.")
+
+        start, end = session_window(session)
+        if booking_start_time is not None and booking_end_time is not None:
+            start, end = booking_window(session=session, start_time=booking_start_time, end_time=booking_end_time)
+        adjacent = active.filter(
+            session__date__range=(session.date - datetime.timedelta(days=1), session.date + datetime.timedelta(days=1)),
+        ).exclude(session__date=session.date).select_related("session")
+        for previous in adjacent:
+            previous_start, previous_end = session_window(previous.session)
+            if previous.booking_start_time is not None and previous.booking_end_time is not None:
+                previous_start, previous_end = booking_window(
+                    session=previous.session, start_time=previous.booking_start_time, end_time=previous.booking_end_time,
+                )
+            if ranges_overlap(start, end, previous_start, previous_end):
+                raise Conflict("자정을 넘는 기존 클리닉 예약과 시간이 겹칩니다.")
 
         same_date = active.filter(
             Q(session__date=session.date)
@@ -1119,7 +1374,10 @@ def create_participant(
         raise ValidationError({"detail": "session과 requested_date/requested_start_time을 동시에 사용할 수 없습니다."})
     if session and getattr(session, "tenant_id", None) != getattr(tenant, "id", None):
         raise PermissionDenied("해당 세션에 접근할 권한이 없습니다.")
-    if session and session.date < timezone.localdate():
+    if (
+        session and session.date < timezone.localdate()
+        and session_window(session)[1] <= timezone.localtime().replace(tzinfo=None)
+    ):
         raise ValidationError({"detail": "지난 날짜의 클리닉은 예약할 수 없습니다."})
 
     if request_student:
@@ -1184,6 +1442,8 @@ def create_participant(
         session=session,
         requested_date=requested_date,
         requested_start_time=requested_start_time,
+        booking_start_time=booking_start_time,
+        booking_end_time=booking_end_time,
     )
 
     if source == SessionParticipant.Source.MANUAL:
@@ -1201,9 +1461,13 @@ def create_participant(
             session=session,
         )
 
-    clinic_reason = validated_data.get("clinic_reason") or _clinic_reason_for_enrollment(
-        tenant=tenant,
-        enrollment_id=enrollment_id,
+    clinic_reason = (
+        validated_data["clinic_reason"]
+        if "clinic_reason" in validated_data
+        else _clinic_reason_for_enrollment(
+            tenant=tenant,
+            enrollment_id=enrollment_id,
+        )
     )
 
     if not requested_status:
@@ -1249,7 +1513,8 @@ def create_participants_bulk(
     *,
     tenant,
     session_ids: list[int],
-    student_ids: list[int],
+    student_ids: list[int] | None = None,
+    enrollment_ids: list[int] | None = None,
     request_student=None,
     student_request_memo: str = "",
     memo: str = "",
@@ -1260,27 +1525,71 @@ def create_participants_bulk(
 ) -> ParticipantBulkWriteResult:
     """Create the complete same-day session/student selection or create nothing."""
     requested_session_ids = [int(session_id) for session_id in session_ids]
+    requested_student_ids = [int(student_id) for student_id in (student_ids or [])]
+    requested_enrollment_ids = [
+        int(enrollment_id) for enrollment_id in (enrollment_ids or [])
+    ]
     if request_student is not None:
-        if student_ids:
+        if requested_student_ids or requested_enrollment_ids:
             raise PermissionDenied("다른 학생의 클리닉 예약을 신청할 수 없습니다.")
-        students = [
+        booking_targets = [(
             _lock_active_student_for_booking(
                 tenant=tenant,
                 student=request_student,
-            )
-        ]
+            ),
+            None,
+        )]
     else:
-        if not student_ids:
+        if requested_student_ids and requested_enrollment_ids:
+            raise ValidationError(
+                {"detail": "student_ids와 enrollment_ids 중 하나만 선택해 주세요."}
+            )
+        if not requested_student_ids and not requested_enrollment_ids:
             raise ValidationError({"student_ids": "추가할 학생을 한 명 이상 선택해 주세요."})
-        requested_student_ids = [int(student_id) for student_id in student_ids]
-        students = list(
-            active_students_for_clinic_tenant(tenant)
-            .filter(id__in=requested_student_ids)
-            .select_for_update()
-            .order_by("id")
-        )
-        if len(students) != len(requested_student_ids):
-            raise NotFound("선택한 학생을 찾을 수 없습니다.")
+        if requested_enrollment_ids:
+            enrollments = list(
+                enrollments_for_clinic_tenant(tenant)
+                .filter(id__in=requested_enrollment_ids, status="ACTIVE")
+                .select_for_update()
+                .order_by("id")
+            )
+            if len(enrollments) != len(requested_enrollment_ids):
+                raise NotFound("선택한 수강 대상을 찾을 수 없습니다.")
+            if len({enrollment.student_id for enrollment in enrollments}) != len(enrollments):
+                raise ValidationError(
+                    {"enrollment_ids": "같은 학생의 수강 대상은 한 번만 선택해 주세요."}
+                )
+            students = list(
+                active_students_for_clinic_tenant(tenant)
+                .filter(id__in=[enrollment.student_id for enrollment in enrollments])
+                .select_for_update()
+                .order_by("id")
+            )
+            if len(students) != len(enrollments):
+                raise NotFound("선택한 수강 대상의 학생을 찾을 수 없습니다.")
+            student_by_id = {student.id: student for student in students}
+            enrollment_by_id = {enrollment.id: enrollment for enrollment in enrollments}
+            booking_targets = [
+                (
+                    student_by_id[enrollment_by_id[enrollment_id].student_id],
+                    enrollment_by_id[enrollment_id],
+                )
+                for enrollment_id in requested_enrollment_ids
+            ]
+        else:
+            students = list(
+                active_students_for_clinic_tenant(tenant)
+                .filter(id__in=requested_student_ids)
+                .select_for_update()
+                .order_by("id")
+            )
+            if len(students) != len(requested_student_ids):
+                raise NotFound("선택한 학생을 찾을 수 없습니다.")
+            student_by_id = {student.id: student for student in students}
+            booking_targets = [
+                (student_by_id[student_id], None)
+                for student_id in requested_student_ids
+            ]
 
     sessions = list(
         Session.objects
@@ -1319,11 +1628,16 @@ def create_participants_bulk(
 
     participants: list[SessionParticipant] = []
     notifications: list[ClinicNotificationEvent] = []
-    for student in students:
+    exact_enrollment_reasons = clinic_reasons_for_unresolved_auto_links(
+        tenant,
+        [enrollment.id for _, enrollment in booking_targets if enrollment is not None],
+    )
+    for student, enrollment in booking_targets:
         for session in sessions:
             validated_data = {
                 "session": session,
                 "student": student,
+                "enrollment": enrollment,
                 "student_request_memo": student_request_memo,
                 "memo": memo,
                 "preferred_start_time": preferred_start_time,
@@ -1331,6 +1645,10 @@ def create_participants_bulk(
                 "booking_start_time": booking_start_time,
                 "booking_end_time": booking_end_time,
             }
+            if enrollment is not None:
+                validated_data["clinic_reason"] = exact_enrollment_reasons.get(
+                    enrollment.id
+                )
             result = create_participant(
                 tenant=tenant,
                 validated_data=validated_data,
@@ -1367,6 +1685,11 @@ def change_participant_booking(
         new_session_id = int(new_session_id)
     except (TypeError, ValueError) as exc:
         raise ValidationError({"detail": "new_session_id는 숫자여야 합니다."}) from exc
+
+    # The limglish conversion locks tenant -> sessions -> participants. Enter
+    # the same tenant fence before this writer locks a student or participant,
+    # so neither path can hold a lower-level row while waiting on the other.
+    tenant = tenant.__class__.objects.select_for_update(no_key=True).get(pk=tenant.pk)
     try:
         booking_identity = (
             SessionParticipant.objects
@@ -1439,6 +1762,8 @@ def change_participant_booking(
         student=booking_student,
         session=new_session,
         exclude_participant_id=old_booking.id,
+        booking_start_time=booking_start_time,
+        booking_end_time=booking_end_time,
     )
     preferred_start_time, preferred_end_time = _validated_time_preference(
         session=new_session,

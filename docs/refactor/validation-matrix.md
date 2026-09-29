@@ -1,7 +1,13 @@
 # Refactor Validation Matrix
 
-**Status:** [PROPOSED] phase gate  
+**Status:** [HISTORICAL PROPOSAL] initial structural-refactor validation matrix
 **Purpose:** every phase must prove behavior from static checks to real flows.
+
+Current execution is [hardening-plan.md](hardening-plan.md); applicable commands
+and release gates are owned by repository `AGENTS.md`, executable workflows and
+[change-risk-and-release-bundle.md](../operations/change-risk-and-release-bundle.md).
+Do not replay historical canonical-root or production-writing examples below as
+current QA instructions. Preserve their invariants when selecting current tests.
 
 Use the smallest set that proves the touched surface, then broaden when a phase
 changes shared contracts, tenant/auth, workers, or frontend routing.
@@ -113,8 +119,10 @@ cd C:\academy\backend
 python -m pytest apps\domains\students\tests\test_student_domain_stabilization.py apps\domains\results\tests\test_submission_scope_guard.py apps\support\omr\tests\test_candidate_matching.py -v --tb=short -x
 ```
 
-Launch readiness uses the stricter gate in
-`student-domain-launch-readiness.md`.
+Current release readiness follows
+[change-risk-and-release-bundle.md](../operations/change-risk-and-release-bundle.md).
+`student-domain-launch-readiness.md` preserves the 2026-06-07 historical decision;
+it is not a current approval or QA procedure.
 
 ## Worker Validation
 

@@ -2,7 +2,7 @@
 
 **Status:** Active
 **Owners:** Backend API and frontend API consumers
-**Last reviewed:** 2026-08-27
+**Last reviewed:** 2026-09-20
 
 ## Purpose and ownership
 
@@ -35,12 +35,18 @@ not inherit test, development, worker, or production settings. Check mode fails 
 - the number of documented paths or schemas falls below the reviewed baseline;
 - the schema is not valid OpenAPI 3.
 
-The current reviewed baseline covers 601 paths and 433 schema components.
-Legacy APIView and serializer inference gaps are recorded as 1,372 generator
-errors (275 unique) and 336 warnings (138 unique). They are an explicit
+The current reviewed baseline covers 609 paths and 470 schema components.
+Legacy APIView and serializer inference gaps are recorded as 1,368 generator
+errors (274 unique) and 303 warnings (134 unique). They are an explicit
 no-regression ceiling, not a claim of complete endpoint typing. When an
 endpoint is touched, add its serializer/schema metadata and lower the baseline
 after regenerating; never raise the baseline merely to make CI pass.
+
+Lecture roster attendance uses the `LectureAttendance` component, distinct from
+employee `Attendance`. Its memo projections include `lecture_memo`,
+`lecture_memo_updated_at`, and read-only `student_memo`. The dedicated enrollment
+memo PATCH returns `LectureMemoResult` and requires `X-Expected-Updated-At`;
+data ownership and role boundaries are in [student-core.md](../domain/student-core.md).
 
 Generic `ExamAttempt` and derived progress resources publish read-only GET
 operations. Question and Sheet creation use dedicated request components so

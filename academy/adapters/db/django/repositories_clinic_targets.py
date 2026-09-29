@@ -8,8 +8,9 @@ from typing import Any
 
 def explicit_not_submitted_exam_results(*, tenant):
     """Latest exam result per enrollment, only when it is explicitly absent."""
+    from apps.domains.exams.models import ExamEnrollment
     from apps.domains.results.models import Result
-    from django.db.models import F, OuterRef, Subquery
+    from django.db.models import Exists, F, OuterRef, Q, Subquery
 
     latest_result_id = (
         Result.objects.filter(
@@ -20,13 +21,24 @@ def explicit_not_submitted_exam_results(*, tenant):
         .order_by("-id")
         .values("id")[:1]
     )
-    return Result.objects.filter(
+    exam_targets = ExamEnrollment.objects.filter(exam_id=OuterRef("target_id"))
+    return Result.objects.alias(
+        has_explicit_exam_targets=Exists(exam_targets),
+        is_current_exam_target=Exists(
+            exam_targets.filter(enrollment_id=OuterRef("enrollment_id"))
+        ),
+    ).filter(
+        # Explicit targets are authoritative; legacy exams without target rows
+        # still use the linked session roster below.
+        Q(has_explicit_exam_targets=False) | Q(is_current_exam_target=True),
         id=Subquery(latest_result_id),
         target_type="exam",
         target_id=F("attempt__exam_id"),
         enrollment__tenant=tenant,
         enrollment__student__tenant=tenant,
+        enrollment__student__deleted_at__isnull=True,
         enrollment__lecture__tenant=tenant,
+        enrollment__lecture__is_active=True,
         enrollment__status="ACTIVE",
         attempt__meta__status="NOT_SUBMITTED",
         attempt__exam__tenant=tenant,
@@ -46,7 +58,7 @@ def explicit_not_submitted_exam_targets(*, tenant, section_id: int | None = None
     from apps.domains.enrollment.models import SessionEnrollment
     from apps.domains.lectures.models import Session
     from apps.domains.progress.models import ClinicLink
-    from django.db.models import Q
+    from django.db.models import F, Q
 
     results = list(
         explicit_not_submitted_exam_results(tenant=tenant).select_related(
@@ -83,10 +95,18 @@ def explicit_not_submitted_exam_targets(*, tenant, section_id: int | None = None
             tenant=tenant,
             enrollment_id__in=enrollment_ids,
             session__lecture__tenant=tenant,
+            session__lecture__is_active=True,
+            session__lecture_id=F("enrollment__lecture_id"),
+            enrollment__status="ACTIVE",
+            enrollment__lecture__is_active=True,
             session__exams__id__in=exam_ids,
         ).values_list("enrollment_id", "session_id", "session__exams__id").distinct()
     )
     session_ids = {int(session_id) for _, session_id, _ in roster_links}
+    completed_pairs = completed_progress_pairs(
+        session_ids=list(session_ids),
+        enrollment_ids=list(enrollment_ids),
+    )
     sessions = {
         int(session.id): session
         for session in Session.objects.filter(
@@ -114,6 +134,8 @@ def explicit_not_submitted_exam_targets(*, tenant, section_id: int | None = None
         session = sessions.get(int(session_id))
         if not result or not session:
             continue
+        if (int(session_id), int(enrollment_id)) in completed_pairs:
+            continue
         if (int(enrollment_id), int(session_id), int(exam_id)) in existing:
             continue
         targets.append((result, session))
@@ -132,11 +154,21 @@ def clinic_links_for_admin_targets(*, tenant, include_resolved: bool):
             enrollment__lecture__tenant=tenant,
             session__lecture__tenant=tenant,
         )
-        .select_related("session", "session__lecture")
+        .select_related(
+            "session__lecture__tenant",
+            "session__homework_policy",
+            "enrollment__student",
+            "enrollment__lecture",
+        )
         .order_by("-created_at")
     )
     if not include_resolved:
-        links = links.filter(resolved_at__isnull=True)
+        links = links.filter(
+            resolved_at__isnull=True,
+            enrollment__student__deleted_at__isnull=True,
+            enrollment__lecture__is_active=True,
+            session__lecture__is_active=True,
+        )
     return links.filter(enrollment__status="ACTIVE")
 
 
@@ -248,40 +280,51 @@ def enrollment_map_for_ids(*, tenant, enrollment_ids: list[int]) -> dict[int, An
     }
 
 
-def regular_homework_for_clinic_target(*, homework_id: int, tenant, session_id: int):
+def source_maps_for_clinic_targets(*, tenant, session_ids, exam_ids, legacy_session_ids, homework_ids):
+    """Load exact live sources once, including legacy smallest-exam fallback."""
+    from django.db.models import F, Q
+    from apps.domains.exams.models import Exam
     from apps.domains.homework_results.models import Homework
+    from apps.support.results.progress_read_dependencies import live_regular_exam_filter
 
-    return (
+    exams = {}
+    legacy_exams = {}
+    for exam in Exam.objects.filter(
+        Q(id__in=exam_ids) | Q(sessions__id__in=legacy_session_ids),
+        tenant=tenant,
+        sessions__id__in=session_ids,
+        sessions__lecture__tenant=tenant,
+        **live_regular_exam_filter(),
+    ).annotate(clinic_session_id=F("sessions__id")).order_by("id"):
+        exams[(int(exam.clinic_session_id), int(exam.id))] = exam
+        legacy_exams.setdefault(int(exam.clinic_session_id), exam)
+    homeworks = {
+        (int(homework.session_id), int(homework.id)): homework
+        for homework in
         Homework.objects.filter(
-            id=int(homework_id),
+            id__in=homework_ids,
             tenant=tenant,
             homework_type=Homework.HomeworkType.REGULAR,
-            session_id=int(session_id),
+            session_id__in=session_ids,
         )
         .exclude(meta__removed_from_session_at__isnull=False)
-        .first()
-    )
+    }
+    return exams, legacy_exams, homeworks
 
 
-def first_homework_score(*, enrollment_id: int, session_id: int, homework_id: int):
+def homework_score_map_for_targets(*, tenant, enrollment_ids, session_ids, homework_ids):
     from apps.domains.homework_results.models import HomeworkScore
 
-    return HomeworkScore.objects.filter(
-        enrollment_id=int(enrollment_id),
-        session_id=int(session_id),
-        homework_id=int(homework_id),
-        attempt_index=1,
-    ).first()
-
-
-def homework_scores_for_target(*, enrollment_id: int, session_id: int, homework_id: int):
-    from apps.domains.homework_results.models import HomeworkScore
-
-    return HomeworkScore.objects.filter(
-        enrollment_id=int(enrollment_id),
-        session_id=int(session_id),
-        homework_id=int(homework_id),
-    ).order_by("attempt_index")
+    scores = {}
+    for score in HomeworkScore.objects.filter(
+        enrollment__tenant=tenant,
+        enrollment_id__in=enrollment_ids,
+        session_id__in=session_ids,
+        homework_id__in=homework_ids,
+    ).order_by("attempt_index", "id"):
+        key = (int(score.enrollment_id), int(score.session_id), int(score.homework_id))
+        scores.setdefault(key, []).append(score)
+    return scores
 
 
 def homework_cutline_settings_for_target(*, session, homework=None):
@@ -297,13 +340,15 @@ def homework_cutline_settings_for_target(*, session, homework=None):
     )
 
 
-def regular_exam_for_source(*, exam_id: int, tenant, session_id: int):
-    from apps.domains.exams.models import Exam
+def exam_cutline_overrides_for_targets(*, tenant, exam_ids, lecture_ids):
+    from apps.domains.exams.models import ExamLecturePolicy
 
-    return Exam.objects.filter(
-        id=int(exam_id),
-        tenant=tenant,
-        exam_type=Exam.ExamType.REGULAR,
-        is_active=True,
-        sessions__id=int(session_id),
-    ).first()
+    return {
+        (int(exam_id), int(lecture_id)): float(pass_score)
+        for exam_id, lecture_id, pass_score in ExamLecturePolicy.objects.filter(
+            exam__tenant=tenant,
+            lecture__tenant=tenant,
+            exam_id__in=exam_ids,
+            lecture_id__in=lecture_ids,
+        ).values_list("exam_id", "lecture_id", "pass_score")
+    }

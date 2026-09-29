@@ -294,6 +294,17 @@
             "nullable": true,
             "type": "number"
           },
+          "grading_status": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/GradingStatusEnum"
+              },
+              {
+                "$ref": "#/components/schemas/NullEnum"
+              }
+            ]
+          },
           "is_provisional": {
             "default": false,
             "type": "boolean"
@@ -807,6 +818,10 @@
       },
       "ClinicAvailabilitySlot": {
         "properties": {
+          "end_date": {
+            "format": "date",
+            "type": "string"
+          },
           "end_time": {
             "format": "time",
             "type": "string"
@@ -815,22 +830,8 @@
             "minimum": 0,
             "type": "integer"
           },
-          "start_time": {
-            "format": "time",
-            "type": "string"
-          }
-        },
-        "required": [
-          "end_time",
-          "remaining_capacity",
-          "start_time"
-        ],
-        "type": "object"
-      },
-      "ClinicAvailabilityWindow": {
-        "properties": {
-          "end_time": {
-            "format": "time",
+          "start_date": {
+            "format": "date",
             "type": "string"
           },
           "start_time": {
@@ -839,7 +840,37 @@
           }
         },
         "required": [
+          "end_date",
           "end_time",
+          "remaining_capacity",
+          "start_date",
+          "start_time"
+        ],
+        "type": "object"
+      },
+      "ClinicAvailabilityWindow": {
+        "properties": {
+          "end_date": {
+            "format": "date",
+            "type": "string"
+          },
+          "end_time": {
+            "format": "time",
+            "type": "string"
+          },
+          "start_date": {
+            "format": "date",
+            "type": "string"
+          },
+          "start_time": {
+            "format": "time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "end_date",
+          "end_time",
+          "start_date",
           "start_time"
         ],
         "type": "object"
@@ -917,7 +948,7 @@
             "nullable": true
           },
           "resolution_type": {
-            "description": "해소 유형: 시험통과/과제통과/수동해소/면제/원본삭제/시험미응시/레거시\n\n* `EXAM_PASS` - 시험 통과\n* `HOMEWORK_PASS` - 과제 통과\n* `MANUAL_OVERRIDE` - 관리자 수동 해소\n* `WAIVED` - 면제\n* `CARRIED_OVER` - 다음 차수로 이월\n* `SOURCE_REMOVED` - 원본 삭제\n* `NOT_SUBMITTED` - 시험 미응시 전환\n* `BOOKING_LEGACY` - 레거시(예약 기반)",
+            "description": "해소 유형: 시험통과/과제통과/수동해소/면제/원본삭제/시험미응시/채점미완료투영철회/레거시\n\n* `EXAM_PASS` - 시험 통과\n* `HOMEWORK_PASS` - 과제 통과\n* `MANUAL_OVERRIDE` - 관리자 수동 해소\n* `WAIVED` - 면제\n* `CARRIED_OVER` - 다음 차수로 이월\n* `SOURCE_REMOVED` - 원본 삭제\n* `NOT_SUBMITTED` - 시험 미응시 전환\n* `GRADING_RETRACTED` - 채점 미완료 투영 철회\n* `BOOKING_LEGACY` - 레거시(예약 기반)",
             "nullable": true,
             "oneOf": [
               {
@@ -1006,7 +1037,7 @@
             "nullable": true
           },
           "resolution_type": {
-            "description": "해소 유형: 시험통과/과제통과/수동해소/면제/원본삭제/시험미응시/레거시\n\n* `EXAM_PASS` - 시험 통과\n* `HOMEWORK_PASS` - 과제 통과\n* `MANUAL_OVERRIDE` - 관리자 수동 해소\n* `WAIVED` - 면제\n* `CARRIED_OVER` - 다음 차수로 이월\n* `SOURCE_REMOVED` - 원본 삭제\n* `NOT_SUBMITTED` - 시험 미응시 전환\n* `BOOKING_LEGACY` - 레거시(예약 기반)",
+            "description": "해소 유형: 시험통과/과제통과/수동해소/면제/원본삭제/시험미응시/채점미완료투영철회/레거시\n\n* `EXAM_PASS` - 시험 통과\n* `HOMEWORK_PASS` - 과제 통과\n* `MANUAL_OVERRIDE` - 관리자 수동 해소\n* `WAIVED` - 면제\n* `CARRIED_OVER` - 다음 차수로 이월\n* `SOURCE_REMOVED` - 원본 삭제\n* `NOT_SUBMITTED` - 시험 미응시 전환\n* `GRADING_RETRACTED` - 채점 미완료 투영 철회\n* `BOOKING_LEGACY` - 레거시(예약 기반)",
             "nullable": true,
             "oneOf": [
               {
@@ -1036,7 +1067,7 @@
         "type": "object"
       },
       "ClinicLinkResolutionTypeEnum": {
-        "description": "* `EXAM_PASS` - 시험 통과\n* `HOMEWORK_PASS` - 과제 통과\n* `MANUAL_OVERRIDE` - 관리자 수동 해소\n* `WAIVED` - 면제\n* `CARRIED_OVER` - 다음 차수로 이월\n* `SOURCE_REMOVED` - 원본 삭제\n* `NOT_SUBMITTED` - 시험 미응시 전환\n* `BOOKING_LEGACY` - 레거시(예약 기반)",
+        "description": "* `EXAM_PASS` - 시험 통과\n* `HOMEWORK_PASS` - 과제 통과\n* `MANUAL_OVERRIDE` - 관리자 수동 해소\n* `WAIVED` - 면제\n* `CARRIED_OVER` - 다음 차수로 이월\n* `SOURCE_REMOVED` - 원본 삭제\n* `NOT_SUBMITTED` - 시험 미응시 전환\n* `GRADING_RETRACTED` - 채점 미완료 투영 철회\n* `BOOKING_LEGACY` - 레거시(예약 기반)",
         "enum": [
           "EXAM_PASS",
           "HOMEWORK_PASS",
@@ -1045,9 +1076,19 @@
           "CARRIED_OVER",
           "SOURCE_REMOVED",
           "NOT_SUBMITTED",
+          "GRADING_RETRACTED",
           "BOOKING_LEGACY"
         ],
         "type": "string"
+      },
+      "ClinicLinkUnresolveRequest": {
+        "properties": {
+          "expected_resolved_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "type": "object"
       },
       "ClinicNotificationRetryRequestRequest": {
         "properties": {
@@ -1222,6 +1263,11 @@
             "minimum": 0,
             "type": "integer"
           },
+          "end_date": {
+            "format": "date",
+            "readOnly": true,
+            "type": "string"
+          },
           "end_time": {
             "readOnly": true,
             "type": "string"
@@ -1340,6 +1386,7 @@
           "created_at",
           "created_by",
           "date",
+          "end_date",
           "end_time",
           "has_auto_targets",
           "id",
@@ -1368,10 +1415,22 @@
       },
       "ClinicSessionParticipant": {
         "properties": {
+          "booking_end_date": {
+            "format": "date",
+            "nullable": true,
+            "readOnly": true,
+            "type": "string"
+          },
           "booking_end_time": {
             "description": "시간 범위 방식에서 확정된 실제 예약 종료 시각입니다.",
             "format": "time",
             "nullable": true,
+            "type": "string"
+          },
+          "booking_start_date": {
+            "format": "date",
+            "nullable": true,
+            "readOnly": true,
             "type": "string"
           },
           "booking_start_time": {
@@ -1379,6 +1438,10 @@
             "format": "time",
             "nullable": true,
             "type": "string"
+          },
+          "can_self_cancel": {
+            "readOnly": true,
+            "type": "boolean"
           },
           "checked_in_at": {
             "format": "date-time",
@@ -1465,6 +1528,10 @@
             "readOnly": true,
             "type": "string"
           },
+          "lecture_current": {
+            "readOnly": true,
+            "type": "boolean"
+          },
           "lecture_title": {
             "readOnly": true,
             "type": "string"
@@ -1519,6 +1586,10 @@
           "requested_start_time": {
             "format": "time",
             "nullable": true,
+            "type": "string"
+          },
+          "self_cancel_reason": {
+            "readOnly": true,
             "type": "string"
           },
           "session": {
@@ -1598,6 +1669,9 @@
           }
         },
         "required": [
+          "booking_end_date",
+          "booking_start_date",
+          "can_self_cancel",
           "checked_out_by_name",
           "completed_by_name",
           "completion_history",
@@ -1606,6 +1680,7 @@
           "id",
           "lecture_chip_label",
           "lecture_color",
+          "lecture_current",
           "lecture_title",
           "name_highlight_clinic_target",
           "planned_clinic_link_ids",
@@ -1613,6 +1688,7 @@
           "preferred_start_time",
           "profile_photo_url",
           "recipient_contacts",
+          "self_cancel_reason",
           "session_date",
           "session_duration_minutes",
           "session_end_time",
@@ -1640,6 +1716,14 @@
             "format": "time",
             "nullable": true,
             "type": "string"
+          },
+          "enrollment_ids": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "maxItems": 100,
+            "type": "array"
           },
           "memo": {
             "default": "",
@@ -2637,6 +2721,15 @@
           "lecture": {
             "type": "integer"
           },
+          "lecture_memo": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "lecture_memo_updated_at": {
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
+          },
           "status": {
             "$ref": "#/components/schemas/Status2d4Enum"
           },
@@ -2663,6 +2756,8 @@
           "enrolled_at",
           "id",
           "lecture",
+          "lecture_memo",
+          "lecture_memo_updated_at",
           "student",
           "tenant",
           "updated_at"
@@ -2732,6 +2827,22 @@
         ],
         "type": "object"
       },
+      "EssayNumberingEnum": {
+        "description": "* `continuous` - 이어서 표시\n* `separate` - 서술형 1번부터 표시",
+        "enum": [
+          "continuous",
+          "separate"
+        ],
+        "type": "string"
+      },
+      "EventProtocolVersionEnum": {
+        "description": "* `1` - 1\n* `2` - 2",
+        "enum": [
+          1,
+          2
+        ],
+        "type": "integer"
+      },
       "EventTypeEnum": {
         "description": "* `VISIBILITY_HIDDEN` - 탭 숨김\n* `VISIBILITY_VISIBLE` - 탭 노출\n* `FOCUS_LOST` - 포커스 이탈\n* `FOCUS_GAINED` - 포커스 복귀\n* `SEEK_ATTEMPT` - 탐색 시도\n* `SPEED_CHANGE_ATTEMPT` - 배속 변경 시도\n* `FULLSCREEN_ENTER` - 전체화면 진입\n* `FULLSCREEN_EXIT` - 전체화면 종료\n* `PLAYER_ERROR` - 플레이어 오류",
         "enum": [
@@ -2790,6 +2901,14 @@
             "maximum": 9223372036854775807,
             "minimum": 0,
             "type": "integer"
+          },
+          "essay_numbering": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EssayNumberingEnum"
+              }
+            ],
+            "description": "서술형 표시 번호 방식. 저장된 문항 번호와 채점·OMR 인식 계약은 변경하지 않는다.\n\n* `continuous` - 이어서 표시\n* `separate` - 서술형 1번부터 표시"
           },
           "exam_type": {
             "$ref": "#/components/schemas/ExamTypeEnum"
@@ -3005,6 +3124,14 @@
           "description": {
             "type": "string"
           },
+          "essay_numbering": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EssayNumberingEnum"
+              }
+            ],
+            "description": "서술형 표시 번호 방식. 저장된 문항 번호와 채점·OMR 인식 계약은 변경하지 않는다.\n\n* `continuous` - 이어서 표시\n* `separate` - 서술형 1번부터 표시"
+          },
           "exam_type": {
             "type": "string"
           },
@@ -3086,6 +3213,14 @@
           },
           "description": {
             "type": "string"
+          },
+          "essay_numbering": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EssayNumberingEnum"
+              }
+            ],
+            "description": "서술형 표시 번호 방식. 저장된 문항 번호와 채점·OMR 인식 계약은 변경하지 않는다.\n\n* `continuous` - 이어서 표시\n* `separate` - 서술형 1번부터 표시"
           },
           "exam_type": {
             "minLength": 1,
@@ -3203,6 +3338,14 @@
             "minimum": 0,
             "type": "integer"
           },
+          "essay_numbering": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EssayNumberingEnum"
+              }
+            ],
+            "description": "서술형 표시 번호 방식. 저장된 문항 번호와 채점·OMR 인식 계약은 변경하지 않는다.\n\n* `continuous` - 이어서 표시\n* `separate` - 서술형 1번부터 표시"
+          },
           "grading_mode": {
             "allOf": [
               {
@@ -3302,6 +3445,14 @@
             "maximum": 9223372036854775807,
             "minimum": 0,
             "type": "integer"
+          },
+          "essay_numbering": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EssayNumberingEnum"
+              }
+            ],
+            "description": "서술형 표시 번호 방식. 저장된 문항 번호와 채점·OMR 인식 계약은 변경하지 않는다.\n\n* `continuous` - 이어서 표시\n* `separate` - 서술형 1번부터 표시"
           },
           "grading_mode": {
             "allOf": [
@@ -3786,6 +3937,13 @@
           "skipped"
         ],
         "type": "object"
+      },
+      "GradingStatusEnum": {
+        "description": "* `subjective_pending` - subjective_pending",
+        "enum": [
+          "subjective_pending"
+        ],
+        "type": "string"
       },
       "HandoffStatusEnum": {
         "description": "* `account_inactive` - account_inactive\n* `password_setup_required` - password_setup_required\n* `first_login_pending` - first_login_pending\n* `complete` - complete",
@@ -4903,6 +5061,176 @@
         ],
         "type": "object"
       },
+      "LectureAttendance": {
+        "properties": {
+          "enrollment_id": {
+            "type": "integer"
+          },
+          "id": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "lecture_color": {
+            "default": "#3b82f6",
+            "readOnly": true,
+            "type": "string"
+          },
+          "lecture_memo": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "lecture_memo_updated_at": {
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
+          },
+          "lecture_title": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "memo": {
+            "type": "string"
+          },
+          "name": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "name_highlight_clinic_target": {
+            "readOnly": true,
+            "type": "boolean"
+          },
+          "parent_phone": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "phone": {
+            "nullable": true,
+            "readOnly": true,
+            "type": "string"
+          },
+          "planned_arrival_date": {
+            "description": "보강 학생의 예정 등원 날짜. 값이 있을 때 등원 예정으로 집계한다.",
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
+          "planned_arrival_time": {
+            "description": "보강 학생의 예정 등원 시간. 날짜만 정해진 경우 비워둘 수 있다.",
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
+          "profile_photo_url": {
+            "nullable": true,
+            "readOnly": true,
+            "type": "string"
+          },
+          "session": {
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/LectureAttendanceStatusEnum"
+          },
+          "student_id": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "student_memo": {
+            "readOnly": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "id",
+          "lecture_color",
+          "lecture_memo",
+          "lecture_memo_updated_at",
+          "lecture_title",
+          "name",
+          "name_highlight_clinic_target",
+          "parent_phone",
+          "phone",
+          "profile_photo_url",
+          "session",
+          "student_id",
+          "student_memo"
+        ],
+        "type": "object"
+      },
+      "LectureAttendanceRequest": {
+        "properties": {
+          "enrollment_id": {
+            "type": "integer"
+          },
+          "memo": {
+            "type": "string"
+          },
+          "planned_arrival_date": {
+            "description": "보강 학생의 예정 등원 날짜. 값이 있을 때 등원 예정으로 집계한다.",
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
+          "planned_arrival_time": {
+            "description": "보강 학생의 예정 등원 시간. 날짜만 정해진 경우 비워둘 수 있다.",
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
+          "session": {
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/LectureAttendanceStatusEnum"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "session"
+        ],
+        "type": "object"
+      },
+      "LectureAttendanceStatusEnum": {
+        "description": "* `UNSET` - 미입력\n* `PRESENT` - 출석\n* `LATE` - 지각\n* `ONLINE` - 온라인\n* `SUPPLEMENT` - 보강\n* `EARLY_LEAVE` - 조퇴\n* `ABSENT` - 결석\n* `RUNAWAY` - 출튀\n* `MATERIAL` - 자료\n* `INACTIVE` - 부재\n* `SECESSION` - 탈퇴",
+        "enum": [
+          "UNSET",
+          "PRESENT",
+          "LATE",
+          "ONLINE",
+          "SUPPLEMENT",
+          "EARLY_LEAVE",
+          "ABSENT",
+          "RUNAWAY",
+          "MATERIAL",
+          "INACTIVE",
+          "SECESSION"
+        ],
+        "type": "string"
+      },
+      "LectureMemoResult": {
+        "properties": {
+          "id": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "lecture_memo": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "lecture_memo_updated_at": {
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "lecture_memo",
+          "lecture_memo_updated_at"
+        ],
+        "type": "object"
+      },
       "LectureProgress": {
         "properties": {
           "completed_sessions": {
@@ -5475,6 +5803,153 @@
         ],
         "type": "string"
       },
+      "ManualAnswerQuestion": {
+        "properties": {
+          "answer": {
+            "type": "string"
+          },
+          "is_correct": {
+            "type": "boolean"
+          },
+          "max_score": {
+            "format": "double",
+            "type": "number"
+          },
+          "number": {
+            "type": "integer"
+          },
+          "question_id": {
+            "type": "integer"
+          },
+          "score": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "answer",
+          "is_correct",
+          "max_score",
+          "number",
+          "question_id",
+          "score"
+        ],
+        "type": "object"
+      },
+      "ManualAnswersDraft": {
+        "properties": {
+          "answers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "enrollment_id": {
+            "type": "integer"
+          },
+          "exam_id": {
+            "type": "integer"
+          },
+          "expected_version": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "answers",
+          "enrollment_id",
+          "exam_id",
+          "expected_version"
+        ],
+        "type": "object"
+      },
+      "ManualAnswersInputRequest": {
+        "properties": {
+          "answers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "apply": {
+            "type": "boolean"
+          },
+          "expected_version": {
+            "minLength": 1,
+            "nullable": true,
+            "type": "string"
+          },
+          "note": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "preview_token": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "answers",
+          "apply",
+          "expected_version",
+          "note"
+        ],
+        "type": "object"
+      },
+      "ManualAnswersPreview": {
+        "properties": {
+          "applied": {
+            "type": "boolean"
+          },
+          "enrollment_id": {
+            "type": "integer"
+          },
+          "exam_id": {
+            "type": "integer"
+          },
+          "expected_version": {
+            "nullable": true,
+            "type": "string"
+          },
+          "max_score": {
+            "format": "double",
+            "type": "number"
+          },
+          "objective_score": {
+            "format": "double",
+            "type": "number"
+          },
+          "preview_token": {
+            "type": "string"
+          },
+          "questions": {
+            "items": {
+              "$ref": "#/components/schemas/ManualAnswerQuestion"
+            },
+            "type": "array"
+          },
+          "subjective_pending": {
+            "type": "boolean"
+          },
+          "total_score": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "applied",
+          "enrollment_id",
+          "exam_id",
+          "expected_version",
+          "max_score",
+          "objective_score",
+          "preview_token",
+          "questions",
+          "subjective_pending",
+          "total_score"
+        ],
+        "type": "object"
+      },
       "ManualGradingMethodEnum": {
         "description": "* `correctness` - 정오 입력\n* `score` - 점수 입력",
         "enum": [
@@ -5497,6 +5972,40 @@
           "channel_source": {
             "readOnly": true,
             "type": "string"
+          },
+          "custom_channel_approved_templates": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "custom_channel_last_test_status": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "custom_channel_last_tested_at": {
+            "format": "date-time",
+            "nullable": true,
+            "readOnly": true,
+            "type": "string"
+          },
+          "custom_channel_reference": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "custom_channel_registered": {
+            "readOnly": true,
+            "type": "boolean"
+          },
+          "custom_channel_required_templates": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "custom_channel_status": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "custom_channel_test_available": {
+            "readOnly": true,
+            "type": "boolean"
           },
           "delivery_policy": {
             "readOnly": true,
@@ -5563,6 +6072,14 @@
           "alimtalk_available",
           "can_manage_messaging",
           "channel_source",
+          "custom_channel_approved_templates",
+          "custom_channel_last_test_status",
+          "custom_channel_last_tested_at",
+          "custom_channel_reference",
+          "custom_channel_registered",
+          "custom_channel_required_templates",
+          "custom_channel_status",
+          "custom_channel_test_available",
           "delivery_policy",
           "has_own_credentials",
           "messaging_disabled",
@@ -5760,6 +6277,18 @@
             },
             "type": "array"
           },
+          "grading_complete": {
+            "type": "boolean"
+          },
+          "grading_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          "grading_status": {
+            "type": "string"
+          },
           "id": {
             "format": "uuid",
             "type": "string"
@@ -5799,6 +6328,12 @@
             },
             "type": "array"
           },
+          "subjective_pending_ordinals": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          },
           "terminal": {
             "type": "boolean"
           },
@@ -5818,6 +6353,9 @@
           "duplicate_ordinals",
           "exam_id",
           "failed_ordinals",
+          "grading_complete",
+          "grading_counts",
+          "grading_status",
           "id",
           "lecture_id",
           "overall_status",
@@ -5826,6 +6364,7 @@
           "retried_ordinals",
           "session_id",
           "skipped_ordinals",
+          "subjective_pending_ordinals",
           "terminal",
           "total_count",
           "updated_at"
@@ -5868,6 +6407,18 @@
             },
             "type": "array"
           },
+          "grading_complete": {
+            "type": "boolean"
+          },
+          "grading_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          "grading_status": {
+            "type": "string"
+          },
           "id": {
             "format": "uuid",
             "type": "string"
@@ -5889,6 +6440,12 @@
             "nullable": true,
             "type": "integer"
           },
+          "subjective_pending_ordinals": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          },
           "terminal": {
             "type": "boolean"
           },
@@ -5908,11 +6465,15 @@
           "duplicate_ordinals",
           "exam_id",
           "failed_ordinals",
+          "grading_complete",
+          "grading_counts",
+          "grading_status",
           "id",
           "lecture_id",
           "overall_status",
           "pending_admission_ordinals",
           "session_id",
+          "subjective_pending_ordinals",
           "terminal",
           "total_count",
           "updated_at"
@@ -5958,6 +6519,18 @@
             },
             "type": "array"
           },
+          "grading_complete": {
+            "type": "boolean"
+          },
+          "grading_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          "grading_status": {
+            "type": "string"
+          },
           "id": {
             "format": "uuid",
             "type": "string"
@@ -5978,6 +6551,12 @@
           "session_id": {
             "nullable": true,
             "type": "integer"
+          },
+          "subjective_pending_ordinals": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
           },
           "submission_ids": {
             "items": {
@@ -6005,11 +6584,15 @@
           "duplicate_ordinals",
           "exam_id",
           "failed_ordinals",
+          "grading_complete",
+          "grading_counts",
+          "grading_status",
           "id",
           "lecture_id",
           "overall_status",
           "pending_admission_ordinals",
           "session_id",
+          "subjective_pending_ordinals",
           "submission_ids",
           "terminal",
           "total_count",
@@ -6635,6 +7218,37 @@
           "results": {
             "items": {
               "$ref": "#/components/schemas/InvoiceList"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "count",
+          "results"
+        ],
+        "type": "object"
+      },
+      "PaginatedLectureAttendanceList": {
+        "properties": {
+          "count": {
+            "example": 123,
+            "type": "integer"
+          },
+          "next": {
+            "example": "http://api.example.org/accounts/?page=4",
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "previous": {
+            "example": "http://api.example.org/accounts/?page=2",
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/LectureAttendance"
             },
             "type": "array"
           }
@@ -8047,6 +8661,14 @@
             "minimum": 0,
             "type": "integer"
           },
+          "essay_numbering": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EssayNumberingEnum"
+              }
+            ],
+            "description": "서술형 표시 번호 방식. 저장된 문항 번호와 채점·OMR 인식 계약은 변경하지 않는다.\n\n* `continuous` - 이어서 표시\n* `separate` - 서술형 1번부터 표시"
+          },
           "grading_mode": {
             "allOf": [
               {
@@ -8294,6 +8916,44 @@
           },
           "teacher_approved": {
             "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "PatchedLectureAttendanceRequest": {
+        "properties": {
+          "enrollment_id": {
+            "type": "integer"
+          },
+          "memo": {
+            "type": "string"
+          },
+          "planned_arrival_date": {
+            "description": "보강 학생의 예정 등원 날짜. 값이 있을 때 등원 예정으로 집계한다.",
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
+          "planned_arrival_time": {
+            "description": "보강 학생의 예정 등원 시간. 날짜만 정해진 경우 비워둘 수 있다.",
+            "format": "time",
+            "nullable": true,
+            "type": "string"
+          },
+          "session": {
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/LectureAttendanceStatusEnum"
+          }
+        },
+        "type": "object"
+      },
+      "PatchedLectureMemoRequest": {
+        "properties": {
+          "lecture_memo": {
+            "maxLength": 2000,
+            "type": "string"
           }
         },
         "type": "object"
@@ -9380,6 +10040,19 @@
             "nullable": true,
             "type": "string"
           },
+          "parent_initial_password": {
+            "oneOf": [
+              {
+                "minLength": 4,
+                "type": "string"
+              },
+              {
+                "maxLength": 0,
+                "type": "string"
+              }
+            ],
+            "writeOnly": true
+          },
           "parent_phone": {
             "description": "정규화된 전화번호 (하이픈 제거, 예: 01012345678)",
             "maxLength": 20,
@@ -9582,6 +10255,182 @@
         },
         "required": [
           "url"
+        ],
+        "type": "object"
+      },
+      "PlaybackRefreshRequestRequest": {
+        "properties": {
+          "token": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "type": "object"
+      },
+      "PlaybackRenewResponse": {
+        "properties": {
+          "access_mode": {
+            "$ref": "#/components/schemas/StudentVideoEffectiveAccessMode"
+          },
+          "event_protocol_version": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EventProtocolVersionEnum"
+              }
+            ],
+            "default": 1
+          },
+          "monitoring_enabled": {
+            "type": "boolean"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "play_url": {
+            "nullable": true,
+            "type": "string"
+          },
+          "playback_expires_at": {
+            "type": "integer"
+          },
+          "playback_session_id": {
+            "nullable": true,
+            "type": "string"
+          },
+          "playback_token": {
+            "type": "string"
+          },
+          "policy_version": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "access_mode",
+          "monitoring_enabled",
+          "ok",
+          "playback_expires_at",
+          "playback_session_id",
+          "playback_token",
+          "policy_version"
+        ],
+        "type": "object"
+      },
+      "PlaybackV2Acknowledgement": {
+        "properties": {
+          "batch_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "duplicate": {
+            "type": "boolean"
+          },
+          "event_count": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "batch_id",
+          "duplicate",
+          "event_count"
+        ],
+        "type": "object"
+      },
+      "PlaybackV2BatchRequest": {
+        "properties": {
+          "batch_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/PlaybackV2EventRequest"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "batch_id",
+          "events"
+        ],
+        "type": "object"
+      },
+      "PlaybackV2EndRequestRequest": {
+        "properties": {
+          "batches": {
+            "items": {
+              "$ref": "#/components/schemas/PlaybackV2BatchRequest"
+            },
+            "type": "array"
+          },
+          "token": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "batches",
+          "token"
+        ],
+        "type": "object"
+      },
+      "PlaybackV2EventRequest": {
+        "properties": {
+          "occurred_at": {
+            "type": "integer"
+          },
+          "payload": {},
+          "type": {
+            "$ref": "#/components/schemas/EventTypeEnum"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object"
+      },
+      "PlaybackV2EventsRequestRequest": {
+        "properties": {
+          "batch": {
+            "$ref": "#/components/schemas/PlaybackV2BatchRequest"
+          },
+          "token": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "batch",
+          "token"
+        ],
+        "type": "object"
+      },
+      "PlaybackV2Response": {
+        "properties": {
+          "acknowledgements": {
+            "items": {
+              "$ref": "#/components/schemas/PlaybackV2Acknowledgement"
+            },
+            "type": "array"
+          },
+          "inserted_count": {
+            "type": "integer"
+          },
+          "protocol_version": {
+            "type": "integer"
+          },
+          "session_status": {
+            "$ref": "#/components/schemas/SessionStatusEnum"
+          }
+        },
+        "required": [
+          "acknowledgements",
+          "inserted_count",
+          "protocol_version",
+          "session_status"
         ],
         "type": "object"
       },
@@ -10237,6 +11086,25 @@
         "required": [
           "reports"
         ],
+        "type": "object"
+      },
+      "ProductUsageOverviewRequestRequest": {
+        "properties": {
+          "days": {
+            "description": "7, 28, 90 중 하나",
+            "type": "integer"
+          },
+          "role": {
+            "type": "string"
+          },
+          "surface": {
+            "type": "string"
+          },
+          "tenant_id": {
+            "nullable": true,
+            "type": "integer"
+          }
+        },
         "type": "object"
       },
       "ProgressPolicy": {
@@ -11161,6 +12029,23 @@
         },
         "required": [
           "content"
+        ],
+        "type": "object"
+      },
+      "PublicVideoSession": {
+        "properties": {
+          "lecture_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "session_id": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "lecture_id",
+          "session_id"
         ],
         "type": "object"
       },
@@ -12723,6 +13608,15 @@
             "readOnly": true,
             "type": "integer"
           },
+          "lecture_memo": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "lecture_memo_updated_at": {
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
+          },
           "session": {
             "type": "integer"
           },
@@ -12734,6 +13628,10 @@
           "student_id": {
             "readOnly": true,
             "type": "integer"
+          },
+          "student_memo": {
+            "readOnly": true,
+            "type": "string"
           },
           "student_name": {
             "readOnly": true,
@@ -12753,9 +13651,12 @@
           "enrollment",
           "enrollment_status",
           "id",
+          "lecture_memo",
+          "lecture_memo_updated_at",
           "session",
           "student_grade",
           "student_id",
+          "student_memo",
           "student_name",
           "student_school",
           "tenant"
@@ -12857,6 +13758,16 @@
           "updated_at"
         ],
         "type": "object"
+      },
+      "SessionStatusEnum": {
+        "description": "* `ACTIVE` - 활성\n* `ENDED` - 종료\n* `REVOKED` - 차단\n* `EXPIRED` - 만료",
+        "enum": [
+          "ACTIVE",
+          "ENDED",
+          "REVOKED",
+          "EXPIRED"
+        ],
+        "type": "string"
       },
       "SessionTypeEnum": {
         "description": "* `REGULAR` - 정규\n* `SUPPLEMENT` - 보강",
@@ -13332,6 +14243,275 @@
         ],
         "type": "object"
       },
+      "StaffPayrollOverview": {
+        "properties": {
+          "date_from": {
+            "format": "date",
+            "type": "string"
+          },
+          "date_to": {
+            "format": "date",
+            "type": "string"
+          },
+          "month": {
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/StaffPayrollOverviewRow"
+            },
+            "type": "array"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/StaffPayrollOverviewTotals"
+          },
+          "year": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "date_from",
+          "date_to",
+          "month",
+          "rows",
+          "totals",
+          "year"
+        ],
+        "type": "object"
+      },
+      "StaffPayrollOverviewRow": {
+        "properties": {
+          "abnormal_long_work_record_count": {
+            "type": "integer"
+          },
+          "account_role": {
+            "type": "string"
+          },
+          "advisory_issue_count": {
+            "type": "integer"
+          },
+          "approved_expense_amount": {
+            "type": "integer"
+          },
+          "assigned_work_type_count": {
+            "type": "integer"
+          },
+          "can_close": {
+            "type": "boolean"
+          },
+          "can_manage_staff": {
+            "type": "boolean"
+          },
+          "duplicate_work_record_count": {
+            "type": "integer"
+          },
+          "incomplete_work_record_count": {
+            "type": "integer"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "manually_edited_work_record_count": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "open_work_record_count": {
+            "type": "integer"
+          },
+          "pay_type": {
+            "type": "string"
+          },
+          "pending_expense_amount": {
+            "type": "integer"
+          },
+          "pending_expense_count": {
+            "type": "integer"
+          },
+          "position": {
+            "type": "string"
+          },
+          "position_label": {
+            "type": "string"
+          },
+          "reference_business_income_tax": {
+            "type": "integer"
+          },
+          "reference_deduction_total": {
+            "type": "integer"
+          },
+          "reference_local_income_tax": {
+            "type": "integer"
+          },
+          "reference_net_work_amount": {
+            "type": "integer"
+          },
+          "reference_transfer_amount": {
+            "type": "integer"
+          },
+          "settlement_status": {
+            "type": "string"
+          },
+          "staff_id": {
+            "type": "integer"
+          },
+          "total_amount": {
+            "type": "integer"
+          },
+          "work_amount": {
+            "type": "integer"
+          },
+          "work_hours": {
+            "format": "double",
+            "type": "number"
+          },
+          "work_type_breakdown": {
+            "items": {
+              "$ref": "#/components/schemas/StaffPayrollWorkTypeBreakdown"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "abnormal_long_work_record_count",
+          "account_role",
+          "advisory_issue_count",
+          "approved_expense_amount",
+          "assigned_work_type_count",
+          "can_close",
+          "can_manage_staff",
+          "duplicate_work_record_count",
+          "incomplete_work_record_count",
+          "is_active",
+          "manually_edited_work_record_count",
+          "name",
+          "open_work_record_count",
+          "pay_type",
+          "pending_expense_amount",
+          "pending_expense_count",
+          "position",
+          "position_label",
+          "reference_business_income_tax",
+          "reference_deduction_total",
+          "reference_local_income_tax",
+          "reference_net_work_amount",
+          "reference_transfer_amount",
+          "settlement_status",
+          "staff_id",
+          "total_amount",
+          "work_amount",
+          "work_hours",
+          "work_type_breakdown"
+        ],
+        "type": "object"
+      },
+      "StaffPayrollOverviewTotals": {
+        "properties": {
+          "advisory_issue_count": {
+            "type": "integer"
+          },
+          "approved_expense_amount": {
+            "type": "integer"
+          },
+          "closed_count": {
+            "type": "integer"
+          },
+          "needs_review_count": {
+            "type": "integer"
+          },
+          "pending_expense_amount": {
+            "type": "integer"
+          },
+          "reference_business_income_tax": {
+            "type": "integer"
+          },
+          "reference_deduction_total": {
+            "type": "integer"
+          },
+          "reference_local_income_tax": {
+            "type": "integer"
+          },
+          "reference_net_work_amount": {
+            "type": "integer"
+          },
+          "reference_transfer_amount": {
+            "type": "integer"
+          },
+          "staff_count": {
+            "type": "integer"
+          },
+          "total_amount": {
+            "type": "integer"
+          },
+          "work_amount": {
+            "type": "integer"
+          },
+          "work_hours": {
+            "format": "double",
+            "type": "number"
+          },
+          "work_type_breakdown": {
+            "items": {
+              "$ref": "#/components/schemas/StaffPayrollWorkTypeBreakdown"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "advisory_issue_count",
+          "approved_expense_amount",
+          "closed_count",
+          "needs_review_count",
+          "pending_expense_amount",
+          "reference_business_income_tax",
+          "reference_deduction_total",
+          "reference_local_income_tax",
+          "reference_net_work_amount",
+          "reference_transfer_amount",
+          "staff_count",
+          "total_amount",
+          "work_amount",
+          "work_hours",
+          "work_type_breakdown"
+        ],
+        "type": "object"
+      },
+      "StaffPayrollWorkTypeBreakdown": {
+        "properties": {
+          "color": {
+            "nullable": true,
+            "type": "string"
+          },
+          "record_count": {
+            "type": "integer"
+          },
+          "work_amount": {
+            "type": "integer"
+          },
+          "work_hours": {
+            "format": "double",
+            "type": "number"
+          },
+          "work_type_id": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "work_type_name": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "color",
+          "record_count",
+          "work_amount",
+          "work_hours",
+          "work_type_id",
+          "work_type_name"
+        ],
+        "type": "object"
+      },
       "StaffWorkCurrentStatus": {
         "properties": {
           "break_minutes": {
@@ -13572,6 +14752,21 @@
           "expense_amount": {
             "type": "integer"
           },
+          "reference_business_income_tax": {
+            "type": "integer"
+          },
+          "reference_deduction_total": {
+            "type": "integer"
+          },
+          "reference_local_income_tax": {
+            "type": "integer"
+          },
+          "reference_net_work_amount": {
+            "type": "integer"
+          },
+          "reference_transfer_amount": {
+            "type": "integer"
+          },
           "staff_id": {
             "type": "integer"
           },
@@ -13588,6 +14783,11 @@
         },
         "required": [
           "expense_amount",
+          "reference_business_income_tax",
+          "reference_deduction_total",
+          "reference_local_income_tax",
+          "reference_net_work_amount",
+          "reference_transfer_amount",
           "staff_id",
           "total_amount",
           "work_amount",
@@ -14461,11 +15661,6 @@
           },
           "school_type": {
             "$ref": "#/components/schemas/SchoolTypeEnum"
-          },
-          "send_welcome_message": {
-            "default": true,
-            "type": "boolean",
-            "writeOnly": true
           },
           "uses_identifier": {
             "description": "True면 학생 전화 없음, 식별자(010+8자리)로 가입. 표시 시 '식별자 XXXX-XXXX'",
@@ -15937,6 +17132,19 @@
             "nullable": true,
             "type": "string"
           },
+          "parent_initial_password": {
+            "oneOf": [
+              {
+                "minLength": 4,
+                "type": "string"
+              },
+              {
+                "maxLength": 0,
+                "type": "string"
+              }
+            ],
+            "writeOnly": true
+          },
           "parent_phone": {
             "description": "정규화된 전화번호 (하이픈 제거, 예: 01012345678)",
             "maxLength": 20,
@@ -16204,6 +17412,14 @@
       "StudentVideoPlayback": {
         "description": "학생 플레이어가 신뢰하는 단일 진실 payload",
         "properties": {
+          "event_protocol_version": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EventProtocolVersionEnum"
+              }
+            ],
+            "default": 1
+          },
           "hls_url": {
             "nullable": true,
             "type": "string"
@@ -16256,6 +17472,19 @@
             "$ref": "#/components/schemas/StudentVideoAccessCheck"
           }
         ]
+      },
+      "StudentVideoPlaybackRequestRequest": {
+        "properties": {
+          "event_protocol_version": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EventProtocolVersionEnum"
+              }
+            ],
+            "default": 1
+          }
+        },
+        "type": "object"
       },
       "Submission": {
         "properties": {
@@ -16653,6 +17882,20 @@
           "grade": {
             "maxLength": 20,
             "type": "string"
+          },
+          "initial_password": {
+            "oneOf": [
+              {
+                "maxLength": 128,
+                "minLength": 4,
+                "type": "string"
+              },
+              {
+                "maxLength": 0,
+                "type": "string"
+              }
+            ],
+            "writeOnly": true
           },
           "name": {
             "maxLength": 100,
@@ -17059,6 +18302,54 @@
         ],
         "type": "string"
       },
+      "VideoBulkPolicyRequest": {
+        "properties": {
+          "allow_skip": {
+            "type": "boolean"
+          },
+          "max_speed": {
+            "format": "double",
+            "maximum": 5.0,
+            "minimum": 0.25,
+            "type": "number"
+          },
+          "session_id": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "video_ids": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "maxItems": 500,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "session_id",
+          "video_ids"
+        ],
+        "type": "object"
+      },
+      "VideoBulkPolicyResponse": {
+        "properties": {
+          "changed": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "updated": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "changed",
+          "updated"
+        ],
+        "type": "object"
+      },
       "VisibilityEnum": {
         "description": "* `ENROLLED` - 수강생 전용\n* `PUBLIC` - 전체 공개",
         "enum": [
@@ -17217,6 +18508,13 @@
           },
           "correct_answer": {
             "type": "string"
+          },
+          "essay_index": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "essay_numbering": {
+            "$ref": "#/components/schemas/EssayNumberingEnum"
           },
           "exam_id": {
             "type": "integer"
@@ -18992,7 +20290,7 @@
     },
     "/api/v1/clinic/participants/{id}/set_status/": {
       "patch": {
-        "description": "PATCH /clinic/participants/{id}/set_status/\n- 상태 변경 + audit 기록\n- 학생: 자신의 예약 신청(status=\"pending\")만 취소 가능\n- 선생: 모든 상태 변경 가능",
+        "description": "PATCH /clinic/participants/{id}/set_status/\n- 상태 변경 + audit 기록\n- 학생/학부모: 자신의 pending/booked 예약 취소 가능. 필수 대상자는 같은 주 예약 1개 유지\n- 선생: 모든 상태 변경 가능",
         "operationId": "clinic_participants_set_status_partial_update",
         "parameters": [
           {
@@ -19359,8 +20657,40 @@
     },
     "/api/v1/clinic/sessions/tree/": {
       "get": {
-        "description": "GET /clinic/sessions/tree/?year=YYYY&month=MM\n- 운영 페이지 좌측 트리 전용\n- serializer 우회 (UI 최적화 목적)",
+        "description": "GET /clinic/sessions/tree/?year=YYYY&month=MM\nGET /clinic/sessions/tree/?date_from=YYYY-MM-DD&date_to=YYYY-MM-DD\n- 운영 페이지 좌측 트리 전용\n- 날짜 범위 모드는 이전 주 복사처럼 월 경계를 건너는 최대 31일 조회용\n- serializer 우회 (UI 최적화 목적)",
         "operationId": "clinic_sessions_tree_retrieve",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "date_from",
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date_to",
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "month",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "year",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -21437,7 +22767,7 @@
     },
     "/api/v1/community/posts/{id}/": {
       "delete": {
-        "description": "학생은 본인 글만 삭제 가능. 학부모는 삭제 불가.",
+        "description": "학생/학부모는 현재 학생 컨텍스트의 본인 글만 삭제 가능.",
         "operationId": "community_posts_destroy",
         "parameters": [
           {
@@ -21563,7 +22893,7 @@
         ]
       },
       "put": {
-        "description": "학생은 본인 글만 수정 가능. 학부모는 수정 불가.",
+        "description": "학생/학부모는 현재 학생 컨텍스트의 본인 글만 수정 가능.",
         "operationId": "community_posts_update",
         "parameters": [
           {
@@ -22624,11 +23954,38 @@
       }
     },
     "/api/v1/core/dev/product-analytics/overview/": {
-      "get": {
-        "operationId": "core_dev_product_analytics_overview_retrieve",
+      "post": {
+        "operationId": "core_dev_product_analytics_overview_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProductUsageOverviewRequestRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/ProductUsageOverviewRequestRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/ProductUsageOverviewRequestRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "No response body"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {},
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [
@@ -25287,6 +26644,71 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Enrollment"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "enrollments"
+        ]
+      }
+    },
+    "/api/v1/enrollments/{id}/lecture-memo/": {
+      "patch": {
+        "operationId": "enrollments_lecture_memo_partial_update",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Expected-Updated-At",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedLectureMemoRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedLectureMemoRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedLectureMemoRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LectureMemoResult"
                 }
               }
             },
@@ -31961,7 +33383,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PaginatedAttendanceList"
+                  "$ref": "#/components/schemas/PaginatedLectureAttendanceList"
                 }
               }
             },
@@ -31987,17 +33409,17 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             },
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             }
           },
@@ -32008,7 +33430,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Attendance"
+                  "$ref": "#/components/schemas/LectureAttendance"
                 }
               }
             },
@@ -32037,7 +33459,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Attendance"
+                  "$ref": "#/components/schemas/LectureAttendance"
                 }
               }
             },
@@ -32065,17 +33487,17 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             },
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             }
           },
@@ -32086,7 +33508,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Attendance"
+                  "$ref": "#/components/schemas/LectureAttendance"
                 }
               }
             },
@@ -32114,17 +33536,17 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             },
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             }
           },
@@ -32135,7 +33557,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Attendance"
+                  "$ref": "#/components/schemas/LectureAttendance"
                 }
               }
             },
@@ -32163,17 +33585,17 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             },
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             }
           },
@@ -32184,7 +33606,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Attendance"
+                  "$ref": "#/components/schemas/LectureAttendance"
                 }
               }
             },
@@ -32212,17 +33634,17 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             },
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             }
           },
@@ -32233,7 +33655,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Attendance"
+                  "$ref": "#/components/schemas/LectureAttendance"
                 }
               }
             },
@@ -32262,7 +33684,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Attendance"
+                  "$ref": "#/components/schemas/LectureAttendance"
                 }
               }
             },
@@ -32333,7 +33755,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Attendance"
+                  "$ref": "#/components/schemas/LectureAttendance"
                 }
               }
             },
@@ -32370,17 +33792,17 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/PatchedAttendanceRequest"
+                "$ref": "#/components/schemas/PatchedLectureAttendanceRequest"
               }
             },
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/PatchedAttendanceRequest"
+                "$ref": "#/components/schemas/PatchedLectureAttendanceRequest"
               }
             },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/PatchedAttendanceRequest"
+                "$ref": "#/components/schemas/PatchedLectureAttendanceRequest"
               }
             }
           }
@@ -32390,7 +33812,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Attendance"
+                  "$ref": "#/components/schemas/LectureAttendance"
                 }
               }
             },
@@ -32427,17 +33849,17 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             },
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/AttendanceRequest"
+                "$ref": "#/components/schemas/LectureAttendanceRequest"
               }
             }
           },
@@ -32448,7 +33870,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Attendance"
+                  "$ref": "#/components/schemas/LectureAttendance"
                 }
               }
             },
@@ -34675,6 +36097,54 @@
         ]
       }
     },
+    "/api/v1/media/playback/renew/": {
+      "post": {
+        "operationId": "media_playback_renew_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaybackRefreshRequestRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaybackRefreshRequestRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaybackRefreshRequestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaybackRenewResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "media"
+        ]
+      }
+    },
     "/api/v1/media/playback/start/": {
       "post": {
         "description": "재생 권한 / 정책 / 공통 로직\n\nAccess Mode 정의:\n- FREE_REVIEW: 복습 모드 (제한 없음)\n- PROCTORED_CLASS: 온라인 수업 대체 (제한 적용)\n- BLOCKED: 접근 차단",
@@ -34682,6 +36152,102 @@
         "responses": {
           "200": {
             "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "media"
+        ]
+      }
+    },
+    "/api/v1/media/playback/v2/end/": {
+      "post": {
+        "operationId": "media_playback_v2_end_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaybackV2EndRequestRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaybackV2EndRequestRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaybackV2EndRequestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaybackV2Response"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "media"
+        ]
+      }
+    },
+    "/api/v1/media/playback/v2/events/": {
+      "post": {
+        "operationId": "media_playback_v2_events_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaybackV2EventsRequestRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaybackV2EventsRequestRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaybackV2EventsRequestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaybackV2Response"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [
@@ -35619,6 +37185,48 @@
         ]
       }
     },
+    "/api/v1/media/videos/bulk-policy/": {
+      "post": {
+        "description": "Atomically update playback defaults for videos in one tenant session.",
+        "operationId": "media_videos_bulk_policy_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VideoBulkPolicyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoBulkPolicyResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid policy fields or a non-exact tenant/session/video target"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "media"
+        ]
+      }
+    },
     "/api/v1/media/videos/comments/{comment_id}/": {
       "delete": {
         "description": "PATCH  /media/videos/comments/{comment_id}/  — 수정 (본인만)\nDELETE /media/videos/comments/{comment_id}/  — 삭제 (본인만)",
@@ -35782,18 +37390,56 @@
     },
     "/api/v1/media/videos/public-session/": {
       "get": {
-        "description": "테넌트당 공개 영상 전용 시스템 Lecture + Session을 get_or_create 하고\nsession_id, lecture_id 를 반환합니다.\n이 세션에 올린 영상은 visibility=PUBLIC으로 설정되어\n프로그램(테넌트)에 등록된 모든 학생이 시청 가능합니다.",
+        "description": "GET은 기존 ID를 조회하고 미준비 상태는 null을 반환합니다.\nPOST는 테넌트당 공개 영상 시스템 Lecture + Session을 준비합니다.\n구형 컨테이너 정규화도 POST에서만 수행합니다.",
         "operationId": "media_videos_public_session_retrieve",
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SealedVideo"
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/PublicVideoSession"
+                    }
+                  ],
+                  "nullable": true
                 }
               }
             },
             "description": ""
+          },
+          "503": {
+            "description": "Read failed; not an unprepared container."
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "media"
+        ]
+      },
+      "post": {
+        "description": "GET은 기존 ID를 조회하고 미준비 상태는 null을 반환합니다.\nPOST는 테넌트당 공개 영상 시스템 Lecture + Session을 준비합니다.\n구형 컨테이너 정규화도 POST에서만 수행합니다.",
+        "operationId": "media_videos_public_session_create",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicVideoSession"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "description": "Preparation failed; retry is safe."
           }
         },
         "security": [
@@ -36838,7 +38484,7 @@
     },
     "/api/v1/messaging/channel-check/": {
       "get": {
-        "description": "GET: 채널 공유 확인 (파트너 등록 여부) — 4단계, 스텁 가능",
+        "description": "GET: effective tenant channel readiness.",
         "operationId": "messaging_channel_check_retrieve",
         "responses": {
           "200": {
@@ -37064,8 +38710,28 @@
       }
     },
     "/api/v1/messaging/provision-defaults/": {
+      "get": {
+        "description": "GET: 복원 가능 기본 문구. POST: 미설정 트리거 초기화/선택 복원.",
+        "operationId": "messaging_provision_defaults_retrieve",
+        "responses": {
+          "200": {
+            "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "messaging"
+        ]
+      },
       "post": {
-        "description": "POST: 기본 템플릿 + 자동발송 config 일괄 생성/리셋.\n- 기존 기본 템플릿(이름이 DEFAULT_TEMPLATES와 동일)은 누락된 config만 연결\n- 학원장이 편집한 제목/본문은 덮어쓰지 않음\n- 사용자가 새로 만든 템플릿은 그대로 유지",
+        "description": "GET: 복원 가능 기본 문구. POST: 미설정 트리거 초기화/선택 복원.",
         "operationId": "messaging_provision_defaults_create",
         "responses": {
           "200": {
@@ -37815,21 +39481,20 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ClinicLinkRequest"
+                "$ref": "#/components/schemas/ClinicLinkUnresolveRequest"
               }
             },
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/ClinicLinkRequest"
+                "$ref": "#/components/schemas/ClinicLinkUnresolveRequest"
               }
             },
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/ClinicLinkRequest"
+                "$ref": "#/components/schemas/ClinicLinkUnresolveRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -39192,7 +40857,7 @@
     },
     "/api/v1/results/admin/clinic-bookings/{id}/set_status/": {
       "patch": {
-        "description": "PATCH /clinic/participants/{id}/set_status/\n- 상태 변경 + audit 기록\n- 학생: 자신의 예약 신청(status=\"pending\")만 취소 가능\n- 선생: 모든 상태 변경 가능",
+        "description": "PATCH /clinic/participants/{id}/set_status/\n- 상태 변경 + audit 기록\n- 학생/학부모: 자신의 pending/booked 예약 취소 가능. 필수 대상자는 같은 주 예약 1개 유지\n- 선생: 모든 상태 변경 가능",
         "operationId": "results_admin_clinic_bookings_set_status_partial_update",
         "parameters": [
           {
@@ -39621,6 +41286,118 @@
         "responses": {
           "200": {
             "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/api/v1/results/admin/exams/{exam_id}/enrollments/{enrollment_id}/manual-answers/": {
+      "get": {
+        "description": "Preview or atomically confirm one student's offline objective answers.",
+        "operationId": "results_admin_exams_enrollments_manual_answers_retrieve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "enrollment_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "exam_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManualAnswersDraft"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      },
+      "post": {
+        "description": "Preview or atomically confirm one student's offline objective answers.",
+        "operationId": "results_admin_exams_enrollments_manual_answers_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "enrollment_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "exam_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualAnswersInputRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualAnswersInputRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualAnswersInputRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManualAnswersPreview"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [
@@ -41392,12 +43169,34 @@
       "get": {
         "description": "전 직원 월 정산 현황. 금액·블로커·마감 상태를 한 번에 반환한다.",
         "operationId": "staffs_payroll_overview_retrieve",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "month",
+            "required": true,
+            "schema": {
+              "maximum": 12,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "year",
+            "required": true,
+            "schema": {
+              "maximum": 2100,
+              "minimum": 2020,
+              "type": "integer"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/StaffWrite"
+                  "$ref": "#/components/schemas/StaffPayrollOverview"
                 }
               }
             },
@@ -43846,7 +45645,7 @@
     },
     "/api/v1/student/video/me/stats/": {
       "get": {
-        "description": "GET /student/video/me/stats/\n학생 영상 시청 통계 — 전체 진도율, 완료 영상 수, 강좌별 진도.\n활성 수강 강좌의 READY 영상 전체를 분모로 삼고, VideoProgress는 진도만 보강한다.",
+        "description": "GET /student/video/me/stats/\n학생 영상 시청 통계 — 전체 진도율, 완료 영상 수, 강좌별 진도.\n활성 수강의 등록된 차시와 시스템 공개 공간의 READY 영상을 분모로 삼는다.",
         "operationId": "student_video_me_stats_retrieve",
         "responses": {
           "200": {
@@ -44131,6 +45930,25 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentVideoPlaybackRequestRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentVideoPlaybackRequestRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentVideoPlaybackRequestRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
@@ -44500,7 +46318,7 @@
     },
     "/api/v1/students/bulk_resolve_conflicts/": {
       "post": {
-        "description": "충돌 해결 후 재시도 — 삭제된 학생과 번호 충돌 시 복원 또는 영구 삭제 후 재등록\nPOST body: {\n  \"initial_password\": \"...\",\n  \"send_welcome_message\": false,\n  \"resolutions\": [ { \"row\": 1, \"student_id\": 123, \"action\": \"restore\"|\"delete\", \"student_data\": {...} } ]\n}",
+        "description": "충돌 해결 후 재시도 — 삭제된 학생과 번호 충돌 시 복원 또는 영구 삭제 후 재등록\nPOST body: {\n  \"initial_password\": \"...\",\n  \"resolutions\": [ { \"row\": 1, \"student_id\": 123, \"action\": \"restore\"|\"delete\", \"student_data\": {...} } ]\n}",
         "operationId": "students_bulk_resolve_conflicts_create",
         "requestBody": {
           "content": {
@@ -44549,7 +46367,7 @@
     },
     "/api/v1/students/bulk_restore/": {
       "post": {
-        "description": "삭제된 학생 일괄 복원\nPOST body: { \"ids\": [1, 2, 3, ...] }",
+        "description": "삭제된 학생 일괄 복원\nPOST body: { \"ids\": [1, 2, 3, ...], \"parent_initial_password\": \"optional\" }\n\n정상 학부모 계정의 비밀번호는 변경하지 않는다. 과거 데이터의 학부모\n계정이 없거나 비밀번호를 쓸 수 없을 때만 명시된 초기 비밀번호를 사용한다.",
         "operationId": "students_bulk_restore_create",
         "requestBody": {
           "content": {

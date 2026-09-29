@@ -59,6 +59,9 @@ def _serialize_exam(exam, *, submission_status_map=None):
     return StudentExamSerializer({
         "id": exam.id,
         "title": exam.title,
+        "grading_mode": exam.grading_mode,
+        "choice_question_count": exam.choice_question_count,
+        "essay_numbering": exam.essay_numbering,
         "description": getattr(exam, "description", "") or "",
         "open_at": exam.open_at,
         "close_at": exam.close_at,
@@ -67,6 +70,7 @@ def _serialize_exam(exam, *, submission_status_map=None):
         "pass_score": int(getattr(exam, "pass_score", 0) or 0),
         "session_id": session_id,
         "has_result": sub_info.get("has_result", False),
+        "submission_pending": sub_info.get("submission_pending", False),
         "attempt_count": sub_info.get("attempt_count", 0),
         "student_results_published": bool(
             getattr(exam, "student_results_published", True)

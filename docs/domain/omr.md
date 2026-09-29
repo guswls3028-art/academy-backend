@@ -4,6 +4,15 @@
 
 학원 시험의 객관식은 OMR 버블로 수집해 AI 워커로 자동 채점하고, 서술형은 같은 답안지의 넓은 작성칸에 적어 교사가 수동 채점하는 시스템.
 
+시험의 `essay_numbering`은 교직원이 시험 운영 설정에서 변경한다. `continuous`는
+객관식 1~18번 다음 서술형 19~20번, `separate`는 서술형 칸을 1~2번으로
+인쇄한다. 독립 OMR 생성기는 요청의 같은 옵션을 사용한다. HTML 미리보기와 PDF는
+동일한 표시 번호를 쓰며, 시험 연결 OMR은 저장된 시험 설정이 우선한다. 유효하지 않은
+독립 생성 옵션은 400으로 거부하고 입력을 고쳐 다시 시도한다. 저장된 문항 번호,
+객관식 인식 좌표, 답안 키, 채점·점수·기존 결과는 변경하지 않는다. 시험 복사와
+템플릿 저장·가져오기는 설정을 이어받는다. 검증은 표시 번호와 원래 OMR 계약 번호를
+각각 확인한다.
+
 ## SSOT 구조
 
 | 구성요소 | SSOT 파일 | 역할 |
@@ -42,6 +51,8 @@ flowchart LR
 - `ExamQuestion.question_kind`가 모든 문항에 있으면 문항 번호별 `choice`/`essay` 값이 경계보다 우선한다. 따라서 `1 객관식 / 2 서술형 / 3 객관식`처럼 섞인 순서를 그대로 보존한다.
 - 인쇄 영역은 객관식 버블과 서술형 빈 작성칸을 물리적으로 나누고 각 행에 시험의 실제 문항 번호를 표시한다. AI 좌표와 자동판정은 객관식에만 존재한다.
 - 수학 `0~999` 정답키도 종이 OMR에서는 숫자 버블을 만들거나 인식하지 않는다. 기존 답안키와 결과 데이터는 보존하고 온라인 응시 자동채점은 유지하되, 종이 OMR 서답형은 교사가 수동 채점한다.
+- 이 구분은 검토 저장·재채점과 학생 결과 동기화에도 동일하게 적용한다. `OMR_SCAN`의 자동채점/답안 완결성 검사는 객관식만 대상으로 하며, 숫자 정답키가 있는 서술형 때문에 `OMR_ANSWERS_INCOMPLETE`를 발생시키거나 기존 수동 서술형 점수를 덮어쓰지 않는다. 실제 객관식 답안이 누락되면 기존 오류와 rollback을 유지한다.
+- 수학 30객관식+2서술형(정답키 `0`)의 검토 저장, 수동 점수 8/9, 정답·문항 배점 변경 후 재채점 보존을 `test_mixed_omr_subjective_projection_pg.py`에서 검증한다. 온라인 숫자 단답 자동채점과 tenant/source 경계는 기존 회귀를 유지하며, 이 수정은 기존 답안/성적을 일괄 변경하거나 자동으로 재채점하지 않는다.
 - `essay_count=0`인 객관식 전용 시험은 객관식 40문항 이하에서 사용자가 기본 5줄짜리 `서술형 작성 공간`을 표시하거나 숨길 수 있다. 41문항부터는 3열 객관식 레이아웃을 우선해 자동으로 숨긴다.
 - 표시 선택은 요청의 `include_optional_essay_area`에만 존재하는 렌더링 옵션이다. `OMRSheetContract`, 워커 payload, 정답키, 좌표 메타, 답안 저장, 채점에는 포함하지 않는다.
 - 독립 `/tools/omr`와 시험 연결 OMR은 모두 `essay_count` 호환 필드를 서술형 기입란 수로만 사용한다. 해당 영역에는 숫자 버블이나 인식 좌표를 만들지 않으며 AI 자동판정 대상에 포함하지 않는다.
@@ -130,10 +141,23 @@ flowchart LR
   보이고, 명시 명단이 없는 기존 시험에 한해 차시 roster 전체에 보인다.
 - 오인식/미식별 스캔은 `Submission`의 수동 검토 상태와 답안 보정 API를 통해 보정한다. 원본 운영 데이터를 임의로 수정하지 않고, 검토자가 선택적으로 답안/점수를 확정한다.
 - 학생이 이미 후보로 연결된 fuzzy match도 답안 변경 여부와 무관하게 같은 수동 보정 API에서 현재 `enrollment_id`를 명시해 확정한다. 이 요청은 수동 검토 표시를 해제하고 매칭 fact, 문항별 `ResultFact`, canonical `Result`, legacy `ExamResult`를 한 transaction에서 동기화한다.
+- 종이 OMR의 인식·수동 학생 확정·재채점은 교사가 시험 이후 수행하는 사후 채점이므로 `Exam.open_at`/`close_at` 온라인 응시 시간창으로 차단하지 않는다. 학생의 온라인 제출 attempt는 기존 시간창을 계속 강제하며, OMR도 tenant·시험 대상자·재응시 횟수·중복 submission 보호는 그대로 적용한다.
 - 객관식 전용 시험에 OMR과 동일한 수기 결과가 먼저 저장돼 있으면 별도 재응시로 만들지 않는다. tenant·시험·submission·enrollment가 일치하는 현재 `confirmed` OMR 매칭 fact가 있고, 완료된 1차 대표 수기 attempt의 문항 집합·답안·정오·문항 점수·만점·총점이 새 OMR 계산값과 모두 정확히 같을 때만 그 attempt를 OMR submission에 연결해 재사용한다. 누락/추가 문항, 답·점수 불일치, 수기 외 source, 서술형이 포함된 시험은 이 경로를 거부하고 기존 재응시 보호를 유지한다. 수기 `ResultFact`는 보존하고 OMR 동기화 fact를 append-only로 추가한다.
 - 제출함 원본 미리보기는 같은 tenant의 교직원이 `Submission` id로 요청한다. 서버가 해당 row의 AI 버킷 객체 소유권과 `tenants/{tenant_id}/` 경계를 확인한 뒤 15분짜리 GET URL만 반환하며, 목록 응답이나 클라이언트 요청에는 원본 객체 키를 노출하지 않는다. 파일 없음·다른 tenant·잘못된 키는 404, 서명 실패는 503으로 fail-closed 한다.
 
 ## 운영 UX SSOT
+
+### 마커가 잘린 세로 스캔 방향 복구
+
+코너 마커와 문서 외곽을 모두 찾지 못한 세로 스캔은 시계/반시계 90도
+후보의 인쇄된 내부 기준점(학생 번호 영역과 답안 열)을 비교한다. 같은 이동량에
+동의하는 기준점이 3개 이상이고 반대 후보보다 2개 이상 많을 때 반시계 방향을
+선택한다. 학생 번호나 답안 내용, 정답키로 방향을 추측하지 않는다. 증거가 없거나
+동률이면 기존 시계 방향을 유지하며 교사는 미리보기 회전 후 `이 방향으로 다시 읽기`로
+새 제출을 만들 수 있다. 기존 원본·제출·수동 확정 점수는 자동으로 덮어쓰지 않는다.
+마커/외곽 정렬과 가로 스캔의 기존 경로는 유지한다. 회귀 검증은
+`tests/omr/test_markerless_orientation.py`의 28/34문항, 양방향 세로 스캔,
+여백 이동, 빈 이미지와 기존 cardinal rotation 검사를 사용한다.
 
 - 선생/원장은 **강의 > 차시 > 성적** 화면에서 OMR을 등록한다. 별도 도구 화면은 OMR 양식 생성/출력용 보조 도구이며, 차시 채점의 주 동선이 아니다.
 - 성적 화면의 주 CTA는 `OMR 스캔 등록`이다. 시험이 1개면 바로 업로드 모달을 열고, 여러 개면 시험 선택만 거쳐 같은 업로드 모달로 진입한다.
@@ -189,9 +213,46 @@ submission의 저장된 DONE 결과에 답안이 있고 기존 답안이 없으�
 덮어쓰지 않는다. 자동 채점 동기화는 최신 `Result`/`ResultItem`뿐 아니라 문항
 통계의 append-only 원본인 `ResultFact`도 같은 transaction에서 문항별로 남긴다.
 따라서 점수는 보이지만 문항 분석만 비는 부분 성공 상태를 허용하지 않는다.
-수동 검토가 필요하지 않은 OMR은 이 동기화 직후 legacy `ExamResult`도 `FINAL`로
-확정한 뒤 진행도와 수업 분석을 갱신한다. 수동 검토 표시가 있는 OMR만 DRAFT를
-유지한다.
+수동 검토가 필요하지 않은 객관식 전용 OMR은 이 동기화 직후 legacy `ExamResult`도
+`FINAL`로 확정한 뒤 진행도와 수업 분석을 갱신한다. 실제 서술형 문항이 있는 혼합형
+OMR은 객관식 저장 뒤 `DRAFT`와 `subjective_pending`을 유지하고, 모든 서술형 점수를
+교사가 입력한 뒤에만 `FINAL`로 전환해 학생 공개·석차·클리닉에 반영한다. 그 밖에
+수동 검토 표시가 있는 OMR도 DRAFT를 유지한다.
+
+새 대표 OMR이 `subjective_pending`이 되면 채점 worker도 진행도 파이프라인을 실행해
+이전 대표 결과의 완료·통과·클리닉 투영을 즉시 철회한다. 교직원이 서술형 점수를 저장해
+`FINAL`이 되면 같은 파이프라인이 다시 실행되어 확정 결과만 복구한다. worker의 최초
+채점·재채점, 공개 재채점 API, 교직원 수기 저장은 모두 `Exam`을 먼저 잠그고 관련
+성적편집 `Session`들을 ID 순서로 잠근 뒤 `Submission`/`ExamResult`/`Result`/
+`ExamAttempt`를 잠근다. 동시 자동 채점이 기존 편집 lease를 무효화하면 교직원 요청은
+409로 닫히며, 화면이 최신 성적을 다시 읽고 lease를 재취득한 뒤 저장을 재시도한다.
+제출 관리의 수기 OMR 보정과 중복 스캔 채택도 mutable `Submission`과 답안 또는 대표
+attempt를 잠그기 전에 같은 `Exam` -> `Session` 순서를 따른다. 공개 재채점은 목록을
+읽은 뒤 기다리는 동안 제출 상태가 바뀔 수 있으므로, 각 `Submission`을 잠근 직후 현재
+상태를 다시 확인하고 더 이상 재채점 대상이 아닌 행은 변경 없이 건너뛴다.
+이 순서를 바꾸면 최초 결과의 FK 생성이나 공개 재채점과 수기 입력이 서로의 잠금을
+기다리는 교착이 생길 수 있으므로 각 경로를 PostgreSQL 동시성 회귀로 고정한다.
+
+### 5분 상태 복구 안전 계약
+
+EventBridge 규칙 `academy-v1-recover-stuck-omr`은 5분마다
+`recover_stuck_omr_submissions`를 실행한다. `SUBMITTED`, `DISPATCHED`,
+`EXTRACTING`, `GRADING`에서 상태별 timeout을 넘긴 OMR만 실패 복구 후보이며,
+탐지는 read-only다.
+
+복구는 후보 조회 결과를 그대로 신뢰하지 않는다. 각 Submission row를 잠근 뒤
+현재 상태와 탐지 당시 상태, `source=omr_scan`, 탐지 당시 `updated_at` 버전,
+현재 상태에 해당하는 cutoff를 한 번 더 모두 확인한다. 후보 조회 뒤 워커가
+heartbeat를 남기거나 다음 상태로 진행해 이 중 하나라도 달라졌으면 그 실행은
+skip하고, 다음 5분 실행이 새 상태와 버전으로 다시 판단한다. 따라서 늦게 row lock을
+얻은 recovery가 살아 있는 worker 상태를 `FAILED`로 덮어쓰지 않는다.
+
+`DONE`과 기존 `FAILED`는 이 recovery의 후보가 아니므로 변경하지 않는다. 동일한
+EventBridge 실행이 반복되어도 첫 성공만 `meta.state_recovery`를 기록하고 후속 실행은
+같은 Submission을 다시 전이하지 않는다. 실제 실패 복구는
+`stuck:<status>_timeout`과 actor를 기록한다. 일반 재처리는 기존 retry lifecycle을
+따른다. 단, 이미 학생이 확정되었고 답안이 아직 없는 복구 실패 제출에 정상 AI 결과가
+늦게 도착하면 기존 콜백이 row lock 아래 답안을 저장하고 재채점을 진행할 수 있다.
 
 단일정답 문항에서 워커가 강한 복수마킹을 `status=ok, marking=multi`로 보내더라도
 정답과 완전히 일치하는 다중정답 키가 아니면 `ANSWER_SCORE_AMBIGUOUS`로 검토를
@@ -219,9 +280,28 @@ submission의 저장된 DONE 결과에 답안이 있고 기존 답안이 없으�
    `admission_failed_ordinals`로 미접수 파일만 다시 선택한다. 이미 성공한 ordinal은
    재전송하지 않는다.
 5. batch 진행 상태는 기존 Submission/AI worker 상태를 집계한다. 파일 수신은
-   `received`, AI 작업 중은 `processing`, 채점 완료는 `completed`, 학생 확인 필요는
+   `received`, AI 작업 중은 `processing`, OMR 처리 완료는 `completed`, 학생 확인 필요는
    `needs_identification`, 처리 실패는 `failed`로 서로 구분한다. 업로드 성공을 AI 완료로
    표시하지 않는다.
+
+`counts.completed`, `terminal`, `overall_status`는 기존 파일 접수·OMR 처리 계약을
+유지한다. 따라서 혼합 시험은 객관식 인식이 끝나면 `overall_status=completed`이면서
+서술형 교사 채점은 남을 수 있다. 목록·상세와 batch summary 응답에는 별도 필드를 추가한다.
+
+| 필드 | 의미 |
+|---|---|
+| `grading_complete` | terminal이며 DONE 제출이 하나 이상 있고, 실패/학생 확인 대기가 없으며 그 DONE 제출 모두 현재 대표 결과의 최종 채점이 완료됨 |
+| `grading_status` | 최종 채점 완료는 `completed`, 남은 서술형이 있으면 `subjective_pending`, 그 밖은 `pending` |
+| `grading_counts` | DONE 제출을 `completed`, `subjective_pending`, `manual_review_required`, `grading_pending`으로 구분한 개수 |
+| `subjective_pending_ordinals` | 교사가 서술형 점수를 입력해야 하는 batch 내 ordinal 목록 |
+
+상태는 tenant·시험·수강·attempt·submission 연결과 legacy FINAL을 함께 검증한다.
+수동 검토 표시, 현재 대표 결과 누락, 다른 시험 연결은 최종 채점 완료가 아니다.
+중복·교체된 ordinal은 기존 `duplicate`/`superseded` 개수에만 남고 새 채점 대상으로
+세지 않으므로 이 항목들만 있는 batch는 `grading_complete=false`다. 기존 클라이언트의
+필드는 제거하거나 의미를 변경하지 않으며, 최종 성적 완료 안내는 새 grading 필드를
+사용해야 한다. 서술형 합산/문항별 입력의 보존과 재채점 정책은
+[시험 채점](exam-grading.md)을 따른다.
 
 Batch와 item에는 tenant, 생성 직원, 시험/차시/강의 id, 총수, ordinal, Submission 연결,
 동일 파일 판정용 SHA-256, 안전한 실패 코드만 저장한다. 파일명, 학생 이름·전화번호, R2 raw key는 batch 모델이나
@@ -249,7 +329,11 @@ item 전환도 row lock 아래에서 현재 상태를 다시 확인하며, 이�
 복구한다. 이 GET들은 `completion_notice_claimed_at`을 포함해 어떤 값도 쓰지 않는다.
 완료 알림 소유권은 별도 `claim-completion` POST가 batch row를 잠근 transaction 안에서
 획득하며, terminal 이후 최초 호출만 `notify=true`, 이후 호출과 동시 탭은 `false`다.
-처리 중 claim은 409로 실패한다.
+처리 중 claim은 409로 실패한다. 이 알림은 OMR 처리 완료에 대한 것이므로 서술형 채점이
+남아 있어도 terminal이면 claim할 수 있다. GET은 점수 확정이나 알림 claim을 실행하지
+않고, 목록의 채점 상태는 batch별 반복 조회 대신 전체 대상 submission을 모아 조회한다.
+혼합 시험의 처리 완료→서술형 0점 저장→최종 채점 완료, 읽기 무변경, 생성 직원/tenant/역할
+격리, 목록 조회 수는 `test_mixed_omr_subjective_projection_pg.py`에서 회귀 검증한다.
 
 재시도 POST는 요청된 ordinal만 처리한다. 원본 key가 남아 있는 실패 Submission은 기존
 retry lifecycle로 다시 dispatch한다. Batch item을 ordinal 순으로 잠근 뒤 연결된 Submission을
@@ -265,6 +349,16 @@ retry가 만든 새 상태를 stale 객체가 덮어쓰지 않는다. 잠금 뒤
 event로 다시 연결하고 `omr_scan_replacements`에 이전/신규 submission, actor, 시각, 사유를
 남긴다. 그 뒤 이전 DONE 제출을 SUPERSEDED로 전환하고 강제 재채점한다. 실제 재시험 정책과
 최대 응시 횟수는 이 좁은 교체 경로에 소비되지 않는다.
+
+시험 제출 목록의 각 행은 읽기 전용 `archived` boolean을 제공한다. `SUPERSEDED` 또는
+`FAILED`이면서 기존 공식 폐기 표식인 `error_message`의 `discarded:` 접두사가 있는 행만
+true다. 일반 인식 실패와 식별 대기, 다시 처리 중인 접수는 false이며, 과거 review flag나
+discard metadata만으로 활성 접수를 숨기지 않는다. 일반 목록은 이력 행을 그대로 반환하고
+`review_issues=1`은 기존과 같이 비활성 행을 제외한다. 클라이언트는 이력을 보존하되 현재
+검토 건수와 편집 대상에서 `archived=true`를 제외할 수 있다. 새 필드는 tenant/교직원
+권한, 원본·답안·검토 기록과 점수, 기존 필드의 의미를 변경하지 않는다. 필드가 없는 구버전
+응답은 활성 상태로 취급해 rolling 배포 중 실제 실패를 숨기지 않는다. 일반 실패/폐기/
+대체/재처리 구분과 이력 보존은 `test_security_regression.py`에서 검증한다.
 
 ## 문항 구성
 
@@ -315,6 +409,14 @@ HTTPS 로고를 PDF 서버가 가져오지 못하면 `renderer/logos/{tenant.cod
 폴백하고, 그것도 없을 때만 OMR 기본 로고를 쓴다. `godmin.png`는 프론트의
 `public/tenants/godmin/logo.png`와 같은 바이트 자산으로 봉인되어 미리보기의
 `min.t` 로고와 다운로드 PDF가 달라지지 않는다.
+이동휘원소(`movementhui`)의 기본 로고 경로 `/tenants/movementhui/logo.png`는
+남색 배경이 이미지에 포함되어 있으므로, OMR 미리보기와 PDF에서는 같은 배경 없는
+인쇄용 벡터 로고를 사용한다. 흰 답안지에서 글자가 읽히도록 남색 글자와 짙은 금색
+궤도를 쓴다. 테넌트가 별도로 업로드한 로고 키나 다른 로고 URL은 그대로 우선하며,
+인쇄용 대체는 기본 로고 또는 로고 미설정에만 적용된다. 로고는 출력 장식으로,
+OMR 좌표·답안·채점 데이터에 영향을 주지 않는다. 미리보기 실패 시 재요청하고
+PDF 생성 실패 시 기존 다운로드 오류를 반환한다. 시험 연결과 독립 도구 양쪽의
+HTML·PDF 출력 및 사용자 업로드 우선순위를 회귀 검사한다.
 
 기존 공개 `/omr-sheet`·`/omr-sheet.html`은 더 이상 별도 답안지를 렌더링하지 않고 인증된 `/admin/tools/omr` 생성기로 이동한다. 정적 HTML 복제본은 최신 좌표 계약과 분리될 수 있으므로 인쇄·인식 입력으로 사용하지 않는다.
 
@@ -340,6 +442,8 @@ HTTPS 로고를 PDF 서버가 가져오지 못하면 `renderer/logos/{tenant.cod
 
 | 버전 | 날짜 | 변경 |
 |------|------|------|
+| v17.4 | 2026-09-07 | 5분 stale recovery가 탐지 후 worker heartbeat/상태 전이를 덮지 않도록 row lock 획득 시 상태·source·상태별 cutoff·탐지 `updated_at` 버전을 모두 재검사. DONE/FAILED 불변과 반복 실행 멱등성을 PostgreSQL barrier 및 command 회귀로 고정. |
+| v17.3 | 2026-09-07 | 종료된 시험의 종이 OMR도 교사가 미식별 학생을 확정하고 재채점할 수 있도록 온라인 응시 시간창과 사후 OMR 채점 경계를 분리. 학생 온라인 응시 시간, tenant, 대상자, 재응시, 중복 보호는 유지하고 예상 밖 재채점 실패는 원자 rollback과 운영 로그 및 재시도 가능한 안내를 제공. |
 | v17.2 | 2026-08-30 | 이미 연결된 fuzzy match를 답안 변경 없이 현재 학생으로 확정하는 OMR 검토 동작을 추가. 객관식 전용 수기 결과가 OMR의 학생·문항·답안·정오·점수와 완전히 같을 때만 기존 attempt를 원자적으로 연결하며, 불일치·혼합형은 기존 재응시 보호로 fail-closed. |
 | v17.1 | 2026-08-30 | OMR의 미사용 0~999 숫자 버블을 제거하고 모든 비객관식 문항을 번호가 붙은 서술형 빈 작성칸으로 통일. 종이 OMR AI 인식·자동판정은 객관식만 수행하며 기존 답안키/성적 데이터와 온라인 숫자 단답 자동채점은 유지. |
 | v17 | 2026-08-27 | 1~100장 OMR 접수를 durable batch/ordinal로 먼저 만들고 기존 Submission/AI worker 상태를 집계. 모달 종료·SPA 이동·새로고침 뒤에도 접수/처리/완료/식별필요/실패를 복구하며, 성공 ordinal 중복 생성 없이 미접수·실패 ordinal만 재시도. GET은 read-only이고 별도 row-lock POST만 완료 알림을 정확히 1회 claim. batch 계약에는 파일명·학생 PII·raw key를 저장하거나 응답하지 않음. |

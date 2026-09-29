@@ -120,8 +120,11 @@ class AdminClinicTargetsContractTests(TestCase):
             ],
         )
 
-    def _get(self, *, tenant_marker=True, user=None):
-        request = self.factory.get("/results/admin/clinic-targets/")
+    def _get(self, *, tenant_marker=True, user=None, include_resolved=False):
+        request = self.factory.get(
+            "/results/admin/clinic-targets/",
+            {"include_resolved": "true"} if include_resolved else {},
+        )
         if tenant_marker:
             request.tenant = self.tenant
         force_authenticate(request, user=user or self.admin)
@@ -228,6 +231,88 @@ class AdminClinicTargetsContractTests(TestCase):
             ],
         )
         self.assertNotIn("memo", row["linked_bookings"][0])
+
+    def test_ended_lecture_is_not_a_current_clinic_target(self):
+        self.assertEqual(len(self._get().data), 1)
+        self.lecture.is_active = False
+        self.lecture.save(update_fields=["is_active", "updated_at"])
+
+        ended = self._get()
+        self.assertEqual(ended.status_code, 200, ended.data)
+        self.assertEqual(ended.data, [])
+        self.assertEqual(self._get(include_resolved=True).data, [])
+        self.assertTrue(self.ClinicLink.objects.filter(pk=self.link.pk).exists())
+
+        self.link.resolved_at = datetime.datetime.now(datetime.timezone.utc)
+        self.link.resolution_type = self.ClinicLink.ResolutionType.WAIVED
+        self.link.save(update_fields=["resolved_at", "resolution_type", "updated_at"])
+        self.assertEqual(len(self._get(include_resolved=True).data), 1)
+
+        self.lecture.is_active = True
+        self.lecture.save(update_fields=["is_active", "updated_at"])
+        self.assertEqual(self._get().data, [])
+        self.link.resolved_at = None
+        self.link.resolution_type = None
+        self.link.save(update_fields=["resolved_at", "resolution_type", "updated_at"])
+        self.assertEqual(len(self._get().data), 1)
+
+    def test_current_course_targets_remain_after_previous_course_ends(self):
+        current_lecture = self.Lecture.objects.create(
+            tenant=self.tenant,
+            title="중3 정규 생물",
+            name="중3 정규 생물",
+            subject="SCIENCE",
+        )
+        current_session = self.LectureSession.objects.create(
+            lecture=current_lecture,
+            order=1,
+            title="사람의 발생과 멘델의 유전",
+        )
+        current_enrollment = self.Enrollment.objects.create(
+            tenant=self.tenant,
+            student=self.student,
+            lecture=current_lecture,
+            status="ACTIVE",
+        )
+        current_exam = self.Exam.objects.create(
+            tenant=self.tenant,
+            title="멘델의 유전 확인",
+            pass_score=80,
+            max_score=100,
+        )
+        current_exam.sessions.add(current_session)
+        current_attempt = ExamAttempt.objects.create(
+            exam=current_exam,
+            enrollment=current_enrollment,
+            attempt_index=1,
+            status="done",
+            meta={"total_score": 40},
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=current_exam.id,
+            enrollment=current_enrollment,
+            attempt=current_attempt,
+            total_score=40,
+            max_score=100,
+        )
+        self.ClinicLink.objects.create(
+            tenant=self.tenant,
+            enrollment=current_enrollment,
+            session=current_session,
+            reason="AUTO_FAILED",
+            source_type="exam",
+            source_id=current_exam.id,
+            is_auto=True,
+        )
+        self.lecture.is_active = False
+        self.lecture.save(update_fields=["is_active", "updated_at"])
+
+        current = self._get()
+        self.assertEqual(current.status_code, 200, current.data)
+        self.assertEqual(len(current.data), 1)
+        self.assertEqual(current.data[0]["lecture_id"], current_lecture.id)
+        self.assertEqual(current.data[0]["source_title"], "멘델의 유전 확인")
 
     def test_missing_tenant_fails_closed_instead_of_empty_success(self):
         before = self.ClinicLink.objects.count()

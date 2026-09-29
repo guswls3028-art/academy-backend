@@ -185,7 +185,7 @@ class SQSQueueClient(QueueClient):
             )
             return True
         except Exception as e:
-            logger.error(f"Failed to delete message: {e}")
+            logger.error("Failed to delete message: queue=%s error_type=%s", queue_name, type(e).__name__)
             return False
 
     def change_message_visibility(
@@ -201,7 +201,7 @@ class SQSQueueClient(QueueClient):
             )
             return True
         except Exception as e:
-            logger.error(f"Failed to change message visibility: {e}")
+            logger.error("Failed to change message visibility: queue=%s error_type=%s", queue_name, type(e).__name__)
             return False
 
     def get_queue_counts(self, queue_name: str) -> Dict[str, int]:

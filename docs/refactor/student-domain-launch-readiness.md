@@ -1,8 +1,14 @@
 # Student Domain Launch Readiness
 
-**Status:** [ACTIVE] pre-promotion gate
+**Status:** [HISTORICAL DECISION] 2026-06-07 pre-promotion evidence
 **Captured:** 2026-06-07 KST
 **Owner SSOT:** `../domain/student-core.md`
+
+The GO decision below applies only to its captured release and evidence. It is
+not a current release approval or permission to repeat historical production
+mutation commands. Current work follows [hardening-plan.md](hardening-plan.md),
+the [release contract](../operations/change-risk-and-release-bundle.md) and
+[isolated development](../operations/persistent-development-runtime.md).
 
 This is the launch gate for the concern that student domain instability can
 break every major product workflow. It is intentionally stricter than a normal

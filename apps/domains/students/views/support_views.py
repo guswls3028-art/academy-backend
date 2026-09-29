@@ -153,7 +153,9 @@ class StudentSupportSessionView(APIView):
             expires_at=expires_at,
         )
         token = AccessToken.for_user(student.user)
-        token.set_exp(from_time=timezone.now(), lifetime=self.lifetime)
+        # Simple JWT stamps iat when the token is created. Reuse that instant so
+        # crossing a second boundary cannot make exp - iat exceed 15 minutes.
+        token.set_exp(from_time=token.current_time, lifetime=self.lifetime)
         token["tenant_id"] = request.tenant.id
         token["token_version"] = getattr(student.user, "token_version", 0) or 0
         token["mcp"] = False

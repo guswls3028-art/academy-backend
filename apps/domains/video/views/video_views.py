@@ -6,10 +6,12 @@ from datetime import timedelta
 from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import models, transaction
-from django.db.utils import IntegrityError
+from django.db.utils import DatabaseError, IntegrityError
+from django.http import JsonResponse
 from django.utils import timezone
 
-from rest_framework import status
+from drf_spectacular.utils import OpenApiResponse, extend_schema, inline_serializer
+from rest_framework import serializers, status
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.filters import SearchFilter
@@ -43,15 +45,19 @@ from apps.core.permissions import IsStudent, TenantResolvedAndStaff
 from academy.adapters.db.django import repositories_video as video_repo
 from apps.support.video.view_dependencies import (
     clinic_highlight_map_for_video_stats,
+    get_public_video_session,
     get_or_create_public_video_session,
     get_staff_for_video_upload,
     lock_session_for_video_upload,
+    prepare_legacy_public_video_upload_session,
 )
 from ..models import (
     Video,
     VideoFolder,
 )
-from ..serializers import VideoSerializer, VideoDetailSerializer, VideoFolderSerializer
+from ..serializers import (
+    PublicVideoSessionSerializer, VideoSerializer, VideoDetailSerializer, VideoFolderSerializer,
+)
 from ..policy import is_video_progress_complete, normalize_video_max_speed
 from ..services.access_resolver import resolve_access_modes_prefetched
 from ..services.video_encoding import REASON_SUBMIT_FAILED, create_job_and_submit_batch
@@ -191,6 +197,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         "update",
         "partial_update",
         "reorder",
+        "bulk_policy",
         "destroy",
         "public_session",
         "delete_folder",
@@ -211,6 +218,25 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ["session", "status", "folder"]
     search_fields = ["title"]
+
+    @transaction.atomic
+    def update(self, request, *args, **kwargs):
+        return super().update(request, *args, **kwargs)
+
+    def perform_update(self, serializer):
+        locked = Video.objects.select_for_update().get(
+            pk=serializer.instance.pk,
+            tenant=self.request.tenant,
+        )
+        serializer.instance = locked
+        policy_changed = any(
+            field in serializer.validated_data
+            and serializer.validated_data[field] != getattr(locked, field)
+            for field in ("allow_skip", "max_speed", "show_watermark")
+        )
+        serializer.save(
+            policy_version=locked.policy_version + (1 if policy_changed else 0),
+        )
 
     def perform_destroy(self, instance):
         """
@@ -418,6 +444,167 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
 
         return Response({"updated": len(video_ids)}, status=status.HTTP_200_OK)
 
+    @transaction.atomic
+    @extend_schema(
+        request=inline_serializer(
+            name="VideoBulkPolicy",
+            fields={
+                "session_id": serializers.IntegerField(min_value=1),
+                "video_ids": serializers.ListField(
+                    child=serializers.IntegerField(min_value=1),
+                    allow_empty=False,
+                    min_length=1,
+                    max_length=500,
+                ),
+                "allow_skip": serializers.BooleanField(required=False),
+                "max_speed": serializers.FloatField(
+                    required=False,
+                    min_value=0.25,
+                    max_value=5.0,
+                ),
+            },
+        ),
+        responses={
+            200: inline_serializer(
+                name="VideoBulkPolicyResponse",
+                fields={
+                    "updated": serializers.IntegerField(min_value=0),
+                    "changed": serializers.IntegerField(min_value=0),
+                },
+            ),
+            400: OpenApiResponse(
+                description="Invalid policy fields or a non-exact tenant/session/video target",
+            ),
+        },
+    )
+    @action(detail=False, methods=["post"], url_path="bulk-policy")
+    def bulk_policy(self, request):
+        """Atomically update playback defaults for videos in one tenant session."""
+        session_id = request.data.get("session_id")
+        video_ids = request.data.get("video_ids")
+
+        if type(session_id) is not int or session_id <= 0:
+            return Response(
+                {"detail": "session_id는 1 이상의 정수여야 합니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not isinstance(video_ids, list) or not video_ids:
+            return Response(
+                {"detail": "video_ids에 한 개 이상의 영상을 보내 주세요."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if len(video_ids) > 500:
+            return Response(
+                {"detail": "한 번에 최대 500개 영상의 정책을 변경할 수 있습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if any(type(video_id) is not int or video_id <= 0 for video_id in video_ids):
+            return Response(
+                {"detail": "video_ids는 1 이상의 정수 목록이어야 합니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if len(set(video_ids)) != len(video_ids):
+            return Response(
+                {"detail": "같은 영상을 두 번 선택할 수 없습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        has_allow_skip = "allow_skip" in request.data
+        has_max_speed = "max_speed" in request.data
+        if not has_allow_skip and not has_max_speed:
+            return Response(
+                {"detail": "건너뛰기 또는 최대 배속 중 하나 이상을 선택해 주세요."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        allow_skip = request.data.get("allow_skip")
+        if has_allow_skip and type(allow_skip) is not bool:
+            return Response(
+                {"detail": "allow_skip은 true 또는 false여야 합니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        max_speed = request.data.get("max_speed")
+        if has_max_speed:
+            if isinstance(max_speed, bool):
+                return Response(
+                    {"detail": "max_speed는 숫자여야 합니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            try:
+                max_speed = normalize_video_max_speed(max_speed)
+            except ValueError:
+                return Response(
+                    {"detail": "최대 배속은 0.25 이상 5 이하의 숫자여야 합니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        locked_session_ids = list(
+            video_repo.session_all_queryset()
+            .select_for_update()
+            .filter(pk=session_id, lecture__tenant=request.tenant)
+            .values_list("id", flat=True)
+        )
+        if len(locked_session_ids) != 1:
+            return Response(
+                {"detail": "해당 차시를 찾을 수 없습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        videos = list(
+            Video.objects.select_for_update()
+            .filter(
+                tenant=request.tenant,
+                session_id=session_id,
+                id__in=video_ids,
+            )
+            .only(
+                "id",
+                "allow_skip",
+                "max_speed",
+                "policy_version",
+                "updated_at",
+            )
+            .order_by("id")
+        )
+        if len(videos) != len(video_ids):
+            return Response(
+                {
+                    "detail": (
+                        "존재하지 않거나 삭제되었거나 다른 차시 또는 학원 소속인 "
+                        "영상이 포함되어 있습니다."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        changed = []
+        changed_at = timezone.now()
+        for video in videos:
+            next_allow_skip = allow_skip if has_allow_skip else video.allow_skip
+            next_max_speed = max_speed if has_max_speed else video.max_speed
+            if (
+                next_allow_skip == video.allow_skip
+                and next_max_speed == video.max_speed
+            ):
+                continue
+            video.allow_skip = next_allow_skip
+            video.max_speed = next_max_speed
+            video.policy_version += 1
+            video.updated_at = changed_at
+            changed.append(video)
+
+        if changed:
+            Video.objects.bulk_update(
+                changed,
+                ["allow_skip", "max_speed", "policy_version", "updated_at"],
+                batch_size=500,
+            )
+
+        return Response(
+            {"updated": len(videos), "changed": len(changed)},
+            status=status.HTTP_200_OK,
+        )
+
     # ==================================================
     # upload/init
     # ==================================================
@@ -475,6 +662,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         )
 
         # 시스템 강의(공개 영상 컨테이너)인 경우 visibility=PUBLIC 자동 설정
+        session = prepare_legacy_public_video_upload_session(session)
         is_public = getattr(session.lecture, "is_system", False)
         folder_id = request.data.get("folder")
         if folder_id not in (None, ""):
@@ -607,6 +795,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        session = prepare_legacy_public_video_upload_session(session)
         is_public = getattr(session.lecture, "is_system", False)
         folder_id = request.data.get("folder")
         if folder_id not in (None, ""):
@@ -690,19 +879,27 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
     # ==================================================
     # public_session — 공개 영상 업로드/목록용 세션 (테넌트당 1개)
     # ==================================================
-    @transaction.atomic
+    @extend_schema(
+        methods=["GET"],
+        responses={200: {
+            "allOf": [{"$ref": "#/components/schemas/PublicVideoSession"}], "nullable": True,
+        }, 503: OpenApiResponse(description="Read failed; not an unprepared container.")},
+    )
+    @extend_schema(
+        methods=["POST"], request=None,
+        responses={200: PublicVideoSessionSerializer, 503: OpenApiResponse(description="Preparation failed; retry is safe.")},
+    )
     @action(
         detail=False,
-        methods=["get"],
+        methods=["get", "post"],
         url_path="public-session",
         url_name="public-session",
     )
     def public_session(self, request):
         """
-        테넌트당 공개 영상 전용 시스템 Lecture + Session을 get_or_create 하고
-        session_id, lecture_id 를 반환합니다.
-        이 세션에 올린 영상은 visibility=PUBLIC으로 설정되어
-        프로그램(테넌트)에 등록된 모든 학생이 시청 가능합니다.
+        GET은 기존 ID를 조회하고 미준비 상태는 null을 반환합니다.
+        POST는 테넌트당 공개 영상 시스템 Lecture + Session을 준비합니다.
+        구형 컨테이너 정규화도 POST에서만 수행합니다.
         """
         tenant = getattr(request, "tenant", None)
         if not tenant:
@@ -710,9 +907,19 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 {"detail": "테넌트를 확인할 수 없습니다. X-Tenant-Code 헤더가 필요합니다. 같은 도메인(예: tchul.com)으로 접속했는지 확인하세요."},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        lecture, session = get_or_create_public_video_session(
-            tenant=tenant,
-        )
+        try:
+            if request.method == "POST":
+                lecture, session = get_or_create_public_video_session(tenant=tenant)
+            else:
+                lecture, session = get_public_video_session(tenant=tenant)
+        except DatabaseError:
+            logger.exception("public_video_session_failed tenant_id=%s method=%s", tenant.pk, request.method)
+            return Response(
+                {"code": "public_video_session_failed", "detail": "공개 영상 공간을 준비하거나 불러오지 못했습니다. 잠시 후 다시 시도해 주세요."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        if lecture is None or session is None:
+            return JsonResponse(None, safe=False)
         return Response(
             {"session_id": session.id, "lecture_id": lecture.id},
             status=status.HTTP_200_OK,

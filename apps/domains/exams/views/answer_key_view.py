@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from django.db import transaction
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import ValidationError
@@ -17,10 +18,47 @@ from apps.domains.exams.services.structure_copy_service import (
 )
 
 from apps.support.exams.view_dependencies import IsTeacherOrAdmin
+from apps.support.submissions.dependencies import regrade_exam_submissions
 
 
 class AnswerKeyViewSet(ModelViewSet):
     serializer_class = AnswerKeySerializer
+
+    def _regrade_changed_answers(self, response):
+        owner_id = getattr(self, "_changed_answer_owner_id", None)
+        if owner_id is None:
+            return response
+        tenant = self.request.tenant
+        owner = Exam.objects.get(id=owner_id, tenant=tenant)
+        regular_exams = [owner] if owner.exam_type == Exam.ExamType.REGULAR else []
+        if owner.exam_type == Exam.ExamType.TEMPLATE:
+            regular_exams.extend(
+                exam for exam in Exam.objects.filter(
+                    tenant=tenant, exam_type=Exam.ExamType.REGULAR,
+                    template_exam_id=owner.id,
+                ) if resolve_structure_exam(exam).id == owner.id
+            )
+        summaries = []
+        for exam in regular_exams:
+            summary = regrade_exam_submissions(
+                tenant=tenant, exam_id=exam.id, actor="AnswerKeyViewSet",
+            )
+            if summary["failed"]:
+                raise ValidationError({
+                    "detail": "정답 변경 후 재채점에 실패해 변경을 취소했습니다. 재시도해 주세요.",
+                    "regrade": summary,
+                })
+            summaries.append(summary)
+        response.data["regrade"] = summaries
+        return response
+
+    @transaction.atomic
+    def create(self, request, *args, **kwargs):
+        return self._regrade_changed_answers(super().create(request, *args, **kwargs))
+
+    @transaction.atomic
+    def update(self, request, *args, **kwargs):
+        return self._regrade_changed_answers(super().update(request, *args, **kwargs))
 
     def get_permissions(self):
         if self.action in {"list", "retrieve"}:
@@ -65,11 +103,14 @@ class AnswerKeyViewSet(ModelViewSet):
         answers = serializer.validated_data["answers"]
         if copy_result.question_id_map:
             answers = remap_answer_keys(answers, copy_result.question_id_map)
+        previous = AnswerKey.objects.filter(exam=owner_exam).values_list("answers", flat=True).first()
         answer_key, _ = AnswerKey.objects.update_or_create(
             exam=owner_exam,
             defaults={"answers": answers},
         )
         serializer.instance = answer_key
+        if previous != answers:
+            self._changed_answer_owner_id = owner_exam.id
 
     def perform_update(self, serializer):
         exam = serializer.validated_data.get("exam") or serializer.instance.exam
@@ -82,11 +123,16 @@ class AnswerKeyViewSet(ModelViewSet):
         ):
             raise ValidationError({"exam": "answer key already exists for this exam"})
         answers = serializer.validated_data.get("answers")
+        previous_answers = serializer.instance.answers
         if answers is not None and copy_result.question_id_map:
             answers = remap_answer_keys(answers, copy_result.question_id_map)
             serializer.save(exam=owner_exam, answers=answers)
+            if previous_answers != answers:
+                self._changed_answer_owner_id = owner_exam.id
             return
         serializer.save(exam=owner_exam)
+        if answers is not None and previous_answers != serializer.instance.answers:
+            self._changed_answer_owner_id = owner_exam.id
 
     def perform_destroy(self, instance):
         self._validate_exam_scope(instance.exam)

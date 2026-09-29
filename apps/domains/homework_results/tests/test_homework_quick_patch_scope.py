@@ -1,5 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier
+import uuid
 from unittest import skipUnless
 from unittest.mock import patch
 
@@ -16,10 +16,13 @@ from apps.domains.homework_results.models import Homework, HomeworkScore
 from apps.domains.homework_results.views.homework_score_viewset import HomeworkScoreViewSet
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.students.models import Student
+from apps.support.submissions.dependencies import homework_submission_revisions
 
 
 User = get_user_model()
 ScoreEditDraft = apps.get_model("results", "ScoreEditDraft")
+Submission = apps.get_model("submissions", "Submission")
+SubmissionMedia = apps.get_model("submissions", "SubmissionMedia")
 
 
 class HomeworkQuickPatchScopeTests(TestCase):
@@ -138,6 +141,38 @@ class HomeworkQuickPatchScopeTests(TestCase):
             ).exists()
         )
 
+    def test_updates_existing_legacy_score_without_assignment(self):
+        legacy_score = HomeworkScore.objects.create(
+            homework=self.homework,
+            session=self.session,
+            enrollment=self.unassigned_enrollment,
+            attempt_index=1,
+            score=None,
+            max_score=None,
+        )
+
+        response = self._quick_patch(
+            {
+                "session_id": self.session.id,
+                "homework_id": self.homework.id,
+                "enrollment_id": self.unassigned_enrollment.id,
+                "score": 80,
+            }
+        )
+
+        legacy_score.refresh_from_db()
+        self.assertEqual(response.data["id"], legacy_score.id)
+        self.assertEqual(legacy_score.score, 80)
+        self.assertEqual(
+            HomeworkScore.objects.filter(
+                homework=self.homework,
+                session=self.session,
+                enrollment=self.unassigned_enrollment,
+                attempt_index=1,
+            ).count(),
+            1,
+        )
+
     def test_rejects_session_mismatch_without_side_effects(self):
         self._quick_patch(
             {
@@ -174,6 +209,64 @@ class HomeworkQuickPatchScopeTests(TestCase):
         )
         self.assertEqual(response.data["id"], score.id)
         self.assertEqual(score.score, 80)
+        self.assertEqual(score.reviewed_submission_revision, "")
+
+    def test_explicit_score_review_captures_current_submission_revision(self):
+        submission = Submission.objects.create(
+            tenant=self.tenant,
+            user=self.assigned_enrollment.student.user,
+            enrollment=self.assigned_enrollment,
+            target_type=Submission.TargetType.HOMEWORK,
+            target_id=self.homework.id,
+            source=Submission.Source.HOMEWORK_IMAGE,
+            status=Submission.Status.SUBMITTED,
+        )
+        media = SubmissionMedia.objects.create(
+            tenant=self.tenant,
+            submission=submission,
+            client_upload_id=uuid.uuid4(),
+            upload_batch_id=uuid.uuid4(),
+            fingerprint="a" * 64,
+            object_key="tenant/test/graded.jpg",
+            original_filename="풀이.jpg",
+            media_kind=SubmissionMedia.Kind.IMAGE,
+            mime_type="image/jpeg",
+            size=100,
+            position=0,
+            status=SubmissionMedia.Status.UPLOADED,
+        )
+        self._quick_patch({
+            "session_id": self.session.id,
+            "homework_id": self.homework.id,
+            "enrollment_id": self.assigned_enrollment.id,
+            "score": 30,
+        })
+        score = HomeworkScore.objects.get(homework=self.homework, enrollment=self.assigned_enrollment)
+        reviewed = homework_submission_revisions(
+            tenant=self.tenant,
+            enrollment_ids=[self.assigned_enrollment.id],
+            homework_ids=[self.homework.id],
+        )[(self.assigned_enrollment.id, self.homework.id)]
+        self.assertEqual(score.reviewed_submission_revision, reviewed)
+        self._quick_patch({
+            "session_id": self.session.id,
+            "homework_id": self.homework.id,
+            "enrollment_id": self.assigned_enrollment.id,
+            "meta_status": HomeworkScore.MetaStatus.NOT_SUBMITTED,
+        })
+        score.refresh_from_db()
+        self.assertEqual(score.reviewed_submission_revision, reviewed)
+        media.removed_at = score.updated_at
+        media.status = SubmissionMedia.Status.REMOVED
+        media.save(update_fields=["removed_at", "status"])
+        self.assertEqual(
+            homework_submission_revisions(
+                tenant=self.tenant,
+                enrollment_ids=[self.assigned_enrollment.id],
+                homework_ids=[self.homework.id],
+            ),
+            {},
+        )
 
     def test_quick_patch_uses_cell_version_cas_and_preserves_server_value_on_conflict(self):
         first = self._quick_patch(
@@ -506,21 +599,12 @@ class HomeworkQuickPatchCreateRaceTests(TransactionTestCase):
 
     @skipUnless(connection.vendor == "postgresql", "unique create race requires PostgreSQL")
     def test_expected_empty_cell_create_race_allows_one_winner_and_one_conflict(self):
-        barrier = Barrier(2)
-        original_create = HomeworkScore.objects.create
-
-        def racing_create(*args, **kwargs):
-            barrier.wait(timeout=10)
-            return original_create(*args, **kwargs)
-
-        # The lease contract is covered separately. Bypass its row lock here so both
-        # requests reach the post-lease empty-cell create window at the same time.
-        with (
-            patch(
-                "apps.domains.homework_results.views.homework_score_viewset."
-                "require_homework_score_edit_lease"
-            ),
-            patch.object(HomeworkScore.objects, "create", side_effect=racing_create),
+        # The lease contract is covered separately. The canonical assignment lock
+        # now serializes the empty-cell create window itself, so forcing both calls
+        # to pause inside create would deadlock the test behind that intended lock.
+        with patch(
+            "apps.domains.homework_results.views.homework_score_viewset."
+            "require_homework_score_edit_lease"
         ):
             with ThreadPoolExecutor(max_workers=2) as executor:
                 results = list(executor.map(self._request, [71, 82]))

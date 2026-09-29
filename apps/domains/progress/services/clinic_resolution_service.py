@@ -9,6 +9,7 @@
 4. 면제 (WAIVED)
 5. 원본 시험/과제 제거 (SOURCE_REMOVED)
 6. 명시적 시험 미응시 전환 (NOT_SUBMITTED, 알림 없음)
+7. 과거 부분 채점 투영 철회 (GRADING_RETRACTED, 알림 없음)
 
 절대 금지:
 - 예약(booking)으로 해소
@@ -17,6 +18,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Iterable, Optional
 
 from django.db import transaction
@@ -30,8 +32,15 @@ from apps.support.clinic.session_dependencies import (
 from apps.support.progress.clinic_resolution_notification_dependencies import (
     send_clinic_resolution_notification,
 )
+from apps.support.progress.session_calculator_dependencies import (
+    homework_progress_enrollment_ids,
+)
 
 logger = logging.getLogger(__name__)
+
+
+class ClinicResolutionConflict(ValueError):
+    """A manual undo no longer matches the decision the operator reviewed."""
 
 
 def _append_history(link, *, action: str, at=None) -> None:
@@ -62,56 +71,13 @@ def _deactivate_today_plan(link: ClinicLink) -> None:
 
 
 def _dispatch_progress_for_link(link: ClinicLink) -> None:
+    """Recompute only the student and session changed by this clinic decision.
+
+    A link resolution does not change the exam or other students' answers.
+    Dispatch runs synchronously after commit, so an exam-wide dispatch makes
+    one student's pass wait for every examinee (and linked session).
+    The point pipeline still refreshes session/lecture progress and risk.
     """
-    해당 ClinicLink 기반으로 SessionProgress 재계산을 on_commit으로 예약.
-
-    필요 이유:
-      admin의 manual resolve / waive / unresolve / carry_over / 재시험 점수 수정이
-      SessionProgress.exam_passed·completed·clinic_required 등 집계 상태를 바꾸지만,
-      파이프라인을 명시적으로 재실행하지 않으면 학생/교사 화면의 파생 지표가
-      stale 상태로 남아 드리프트가 재발한다.
-
-    Dispatch 전략 (우선순위):
-      1) source_type="exam" + source_id 유효 → dispatch_progress_pipeline(exam_id=...)
-         (해당 시험 응시자 전체 재계산 — risk 평가까지 정확)
-      2) source_type=NULL legacy + meta.exam_id 유효 → exam_id path 동일
-      3) 그 외 (homework, exam_id 미상) + enrollment_id + session_id 존재
-         → dispatch_progress_pipeline(enrollment_id=..., session_id=...)
-         (특정 학생 × 세션 한 점 재계산)
-      4) 위 조건 모두 실패 → skip + debug log
-    """
-    exam_id: int | None = None
-    if link.source_type == "exam" and link.source_id:
-        try:
-            exam_id = int(link.source_id)
-        except (TypeError, ValueError):
-            exam_id = None
-    elif link.source_type is None and isinstance(link.meta, dict):
-        raw = link.meta.get("exam_id")
-        if raw is not None:
-            try:
-                exam_id = int(raw)
-            except (TypeError, ValueError):
-                exam_id = None
-
-    # Path 1/2: exam_id 경로
-    if exam_id is not None:
-        _eid = exam_id
-
-        def _dispatch_by_exam() -> None:
-            try:
-                from apps.domains.progress.dispatcher import dispatch_progress_pipeline
-                dispatch_progress_pipeline(exam_id=_eid)
-            except Exception:
-                logger.exception(
-                    "clinic_resolution: pipeline dispatch failed (link=%s, exam=%s)",
-                    link.id, _eid,
-                )
-
-        transaction.on_commit(_dispatch_by_exam)
-        return
-
-    # Path 3: enrollment + session 점 재계산
     if link.enrollment_id and link.session_id:
         _enr = int(link.enrollment_id)
         _sid = int(link.session_id)
@@ -254,6 +220,8 @@ class ClinicResolutionService:
                 if latest.resolved_at:
                     # A factual retake/pass or unrelated waiver is stronger than
                     # this review control and must not be reopened here.
+                    if source_type == "homework":
+                        _dispatch_progress_for_link(latest)
                     return latest
                 link = latest
             else:
@@ -283,6 +251,8 @@ class ClinicResolutionService:
         # closure. The correction row records this review, but the teacher
         # toggle must not replace or later reopen an already-resolved source.
         if latest and latest.resolved_at and not latest_is_teacher_resolution:
+            if source_type == "homework":
+                _dispatch_progress_for_link(latest)
             return latest
 
         link = latest
@@ -362,6 +332,7 @@ class ClinicResolutionService:
         source_type: str,
         source_id: int,
         enrollment_ids: Optional[Iterable[int]] = None,
+        link_ids: Optional[Iterable[int]] = None,
         user_id: Optional[int] = None,
         reason: str = "source_removed_from_session",
     ) -> int:
@@ -389,25 +360,45 @@ class ClinicResolutionService:
             )
             if not normalized_enrollment_ids:
                 return 0
+        normalized_link_ids: list[int] | None = None
+        if link_ids is not None:
+            normalized_link_ids = sorted({int(link_id) for link_id in link_ids})
+            if not normalized_link_ids:
+                return 0
 
         link_qs = (
             ClinicLink.objects.select_for_update()
             .filter(
                 tenant_id=tenant_id,
                 session_id=session_id,
+                is_auto=True,
                 resolved_at__isnull=True,
             )
             .filter(source_filter)
         )
         if normalized_enrollment_ids is not None:
             link_qs = link_qs.filter(enrollment_id__in=normalized_enrollment_ids)
+        if normalized_link_ids is not None:
+            link_qs = link_qs.filter(id__in=normalized_link_ids)
+
+        affected_pairs: set[tuple[int, int]] = set()
+        if source_type == "homework" and normalized_link_ids is None:
+            # Assignment removal is a progress event even without a failed link.
+            # Whole-source removal captures the roster before its rows are deleted.
+            homework_enrollment_ids = (
+                normalized_enrollment_ids
+                if normalized_enrollment_ids is not None
+                else homework_progress_enrollment_ids(
+                    tenant_id=tenant_id, session_id=session_id, homework_id=source_id,
+                )
+            )
+            affected_pairs.update((int(enrollment_id), session_id) for enrollment_id in homework_enrollment_ids)
 
         links = list(link_qs.order_by("id"))
-        if not links:
+        if not links and not affected_pairs:
             return 0
 
         now = timezone.now()
-        affected_pairs: set[tuple[int, int]] = set()
         count = 0
         for link in links:
             _append_history(link, action="resolve_source_removed", at=now)
@@ -514,6 +505,69 @@ class ClinicResolutionService:
             enrollment_id,
             exam_id,
             attempt_id,
+        )
+        return len(links)
+
+    @staticmethod
+    @transaction.atomic
+    def resolve_by_pending_grading(
+        *,
+        tenant_id: int,
+        enrollment_id: int,
+        exam_id: int,
+    ) -> int:
+        """Audit-close automatic clinic projections from an incomplete OMR score."""
+
+        tenant_id = int(tenant_id)
+        enrollment_id = int(enrollment_id)
+        exam_id = int(exam_id)
+        source_filter = (
+            Q(source_type="exam", source_id=exam_id)
+            | Q(source_type__isnull=True, meta__exam_id=exam_id)
+        )
+        links = list(
+            ClinicLink.objects.select_for_update()
+            .filter(
+                tenant_id=tenant_id,
+                enrollment_id=enrollment_id,
+                is_auto=True,
+                resolved_at__isnull=True,
+            )
+            .filter(source_filter)
+            .order_by("session_id", "id")
+        )
+        if not links:
+            return 0
+
+        now = timezone.now()
+        for link in links:
+            _append_history(link, action="resolve_pending_grading", at=now)
+            link.resolved_at = now
+            link.resolution_type = ClinicLink.ResolutionType.GRADING_RETRACTED
+            link.resolution_evidence = {
+                "grading_status": "subjective_pending",
+                "exam_id": exam_id,
+                "enrollment_id": enrollment_id,
+                "transitioned_at": now.isoformat(),
+            }
+            link.save(
+                update_fields=[
+                    "resolved_at",
+                    "resolution_type",
+                    "resolution_evidence",
+                    "resolution_history",
+                    "updated_at",
+                ]
+            )
+            _deactivate_today_plan(link)
+
+        logger.info(
+            "clinic_resolution: GRADING_RETRACTED resolved %d links "
+            "(tenant=%s, enrollment=%s, exam=%s)",
+            len(links),
+            tenant_id,
+            enrollment_id,
+            exam_id,
         )
         return len(links)
 
@@ -801,6 +855,7 @@ class ClinicResolutionService:
     def unresolve(
         *,
         clinic_link_id: int,
+        expected_resolved_at: Optional[datetime] = None,
     ) -> Optional[ClinicLink]:
         """
         해소 취소 (되돌리기). 재시험 실패 시 등에 사용.
@@ -809,6 +864,16 @@ class ClinicResolutionService:
             link = ClinicLink.objects.select_for_update().get(id=clinic_link_id)
         except ClinicLink.DoesNotExist:
             return None
+
+        if expected_resolved_at is not None:
+            evidence = link.resolution_evidence
+            if (
+                link.resolved_at != expected_resolved_at
+                or link.resolution_type != ClinicLink.ResolutionType.MANUAL_OVERRIDE
+                or (evidence is not None and not isinstance(evidence, dict))
+                or (isinstance(evidence, dict) and "assessment_correction_id" in evidence)
+            ):
+                raise ClinicResolutionConflict("처리 결과가 변경되었습니다. 새로고침 후 다시 확인해 주세요.")
 
         if not link.resolved_at:
             return link  # already unresolved

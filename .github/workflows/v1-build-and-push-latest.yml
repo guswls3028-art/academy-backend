@@ -17,6 +17,11 @@ on:
       - 'docs/reports/**'
       - 'docs/ssot/runtime-current.md'
       - 'scripts/codex/**'
+      - '.github/workflows/candidate-build-only.yml'
+      - 'scripts/v1/candidate_build_only.py'
+      - 'scripts/v1/test_candidate_build_only.py'
+      - '**/tests/**'
+      - '**/tests.py'
       - '.gitignore'
       - 'LICENSE'
   workflow_dispatch:
@@ -56,14 +61,17 @@ jobs:
   # ============================================================
   detect-changes:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     outputs:
-      build_api: ${{ steps.changes.outputs.build_api }}
-      build_video: ${{ steps.changes.outputs.build_video }}
-      build_messaging: ${{ steps.changes.outputs.build_messaging }}
-      build_ai: ${{ steps.changes.outputs.build_ai }}
-      build_tools: ${{ steps.changes.outputs.build_tools }}
-      build_base: ${{ steps.changes.outputs.build_base }}
-      force_full: ${{ steps.changes.outputs.build_all }}
+      build_api: ${{ steps.base-reuse.outputs.rebuild == 'true' || steps.changes.outputs.build_api == 'true' }}
+      build_video: ${{ steps.base-reuse.outputs.rebuild == 'true' || steps.changes.outputs.build_video == 'true' }}
+      build_messaging: ${{ steps.base-reuse.outputs.rebuild == 'true' || steps.changes.outputs.build_messaging == 'true' }}
+      build_ai: ${{ steps.base-reuse.outputs.rebuild == 'true' || steps.changes.outputs.build_ai == 'true' }}
+      build_tools: ${{ steps.base-reuse.outputs.rebuild == 'true' || steps.changes.outputs.build_tools == 'true' }}
+      build_base: ${{ steps.base-reuse.outputs.rebuild == 'true' || steps.changes.outputs.build_base == 'true' }}
+      force_full: ${{ steps.base-reuse.outputs.rebuild == 'true' || steps.changes.outputs.build_all == 'true' }}
       short_sha: ${{ steps.meta.outputs.short_sha }}
     steps:
       - name: Checkout
@@ -75,6 +83,33 @@ jobs:
         id: meta
         run: |
           echo "short_sha=${GITHUB_SHA:0:8}" >> $GITHUB_OUTPUT
+
+      # A run can wait behind an earlier production mutation for a long time.
+      # Capture the manifest promoted by that earlier run after the workflow-level
+      # concurrency wait, rather than using the stale copy from this push SHA.
+      - name: Capture current verified release baseline
+        if: github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          BASELINE_DIR="$RUNNER_TEMP/release-baseline"
+          mkdir -p "$BASELINE_DIR"
+          git fetch --no-tags origin main
+          git show origin/main:docs/reports/release-manifest.latest.json > "$RUNNER_TEMP/release-baseline/release-manifest.latest.json"
+          jq -e '
+            .schemaVersion == 1 and
+            .status == "successful" and
+            .complete == true and
+            (.gitSha | type == "string" and test("^[0-9a-f]{40}$"))
+          ' "$RUNNER_TEMP/release-baseline/release-manifest.latest.json" >/dev/null
+
+      - name: Upload current verified release baseline
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-baseline-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-baseline/release-manifest.latest.json
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Detect changes
         id: changes
@@ -96,7 +131,7 @@ jobs:
           # its diff base from the last verified image tag, not event.before:
           # a failed workflow followed by a hotfix push must still rebuild all
           # previously unshipped runtime changes.
-          MANIFEST="docs/reports/release-manifest.latest.json"
+          MANIFEST="$RUNNER_TEMP/release-baseline/release-manifest.latest.json"
           force_full_build() {
             echo "$1 — full build"
             echo "build_all=true" >> $GITHUB_OUTPUT
@@ -155,26 +190,47 @@ jobs:
           CHANGED_AI=$(git diff --name-only "$AI_PREV" HEAD)
           CHANGED_TOOLS=$(git diff --name-only "$TOOLS_PREV" HEAD)
           CHANGED=$(printf '%s\n' \
-            "$CHANGED_RELEASE" "$CHANGED_BASE" "$CHANGED_API" \
+            "$CHANGED_RELEASE" "$CHANGED_API" \
             "$CHANGED_VIDEO" "$CHANGED_MSG" "$CHANGED_AI" "$CHANGED_TOOLS" |
             sed '/^$/d' | sort -u)
           # Avoid echo|grep -q under GitHub's `bash -o pipefail`: on a large
           # multi-commit diff, grep can exit early and make echo fail with SIGPIPE.
           changed_matches() { grep -qE "$1" <<< "$CHANGED"; }
-          # Local Codex worktree tooling is never copied for a product purpose.
-          # Exclude it from accumulated per-image diffs as well as push triggers,
+          # Local tooling, candidate-only controller code and test suites do
+          # not change product behavior.
+          # Exclude them from accumulated per-image diffs as well as push triggers,
           # otherwise a later workflow-file change would reclassify it as API/AI.
-          runtime_changes() { grep -vE '^scripts/codex/' <<< "$1" || true; }
+          runtime_changes() { grep -vE '^scripts/codex/|^scripts/v1/(candidate_build_only|test_candidate_build_only)\.py$|^\.github/workflows/candidate-build-only\.yml$|(^|/)tests(/|\.py$)' <<< "$1" || true; }
 
-          # 전체 빌드 트리거: base/공통 requirements와 모든 worker가 import하는 코드.
+          # Base contains dependencies only, not academy/apps/libs source. Compare
+          # its actual inputs separately; old base source must not reintroduce
+          # app changes that every runtime has already shipped.
+          RUNTIME_CHANGED="$CHANGED"
+          CHANGED="$CHANGED_BASE"
+          BASE=false
+          changed_matches "^\.dockerignore$" && BASE=true
+          changed_matches "^docker/Dockerfile\.base$" && BASE=true
+          changed_matches "^docker/native-security/" && BASE=true
+          changed_matches "^requirements/constraints\.txt$" && BASE=true
+          changed_matches "^requirements/common\.txt$" && BASE=true
+          if [ "$BASE" = "true" ]; then
+            force_full_build "Base dependency input changed"
+          fi
+          CHANGED="$(runtime_changes "$RUNTIME_CHANGED")"
+
+          # 공통 코드 변경은 다섯 runtime 모두 빌드하되 dependency base는 재사용한다.
           # Worker settings가 apps.core/api.common/shared와 각 domain model을 초기화하고,
           # academy/libs/support/infrastructure는 여러 service entrypoint가 직접 import한다.
           FORCE_ALL=false
+          # A prior selective/legacy release may have promoted a new base while
+          # one runtime still contains the older dependency layer. Catch up all
+          # consumers even when the current base inputs are already shipped.
           changed_matches "^\.dockerignore$" && FORCE_ALL=true
-          changed_matches "^docs/ssot/params\.yaml$" && FORCE_ALL=true
           changed_matches "^docker/Dockerfile\.base$" && FORCE_ALL=true
+          changed_matches "^docker/native-security/" && FORCE_ALL=true
           changed_matches "^requirements/constraints\.txt$" && FORCE_ALL=true
           changed_matches "^requirements/common\.txt$" && FORCE_ALL=true
+          changed_matches "^docs/ssot/params\.yaml$" && FORCE_ALL=true
           changed_matches "^libs/" && FORCE_ALL=true
           changed_matches "^academy/" && FORCE_ALL=true
           changed_matches "^apps/shared/" && FORCE_ALL=true
@@ -188,9 +244,9 @@ jobs:
           changed_matches "^manage\.py$" && FORCE_ALL=true
 
           if [ "$FORCE_ALL" = "true" ]; then
-            echo "Core/shared change detected — full build"
-            echo "build_all=true" >> $GITHUB_OUTPUT
-            echo "build_base=true" >> $GITHUB_OUTPUT
+            echo "Core/shared change detected — rebuild all runtimes, reuse immutable base"
+            echo "build_all=false" >> $GITHUB_OUTPUT
+            echo "build_base=false" >> $GITHUB_OUTPUT
             echo "build_api=true" >> $GITHUB_OUTPUT
             echo "build_video=true" >> $GITHUB_OUTPUT
             echo "build_messaging=true" >> $GITHUB_OUTPUT
@@ -201,12 +257,6 @@ jobs:
 
           echo "build_all=false" >> $GITHUB_OUTPUT
 
-          # Base image: only when Dockerfile.base, common requirements, or libs change
-          CHANGED="$CHANGED_BASE"
-          BASE=false
-          changed_matches "^docker/Dockerfile\.base$" && BASE=true
-          changed_matches "^requirements/common\.txt$" && BASE=true
-          changed_matches "^libs/" && BASE=true
           echo "build_base=$BASE" >> $GITHUB_OUTPUT
 
           # API: apps/ (대부분), docker/api/, requirements/api.txt
@@ -226,7 +276,7 @@ jobs:
           # 실행한다. 따라서 apps/domains/video/ 변경도 video 이미지 재빌드 + jobdef
           # rev 갱신이 필요하다. 2026-05-10: recover_dead_video_jobs 신규 시 trigger 누락
           # 사고로 ops jobdef가 옛 image를 가리킨 적 있음.
-          CHANGED="$CHANGED_VIDEO"
+          CHANGED="$(runtime_changes "$CHANGED_VIDEO")"
           VIDEO=false
           changed_matches "^apps/worker/video_worker/" && VIDEO=true
           changed_matches "^apps/support/video/" && VIDEO=true
@@ -245,7 +295,7 @@ jobs:
           # 워커가 alimtalk_content_builders / notification_dispatch / queue_service 등을
           # 직접 import하므로 도메인 코드 변경도 워커 이미지 재빌드 + ASG refresh 필요.
           # 누락 시 새 매핑/양식이 API에만 들어가고 워커는 옛 매핑으로 enqueue 처리 → 실효 X.
-          CHANGED="$CHANGED_MSG"
+          CHANGED="$(runtime_changes "$CHANGED_MSG")"
           MSG=false
           changed_matches "^apps/worker/messaging_worker/" && MSG=true
           changed_matches "^apps/support/messaging/" && MSG=true
@@ -279,7 +329,7 @@ jobs:
           echo "build_ai=$AI" >> $GITHUB_OUTPUT
 
           # Tools worker: deterministic document conversion/spreadsheet jobs without AI model caches.
-          CHANGED="$CHANGED_TOOLS"
+          CHANGED="$(runtime_changes "$CHANGED_TOOLS")"
           TOOLS=false
           changed_matches "^apps/worker/tools_worker/" && TOOLS=true
           changed_matches "^apps/domains/tools/" && TOOLS=true
@@ -299,8 +349,24 @@ jobs:
           changed_matches "^docker/tools-worker/" && TOOLS=true
           changed_matches "^requirements/worker-tools\.txt$" && TOOLS=true
           echo "build_tools=$TOOLS" >> $GITHUB_OUTPUT
+          echo "Detection complete: api=$API video=$VIDEO messaging=$MSG ai=$AI tools=$TOOLS base=$BASE"
 
-          echo "Detection complete: api=$API video=$VIDEO messaging=$MSG ai=$AI tools=$TOOLS"
+      - name: Configure AWS for read-only base identity check
+        if: steps.changes.outputs.build_base != 'true' && contains(steps.changes.outputs.*, 'true')
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
+          aws-region: ${{ env.AWS_REGION }}
+          action-timeout-s: 180
+
+      - name: Verify prior base identity or select a complete rebuild
+        id: base-reuse
+        if: steps.changes.outputs.build_base != 'true' && contains(steps.changes.outputs.*, 'true')
+        run: |
+          python scripts/v1/resolve_release_base.py \
+            --baseline "$RUNNER_TEMP/release-baseline/release-manifest.latest.json" \
+            --region "${{ env.AWS_REGION }}" \
+            --github-output "$GITHUB_OUTPUT"
 
   # ============================================================
   # Phase 1.4: Static lint (deploy gate)
@@ -320,6 +386,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+
+      - name: Download current verified release baseline
+        if: github.event_name == 'push'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-baseline-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-baseline
 
       - name: Set up Python 3.11
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -359,17 +432,23 @@ jobs:
       - name: Expand/contract migration guard
         env:
           EVENT_NAME: ${{ github.event_name }}
-          EVENT_BEFORE: ${{ github.event.before }}
           ALLOW_CONTRACT_MIGRATIONS: ${{ inputs.allow_contract_migrations || false }}
         run: |
           set -euo pipefail
           python -m unittest scripts.lint.test_check_expand_contract_migrations
-          BASE_REF="HEAD^"
-          if [ "$EVENT_NAME" = "push" ] && \
-             [ -n "$EVENT_BEFORE" ] && \
-             [ "$EVENT_BEFORE" != "0000000000000000000000000000000000000000" ]; then
-            BASE_REF="$EVENT_BEFORE"
+          MANIFEST="docs/reports/release-manifest.latest.json"
+          if [ "$EVENT_NAME" = "push" ]; then
+            MANIFEST="$RUNNER_TEMP/release-baseline/release-manifest.latest.json"
           fi
+          # Include migrations from any failed release that preceded this push.
+          BASE_REF="$(jq -er '
+            select(.schemaVersion == 1 and .status == "successful" and .complete == true)
+            | .gitSha | select(type == "string" and test("^[0-9a-f]{40}$"))
+          ' "$MANIFEST")"
+          git merge-base --is-ancestor "$BASE_REF" HEAD || {
+            echo "::error::Verified release baseline is not an ancestor of this candidate" >&2
+            exit 1
+          }
           ARGS=(--base-ref "$BASE_REF")
           if [ "$EVENT_NAME" = "workflow_dispatch" ] && \
              [ "$ALLOW_CONTRACT_MIGRATIONS" = "true" ]; then
@@ -581,7 +660,7 @@ jobs:
 
   prepare-build:
     name: Prepare immutable base image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     outputs:
       base_image_uri: ${{ steps.base-image.outputs.uri }}
     permissions:
@@ -609,9 +688,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up QEMU
-        if: needs.detect-changes.outputs.build_base == 'true' || needs.detect-changes.outputs.force_full == 'true'
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
+      - name: Download current verified release baseline
+        if: github.event_name == 'push'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-baseline-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-baseline
 
       - name: Set up Docker Buildx
         if: needs.detect-changes.outputs.build_base == 'true' || needs.detect-changes.outputs.force_full == 'true'
@@ -694,11 +776,12 @@ jobs:
               --query 'imageDetails[0].imageDigest' \
               --output text)
           else
-            if [ ! -f docs/reports/release-manifest.latest.json ]; then
+            BASELINE="$RUNNER_TEMP/release-baseline/release-manifest.latest.json"
+            if [ ! -f "$BASELINE" ]; then
               echo "::error::No successful release manifest exists. Run workflow_dispatch once to build all images."
               exit 1
             fi
-            BASE_DIGEST=$(jq -r '.images["academy-base"].digest // empty' docs/reports/release-manifest.latest.json)
+            BASE_DIGEST=$(jq -r '.images["academy-base"].digest // empty' "$BASELINE")
           fi
           if [[ ! "$BASE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
             echo "::error::academy-base digest resolution failed"
@@ -846,6 +929,13 @@ jobs:
           fetch-depth: 0
           ssh-key: ${{ secrets.ACADEMY_RELEASE_DEPLOY_KEY }}
 
+      - name: Download current verified release baseline
+        if: github.event_name == 'push'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-baseline-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-baseline
+
       - name: Configure AWS credentials (OIDC only)
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
         with:
@@ -885,7 +975,7 @@ jobs:
           # Remove leading whitespace from heredoc
           sed -i 's/^          //' "$REPORTS_DIR/ci-build.latest.md"
 
-          PRIOR="$REPORTS_DIR/release-manifest.latest.json"
+          PRIOR="$RUNNER_TEMP/release-baseline/release-manifest.latest.json"
           CANDIDATE="$REPORTS_DIR/release-manifest.candidate.json"
           jq -n \
             --arg generatedAt "$BUILD_TIME" \
@@ -945,7 +1035,7 @@ jobs:
 
           echo "buildTime=$BUILD_TIME" >> $GITHUB_OUTPUT
 
-      - name: Gate newly built images on completed ECR critical scan
+      - name: Gate all candidate images on completed ECR critical scan
         run: |
           python scripts/v1/ecr-critical-scan-gate.py \
             --candidate docs/reports/release-manifest.candidate.json \
@@ -1055,6 +1145,7 @@ jobs:
           $apiDigest = [string]$candidate.images.'academy-api'.digest
           $toolsDigest = [string]$candidate.images.'academy-tools-worker'.digest
           $aiDigest = [string]$candidate.images.'academy-ai-worker-cpu'.digest
+          $messagingDigest = [string]$candidate.images.'academy-messaging-worker'.digest
           if ($apiDigest -notmatch '^sha256:[0-9a-f]{64}$') {
             throw "Invalid API digest in release candidate: $apiDigest"
           }
@@ -1064,10 +1155,14 @@ jobs:
           if ($aiDigest -notmatch '^sha256:[0-9a-f]{64}$') {
             throw "Invalid AI digest in release candidate: $aiDigest"
           }
+          if ($messagingDigest -notmatch '^sha256:[0-9a-f]{64}$') {
+            throw "Invalid Messaging digest in release candidate: $messagingDigest"
+          }
           ./scripts/v1/deploy-api-development.ps1 `
             -ApiImageUri "${{ env.ECR_REGISTRY }}/academy-api@$apiDigest" `
             -ToolsImageUri "${{ env.ECR_REGISTRY }}/academy-tools-worker@$toolsDigest" `
             -AiImageUri "${{ env.ECR_REGISTRY }}/academy-ai-worker-cpu@$aiDigest" `
+            -MessagingImageUri "${{ env.ECR_REGISTRY }}/academy-messaging-worker@$messagingDigest" `
             -ExpectedEnvVersion "${{ steps.development-env.outputs.parameter_version }}" `
             -ExpectedWorkersEnvVersion "${{ steps.development-env.outputs.workers_parameter_version }}" `
             -ExpectedReleaseId "${{ steps.development-env.outputs.release_id }}" `

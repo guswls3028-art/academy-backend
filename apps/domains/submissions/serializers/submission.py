@@ -14,11 +14,19 @@ from rest_framework import serializers
 from apps.domains.submissions.models import Submission
 
 # ✅ API 서버 전용 R2 업로드
+from apps.api.common.upload_validation import DEFAULT_MAX_OMR_SIZE
 from apps.core.r2_paths import ai_submission_key
-from apps.infrastructure.storage.r2 import delete_object_r2_storage, upload_fileobj_to_r2
+from apps.infrastructure.storage.r2 import delete_object_r2_ai, upload_fileobj_to_r2
 
 
 logger = logging.getLogger(__name__)
+
+
+class SubmissionUploadCleanupRequired(RuntimeError):
+    def __init__(self, *, tenant_id: int, key: str):
+        super().__init__("uploaded submission object requires durable cleanup")
+        self.tenant_id = int(tenant_id)
+        self.key = key
 
 
 class SubmissionSerializer(serializers.ModelSerializer):
@@ -119,8 +127,24 @@ class SubmissionCreateSerializer(serializers.ModelSerializer):
                     fileobj=upload_file,
                     key=key,
                     content_type=getattr(upload_file, "content_type", None),
+                    # Bounded so a stalled R2 connection fails fast instead of
+                    # holding the request (and this create() call's caller's
+                    # row locks, where applicable) for boto3's unbounded
+                    # default. 30s comfortably covers this app's upload size
+                    # limits (e.g. OMR batch upload's 10MB cap).
+                    timeout_seconds=30,
+                    # Every known caller of this serializer validates against
+                    # this exact cap before reaching here (exam_omr_batch_upload_view,
+                    # exam_omr_submit_view, submission_view's create action) --
+                    # forcing a single PUT keeps the 30s timeout_seconds above
+                    # an actual per-request boundary instead of one that a
+                    # multipart split (boto3 default threshold: 8MB) could
+                    # multiply into several requests.
+                    single_put_max_bytes=DEFAULT_MAX_OMR_SIZE,
                 )
                 uploaded = True
+                self.uploaded_object_key = key
+                self.uploaded_tenant_id = int(submission.tenant_id)
 
                 submission.file_key = key
                 submission.file_type = (
@@ -129,15 +153,20 @@ class SubmissionCreateSerializer(serializers.ModelSerializer):
                 )
                 submission.file_size = getattr(upload_file, "size", None)
                 submission.save(update_fields=["file_key", "file_type", "file_size"])
-            except Exception:
+            except Exception as exc:
                 if uploaded:
                     try:
-                        delete_object_r2_storage(key=key)
+                        delete_object_r2_ai(key=key)
+                        self.uploaded_object_key = None
                     except Exception:
                         logger.exception(
                             "Failed to compensate uploaded submission object",
                             extra={"submission_id": int(submission.id)},
                         )
+                        raise SubmissionUploadCleanupRequired(
+                            tenant_id=submission.tenant_id,
+                            key=key,
+                        ) from exc
                 raise
 
         return submission

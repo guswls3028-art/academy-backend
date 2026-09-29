@@ -10,6 +10,9 @@ from apps.support.attendance.serializer_dependencies import (
 
 
 class AttendanceSerializer(serializers.ModelSerializer):
+    student_memo = serializers.SerializerMethodField()
+    lecture_memo = serializers.CharField(source="enrollment.lecture_memo", read_only=True)
+    lecture_memo_updated_at = serializers.DateTimeField(source="enrollment.updated_at", read_only=True)
     session = serializers.PrimaryKeyRelatedField(
         queryset=session_queryset_for_attendance_serializer(),
     )
@@ -56,6 +59,7 @@ class AttendanceSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Attendance
+        ref_name = "LectureAttendance"
         fields = [
             "id",
             "session",
@@ -63,6 +67,9 @@ class AttendanceSerializer(serializers.ModelSerializer):
             "student_id",
             "status",
             "memo",
+            "lecture_memo",
+            "lecture_memo_updated_at",
+            "student_memo",
             "planned_arrival_date",
             "planned_arrival_time",
             "name",
@@ -73,6 +80,9 @@ class AttendanceSerializer(serializers.ModelSerializer):
             "profile_photo_url",
             "name_highlight_clinic_target",
         ]
+
+    def get_student_memo(self, obj) -> str:
+        return obj.enrollment.student.memo or ""
 
     def validate(self, attrs):
         request = self.context.get("request")
@@ -130,7 +140,7 @@ class AttendanceSerializer(serializers.ModelSerializer):
 
         return attrs
 
-    def get_profile_photo_url(self, obj):
+    def get_profile_photo_url(self, obj) -> str | None:
         student = getattr(getattr(obj, "enrollment", None), "student", None)
         if not student:
             return None
@@ -174,7 +184,7 @@ class AttendanceSerializer(serializers.ModelSerializer):
         ctx["_clinic_highlight_map"] = highlight_map
         return highlight_map
 
-    def get_name_highlight_clinic_target(self, obj):
+    def get_name_highlight_clinic_target(self, obj) -> bool:
         highlight_map = self._get_clinic_highlight_map()
         eid = getattr(obj, "enrollment_id", None)
         return highlight_map.get(int(eid), False) if eid else False

@@ -27,6 +27,9 @@ from apps.domains.results.services.assessment_correction_status import (
     assessment_correction_payload,
     exam_correction_fingerprint,
 )
+from apps.domains.results.services.omr_subjective_completion import (
+    pending_omr_result_ids,
+)
 from apps.domains.results.services.answer_matching import format_answer_for_display
 from apps.domains.results.aggregations.exam_report import summarize_result_items
 from apps.domains.enrollment.selectors import learning_history_enrollments_for_student
@@ -132,14 +135,21 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
     # 시험 응시 기록과 교직원 성적 운영은 유지하되, 학생·학부모에게는
     # 공개 전 점수·문항·석차를 전혀 직렬화하지 않는다. 재응시 가능 여부는
     # 결과 비공개 상태에서도 서버가 계속 소유해야 중복 응시를 막을 수 있다.
-    if not bool(getattr(exam, "student_results_published", True)):
-        return {
+    subjective_pending = int(result.id) in pending_omr_result_ids([result])
+    if (
+        not bool(getattr(exam, "student_results_published", True))
+        or subjective_pending
+    ):
+        hidden = {
             "exam_id": exam_id,
             "student_results_published": False,
             "allow_retake": allow_retake,
             "max_attempts": max_attempts,
             "can_retake": can_retake,
         }
+        if subjective_pending:
+            hidden["grading_status"] = "subjective_pending"
+        return hidden
 
     clinic_required = False
     if session:
@@ -225,10 +235,13 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
         assessment_correction_payload(
             source_type=AssessmentCorrection.SourceType.EXAM,
             score=data.get("total_score"),
-            max_score=data.get("max_score"),
+            max_score=float(getattr(exam, "max_score", 100.0) or 100.0),
             source_fingerprint=exam_correction_fingerprint(
                 result=result,
                 items=result.items.all(),
+                current_max_score=float(
+                    getattr(exam, "max_score", 100.0) or 100.0
+                ),
             ),
             correction=correction,
         )["correction_status"]
@@ -247,6 +260,7 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
         show_answers = False
     data["answer_visibility"] = getattr(exam, "answer_visibility", "hidden")
     data["answers_visible"] = show_answers
+    data["essay_numbering"] = getattr(exam, "essay_numbering", "continuous")
 
     # question_id → question_number 매핑 (ExamQuestion.number 사용)
     item_question_ids = [
@@ -259,6 +273,26 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
         exam_id=template_exam_id,
         tenant=tenant,
     )
+    essay_index_by_id = {}
+    if data["essay_numbering"] == "separate" and item_question_ids:
+        from apps.support.omr.score_shape import get_exam_score_shape
+
+        score_shape = get_exam_score_shape(exam)
+        essay_question_numbers = exams_repo.exam_question_number_map(
+            [
+                question_id for question_id, kind in score_shape.question_kind_by_id.items()
+                if kind == "essay"
+            ],
+            exam_id=template_exam_id,
+            tenant=tenant,
+        )
+        essay_ids = sorted(
+            essay_question_numbers,
+            key=lambda question_id: essay_question_numbers[question_id],
+        )
+        essay_index_by_id = {
+            question_id: index for index, question_id in enumerate(essay_ids, start=1)
+        }
     data["items"] = [
         item for item in (data.get("items") or [])
         if item.get("question_id") in question_number_map
@@ -275,6 +309,8 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
     for item in data.get("items") or []:
         q_id = item.get("question_id")
         item["question_number"] = question_number_map.get(q_id)
+        if q_id in essay_index_by_id:
+            item["essay_index"] = essay_index_by_id[q_id]
         item.setdefault("student_answer", item.get("answer"))
         if show_answers:
             correct = correct_answer_map.get(str(q_id or ""))

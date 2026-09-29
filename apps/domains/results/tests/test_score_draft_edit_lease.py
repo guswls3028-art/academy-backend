@@ -85,6 +85,7 @@ class ScoreDraftEditLeaseTests(TestCase):
         session=None,
         acknowledge_stale=False,
         active_cell=None,
+        take_over_same_user=False,
     ):
         return ScoreDraftView.as_view()(
             self._request(
@@ -95,6 +96,7 @@ class ScoreDraftEditLeaseTests(TestCase):
                     "changes": changes or [],
                     "acknowledge_stale": acknowledge_stale,
                     "active_cell": active_cell,
+                    "take_over_same_user": take_over_same_user,
                 },
             ),
             session_id=(session or self.session).id,
@@ -106,13 +108,13 @@ class ScoreDraftEditLeaseTests(TestCase):
             session_id=(session or self.session).id,
         )
 
-    def _commit(self, user, client_id, *, release_lease):
+    def _commit(self, user, client_id, *, release_lease, release_if_empty=False):
         return ScoreDraftCommitView.as_view()(
             self._request(
                 "post",
                 user,
                 client_id,
-                {"release_lease": release_lease},
+                {"release_lease": release_lease, "release_if_empty": release_if_empty},
             ),
             session_id=self.session.id,
         )
@@ -154,6 +156,7 @@ class ScoreDraftEditLeaseTests(TestCase):
                     "editor_user_id": self.admin_a.id,
                     "editor_name": "score-lease-a",
                     "active_cell": first_cell,
+                    "has_pending_changes": True,
                 }
             ],
         )
@@ -210,6 +213,92 @@ class ScoreDraftEditLeaseTests(TestCase):
         self.assertEqual(conflict.data["code"], "SCORE_EDIT_LOCKED")
         self.assertEqual(available.status_code, 200)
 
+    def test_exam_presence_blocks_only_the_same_score_cell(self):
+        occupied_cell = {
+            "type": "exam",
+            "enrollmentId": 21,
+            "examId": 11,
+            "sub": "subjective",
+        }
+        self.assertEqual(
+            self._put(
+                self.admin_a,
+                "tab-a",
+                active_cell=occupied_cell,
+            ).status_code,
+            200,
+        )
+
+        conflict = self._put(
+            self.admin_b,
+            "tab-b",
+            active_cell=occupied_cell,
+        )
+        available = self._put(
+            self.admin_b,
+            "tab-b",
+            active_cell={**occupied_cell, "enrollmentId": 22},
+        )
+
+        self.assertEqual(conflict.status_code, 409)
+        self.assertEqual(conflict.data["code"], "SCORE_EDIT_LOCKED")
+        self.assertEqual(available.status_code, 200)
+        self.assertEqual(available.data["active_editors"][0]["active_cell"], occupied_cell)
+
+    def test_active_homework_cell_does_not_block_subjective_score_save(self):
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="Subjective Exam",
+            exam_type=Exam.ExamType.REGULAR,
+        )
+        exam.sessions.add(self.session)
+        homework_cell = {
+            "type": "homework",
+            "enrollmentId": 21,
+            "homeworkId": 31,
+        }
+        subjective_cell = {
+            "type": "exam",
+            "enrollmentId": 22,
+            "examId": exam.id,
+            "sub": "subjective",
+        }
+        subjective_change = {
+            "type": "examSubjective",
+            "examId": exam.id,
+            "enrollmentId": 22,
+            "score": 7,
+        }
+        self.assertEqual(
+            self._put(
+                self.admin_a,
+                "homework-tab",
+                active_cell=homework_cell,
+            ).status_code,
+            200,
+        )
+        self.assertEqual(
+            self._put(
+                self.admin_b,
+                "subjective-tab",
+                [subjective_change],
+                active_cell=subjective_cell,
+            ).status_code,
+            200,
+        )
+
+        request = self._request("patch", self.admin_b, "subjective-tab")
+        with transaction.atomic():
+            self.assertEqual(
+                require_score_edit_lease(
+                    request,
+                    session_id=self.session.id,
+                    exam_id=exam.id,
+                    target_cell=subjective_cell,
+                ).id,
+                self.session.id,
+            )
+
     def test_draft_and_commit_reject_ambiguous_boolean_values(self):
         put_response = self._put(
             self.admin_a,
@@ -221,9 +310,15 @@ class ScoreDraftEditLeaseTests(TestCase):
             "tab-invalid-commit",
             release_lease="sometimes",
         )
+        handoff_response = self._put(
+            self.admin_a,
+            "tab-invalid-handoff",
+            take_over_same_user="sometimes",
+        )
 
         self.assertEqual(put_response.status_code, 400)
         self.assertEqual(commit_response.status_code, 400)
+        self.assertEqual(handoff_response.status_code, 400)
 
     def test_disjoint_homework_cells_coexist_but_same_cell_conflicts(self):
         first = {
@@ -276,7 +371,7 @@ class ScoreDraftEditLeaseTests(TestCase):
         self.assertEqual(conflict.status_code, 409)
         self.assertEqual(conflict.data["code"], "SCORE_EDIT_LOCKED")
 
-    def test_exam_changes_remain_exclusive_after_empty_drafts_coexist(self):
+    def test_exam_changes_are_scoped_to_their_exact_cells(self):
         self.assertEqual(self._put(self.admin_a, "tab-a").status_code, 200)
         self.assertEqual(self._put(self.admin_b, "tab-b").status_code, 200)
         exam_change_a = {
@@ -295,9 +390,207 @@ class ScoreDraftEditLeaseTests(TestCase):
             self._put(self.admin_a, "tab-a", [exam_change_a]).status_code,
             200,
         )
-        response = self._put(self.admin_b, "tab-b", [exam_change_b])
+        available = self._put(self.admin_b, "tab-b", [exam_change_b])
+        conflict = self._put(self.admin_b, "tab-b", [exam_change_a])
+        self.assertEqual(available.status_code, 200)
+        self.assertEqual(conflict.status_code, 409)
+        self.assertEqual(conflict.data["code"], "SCORE_EDIT_LOCKED")
+
+    def test_same_account_empty_subjective_presence_requires_explicit_reclaim(self):
+        cell = {"type": "exam", "enrollmentId": 21, "examId": 11, "sub": "subjective"}
+        self.assertEqual(self._put(self.admin_a, "before-reload", active_cell=cell).status_code, 200)
+        reopened = self._get(self.admin_a, "after-reload")
+        self.assertFalse(reopened.data["active_editors"][0]["has_pending_changes"])
+        self.assertEqual(self._put(self.admin_a, "after-reload", active_cell=cell).status_code, 409)
+
+        reclaimed = self._put(
+            self.admin_a, "after-reload", active_cell=cell, take_over_same_user=True,
+        )
+
+        self.assertEqual(reclaimed.status_code, 200)
+        self.assertEqual(reclaimed.data["active_editors"], [])
+        previous = ScoreEditDraft.objects.get(client_id="before-reload", tenant=self.tenant)
+        self.assertEqual(previous.payload["changes"], [])
+        self.assertEqual(previous.payload["invalidated_reason"], "SAME_ACCOUNT_HANDOFF")
+        with transaction.atomic():
+            require_score_edit_lease(
+                self._request("patch", self.admin_a, "after-reload"),
+                session_id=self.session.id, target_cell=cell,
+            )
+        with self.assertRaises(ScoreEditLeaseStale), transaction.atomic():
+            require_score_edit_lease(
+                self._request("patch", self.admin_a, "before-reload"),
+                session_id=self.session.id, target_cell=cell,
+            )
+
+    def test_empty_presence_reclaim_never_takes_other_account(self):
+        cell = {"type": "exam", "enrollmentId": 21, "examId": 11, "sub": "subjective"}
+        self._put(self.admin_a, "first", active_cell=cell)
+        response = self._put(self.admin_b, "second", active_cell=cell, take_over_same_user=True)
         self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.data["code"], "SCORE_EDIT_LOCKED")
+        self.assertEqual(ScoreEditDraft.objects.get(client_id="first").payload["active_cell"], cell)
+
+    def test_empty_presence_reclaim_preserves_same_account_pending_scores(self):
+        cell = {"type": "exam", "enrollmentId": 21, "examId": 11, "sub": "subjective"}
+        change = {"type": "examSubjective", "enrollmentId": 21, "examId": 11, "score": 17}
+        self._put(self.admin_a, "first", [change], active_cell=cell)
+        reopened = self._get(self.admin_a, "second")
+        self.assertTrue(reopened.data["active_editors"][0]["has_pending_changes"])
+        response = self._put(self.admin_a, "second", active_cell=cell, take_over_same_user=True)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(ScoreEditDraft.objects.get(client_id="first").payload["changes"], [change])
+
+    def test_conditional_exit_release_clears_only_current_empty_presence(self):
+        cell = {"type": "exam", "enrollmentId": 21, "examId": 11, "sub": "subjective"}
+        other_cell = {**cell, "enrollmentId": 22}
+        self._put(self.admin_a, "closing", active_cell=cell)
+        self._put(self.admin_a, "still-open", active_cell=other_cell)
+        response = self._commit(self.admin_a, "closing", release_lease=True, release_if_empty=True)
+        self.assertEqual(response.status_code, 204)
+        current = ScoreEditDraft.objects.get(client_id="closing")
+        self.assertIsNone(current.payload["active_cell"])
+        self.assertEqual(current.payload["changes"], [])
+        self.assertEqual(ScoreEditDraft.objects.get(client_id="still-open").payload["active_cell"], other_cell)
+        self.assertEqual(self._put(self.admin_b, "other-staff", active_cell=cell).status_code, 200)
+
+    def test_conditional_exit_release_preserves_changes_received_before_release(self):
+        cell = {"type": "exam", "enrollmentId": 21, "examId": 11, "sub": "subjective"}
+        change = {"type": "examSubjective", "enrollmentId": 21, "examId": 11, "score": 17}
+        self._put(self.admin_a, "closing", active_cell=cell)
+        self._put(self.admin_a, "closing", [change], active_cell=cell)
+        before = ScoreEditDraft.objects.get(client_id="closing")
+        response = self._commit(self.admin_a, "closing", release_lease=True, release_if_empty=True)
+        self.assertEqual(response.status_code, 204)
+        after = ScoreEditDraft.objects.get(client_id="closing")
+        self.assertEqual(after.payload, before.payload)
+        self.assertEqual(after.updated_at, before.updated_at)
+
+    def test_conditional_exit_release_does_not_claim_legacy_or_missing_client(self):
+        cell = {"type": "exam", "enrollmentId": 21, "examId": 11, "sub": "subjective"}
+        legacy = ScoreEditDraft.objects.create(
+            tenant=self.tenant, session=self.session, editor_user=self.admin_a,
+            client_id="", payload={"changes": [], "active_cell": cell},
+        )
+        response = self._commit(self.admin_a, "missing", release_lease=True, release_if_empty=True)
+        self.assertEqual(response.status_code, 204)
+        legacy.refresh_from_db()
+        self.assertEqual(legacy.payload["active_cell"], cell)
+        self.assertEqual(ScoreEditDraft.objects.filter(tenant=self.tenant).count(), 1)
+
+    def test_conditional_exit_release_rejects_invalid_or_incompatible_flags(self):
+        for release_lease, release_if_empty in ((True, "sometimes"), (False, True)):
+            with self.subTest(release_lease=release_lease, release_if_empty=release_if_empty):
+                response = self._commit(
+                    self.admin_a, "closing", release_lease=release_lease,
+                    release_if_empty=release_if_empty,
+                )
+                self.assertEqual(response.status_code, 400)
+
+    def test_same_account_mobile_score_handoff_preserves_and_fences_old_draft(self):
+        desktop_change = {
+            "type": "examTotal",
+            "examId": 11,
+            "enrollmentId": 21,
+            "score": 70,
+        }
+        mobile_change = {
+            "type": "examTotal",
+            "examId": 11,
+            "enrollmentId": 21,
+            "score": 80,
+        }
+        self.assertEqual(
+            self._put(self.admin_a, "desktop", [desktop_change]).status_code,
+            200,
+        )
+
+        handoff = self._put(
+            self.admin_a,
+            "iphone",
+            [mobile_change],
+            take_over_same_user=True,
+        )
+
+        self.assertEqual(handoff.status_code, 200)
+        desktop_draft = ScoreEditDraft.objects.get(
+            session=self.session,
+            editor_user=self.admin_a,
+            client_id="desktop",
+        )
+        self.assertTrue(desktop_draft.payload["invalidated"])
+        self.assertEqual(
+            desktop_draft.payload["invalidated_reason"],
+            "SAME_ACCOUNT_HANDOFF",
+        )
+        self.assertEqual(desktop_draft.payload["changes"], [desktop_change])
+
+        mobile_request = self._request("patch", self.admin_a, "iphone")
+        with transaction.atomic():
+            self.assertEqual(
+                require_score_edit_lease(
+                    mobile_request,
+                    session_id=self.session.id,
+                ).id,
+                self.session.id,
+            )
+
+        desktop_request = self._request("patch", self.admin_a, "desktop")
+        with self.assertRaises(ScoreEditLeaseStale):
+            with transaction.atomic():
+                require_score_edit_lease(
+                    desktop_request,
+                    session_id=self.session.id,
+                )
+
+    def test_active_changed_draft_is_recoverable_only_by_same_account_new_device(self):
+        desktop_change = {
+            "type": "examTotal",
+            "examId": 11,
+            "enrollmentId": 21,
+            "score": 70,
+        }
+        self.assertEqual(
+            self._put(self.admin_a, "desktop", [desktop_change]).status_code,
+            200,
+        )
+
+        same_account = self._get(self.admin_a, "iphone")
+        other_account = self._get(self.admin_b, "iphone")
+
+        self.assertEqual(same_account.status_code, 200)
+        self.assertEqual(same_account.data["changes"], [desktop_change])
+        self.assertFalse(same_account.data["stale"])
+        self.assertEqual(other_account.status_code, 200)
+        self.assertEqual(other_account.data["changes"], [])
+
+    def test_other_account_can_edit_disjoint_exam_cell_but_not_same_cell(self):
+        change = {
+            "type": "examTotal",
+            "examId": 11,
+            "enrollmentId": 21,
+            "score": 70,
+        }
+        self.assertEqual(
+            self._put(self.admin_a, "desktop", [change]).status_code,
+            200,
+        )
+
+        available = self._put(
+            self.admin_b,
+            "iphone",
+            [{**change, "enrollmentId": 22}],
+            take_over_same_user=True,
+        )
+        conflict = self._put(
+            self.admin_b,
+            "iphone",
+            [change],
+            take_over_same_user=True,
+        )
+
+        self.assertEqual(available.status_code, 200)
+        self.assertEqual(conflict.status_code, 409)
+        self.assertEqual(conflict.data["code"], "SCORE_EDIT_LOCKED")
 
     def test_autosave_commit_keeps_lease_until_explicit_release(self):
         change = {
@@ -366,7 +659,7 @@ class ScoreDraftEditLeaseTests(TestCase):
         self.assertEqual(draft.payload["client_id"], "tab-b")
         self.assertEqual(draft.payload["changes"], [])
 
-    def test_expired_changed_lease_stays_locked_for_same_account_new_tab(self):
+    def test_expired_changed_lease_is_recoverable_by_same_account_new_tab(self):
         change = {
             "type": "examTotal",
             "examId": 11,
@@ -379,15 +672,59 @@ class ScoreDraftEditLeaseTests(TestCase):
             editor_user=self.admin_a,
         ).update(updated_at=timezone.now() - timedelta(minutes=3))
 
-        response = self._put(self.admin_a, "tab-b")
+        recovery = self._get(self.admin_a, "tab-b")
+        blocked_without_choice = self._put(self.admin_a, "tab-b")
+        restored = self._put(
+            self.admin_a,
+            "tab-b",
+            [change],
+            acknowledge_stale=True,
+            take_over_same_user=True,
+        )
 
-        self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.data["code"], "SCORE_EDIT_LOCKED")
-        draft = ScoreEditDraft.objects.get(
+        self.assertEqual(recovery.status_code, 200)
+        self.assertEqual(recovery.data["changes"], [change])
+        self.assertEqual(blocked_without_choice.status_code, 409)
+        self.assertEqual(restored.status_code, 200)
+        old_draft = ScoreEditDraft.objects.get(
             session=self.session,
             editor_user=self.admin_a,
+            client_id="tab-a",
         )
-        self.assertEqual(draft.payload["changes"], [change])
+        self.assertTrue(old_draft.payload["invalidated"])
+        self.assertEqual(old_draft.payload["changes"], [change])
+        new_draft = ScoreEditDraft.objects.get(
+            session=self.session,
+            editor_user=self.admin_a,
+            client_id="tab-b",
+        )
+        self.assertEqual(new_draft.payload["changes"], [change])
+
+    def test_expired_invalidated_empty_lease_does_not_strand_new_device(self):
+        active_cell = {
+            "type": "homework",
+            "enrollmentId": 21,
+            "homeworkId": 31,
+        }
+        self.assertEqual(
+            self._put(self.admin_a, "old-device", active_cell=active_cell).status_code,
+            200,
+        )
+        draft = ScoreEditDraft.objects.get(session=self.session, editor_user=self.admin_a)
+        draft.payload = {**draft.payload, "invalidated": True, "invalidated_reason": "AUTOMATIC_GRADING_COMPLETED"}
+        draft.save(update_fields=["payload"])
+        ScoreEditDraft.objects.filter(id=draft.id).update(
+            updated_at=timezone.now() - timedelta(minutes=3),
+        )
+
+        response = self._put(self.admin_a, "new-device")
+
+        self.assertEqual(response.status_code, 200)
+        draft.refresh_from_db()
+        self.assertEqual(draft.client_id, "new-device")
+        self.assertEqual(draft.payload["changes"], [])
+        self.assertIsNone(draft.payload["active_cell"])
+        self.assertNotIn("invalidated", draft.payload)
 
     def test_legacy_list_payload_remains_readable(self):
         changes = [{"type": "homework", "enrollmentId": 3, "homeworkId": 4, "score": 5}]
@@ -421,7 +758,7 @@ class ScoreDraftEditLeaseTests(TestCase):
             with transaction.atomic():
                 require_score_edit_lease(other_tab, session_id=self.session.id)
 
-    def test_shared_exam_session_is_one_edit_scope(self):
+    def test_shared_exam_sessions_still_conflict_only_on_same_score_cell(self):
         sibling = Session.objects.create(
             lecture=self.session.lecture,
             order=2,
@@ -446,14 +783,21 @@ class ScoreDraftEditLeaseTests(TestCase):
             200,
         )
 
-        response = self._put(
+        available = self._put(
             self.admin_b,
             "tab-b",
             [{**change, "enrollmentId": 23}],
             session=sibling,
         )
-        self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.data["code"], "SCORE_EDIT_LOCKED")
+        conflict = self._put(
+            self.admin_b,
+            "tab-b",
+            [change],
+            session=sibling,
+        )
+        self.assertEqual(available.status_code, 200)
+        self.assertEqual(conflict.status_code, 409)
+        self.assertEqual(conflict.data["code"], "SCORE_EDIT_LOCKED")
 
     def test_authoritative_update_preserves_and_stales_manual_draft(self):
         exam = Exam.objects.create(

@@ -1,6 +1,8 @@
 # PATH: apps/domains/submissions/views/submission_view.py
 from __future__ import annotations
 
+import logging
+
 from django.db import transaction
 from django.utils import timezone
 
@@ -22,6 +24,7 @@ from apps.api.common.upload_validation import (
 from apps.core.permissions import TenantResolvedAndMember, TenantResolvedAndStaff
 from apps.domains.submissions.models import OMRStudentMatch, Submission, SubmissionAnswer
 from apps.domains.submissions.serializers.submission import (
+    SubmissionUploadCleanupRequired,
     SubmissionSerializer,
     SubmissionCreateSerializer,
 )
@@ -38,8 +41,10 @@ from apps.domains.submissions.services.omr_submission_guards import (
 )
 from apps.domains.submissions.services.lifecycle import (
     InvalidTransitionError,
+    ensure_ai_submission_key_attachable,
     fail_submission,
     retry_failed_submission,
+    schedule_unreferenced_ai_object_cleanup,
     supersede_submission,
 )
 from apps.support.submissions.dependencies import (
@@ -47,7 +52,9 @@ from apps.support.submissions.dependencies import (
     create_exam_enrollment_assignment,
     enrollment_belongs_to_tenant,
     exam_question_number_by_id,
+    finalize_omr_result_projection,
     get_synced_exam_score,
+    lock_submission_score_edit_scope_before_write,
     rebind_representative_omr_submission,
     request_is_parent,
     student_owns_enrollment,
@@ -55,6 +62,9 @@ from apps.support.submissions.dependencies import (
     target_enrollment_assignment_exists,
     validate_exam_enrollment_candidate,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class SubmissionViewSet(ModelViewSet):
@@ -89,6 +99,22 @@ class SubmissionViewSet(ModelViewSet):
         if self.action in ("create", "admin_omr_upload"):
             return SubmissionCreateSerializer
         return SubmissionSerializer
+
+    def create(self, request, *args, **kwargs):
+        try:
+            return super().create(request, *args, **kwargs)
+        except SubmissionUploadCleanupRequired as exc:
+            schedule_unreferenced_ai_object_cleanup(
+                tenant_id=exc.tenant_id,
+                key=exc.key,
+            )
+            return Response(
+                {
+                    "code": "submission_storage_cleanup_pending",
+                    "detail": "업로드 정리를 예약했습니다. 잠시 후 다시 시도해 주세요.",
+                },
+                status=503,
+            )
 
     @extend_schema(
         request=inline_serializer(
@@ -200,6 +226,19 @@ class SubmissionViewSet(ModelViewSet):
                 "requested_by_user_id": getattr(request.user, "id", None),
                 "requested_at": timezone.now().isoformat(),
             }
+            try:
+                ensure_ai_submission_key_attachable(
+                    tenant_id=tenant.id,
+                    key=str(source.file_key),
+                )
+            except ValueError:
+                return Response(
+                    {
+                        "code": "submission_storage_cleanup_conflict",
+                        "detail": "정리 중인 원본 파일은 다시 사용할 수 없습니다.",
+                    },
+                    status=409,
+                )
             replacement = Submission.objects.create(
                 tenant=tenant,
                 user=source.user,
@@ -318,7 +357,31 @@ class SubmissionViewSet(ModelViewSet):
             }
         )
         ser.is_valid(raise_exception=True)
-        submission = ser.save(user=request.user, tenant=tenant)
+        try:
+            with transaction.atomic():
+                submission = ser.save(user=request.user, tenant=tenant)
+        except Exception as error:
+            if isinstance(error, SubmissionUploadCleanupRequired):
+                cleanup_error = error
+            else:
+                uploaded_key = getattr(ser, "uploaded_object_key", None)
+                if not uploaded_key:
+                    raise
+                cleanup_error = SubmissionUploadCleanupRequired(
+                    tenant_id=getattr(ser, "uploaded_tenant_id", tenant.id),
+                    key=uploaded_key,
+                )
+            schedule_unreferenced_ai_object_cleanup(
+                tenant_id=cleanup_error.tenant_id,
+                key=cleanup_error.key,
+            )
+            return Response(
+                {
+                    "code": "submission_storage_cleanup_pending",
+                    "detail": "업로드 정리를 예약했습니다. 잠시 후 다시 시도해 주세요.",
+                },
+                status=503,
+            )
         dispatch_submission(submission)
         submission.refresh_from_db(fields=["status"])
 
@@ -371,7 +434,19 @@ class SubmissionViewSet(ModelViewSet):
                 ensure_exam_enrollment=True,
             ):
                 raise PermissionDenied("해당 시험/과제에 등록되지 않은 수강 정보입니다.")
-        submission = serializer.save(user=self.request.user, tenant=tenant)
+        try:
+            with transaction.atomic():
+                submission = serializer.save(user=self.request.user, tenant=tenant)
+        except Exception as error:
+            if isinstance(error, SubmissionUploadCleanupRequired):
+                raise
+            uploaded_key = getattr(serializer, "uploaded_object_key", None)
+            if not uploaded_key:
+                raise
+            raise SubmissionUploadCleanupRequired(
+                tenant_id=getattr(serializer, "uploaded_tenant_id", tenant.id),
+                key=uploaded_key,
+            ) from error
         dispatch_submission(submission)
 
     @staticmethod
@@ -536,7 +611,11 @@ class SubmissionViewSet(ModelViewSet):
 
     @transaction.atomic
     def _manual_edit_post(self, request, pk=None):
-        submission: Submission = Submission.objects.select_for_update().get(pk=self.get_object().pk)
+        submission_scope: Submission = self.get_object()
+        lock_submission_score_edit_scope_before_write(submission=submission_scope)
+        submission: Submission = Submission.objects.select_for_update().get(
+            pk=submission_scope.pk
+        )
 
         identifier = request.data.get("identifier")
         answers = request.data.get("answers") or []
@@ -757,13 +836,19 @@ class SubmissionViewSet(ModelViewSet):
                 allow_done_regrade=True,
             )
         except Exception:
+            logger.exception(
+                "OMR manual grading failed tenant_id=%s submission_id=%s",
+                getattr(tenant, "id", None),
+                submission.id,
+            )
             transaction.set_rollback(True)
             return Response(
                 {
                     "submission_id": submission.id,
                     "status": submission.status,
                     "updated": updated,
-                    "detail": "grading failed",
+                    "code": "OMR_REGRADING_FAILED",
+                    "detail": "재채점에 실패했습니다. 변경 사항은 저장되지 않았습니다. 잠시 후 다시 시도해 주세요.",
                 },
                 status=500,
             )
@@ -788,12 +873,24 @@ class SubmissionViewSet(ModelViewSet):
 
         synced_score = None
         synced_max_score = None
+        synced_result_id = None
+        projection_ready = True
+        grading_status = None
         if submission.target_type == Submission.TargetType.EXAM and submission.enrollment_id:
-            synced_score, synced_max_score = get_synced_exam_score(
+            synced_result_id, synced_score, synced_max_score = get_synced_exam_score(
                 tenant=tenant,
                 target_id=int(submission.target_id),
                 enrollment_id=int(submission.enrollment_id),
             )
+            if synced_result_id is None:
+                projection_ready = False
+                grading_status = "result_missing"
+            else:
+                finalization = finalize_omr_result_projection(
+                    result_id=synced_result_id
+                )
+                projection_ready = finalization.projection_ready
+                grading_status = finalization.pending_reason
 
         return Response(
             {
@@ -807,6 +904,8 @@ class SubmissionViewSet(ModelViewSet):
                 "score": synced_score,
                 "total_score": synced_score,
                 "max_score": synced_max_score,
+                "projection_ready": projection_ready,
+                "grading_status": grading_status,
             }
         )
 
@@ -823,6 +922,17 @@ class SubmissionViewSet(ModelViewSet):
             return Response({"detail": "Tenant required"}, status=403)
 
         with transaction.atomic():
+            submission_scope = Submission.objects.only(
+                "id",
+                "tenant_id",
+                "target_type",
+                "target_id",
+            ).get(pk=pk)
+            if submission_scope.tenant_id != getattr(tenant, "id", None):
+                return Response({"detail": "tenant mismatch"}, status=403)
+            lock_submission_score_edit_scope_before_write(
+                submission=submission_scope
+            )
             submission: Submission = Submission.objects.select_for_update().get(pk=pk)
             if submission.tenant_id != getattr(tenant, "id", None):
                 return Response({"detail": "tenant mismatch"}, status=403)
@@ -949,15 +1059,26 @@ class SubmissionViewSet(ModelViewSet):
                     allow_done_regrade=True,
                 )
             except Exception:
+                logger.exception(
+                    "OMR duplicate resolution grading failed tenant_id=%s submission_id=%s",
+                    getattr(tenant, "id", None),
+                    submission.id,
+                )
                 transaction.set_rollback(True)
-                return Response({"detail": "grading failed"}, status=500)
+                return Response(
+                    {
+                        "code": "OMR_REGRADING_FAILED",
+                        "detail": "재채점에 실패했습니다. 변경 사항은 저장되지 않았습니다. 잠시 후 다시 시도해 주세요.",
+                    },
+                    status=500,
+                )
 
         submission.refresh_from_db()
 
         synced_score = None
         synced_max_score = None
         if submission.enrollment_id:
-            synced_score, synced_max_score = get_synced_exam_score(
+            _synced_result_id, synced_score, synced_max_score = get_synced_exam_score(
                 tenant=tenant,
                 target_id=int(submission.target_id),
                 enrollment_id=int(submission.enrollment_id),

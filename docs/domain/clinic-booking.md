@@ -1,9 +1,50 @@
-# 클리닉 예약 정책과 다중 시간대 계약
+# 클리닉 개설 방식과 예약 정책
+
+새 학원의 `Tenant.clinic_use_daily_random` 기본값은 `True`다. 따라서 새 학원은
+패스카드 합격 화면에 날짜 기준 자동 3색을 사용한다. 기존 학원 행의 저장된
+`True`/`False`는 변경하지 않으며 관리자는 `/clinic/settings/` GET/PATCH로
+선택을 확인하고 바꿀 수 있다. 실제 자동 색상은 서버의 날짜별 결정 함수가
+계산하고 `/clinic/idcard/`의 합격 화면에만 적용된다. 예약 확정·승인 대기·예약
+필요 상태는 기존 판정과 배경을 유지한다. PATCH 실패는 기존 값을 보존하며
+GET을 다시 읽어 확인할 수 있다. 새 인스턴스 기본값과 명시적 `False` 저장
+테스트, 패스카드 GET의 상태별 응답으로 검증한다.
 
 ## 목적과 사용자 흐름
 
-클리닉 예약은 기존 한 시간 단위의 `fixed_slot`과 하나의 긴 운영 세션에서 실제
-체류 시간을 고르는 `time_range`를 함께 지원한다. 학생이나 교직원이 같은 날짜의
+### 수동 통과 복구와 점수 보존
+
+교직원은 전체 미통과 목록의 **해결 완료 포함**에서 직접 수동 통과한 항목을
+다시 찾아 취소할 수 있다. 원점수·기존 처리 이력은 보존하고 해당 학생/차시의
+클리닉 필요 여부와 학생 성적의 보충 완료 표시를 다시 계산한다. 자동 시험/숙제
+통과와 성적 교정에서 만들어진 해소는 이 복구 버튼의 대상이 아니다.
+
+UI는 `POST /progress/clinic-links/{id}/unresolve/`에 목록에서 읽은 원문
+`expected_resolved_at`을 보낸다. tenant/교직원 권한 검증 뒤 서비스의 행 잠금 안에서
+처리 시각, `MANUAL_OVERRIDE`, 성적 교정 근거 부재를 확인한다. 다른 처리로 바뀌었거나
+이미 취소된 항목은 데이터·이력·후속 계산을 바꾸지 않고 `409 clinic_resolution_conflict`를
+반환한다. 화면은 새 결과를 조회해 사용자가 다시 확인하도록 안내한다. 잘못된 시각이나
+null은400이다. 기존 내부 재시험 처리와 token 없는 API 호출은 기존 계약을 유지한다.
+
+`tests/test_clinic_resolution_progress.py`는 조교의 정상 취소, 원점수/학생 결과/
+다른 학생 보존, 반복 요청·자동 통과·성적 교정·시각 변경의 거부, 학생/다른 tenant
+차단을 검증한다. 프런트의 PC/390px 흐름과 공식 격리 실사용은 별도 검증한다.
+
+### 개설과 예약
+
+클리닉을 새로 만들 때 교직원은 세부 입력보다 먼저 두 개설 방식 중 하나를
+명시적으로 고른다.
+
+- **시간지정 클리닉**(`fixed_slot`): 17:00–18:00처럼 정해진 한 타임을 개설하고
+  학생은 그 타임 전체를 예약한다. godmin·tchul의 기존 운영 방식이다.
+- **자유지정 클리닉**(`time_range`): 15:00–22:00처럼 운영 범위를 한 번 열고
+  학생은 그 안에서 16:00–19:00처럼 실제 등원·하원 시각을 시각적인 시간 축으로
+  선택한다. limglish의 독서실형 운영 방식이다.
+
+선택 뒤에만 날짜·운영시간·정원 같은 세부 입력을 보여 주며, 생성 화면의 짧은
+설명과 예시가 두 방식의 차이를 전달한다. 수정·복사는 저장된 세션 snapshot을
+그대로 열어 기존 일정의 의미를 바꾸지 않는다.
+
+학생이나 교직원이 같은 날짜의
 고정 세션 여러 개를 한 번에 선택하면, 각 시간대마다 독립적인
 `SessionParticipant`를 만든다. 예를 들어 17:00–18:00과 18:00–19:00을 함께
 선택하면 화면에는 17:00–19:00 이용으로 요약하지만 데이터와 정원은 두 세션에서
@@ -30,6 +71,23 @@
 
 ## API 계약
 
+### 교직원 미통과 대상 목록
+
+`GET /api/v1/results/admin/clinic-targets/`는 요청 tenant의 활성 수강과 현재
+유효한 자동 ClinicLink를 읽는다. 시험·과제 원본, 강의별 시험 커트라인,
+대표 성적·최초 응시·재응시 이력·신뢰도 근거를 요청 단위로 일괄 조회하므로
+대상 행마다 같은 정보를 다시 조회하지 않는다. 신뢰도는 최초 응시 meta와
+정확한 시험·수강·응시의 meta가 있는 최신 200개 ResultFact 경계를 유지한다.
+과제별 커트라인 우선/차시 정책 fallback과 source 없는 legacy 링크의 가장
+작은 live regular 시험 표시도 유지한다. 이 조회는 점수·수동 해소·미제출 이력을
+쓰거나 재계산하지 않으며, tenant 누락과 다른 tenant 원본은 노출하지 않는다.
+
+`tests/test_clinic_target_bulk_reads.py`는 시험·과제 2행과 700행의 조회 수가
+같은지, 최초 점수·재응시·최신 200개 경계와 수동 해소 이력 보존을 검사한다.
+기존 대상 목록/미응시 면제/수강 범위 회귀가 권한·미제출·원본 제거 계약을 검증한다.
+
+### 일괄 예약 생성
+
 `POST /api/v1/clinic/participants/bulk-create/`
 
 ```json
@@ -51,7 +109,13 @@
 
 - `session_ids`는 중복 없는 1–20개이며 모두 현재 테넌트의 같은 날짜여야 한다.
 - 학생 요청은 `student_ids`를 받지 않고 인증된 학생만 사용한다.
-- 교직원 요청은 중복 없는 활성 학생 1–100명을 명시한다.
+- 교직원 요청은 중복 없는 활성 학생 1–100명을 `student_ids`로 명시하거나,
+  대상자 목록에서 고른 정확한 활성 수강 1–100개를 `enrollment_ids`로 명시한다.
+  두 ID 배열은 서로 다른 식별자이므로 한 요청에 섞지 않는다. `enrollment_ids`를
+  사용하면 생성된 참가자의 수강과 미해결 시험·과제 사유도 그 수강 기준으로
+  보존한다. 현재 응시·제출 대상에서 빠진 원본 링크와 이미 완료된 차시는 사유
+  계산에서도 제외한다. 선택 수와 시간대 수가 늘어도 같은 사유를 참가자마다 다시
+  조회하지 않고 선택 전체를 한 번에 판정한다.
 - 한 요청의 학생 × 시간대 조합은 최대 500개다.
 - 학생 신청은 세션 대상 강의·학년·학교·정원 규칙을 기존 단일 예약과 동일하게
   적용한다. 교직원 추가도 기존 수동 추가 권한과 상태 규칙을 유지한다.
@@ -72,19 +136,69 @@
   `booking_start_time`/`booking_end_time`을 선택한다. 시작·종료는 둘 다 있어야
   하고 세션 시작 기준 30분 또는 60분 간격, 세션 운영 범위, 최대 체류 시간을
   모두 만족해야 한다. `preferred_*` 희망 시간과는 별도 사실이다.
+- 운영 범위는 0분보다 길고24시간보다 짧아야 하며 다음 날까지 이어질 수 있다.
+  예를 들어23:00–다음 날02:00 운영에서23:30–01:00과 다음 날00:30–01:30을
+  예약할 수 있다. 예약 시작이 세션 시작 시각보다 이르면 다음 날이고, 종료가
+  예약 시작보다 이르면 그 다음 날짜다. 같은 시작·종료 시각은 빈 구간으로 거절한다.
+  이 해석으로 시간만 저장한 기존 데이터는 보존하며 날짜는 세션에서 파생한다.
+- 자정 종료 write는 reader-first 배포 경계다. 첫 reader/DB 배포는
+  `CLINIC_MIDNIGHT_TIME_RANGE_WRITES_ENABLED=false`로 단일·일괄 세션 생성과
+  학생/교직원 예약의 새 `00:00` write를 차단한다. 모든 API/worker가 호환 reader와
+  0022 제약을 사용하는 정확한 release로 수렴한 뒤에만 별도 활성화 release를 승격한다.
+  활성화 release의 기본값은 `true`이며 기존 환경의 명시적인 `false`는 우선한다.
+  같은 immutable candidate의 개발·preprod·health-gated rolling 배포와 runtime 설정
+  readback을 완료해야만 write와 limglish 전환을 진행한다.
+  이미 저장된 자정 세션의 읽기와 비시간 필드 수정은 플래그를 다시 내린 상태에서도
+  막지 않는다.
+- 다음 날00:00 이후 종료에는 별도 `CLINIC_OVERNIGHT_TIME_RANGE_WRITES_ENABLED`
+  reader-first 경계를 적용한다. 첫 reader release는 기본값false로 새 reader와0022
+  제약 확장을 배포한다. 모든 API/worker의 exact digest 수렴을 확인한 다음 활성화
+  release에서 기본값true로 바꾼다. 이미 명시된false는 보존하므로 runtime의 두 플래그가
+  실제true인지 확인해야 한다. 두 플래그가 활성화되어야 자정 종료를 포함한 전체 예약
+  흐름을 검증할 수 있다. 활성화 release를 reader release보다 먼저 배포하지 않는다.
+  플래그가 꺼져 있으면 새 단일·일괄 개설과 예약을 거절하되 기존 읽기·비시간 수정은
+  유지한다. 활성화 후 rollback은 writer를 차단하고 새 reader/확장 제약을 유지한다.
+  다음 날 예약을 저장한 상태에서 구 reader나 좁은 제약으로 내리지 않는다.
+  0022는 기존 행을 수정하지 않으며5초 lock/30초 statement 제한과 원자적 DDL로
+  잠금 실패 시 기존 제약을 보존한다. limglish 전용 과거 일괄 전환 도구의 대상은
+  기존 같은 날/정확한 자정 범위를 유지하며 일반 개설의 지원 확대로 자동 확장하지 않는다.
+- 단일·일괄 세션 생성은 요청에 예약 정책이 생략돼도 tenant 기본값을 먼저 적용한
+  유효 정책으로 간격·최대 체류·운영 종료 경계를 검사한다. 따라서 저장 뒤에야
+  `time_range`가 되는 호출도 길이·reader-first 경계를 우회할 수 없다.
 - tenant 기본값 `clinic_booking_mode`, `clinic_booking_interval_minutes`,
   `clinic_booking_max_stay_minutes`는 owner/admin만 바꾼다. 모든 직원 역할은 값을
   읽을 수 있고, session의 snapshot은 이후 기본값 변경에 따라 바뀌지 않는다.
 - 활성 예약이 있는 session의 예약 방식·간격·최대 체류는 바꿀 수 없다.
+  `time_range` 세션은 기존 실제 예약을 운영 범위 밖으로 밀어내지 않도록 날짜·시작
+  시각·운영 시간도 바꿀 수 없다.
   `time_range`는 다중 session 선택과 섞지 않으며 반복 생성도 한 날짜씩 한다.
 
 `GET /api/v1/clinic/sessions/{id}/availability/`는 요청 tenant와 세션 대상 자격을
 통과한 사용자에게 운영 범위, 간격, 최대 체류, 각 구간의 남은 정원만 반환한다.
+운영 `window`와 각 `slots`는 실제 `start_date`/`end_date`도 반환한다.
+세션 `end_date`와 참가자 `booking_start_date`/`booking_end_date`도 파생 읽기 필드다.
+`session_date`와 날짜 목록 필터는 운영 세션이 시작한 날짜를 유지한다.
 참가자 신원은 반환하지 않는다. 시간 범위 정원은 session row lock 아래
 `pending`/`booked`/`attended`의 반열린 구간(`[start, end)`) 겹침을 각 간격마다
 검사한다. 따라서 10:00–11:00과 11:00–12:00은 겹치지 않으며 동시 요청도 같은
 구간 정원을 초과할 수 없다. 고정 시간대 정원 계산은 기존 pending/booked 계약을
 그대로 유지한다.
+
+학생 신청과 교직원 직접 등록은 같은 실제 구간 검증·정원·중복 경계를 사용한다.
+직접 등록도 시간 범위 모드에서는 시작·종료를 명시해야 하며 임의 기본 구간을 채우지 않는다.
+날짜가 다른 세션이라도 실제 예약 구간이 겹치면 학생 row lock 아래409로 거절하고
+기존 같은 운영 날짜의 단일/연속 예약 정책은 유지한다. 자정이 지난 뒤에도 전날
+시작한 세션이 아직 끝나지 않았다면 신청할 수 있다. 패스카드는 남아 있는 실제
+예약 종료까지 표시하고 실제 시작 날짜·시간을 안내한다. 완료하지 않은 등원 상태와
+시험 기준일 이후 예약만 인정하는 기존 정책은 유지한다.
+예약 알림은 실제 시작 날짜·시간으로 origin과 안내 날짜를 만들고 전송 전에 같은
+참가자·세션·tenant·예약 구간을 다시 대조한다. 다음 날 시각을 이전 날짜로 보내거나
+취소/변경된 예약 알림을 되살리지 않는다.
+
+검증 소유: `test_clinic_overnight_time_range.py`의 개설·직접 등록·학생 신청·실제 날짜
+정원·패스카드·다른 운영 날짜 중복, 기존 midnight/policy/passcard/conversion 회귀와
+PostgreSQL `test_clinic_overnight_migration_lock_timeout.py`. 실제 사용자 PC/390px
+개설→신청/등록→역할별 재조회→취소는 같은 산출물 격리 실사용 게이트에서 검증한다.
 
 목록·상세·운영 tree의 `is_full`도 같은 구간별 계산을 사용한다. `time_range`는
 모든 구간이 마감일 때만 전체 마감이고, `available_slots`는 구간 중 가장 큰 잔여
@@ -99,9 +213,12 @@
 이미 생성된 세션은 바뀌지 않는다.
 
 - 기본값은 `false`다.
-- 초기 운영값은 `tchul=false`, `godmin=false`, `limglish=true`다.
-- 기존 `limglish` 세션은 migration에서 `true`, 나머지 기존 세션은 `false`로
-  설정한다.
+- 최초 다중 고정시간대 도입 시 운영값은 `tchul=false`, `godmin=false`,
+  `limglish=true`였고 그 이력은 기존 migration에 보존한다.
+- 현재 자유지정 전환 뒤에는 `tchul=false`, `godmin=false`를 유지하고,
+  `limglish`는 긴 `time_range` 세션 하나 안에서 실제 시간을 고르므로 기본값과
+  전환 대상 세션을 `false`로 둔다. 여러 고정 세션 점유 허용과 한 운영 범위 안의
+  연속 체류 선택을 같은 정책으로 취급하지 않는다.
 - 세션을 `true`에서 `false`로 바꿔도 기존 참가자 행은 보존한다. 이후 같은 날짜의
   충돌하는 새 예약만 막는다.
 - `cancelled`, `rejected`, `no_show`는 활성 충돌로 보지 않는다.
@@ -111,11 +228,89 @@
 추정하지 않는다. tenant나 session을 현재 요청 범위에서 확인할 수 없으면 다른
 tenant를 추정하지 않고 실패 폐쇄한다.
 
+### 일정 tree 날짜 범위 조회
+
+교직원 전용 `GET /api/v1/clinic/sessions/tree/`는 기존 `year`+`month` 조회와
+`date_from`+`date_to` inclusive 조회 중 정확히 하나만 받는다. 날짜 범위는 최대
+31일이며 일부 누락, 역순, 잘못된 날짜, 월 조회와의 혼합을 `400`으로 거부한다.
+범위는 tenant-scoped `Session.date`에 직접 적용하므로 8월 31일~9월 6일처럼
+월말·월초를 건너도 양 끝 날짜를 모두 포함하고 서버 시각대 변환을 하지 않는다.
+
+이 조회는 존재하는 세션 행을 반환한다. 참가자의 `cancelled` 여부는 세션 자체를
+숨기지 않으며 예약·출결 수치는 상태별 집계로만 구분한다. 삭제된 세션 행과 다른
+tenant의 세션은 반환하지 않는다. 이전 주 복사에 필요한 제목·날짜·시간·장소·정원,
+대상 학년/학교유형/강의/반, 희망시간 접수, 다중 시간대, 예약 방식·간격·최대 체류
+snapshot을 함께 반환하지만 참가자 명단은 반환하거나 복사하지 않는다.
+
+## limglish 현재·미래 일정 전환
+
+기존 limglish 일정은 일반 migration에서 모든 tenant와 함께 추정 변환하지 않는다.
+배포된 코드와 migration이 먼저 적용된 뒤, 전용 명령이 정확한 `limglish` tenant의
+기준일 이후 일정만 잠그고 전환한다.
+
+```powershell
+python manage.py convert_limglish_clinic_time_ranges --from-date 2026-09-10
+python manage.py convert_limglish_clinic_time_ranges --from-date 2026-09-10 --execute --confirm <dry-run-token>
+```
+
+- 첫 명령은 변경 없이 session ID·참가자 수·정책 지문·확인 토큰만 JSON으로
+  출력하며 이름·전화번호·메모 같은 개인정보를 출력하지 않는다.
+- 실행은 같은 기준일로 다시 계산한 확인 토큰이 정확히 일치할 때만 진행한다.
+  tenant·session·participant를 transaction 안에서 잠가 dry-run 뒤 대상이
+  달라졌으면 실패 폐쇄한다. 일반 단일·일괄 session 생성과 PATCH도 먼저 같은 tenant
+  정책 row를 잠그며, PATCH는 잠근 session을 다시 읽는다. 요청 validation 이후 정책이나
+  session `updated_at`이 바뀌었으면 옛 객체를 저장하지 않고 새로고침·재시도를 요구한다.
+  tenant 다음에 session을 잠그는 변환과 session 쓰기는 tenant를 `FOR NO KEY UPDATE`로
+  잠가, 기존 session을 잡은 신규 예약의 tenant FK `KEY SHARE` 커밋과 교착하지 않는다.
+  예약 정책 설정 PATCH도 tenant row를 먼저 잠그고 최신 정책 조합을 다시 읽는다. 요청에
+  포함된 정책 필드만 저장하므로 변환과 겹친 간격 전용 PATCH가 새 mode나 최대 체류시간을
+  옛 값으로 되돌리지 않는다.
+  변환 write 뒤에는 같은 잠금 안에서 계획을 다시 계산해 대상이 0인지 확인하며 하나라도
+  남으면 transaction 전체를 롤백한다.
+- 자정 종료 대상이 하나라도 있으면 reader-first release의 API/worker 수렴과
+  `CLINIC_MIDNIGHT_TIME_RANGE_WRITES_ENABLED=true`가 먼저 필요하다. 플래그 기본 OFF인
+  첫 reader 배포에서 변환 명령을 실행해 rolling overlap을 우회할 수 없다.
+- 60분 단위의 고정 일정만 변환하고, 같은 날 종료 또는 정확한 다음 날 `00:00`
+  종료만 허용한다. 모든 기존 참가자의 현재 또는 변환 후 실제 범위도 세션 안에 있고,
+  세션 시작 기준 60분 경계에 맞으며, 새 최대 체류 600분 이하여야 한다. 하나라도
+  어긋나면 dry-run과 실행 모두 아무 행도 바꾸지 않고 실패한다. 이미 부분 실제시간이
+  기록됐거나 형식이 섞인 참가자, 자정 이후 운영, 중복 tenant code도 임의 보정하지 않는다.
+- 예약·취소·거절 등 기존 참가자 행은 삭제하지 않고 원래 세션 전체 범위를 실제
+  `booking_start_time`/`booking_end_time`으로 채운다. 상태와 알림 이력은 유지한다.
+- 대상 session은 `time_range`, 60분 간격, 최대 600분, 여러 고정 세션 예약 OFF로
+  바꾸고 tenant의 새 일정 기본값도 동일하게 맞춘다. godmin·tchul과 과거 일정은
+  건드리지 않으며, 같은 명령을 다시 실행하면 변경 없는 상태로 끝난다.
+
+자정 종료를 허용하는 참가자 DB 제약 교체 migration은 PostgreSQL에서 같은 원자
+transaction 안에 `lock_timeout=5s`, `statement_timeout=30s`를 먼저 설정한다. 테이블
+잠금을 제시간에 얻지 못하거나 제약 검사 scan이 예산을 넘으면 migration 기록과 제약
+변경을 함께 롤백하므로 기존 순서 제약과 참가자 행은 그대로 남는다. 운영자는 트래픽을
+우회해 수동 DDL을 실행하지 않고, 잠금 경쟁이 사라진 뒤 동일 migration을 재시도한다.
+
+## 학생별 통과·면제와 진도 갱신
+
+교직원의 통과·면제·되돌리기·이월은 해당 `ClinicLink`의 학생과 차시만
+커밋 후 동기 재계산한다. 시험 연결이나 레거시 `meta.exam_id`가 있어도 전체
+응시자·연결 차시를 다시 계산하지 않는다. 한 학생의 판정은 다른 학생의 답안이나
+점수를 바꾸지 않기 때문이다. 해당 학생의 차시·강의 진도와 위험도 계산은 유지하며,
+정답 변경 후 시험 전체 재채점은 별도의 시험 재계산 경로를 그대로 사용한다.
+원래 점수·답안과 수동 해소 이력, tenant·교직원 권한은 보존한다. 재계산 실패는
+기존 구조화 오류 로그에 남으며, 저장 응답 뒤 새로고침한 상태와 학생 성적의
+클리닉 통과 표시를 함께 확인한다.
+
+회귀 검증: `apps/domains/progress/tests/test_resolution_dispatch.py`,
+`tests/test_clinic_resolution_progress.py`.
+
 ## 원자성·동시성·알림
 
-서비스는 학생을 ID 순으로 먼저 잠그고 세션을 날짜·시작 시각·ID 순으로 잠근다.
-단일 생성, 학생 bulk, 교직원 bulk, 일정 변경이 모두 같은 학생 row lock을
-사용하므로 서로 다른 세션을 향한 동시 요청도 같은 날짜 정책을 우회하지 못한다.
+단일 생성과 bulk는 학생을 먼저 잠그며, bulk와 limglish 변환은 여러 세션을 모두
+날짜·시작 시각·ID 순으로 잠근다. 따라서 역순으로 생성된 두 세션에서도 session 간
+교착이 없다. 일정 변경은 변환과 충돌하는 tenant row를 가장 먼저 `FOR NO KEY UPDATE`로
+잠근 뒤 학생·기존 예약·새 세션을 처리한다. 이 잠금은 변환의 `FOR NO KEY UPDATE`와는
+직렬화되지만 정상 신규 예약의 tenant FK `KEY SHARE`와는 호환되므로, 신규 예약 커밋과
+일정 변경이 같은 학생에서 서로 기다리지 않는다. 단일 생성, 학생 bulk, 교직원 bulk,
+일정 변경이 모두 같은 학생 row lock을 사용하므로 서로 다른 세션을 향한 동시 요청도
+같은 날짜 정책을 우회하지 못한다.
 이후 기존 단일 참가자 생성 규칙을 학생 × 세션 조합마다 적용한다.
 정원 마감, 비연속 시간대, 잘못된 대상, 권한 오류가 하나라도 발생하면 요청 전체를 롤백한다.
 따라서 2명 × 2시간대 요청이 일부만 저장되는 상태는 없다.
@@ -127,9 +322,47 @@ bulk 모두 `409`로 거부하고 요청 전체를 롤백한다. 일정 변경�
 `clinic_reservation_created` 이벤트로 요청하며, 승인된 알림톡 템플릿이 없으면
 기존 메시징 정책대로 실패 폐쇄한다.
 
+기존 세션의 교직원 **학생 추가** 화면은 bulk 실패의 `detail`을 사용자에게 그대로
+설명하고 선택 모달을 닫지 않는다. 따라서 `이미 해당 세션에 예약된 학생입니다.`,
+같은 날 단일 시간대 정책, 정원 마감 같은 충돌을 숫자만으로 숨기지 않으며, 서버가
+아무 행도 쓰지 않은 상태에서 선택을 확인하고 즉시 다시 시도할 수 있다.
+
 다중 예약은 기존 `SessionParticipant` 행들의 집합이므로 조회·출석·취소·패스카드
 규칙을 그대로 따른다. 학생 직접 예약 생성·일정 변경·취소 알림은 기존 계약대로
 학생과 학부모 모두에게 보내며, 교직원 수신자 선택 규칙은 변경하지 않는다.
+
+### 학생·학부모 직접 취소
+
+학생과 선택된 자녀를 이용하는 학부모는 자신의 `pending` 또는 `booked` 예약을
+**내 일정**에서 직접 취소한다. 취소 가능 여부는 API의 `can_self_cancel`과
+`self_cancel_reason`이 소유하며 화면이 미통과 항목이나 예약 수를 다시 추측하지 않는다.
+
+- 패스카드와 같은 현재 유효·미해결 자동 `ClinicLink`가 없으면 마지막 예약도 취소할 수 있다.
+- 현재 필수 대상이면 취소할 예약의 `Session.date`가 속한 월요일~일요일에
+  취소 대상 이외의 `pending|booked` 예약을 최소 1개 남겨야 한다. 남는 예약은 현재
+  시각에 아직 종료되지 않았고 `checked_out_at`·`completed_at`이 없는 활성 일정이어야
+  한다. 이미 끝난 session/time, 하원·완료 예약과 다른 주 예약은 이 수에 포함하지 않는다.
+- 해소된 링크, 원본 시험·과제가 차시에서 제거된 stale 링크, 비활성 수강 또는
+  완료된 차시의 링크는 필수 대상으로 세지 않는다.
+- self-service 취소는 학생 row를 먼저 잠근 뒤 주간 활성 예약 수를 다시 읽으므로
+  두 예약을 동시에 취소해도 하나만 성공하고 하나는 `409`로 끝난다. 차단된 요청은
+  참가자·오늘 계획·미발송 리마인더·알림 outbox를 전혀 바꾸지 않는다.
+- 성공한 직접 취소는 참가자 상태·계획/리마인더 정리와 학생/학부모 각각의
+  `clinic_cancelled` durable outbox 두 행을 같은 DB transaction에 저장한다. 둘 중 하나라도
+  접수할 수 없으면 `503 clinic_notification_outbox_unavailable`로 전체를 롤백한다.
+  transaction commit 뒤 SQS/provider 경로가 실패하면 취소는 유지되고 outbox가
+  `pending`과 다음 재시도 시각을 보존하므로 조교의 정상 수동 개입을 요구하지 않는다.
+  같은 취소 PATCH 재시도는 `200`으로 현재 취소 상태를 반환하고 outbox를 중복 생성하지
+  않는다. 응답의 `notification.targets`가 최초 두 접수 또는 이미 접수된 재시도를
+  대상별로 표시한다. SMS/LMS 대체는 없다.
+- 림글리쉬도 같은 계약을 사용한다. 큐에는 공용 owner tenant와 승인된
+  `clinic_change` template ID를 넣고, `source_tenant_id`와 서명으로 림글리쉬를 보존한다.
+  worker는 provider 호출 직전에만 활성 channel binding과 `APPROVED`·동일 지문 template
+  binding을 림글리쉬 채널/템플릿으로 치환한다. 합성 QA는 두 수신자 enqueue·서명·라우팅만
+  확인하고 provider 실수신과 SMS/LMS를 발생시키지 않는다. persistent development는
+  `MESSAGING_DRY_RUN_TRIGGERS`를 비워 outbox 생명주기를 실제로 통과시키되 API와 전용
+  Messaging worker 모두 `SOLAPI_MOCK=true`를 강제해 외부 공급자 호출과 비용을 막는다.
+- 교직원의 행정 취소 권한과 교직원 수신자 선택은 유지한다.
 
 ### 자동 시작 리마인더
 
@@ -200,7 +433,17 @@ bulk 모두 `409`로 거부하고 요청 전체를 롤백한다. 일정 변경�
 - API 액션·커밋 후 알림: `apps/domains/clinic/views/participant_views.py`
 - tenant/session 정책: `apps/core/models/tenant.py`, `apps/domains/clinic/models.py`
 - 집중 API 회귀: `tests/test_clinic_multi_slot_booking_api.py`
+- 직접 취소·부작용 0·학생/학부모·PostgreSQL 동시성 회귀:
+  `tests/test_clinic_self_cancellation.py`
+- 월 경계·tenant·복사 설정 범위 회귀:
+  `tests/test_clinic_session_tree_date_range_api.py`
 - 시간 범위·권한·연락처·알림 이력 회귀: `tests/test_clinic_time_range_policy_api.py`
+- 자정 종료·구간 정원·리마인더·DB 제약 회귀:
+  `tests/test_clinic_time_range_midnight_api.py`
+- 자정 제약 migration 잠금 예산·원자 롤백·기존 행 호환 회귀:
+  `tests/test_clinic_midnight_migration_lock_timeout.py`
+- limglish dry-run/token/잠금/전환/tenant 격리 회귀:
+  `tests/test_convert_limglish_clinic_time_ranges_command.py`
 - 하원·등원 독립 회귀: `tests/test_clinic_operations_workflow_api.py`
 - 상태 소유권·오늘 계획·패스카드·완료 감사 회귀:
   `apps/domains/progress/tests/test_generic_write_boundaries.py`,
@@ -209,6 +452,8 @@ bulk 모두 `409`로 거부하고 요청 전체를 롤백한다. 일정 변경�
 ```powershell
 $env:DJANGO_SETTINGS_MODULE='apps.api.config.settings.test'
 python -m pytest tests/test_clinic_multi_slot_booking_api.py -q
+python -m pytest tests/test_clinic_time_range_midnight_api.py -q
+python -m pytest tests/test_convert_limglish_clinic_time_ranges_command.py -q
 python manage.py test tests.test_clinic_time_range_policy_api --noinput
 python manage.py makemigrations --check --dry-run
 python manage.py check --settings apps.api.config.settings.test
@@ -216,3 +461,22 @@ python manage.py check --settings apps.api.config.settings.test
 
 집중 회귀는 ON/OFF 단일·bulk 경로, 혼합 정책 원자성, 비활성 상태, ON→OFF,
 일정 변경, tenant 격리, 초기 tenant/session 값과 PostgreSQL 동시 쓰기를 검증한다.
+
+
+### 미응시 처리와 시험 대상 변경
+
+직원이 명시적으로 미응시 처리한 시험도 현재 응시 대상에 속할 때만 미통과
+목록과 면제 처리에 나타난다. 시험에 명시적인 대상자 명단이 있으면 그 명단이
+차시 수강 명단보다 우선한다. 대상자 명단이 전혀 없는 기존 시험은 연결된
+차시 수강 명단을 계속 따른다. 학생을 대상에서 제외해도 기존 성적·미응시
+기록·예약 이력은 삭제하지 않는다. 종료 강의를 복원해도 제외된 시험의 미응시
+항목은 다시 나타나지 않으며, 학생을 시험 대상에 다시 추가하면 기존 미응시
+항목을 정상적으로 조회·면제할 수 있다.
+
+대상 변경과 면제 쓰기는 같은 시험 행의 트랜잭션 잠금을 사용한다. 면제 API도
+채점과 동일하게 시험 행을 먼저 잠근 뒤 결과를 잠가 동시 실행의 역순 잠금을 방지한다. 제외된
+학생에 대한 오래된 면제 요청은 `404 MISSING_EXAM_TARGET_NOT_FOUND`로 응답하고
+새 면제 이력을 만들지 않는다. 화면을 새로 조회하거나 응시 대상 설정을
+수정한 뒤 계속할 수 있다. tenant·활성 수강·강의·차시 완료 경계는 유지한다.
+`test_admin_clinic_missing_exam_waiver.py`는 대상 제외 API 이후 목록·면제 거부,
+강의 종료/복원, 재추가 후 면제 성공, 성적 보존을 검증한다.

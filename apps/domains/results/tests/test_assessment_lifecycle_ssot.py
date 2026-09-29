@@ -1,5 +1,6 @@
 import json
 from io import BytesIO, StringIO
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.apps import apps
@@ -842,6 +843,203 @@ class AssessmentLifecycleSsotTests(TestCase):
 
         self.assertEqual(report["inactive_regular_linked_exam_count"], 1)
         self.assertEqual(report["unresolved_non_live_source_clinic_link_count"], 1)
+
+    def test_assessment_drift_commands_detect_and_repair_unassigned_exam_link(self):
+        Enrollment = apps.get_model("enrollment", "Enrollment")
+        ExamEnrollment = apps.get_model("exams", "ExamEnrollment")
+        Student = apps.get_model("students", "Student")
+        other_user = User.objects.create_user(
+            username="assessment-life-targeted-student",
+            password="test1234",
+            tenant=self.tenant,
+        )
+        other_student = Student.objects.create(
+            tenant=self.tenant,
+            user=other_user,
+            name="배정 학생",
+            ps_number="AL-002",
+            omr_code="AL000002",
+            parent_phone="01000000000",
+        )
+        other_enrollment = Enrollment.objects.create(
+            tenant=self.tenant,
+            student=other_student,
+            lecture=self.lecture,
+            status="ACTIVE",
+        )
+        exam = self.Exam.objects.create(
+            tenant=self.tenant,
+            title="일부 학생만 보는 시험",
+            exam_type="regular",
+            is_active=True,
+        )
+        exam.sessions.add(self.session)
+        ExamEnrollment.objects.create(exam=exam, enrollment=other_enrollment)
+        link = self.ClinicLink.objects.create(
+            tenant=self.tenant,
+            enrollment=self.enrollment,
+            session=self.session,
+            reason=self.ClinicLink.Reason.AUTO_FAILED,
+            is_auto=True,
+            source_type="exam",
+            source_id=exam.id,
+        )
+        manual_link = self.ClinicLink.objects.create(
+            tenant=self.tenant,
+            enrollment=self.enrollment,
+            session=self.session,
+            reason=self.ClinicLink.Reason.MANUAL_REQUEST,
+            is_auto=False,
+            source_type="exam",
+            source_id=exam.id,
+            cycle_no=2,
+        )
+
+        out = StringIO()
+        call_command(
+            "detect_assessment_state_drift",
+            "--tenant",
+            str(self.tenant.id),
+            "--json",
+            stdout=out,
+        )
+        report = json.loads(out.getvalue())
+        self.assertEqual(report["unresolved_non_live_source_clinic_link_count"], 1)
+        self.assertEqual(
+            report["unresolved_non_live_source_clinic_link_reason_counts"],
+            {"exam_enrollment_unassigned": 1},
+        )
+        self.assertEqual(
+            report["samples"]["unresolved_non_live_source_clinic_links"][0]["id"],
+            link.id,
+        )
+        self.assertEqual(
+            report["samples"]["unresolved_non_live_source_clinic_links"][0]["state_reason"],
+            "exam_enrollment_unassigned",
+        )
+
+        from apps.domains.results.utils.clinic import classify_source_links as classify
+
+        late_links = []
+
+        def add_link_after_snapshot(candidate_links, **kwargs):
+            result = classify(candidate_links, **kwargs)
+            if not late_links:
+                late_links.append(self.ClinicLink.objects.create(
+                    tenant=self.tenant,
+                    enrollment=self.enrollment,
+                    session=self.session,
+                    reason=self.ClinicLink.Reason.AUTO_FAILED,
+                    is_auto=True,
+                    source_type="exam",
+                    source_id=exam.id,
+                    cycle_no=3,
+                ))
+            return result
+
+        out = StringIO()
+        with patch(
+            "apps.domains.results.management.commands.repair_assessment_state_drift.classify_source_links",
+            side_effect=add_link_after_snapshot,
+        ):
+            call_command(
+                "repair_assessment_state_drift", "--tenant", str(self.tenant.id),
+                "--apply", "--json", stdout=out,
+            )
+        repair = json.loads(out.getvalue())
+        link.refresh_from_db()
+        manual_link.refresh_from_db()
+        late_links[0].refresh_from_db()
+        self.assertEqual(repair["resolved_non_live_source_clinic_link_count"], 1)
+        self.assertEqual(
+            repair["samples"]["non_live_source_clinic_links"][0]["state_reason"],
+            "exam_enrollment_unassigned",
+        )
+        self.assertEqual(link.resolution_type, self.ClinicLink.ResolutionType.SOURCE_REMOVED)
+        self.assertIsNotNone(link.resolved_at)
+        self.assertIsNone(manual_link.resolved_at)
+        self.assertEqual(manual_link.resolution_history, [])
+        self.assertIsNone(late_links[0].resolved_at)
+
+    def test_repair_rechecks_assignment_added_after_candidate_scan(self):
+        ExamEnrollment = apps.get_model("exams", "ExamEnrollment")
+        Enrollment = apps.get_model("enrollment", "Enrollment")
+        Student = apps.get_model("students", "Student")
+        other_user = User.objects.create_user(
+            username="assessment-life-restored-target", tenant=self.tenant,
+        )
+        other_student = Student.objects.create(
+            tenant=self.tenant, user=other_user, name="기존 배정 학생",
+            ps_number="AL-003", omr_code="AL000003", parent_phone="01000000000",
+        )
+        other_enrollment = Enrollment.objects.create(
+            tenant=self.tenant, student=other_student, lecture=self.lecture,
+            status="ACTIVE",
+        )
+        exam = self.Exam.objects.create(
+            tenant=self.tenant, title="대상 복원 경합", exam_type="regular", is_active=True,
+        )
+        exam.sessions.add(self.session)
+        ExamEnrollment.objects.create(exam=exam, enrollment=other_enrollment)
+        link = self.ClinicLink.objects.create(
+            tenant=self.tenant, enrollment=self.enrollment, session=self.session,
+            reason=self.ClinicLink.Reason.AUTO_FAILED, is_auto=True,
+            source_type="exam", source_id=exam.id,
+        )
+
+        from apps.domains.results.utils.clinic import classify_source_links as classify
+
+        calls = 0
+
+        def restore_after_snapshot(candidate_links, **kwargs):
+            nonlocal calls
+            result = classify(candidate_links, **kwargs)
+            calls += 1
+            if calls == 1:
+                ExamEnrollment.objects.create(exam=exam, enrollment=self.enrollment)
+            return result
+
+        out = StringIO()
+        with patch(
+            "apps.domains.results.management.commands.repair_assessment_state_drift.classify_source_links",
+            side_effect=restore_after_snapshot,
+        ):
+            call_command(
+                "repair_assessment_state_drift", "--tenant", str(self.tenant.id),
+                "--apply", "--json", stdout=out,
+            )
+
+        link.refresh_from_db()
+        report = json.loads(out.getvalue())
+        self.assertEqual(calls, 2)
+        self.assertEqual(report["resolved_non_live_source_clinic_link_count"], 0)
+        self.assertEqual(report["samples"]["non_live_source_clinic_link_ids"], [])
+        self.assertIsNone(link.resolved_at)
+
+    def test_repair_failure_rolls_back_detach_and_link_resolution(self):
+        exam = self.Exam.objects.create(
+            tenant=self.tenant, title="롤백 시험", exam_type="regular", is_active=False,
+        )
+        exam.sessions.add(self.session)
+        link = self.ClinicLink.objects.create(
+            tenant=self.tenant, enrollment=self.enrollment, session=self.session,
+            reason=self.ClinicLink.Reason.AUTO_FAILED, is_auto=True,
+            source_type="exam", source_id=exam.id,
+        )
+
+        with patch(
+            "apps.domains.results.management.commands.repair_assessment_state_drift.resolve_removed_source_clinic_links",
+            side_effect=RuntimeError("synthetic resolution failure"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "synthetic resolution failure"):
+                call_command(
+                    "repair_assessment_state_drift", "--tenant", str(self.tenant.id),
+                    "--apply", "--json", stdout=StringIO(),
+                )
+
+        link.refresh_from_db()
+        self.assertIsNone(link.resolved_at)
+        self.assertTrue(exam.sessions.filter(id=self.session.id).exists())
 
     def test_repair_assessment_state_drift_detaches_inactive_exam_links(self):
         inactive_exam = self.Exam.objects.create(

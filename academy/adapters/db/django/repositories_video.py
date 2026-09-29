@@ -53,6 +53,70 @@ def lock_direct_video_session_scope(*, tenant, session_id: int):
     return lecture, session
 
 
+def lock_active_playback_renewal_scope(
+    *,
+    tenant_id: int,
+    lecture_id: int,
+    session_id: int,
+    enrollment_id: int,
+    student_id: int,
+    video_id: int,
+):
+    """Lock one exact active-enrollment playback graph in canonical order."""
+    from apps.domains.enrollment.models import Enrollment
+    from apps.domains.lectures.models import Lecture, Session
+    from apps.domains.video.models import Video
+
+    try:
+        tenant_id = int(tenant_id)
+        lecture_id = int(lecture_id)
+        session_id = int(session_id)
+        enrollment_id = int(enrollment_id)
+        student_id = int(student_id)
+        video_id = int(video_id)
+    except (TypeError, ValueError):
+        return None, None, None, None
+
+    lecture = (
+        Lecture.objects.select_for_update()
+        .filter(id=lecture_id, tenant_id=tenant_id)
+        .first()
+    )
+    if lecture is None:
+        return None, None, None, None
+    session = (
+        Session.objects.select_for_update()
+        .filter(id=session_id, lecture=lecture)
+        .first()
+    )
+    if session is None:
+        return lecture, None, None, None
+    enrollment = (
+        Enrollment.objects.select_for_update(of=("self",))
+        .select_related("student", "lecture")
+        .filter(
+            id=enrollment_id,
+            tenant_id=tenant_id,
+            student_id=student_id,
+            lecture=lecture,
+            status="ACTIVE",
+        )
+        .first()
+    )
+    video = (
+        Video.objects.select_for_update(of=("self",))
+        .filter(
+            id=video_id,
+            tenant_id=tenant_id,
+            session=session,
+            status=Video.Status.READY,
+            deleted_at__isnull=True,
+        )
+        .first()
+    )
+    return lecture, session, enrollment, video
+
+
 def lock_direct_video_student(*, tenant, student_id: int, include_deleted: bool = False):
     """Lock one same-tenant student used by a direct-video transaction."""
     from apps.domains.students.models import Student
@@ -280,9 +344,28 @@ def session_get_by_id_with_lecture(session_id):
     return Session.objects.select_related("lecture").get(id=session_id)
 
 
-def session_enrollment_exists(session, enrollment) -> bool:
+def video_session_memberships(*, tenant_id, enrollment_ids):
+    """Exact tenant/lecture/session membership; attendance never grants access."""
+    from django.db.models import F
     from apps.domains.enrollment.models import SessionEnrollment
-    return SessionEnrollment.objects.filter(session=session, enrollment=enrollment).exists()
+
+    return SessionEnrollment.objects.filter(
+        tenant_id=tenant_id,
+        enrollment_id__in=enrollment_ids,
+        enrollment__tenant_id=tenant_id,
+        enrollment__student__tenant_id=tenant_id,
+        enrollment__student__deleted_at__isnull=True,
+        session__lecture__tenant_id=tenant_id,
+        session__lecture_id=F("enrollment__lecture_id"),
+    )
+
+
+def session_enrollment_exists(session, enrollment) -> bool:
+    if session is None or enrollment is None:
+        return False
+    return video_session_memberships(
+        tenant_id=enrollment.tenant_id, enrollment_ids=[enrollment.id],
+    ).filter(session=session).exists()
 
 
 def video_access_get(video, enrollment):

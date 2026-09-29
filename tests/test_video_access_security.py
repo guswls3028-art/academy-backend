@@ -1,5 +1,6 @@
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -23,7 +24,9 @@ from apps.domains.video.models import (
     Video,
     VideoAccess,
     VideoFolder,
+    VideoPlaybackEvent,
     VideoPlaybackSession,
+    VideoProgress,
 )
 from academy.application.use_cases.student_video_access_context import (
     StudentVideoAccessContext,
@@ -34,6 +37,7 @@ from apps.domains.video.views.playback_views import (
     PlaybackEventBatchView,
     PlaybackHeartbeatView,
     PlaybackRefreshView,
+    PlaybackRenewView,
     PlaybackStartView,
 )
 
@@ -195,11 +199,149 @@ class PlaybackStartStudentEnrollmentAccessTests(TestCase):
         self.lecture.is_active = False
         self.lecture.save(update_fields=["is_active", "updated_at"])
 
-        for view in (PlaybackRefreshView.as_view(), PlaybackHeartbeatView.as_view()):
+        for view in (
+            PlaybackRefreshView.as_view(),
+            PlaybackRenewView.as_view(),
+            PlaybackHeartbeatView.as_view(),
+        ):
             with self.subTest(view=view):
                 response = self._followup(view, started.data["token"])
                 self.assertEqual(response.status_code, 403, response.data)
                 self.assertEqual(response.data["detail"], "policy_changed")
+
+    def test_renew_rotates_token_without_replacing_the_monitored_session(self):
+        Attendance.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            enrollment=self.enrollment_a,
+            status="ONLINE",
+        )
+        started = self._post(student=self.student_a, enrollment=self.enrollment_a)
+        self.assertEqual(started.status_code, 201, started.data)
+        original_session_id = started.data["session_id"]
+        original_token = started.data["token"]
+        self.assertIsNotNone(original_session_id)
+        self.assertEqual(VideoPlaybackSession.objects.count(), 1)
+        playback_session = VideoPlaybackSession.objects.get(session_id=original_session_id)
+        playback_session.expires_at = timezone.now() + timedelta(seconds=5)
+        playback_session.save(update_fields=["expires_at", "updated_at"])
+        forced_expiry = playback_session.expires_at
+
+        refreshed = self._followup(PlaybackRenewView.as_view(), original_token)
+
+        self.assertEqual(refreshed.status_code, 200, refreshed.data)
+        self.assertEqual(refreshed.data["playback_session_id"], original_session_id)
+        self.assertEqual(refreshed.data["policy_version"], self.video.policy_version)
+        self.assertEqual(refreshed.data["access_mode"], AccessMode.PROCTORED_CLASS)
+        self.assertTrue(refreshed.data["monitoring_enabled"])
+        self.assertGreater(refreshed.data["playback_expires_at"], int(timezone.now().timestamp()))
+        self.assertTrue(refreshed.data["playback_token"])
+        self.assertEqual(VideoPlaybackSession.objects.count(), 1)
+        playback_session.refresh_from_db()
+        self.assertEqual(playback_session.status, VideoPlaybackSession.Status.ACTIVE)
+        self.assertGreater(playback_session.expires_at, forced_expiry)
+        self.assertEqual(
+            int(playback_session.expires_at.timestamp()),
+            refreshed.data["playback_expires_at"],
+        )
+
+        valid, payload, error = verify_playback_token(refreshed.data["playback_token"])
+        self.assertTrue(valid, error)
+        self.assertEqual(payload["session_id"], original_session_id)
+        self.assertEqual(payload["enrollment_id"], self.enrollment_a.id)
+
+    def _start_completed_watch(self):
+        Attendance.objects.create(
+            tenant=self.tenant, session=self.session,
+            enrollment=self.enrollment_a, status="ONLINE",
+        )
+        started = self._post(student=self.student_a, enrollment=self.enrollment_a)
+        self.assertEqual(started.status_code, 201, started.data)
+        VideoProgress.objects.create(
+            video=self.video, enrollment=self.enrollment_a,
+            progress=0.9, completed=True, last_position=90,
+        )
+        return started.data
+
+    def test_completed_watch_keeps_existing_session_until_review_bootstrap(self):
+        started = self._start_completed_watch()
+        for view in (PlaybackRefreshView, PlaybackHeartbeatView, PlaybackRenewView):
+            response = self._followup(view.as_view(), started["token"])
+            self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["playback_session_id"], started["session_id"])
+        self.assertEqual(response.data["access_mode"], AccessMode.PROCTORED_CLASS.value)
+        self.assertTrue(response.data["monitoring_enabled"])
+        valid, payload, error = verify_playback_token(response.data["playback_token"])
+        self.assertTrue(valid, error)
+        self.assertEqual(payload["session_id"], started["session_id"])
+        self.assertEqual(payload["access_mode"], AccessMode.PROCTORED_CLASS.value)
+        self.assertEqual(VideoPlaybackSession.objects.count(), 1)
+
+        request = self.factory.post(
+            "/api/v1/video/playback/events/",
+            {"token": started["token"], "events": [{"type": "SEEK_ATTEMPT", "payload": {}}]},
+            format="json",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.student_a.user)
+        events = PlaybackEventBatchView.as_view()(request)
+        self.assertEqual(events.status_code, 201, events.data)
+        self.assertFalse(VideoPlaybackEvent.objects.get().violated)
+        review = self._post(student=self.student_a, enrollment=self.enrollment_a)
+        self.assertEqual(review.status_code, 201, review.data)
+        self.assertEqual(review.data["access_mode"], AccessMode.FREE_REVIEW.value)
+        self.assertIsNone(review.data["session_id"])
+
+    def test_completed_watch_still_rejects_policy_change_and_withdrawal(self):
+        started = self._start_completed_watch()
+        self.video.policy_version += 1
+        self.video.save(update_fields=["policy_version"])
+        for view in (PlaybackRefreshView, PlaybackHeartbeatView, PlaybackRenewView):
+            response = self._followup(view.as_view(), started["token"])
+            self.assertEqual(response.status_code, 403, response.data)
+        self.video.policy_version -= 1
+        self.video.save(update_fields=["policy_version"])
+        for field, value in (("access_mode", AccessMode.BLOCKED), ("rule", "blocked")):
+            permission = VideoAccess.objects.create(
+                video=self.video, enrollment=self.enrollment_a, **{field: value},
+            )
+            for view in (PlaybackRefreshView, PlaybackHeartbeatView, PlaybackRenewView):
+                response = self._followup(view.as_view(), started["token"])
+                self.assertEqual(response.status_code, 403, response.data)
+            permission.delete()
+        SessionEnrollment.objects.filter(session=self.session, enrollment=self.enrollment_a).delete()
+        for view in (PlaybackRefreshView, PlaybackHeartbeatView, PlaybackRenewView):
+            response = self._followup(view.as_view(), started["token"])
+            self.assertEqual(response.status_code, 403, response.data)
+
+    def test_completion_marker_keeps_existing_proctored_token(self):
+        started = self._start_completed_watch()
+        VideoProgress.objects.filter(video=self.video, enrollment=self.enrollment_a).delete()
+        VideoAccess.objects.create(
+            video=self.video, enrollment=self.enrollment_a,
+            proctored_completed_at=timezone.now(),
+        )
+        for view in (PlaybackRefreshView, PlaybackHeartbeatView, PlaybackRenewView):
+            response = self._followup(view.as_view(), started["token"])
+            self.assertEqual(response.status_code, 200, response.data)
+
+    def test_completed_watch_cannot_revive_revoked_session(self):
+        started = self._start_completed_watch()
+        VideoPlaybackSession.objects.filter(session_id=started["session_id"]).update(
+            status=VideoPlaybackSession.Status.REVOKED, is_revoked=True,
+        )
+        for view in (PlaybackRefreshView, PlaybackHeartbeatView, PlaybackRenewView):
+            response = self._followup(view.as_view(), started["token"])
+            self.assertEqual(response.status_code, 409, response.data)
+            self.assertEqual(response.data["detail"], "session_inactive")
+
+    def test_noncompletion_access_change_does_not_keep_old_proctored_token(self):
+        started = self._start_completed_watch()
+        VideoProgress.objects.filter(video=self.video, enrollment=self.enrollment_a).delete()
+        Attendance.objects.filter(session=self.session, enrollment=self.enrollment_a).update(status="PRESENT")
+        for view in (PlaybackRefreshView, PlaybackHeartbeatView, PlaybackRenewView):
+            response = self._followup(view.as_view(), started["token"])
+            self.assertEqual(response.status_code, 403, response.data)
 
     def test_lecture_deactivation_revokes_active_proctored_sessions(self):
         Attendance.objects.create(

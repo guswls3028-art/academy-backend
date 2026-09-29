@@ -6,6 +6,7 @@ from django.test import SimpleTestCase, TestCase
 from rest_framework.exceptions import ValidationError
 
 from apps.core.parsing import parse_bool
+from apps.core.models import Tenant
 from apps.core.landing.views_hit_report import LandingHitReportToggleView
 from apps.domains.clinic.views.settings_views import ClinicSettingsView
 from apps.domains.students.views.registration_views import RegistrationRequestViewSet
@@ -23,8 +24,12 @@ class TestParseBool(SimpleTestCase):
 
 
 class TestSettingsBooleanParsing(SimpleTestCase):
+    def test_new_tenant_defaults_to_daily_passcard_colors(self):
+        self.assertTrue(Tenant().clinic_use_daily_random)
+
     def setUp(self):
         self.tenant = SimpleNamespace(
+            pk=1,
             student_registration_auto_approve=True,
             clinic_use_daily_random=True,
             clinic_auto_approve_booking=True,
@@ -39,7 +44,11 @@ class TestSettingsBooleanParsing(SimpleTestCase):
             tenant=self.tenant,
         )
         viewset = RegistrationRequestViewSet()
-        response = viewset.registration_settings(request)
+        with patch(
+            "apps.domains.students.views.registration_views.transaction.atomic",
+            return_value=nullcontext(),
+        ):
+            response = viewset.registration_settings(request)
 
         self.assertEqual(response.status_code, 200)
         self.assertFalse(self.tenant.student_registration_auto_approve)
@@ -51,7 +60,16 @@ class TestSettingsBooleanParsing(SimpleTestCase):
             data={"use_daily_random": "false", "auto_approve_booking": "false"},
             tenant=self.tenant,
         )
-        with patch("apps.domains.clinic.views.settings_views.transaction.atomic", return_value=nullcontext()):
+        with (
+            patch(
+                "apps.domains.clinic.views.settings_views.transaction.atomic",
+                return_value=nullcontext(),
+            ),
+            patch(
+                "apps.domains.clinic.views.settings_views.Tenant.objects.select_for_update"
+            ) as select_for_update,
+        ):
+            select_for_update.return_value.get.return_value = self.tenant
             response = ClinicSettingsView().patch(request)
 
         self.assertEqual(response.status_code, 200)

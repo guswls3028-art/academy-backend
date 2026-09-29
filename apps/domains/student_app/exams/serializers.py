@@ -5,6 +5,9 @@ from rest_framework import serializers
 class StudentExamSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     title = serializers.CharField()
+    grading_mode = serializers.CharField(read_only=True)
+    choice_question_count = serializers.IntegerField(read_only=True)
+    essay_numbering = serializers.CharField(read_only=True)
     open_at = serializers.DateTimeField(allow_null=True)
     close_at = serializers.DateTimeField(allow_null=True)
     allow_retake = serializers.BooleanField()
@@ -13,5 +16,6 @@ class StudentExamSerializer(serializers.Serializer):
     description = serializers.CharField(allow_null=True, required=False)
     session_id = serializers.IntegerField(allow_null=True, required=False)
     has_result = serializers.BooleanField(default=False, required=False)
+    submission_pending = serializers.BooleanField(default=False, required=False)
     attempt_count = serializers.IntegerField(default=0, required=False)
     student_results_published = serializers.BooleanField(default=True, required=False)

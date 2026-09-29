@@ -52,10 +52,11 @@ from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.results.contracts import (
     require_homework_score_edit_lease,
 )
+from apps.support.homework.review_lock import lock_homework_review_target
+from apps.support.submissions.dependencies import homework_submission_revisions
 from apps.support.homework_results.score_dependencies import (
     calc_homework_passed_and_clinic,
     dispatch_progress_pipeline,
-    homework_assignment_exists,
     latest_homework_submission,
     sync_homework_clinic_link,
     validate_enrollment_belongs_to_tenant,
@@ -150,7 +151,13 @@ def _apply_score_and_policy(
     obj.clinic_required = bool(clinic_required)
     obj.updated_by_user_id = _safe_user_id(request)
 
-    obj.save(update_fields=save_fields + ["updated_at"])
+    obj.reviewed_submission_revision = homework_submission_revisions(
+        tenant=request.tenant,
+        enrollment_ids=[obj.enrollment_id],
+        homework_ids=[obj.homework_id],
+    ).get((obj.enrollment_id, obj.homework_id), "")
+
+    obj.save(update_fields=save_fields + ["reviewed_submission_revision", "updated_at"])
     return obj
 
 
@@ -253,12 +260,24 @@ class HomeworkScoreViewSet(ModelViewSet):
         obj: HomeworkScore = self.get_object()
 
         validate_enrollment_belongs_to_tenant(obj.enrollment_id, request.tenant)
+        assignment = lock_homework_review_target(
+            tenant=request.tenant,
+            session_id=obj.session_id,
+            enrollment_id=obj.enrollment_id,
+            homework_id=obj.homework_id,
+        )
+        if assignment is None:
+            return Response(
+                {"enrollment_id": "이 과제의 배정 대상 수강생만 점수를 입력할 수 있습니다."},
+                status=drf_status.HTTP_400_BAD_REQUEST,
+            )
         require_homework_score_edit_lease(
             request,
             session_id=obj.session_id,
             enrollment_id=obj.enrollment_id,
             homework_id=obj.homework_id,
         )
+        obj = self.get_queryset().select_for_update(of=("self",)).get(pk=obj.pk)
 
         if getattr(obj, "is_locked", False):
             return _locked_response(obj)
@@ -398,28 +417,21 @@ class HomeworkScoreViewSet(ModelViewSet):
                     {"session_id": "과제의 차시와 요청 차시가 일치하지 않습니다."},
                     status=drf_status.HTTP_400_BAD_REQUEST,
                 )
-            require_homework_score_edit_lease(
-                request,
+            assignment = lock_homework_review_target(
+                tenant=request.tenant,
                 session_id=session.id,
                 enrollment_id=enrollment_id,
                 homework_id=homework_id,
             )
-            if not homework_assignment_exists(
-                tenant=request.tenant,
-                homework=homework,
-                session=session,
-                enrollment_id=enrollment_id,
-            ):
-                return Response(
-                    {"enrollment_id": "이 과제의 배정 대상 수강생만 점수를 입력할 수 있습니다."},
-                    status=drf_status.HTTP_400_BAD_REQUEST,
-                )
-
-            with transaction.atomic():
-                obj = (
+            legacy_score = None
+            if assignment is None:
+                # HomeworkAssignment 도입 전 생성된 점수행은 학생 상세 이력에
+                # 계속 노출된다. 새 미배정 점수 생성은 거부하되, 이미 존재하는
+                # 정확한 1차 점수행은 그 행 자체를 잠근 뒤 수정할 수 있게 한다.
+                legacy_score = (
                     HomeworkScore.objects.select_for_update()
                     .filter(
-                        homework_id=homework_id,
+                        homework=homework,
                         session=session,
                         enrollment_id=enrollment_id,
                         attempt_index=1,
@@ -427,6 +439,32 @@ class HomeworkScoreViewSet(ModelViewSet):
                     .select_related("session", "homework")
                     .first()
                 )
+                if legacy_score is None:
+                    return Response(
+                        {"enrollment_id": "이 과제의 배정 대상 수강생만 점수를 입력할 수 있습니다."},
+                        status=drf_status.HTTP_400_BAD_REQUEST,
+                    )
+            require_homework_score_edit_lease(
+                request,
+                session_id=session.id,
+                enrollment_id=enrollment_id,
+                homework_id=homework_id,
+            )
+
+            with transaction.atomic():
+                obj = legacy_score
+                if obj is None:
+                    obj = (
+                        HomeworkScore.objects.select_for_update()
+                        .filter(
+                            homework_id=homework_id,
+                            session=session,
+                            enrollment_id=enrollment_id,
+                            attempt_index=1,
+                        )
+                        .select_related("session", "homework")
+                        .first()
+                    )
 
                 if obj and obj.is_locked:
                     return _locked_response(obj)
@@ -480,7 +518,12 @@ class HomeworkScoreViewSet(ModelViewSet):
                     )
                     obj.passed = bool(passed)
                     obj.clinic_required = bool(clinic_required)
-                    obj.save(update_fields=["meta", "score", "max_score", "passed", "clinic_required", "updated_by_user_id", "updated_at"])
+                    obj.reviewed_submission_revision = homework_submission_revisions(
+                        tenant=request.tenant,
+                        enrollment_ids=[enrollment_id],
+                        homework_ids=[homework_id],
+                    ).get((enrollment_id, homework_id), "")
+                    obj.save(update_fields=["meta", "score", "max_score", "passed", "clinic_required", "updated_by_user_id", "reviewed_submission_revision", "updated_at"])
                 else:
                     obj = _apply_score_and_policy(
                         obj=obj,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -14,6 +15,12 @@ from apps.domains.results.guards.score_edit_lease_guard import (
     require_score_edit_scope_available_for_exam,
 )
 from apps.domains.results.models import ExamAttempt, Result, ResultFact, ResultItem
+from apps.domains.results.services.manual_subjective_score import (
+    latest_subjective_grading_facts,
+)
+from apps.domains.results.services.omr_subjective_completion import (
+    finalize_omr_result_if_ready,
+)
 from apps.domains.results.services.exam_result_excel_import import (
     Candidate,
     CorrectnessMark,
@@ -578,6 +585,19 @@ def apply_manual_grading(
             )
             continue
 
+        latest_subjective = latest_subjective_grading_facts(
+            [result],
+            essay_question_ids={
+                question.question_id
+                for question in plan.questions
+                if question.kind == "essay"
+            },
+            include_total=True,
+        ).get(int(attempt.id))
+        replaces_aggregate = (
+            latest_subjective is None
+            or latest_subjective.source in {"manual_subjective", "manual_total"}
+        )
         for question_id, mark in planned_row.marks.items():
             question = questions_by_id[question_id]
             existing_item = (
@@ -588,6 +608,7 @@ def apply_manual_grading(
             earned = float(mark.earned_score or 0.0)
             changed = (
                 existing_item is None
+                or (replaces_aggregate and question.kind == "essay")
                 or bool(existing_item.is_correct) != mark.is_correct
                 or bool(existing_item.include_in_wrong_note)
                 != mark.include_in_wrong_note
@@ -677,6 +698,15 @@ def apply_manual_grading(
             now=now,
             is_not_submitted=False,
         )
+        finalization = finalize_omr_result_if_ready(result_id=int(result.id))
+        if not finalization.projection_ready:
+            raise ManualExamGradingError(
+                (
+                    f"{planned_row.candidate.student_name} 학생의 OMR 결과를 "
+                    "최종 확정할 수 없습니다: "
+                    f"{finalization.pending_reason or 'projection_not_ready'}"
+                )
+            )
 
     exam_id = int(exam.id)
 
@@ -767,15 +797,10 @@ def _question_score_overrides(
             )
             continue
         try:
-            score = round(float(raw_score), 2)
-            expected_score = round(
-                float(
-                    raw_expected.get(
-                        str(question_id),
-                        raw_expected.get(question_id),
-                    )
-                ),
-                2,
+            # Individual bounds and their optimistic snapshot must round-trip exactly.
+            score = float(raw_score)
+            expected_score = float(
+                raw_expected.get(str(question_id), raw_expected.get(question_id))
             )
         except (TypeError, ValueError):
             errors.append(
@@ -786,7 +811,7 @@ def _question_score_overrides(
                 )
             )
             continue
-        if score < 0:
+        if not math.isfinite(score) or not math.isfinite(expected_score) or score < 0:
             errors.append(
                 _error(
                     None,
@@ -795,7 +820,7 @@ def _question_score_overrides(
                 )
             )
             continue
-        if abs(expected_score - float(question.max_score)) > 0.001:
+        if expected_score != float(question.max_score):
             errors.append(
                 _error(
                     None,
@@ -807,7 +832,7 @@ def _question_score_overrides(
                 )
             )
             continue
-        if abs(score - float(question.max_score)) > 0.001:
+        if score != float(question.max_score):
             updates[question_id] = score
             originals[question_id] = expected_score
 
@@ -867,7 +892,7 @@ def _apply_question_score_updates(*, plan: ManualGradePlan) -> None:
     for question_id, next_score in plan.question_score_updates.items():
         question = locked_questions[question_id]
         expected_score = plan.original_question_scores[question_id]
-        if abs(float(question.score or 0.0) - expected_score) > 0.001:
+        if float(question.score or 0.0) != expected_score:
             raise ManualExamGradingError(
                 (
                     f"{question.number}번 배점이 다른 화면에서 변경됐습니다. "

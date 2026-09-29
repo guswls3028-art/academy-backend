@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 3,
+  "maximumHighFindings": {
+    "academy-base": 3,
+    "academy-api": 3,
+    "academy-video-worker": 3,
+    "academy-messaging-worker": 3,
+    "academy-ai-worker-cpu": 3,
+    "academy-tools-worker": 3
+  },
+  "acceptedHighFindings": [
+    {
+      "cve": "CVE-2026-11822",
+      "packageName": "sqlite3",
+      "packageVersion": "3.46.1-7+deb13u1",
+      "repositories": [
+        "academy-base",
+        "academy-api",
+        "academy-video-worker",
+        "academy-messaging-worker",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ],
+      "expiresOn": "2026-09-19",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-11822",
+      "rationale": "Debian trixie remains vulnerable in an SQLite FTS5 MATCH path that requires a crafted SQLite database. Academy production uses PostgreSQL and neither ingests attacker-provided SQLite databases nor executes application FTS5 queries."
+    },
+    {
+      "cve": "CVE-2026-11824",
+      "packageName": "sqlite3",
+      "packageVersion": "3.46.1-7+deb13u1",
+      "repositories": [
+        "academy-base",
+        "academy-api",
+        "academy-video-worker",
+        "academy-messaging-worker",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ],
+      "expiresOn": "2026-09-19",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-11824",
+      "rationale": "Debian trixie remains vulnerable in an SQLite FTS5 MATCH path that requires a crafted SQLite database. Academy production uses PostgreSQL and neither ingests attacker-provided SQLite databases nor executes application FTS5 queries."
+    },
+    {
+      "cve": "CVE-2026-5928",
+      "packageName": "glibc",
+      "packageVersion": "2.41-12+deb13u3",
+      "repositories": [
+        "academy-base",
+        "academy-api",
+        "academy-video-worker",
+        "academy-messaging-worker",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+      ],
+      "expiresOn": "2026-09-19",
+      "vendorTracker": "https://security-tracker.debian.org/tracker/CVE-2026-5928",
+      "rationale": "The affected glibc ungetwc path requires an exotic overlapping character encoding and does not affect standard Unicode encodings. Academy Python entrypoints use standard Unicode and do not expose native wide-character pushback to product input."
+    }
+  ]
+}

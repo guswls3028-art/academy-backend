@@ -36,6 +36,8 @@ class EnrollmentExcelUploadAcceptedSerializer(serializers.Serializer):
 
 
 class EnrollmentSerializer(serializers.ModelSerializer):
+    lecture_memo = serializers.CharField(read_only=True)
+    lecture_memo_updated_at = serializers.DateTimeField(source="updated_at", read_only=True)
     student = StudentShortSerializer(read_only=True)
     tenant = serializers.PrimaryKeyRelatedField(read_only=True)
     lecture = serializers.PrimaryKeyRelatedField(
@@ -47,7 +49,15 @@ class EnrollmentSerializer(serializers.ModelSerializer):
         fields = [
             "id", "tenant", "student", "lecture", "status",
             "enrolled_at", "created_at", "updated_at",
+            "lecture_memo", "lecture_memo_updated_at",
         ]
+
+    def update(self, instance, validated_data):
+        # A status edit loaded before a memo save must not write its stale memo.
+        for field, value in validated_data.items():
+            setattr(instance, field, value)
+        instance.save(update_fields=[*validated_data, "updated_at"])
+        return instance
 
     def validate(self, attrs):
         request = self.context.get("request")
@@ -78,7 +88,29 @@ class EnrollmentSerializer(serializers.ModelSerializer):
         return attrs
 
 
+class LectureMemoSerializer(serializers.Serializer):
+    lecture_memo = serializers.CharField(
+        allow_blank=True, max_length=2000, trim_whitespace=False,
+    )
+
+    def to_internal_value(self, data):
+        if not isinstance(data, dict) or set(data) != {"lecture_memo"}:
+            raise serializers.ValidationError({"lecture_memo": "강의 메모만 전달해야 합니다."})
+        if not isinstance(data["lecture_memo"], str):
+            raise serializers.ValidationError({"lecture_memo": "문자열이어야 합니다."})
+        return super().to_internal_value(data)
+
+
+class LectureMemoResultSerializer(serializers.Serializer):
+    id = serializers.IntegerField(read_only=True)
+    lecture_memo = serializers.CharField(read_only=True)
+    lecture_memo_updated_at = serializers.DateTimeField(source="updated_at", read_only=True)
+
+
 class SessionEnrollmentSerializer(serializers.ModelSerializer):
+    student_memo = serializers.SerializerMethodField()
+    lecture_memo = serializers.CharField(source="enrollment.lecture_memo", read_only=True)
+    lecture_memo_updated_at = serializers.DateTimeField(source="enrollment.updated_at", read_only=True)
     tenant = serializers.PrimaryKeyRelatedField(read_only=True)
     session = serializers.PrimaryKeyRelatedField(
         queryset=session_queryset(),
@@ -108,8 +140,13 @@ class SessionEnrollmentSerializer(serializers.ModelSerializer):
             "id", "tenant", "session", "enrollment",
             "student_name", "student_id", "enrollment_status",
             "student_school", "student_grade",
+            "lecture_memo", "lecture_memo_updated_at",
+            "student_memo",
             "created_at",
         ]
+
+    def get_student_memo(self, obj) -> str:
+        return obj.enrollment.student.memo or ""
 
     def validate(self, attrs):
         request = self.context.get("request")

@@ -1,9 +1,46 @@
 # 배포 방식 개요
 
 **기준:** 실제 스크립트·워크플로우. 문서는 실행 방식과 일치하도록 유지한다.
-**최종 갱신:** 2026-07-31
+**최종 갱신:** 2026-09-12
 
 ---
+
+## 배포 시점과 사용자 연속성
+
+호환 가능한 패치는 기존 검증을 마친 뒤 release owner가 신속히 반영한다.
+모든 배포를 새벽 04시까지 기다리는 전역 규칙은 없다. 과거 장애 대응 때 정한
+시간 약속, 자동화의 재개 시간, 정기 감사·정리 스케줄을 배포 허용 시간으로
+일반화하지 않는다. 현재 변경에 명시적으로 적용되는 HOLD나 변경 창은 그 소유자,
+범위, 해제 조건을 확인하며, 현재 사용자 지시로 바뀐 시간 정책을 오래된 메모로
+되돌리지 않는다.
+
+신속 반영은 게이트 생략이 아니다. exact 후보의 CI와 변경별 성공 이용 증거,
+backend development→격리 preprod→임시 인스턴스 종료, frontend 동일 artifact의
+development-canary와 tenant/user cleanup zero, 플랫폼 승인·공유 잠금·rollback
+준비를 그대로 충족해야 한다. 전환 중인 IAM/SSM 검증 같은 기술적 HOLD는 시간을
+앞당긴다는 이유로 해제하지 않는다.
+
+무중단 판정에는 API health 외에 다음 사용자 연속성도 포함한다.
+
+검증 범위는 후보가 바꾸거나 노출시키는 경계에 맞춘다. 동일 입력·후보에 적용되는
+기존 통과 증거는 재사용한다. 기존 frontend 오류 복구의 정적 후보가 있다는 사실만으로
+독립적인 backend 조회 수정이나 모든 배포를 HOLD하지 않는다. 기존 결함, 후보의
+노출 조건, 실제 중단 재현을 구분해 영향이 있는 release owner에게 판정을 맡긴다.
+
+- 구·신 API/DB와 이미 열린 frontend가 함께 동작한다. migration은 expand/contract
+  경계를 지키고 기존 인스턴스는 대체 인스턴스가 healthy해질 때까지 유지한다.
+- 활성 영상 재생, 입력 중인 성적·출결·과제, 파일 업로드를 강제 새로고침이나
+  세션 초기화로 중단하지 않는다. 버전 알림뿐 아니라 chunk 오류 복구 경로도
+  실제 영향 범위에서 검증한다. ALB green이나 version.json 일치만으로 추정하지 않는다.
+- 자동 QA는 격리 개발환경에서 수행하고 외부 메시지 발송 0과 잔여 tenant/user 0을
+  확인한다. 실발송은 별도로 명시 배정된 메시징 검증의 정확한 대상·템플릿 계약만 따른다.
+- 배포 후 exact revision, 주요 성공 경로와 reload/후속 화면, 관련 viewport를 확인한다.
+  실패하면 소유 workflow의 중단·rollback·재검증 절차를 적용한다.
+
+비호환 변경, 파괴적 데이터 작업, 활성 사용자 중단 위험을 해소하지 못한 후보만
+구체적인 사유와 별도 변경 창을 지정한다. 시각이 새벽이라는 사실 자체는 안전
+증거가 아니다. 동시에 여러 작업이 배포하지 않고
+[동시 작업 계약](concurrent-codex-sessions.md)의 단일 release 소유권을 유지한다.
 
 ## 0. 프론트엔드 배포
 
@@ -27,7 +64,7 @@
 | **CI 자동 배포** | main push → GitHub Actions | build-and-push → 상시 격리 development(실사용 smoke) → 임시 격리 preprod(전용 DB migration+health) → 운영 migration → deploy-api/messaging/ai/tools/video → verify-deployment | ~20~40분 |
 | **수동 인프라 수렴** | clean·최신 `main`에서 `pwsh scripts/v1/deploy.ps1 -AwsProfile <approved-operator>` | 검증·승격된 digest → persistent development → 격리 preprod → 운영 env 승격 → API/worker/Batch/EventBridge/ALB 반영 | 30~45분 |
 
-- **env·이미지 소스:** 운영은 SSM `/academy/api/env` → `/opt/api.env`, development는 버전 고정 `/academy/api/development/env`·`/academy/workers/development/env`, `academy_api_development` DB와 개발 전용 큐/R2를 사용한다. development Video Batch 전용 자원은 아직 없으므로 두 env의 `VIDEO_BATCH_JOB_QUEUE`·`VIDEO_BATCH_JOB_DEFINITION`은 빈 값으로 강제해 운영 Batch 제출을 실패 폐쇄한다. preprod는 릴리스마다 운영 env에서 새 Advanced SecureString 버전을 만들되 `/academy/api/preprod/db-credentials`의 전용 `academy_api_preprod_app` 역할로 DB 사용자·비밀번호를 교체한다. 동시에 Django·tenant-binding secret을 preprod 전용으로 파생하고 SOLAPI, Toss/billing, 외부 AI, VAPID, 정적 AWS credential을 제거한다. CDN playback은 `/academy/r2/preprod/credentials`의 production key와 다른 bucket-scoped read-only R2 key로만 검증한다. 이미지는 완전 성공 `docs/reports/release-manifest.latest.json`의 digest만 사용한다.
+- **env·이미지 소스:** 운영은 SSM `/academy/api/env` → `/opt/api.env`, development는 버전 고정 `/academy/api/development/env`·`/academy/workers/development/env`, `academy_api_development` DB와 개발 전용 큐/R2를 사용한다. development Video Batch 전용 자원은 아직 없으므로 두 env의 `VIDEO_BATCH_JOB_QUEUE`·`VIDEO_BATCH_JOB_DEFINITION`은 빈 값으로 강제해 운영 Batch 제출을 실패 폐쇄한다. preprod는 릴리스마다 운영 env에서 새 Advanced SecureString 버전을 만들되 `/academy/api/preprod/db-credentials`의 전용 `academy_api_preprod_app` 역할로 DB 사용자·비밀번호를 교체한다. 동시에 Django·tenant-binding secret을 preprod 전용으로 파생하고 SOLAPI, Toss/billing, Gemini를 포함한 외부 AI, VAPID, 정적 AWS credential을 제거한다. CDN playback은 `/academy/r2/preprod/credentials`의 production key와 다른 bucket-scoped read-only R2 key로만 검증한다. 이미지는 완전 성공 `docs/reports/release-manifest.latest.json`의 digest만 사용한다.
 - **API 역할 불변조건:** `/academy/api/env`의 `DJANGO_SETTINGS_MODULE`은 `apps.api.config.settings.prod`, `/academy/workers/env`는 `apps.api.config.settings.worker`여야 한다. 누락·교차 오염·API env 조회 실패 시 배포를 중단하며 workers env에서 API env를 합성하지 않는다.
 - **격리 불변조건:** development와 preprod EC2는 운영 ASG/ALB에 등록하지 않는다. development는 inbound 없는 전용 보안그룹·instance profile·DB/큐/R2를 사용한다. preprod는 전용 instance profile, 정확한 SSM parameter version·릴리스 ID, 별도 DB·전용 DB 역할을 사용하며 그 역할의 운영 DB `CONNECT`가 거부되는지 실연결로 증명한다.
 
@@ -35,10 +72,26 @@
 
 ## 2. CI 자동 배포 (push=서버 반영)
 
+표준 `tests/` 디렉터리·`tests.py`만 바꾼 push는 제품 배포를 시작하지 않는다.
+이 경계는 push 필터뿐 아니라 각 이미지의 마지막 성공 source부터 누적한 diff와
+공통 변경 판정에도 적용한다. 따라서 이후 제품 변경이 과거 테스트 수정을 다시
+이미지 변경으로 계산하지 않는다. 테스트와 제품 코드가 함께 바뀌면 제품 코드의
+영향을 그대로 배포하고, Required Quality Gate는 테스트 전용 PR에도 유지한다.
+
+공통 앱 코드(`academy/`, `libs/` 등) 변경은 다섯 runtime을 모두 빌드하지만,
+앱 소스를 포함하지 않는 `academy-base`까지 다시 컴파일하지 않는다. base Dockerfile,
+native 보안 빌드, 공통 requirements/constraints, `.dockerignore`가 변경되면 기존대로
+base와 모든 consumer를 재빌드하고 APT 보안 패키지를 갱신한다. 재사용은 대기열 이후
+캡처한 성공 manifest의 exact digest/source tag와 ECR identity가 일치할 때만 가능하다.
+확인된 이미지/저장소 부재만 정식 전체 빌드로 복구하며 권한·통신·정합성 오류는 중단한다.
+재사용 이미지를 포함한 여섯 후보는 모두 완료 scan과 현재 exact Critical/High 정책을
+통과해야 한다. 개발·격리 preprod·승인·rolling·후검증 순서는 줄이지 않는다.
+상세 변경 경계와 검증은 [배포 아키텍처](../infrastructure/deployment-architecture.md#3-selective-build-logic)를 따른다.
+
 main에 push하면 자동으로 서버 반영까지 완료된다:
 
 1. GitHub Actions `v1-build-and-push-latest.yml` 트리거
-2. lint, expand/contract migration guard와 smoke가 통과한 뒤 base digest를 먼저 빌드/해결한다. guard는 같은 app의 이전 migration까지 역추적해 다른 옵션이 동일한 `CharField.max_length` 증가만 expand-safe로 인정한다. 길이 축소, 옵션 변경, 과거 필드 상태를 증명할 수 없는 `AlterField`는 계속 contract로 실패 폐쇄한다. PR 품질 게이트는 `ACADEMY_MIGRATION_PHASE = "contract"`와 구체적인 `ACADEMY_MIGRATION_REASON`이 있는 변경을 검토할 수 있지만 DB를 변경하지 않는다. 병합 뒤 일반 main push는 같은 contract migration을 계속 실패 폐쇄하며, 선행 expand 배포 완료 또는 구버전 API 호환성이 증명된 정확한 main SHA만 `workflow_dispatch`의 `allow_contract_migrations=true`로 실행할 수 있다. 변경 감지 결과에 따라 필요한 API, Video, Messaging, AI, Tools linux/arm64 이미지는 격리 matrix runner에서 병렬 빌드해 ECR run-unique `:sha-*` 후보로 푸시하고, 단일 fan-in job이 여섯 digest를 정확히 조립한다. 각 worker Dockerfile은 실제 entrypoint import를 build-time에 검증한다. 모든 ECR repo는 scan-on-push이며 재사용 digest도 scan 결과가 없으면 명시적으로 scan을 시작한다. 완료되지 않은 scan과 승인되지 않은 critical은 실패 폐쇄한다. 예외는 [container-image-security.md](container-image-security.md)의 exact·expiring 계약만 허용하며 high은 경고와 remediation 대상으로 남긴다. `:latest`는 이 시점에 움직이지 않는다.
+2. 직전 운영 릴리스와 대기열이 끝난 뒤 `origin/main`에서 그 릴리스가 승격한 성공 manifest를 캡처해 run 전용 artifact로 고정한다. 따라서 push 시점 checkout에 들어 있던 오래된 manifest 때문에 불필요한 전체 이미지 재빌드가 발생하지 않으며, 변경 감지·base 재사용·후보 조립은 모두 같은 캡처본을 사용한다. 캡처본이 없거나 완전 성공 형식이 아니면 선택 빌드로 추정하지 않고 실패 폐쇄한다. 이어 lint, expand/contract migration guard와 smoke가 통과한 뒤 base digest를 먼저 빌드/해결한다. 자동 push의 migration guard도 같은 성공 manifest의 `gitSha`부터 누적 변경을 검사하므로 실패한 릴리스 뒤 새 push에서 contract migration이 빠지지 않는다. guard는 같은 app의 이전 migration까지 역추적해 다른 옵션이 동일한 `CharField.max_length` 증가만 expand-safe로 인정한다. 길이 축소, 옵션 변경, 과거 필드 상태를 증명할 수 없는 `AlterField`는 계속 contract로 실패 폐쇄한다. PR 품질 게이트는 `ACADEMY_MIGRATION_PHASE = "contract"`와 구체적인 `ACADEMY_MIGRATION_REASON`이 있는 변경을 검토할 수 있지만 DB를 변경하지 않는다. 병합 뒤 일반 main push는 같은 contract migration을 계속 실패 폐쇄하며, 선행 expand 배포 완료 또는 구버전 API 호환성이 증명된 정확한 main SHA만 `workflow_dispatch`의 `allow_contract_migrations=true`로 실행할 수 있다. 변경 감지 결과에 따라 필요한 API, Video, Messaging, AI, Tools linux/arm64 이미지는 격리 matrix runner에서 병렬 빌드해 ECR run-unique `:sha-*` 후보로 푸시하고, 단일 fan-in job이 여섯 digest를 정확히 조립한다. 각 worker Dockerfile은 실제 entrypoint import를 build-time에 검증한다. 모든 ECR repo는 scan-on-push이며 재사용 digest도 scan 결과가 없으면 명시적으로 scan을 시작한다. 완료되지 않은 scan과 승인되지 않은 critical은 실패 폐쇄한다. 예외는 [container-image-security.md](container-image-security.md)의 exact·expiring 계약만 허용하며 high은 경고와 remediation 대상으로 남긴다. `:latest`는 이 시점에 움직이지 않는다.
 3. `verify-api-development` job → API/Tools 변경 여부와 무관하게 모든 release candidate에서 같은 manifest의 API/Tools digest를 상시 격리 development에 blue/green 방식으로 배포한다. 전용 DB migration, 운영 DB·R2 접근 거부, 개발 큐/R2/Redis, `/healthz`, `/health`, 이미지 identity와 합성 XLSX/PPT/R2 실사용 smoke가 모두 통과해야 candidate를 active로 승격한다.
 4. `verify-api-preprod` job → development를 통과한 API digest로 릴리스 고정 env 버전을 만들고 임시 격리 EC2 1대를 기동해 별도 DB에 migration을 적용한다. prod settings, DB 이름·전용 역할, 운영 DB CONNECT 거부, env version·release ID, `/healthz`, DB 포함 `/health`, 실제 CDN chain을 모두 확인한 뒤 종료한다.
 5. preprod 성공 후에만 `run-migrations`가 운영 DB migration을 실행한다.

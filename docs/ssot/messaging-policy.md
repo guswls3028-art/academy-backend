@@ -1,4 +1,4 @@
-# 메시징/알림톡 운영 정책 SSOT (2026-08-30 갱신)
+# 메시징/알림톡 운영 정책 SSOT (2026-09-10 갱신)
 
 ## 정책 분류 체계
 
@@ -59,11 +59,12 @@
 2. **SYSTEM_AUTO 외에는 사용자가 투명하게 보고 테넌트별로 통제 가능.** 한 학원의 선택을 다른 학원이나 공통 기본값에 복사하지 않는다.
 3. **일반 강의와 클리닉 정책 절대 분리.**
 4. **숨겨진 자동 발송 금지.** 모든 발송 경로가 설정 콘솔에 노출.
-5. **공용 알림톡 only.** 제품·고객·운영 경로 모두 SMS/LMS를 실발송하지 않는다. tenant별 PFID/provider도 사용하지 않으며, 운영 오류 알림은 Slack webhook만 사용한다.
+5. **검증 채널 알림톡 only.** 제품·고객·운영 경로 모두 SMS/LMS를 실발송하지 않는다. 공급자와 인증 키는 공용 Solapi만 사용한다. 기본은 공용 owner 채널이며, 운영자가 공급자 실조회로 새 `AlimtalkChannelBinding`을 만든 tenant만 본문 지문이 같은 승인 템플릿 매핑을 통해 자기 카카오 채널을 사용한다. 과거 `Tenant.kakao_pfid`, tenant provider, 자체 API 키는 읽지 않는다. 운영 오류 알림은 Slack webhook만 사용한다.
 6. **fallback 금지.** exact trigger의 공용 승인 템플릿 또는 명시 unified category 템플릿이 없으면 발송하지 않는다.
 7. **비알림톡 입력 실패 폐쇄.** SMS/LMS와 알 수 없는 `message_mode`를 알림톡으로 보정하지 않는다. 신규 코드에는 SMS 발송·enqueue 호환 callable이나 `sms_allowed` capability를 만들지 않는다.
 8. **클리닉 하원과 학습 완료 분리.** `clinic_check_out`은 `checked_out_at`과 `checkout_mode`, `clinic_self_study_completed`는 `completed_at`을 소유한다. `arrival_not_recorded`는 등원 상태/시각을 만들지 않는다. 하원은 승인된 공용 `clinic_info` 봉투에 하원 전용 본문·실제 시각을 담고, 다른 trigger나 SMS/LMS로 대체하지 않는다.
-9. **성적 알림은 보호자 전용이며 미확정 상태를 추정하지 않는다.** `grades` 수동 발송과 `exam_score_published`·`monthly_report_generated` 미리보기는 `send_to=parent`만 허용한다. 점수가 `null`이면 교사가 `NOT_SUBMITTED`를 명시한 경우에만 미응시·미제출로 표시하고, 그 외 미입력 항목이 하나라도 있으면 성적 발송 진입점에서 실패 폐쇄한다. 미입력을 0점·불합격·보충 필요로 변환하지 않는다. `grades` 수동 발송은 서버가 해석한 전체 수신 학생 ID와 `alimtalk_extra_vars_per_student`의 키가 정확히 일치하고 각 학생의 비어 있지 않은 `_body_subst`가 있을 때만 허용한다. 누락·초과·잘못된 키나 본문이 있으면 공용 `raw_body` 또는 첫 학생의 전역 성적값으로 대체하지 않고 미리보기와 confirm을 모두 차단한다.
+9. **성적 알림 수신자는 발송자가 선택하며 미확정 상태를 추정하지 않는다.** `grades` 수동 발송과 `exam_score_published`·`monthly_report_generated` 미리보기는 `send_to=parent`와 `send_to=student`를 모두 허용한다. 화면에서는 학생과 보호자를 독립적으로 선택할 수 있고, 둘 다 선택하면 각 수신자 경로를 별도로 사전검사한 뒤 발송한다. 점수가 `null`이면 교사가 `NOT_SUBMITTED`를 명시한 경우에만 미응시·미제출로 표시하고, 그 외 미입력 항목이 하나라도 있으면 성적 발송 진입점에서 실패 폐쇄한다. 미입력을 0점·불합격·보충 필요로 변환하지 않는다. `grades` 수동 발송은 서버가 해석한 전체 수신 학생 ID와 `alimtalk_extra_vars_per_student`의 키가 정확히 일치하고 각 학생의 비어 있지 않은 `_body_subst`가 있을 때만 허용한다. 누락·초과·잘못된 키나 본문이 있으면 공용 `raw_body` 또는 첫 학생의 전역 성적값으로 대체하지 않고 미리보기와 confirm을 모두 차단한다.
+10. **학부모 계정 알림의 자녀 문맥은 명시적이다.** 학생 상세에서 시작한 학부모 비밀번호 재설정은 그 exact 학생만 안내 변수와 감사 target에 사용한다. 학부모 본인 변경처럼 학생 문맥이 없는 `password_reset_parent`는 학부모 계정 정보만 사용하며, 연결 목록의 첫 행·최근 행을 골라 학생 이름이나 아이디를 채우지 않는다.
 
 ## 클리닉 일정 알림 활성화
 
@@ -78,8 +79,10 @@ ON 한다.
 - `clinic_cancelled`
 
 다른 `AutoSendConfig`, 학원 전체 메시징 스위치, 메시지 본문과 발송 시점은 변경하지
-않는다. 기존 템플릿이 연결되어 있으면 그대로 보존하고, 누락된 경우에만 해당
-트리거의 기본 클리닉 템플릿을 생성·연결한다. 대상 config 중 비알림톡 모드가 한
+않는다. 기존 템플릿이 연결되어 있으면 그대로 보존하고, 새 config에만 해당
+트리거의 기본 클리닉 템플릿을 생성·연결한다. 삭제 보류 기본 문구나 연결이 빈 기존
+config가 있으면 사용자가 명시적으로 문구를 복원·선택할 때까지 전체 적용을 거절한다.
+대상 config 중 비알림톡 모드가 한
 건이라도 있거나 공용 승인 알림톡 매핑이 없으면 전체 적용을 실패 폐쇄한다. 설정
 활성화 자체는 메시지를 발송하거나 과거 이벤트를 재발송하지 않는다.
 
@@ -88,12 +91,15 @@ ON 한다.
 않으며, 일반 강의 입실·결석 안내는 메시징 도메인의 출결 알림
 preview→confirm 경로에서 선생이 명시적으로 확인한 경우에만 생성한다.
 
-## 공용 알림톡 정책
+## 검증 채널 라우팅 정책
 
-- 모든 알림톡 큐 payload는 `OWNER_TENANT_ID` 공용 채널로 정규화한다.
-- 원 업무 테넌트는 `source_tenant_id` 등 로그 메타데이터로만 남긴다.
-- tenant별 AutoSendConfig는 enabled/delay/본문 메모 등 업무 설정으로만 사용하고, Solapi 검수 템플릿/PFID/provider의 출처가 될 수 없다.
+- 모든 알림톡 큐 payload는 계속 `OWNER_TENANT_ID`와 공용 template ID로 정규화하며, 원 업무 테넌트는 서명된 `source_tenant_id`로 보존한다.
+- worker는 공용 template 허용 검증을 먼저 끝낸 뒤 provider 호출 직전에만 `AlimtalkChannelBinding`을 조회한다. binding이 `active`이고 같은 공용 template ID의 `AlimtalkTemplateBinding`이 `APPROVED`이며 source/channel 본문 지문이 같을 때만 tenant PFID/template ID로 치환한다.
+- 검수 중(`pending_templates`)에는 공용 owner 채널을 계속 사용한다. 활성 binding의 템플릿 매핑이 없거나 지문이 달라졌으면 API/UI에 `suspended`로 투영하고 공용으로 조용히 되돌리지 않고 fail-closed한다.
+- tenant별 AutoSendConfig는 enabled/delay/본문 메모 등 업무 설정으로만 사용한다. 과거 `Tenant.kakao_pfid`, `messaging_provider`, 자체 Solapi/Ppurio 키와 MessageTemplate 승인 흔적은 새 binding의 출처가 될 수 없다.
+- 공급자·API 키·발신번호는 공용 Solapi 설정만 사용하며 tenant별 credential/provider 분기는 복구하지 않는다.
 - `send_alimtalk_via_owner()`는 `OWNER_TENANT_ID`의 exact trigger AutoSendConfig에 연결된 APPROVED 템플릿만 사용한다.
+- 학원별 기본 **문구**의 삭제·선택 복원은 [메시징 도메인](../domain/messaging.md#기본-문구의-삭제와-복원)을 따른다. 삭제 의도와 기존 자동발송 연결을 보존하며, 이 콘텐츠 관리 작업은 공용 승인 봉투·owner exact 템플릿·공급사 검수 정책을 바꾸지 않는다.
 - `password_reset_*` 또는 `password_find_otp`가 `registration_approved_*` 템플릿으로 대체되는 fallback은 금지한다.
 - 2026-07-08 Solapi 실등록 감사 기준 `notice_payment` SID는 provider에 없으므로 결제 트리거는 논리 매핑을 유지하되 fail-closed다.
 - Community/Q&A 외부 알림톡은 owner의 exact `qna_answered` 고정 문구 템플릿만 사용한다. 학생 이름과 사이트 링크 외 자유문구를 넣지 않으며, provider와 DB가 모두 `APPROVED`가 아니면 발송하지 않는다. 자유양식·출석·성적 봉투로 fallback하지 않고 기존 답변도 소급 발송하지 않는다.
@@ -102,13 +108,13 @@ preview→confirm 경로에서 선생이 명시적으로 확인한 경우에만 
 1. **Tenant.messaging_is_active** — 대표·관리자가 화면에서 직접 제어하는 학원 전체 on/off. 신규·기존 사용 중 학원은 기본 on이며 개인 고객의 선호를 코드나 운영 환경변수에 넣지 않는다.
 2. **AutoSendConfig.enabled** — 트리거별 DB on/off (설정 콘솔에서 제어)
 3. **TRIGGER_POLICY** — 코드 레벨 정책 분류 (SYSTEM_AUTO는 토글 비활성화)
-4. **is_event_dry_run()** — MESSAGING_DRY_RUN_TRIGGERS 환경변수로 dry-run
+4. **is_event_dry_run()** — `MESSAGING_DRY_RUN_TRIGGERS` 환경변수로 이벤트 생산 자체를 dry-run한다. 상시 persistent development는 제품의 저장→outbox 생명주기를 실사용 형태로 검증해야 하므로 이 값을 비워 두고, API와 전용 Messaging worker의 `SOLAPI_MOCK=true`가 공급자 호출·비용을 차단한다. preprod와 운영자가 명시한 dry-run의 기존 동작은 바꾸지 않는다.
 5. **check_recipient_allowed()** — `MESSAGING_RECIPIENT_DENYLIST`의 운영 차단번호를 우선 거부하고, 테스트 환경에서는 `MESSAGING_TEST_WHITELIST`로 추가 제한한다. API enqueue와 워커 소비 입구에서 검사하며 공용 Solapi 호출 직전에도 다시 검사한다.
 6. **NotificationPreviewToken** — preview→confirm 핸드셰이크 (1회용, 5분 TTL). confirm 성공 즉시 수신자/본문을 비우며, 1분 주기 `process_scheduled_notifications`가 만료 행을 회당 500건 정리한다. 수동 대량 정리는 `python manage.py purge_expired_notification_preview_tokens [--dry-run]`을 사용한다.
 7. **멱등성 키** — business_idempotency_key (trigger + student_id + 날짜)
 8. **일반 강의 출결 수동 발송 경계** — 출결 상태 PATCH·일괄 출석·차시 명단 생성은 자동 outbox를 만들지 않는다. 입실·결석 안내는 `NotificationPreviewToken`을 사용하는 출결 알림 preview→confirm 경로만 허용한다.
 9. **계정 알림 event metadata** — `registration_approved_*`, `password_*` 발송은 큐 payload에 원 trigger를 `event_type`으로 싣는다. `NotificationLog.message_body` 보안 마스킹과 운영 추적은 이 값에 의존한다.
-   신규 학생 계정 생성 시 초기 안내값은 암호화해 대기시키고, 첫 ACTIVE 수강 확정 후 계정 안내 outbox가 모두 확보되면 즉시 제거한다. 학생/학부모 계정 안내, 아이디 변경, 비밀번호 변경, 학생 전화번호 최초 등록은 SYSTEM_AUTO이며 legacy `send_welcome_message`/`skip_notify` 입력으로 끄지 않는다.
+   신규 학생 계정 생성 시 초기 안내값은 암호화해 대기시키고, 첫 ACTIVE 수강 확정 후 계정 안내 outbox가 모두 확보되면 즉시 제거한다. 학생/학부모 계정 안내, 아이디 변경, 비밀번호 변경, 학생 전화번호 최초 등록은 SYSTEM_AUTO이며 발송 opt-out 입력은 제공하지 않는다.
    `registration_approved_student|parent`의 첫 수강 계정 안내는 legacy `AutoSendConfig.enabled` 값으로 끌 수 없다. 공용 owner의 exact APPROVED 템플릿이 없을 때만 fail-closed하며, 학생과 학부모의 유효 수신번호가 다르면 각 계정 안내 outbox를 모두 확보해야 한다.
 10. **DB dispatch/outbox** — 수동·시스템·영상·매치업·커뮤니티의 즉시 발송과 `AutoSendConfig.delay_mode` 예약 발송은 모두 `ScheduledNotification`을 먼저 저장한다. product producer의 `enqueue_alimtalk()` 직접 호출은 금지한다. `dispatch_key`에서 안정 occurrence key를 만들고 `pending → dispatching → sent(SQS 접수)`로 전이한다.
 11. **SQS enqueue 복구** — transient enqueue 실패는 30초 지수 백오프, 최대 8회 재시도한다. `dispatching` 5분 stale claim도 같은 dispatch key로 회수한다. 입력 오류와 일반 알림의 업무 tenant 전체 발송 중지는 SQS 호출·재시도 없이 즉시 terminal `failed`로 전이해 payload를 제거하며, transient 재시도 소진도 terminal `failed`다. 첫 수강 계정 안내 2종은 운영 중지 중 15분 간격 `pending`으로 보류해 일회용 비밀번호를 잃지 않는다.
@@ -122,12 +128,13 @@ preview→confirm 경로에서 선생이 명시적으로 확인한 경우에만 
 18. **공용 owner와 고객 설정 분리** — 공용 owner tenant는 승인 채널 인프라의 소유자일 뿐 고객별 전체 사용 설정의 전역 기준이 아니다. owner 학원이 자기 알림톡을 꺼도 다른 업무 tenant의 발송·계정 복구는 계속되며, owner 경계에서 전역으로 공유되는 차단은 테스트 tenant와 긴급 운영 hold뿐이다.
 19. **공급자 계정 일일 브레이크** — 시간당 tenant 한도와 별개로 모든 업무 tenant가 공유하는 공급자 계정에 KST 날짜 기준 `MESSAGING_PROVIDER_DAILY_DISPATCH_LIMIT`(기본 900) 한도를 적용한다. `ScheduledNotification.last_attempt_at` 예약과 outbox가 없는 legacy `NotificationLog`를 중복 없이 합산하며, 한도에 도달한 신규 outbox는 실패/폐기하지 않고 다음 날 00:05 KST로 이월한다. PostgreSQL transaction advisory lock이 tenant 간 동시 claim을 직렬화하며 owner tenant 행의 존재 여부에는 의존하지 않는다. 공급자가 `QuotaExceeded` 또는 `NotEnoughBalance`로 접수 전 거절하면 provider ID·차감이 없는 확정 실패로 닫고 `ambiguous`로 남기지 않는다. 자동 재발송은 하지 않는다.
 20. **개인정보 없는 incident trace** — outbox와 worker log는 원문 번호 대신 `MESSAGING_TENANT_BINDING_KEY` HMAC `recipient_fingerprint`를 저장하고, `origin_type`/`origin_id`로 Excel job·수동 batch·domain object를 연결한다. terminal payload에는 이 비식별 메타데이터와 기존 dispatch/business key만 남긴다. 키 순환 중 조회는 fallback key 지문도 함께 계산한다.
+20-A. **tenant 채널 등록·검수·테스트** — `configure_tenant_alimtalk_channel`은 dry-run 기본이며 tenant code를 정확히 1건으로 확정하고 공용 Solapi 계정에서 새 channel ID가 실제 조회될 때만 새 binding을 기록한다. 현재 공용 승인 템플릿의 본문·버튼·강조 구조를 복제하고 별도 검수를 요청한다. legacy `TE` 카테고리는 현재 Kakao 6자리 분류(가입, 인증, 예약, 서비스 신청, 피드백)로 의미에 따라 명시 변환하며, 검수 분류값과 provider의 빈 응답 기본값은 전달 동작 지문에서 제외한다. 모두 `APPROVED`이고 전달 동작 지문이 같을 때만 `--activate-if-ready`로 활성화한다. `send_tenant_alimtalk_channel_test`는 binding에 기록된 승인 `인증번호` 템플릿을 live로 다시 조회하고 denylist/whitelist와 idempotency key를 확인한 뒤 정확히 1건만 보낸다. 테스트도 `disable_sms=True`, PII-free recipient fingerprint, `NotificationLog.status`와 provider ID를 남기며 raw 번호·본문·provider ID를 출력하지 않는다. provider adapter 로그의 channel ID도 마지막 네 자리만 남긴다.
 21. **Excel 계정 안내 provenance** — Excel로 신규 학생을 만든 job ID는 암호화 pending 계정 안내와 함께 저장한다. 첫 ACTIVE 수강에서 `origin_type=excel_import`, `origin_id=<AIJob job_id>`를 학생/학부모 outbox로 전달하고, 모든 유효 outbox 확보 뒤 비밀번호 암호문과 provenance를 함께 제거한다.
 22. **canonical payload 무결성** — 신규 SQS payload는 `occurrence_key`를 명시하고 worker가 수신자·event·target·template을 다시 조합한 business key와 producer key가 같은지 확인한다. signed key를 복사한 뒤 수신자 등을 바꾼 payload는 `invalid_business_idempotency_key`로 공급자 호출 전에 폐기한다.
 23. **공급자 잔액/재시도 감시** — 5분 주기 `check_dev_alerts`는 사용자 오류와 함께 최근 30분 `NotEnoughBalance` 확정 거절·미확정 건 및 Solapi 공용 잔액을 검사한다. 잔액이 `MESSAGING_PROVIDER_LOW_BALANCE_ALERT_THRESHOLD`(기본 10,000원) 미만이거나 잔액 조회가 실패하면 개인정보 없이 Slack으로 경고한다. 이 운영 경고도 SMS/LMS를 사용하지 않는다.
 24. **2026-08-22 첫 수강 계정 안내 복구** — `repair_failed_first_enrollment_notices`는 tenant 11과 reviewed student allowlist `3656,4102,4103,4104,4105`만 받는 incident 전용 dry-run 기본 명령이다. 적용 직전 공용 PFID·발신번호·live 승인 template SID/body, exact 학생·학부모 placeholder envelope 9건, provider 잔액과 main queue·DLQ 0을 개인정보 없이 transaction 밖에서 먼저 읽는다. 실제 apply transaction은 `SET LOCAL lock_timeout='5s'`를 방어 설정한 뒤 pending reset → Student → ScheduledNotification → NotificationLog 순서로 `SHARE ROW EXCLUSIVE NOWAIT` table lock을 먼저 얻고, 그 뒤에만 tenant·학생·모든 parent linkage(비활성·soft-deleted·cross-tenant 포함)·학부모·계정·수강·기존 outbox/log·owner template을 `NO KEY UPDATE NOWAIT`로 한 번 authoritative 조회한다. 선행 DML 또는 row lock이 있으면 대기·교착 없이 `recovery_quiescence_unavailable`로 전체 중단하며 자동 재시도하지 않고, 후발 DML은 복구 transaction 뒤에 직렬화된다. external main/DLQ 0 확인 뒤 apply lock 안에서 committed `ScheduledNotification.status=dispatching` 전역 0을 DB-only로 다시 확인하며, claim이 있으면 같은 operator error로 중단한다. lock 내부에는 DB authoritative 검증·DML·`on_commit` 등록만 두고 SQS/provider network 호출은 하지 않는다. SQS readback client는 transaction 밖 preflight에서 요청당 2초·SDK 재시도 0으로 제한하며, commit 뒤 queue/provider 완료는 별도 운영 readback에서 확인한다. 3656의 broad first-enrollment history 집합은 `registration_approved_student|parent` trigger의 outbox `{1174,1654,1759}`와 log `{4570,5060,5145}`가 정확히 일치해야 하며 해당 trigger의 추가·누락 행은 모두 fail-closed다. 같은 target의 별도 `password_reset_*` history는 이 incident 집합에서 제외해 불변 보존하지만, first-enrollment trigger 범위의 pending·later sent·provider acceptance·cross-tenant 이력은 계속 차단한다. `1174↔4570`은 dispatch `e3b6c52e-1890-4ee9-b549-60d789a8507b`, business `f1645e709a33ffa71c1687743eccf169774a583f02fd1995f06736c434788a69`, blank origin, exact `provider_quota_exceeded_not_accepted` failed/no-provider/차감 0 이력이다. 이 exact 1174 reviewed pair에서 legacy payload의 blank origin 두 key가 없을 때만 missing을 blank로 정규화하며, 명시적 빈 문자열 외의 falsey 값은 거절한다. row origin과 nonblank 1654/1759 payload origin은 계속 exact key/value를 요구한다. `1654↔5060`은 dispatch `3055120a-c519-487e-b4ac-20b8057bc588`, business `6403f10f32e0633115ffd041b1e188822abb4c7bdded5b8ab66277dcfb40bcbb`, `system_account/student:3656`, 운영 DB에 기록된 exact literal backslash+n `NotEnoughBalance` ambiguous/no-provider/차감 0 이력이며 실제 LF로 정규화하지 않는다. `1759↔5145`는 dispatch `707ce6d8-756d-4a1f-86ff-1c5eb26811de`, business `ac83900afd8620f05e14a4d37fa33054367d63446bfd9a9e4564707dd051e4b0`, `credential_incident/godmin-20260822`, sent/success/provider-present/차감 0 canonical 학부모 이력이다. 세 쌍 모두 row tenant·trigger·status·error·keys·origin, payload source/event/target/mode/origin, log owner/source/type/target/mode/status/result/keys/origin이 exact여야 하며 history를 범용 상태나 느슨한 개수 조건으로 인정하지 않는다. 4102–4105의 failed pair outbox도 row tenant, source/event/target/mode/origin, dispatch/business key와 exact failed reason을 모두 만족해야 하며 잘못된 tenant 행도 target 기준 broad 조회에서 숨기지 않는다. generic ambiguous/processing/sending/비정형 provider evidence는 거절한다. 공유 학부모 계정과 canonical 학부모 성공 이력은 불변이고, 4102–4105는 parent를 가리키는 다른 Student row가 하나도 없을 때만 pair 회전한다. locked 계정은 실제 렌더 ID와 일치하고 usable password·active·미로그인·token version 2·pending 0이어야 한다. exact 결과는 회전 9계정과 `origin_type=recovery`, Alimtalk-only outbox 9건이다. 후보·템플릿·수신자·공유관계 drift, 안내 생성 false 또는 예상 수 불일치는 outer transaction 전체를 rollback하고 `on_commit` callback/SQS enqueue는 0이어야 한다. 비밀번호·전화번호·사용자명은 출력하지 않고 기존 failed/ambiguous/sent 이력은 수정·삭제하지 않는다.
 25. **공용 발신번호 런타임 동치** — `/academy/api/env`와 `/academy/workers/env`의 `SOLAPI_API_KEY`, `SOLAPI_API_SECRET`, `SOLAPI_SENDER`는 서로 exact여야 하며 sender는 같은 자격으로 조회한 공급자의 유일한 ACTIVE 번호여야 한다. `reconcile_common_alimtalk_sender.py`는 번호를 입력·출력하지 않는 dry-run 기본 운영 도구다. apply는 clean latest main과 성공 manifest를 요구하고 shared production lock을 얻은 뒤 두 SSM 문서의 sender 한 key만 메모리에서 변경한다. Messaging과 API만 launch-before-terminate로 갱신하고 모든 InService 컨테이너의 sender를 일회성 HMAC으로 확인하며, main queue·DLQ 0과 API health까지 확인한 뒤에만 lock을 반환한다. refresh 전 부분 실패는 원문 파일 백업 없이 메모리의 exact SSM 값으로 rollback하고, refresh 시작 뒤 실패는 inactive 값으로 되돌리지 않고 lock을 유지해 forward-converge한다.
-26. **공용 owner 런타임 명시성** — 코드의 호환 기본값은 owner tenant 1이지만 production `/academy/api/env`와 `/academy/workers/env`에는 `OWNER_TENANT_ID`가 같은 고정 JSON 문자열로 명시되어야 한다. 숫자·null·문자열 강제 변환은 명시 상태로 인정하지 않는다. `reconcile_common_alimtalk_owner_tenant.py`는 owner 값을 입력·출력하지 않는 dry-run 기본 운영 도구이며 absent 또는 exact 기본값만 허용한다. apply는 shared production lock 아래 누락된 owner key만 worker→API 순서로 추가하고 SOLAPI sender를 포함한 다른 key/value를 exact 보존한다. 이미 SSM이 명시돼도 InService runtime HMAC, API health, main queue·DLQ 0을 확인하며 runtime 값이 stale 또는 missing이면 같은 Messaging→API terminal refresh로 forward-converge한다. SSM version/raw/KMS와 최종 lock ownership까지 확인한 뒤에만 lock을 반환한다. refresh 전 부분 실패는 lock ownership을 다시 증명한 뒤 exact 원문으로 rollback하고, write 뒤 lock loss에서는 unowned 보상 write를 하지 않는다. refresh·readback·concurrency·rollback 불확실성은 lock을 유지한다. 이 도구는 sender-only 정합화 도구를 대체하거나 확장하지 않는다.
+26. **공용 owner 런타임 명시성** — 코드의 호환 기본값은 owner tenant 1이지만 production `/academy/api/env`와 `/academy/workers/env`에는 `OWNER_TENANT_ID`가 같은 고정 JSON 문자열로 명시되어야 한다. API와 Django worker settings가 모두 이 환경변수를 정수로 직접 읽으며, malformed 값은 worker 시작 단계에서 실패한다. 숫자·null·문자열 강제 변환은 명시 상태로 인정하지 않는다. `reconcile_common_alimtalk_owner_tenant.py`는 owner 값을 입력·출력하지 않는 dry-run 기본 운영 도구이며 absent 또는 exact 기본값만 허용한다. apply는 shared production lock 아래 누락된 owner key만 worker→API 순서로 추가하고 SOLAPI sender를 포함한 다른 key/value를 exact 보존한다. 이미 SSM이 명시돼도 InService runtime HMAC, API health, main queue·DLQ 0을 확인하며 runtime 값이 stale 또는 missing이면 같은 Messaging→API terminal refresh로 forward-converge한다. SSM version/raw/KMS와 최종 lock ownership까지 확인한 뒤에만 lock을 반환한다. refresh 전 부분 실패는 lock ownership을 다시 증명한 뒤 exact 원문으로 rollback하고, write 뒤 lock loss에서는 unowned 보상 write를 하지 않는다. refresh·readback·concurrency·rollback 불확실성은 lock을 유지한다. 이 도구는 sender-only 정합화 도구를 대체하거나 확장하지 않는다.
 27. **클리닉 T-30 중복 방지** — `clinic_reminder`는 enabled tenant의 `minutes_before`(기본 30분) 시점에 `booked` 학생만 대상으로 한다. 고정시간 방식은 기존 세션 시작시각과 `clinic_session:<session_id>:reminder` origin+학생 target을 보존한다. 시간범위 방식은 실제 예약 시작시각과 `clinic_booking:<participant>:<session>:<date>:<start>` origin을 사용한다. EventBridge가 5분 보정 창에서 매분 실행되어도 이미 durable `ScheduledNotification`에 있는 occurrence는 다시 만들지 않으며, 시간범위 보정은 기존 세션 기준 이력을 재생하지 않는다. 범위 예약은 dispatcher와 공급자 호출 직전에도 취소·날짜·시각·tenant를 재검증한다. 이 검증은 기존 명시 참관 사본에도 적용한다. 공급사 잔액의 확정 미접수 거절은 audited retry에서도 같은 business key와 단일 `NotificationLog`만 사용하며, provider id는 접수 증거이고 최종 전달은 13-A의 별도 상태 확인을 따른다. 수동 `clinic.manual_reminder`는 별도 occurrence이므로 자동 T-30 dedup과 섞이지 않는다. 상세 시간범위 계약은 [클리닉 예약](../domain/clinic-booking.md#자동-시작-리마인더)을 따른다.
 28. **클리닉 수동 재촉의 예약 생명주기 결속** — 예약 취소·거절·일정 변경과 세션 삭제는 같은 DB transaction에서 이전 participant의 미발송 수동 `clinic_reminder`를 `cancelled`로 끝내고 `next_attempt_at`과 수신 payload를 제거한다. dispatcher도 claim 직전에 origin의 tenant/participant가 여전히 활성 학생의 `booked` 예약인지 확인하므로, 이미 due가 된 stale 행도 외부 발송하지 않는다. 합법적인 새 예약에는 새 participant occurrence를 사용하며 이전 occurrence를 재개하지 않는다.
 28. **테넌트별 참관 수신자** — 명시적으로 설정된 `MessagingObserver`는 해당 업무 tenant에서 새로 생성되는 비계정 알림톡의 동일 본문·승인 봉투 사본을 별도 outbox로 받는다. durable outbox의 `trigger` 또는 payload `event_type`이 `registration_approved_student`, `registration_approved_parent`, `password_find_otp`, `password_reset_student`, `password_reset_parent` 중 하나이면 아이디·비밀번호·OTP를 포함할 수 있으므로 참관 사본을 무조건 만들지 않는다. 두 값이 어긋나는 legacy/malformed producer도 중앙 `is_sensitive_notification()` 판정으로 fail-closed한다. 원 수신자 outbox와 UI 접수 건수는 바꾸지 않고, 허용된 사본은 `target_type=messaging_observer`, `origin_type=messaging_observer`, `origin_id=outbox:<원본 ID>`로 추적한다. 원 수신번호와 같은 참관 번호 및 참관자 간 중복 번호는 한 번만 발송한다. 발송 순간에도 활성 사용자, 활성 `owner/admin/staff` tenant membership, `010` 11자리 전화번호를 모두 요구한다. 즉시 발송의 참관 사본은 원본과 같은 commit 후 처리 묶음에 포함한다. 참관 사본에는 학생 이름·출결 등 개인정보가 포함될 수 있으므로 owner의 명시적 승인 아래 `python manage.py set_messaging_observers --tenant-id <id> --user-id <id> ... --apply --ack-sensitive-content`로만 전체 집합을 교체한다. 중단은 `--clear --apply`로 즉시 적용하며 기존 로그와 outbox는 감사 이력으로 보존한다.
@@ -138,10 +145,17 @@ preview→confirm 경로에서 선생이 명시적으로 확인한 경우에만 
 - 이 스크립트는 API 인스턴스에서 `messaging_verify_common_alimtalk`을 실행하며, 수신번호는 통제번호 `01031217466` 하나만 허용한다.
 - 검증 트리거는 owner exact approved template(`password_reset_student` 기본)을 사용한다. SMS/LMS, tenant별 PFID/provider, 템플릿 fallback을 쓰지 않는다.
 - 성공 판정은 SQS enqueue가 아니라 워커가 만든 `NotificationLog.status=sent`, `message_mode=alimtalk`, `tenant_id=OWNER_TENANT_ID`, `provider_message_id` 기록까지다.
+- 림글리쉬 클리닉 취소 배포 readback은 개인정보 없이 `limglish` binding 활성 상태,
+  공용 `clinic_change` ID에 대응하는 `APPROVED`·동일 지문 template binding, API/worker의
+  동일 owner/binding 설정, queue·DLQ 깊이를 확인한다. 합성 QA에서는 학생·학부모 양쪽의
+  서명된 `clinic_cancelled` payload와 `tenant_verified` route 준비까지만 검증하고 provider
+  호출·실수신·SMS/LMS는 0으로 유지한다. 실제 `sent` 확인은 승인된 실사용 취소 이벤트가
+  발생한 뒤 recipient 원문 없이 business key·target type·provider 상태로만 수행한다.
 - 제품 메시징 사고는 `python manage.py diagnose_messaging_incident --tenant-id <id> --recipient <번호> [--origin-id <job-id>] [--since-hours 72] [--provider]`로 조회한다. 출력은 상태/트리거/연결 건수와 공급자 type/status 집계만 포함하고 번호·본문·비밀번호·provider ID·입력한 origin ID를 출력하지 않는다.
 - 잔액 충전/자동충전 뒤 audited recovery가 기존 이력을 보존하며 `sent`와 provider id까지 닫혔는지 확인한다. `ambiguous`는 접수 여부가 불명확하므로 자동 재발송하지 않고 공급자 대사 후 수동 조치한다.
 
 ## 변경 이력
+- 2026-09-10: persistent development에서 dry-run 조기 반환 때문에 클리닉 직접 취소의 필수 학생·학부모 outbox가 생성되지 않아 503으로 롤백되던 경계를 수정했다. 개발 API와 Messaging worker는 durable outbox와 전용 개발 SQS를 실제로 통과하되 `SOLAPI_MOCK=true`로 공급자 호출을 0건 보장한다. preprod·production 정책은 변경하지 않았다.
 - 2026-09-03: 하원 알림을 승인된 공용 `clinic_info` 봉투로 복구하고, 기존 테넌트에 하원 전용 본문/config를 기본 ON으로 프로비저닝했다. 정상 하원과 명시 확인한 미등원 하원 모두 직원이 수신자를 선택하며, 중복 하원은 재발송하지 않는다.
 - 2026-08-29: 일반 강의 개별 출결 PATCH에 재유입된 입실·결석 자동 훅을 제거하고, 출결 알림 preview→confirm 수동 발송만 허용하는 회귀 계약을 복구
 - 2026-08-23: 참관 사본에서 계정 아이디·비밀번호·OTP를 포함할 수 있는 5개 계정 트리거를 fail-closed로 제외했다. durable trigger와 payload event type을 중앙 민감도 판정으로 함께 검사해 legacy mismatch도 차단하며, 기존 감사 로그와 outbox는 보존한다.

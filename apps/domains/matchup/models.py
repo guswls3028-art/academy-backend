@@ -873,3 +873,37 @@ class AutoSegmentationSnapshot(TimestampModel):
             f"AutoSnapshot doc={self.document_id} p{self.page_index} "
             f"#{self.detected_problem_number} {self.engine}@{self.engine_version}"
         )
+
+
+class MatchupArtifactScanIntent(TimestampModel):
+    """Retry discovery of unreferenced R2 objects for one verified analysis job."""
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        PROCESSING = "processing", "Processing"
+        FAILED = "failed", "Failed"
+        CLEANED = "cleaned", "Cleaned"
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
+    document_id = models.PositiveBigIntegerField()
+    job_id = models.CharField(max_length=64)
+    status = models.CharField(
+        max_length=16, choices=Status.choices, default=Status.PENDING, db_index=True,
+    )
+    attempt_count = models.PositiveIntegerField(default=0)
+    claim_token = models.UUIDField(null=True, blank=True)
+    last_error = models.TextField(blank=True, default="")
+    last_attempt_at = models.DateTimeField(null=True, blank=True)
+    cleaned_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "matchup_artifact_scan_intent"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "document_id", "job_id"],
+                name="uniq_matchup_scan_tenant_doc_job",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["status", "last_attempt_at"], name="matchup_scan_status_idx"),
+        ]

@@ -9,14 +9,22 @@ continuity gates.
 
 Unless the user explicitly limits the task to local-only, no-deploy,
 draft/PR-only, or read-only work, an assigned implementation, change, or build
-includes the normal in-scope commit, push, PR, merge, messaging, deployment,
-production verification, and residue cleanup steps. GitHub publication and
+includes the normal in-scope commit, push, PR, merge, internal task handoffs,
+deployment, production verification, and residue cleanup steps. GitHub publication and
 production deployment do not require a separate request. Release, operations,
 and cleanup assignments carry the same standing authority. Do not pause for a
 second approval at each step; record the exact source SHA, target, checks, and
 readback instead. This does not broaden the task, make an ambiguous destructive
-target safe, waive tenant or user-data protection, bypass a release window or
+target safe, waive tenant or user-data protection, bypass an explicitly applicable change window or
 continuity gate, or make an external approval true without platform readback.
+Same-user Academy tasks and owned subagents can share non-sensitive paths,
+SHAs, PR/CI state, and verification evidence without per-message approval.
+External recipients, account authentication, secret transfers, ambiguous
+destructive targets, and higher-priority action-time approvals remain separate.
+Confirm target and impact read-only when needed. Present the exact current user
+instruction to formal approval review; never route around a denial. Managed
+session permissions and release gates still apply.
+
 An explicit instruction to deploy, release, apply to production, or continue a
 specific rollout includes authority to submit that rollout's GitHub
 `production` environment approval through the official authenticated API; do
@@ -25,6 +33,197 @@ before mutation, and never remove the protection, approve another queued run,
 or infer approval from the instruction alone. If GitHub rejects the review or
 the configured identity is ineligible, preserve the error and report that
 technical blocker without asking the user to repeat the same authorization.
+
+Compatible patches do not wait for a default 04:00 slot. Use the current
+[deployment timing and continuity policy](deployment-modes.md) and retain
+technical holds until their actual release conditions pass. Historical task
+windows and old automation snapshots are not current release evidence.
+
+## Execution efficiency
+
+Read only the applicable subsection once per task when choosing reasoning,
+delegating, recovering output or reusing evidence; reread changed material.
+Optimize total consumption and
+elapsed time per verified completed task, including rework; shorter prompts or
+less reasoning alone do not establish savings or equal quality. Safety,
+acceptance criteria, scoped HOLDs, required CI and delivery ownership still apply.
+
+### Reasoning by actual change impact
+
+Keep the primary Codex model and effort as selected by the user. Web subagent
+defaults are independent; the table below guides local work and deliberate
+exceptions to the Web Pro delegation preference.
+
+| Actual work | Reasoning choice |
+|---|---|
+| Read-only lookup, prose cleanup, clear small fixes, ordinary existing-pattern implementation | `medium` |
+| Frontend/backend contract changes or broad structural changes | Consider `high` for design and final review |
+| Tenant isolation, auth/authorization, user-data integrity, message duplication/retry, migrations, deployment/recovery safety | Start the relevant analysis/review at `high` or above, before a failure |
+| Adequate evidence but unresolved cause/design, or repeated edit/test failure without new evidence | Change approach or consider higher reasoning; do not repeat the same loop |
+| Complex analysis unresolved at `high`, or a specifically justified high-risk review | Consider `ultra` only for that scope |
+
+Classify the actual impact, not words appearing in a document. Missing context,
+truncated logs, access denial and environment faults need evidence or recovery,
+not a larger reasoning setting.
+
+Instructions saying "think at high" do not change runtime effort. When actual
+risk requires High or above and the primary effort is lower or unverified, use
+a scoped Web Pro reviewer before consequential implementation if the review is
+independent. This policy authorizes that request; no repeat user request is
+needed. A primary task already at the required effort need not add a duplicate
+reviewer solely for effort coverage.
+
+If delegation is unavailable, select the required effort in the app's
+model/reasoning picker before the relevant work; an existing selection applies to
+subsequent turns. A CLI invocation can use
+`codex -c 'model_reasoning_effort="high"' -c 'plan_mode_reasoning_effort="high"'`
+without changing saved defaults. The app-server supports an explicit next-turn
+`effort` override, but AGENTS cannot switch an in-flight turn itself. If the
+current interface cannot provide either path, report the required setting/scope,
+defer that high-risk work until the effort requirement is met, and continue
+independent work. Neither policy nor a High child changes the primary task's
+runtime effort; do not claim automatic switching.
+Use only values advertised by the installed model. A task run at `ultra` is not
+evidence that `medium` preserves its quality.
+
+### Valuable delegation and context
+
+Keep one concurrent subagent. The global Codex `[agents]` settings select
+`chatgpt-web/gpt-6-pro` at `max` for spawned agents; keep the primary Codex model
+unchanged. Start one useful, bounded Web task early for meaningful independent
+implementation, research, diagnosis, architecture or review while Codex handles
+non-overlapping work. Use a lower Web model only for genuinely trivial tasks.
+If Pro is at capacity, retry once; do not silently downgrade consequential
+work. Check bridge `doctor --json` and `browser check` before calling a generic
+spawn failure an account limit: a failed `browser-host` check means the local
+launcher cannot verify its ChatGPT browser. If another Codex turn owns the
+shared launcher, defer the Web task until it is idle; do not cancel another
+task's turn or restart the shared runtime. Continue locally if the retry fails
+and report the limitation. Simple one-step work may stay local when delegation
+adds more work than it saves.
+Reuse completed findings or the existing agent for a new bounded question
+instead of spawning near-duplicate workers.
+
+After reconnecting or resuming a failed worker, verify its actual model and effort
+again. A resumed worker can inherit the primary model even when its first turn
+explicitly selected Web Pro. If the interface cannot retain the override, close
+the failed worker and start one fresh bounded worker with the explicit Web model;
+reuse its useful findings rather than repeating the investigation. A worker that
+already occupies the one Web slot must execute its assignment directly, not spawn
+another Web worker to satisfy the same delegation preference.
+
+If a Web follow-up fails with `MissingTrustedCodexEnvironmentError` / missing
+`cwd` in trusted context, preserve its diff and stop sending the same request.
+The native bridge could not establish the current turn's trusted workspace;
+healthy browser/proxy checks and explicit model selection do not prove that
+workspace context is present. Create one fresh bounded worker through the native
+agent interface and verify a harmless file operation in the genuine workspace
+before continuing. Carry forward relevant paths and commits, not full history.
+Never forge environment-context text, weaken trusted-context validation, or
+restart a healthy shared launcher for this error. The 2026-09-29 failure was
+recovered through a fresh Web Pro worker's successful native read; the exact
+historical omission/compaction cause and any released bridge fix were not proven.
+
+For a launcher-backed installation, HTTP `/healthz` alone proves only the proxy
+listener. Recovery must also pass `doctor --json`, `browser check`, and one actual
+connector file/tool operation. Do not start standalone `serve` as a replacement
+for a missing launcher browser. An owned orphan proxy may be gracefully drained
+and shut down only after the official control endpoint confirms zero HTTP and
+browser turns; resume it if idleness cannot be proved. Preserve an active launcher,
+unknown listener and other tasks. Start the installed launcher hidden, retain its
+existing authentication/model/approval settings, then verify the browser, proxy,
+tunnel and actual selected Web model before dispatching consequential work.
+
+Supply the objective, exact paths/symbols/SHA, relevant constraints/invariants,
+expected result, and established facts/failure evidence. Omit unrelated history
+and whole documents/logs; do not omit evidence essential for correct review.
+With the current collaboration tool, `fork_context: false` omits the current
+thread history. Runtime/project/tool instructions still occupy context, and
+files remain shared: a short prompt does not prove a small actual input.
+If the interface cannot control inheritance, record that limit instead of
+promising reduced context.
+
+When higher-effort coverage is required above, request one scoped reviewer to
+check the proposed approach, invariants and failure boundaries before the risky
+implementation, then incorporate its findings. Continue independent work while
+it runs. Reuse that reviewer for the resulting relevant diff/evidence when
+needed; send only the changes and new evidence, not a second full investigation.
+Check the current spawn tool contract and actual selected model. An explicit
+`model="chatgpt-web/gpt-6-pro"` and `reasoning_effort="max"` may be used when the
+saved defaults have not loaded into an existing task. A configured default does
+not itself spawn an agent or prove that a Web request succeeded.
+
+This Web model setting belongs to the local Codex host. Codex Cloud currently
+does not allow changing its default cloud-chat model, and an SSH remote project
+uses the remote host's configuration. Verify the bridge on the execution host
+before claiming that remote development uses Web Pro.
+
+### Output recovery and complete review
+
+Keep `tool_output_token_limit=4000`: it budgets each individual tool/function
+output stored in history, not the whole conversation/task, generated stdout or
+an archive. Tool-specific output limits/pagination may also apply.
+
+When long output must remain inspectable, explicitly redirect it to a suitable
+temporary/existing log before execution. Report exit code, failure summary,
+source path and relevant ranges. Do not permanently archive all successful
+output. If truncated, search/read missing ranges from that source; do not rerun
+the command or repeatedly dump the full log just to recover stdout. If a
+connector truncated upstream, use its pagination/refetch path. The setting
+does not guarantee original-file storage, and raising it cannot restore missing
+upstream content. Never repeat a mutation solely to recover output.
+
+Track which files/sections were actually inspected. Partial diff/log excerpts
+do not establish complete contract, migration or permission review; inspect the
+missing material before closure. An unavailable required source remains an
+evidence gap, never an assumed pass. Consider a supported per-command/read limit
+override only for recurring, evidenced re-read costs; do not change the global
+limit speculatively or confuse display budget with history storage.
+
+### Durable context, evidence reuse and measurement
+
+Keep automatic memory use/generation off and existing memory files intact.
+Use versioned owners instead of a new diary or memory index. Before decisions
+that depend on them, read current HOLD scope/owner/release conditions in the
+[deployment owner](deployment-modes.md) and frontend `DEPLOYMENT-OPERATIONS.md`,
+and the exact SHA/environment/run evidence in the
+[change-risk owner](change-risk-and-release-bundle.md). Missing release evidence
+does not clear a HOLD. Record important design decisions and reusable rejected
+approaches with their reasons in the affected current-state owner only when
+needed; do not reconstruct prior conversations or accumulate speculative TODOs.
+
+Before consequential edits, identify the affected successful user outcome and
+relevant failure/invariant checks in the existing task plan/context. Before
+closure, map each to actual evidence or explicitly report the unresolved gap;
+do not weaken acceptance criteria to meet a token budget or create a separate
+checklist document for every task.
+
+Reuse a check only after confirming relevant code, tests, dependencies, inputs
+and environment match, or documenting why their differences cannot affect the
+claim. Keep the tested SHA/environment and artifact/run link with that claim.
+File extensions such as `.md` or "config" do not prove unchanged behavior;
+assess effective behavior and retain required CI. Canonical and owned worktrees,
+saved defaults, new-session values and existing task/composer state are distinct.
+Read this owner from the fresh owned checkout/origin/main when canonical is stale.
+
+Fast is a separate speed/usage selection for the same model, not reasoning.
+Check installed catalog, authentication route, effective tier and current
+[official Speed guidance](https://learn.chatgpt.com/docs/agent-configuration/speed)
+before changing it. Preserve explicit task choices; an absent saved preference
+does not establish the tier of an existing turn. Never apply API billing claims
+to subscription usage or infer a credit multiplier from raw token counts.
+
+For a few ordinary subsequent tasks, use the existing completion report/artifact
+to note task type/risk, actual model/effort/tier, unique primary+child usage and
+elapsed time, edit/check repeats, review omissions and later reopening. Count
+each usage event once (not parent inherited baselines plus child totals). Measure
+subscription-window changes only when resets and other task consumption can be
+separated. Compare verified completions including rework, not cached-token ratio,
+reasoning share or AGENTS size. Separate canonical/owned and new/existing session
+cohorts. A small medium/high comparison needs the same starting state and
+acceptance criteria; no mass benchmark or quality-equivalence claim by default.
+
+Configuration semantics: [official reference](https://developers.openai.com/codex/config-reference/).
 
 ## Ownership model
 
@@ -56,12 +255,17 @@ pwsh C:\academy\backend\scripts\codex\session-worktree.ps1 `
 `Start` fetches `origin/main` and creates a unique branch and worktree for each
 selected repository. Use `backend`, `frontend`, or `both` to match the actual
 scope. If a foreign dirty tree already exists, leave it untouched and still
-start from current `origin/main` in the owned worktree.
+start from current `origin/main` in the owned worktree. `Start` refuses a new
+local session when its volume has less than 10 GB free, before fetching or
+creating a branch. Use a Codespace for new dependency installs and builds.
+For a small recovery task that needs a local worktree, `-AllowLowDisk` explicitly
+permits `Start`; keep installs and builds remote and close the worktree afterward.
 
 Before editing, record the emitted base SHA and confirm the intended paths with:
 
 ```powershell
-pwsh C:\academy\backend\scripts\codex\session-worktree.ps1 -Action Inspect
+pwsh C:\academy\backend\scripts\codex\session-worktree.ps1 `
+  -Action Inspect -Session attendance-019fb78c -Repository both
 ```
 
 ## Work and integration
@@ -96,7 +300,12 @@ one explicit terminal state:
 For the merged state, the close command performs a full preflight and refuses
 dirty, foreign, or unmerged worktrees before deleting anything. A squash or
 cherry-pick merge is accepted only when `git cherry origin/main HEAD` contains
-no `+` commit; any unique commit preserves the branch:
+no `+` commit; any unique commit preserves the branch. `Close` clears only
+ignored backend Python caches (`.pytest_cache/`, `.ruff_cache/`, and
+`__pycache__/`) after verifying every ignored path. It refuses other ignored
+local files and directories before Git can unregister a worktree and leave an
+incomplete directory. Clear only confirmed regenerable outputs in the exact
+session, then close a merged session promptly:
 
 ```powershell
 pwsh C:\academy\backend\scripts\codex\session-worktree.ps1 `
@@ -114,10 +323,95 @@ pwsh C:\academy\backend\scripts\codex\session-worktree.ps1 -Action Sync
 `Sync` refuses dirty, non-`main`, or divergent canonical roots. It never resets,
 rebases, force-checks out, or deletes user work.
 
+A reused owned worktree may have a later `codex/*` branch that no longer matches
+its original session name. After confirming the exact registered path and that
+no active task/process needs it, pass `-ExpectedBranch <exact-current-branch>`
+with `Close` and one repository. A missing or mismatched explicit branch still
+refuses a reused checkout; dirty, unmerged, ignored-data and remote-integration
+checks remain unchanged. This does not authorize closing another task's checkout.
 `Close` validates integration against freshly fetched `origin/main`, not the
 possibly stale canonical checkout. After that fail-closed preflight succeeds it
 removes the exact session branch even when concurrent work intentionally keeps
 the canonical `main` behind the remote.
+
+## Local disk capacity
+
+Check free space before large dependency installs or worktree batches:
+
+```powershell
+Get-PSDrive C | Select-Object @{Name='FreeGB';Expression={[math]::Round($_.Free/1GB,1)}}
+```
+
+When free space falls below 10 GB, inspect and close old merged, clean sessions
+first. Preserve unmerged branches, dirty worktrees, ignored local data outside
+confirmed regenerable outputs, and `_artifacts/` evidence. A failed `Close`
+may leave a directory after Git unregisters the worktree; inspect its remaining
+files before any manual cleanup. `pnpm` hardlinks package files across many
+worktrees, so directory totals can overstate physical disk use. Use volume free
+space before and after maintenance to measure actual savings.
+
+On NTFS, mark the session and artifact parent directories as compressed so new
+children inherit compression without deleting data:
+
+```powershell
+compact /C /Q C:\academy\_worktrees\sessions C:\academy\_artifacts
+Get-Item C:\academy\_worktrees\sessions, C:\academy\_artifacts |
+  Select-Object FullName,Attributes
+```
+
+Both parent directories must report `Compressed`. This does not compress
+existing descendants. Compression can add CPU cost to builds, so measure it
+locally before extending it to existing dependency trees.
+
+## Remote development when local space is low
+
+When C: has under 10 GB free, run new dependency-heavy development in a GitHub
+Codespace created from `academy-backend/main`. This moves its working files,
+package installs, builds, and owned worktrees to remote storage; Git alone is
+source control and does not execute builds. Use the existing Codespace if it is
+available. Keep its idle timeout short and stop it after work; review its
+compute and storage usage in GitHub. A stopped Codespace retains files until its
+retention deadline, so push completed branches and PRs before that deadline.
+
+In the Codespace, keep `/workspaces/academy-backend` and, for frontend work,
+`/workspaces/academy-frontend` as clean canonical checkouts. Clone the frontend
+only when needed:
+
+```bash
+git clone --filter=blob:none --single-branch --branch main \
+  https://github.com/guswls3028-art/academy-frontend.git \
+  /workspaces/academy-frontend
+```
+
+Install dependencies only for the current task.
+Authenticate the remote Codex CLI with the user's account; never commit its
+authentication file. The local ChatGPT Web bridge configuration does not carry
+over to the Codespace. Verify the selected remote model and runtime before
+claiming Web Pro delegation there.
+
+The Windows `session-worktree.ps1` uses `C:\academy` paths and does not run in
+the Linux Codespace. Preserve the same ownership and release rules with Git's
+native worktree commands. From a clean canonical repository, for each needed
+repository:
+
+```bash
+slug=example-01a0d31f
+repo=/workspaces/academy-backend # or /workspaces/academy-frontend
+git -C "$repo" fetch origin main
+mkdir -p "/workspaces/_sessions/$slug"
+git -C "$repo" worktree add -b "codex/$slug" \
+  "/workspaces/_sessions/$slug/$(basename "$repo")" origin/main
+git -C "$repo" rev-parse origin/main
+git -C "/workspaces/_sessions/$slug/$(basename "$repo")" status --short
+```
+
+Use a unique slug and record the base SHA. Work, commit, push, and run focused
+checks inside only that owned remote worktree. Hand off exact SHA and CI to the
+release owner; the production source and gates are unchanged. Keep review-pending
+worktrees. After integration, fetch `origin/main`, verify the worktree is clean
+and `git cherry origin/main HEAD` has no `+` commits, then remove only the exact
+owned worktree and branch. Preserve unmerged or dirty work. Stop the Codespace
+with `gh codespace stop -c <name>` after remote commands finish.
 
 ## Verification
 

@@ -73,13 +73,33 @@ UI/API 소비자는 `monthly_supply_amount`, `monthly_tax_amount`,
 제공한다. `feature_flags`는 학원별 운영 모드를 위한 설정일 뿐 결제 등급이나
 기능 잠금으로 사용하지 않는다.
 
-구독 유예기간 SSOT는 `BILLING_GRACE_PERIOD_DAYS`(기본 7일)다. 유예 상태의
+구독 유예기간 SSOT는 `BILLING_GRACE_PERIOD_DAYS`(기본 30일)다. 유예 상태의
 실제 접근 종료일은 `service_access_expires_at`/`grace_expires_at`이며,
 `process_billing`이 active → grace → expired 전이를 수행한다.
 장기간 실행이 누락된 테넌트는 한 번의 실제 배치에서 두 전이를 연속 적용해
 `expired`로 수렴한다. `--dry-run`도 DB를 변경하지 않으면서 같은 전체 전이
 체인을 출력해야 한다. `audit_billing_fields --strict`는 만료일이 지난 `active`
 상태와 유예 종료일이 지난 `grace` 상태를 운영 오류로 판정한다.
+
+유료 이용기간 종료 다음 날부터 30일째까지 수업·학생 이용을 유지한다.
+`active` 레코드도 기간이 지나면 같은 유예 종료일로 접근을 판정하므로,
+자정과 00:05 배치 사이 또는 배치 지연 중에 이용이 끊기지 않는다. 31일째부터
+기존 402 제한이 적용되며, 명시적 해지 예약·이미 `expired`인 레코드·기간 누락은
+자동 복구하지 않는다. 유예는 결제 완료나 청구서 납부기한 변경이 아니므로
+인보이스·수납 기록은 보존한다.
+
+`GET /api/v1/core/me/`의 `subscription_notice`는 현재 테넌트의 활성
+`owner/admin/teacher/staff` 멤버에게만 제공한다. 유료 기간이 지났지만 이용 가능한
+경우 만료일·유예 이용 종료일·경과일·남은 일수를 반환하며 금액·계좌·고객 개인정보는
+포함하지 않는다. 학생·학부모, 무기한 예외, 정상 기간, 해지 예약은 `null`이다.
+결제 갱신 후 다음 `/me/` 조회부터 안내가 사라진다. 로그인당 한 번 닫을 수 있는
+팝업은 [프론트 운영 가이드](../../../frontend/docs/USER-GUIDE-ADMIN.md)가 소유한다.
+`/me/` 오류는 기존 인증 오류 처리와 재시도를 따르며 안내 조회를 이유로 별도
+결제 권한이나 서버 쓰기를 부여하지 않는다.
+
+검증: `test_subscription_login_notice`, `test_middleware_402`,
+`test_process_billing_command`, `test_subscription_view`로 역할·테넌트 격리,
+갱신 후 안내 해제, 배치 전 접근, 30/31일 경계와 명시적 해지 제한을 확인한다.
 
 명시적으로 승인된 무기한 이용 테넌트는 운영 SSM `/academy/api/env`의
 `BILLING_EXEMPT_TENANT_IDS`로 관리한다. 예외 테넌트는 만료일·다음 결제일 없이

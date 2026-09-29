@@ -16,6 +16,7 @@ from apps.domains.ai.models import AIJobModel, AIResultModel
 from apps.domains.ai.queueing.publisher import publish_ai_job_sqs
 from apps.domains.ai.services.excel_job_secrets import (
     EXCEL_CREDENTIALS_ENVELOPE_FIELD,
+    EXCEL_SECRET_PREFIX,
 )
 from apps.shared.contracts.ai_result import AIResult
 
@@ -170,8 +171,11 @@ class ToolWorkerRoutingTests(TestCase):
 
         stored = AIResultModel.objects.get(job=job).payload
         assert stored["created"] == 1
-        assert EXCEL_CREDENTIALS_ENVELOPE_FIELD in stored
-        assert "0042" not in str(stored)
+        # Random ciphertext can contain a short PIN by chance; check its envelope.
+        assert set(stored) == {"created", EXCEL_CREDENTIALS_ENVELOPE_FIELD}
+        envelope = stored[EXCEL_CREDENTIALS_ENVELOPE_FIELD]
+        assert set(envelope) == {"ciphertext", "expires_at"}
+        assert envelope["ciphertext"].startswith(EXCEL_SECRET_PREFIX)
         assert repo.get_result_payload_for_job(job) == {"created": 1}
         assert repo.get_result_payload_for_job(
             job,

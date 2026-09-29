@@ -13,6 +13,59 @@ permissions:
   contents: read
 
 jobs:
+  native-security-diff:
+    name: Detect native security image changes
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.diff.outputs.changed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Detect base-image security changes
+        id: diff
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          elif git diff --quiet \
+            "${{ github.event.pull_request.base.sha }}"...HEAD -- \
+            docker/Dockerfile.base docker/native-security/; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  native-security-image:
+    name: Native security arm64 image contract
+    needs: native-security-diff
+    if: needs.native-security-diff.outputs.changed == 'true'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+      - name: Build patched Academy base image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          file: docker/Dockerfile.base
+          platforms: linux/arm64
+          load: true
+          tags: academy-base:native-security-check
+          build-args: APT_REFRESH_TOKEN=${{ github.run_id }}-${{ github.run_attempt }}
+          cache-from: type=gha,scope=backend-native-security
+          cache-to: type=gha,mode=max,scope=backend-native-security
+          provenance: false
+      - name: Verify fixed package versions and runtime ABI
+        run: |
+          docker run --rm --platform linux/arm64 \
+            -v "${GITHUB_WORKSPACE}/docker/native-security/verify-fixed-libs.sh:/tmp/verify-fixed-libs.sh:ro" \
+            academy-base:native-security-check sh /tmp/verify-fixed-libs.sh
+
   static-contract:
     name: Backend static and migration contract
     runs-on: ubuntu-latest
@@ -106,6 +159,8 @@ jobs:
       - name: Deployment contract tests
         shell: pwsh
         run: |
+          python -B -m unittest scripts.v1.test_frontend_development_qa -v
+          if ($LASTEXITCODE -ne 0) { throw "Frontend development QA boundary contracts failed." }
           ./scripts/codex/test-change-risk-contract.ps1
           ./scripts/codex/test-production-release-bundle-contract.ps1
           ./scripts/v1/test-verification-contract.ps1

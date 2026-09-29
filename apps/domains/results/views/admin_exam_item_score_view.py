@@ -26,13 +26,16 @@ from apps.domains.results.services.answer_matching import answer_matches, correc
 from apps.domains.results.services.manual_subjective_score import (
     explicit_manual_subjective_score_for_result,
 )
+from apps.domains.results.services.omr_subjective_completion import (
+    finalize_omr_result_if_ready,
+)
 from apps.support.omr.score_shape import get_exam_score_shape
 from apps.support.results.admin_exam_item_score_dependencies import (
     dispatch_progress_pipeline,
     get_answer_key_value,
     get_exam_question_for_item_score,
     get_latest_exam_submission_id,
-    get_regular_active_exam_for_tenant,
+    lock_regular_active_exam_for_tenant,
 )
 
 _OBJECTIVE_CHOICE_LABELS = {"1", "2", "3", "4", "5"}
@@ -110,11 +113,17 @@ class AdminExamItemScoreView(APIView):
         question_id = int(question_id)
 
         # ✅ tenant isolation: verify exam belongs to tenant
-        exam = get_regular_active_exam_for_tenant(
+        exam = lock_regular_active_exam_for_tenant(
             exam_id=exam_id,
             tenant=request.tenant,
         )
-        require_score_edit_lease_from_headers(request, exam_id=exam_id)
+        require_score_edit_lease_from_headers(
+            request,
+            exam_id=exam_id,
+            enrollment_id=enrollment_id,
+            sub="item",
+            question_id=question_id,
+        )
         score_shape = get_exam_score_shape(exam)
 
         # ✅ tenant isolation: verify enrollment belongs to tenant
@@ -186,7 +195,11 @@ class AdminExamItemScoreView(APIView):
         # -------------------------------------------------
         # 2️⃣ Attempt 상태 확인 (LOCK)
         # -------------------------------------------------
-        attempt = ExamAttempt.objects.filter(id=int(result.attempt_id)).first()
+        attempt = (
+            ExamAttempt.objects.select_for_update()
+            .filter(id=int(result.attempt_id))
+            .first()
+        )
         if not attempt:
             raise NotFound({"detail": "attempt not found", "code": "NOT_FOUND"})
 
@@ -315,12 +328,11 @@ class AdminExamItemScoreView(APIView):
         # -------------------------------------------------
         agg_items = list(ResultItem.objects.filter(result=result))
         items_sum = sum(float(x.score or 0.0) for x in agg_items)
-        items_max_sum = sum(float(x.max_score or 0.0) for x in agg_items)
 
         choice_items_sum = 0.0
         essay_items_sum = 0.0
         has_choice_items = False
-        has_essay_items = False
+        has_automatic_essay_items = False
         has_unknown_items = False
         for score_item in agg_items:
             kind = score_shape.question_kind(int(score_item.question_id))
@@ -329,14 +341,14 @@ class AdminExamItemScoreView(APIView):
                 has_choice_items = True
             elif kind == "essay":
                 essay_items_sum += float(score_item.score or 0.0)
-                has_essay_items = True
+                if score_item.source not in {"manual", "manual_grid"}:
+                    has_automatic_essay_items = True
             else:
                 has_unknown_items = True
 
         if has_unknown_items:
             objective_score = float(result.objective_score or 0.0)
             total_score = items_sum
-            max_total = items_max_sum
         else:
             previous_objective = float(result.objective_score or 0.0)
             explicit_subjective = explicit_manual_subjective_score_for_result(
@@ -345,14 +357,10 @@ class AdminExamItemScoreView(APIView):
                 score_shape=score_shape,
             )
             objective_score = choice_items_sum if has_choice_items else previous_objective
-            subjective_score = essay_items_sum if has_essay_items else explicit_subjective
+            subjective_score = essay_items_sum if has_automatic_essay_items else explicit_subjective
             total_score = objective_score + subjective_score
-            max_total = float(
-                score_shape.total_max_score
-                or getattr(exam, "max_score", 0.0)
-                or items_max_sum
-                or 0.0
-            )
+
+        max_total = float(getattr(exam, "max_score", 100.0) or 100.0)
 
         if max_total > 0 and total_score > max_total:
             raise ValidationError(
@@ -371,6 +379,8 @@ class AdminExamItemScoreView(APIView):
             attempt.meta.pop("status", None)
             attempt.save(update_fields=["meta", "updated_at"])
 
+        finalization = finalize_omr_result_if_ready(result_id=int(result.id))
+
         # -------------------------------------------------
         # 7️⃣ progress pipeline 즉시 트리거
         # -------------------------------------------------
@@ -379,17 +389,20 @@ class AdminExamItemScoreView(APIView):
             enrollment_id=enrollment_id,
             exam_id=exam_id,
         )
-        if submission_id:
-            dispatch_progress_pipeline(submission_id=submission_id)
-        else:
-            dispatch_progress_pipeline(exam_id=int(exam_id))
+        if finalization.projection_ready or finalization.transitioned:
+            if submission_id:
+                dispatch_progress_pipeline(submission_id=submission_id)
+            else:
+                dispatch_progress_pipeline(exam_id=int(exam_id))
 
         # 정책 SSOT: messaging-policy.md "저장과 발송은 분리" — 점수 저장 자체는 알림 트리거 아님.
         # exam_score_published = MANUAL_DEFAULT. 학원장이 명시적으로 발송 버튼 클릭(preview→confirm)할 때만 발송.
 
         return Response(
             {
-                "ok": True,
+                "ok": finalization.projection_ready,
+                "saved": True,
+                "projection_ready": finalization.projection_ready,
                 "exam_id": exam_id,
                 "enrollment_id": enrollment_id,
                 "question_id": question_id,
@@ -397,6 +410,7 @@ class AdminExamItemScoreView(APIView):
                 "objective_score": float(result.objective_score or 0.0),
                 "total_score": float(total_score),
                 "max_score": float(max_total),
+                "grading_status": finalization.pending_reason,
             },
             status=drf_status.HTTP_200_OK,
         )

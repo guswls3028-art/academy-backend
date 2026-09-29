@@ -51,6 +51,7 @@ from academy.application.use_cases.student_video_access_context import (
     resolve_student_video_access_context,
     student_can_access_video,
 )
+from academy.adapters.db.django import repositories_video as video_repo
 from apps.domains.enrollment.selectors import learning_history_enrollments_for_student
 from apps.api.common.query_params import parse_query_bool
 from .serializers import (
@@ -59,6 +60,7 @@ from .serializers import (
     StudentVideoForwardSkipResponseSerializer,
     StudentVideoListItemSerializer,
     StudentVideoPlaybackSerializer,
+    StudentVideoPlaybackRequestSerializer,
 )
 
 
@@ -257,6 +259,11 @@ class StudentVideoMeView(APIView):
             .order_by("lecture__title")
         )
         enrollment_by_lecture = {e.lecture_id: e.id for e in enrollments}
+        active_session_ids_by_lecture = {e.lecture_id: set() for e in enrollments}
+        for lecture_id, session_id in video_repo.video_session_memberships(
+            tenant_id=tenant.id, enrollment_ids=list(enrollment_by_lecture.values()),
+        ).values_list("enrollment__lecture_id", "session_id"):
+            active_session_ids_by_lecture[lecture_id].add(session_id)
         active_lecture_ids = set(enrollment_by_lecture)
         inactive_entitlements = []
         for candidate in active_inactive_video_entitlements_for_student(
@@ -352,6 +359,14 @@ class StudentVideoMeView(APIView):
             Session.objects.filter(lecture_id__in=all_lecture_ids)
             .values_list("id", flat=True)
         )
+        active_session_ids = set().union(*active_session_ids_by_lecture.values())
+        session_ids_all = [
+            session_id for session_id in session_ids_all
+            if session_id in active_session_ids
+            or (public_session is not None and session_id == public_session.id)
+            or any(session_id in ids for ids in inactive_session_ids_by_lecture.values())
+            or any(session_id in ids for ids in direct_session_ids_by_lecture.values())
+        ]
         video_summary_by_session = {}
         first_video_by_lecture = {}
         if session_ids_all:
@@ -392,6 +407,8 @@ class StudentVideoMeView(APIView):
             inactive_session_ids = inactive_session_ids_by_lecture.get(lec.id)
             direct_session_ids = direct_session_ids_by_lecture.get(lec.id)
             exact_session_ids = inactive_session_ids or direct_session_ids
+            if lec.id in active_session_ids_by_lecture:
+                exact_session_ids = active_session_ids_by_lecture[lec.id]
             if exact_session_ids is not None:
                 sessions = [s for s in sessions if s.id in exact_session_ids]
             sessions_data = [
@@ -577,7 +594,7 @@ class StudentVideoStatsView(APIView):
     """
     GET /student/video/me/stats/
     학생 영상 시청 통계 — 전체 진도율, 완료 영상 수, 강좌별 진도.
-    활성 수강 강좌의 READY 영상 전체를 분모로 삼고, VideoProgress는 진도만 보강한다.
+    활성 수강의 등록된 차시와 시스템 공개 공간의 READY 영상을 분모로 삼는다.
     """
 
     permission_classes = [IsAuthenticated, IsStudentOrParent]
@@ -630,6 +647,11 @@ class StudentVideoStatsView(APIView):
                 session__lecture_id__in=list(enrollments_by_lecture.keys()),
                 session__lecture__tenant=tenant,
                 status=Video.Status.READY,
+            ).filter(
+                Q(session_id__in=video_repo.video_session_memberships(
+                    tenant_id=tenant.id, enrollment_ids=enrollment_ids,
+                ).values("session_id"))
+                | Q(session__lecture__is_system=True)
             ).values("id", "duration", "session__lecture_id")
         )
 
@@ -948,13 +970,17 @@ class StudentVideoPlaybackView(APIView):
         return self._resolve_playback(request, video_id)
 
     @extend_schema(
-        request=None,
+        request=StudentVideoPlaybackRequestSerializer,
         responses={200: StudentVideoPlaybackSerializer},
     )
     def post(self, request, video_id: int):
-        return self._resolve_playback(request, video_id)
+        serializer = StudentVideoPlaybackRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return self._resolve_playback(
+            request, video_id, event_protocol_version=serializer.validated_data["event_protocol_version"],
+        )
 
-    def _resolve_playback(self, request, video_id: int):
+    def _resolve_playback(self, request, video_id: int, *, event_protocol_version=1):
         Video, VideoPermission = _import_media_models()
         explicit_enrollment_id = _get_explicit_enrollment_id(request)
         access_check = parse_query_bool(
@@ -1133,6 +1159,7 @@ class StudentVideoPlaybackView(APIView):
         playback_session_id = None
         playback_expires_at = None
         playback_policy_version = int(getattr(video, "policy_version", 1) or 1)
+        playback_event_protocol_version = 1
         if enrollment_obj or direct_entitlement is not None:
             try:
                 if direct_entitlement is not None:
@@ -1147,10 +1174,12 @@ class StudentVideoPlaybackView(APIView):
                         enrollment=enrollment_obj,
                         user=request.user,
                         device_id=str(request.headers.get("X-Device-Id") or request.user.id),
+                        event_protocol_version=event_protocol_version,
                     )
                 playback_token = playback_grant.token
                 playback_session_id = playback_grant.session_id
                 playback_expires_at = playback_grant.expires_at
+                playback_event_protocol_version = playback_grant.event_protocol_version
                 playback_policy_version = (
                     playback_grant.policy_version or playback_policy_version
                 )
@@ -1290,6 +1319,7 @@ class StudentVideoPlaybackView(APIView):
             "playback_session_id": playback_session_id,
             "playback_expires_at": playback_expires_at,
             "policy_version": playback_policy_version,
+            "event_protocol_version": playback_event_protocol_version,
             "policy": {
                 **playback_policy,
                 "source": {
@@ -1407,6 +1437,7 @@ class StudentVideoProgressView(APIView):
     def post(self, request, video_id: int):
         Video, _VideoPermission = _import_media_models()
         VideoProgress = get_video_progress_model()
+        request_student = get_request_student(request)
 
         explicit_enrollment_id = _get_explicit_enrollment_id(request, include_body=True)
 
@@ -1432,13 +1463,10 @@ class StudentVideoProgressView(APIView):
         enrollment = access_context.enrollment
         if enrollment is None:
             return _progress_echo_response(video_id=video.id, enrollment_id=0, request=request)
-
-        # 학부모: 영상 시청은 가능하나 진행률 기록 저장 안 함 (읽기 전용)
-        if getattr(request.user, "parent_profile", None) is not None:
-            return _progress_echo_response(
-                video_id=video.id,
-                enrollment_id=enrollment.id,
-                request=request,
+        if enrollment.student_id != request_student.id:
+            return Response(
+                {"detail": "선택한 자녀의 수강 정보가 아닙니다.", "code": "student_mismatch"},
+                status=status.HTTP_403_FORBIDDEN,
             )
 
         # 진행률 업데이트 또는 생성

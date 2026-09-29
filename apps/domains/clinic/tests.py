@@ -195,6 +195,10 @@ class MultiTenantIsolationTest(TestCase, ClinicTestMixin):
         first_enrollment = self.a["enrollments"][0]
         second_lecture = self.make_lecture(tenant, title="영어")
         second_session = self.make_lecture_session(second_lecture, order=2)
+        # This lifecycle checks work after the original assessments, not a new exam.
+        for assessment_session in (self.a["lec_session"], second_session):
+            assessment_session.date = timezone.localdate() - datetime.timedelta(days=2)
+            assessment_session.save(update_fields=["date", "updated_at"])
         second_enrollment = self.make_enrollment(tenant, student, second_lecture)
         second_exam = Exam.objects.create(
             tenant=tenant,
@@ -1374,11 +1378,19 @@ class ParticipantCreateServiceAPITest(APITestCase, ClinicAPITestMixin):
 
     def test_admin_create_with_enrollment_resolves_student_and_reason(self):
         enrollment = self.data["enrollments"][0]
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="참가자 사유 실재 시험",
+            exam_type=Exam.ExamType.REGULAR,
+            is_active=True,
+        )
+        exam.sessions.add(self.data["lec_session"])
         self.make_clinic_link(
             enrollment,
             self.data["lec_session"],
             tenant=self.tenant,
             source_type="exam",
+            source_id=exam.id,
         )
 
         resp = self.client.post(
@@ -1540,6 +1552,29 @@ class ParticipantStatusTransitionAPITest(APITestCase, ClinicAPITestMixin):
         self.student = self.data["students"][0]
         self.student.user.tenant = self.tenant
         self.student.user.save(update_fields=["tenant"])
+
+    def test_ended_lecture_keeps_booking_history_without_current_chip(self):
+        self.client.force_authenticate(user=self.admin)
+        enrollment = self.data["enrollments"][0]
+        participant = self.make_participant(
+            self.tenant,
+            self.data["clinic_session"],
+            self.student,
+            enrollment=enrollment,
+        )
+        url = f"/api/v1/clinic/participants/{participant.id}/"
+        before = self.client.get(url, **self._headers(self.tenant))
+        self.assertEqual(before.status_code, 200, before.data)
+        self.assertTrue(before.data["lecture_current"])
+        self.assertEqual(before.data["lecture_title"], enrollment.lecture.title)
+
+        enrollment.lecture.is_active = False
+        enrollment.lecture.save(update_fields=["is_active"])
+        after = self.client.get(url, **self._headers(self.tenant))
+        self.assertEqual(after.status_code, 200, after.data)
+        self.assertFalse(after.data["lecture_current"])
+        self.assertEqual(after.data["lecture_title"], enrollment.lecture.title)
+        self.assertEqual(after.data["id"], participant.id)
 
     def test_staff_can_mark_booked_as_no_show(self):
         self.client.force_authenticate(user=self.admin)
@@ -1787,6 +1822,109 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
         self.assertEqual(participant.enrollment_id, target_enrollment.id)
         self.assertEqual(participant.clinic_reason, "exam")
 
+    def test_ended_target_lecture_disappears_from_student_calendar_and_cannot_be_booked(self):
+        lecture = self.data["lecture"]
+        session = self.data["clinic_session"]
+        session.target_lectures.set([lecture])
+
+        def visible_session_ids():
+            response = self.client.get(
+                "/api/v1/clinic/sessions/", **self._headers(self.tenant)
+            )
+            self.assertEqual(response.status_code, 200, response.data)
+            return {row["id"] for row in response.data.get("results", response.data)}
+
+        self.assertIn(session.id, visible_session_ids())
+        lecture.is_active = False
+        lecture.save(update_fields=["is_active", "updated_at"])
+        self.assertNotIn(session.id, visible_session_ids())
+
+        booking = self.client.post(
+            "/api/v1/clinic/participants/",
+            {"session": session.id},
+            format="json",
+            **self._headers(self.tenant),
+        )
+        self.assertEqual(booking.status_code, 403, booking.data)
+        self.assertFalse(SessionParticipant.objects.filter(session=session).exists())
+
+        lecture.is_active = True
+        lecture.save(update_fields=["is_active", "updated_at"])
+        self.assertIn(session.id, visible_session_ids())
+
+    def test_unrestricted_booking_ignores_newer_ended_enrollment(self):
+        current_enrollment = self.data["enrollments"][0]
+        ended_lecture = self.make_lecture(
+            self.tenant, title="종료 과학", name="종료 과학", subject="science"
+        )
+        ended_enrollment = self.make_enrollment(
+            self.tenant, self.student, ended_lecture
+        )
+        self.assertGreater(ended_enrollment.id, current_enrollment.id)
+        ended_lecture.is_active = False
+        ended_lecture.save(update_fields=["is_active", "updated_at"])
+
+        response = self.client.post(
+            "/api/v1/clinic/participants/",
+            {"session": self.data["clinic_session"].id},
+            format="json",
+            **self._headers(self.tenant),
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(
+            SessionParticipant.objects.get(id=response.data["id"]).enrollment_id,
+            current_enrollment.id,
+        )
+
+    def test_current_middle_school_class_calendar_survives_old_course_end(self):
+        self.student.school_type = "MIDDLE"
+        self.student.grade = 3
+        self.student.save(update_fields=["school_type", "grade", "updated_at"])
+        current_lecture = self.make_lecture(
+            self.tenant, title="중3 정규 생물", name="중3 정규 생물", subject="science"
+        )
+        current_enrollment = self.make_enrollment(
+            self.tenant, self.student, current_lecture
+        )
+        clinic_session = self.data["clinic_session"]
+        clinic_session.target_grade = 3
+        clinic_session.target_school_type = "MIDDLE"
+        clinic_session.save(update_fields=["target_grade", "target_school_type", "updated_at"])
+        clinic_session.target_lectures.set([current_lecture])
+        old_lecture = self.data["lecture"]
+        old_lecture.is_active = False
+        old_lecture.save(update_fields=["is_active", "updated_at"])
+
+        listed = self.client.get(
+            "/api/v1/clinic/sessions/", **self._headers(self.tenant)
+        )
+        self.assertEqual(listed.status_code, 200, listed.data)
+        self.assertIn(
+            clinic_session.id,
+            {row["id"] for row in listed.data.get("results", listed.data)},
+        )
+        booked = self.client.post(
+            "/api/v1/clinic/participants/",
+            {"session": clinic_session.id},
+            format="json",
+            **self._headers(self.tenant),
+        )
+        self.assertEqual(booked.status_code, 201, booked.data)
+        self.assertEqual(
+            SessionParticipant.objects.get(id=booked.data["id"]).enrollment_id,
+            current_enrollment.id,
+        )
+
+    def test_unrestricted_calendar_requires_an_active_course(self):
+        self.data["lecture"].is_active = False
+        self.data["lecture"].save(update_fields=["is_active", "updated_at"])
+
+        listed = self.client.get(
+            "/api/v1/clinic/sessions/", **self._headers(self.tenant)
+        )
+        self.assertEqual(listed.status_code, 200, listed.data)
+        self.assertEqual(listed.data.get("results", listed.data), [])
+
     def test_idcard_aggregates_targets_from_all_active_enrollments(self):
         target_enrollment = self.data["enrollments"][0]
         link = self._make_live_exam_clinic_link(
@@ -2022,10 +2160,130 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
         self.assertEqual(resp.data["booking_status_label"], "승인 대기")
         self.assertEqual(resp.data["current_booking"]["participant_id"], pending.id)
 
+    def test_new_assessment_does_not_reuse_older_attendance_or_earlier_booking(self):
+        from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
+
+        enrollment = self.data["enrollments"][0]
+        today = timezone.localdate()
+        assessment_session = self.data["lec_session"]
+        assessment_session.date = today + datetime.timedelta(days=2)
+        assessment_session.save(update_fields=["date", "updated_at"])
+        link = self._make_live_exam_clinic_link(enrollment, assessment_session)
+        previous = self.make_clinic_session(self.tenant, date=today - datetime.timedelta(days=11))
+        attended = self.make_participant(
+            self.tenant, previous, self.student, enrollment=enrollment,
+            status=SessionParticipant.Status.ATTENDED,
+        )
+        attended.checked_out_at = timezone.now() - datetime.timedelta(days=11)
+        attended.save(update_fields=["checked_out_at", "updated_at"])
+        before_exam = self.make_clinic_session(self.tenant, date=today + datetime.timedelta(days=1))
+        booked = self.make_participant(
+            self.tenant, before_exam, self.student, enrollment=enrollment,
+            status=SessionParticipant.Status.BOOKED,
+        )
+
+        def read_state():
+            response = self.client.get("/api/v1/clinic/idcard/", **self._headers(self.tenant))
+            self.assertEqual(response.status_code, 200, response.data)
+            highlights = compute_clinic_highlight_map(
+                tenant=self.tenant, enrollment_ids={enrollment.id},
+            )
+            return response.data, highlights[enrollment.id]
+
+        for _ in range(2):
+            state, highlighted = read_state()
+            self.assertEqual(state["passcard_state"], "CLINIC_REQUIRED")
+            self.assertFalse(state["can_leave"])
+            self.assertIsNone(state["current_booking"])
+            self.assertEqual(state["valid_bookings"], [])
+            self.assertTrue(highlighted)
+
+        # The ordinary same-day booking remains valid; no blanket attendance guard.
+        before_exam.date = assessment_session.date
+        before_exam.save(update_fields=["date", "updated_at"])
+        for _ in range(2):
+            state, highlighted = read_state()
+            self.assertEqual(state["passcard_state"], "BOOKING_CONFIRMED")
+            self.assertEqual(state["current_booking"]["participant_id"], booked.id)
+            self.assertEqual([item["participant_id"] for item in state["valid_bookings"]], [booked.id])
+            self.assertFalse(highlighted)
+        attended.refresh_from_db()
+        link.refresh_from_db()
+        self.assertEqual(attended.status, SessionParticipant.Status.ATTENDED)
+        self.assertIsNotNone(attended.checked_out_at)
+        self.assertIsNone(attended.completed_at)
+        self.assertIsNone(link.resolved_at)
+
+    @timezone.override("Asia/Seoul")
+    def test_undated_assessment_uses_local_requirement_date_not_utc_date(self):
+        from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
+
+        enrollment = self.data["enrollments"][0]
+        today = timezone.localdate()
+        yesterday = today - datetime.timedelta(days=1)
+        link = self._make_live_exam_clinic_link(enrollment, self.data["lec_session"])
+        self.assertIsNone(self.data["lec_session"].date)
+        # Yesterday 18:00 UTC is today 03:00 KST.
+        ClinicLink.objects.filter(id=link.id).update(created_at=datetime.datetime.combine(
+            yesterday, datetime.time(18), tzinfo=datetime.timezone.utc,
+        ))
+        clinic = self.make_clinic_session(self.tenant, date=yesterday, location="날짜 기준 검증실")
+        self.make_participant(
+            self.tenant, clinic, self.student, enrollment=enrollment,
+            status=SessionParticipant.Status.ATTENDED,
+        )
+        for expected, expected_highlight in (("CLINIC_REQUIRED", True), ("BOOKING_CONFIRMED", False)):
+            response = self.client.get("/api/v1/clinic/idcard/", **self._headers(self.tenant))
+            self.assertEqual(response.data["passcard_state"], expected)
+            self.assertEqual(compute_clinic_highlight_map(
+                tenant=self.tenant, enrollment_ids={enrollment.id},
+            )[enrollment.id], expected_highlight)
+            clinic.date = today
+            clinic.save(update_fields=["date", "updated_at"])
+
+    def test_passcard_booking_cutoff_includes_new_requirement_in_other_active_lecture(self):
+        from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
+
+        enrollment = self.data["enrollments"][0]
+        today = timezone.localdate()
+        session = self.data["lec_session"]
+        session.date = today - datetime.timedelta(days=2)
+        session.save(update_fields=["date", "updated_at"])
+        self._make_live_exam_clinic_link(enrollment, session)
+        other_lecture = self.make_lecture(self.tenant, title="새 시험 강의")
+        other_enrollment = self.make_enrollment(self.tenant, self.student, other_lecture)
+        other_session = self.make_lecture_session(other_lecture)
+        other_session.date = today
+        other_session.save(update_fields=["date", "updated_at"])
+        newer_link = self._make_live_exam_clinic_link(other_enrollment, other_session)
+        clinic = self.make_clinic_session(self.tenant, date=today - datetime.timedelta(days=1))
+        self.make_participant(
+            self.tenant, clinic, self.student, enrollment=enrollment,
+            status=SessionParticipant.Status.ATTENDED,
+        )
+
+        def highlight():
+            # Even a session-scoped request must include the student's other active requirement.
+            return compute_clinic_highlight_map(
+                tenant=self.tenant, enrollment_ids={enrollment.id}, session=session,
+            )[enrollment.id]
+
+        self.assertTrue(highlight())
+        response = self.client.get("/api/v1/clinic/idcard/", **self._headers(self.tenant))
+        self.assertEqual(response.data["passcard_state"], "CLINIC_REQUIRED")
+        newer_link.resolved_at = timezone.now()
+        newer_link.save(update_fields=["resolved_at", "updated_at"])
+        self.assertFalse(highlight(), "The original still-in-progress clinic remains valid for the older requirement.")
+        response = self.client.get("/api/v1/clinic/idcard/", **self._headers(self.tenant))
+        self.assertEqual(response.data["passcard_state"], "BOOKING_CONFIRMED")
+
     def test_idcard_reservation_holds_until_completion_then_requires_next_booking(self):
         from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
 
         enrollment = self.data["enrollments"][0]
+        assessment_session = self.data["lec_session"]
+        assessment_session.date = timezone.localdate() - datetime.timedelta(days=2)
+        assessment_session.save(update_fields=["date", "updated_at"])
         link = self._make_live_exam_clinic_link(
             enrollment,
             self.data["lec_session"],
