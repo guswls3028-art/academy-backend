@@ -49,11 +49,28 @@ try {
         ))
     }
 
+    $freeBytes = [IO.DriveInfo]::new([IO.Path]::GetPathRoot($fixtureRoot)).AvailableFreeSpace
+    if ($freeBytes -lt 10GB) {
+        $lowDiskRefused = $false
+        try {
+            & $scriptUnderTest `
+                -Action Start `
+                -Session low-disk-test `
+                -Repository both `
+                -WorkspaceRoot $fixtureRoot *> $null
+        } catch {
+            $lowDiskRefused = $_.Exception.Message.Contains("new local sessions require 10 GB")
+        }
+        Assert-True $lowDiskRefused "Start must refuse a new session below 10 GB."
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $fixtureRoot "_worktrees\sessions\low-disk-test"))) "Low-disk refusal must not create a worktree."
+    }
+
     & $scriptUnderTest `
         -Action Start `
         -Session dry-run-test `
         -Repository both `
         -WorkspaceRoot $fixtureRoot `
+        -AllowLowDisk `
         -WhatIf *> $null
     Assert-True (
         -not (Test-Path -LiteralPath (Join-Path $fixtureRoot "_worktrees\sessions\dry-run-test"))
@@ -63,13 +80,23 @@ try {
         -Action Start `
         -Session contract-test `
         -Repository both `
-        -WorkspaceRoot $fixtureRoot)
+        -WorkspaceRoot $fixtureRoot `
+        -AllowLowDisk)
     Assert-True (@($startOutput -match "SESSION_WORKTREE_CREATED").Count -gt 0) "Start did not create paired worktrees."
 
     $backendWorktree = Join-Path $fixtureRoot "_worktrees\sessions\contract-test\backend"
     $frontendWorktree = Join-Path $fixtureRoot "_worktrees\sessions\contract-test\frontend"
     Assert-True (Test-Path -LiteralPath $backendWorktree) "Backend session worktree is missing."
     Assert-True (Test-Path -LiteralPath $frontendWorktree) "Frontend session worktree is missing."
+    $inspectOutput = @(& $scriptUnderTest `
+        -Action Inspect `
+        -Session contract-test `
+        -Repository both `
+        -WorkspaceRoot $fixtureRoot `
+        -SkipFetch)
+    Assert-True (
+        @($inspectOutput -match "SESSION_WORKTREE_STATUS").Count -eq 2
+    ) "Scoped Inspect must report only the requested paired worktrees."
 
     Set-Content -LiteralPath (Join-Path $backendWorktree "dirty.txt") -Value "dirty" -Encoding UTF8
     $dirtyRefused = $false
@@ -111,6 +138,47 @@ try {
     [void](Invoke-Git -Root $backendRoot -Arguments @("merge", "--ff-only", $backendBranch))
     [void](Invoke-Git -Root $backendRoot -Arguments @("push", "origin", "main"))
 
+    $frontendExclude = Join-Path $fixtureRoot "frontend\.git\info\exclude"
+    Add-Content -LiteralPath $frontendExclude -Value "node_modules/`n.env.local" -Encoding UTF8
+    $generatedDir = Join-Path $frontendWorktree "node_modules"
+    [void](New-Item -ItemType Directory -Path $generatedDir)
+    Set-Content -LiteralPath (Join-Path $generatedDir "package.txt") -Value "rebuildable" -Encoding UTF8
+    $privateFile = Join-Path $frontendWorktree ".env.local"
+    Set-Content -LiteralPath $privateFile -Value "preserve" -Encoding UTF8
+    $ignoredRefused = $false
+    try {
+        & $scriptUnderTest `
+            -Action Close `
+            -Session contract-test `
+            -Repository both `
+            -WorkspaceRoot $fixtureRoot *> $null
+    } catch {
+        $ignoredRefused = $_.Exception.Message.Contains("ignored local data")
+    }
+    Assert-True $ignoredRefused "Close must refuse ignored local data."
+    Assert-True (Test-Path -LiteralPath $backendWorktree) "Ignored-data preflight must preserve paired worktrees."
+    Assert-True (Test-Path -LiteralPath $privateFile) "Close must preserve ignored local data."
+    Remove-Item -LiteralPath $privateFile
+    $generatedRefused = $false
+    try {
+        & $scriptUnderTest `
+            -Action Close `
+            -Session contract-test `
+            -Repository both `
+            -WorkspaceRoot $fixtureRoot *> $null
+    } catch {
+        $generatedRefused = $_.Exception.Message.Contains("ignored local data")
+    }
+    Assert-True $generatedRefused "Close must refuse generated ignored data before Git can leave an orphan."
+    Assert-True (Test-Path -LiteralPath $backendWorktree) "Generated-data preflight must preserve paired worktrees."
+    Remove-Item -LiteralPath $generatedDir -Recurse
+
+    $backendExclude = Join-Path $fixtureRoot "backend\.git\info\exclude"
+    Add-Content -LiteralPath $backendExclude -Value ".ruff_cache/" -Encoding UTF8
+    $backendCache = Join-Path $backendWorktree ".ruff_cache"
+    [void](New-Item -ItemType Directory -Path $backendCache)
+    Set-Content -LiteralPath (Join-Path $backendCache "cache.txt") -Value "rebuildable" -Encoding UTF8
+
     $closeOutput = @(& $scriptUnderTest `
         -Action Close `
         -Session contract-test `
@@ -124,7 +192,8 @@ try {
         -Action Start `
         -Session stale-main-test `
         -Repository backend `
-        -WorkspaceRoot $fixtureRoot)
+        -WorkspaceRoot $fixtureRoot `
+        -AllowLowDisk)
     $staleMainWorktree = Join-Path $fixtureRoot "_worktrees\sessions\stale-main-test\backend"
     Set-Content -LiteralPath (Join-Path $staleMainWorktree "remote-only.txt") -Value "remote" -Encoding UTF8
     [void](Invoke-Git -Root $staleMainWorktree -Arguments @("add", "remote-only.txt"))
@@ -153,7 +222,8 @@ try {
         -Action Start `
         -Session patch-test `
         -Repository backend `
-        -WorkspaceRoot $fixtureRoot)
+        -WorkspaceRoot $fixtureRoot `
+        -AllowLowDisk)
     $patchWorktree = Join-Path $fixtureRoot "_worktrees\sessions\patch-test\backend"
     Set-Content -LiteralPath (Join-Path $patchWorktree "equivalent.txt") -Value "same patch" -Encoding UTF8
     [void](Invoke-Git -Root $patchWorktree -Arguments @("add", "equivalent.txt"))
@@ -171,6 +241,39 @@ try {
         @($patchCloseOutput -match "integration=patch-equivalent").Count -gt 0
     ) "Close did not recognize a fully patch-equivalent branch."
     Assert-True (-not (Test-Path -LiteralPath $patchWorktree)) "Patch-equivalent worktree remains after close."
+
+    [void](& $scriptUnderTest -Action Start -Session reused-test -Repository backend `
+        -WorkspaceRoot $fixtureRoot -AllowLowDisk)
+    $reusedWorktree = Join-Path $fixtureRoot "_worktrees\sessions\reused-test\backend"
+    $reusedBranch = "codex/later-owned-task"
+    [void](Invoke-Git -Root $reusedWorktree -Arguments @("branch", "-m", $reusedBranch))
+    foreach ($expected in @("", "codex/wrong-task")) {
+        $refused = $false
+        try {
+            & $scriptUnderTest -Action Close -Session reused-test -Repository backend `
+                -WorkspaceRoot $fixtureRoot -ExpectedBranch $expected *> $null
+        } catch { $refused = $true }
+        Assert-True $refused "A reused branch requires its exact explicit identity."
+        Assert-True (Test-Path -LiteralPath $reusedWorktree) "Branch mismatch removed the worktree."
+    }
+    Set-Content -LiteralPath (Join-Path $reusedWorktree "unique.txt") -Value "owned" -Encoding UTF8
+    foreach ($committed in @($false, $true)) {
+        if ($committed) {
+            [void](Invoke-Git -Root $reusedWorktree -Arguments @("add", "unique.txt"))
+            [void](Invoke-Git -Root $reusedWorktree -Arguments @("commit", "-m", "owned unique change"))
+        }
+        $refused = $false
+        try {
+            & $scriptUnderTest -Action Close -Session reused-test -Repository backend `
+                -WorkspaceRoot $fixtureRoot -ExpectedBranch $reusedBranch *> $null
+        } catch { $refused = $true }
+        Assert-True $refused "Exact branch must still reject dirty or unmerged work."
+        Assert-True (Test-Path -LiteralPath $reusedWorktree) "Unique work was removed."
+    }
+    [void](Invoke-Git -Root $reusedWorktree -Arguments @("push", "origin", "HEAD:main"))
+    [void](& $scriptUnderTest -Action Close -Session reused-test -Repository backend `
+        -WorkspaceRoot $fixtureRoot -ExpectedBranch $reusedBranch)
+    Assert-True (-not (Test-Path -LiteralPath $reusedWorktree)) "Merged reused worktree remains."
 
     $frontendRoot = Join-Path $fixtureRoot "frontend"
     Set-Content -LiteralPath (Join-Path $frontendRoot "dirty-sync.txt") -Value "dirty" -Encoding UTF8

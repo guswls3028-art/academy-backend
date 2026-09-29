@@ -87,9 +87,31 @@ class TestSubscriptionCheck(TestCase):
         self.assertIsNotNone(response)
         self.assertEqual(response.status_code, 402)
 
-    def test_active_past_expires_returns_402(self):
-        """active이지만 만료일이 지난 경우 → is_subscription_active=False → 402"""
+    @override_settings(BILLING_GRACE_PERIOD_DAYS=30)
+    def test_active_past_expires_keeps_access_before_billing_batch(self):
+        """자정부터 배치 실행 전까지도 30일 유예 이용을 유지한다."""
         self.program.subscription_status = "active"
+        self.program.subscription_expires_at = date.today() - timedelta(days=1)
+        self.program.save()
+        self.assertIsNone(self._check())
+
+    @override_settings(BILLING_GRACE_PERIOD_DAYS=30)
+    def test_active_and_grace_allow_day_30_and_block_day_31(self):
+        for status in ("active", "grace"):
+            for days, allowed in ((8, True), (30, True), (31, False)):
+                with self.subTest(status=status, days=days):
+                    self.program.subscription_status = status
+                    self.program.subscription_expires_at = date.today() - timedelta(days=days)
+                    self.program.save()
+                    response = self._check()
+                    if allowed:
+                        self.assertIsNone(response)
+                    else:
+                        self.assertEqual(response.status_code, 402)
+
+    def test_cancelled_period_does_not_receive_grace(self):
+        self.program.subscription_status = "active"
+        self.program.cancel_at_period_end = True
         self.program.subscription_expires_at = date.today() - timedelta(days=1)
         self.program.save()
         response = self._check()

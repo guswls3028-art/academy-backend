@@ -1528,6 +1528,10 @@
             "readOnly": true,
             "type": "string"
           },
+          "lecture_current": {
+            "readOnly": true,
+            "type": "boolean"
+          },
           "lecture_title": {
             "readOnly": true,
             "type": "string"
@@ -1676,6 +1680,7 @@
           "id",
           "lecture_chip_label",
           "lecture_color",
+          "lecture_current",
           "lecture_title",
           "name_highlight_clinic_target",
           "planned_clinic_link_ids",
@@ -2822,6 +2827,14 @@
         ],
         "type": "object"
       },
+      "EssayNumberingEnum": {
+        "description": "* `continuous` - 이어서 표시\n* `separate` - 서술형 1번부터 표시",
+        "enum": [
+          "continuous",
+          "separate"
+        ],
+        "type": "string"
+      },
       "EventProtocolVersionEnum": {
         "description": "* `1` - 1\n* `2` - 2",
         "enum": [
@@ -2888,6 +2901,14 @@
             "maximum": 9223372036854775807,
             "minimum": 0,
             "type": "integer"
+          },
+          "essay_numbering": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EssayNumberingEnum"
+              }
+            ],
+            "description": "서술형 표시 번호 방식. 저장된 문항 번호와 채점·OMR 인식 계약은 변경하지 않는다.\n\n* `continuous` - 이어서 표시\n* `separate` - 서술형 1번부터 표시"
           },
           "exam_type": {
             "$ref": "#/components/schemas/ExamTypeEnum"
@@ -3103,6 +3124,14 @@
           "description": {
             "type": "string"
           },
+          "essay_numbering": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EssayNumberingEnum"
+              }
+            ],
+            "description": "서술형 표시 번호 방식. 저장된 문항 번호와 채점·OMR 인식 계약은 변경하지 않는다.\n\n* `continuous` - 이어서 표시\n* `separate` - 서술형 1번부터 표시"
+          },
           "exam_type": {
             "type": "string"
           },
@@ -3184,6 +3213,14 @@
           },
           "description": {
             "type": "string"
+          },
+          "essay_numbering": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EssayNumberingEnum"
+              }
+            ],
+            "description": "서술형 표시 번호 방식. 저장된 문항 번호와 채점·OMR 인식 계약은 변경하지 않는다.\n\n* `continuous` - 이어서 표시\n* `separate` - 서술형 1번부터 표시"
           },
           "exam_type": {
             "minLength": 1,
@@ -3301,6 +3338,14 @@
             "minimum": 0,
             "type": "integer"
           },
+          "essay_numbering": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EssayNumberingEnum"
+              }
+            ],
+            "description": "서술형 표시 번호 방식. 저장된 문항 번호와 채점·OMR 인식 계약은 변경하지 않는다.\n\n* `continuous` - 이어서 표시\n* `separate` - 서술형 1번부터 표시"
+          },
           "grading_mode": {
             "allOf": [
               {
@@ -3400,6 +3445,14 @@
             "maximum": 9223372036854775807,
             "minimum": 0,
             "type": "integer"
+          },
+          "essay_numbering": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EssayNumberingEnum"
+              }
+            ],
+            "description": "서술형 표시 번호 방식. 저장된 문항 번호와 채점·OMR 인식 계약은 변경하지 않는다.\n\n* `continuous` - 이어서 표시\n* `separate` - 서술형 1번부터 표시"
           },
           "grading_mode": {
             "allOf": [
@@ -5750,6 +5803,153 @@
         ],
         "type": "string"
       },
+      "ManualAnswerQuestion": {
+        "properties": {
+          "answer": {
+            "type": "string"
+          },
+          "is_correct": {
+            "type": "boolean"
+          },
+          "max_score": {
+            "format": "double",
+            "type": "number"
+          },
+          "number": {
+            "type": "integer"
+          },
+          "question_id": {
+            "type": "integer"
+          },
+          "score": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "answer",
+          "is_correct",
+          "max_score",
+          "number",
+          "question_id",
+          "score"
+        ],
+        "type": "object"
+      },
+      "ManualAnswersDraft": {
+        "properties": {
+          "answers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "enrollment_id": {
+            "type": "integer"
+          },
+          "exam_id": {
+            "type": "integer"
+          },
+          "expected_version": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "answers",
+          "enrollment_id",
+          "exam_id",
+          "expected_version"
+        ],
+        "type": "object"
+      },
+      "ManualAnswersInputRequest": {
+        "properties": {
+          "answers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "apply": {
+            "type": "boolean"
+          },
+          "expected_version": {
+            "minLength": 1,
+            "nullable": true,
+            "type": "string"
+          },
+          "note": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "preview_token": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "answers",
+          "apply",
+          "expected_version",
+          "note"
+        ],
+        "type": "object"
+      },
+      "ManualAnswersPreview": {
+        "properties": {
+          "applied": {
+            "type": "boolean"
+          },
+          "enrollment_id": {
+            "type": "integer"
+          },
+          "exam_id": {
+            "type": "integer"
+          },
+          "expected_version": {
+            "nullable": true,
+            "type": "string"
+          },
+          "max_score": {
+            "format": "double",
+            "type": "number"
+          },
+          "objective_score": {
+            "format": "double",
+            "type": "number"
+          },
+          "preview_token": {
+            "type": "string"
+          },
+          "questions": {
+            "items": {
+              "$ref": "#/components/schemas/ManualAnswerQuestion"
+            },
+            "type": "array"
+          },
+          "subjective_pending": {
+            "type": "boolean"
+          },
+          "total_score": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "applied",
+          "enrollment_id",
+          "exam_id",
+          "expected_version",
+          "max_score",
+          "objective_score",
+          "preview_token",
+          "questions",
+          "subjective_pending",
+          "total_score"
+        ],
+        "type": "object"
+      },
       "ManualGradingMethodEnum": {
         "description": "* `correctness` - 정오 입력\n* `score` - 점수 입력",
         "enum": [
@@ -6077,6 +6277,18 @@
             },
             "type": "array"
           },
+          "grading_complete": {
+            "type": "boolean"
+          },
+          "grading_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          "grading_status": {
+            "type": "string"
+          },
           "id": {
             "format": "uuid",
             "type": "string"
@@ -6116,6 +6328,12 @@
             },
             "type": "array"
           },
+          "subjective_pending_ordinals": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          },
           "terminal": {
             "type": "boolean"
           },
@@ -6135,6 +6353,9 @@
           "duplicate_ordinals",
           "exam_id",
           "failed_ordinals",
+          "grading_complete",
+          "grading_counts",
+          "grading_status",
           "id",
           "lecture_id",
           "overall_status",
@@ -6143,6 +6364,7 @@
           "retried_ordinals",
           "session_id",
           "skipped_ordinals",
+          "subjective_pending_ordinals",
           "terminal",
           "total_count",
           "updated_at"
@@ -6185,6 +6407,18 @@
             },
             "type": "array"
           },
+          "grading_complete": {
+            "type": "boolean"
+          },
+          "grading_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          "grading_status": {
+            "type": "string"
+          },
           "id": {
             "format": "uuid",
             "type": "string"
@@ -6206,6 +6440,12 @@
             "nullable": true,
             "type": "integer"
           },
+          "subjective_pending_ordinals": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          },
           "terminal": {
             "type": "boolean"
           },
@@ -6225,11 +6465,15 @@
           "duplicate_ordinals",
           "exam_id",
           "failed_ordinals",
+          "grading_complete",
+          "grading_counts",
+          "grading_status",
           "id",
           "lecture_id",
           "overall_status",
           "pending_admission_ordinals",
           "session_id",
+          "subjective_pending_ordinals",
           "terminal",
           "total_count",
           "updated_at"
@@ -6275,6 +6519,18 @@
             },
             "type": "array"
           },
+          "grading_complete": {
+            "type": "boolean"
+          },
+          "grading_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          "grading_status": {
+            "type": "string"
+          },
           "id": {
             "format": "uuid",
             "type": "string"
@@ -6295,6 +6551,12 @@
           "session_id": {
             "nullable": true,
             "type": "integer"
+          },
+          "subjective_pending_ordinals": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
           },
           "submission_ids": {
             "items": {
@@ -6322,11 +6584,15 @@
           "duplicate_ordinals",
           "exam_id",
           "failed_ordinals",
+          "grading_complete",
+          "grading_counts",
+          "grading_status",
           "id",
           "lecture_id",
           "overall_status",
           "pending_admission_ordinals",
           "session_id",
+          "subjective_pending_ordinals",
           "submission_ids",
           "terminal",
           "total_count",
@@ -8394,6 +8660,14 @@
             "maximum": 9223372036854775807,
             "minimum": 0,
             "type": "integer"
+          },
+          "essay_numbering": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EssayNumberingEnum"
+              }
+            ],
+            "description": "서술형 표시 번호 방식. 저장된 문항 번호와 채점·OMR 인식 계약은 변경하지 않는다.\n\n* `continuous` - 이어서 표시\n* `separate` - 서술형 1번부터 표시"
           },
           "grading_mode": {
             "allOf": [
@@ -10812,6 +11086,25 @@
         "required": [
           "reports"
         ],
+        "type": "object"
+      },
+      "ProductUsageOverviewRequestRequest": {
+        "properties": {
+          "days": {
+            "description": "7, 28, 90 중 하나",
+            "type": "integer"
+          },
+          "role": {
+            "type": "string"
+          },
+          "surface": {
+            "type": "string"
+          },
+          "tenant_id": {
+            "nullable": true,
+            "type": "integer"
+          }
+        },
         "type": "object"
       },
       "ProgressPolicy": {
@@ -18216,6 +18509,13 @@
           "correct_answer": {
             "type": "string"
           },
+          "essay_index": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "essay_numbering": {
+            "$ref": "#/components/schemas/EssayNumberingEnum"
+          },
           "exam_id": {
             "type": "integer"
           },
@@ -20357,8 +20657,40 @@
     },
     "/api/v1/clinic/sessions/tree/": {
       "get": {
-        "description": "GET /clinic/sessions/tree/?year=YYYY&month=MM\n- 운영 페이지 좌측 트리 전용\n- serializer 우회 (UI 최적화 목적)",
+        "description": "GET /clinic/sessions/tree/?year=YYYY&month=MM\nGET /clinic/sessions/tree/?date_from=YYYY-MM-DD&date_to=YYYY-MM-DD\n- 운영 페이지 좌측 트리 전용\n- 날짜 범위 모드는 이전 주 복사처럼 월 경계를 건너는 최대 31일 조회용\n- serializer 우회 (UI 최적화 목적)",
         "operationId": "clinic_sessions_tree_retrieve",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "date_from",
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date_to",
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "month",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "year",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -23622,11 +23954,38 @@
       }
     },
     "/api/v1/core/dev/product-analytics/overview/": {
-      "get": {
-        "operationId": "core_dev_product_analytics_overview_retrieve",
+      "post": {
+        "operationId": "core_dev_product_analytics_overview_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProductUsageOverviewRequestRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/ProductUsageOverviewRequestRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/ProductUsageOverviewRequestRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "No response body"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {},
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [
@@ -38351,8 +38710,28 @@
       }
     },
     "/api/v1/messaging/provision-defaults/": {
+      "get": {
+        "description": "GET: 복원 가능 기본 문구. POST: 미설정 트리거 초기화/선택 복원.",
+        "operationId": "messaging_provision_defaults_retrieve",
+        "responses": {
+          "200": {
+            "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "messaging"
+        ]
+      },
       "post": {
-        "description": "POST: 기본 템플릿 + 자동발송 config 일괄 생성/리셋.\n- 기존 기본 템플릿(이름이 DEFAULT_TEMPLATES와 동일)은 누락된 config만 연결\n- 학원장이 편집한 제목/본문은 덮어쓰지 않음\n- 사용자가 새로 만든 템플릿은 그대로 유지",
+        "description": "GET: 복원 가능 기본 문구. POST: 미설정 트리거 초기화/선택 복원.",
         "operationId": "messaging_provision_defaults_create",
         "responses": {
           "200": {
@@ -40907,6 +41286,118 @@
         "responses": {
           "200": {
             "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      }
+    },
+    "/api/v1/results/admin/exams/{exam_id}/enrollments/{enrollment_id}/manual-answers/": {
+      "get": {
+        "description": "Preview or atomically confirm one student's offline objective answers.",
+        "operationId": "results_admin_exams_enrollments_manual_answers_retrieve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "enrollment_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "exam_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManualAnswersDraft"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "results"
+        ]
+      },
+      "post": {
+        "description": "Preview or atomically confirm one student's offline objective answers.",
+        "operationId": "results_admin_exams_enrollments_manual_answers_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "enrollment_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "exam_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualAnswersInputRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualAnswersInputRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualAnswersInputRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManualAnswersPreview"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [

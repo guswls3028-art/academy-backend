@@ -332,6 +332,7 @@ class ClinicResolutionService:
         source_type: str,
         source_id: int,
         enrollment_ids: Optional[Iterable[int]] = None,
+        link_ids: Optional[Iterable[int]] = None,
         user_id: Optional[int] = None,
         reason: str = "source_removed_from_session",
     ) -> int:
@@ -359,21 +360,29 @@ class ClinicResolutionService:
             )
             if not normalized_enrollment_ids:
                 return 0
+        normalized_link_ids: list[int] | None = None
+        if link_ids is not None:
+            normalized_link_ids = sorted({int(link_id) for link_id in link_ids})
+            if not normalized_link_ids:
+                return 0
 
         link_qs = (
             ClinicLink.objects.select_for_update()
             .filter(
                 tenant_id=tenant_id,
                 session_id=session_id,
+                is_auto=True,
                 resolved_at__isnull=True,
             )
             .filter(source_filter)
         )
         if normalized_enrollment_ids is not None:
             link_qs = link_qs.filter(enrollment_id__in=normalized_enrollment_ids)
+        if normalized_link_ids is not None:
+            link_qs = link_qs.filter(id__in=normalized_link_ids)
 
         affected_pairs: set[tuple[int, int]] = set()
-        if source_type == "homework":
+        if source_type == "homework" and normalized_link_ids is None:
             # Assignment removal is a progress event even without a failed link.
             # Whole-source removal captures the roster before its rows are deleted.
             homework_enrollment_ids = (

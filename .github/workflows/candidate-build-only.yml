@@ -1,0 +1,509 @@
+# Owner: docs/operations/candidate-build-only.md
+name: Candidate PR build only
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Open same-repository PR number
+        required: true
+        type: string
+      source_sha:
+        description: Exact 40-character PR head SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-build-only-pr-${{ inputs.pr_number }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-northeast-2
+  ECR_REGISTRY: 809466760795.dkr.ecr.ap-northeast-2.amazonaws.com
+  QA_TAG: qa-pr-${{ inputs.pr_number }}-${{ inputs.source_sha }}-run-${{ github.run_id }}-${{ github.run_attempt }}
+
+jobs:
+  validate:
+    name: Validate exact PR and image reuse proof
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      source_sha: ${{ steps.plan.outputs.source_sha }}
+      reuse_base: ${{ steps.plan.outputs.reuse_base }}
+      reuse_messaging: ${{ steps.plan.outputs.reuse_messaging }}
+      base_digest: ${{ steps.plan.outputs.base_digest }}
+      base_tag: ${{ steps.plan.outputs.base_tag }}
+      base_source_sha: ${{ steps.plan.outputs.base_source_sha }}
+      messaging_digest: ${{ steps.plan.outputs.messaging_digest }}
+      messaging_tag: ${{ steps.plan.outputs.messaging_tag }}
+      build_matrix: ${{ steps.plan.outputs.build_matrix }}
+      publish_matrix: ${{ steps.plan.outputs.publish_matrix }}
+      quality_run_id: ${{ steps.plan.outputs.quality_run_id }}
+      quality_run_attempt: ${{ steps.plan.outputs.quality_run_attempt }}
+    steps:
+      - name: Checkout trusted main controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          # This main-only controller needs GitHub read credentials to fetch a
+          # private same-repository PR commit; it never builds or runs PR code.
+          persist-credentials: true
+      - name: Fetch exact PR source for input equivalence
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git fetch --no-tags origin "$SOURCE_SHA"
+      - name: Verify current main, exact open PR, complete CI and baseline inputs
+        id: plan
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          MAIN_SHA: ${{ github.sha }}
+        run: |
+          python3 scripts/v1/candidate_build_only.py plan \
+            --pr "$PR_NUMBER" --source-sha "$SOURCE_SHA" --main-sha "$MAIN_SHA" \
+            --repo-dir . --manifest docs/reports/release-manifest.latest.json
+
+  export-base:
+    name: Export verified immutable base
+    needs: validate
+    if: needs.validate.outputs.reuse_base == 'true'
+    runs-on: ubuntu-24.04-arm
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+      actions: read
+      pull-requests: read
+    steps:
+      - name: Checkout trusted main controller only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Recheck PR and CI before privileged read
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          MAIN_SHA: ${{ github.sha }}
+          QUALITY_RUN_ID: ${{ needs.validate.outputs.quality_run_id }}
+          QUALITY_RUN_ATTEMPT: ${{ needs.validate.outputs.quality_run_attempt }}
+        run: |
+          python3 scripts/v1/candidate_build_only.py verify-source \
+            --pr "$PR_NUMBER" --source-sha "$SOURCE_SHA" --main-sha "$MAIN_SHA" \
+            --expected-quality-run-id "$QUALITY_RUN_ID" \
+            --expected-quality-run-attempt "$QUALITY_RUN_ATTEMPT"
+      - name: Configure existing production ECR OIDC role
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
+          aws-region: ${{ env.AWS_REGION }}
+          action-timeout-s: 180
+          inline-session-policy: >-
+            {"Version":"2012-10-17","Statement":[
+              {"Effect":"Allow","Action":"ecr:GetAuthorizationToken","Resource":"*"},
+              {"Effect":"Allow","Action":["ecr:DescribeImages","ecr:BatchGetImage","ecr:GetDownloadUrlForLayer","ecr:DescribeImageScanFindings","ecr:StartImageScan"],"Resource":"arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-base"},
+              {"Effect":"Allow","Action":"ecr:DescribeImages","Resource":"arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-messaging-worker"}
+            ]}
+      - name: Read back approved base digest and export
+        env:
+          BASE_DIGEST: ${{ needs.validate.outputs.base_digest }}
+          BASE_TAG: ${{ needs.validate.outputs.base_tag }}
+          BASE_SOURCE_SHA: ${{ needs.validate.outputs.base_source_sha }}
+          MESSAGING_DIGEST: ${{ needs.validate.outputs.messaging_digest }}
+          MESSAGING_TAG: ${{ needs.validate.outputs.messaging_tag }}
+        run: |
+          set -euo pipefail
+          ACTUAL_BASE=$(aws ecr describe-images --repository-name academy-base \
+            --image-ids "imageTag=$BASE_TAG" --region "$AWS_REGION" \
+            --query 'imageDetails[0].imageDigest' --output text)
+          test "$ACTUAL_BASE" = "$BASE_DIGEST"
+          if [ -n "$MESSAGING_DIGEST" ]; then
+            ACTUAL_MESSAGING=$(aws ecr describe-images --repository-name academy-messaging-worker \
+              --image-ids "imageTag=$MESSAGING_TAG" --region "$AWS_REGION" \
+              --query 'imageDetails[0].imageDigest' --output text)
+            test "$ACTUAL_MESSAGING" = "$MESSAGING_DIGEST"
+          fi
+          python3 scripts/v1/candidate_build_only.py scan --repo-dir . --region "$AWS_REGION" \
+            --services base --digests "{\"base\":\"$BASE_DIGEST\"}"
+          aws ecr get-login-password --region "$AWS_REGION" |
+            docker login --username AWS --password-stdin "$ECR_REGISTRY"
+          docker pull --platform linux/arm64 "$ECR_REGISTRY/academy-base@$BASE_DIGEST"
+          docker tag "$ECR_REGISTRY/academy-base@$BASE_DIGEST" academy-base:candidate
+          mkdir -p image
+          python3 scripts/v1/candidate_build_only.py check-capacity \
+            --image academy-base:candidate --directory image
+          docker save academy-base:candidate | gzip -1 > image/image.tar.gz
+          python3 scripts/v1/candidate_build_only.py receipt \
+            --service base --source-sha "$BASE_SOURCE_SHA" \
+            --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --archive image/image.tar.gz --output image/receipt.json
+      - name: Upload verified base artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: candidate-base-${{ github.run_id }}-${{ github.run_attempt }}
+          path: image/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+  build-base:
+    name: Build changed base without credentials
+    needs: validate
+    if: needs.validate.outputs.reuse_base == 'false'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout trusted main controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: control
+          persist-credentials: false
+      - name: Checkout exact PR source without persisted token
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate.outputs.source_sha }}
+          path: source
+          persist-credentials: false
+      - name: Build and record linux arm64 base
+        env:
+          SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git -C source rev-parse HEAD)" = "$SOURCE_SHA"
+          docker build --platform linux/arm64 -f source/docker/Dockerfile.base \
+            --build-arg "APT_REFRESH_TOKEN=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            -t academy-base:candidate source
+          mkdir -p image
+          python3 control/scripts/v1/candidate_build_only.py check-capacity \
+            --image academy-base:candidate --directory image
+          docker save academy-base:candidate | gzip -1 > image/image.tar.gz
+          python3 control/scripts/v1/candidate_build_only.py receipt \
+            --service base --source-sha "$SOURCE_SHA" \
+            --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --archive image/image.tar.gz --output image/receipt.json
+      - name: Upload base artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: candidate-base-${{ github.run_id }}-${{ github.run_attempt }}
+          path: image/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+  build-runtime:
+    name: Build ${{ matrix.service }} without credentials
+    needs: [validate, export-base, build-base]
+    if: >-
+      always() && needs.validate.result == 'success' &&
+      (needs.export-base.result == 'success' || needs.build-base.result == 'success')
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.validate.outputs.build_matrix) }}
+    steps:
+      - name: Checkout trusted main controller
+        if: matrix.service != 'messaging' || needs.validate.outputs.reuse_messaging != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: control
+          persist-credentials: false
+      - name: Checkout exact PR source without persisted token
+        if: matrix.service != 'messaging' || needs.validate.outputs.reuse_messaging != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate.outputs.source_sha }}
+          path: source
+          persist-credentials: false
+      - name: Download exact base artifact
+        if: matrix.service != 'messaging' || needs.validate.outputs.reuse_messaging != 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: candidate-base-${{ github.run_id }}-${{ github.run_attempt }}
+          path: base
+      - name: Verify base archive and build runtime image
+        if: matrix.service != 'messaging' || needs.validate.outputs.reuse_messaging != 'true'
+        env:
+          SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+          BASE_SOURCE_SHA: ${{ needs.validate.outputs.base_source_sha }}
+          SERVICE: ${{ matrix.service }}
+          REPOSITORY: ${{ matrix.repository }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
+        run: |
+          set -euo pipefail
+          test "$(git -C source rev-parse HEAD)" = "$SOURCE_SHA"
+          python3 control/scripts/v1/candidate_build_only.py verify-archive \
+            --service base --source-sha "$BASE_SOURCE_SHA" \
+            --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --archive base/image.tar.gz --receipt base/receipt.json
+          gzip -dc base/image.tar.gz | docker load
+          python3 control/scripts/v1/candidate_build_only.py verify-archive \
+            --service base --source-sha "$BASE_SOURCE_SHA" \
+            --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --archive base/image.tar.gz --receipt base/receipt.json --loaded
+          rm base/image.tar.gz
+          docker build --platform linux/arm64 -f "source/$DOCKERFILE" \
+            --build-arg BASE_IMAGE=academy-base:candidate \
+            -t "$REPOSITORY:candidate" source
+          mkdir -p image
+          python3 control/scripts/v1/candidate_build_only.py check-capacity \
+            --image "$REPOSITORY:candidate" --directory image
+          docker save "$REPOSITORY:candidate" | gzip -1 > image/image.tar.gz
+          python3 control/scripts/v1/candidate_build_only.py receipt \
+            --service "$SERVICE" --source-sha "$SOURCE_SHA" \
+            --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --archive image/image.tar.gz --output image/receipt.json
+      - name: Upload runtime artifact
+        if: matrix.service != 'messaging' || needs.validate.outputs.reuse_messaging != 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: candidate-${{ matrix.service }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: image/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+  publish:
+    name: Push and scan immutable QA ${{ matrix.service }}
+    needs: [validate, build-runtime]
+    # The unused base branch is skipped; override inherited success() explicitly.
+    if: ${{ !cancelled() && needs.validate.result == 'success' && needs.build-runtime.result == 'success' }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    environment: production
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      pull-requests: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.validate.outputs.publish_matrix) }}
+    steps:
+      - name: Checkout trusted main controller only
+        if: (matrix.service != 'base' || needs.validate.outputs.reuse_base != 'true') && (matrix.service != 'messaging' || needs.validate.outputs.reuse_messaging != 'true')
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download exact build artifact
+        if: (matrix.service != 'base' || needs.validate.outputs.reuse_base != 'true') && (matrix.service != 'messaging' || needs.validate.outputs.reuse_messaging != 'true')
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: candidate-${{ matrix.service }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: image
+      - name: Validate artifact before OIDC and load image without running it
+        if: (matrix.service != 'base' || needs.validate.outputs.reuse_base != 'true') && (matrix.service != 'messaging' || needs.validate.outputs.reuse_messaging != 'true')
+        env:
+          SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+          SERVICE: ${{ matrix.service }}
+        run: |
+          set -euo pipefail
+          python3 scripts/v1/candidate_build_only.py verify-archive \
+            --service "$SERVICE" --source-sha "$SOURCE_SHA" \
+            --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --archive image/image.tar.gz --receipt image/receipt.json
+          gzip -dc image/image.tar.gz | docker load
+          python3 scripts/v1/candidate_build_only.py verify-archive \
+            --service "$SERVICE" --source-sha "$SOURCE_SHA" \
+            --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --archive image/image.tar.gz --receipt image/receipt.json --loaded
+          rm image/image.tar.gz
+      - name: Recheck PR and CI immediately before ECR write
+        if: (matrix.service != 'base' || needs.validate.outputs.reuse_base != 'true') && (matrix.service != 'messaging' || needs.validate.outputs.reuse_messaging != 'true')
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          MAIN_SHA: ${{ github.sha }}
+          QUALITY_RUN_ID: ${{ needs.validate.outputs.quality_run_id }}
+          QUALITY_RUN_ATTEMPT: ${{ needs.validate.outputs.quality_run_attempt }}
+        run: |
+          python3 scripts/v1/candidate_build_only.py verify-source \
+            --pr "$PR_NUMBER" --source-sha "$SOURCE_SHA" --main-sha "$MAIN_SHA" \
+            --expected-quality-run-id "$QUALITY_RUN_ID" \
+            --expected-quality-run-attempt "$QUALITY_RUN_ATTEMPT"
+      - name: Configure existing production ECR OIDC role
+        if: (matrix.service != 'base' || needs.validate.outputs.reuse_base != 'true') && (matrix.service != 'messaging' || needs.validate.outputs.reuse_messaging != 'true')
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
+          aws-region: ${{ env.AWS_REGION }}
+          action-timeout-s: 180
+          inline-session-policy: >-
+            {"Version":"2012-10-17","Statement":[
+              {"Effect":"Allow","Action":"ecr:GetAuthorizationToken","Resource":"*"},
+              {"Effect":"Allow","Action":["ecr:DescribeRepositories","ecr:DescribeImages","ecr:BatchCheckLayerAvailability","ecr:InitiateLayerUpload","ecr:UploadLayerPart","ecr:CompleteLayerUpload","ecr:PutImage","ecr:BatchGetImage","ecr:GetDownloadUrlForLayer","ecr:DescribeImageScanFindings","ecr:StartImageScan"],"Resource":"arn:aws:ecr:ap-northeast-2:809466760795:repository/${{ matrix.repository }}"}
+            ]}
+      - name: Push once to existing immutable ECR QA tag and scan
+        if: (matrix.service != 'base' || needs.validate.outputs.reuse_base != 'true') && (matrix.service != 'messaging' || needs.validate.outputs.reuse_messaging != 'true')
+        env:
+          SERVICE: ${{ matrix.service }}
+          REPOSITORY: ${{ matrix.repository }}
+          SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+          BASE_DIGEST: ${{ needs.validate.outputs.base_digest }}
+        run: |
+          set -euo pipefail
+          aws ecr describe-repositories --repository-names "$REPOSITORY" --region "$AWS_REGION" |
+            jq -e '.repositories | length == 1 and .[0].imageTagMutability == "IMMUTABLE_WITH_EXCLUSION" and .[0].imageTagMutabilityExclusionFilters == [{"filterType":"WILDCARD","filter":"latest"}] and .[0].imageScanningConfiguration.scanOnPush == true' >/dev/null
+          if aws ecr describe-images --repository-name "$REPOSITORY" \
+              --image-ids "imageTag=$QA_TAG" --region "$AWS_REGION" >/dev/null 2>&1; then
+            echo '::error::QA tag already exists'; exit 1
+          fi
+          aws ecr get-login-password --region "$AWS_REGION" |
+            docker login --username AWS --password-stdin "$ECR_REGISTRY"
+          docker tag "$REPOSITORY:candidate" "$ECR_REGISTRY/$REPOSITORY:$QA_TAG"
+          docker push "$ECR_REGISTRY/$REPOSITORY:$QA_TAG"
+          DIGEST=''
+          for attempt in 1 2 3 4 5 6; do
+            DIGEST=$(aws ecr describe-images --repository-name "$REPOSITORY" \
+              --image-ids "imageTag=$QA_TAG" --region "$AWS_REGION" \
+              --query 'imageDetails[0].imageDigest' --output text 2>/dev/null) || true
+            [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] && break
+            sleep 5
+          done
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          python3 scripts/v1/candidate_build_only.py scan --repo-dir . --region "$AWS_REGION" \
+            --services "$SERVICE" --digests "{\"$SERVICE\":\"$DIGEST\"}"
+          jq -n --arg source "$SOURCE_SHA" --arg repo "$REPOSITORY" \
+            --arg digest "$DIGEST" --arg tag "$QA_TAG" --arg base "$BASE_DIGEST" \
+            --argjson run "$GITHUB_RUN_ID" --argjson attempt "$GITHUB_RUN_ATTEMPT" \
+            --slurpfile artifact image/receipt.json \
+            '{sourceSha:$source,repository:$repo,digest:$digest,tag:$tag,baseBaselineDigest:$base,runId:$run,runAttempt:$attempt,artifact:$artifact[0]}' \
+            > "image/published-$SERVICE.json"
+          echo "$REPOSITORY@$DIGEST from $SOURCE_SHA ($QA_TAG)" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload readback receipt
+        if: (matrix.service != 'base' || needs.validate.outputs.reuse_base != 'true') && (matrix.service != 'messaging' || needs.validate.outputs.reuse_messaging != 'true')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: candidate-published-${{ matrix.service }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: image/published-${{ matrix.service }}.json
+          if-no-files-found: error
+          retention-days: 1
+
+  finalize:
+    name: Verify complete QA image set
+    needs: [validate, publish]
+    if: ${{ !cancelled() && needs.validate.result == 'success' && needs.publish.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      pull-requests: read
+    steps:
+      - name: Checkout trusted main controller only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Recheck current main, exact PR and same successful CI
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          MAIN_SHA: ${{ github.sha }}
+          QUALITY_RUN_ID: ${{ needs.validate.outputs.quality_run_id }}
+          QUALITY_RUN_ATTEMPT: ${{ needs.validate.outputs.quality_run_attempt }}
+        run: |
+          python3 scripts/v1/candidate_build_only.py verify-source \
+            --pr "$PR_NUMBER" --source-sha "$SOURCE_SHA" --main-sha "$MAIN_SHA" \
+            --expected-quality-run-id "$QUALITY_RUN_ID" \
+            --expected-quality-run-attempt "$QUALITY_RUN_ATTEMPT"
+      - name: Download all individual publication receipts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: candidate-published-*-${{ github.run_id }}-${{ github.run_attempt }}
+          merge-multiple: true
+          path: published
+      - name: Configure existing ECR role with readback-only session policy
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
+          aws-region: ${{ env.AWS_REGION }}
+          action-timeout-s: 180
+          inline-session-policy: >-
+            {"Version":"2012-10-17","Statement":[
+              {"Effect":"Allow","Action":"ecr:DescribeImages","Resource":["arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-base","arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-api","arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-ai-worker-cpu","arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-tools-worker","arn:aws:ecr:ap-northeast-2:809466760795:repository/academy-messaging-worker"]}
+            ]}
+      - name: Read back every required digest and seal QA-only receipt
+        env:
+          SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+          REUSE_BASE: ${{ needs.validate.outputs.reuse_base }}
+          BASE_DIGEST: ${{ needs.validate.outputs.base_digest }}
+          BASE_TAG: ${{ needs.validate.outputs.base_tag }}
+          REUSE_MESSAGING: ${{ needs.validate.outputs.reuse_messaging }}
+          MESSAGING_DIGEST: ${{ needs.validate.outputs.messaging_digest }}
+          MESSAGING_TAG: ${{ needs.validate.outputs.messaging_tag }}
+          QUALITY_RUN_ID: ${{ needs.validate.outputs.quality_run_id }}
+          QUALITY_RUN_ATTEMPT: ${{ needs.validate.outputs.quality_run_attempt }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          mkdir -p receipt
+          printf '{}' > receipt/images.json
+          for item in 'api academy-api' 'ai academy-ai-worker-cpu' 'tools academy-tools-worker' 'base academy-base' 'messaging academy-messaging-worker'; do
+            read -r SERVICE REPOSITORY <<< "$item"
+            TAG="$QA_TAG"
+            if [ "$SERVICE" = base ] && [ "$REUSE_BASE" = true ]; then TAG="$BASE_TAG"; fi
+            if [ "$SERVICE" = messaging ] && [ "$REUSE_MESSAGING" = true ]; then TAG="$MESSAGING_TAG"; fi
+            DIGEST=$(aws ecr describe-images --repository-name "$REPOSITORY" \
+              --image-ids "imageTag=$TAG" --region "$AWS_REGION" \
+              --query 'imageDetails[0].imageDigest' --output text)
+            [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+            if [ "$SERVICE" = base ] && [ "$REUSE_BASE" = true ]; then test "$DIGEST" = "$BASE_DIGEST"; fi
+            if [ "$SERVICE" = messaging ] && [ "$REUSE_MESSAGING" = true ]; then test "$DIGEST" = "$MESSAGING_DIGEST"; fi
+            jq --arg service "$SERVICE" --arg repo "$REPOSITORY" --arg digest "$DIGEST" --arg tag "$TAG" \
+              '.[$service]={repository:$repo,digest:$digest,tag:$tag}' receipt/images.json > receipt/images.tmp
+            mv receipt/images.tmp receipt/images.json
+          done
+          python3 scripts/v1/candidate_build_only.py seal \
+            --images receipt/images.json --published-dir published \
+            --source-sha "$SOURCE_SHA" --main-sha "$GITHUB_SHA" --pr "$PR_NUMBER" \
+            --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --quality-run-id "$QUALITY_RUN_ID" \
+            --quality-run-attempt "$QUALITY_RUN_ATTEMPT" --qa-tag "$QA_TAG" \
+            --reuse-base "$REUSE_BASE" --reuse-messaging "$REUSE_MESSAGING" \
+            --base-digest "$BASE_DIGEST" --messaging-digest "$MESSAGING_DIGEST" \
+            --output receipt/candidate-build-only.json
+          cat receipt/candidate-build-only.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload complete QA-only receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: candidate-complete-${{ github.run_id }}-${{ github.run_attempt }}
+          path: receipt/candidate-build-only.json
+          if-no-files-found: error
+          retention-days: 1
+
+  completion:
+    name: Require complete QA image receipt
+    needs: [validate, publish, finalize]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Reject a skipped or incomplete candidate
+        env:
+          VALIDATION_RESULT: ${{ needs.validate.result }}
+          PUBLICATION_RESULT: ${{ needs.publish.result }}
+          FINALIZATION_RESULT: ${{ needs.finalize.result }}
+        run: |
+          set -euo pipefail
+          test "$VALIDATION_RESULT" = success
+          test "$PUBLICATION_RESULT" = success
+          test "$FINALIZATION_RESULT" = success

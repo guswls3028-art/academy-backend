@@ -52,11 +52,10 @@ def clinic_enrollment_for_tenant(tenant, enrollment_id: int | None):
 
 
 def active_enrolled_lecture_ids_for_student(tenant, student) -> set[int]:
-    from apps.domains.enrollment.selectors import enrollments_for_tenant
+    from apps.domains.enrollment.selectors import active_enrollments_for_student
 
     return set(
-        enrollments_for_tenant(tenant)
-        .filter(student=student, status="ACTIVE")
+        active_enrollments_for_student(tenant=tenant, student=student)
         .values_list("lecture_id", flat=True)
     )
 
@@ -74,13 +73,10 @@ def preferred_active_enrollment_id_for_student_session(
     target and respect any lecture restriction on the destination session so a
     booking never points at the student's latest unrelated course.
     """
-    from apps.domains.enrollment.selectors import enrollments_for_tenant
+    from apps.domains.enrollment.selectors import active_enrollments_for_student
     from apps.domains.progress.models import ClinicLink
 
-    enrollments = enrollments_for_tenant(tenant).filter(
-        student=student,
-        status="ACTIVE",
-    )
+    enrollments = active_enrollments_for_student(tenant=tenant, student=student)
     if session is not None:
         target_lecture_ids = list(
             session.target_lectures.values_list("id", flat=True)

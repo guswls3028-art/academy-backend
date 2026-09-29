@@ -135,3 +135,18 @@ def get_locked_enrollment_for_tenant(*, enrollment_id: int, tenant: Any) -> Any 
         .filter(id=int(enrollment_id), tenant=tenant)
         .first()
     )
+
+
+def get_locked_exam_for_tenant(*, exam_id: int, tenant: Any) -> Any | None:
+    from apps.domains.exams.models import Exam
+
+    return Exam.objects.select_for_update().filter(id=int(exam_id), tenant=tenant).first()
+
+
+def has_active_exam_submission(*, exam_id: int, enrollment_id: int, tenant: Any) -> bool:
+    from apps.domains.submissions.models import Submission
+
+    return Submission.objects.filter(
+        tenant=tenant, target_type=Submission.TargetType.EXAM,
+        target_id=int(exam_id), enrollment_id=int(enrollment_id),
+    ).exclude(status__in=[Submission.Status.FAILED, Submission.Status.SUPERSEDED]).exists()

@@ -120,7 +120,10 @@ trixie와 sid 모두 미수정으로 표시한다. Expat2.8.4로 버전만 올�
 공통 base는 실제 upstream2.8.4와
 [공식 수정0cfd15b](https://github.com/libexpat/libexpat/commit/0cfd15bdf4b2c22d6b0df73610709dfb60921091),
 [공식 회귀28fcfba](https://github.com/libexpat/libexpat/commit/28fcfba540f6933aa8904a1514c4811713d2ab72)를
-SHA-256으로 고정해 빌드한다. 2.8.4에 남은 `FASTCALL`과 맞추기 위해 patch의
+`docker/native-security/patches/`에 검증된 바이트로 보관하고 Docker COPY 뒤 SHA-256을
+재검사한다. 빌드 시 GitHub 생성 `.patch`를 다시 내려받지 않아 바이트 드리프트가
+같은 커밋의 재빌드를 중단시키지 않는다. 2.8.4 원본 tarball도 SHA-256으로 고정한다.
+2.8.4에 남은 `FASTCALL`과 맞추기 위해 patch의
 context 한 줄만 정확히 변환하고 fuzz 없는 적용을 요구한다. 패키지 정체성은
 `Package: libexpat1`, `Source: expat`, 실제 backport 버전 `2.8.4+academy1-1`이다.
 아직 발표되지 않은 버전을 주장하거나 scanner에서 패키지를 숨기지 않는다.

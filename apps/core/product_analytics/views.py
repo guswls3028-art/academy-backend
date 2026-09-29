@@ -4,12 +4,14 @@ import logging
 
 from django.conf import settings
 from django.db import DatabaseError
-from rest_framework import status
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema, inline_serializer
+from rest_framework import serializers, status
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.api.common.query_params import parse_query_int
 from apps.core.permissions import IsPlatformAdmin
 from apps.core.product_analytics.constants import MAX_BATCH_BYTES, SURFACES
 from apps.core.product_analytics.queries import build_overview
@@ -110,29 +112,70 @@ class ProductUsageBatchView(APIView):
 class ProductUsageOverviewView(APIView):
     permission_classes = [IsAuthenticated, IsPlatformAdmin]
 
-    def get(self, request):
-        days = parse_query_int(request.query_params, "days", default=28)
+    def http_method_not_allowed(self, request, *args, **kwargs):
+        if request.method == "GET":
+            return Response(
+                {
+                    "code": "post_required",
+                    "detail": "사용 분석 조회는 POST로 다시 요청해 주세요.",
+                },
+                status=status.HTTP_405_METHOD_NOT_ALLOWED,
+            )
+        return super().http_method_not_allowed(request, *args, **kwargs)
+
+    @extend_schema(
+        request=inline_serializer(
+            name="ProductUsageOverviewRequest",
+            fields={
+                "days": serializers.IntegerField(
+                    required=False, help_text="7, 28, 90 중 하나"
+                ),
+                "tenant_id": serializers.IntegerField(required=False, allow_null=True),
+                "role": serializers.CharField(required=False, allow_blank=True),
+                "surface": serializers.CharField(required=False, allow_blank=True),
+            },
+        ),
+        responses={200: OpenApiTypes.OBJECT},
+    )
+    def post(self, request):
+        filters = request.data
+        if not isinstance(filters, dict):
+            return Response(
+                {"detail": "조회 조건은 JSON 객체여야 합니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        days = filters.get("days", 28)
+        if type(days) is not int:
+            raise ValidationError({"days": "정수 값을 입력해 주세요."})
         if days not in (7, 28, 90):
             return Response(
                 {"detail": "days는 7, 28, 90 중 하나여야 합니다."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        tenant_id = request.query_params.get("tenant_id")
-        if tenant_id:
-            try:
-                tenant_id = int(tenant_id)
-            except (TypeError, ValueError):
-                return Response(
-                    {"detail": "tenant_id가 올바르지 않습니다."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-        else:
-            tenant_id = None
+        tenant_id = filters.get("tenant_id")
+        if tenant_id is not None and (
+            type(tenant_id) is not int or not 1 <= tenant_id <= 2**63 - 1
+        ):
+            return Response(
+                {"detail": "tenant_id가 올바르지 않습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         valid_roles = {"owner", "admin", "teacher", "staff", "student", "parent"}
-        role = (request.query_params.get("role") or "").strip()
-        surface = (request.query_params.get("surface") or "").strip()
+        role = filters.get("role")
+        surface = filters.get("surface")
+        if role is None:
+            role = ""
+        if surface is None:
+            surface = ""
+        if not isinstance(role, str) or not isinstance(surface, str):
+            return Response(
+                {"detail": "role과 surface는 문자열이어야 합니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        role = role.strip()
+        surface = surface.strip()
         if role and role not in valid_roles:
             return Response(
                 {"detail": "role이 올바르지 않습니다."},

@@ -10,9 +10,15 @@ from apps.domains.results.services.sync_result_from_submission import (
 from apps.domains.results.services.omr_subjective_completion import (
     finalize_omr_result_if_ready,
 )
+from apps.domains.results.services.submission_scope_guard import (
+    validate_exam_submission_scope,
+)
+from apps.support.submissions.dependencies import complete_submission_after_auto_grade
 from apps.support.results.grading_dependencies import (
     dispatch_progress_pipeline,
     get_submission_for_grading,
+    get_exam_for_result_sync,
+    lock_exam_submission_regrade_state,
     is_omr_manual_review_required,
     lock_score_edit_scope_before_submission_grading,
 )
@@ -22,6 +28,24 @@ from apps.support.results.grading_dependencies import (
 def grade_submission(submission_id: int, *, force_regrade: bool = False) -> ExamResult:
     submission = get_submission_for_grading(submission_id=int(submission_id))
     lock_score_edit_scope_before_submission_grading(submission=submission)
+
+    if submission is not None and str(submission.target_type) == "exam":
+        submission, _canonical_result, not_submitted = lock_exam_submission_regrade_state(
+            submission_id=int(submission.id),
+            exam_id=int(submission.target_id),
+            tenant_id=int(submission.tenant_id),
+        )
+        if not_submitted:
+            exam = get_exam_for_result_sync(exam_id=int(submission.target_id))
+            validate_exam_submission_scope(submission=submission, exam=exam)
+            # Retain the existing compatibility snapshot without grading or
+            # publishing the teacher-cancelled attempt again.
+            retained = ExamResult.objects.get(submission=submission, exam=exam)
+            if submission.status != submission.Status.DONE:
+                complete_submission_after_auto_grade(
+                    submission, actor="grader.absence_preserved",
+                )
+            return retained
 
     service = ExamGradingService()
     result = service.auto_grade_objective(

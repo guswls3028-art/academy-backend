@@ -21,6 +21,7 @@ from apps.domains.results.services.answer_matching import (
 )
 from apps.domains.results.services.manual_subjective_score import (
     explicit_manual_subjective_score_for_result,
+    explicit_manual_total_score_for_result,
 )
 from apps.domains.results.services.submission_answer_map import (
     build_submission_answers_map,
@@ -40,6 +41,8 @@ from apps.support.exams.numeric_short_answer import (
 from apps.support.results.grading_dependencies import (
     get_exam_for_result_sync,
     get_submission_for_result_sync,
+    lock_exam_submission_regrade_state,
+    lock_score_edit_scope_before_submission_grading,
 )
 
 
@@ -159,12 +162,21 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
     if submission.target_type != "exam":
         return None
 
+    lock_score_edit_scope_before_submission_grading(submission=submission)
+    submission, locked_result, not_submitted = lock_exam_submission_regrade_state(
+        submission_id=int(submission.id),
+        exam_id=int(submission.target_id),
+        tenant_id=int(submission.tenant_id),
+    )
     exam = get_exam_for_result_sync(exam_id=int(submission.target_id))
     enrollment_id = getattr(submission, "enrollment_id", None)
     if not enrollment_id:
         return None
     enrollment = validate_exam_submission_scope(submission=submission, exam=exam)
     enrollment_id = int(enrollment.id)
+
+    if not_submitted:
+        return locked_result
 
     try:
         sheet, answer_key = GradingContractGuard.validate_exam_for_grading(exam)
@@ -313,13 +325,24 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
         and int(existing_result_prev.attempt_id) == int(attempt.id)
     )
     existing_subjective = 0.0
+    existing_manual_total = None
     if preserve_existing_subjective:
         existing_subjective = explicit_manual_subjective_score_for_result(
             result=existing_result_prev,
             attempt=attempt,
             score_shape=score_shape,
         )
-    result_total = round(float(total) + float(existing_subjective), 2)
+        if is_omr_scan_submission(submission):
+            existing_manual_total = explicit_manual_total_score_for_result(
+                result=existing_result_prev,
+                attempt=attempt,
+                score_shape=score_shape,
+            )
+    result_total = (
+        existing_manual_total
+        if existing_manual_total is not None
+        else round(float(total) + float(existing_subjective), 2)
+    )
 
     attempt.status = "done"
     if int(attempt.attempt_index) == 1 and (created_attempt or attached_placeholder):

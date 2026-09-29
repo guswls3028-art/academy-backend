@@ -39,6 +39,7 @@ RUN test -n "${APT_REFRESH_TOKEN}" \
 WORKDIR /build
 
 COPY docker/native-security/build-fixed-libs.sh /usr/local/bin/build-fixed-libs.sh
+COPY docker/native-security/patches/ /usr/local/share/academy-native-security/
 COPY docker/native-security/build-python-xml.py docker/native-security/verify-expat.py /usr/local/bin/
 RUN sh /usr/local/bin/build-fixed-libs.sh /build/native-security/out
 

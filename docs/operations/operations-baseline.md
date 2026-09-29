@@ -128,6 +128,7 @@ reports, or command output.
 | API replacement | ASG desired/InService and ALB healthy targets match; old instance drains only after replacement health |
 | Runtime identity | release manifest digest = Launch Template = actual container `RepoDigests` |
 | Workers | Messaging warm baseline; AI/Tools scale to queue demand; Video Batch queue/CE/job definition healthy |
+| AI SQS exact ACK | `AI_JOB_SQS_ACK` names the job ID, actual receive queue and SQS MessageId only after `DeleteMessage` returns success, including terminal redelivery. `SQS_JOB_COMPLETED` records DB/callback completion and alone does not prove queue deletion; delete failure/deferral remains a separate signal. Never log a ReceiptHandle or payload. |
 | Database | RDS available, connection alarm `OK`, no API connection accumulation |
 | Frontend | live `version.json` equals deployed Git SHA; required lazy assets and production E2E pass |
 | User-impact alerts | five-minute alert cron succeeds without exposing payload or recipient secrets |

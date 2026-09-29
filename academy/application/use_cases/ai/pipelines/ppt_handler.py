@@ -80,6 +80,7 @@ def handle_ppt_generation_job(job: AIJob) -> AIResult:
 
     tmp_dirs: list[str] = []
     unique_id = uuid.uuid4().hex[:12]
+    output_key: str | None = None
 
     try:
         # ──────────────── Step 1: Download ────────────────
@@ -240,6 +241,7 @@ def handle_ppt_generation_job(job: AIJob) -> AIResult:
             generate_presigned_get_url_storage,
         )
 
+        output_key = r2_key
         upload_fileobj_to_r2_storage(
             fileobj=io.BytesIO(pptx_bytes),
             key=r2_key,
@@ -274,6 +276,7 @@ def handle_ppt_generation_job(job: AIJob) -> AIResult:
 
         result_payload = {
             "download_url": download_url,
+            "r2_key": r2_key,
             "filename": filename,
             "slide_count": slide_count,
             "size_bytes": len(pptx_bytes),
@@ -284,6 +287,13 @@ def handle_ppt_generation_job(job: AIJob) -> AIResult:
         return AIResult.done(job.id, result_payload)
 
     except Exception as e:
+        if output_key is not None:
+            try:
+                from apps.infrastructure.storage.r2 import delete_object_r2_storage
+
+                delete_object_r2_storage(key=output_key)
+            except Exception:
+                logger.exception("PPT output cleanup failed after generation error: job_id=%s", job.id)
         logger.exception(
             "PPT_GENERATION failed job_id=%s tenant_id=%s mode=%s: %s",
             job.id, tenant_id, mode, e,

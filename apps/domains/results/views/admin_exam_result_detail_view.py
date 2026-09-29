@@ -272,6 +272,7 @@ class AdminExamResultDetailView(APIView):
             "scan_image_size": None,
         }
         submission_id_for_omr: int | None = None
+        manual_answer_entry = False
         submission_status = None
         manual_review_meta = None
         identifier_status = None
@@ -280,6 +281,8 @@ class AdminExamResultDetailView(APIView):
             att = ExamAttempt.objects.filter(id=int(result_attempt_id)).first()
             if att and att.submission_id:
                 submission_id_for_omr = int(att.submission_id)
+            elif att and isinstance(att.meta, dict):
+                manual_answer_entry = att.meta.get("source") == "manual_entry"
 
         if submission_id_for_omr:
             sub = get_omr_submission_for_tenant(
@@ -355,6 +358,7 @@ class AdminExamResultDetailView(APIView):
             },
             **scan_image_payload,
             "submission_id": submission_id_for_omr,
+            "manual_answer_entry": manual_answer_entry,
             "submission_status": submission_status,
             "manual_review": manual_review_meta,
             "identifier_status": identifier_status,

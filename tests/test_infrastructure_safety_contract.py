@@ -1517,7 +1517,12 @@ def test_workflow_checks_release_freshness_under_lock_and_always_releases() -> N
     assert "'docs/reports/**'" in workflow
     assert "'docs/ssot/runtime-current.md'" in workflow
     assert "'scripts/codex/**'" in workflow
-    assert "runtime_changes() { grep -vE '^scripts/codex/|(^|/)tests(/|\\.py$)'" in workflow
+    assert (
+        r"runtime_changes() { grep -vE '^scripts/codex/"
+        r"|^scripts/v1/(candidate_build_only|test_candidate_build_only)\.py$"
+        r"|^\.github/workflows/candidate-build-only\.yml$"
+        r"|(^|/)tests(/|\.py$)'"
+    ) in workflow
     assert 'CHANGED="$(runtime_changes "$CHANGED_API")"' in workflow
     assert 'CHANGED="$(runtime_changes "$CHANGED_AI")"' in workflow
     for output in (

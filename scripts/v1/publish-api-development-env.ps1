@@ -181,12 +181,20 @@ function Set-IsolatedDevelopmentValues {
         '^VAPID_PRIVATE_KEY$',
         '^OPENAI_',
         '^ANTHROPIC_',
+        '^GEMINI_',
         '^AWS_ACCESS_KEY_ID$',
         '^AWS_SECRET_ACCESS_KEY$',
         '^AWS_SESSION_TOKEN$',
         '^AWS_ROOT_'
     )
     foreach ($property in @($Target.PSObject.Properties)) {
+        # Reuse the approved provider only in isolated development workers.
+        if (
+            $SettingsModule -eq "apps.api.config.settings.worker" -and
+            $property.Name -eq "GEMINI_API_KEY"
+        ) {
+            continue
+        }
         if ($secretPatterns | Where-Object { $property.Name -match $_ }) {
             $Target.PSObject.Properties.Remove($property.Name)
         }

@@ -44,8 +44,75 @@ API 오류 모양으로 구분할 수 없다.
 | `manual_grading_method` | `correctness` | 답변형을 정오로 입력한다. |
 |  | `score` | 답변형을 문항별 부분점수로 입력한다. |
 | `choice_question_count` | 0 이상의 정수 | 원본 자동 분리 시 앞에서부터 선택형으로 만들 문항 수. 혼합형은 1 이상이어야 한다. |
+| `essay_numbering` | `continuous` (기본), `separate` | 시험별 서술형 표시 번호. 기존 시험은 연속 번호를 유지하고, 별도 모드는 서술형을 1번부터 보여 준다. |
 | `segmentation_status` | `none`, `processing`, `review_required`, `ready`, `failed`, `conversion_required` | 원본 문항 분리와 교직원 검수 상태다. |
 | `student_results_published` | `true`, `false` | 학생·학부모 성적 공개 여부다. 기본값 `true`는 기존 시험 노출을 유지한다. |
+
+교직원은 기존 tenant·역할 범위와 `updated_at` 동시 수정 조건을 따르는
+`PATCH /exams/{id}/`로 번호 표시를 저장한다. `GET /exams/{id}/`, 학생의
+tenant·응시 대상 범위에 한정된 시험 목록·상세, 성적 요약과 공개된 결과는 같은 설정을 반환한다.
+결과 문항에는 서술형 `essay_index`를 함께 반환하므로 종료된 강의의 결과도
+시험 목록 조회 없이 원래 표시 번호로 볼 수 있다. 비공개 결과에는 문항·표시 정보가 없다.
+잘못된 값은 400으로 거부하며, 프런트엔드는 입력을 보존하고 최신 설정을 다시
+불러와 재시도한다. 기존 시험과 요청에서 값을 생략한 신규 시험의 기본값은
+`continuous`다. 시험 복사·템플릿 저장·가져오기는 원본 설정을 복사하며,
+기존 문항 번호·답안·성적 데이터에는 마이그레이션이 없다. 표시 변경은
+채점, 재채점, OMR 인식의 입력이 아니므로 결과를 다시 계산하지 않는다.
+검증: `test_exam_policy_update.py`, `test_exam_create_order.py`,
+`test_save_as_template_view.py`, `test_parent_exam_child_selection.py`,
+`test_essay_numbering.py`.
+
+### 설정 정정과 오프라인 답안 복구
+
+선택형 정답은 `AnswerKey.answers[문항 ID]`에 저장한다. 한 번호만 정답이면 `3`,
+여러 번호를 **모두** 표시해야 정답이면 `3,5`, 대체 정답으로 3번이나 5번 중
+하나 이상을 허용하면 `3|5|3,5`로 기록한다. 마지막 형식은 3번, 5번, 3·5번을
+함께 표시한 답을 모두 정답으로 채점하지만 빈 답과 그 밖의 번호가 섞인 답은
+오답이다. 기존 `3|5`는 3번 또는 5번만 정답이며 동시 선택은 허용하지 않고,
+`3,5`는 둘 다 필수인 규칙으로 유지한다. 3개 이상의 예외 번호도 가능한 비어 있지
+않은 조합을 모두 저장해 같은 규칙을 적용한다. 교사·관리자는 시험 생성 직후와
+시험 상세의 답안 등록에서 문항별 예외를 지정한다. OMR, 직접 답안 입력, 수기
+결과 조회는 공통 정답 집합 비교를 사용하며 정답 공개 화면에는 `3·5 중 하나 이상`
+처럼 읽을 수 있는 문구를 보여 준다. 교직원의 변경 권한과 tenant 경계는
+`AnswerKeyViewSet`이 검증한다. 저장 실패 시 이전 정답과 성적을 유지하며 화면은
+입력을 보존하고 재시도를 제공한다.
+
+교사·관리자가 정답표의 답을 바꾸면 해당 정규 시험의 완료된 제출을 같은 요청에서
+재채점한다. 템플릿 정답표는 아직 자체 문항을 갖지 않은 연결 정규 시험에 적용한다.
+제출별 채점 실패가 있으면 정답표 변경과 이미 재채점된 결과를 함께 롤백하고 오류를
+반환한다. 응답의 `regrade`에는 제출·수기 답안 재채점 수와 확인이 필요한 항목이
+포함된다. 학생이 아직 식별되지 않은 `answers_ready` OMR은 원본과 상태를 보존하고
+`needs_review`에 표시한다. 이 제출 때문에 식별된 다른 학생의 정답·만점 정정을
+막지 않으며, 학생을 확인한 뒤 OMR 검토에서 채점한다. 시험 만점 수정도 정규 시험에
+대해 같은 재채점을 실행한다. 합격 점수 수정은 진행도·클리닉 판정을 같은
+트랜잭션에서 다시 계산하며, 실패하면 설정
+변경을 롤백한다. 운영자가 `POST /exams/{id}/recalculate/`로 전체 재채점을 다시
+실행할 수도 있다.
+
+OMR 없이 시험을 본 학생은 채점·결과의 **답안 없는 시험 대상자**에서 입력한다.
+`POST /results/admin/exams/{exam_id}/enrollments/{enrollment_id}/manual-answers/`는
+`apply=false`일 때 전체 객관식·숫자 단답 답안을 서버 정답과 현재 배점으로 미리
+채점하고, `apply=true`일 때만 대표 `Result`, `ExamAttempt`, `ResultItem`과 감사용
+`ResultFact`를 한 트랜잭션으로 저장한다. 2~500자 사유, 전체 문항 ID, 답안 형식,
+현재 결과 버전, 미리보기 토큰, 활성 응시 대상 및 tenant를 검증한다. 미리보기 뒤
+정답·배점·답안·시험 설정이나 기존 결과의 점수·문항이 달라지면 확정을 거부하고
+새 미리보기를 요구한다. 수정 시각이 그대로인 점수 보정도 결과 지문으로 감지한다.
+기존 OMR 제출이나 출처가 다른
+성적은 이 경로로 덮지 않고 OMR 검토·기존 채점 경로에서 수정한다. 동시 변경,
+후속 진행도 실패, 정답 누락이나 만점 불일치도 부분 결과 없이 실패한다.
+OMR 없이 `NOT_SUBMITTED`로 기록됐던 학생이 늦게 응시했다면 같은 경로에서 답안을
+확정할 수 있다. 종전 결시의 출처와 수정자를 attempt 감사 메타에 남기고 결시 상태와
+첫 점수 snapshot을 새 응시 결과로 바꾼다.
+
+수기 답안의 이후 정답표·만점 재채점은 학생이 적은 답 자체를 유지하고 점수만
+다시 계산한다. 마지막 수기 답안 입력 뒤 별도 점수 보정이 있었다면 자동 덮어쓰기를
+건너뛰고 `needs_review`로 반환한다. OMR 결과의 수기 객관식 보정도 자동 제출
+재채점에서 건너뛰어 원본을 보존한다. OMR 인식·식별 오류는 채점·결과 상단의
+검토 현황과 개별 학생 상세의 **OMR 답안 검토·수정**에서 처리한다.
+
+검증: `test_manual_exam_answers.py`, `test_exam_recalculate_view.py`,
+`test_answer_key_view.py`; 설정 오류 시 저장 전후 값과 결과·진행도 롤백을 함께
+확인한다.
 
 운영 설정은 `PATCH /exams/{id}/`에서 한 transaction으로 저장한다. 조회와 잠금은
 반드시 `Exam.tenant` 소유권으로 범위를 제한한 단일 시험 행에 적용한다. 차시 연결은
@@ -83,9 +150,21 @@ FK key-share와 양립하는 잠금으로 공유 차시/강의의 교착 위험�
 | `calculated_at`, `updated_at` | 실제 파생값이 달라진 행만 갱신한다. 출결·영상·과제 필드와 수동 `meta`는 보존한다. |
 | `LectureProgress` | 영향 수강 등록의 기존 canonical 강의 집계와 같은 위험수준 규칙을 사용한다. `meta`와 소유 강의는 보존하며 `RiskLog`를 만들지 않는다. |
 
-전체 `ProgressPipelineService`는 클리닉 자동 생성·해소 부작용을 가지므로 이
-대상자 편집 경로에서 호출하지 않는다. `Result`, `ResultFact`, `ExamAttempt`,
-`ClinicLink`/해소 이력, `AssessmentCorrection`, 발송 로그·예약·outbox는 바꾸지 않는다.
+파생값 갱신 context 자체는 클리닉 자동 생성·해소 부작용을 가진
+전체 `ProgressPipelineService`를 호출하지 않는다. 다만 대상 완전 치환이
+끝나면 같은 트랜잭션에서 변경 전·후 실제 유효
+`(enrollment, session)` 대상 집합의 차이를 구한다. 이 시험에서 빠진
+학생×연결 차시의 미해소 source-specific `ClinicLink`만
+`SOURCE_REMOVED`로 감사 해소하고 해당 진척 지점을 재계산한다. 이로써
+일부 대상을 처음 명시하는 legacy 전환과 하나의 시험이 여러 차시에
+연결된 경우도 모든 유효 차이를 빠짐없이 닫는다.
+
+`SOURCE_REMOVED` 근거에는 시험·차시·정확한 수강 등록 ID 목록·요청
+사용자·`exam_enrollment_removed` 사유를 남긴다. 오늘 계획 선택은
+비활성화하지만 기존 예약·등원·완료 사실과 append-only 해소 이력은
+보존하며, 대상 제거 자체로 제품 알림·예약 발송·push outbox를 만들지
+않는다. `Result`, `ResultFact`, `ExamAttempt`, `AssessmentCorrection`도 변경하지
+않는다. 해소 실패 시 대상 치환과 파생값 갱신까지 모두 롤백한다.
 신규 roster에 아직 진척 행이 없다면 시험 생성만으로 출결·과제 값을 추측해 행을
 만들지 않는다. 누락 수는 구조화 로그에 남고, roster/시험 조회는 실제 새 시험을
 반환하며 세션 요약의 participant_count는 기존 진척 행 수(없으면 0)를 유지한다.
@@ -93,7 +172,8 @@ FK key-share와 양립하는 잠금으로 공유 차시/강의의 교착 위험�
 
 검증: `apps/domains/progress/tests/test_exam_target_projection_pg.py`의 PostgreSQL
 API 생성→대상 편집→요약 조회, 진척 부재→최초 채점, rollback/중복/commit 후 예외,
-동시 치환·생성 교차, 다중 연결·legacy 전환·tenant 격리, 원본/수동/발송 불변 테스트.
+동시 치환·생성 교차, 다중 연결·legacy 전환·tenant 격리, 제거된 학생만의
+클리닉 감사 해소·발송 0건·해소 실패 전체 rollback, 원본/수동 불변 테스트.
 
 ### 하나의 시험을 여러 강의에서 운영
 
@@ -569,6 +649,13 @@ Ymath의 `Program.feature_flags.assessment_status_display=wrong_completion`은
   확정이 동시에 실행되면 먼저 잠금을
   얻은 작업 뒤에 두 번째 작업이 최신 상태를 다시 읽어 최종 결시 상태를 보존한다.
 
+  개별 `grade_submission`과 직접 결과 동기화도 같은 잠금·결시 판정을 사용한다.
+  늦게 도착한 자동 채점은 결시 점수·문항·감사·진도·클리닉을 다시 만들지 않는다.
+  이미 `ANSWERS_READY`에 들어온 접수는 기존 lifecycle을 통해 `DONE`으로 닫아
+  처리 중으로 남기지 않는다. 기존 완료 접수의 반복 호출은 저장 결과를 유지한다.
+  명시적인 새 점수 입력이나 새 응시는 정상적으로 진행되며, 과거 결시 접수의
+  재전달이 새 대표 성적을 덮어쓰지 않는다. 이 변경은 기존 데이터를 일괄 수정하지 않는다.
+
 AI OMR 성공 콜백은 인식 fact를 저장한 뒤 같은 worker 프로세스에서 채점과
 `Result` 동기화를 닫는다. 이 동기화는 문항별 최신 `ResultItem`과 append-only
 `ResultFact`를 같은 transaction에서 함께 저장하므로 점수 목록과 문항 분석이
@@ -576,7 +663,8 @@ AI OMR 성공 콜백은 인식 fact를 저장한 뒤 같은 worker 프로세스�
 `ExamResult`도 확정 준비 상태를 검사한다. 현재 점수 구조에 답변형 문항이 없을 때만
 즉시 `FINAL`로 확정하고 진행도와 수업 분석을 갱신한다. 답변형 문항이 있으면
 객관식 OMR 점수는 교직원 입력 화면에만 보존하고, 현재 대표 attempt의 모든 답변형
-`ResultItem` 또는 명시적인 `manual_subjective`/`manual_total` 합산 근거가 채워질 때까지
+수기 `ResultItem`(`manual`/`manual_grid`) 또는 명시적인
+`manual_subjective`/`manual_total` 합산 근거가 채워질 때까지
 `ExamResult=DRAFT`, `grading_status=subjective_pending`으로 유지한다. 이 상태는
 학생·학부모 결과, 석차·평균, 합불·진척, 클리닉 생성·해소, 오답 후속, 성적 알림과
 외부 성적 출력에 사용하지 않는다. 시험의 `grading_mode`가 과거 값으로 남아 있어도
@@ -593,6 +681,45 @@ AI OMR 성공 콜백은 인식 fact를 저장한 뒤 같은 worker 프로세스�
 `grading_status`를 함께 반환하므로, 검토 화면은 부분 점수를 최종 채점 완료로 알리지
 않는다.
 
+서술형 빠른 합산 입력과 문항별 수기 채점이 함께 있으면 같은 시험·수강·현재 attempt의
+append-only Fact ID 순서로 최근 명시 입력 방식을 선택한다. 최근 `manual_subjective`가
+문항 입력보다 뒤라면 이전 문항 snapshot을 지우지 않고 합산값을 사용한다. 명시한 0점도
+완료된 합산 입력이다. 이후 `manual`/`manual_grid` 답변형 문항 입력은 현재 수기 문항 합을
+사용하며, 과거 합산 Fact나 `attempt.meta.subjective_score`가 미채점 문항을 완료로 만들지
+않는다. 객관식 문항만 고치는 동작은 이 선택을 바꾸지 않는다. 직접 채점 표를 발행하면
+문항값이 이전과 같더라도 합산 입력 이후의 명시적 문항 채점 Fact를 남긴다. 같은 표를
+다시 발행하는 것만으로 동일 Fact를 반복 추가하지 않는다. OMR 재동기화·재채점에도 이
+선택이 유지되며 기존 교사 입력 이력은 보존된다. `manual_total`은 기존의 독립된 전체
+합계/완료 근거로 유지하고, 전체 합계에서 객관식 점수를 빼 새 서술형 입력으로 추측하지
+않는다. 대표 전환의 합계 이벤트 재생 계약도 그대로 유지한다.
+
+같은 OMR submission/attempt를 다시 채점할 때 최신 수동 점수 이벤트가
+`manual_total`이면 그 전체 합계를 그대로 보존한다. 객관식 80점에 교사가 전체
+95점을 입력한 뒤 재채점해도 `Result`와 FINAL `ExamResult`는 95점이며,
+객관식 답안의 자동 재채점이나 반복 실행도 override를 해제하지 않는다. 전체
+0점도 유효하며 이전 서술형 문항 점수는 이력으로 보존한다. 이후 교사가 서술형/객관식
+합계 또는 실제 문항 점수를 저장하면 기존 전체 override를 다시 적용하지 않고
+해당 입력 방식의 점수 계산을 따른다. 이후 `manual_not_submitted` 미응시 처리는
+이전 전체 override를 무효화한다. 과거 총점 Fact는 감사 이력으로 남으며, 미응시를
+해제하는 기존 명시적 점수 입력 이후에는 새 총점만 재채점에서 보존한다.
+미응시 자체의 재계산·재개 정책은 위 직접 채점 계약을 그대로 따른다.
+다른 시험·수강·attempt의 Fact는 적용하지
+않고 새 응시에는 이전 override를 넘기지 않는다. 제출 연결 전의 임시 0점은
+기존 placeholder 교체 정책을 유지하고, 연결 이후 교사가 명시한 0점만 보존한다.
+총점 보존과 서술형 완료 판정은 같은 `attached_at` 경계를 사용한다. 연결 시각보다
+이전에 생성되어 소비된 총점 Fact는 합산 완료 근거에서도 제외하므로, 서술형이
+미채점인 혼합 OMR은 객관식 80점이 계산되어도 `DRAFT`/`subjective_pending`으로
+남는다. 연결 시각과 같거나 이후에 생성된 명시적 총점 0점은 유효한 완료 근거다.
+이 변경은 자동 일괄 재채점이나
+기존 Fact 수정을 하지 않는다. 회귀 검증은
+`test_mixed_omr_subjective_projection_pg.py`의 총점 재채점·입력 순서·새 응시 사례가 담당한다.
+
+합산 완료 뒤 일부 답변형만 문항 채점하면 남은 문항은 다시 `subjective_pending`이다.
+같은 transaction에서 legacy `FINAL`을 `DRAFT`로 되돌리고 `finalized_at`을 비우며,
+진행도 파이프라인을 실행해 이전 확정 투영을 회수한다. 모든 필수 답변형 문항을 채점하거나
+합산값을 다시 명시하면 재확정한다. 자동 OMR/온라인 출처의 답변형 snapshot만으로는
+교사 채점 완료로 판정하지 않는다.
+
 서술형 입력이 끝나면 같은 transaction에서 legacy 결과를 정확히 한 번 `FINAL`로
 전환하고 commit 뒤 진행도 파이프라인을 한 번만 실행한다. 같은 attempt를 재채점할 때는
 수기 답변형 `ResultItem`을 보존하지만, 대표 attempt가 바뀌면 이전 attempt의 수기
@@ -603,6 +730,12 @@ attempt 중 하나라도 현재 결과와 맞지 않거나 수동 검토가 남�
 `score_edit_lease_state`를 사용한다. worker 이미지 빌드와
 `tests/test_worker_entrypoint_imports.py`는 DRF가 없는 환경에서
 `grading_service` import가 성공해야 통과한다.
+
+회귀 검증은 `apps/domains/results/tests/test_mixed_omr_subjective_projection_pg.py`와
+`apps/support/results/tests/test_manual_exam_grading.py`에서 합산↔문항 입력 순서,
+0점, 동일 표 재발행, 객관식 재채점 후 재조회, 부분 채점 확정 회수/복구와 tenant 경계를
+확인한다. batch의 처리 완료와 교사 채점 완료를 분리하는 API 계약은
+[OMR batch 진행 상태](omr.md)에 둔다. 기존 DB 열이나 저장된 Fact를 바꾸는 migration은 없다.
 
 과거 버전에서 이미 `FINAL` 또는 진행도·자동 클리닉으로 투영된 부분 채점은 기본
 dry-run 명령으로 테넌트와 정확한 대상 수를 먼저 확인한다.
@@ -774,6 +907,14 @@ teacher/admin만 허용하고, 시험 roster와 현재 대표 `Result` 밖의 �
 정답률에는 정답으로 남으면서 학생 오답노트에는 포함된다. 재채점으로
 오답도 아니고 복습 지정도 아닌 상태가 되면 누적 오답노트에서 빠진다.
 
+오답노트 조회와 선택 자료 미리보기는 시험 문항마다 원래 `question_number`와
+표시 전용 `essay_numbering`, `essay_index`를 반환한다. 별도 번호 시험은
+전체 시험 문항 구성으로 서술형 순번을 계산하므로, 조회 범위나 페이지에
+서술형 20번만 있어도 `서술형 2번`으로 표시된다. 교직원 화면과 오답노트
+PDF/HWPX의 문제·해설 제목은 같은 표시를 사용한다. 워크북·기존 시험은
+연속 번호를 유지하며, 결과 문항 키·채점·OMR 인식·안정적인 오답노트
+fingerprint는 원래 번호를 사용한다. 다른 tenant 시험 문항은 조회되지 않는다.
+
 결시를 제외한 확정 결과는 기존 시험 요약, 문항 통계, 합격 판정과
 진행도 파이프라인이 읽는다. 선택형·답변형·혼합형이 별도 통계 저장소를
 만들지 않는다.
@@ -907,3 +1048,15 @@ Ymath 전체 원본을 운영 데이터 없이 persistent development에서 재�
 따른다. `scripts/exam_source_bundle.py`, `scripts/exam_source_hwp_qa.py`,
 `scripts/ymath_realuse_scenario.py`가 각각 원본 인벤토리, 미주 구조/미리보기,
 실제 HTTP 시나리오와 재시작 상태를 소유한다.
+### OMR 검토 목록과 성적표 출력 사전 점검
+
+`GET /submissions/submissions/exams/{exam_id}/`의 기존 배열 응답은 최근
+200건으로 유지한다. `review_issues=1`은 동일한 교직원 권한과 테넌트·시험
+범위에서 미해결 답안만 최신 ID 순으로 50건씩 반환하며
+`{items,total,next_cursor}`를 준다. `cursor`는 다음 페이지의 직전 마지막
+ID이고 `total`은 해당 필터 전체 건수다. 식별되지 않은 답안, 미완료 상태,
+수동 검토 필요, 식별 실패를 포함하고 대체·명시적 폐기 답안은 제외한다.
+`enrollment_ids`로 출력 대상 학생만 고를 때는 미식별 답안도 함께 포함한다.
+여러 묶음을 조회할 때 `include_unbound=0`으로 중복 합산을 피한다.
+`focus_id`는 성적표에서 특정 미해결 답안으로 이동할 때 사용한다. 잘못된
+필터는 400으로 실패하며 목록 조회 실패는 성적표 출력을 잠근다.

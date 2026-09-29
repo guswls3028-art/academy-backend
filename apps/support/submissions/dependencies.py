@@ -281,18 +281,23 @@ def complete_submission_after_auto_grade(submission, *, actor: str) -> None:
 def regrade_exam_submissions(*, tenant, exam_id: int, actor: str) -> dict[str, Any]:
     from django.db import transaction
 
-    from apps.domains.enrollment.models import Enrollment
-    from apps.domains.results.models import ExamAttempt, Result
+    from apps.domains.results.models import ResultItem
+    from apps.domains.results.services.manual_exam_answers import regrade_manual_exam_answers
     from apps.domains.submissions.models import Submission
     from apps.domains.submissions.services.lifecycle import reopen_for_regrade
+    from apps.domains.exams.models import Exam
+    from apps.support.omr.score_shape import get_exam_score_shape
     from apps.support.results.grading_dependencies import (
         lock_exam_and_score_edit_scope_for_grading,
+        lock_exam_submission_regrade_state,
     )
 
     regradable_statuses = {
         Submission.Status.DONE,
         Submission.Status.ANSWERS_READY,
     }
+    exam = Exam.objects.get(id=int(exam_id), tenant=tenant)
+    score_shape = get_exam_score_shape(exam)
     submissions = list(
         Submission.objects.filter(
             tenant=tenant,
@@ -307,6 +312,7 @@ def regrade_exam_submissions(*, tenant, exam_id: int, actor: str) -> dict[str, A
     graded = 0
     skipped = 0
     failed: list[dict[str, object]] = []
+    needs_review: list[dict[str, object]] = []
 
     for submission_id, current_status in submissions:
         if current_status not in regradable_statuses:
@@ -318,33 +324,35 @@ def regrade_exam_submissions(*, tenant, exam_id: int, actor: str) -> dict[str, A
                     exam_id=int(exam_id),
                     tenant_id=int(tenant.id),
                 )
-                submission = Submission.objects.select_for_update().get(id=int(submission_id))
+                submission, result, not_submitted = lock_exam_submission_regrade_state(
+                    submission_id=int(submission_id),
+                    exam_id=int(exam_id),
+                    tenant_id=int(tenant.id),
+                )
                 if submission.status not in regradable_statuses:
                     skipped += 1
                     continue
-                enrollment = Enrollment.objects.select_for_update().get(
-                    id=int(submission.enrollment_id),
-                    tenant=tenant,
+                if submission.enrollment_id is None:
+                    needs_review.append({
+                        "submission_id": int(submission_id),
+                        "detail": "학생이 식별되지 않아 정답 변경 후 재채점을 보류했습니다.",
+                    })
+                    skipped += 1
+                    continue
+                manual_question_ids = (
+                    ResultItem.objects.filter(result=result, source="manual")
+                    .values_list("question_id", flat=True)
+                    if result is not None else ()
                 )
-                Result.objects.select_for_update().filter(
-                    target_type="exam",
-                    target_id=int(exam_id),
-                    enrollment_id=int(enrollment.id),
-                ).first()
-                attempt = (
-                    ExamAttempt.objects.select_for_update()
-                    .filter(
-                        exam_id=int(exam_id),
-                        submission_id=int(submission_id),
-                        enrollment__tenant=tenant,
-                    )
-                    .first()
-                )
-                if (
-                    attempt is not None
-                    and isinstance(attempt.meta, dict)
-                    and attempt.meta.get("status") == "NOT_SUBMITTED"
-                ):
+                if any(score_shape.question_kind(int(qid)) == "choice" for qid in manual_question_ids):
+                    # A teacher-owned item may differ from the scan; keep it intact.
+                    needs_review.append({
+                        "submission_id": int(submission_id),
+                        "detail": "수기 보정 문항이 있어 자동 재채점에서 제외했습니다.",
+                    })
+                    skipped += 1
+                    continue
+                if not_submitted:
                     skipped += 1
                     continue
                 if submission.status != Submission.Status.ANSWERS_READY:
@@ -360,12 +368,21 @@ def regrade_exam_submissions(*, tenant, exam_id: int, actor: str) -> dict[str, A
                 }
             )
 
+    manual = regrade_manual_exam_answers(exam=exam, tenant=tenant)
+    needs_review.extend(manual["needs_review"])
+    failed.extend({
+        "submission_id": 0, "enrollment_id": item["enrollment_id"],
+        "status": "manual_entry", "detail": item["detail"],
+    } for item in manual["failed"])
     return {
         "exam_id": int(exam_id),
         "total": len(submissions),
         "graded": graded,
         "skipped": skipped,
         "failed": failed,
+        "manual_total": manual["total"],
+        "manual_graded": manual["graded"],
+        "needs_review": needs_review,
     }
 
 

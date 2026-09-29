@@ -1,5 +1,14 @@
 # 클리닉 개설 방식과 예약 정책
 
+새 학원의 `Tenant.clinic_use_daily_random` 기본값은 `True`다. 따라서 새 학원은
+패스카드 합격 화면에 날짜 기준 자동 3색을 사용한다. 기존 학원 행의 저장된
+`True`/`False`는 변경하지 않으며 관리자는 `/clinic/settings/` GET/PATCH로
+선택을 확인하고 바꿀 수 있다. 실제 자동 색상은 서버의 날짜별 결정 함수가
+계산하고 `/clinic/idcard/`의 합격 화면에만 적용된다. 예약 확정·승인 대기·예약
+필요 상태는 기존 판정과 배경을 유지한다. PATCH 실패는 기존 값을 보존하며
+GET을 다시 읽어 확인할 수 있다. 새 인스턴스 기본값과 명시적 `False` 저장
+테스트, 패스카드 GET의 상태별 응답으로 검증한다.
+
 ## 목적과 사용자 흐름
 
 ### 수동 통과 복구와 점수 보존
@@ -219,6 +228,20 @@ PostgreSQL `test_clinic_overnight_migration_lock_timeout.py`. 실제 사용자 P
 추정하지 않는다. tenant나 session을 현재 요청 범위에서 확인할 수 없으면 다른
 tenant를 추정하지 않고 실패 폐쇄한다.
 
+### 일정 tree 날짜 범위 조회
+
+교직원 전용 `GET /api/v1/clinic/sessions/tree/`는 기존 `year`+`month` 조회와
+`date_from`+`date_to` inclusive 조회 중 정확히 하나만 받는다. 날짜 범위는 최대
+31일이며 일부 누락, 역순, 잘못된 날짜, 월 조회와의 혼합을 `400`으로 거부한다.
+범위는 tenant-scoped `Session.date`에 직접 적용하므로 8월 31일~9월 6일처럼
+월말·월초를 건너도 양 끝 날짜를 모두 포함하고 서버 시각대 변환을 하지 않는다.
+
+이 조회는 존재하는 세션 행을 반환한다. 참가자의 `cancelled` 여부는 세션 자체를
+숨기지 않으며 예약·출결 수치는 상태별 집계로만 구분한다. 삭제된 세션 행과 다른
+tenant의 세션은 반환하지 않는다. 이전 주 복사에 필요한 제목·날짜·시간·장소·정원,
+대상 학년/학교유형/강의/반, 희망시간 접수, 다중 시간대, 예약 방식·간격·최대 체류
+snapshot을 함께 반환하지만 참가자 명단은 반환하거나 복사하지 않는다.
+
 ## limglish 현재·미래 일정 전환
 
 기존 limglish 일정은 일반 migration에서 모든 tenant와 함께 추정 변환하지 않는다.
@@ -412,6 +435,8 @@ bulk 모두 `409`로 거부하고 요청 전체를 롤백한다. 일정 변경�
 - 집중 API 회귀: `tests/test_clinic_multi_slot_booking_api.py`
 - 직접 취소·부작용 0·학생/학부모·PostgreSQL 동시성 회귀:
   `tests/test_clinic_self_cancellation.py`
+- 월 경계·tenant·복사 설정 범위 회귀:
+  `tests/test_clinic_session_tree_date_range_api.py`
 - 시간 범위·권한·연락처·알림 이력 회귀: `tests/test_clinic_time_range_policy_api.py`
 - 자정 종료·구간 정원·리마인더·DB 제약 회귀:
   `tests/test_clinic_time_range_midnight_api.py`
@@ -436,3 +461,22 @@ python manage.py check --settings apps.api.config.settings.test
 
 집중 회귀는 ON/OFF 단일·bulk 경로, 혼합 정책 원자성, 비활성 상태, ON→OFF,
 일정 변경, tenant 격리, 초기 tenant/session 값과 PostgreSQL 동시 쓰기를 검증한다.
+
+
+### 미응시 처리와 시험 대상 변경
+
+직원이 명시적으로 미응시 처리한 시험도 현재 응시 대상에 속할 때만 미통과
+목록과 면제 처리에 나타난다. 시험에 명시적인 대상자 명단이 있으면 그 명단이
+차시 수강 명단보다 우선한다. 대상자 명단이 전혀 없는 기존 시험은 연결된
+차시 수강 명단을 계속 따른다. 학생을 대상에서 제외해도 기존 성적·미응시
+기록·예약 이력은 삭제하지 않는다. 종료 강의를 복원해도 제외된 시험의 미응시
+항목은 다시 나타나지 않으며, 학생을 시험 대상에 다시 추가하면 기존 미응시
+항목을 정상적으로 조회·면제할 수 있다.
+
+대상 변경과 면제 쓰기는 같은 시험 행의 트랜잭션 잠금을 사용한다. 면제 API도
+채점과 동일하게 시험 행을 먼저 잠근 뒤 결과를 잠가 동시 실행의 역순 잠금을 방지한다. 제외된
+학생에 대한 오래된 면제 요청은 `404 MISSING_EXAM_TARGET_NOT_FOUND`로 응답하고
+새 면제 이력을 만들지 않는다. 화면을 새로 조회하거나 응시 대상 설정을
+수정한 뒤 계속할 수 있다. tenant·활성 수강·강의·차시 완료 경계는 유지한다.
+`test_admin_clinic_missing_exam_waiver.py`는 대상 제외 API 이후 목록·면제 거부,
+강의 종료/복원, 재추가 후 면제 성공, 성적 보존을 검증한다.

@@ -57,6 +57,13 @@ class WrongNotePDFDeadlineError(TimeoutError):
     pass
 
 
+def _display_question_label(item: dict[str, Any], fallback: int | None = None) -> str:
+    if item.get("essay_numbering") == "separate" and item.get("essay_index") is not None:
+        return f"서술형 {item['essay_index']}번"
+    number = item.get("question_number") or fallback
+    return f"{number}번" if number is not None else "문항 번호 미확인"
+
+
 def _ensure_korean_font() -> tuple[str, str]:
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
@@ -475,10 +482,7 @@ def build_wrong_note_pdf(
             _remaining_seconds(deadline_monotonic)
             item_index = pair_start + column_index + 1
             column_x = margin + column_index * (column_w + column_gap)
-            q_number = item.get("question_number")
-            question_label = (
-                f"{q_number}번" if q_number is not None else "문항 번호 미확인"
-            )
+            question_label = _display_question_label(item)
             pdf.setFillColor(HexColor(_INK))
             pdf.setFont(bold_font, 15)
             pdf.drawString(column_x, page_h - 31 * mm, question_label)
@@ -628,10 +632,9 @@ def build_wrong_note_pdf(
             pdf.setFont(regular_font, 9)
             pdf.drawRightString(page_w - margin, page_h - 14 * mm, f"{index} / {len(rows)}")
 
-            q_number = item.get("question_number")
             pdf.setFillColor(HexColor(_INK))
             pdf.setFont(bold_font, 21)
-            pdf.drawString(margin, page_h - 38 * mm, f"{q_number}번" if q_number else "문항")
+            pdf.drawString(margin, page_h - 38 * mm, _display_question_label(item))
             pdf.setFont(bold_font, 11)
             pdf.setFillColor(HexColor(_CORRECT))
             pdf.drawRightString(
@@ -734,7 +737,7 @@ def build_wrong_note_hwpx(
         try:
             problem_pages.append(
                 {
-                    "heading": f"{item.get('question_number') or index}번",
+                    "heading": _display_question_label(item, index),
                     "subheading": (
                         f"{_session_label(item)} · "
                         f"{str(item.get('exam_title') or '시험')}"
@@ -759,7 +762,7 @@ def build_wrong_note_hwpx(
             solution_pages.append(
                 {
                     "heading": (
-                        f"{item.get('question_number') or index}번 정답 및 해설"
+                        f"{_display_question_label(item, index)} 정답 및 해설"
                         f"{suffix}"
                     ),
                     "answer": str(item.get("correct_answer") or "미등록"),

@@ -190,9 +190,10 @@ class SubscriptionViewAuthorizationTests(APITestCase):
     def test_grace_contract_exposes_actual_service_access_end(self):
         today = timezone.localdate()
         self.program.subscription_status = "grace"
+        self.program.cancel_at_period_end = False
         self.program.subscription_expires_at = today - timedelta(days=3)
         self.program.save(
-            update_fields=["subscription_status", "subscription_expires_at"]
+            update_fields=["subscription_status", "subscription_expires_at", "cancel_at_period_end"]
         )
         self._authenticate_owner("grace-owner")
 

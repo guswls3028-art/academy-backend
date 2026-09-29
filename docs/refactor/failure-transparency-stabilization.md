@@ -3,7 +3,7 @@
 **상태(2026-09-20 재확인):** 자동승인 저장 실패는 backend 수리·전체 CI 확인,
 실화면/운영 미검증. 공개영상 준비는 코드·기존 회귀에서 수리 확인.
 교사 목록 오류/빈 상태는 frontend PR552에서 수리했고 후속 PR553의 격리 실사용까지
-통과했다. exact 운영 검증 결과는 [실행 계획 §7](hardening-plan.md#7-인수인계와-재개)이
+통과했다. 당시 운영 검증 근거는 [안정화 첫 배치 인수인계 §7](hardening-plan.md#7-인수인계와-재개)이
 소유한다. 나머지 후보는 최신 재현이 필요하다.
 **최초 발견 기준:** 2026-09-12, backend `ea0b3ae7866773d0f0a9d8b44056bb3cd68202ab`,
 frontend `a13ad36ed7d4a8e976c3d0d2874da73e825d21a0`.
@@ -13,7 +13,8 @@ frontend `a13ad36ed7d4a8e976c3d0d2874da73e825d21a0`.
 재현됐다는 기록이 아니다.
 성공 기준은 [변경 위험·실사용 감사 계약](../operations/change-risk-and-release-bundle.md),
 배포 시점은 [배포 시점과 연속성](../operations/deployment-modes.md)을 따른다.
-현재 실행 순서·인수인계는 [hardening-plan.md](hardening-plan.md)가 소유한다.
+Academy 전체 실행 순서는 [실행 계획](../PLAN.md), 안정화 상세 인수인계는
+[hardening-plan.md](hardening-plan.md)가 소유한다.
 아래 최초 발견 당시의 파일 위치·상태는 현재 코드와 구분한다.
 
 ## 확인한 후보

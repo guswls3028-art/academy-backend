@@ -24,6 +24,9 @@
 # Shell scripts: LF (EC2/Linux 호환)
 *.sh text eol=lf
 
+# Unified diff uses a space marker for empty context lines.
+docker/native-security/patches/*.patch text eol=lf whitespace=-blank-at-eol
+
 # Windows 전용 스크립트만 CRLF 유지
 *.bat text eol=crlf
 *.ps1 text eol=crlf

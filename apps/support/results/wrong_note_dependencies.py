@@ -98,7 +98,7 @@ def exams_with_wrong_note_sessions_by_id(
         for exam in (
             Exam.objects
             .filter(id__in=exam_ids, tenant_id=int(tenant_id))
-            .only("id", "title")
+            .only("id", "title", "essay_numbering", "max_score", "exam_type", "template_exam_id")
             .prefetch_related(
                 Prefetch(
                     "sessions",

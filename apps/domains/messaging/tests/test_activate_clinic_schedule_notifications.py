@@ -5,7 +5,9 @@ from django.core.management.base import CommandError
 from django.test import TestCase
 
 from apps.core.models import Tenant
-from apps.domains.messaging.models import AutoSendConfig, MessageTemplate
+from apps.domains.messaging.models import (
+    AutoSendConfig, DefaultTemplateSuppression, MessageTemplate,
+)
 from apps.domains.messaging.management.commands.activate_clinic_schedule_notifications import (
     TARGET_TRIGGERS,
 )
@@ -130,3 +132,20 @@ class ActivateClinicScheduleNotificationsCommandTest(TestCase):
             ).count(),
             1,
         )
+
+    def test_deleted_or_unlinked_default_blocks_manual_activation(self):
+        DefaultTemplateSuppression.objects.create(
+            tenant=self.active, default_key="clinic_reservation_changed",
+        )
+        with self.assertRaises(CommandError):
+            call_command("activate_clinic_schedule_notifications", "--apply", stdout=StringIO())
+        self.assertFalse(self.created_config.enabled)
+        DefaultTemplateSuppression.objects.all().delete()
+
+        self.created_config.template = None
+        self.created_config.save(update_fields=["template"])
+        with self.assertRaises(CommandError):
+            call_command("activate_clinic_schedule_notifications", "--apply", stdout=StringIO())
+        self.created_config.refresh_from_db()
+        self.assertIsNone(self.created_config.template_id)
+        self.assertFalse(self.created_config.enabled)

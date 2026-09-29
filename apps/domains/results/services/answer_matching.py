@@ -26,7 +26,26 @@ def normalize_answer(value: Any) -> str:
 
 
 def format_answer_for_display(value: Any) -> str:
-    if isinstance(value, str) or not isinstance(value, Iterable):
+    if isinstance(value, str):
+        text = value.strip()
+        if "|" in text:
+            sets = correct_answer_sets(text)
+            choices = sorted(set().union(*sets)) if sets else []
+            if 2 <= len(choices) <= 5 and all(
+                choice in {"1", "2", "3", "4", "5"} for choice in choices
+            ):
+                expected = {
+                    frozenset(
+                        choice
+                        for index, choice in enumerate(choices)
+                        if mask & (1 << index)
+                    )
+                    for mask in range(1, 1 << len(choices))
+                }
+                if set(sets) == expected and len(sets) == len(expected):
+                    return f"{'·'.join(choices)} 중 하나 이상"
+        return text
+    if not isinstance(value, Iterable):
         return str(value or "").strip()
     return ",".join(str(v or "").strip() for v in value if str(v or "").strip())
 

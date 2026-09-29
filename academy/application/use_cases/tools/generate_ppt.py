@@ -31,6 +31,7 @@ class _PdfQuestionPlan:
     use_whole_page: bool
     regions_per_page: List[List[Any]]
     workbook_doc: bool = False
+    allow_image_segmentation: bool = True
 
 
 class GeneratePptUseCase:
@@ -112,7 +113,11 @@ class GeneratePptFromPdfUseCase:
             PptResult with PPTX bytes and slide count.
         """
         from academy.adapters.tools.pymupdf_renderer import PdfDocument
-        from academy.domain.tools.image_preprocessor import preprocess_for_export, trim_bottom_whitespace
+        from academy.domain.tools.image_preprocessor import (
+            compact_internal_whitespace,
+            preprocess_for_export,
+            trim_bottom_whitespace,
+        )
         from academy.domain.tools.ppt_composer import PptComposer, PptConfig
 
         # 빔프로젝터 1080p 충분 + Pillow MAX_IMAGE_PIXELS(50M) 안전. 고해상도 스캔본 대응.
@@ -156,7 +161,7 @@ class GeneratePptFromPdfUseCase:
             use_whole_page = question_plan.use_whole_page
             segmented_question_mode = False
 
-            if use_whole_page:
+            if use_whole_page and question_plan.allow_image_segmentation:
                 if on_progress:
                     on_progress(0, "이미지 문항 영역 분석")
                 segmented_slide_count = _add_segmented_pdf_slides_to_composer(
@@ -220,7 +225,9 @@ class GeneratePptFromPdfUseCase:
                         if px1 - px0 < 10 or py1 - py0 < 10:
                             continue
                         crop = page_img.crop((px0, py0, px1, py1))
-                        crop = trim_bottom_whitespace(crop, padding_px=12)
+                        crop = compact_internal_whitespace(
+                            trim_bottom_whitespace(crop, padding_px=12)
+                        )
                         export_img = preprocess_for_export(crop)
                         img_bytes = _image_to_bytes(export_img)
                         img_bytes = _apply_user_settings(img_bytes)
@@ -329,6 +336,13 @@ def _build_pdf_question_plan(doc: Any) -> _PdfQuestionPlan:
                     exc,
                 )
 
+        is_blank_page = False
+        if not splitter_blocks:
+            try:
+                is_blank_page = doc.is_blank_page(page_idx)
+            except Exception:  # Unverified textless pages must remain protected.
+                logger.warning("PPT_PDF_BLANK_CHECK_FAILED page=%d", page_idx)
+
         phase1.append({
             "page_index": page_idx,
             "text_blocks": splitter_blocks,
@@ -336,6 +350,7 @@ def _build_pdf_question_plan(doc: Any) -> _PdfQuestionPlan:
             "page_height": page_h,
             "paper_type_result": paper_type_result,
             "is_skip_page": is_skip_page,
+            "is_blank_page": is_blank_page,
         })
 
     # 스캔/사진 PDF는 text layer가 없어서 문항 split이 불가능하다. 페이지 단위 fallback.
@@ -345,6 +360,24 @@ def _build_pdf_question_plan(doc: Any) -> _PdfQuestionPlan:
         return _PdfQuestionPlan(
             use_whole_page=True,
             regions_per_page=[[] for _ in range(page_count)],
+        )
+
+    # A mixed PDF can have valid question anchors on every text page while
+    # image-only pages disappear from the question-mode output. Preserve all
+    # pages; fully image-only PDFs above still use image segmentation.
+    textless_pages = sum(
+        not page["text_blocks"] and not page["is_blank_page"] for page in phase1
+    )
+    if textless_pages:
+        logger.warning(
+            "PPT_PDF_MIXED_TEXT_IMAGE_PAGES pages=%d textless=%d; using pages",
+            page_count,
+            textless_pages,
+        )
+        return _PdfQuestionPlan(
+            use_whole_page=True,
+            regions_per_page=[[] for _ in range(page_count)],
+            allow_image_segmentation=False,
         )
 
     eligible_pages = 0
@@ -410,6 +443,22 @@ def _build_pdf_question_plan(doc: Any) -> _PdfQuestionPlan:
         if {r.number for r in regions} & {1, 2, 3}
     )
     eligible_with_anchors = sum(1 for regions in first_pass_regions if regions)
+    # A few plausible anchors can produce a non-empty PPT while silently dropping
+    # most of a worksheet. Preserve every page when text-based detection has not
+    # established coverage across the document; image segmentation would make
+    # another unreviewed partial result from the same ambiguous source.
+    if eligible_pages >= 3 and eligible_with_anchors * 2 < eligible_pages:
+        logger.warning(
+            "PPT_PDF_LOW_ANCHOR_COVERAGE pages=%d eligible=%d anchored=%d; using pages",
+            page_count,
+            eligible_pages,
+            eligible_with_anchors,
+        )
+        return _PdfQuestionPlan(
+            use_whole_page=True,
+            regions_per_page=[[] for _ in range(page_count)],
+            allow_image_segmentation=False,
+        )
     pages_per_number: dict[int, int] = {}
     for regions in first_pass_regions:
         for number in {r.number for r in regions}:
@@ -503,6 +552,7 @@ def _add_segmented_pdf_slides_to_composer(
         segment_questions_multipage,
     )
     from academy.domain.tools.image_preprocessor import (
+        compact_internal_whitespace,
         preprocess_for_export,
         trim_bottom_whitespace,
     )
@@ -536,7 +586,9 @@ def _add_segmented_pdf_slides_to_composer(
                     if px1 - px0 < 10 or py1 - py0 < 10:
                         continue
                     crop = page_img.crop((px0, py0, px1, py1))
-                    crop = trim_bottom_whitespace(crop, padding_px=12)
+                    crop = compact_internal_whitespace(
+                        trim_bottom_whitespace(crop, padding_px=12)
+                    )
                     export_img = preprocess_for_export(crop)
                     img_bytes = _image_to_bytes(export_img)
                     img_bytes = apply_user_settings(img_bytes)
