@@ -99,7 +99,7 @@ def download_r2_key_to_tmp(*, r2_key: str, job_id: str) -> str:
     try:
         local_path = str(Path(tmp_dir) / f"input{ext}")
 
-        from apps.infrastructure.storage.r2_adapter import R2ObjectStorageAdapter
+        from academy.adapters.storage.r2_adapter import R2ObjectStorageAdapter
 
         # Resolve bucket name: Django settings first, then env var, then default
         try:

@@ -1,4 +1,4 @@
-# PATH: src/infrastructure/storage/r2_adapter.py
+# PATH: academy/adapters/storage/r2_adapter.py
 # R2(S3 호환) 객체 스토리지 어댑터 — IObjectStorage 구현
 # Django settings 또는 os.environ 사용 (워커 환경)
 

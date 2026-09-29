@@ -1,9 +1,11 @@
 # Candidate preparation boundary (draft)
 
-This is a design contract for the pending PPT/Matchup integration. No candidate
-workflow, GitHub environment, IAM role, Google key, or base configuration is
-provisioned by this change. PR #509 remains Draft; the existing production
-release workflow remains the only active deployment path.
+This is a design contract for the pending PPT/Matchup integration. PR #509
+merged on 2026-09-27 with the metadata-only preflight below. That PR did not
+provision a candidate prepare/promote workflow, GitHub environment, IAM role,
+Google key, or base configuration. The production release workflow remains the
+active deployment path in this dated baseline; verify current executable
+workflows before using this design.
 
 ## Exact nonproduction sources
 

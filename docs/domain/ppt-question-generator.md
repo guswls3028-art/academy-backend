@@ -49,6 +49,11 @@ PDF 모드는 먼저 문항 단위 크롭을 시도하고,
 - 이미지 모드의 `맞춤`은 비율을 유지하며 전부 보이고, `채움`은 비율을 유지한
   중앙 crop, `늘림`은 슬라이드 크기에 맞춘 변형이다. `채움`의 picture 좌표는
   슬라이드 경계와 같고 초과분은 OOXML crop 속성으로만 제거한다.
+- 텍스트 PDF 또는 스캔 PDF의 자동 문항 크롭이 세로로 길고 본문과 보기 사이에 큰 공백이 있으면, PPT용
+  이미지에서 실제 픽셀이 없는 내부 세로 띠만 줄인다. 글자·그림·보기 픽셀은
+  그대로 유지하고 한 문항을 한 슬라이드에 둔다. 희미한 선이나 배경 때문에
+  빈 띠임을 입증하지 못하면 원본 배치를 유지한다. 원본 PDF와 직접 자르기
+  영역은 바꾸지 않는다.
 
 ## 비동기 작업과 저장 경계
 
@@ -92,7 +97,7 @@ API는 업로드를 `tenants/<tenant_id>/tools/ppt/tmp/` 아래에 두고
 집중 회귀는 다음 명령으로 확인한다.
 
 ```powershell
-python -m pytest tests/test_ppt_pdf_question_plan.py tests/test_pptx_writer_crop.py tests/test_question_splitter_t2_fixes.py apps/domains/ai/tests/test_ppt_job_recovery.py -q
+python -m pytest tests/test_ppt_question_readability.py tests/test_ppt_pdf_question_plan.py tests/test_pptx_writer_crop.py tests/test_question_splitter_t2_fixes.py apps/domains/ai/tests/test_ppt_job_recovery.py -q
 ```
 
 실사용 검증은 2단 PDF에서 공통 자료와 반대쪽 시작 문항이 함께 보이는지,
