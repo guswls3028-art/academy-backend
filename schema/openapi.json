@@ -5129,7 +5129,7 @@
             "type": "integer"
           },
           "status": {
-            "$ref": "#/components/schemas/LectureAttendanceStatusEnum"
+            "$ref": "#/components/schemas/SessionAttendanceStatus"
           },
           "student_id": {
             "readOnly": true,
@@ -5195,7 +5195,7 @@
             "type": "integer"
           },
           "status": {
-            "$ref": "#/components/schemas/LectureAttendanceStatusEnum"
+            "$ref": "#/components/schemas/SessionAttendanceStatus"
           }
         },
         "required": [
@@ -5203,23 +5203,6 @@
           "session"
         ],
         "type": "object"
-      },
-      "LectureAttendanceStatusEnum": {
-        "description": "* `UNSET` - 미입력\n* `PRESENT` - 출석\n* `LATE` - 지각\n* `ONLINE` - 온라인\n* `SUPPLEMENT` - 보강\n* `EARLY_LEAVE` - 조퇴\n* `ABSENT` - 결석\n* `RUNAWAY` - 출튀\n* `MATERIAL` - 자료\n* `INACTIVE` - 부재\n* `SECESSION` - 탈퇴",
-        "enum": [
-          "UNSET",
-          "PRESENT",
-          "LATE",
-          "ONLINE",
-          "SUPPLEMENT",
-          "EARLY_LEAVE",
-          "ABSENT",
-          "RUNAWAY",
-          "MATERIAL",
-          "INACTIVE",
-          "SECESSION"
-        ],
-        "type": "string"
       },
       "LectureMemoResult": {
         "properties": {
@@ -8970,7 +8953,7 @@
             "type": "integer"
           },
           "status": {
-            "$ref": "#/components/schemas/LectureAttendanceStatusEnum"
+            "$ref": "#/components/schemas/SessionAttendanceStatus"
           }
         },
         "type": "object"
@@ -13621,6 +13604,23 @@
           "student",
           "parent",
           "both"
+        ],
+        "type": "string"
+      },
+      "SessionAttendanceStatus": {
+        "description": "* `UNSET` - 미입력\n* `PRESENT` - 출석\n* `LATE` - 지각\n* `ONLINE` - 온라인\n* `SUPPLEMENT` - 보강\n* `EARLY_LEAVE` - 조퇴\n* `ABSENT` - 결석\n* `RUNAWAY` - 출튀\n* `MATERIAL` - 자료\n* `INACTIVE` - 부재\n* `SECESSION` - 탈퇴",
+        "enum": [
+          "UNSET",
+          "PRESENT",
+          "LATE",
+          "ONLINE",
+          "SUPPLEMENT",
+          "EARLY_LEAVE",
+          "ABSENT",
+          "RUNAWAY",
+          "MATERIAL",
+          "INACTIVE",
+          "SECESSION"
         ],
         "type": "string"
       },
