@@ -18,10 +18,14 @@ Academy 전체의 실행 순서는 [실행 계획](../PLAN.md)이 소유한다.
 | [validation-matrix.md](validation-matrix.md) | historical proposal | 초기 검증 설계; 현재 gate는 owning workflow/운영 계약 |
 | [hardening-plan.md](hardening-plan.md) | active detail / handoff | 안정화·사용 편의성 단계의 실제 증거·미검증 조건·상세 인계 |
 | [failure-transparency-stabilization.md](failure-transparency-stabilization.md) | partially implemented / runtime-unverified | 자동승인·공개영상 준비 수리 근거와 남은 오류/복구 후보 |
+| [candidate-prepare-gate-plan.md](candidate-prepare-gate-plan.md) | draft design / preflight implemented | 격리 QA 후보 준비 경계 설계안; metadata preflight만 병합, 실행·승격 상태는 워크플로에서 확인 |
+| [product-usage-analytics-product-spec.md](product-usage-analytics-product-spec.md) | historical design snapshot | 역할별 사용 분석의 최초 기획 근거; 현재 계약은 domain 문서 |
+| [product-usage-analytics-execution-plan.md](product-usage-analytics-execution-plan.md) | historical execution snapshot | 최초 구현·배포 계획의 기록; 현재 절차 아님 |
+| [product-usage-analytics-remaining-work.md](product-usage-analytics-remaining-work.md) | dated follow-up / needs readback | 파일럿·잔여 검증 후보; 2026-08-26 판정 예정일은 현재 상태가 아님 |
 | [student-domain-phase2-stability-audit.md](student-domain-phase2-stability-audit.md) | historical audit | 2026-06-07 증거·미완료 후보; 현재성 재검증 필요 |
 | [student-domain-launch-readiness.md](student-domain-launch-readiness.md) | historical decision | 2026-06-07 GO 판단; 현재 릴리스 허가로 사용하지 않음 |
 | [matchup-segmentation-risk-backlog.md](matchup-segmentation-risk-backlog.md) | proposed | 매치업 문항분리 숨은 버그·잠재 리스크와 실행 단위 |
-| [exam-wrong-note-hwpx-plan.md](exam-wrong-note-hwpx-plan.md) | proposed | 시험 원본 검수·문항 정본 저장·회차 범위 학생별 HWPX 오답노트 단계와 수용 기준 |
+| [exam-wrong-note-hwpx-plan.md](exam-wrong-note-hwpx-plan.md) | partially implemented | 시험 원본 검수·문항 정본 저장·회차 범위 학생별 HWPX 오답노트 단계와 잔여 수용 기준 |
 | [backlog-student-grade-comparison.md](backlog-student-grade-comparison.md) | backlog | 학생 성적 비교 시스템 |
 
 ## 작성 규칙

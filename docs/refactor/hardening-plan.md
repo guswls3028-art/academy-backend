@@ -263,6 +263,9 @@ frontend #570의 desktop/390px mock과 필수 PR CI도 통과했다. 학부모 �
 `/version.json`은 이 frontend SHA, 진입 JS는 배포 산출물의 SHA256과 일치한다.
 격리 개발의 backend API digest는
 `sha256:c739f7dce09408db46d2ea67a310fecf5ae296c84ff019975f295d96d92d36b2`였다.
+이 값은 위 backend 운영 manifest의 `sha256:64419c8d...`와 다르다. 당시
+격리 QA의 backend digest를 운영 배포 digest로 해석하지 않으며, 이 문서에는
+`c739f7dc...`의 소스 SHA가 기록돼 있지 않다.
 원 신고 학생·대상·시각은 특정되지 않아 그 1건의 과거 원인은 단정하지 않는다.
 운영 읽기 검증은 실제 모든 학생의 제출 재현을 뜻하지 않으며, 역할별 쓰기·재제출
 경계의 증거는 위 격리 QA에 한정된다. 상세 실패 이력과 정리·운영 영수증은
