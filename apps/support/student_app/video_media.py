@@ -329,7 +329,7 @@ def issue_playback_access_grant(
                 ttl_seconds=ttl,
                 max_sessions=max_sessions,
                 max_devices=max_devices,
-                expires_at=inactive_expires_at,
+                expires_at=expires_at,
             )
             if not ok or not session_payload:
                 return PlaybackAccessGrant(
