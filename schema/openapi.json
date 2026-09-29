@@ -5160,6 +5160,10 @@
       },
       "LectureAttendanceRequest": {
         "properties": {
+          "confirm_secession": {
+            "type": "boolean",
+            "writeOnly": true
+          },
           "enrollment_id": {
             "type": "integer"
           },
@@ -5177,6 +5181,15 @@
             "format": "time",
             "nullable": true,
             "type": "string"
+          },
+          "secession_scope": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SecessionScopeEnum"
+              }
+            ],
+            "description": "session: 이 차시만 퇴원. lecture 또는 생략: 기존 강의 전체 퇴원.\n\n* `session` - session\n* `lecture` - lecture",
+            "writeOnly": true
           },
           "session": {
             "type": "integer"
@@ -8922,6 +8935,10 @@
       },
       "PatchedLectureAttendanceRequest": {
         "properties": {
+          "confirm_secession": {
+            "type": "boolean",
+            "writeOnly": true
+          },
           "enrollment_id": {
             "type": "integer"
           },
@@ -8939,6 +8956,15 @@
             "format": "time",
             "nullable": true,
             "type": "string"
+          },
+          "secession_scope": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SecessionScopeEnum"
+              }
+            ],
+            "description": "session: 이 차시만 퇴원. lecture 또는 생략: 기존 강의 전체 퇴원.\n\n* `session` - session\n* `lecture` - lecture",
+            "writeOnly": true
           },
           "session": {
             "type": "integer"
@@ -13434,6 +13460,14 @@
           "PROCESSING",
           "READY",
           "FAILED"
+        ],
+        "type": "string"
+      },
+      "SecessionScopeEnum": {
+        "description": "* `session` - session\n* `lecture` - lecture",
+        "enum": [
+          "session",
+          "lecture"
         ],
         "type": "string"
       },
