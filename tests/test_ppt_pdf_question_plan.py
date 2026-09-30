@@ -362,6 +362,10 @@ def test_ppt_pdf_image_segmentation_fallback_adds_question_slides(tmp_path, monk
         def __init__(self):
             self.slides: list[bytes] = []
 
+        @property
+        def slide_count(self) -> int:
+            return len(self.slides)
+
         def add_slide(self, image_bytes: bytes):
             self.slides.append(image_bytes)
 
@@ -411,6 +415,10 @@ def test_ppt_scanned_question_shortens_only_empty_middle(tmp_path, monkeypatch):
     class Composer:
         slides: list[bytes] = []
 
+        @property
+        def slide_count(self) -> int:
+            return len(self.slides)
+
         def add_slide(self, image_bytes: bytes):
             self.slides.append(image_bytes)
 
@@ -422,6 +430,50 @@ def test_ppt_scanned_question_shortens_only_empty_middle(tmp_path, monkeypatch):
         assert slide.width == 320
         assert slide.height < 350
         assert slide.convert("L").point(lambda pixel: 255 if pixel < 100 else 0).getbbox()
+
+
+def test_scanned_pdf_keeps_pages_without_detected_boxes(tmp_path, monkeypatch):
+    from PIL import Image
+
+    from academy.adapters.ai.detection import segment_dispatcher
+
+    image_paths = [tmp_path / f"page-{idx}.png" for idx in range(2)]
+    for path in image_paths:
+        Image.new("RGB", (320, 220), "white").save(path)
+    monkeypatch.setattr(segment_dispatcher, "segment_questions_multipage", lambda _path: {
+        "pages": [
+            {"page_index": 0, "image_path": str(image_paths[0]), "boxes": [(20, 20, 120, 90)]},
+            {"page_index": 1, "image_path": str(image_paths[1]), "boxes": []},
+        ],
+        "tmp_dirs": [],
+    })
+    monkeypatch.setattr(segment_dispatcher, "cleanup_pdf_seg_tmp_dirs", lambda _paths: None)
+
+    class Composer:
+        def __init__(self):
+            self.slides: list[bytes] = []
+
+        @property
+        def slide_count(self) -> int:
+            return len(self.slides)
+
+        def add_slide(self, image_bytes: bytes) -> None:
+            self.slides.append(image_bytes)
+
+    composer = Composer()
+    fallback_pages: set[int] = set()
+    added = _add_segmented_pdf_slides_to_composer(
+        "source.pdf",
+        composer=composer,
+        apply_user_settings=lambda data: data,
+        expected_page_count=2,
+        fallback_pages=fallback_pages,
+    )
+
+    assert added == 2
+    assert fallback_pages == {1}
+    assert composer.slides[0].startswith(b"\x89PNG")
+    assert composer.slides[1].startswith(b"\xff\xd8")
 
 
 def test_ppt_pdf_shared_range_keeps_opposite_column_question_body():

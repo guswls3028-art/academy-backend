@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, List, Optional
 
@@ -184,6 +185,8 @@ class GeneratePptFromPdfUseCase:
                     composer=composer,
                     apply_user_settings=_apply_user_settings,
                     on_progress=on_progress,
+                    expected_page_count=page_count,
+                    fallback_pages=fallback_pages,
                 )
                 if segmented_slide_count > 0:
                     use_whole_page = False
@@ -536,6 +539,8 @@ def _add_segmented_pdf_slides_to_composer(
     composer: Any,
     apply_user_settings: Callable[[bytes], bytes],
     on_progress: Optional[Callable[[int, str], None]] = None,
+    expected_page_count: Optional[int] = None,
+    fallback_pages: Optional[set[int]] = None,
 ) -> int:
     """Use the Matchup image segmentation path when a PDF has no text layer."""
     from academy.adapters.ai.detection.segment_dispatcher import (
@@ -549,25 +554,31 @@ def _add_segmented_pdf_slides_to_composer(
     )
 
     result: dict[str, Any] | None = None
+    initial_slide_count = composer.slide_count
     try:
         result = segment_questions_multipage(pdf_path)
         pages = list(result.get("pages") or [])
         total_pages = len(pages)
+        if expected_page_count is not None and (
+            total_pages != expected_page_count
+            or [page.get("page_index") for page in pages] != list(range(expected_page_count))
+        ):
+            logger.warning("PPT_PDF_SEGMENTATION_PAGE_MISMATCH expected=%d actual=%d", expected_page_count, total_pages)
+            return 0
+        if any(not page.get("image_path") or not os.path.isfile(page["image_path"]) for page in pages):
+            logger.warning("PPT_PDF_SEGMENTATION_IMAGE_MISSING pages=%d", total_pages)
+            return 0
         added = 0
         for page_idx, page in enumerate(pages):
             boxes = list(page.get("boxes") or [])
-            if not boxes:
-                continue
-            image_path = page.get("image_path")
-            if not image_path:
-                continue
             if on_progress:
                 pct = int(page_idx / max(total_pages, 1) * 100)
                 on_progress(pct, f"문항 슬라이드 {page_idx + 1}/{total_pages}")
-            with PILImage.open(image_path) as source_img:
+            with PILImage.open(page["image_path"]) as source_img:
                 page_img = source_img.convert("RGB")
             try:
                 img_w, img_h = page_img.size
+                slides_before_page = composer.slide_count
                 for box in boxes:
                     x, y, w, h = box
                     px0 = max(0, int(x))
@@ -586,6 +597,14 @@ def _add_segmented_pdf_slides_to_composer(
                     composer.add_slide(img_bytes)
                     added += 1
                     del crop, export_img
+                if composer.slide_count == slides_before_page:
+                    page_img.thumbnail((2400, 2400), resample=PILImage.LANCZOS)
+                    export_img = preprocess_for_export(page_img)
+                    composer.add_slide(apply_user_settings(_image_to_bytes(export_img, fmt="JPEG")))
+                    if fallback_pages is not None:
+                        fallback_pages.add(page_idx)
+                    added += 1
+                    del export_img
             finally:
                 page_img.close()
         return added
@@ -595,6 +614,8 @@ def _add_segmented_pdf_slides_to_composer(
             pdf_path,
             exc,
         )
+        if composer.slide_count != initial_slide_count:
+            raise
         return 0
     finally:
         if result is not None:
