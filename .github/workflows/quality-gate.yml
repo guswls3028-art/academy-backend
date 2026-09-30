@@ -13,6 +13,17 @@ permissions:
   contents: read
 
 jobs:
+  session-worktree-contract:
+    name: Windows session worktree lifecycle contract
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Verify session preservation and cleanup
+        shell: pwsh
+        run: ./scripts/codex/test-session-worktree.ps1
+
   native-security-diff:
     name: Detect native security image changes
     runs-on: ubuntu-latest

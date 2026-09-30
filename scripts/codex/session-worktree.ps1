@@ -111,14 +111,29 @@ function Get-WorktreePaths([string]$Root) {
     return $paths
 }
 
-function Get-IntegrationState([string]$Root) {
+function Get-IntegrationState([string]$Root, [string]$MainSha = "", [string]$HeadSha = "") {
+    if (-not $MainSha) {
+        $MainSha = @(Invoke-GitChecked -Root $Root -Arguments @(
+            "rev-parse", "--verify", "refs/remotes/origin/main^{commit}"
+        ))[0]
+    }
+    if (-not $HeadSha) {
+        $HeadSha = @(Invoke-GitChecked -Root $Root -Arguments @(
+            "rev-parse", "--verify", "HEAD^{commit}"
+        ))[0]
+    }
     if (Test-GitSuccess -Root $Root -Arguments @(
-        "merge-base", "--is-ancestor", "HEAD", "origin/main"
+        "merge-base", "--is-ancestor", $HeadSha, $MainSha
     )) {
         return "ancestor"
     }
+    # git cherry omits merges, including their potentially unique resolutions.
+    $exclusiveMerges = @(Invoke-GitChecked -Root $Root -Arguments @(
+        "rev-list", "--merges", "--max-count=1", "$MainSha..$HeadSha"
+    ))
+    if ($exclusiveMerges.Count -gt 0) { return "unmerged" }
     $cherry = @(Invoke-GitChecked -Root $Root -Arguments @(
-        "cherry", "origin/main", "HEAD"
+        "cherry", $MainSha, $HeadSha
     ))
     $unique = @($cherry | Where-Object { [string]$_ -like "+ *" })
     if ($cherry.Count -gt 0 -and $unique.Count -eq 0) {
@@ -260,6 +275,36 @@ function Invoke-Sync {
     }
 }
 
+function Assert-ClosePlanUnchanged($Plan, [switch]$CachesRemoved) {
+    $registered = @(@(Get-WorktreePaths $Plan.Root) | Where-Object {
+        [string]::Equals(
+            [IO.Path]::GetFullPath($_),
+            [IO.Path]::GetFullPath($Plan.Path),
+            [StringComparison]::OrdinalIgnoreCase
+        )
+    })
+    if ($registered.Count -ne 1 -or -not (Test-Path -LiteralPath $Plan.Path -PathType Container)) {
+        throw "Session registration changed after close preflight; preserving worktree: $($Plan.Path)"
+    }
+    $branch = Get-BranchName $Plan.Path
+    $headSha = @(Invoke-GitChecked -Root $Plan.Path -Arguments @(
+        "rev-parse", "--verify", "HEAD^{commit}"
+    ))[0]
+    if ($branch -cne $Plan.Branch -or $headSha -cne $Plan.HeadSha) {
+        throw "Session branch or HEAD changed after close preflight; preserving worktree: $($Plan.Path)"
+    }
+    $status = @(Invoke-GitChecked -Root $Plan.Path -Arguments @(
+        "status", "--ignored", "--porcelain=v1", "--untracked-files=normal"
+    ))
+    $expectedStatus = @()
+    if (-not $CachesRemoved) {
+        $expectedStatus = @($Plan.IgnoredPaths | ForEach-Object { "!! $_" })
+    }
+    if (($status -join "`n") -cne ($expectedStatus -join "`n")) {
+        throw "Session clean/ignored state changed after close preflight; preserving worktree: $($Plan.Path)"
+    }
+}
+
 function Invoke-Close {
     Assert-SessionName
     $sessionRoot = Join-Path $WorkspaceRoot "_worktrees\sessions\$Session"
@@ -268,6 +313,9 @@ function Invoke-Close {
     foreach ($name in Get-RepositoryNames) {
         $root = Get-RepositoryRoot $name
         Update-MainReference $root
+        $mainSha = @(Invoke-GitChecked -Root $root -Arguments @(
+            "rev-parse", "--verify", "refs/remotes/origin/main^{commit}"
+        ))[0]
         $path = Join-Path $sessionRoot $name
         if (-not (Test-Path -LiteralPath $path -PathType Container)) {
             throw "Session worktree does not exist: $path"
@@ -296,7 +344,10 @@ function Invoke-Close {
         if ($status.Count -gt 0) {
             throw "Session worktree is dirty and must be committed or explicitly handed off: $path"
         }
-        $integration = Get-IntegrationState $path
+        $headSha = @(Invoke-GitChecked -Root $path -Arguments @(
+            "rev-parse", "--verify", "HEAD^{commit}"
+        ))[0]
+        $integration = Get-IntegrationState -Root $path -MainSha $mainSha -HeadSha $headSha
         if ($integration -eq "unmerged") {
             throw "Session branch is not merged into origin/main and will be preserved: $branch"
         }
@@ -318,6 +369,8 @@ function Invoke-Close {
             Root = $root
             Path = $path
             Branch = $branch
+            MainSha = $mainSha
+            HeadSha = $headSha
             Integration = $integration
             IgnoredPaths = $ignoredPaths
         })
@@ -325,28 +378,22 @@ function Invoke-Close {
 
     foreach ($plan in $plans) {
         if ($PSCmdlet.ShouldProcess($plan.Path, "remove merged clean Academy session worktree")) {
+            Assert-ClosePlanUnchanged $plan
             if ($plan.IgnoredPaths.Count -gt 0) {
                 $cleanArguments = @("clean", "-fdX", "--") + @($plan.IgnoredPaths)
                 [void](Invoke-GitChecked -Root $plan.Path -Arguments $cleanArguments)
-                $remainingIgnored = @(Invoke-GitChecked -Root $plan.Path -Arguments @(
-                    "status", "--ignored", "--porcelain=v1", "--untracked-files=normal"
-                ) | Where-Object { [string]$_ -like "!! *" })
-                if ($remainingIgnored.Count -gt 0) {
-                    throw "Generated cache cleanup was incomplete; preserving worktree: $($plan.Path)"
-                }
+                Assert-ClosePlanUnchanged $plan -CachesRemoved
             }
             [void](Invoke-GitChecked -Root $plan.Root -Arguments @(
                 "worktree", "remove", $plan.Path
             ))
-            # Integration was already verified against the freshly fetched
-            # origin/main. The canonical checkout may intentionally remain
-            # behind while concurrent sessions are active, so `branch -d`
-            # would incorrectly compare against that stale local HEAD.
+            # Compare and delete atomically: preserve a tip advanced after the
+            # last check, without depending on a possibly stale canonical HEAD.
             [void](Invoke-GitChecked -Root $plan.Root -Arguments @(
-                "branch", "-D", $plan.Branch
+                "update-ref", "--no-deref", "-d", "refs/heads/$($plan.Branch)", $plan.HeadSha
             ))
             Write-Output (
-                "SESSION_WORKTREE_CLOSED repo=$($plan.Name) branch=$($plan.Branch) integration=$($plan.Integration)"
+                "SESSION_WORKTREE_CLOSED repo=$($plan.Name) branch=$($plan.Branch) integration=$($plan.Integration) head=$($plan.HeadSha) main=$($plan.MainSha)"
             )
         }
     }
