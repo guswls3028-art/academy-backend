@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import io
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, List, Optional
 
 from PIL import Image as PILImage
@@ -32,6 +32,7 @@ class _PdfQuestionPlan:
     regions_per_page: List[List[Any]]
     workbook_doc: bool = False
     allow_image_segmentation: bool = True
+    fallback_page_indices: List[int] = field(default_factory=list)
 
 
 class GeneratePptUseCase:
@@ -160,7 +161,20 @@ class GeneratePptFromPdfUseCase:
                 on_progress(0, "문항 구조 분석")
             question_plan = _build_pdf_question_plan(doc)
             use_whole_page = question_plan.use_whole_page
+            fallback_pages = set(question_plan.fallback_page_indices)
             segmented_question_mode = False
+
+            def add_whole_page_slide(page_idx: int) -> None:
+                page_img = doc.render_page(page_idx, dpi=200)
+                if max(page_img.size) > WHOLE_PAGE_MAX_LONG_EDGE:
+                    page_img.thumbnail(
+                        (WHOLE_PAGE_MAX_LONG_EDGE, WHOLE_PAGE_MAX_LONG_EDGE),
+                        resample=PILImage.LANCZOS,
+                    )
+                export_img = preprocess_for_export(page_img)
+                img_bytes = _apply_user_settings(_image_to_bytes(export_img, fmt="JPEG"))
+                composer.add_slide(img_bytes)
+                del page_img, export_img
 
             if use_whole_page and question_plan.allow_image_segmentation:
                 if on_progress:
@@ -186,20 +200,9 @@ class GeneratePptFromPdfUseCase:
                         pct = int(page_idx / max(page_count, 1) * 100)
                         on_progress(pct, f"페이지 {page_idx + 1}/{page_count}")
 
-                    if use_whole_page:
-                        # 스캔/이미지 PDF: 이미지 세그멘테이션도 실패하면 페이지 단위로 안전 fallback.
-                        page_img = doc.render_page(page_idx, dpi=200)
-                        if max(page_img.size) > WHOLE_PAGE_MAX_LONG_EDGE:
-                            page_img.thumbnail(
-                                (WHOLE_PAGE_MAX_LONG_EDGE, WHOLE_PAGE_MAX_LONG_EDGE),
-                                resample=PILImage.LANCZOS,
-                            )
-                        export_img = preprocess_for_export(page_img)
-                        # 페이지 단위 = 사진 컨텐츠. JPEG가 PNG보다 1/3 사이즈 (50p PDF에 critical).
-                        img_bytes = _image_to_bytes(export_img, fmt="JPEG")
-                        img_bytes = _apply_user_settings(img_bytes)
-                        composer.add_slide(img_bytes)
-                        del page_img, export_img
+                    if use_whole_page or page_idx in fallback_pages:
+                        # Keep an unresolved page without discarding valid question crops elsewhere.
+                        add_whole_page_slide(page_idx)
                         continue
 
                     # 텍스트 PDF: pre-pass에서 page type/workbook/cross-page 검증까지 끝낸 문항 crop.
@@ -217,6 +220,7 @@ class GeneratePptFromPdfUseCase:
                     scale_x = img_w / page_w if page_w > 0 else 1.0
                     scale_y = img_h / page_h if page_h > 0 else 1.0
 
+                    slides_before_page = composer.slide_count
                     for region in regions:
                         rx0, ry0, rx1, ry1 = region.bbox
                         px0 = max(0, int(rx0 * scale_x))
@@ -237,6 +241,9 @@ class GeneratePptFromPdfUseCase:
                         composer.add_slide(img_bytes)
                         del crop, export_img
                     del page_img
+                    if composer.slide_count == slides_before_page:
+                        fallback_pages.add(page_idx)
+                        add_whole_page_slide(page_idx)
 
             # 텍스트 모드로 갔지만 0 슬라이드인 경우 (예: 모든 페이지가 표지/목차로 분류된 short PDF):
             # 페이지 단위 fallback로 한 번 더 시도해야 사용자가 빈 결과를 보지 않음.
@@ -247,17 +254,7 @@ class GeneratePptFromPdfUseCase:
                 for page_idx in range(page_count):
                     if on_progress:
                         on_progress(50 + int(page_idx / max(page_count, 1) * 50), f"페이지 단위 변환 {page_idx + 1}/{page_count}")
-                    page_img = doc.render_page(page_idx, dpi=200)
-                    if max(page_img.size) > WHOLE_PAGE_MAX_LONG_EDGE:
-                        page_img.thumbnail(
-                            (WHOLE_PAGE_MAX_LONG_EDGE, WHOLE_PAGE_MAX_LONG_EDGE),
-                            resample=PILImage.LANCZOS,
-                        )
-                    export_img = preprocess_for_export(page_img)
-                    img_bytes = _image_to_bytes(export_img, fmt="JPEG")
-                    img_bytes = _apply_user_settings(img_bytes)
-                    composer.add_slide(img_bytes)
-                    del page_img, export_img
+                    add_whole_page_slide(page_idx)
 
         if composer.slide_count == 0:
             raise ValueError("No slides could be generated from the PDF")
@@ -266,7 +263,7 @@ class GeneratePptFromPdfUseCase:
             on_progress(100, "완료")
 
         pptx_bytes = composer.finalize()
-        result_mode = "page" if (use_whole_page or fallback_triggered) else "question"
+        result_mode = "page" if (use_whole_page or fallback_triggered or fallback_pages) else "question"
         return PptResult(
             pptx_bytes=pptx_bytes,
             slide_count=composer.slide_count,
@@ -365,24 +362,6 @@ def _build_pdf_question_plan(doc: Any) -> _PdfQuestionPlan:
             regions_per_page=[[] for _ in range(page_count)],
         )
 
-    # A mixed PDF can have valid question anchors on every text page while
-    # image-only pages disappear from the question-mode output. Preserve all
-    # pages; fully image-only PDFs above still use image segmentation.
-    textless_pages = sum(
-        not page["text_blocks"] and not page["is_blank_page"] for page in phase1
-    )
-    if textless_pages:
-        logger.warning(
-            "PPT_PDF_MIXED_TEXT_IMAGE_PAGES pages=%d textless=%d; using pages",
-            page_count,
-            textless_pages,
-        )
-        return _PdfQuestionPlan(
-            use_whole_page=True,
-            regions_per_page=[[] for _ in range(page_count)],
-            allow_image_segmentation=False,
-        )
-
     eligible_pages = 0
     pages_with_marginal = 0
     for page in phase1:
@@ -446,21 +425,13 @@ def _build_pdf_question_plan(doc: Any) -> _PdfQuestionPlan:
         if {r.number for r in regions} & {1, 2, 3}
     )
     eligible_with_anchors = sum(1 for regions in first_pass_regions if regions)
-    # A few plausible anchors can produce a non-empty PPT while silently dropping
-    # most of a worksheet. Preserve every page when text-based detection has not
-    # established coverage across the document; image segmentation would make
-    # another unreviewed partial result from the same ambiguous source.
+    # Record sparse coverage; unresolved pages are preserved individually below.
     if eligible_pages >= 3 and eligible_with_anchors * 2 < eligible_pages:
         logger.warning(
-            "PPT_PDF_LOW_ANCHOR_COVERAGE pages=%d eligible=%d anchored=%d; using pages",
+            "PPT_PDF_LOW_ANCHOR_COVERAGE pages=%d eligible=%d anchored=%d; using per-page fallback",
             page_count,
             eligible_pages,
             eligible_with_anchors,
-        )
-        return _PdfQuestionPlan(
-            use_whole_page=True,
-            regions_per_page=[[] for _ in range(page_count)],
-            allow_image_segmentation=False,
         )
     pages_per_number: dict[int, int] = {}
     for regions in first_pass_regions:
@@ -534,20 +505,28 @@ def _build_pdf_question_plan(doc: Any) -> _PdfQuestionPlan:
         planned_regions,
         force_per_page_restart=workbook_doc,
     )
+    fallback_page_indices = [
+        idx for idx, page in enumerate(phase1)
+        if not page["is_blank_page"] and not validated_regions[idx]
+    ]
+    question_slides = sum(len(regions) for regions in validated_regions)
     logger.info(
         "PPT_PDF_QUESTION_PLAN pages=%d eligible=%d anchors=%d "
-        "marginal_pages=%d workbook=%s slides=%d",
+        "marginal_pages=%d workbook=%s slides=%d fallback_pages=%d",
         page_count,
         eligible_pages,
         eligible_with_anchors,
         pages_with_marginal,
         workbook_doc,
-        sum(len(regions) for regions in validated_regions),
+        question_slides,
+        len(fallback_page_indices),
     )
     return _PdfQuestionPlan(
-        use_whole_page=False,
+        use_whole_page=question_slides == 0,
         regions_per_page=validated_regions,
         workbook_doc=workbook_doc,
+        allow_image_segmentation=False,
+        fallback_page_indices=fallback_page_indices,
     )
 
 
