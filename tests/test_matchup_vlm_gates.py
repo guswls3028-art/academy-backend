@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Tuple
@@ -1774,8 +1775,9 @@ def test_gemini_vision_discards_missing_number_and_out_of_range_box(monkeypatch,
 @pytest.mark.parametrize("reason", [
     "uncovered", "number_collision", "manual", "pinned", "low_confidence",
     "too_few_cuts", "same_page_manual", "confirmed", "approved", "unknown_approval",
+    "unprotected",
 ])
-def test_vlm_photo_replacement_preserves_existing_on_unsafe_result(reason):
+def test_vlm_photo_replacement_preservation_and_positive_control(reason):
     from academy.application.use_cases.ai.pipelines import matchup_pipeline
 
     old = {
@@ -1811,7 +1813,24 @@ def test_vlm_photo_replacement_preserves_existing_on_unsafe_result(reason):
     if reason == "low_confidence":
         result.problems[0].confidence = 0.5
 
+    original_questions = deepcopy(questions)
+    original_page = deepcopy(page)
+    if reason == "unprotected":
+        assert matchup_pipeline._replace_numberless_photo_page(page, questions, result) == (1, 2)
+        assert [question["number"] for question in questions] == [12, 13, 99]
+        assert questions[-1] is reserved
+        assert reserved == original_questions[-1]
+        assert all(question is not old for question in questions)
+        assert [question["bbox"] for question in questions[:-1]] == [
+            list(problem.bbox) for problem in result.problems
+        ]
+        assert page["numbers"] == [12, 13]
+        assert page["boxes"] == [problem.bbox for problem in result.problems]
+        return
+
     assert matchup_pipeline._replace_numberless_photo_page(page, questions, result) == (0, 0)
+    assert questions == original_questions
+    assert page == original_page
     assert questions[0] is old
     assert questions[-1] is reserved
     assert len(questions) == (3 if reason == "same_page_manual" else 2)

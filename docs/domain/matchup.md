@@ -47,7 +47,7 @@
 
 [CANDIDATE 2026-09-29, source only] OCR 앵커로 다섯 문항이 확인되어도 기존 자동 박스나 문항 중 새 영역으로 설명되지 않는 것이 있거나 기존 후보가 다섯 개보다 많으면 자동 교체를 거부한다. 설명되지 않은 독립 크롭은 원래 검수 후보로 보존하며, VLM 교체가 거절된 뒤 OCR 복구를 시도하는 경우에도 같은 경계를 적용한다. 회귀 검증은 두 경로에서 기존 박스·문항이 유지되는지 확인한다.
 
-[CANDIDATE 2026-10-01, source only] VLM 사진 교체도 OCR 복구와 동일하게 확인된 문항(`confirmation_status=confirmed`)과 공개 이미지 승인 문항(`public_cleanup.status=approved`)을 보존한다. 이전 자동 번호 표식이 남아 있어도 교체하지 않으며, 승인 메타데이터 형식이 불명확하면 원래 검수 후보를 유지한다. `tests/test_matchup_vlm_gates.py`는 번호 충돌과 별개로 수동·고정·확인·승인 문항 보존을 각각 검증한다. 실제 저장·새로고침·후속 사용 및 cleanup-zero는 정확한 후보 이미지의 격리 QA에서 확인해야 한다.
+[CANDIDATE 2026-10-01, source only] VLM 사진 교체도 OCR 복구와 동일하게 확인된 문항(`confirmation_status=confirmed`)과 공개 이미지 승인 문항(`public_cleanup.status=approved`)을 보존한다. 이전 자동 번호 표식이 남아 있어도 교체하지 않으며, 승인 메타데이터 형식이 불명확하면 원래 검수 후보를 유지한다. `tests/test_matchup_vlm_gates.py`는 번호 충돌과 별개로 수동·고정·확인·승인 문항 보존을 각각 검증한다. 같은 입력의 보호 표식 없는 자동 문항은 실제 교체가 성공해야 하며, 거절 시 기존 문항의 번호·박스·메타데이터와 페이지 전체가 그대로 남아야 한다. 실제 저장·새로고침·후속 사용 및 cleanup-zero는 정확한 후보 이미지의 격리 QA에서 확인해야 한다.
 
 [CURRENT 2026-06-20] Tenant 2 과거 실사용 자료 중 손촬영 사진을 제외한 PDF/스캔본/텍스트 PDF는 v55 full-display 감사에서 운영 baseline을 닫았다. 수동 GT가 있는 61개 문서의 물리 문항 기준 `physical_missed_count=0`, `physical_recall=1.0`이며, raw miss 11건은 중복 GT row로 설명된다. 재현 절차와 합격 기준은 `docs/operations/runbooks/matchup-segmentation-qa.md`를 정본으로 본다. 새 자료 유형이나 손촬영 사진은 이 baseline에 자동 포함하지 않고 별도 감사로 편입한다. 숨은 버그 후보와 다음 실행 단위는 `docs/refactor/matchup-segmentation-risk-backlog.md`에 [PROPOSED]로 둔다.
 
