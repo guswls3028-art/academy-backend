@@ -39,6 +39,7 @@ class LectureSerializer(serializers.ModelSerializer):
 
 
 class SessionSerializer(serializers.ModelSerializer):
+    title = serializers.CharField(required=False, allow_blank=True, max_length=255)
     order = serializers.IntegerField(required=False, allow_null=True, min_value=1)
     session_type = serializers.ChoiceField(
         choices=Session.SessionType.choices,
@@ -125,6 +126,8 @@ class SessionSerializer(serializers.ModelSerializer):
         session_type = attrs.get("session_type") or (
             self.instance.session_type if self.instance else Session.SessionType.REGULAR
         )
+        if session_type == Session.SessionType.SUPPLEMENT and "title" in attrs and not attrs["title"].strip():
+            raise serializers.ValidationError({"title": "보강 차시 이름은 비울 수 없습니다."})
 
         if section and lecture:
             if section.lecture_id != lecture.id:
