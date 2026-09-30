@@ -49,6 +49,52 @@ def _write_blank_png(path: Path, *, width: int, height: int) -> None:
 
 
 class CleanPdfQuestionSplitterV2Tests(TestCase):
+    def test_indented_experiment_steps_stay_inside_parent_question(self):
+        page_width = 595.0
+        page_height = 842.0
+        blocks = [
+            TextBlock("12. 전기 전도성을 알아보는 실험이다.", 35.0, 44.0, 280.0, 75.0),
+            TextBlock("13. 다음 자료를 분석하시오.", 308.0, 44.0, 558.0, 75.0),
+            TextBlock("1. 고체 상태를 측정한다.", 45.0, 163.0, 260.0, 180.0),
+            TextBlock("2. 수용액을 측정한다.", 45.0, 198.0, 260.0, 215.0),
+            TextBlock("① ㄱ ② ㄴ ③ ㄱ, ㄴ ④ ㄷ ⑤ ㄱ, ㄴ, ㄷ", 35.0, 818.0, 288.0, 835.0),
+            TextBlock("① ㄱ ② ㄴ ③ ㄱ, ㄴ ④ ㄷ ⑤ ㄱ, ㄴ, ㄷ", 308.0, 818.0, 561.0, 835.0),
+        ]
+
+        regions = split_questions(
+            blocks,
+            page_width=page_width,
+            page_height=page_height,
+            paper_type=_paper_type(dual=True),
+        )
+
+        self.assertEqual([region.number for region in regions], [12, 13])
+        self.assertTrue(all(region.bbox[3] >= 835.0 for region in regions))
+
+    def test_two_column_bottom_choices_are_not_treated_as_footer(self):
+        page_width = 595.0
+        page_height = 842.0
+        blocks = [
+            TextBlock("1. 왼쪽 문항", 30.0, 42.0, 240.0, 58.0),
+            TextBlock("왼쪽 보기", 45.0, 745.0, 260.0, 779.0),
+            TextBlock("① ㄱ ② ㄴ ③ ㄱ, ㄴ ④ ㄷ ⑤ ㄱ, ㄴ, ㄷ", 35.0, 818.0, 288.0, 835.0),
+            TextBlock("2. 오른쪽 문항", 307.0, 42.0, 550.0, 58.0),
+            TextBlock("오른쪽 보기", 318.0, 745.0, 540.0, 779.0),
+            TextBlock("① ㄱ ② ㄴ ③ ㄱ, ㄴ ④ ㄷ ⑤ ㄱ, ㄴ, ㄷ", 308.0, 818.0, 561.0, 835.0),
+        ]
+
+        regions = split_questions(
+            blocks,
+            page_width=page_width,
+            page_height=page_height,
+            paper_type=_paper_type(dual=True),
+        )
+
+        self.assertEqual([region.number for region in regions], [1, 2])
+        self.assertTrue(all(region.bbox[3] >= 835.0 for region in regions))
+        self.assertLess(regions[0].bbox[2], page_width * 0.52)
+        self.assertGreater(regions[1].bbox[0], page_width * 0.48)
+
     def test_pdf_control_character_after_number_is_ignored(self):
         page_width = 612.0
         page_height = 864.0
