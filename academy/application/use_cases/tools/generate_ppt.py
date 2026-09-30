@@ -429,7 +429,8 @@ def _build_pdf_question_plan(doc: Any) -> _PdfQuestionPlan:
     )
     eligible_with_anchors = sum(1 for regions in first_pass_regions if regions)
     # Record sparse coverage; unresolved pages are preserved individually below.
-    if eligible_pages >= 3 and eligible_with_anchors * 2 < eligible_pages:
+    low_anchor_coverage = eligible_pages >= 3 and eligible_with_anchors * 2 < eligible_pages
+    if low_anchor_coverage:
         logger.warning(
             "PPT_PDF_LOW_ANCHOR_COVERAGE pages=%d eligible=%d anchored=%d; using per-page fallback",
             page_count,
@@ -508,11 +509,22 @@ def _build_pdf_question_plan(doc: Any) -> _PdfQuestionPlan:
         planned_regions,
         force_per_page_restart=workbook_doc,
     )
+    question_slides = sum(len(regions) for regions in validated_regions)
+    first_question_page = next(
+        (idx for idx, regions in enumerate(validated_regions) if regions), page_count
+    )
     fallback_page_indices = [
         idx for idx, page in enumerate(phase1)
-        if not page["is_blank_page"] and not validated_regions[idx]
+        if not page["is_blank_page"]
+        and not page["is_skip_page"]
+        and not validated_regions[idx]
+        and (
+            low_anchor_coverage
+            or not page["text_blocks"]
+            or bool(first_pass_regions[idx])
+            or idx > first_question_page
+        )
     ]
-    question_slides = sum(len(regions) for regions in validated_regions)
     logger.info(
         "PPT_PDF_QUESTION_PLAN pages=%d eligible=%d anchors=%d "
         "marginal_pages=%d workbook=%s slides=%d fallback_pages=%d",

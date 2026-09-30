@@ -126,7 +126,8 @@ def test_ppt_pdf_plan_preserves_image_only_pages_between_anchored_text_pages(mon
     assert plan.fallback_page_indices == [2, 3, 4, 5]
 
 
-def test_ppt_pdf_plan_preserves_pages_when_anchors_cover_only_one_of_seven(monkeypatch):
+@pytest.mark.parametrize("anchor_index", [0, 3])
+def test_ppt_pdf_plan_preserves_pages_when_anchors_cover_only_one_of_seven(monkeypatch, anchor_index):
     from academy.domain.tools import paper_type, question_splitter
 
     pages = [[_Block(f"page {index} lesson text", 40, 80, 560, 150)] for index in range(7)]
@@ -141,15 +142,33 @@ def test_ppt_pdf_plan_preserves_pages_when_anchors_cover_only_one_of_seven(monke
         question_splitter,
         "split_questions",
         lambda blocks, *_args, **_kwargs: [SimpleNamespace(number=1)]
-        if "page 0" in blocks[0].text else [],
+        if f"page {anchor_index}" in blocks[0].text else [],
     )
 
     plan = _build_pdf_question_plan(_FakeDoc(pages))
 
     assert plan.use_whole_page is False
     assert plan.allow_image_segmentation is False
-    assert [bool(regions) for regions in plan.regions_per_page] == [True, False, False, False, False, False, False]
-    assert plan.fallback_page_indices == [1, 2, 3, 4, 5, 6]
+    assert [bool(regions) for regions in plan.regions_per_page] == [
+        index == anchor_index for index in range(7)
+    ]
+    assert plan.fallback_page_indices == [
+        index for index in range(7) if index != anchor_index
+    ]
+
+
+def test_text_cover_before_detected_questions_is_not_added_as_a_slide():
+    pages = [
+        [_Block("통합과학 시험지 32문항", 40, 100, 560, 130)],
+        [_Block(_question_text(1), 40, 100, 560, 130)],
+        [_Block(_question_text(2), 40, 100, 560, 130)],
+    ]
+
+    plan = _build_pdf_question_plan(_FakeDoc(pages))
+
+    assert plan.use_whole_page is False
+    assert [bool(regions) for regions in plan.regions_per_page] == [False, True, True]
+    assert plan.fallback_page_indices == []
 
 
 def test_low_coverage_pdf_result_keeps_crops_and_unresolved_pages(tmp_path, monkeypatch):
