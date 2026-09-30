@@ -26,10 +26,17 @@
   재사용하지 않고, 당시 Debian 저장소의 최신 보안 패키지를 설치한다. base가
   선택되지 않은 일반 앱 코드 빌드는 기존 digest를 재사용한다.
 - 공통 runtime은 `openssl`과 `util-linux`를 명시적으로 설치하고 각각
-  `3.5.7-1~deb13u2`, `2.41.5-0+deb13u1` 이상인지 빌드 중 검증한다. upstream
+  `3.5.7-1~deb13u3`, `2.41.5-0+deb13u1` 이상인지 빌드 중 검증한다. upstream
   slim digest에 더 낮은 essential package가 들어 있어도 단순 `apt-get update`에
   의존하지 않으며, Debian stable 보안 수정본이 후보에 실제 포함되지 않으면
   이미지 빌드가 실패한다.
+  2026-09-30 OMR 후보 run `36706733524`는 AI 이미지의 `openssl`
+  `3.5.7-1~deb13u2`에 새 High finding 세 건(`CVE-2026-72897`,
+  `CVE-2026-84782`, `CVE-2026-84784`)이 발생해 development 진입 전에
+  중단됐다. [Debian DSA-6531-1](https://security-tracker.debian.org/tracker/DSA-6531-1)의
+  trixie-security 수정판 `3.5.7-1~deb13u3`을 새 base에 실제 설치하도록 위 최소
+  버전을 올렸다. 새 후보의 완료 ECR scan에서 세 finding이 사라질 때까지
+  운영 승격을 재개하지 않는다.
 - pip Dependabot은 같은 호환 버전이 필요한 `boto3`/`botocore`를 한 PR로
   갱신하고, 개발 의존성 및 GitHub Actions minor/patch는 각각 묶어 중복 CI를
   줄인다. 모든 묶음은 개별 업데이트와 같은 전체 품질·이미지 scan 게이트를
