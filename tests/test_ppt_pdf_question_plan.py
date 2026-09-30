@@ -280,6 +280,34 @@ def test_ppt_pdf_plan_does_not_treat_short_exam_false_low_anchor_as_restart():
     assert [[r.number for r in page] for page in plan.regions_per_page] == [[1, 2, 3], [4, 5]]
 
 
+def test_continuously_numbered_exam_keeps_main_questions_over_nested_steps(monkeypatch):
+    from academy.domain.tools import question_splitter
+
+    pages = []
+    for page_index in range(16):
+        first = page_index * 2 + 1
+        page = [
+            _Block(_question_text(first), 35, 44, 282, 75),
+            _Block(_question_text(first + 1), 308, 44, 558, 75),
+        ]
+        if page_index == 3:
+            page.extend([
+                _Block("1. 실험 첫 번째 단계입니다.", 45, 160, 260, 177),
+                _Block("2. 실험 두 번째 단계입니다.", 45, 198, 260, 215),
+            ])
+        pages.append(page)
+
+    # School exam folios can resemble marginal numbers on later pages.
+    monkeypatch.setattr(question_splitter, "count_marginal_anchor_candidates", lambda *_args: 1)
+    plan = _build_pdf_question_plan(_FakeDoc(pages))
+
+    assert plan.use_whole_page is False
+    assert plan.workbook_doc is False
+    assert [[r.number for r in page] for page in plan.regions_per_page] == [
+        [index * 2 + 1, index * 2 + 2] for index in range(16)
+    ]
+
+
 def test_ppt_pdf_image_segmentation_fallback_adds_question_slides(tmp_path, monkeypatch):
     from PIL import Image, ImageDraw
 

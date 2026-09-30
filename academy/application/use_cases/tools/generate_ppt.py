@@ -486,7 +486,16 @@ def _build_pdf_question_plan(doc: Any) -> _PdfQuestionPlan:
             and (repeated_low_numbers >= 2 or all_anchor_pages_single_q1)
         )
 
-    workbook_doc = signal_a or signal_b
+    page_maxima = [max(r.number for r in regions) for regions in first_pass_regions if regions]
+    continuously_numbered_exam = (
+        len(page_maxima) >= 5
+        and page_maxima[0] <= 3
+        and all(0 < current - previous <= 4 for previous, current in zip(page_maxima, page_maxima[1:]))
+    )
+    # School exams may have marginal-looking folios on later pages. Their main
+    # question numbers still advance page by page; workbook mode would instead
+    # promote an embedded "1./2." experiment procedure over questions 12/13.
+    workbook_doc = (signal_a and not continuously_numbered_exam) or signal_b
     planned_regions: List[List[Any]] = []
     for idx, page in enumerate(phase1):
         if (

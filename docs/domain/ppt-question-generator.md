@@ -32,6 +32,13 @@ PDF 모드는 먼저 문항 단위 크롭을 시도하고,
   다음 문항의 시작점과 페이지 하단 folio를 넘지 않는다.
 - 일반 2단 문항은 자기 열을 벗어나 인접 문항을 포함하지 않는다. 공통 자료나
   큰 시각 자료라는 명시적 신호가 있을 때만 필요한 범위를 확장한다.
+- 텍스트 PDF의 마지막 문항은 페이지 하단 8%에 보기·선택지가 있어도 같은
+  슬라이드에 포함한다. 다음 문항이 같은 열에 있으면 그 시작점에서 멈추고,
+  페이지 번호만 문항 텍스트 판단에서 제외한다. 하단을 임의 비율로 잘라
+  문장·선택지가 누락되는 결과는 성공으로 취급하지 않는다.
+- 쪽마다 문항 번호가 연속 증가하는 시험지는 여백의 숫자만으로 워크북처럼
+  페이지별 번호가 다시 시작한다고 판단하지 않는다. 큰 문항 안의 들여 쓴
+  `1.`·`2.` 실험 절차는 별도 슬라이드가 아니라 부모 문항에 포함한다.
 - 자동 분할이 불확실하거나 유효 슬라이드가 0장이면 빈 PPTX를 반환하지 않고
   안전한 페이지 단위 변환으로 되돌린다.
 - 분석 대상이 3쪽 이상인데 첫 문항 분석에서 후보가 잡힌 페이지가 절반
@@ -97,10 +104,11 @@ API는 업로드를 `tenants/<tenant_id>/tools/ppt/tmp/` 아래에 두고
 집중 회귀는 다음 명령으로 확인한다.
 
 ```powershell
-python -m pytest tests/test_ppt_question_readability.py tests/test_ppt_pdf_question_plan.py tests/test_pptx_writer_crop.py tests/test_question_splitter_t2_fixes.py apps/domains/ai/tests/test_ppt_job_recovery.py -q
+python -m pytest tests/test_ppt_question_readability.py tests/test_ppt_pdf_question_plan.py tests/test_pptx_writer_crop.py tests/test_question_splitter_t2_fixes.py apps/domains/matchup/tests/test_clean_pdf_question_splitter_v2.py apps/domains/ai/tests/test_ppt_job_recovery.py -q
 ```
 
 실사용 검증은 2단 PDF에서 공통 자료와 반대쪽 시작 문항이 함께 보이는지,
-후속 문항 순서와 총 슬라이드 수가 유지되는지, 생성 PPTX를 다시 열 수 있는지
+하단 선택지·들여 쓴 절차·후속 문항 순서와 총 슬라이드 수가 유지되는지,
+생성 PPTX를 다시 열 수 있는지
 확인한다. 배포는 Tools worker를 포함한 정식 backend release를 사용하고 개발
 런타임·격리 preproduction의 Excel/PPT/R2 smoke를 모두 통과해야 한다.

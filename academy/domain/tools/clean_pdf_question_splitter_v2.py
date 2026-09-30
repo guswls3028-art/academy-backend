@@ -159,6 +159,7 @@ def split_clean_pdf_questions_v2(
     raw_anchors = _collect_anchors(blocks, page_width, page_height)
     if not raw_anchors:
         return CleanPdfSplitResult(handled=False, reason="no_anchors")
+    raw_anchors = _drop_indented_low_substeps(raw_anchors, page_width, page_height)
 
     anchors = _assign_flows(raw_anchors, blocks, page_width, is_dual_hint)
     regions = _build_regions(anchors, blocks, page_width, page_height)
@@ -294,6 +295,37 @@ def _collect_anchors(
         seen.add(number)
         deduped.append((number, block))
     return deduped
+
+
+def _drop_indented_low_substeps(
+    anchors: list[tuple[int, _Block]],
+    page_width: float,
+    page_height: float,
+) -> list[tuple[int, _Block]]:
+    """Keep numbered experiment steps inside their parent exam question."""
+    kept: list[tuple[int, _Block]] = []
+    min_indent = max(7.0, page_width * 0.012)
+    for number, block in anchors:
+        parent = next(
+            (
+                (previous_number, previous_block)
+                for previous_number, previous_block in reversed(kept)
+                if _same_coarse_column(previous_block, block, page_width)
+            ),
+            None,
+        )
+        if parent is not None:
+            previous_number, previous_block = parent
+            gap = block.y0 - previous_block.y0
+            if (
+                number <= 3
+                and number < previous_number
+                and block.x0 - previous_block.x0 >= min_indent
+                and 20.0 < gap < page_height * 0.35
+            ):
+                continue
+        kept.append((number, block))
+    return kept
 
 
 def _looks_like_exam_header_page_number(
@@ -474,12 +506,12 @@ def _build_regions(
 
     margin_x = max(7.0, page_width * 0.012)
     margin_y = max(10.0, page_height * 0.015)
-    footer_top = page_height * 0.92
-
     for anchor in anchors:
         next_anchor = _next_anchor_in_flow(anchor, by_flow[anchor.flow])
         y0 = max(0.0, anchor.start_y - margin_y)
-        y1 = footer_top
+        # Choices can sit in the bottom 8% of an exam page. Folio blocks were
+        # removed above, so a fixed footer cutoff would clip real answers.
+        y1 = page_height
         if next_anchor is not None:
             y1 = min(y1, max(y0 + page_height * 0.035, next_anchor.start_y - margin_y))
 
