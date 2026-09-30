@@ -116,6 +116,7 @@ class GeneratePptFromPdfUseCase:
         from academy.domain.tools.image_preprocessor import (
             compact_internal_whitespace,
             preprocess_for_export,
+            reflow_tall_question,
             trim_bottom_whitespace,
         )
         from academy.domain.tools.ppt_composer import PptComposer, PptConfig
@@ -229,6 +230,8 @@ class GeneratePptFromPdfUseCase:
                             trim_bottom_whitespace(crop, padding_px=12)
                         )
                         export_img = preprocess_for_export(crop)
+                        if ppt_config.fit_mode == "contain":
+                            export_img = reflow_tall_question(export_img)
                         img_bytes = _image_to_bytes(export_img)
                         img_bytes = _apply_user_settings(img_bytes)
                         composer.add_slide(img_bytes)

@@ -99,9 +99,9 @@ def compact_internal_whitespace(img: Image.Image) -> Image.Image:
     """Shorten proven empty bands in tall question crops without removing ink.
 
     A portrait question with its choices near the bottom is otherwise shrunk to
-    an unreadable width on a landscape slide. Only full-width white bands
-    between visible rows are shortened; the question, figures and choices stay
-    together and in their original order.
+    an unreadable width on a landscape slide. Only body-wide white bands
+    between visible rows are shortened; thin page-edge rules may be shortened,
+    while the question, figures and choices stay in their original order.
     """
     width, height = img.size
     if width <= 0 or height < width * 1.6:
@@ -109,6 +109,10 @@ def compact_internal_whitespace(img: Image.Image) -> Image.Image:
 
     gray = img.convert("L")
     ink = gray.point(lambda value: 255 if value < 245 else 0)
+    # Page-edge rules can span an otherwise empty band. Keep diagrams and text
+    # in the body, but do not let a thin decorative rule force a tiny slide.
+    inner_margin = max(1, int(width * 0.035))
+    inner_ink = ink.crop((inner_margin, 0, width - inner_margin, height))
     # Find candidates cheaply, then verify every pixel before removing a band.
     row_density = list(ink.resize((1, height), Image.Resampling.BOX).getdata())
     min_gap = max(120, int(height * 0.12))
@@ -124,7 +128,7 @@ def compact_internal_whitespace(img: Image.Image) -> Image.Image:
                 row - start > max(min_gap, keep_gap)
                 and start > 0
                 and row < height
-                and ink.crop((0, start, width, row)).getbbox() is None
+                and inner_ink.crop((0, start, inner_ink.width, row)).getbbox() is None
             ):
                 gaps.append((start, row))
             start = None
@@ -143,6 +147,51 @@ def compact_internal_whitespace(img: Image.Image) -> Image.Image:
     for piece in pieces:
         result.paste(piece, (0, top))
         top += piece.height
+    return result
+
+
+def reflow_tall_question(img: Image.Image) -> Image.Image:
+    """Place two intact reading sections side by side on a landscape slide.
+
+    A split is made only inside a verified whitespace band. If the source has
+    a continuous figure or no safe band, its original pixels remain in order.
+    """
+    width, height = img.size
+    if width <= 0 or height <= width * 1.3:
+        return img
+
+    ink = img.convert("L").point(lambda value: 255 if value < 245 else 0)
+    margin = max(1, int(width * 0.035))
+    inner_ink = ink.crop((margin, 0, width - margin, height))
+    density = list(ink.resize((1, height), Image.Resampling.BOX).getdata())
+    gaps: list[tuple[int, int]] = []
+    start = None
+    for row, value in enumerate([*density, 255]):
+        if value <= 2:
+            if start is None:
+                start = row
+        elif start is not None:
+            if (
+                row - start >= max(20, int(height * 0.02))
+                and height * 0.25 <= start
+                and row <= height * 0.8
+                and inner_ink.crop((0, start, inner_ink.width, row)).getbbox() is None
+            ):
+                gaps.append((start, row))
+            start = None
+
+    if not gaps:
+        return img
+    # The widest gap is more likely to be between a stem/figure and choices
+    # than inside a table. Preserve every source row exactly once.
+    gap_start, gap_end = max(gaps, key=lambda gap: (gap[1] - gap[0], -abs(sum(gap) - height)))
+    split_at = (gap_start + gap_end) // 2
+    left = img.crop((0, 0, width, split_at))
+    right = img.crop((0, split_at, width, height))
+    gutter = max(20, int(width * 0.04))
+    result = Image.new(img.mode, (width * 2 + gutter, max(left.height, right.height)), "white")
+    result.paste(left, (0, 0))
+    result.paste(right, (width + gutter, 0))
     return result
 
 
