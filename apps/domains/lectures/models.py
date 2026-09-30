@@ -1,5 +1,7 @@
 # PATH: apps/domains/lectures/models.py
 
+import re
+
 from django.db import models, transaction
 from django.db.models import Max
 from apps.api.common.models import TimestampModel
@@ -367,6 +369,12 @@ class Session(TimestampModel):
         if self.session_type == self.SessionType.SUPPLEMENT:
             return (self.title or "").strip() or "보강"
         order = self.regular_order or self.order
+        title = (self.title or "").strip()
+        if title and not re.fullmatch(
+            r"\d+(?:\s*차시)?(?:\s*\(\s*\d{1,2}:\d{2}\s*[~–-]\s*\d{1,2}:\d{2}\s*\))?",
+            title,
+        ):
+            return title
         return f"{order}차시"
 
     def save(self, *args, **kwargs):

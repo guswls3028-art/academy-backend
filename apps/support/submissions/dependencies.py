@@ -278,12 +278,99 @@ def complete_submission_after_auto_grade(submission, *, actor: str) -> None:
     )
 
 
+def _refresh_omr_score_review_after_key(*, submission, answer_key, choice_question_ids):
+    """Recheck scan-only ambiguity after a complete answer key becomes available."""
+    from django.utils import timezone
+
+    from apps.domains.results.services.answer_matching import (
+        answer_matches,
+        correct_answer_sets,
+    )
+    from apps.domains.submissions.models import Submission, SubmissionAnswer
+    from apps.support.omr.answer_policy import ambiguous_answer_can_change_score
+
+    if submission.source != Submission.Source.OMR_SCAN or not answer_key:
+        return
+    meta = dict(submission.meta or {})
+    review = dict(meta.get("manual_review") or {})
+    reasons = set(review.get("reasons") or [])
+    if meta.get("manual_edits") or review.get("resolved_at"):
+        return
+
+    correct = answer_key.answers
+    if not isinstance(correct, dict) or not choice_question_ids or any(
+        not correct_answer_sets(correct.get(str(qid))) for qid in choice_question_ids
+    ):
+        return
+
+    answers = list(SubmissionAnswer.objects.filter(
+        tenant_id=submission.tenant_id,
+        submission=submission,
+        exam_question_id__in=choice_question_ids,
+    ))
+    if len(answers) != len(choice_question_ids) or any(
+        not isinstance((answer.meta or {}).get("omr"), dict) for answer in answers
+    ):
+        return
+
+    score_ambiguous = False
+    low_confidence_ambiguous = False
+    has_score_signal = False
+    answer_meta_changed = False
+    for answer in answers:
+        omr_meta = dict(answer.meta["omr"])
+        detected = [part.strip() for part in answer.answer.split(",") if part.strip()]
+        expected = correct.get(str(answer.exam_question_id))
+        expected_multi = len(detected) > 1 and answer_matches(detected, expected)
+        status = str(omr_meta.get("status") or "").lower()
+        marking = str(omr_meta.get("marking") or "").lower()
+        score_signal = marking == "multi" or status not in ("ok", "blank")
+        has_score_signal |= score_signal
+        if status != "error" and not expected_multi and score_signal:
+            affects_score = ambiguous_answer_can_change_score(
+                detected_values=detected, correct_answer=expected,
+            )
+            score_ambiguous |= affects_score
+            low_confidence_ambiguous |= status == "low_confidence" and affects_score
+        if expected_multi != bool(omr_meta.get("expected_multi_answer")):
+            if expected_multi:
+                omr_meta["expected_multi_answer"] = True
+            else:
+                omr_meta.pop("expected_multi_answer", None)
+            answer.meta = {**answer.meta, "omr": omr_meta}
+            answer.save(update_fields=["meta", "updated_at"])
+            answer_meta_changed = True
+
+    if not has_score_signal and "ANSWER_SCORE_AMBIGUOUS" not in reasons:
+        return
+
+    reasons.discard("ANSWER_SCORE_AMBIGUOUS")
+    reasons.discard("ANSWER_LOW_CONFIDENCE")
+    if score_ambiguous:
+        reasons.add("ANSWER_SCORE_AMBIGUOUS")
+    if low_confidence_ambiguous:
+        reasons.add("ANSWER_LOW_CONFIDENCE")
+    if (
+        not answer_meta_changed
+        and review.get("reasons") == sorted(reasons)
+        and review.get("required") == bool(reasons)
+    ):
+        return
+    review["reasons"] = sorted(reasons)
+    review["required"] = bool(reasons)
+    review["updated_at"] = timezone.now().isoformat()
+    meta["manual_review"] = review
+    submission.meta = meta
+    submission.save(update_fields=["meta", "updated_at"])
+
+
 def regrade_exam_submissions(*, tenant, exam_id: int, actor: str) -> dict[str, Any]:
     from django.db import transaction
 
     from apps.domains.results.models import ResultItem
     from apps.domains.results.services.manual_exam_answers import regrade_manual_exam_answers
     from apps.domains.submissions.models import Submission
+    from apps.domains.exams.models import AnswerKey
     from apps.domains.submissions.services.lifecycle import reopen_for_regrade
     from apps.domains.exams.models import Exam
     from apps.support.omr.score_shape import get_exam_score_shape
@@ -298,6 +385,10 @@ def regrade_exam_submissions(*, tenant, exam_id: int, actor: str) -> dict[str, A
     }
     exam = Exam.objects.get(id=int(exam_id), tenant=tenant)
     score_shape = get_exam_score_shape(exam)
+    choice_question_ids = {
+        qid for qid, kind in score_shape.question_kind_by_id.items()
+        if kind == "choice"
+    }
     submissions = list(
         Submission.objects.filter(
             tenant=tenant,
@@ -355,6 +446,14 @@ def regrade_exam_submissions(*, tenant, exam_id: int, actor: str) -> dict[str, A
                 if not_submitted:
                     skipped += 1
                     continue
+                if submission.source == Submission.Source.OMR_SCAN:
+                    _refresh_omr_score_review_after_key(
+                        submission=submission,
+                        answer_key=AnswerKey.objects.filter(
+                            exam_id=score_shape.template_exam_id,
+                        ).first(),
+                        choice_question_ids=choice_question_ids,
+                    )
                 if submission.status != Submission.Status.ANSWERS_READY:
                     reopen_for_regrade(submission, actor=actor)
                 grade_submission_objective(int(submission_id), force_regrade=True)
