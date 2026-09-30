@@ -353,7 +353,7 @@ def test_base_image_requires_security_fixed_openssl() -> None:
     ).read_text(encoding="utf-8")
 
     assert "openssl \\" in dockerfile
-    assert 'dpkg --compare-versions "$openssl_version" ge "3.5.7-1~deb13u2"' in dockerfile
+    assert 'dpkg --compare-versions "$openssl_version" ge "3.5.7-1~deb13u3"' in dockerfile
 
 
 def test_base_image_requires_security_fixed_util_linux() -> None:
