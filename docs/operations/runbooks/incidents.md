@@ -8,6 +8,35 @@
 > powershell -File scripts/v1/run-with-env.ps1 --
 > ```
 
+### 운영 데이터 긴급 확인 (인증 재요청 없이)
+
+Academy 담당 작업에는 이미 설정된 `C:\academy\backend\.env`의 AWS 인증 경로를
+우선 사용한다. 비밀번호나 키를 채팅으로 다시 요청하거나 문서·명령 출력에 복사하지
+않는다. 새 개발 계정이 필요하다고 가정하지 말고 아래처럼 현재 신원을 읽어 확인한다.
+
+```powershell
+pwsh -NoProfile -File C:\academy\backend\scripts\v1\run-with-env.ps1 -- aws sts get-caller-identity
+```
+
+운영 DB의 사실 확인은 격리 개발 DB를 운영 DB에 연결하는 방식이 아니라, 공식
+`scripts/v1/core/ssot.ps1`의 `Load-SSOT -Env prod`와
+`scripts/v1/core/remote.ps1`의 `Invoke-ApiSsmDockerExec`를 이용해 현재 운영
+API 컨테이너 안에서 tenant 및 정확한 객체 ID로 제한한 **읽기 전용** Django
+조회로 수행한다. `scripts/v1/resources/api.ps1`을 먼저 dot-source해야 해당
+SSM 함수가 운영 API 인스턴스를 찾는다. 이 PowerShell 조회 스크립트는
+`run-with-env.ps1 -- pwsh -NoProfile -File <조회 스크립트>`로 실행한다.
+표준 출력은 필요한 ID·상태·건수로만 제한하고 학생 이름·연락처·답안 원본,
+환경변수와 SSM 비밀값은 남기지 않는다. SSM 명령 ID와 조회 시각을 기록해
+사후 검증할 수 있게 한다. 인증/SSM 호출이 실패하면 기존 설정과 권한 상태를
+진단하고, 무작정 별도 운영 계정을 만들거나 개발 런타임의 운영 접근 차단을
+해제하지 않는다.
+
+운영 데이터 변경은 조회와 별개다. 정확한 tenant·시험·제출 ID, 영향 건수,
+정답/원본 근거, 기존 수동 수정 여부를 먼저 확인하고 소유 절차의 잠금·보존·
+rollback·변경 후 재조회 조건을 따른다. 특히 OMR 정답표가 없을 때는 학생
+마킹 빈도나 대화 속 추정만으로 정답 또는 성적을 생성하지 않는다. 정답표가
+후등록되면 정답 저장 API의 재채점 결과와 검토 잔여 건수를 읽어 확인한다.
+
 ---
 
 ## 0. 사용자 오류 운영 알림

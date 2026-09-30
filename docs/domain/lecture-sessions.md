@@ -44,8 +44,8 @@
 | `session_type` | `REGULAR` 또는 `SUPPLEMENT`; 제목 문자열로 새 데이터를 추론하지 않는다. |
 | `regular_order` | 정규 수업의 n차시 번호. 보강은 반드시 `null`이다. |
 | `order` | 같은 강의·반 안의 화면 배치 순서. 두 유형을 모두 포함한다. |
-| `title` | 사용자 저장 이름. 보강에서는 카드·경로에 표시할 이름이다. |
-| `display_label` | 정규는 `{regular_order}차시`, 보강은 저장된 `title`; 빈 레거시 값만 `보강`으로 폴백한다. |
+| `title` | 사용자 저장 이름. 정규·보강 모두 카드·경로의 사용자 지정 이름으로 쓸 수 있다. |
+| `display_label` | 정규의 기본 제목(`N차시`, 숫자만 있는 레거시 값, 또는 `N차시 (시각~시각)`)은 `{regular_order}차시`, 사용자 지정 제목은 그 제목을 표시한다. 보강은 저장된 `title`; 빈 레거시 값만 `보강`으로 폴백한다. |
 
 정규 번호의 유일성과 유형별 `regular_order` null 여부는 DB 제약으로 지킨다.
 기존 `Session`, 시험, 과제, 출결, 영상, 수강 연결은 그대로 유지되며 유형을
@@ -65,8 +65,9 @@
   클라이언트는 `session_type`으로 두 진입 범위를 구성한다.
 - `POST /lectures/sessions/`에서 정규는 `regular_order`, 보강은
   `session_type=SUPPLEMENT`와 사용자 이름인 `title`을 받는다.
-- `PATCH /lectures/sessions/{id}/`의 `title` 수정은 같은 수업 ID와 연결 데이터를
-  유지한 채 보강 표시 이름을 바꾼다.
+- `PATCH /lectures/sessions/{id}/`의 `title` 수정은 정규·보강 모두 같은 수업 ID와
+  연결 데이터를 유지한 채 표시 이름을 바꾼다. 정규의 `regular_order`와
+  `session_type=REGULAR`는 이름에 `직보`가 들어가도 유지한다.
 - 부분 수정의 `start_date`·`end_date` 검증은 요청에 실제 포함된 필드를 우선한다.
   nullable 시작일을 `null`로 지우면서 종료일을 함께 옮기는 요청은 이전 시작일을
   되살려 비교하지 않으며, 최종 두 값이 모두 있을 때만 순서를 검사한다.
@@ -90,11 +91,11 @@
   생략한 INSERT를 허용한다. 기존 행은 migration에서 backfill하고, 배포 창에
   생긴 nullable 행은 위 재정렬 경로가 잠금 후 정규화한다. 따라서 production
   롤링 교체 중 강의 생성이 중단되거나 동일한 `0` 순서로 충돌하지 않는다.
-- 보강 이름 저장 실패 시 기존 이름과 연결 데이터는 유지된다.
+- 이름 저장 실패 시 기존 이름과 연결 데이터는 유지된다.
 - `0007_session_regular_order_session_session_type_and_more` 이전 데이터는 당시
   제목의 `보강` 포함 여부로 한 번 backfill되었다. 이후 런타임은 명시적
   `session_type`을 우선하며 새 제목 추론을 하지 않는다.
-- 보강 이름 변경은 ID나 성적·출결 범위를 바꾸지 않으므로 별도 데이터 이전이
+- 이름 변경은 ID나 성적·출결 범위를 바꾸지 않으므로 별도 데이터 이전이
   없다.
 
 ## 집중 검증

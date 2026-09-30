@@ -229,6 +229,31 @@ class TestSessionCreateOrdering(LectureTestBase):
         self.assertEqual(update_response.data["title"], "일요일 취약 단원 클리닉")
         self.assertEqual(update_response.data["display_label"], "일요일 취약 단원 클리닉")
 
+    def test_regular_session_custom_title_keeps_regular_identity(self):
+        session = Session.objects.create(
+            lecture=self.lecture, order=7, regular_order=7,
+            title="7차시 (09:30~13:00)",
+        )
+        self.assertEqual(session.display_label, "7차시")
+
+        response = self._patch_session(session, {"title": "직보(7주차)"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["display_label"], "직보(7주차)")
+        session.refresh_from_db()
+        self.assertEqual((session.session_type, session.regular_order), ("REGULAR", 7))
+        self.assertEqual(session.display_label, "직보(7주차)")
+
+        named_suffix = self._patch_session(session, {"title": "7차시 (직보)"})
+        self.assertEqual(named_suffix.status_code, 200)
+        self.assertEqual(named_suffix.data["display_label"], "7차시 (직보)")
+
+        reset = self._patch_session(session, {"title": ""})
+        self.assertEqual(reset.status_code, 200)
+        self.assertEqual(reset.data["display_label"], "7차시")
+        session.refresh_from_db()
+        self.assertEqual(session.title, "")
+
     def test_regular_order_null_update_rejected(self):
         """정규 차시는 PATCH에서도 regular_order null을 허용하지 않는다."""
         session = Session.objects.create(lecture=self.lecture, order=1, title="1차시")

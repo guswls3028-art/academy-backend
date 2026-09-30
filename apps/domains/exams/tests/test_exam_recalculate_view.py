@@ -181,6 +181,94 @@ class ExamRecalculateViewTests(TestCase):
         self.assertEqual(mock_dispatch.call_count, 2)
 
     @patch("apps.domains.results.services.grading_service.dispatch_progress_pipeline")
+    def test_late_answer_key_releases_matching_multi_mark_from_review(self, mock_dispatch):
+        self.answer_key.delete()
+        submission = self._create_submission(status=Submission.Status.ANSWERS_READY)
+        submission.meta = {
+            "manual_review": {
+                "required": True,
+                "reasons": ["ANSWER_SCORE_AMBIGUOUS"],
+            },
+        }
+        submission.save(update_fields=["meta", "updated_at"])
+        answer = SubmissionAnswer.objects.get(
+            submission=submission, exam_question_id=self.q1.id,
+        )
+        answer.answer = "1,3"
+        answer.meta = {"omr": {"detected": ["1", "3"], "status": "ok", "marking": "multi"}}
+        answer.save(update_fields=["answer", "meta", "updated_at"])
+        single = SubmissionAnswer.objects.get(
+            submission=submission, exam_question_id=self.q2.id,
+        )
+        single.answer = "3"
+        single.meta = {"omr": {"detected": ["3"], "status": "ok", "marking": "single"}}
+        single.save(update_fields=["answer", "meta", "updated_at"])
+
+        request = self.factory.post(
+            "/api/v1/exams/answer-keys/",
+            {"exam": self.exam.id, "answers": {
+                str(self.q1.id): "1,3", str(self.q2.id): "3",
+            }},
+            format="json",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        response = AnswerKeyViewSet.as_view({"post": "create"})(request)
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["regrade"][0]["graded"], 1)
+        submission.refresh_from_db()
+        answer.refresh_from_db()
+        self.assertFalse(submission.meta["manual_review"]["required"])
+        self.assertTrue(answer.meta["omr"]["expected_multi_answer"])
+        self.assertEqual(submission.status, Submission.Status.DONE)
+        self.assertEqual(float(ExamResult.objects.get(submission=submission).total_score), 10.0)
+        self.assertTrue(Result.objects.filter(
+            target_type="exam", target_id=self.exam.id, enrollment=self.enrollment,
+        ).exists())
+        mock_dispatch.assert_called_once_with(submission_id=submission.id)
+
+    @patch("apps.domains.results.services.grading_service.dispatch_progress_pipeline")
+    def test_late_answer_key_keeps_unmatched_multi_mark_in_review(self, mock_dispatch):
+        self.answer_key.delete()
+        submission = self._create_submission(status=Submission.Status.ANSWERS_READY)
+        submission.meta = {"manual_review": {
+            "required": True, "reasons": ["ANSWER_SCORE_AMBIGUOUS"],
+        }}
+        submission.save(update_fields=["meta", "updated_at"])
+        answer = SubmissionAnswer.objects.get(
+            submission=submission, exam_question_id=self.q1.id,
+        )
+        answer.answer = "1,3"
+        answer.meta = {"omr": {"detected": ["1", "3"], "status": "ok", "marking": "multi"}}
+        answer.save(update_fields=["answer", "meta", "updated_at"])
+        single = SubmissionAnswer.objects.get(
+            submission=submission, exam_question_id=self.q2.id,
+        )
+        single.meta = {"omr": {"detected": ["2"], "status": "ok", "marking": "single"}}
+        single.save(update_fields=["meta", "updated_at"])
+
+        request = self.factory.post(
+            "/api/v1/exams/answer-keys/",
+            {"exam": self.exam.id, "answers": {
+                str(self.q1.id): "1", str(self.q2.id): "3",
+            }},
+            format="json",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        response = AnswerKeyViewSet.as_view({"post": "create"})(request)
+
+        self.assertEqual(response.status_code, 201, response.data)
+        submission.refresh_from_db()
+        self.assertTrue(submission.meta["manual_review"]["required"])
+        self.assertIn("ANSWER_SCORE_AMBIGUOUS", submission.meta["manual_review"]["reasons"])
+        self.assertFalse(Result.objects.filter(
+            target_type="exam", target_id=self.exam.id, enrollment=self.enrollment,
+        ).exists())
+        mock_dispatch.assert_not_called()
+
+    @patch("apps.domains.results.services.grading_service.dispatch_progress_pipeline")
     def test_exception_edit_preserves_manual_choice_and_flags_review(self, mock_dispatch):
         submission = self._create_submission()
         SubmissionAnswer.objects.filter(
