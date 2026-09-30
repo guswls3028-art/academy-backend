@@ -21,6 +21,21 @@ function Assert-True([bool]$Condition, [string]$Message) {
     if (-not $Condition) { throw $Message }
 }
 
+function Invoke-InterceptedClose {
+    param([string]$Session, [hashtable]$State, [scriptblock]$BeforeGit)
+
+    $gitExecutable = (Get-Command git -CommandType Application | Select-Object -First 1).Source
+    # Intercept only Git call boundaries; execute the unmodified production script
+    # and every Git operation against real, disposable fixture repositories.
+    function git {
+        $arguments = @($args)
+        & $BeforeGit $arguments $State $gitExecutable
+        & $gitExecutable @arguments
+        Set-Variable -Name LASTEXITCODE -Value $LASTEXITCODE -Scope 1
+    }
+    & $scriptUnderTest -Action Close -Session $Session -Repository backend -WorkspaceRoot $fixtureRoot
+}
+
 try {
     [void](New-Item -ItemType Directory -Path $fixtureRoot)
     [void](New-Item -ItemType Directory -Path (Join-Path $fixtureRoot "remotes"))
@@ -179,6 +194,15 @@ try {
     [void](New-Item -ItemType Directory -Path $backendCache)
     Set-Content -LiteralPath (Join-Path $backendCache "cache.txt") -Value "rebuildable" -Encoding UTF8
 
+    & $scriptUnderTest -Action Close -Session contract-test -Repository both `
+        -WorkspaceRoot $fixtureRoot -WhatIf *> $null
+    Assert-True (Test-Path -LiteralPath $backendWorktree) "Close -WhatIf removed the backend worktree."
+    Assert-True (Test-Path -LiteralPath $frontendWorktree) "Close -WhatIf removed the frontend worktree."
+    Assert-True (Test-Path -LiteralPath (Join-Path $backendCache "cache.txt")) "Close -WhatIf removed ignored caches."
+    Assert-True (
+        @((Invoke-Git -Root $backendRoot -Arguments @("branch", "--list", $backendBranch))).Count -eq 1
+    ) "Close -WhatIf removed the session branch."
+
     $closeOutput = @(& $scriptUnderTest `
         -Action Close `
         -Session contract-test `
@@ -232,15 +256,30 @@ try {
     [void](Invoke-Git -Root $backendRoot -Arguments @("add", "equivalent.txt"))
     [void](Invoke-Git -Root $backendRoot -Arguments @("commit", "-m", "fixture main equivalent"))
     [void](Invoke-Git -Root $backendRoot -Arguments @("push", "origin", "main"))
-    $patchCloseOutput = @(& $scriptUnderTest `
-        -Action Close `
-        -Session patch-test `
-        -Repository backend `
-        -WorkspaceRoot $fixtureRoot)
+    $patchMainSha = @(Invoke-Git -Root $backendRoot -Arguments @("rev-parse", "HEAD"))[0]
+    $patchState = @{
+        Root = $backendRoot
+        MainSha = $patchMainSha
+        PreviousMainSha = @(Invoke-Git -Root $backendRoot -Arguments @("rev-parse", "HEAD^"))[0]
+        Shifted = $false
+    }
+    $patchCloseOutput = @(Invoke-InterceptedClose -Session patch-test -State $patchState -BeforeGit {
+        param($Arguments, $State, $GitExecutable)
+        if ($Arguments[2] -eq "merge-base" -and -not $State.Shifted) {
+            & $GitExecutable -C $State.Root update-ref refs/remotes/origin/main $State.PreviousMainSha $State.MainSha
+            if ($LASTEXITCODE -ne 0) { throw "Fixture could not move origin/main after its snapshot." }
+            $State.Shifted = $true
+        }
+    })
+    Assert-True $patchState.Shifted "The immutable-main fixture did not move origin/main during integration."
     Assert-True (
         @($patchCloseOutput -match "integration=patch-equivalent").Count -gt 0
     ) "Close did not recognize a fully patch-equivalent branch."
+    Assert-True (
+        @($patchCloseOutput -match "main=$patchMainSha").Count -eq 1
+    ) "Close did not retain its checked main SHA."
     Assert-True (-not (Test-Path -LiteralPath $patchWorktree)) "Patch-equivalent worktree remains after close."
+    Write-Output "SESSION_WORKTREE_CASE_PASS immutable-main-patch-equivalence"
 
     [void](& $scriptUnderTest -Action Start -Session reused-test -Repository backend `
         -WorkspaceRoot $fixtureRoot -AllowLowDisk)
@@ -274,6 +313,142 @@ try {
     [void](& $scriptUnderTest -Action Close -Session reused-test -Repository backend `
         -WorkspaceRoot $fixtureRoot -ExpectedBranch $reusedBranch)
     Assert-True (-not (Test-Path -LiteralPath $reusedWorktree)) "Merged reused worktree remains."
+
+    [void](Invoke-Git -Root $backendRoot -Arguments @("merge", "--ff-only", "origin/main"))
+    Set-Content -LiteralPath (Join-Path $backendRoot "merge.txt") -Value "base" -Encoding UTF8
+    [void](Invoke-Git -Root $backendRoot -Arguments @("add", "merge.txt"))
+    [void](Invoke-Git -Root $backendRoot -Arguments @("commit", "-m", "fixture merge base"))
+    [void](Invoke-Git -Root $backendRoot -Arguments @("push", "origin", "main"))
+    [void](& $scriptUnderTest -Action Start -Session merge-resolution-test -Repository backend `
+        -WorkspaceRoot $fixtureRoot -AllowLowDisk)
+    $mergeWorktree = Join-Path $fixtureRoot "_worktrees\sessions\merge-resolution-test\backend"
+    $mergeBranch = @(Invoke-Git -Root $mergeWorktree -Arguments @("symbolic-ref", "--short", "HEAD"))[0]
+    $mergeBase = @(Invoke-Git -Root $mergeWorktree -Arguments @("rev-parse", "HEAD"))[0]
+    Set-Content -LiteralPath (Join-Path $mergeWorktree "merge.txt") -Value "left" -Encoding UTF8
+    [void](Invoke-Git -Root $mergeWorktree -Arguments @("add", "merge.txt"))
+    [void](Invoke-Git -Root $mergeWorktree -Arguments @("commit", "-m", "fixture left patch"))
+    $leftSha = @(Invoke-Git -Root $mergeWorktree -Arguments @("rev-parse", "HEAD"))[0]
+    [void](Invoke-Git -Root $mergeWorktree -Arguments @("checkout", "-b", "codex/fixture-merge-side", $mergeBase))
+    Set-Content -LiteralPath (Join-Path $mergeWorktree "merge.txt") -Value "right" -Encoding UTF8
+    [void](Invoke-Git -Root $mergeWorktree -Arguments @("add", "merge.txt"))
+    [void](Invoke-Git -Root $mergeWorktree -Arguments @("commit", "-m", "fixture right patch"))
+    $rightSha = @(Invoke-Git -Root $mergeWorktree -Arguments @("rev-parse", "HEAD"))[0]
+    [void](Invoke-Git -Root $mergeWorktree -Arguments @("checkout", $mergeBranch))
+    & git -C $mergeWorktree merge --no-ff --no-commit codex/fixture-merge-side *> $null
+    Assert-True ($LASTEXITCODE -eq 1) "The merge-resolution fixture must create a real conflict."
+    Set-Content -LiteralPath (Join-Path $mergeWorktree "merge.txt") -Value "unique merge resolution" -Encoding UTF8
+    [void](Invoke-Git -Root $mergeWorktree -Arguments @("add", "merge.txt"))
+    [void](Invoke-Git -Root $mergeWorktree -Arguments @("commit", "-m", "fixture unique merge resolution"))
+    $mergeSha = @(Invoke-Git -Root $mergeWorktree -Arguments @("rev-parse", "HEAD"))[0]
+    # Put both ordinary patches on main without integrating the merge resolution.
+    [void](Invoke-Git -Root $backendRoot -Arguments @("cherry-pick", "-x", $leftSha))
+    [void](Invoke-Git -Root $backendRoot -Arguments @("revert", "--no-edit", "HEAD"))
+    [void](Invoke-Git -Root $backendRoot -Arguments @("cherry-pick", "-x", $rightSha))
+    [void](Invoke-Git -Root $backendRoot -Arguments @("push", "origin", "main"))
+    $mergeCherry = @(Invoke-Git -Root $mergeWorktree -Arguments @("cherry", "origin/main", "HEAD"))
+    Assert-True (
+        $mergeCherry.Count -gt 0 -and @($mergeCherry -like "+ *").Count -eq 0
+    ) "The fixture must fool a check based only on git cherry."
+    $mergeRefused = $false
+    try {
+        & $scriptUnderTest -Action Close -Session merge-resolution-test -Repository backend `
+            -WorkspaceRoot $fixtureRoot *> $null
+    } catch {
+        if (-not $_.Exception.Message.Contains("not merged")) { throw }
+        $mergeRefused = $true
+    }
+    Assert-True $mergeRefused "Close must preserve an exclusive merge despite equivalent ordinary patches."
+    Assert-True (Test-Path -LiteralPath $mergeWorktree) "Close removed the unique merge worktree."
+    Assert-True (
+        @(Invoke-Git -Root $backendRoot -Arguments @("rev-parse", "refs/heads/$mergeBranch"))[0] -eq $mergeSha
+    ) "Close removed or changed the unique merge branch."
+    Assert-True (
+        (Get-Content -LiteralPath (Join-Path $mergeWorktree "merge.txt") -Raw).Trim() -eq "unique merge resolution"
+    ) "Close lost the unique merge resolution."
+    Write-Output "SESSION_WORKTREE_CASE_PASS exclusive-merge-resolution"
+
+    Add-Content -LiteralPath $backendExclude -Value ".env.boundary" -Encoding UTF8
+    foreach ($boundary in @("registration", "branch", "head", "dirty", "ignored", "late-head")) {
+        $boundarySession = "boundary-$boundary"
+        [void](& $scriptUnderTest -Action Start -Session $boundarySession -Repository backend `
+            -WorkspaceRoot $fixtureRoot -AllowLowDisk)
+        $boundaryPath = Join-Path $fixtureRoot "_worktrees\sessions\$boundarySession\backend"
+        $boundaryBranch = @(Invoke-Git -Root $boundaryPath -Arguments @("symbolic-ref", "--short", "HEAD"))[0]
+        $checkedSha = @(Invoke-Git -Root $boundaryPath -Arguments @("rev-parse", "HEAD"))[0]
+        $advancedSha = $checkedSha
+        if ($boundary -in @("head", "late-head")) {
+            Set-Content -LiteralPath (Join-Path $boundaryPath "boundary.txt") -Value "preserve unique commit" -Encoding UTF8
+            [void](Invoke-Git -Root $boundaryPath -Arguments @("add", "boundary.txt"))
+            [void](Invoke-Git -Root $boundaryPath -Arguments @("commit", "-m", "fixture concurrent advance"))
+            $advancedSha = @(Invoke-Git -Root $boundaryPath -Arguments @("rev-parse", "HEAD"))[0]
+            [void](Invoke-Git -Root $boundaryPath -Arguments @("reset", "--hard", $checkedSha))
+        }
+        $boundaryState = @{
+            Kind = $boundary; Root = $backendRoot; Path = $boundaryPath
+            SurvivorPath = $boundaryPath; SurvivorBranch = $boundaryBranch
+            Ref = "refs/heads/$boundaryBranch"; CheckedSha = $checkedSha; AdvancedSha = $advancedSha
+            Lists = 0; Injected = $false
+        }
+        $boundaryRefused = $false
+        try {
+            Invoke-InterceptedClose -Session $boundarySession -State $boundaryState -BeforeGit {
+                param($Arguments, $State, $GitExecutable)
+                $listing = $Arguments[2] -eq "worktree" -and $Arguments[3] -eq "list"
+                if ($listing) { $State.Lists++ }
+                $beforeRecheck = $State.Kind -ne "late-head" -and $listing -and $State.Lists -eq 2
+                $beforeDelete = $State.Kind -eq "late-head" -and $Arguments[2] -eq "update-ref" -and $Arguments -contains "-d"
+                if ($State.Injected -or -not ($beforeRecheck -or $beforeDelete)) { return }
+                $State.Injected = $true
+                switch ($State.Kind) {
+                    "registration" {
+                        $State.SurvivorPath = "$($State.Path)-moved"
+                        & $GitExecutable -C $State.Root worktree move $State.Path $State.SurvivorPath
+                    }
+                    "branch" {
+                        $State.SurvivorBranch = "codex/fixture-renamed-boundary"
+                        & $GitExecutable -C $State.Path branch -m $State.SurvivorBranch
+                    }
+                    "head" { & $GitExecutable -C $State.Path reset --hard $State.AdvancedSha }
+                    "dirty" {
+                        Set-Content -LiteralPath (Join-Path $State.Path "README.md") -Value "preserve tracked edit" -Encoding UTF8
+                    }
+                    "ignored" {
+                        Set-Content -LiteralPath (Join-Path $State.Path ".env.boundary") -Value "preserve ignored data" -Encoding UTF8
+                    }
+                    "late-head" {
+                        & $GitExecutable -C $State.Root update-ref $State.Ref $State.AdvancedSha $State.CheckedSha
+                    }
+                }
+                if ($LASTEXITCODE -ne 0) { throw "Fixture boundary mutation failed: $($State.Kind)" }
+            } *> $null
+        } catch {
+            $expectedError = if ($boundary -eq "late-head") { "update-ref" } else { "after close preflight" }
+            if (-not $_.Exception.Message.Contains($expectedError)) { throw }
+            $boundaryRefused = $true
+        }
+        Assert-True $boundaryState.Injected "The $boundary fixture never reached its interception boundary."
+        Assert-True $boundaryRefused "Close did not refuse the $boundary change."
+        Assert-True (
+            @(Invoke-Git -Root $backendRoot -Arguments @("rev-parse", "refs/heads/$($boundaryState.SurvivorBranch)"))[0] -eq $advancedSha
+        ) "Close lost or changed the branch at the $boundary boundary."
+        if ($boundary -eq "late-head") {
+            Assert-True (-not (Test-Path -LiteralPath $boundaryPath)) "The late advance must happen after worktree removal."
+        } else {
+            Assert-True (Test-Path -LiteralPath $boundaryState.SurvivorPath) "Close removed the changed $boundary worktree."
+        }
+        if ($boundary -in @("head", "late-head")) {
+            Assert-True (
+                @(Invoke-Git -Root $backendRoot -Arguments @("show", "${advancedSha}:boundary.txt"))[0] -eq "preserve unique commit"
+            ) "Close lost the advanced commit's content."
+        } elseif ($boundary -eq "dirty") {
+            Assert-True (
+                (Get-Content -LiteralPath (Join-Path $boundaryPath "README.md") -Raw).Trim() -eq "preserve tracked edit"
+            ) "Close lost the tracked edit."
+        } elseif ($boundary -eq "ignored") {
+            Assert-True (Test-Path -LiteralPath (Join-Path $boundaryPath ".env.boundary")) "Close lost new ignored data."
+        }
+        Write-Output "SESSION_WORKTREE_CASE_PASS $boundary-boundary"
+    }
 
     $frontendRoot = Join-Path $fixtureRoot "frontend"
     Set-Content -LiteralPath (Join-Path $frontendRoot "dirty-sync.txt") -Value "dirty" -Encoding UTF8

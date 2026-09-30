@@ -288,9 +288,10 @@ pwsh C:\academy\backend\scripts\codex\session-worktree.ps1 `
 A task is not complete merely because existing changes were “preserved.” Pick
 one explicit terminal state:
 
-1. **Merged:** branch is contained in `origin/main`, or every remaining commit
-   is patch-equivalent to `origin/main`; the worktree is clean and the session
-   worktree and local branch are removed.
+1. **Merged:** branch is contained in `origin/main`, or every remaining ordinary
+   commit is patch-equivalent to `origin/main` and no exclusive merge commit
+   remains; the worktree is clean and the session worktree and local branch are
+   removed.
 2. **Review pending:** clean committed branch/PR, named owner, exact SHA, and a
    stated merge or discard decision. It remains a worktree until resolved.
 3. **Intentional WIP:** a named `wip/` branch with a recovery commit, owner, and
@@ -300,7 +301,14 @@ one explicit terminal state:
 For the merged state, the close command performs a full preflight and refuses
 dirty, foreign, or unmerged worktrees before deleting anything. A squash or
 cherry-pick merge is accepted only when `git cherry origin/main HEAD` contains
-no `+` commit; any unique commit preserves the branch. `Close` clears only
+no `+` commit and `git rev-list --merges origin/main..HEAD` is empty. `git cherry`
+does not prove merge-resolution equivalence, so an exclusive merge preserves
+the branch even when its ordinary commits are equivalent. `Close` binds this
+check to the recorded main and HEAD SHAs, then rechecks the registered path,
+branch, HEAD, clean status and ignored data immediately before removal. Branch
+deletion compares the recorded SHA atomically; a concurrent advance is preserved
+and reported for recovery. Keep exclusive ownership until cleanup finishes.
+`Close` clears only
 ignored backend Python caches (`.pytest_cache/`, `.ruff_cache/`, and
 `__pycache__/`) after verifying every ignored path. It refuses other ignored
 local files and directories before Git can unregister a worktree and leave an
@@ -414,6 +422,10 @@ owned worktree and branch. Preserve unmerged or dirty work. Stop the Codespace
 with `gh codespace stop -c <name>` after remote commands finish.
 
 ## Verification
+
+The backend quality gate runs the lifecycle fixture on Windows, including
+exclusive merge resolutions and branch advances during cleanup. Local checks
+use the same script; a passing parse alone does not verify deletion safety.
 
 ```powershell
 pwsh scripts/codex/test-session-worktree.ps1
