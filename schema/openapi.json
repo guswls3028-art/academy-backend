@@ -5642,7 +5642,6 @@
           "section_label",
           "section_type",
           "start_time",
-          "title",
           "updated_at"
         ],
         "type": "object"
@@ -5688,13 +5687,11 @@
           },
           "title": {
             "maxLength": 255,
-            "minLength": 1,
             "type": "string"
           }
         },
         "required": [
-          "lecture",
-          "title"
+          "lecture"
         ],
         "type": "object"
       },
@@ -9122,7 +9119,6 @@
           },
           "title": {
             "maxLength": 255,
-            "minLength": 1,
             "type": "string"
           }
         },
