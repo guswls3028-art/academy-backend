@@ -80,6 +80,15 @@ def test_blank_separator_preserves_question_crops_but_visible_textless_pages_are
     presentation = Presentation(io.BytesIO(result.pptx_bytes))
     assert len(presentation.slides) == expected_count
     assert all(len(slide.shapes) == 1 for slide in presentation.slides)
+    if middle_content != "blank":
+        from PIL import Image
+
+        heights = [
+            Image.open(io.BytesIO(slide.shapes[0].image.blob)).height
+            for slide in presentation.slides
+        ]
+        assert heights[0] < heights[1]
+        assert heights[2] < heights[1]
 
 
 def test_ppt_pdf_plan_uses_whole_page_for_scan_pdf_without_text():
@@ -107,15 +116,18 @@ def test_ppt_pdf_plan_preserves_image_only_pages_between_anchored_text_pages(mon
         "split_questions",
         lambda blocks, *_args, **_kwargs: [SimpleNamespace(number=1)] if blocks else [],
     )
+    monkeypatch.setattr(question_splitter, "validate_anchors_across_pages", lambda pages, **_kwargs: pages)
 
     plan = _build_pdf_question_plan(_FakeDoc(pages))
 
-    assert plan.use_whole_page is True
+    assert plan.use_whole_page is False
     assert plan.allow_image_segmentation is False
-    assert plan.regions_per_page == [[] for _ in range(7)]
+    assert [bool(regions) for regions in plan.regions_per_page] == [True, True, False, False, False, False, True]
+    assert plan.fallback_page_indices == [2, 3, 4, 5]
 
 
-def test_ppt_pdf_plan_preserves_pages_when_anchors_cover_only_one_of_seven(monkeypatch):
+@pytest.mark.parametrize("anchor_index", [0, 3])
+def test_ppt_pdf_plan_preserves_pages_when_anchors_cover_only_one_of_seven(monkeypatch, anchor_index):
     from academy.domain.tools import paper_type, question_splitter
 
     pages = [[_Block(f"page {index} lesson text", 40, 80, 560, 150)] for index in range(7)]
@@ -125,22 +137,43 @@ def test_ppt_pdf_plan_preserves_pages_when_anchors_cover_only_one_of_seven(monke
         lambda **_kwargs: SimpleNamespace(is_non_question=False),
     )
     monkeypatch.setattr(question_splitter, "count_marginal_anchor_candidates", lambda *_args: 1)
+    monkeypatch.setattr(question_splitter, "validate_anchors_across_pages", lambda pages, **_kwargs: pages)
     monkeypatch.setattr(
         question_splitter,
         "split_questions",
         lambda blocks, *_args, **_kwargs: [SimpleNamespace(number=1)]
-        if "page 0" in blocks[0].text else [],
+        if f"page {anchor_index}" in blocks[0].text else [],
     )
 
     plan = _build_pdf_question_plan(_FakeDoc(pages))
 
-    assert plan.use_whole_page is True
+    assert plan.use_whole_page is False
     assert plan.allow_image_segmentation is False
-    assert plan.regions_per_page == [[] for _ in range(7)]
+    assert [bool(regions) for regions in plan.regions_per_page] == [
+        index == anchor_index for index in range(7)
+    ]
+    assert plan.fallback_page_indices == [
+        index for index in range(7) if index != anchor_index
+    ]
 
 
-def test_low_coverage_pdf_result_contains_every_page_without_image_segmentation(tmp_path, monkeypatch):
+def test_text_cover_before_detected_questions_is_not_added_as_a_slide():
+    pages = [
+        [_Block("통합과학 시험지 32문항", 40, 100, 560, 130)],
+        [_Block(_question_text(1), 40, 100, 560, 130)],
+        [_Block(_question_text(2), 40, 100, 560, 130)],
+    ]
+
+    plan = _build_pdf_question_plan(_FakeDoc(pages))
+
+    assert plan.use_whole_page is False
+    assert [bool(regions) for regions in plan.regions_per_page] == [False, True, True]
+    assert plan.fallback_page_indices == []
+
+
+def test_low_coverage_pdf_result_keeps_crops_and_unresolved_pages(tmp_path, monkeypatch):
     import fitz
+    from PIL import Image
     from pptx import Presentation
 
     from academy.application.use_cases.tools import generate_ppt
@@ -157,9 +190,10 @@ def test_low_coverage_pdf_result_contains_every_page_without_image_segmentation(
         generate_ppt,
         "_build_pdf_question_plan",
         lambda _doc: generate_ppt._PdfQuestionPlan(
-            use_whole_page=True,
-            regions_per_page=[[], [], []],
+            use_whole_page=False,
+            regions_per_page=[[SimpleNamespace(bbox=(40, 40, 300, 120))], [], []],
             allow_image_segmentation=False,
+            fallback_page_indices=[1, 2],
         ),
     )
     monkeypatch.setattr(
@@ -172,7 +206,13 @@ def test_low_coverage_pdf_result_contains_every_page_without_image_segmentation(
 
     assert result.mode == "page"
     assert result.slide_count == 3
-    assert len(Presentation(io.BytesIO(result.pptx_bytes)).slides) == 3
+    presentation = Presentation(io.BytesIO(result.pptx_bytes))
+    assert len(presentation.slides) == 3
+    heights = [
+        Image.open(io.BytesIO(slide.shapes[0].image.blob)).height
+        for slide in presentation.slides
+    ]
+    assert heights[0] < heights[1]
 
 
 def test_ppt_pdf_plan_attempts_split_for_short_text_pdf():
@@ -341,6 +381,10 @@ def test_ppt_pdf_image_segmentation_fallback_adds_question_slides(tmp_path, monk
         def __init__(self):
             self.slides: list[bytes] = []
 
+        @property
+        def slide_count(self) -> int:
+            return len(self.slides)
+
         def add_slide(self, image_bytes: bytes):
             self.slides.append(image_bytes)
 
@@ -390,6 +434,10 @@ def test_ppt_scanned_question_shortens_only_empty_middle(tmp_path, monkeypatch):
     class Composer:
         slides: list[bytes] = []
 
+        @property
+        def slide_count(self) -> int:
+            return len(self.slides)
+
         def add_slide(self, image_bytes: bytes):
             self.slides.append(image_bytes)
 
@@ -401,6 +449,50 @@ def test_ppt_scanned_question_shortens_only_empty_middle(tmp_path, monkeypatch):
         assert slide.width == 320
         assert slide.height < 350
         assert slide.convert("L").point(lambda pixel: 255 if pixel < 100 else 0).getbbox()
+
+
+def test_scanned_pdf_keeps_pages_without_detected_boxes(tmp_path, monkeypatch):
+    from PIL import Image
+
+    from academy.adapters.ai.detection import segment_dispatcher
+
+    image_paths = [tmp_path / f"page-{idx}.png" for idx in range(2)]
+    for path in image_paths:
+        Image.new("RGB", (320, 220), "white").save(path)
+    monkeypatch.setattr(segment_dispatcher, "segment_questions_multipage", lambda _path: {
+        "pages": [
+            {"page_index": 0, "image_path": str(image_paths[0]), "boxes": [(20, 20, 120, 90)]},
+            {"page_index": 1, "image_path": str(image_paths[1]), "boxes": []},
+        ],
+        "tmp_dirs": [],
+    })
+    monkeypatch.setattr(segment_dispatcher, "cleanup_pdf_seg_tmp_dirs", lambda _paths: None)
+
+    class Composer:
+        def __init__(self):
+            self.slides: list[bytes] = []
+
+        @property
+        def slide_count(self) -> int:
+            return len(self.slides)
+
+        def add_slide(self, image_bytes: bytes) -> None:
+            self.slides.append(image_bytes)
+
+    composer = Composer()
+    fallback_pages: set[int] = set()
+    added = _add_segmented_pdf_slides_to_composer(
+        "source.pdf",
+        composer=composer,
+        apply_user_settings=lambda data: data,
+        expected_page_count=2,
+        fallback_pages=fallback_pages,
+    )
+
+    assert added == 2
+    assert fallback_pages == {1}
+    assert composer.slides[0].startswith(b"\x89PNG")
+    assert composer.slides[1].startswith(b"\xff\xd8")
 
 
 def test_ppt_pdf_shared_range_keeps_opposite_column_question_body():
