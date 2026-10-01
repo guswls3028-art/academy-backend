@@ -9,6 +9,7 @@ from django.db import IntegrityError, transaction
 
 from academy.adapters.db.django import repositories_core as core_repo
 from apps.core.models import TenantMembership
+from apps.core.services.account_credentials import remember_account_password
 from ..models import Parent
 
 
@@ -44,7 +45,8 @@ class ParentAccountEnsureResult:
 
     @property
     def password_for_notice(self) -> str:
-        return self.password_notice or "변경되지 않음"
+        from apps.core.services.account_credentials import account_notice_password
+        return account_notice_password(self.parent.user, self.password_notice, tenant_id=self.parent.tenant_id)
 
 
 def ensure_parent_account_for_student(
@@ -66,6 +68,9 @@ def ensure_parent_account_for_student(
     parent_phone = normalize_parent_phone(parent_phone)
     initial_pw = str(initial_password or "")
     password_hash = str(initial_password_hash or "")
+    if not initial_pw and not password_hash:
+        from apps.core.services.initial_password_policy import initial_password as resolve_initial_password
+        initial_pw = resolve_initial_password(tenant, role="parent", phone=parent_phone)
     password_notice = str(initial_password_notice or initial_pw)
     if initial_pw and password_hash:
         raise ValueError("학부모 초기 비밀번호와 비밀번호 해시는 함께 입력할 수 없습니다.")
@@ -111,6 +116,8 @@ def ensure_parent_account_for_student(
                             parent.user.set_password(initial_pw)
                         parent.user.must_change_password = True
                         parent.user.save(update_fields=["password", "must_change_password"])
+                        if initial_pw:
+                            remember_account_password(parent.user, initial_pw)
                         credentials_initialized = True
                     TenantMembership.ensure_active(
                         tenant=tenant,
@@ -167,6 +174,8 @@ def ensure_parent_account_for_student(
                         user.set_password(initial_pw)
                     user.must_change_password = True
                     user.save(update_fields=["password", "must_change_password"])
+                    if initial_pw:
+                        remember_account_password(user, initial_pw)
                     credentials_initialized = True
 
                 if parent is None:

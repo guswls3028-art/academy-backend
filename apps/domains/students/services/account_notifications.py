@@ -4,9 +4,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from django.conf import settings
+from django.db import transaction
 
 from apps.core.models.user import user_display_username
+from apps.core.services.account_credentials import account_notice_password
 from apps.domains.students.models import Student
 from apps.support.students.account_recovery_dependencies import (
     account_recovery_delivery_disabled,
@@ -15,15 +16,14 @@ from apps.support.students.account_recovery_dependencies import (
 
 logger = logging.getLogger(__name__)
 
-UNCHANGED_PASSWORD_NOTICE = "변경되지 않음"
-
 
 class AccountNotificationDeliveryError(Exception):
     """Raised when a credential change cannot be delivered."""
 
 
-def _site_url() -> str:
-    return getattr(settings, "SITE_URL", "") or "https://hakwonplus.com"
+def _site_url(tenant) -> str:
+    from apps.domains.messaging.services.url_helpers import get_tenant_site_url
+    return get_tenant_site_url(tenant)
 
 
 def _normalize_phone(value: Any) -> str:
@@ -88,9 +88,9 @@ def send_student_account_credentials_notice(
     replacements = {
         "학생이름": student.name or "",
         "학생아이디": display_username or "",
-        "학생비밀번호": (password or "").strip() or UNCHANGED_PASSWORD_NOTICE,
-        "사이트링크": _site_url(),
-        "비밀번호안내": "로그인 정보가 변경되었습니다. 변경된 정보로 로그인해 주세요.",
+        "학생비밀번호": account_notice_password(student.user, password, tenant_id=student.tenant_id),
+        "사이트링크": _site_url(student.tenant),
+        "비밀번호안내": "안내된 아이디와 비밀번호로 로그인해 주세요. 로그인 후 비밀번호를 변경할 수 있습니다.",
     }
     return _send_owner_account_notice(
         source_tenant_id=student.tenant_id,
@@ -104,6 +104,7 @@ def send_student_account_credentials_notice(
     )
 
 
+@transaction.atomic
 def send_parent_account_credentials_notice(
     *,
     student: Student,
@@ -116,6 +117,7 @@ def send_parent_account_credentials_notice(
 ) -> bool:
     """Send parent login information, including the linked student account ID."""
 
+    Student.objects.select_for_update().only("id").get(pk=student.pk, tenant_id=student.tenant_id)
     parent_obj = parent or getattr(student, "parent", None)
     parent_phone = _normalize_phone(to) or _normalize_phone(getattr(parent_obj, "phone", None)) or _normalize_phone(student.parent_phone)
     if not parent_phone:
@@ -126,11 +128,11 @@ def send_parent_account_credentials_notice(
     replacements = {
         "학생이름": student.name or "",
         "학생아이디": student.ps_number or "",
-        "학생비밀번호": (student_password or "").strip() or UNCHANGED_PASSWORD_NOTICE,
         "학부모아이디": parent_username,
-        "학부모비밀번호": (parent_password or "").strip() or UNCHANGED_PASSWORD_NOTICE,
-        "사이트링크": _site_url(),
-        "비밀번호안내": "로그인 정보가 변경되었습니다. 변경된 정보로 로그인해 주세요.",
+        "학부모비밀번호": account_notice_password(parent_obj.user, parent_password, tenant_id=student.tenant_id),
+        "학생비밀번호": account_notice_password(student.user, student_password, tenant_id=student.tenant_id),
+        "사이트링크": _site_url(student.tenant),
+        "비밀번호안내": "안내된 아이디와 비밀번호로 로그인해 주세요. 로그인 후 비밀번호를 변경할 수 있습니다.",
     }
     return _send_owner_account_notice(
         source_tenant_id=student.tenant_id,
@@ -156,7 +158,7 @@ def send_student_password_changed_notice(*, student: Student, password: str, to:
         "아이디": student.ps_number or user_display_username(getattr(student, "user", None)),
         "임시비밀번호": password,
         "비밀번호안내": "변경된 비밀번호로 로그인해 주세요.",
-        "사이트링크": _site_url(),
+        "사이트링크": _site_url(student.tenant),
     }
     return _send_owner_account_notice(
         source_tenant_id=student.tenant_id,
@@ -179,13 +181,12 @@ def send_parent_password_changed_notice(*, parent: Any, password: str, student: 
     replacements = {
         "학생이름": student_name,
         "학생아이디": getattr(linked_student, "ps_number", "") or "",
-        "학생비밀번호": UNCHANGED_PASSWORD_NOTICE,
         "학부모아이디": parent_username,
         "학부모비밀번호": password,
         "아이디": parent_username,
         "임시비밀번호": password,
         "비밀번호안내": "변경된 비밀번호로 로그인해 주세요.",
-        "사이트링크": _site_url(),
+        "사이트링크": _site_url(parent.tenant),
     }
     log_target_id = (
         _parent_target_id(linked_student)

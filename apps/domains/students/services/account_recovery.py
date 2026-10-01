@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from django.conf import settings
+from django.db import transaction
 from django.db.models import Q
 
 from apps.core.models.user import user_display_username
@@ -131,8 +132,9 @@ def resolve_recovery_account(*, tenant, target: str, name: str, phone: str) -> R
     )
 
 
-def _site_url() -> str:
-    return getattr(settings, "SITE_URL", "") or "https://hakwonplus.com"
+def _site_url(tenant) -> str:
+    from apps.domains.messaging.services.url_helpers import get_tenant_site_url
+    return get_tenant_site_url(tenant)
 
 
 def _account_recovery_delivery_disabled(source_tenant_id: int) -> bool:
@@ -176,19 +178,24 @@ def _password_replacements(account: RecoveryAccount, password: str) -> dict[str,
         "아이디": account.display_username or "",
         "임시비밀번호": password,
         "비밀번호안내": notice,
-        "사이트링크": _site_url(),
+        "사이트링크": _site_url(account.student.tenant),
     }
     if account.target == "parent":
+        replacements.pop("학생비밀번호")
         replacements["학생이름"] = account.student.name or ""
         replacements["학부모아이디"] = account.display_username or ""
         replacements["학부모비밀번호"] = password
     return replacements
 
 
+@transaction.atomic
 def send_username_recovery(account: RecoveryAccount) -> None:
-    """Send username only. Password is not changed."""
+    """Send usable login credentials while preserving the current password."""
 
-    notice = "비밀번호를 잊으셨다면 비밀번호 찾기에서 임시 비밀번호를 받아 주세요."
+    Student.objects.select_for_update().only("id").get(pk=account.student.pk, tenant_id=account.student.tenant_id)
+    from apps.core.services.account_credentials import account_notice_password
+    password = account_notice_password(account.user)
+    notice = "안내된 아이디와 비밀번호로 로그인해 주세요. 로그인 후 비밀번호를 변경할 수 있습니다."
     if account.target == "parent":
         ok = _send_owner_alimtalk(
             source_tenant_id=account.student.tenant_id,
@@ -197,10 +204,10 @@ def send_username_recovery(account: RecoveryAccount) -> None:
             replacements={
                 "학생이름": account.student.name or "",
                 "학생아이디": account.student.ps_number or "",
-                "학생비밀번호": "변경되지 않음",
+                "학생비밀번호": account_notice_password(account.student.user),
                 "학부모아이디": account.display_username,
-                "학부모비밀번호": "변경되지 않음",
-                "사이트링크": _site_url(),
+                "학부모비밀번호": password,
+                "사이트링크": _site_url(account.student.tenant),
                 "비밀번호안내": notice,
             },
             log_target_id=_log_target_id(account),
@@ -214,8 +221,8 @@ def send_username_recovery(account: RecoveryAccount) -> None:
             replacements={
                 "학생이름": account.display_name,
                 "학생아이디": account.display_username,
-                "학생비밀번호": "변경되지 않음",
-                "사이트링크": _site_url(),
+                "학생비밀번호": password,
+                "사이트링크": _site_url(account.student.tenant),
                 "비밀번호안내": notice,
             },
             log_target_id=_log_target_id(account),

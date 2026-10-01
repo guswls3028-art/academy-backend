@@ -257,13 +257,14 @@ def resolve_student_import_row(
     row: dict[str, Any],
     initial_password: str,
     *,
+    parent_initial_password: str | None = None,
     identity_policy: StudentImportIdentityPolicy = "phone_if_available",
     valid_school_types: frozenset[str] | None = None,
     custom_field_definitions=None,
     source_job_id: str = "",
 ) -> StudentImportRowResolution:
     """Resolve one imported row to an active student in one tenant."""
-    initial_password = (initial_password or "").strip()
+    initial_password = initial_password or ""
 
     normalized = _normalize_import_row(
         tenant=tenant,
@@ -362,7 +363,7 @@ def resolve_student_import_row(
         "ps_number": ps_number,
         "omr_code": omr_code,
     }
-    if len(initial_password) < 4:
+    if initial_password and len(initial_password) < 4:
         raise StudentImportRowError("신규 학생 초기 비밀번호는 4자 이상 입력해 주세요.")
 
     with transaction.atomic():
@@ -389,7 +390,8 @@ def resolve_student_import_row(
 
         created = create_student_account(
             tenant=tenant,
-            password=initial_password,
+            password=initial_password or None,
+            parent_password=parent_initial_password or None,
             student_data=student_data,
             must_change_password=True,
             account_notice_origin_type=("excel_import" if source_job_id else ""),
@@ -436,6 +438,7 @@ def import_students_from_rows(
     password_policy = build_student_import_password_policy(
         password_mode=password_mode,
         initial_password=initial_password,
+        tenant=tenant,
     )
     created_students: list[Any] = []
     created_rows: list[dict[str, Any]] = []
@@ -564,6 +567,7 @@ def resolve_student_import_conflicts(
     tenant,
     resolutions: list[dict],
     initial_password: str,
+    parent_initial_password: str | None = None,
 ) -> dict:
     """
     Resolve deleted-student import conflicts through the same row policy.
@@ -575,8 +579,8 @@ def resolve_student_import_conflicts(
       "failed": [{"row", "name", "error", "conflict_student_id"?}],
     }
     """
-    initial_password = (initial_password or "").strip()
-    if len(initial_password) < 4:
+    initial_password = initial_password or ""
+    if initial_password and len(initial_password) < 4:
         raise ValueError("initial_password는 4자 이상이어야 합니다.")
     if not isinstance(resolutions, (list, tuple)):
         raise ValueError("resolutions는 배열이어야 합니다.")
@@ -653,7 +657,7 @@ def resolve_student_import_conflicts(
                         tenant=tenant,
                         parent_phone=normalized.parent_phone,
                         student_name=normalized.name,
-                        initial_password=initial_password,
+                        initial_password=(parent_initial_password if parent_initial_password is not None else initial_password),
                     )
                     restored_result = restore_student(
                         deleted_student,
@@ -691,6 +695,7 @@ def resolve_student_import_conflicts(
                     tenant,
                     student_data,
                     initial_password,
+                    parent_initial_password=parent_initial_password,
                     identity_policy="phone_if_available",
                     valid_school_types=valid_school_types,
                     custom_field_definitions=custom_field_definitions,

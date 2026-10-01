@@ -14,7 +14,7 @@
 | 변경 권장 | `must_change_password=True`; 로그인·API 사용은 차단하지 않음 |
 | 이름 | 기존 Parent 이름 우선, 없으면 `{학생이름} 학부모` |
 | 역할 | `TenantMembership.role = "parent"` |
-| 생성 시점 | 학생 생성 SSOT에서 명시적 비밀번호/hash가 전달된 경우만 |
+| 생성 시점 | 학생 생성 SSOT 또는 계정 복구의 Parent ensure |
 
 입력은 하이픈/공백을 제거한 뒤 `010` 11자리여야 하며, 짧거나 잘못된 번호를
 전화번호 일부나 공용 비밀번호로 보정하지 않고 요청을 실패시킨다.
@@ -31,7 +31,7 @@
     -> Parent(tenant + phone) 조회
     -> Parent 없음:
          User(username=p_{tenant_id}_{phone}, phone=phone, tenant=tenant) 생성
-         password=호출자가 명시한 초기 비밀번호 또는 검증된 가입 password hash
+         password=학부모 개별 입력 또는 학부모 초기 비밀번호 설정
          must_change_password=True
          Parent 생성
          TenantMembership(parent) 활성화
@@ -44,31 +44,14 @@
     -> Parent 있음 + user 있음:
          기존 Parent 반환
          TenantMembership(parent) 활성 상태 보정
-         result.password_for_notice = "변경되지 않음"
+         result.password_for_notice = 실제 로그인 가능한 비밀번호
 ```
 
-학생을 단건·JSON·Excel로 직접 등록하면서 4자 이상의 초기 비밀번호를 입력하면,
-새 학생 계정과 새 학부모 계정에 같은 값을 설정하고 각각의 첫 수강 안내에도 같은
-값을 staging한다. 가입 신청 승인은 학생이 제출한 검증된 hash를 새 학생과 새
-학부모 계정에 동일하게 적용하고 안내에는 `가입 신청 시 입력한 비밀번호`라고
-표시한다. 기존 학부모 계정의 비밀번호는 새 자녀를 등록해도 변경하지 않는다.
-
-직원이 학생 수정에서 학부모 번호를 바꾸면 기존 학부모 계정은 비밀번호 변경 없이
-연결한다. 해당 번호의 계정이 없다면 `parent_initial_password` 4자 이상이 있어야
-새 계정을 만들며, 없으면 학생 수정 전체를 rollback한다.
-번호가 바뀌지 않았더라도 Parent/User 또는 학생 연결이 누락된 경우에는 같은 직원
-수정 화면에서 해당 번호와 명시적 초기 비밀번호를 다시 제출해 한 계정만 복구한다.
-비밀번호가 없는 미완성 User만 그 입력으로 자격증명을 초기화한다. 이미 사용 가능한
-비밀번호가 있는 User는 프로필 연결만 복구하고 입력값으로 비밀번호를 덮어쓰지 않는다.
-학생 본인 프로필에서는 학부모 번호와 Parent 연결을 바꿀 수 없다.
-잘못된 연결이 성적·출결·영상 권한으로 이어지지 않도록 직원이 exact 학생을
-확인한 뒤 관리자/교사 학생 수정 흐름에서만 변경한다.
-
-학생 전화번호가 학부모 전화번호와 정확히 같으면 그 값은 학부모 연락처로만
-취급한다. 학생 계정 그래프는 별도 `ps_number`로 유지하되 `Student.phone`과
-`User.phone`은 비우므로, 학부모 번호가 학생 수신처나 학생 전화 로그인 ID로
-중복 등록되지 않는다. 이후 직원이 실제 학생 번호를 입력하는 전환 규칙과 legacy
-교정 명령은 [student-core.md](student-core.md)가 정본이다.
+학생·학부모 초기 비밀번호는 독립적으로 설정한다. 직원의 `initial_password`는
+학생에게만 적용하고 `parent_initial_password`는 새 학부모 계정에만 적용한다.
+빈 입력은 학원 설정을 적용한다. 학생이 가입 신청에서 직접 정한 값은 hash와
+암호문으로 승인까지 보관하고 승인/반려 후 신청 암호문을 제거한다. 기존 계정을
+연결할 때 비밀번호를 바꾸지 않는다. 자세한 안내·복구 계약은 아래 절을 따른다.
 
 동일 테넌트에서 같은 학부모 번호를 가진 학생 둘을 동시에 등록할 수 있다.
 서비스는 Parent row를 잠그고, 신규 row 경합은 DB의 User username 및
@@ -141,9 +124,9 @@ Body: { "username": "{학부모전화번호}", "password": "{비밀번호}" }
 | 변수 | 값 |
 |------|----|
 | `#{학부모아이디}` | 학부모 전화번호 |
-| `#{학부모비밀번호}` | 직접 입력/명시 생성된 임시 비밀번호, 가입 신청 시 입력값 안내 문구, 아이디 찾기·기존 계정 연결 시 `변경되지 않음` |
+| `#{학부모비밀번호}` | 현재 비밀번호와 검증한 실제 로그인 값 또는 30일 안내용 로그인 비밀번호 |
 | `#{학생아이디}` | 학생 `ps_number` |
-| `#{학생비밀번호}` | 가입 승인/학생 안내 값 또는 `변경되지 않음` |
+| `#{학생비밀번호}` | 가입 승인/학생 안내 값 또는 실제 로그인 가능한 비밀번호 |
 | `#{비밀번호안내}` | 상황별 안내 문구 |
 
 계정/비밀번호 복구 발송 정책은 `send_alimtalk_via_owner()`를 따른다. SMS fallback과 템플릿 fallback은 없다.
@@ -172,3 +155,29 @@ python manage.py test apps.domains.parents.tests.test_account_creation_concurren
 
 두 번째 테스트는 PostgreSQL row/unique-lock 동작을 검증하므로 SQLite에서는
 skip이 정답이다.
+
+## 초기 비밀번호 설정과 실제 로그인 안내 (2026-10-01)
+
+직원 전용 `GET/PATCH /api/v1/students/account-password-settings/`가 학생·학부모
+각각의 `phone_last4`, `fixed`, `random` 규칙을 저장한다. 기본은 본인 번호 뒤
+4자리이며 학생 번호가 없거나 학부모와 공유하면 6자리 숫자를 생성한다. 공통값과
+User의 재안내용 값은 tenant/user 문맥에 묶인 암호문으로만 저장하며 일반 계정·학생
+조회에는 노출하지 않는다. 단건·JSON·Excel·학생 승인 모두 같은 계정 생성 경계를
+사용한다. Excel의 `tenant` 방식은 작업 실행 시 그 학원 설정을 적용한다.
+
+계정 안내는 실제 password hash 또는 유효 pending login credential과 일치하는
+값만 사용한다. 과거 hash만 남아 원문을 모르면 기존 비밀번호·token version을
+유지한 채 30일 유효한 6자리 안내용 로그인 비밀번호를 발급한다. 재안내는 이를
+재사용하고, 이 값으로 실제 로그인할 때만 기존 pending-reset SSOT가 활성화한다.
+공개 비밀번호 찾기의 30분 TTL은 유지한다. 명시적 변경·초기화는 새 값으로 안내
+암호문을 갱신하고 기존 pending을 정리한다. 정책 변경과 새 자녀 연결은 기존
+계정을 초기화하지 않는다. 수강 전 저장값이 오래됐어도 첫 수강 발송 직전에
+현재 로그인 가능 여부를 다시 검증하며 durable outbox 접수 전 실패는 재시도한다.
+계정 안내·아이디 찾기·비밀번호 안내의 링크는 업무 테넌트 primary domain을 쓴다.
+템플릿·채널 승인과 수신자 검증, 민감 메시지 로그/참관 사본 차단은 기존 SSOT다.
+
+검증: `test_account_notice_credentials.py`, `test_registration_password_safety.py`,
+`test_password_reset_safety.py`, `test_account_recovery.py`,
+`apps/api/common/tests/test_password_login_roundtrip.py`. 전달된 학생·학부모 값으로
+JWT 로그인과 `/core/me/`를 실제 실행하며 원문 미노출, 기존 비밀번호 보존,
+공유 학부모, 번호 없음, 값 변경 후 첫 수강, tenant 경계를 함께 검증한다.

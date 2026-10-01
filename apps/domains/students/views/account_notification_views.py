@@ -114,5 +114,5 @@ class StudentAccountNotificationLogView(APIView):
 
         target_label = "학생" if account.target == "student" else "학부모"
         return Response({
-            "message": f"{target_label} 아이디 안내 알림톡을 발송했습니다. 비밀번호는 변경되지 않았습니다.",
+            "message": f"{target_label} 로그인 정보 알림톡을 발송했습니다. 안내된 아이디와 비밀번호로 로그인할 수 있습니다.",
         })

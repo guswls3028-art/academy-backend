@@ -26,6 +26,7 @@ class AccountNotificationTargetIdTests(SimpleTestCase):
         parent = SimpleNamespace(
             id=23,
             tenant_id=5,
+            tenant=SimpleNamespace(id=5, primary_domain="passwordqa.test"),
             phone="01012345678",
             name="학부모",
             user=SimpleNamespace(username="parent-user"),
@@ -52,6 +53,7 @@ class AccountNotificationTargetIdTests(SimpleTestCase):
         parent = SimpleNamespace(
             id=23,
             tenant_id=5,
+            tenant=SimpleNamespace(id=5, primary_domain="passwordqa.test"),
             phone="01012345678",
             name="학부모",
             user=SimpleNamespace(username="parent-user"),

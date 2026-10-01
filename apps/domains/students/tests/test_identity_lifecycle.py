@@ -730,19 +730,17 @@ class TestBulkRestoreFlow(TestCase):
             TenantMembership.objects.get(tenant=self.tenant, user=self.student.user).is_active
         )
 
-    def test_restore_missing_parent_account_requires_explicit_password_without_reactivating_student(self):
+    def test_restore_missing_parent_account_uses_tenant_initial_password_policy(self):
         parent_user = self.parent.user
         self.parent.delete()
         parent_user.delete()
 
-        with self.assertRaises(StudentLifecycleError) as ctx:
-            restore_student(self.student, tenant=self.tenant)
-
-        self.assertEqual(ctx.exception.code, "parent_account_password_required")
+        restore_student(self.student, tenant=self.tenant)
         self.student.refresh_from_db()
         self.student.user.refresh_from_db()
-        self.assertIsNotNone(self.student.deleted_at)
-        self.assertFalse(self.student.user.is_active)
+        self.assertIsNone(self.student.deleted_at)
+        self.assertTrue(self.student.user.is_active)
+        self.assertTrue(self.student.parent.user.check_password(self.student.parent_phone[-4:]))
 
     def test_restore_missing_parent_account_uses_explicit_password(self):
         parent_user = self.parent.user

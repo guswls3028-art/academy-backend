@@ -1,6 +1,23 @@
 {
   "components": {
     "schemas": {
+      "AccountPasswordSettingsSchema": {
+        "properties": {
+          "parent_fixed_password": {
+            "type": "string"
+          },
+          "parent_mode": {
+            "$ref": "#/components/schemas/ParentModeEnum"
+          },
+          "student_fixed_password": {
+            "type": "string"
+          },
+          "student_mode": {
+            "$ref": "#/components/schemas/StudentModeEnum"
+          }
+        },
+        "type": "object"
+      },
       "AccountStateEnum": {
         "description": "* `ACTIVE` - ACTIVE\n* `INACTIVE` - INACTIVE\n* `DELETED` - DELETED\n* `UNLINKED` - UNLINKED",
         "enum": [
@@ -8244,6 +8261,15 @@
         ],
         "type": "object"
       },
+      "ParentModeEnum": {
+        "description": "* `phone_last4` - phone_last4\n* `fixed` - fixed\n* `random` - random",
+        "enum": [
+          "phone_last4",
+          "fixed",
+          "random"
+        ],
+        "type": "string"
+      },
       "ParticipantRoleEnum": {
         "description": "* `target` - Target\n* `manual` - Manual",
         "enum": [
@@ -8263,6 +8289,23 @@
           "rejected"
         ],
         "type": "string"
+      },
+      "PatchedAccountPasswordSettingsSchemaRequest": {
+        "properties": {
+          "parent_fixed_password": {
+            "type": "string"
+          },
+          "parent_mode": {
+            "$ref": "#/components/schemas/ParentModeEnum"
+          },
+          "student_fixed_password": {
+            "type": "string"
+          },
+          "student_mode": {
+            "$ref": "#/components/schemas/StudentModeEnum"
+          }
+        },
+        "type": "object"
       },
       "PatchedAnswerKeyRequest": {
         "properties": {
@@ -15613,8 +15656,16 @@
             "type": "string"
           },
           "initial_password": {
-            "minLength": 4,
-            "type": "string",
+            "oneOf": [
+              {
+                "minLength": 4,
+                "type": "string"
+              },
+              {
+                "maxLength": 0,
+                "type": "string"
+              }
+            ],
             "writeOnly": true
           },
           "is_managed": {
@@ -15659,6 +15710,19 @@
             "nullable": true,
             "type": "integer"
           },
+          "parent_initial_password": {
+            "oneOf": [
+              {
+                "minLength": 4,
+                "type": "string"
+              },
+              {
+                "maxLength": 0,
+                "type": "string"
+              }
+            ],
+            "writeOnly": true
+          },
           "parent_phone": {
             "description": "정규화된 전화번호 (하이픈 제거, 예: 01012345678)",
             "maxLength": 20,
@@ -15698,7 +15762,6 @@
           }
         },
         "required": [
-          "initial_password",
           "name",
           "parent_phone"
         ],
@@ -16800,6 +16863,15 @@
           "user"
         ],
         "type": "object"
+      },
+      "StudentModeEnum": {
+        "description": "* `phone_last4` - phone_last4\n* `fixed` - fixed\n* `random` - random",
+        "enum": [
+          "phone_last4",
+          "fixed",
+          "random"
+        ],
+        "type": "string"
       },
       "StudentShort": {
         "description": "강의/수강 맥락에서 노출하는 학생 최소 정보. Student 모델 스펙과 정합성 유지.",
@@ -46131,6 +46203,79 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/StudentCreate"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      }
+    },
+    "/api/v1/students/account-password-settings/": {
+      "get": {
+        "operationId": "students_account_password_settings_retrieve",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountPasswordSettingsSchema"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "students"
+        ]
+      },
+      "patch": {
+        "operationId": "students_account_password_settings_partial_update",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedAccountPasswordSettingsSchemaRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedAccountPasswordSettingsSchemaRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedAccountPasswordSettingsSchemaRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountPasswordSettingsSchema"
                 }
               }
             },

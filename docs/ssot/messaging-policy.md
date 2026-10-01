@@ -7,7 +7,7 @@
 ### SYSTEM_AUTO — 시스템 필수 안내 (항상 자동, 사용자가 끌 수 없음)
 | Trigger | 설명 | 수신자 | 발송 순간 |
 |---------|------|--------|----------|
-| registration_approved_student | 가입/계정 아이디 안내(학생) | 학생(학생 번호 없으면 학부모) | 신규 학생의 첫 ACTIVE 수강 확정, 학생 아이디 변경, 학생 전화번호 최초 등록 시 |
+| registration_approved_student | 가입/계정 로그인 정보 안내(학생) | 학생(학생 번호 없으면 학부모) | 신규 학생의 첫 ACTIVE 수강 확정, 학생 아이디 변경, 학생 전화번호 최초 등록 시 |
 | registration_approved_parent | 가입/계정 안내(학부모) | 학부모 | 신규 학생의 첫 ACTIVE 수강 확정, 학부모 전화번호 변경/계정 연결 시 |
 | password_find_otp | 비밀번호 찾기 OTP (legacy compatibility) | 요청자 | legacy OTP 요청 시 |
 | password_reset_student | 비밀번호 변경/재설정(학생) | 학생(학생 번호 없으면 학부모) | 관리자/선생님/본인 비밀번호 변경 또는 재설정 시 |
@@ -184,3 +184,10 @@ preview→confirm 경로에서 선생이 명시적으로 확인한 경우에만 
 - 2026-03-28: 설정 콘솔 재정렬 (정책 배지, 템플릿 읽기 전용, DISABLED 숨김)
 - 2026-03-28: 일반 강의 출결 자동 발송 코드 완전 제거
 - 2026-03-28: 행정 화면 AutoSendToggle 전면 제거
+
+
+계정 안내의 비밀번호 변수에는 실제 로그인 가능한 값만 넣는다.
+초기 규칙·기존 계정 보존·암호화 저장·30일 legacy 안내용 credential은
+[학부모 계정](../domain/parent-account.md)의 현재 계약을 따른다.
+가입자가 입력한 비밀번호라는 설명이나 변경 여부 문구로 비밀번호를 대체하지 않는다.
+계정 안내·찾기·초기화 링크는 업무 테넌트 primary domain을 사용한다.

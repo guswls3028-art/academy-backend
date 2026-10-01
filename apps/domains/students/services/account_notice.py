@@ -10,6 +10,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from ..models import Student
+from apps.core.services.account_credentials import account_notice_password
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ def _decrypt(value: str) -> str:
         ) from exc
 
 
+@transaction.atomic
 def stage_pending_account_notice(
     *,
     student: Student,
@@ -60,6 +62,9 @@ def stage_pending_account_notice(
     origin_id: str = "",
 ) -> None:
     """Store only encrypted one-time notice values until first enrollment."""
+    Student.objects.select_for_update().only("id").get(pk=student.pk, tenant_id=student.tenant_id)
+    parent_password = account_notice_password(student.parent.user, parent_password, tenant_id=student.tenant_id) if student.parent_id else student_password
+    student_password = account_notice_password(student.user, student_password, tenant_id=student.tenant_id)
     student.pending_account_notice_student_password_ciphertext = _encrypt(
         student_password
     )
@@ -119,6 +124,8 @@ def dispatch_pending_account_notice(*, student_id: int) -> dict:
         try:
             student_password = _decrypt(student_ciphertext)
             parent_password = _decrypt(parent_ciphertext)
+            parent_password = account_notice_password(student.parent.user, parent_password, tenant_id=student.tenant_id) if student.parent_id else student_password
+            student_password = account_notice_password(student.user, student_password, tenant_id=student.tenant_id)
         except AccountNoticeSecretError:
             logger.exception(
                 "pending account notice secret invalid: student_id=%s",
