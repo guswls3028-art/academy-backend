@@ -1,19 +1,28 @@
 {
   "components": {
     "schemas": {
+      "AccountPasswordModeEnum": {
+        "description": "* `phone_last4` - phone_last4\n* `fixed` - fixed\n* `random` - random",
+        "enum": [
+          "phone_last4",
+          "fixed",
+          "random"
+        ],
+        "type": "string"
+      },
       "AccountPasswordSettingsSchema": {
         "properties": {
           "parent_fixed_password": {
             "type": "string"
           },
           "parent_mode": {
-            "$ref": "#/components/schemas/ParentModeEnum"
+            "$ref": "#/components/schemas/AccountPasswordModeEnum"
           },
           "student_fixed_password": {
             "type": "string"
           },
           "student_mode": {
-            "$ref": "#/components/schemas/StudentModeEnum"
+            "$ref": "#/components/schemas/AccountPasswordModeEnum"
           }
         },
         "type": "object"
@@ -8261,15 +8270,6 @@
         ],
         "type": "object"
       },
-      "ParentModeEnum": {
-        "description": "* `phone_last4` - phone_last4\n* `fixed` - fixed\n* `random` - random",
-        "enum": [
-          "phone_last4",
-          "fixed",
-          "random"
-        ],
-        "type": "string"
-      },
       "ParticipantRoleEnum": {
         "description": "* `target` - Target\n* `manual` - Manual",
         "enum": [
@@ -8296,13 +8296,13 @@
             "type": "string"
           },
           "parent_mode": {
-            "$ref": "#/components/schemas/ParentModeEnum"
+            "$ref": "#/components/schemas/AccountPasswordModeEnum"
           },
           "student_fixed_password": {
             "type": "string"
           },
           "student_mode": {
-            "$ref": "#/components/schemas/StudentModeEnum"
+            "$ref": "#/components/schemas/AccountPasswordModeEnum"
           }
         },
         "type": "object"
@@ -16863,15 +16863,6 @@
           "user"
         ],
         "type": "object"
-      },
-      "StudentModeEnum": {
-        "description": "* `phone_last4` - phone_last4\n* `fixed` - fixed\n* `random` - random",
-        "enum": [
-          "phone_last4",
-          "fixed",
-          "random"
-        ],
-        "type": "string"
       },
       "StudentShort": {
         "description": "강의/수강 맥락에서 노출하는 학생 최소 정보. Student 모델 스펙과 정합성 유지.",

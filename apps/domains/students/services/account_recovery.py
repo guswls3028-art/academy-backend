@@ -133,8 +133,8 @@ def resolve_recovery_account(*, tenant, target: str, name: str, phone: str) -> R
 
 
 def _site_url(tenant) -> str:
-    from apps.domains.messaging.services.url_helpers import get_tenant_site_url
-    return get_tenant_site_url(tenant)
+    from apps.support.students.account_recovery_dependencies import get_tenant_account_site_url
+    return get_tenant_account_site_url(tenant)
 
 
 def _account_recovery_delivery_disabled(source_tenant_id: int) -> bool:
@@ -192,6 +192,8 @@ def _password_replacements(account: RecoveryAccount, password: str) -> dict[str,
 def send_username_recovery(account: RecoveryAccount) -> None:
     """Send usable login credentials while preserving the current password."""
 
+    from .account_notice import lock_account_notice_users
+    lock_account_notice_users(account.student)
     Student.objects.select_for_update().only("id").get(pk=account.student.pk, tenant_id=account.student.tenant_id)
     from apps.core.services.account_credentials import account_notice_password
     password = account_notice_password(account.user)

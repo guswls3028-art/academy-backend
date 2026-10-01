@@ -6,4 +6,4 @@ ACADEMY_MIGRATION_REASON = "승인 안내에 실제 가입 비밀번호를 사�
 
 class Migration(migrations.Migration):
     dependencies = [("students", "0019_registration_request_student_history")]
-    operations = [migrations.AddField(model_name="studentregistrationrequest", name="initial_password_ciphertext", field=models.TextField(blank=True, default="", editable=False))]
+    operations = [migrations.AddField(model_name="studentregistrationrequest", name="initial_password_ciphertext", field=models.TextField(blank=True, default="", db_default="", editable=False))]

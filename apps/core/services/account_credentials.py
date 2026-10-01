@@ -64,6 +64,8 @@ Repeated notices reuse the same credential rather than invalidating each other.
     if user is None or not user.is_active or (tenant_id is not None and user.tenant_id != tenant_id):
         raise ValueError("로그인할 수 있는 계정이 없습니다.")
     user = get_user_model().objects.select_for_update().get(pk=user.pk, tenant_id=user.tenant_id)
+    if not user.is_active:
+        raise ValueError("로그인할 수 있는 계정이 없습니다.")
     context = _context(user)
     pending = PendingPasswordReset.objects.filter(user=user, tenant_id=user.tenant_id).first()
     from django.utils import timezone

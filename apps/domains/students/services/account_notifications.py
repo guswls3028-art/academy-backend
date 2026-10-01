@@ -22,8 +22,8 @@ class AccountNotificationDeliveryError(Exception):
 
 
 def _site_url(tenant) -> str:
-    from apps.domains.messaging.services.url_helpers import get_tenant_site_url
-    return get_tenant_site_url(tenant)
+    from apps.support.students.account_recovery_dependencies import get_tenant_account_site_url
+    return get_tenant_account_site_url(tenant)
 
 
 def _normalize_phone(value: Any) -> str:
@@ -117,6 +117,8 @@ def send_parent_account_credentials_notice(
 ) -> bool:
     """Send parent login information, including the linked student account ID."""
 
+    from .account_notice import lock_account_notice_users
+    lock_account_notice_users(student)
     Student.objects.select_for_update().only("id").get(pk=student.pk, tenant_id=student.tenant_id)
     parent_obj = parent or getattr(student, "parent", None)
     parent_phone = _normalize_phone(to) or _normalize_phone(getattr(parent_obj, "phone", None)) or _normalize_phone(student.parent_phone)

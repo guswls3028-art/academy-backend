@@ -52,6 +52,18 @@ def _decrypt(value: str) -> str:
         ) from exc
 
 
+def lock_account_notice_users(student: Student) -> None:
+    """Acquire account locks before Student, matching deletion/restoration order."""
+    from django.contrib.auth import get_user_model
+
+    user_ids = [student.user_id]
+    if student.parent_id:
+        user_ids.append(student.parent.user_id)
+    list(get_user_model().objects.select_for_update().filter(
+        pk__in=user_ids, tenant_id=student.tenant_id,
+    ).order_by("pk"))
+
+
 @transaction.atomic
 def stage_pending_account_notice(
     *,
@@ -62,6 +74,7 @@ def stage_pending_account_notice(
     origin_id: str = "",
 ) -> None:
     """Store only encrypted one-time notice values until first enrollment."""
+    lock_account_notice_users(student)
     Student.objects.select_for_update().only("id").get(pk=student.pk, tenant_id=student.tenant_id)
     parent_password = account_notice_password(student.parent.user, parent_password, tenant_id=student.tenant_id) if student.parent_id else student_password
     student_password = account_notice_password(student.user, student_password, tenant_id=student.tenant_id)
@@ -101,6 +114,10 @@ def dispatch_pending_account_notice(*, student_id: int) -> dict:
     from apps.support.students.account_notice_dependencies import send_welcome_messages
 
     with transaction.atomic():
+        snapshot = Student.objects.select_related("parent__user").filter(pk=student_id, deleted_at__isnull=True).first()
+        if snapshot is None:
+            return {"status": "skip", "reason": "student_missing"}
+        lock_account_notice_users(snapshot)
         student = (
             Student.objects.select_for_update()
             .select_related("tenant")

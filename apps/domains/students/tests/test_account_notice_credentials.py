@@ -1,7 +1,10 @@
+from threading import Event, Thread
+from unittest import skipUnless
+from django.db import connection, connections, transaction
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, TransactionTestCase
 from rest_framework.test import APIClient, APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantDomain, TenantMembership, PendingPasswordReset
@@ -141,3 +144,59 @@ class AccountNoticeCredentialTests(TestCase):
             self.assertEqual(response.status_code, 200, response.data)
             self.client.credentials(HTTP_AUTHORIZATION="Bearer " + response.data["access"])
             self.assertEqual(self.client.get("/api/v1/core/me/").status_code, 200)
+
+
+
+@skipUnless(connection.vendor == "postgresql", "requires PostgreSQL row locks")
+class AccountNoticeLockOrderTests(TransactionTestCase):
+    def test_parent_notice_preserves_user_before_student_lock_order(self):
+        tenant = Tenant.objects.create(name="계정 잠금 QA", code="password-lock-qa")
+        result = create_student_account(tenant=tenant, student_data={
+            "name": "잠금검증", "ps_number": "LOCK-QA", "phone": "01070001111", "parent_phone": "01080002222",
+        })
+        student_id, user_id = result.student.pk, result.user.pk
+        user_locked, notice_started = Event(), Event()
+        failures = []
+        delivered = []
+
+        def lifecycle_locks():
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute("SET statement_timeout TO 5000")
+                with transaction.atomic():
+                    get_user_model().objects.select_for_update().get(pk=user_id)
+                    user_locked.set()
+                    if not notice_started.wait(5):
+                        raise RuntimeError("notice did not start")
+                    from time import sleep
+                    sleep(0.2)
+                    from apps.domains.students.models import Student
+                    Student.objects.select_for_update().get(pk=student_id)
+            except Exception as exc:
+                failures.append(exc)
+            finally:
+                connections.close_all()
+
+        def notice():
+            try:
+                from apps.domains.students.models import Student
+                with connection.cursor() as cursor:
+                    cursor.execute("SET statement_timeout TO 5000")
+                notice_started.set()
+                delivered.append(send_parent_account_credentials_notice(student=Student.objects.get(pk=student_id)))
+            except Exception as exc:
+                failures.append(exc)
+            finally:
+                connections.close_all()
+
+        with patch("apps.domains.students.services.account_notifications._send_owner_account_notice", return_value=True):
+            first = Thread(target=lifecycle_locks, daemon=True)
+            first.start()
+            self.assertTrue(user_locked.wait(5))
+            second = Thread(target=notice, daemon=True)
+            second.start()
+            first.join(10)
+            second.join(10)
+        self.assertFalse(first.is_alive() or second.is_alive())
+        self.assertEqual(failures, [])
+        self.assertEqual(delivered, [True])
