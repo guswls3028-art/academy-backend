@@ -5,6 +5,40 @@
 `.github/workflows/v1-build-and-push-latest.yml`과
 `scripts/v1/ecr-critical-scan-gate.py`다.
 
+## 2026-10-01 GCC 후보 배포 보류
+
+Django 5.2.17을 고정한 main `2804eb66e2917aee09653ec81eae5f7950ea871c`의
+[공식 실행 36796021929](https://github.com/guswls3028-art/academy-backend/actions/runs/36796021929)은
+이미지 빌드를 완료했지만 ECR 보안 게이트에서 중단됐다. immutable tag는
+`sha-2804eb66e2917aee09653ec81eae5f7950ea871c-run-36796021929-1`이며,
+여섯 repository의 완료 scan을 직접 재조회한 결과 모두 `CVE-2026-102010` /
+`gcc-14` / `14.2.0-19` High 1건을 반환했다. 최초 오류가 AI repository에서
+발생했다는 사실은 나머지 이미지의 통과를 의미하지 않는다.
+
+이 후보의 development, preprod, 운영 migration·API·worker 교체·검증은 모두
+실행되지 않았고 공유 배포 잠금은 해제됐다. 마지막 성공 운영 이미지와 소스는
+[성공 manifest](../reports/release-manifest.latest.json)를 기준으로 유지한다.
+main의 Django pin 변경을 운영 반영 완료로 기록하지 않는다. 같은 공통 base와
+취약 패키지를 사용하는 새 PR 후보도 완료 scan과 기존 게이트 없이는 배포하지
+않는다. `maximumHighFindings`는 여섯 repository 모두 0,
+`acceptedHighFindings`는 빈 배열을 유지한다.
+
+확인 당시 [Debian tracker](https://security-tracker.debian.org/tracker/CVE-2026-102010)는
+trixie `gcc-14`를 vulnerable로 분류하며 수정 패키지를 제시하지 않았다.
+[upstream 수정 aaa8351f4d2e636f9680a1f0a8ebc2f0a60611e6](https://github.com/gcc-mirror/gcc/commit/aaa8351f4d2e636f9680a1f0a8ebc2f0a60611e6)은
+PBDS binary heap의 `erase_if` 재할당 뒤 entry pointer를 갱신하는 헤더 수정이다.
+실패한 AI digest의 APT 레이어에는 `gcc-14-base`, `libgcc-s1`, `libstdc++6`가
+설치돼 있었다. 해당 레이어에서 PBDS 헤더를 찾지 못한 결과만으로 wheel 등
+미리 컴파일된 코드의 비도달성이나 scanner 오탐을 확정하지 않는다.
+
+재개 조건은 실제 수정·호환성 검증과 새 여섯 immutable digest의 완료
+Critical/High 0이다. 수정 검증에 성공해도 scanner가 계속 차단하면 보류를
+유지하며, 버전·source 이름 변경이나 acceptance 추가로 우회하지 않는다.
+스캔을 통과한 뒤에도 기존 persistent development → isolated preprod 및 임시
+인스턴스 종료 확인 → 운영 연속성 → exact runtime readback 순서를 모두 적용한다.
+이 보류는 신규 백엔드 후보에 적용하며 별도 프런트엔드 동일 산출물 검증을
+완료했다는 증거를 대체하지 않는다.
+
 ## 빌드 입력과 런타임 패키지
 
 - `requirements/constraints.txt`의 DRF는 3.17.2로 고정한다. 두 공개 보안 수정
