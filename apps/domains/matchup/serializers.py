@@ -27,7 +27,7 @@ class MatchupDocumentUpdateSerializer(serializers.Serializer):
     grade_level = serializers.CharField(max_length=50, required=False, allow_blank=True)
     # 2026-05-12 #15 — 학원장이 시험 회차/연도 분류 입력 (랜딩 학교별 grouping)
     exam_cycle = serializers.ChoiceField(
-        choices=["", "midterm", "final", "mock", "other"],
+        choices=MatchupDocument.EXAM_CYCLE_CHOICES,
         required=False, allow_blank=True,
     )
     exam_year = serializers.IntegerField(required=False, min_value=0, max_value=2100)

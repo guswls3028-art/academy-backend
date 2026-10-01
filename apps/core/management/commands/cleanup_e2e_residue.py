@@ -815,7 +815,8 @@ class Command(BaseCommand):
                     keys.append(public_key)
             keys.extend(
                 key
-                for key in ((document.meta or {}).get("page_image_keys") or [])
+                for field in ("page_image_keys", "manual_page_image_keys")
+                for key in ((document.meta or {}).get(field) or [])
                 if isinstance(key, str) and key
             )
             keys.extend(
