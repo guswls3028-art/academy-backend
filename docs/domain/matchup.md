@@ -22,6 +22,27 @@
 5. 강사는 자동 매칭 결과를 검수하고 필요하면 문항 영역을 직접 수정한다.
 6. 시스템은 유사 문항, 적중률, 출처, 통계 정보를 리포트로 만든다.
 
+### 문서 조회·분석 상태와 인증 실패
+
+문서 목록 `GET /matchup/documents/`와 작업 상태
+`GET /matchup/documents/{id}/job/`는 해당 tenant 교직원에게 저장된 문서 상태를
+읽기만 반환한다. 완료·실패한 AI 작업의 callback이 아직 적용되지 않았거나
+RUNNING lease가 만료돼도 GET은 작업·문서·문항·보고서를 변경하지 않는다.
+조회 중 복구 쓰기가 안전한 HTTP 메서드의 DB 쓰기 차단에 걸려 목록 전체를
+500으로 만드는 경로를 제거했다. 상태 반영은 기존 AI domain callback이 담당하고,
+callback 누락·만료 작업의 복구 helper는 정확한 tenant·문서·작업과 영향을 확인한
+명시적 운영 복구에서만 호출한다. 조회 요청으로 재시도·lease 해제·결과 재적용을
+자동 실행하지 않으며 원본, 수동/승인 문항과 기존 보고서는 유지한다.
+
+매치업의 Django View JWT 경계는 기존 토큰 버전·활성 권한·tenant 검증을 유지한다.
+유효한 JWT와 다른 tenant 헤더의 조합, 만료·잘못된 JWT 및 인증 누락은 상세 데이터
+없이 `401`, `auth_required`, `WWW-Authenticate: Bearer ...`로 반환한다.
+알려진 인증 실패만 처리하며 다른 서비스 오류를 인증 실패로 숨기지 않는다.
+정상 교직원 조회, 외부 tenant 문서의 404, 교직원 권한 거부와 데이터 불변성은
+실제 JWT·tenant resolver·DB 쓰기 차단을 사용하는
+`tests/test_matchup_document_read_boundaries.py`에서 확인한다. 명시적 만료 작업
+복구의 기존 회귀 검증은 `tests/test_matchup_reconcile_stale_ai_job.py`로 유지한다.
+
 ### 시험 회차·연도와 직접 자르기
 
 교직원은 업로드에서 시험 회차를 `1학기 중간고사`, `1학기 기말고사`,
