@@ -6,12 +6,13 @@ from django.contrib.auth.hashers import check_password, identify_hasher, make_pa
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.test import TestCase
-from rest_framework.test import APIRequestFactory, force_authenticate
+from rest_framework.test import APIClient, APIRequestFactory, force_authenticate
 
-from apps.core.models import Tenant, TenantMembership
+from apps.core.models import Tenant, TenantDomain, TenantMembership
+from apps.core.services.account_credentials import protect_password
 from apps.core.services.password import pending_password_reset_matches
 from apps.domains.students.models import Student, StudentRegistrationRequest
-from apps.domains.students.serializers import StudentCreateSerializer
+from apps.domains.students.serializers import RegistrationRequestListSerializer, StudentCreateSerializer
 from apps.domains.students.services.account_notice import _decrypt
 from apps.domains.students.views.registration_views import (
     RegistrationRequestViewSet,
@@ -27,7 +28,7 @@ class RegistrationPasswordSafetyTests(TestCase):
     def setUp(self):
         cache.clear()
         self.factory = APIRequestFactory()
-        self.tenant = Tenant.objects.create(name="가입보안학원", code="regsafe", is_active=True)
+        self.tenant = Tenant.objects.create(account_password_policy={"parent_mode": "phone_last4"}, name="가입보안학원", code="regsafe", is_active=True)
         self.admin = User.objects.create_user(
             username="regsafe-admin",
             password="test1234",
@@ -113,6 +114,100 @@ class RegistrationPasswordSafetyTests(TestCase):
             Student.objects.filter(tenant=self.tenant).count(),
             original_student_count,
         )
+
+    def _create_parent_choice_request(self, mode, password="", suffix="01"):
+        request = self.factory.post("/api/v1/students/registration-requests/", {
+            **self._registration_payload(), "username": f"parent-choice-{suffix}",
+            "phone": f"010777788{suffix}", "parent_phone": f"010555566{suffix}",
+            "parent_initial_password_mode": mode, "parent_initial_password": password,
+        }, format="json")
+        request.tenant = self.tenant
+        response = RegistrationRequestViewSet.as_view({"post": "create"})(request)
+        self.assertEqual(response.status_code, 201, response.data)
+        return StudentRegistrationRequest.objects.get(username=f"parent-choice-{suffix}")
+
+    def _parent_choice_action(self, reg, action, data=None):
+        request = self.factory.post(f"/api/v1/students/registration-requests/{reg.pk}/{action}/", data or {}, format="json")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        return RegistrationRequestViewSet.as_view({"post": action})(request, pk=reg.pk)
+
+    def test_pending_parent_choices_survive_policy_and_staff_changes_and_login(self):
+        TenantDomain.objects.filter(tenant=self.tenant, is_primary=True).update(is_primary=False)
+        TenantDomain.objects.create(tenant=self.tenant, host="regsafe.test", is_primary=True)
+        client = APIClient(HTTP_HOST="regsafe.test")
+        for suffix, mode, raw in (("01", "fixed", " parent choice "), ("02", "phone_last4", ""), ("03", "random", "")):
+            with self.subTest(mode=mode):
+                reg = self._create_parent_choice_request(mode, raw, suffix)
+                self.assertEqual(reg.parent_initial_password_mode, mode)
+                if raw:
+                    self.assertNotEqual(reg.parent_initial_password_ciphertext, raw)
+                serialized = RegistrationRequestListSerializer(reg).data
+                self.assertTrue(serialized["parent_password_selected"])
+                self.assertNotIn("parent_initial_password_ciphertext", serialized)
+                self.assertNotIn("parent_initial_password", serialized)
+                self.tenant.account_password_policy = {}
+                self.tenant.save(update_fields=["account_password_policy"])
+                response = self._parent_choice_action(reg, "approve", {
+                    "parent_initial_password_mode": "fixed", "parent_initial_password": "staff-override",
+                })
+                self.assertEqual(response.status_code, 200, response.data)
+                reg.refresh_from_db()
+                self.assertEqual(reg.status, StudentRegistrationRequest.APPROVED)
+                self.assertEqual((reg.initial_password_ciphertext, reg.parent_initial_password_ciphertext, reg.parent_initial_password_mode), ("", "", ""))
+                parent_password = _decrypt(reg.student.pending_account_notice_parent_password_ciphertext)
+                if mode == "random":
+                    self.assertRegex(parent_password, r"^\d{6}$")
+                else:
+                    self.assertEqual(parent_password, raw if mode == "fixed" else f"66{suffix}")
+                for login_id, password in ((reg.student.ps_number, "rawpw1234"), (reg.parent_phone, parent_password)):
+                    client.credentials()
+                    login = client.post("/api/v1/token/", {"username": login_id, "password": password}, format="json")
+                    self.assertEqual(login.status_code, 200, login.data)
+                    client.credentials(HTTP_AUTHORIZATION="Bearer " + login.data["access"])
+                    self.assertEqual(client.get("/api/v1/core/me/").status_code, 200)
+
+    def test_pending_parent_choice_preserves_existing_parent_hash(self):
+        parent = ensure_parent_account_for_student(tenant=self.tenant, parent_phone="01055556601", student_name="기존학생", initial_password="existing-parent").parent
+        original_hash = parent.user.password
+        reg = self._create_parent_choice_request("fixed", "new-parent-choice")
+        response = self._parent_choice_action(reg, "approve")
+        self.assertEqual(response.status_code, 200, response.data)
+        reg.refresh_from_db()
+        parent.user.refresh_from_db()
+        self.assertEqual(parent.user.password, original_hash)
+        self.assertEqual(reg.student.parent_id, parent.pk)
+        self._assert_notice_loginable(reg.student, "parent")
+
+    def test_parent_signup_choice_rejects_incomplete_or_conflicting_values(self):
+        for mode, raw in (("fixed", ""), ("phone_last4", "unexpected"), ("random", "unexpected")):
+            request = self.factory.post("/api/v1/students/registration-requests/", {
+                **self._registration_payload(), "parent_initial_password_mode": mode, "parent_initial_password": raw,
+            }, format="json")
+            request.tenant = self.tenant
+            response = RegistrationRequestViewSet.as_view({"post": "create"})(request)
+            self.assertEqual(response.status_code, 400, response.data)
+            self.assertFalse(StudentRegistrationRequest.objects.exists())
+
+    def test_parent_choice_ciphertext_cannot_replay_from_another_tenant(self):
+        reg = self._create_parent_choice_request("fixed", "chosen-parent")
+        reg.parent_initial_password_ciphertext = protect_password("other-parent", context=f"signup-parent:{self.tenant.pk + 1}")
+        reg.save(update_fields=["parent_initial_password_ciphertext"])
+        before = User.objects.count()
+        response = self._parent_choice_action(reg, "approve")
+        self.assertEqual(response.status_code, 400, response.data)
+        reg.refresh_from_db()
+        self.assertEqual(reg.status, StudentRegistrationRequest.PENDING)
+        self.assertEqual(User.objects.count(), before)
+        self.assertFalse(Student.objects.exists())
+
+    def test_rejection_clears_both_pending_password_secrets(self):
+        reg = self._create_parent_choice_request("fixed", "chosen-parent")
+        response = self._parent_choice_action(reg, "reject")
+        self.assertEqual(response.status_code, 200, response.data)
+        reg.refresh_from_db()
+        self.assertEqual(reg.status, StudentRegistrationRequest.REJECTED)
+        self.assertEqual((reg.initial_password_ciphertext, reg.parent_initial_password_ciphertext, reg.parent_initial_password_mode), ("", "", ""))
 
     def test_approval_stages_loginable_credentials_without_plaintext_until_enrollment(self):
         reg = StudentRegistrationRequest.objects.create(

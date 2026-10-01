@@ -45,6 +45,8 @@ def create_student_account(
     password: str | None = None,
     password_hash: str | None = None,
     parent_password: str | None = None,
+    password_mode: str | None = None,
+    parent_password_mode: str | None = None,
     must_change_password: bool = False,
     account_notice_student_password: str | None = None,
     account_notice_parent_password: str | None = None,
@@ -60,8 +62,8 @@ def create_student_account(
     Callers keep validation, duplicate/deleted-student policy, API response
     shape, and message dispatch so existing surfaces can migrate safely.
     """
-    if password is None and password_hash is None:
-        password = initial_password(tenant, role="student", phone=canonical_student_phone(phone=student_data.get("phone"), parent_phone=student_data.get("parent_phone")))
+    if password_hash is None:
+        password = initial_password(tenant, role="student", phone=canonical_student_phone(phone=student_data.get("phone"), parent_phone=student_data.get("parent_phone")), supplied=password, mode=password_mode)
     if password is not None and password_hash is not None:
         raise ValueError("password and password_hash are mutually exclusive")
     if password is not None and len(str(password)) < 4:
@@ -104,7 +106,8 @@ def create_student_account(
                 tenant=tenant,
                 parent_phone=parent_phone,
                 student_name=name,
-                initial_password=initial_password(tenant, role="parent", phone=parent_phone, supplied=parent_password),
+                initial_password=parent_password,
+                initial_password_mode=parent_password_mode,
             )
             parent = parent_result.parent
             parent_password_for_notice = parent_result.password_for_notice

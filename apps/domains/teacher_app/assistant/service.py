@@ -492,8 +492,8 @@ def _assert_confirmed_row(*, tenant, source_row: dict, override: dict) -> dict:
         raise ValidationError(
             {"code": "proposal_needs_review", "detail": "확인이 필요한 항목이 남아 있습니다.", "row": preview}
         )
-    if preview["initial_password_required"] and len(
-        str(override.get("initial_password") or "").strip()
+    if preview["initial_password_required"] and not (override.get("initial_password_mode") or override.get("parent_initial_password_mode")) and len(
+        str(override.get("initial_password") or "")
     ) < 4:
         raise ValidationError(
             {
@@ -593,8 +593,9 @@ def execute_proposal(*, tenant, actor, payload: dict, overrides: list[dict]) -> 
                 ):
                     update_data["parent_phone"] = row["parent_phone"]
                     update_data["parent_initial_password"] = row.get(
-                        "initial_password", ""
+                        "parent_initial_password", row.get("initial_password", "")
                     )
+                    update_data["parent_initial_password_mode"] = row.get("parent_initial_password_mode")
                 if update_data:
                     try:
                         updated = update_student_profile(
@@ -636,6 +637,9 @@ def execute_proposal(*, tenant, actor, payload: dict, overrides: list[dict]) -> 
                         "is_managed": True,
                     },
                     str(row.get("initial_password") or ""),
+                    password_mode=row.get("initial_password_mode"),
+                    parent_initial_password=row.get("parent_initial_password"),
+                    parent_initial_password_mode=row.get("parent_initial_password_mode"),
                     identity_policy="phone_if_available",
                     source_job_id=str(payload["nonce"]),
                 )

@@ -348,6 +348,7 @@ def restore_student(
     tenant,
     profile_data: dict[str, Any] | None = None,
     parent_initial_password: str | None = None,
+    parent_initial_password_mode: str | None = None,
 ) -> StudentRestoreResult:
     with transaction.atomic():
         if not tenant or student.tenant_id != tenant.id:
@@ -406,11 +407,12 @@ def restore_student(
                     parent_phone=student.parent_phone,
                     student_name=student.name,
                     initial_password=parent_initial_password,
+                    initial_password_mode=parent_initial_password_mode,
                 )
             except ValueError as exc:
                 detail = str(exc)
                 password_required = (
-                    not str(parent_initial_password or "").strip()
+                    not parent_initial_password
                     and "비밀번호" in detail
                 )
                 raise StudentLifecycleError(

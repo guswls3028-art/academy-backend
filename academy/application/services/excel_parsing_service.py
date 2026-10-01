@@ -756,8 +756,10 @@ class ExcelParsingService:
           - file_key: str (R2 객체 키)
           - bucket: str (선택)
           - tenant_id: int (필수)
-          - password_mode: str (학생 등록에서 fixed | random, 기본 fixed)
+          - password_mode: str (학생 등록에서 fixed | phone_last4 | random)
           - initial_password_secret: str (학생 등록 fixed 방식의 암호화 비밀번호)
+          - parent_initial_password_mode: str (학부모 초기 비밀번호 방식)
+          - parent_initial_password_secret: str (학부모 fixed 방식의 암호화 비밀번호)
           - lecture_id: int (선택) — 있으면 수강등록, 없으면 학생만 일괄 생성
           - session_id: int (선택, lecture_id 있을 때만)
           - student_match_mode: existing_only (수강등록 명시 표식)
@@ -779,19 +781,14 @@ class ExcelParsingService:
         if not tenant_id:
             raise ValueError("payload.tenant_id required")
 
-        password_policy = None
         if lecture_id is None:
             from apps.domains.ai.services.excel_job_secrets import (
                 recover_excel_initial_password,
             )
-            from apps.domains.students.services import build_student_import_password_policy
-
-            password_mode = (payload.get("password_mode") or "fixed").strip()
+            password_mode = payload.get("initial_password_mode", payload.get("password_mode"))
             initial_password = recover_excel_initial_password(payload)
-            password_policy = build_student_import_password_policy(
-                password_mode=password_mode,
-                initial_password=initial_password,
-            )
+            parent_initial_password = recover_excel_initial_password(payload, role="parent")
+            parent_initial_password_mode = payload.get("parent_initial_password_mode")
 
         tmp_dir = Path(tempfile.gettempdir())
         local_path = tmp_dir / f"excel_job_{job_id}.xlsx"
@@ -839,9 +836,6 @@ class ExcelParsingService:
             from django.utils import timezone
             from academy.adapters.db.django.repositories_ai import DjangoAIJobRepository
 
-            if password_policy is None:
-                raise RuntimeError("student Excel password policy was not resolved")
-
             _last_pct: list[int] = [-1]  # mutable for closure
 
             def _row_progress(current: int, total: int) -> None:
@@ -855,8 +849,10 @@ class ExcelParsingService:
                 result = import_students_from_rows(
                     tenant_id=int(tenant_id),
                     students_data=rows,
-                    initial_password=password_policy.fixed_password,
-                    password_mode=password_policy.mode,
+                    initial_password=initial_password,
+                    password_mode=password_mode,
+                    parent_initial_password=parent_initial_password,
+                    parent_initial_password_mode=parent_initial_password_mode,
                     on_row_progress=_row_progress if on_progress else None,
                     source_job_id=str(job_id),
                 )

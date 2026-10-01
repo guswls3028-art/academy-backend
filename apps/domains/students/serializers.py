@@ -376,10 +376,57 @@ class StudentBulkItemSerializer(serializers.Serializer):
 
 class StudentBulkCreateSerializer(serializers.Serializer):
     initial_password = serializers.CharField(min_length=4, write_only=True, required=False, allow_blank=True, trim_whitespace=False)
+    password_mode = serializers.ChoiceField(choices=("fixed", "phone_last4", "random"), write_only=True, required=False, allow_null=True)
+    initial_password_mode = serializers.ChoiceField(choices=("fixed", "phone_last4", "random"), write_only=True, required=False, allow_null=True)
+    parent_initial_password_mode = serializers.ChoiceField(choices=("fixed", "phone_last4", "random"), write_only=True, required=False, allow_null=True)
+    parent_initial_password = serializers.CharField(min_length=4, write_only=True, required=False, allow_blank=True, trim_whitespace=False)
     students = StudentBulkItemSerializer(many=True)
+
+    def validate(self, attrs):
+        from .services.import_passwords import build_student_import_password_policy
+
+        mode = attrs.pop("initial_password_mode", None)
+        if mode is not None:
+            if attrs.get("password_mode") not in (None, mode):
+                raise serializers.ValidationError({"password_mode": "학생 비밀번호 방식이 서로 일치하지 않습니다."})
+            attrs["password_mode"] = mode
+        for password_key, mode_key in (
+            ("initial_password", "password_mode"),
+            ("parent_initial_password", "parent_initial_password_mode"),
+        ):
+            if attrs.get(password_key) and attrs.get(mode_key) not in (None, "fixed"):
+                raise serializers.ValidationError({password_key: "선택한 방식과 직접 입력 비밀번호가 일치하지 않습니다."})
+        if not self.partial or "students" in attrs:
+            try:
+                policy = build_student_import_password_policy(
+                    password_mode=attrs.get("password_mode"),
+                    initial_password=attrs.get("initial_password"),
+                    tenant=getattr(self.context.get("request"), "tenant", None),
+                )
+            except ValueError as exc:
+                raise serializers.ValidationError({"initial_password": str(exc)}) from exc
+            attrs["password_mode"] = policy.mode
+            attrs["initial_password"] = policy.fixed_password
+        return attrs
+
+
+class ParentInitialPasswordChoiceSerializer(serializers.Serializer):
+    parent_initial_password_mode = serializers.ChoiceField(choices=("fixed", "phone_last4", "random"), required=False)
+    parent_initial_password = serializers.CharField(required=False, allow_blank=True, min_length=4, trim_whitespace=False, write_only=True)
+
+    def validate(self, attrs):
+        mode = attrs.get("parent_initial_password_mode")
+        password = attrs.get("parent_initial_password")
+        if password and mode not in (None, "fixed"):
+            raise serializers.ValidationError({"parent_initial_password": "선택한 방식과 직접 입력 비밀번호가 일치하지 않습니다."})
+        if mode == "fixed" and len(password or "") < 4:
+            raise serializers.ValidationError({"parent_initial_password": "직접 입력 비밀번호는 4자 이상 입력해 주세요."})
+        return attrs
 
 
 class StudentCreateSerializer(serializers.ModelSerializer):
+    initial_password_mode = serializers.ChoiceField(choices=("fixed", "phone_last4", "random"), write_only=True, required=False)
+    parent_initial_password_mode = serializers.ChoiceField(choices=("fixed", "phone_last4", "random"), write_only=True, required=False)
     parent_initial_password = serializers.CharField(write_only=True, required=False, allow_blank=True, min_length=4, trim_whitespace=False)
     custom_fields = serializers.DictField(required=False, default=dict)
     initial_password = serializers.CharField(
@@ -534,6 +581,7 @@ class StudentCreateSerializer(serializers.ModelSerializer):
 
 class StudentUpdateSerializer(serializers.ModelSerializer):
     custom_fields = serializers.DictField(required=False)
+    parent_initial_password_mode = serializers.ChoiceField(choices=("fixed", "phone_last4", "random"), required=False, write_only=True)
     parent_initial_password = serializers.CharField(
         write_only=True,
         required=False,
@@ -555,6 +603,7 @@ class StudentUpdateSerializer(serializers.ModelSerializer):
             "phone",
             "parent_phone",
             "parent_initial_password",
+            "parent_initial_password_mode",
             "uses_identifier",
             "elementary_school",
             "high_school",
@@ -646,7 +695,7 @@ def _normalize_phone(value):
         raise serializers.ValidationError(exc.detail) from exc
 
 
-class RegistrationRequestCreateSerializer(serializers.Serializer):
+class RegistrationRequestCreateSerializer(ParentInitialPasswordChoiceSerializer):
     """학생이 로그인 페이지에서 제출하는 가입 신청 (필수 필드만)"""
 
     name = serializers.CharField(max_length=50, trim_whitespace=True)
@@ -716,6 +765,7 @@ class RegistrationRequestCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {"password_confirmation": "비밀번호가 일치하지 않습니다."}
             )
+        attrs = super().validate(attrs)
         attrs.pop("password_confirmation", None)
         attrs["parent_phone"] = attrs["parent_phone"]
         attrs["phone"] = attrs.get("phone") or None
@@ -812,10 +862,14 @@ _REGISTRATION_REQUEST_LIST_FIELDS = (
 
 class RegistrationRequestListSerializer(serializers.ModelSerializer):
     """스태프용 가입 신청 목록/상세 (initial_password 제외)"""
+    parent_password_selected = serializers.SerializerMethodField()
+
+    def get_parent_password_selected(self, obj) -> bool:
+        return bool(obj.parent_initial_password_mode)
 
     class Meta:
         model = StudentRegistrationRequest
-        fields = _REGISTRATION_REQUEST_LIST_FIELDS
+        fields = (*_REGISTRATION_REQUEST_LIST_FIELDS, "parent_password_selected")
         read_only_fields = _REGISTRATION_REQUEST_LIST_FIELDS
 
 
@@ -824,7 +878,7 @@ class SelfRegistrationDisabledErrorSerializer(serializers.Serializer):
     detail = serializers.CharField()
 
 
-class RegistrationRequestBulkIdsSerializer(serializers.Serializer):
+class RegistrationRequestBulkIdsSerializer(ParentInitialPasswordChoiceSerializer):
     ids = serializers.ListField(child=serializers.IntegerField(min_value=1), allow_empty=False)
 
 
@@ -879,5 +933,5 @@ class DeletedRegistrationConflictSerializer(serializers.Serializer):
     candidates = DeletedRegistrationCandidateSerializer(many=True)
 
 
-class DeletedRegistrationResolveSerializer(serializers.Serializer):
+class DeletedRegistrationResolveSerializer(ParentInitialPasswordChoiceSerializer):
     student_id = serializers.IntegerField(min_value=1)

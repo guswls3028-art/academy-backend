@@ -18,7 +18,7 @@ User = get_user_model()
 
 
 def _tenant(*, name: str, code: str) -> Tenant:
-    return Tenant.objects.create(name=name, code=code, is_active=True)
+    return Tenant.objects.create(account_password_policy={"parent_mode": "phone_last4"}, name=name, code=code, is_active=True)
 
 
 def _staff(*, tenant: Tenant, username: str):

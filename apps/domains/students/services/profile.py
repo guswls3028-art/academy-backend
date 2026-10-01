@@ -209,7 +209,8 @@ def update_student_profile(
 
     changed: list[str] = []
     data = dict(data)
-    parent_initial_password = str(data.pop("parent_initial_password", "") or "").strip()
+    parent_initial_password = str(data.pop("parent_initial_password", "") or "")
+    parent_initial_password_mode = data.pop("parent_initial_password_mode", None)
     old_phone = student.phone or ""
     old_parent_phone = student.parent_phone or ""
     old_ps_number = student.ps_number or ""
@@ -345,6 +346,7 @@ def update_student_profile(
                     parent_phone=new_parent_phone,
                     student_name=student.name,
                     initial_password=parent_initial_password,
+                    initial_password_mode=parent_initial_password_mode,
                 )
             except ValueError as exc:
                 raise StudentProfileUpdateError(

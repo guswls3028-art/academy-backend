@@ -40,7 +40,7 @@ User = get_user_model()
 
 
 def _create_tenant(name="TestAcademy", code="test"):
-    return Tenant.objects.create(name=name, code=code)
+    return Tenant.objects.create(account_password_policy={"parent_mode": "phone_last4"}, name=name, code=code)
 
 
 def _create_student(tenant, ps_number, name="테스트학생", phone="01012345678", parent_phone="01098765432"):

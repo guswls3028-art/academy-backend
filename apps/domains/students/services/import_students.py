@@ -20,7 +20,6 @@ from django.db import transaction
 from academy.adapters.db.django import repositories_core as core_repo
 from academy.adapters.db.django import repositories_enrollment as enroll_repo
 from academy.adapters.db.django import repositories_students as student_repo
-from apps.support.students.lifecycle_dependencies import ensure_parent_account_for_student
 
 from .account_notifications import send_parent_account_credentials_notice
 from .creation import create_student_account
@@ -37,7 +36,7 @@ from .identity import (
     phone_digits,
     resolve_student_login_id,
 )
-from .import_passwords import StudentImportPasswordError, build_student_import_password_policy
+from .import_passwords import build_student_import_password_policy
 from .lifecycle import permanently_delete_students, restore_student
 from .school import get_valid_school_types, is_valid_grade, normalize_school_from_name
 
@@ -258,6 +257,8 @@ def resolve_student_import_row(
     initial_password: str,
     *,
     parent_initial_password: str | None = None,
+    password_mode: str | None = None,
+    parent_initial_password_mode: str | None = None,
     identity_policy: StudentImportIdentityPolicy = "phone_if_available",
     valid_school_types: frozenset[str] | None = None,
     custom_field_definitions=None,
@@ -330,18 +331,33 @@ def resolve_student_import_row(
         ),
     )
     if deleted_student:
-        restored_result = restore_student(
-            deleted_student,
-            tenant=tenant,
-            profile_data=normalized.restore_data,
-        )
+        with transaction.atomic():
+            restored_result = restore_student(
+                deleted_student,
+                tenant=tenant,
+                profile_data=normalized.restore_data,
+                parent_initial_password=parent_initial_password,
+                parent_initial_password_mode=parent_initial_password_mode,
+            )
+            if restored_result.parent_credentials_initialized:
+                delivered = send_parent_account_credentials_notice(
+                    student=restored_result.student,
+                    parent=restored_result.student.parent,
+                    parent_password=restored_result.parent_password_for_notice,
+                    origin_type="student_import_restore",
+                    origin_id=source_job_id or str(restored_result.student.id),
+                )
+                if not delivered:
+                    raise StudentImportRowError(
+                        "학부모 계정 안내 알림톡을 보내지 못해 복원을 취소했습니다."
+                    )
         return StudentImportRowResolution(
             student=restored_result.student,
             created=False,
             restored=True,
             duplicate=False,
             parent_phone=normalized.parent_phone,
-            parent_password_for_notice="",
+            parent_password_for_notice=restored_result.parent_password_for_notice,
         )
 
     ps_number = _choose_ps_number(
@@ -392,6 +408,8 @@ def resolve_student_import_row(
             tenant=tenant,
             password=initial_password or None,
             parent_password=parent_initial_password or None,
+            password_mode=password_mode,
+            parent_password_mode=parent_initial_password_mode,
             student_data=student_data,
             must_change_password=True,
             account_notice_origin_type=("excel_import" if source_job_id else ""),
@@ -412,8 +430,10 @@ def import_students_from_rows(
     *,
     tenant_id: int,
     students_data: list[dict],
-    initial_password: str,
-    password_mode: str = "fixed",
+    initial_password: str | None = None,
+    password_mode: str | None = None,
+    parent_initial_password: str | None = None,
+    parent_initial_password_mode: str | None = None,
     on_row_progress: Callable[[int, int], None] | None = None,
     source_job_id: str = "",
 ) -> dict:
@@ -471,14 +491,17 @@ def import_students_from_rows(
                 tenant,
                 row,
                 row_password,
+                password_mode="fixed",
+                parent_initial_password=parent_initial_password,
+                parent_initial_password_mode=parent_initial_password_mode,
                 identity_policy="phone_if_available",
                 valid_school_types=valid_school_types,
                 custom_field_definitions=custom_field_definitions,
                 source_job_id=source_job_id,
             )
-        except (StudentImportRowError, StudentImportPasswordError) as exc:
+        except ValueError as exc:
             error_detail = exc.detail if isinstance(exc, StudentImportRowError) else str(exc)
-            reason_code = "password_policy" if isinstance(exc, StudentImportPasswordError) else "invalid_row"
+            reason_code = "invalid_row" if isinstance(exc, StudentImportRowError) else "password_policy"
             if error_detail == "이미 사용 중인 전화번호입니다.":
                 reason_code = "phone_in_use"
             elif error_detail == "이미 사용 중인 PS 번호입니다.":
@@ -568,6 +591,8 @@ def resolve_student_import_conflicts(
     resolutions: list[dict],
     initial_password: str,
     parent_initial_password: str | None = None,
+    password_mode: str | None = None,
+    parent_initial_password_mode: str | None = None,
 ) -> dict:
     """
     Resolve deleted-student import conflicts through the same row policy.
@@ -653,22 +678,18 @@ def resolve_student_import_conflicts(
                     custom_field_definitions=custom_field_definitions,
                 )
                 with transaction.atomic():
-                    parent_result = ensure_parent_account_for_student(
-                        tenant=tenant,
-                        parent_phone=normalized.parent_phone,
-                        student_name=normalized.name,
-                        initial_password=(parent_initial_password if parent_initial_password is not None else initial_password),
-                    )
                     restored_result = restore_student(
                         deleted_student,
                         tenant=tenant,
                         profile_data=normalized.restore_data,
+                        parent_initial_password=parent_initial_password,
+                        parent_initial_password_mode=parent_initial_password_mode,
                     )
-                    if parent_result.credentials_initialized:
+                    if restored_result.parent_credentials_initialized:
                         delivered = send_parent_account_credentials_notice(
                             student=restored_result.student,
-                            parent=parent_result.parent,
-                            parent_password=parent_result.password_for_notice,
+                            parent=restored_result.student.parent,
+                            parent_password=restored_result.parent_password_for_notice,
                             origin_type="student_import_conflict_restore",
                             origin_id=str(row or deleted_student.id),
                         )
@@ -696,6 +717,8 @@ def resolve_student_import_conflicts(
                     student_data,
                     initial_password,
                     parent_initial_password=parent_initial_password,
+                    password_mode=password_mode,
+                    parent_initial_password_mode=parent_initial_password_mode,
                     identity_policy="phone_if_available",
                     valid_school_types=valid_school_types,
                     custom_field_definitions=custom_field_definitions,

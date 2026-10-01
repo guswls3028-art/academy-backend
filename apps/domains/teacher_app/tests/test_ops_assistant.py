@@ -77,7 +77,7 @@ class TeacherOpsExtractionTests(TestCase):
 class TeacherOpsAssistantApiTests(TestCase):
     def setUp(self):
         self.factory = APIRequestFactory()
-        self.tenant = Tenant.objects.create(name="Teacher Ops", code="teacher_ops", is_active=True)
+        self.tenant = Tenant.objects.create(account_password_policy={"parent_mode": "phone_last4"}, name="Teacher Ops", code="teacher_ops", is_active=True)
         self.teacher = User.objects.create_user(
             username="teacher_ops_user", password="pw1234", tenant=self.tenant, name="담당교사"
         )
@@ -403,7 +403,7 @@ class TeacherOpsAssistantApiTests(TestCase):
 
     def test_token_cannot_cross_tenant_or_actor_boundary(self):
         analyze_response = self._analyze()
-        other_tenant = Tenant.objects.create(name="Other", code="teacher_ops_other", is_active=True)
+        other_tenant = Tenant.objects.create(account_password_policy={"parent_mode": "phone_last4"}, name="Other", code="teacher_ops_other", is_active=True)
         other_teacher = User.objects.create_user(username="teacher_ops_other", password="pw1234", tenant=other_tenant)
         TenantMembership.ensure_active(tenant=other_tenant, user=other_teacher, role="teacher")
 

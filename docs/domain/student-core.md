@@ -959,10 +959,12 @@ and follows the [release contract](../operations/change-risk-and-release-bundle.
 
 ### Initial account password policy and notices (2026-10-01)
 
-Staff may omit `initial_password` on single creation to apply the tenant student
-policy and independently override `parent_initial_password` for a new Parent.
-Signup preserves the applicant-selected student password; a new Parent uses its
-own tenant policy. Values in credential notices are verified against the active
+Staff explicitly choose student and parent methods in the final confirmation.
+Legacy callers may use a supplied password or an explicitly saved role policy;
+unset policies and unavailable phone suffixes fail without an implicit substitute.
+Signup preserves the applicant-selected student password. A new Parent receives
+the explicitly chosen method independently. The canonical policy is
+[account-initial-password-policy.md](../ssot/account-initial-password-policy.md). Values in credential notices are verified against the active
 hash or a valid pending login credential, including before first enrollment.
 Legacy unknown hashes receive a reusable 30-day additional login credential;
 existing passwords remain active until the delivered credential is used. No

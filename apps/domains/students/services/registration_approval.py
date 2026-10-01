@@ -559,7 +559,9 @@ def _approve_with_existing_student(
     reg.student = student
     reg.initial_password_plain = ""
     reg.initial_password_ciphertext = ""
-    reg.save(update_fields=["status", "student", "initial_password_plain", "initial_password_ciphertext", "updated_at"])
+    reg.parent_initial_password_ciphertext = ""
+    reg.parent_initial_password_mode = ""
+    reg.save(update_fields=["status", "student", "initial_password_plain", "initial_password_ciphertext", "parent_initial_password_ciphertext", "parent_initial_password_mode", "updated_at"])
     notice = RegistrationApprovalNotice(
         student_name=student.name,
         student_phone=student.phone or "",
@@ -579,6 +581,8 @@ def approve_registration_request(
     *,
     tenant,
     registration_id: int,
+    parent_password: str | None = None,
+    parent_password_mode: str | None = None,
 ) -> RegistrationApprovalResult:
     """
     Approve one student registration request.
@@ -601,6 +605,12 @@ def approve_registration_request(
         if reg.status != StudentRegistrationRequest.PENDING:
             raise RegistrationApprovalError("이미 처리된 신청입니다.", status_code=400)
 
+        if reg.parent_initial_password_mode:
+            parent_password_mode = reg.parent_initial_password_mode
+            parent_password = recover_password(reg.parent_initial_password_ciphertext, context=f"signup-parent:{tenant.pk}") or None
+            if parent_password_mode == "fixed" and not parent_password:
+                raise RegistrationApprovalError("학부모 비밀번호 선택값을 확인하지 못했습니다. 가입 신청을 다시 확인해 주세요.", status_code=400)
+
         _acquire_registration_identity_locks(tenant, reg)
         existing_student = _resolve_existing_student(tenant=tenant, reg=reg)
         if existing_student is not None:
@@ -616,6 +626,8 @@ def approve_registration_request(
             tenant=tenant,
             password_hash=reg.initial_password,
             account_notice_student_password=signup_password or None,
+            parent_password=parent_password,
+            parent_password_mode=parent_password_mode,
             student_data={
                 "name": reg.name,
                 "parent_phone": parent_phone,
@@ -644,7 +656,9 @@ def approve_registration_request(
         reg.student = result.student
         reg.initial_password_plain = ""
         reg.initial_password_ciphertext = ""
-        reg.save(update_fields=["status", "student", "initial_password_plain", "initial_password_ciphertext", "updated_at"])
+        reg.parent_initial_password_ciphertext = ""
+        reg.parent_initial_password_mode = ""
+        reg.save(update_fields=["status", "student", "initial_password_plain", "initial_password_ciphertext", "parent_initial_password_ciphertext", "parent_initial_password_mode", "updated_at"])
 
     created_student = result.student
     notice = RegistrationApprovalNotice(
@@ -667,6 +681,8 @@ def resolve_deleted_registration_request(
     tenant,
     registration_id: int,
     student_id: int,
+    parent_password: str | None = None,
+    parent_password_mode: str | None = None,
 ) -> RegistrationApprovalResult:
     """Explicitly restore one selected deleted identity and approve signup.
 
@@ -686,6 +702,12 @@ def resolve_deleted_registration_request(
         )
         if reg.status != StudentRegistrationRequest.PENDING:
             raise RegistrationApprovalError("이미 처리된 신청입니다.", status_code=409)
+
+        if reg.parent_initial_password_mode:
+            parent_password_mode = reg.parent_initial_password_mode
+            parent_password = recover_password(reg.parent_initial_password_ciphertext, context=f"signup-parent:{tenant.pk}") or None
+            if parent_password_mode == "fixed" and not parent_password:
+                raise RegistrationApprovalError("학부모 비밀번호 선택값을 확인하지 못했습니다. 가입 신청을 다시 확인해 주세요.", status_code=400)
 
         _acquire_registration_identity_locks(tenant, reg)
         identity_query = _registration_identity_query(tenant, reg)
@@ -711,6 +733,8 @@ def resolve_deleted_registration_request(
             exclude_user_id=candidate.user_id,
         )
         profile_data = {
+            "parent_initial_password": parent_password or "",
+            "parent_initial_password_mode": parent_password_mode,
             "name": reg.name,
             "phone": reg.phone,
             "parent_phone": reg.parent_phone,
@@ -728,7 +752,7 @@ def resolve_deleted_registration_request(
             "ps_number": login_id,
         }
         try:
-            restored = restore_student(candidate, tenant=tenant)
+            restored = restore_student(candidate, tenant=tenant, parent_initial_password=parent_password, parent_initial_password_mode=parent_password_mode)
             profile_result = update_student_profile(
                 student=restored.student,
                 tenant=tenant,
@@ -758,7 +782,9 @@ def resolve_deleted_registration_request(
         reg.student = student
         reg.initial_password_plain = ""
         reg.initial_password_ciphertext = ""
-        reg.save(update_fields=["status", "student", "initial_password_plain", "initial_password_ciphertext", "updated_at"])
+        reg.parent_initial_password_ciphertext = ""
+        reg.parent_initial_password_mode = ""
+        reg.save(update_fields=["status", "student", "initial_password_plain", "initial_password_ciphertext", "parent_initial_password_ciphertext", "parent_initial_password_mode", "updated_at"])
 
     notice = RegistrationApprovalNotice(
         student_name=student.name,

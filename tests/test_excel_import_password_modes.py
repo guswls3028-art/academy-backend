@@ -23,10 +23,11 @@ class StudentExcelImportPasswordModeTests(TestCase):
             name="엑셀 비밀번호 학원",
             code="excel_password_modes",
             is_active=True,
+            account_password_policy={"parent_mode": "phone_last4"},
         )
 
-    def test_phone_last4_mode_is_rejected_without_creating_accounts(self):
-        with self.assertRaisesRegex(StudentImportPasswordError, "fixed, random 또는 tenant"):
+    def test_unset_student_mode_is_rejected_without_creating_accounts(self):
+        with self.assertRaisesRegex(StudentImportPasswordError, "방식을 선택"):
             import_students_from_rows(
                 tenant_id=self.tenant.id,
                 students_data=[
@@ -40,13 +41,13 @@ class StudentExcelImportPasswordModeTests(TestCase):
                     }
                 ],
                 initial_password="",
-                password_mode="phone_last4",
+                password_mode=None,
             )
 
         self.assertFalse(Student.objects.filter(tenant=self.tenant).exists())
 
     @patch("apps.domains.messaging.services.send_welcome_messages")
-    @patch("apps.domains.students.services.import_passwords.secrets.randbelow", return_value=42)
+    @patch("apps.core.services.initial_password_policy.generate_temp_password", return_value="000042")
     def test_random_mode_returns_download_credentials_and_sets_password(
         self,
         _random_mock,

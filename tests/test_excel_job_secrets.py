@@ -107,6 +107,7 @@ class ExcelJobAtomicCompletionTests(TestCase):
             name="원자적 엑셀 작업 학원",
             code="excel_atomic_completion",
             is_active=True,
+            account_password_policy={"parent_mode": "phone_last4"},
         )
         self.job = AIJobModel.objects.create(
             job_id="excel-atomic-job",
@@ -122,8 +123,8 @@ class ExcelJobAtomicCompletionTests(TestCase):
 
     @patch("apps.domains.messaging.services.send_welcome_messages")
     @patch(
-        "apps.domains.students.services.import_passwords.secrets.randbelow",
-        return_value=42,
+        "apps.core.services.initial_password_policy.generate_temp_password",
+        return_value="000042",
     )
     def test_account_and_encrypted_credentials_commit_together(
         self,
