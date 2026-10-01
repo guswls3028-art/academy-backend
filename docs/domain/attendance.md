@@ -91,6 +91,13 @@ PostgreSQL 잠금 경합을 검증한다. `test_bulk_present_undo.py`는 잠금 
 칸을 `결석 제외`로 표시한다. 프런트엔드 조작과 모바일 검증은
 [`ATTENDANCE-ROSTER-SAFETY.md`](https://github.com/guswls3028-art/academy-frontend/blob/main/docs/ATTENDANCE-ROSTER-SAFETY.md)가 소유한다.
 
+이미 저장된 시험 점수는 실제 결석 중에도 일반 합산 점수 수정 API에서 유효한
+성적 편집 세션을 통해 수정할 수 있다. 수정한 점수와 응시·제출 이력은 재조회에도
+남는다. 별도 오답 확인 판정 API는 현재 차시가 `ABSENT`면 `400`과 실제 결석
+사유를 반환하며, 출결을 `ONLINE` 또는 `PRESENT`로 바로잡은 후 다시 저장할 수
+있다. 화면은 이 제한 사유와 출결 수정 경로를 보여야 하며 과거 점수 수정 가능
+여부와 혼동해서는 안 된다.
+
 상태 저장에 실패하면 출결과 재계산은 함께 롤백되며 기존 평가 대상이 유지된다.
 교직원은 출결 상태를 다시 확인하고 저장을 재시도한다. 범위와 이력 보존은
 `tests/test_attendance_learning_todo_eligibility_pg.py`의 배정·학생 조회·클리닉·

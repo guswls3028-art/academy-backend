@@ -23,11 +23,14 @@ from apps.domains.homework.views.homework_assignment_view import (
 )
 from apps.domains.homework_results.models import Homework, HomeworkScore
 from apps.domains.lectures.models import Lecture, Session
-from apps.domains.progress.models import ClinicLink, SessionProgress
+from apps.domains.progress.models import AssessmentCorrection, ClinicLink, SessionProgress
 from apps.domains.progress.services.clinic_trigger_service import ClinicTriggerService
-from apps.domains.results.models import ExamAttempt, Result
+from apps.domains.results.models import ExamAttempt, Result, ScoreEditDraft
 from apps.domains.results.services.clinic_target_service import ClinicTargetService
-from apps.domains.results.views.session_scores_view import SessionScoresView
+from apps.domains.results.views.session_scores_view import (
+    SessionScoreCorrectionView,
+    SessionScoresView,
+)
 from apps.domains.student_app.exams.views import StudentExamListView
 from apps.domains.students.models import Student
 from apps.domains.submissions.models import Submission
@@ -655,6 +658,72 @@ class LearningTodoEligibilityPostgresTests(TransactionTestCase):
             [item["homework_id"] for item in row["homeworks"]],
             [homework.id],
         )
+
+        # An authored score remains editable through the normal manual-score API,
+        # even while absence suppresses new assessment TODO and clinic targeting.
+        ScoreEditDraft.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            editor_user=self.admin,
+            payload={"client_id": "absence-history-test", "changes": []},
+        )
+        with patch(
+            "apps.domains.results.views.admin_exam_total_score_view.dispatch_progress_pipeline"
+        ):
+            edited = self.client.patch(
+                f"/api/v1/results/admin/exams/{exam.id}/enrollments/{enrollment.id}/score/",
+                {"score": 81},
+                format="json",
+                HTTP_X_SCORE_EDITOR_CLIENT="absence-history-test",
+                HTTP_X_SCORE_SESSION_ID=str(self.session.id),
+                **self.headers,
+            )
+        self.assertEqual(edited.status_code, 200, edited.data)
+        result.refresh_from_db()
+        self.assertEqual(
+            result.id,
+            Result.objects.get(
+                target_type="exam", target_id=exam.id, enrollment=enrollment
+            ).id,
+        )
+        self.assertEqual(result.total_score, 81)
+        reloaded = self._session_scores()
+        reloaded_row = next(
+            item for item in reloaded.data["rows"]
+            if int(item["enrollment_id"]) == enrollment.id
+        )
+        self.assertFalse(reloaded_row["assessment_todo_eligible"])
+        self.assertEqual(reloaded_row["exams"][0]["block"]["score"], 81)
+
+        correction_payload = {
+            "enrollment_id": enrollment.id,
+            "source_type": "exam",
+            "source_id": exam.id,
+            "completed": True,
+            "note": "현장 오답 해결 확인",
+        }
+        correction_request = self.factory.patch(
+            f"/api/v1/results/admin/sessions/{self.session.id}/score-correction/",
+            correction_payload,
+            format="json",
+        )
+        correction_request.tenant = self.tenant
+        force_authenticate(correction_request, user=self.admin)
+        absent_correction = SessionScoreCorrectionView.as_view()(
+            correction_request, session_id=self.session.id
+        )
+        self.assertEqual(absent_correction.status_code, 400, absent_correction.data)
+        self.assertIn("실제 결석", str(absent_correction.data))
+        self.assertFalse(
+            AssessmentCorrection.objects.filter(
+                tenant=self.tenant,
+                enrollment=enrollment,
+                session=self.session,
+                source_type="exam",
+                source_id=exam.id,
+            ).exists()
+        )
+
         link.resolved_at = timezone.now()
         link.save(update_fields=["resolved_at"])
         historical_targets = ClinicTargetService.list_admin_targets(
@@ -670,6 +739,30 @@ class LearningTodoEligibilityPostgresTests(TransactionTestCase):
             },
         )
         self.assertEqual(self._unrelated_write_counts(), writes_before)
+
+        restored = self._patch_attendance("ONLINE", current_status="ONLINE")
+        self.assertEqual(restored.status_code, 200, restored.data)
+        correction_request = self.factory.patch(
+            f"/api/v1/results/admin/sessions/{self.session.id}/score-correction/",
+            correction_payload,
+            format="json",
+        )
+        correction_request.tenant = self.tenant
+        force_authenticate(correction_request, user=self.admin)
+        restored_correction = SessionScoreCorrectionView.as_view()(
+            correction_request, session_id=self.session.id
+        )
+        self.assertEqual(restored_correction.status_code, 200, restored_correction.data)
+        self.assertTrue(
+            AssessmentCorrection.objects.filter(
+                tenant=self.tenant,
+                enrollment=enrollment,
+                session=self.session,
+                source_type="exam",
+                source_id=exam.id,
+                completed=True,
+            ).exists()
+        )
 
     def test_student_exam_todo_excludes_absent_but_preserves_history_without_retest(self):
         exam = Exam.objects.create(
