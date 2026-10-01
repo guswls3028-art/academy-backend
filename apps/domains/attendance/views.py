@@ -39,6 +39,7 @@ from apps.support.attendance.view_dependencies import (
     dispatch_job,
     get_exams_for_session,
 )
+from apps.support.attendance.learning_todo_eligibility import reconcile_learning_todo_targets
 
 logger = logging.getLogger(__name__)
 
@@ -235,7 +236,11 @@ class AttendanceViewSet(ModelViewSet):
         conflict = _secession_status_conflict(instance, request.data.get("status"))
         if conflict is not None:
             return conflict
-        return super().update(request, *args, **kwargs)
+        response = super().update(request, *args, **kwargs)
+        if "status" in request.data:
+            instance.refresh_from_db()
+            reconcile_learning_todo_targets(instance)
+        return response
 
     @transaction.atomic
     def destroy(self, request, *args, **kwargs):
@@ -367,6 +372,8 @@ class AttendanceViewSet(ModelViewSet):
 
         # 일반 강의 출결 저장은 알림 발송과 분리한다. 입실/결석 안내는
         # 전용 preview → confirm 수동 발송 경로에서만 요청할 수 있다.
+        # DRF partial_update delegates to self.update, which reconciles the
+        # persisted status once inside its transaction.
         return super().partial_update(request, *args, **kwargs)
 
     # =========================================================
@@ -403,6 +410,10 @@ class AttendanceViewSet(ModelViewSet):
         target_ids = [attendance_id for attendance_id, _ in target_rows]
 
         updated = Attendance.objects.filter(id__in=target_ids).update(status="PRESENT")
+        for attendance in Attendance.objects.select_related(
+            "tenant", "session", "session__lecture", "enrollment"
+        ).filter(id__in=target_ids):
+            reconcile_learning_todo_targets(attendance)
 
         undo_token = None
         if target_rows:
@@ -527,6 +538,8 @@ class AttendanceViewSet(ModelViewSet):
         for row in rows:
             row.status = previous_status_by_id[row.id]
         Attendance.objects.bulk_update(rows, ["status"])
+        for row in rows:
+            reconcile_learning_todo_targets(row)
 
         return Response(
             {"restored": len(rows), "session": session.id},
@@ -536,6 +549,7 @@ class AttendanceViewSet(ModelViewSet):
     # =========================================================
     # 1️⃣ 세션 기준 학생 등록
     # =========================================================
+    @transaction.atomic
     @action(detail=False, methods=["post"])
     def bulk_create(self, request):
         tenant = getattr(request, "tenant", None)
@@ -548,6 +562,8 @@ class AttendanceViewSet(ModelViewSet):
             session_id=session_id,
             student_ids=student_ids,
         )
+        for attendance in created:
+            reconcile_learning_todo_targets(attendance)
 
         # 차시 학생 등록(bulk_create)은 행정 작업 — 입실 알림톡을 발송하지 않음.
         # 일반 강의 입실/결석 안내는 별도 수동 preview → confirm 경로만 사용한다.

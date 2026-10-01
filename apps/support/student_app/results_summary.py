@@ -8,6 +8,7 @@ from typing import Any
 from django.db.models import F, Max
 
 from apps.domains.enrollment.selectors import learning_history_enrollments_for_student
+from apps.domains.attendance.models import Attendance
 from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.homework_results.models import HomeworkScore
 from apps.domains.submissions.models import Submission
@@ -405,6 +406,23 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
         .select_related("homework", "session", "session__lecture")
         .order_by("-homework__updated_at", "-homework_id")
     )
+    assigned_pairs = {
+        (int(assignment.enrollment_id), int(assignment.session_id))
+        for assignment in assigned_homeworks
+    }
+    absent_assignment_pairs = {
+        (int(enrollment_id), int(session_id))
+        for enrollment_id, session_id in Attendance.objects.filter(
+            tenant=tenant,
+            enrollment_id__in={pair[0] for pair in assigned_pairs},
+            session_id__in={pair[1] for pair in assigned_pairs},
+            enrollment__tenant=tenant,
+            session__lecture__tenant=tenant,
+            enrollment__lecture_id=F("session__lecture_id"),
+            status="ABSENT",
+        ).values_list("enrollment_id", "session_id")
+        if (int(enrollment_id), int(session_id)) in assigned_pairs
+    }
     assigned_homework_ids = {assignment.homework_id for assignment in assigned_homeworks}
     homework_ids = list(
         {score.homework_id for score in homework_scores} | assigned_homework_ids
@@ -547,6 +565,15 @@ def build_student_grades_summary(*, tenant: Any, student: Any) -> dict[str, Any]
             assignment.homework_id,
         ))
         teacher_resolved = resolution == "MANUAL_OVERRIDE"
+        if (
+            (int(assignment.enrollment_id), int(assignment.session_id)) in absent_assignment_pairs
+            and (assignment.enrollment_id, assignment.homework_id) not in submitted_revisions
+            and (assignment.enrollment_id, assignment.homework_id) not in submission_media_lock_keys
+            and (assignment.enrollment_id, assignment.homework_id) not in homework_retake_counts
+            and key not in unscored_reviewed_revisions
+            and not teacher_resolved
+        ):
+            continue
         session_metadata = _homework_session_metadata(session)
 
         homework_list.append({
