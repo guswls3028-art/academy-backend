@@ -128,8 +128,9 @@ def inventory_matchup_delete_plan(*, tenant: Any, inventory_file_ids: list[int])
                 raise ValueError("matchup public key is not an exact key")
             keys.add(cleanup["public_image_key"])
     for document in documents:
-        page_keys = (document.meta or {}).get("page_image_keys") or []
-        if not isinstance(page_keys, list) or any(not isinstance(key, str) for key in page_keys):
-            raise ValueError("matchup page keys are not an exact key list")
-        keys.update(key for key in page_keys if key)
+        for field in ("page_image_keys", "manual_page_image_keys"):
+            page_keys = (document.meta or {}).get(field) or []
+            if not isinstance(page_keys, list) or any(not isinstance(key, str) for key in page_keys):
+                raise ValueError("matchup page keys are not an exact key list")
+            keys.update(key for key in page_keys if key)
     return len(documents), keys, None

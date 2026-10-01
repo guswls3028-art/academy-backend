@@ -220,10 +220,10 @@ class InventoryDeleteDurabilityTests(InventoryDeleteFixtures, TestCase):
 
         file = self._file()
         prefix = f"tenants/{self.tenant.id}/matchup/"
-        keys = [prefix + name for name in ("problem.png", "public.png", "page.png", "proposal.png")]
+        keys = [prefix + name for name in ("problem.png", "public.png", "page.png", "proposal.png", "manual-page.png")]
         document = MatchupDocument.objects.create(
             tenant=self.tenant, inventory_file=file, r2_key=file.r2_key,
-            title="Synthetic document", meta={"page_image_keys": [keys[2]]},
+            title="Synthetic document", meta={"page_image_keys": [keys[2]], "manual_page_image_keys": ["", keys[4]]},
         )
         problem = MatchupProblem.objects.create(
             tenant=self.tenant, document=document, number=1, image_key=keys[0],
@@ -236,7 +236,7 @@ class InventoryDeleteDurabilityTests(InventoryDeleteFixtures, TestCase):
             response = self._delete_file(file.id)
             self.assertEqual(response.status_code, 204)
             self.assertEqual(self.deleted_keys, [])
-            self.assertEqual(SubmissionStorageCleanupIntent.objects.count(), 5)
+            self.assertEqual(SubmissionStorageCleanupIntent.objects.count(), 6)
         self.assertCountEqual(self.deleted_keys, [file.r2_key, *keys])
         self.assertFalse(MatchupDocument.objects.filter(pk=document.id).exists())
         self.assertFalse(MatchupProblem.objects.filter(pk=problem.id).exists())
@@ -246,10 +246,11 @@ class InventoryDeleteDurabilityTests(InventoryDeleteFixtures, TestCase):
         from apps.domains.matchup.models import MatchupDocument, MatchupProblem
 
         first, second = self._file("public.png"), self._file("page.png")
+        third = self._file("manual-page.png")
         owner_file = self._file("owner.pdf")
         document = MatchupDocument.objects.create(
             tenant=self.tenant, inventory_file=owner_file, r2_key=owner_file.r2_key,
-            title="Surviving owner", meta={"page_image_keys": [second.r2_key]},
+            title="Surviving owner", meta={"page_image_keys": [second.r2_key], "manual_page_image_keys": ["", third.r2_key]},
         )
         problem = MatchupProblem.objects.create(
             tenant=self.tenant, document=document, number=1,
@@ -258,6 +259,7 @@ class InventoryDeleteDurabilityTests(InventoryDeleteFixtures, TestCase):
         with self.captureOnCommitCallbacks(execute=True):
             self.assertEqual(self._delete_file(first.id).status_code, 204)
             self.assertEqual(self._delete_file(second.id).status_code, 204)
+            self.assertEqual(self._delete_file(third.id).status_code, 204)
         self.assertEqual(self.deleted_keys, [])
         self.assertFalse(SubmissionStorageCleanupIntent.objects.exists())
         self.assertTrue(MatchupDocument.objects.filter(pk=document.id).exists())

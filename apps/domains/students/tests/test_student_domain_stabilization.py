@@ -814,6 +814,7 @@ class TestB10BulkResolveConflictsAtomicity(TestCase):
             "/api/v1/students/bulk_resolve_conflicts/",
             data={
                 "initial_password": "chosen-new-password",
+                "parent_initial_password": " parent chosen password ",
                 "resolutions": [
                     {
                         "row": 2,
@@ -846,7 +847,7 @@ class TestB10BulkResolveConflictsAtomicity(TestCase):
         self.assertEqual(replacement.ps_number, "CHOSEN-LOGIN-ID")
         self.assertTrue(replacement.user.check_password("chosen-new-password"))
         self.assertTrue(
-            replacement.parent.user.check_password("chosen-new-password")
+            replacement.parent.user.check_password(" parent chosen password ")
         )
         self.assertFalse(Student.objects.filter(pk=self.student2.id).exists())
 

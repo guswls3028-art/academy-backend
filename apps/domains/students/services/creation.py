@@ -12,6 +12,8 @@ from apps.core.services.login_identifier import normalize_login_identifier
 from apps.support.students.lifecycle_dependencies import ensure_parent_account_for_student
 
 from .account_notice import stage_pending_account_notice
+from apps.core.services.initial_password_policy import initial_password
+from apps.core.services.account_credentials import account_notice_password, remember_account_password
 from .identity import (
     StudentIdentityError,
     canonical_student_phone,
@@ -42,6 +44,7 @@ def create_student_account(
     student_data: Mapping[str, Any],
     password: str | None = None,
     password_hash: str | None = None,
+    parent_password: str | None = None,
     must_change_password: bool = False,
     account_notice_student_password: str | None = None,
     account_notice_parent_password: str | None = None,
@@ -58,7 +61,7 @@ def create_student_account(
     shape, and message dispatch so existing surfaces can migrate safely.
     """
     if password is None and password_hash is None:
-        raise ValueError("password or password_hash is required")
+        password = initial_password(tenant, role="student", phone=canonical_student_phone(phone=student_data.get("phone"), parent_phone=student_data.get("parent_phone")))
     if password is not None and password_hash is not None:
         raise ValueError("password and password_hash are mutually exclusive")
     if password is not None and len(str(password)) < 4:
@@ -101,13 +104,7 @@ def create_student_account(
                 tenant=tenant,
                 parent_phone=parent_phone,
                 student_name=name,
-                initial_password=password,
-                initial_password_hash=password_hash,
-                initial_password_notice=(
-                    account_notice_parent_password
-                    or account_notice_student_password
-                    or password
-                ),
+                initial_password=initial_password(tenant, role="parent", phone=parent_phone, supplied=parent_password),
             )
             parent = parent_result.parent
             parent_password_for_notice = parent_result.password_for_notice
@@ -125,6 +122,9 @@ def create_student_account(
             user.set_password(password)
         user.must_change_password = must_change_password
         user.save()
+        raw_notice_password = account_notice_student_password or password
+        if raw_notice_password and user.check_password(raw_notice_password):
+            remember_account_password(user, raw_notice_password)
 
         student = student_repo.student_create(
             tenant=tenant,
@@ -139,15 +139,11 @@ def create_student_account(
             role="student",
         )
 
-        notice_student_password = account_notice_student_password or password
-        if not notice_student_password:
-            raise ValueError(
-                "account_notice_student_password is required with password_hash"
-            )
+        notice_student_password = account_notice_password(user, raw_notice_password)
         stage_pending_account_notice(
             student=student,
             student_password=notice_student_password,
-            parent_password=parent_password_for_notice or "변경되지 않음",
+            parent_password=parent_password_for_notice or notice_student_password,
             origin_type=account_notice_origin_type,
             origin_id=account_notice_origin_id,
         )

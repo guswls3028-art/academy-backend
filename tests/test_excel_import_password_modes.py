@@ -26,7 +26,7 @@ class StudentExcelImportPasswordModeTests(TestCase):
         )
 
     def test_phone_last4_mode_is_rejected_without_creating_accounts(self):
-        with self.assertRaisesRegex(StudentImportPasswordError, "fixed 또는 random"):
+        with self.assertRaisesRegex(StudentImportPasswordError, "fixed, random 또는 tenant"):
             import_students_from_rows(
                 tenant_id=self.tenant.id,
                 students_data=[

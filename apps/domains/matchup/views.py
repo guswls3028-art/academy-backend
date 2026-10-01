@@ -11,6 +11,7 @@ from django.views import View
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
+from rest_framework.exceptions import AuthenticationFailed
 
 from apps.core.authentication import TokenVersionJWTAuthentication as JWTAuthentication
 
@@ -90,12 +91,17 @@ def _tenant_required(view_func):
 def _jwt_required(view_func):
     def wrapped(request, *args, **kwargs):
         auth = JWTAuthentication()
-        result = auth.authenticate(request)
+        try:
+            result = auth.authenticate(request)
+        except AuthenticationFailed:
+            result = None
         if result is None:
-            return JsonResponse(
+            response = JsonResponse(
                 {"detail": "Authentication required", "code": "auth_required"},
                 status=401,
             )
+            response["WWW-Authenticate"] = auth.authenticate_header(request)
+            return response
         request.user, request.auth = result[0], result[1]
         return view_func(request, *args, **kwargs)
     return wrapped
@@ -178,8 +184,8 @@ def _reconcile_document_from_ai_job(doc: MatchupDocument) -> bool:
     """AIJob은 끝났지만 RDS 고갈 등으로 domain callback이 실패한 문서를 복구한다.
 
     업로드 직후 대량 처리 중 DB connection slot이 고갈되면 AI job은 DONE인데
-    MatchupDocument만 processing에 남을 수 있다. 목록/상태 조회 시 DB의 AIResult를
-    다시 적용해 멱등 복구한다.
+    MatchupDocument만 processing에 남을 수 있다. 명시적으로 승인된 운영 복구에서
+    DB의 AIResult를 다시 적용하며, 읽기 전용 목록/상태 조회에서는 호출하지 않는다.
     """
     if doc.status not in ("pending", "processing") or not doc.ai_job_id:
         return False
@@ -323,6 +329,13 @@ class DocumentUploadView(View):
                 status=400,
             )
 
+        exam_metadata = MatchupDocumentUpdateSerializer(data={
+            field: request.POST[field]
+            for field in ("exam_cycle", "exam_year") if field in request.POST
+        })
+        if not exam_metadata.is_valid():
+            return JsonResponse(exam_metadata.errors, status=400)
+
         tenant = request.tenant
         doc_count = MatchupDocument.objects.filter(tenant=tenant).count()
         if doc_count >= MAX_DOCUMENTS_PER_TENANT:
@@ -398,6 +411,7 @@ class DocumentUploadView(View):
             category=category,
             subject=subject,
             grade_level=grade_level,
+            **exam_metadata.validated_data,
             upload_intent=upload_intent,
             author=getattr(request, "user", None),
         )
@@ -428,6 +442,13 @@ class DocumentPromoteFromInventoryView(View):
         inv_file_id = body.get("inventory_file_id")
         if not inv_file_id:
             return JsonResponse({"detail": "inventory_file_id required"}, status=400)
+
+        exam_metadata = MatchupDocumentUpdateSerializer(data={
+            field: body[field]
+            for field in ("exam_cycle", "exam_year") if field in body
+        })
+        if not exam_metadata.is_valid():
+            return JsonResponse(exam_metadata.errors, status=400)
 
         InventoryFile = get_inventory_file_model()
         try:
@@ -490,6 +511,7 @@ class DocumentPromoteFromInventoryView(View):
                     category=category,
                     subject=subject,
                     grade_level=grade_level,
+                    **exam_metadata.validated_data,
                     upload_intent=upload_intent,
                     author=getattr(request, "user", None),
                 )
@@ -521,8 +543,6 @@ class DocumentListView(View):
             return JsonResponse({"detail": "Staff only"}, status=403)
 
         docs = list(MatchupDocument.objects.filter(tenant=request.tenant))
-        for doc in docs:
-            _reconcile_document_from_ai_job(doc)
         data = MatchupDocumentSerializer(docs, many=True).data
         return JsonResponse(data, safe=False)
 
@@ -897,7 +917,6 @@ class DocumentJobView(View):
         except MatchupDocument.DoesNotExist:
             return JsonResponse({"detail": "Not found"}, status=404)
 
-        _reconcile_document_from_ai_job(doc)
         return JsonResponse(
             {
                 "document_id": doc.id,
@@ -1371,7 +1390,12 @@ class DocumentPagesView(View):
 
         from .services import ensure_document_page_images
         try:
-            pages = ensure_document_page_images(doc)
+            page_index = request.GET.get("page_index")
+            pages = ensure_document_page_images(
+                doc, page_index=int(page_index) if page_index is not None else None,
+            )
+        except ValueError as exc:
+            return JsonResponse({"detail": str(exc)}, status=400)
         except Exception:
             logger.exception("ensure_document_page_images failed (doc=%s)", doc.id)
             return JsonResponse({"detail": "페이지 이미지 준비 실패"}, status=500)

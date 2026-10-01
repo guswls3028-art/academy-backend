@@ -66,6 +66,7 @@ class User(AbstractUser):
         blank=True,
         help_text="첫 접속 계정 안내를 확인한 시각. null이면 안내 대상.",
     )
+    account_notice_password_ciphertext = models.TextField(blank=True, default="", db_default="", editable=False)
     token_version = models.PositiveIntegerField(
         default=0,
         help_text="비밀번호 변경 시 +1. JWT claim과 비교하여 기존 토큰 무효화.",

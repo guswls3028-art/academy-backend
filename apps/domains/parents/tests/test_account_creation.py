@@ -25,15 +25,10 @@ class ParentAccountCreationTests(TestCase):
         self.assertEqual(result.password_for_notice, "chosen-5678")
         self.assertEqual(result.parent.user.username, f"p_{self.tenant.id}_01012345678")
 
-    def test_new_parent_requires_explicit_password(self):
-        with self.assertRaisesMessage(ValueError, "초기 비밀번호를 입력"):
-            ensure_parent_account_for_student(
-                tenant=self.tenant,
-                parent_phone="01012345678",
-                student_name="학생",
-            )
-
-        self.assertFalse(Parent.objects.filter(tenant=self.tenant).exists())
+    def test_new_parent_uses_tenant_policy_when_password_is_omitted(self):
+        result = ensure_parent_account_for_student(tenant=self.tenant, parent_phone="01012345678", student_name="학생")
+        self.assertTrue(result.parent.user.check_password("5678"))
+        self.assertEqual(result.password_for_notice, "5678")
 
     def test_explicit_student_registration_password_is_shared_with_new_parent(self):
         result = ensure_parent_account_for_student(
@@ -125,7 +120,7 @@ class ParentAccountCreationTests(TestCase):
         self.assertFalse(result.credentials_initialized)
         self.assertTrue(user.check_password("preserved-password"))
 
-    def test_unusable_existing_credentials_require_and_use_explicit_password(self):
+    def test_unusable_existing_credentials_use_explicit_override(self):
         phone = "01012345678"
         user = get_user_model().objects.create_user(
             username=f"p_{self.tenant.id}_{phone}",
@@ -137,13 +132,6 @@ class ParentAccountCreationTests(TestCase):
             name="학생 학부모",
             phone=phone,
         )
-
-        with self.assertRaisesMessage(ValueError, "초기 비밀번호를 입력"):
-            ensure_parent_account_for_student(
-                tenant=self.tenant,
-                parent_phone=phone,
-                student_name="학생",
-            )
 
         result = ensure_parent_account_for_student(
             tenant=self.tenant,

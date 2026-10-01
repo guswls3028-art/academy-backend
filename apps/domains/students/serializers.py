@@ -375,16 +375,19 @@ class StudentBulkItemSerializer(serializers.Serializer):
 
 
 class StudentBulkCreateSerializer(serializers.Serializer):
-    initial_password = serializers.CharField(min_length=4, write_only=True)
+    initial_password = serializers.CharField(min_length=4, write_only=True, required=False, allow_blank=True, trim_whitespace=False)
     students = StudentBulkItemSerializer(many=True)
 
 
 class StudentCreateSerializer(serializers.ModelSerializer):
+    parent_initial_password = serializers.CharField(write_only=True, required=False, allow_blank=True, min_length=4, trim_whitespace=False)
     custom_fields = serializers.DictField(required=False, default=dict)
     initial_password = serializers.CharField(
         write_only=True,
-        required=True,
+        required=False,
+        allow_blank=True,
         min_length=4,
+        trim_whitespace=False,
     )
     no_phone = serializers.BooleanField(
         write_only=True,
@@ -536,6 +539,7 @@ class StudentUpdateSerializer(serializers.ModelSerializer):
         required=False,
         allow_blank=True,
         min_length=4,
+        trim_whitespace=False,
     )
 
     class Meta:

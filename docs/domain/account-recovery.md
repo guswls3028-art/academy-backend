@@ -47,7 +47,7 @@ POST /api/v1/auth/account-recovery/dispatch/
 학생 셀프 회원가입은 `initial_password`와 write-only
 `password_confirmation`의 exact 일치를 서버에서 먼저 검증한다. 불일치하면
 가입신청을 포함해 Student/User/membership 쓰기가 0건이며, 확인값 원문·별도 해시는
-저장하거나 로그로 남기지 않는다. 일치하면 기존처럼 `initial_password`의 강한
+저장하거나 로그로 남기지 않는다. 일치하면 `initial_password`의 강한
 Django hash 하나만 가입신청에 저장한다.
 
 일반 승인은 삭제 학생을 자동 선택하지 않는다. 현재 테넌트에서 exact 복원
@@ -97,8 +97,9 @@ Student(tenant, deleted_at is null, name__iexact, parent_phone == 요청번호)
 
 - 비밀번호를 변경하지 않는다.
 - 학생은 `registration_approved_student`, 학부모는 `registration_approved_parent` 트리거를 재사용한다.
-- 비밀번호 변수에는 `변경되지 않음`을 넣는다.
-- `#{비밀번호안내}`로 비밀번호를 잊었으면 비밀번호 찾기를 사용하라고 안내한다.
+- 비밀번호 변수에는 현재 hash 또는 유효한 pending credential과 일치하는 실제 로그인 값을 넣는다.
+- 과거 원문이 없으면 기존 hash·세션을 유지하며 30일 안내용 credential을 발급한다. 공개 복구에서 먼저 받은 유효한 값은 재사용하고 30분 TTL을 연장하지 않는다.
+- `#{비밀번호안내}`로 안내된 값의 로그인과 본인 변경 동선을 설명한다. 원문·보관·권한 계약은 [학부모 계정](parent-account.md)의 현재 정책을 따른다.
 
 ### `mode=password`
 
@@ -252,3 +253,6 @@ legacy 공개 호환 규칙:
 - 실발송: 운영 설정에서 실제 알림톡 enqueue와 워커 발송 성공을 확인해야 한다.
 - 단말 확인: 실사용 번호로 받은 알림톡 본문을 확인해야 상품 QA가 닫힌다.
 - 테스트 데이터는 `[E2E-{timestamp}]` 태그를 사용하고 cleanup한다.
+
+계정 안내·찾기·초기화의 접속 링크는 업무 테넌트 primary domain을 사용한다.
+공개 응답과 일반 계정 조회에 비밀번호를 반환하지 않는다.

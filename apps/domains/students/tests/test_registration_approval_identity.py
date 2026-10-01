@@ -158,8 +158,9 @@ class RegistrationApprovalIdentityTests(TestCase):
             original["parent_notice"],
         )
         self.assertEqual(result.notice.student_id, original["ps_number"])
-        self.assertEqual(result.notice.student_password, "변경되지 않음")
-        self.assertEqual(result.notice.parent_password, "변경되지 않음")
+        # Identity reuse does not enqueue another account notice or touch credentials.
+        self.assertEqual(result.notice.student_password, "")
+        self.assertEqual(result.notice.parent_password, "")
 
     def test_approval_fails_closed_when_phone_matches_multiple_active_students(self):
         self._student(ps_number="AMBIGUOUS-001")

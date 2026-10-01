@@ -29,3 +29,9 @@ def send_account_recovery_alimtalk(**kwargs: Any) -> bool:
     from apps.domains.messaging.policy import send_alimtalk_via_owner
 
     return send_alimtalk_via_owner(**kwargs)
+
+
+def get_tenant_account_site_url(tenant: Any) -> str:
+    from apps.domains.messaging.services.url_helpers import get_tenant_site_url
+
+    return get_tenant_site_url(tenant)

@@ -212,11 +212,12 @@ def _other_storage_owner_references(
         ).exists():
             return True
         document_model = django_apps.get_model("matchup", "MatchupDocument")
-        page_key_lists = document_model._base_manager.filter(
-            meta__page_image_keys__icontains=key,
-        ).values_list("meta__page_image_keys", flat=True)
-        if any(isinstance(keys, list) and key in keys for keys in page_key_lists):
-            return True
+        for field in ("page_image_keys", "manual_page_image_keys"):
+            page_key_lists = document_model._base_manager.filter(
+                **{f"meta__{field}__icontains": key},
+            ).values_list(f"meta__{field}", flat=True)
+            if any(isinstance(keys, list) and key in keys for keys in page_key_lists):
+                return True
     return False
 
 

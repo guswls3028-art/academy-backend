@@ -174,7 +174,7 @@ Required invariants:
   `omr_code`, `uses_identifier`, `Student.ps_number`, and the internal username.
   A phone-owned login ID also follows a later phone change; an explicitly
   custom login ID remains unchanged. Passwords are never reset by this update,
-  and the existing SYSTEM_AUTO account notice reports `변경되지 않음`.
+  and the existing SYSTEM_AUTO account notice reports 실제 로그인 가능한 비밀번호.
 
 Current canonical entry points:
 
@@ -295,10 +295,12 @@ Current rules:
   before any request, Student, User, or membership write. A mismatch is a
   field-keyed 400 and creates nothing. Confirmation is not a model field and
   neither its plaintext nor a second hash is persisted or logged.
-- a matching signup request stores one Django password hash only;
-  `initial_password_plain` must remain empty.
-- signup approval uses the original password hash and tells the student
-  "가입 신청 시 입력한 비밀번호" instead of exposing plaintext.
+- a matching signup request stores the Django password hash and a tenant-bound
+  encrypted password for the approved account notice; `initial_password_plain`
+  remains empty. Approval/rejection clears the request ciphertext.
+- signup approval keeps the exact chosen student password and stages that actual
+  login value. A new parent independently uses the tenant parent rule. Legacy
+  hash-only requests use a valid 30-day pending credential for the notice.
 - signup approval status transition and student creation are atomic in
   `approve_registration_request()`.
 - PostgreSQL approval acquires deterministic transaction locks for the
@@ -309,8 +311,8 @@ Current rules:
   creating anything. One exact active student graph is reused in place: the
   request is linked and approved without changing the existing Student,
   Parent, User, membership, `ps_number`, password, `token_version`, or pending
-  account-notice state. The approval result reports both passwords as
-  `변경되지 않음`.
+  account-notice state. Active reuse sends no new account notice, so its internal approval result
+  leaves the unused notice password fields empty.
 - multiple active matches or a mismatched tenant/phone/account graph fails
   closed with 409. A deleted match is never restored automatically: the staff
   approval response returns only same-tenant candidates whose exact recovery
@@ -387,14 +389,14 @@ Student account Alimtalk is system-critical but still fail-closed:
 - any student/parent account ID or password change sends a SYSTEM_AUTO account
   notice. ID-only changes, parent phone relinks, and first-time student phone
   registration use `registration_approved_*` with password phrase
-  `변경되지 않음`.
+  실제 로그인 가능한 비밀번호.
 - student creation and registration approval stage, but do not send, the initial
   account notice. The first confirmed active enrollment dispatches it once.
 - staged student and parent password notice values are encrypted separately and
   removed only after all expected durable outbox rows exist.
 - first-enrollment notices use service-returned parent password phrases:
   - new parent account: parent initial password phrase;
-  - existing parent account: `변경되지 않음`.
+  - existing parent account: 실제 로그인 가능한 비밀번호.
 - account notification logs are linked back through `source_tenant_id`,
   `target_type="account"`, and stable target IDs.
 - student detail UI may show account-notification status metadata, never the
@@ -954,3 +956,18 @@ and follows the [release contract](../operations/change-risk-and-release-bundle.
 - do not let OMR, clinic, homework, results, or QnA choose a student by name alone;
 - do not treat admin-side success as complete until the student/parent-facing
   projection is checked when that projection exists.
+
+### Initial account password policy and notices (2026-10-01)
+
+Staff may omit `initial_password` on single creation to apply the tenant student
+policy and independently override `parent_initial_password` for a new Parent.
+Signup preserves the applicant-selected student password; a new Parent uses its
+own tenant policy. Values in credential notices are verified against the active
+hash or a valid pending login credential, including before first enrollment.
+Legacy unknown hashes receive a reusable 30-day additional login credential;
+existing passwords remain active until the delivered credential is used. No
+placeholder prose is a password. The credential encryption, staff-only policy
+API, failure/retry, parent sharing and verification contract is owned by
+[parent-account.md](parent-account.md#초기-비밀번호-설정과-실제-로그인-안내-2026-10-01).
+Existing rows/hashes are preserved by additive migrations; old API instances
+can consume the new pending credentials during a compatible rolling release.

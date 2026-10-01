@@ -25,6 +25,7 @@ from .views.enrollment_matrix_view import (
     StudentEnrollmentMatrixView,
     StudentEnrollmentMatrixToggleView,
 )
+from .views.initial_password_settings import InitialPasswordSettingsView
 
 router = DefaultRouter()
 
@@ -39,6 +40,7 @@ router.register(r"registration_requests", RegistrationRequestViewSet, basename="
 router.register(r"", StudentViewSet, basename="student")
 
 urlpatterns = [
+    path("account-password-settings/", InitialPasswordSettingsView.as_view(), name="student-initial-password-settings"),
     path("me/activity/", StudentActivityRecordView.as_view(), name="student-activity-record"),
     path("me/activity/homework-open/", StudentHomeworkOpenActivityView.as_view(), name="student-homework-open-activity"),
     path("me/activity/exam-result-open/", StudentExamResultOpenActivityView.as_view(), name="student-exam-result-open-activity"),

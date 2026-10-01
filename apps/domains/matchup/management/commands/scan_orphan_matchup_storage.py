@@ -193,11 +193,12 @@ class Command(BaseCommand):
         for doc in doc_qs.only("r2_key", "meta"):
             if doc.r2_key:
                 keys.add(doc.r2_key)
-            page_keys = (doc.meta or {}).get("page_image_keys") or []
-            if isinstance(page_keys, list):
-                for k in page_keys:
-                    if isinstance(k, str) and k:
-                        keys.add(k)
+            for field in ("page_image_keys", "manual_page_image_keys"):
+                page_keys = (doc.meta or {}).get(field) or []
+                if isinstance(page_keys, list):
+                    for k in page_keys:
+                        if isinstance(k, str) and k:
+                            keys.add(k)
 
         # 2. MatchupProblem.image_key + public cleanup image (+ manual=True 별도 set)
         prob_qs = MatchupProblem.objects.exclude(image_key="")

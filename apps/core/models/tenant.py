@@ -12,6 +12,7 @@ class Tenant(models.Model):
 
     name = models.CharField(max_length=255)
     code = models.CharField(max_length=50, unique=True)
+    account_password_policy = models.JSONField(default=dict, db_default={}, blank=True, editable=False)
 
     owner_name = models.CharField(max_length=100, blank=True)
     phone = models.CharField(max_length=50, blank=True)

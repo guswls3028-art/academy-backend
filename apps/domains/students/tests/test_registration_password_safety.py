@@ -9,6 +9,7 @@ from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
+from apps.core.services.password import pending_password_reset_matches
 from apps.domains.students.models import Student, StudentRegistrationRequest
 from apps.domains.students.serializers import StudentCreateSerializer
 from apps.domains.students.services.account_notice import _decrypt
@@ -35,6 +36,12 @@ class RegistrationPasswordSafetyTests(TestCase):
             name="가입 관리자",
         )
         TenantMembership.ensure_active(tenant=self.tenant, user=self.admin, role="owner")
+
+    def _assert_notice_loginable(self, student, role):
+        password = _decrypt(getattr(student, f"pending_account_notice_{role}_password_ciphertext"))
+        user = student.user if role == "student" else student.parent.user
+        self.assertTrue(user.check_password(password) or pending_password_reset_matches(user, password))
+        self.assertNotIn(password, ("변경되지 않음", "가입 신청 시 입력한 비밀번호"))
 
     def _registration_payload(self) -> dict:
         return {
@@ -107,7 +114,7 @@ class RegistrationPasswordSafetyTests(TestCase):
             original_student_count,
         )
 
-    def test_approval_stages_non_secret_password_phrase_until_enrollment(self):
+    def test_approval_stages_loginable_credentials_without_plaintext_until_enrollment(self):
         reg = StudentRegistrationRequest.objects.create(
             tenant=self.tenant,
             status=StudentRegistrationRequest.PENDING,
@@ -130,18 +137,8 @@ class RegistrationPasswordSafetyTests(TestCase):
         error = _approve_registration_request(request, reg)
 
         self.assertIsNone(error)
-        self.assertEqual(
-            _decrypt(
-                reg.student.pending_account_notice_student_password_ciphertext
-            ),
-            "가입 신청 시 입력한 비밀번호",
-        )
-        self.assertEqual(
-            _decrypt(
-                reg.student.pending_account_notice_parent_password_ciphertext
-            ),
-            "가입 신청 시 입력한 비밀번호",
-        )
+        self._assert_notice_loginable(reg.student, "student")
+        self._assert_notice_loginable(reg.student, "parent")
         reg.refresh_from_db()
         self.assertEqual(reg.initial_password_plain, "")
 
@@ -174,12 +171,7 @@ class RegistrationPasswordSafetyTests(TestCase):
         error = _approve_registration_request(request, reg)
 
         self.assertIsNone(error)
-        self.assertEqual(
-            _decrypt(
-                reg.student.pending_account_notice_parent_password_ciphertext
-            ),
-            "변경되지 않음",
-        )
+        self._assert_notice_loginable(reg.student, "parent")
 
     def test_approve_action_returns_created_student_without_refreshing_input_instance(self):
         reg = StudentRegistrationRequest.objects.create(
@@ -289,12 +281,9 @@ class RegistrationPasswordSafetyTests(TestCase):
         self.assertEqual(response.status_code, 201)
         send_mock.assert_not_called()
         student = Student.objects.get(pk=response.data["id"])
-        self.assertEqual(
-            _decrypt(student.pending_account_notice_parent_password_ciphertext),
-            "stud1234",
-        )
+        self._assert_notice_loginable(student, "parent")
         self.assertTrue(student.user.must_change_password)
-        self.assertTrue(student.parent.user.check_password("stud1234"))
+        self.assertTrue(student.parent.user.check_password("6666"))
         self.assertTrue(student.parent.user.must_change_password)
 
     @patch("apps.domains.messaging.services.send_welcome_messages")
@@ -328,10 +317,7 @@ class RegistrationPasswordSafetyTests(TestCase):
             _decrypt(student.pending_account_notice_student_password_ciphertext),
             "stud1234",
         )
-        self.assertEqual(
-            _decrypt(student.pending_account_notice_parent_password_ciphertext),
-            "stud1234",
-        )
+        self._assert_notice_loginable(student, "parent")
 
     @patch("apps.domains.messaging.services.send_welcome_messages")
     def test_student_create_stages_parent_password_unchanged_when_account_exists(self, send_mock):
@@ -362,10 +348,7 @@ class RegistrationPasswordSafetyTests(TestCase):
         self.assertEqual(response.status_code, 201)
         send_mock.assert_not_called()
         student = Student.objects.get(pk=response.data["id"])
-        self.assertEqual(
-            _decrypt(student.pending_account_notice_parent_password_ciphertext),
-            "변경되지 않음",
-        )
+        self._assert_notice_loginable(student, "parent")
 
     @patch("apps.domains.messaging.services.send_welcome_messages")
     def test_student_excel_stages_parent_initial_password_until_enrollment(self, send_mock):
@@ -390,10 +373,7 @@ class RegistrationPasswordSafetyTests(TestCase):
         self.assertEqual(result["created"], 1)
         send_mock.assert_not_called()
         student = Student.objects.get(tenant=self.tenant, name="엑셀등록학생")
-        self.assertEqual(
-            _decrypt(student.pending_account_notice_parent_password_ciphertext),
-            "stud1234",
-        )
+        self._assert_notice_loginable(student, "parent")
 
     @patch("apps.domains.messaging.services.send_welcome_messages")
     def test_student_excel_stages_notice_until_enrollment(self, send_mock):
@@ -632,10 +612,7 @@ class RegistrationPasswordSafetyTests(TestCase):
             name="삭제재생성대상",
             phone="01077778903",
         )
-        self.assertEqual(
-            _decrypt(replacement.pending_account_notice_parent_password_ciphertext),
-            "변경되지 않음",
-        )
+        self._assert_notice_loginable(replacement, "parent")
 
     def test_bulk_resolve_delete_recreate_failure_keeps_deleted_student(self):
         from apps.domains.students.models import Student
