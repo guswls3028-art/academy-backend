@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import contextvars
 import logging
+import math
 import os
 import re
 import shutil
@@ -26,6 +27,7 @@ from academy.adapters.ai.detection.segment_ocr import (
 
 # PDF 200 DPI 렌더링 기준 좌표 변환 (points → pixels)
 _PDF_TO_PIXEL_SCALE = 200.0 / 72.0
+_PDF_RENDER_MAX_PIXELS = 20_000_000
 
 logger = logging.getLogger(__name__)
 
@@ -465,30 +467,37 @@ def _add_region_semantic_flag(region: object, flag: str) -> None:
 def _bbox_points_to_pixels(
     bbox: Tuple[float, float, float, float],
     *,
-    scale: float = _PDF_TO_PIXEL_SCALE,
+    scale_x: float = _PDF_TO_PIXEL_SCALE,
+    scale_y: float = _PDF_TO_PIXEL_SCALE,
 ) -> BBox:
     x0, y0, x1, y1 = bbox
     return (
-        int(x0 * scale),
-        int(y0 * scale),
-        int((x1 - x0) * scale),
-        int((y1 - y0) * scale),
+        int(x0 * scale_x),
+        int(y0 * scale_y),
+        int((x1 - x0) * scale_x),
+        int((y1 - y0) * scale_y),
     )
 
 
-def _region_bbox_meta(region: object) -> Dict[str, object]:
+def _region_bbox_meta(
+    region: object,
+    *,
+    scale_x: float = _PDF_TO_PIXEL_SCALE,
+    scale_y: float = _PDF_TO_PIXEL_SCALE,
+) -> Dict[str, object]:
     """Serialize v2 region boxes without changing the legacy ``boxes`` contract."""
     display_bbox = getattr(region, "display_bbox", None) or getattr(region, "bbox")
     audit_bbox = getattr(region, "audit_bbox", None) or display_bbox
     body_bbox = getattr(region, "body_bbox", None) or audit_bbox
     context_bbox = getattr(region, "context_bbox", None)
+    scales = {"scale_x": scale_x, "scale_y": scale_y}
     return {
         "version": "question_region_v2",
-        "display_box": _bbox_points_to_pixels(display_bbox),
-        "audit_box": _bbox_points_to_pixels(audit_bbox),
-        "body_box": _bbox_points_to_pixels(body_bbox),
+        "display_box": _bbox_points_to_pixels(display_bbox, **scales),
+        "audit_box": _bbox_points_to_pixels(audit_bbox, **scales),
+        "body_box": _bbox_points_to_pixels(body_bbox, **scales),
         "context_box": (
-            _bbox_points_to_pixels(context_bbox)
+            _bbox_points_to_pixels(context_bbox, **scales)
             if context_bbox is not None
             else None
         ),
@@ -1214,6 +1223,30 @@ def cleanup_pdf_seg_tmp_dirs(tmp_dirs: List[str]) -> None:
             logger.warning("cleanup_pdf_seg failed: dir=%s err=%s", d, e)
 
 
+def _pdf_render_dpi(page_width: float, page_height: float) -> float:
+    """Keep the rendered page within the pixel budget before allocating it."""
+    if not all(math.isfinite(v) and v > 0 for v in (page_width, page_height)):
+        raise ValueError("PDF page dimensions must be positive and finite")
+
+    def fits(zoom: float) -> bool:
+        # Leave one pixel per edge for PyMuPDF's raster-boundary rounding.
+        width = math.ceil(page_width * zoom) + 1
+        height = math.ceil(page_height * zoom) + 1
+        return width * height <= _PDF_RENDER_MAX_PIXELS
+
+    if fits(_PDF_TO_PIXEL_SCALE):
+        return 200.0
+
+    low, high = 0.0, _PDF_TO_PIXEL_SCALE
+    for _ in range(48):
+        mid = (low + high) / 2
+        if fits(mid):
+            low = mid
+        else:
+            high = mid
+    return low * 72.0
+
+
 def _pdf_to_images(
     pdf_path: str,
     *,
@@ -1262,9 +1295,27 @@ def _pdf_to_images(
         logger.info("PDF_TO_IMAGES | pages=%d | path=%s", page_count, pdf_path)
 
         for i in range(page_count):
-            pil_img = doc.render_page(i, dpi=200)
+            physical_width, physical_height = doc.page_dimensions(i)
+            render_dpi = _pdf_render_dpi(physical_width, physical_height)
+            if render_dpi < 200.0:
+                logger.info(
+                    "PDF_RENDER_BUDGET | page=%d | points=%.1fx%.1f | dpi=%.2f",
+                    i, physical_width, physical_height, render_dpi,
+                )
+            pil_img = doc.render_page(i, dpi=render_dpi)
             out_path = os.path.join(tmp_dir, f"page_{i:03d}.png")
-            pil_img.save(out_path, "PNG")
+            try:
+                image_width, image_height = pil_img.size
+                if image_width * image_height > _PDF_RENDER_MAX_PIXELS:
+                    raise ValueError("PDF render exceeded the page pixel budget")
+                pil_img.save(out_path, "PNG")
+            finally:
+                pil_img.close()
+            if render_dpi == 200.0:
+                render_scale_x = render_scale_y = _PDF_TO_PIXEL_SCALE
+            else:
+                render_scale_x = image_width / physical_width
+                render_scale_y = image_height / physical_height
 
             has_text = False
             try:
@@ -1365,6 +1416,8 @@ def _pdf_to_images(
             phase1.append({
                 "page_index": i,
                 "image_path": out_path,
+                "render_scale_x": render_scale_x,
+                "render_scale_y": render_scale_y,
                 "has_text": has_text,
                 "text_blocks": tbs,
                 "page_text": page_text,
@@ -1498,10 +1551,14 @@ def _pdf_to_images(
                     workbook_doc=workbook_doc,
                 )
                 text_regions = list(regions)
+                scales = {
+                    "scale_x": p["render_scale_x"],
+                    "scale_y": p["render_scale_y"],
+                }
                 for r in regions:
                     display_bbox = getattr(r, "display_bbox", None) or r.bbox
-                    text_boxes.append(_bbox_points_to_pixels(display_bbox))
-                    text_box_meta.append(_region_bbox_meta(r))
+                    text_boxes.append(_bbox_points_to_pixels(display_bbox, **scales))
+                    text_box_meta.append(_region_bbox_meta(r, **scales))
                 logger.info(
                     "PDF_TEXT_LAYOUT | page=%d | paper_type=%s | regions=%d | "
                     "workbook=%s",
