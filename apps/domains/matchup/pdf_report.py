@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import io
 import logging
+import math
 import os
 import urllib.request
 from datetime import datetime
@@ -180,6 +181,23 @@ def _classify_match(sim: float) -> str:
     return "miss"
 
 
+def _raw_display_cosine(left, right) -> Optional[float]:
+    """Undo the shared ranking scale only for a measurable vector pair."""
+    from apps.shared.utils.vector import cosine_similarity
+
+    if not left or not right or len(left) != len(right):
+        return None
+    try:
+        if not all(math.isfinite(value) for value in (*left, *right)):
+            return None
+        norms = [sum(value * value for value in vector) for vector in (left, right)]
+        if any(norm <= 0 or not math.isfinite(norm) for norm in norms):
+            return None
+        return 2.0 * float(cosine_similarity(left, right)) - 1.0
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def _compute_display_sim(source, candidate) -> Optional[float]:
     """source vs candidate raw cosine sim (+ image emb ensemble + bbox=null 패널티).
 
@@ -190,32 +208,22 @@ def _compute_display_sim(source, candidate) -> Optional[float]:
       float — sim 측정 가능 (0.0~1.0)
       None  — text/image embedding 둘 다 없어 측정 불가 (호출자가 "측정 불가" UI 표시)
     """
-    from apps.shared.utils.vector import cosine_similarity
-
     try:
-        has_text_emb = bool(source.embedding and candidate.embedding)
-        has_img_emb = bool(source.image_embedding and candidate.image_embedding)
-        if not has_text_emb and not has_img_emb:
+        raw_text_sim = _raw_display_cosine(source.embedding, candidate.embedding)
+        raw_img_sim = _raw_display_cosine(source.image_embedding, candidate.image_embedding)
+        if raw_text_sim is None and raw_img_sim is None:
             return None  # 측정 불가 — sim=0.0%로 표시하면 misleading
-        raw_text_sim = (
-            float(cosine_similarity(source.embedding, candidate.embedding))
-            if has_text_emb else 0.0
-        )
-        if has_img_emb:
-            raw_img_sim = float(cosine_similarity(
-                source.image_embedding, candidate.image_embedding,
-            ))
+        if raw_text_sim is not None and raw_img_sim is not None:
             src_len = len((source.text or "").strip())
             img_w = 0.5 if src_len < 60 else (0.3 if src_len < 200 else 0.15)
             display_sim = (1 - img_w) * raw_text_sim + img_w * raw_img_sim
         else:
-            display_sim = raw_text_sim
+            display_sim = raw_text_sim if raw_text_sim is not None else raw_img_sim
         # 페이지 폴백 candidate (bbox=null) → 페이지 통째 텍스트로 sim 부풀림 방지
         cand_meta = candidate.meta or {}
         if cand_meta.get("bbox") is None:
             display_sim = min(0.89, display_sim - 0.10)
-            display_sim = max(0.0, display_sim)
-        return display_sim
+        return max(0.0, min(1.0, display_sim))
     except Exception:
         logger.exception("compute_display_sim failed (src=%s, cand=%s)",
                          getattr(source, "id", "?"), getattr(candidate, "id", "?"))
