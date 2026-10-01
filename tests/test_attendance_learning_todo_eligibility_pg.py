@@ -740,19 +740,24 @@ class LearningTodoEligibilityPostgresTests(TransactionTestCase):
         )
         self.assertEqual(self._unrelated_write_counts(), writes_before)
 
-        restored = self._patch_attendance("ONLINE", current_status="ONLINE")
-        self.assertEqual(restored.status_code, 200, restored.data)
-        correction_request = self.factory.patch(
-            f"/api/v1/results/admin/sessions/{self.session.id}/score-correction/",
-            correction_payload,
-            format="json",
-        )
-        correction_request.tenant = self.tenant
-        force_authenticate(correction_request, user=self.admin)
-        restored_correction = SessionScoreCorrectionView.as_view()(
-            correction_request, session_id=self.session.id
-        )
-        self.assertEqual(restored_correction.status_code, 200, restored_correction.data)
+        for restored_status in ("ONLINE", "PRESENT"):
+            restored = self._patch_attendance(
+                restored_status, current_status="ONLINE"
+            )
+            self.assertEqual(restored.status_code, 200, restored.data)
+            correction_request = self.factory.patch(
+                f"/api/v1/results/admin/sessions/{self.session.id}/score-correction/",
+                correction_payload,
+                format="json",
+            )
+            correction_request.tenant = self.tenant
+            force_authenticate(correction_request, user=self.admin)
+            restored_correction = SessionScoreCorrectionView.as_view()(
+                correction_request, session_id=self.session.id
+            )
+            self.assertEqual(
+                restored_correction.status_code, 200, restored_correction.data
+            )
         self.assertTrue(
             AssessmentCorrection.objects.filter(
                 tenant=self.tenant,
