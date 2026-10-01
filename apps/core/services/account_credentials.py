@@ -42,9 +42,17 @@ def _context(user) -> str:
     return f"user:{user.tenant_id}:{user.pk}"
 
 
-def remember_account_password(user, password: str) -> None:
-    if not password or not check_password(password, user.password):
+def remember_account_password(user, password: str, *, pending: bool = False) -> None:
+    valid = bool(password) and check_password(password, user.password)
+    if pending and not valid:
+        from .password import pending_password_reset_matches
+        valid = pending_password_reset_matches(user, password)
+    if not valid:
         raise ValueError("로그인 비밀번호와 안내 비밀번호가 일치하지 않습니다.")
+    if pending:
+        stored = recover_password(user.account_notice_password_ciphertext, context=_context(user))
+        if stored and check_password(stored, user.password):
+            return
     user.account_notice_password_ciphertext = protect_password(password, context=_context(user))
     user.save(update_fields=["account_notice_password_ciphertext"])
 

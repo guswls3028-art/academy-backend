@@ -142,6 +142,7 @@ def adopt_password_hash(
         setattr(user, field, getattr(locked_user, field))
 
 
+@transaction.atomic
 def create_pending_password_reset(
     user,
     raw_password: str,
@@ -156,6 +157,7 @@ def create_pending_password_reset(
     """
     from apps.core.models import PendingPasswordReset
 
+    user = get_user_model().objects.select_for_update().get(pk=user.pk, tenant_id=user.tenant_id)
     expires_at = timezone.now() + timedelta(minutes=ttl_minutes)
     pending, _created = PendingPasswordReset.objects.update_or_create(
         user=user,
@@ -165,6 +167,9 @@ def create_pending_password_reset(
             "expires_at": expires_at,
         },
     )
+    if user.tenant_id and (hasattr(user, "student_profile") or hasattr(user, "parent_profile")):
+        from .account_credentials import remember_account_password
+        remember_account_password(user, raw_password, pending=True)
     return pending
 
 

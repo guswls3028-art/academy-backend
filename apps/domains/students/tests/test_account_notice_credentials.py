@@ -10,7 +10,7 @@ from rest_framework.test import APIClient, APIRequestFactory, force_authenticate
 from apps.core.models import Tenant, TenantDomain, TenantMembership, PendingPasswordReset
 from apps.core.services.account_credentials import account_notice_password
 from apps.core.services.initial_password_policy import save_password_settings
-from apps.core.services.password import change_password, consume_pending_password_reset, pending_password_reset_matches
+from apps.core.services.password import change_password, consume_pending_password_reset, create_pending_password_reset, pending_password_reset_matches
 from apps.domains.students.services.creation import create_student_account
 from apps.domains.students.services.account_notice import _decrypt, dispatch_pending_account_notice
 from apps.domains.students.services.account_notifications import send_parent_account_credentials_notice
@@ -129,6 +129,47 @@ class AccountNoticeCredentialTests(TestCase):
                 force_authenticate(request, user=user)
             response = InitialPasswordSettingsView.as_view()(request)
             self.assertIn(response.status_code, (401, 403))
+
+    def test_public_recovery_then_account_notice_reuses_the_delivered_pending_password(self):
+        result = self.create(password="original-password")
+        result.user.account_notice_password_ciphertext = ""
+        result.user.save(update_fields=["account_notice_password_ciphertext"])
+        pending = create_pending_password_reset(result.user, "public-recovery-password")
+        expires_at = pending.expires_at
+        self.assertEqual(account_notice_password(result.user), "public-recovery-password")
+        pending.refresh_from_db()
+        self.assertEqual(pending.expires_at, expires_at)
+        result.user.refresh_from_db()
+        self.assertTrue(result.user.check_password("original-password"))
+        self.assertTrue(pending_password_reset_matches(result.user, "public-recovery-password"))
+
+    def test_staff_settings_api_persists_roles_and_rejects_invalid_or_foreign_updates(self):
+        view = InitialPasswordSettingsView.as_view()
+        data = {"student_mode": "fixed", "student_fixed_password": " student policy ", "parent_mode": "phone_last4"}
+        request = self.factory.patch("/", data, format="json")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        response = view(request)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.tenant.refresh_from_db()
+        saved = dict(self.tenant.account_password_policy)
+        self.assertNotIn(" student policy ", str(saved))
+        request = self.factory.get("/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        self.assertEqual(view(request).data["student_fixed_password"], " student policy ")
+        for data in ({"student_fixed_password": "abc"}, {"tenant_id": 999}):
+            request = self.factory.patch("/", data, format="json")
+            request.tenant = self.tenant
+            force_authenticate(request, user=self.admin)
+            self.assertEqual(view(request).status_code, 400)
+            self.tenant.refresh_from_db()
+            self.assertEqual(self.tenant.account_password_policy, saved)
+        other = Tenant.objects.create(name="다른 학원", code="password-policy-other")
+        request = self.factory.patch("/", {"student_mode": "random"}, format="json")
+        request.tenant = other
+        force_authenticate(request, user=self.admin)
+        self.assertEqual(view(request).status_code, 403)
 
     def test_delivered_legacy_student_and_parent_credentials_complete_real_jwt_login(self):
         result = self.create(password="old1234", parent_password="parent5678")
