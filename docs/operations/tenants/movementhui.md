@@ -47,7 +47,7 @@
   만료일·다음 청구일 `2026-11-10` 운영 감사 확인
 - [x] **G6 Pages·HTTPS** — apex/`www`·CNAME 활성화와 두 호스트 HTTP 200
 - [x] **G7 대표 계정** — 개발자 콘솔에서 1회 생성, owner 초기 로그인 인증 확인
-- [ ] **G8 실제 인계** — 대표자 최초 비밀번호 변경 후 admin 화면·tenant isolation 확인
+- [x] **G8 실제 인계** — 2026-10-01 운영 감사에서 owner 활성·usable password·최초 변경 완료 확인
 
 2026-10-01 운영 감사에서 활성 owner 1명, usable password,
 `must_change_password=false`를 확인했다. 최초 비밀번호 변경 대기는 종료됐으며,
@@ -95,3 +95,22 @@ Cloudflare Pages와 apex/`www` CNAME은 활성화됐고 두 호스트 모두 HTT
 합치지 말고, 테넌트별 학생 프로필 필드 계약 또는 정식 공통 컬럼으로 구현 범위를
 확정한 뒤 반영한다. 고객 데이터 입력 전에 UI·엑셀 import/export·권한·학생앱
 노출 여부를 함께 검증한다.
+
+
+## 2026-10-01 계정·알림톡 점검
+
+운영 readback에서 ID 10 / `movementhui`, apex primary 및 www domain,
+allowed hosts/CORS/CSRF, Program, billing, owner handoff와 approved messaging
+온보딩 검사가 모두 통과했다. 초기 비밀번호 제품 규칙은
+[학부모 계정](../../domain/parent-account.md)의 현재 계약을 따른다.
+학생·학부모의 본인 번호 뒤 4자리 기본값은 새 계정에만 적용한다.
+계정 안내 URL은 primary domain인 `https://movementhui.com`이다.
+
+사용자가 제공한 채널은 `https://pf.kakao.com/_xnjixin`,
+`동휘 원소 과학 연구소 질문방` / 검색 ID `동휘원소`이다.
+공식 공급사 조회에서 등록된 기존 binding과 일치했다.
+`configure_tenant_alimtalk_channel` dry-run 결과 required/matched 10,
+APPROVED 0, INSPECTING 10, binding `pending_templates`이다.
+기존 검수를 중복 신청하거나 승인 이전에 활성화하지 않는다.
+공급사 승인 후 같은 공식 명령의 apply/activate-if-ready로 대조·활성화한다.
+실제 학생·학부모에게 QA 발송하지 않았다.

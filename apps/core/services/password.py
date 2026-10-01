@@ -14,6 +14,12 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.utils import timezone
 
+def _remember_family_password(user, password):
+    if user.tenant_id and (hasattr(user, "student_profile") or hasattr(user, "parent_profile")):
+        from .account_credentials import remember_account_password
+        remember_account_password(user, password)
+
+
 TEMP_PASSWORD_LENGTH = 6
 PENDING_PASSWORD_RESET_TTL_MINUTES = 30
 
@@ -52,6 +58,7 @@ def change_password(user, new_password: str) -> None:
     locked_user.token_version = (getattr(locked_user, "token_version", 0) or 0) + 1
     locked_user.must_change_password = False
     locked_user.save(update_fields=["password", "token_version", "must_change_password"])
+    _remember_family_password(locked_user, new_password)
     clear_pending_password_reset(locked_user)
     for field in ("password", "token_version", "must_change_password"):
         setattr(user, field, getattr(locked_user, field))
@@ -103,6 +110,7 @@ def force_reset_password(user, new_password: str) -> None:
     locked_user.token_version = (getattr(locked_user, "token_version", 0) or 0) + 1
     locked_user.must_change_password = True
     locked_user.save(update_fields=["password", "token_version", "must_change_password"])
+    _remember_family_password(locked_user, new_password)
     clear_pending_password_reset(locked_user)
     for field in ("password", "token_version", "must_change_password"):
         setattr(user, field, getattr(locked_user, field))
@@ -123,6 +131,8 @@ def adopt_password_hash(
     """
     identify_hasher(password_hash)
     locked_user = get_user_model().objects.select_for_update().get(pk=user.pk)
+    locked_user.account_notice_password_ciphertext = ""
+    locked_user.save(update_fields=["account_notice_password_ciphertext"])
     locked_user.password = password_hash
     locked_user.token_version = (getattr(locked_user, "token_version", 0) or 0) + 1
     locked_user.must_change_password = must_change_password
@@ -132,6 +142,7 @@ def adopt_password_hash(
         setattr(user, field, getattr(locked_user, field))
 
 
+@transaction.atomic
 def create_pending_password_reset(
     user,
     raw_password: str,
@@ -146,6 +157,7 @@ def create_pending_password_reset(
     """
     from apps.core.models import PendingPasswordReset
 
+    user = get_user_model().objects.select_for_update().get(pk=user.pk, tenant_id=user.tenant_id)
     expires_at = timezone.now() + timedelta(minutes=ttl_minutes)
     pending, _created = PendingPasswordReset.objects.update_or_create(
         user=user,
@@ -155,6 +167,9 @@ def create_pending_password_reset(
             "expires_at": expires_at,
         },
     )
+    if user.tenant_id and (hasattr(user, "student_profile") or hasattr(user, "parent_profile")):
+        from .account_credentials import remember_account_password
+        remember_account_password(user, raw_password, pending=True)
     return pending
 
 

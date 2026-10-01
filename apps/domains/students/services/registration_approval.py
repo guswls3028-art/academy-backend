@@ -10,6 +10,7 @@ from apps.core.models import TenantMembership
 from apps.core.models.user import user_internal_username
 from apps.core.services.login_identifier import normalize_login_identifier
 from apps.core.services.password import adopt_password_hash
+from apps.core.services.account_credentials import account_notice_password, recover_password, remember_account_password
 from apps.support.students.lifecycle_dependencies import (
     locked_parent_account_by_phone_for_registration,
     locked_parent_account_for_registration,
@@ -557,14 +558,15 @@ def _approve_with_existing_student(
     reg.status = StudentRegistrationRequest.APPROVED
     reg.student = student
     reg.initial_password_plain = ""
-    reg.save(update_fields=["status", "student", "initial_password_plain", "updated_at"])
+    reg.initial_password_ciphertext = ""
+    reg.save(update_fields=["status", "student", "initial_password_plain", "initial_password_ciphertext", "updated_at"])
     notice = RegistrationApprovalNotice(
         student_name=student.name,
         student_phone=student.phone or "",
         student_id=student.ps_number,
-        student_password="변경되지 않음",
+        student_password="",
         parent_phone=student.parent_phone,
-        parent_password="변경되지 않음",
+        parent_password="",
     )
     return RegistrationApprovalResult(
         registration=reg,
@@ -606,14 +608,14 @@ def approve_registration_request(
 
         _validate_unlinked_account_graph(tenant=tenant, reg=reg)
 
+        signup_password = recover_password(reg.initial_password_ciphertext, context=f"signup:{tenant.pk}")
         ps_number = _resolve_login_id(tenant, reg)
         parent_phone = reg.parent_phone or ""
         student_phone = reg.phone or None
         result = create_student_account(
             tenant=tenant,
             password_hash=reg.initial_password,
-            account_notice_student_password="가입 신청 시 입력한 비밀번호",
-            account_notice_parent_password="가입 신청 시 입력한 비밀번호",
+            account_notice_student_password=signup_password or None,
             student_data={
                 "name": reg.name,
                 "parent_phone": parent_phone,
@@ -641,16 +643,17 @@ def approve_registration_request(
         reg.status = StudentRegistrationRequest.APPROVED
         reg.student = result.student
         reg.initial_password_plain = ""
-        reg.save(update_fields=["status", "student", "initial_password_plain", "updated_at"])
+        reg.initial_password_ciphertext = ""
+        reg.save(update_fields=["status", "student", "initial_password_plain", "initial_password_ciphertext", "updated_at"])
 
     created_student = result.student
     notice = RegistrationApprovalNotice(
         student_name=reg.name,
         student_phone=created_student.phone or "",
         student_id=created_student.ps_number,
-        student_password="가입 신청 시 입력한 비밀번호",
+        student_password=account_notice_password(created_student.user),
         parent_phone=parent_phone,
-        parent_password=result.parent_password_for_notice or "변경되지 않음",
+        parent_password=result.parent_password_for_notice,
     )
     return RegistrationApprovalResult(
         registration=reg,
@@ -746,19 +749,23 @@ def resolve_deleted_registration_request(
         user.username = user_internal_username(tenant, login_id)
         user.phone = student.phone or ""
         user.save(update_fields=["username", "phone"])
+        signup_password = recover_password(reg.initial_password_ciphertext, context=f"signup:{tenant.pk}")
         adopt_password_hash(user, reg.initial_password, must_change_password=False)
+        if signup_password:
+            remember_account_password(user, signup_password)
 
         reg.status = StudentRegistrationRequest.APPROVED
         reg.student = student
         reg.initial_password_plain = ""
-        reg.save(update_fields=["status", "student", "initial_password_plain", "updated_at"])
+        reg.initial_password_ciphertext = ""
+        reg.save(update_fields=["status", "student", "initial_password_plain", "initial_password_ciphertext", "updated_at"])
 
     notice = RegistrationApprovalNotice(
         student_name=student.name,
         student_phone=student.phone or "",
         student_id=student.ps_number,
-        student_password="가입 신청 시 입력한 비밀번호",
+        student_password=account_notice_password(student.user),
         parent_phone=student.parent_phone,
-        parent_password="변경되지 않음",
+        parent_password=account_notice_password(student.parent.user) if student.parent_id else "",
     )
     return RegistrationApprovalResult(registration=reg, student=student, notice=notice)

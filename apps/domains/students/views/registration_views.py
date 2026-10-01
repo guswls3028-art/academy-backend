@@ -43,6 +43,8 @@ from ..services import (
 from ..services.registration_policy import is_student_self_registration_enabled
 from .student_views import StudentListPagination
 
+from apps.core.services.account_credentials import protect_password
+
 logger = logging.getLogger(__name__)
 
 
@@ -359,6 +361,7 @@ class RegistrationRequestViewSet(ModelViewSet):
                 status=StudentRegistrationRequest.PENDING,
                 initial_password=password,
                 initial_password_plain="",
+                initial_password_ciphertext=protect_password(raw_password, context=f"signup:{tenant.pk}"),
                 name=data.get("name", ""),
                 username=(data.get("username") or "").strip() or "",
                 parent_phone=data.get("parent_phone", ""),
@@ -597,7 +600,8 @@ class RegistrationRequestViewSet(ModelViewSet):
                     status=400,
                 )
             reg.status = StudentRegistrationRequest.REJECTED
-            reg.save(update_fields=["status", "updated_at"])
+            reg.initial_password_ciphertext = ""
+            reg.save(update_fields=["status", "initial_password_ciphertext", "updated_at"])
         return Response({"status": "rejected", "id": reg.id}, status=200)
 
     @extend_schema(
@@ -631,5 +635,5 @@ class RegistrationRequestViewSet(ModelViewSet):
                 tenant=tenant,
                 id__in=ids,
                 status=StudentRegistrationRequest.PENDING,
-            ).update(status=StudentRegistrationRequest.REJECTED)
+            ).update(status=StudentRegistrationRequest.REJECTED, initial_password_ciphertext="")
         return Response({"rejected": updated}, status=200)

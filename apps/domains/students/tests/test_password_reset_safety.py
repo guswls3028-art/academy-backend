@@ -535,12 +535,14 @@ class StudentPasswordResetSafetyTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("비밀번호는 변경되지 않았습니다", response.data["message"])
+        self.assertIn("안내된 아이디와 비밀번호로 로그인할 수 있습니다", response.data["message"])
         self.user.refresh_from_db()
         self.assertTrue(self.user.check_password("oldpw123"))
         self.assertFalse(self.user.must_change_password)
         self.assertEqual(self.user.token_version, 0)
-        self.assertFalse(PendingPasswordReset.objects.filter(user=self.user).exists())
+        from apps.core.services.password import pending_password_reset_matches
+        delivered_password = send_mock.call_args.kwargs["replacements"]["학생비밀번호"]
+        self.assertTrue(pending_password_reset_matches(self.user, delivered_password))
         self.assertEqual(send_mock.call_args.kwargs["trigger"], "registration_approved_student")
         self.assertEqual(send_mock.call_args.kwargs["to"], self.student.phone)
 

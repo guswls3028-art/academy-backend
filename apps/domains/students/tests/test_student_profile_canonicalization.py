@@ -9,6 +9,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
+from apps.core.services.password import pending_password_reset_matches
 from apps.core.models.user import user_internal_username
 from apps.core.models.user import user_display_username
 from apps.core.permissions import IsStudent
@@ -22,6 +23,12 @@ from apps.domains.students.views import StudentViewSet
 from apps.domains.student_app.profile.views import StudentProfileView
 
 User = get_user_model()
+
+
+def assert_notice_loginable(case, user, password):
+    user.refresh_from_db()
+    case.assertTrue(user.check_password(password) or pending_password_reset_matches(user, password))
+
 
 
 def make_tenant(code="canon"):
@@ -114,10 +121,7 @@ class StudentProfileCanonicalizationTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(send_mock.call_args.kwargs["trigger"], "registration_approved_student")
         self.assertEqual(send_mock.call_args.kwargs["to"], "01099998888")
-        self.assertEqual(
-            send_mock.call_args.kwargs["replacements"]["학생비밀번호"],
-            "변경되지 않음",
-        )
+        assert_notice_loginable(self, no_phone_student.user, send_mock.call_args.kwargs["replacements"]["학생비밀번호"])
 
     @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=True)
     def test_admin_adds_first_real_phone_and_moves_identifier_account_to_phone(self, send_mock):
@@ -323,8 +327,7 @@ class StudentProfileCanonicalizationTests(TestCase):
         )
 
     @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=True)
-    def test_admin_parent_phone_change_requires_password_for_new_account(self, send_mock):
-        original_parent_phone = self.student.parent_phone
+    def test_admin_parent_phone_change_uses_tenant_password_policy(self, send_mock):
         request = self.factory.patch(
             f"/api/v1/students/{self.student.id}/",
             data={"parent_phone": "01022223333"},
@@ -335,17 +338,11 @@ class StudentProfileCanonicalizationTests(TestCase):
 
         response = StudentViewSet.as_view({"patch": "partial_update"})(request, pk=self.student.id)
 
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("parent_initial_password", response.data)
+        self.assertEqual(response.status_code, 200)
         self.student.refresh_from_db()
-        self.assertEqual(self.student.parent_phone, original_parent_phone)
-        self.assertFalse(
-            parent_account_fixture_exists(
-                tenant=self.tenant,
-                parent_phone="01022223333",
-            )
-        )
-        send_mock.assert_not_called()
+        self.assertEqual(self.student.parent_phone, "01022223333")
+        self.assertTrue(self.student.parent.user.check_password("3333"))
+        self.assertEqual(send_mock.call_args.kwargs["replacements"]["학부모비밀번호"], "3333")
 
     @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=True)
     def test_admin_parent_phone_change_reuses_existing_password(self, send_mock):
@@ -373,7 +370,7 @@ class StudentProfileCanonicalizationTests(TestCase):
         self.assertTrue(existing.user.check_password("existing-parent-password"))
         self.assertEqual(
             send_mock.call_args.kwargs["replacements"]["학부모비밀번호"],
-            "변경되지 않음",
+            "existing-parent-password",
         )
 
     @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=False)
@@ -581,7 +578,7 @@ class StudentProfileCanonicalizationTests(TestCase):
         self.assertEqual(self.student.user.username, user_internal_username(self.tenant, "S-SELF-APP"))
         self.assertEqual(send_mock.call_args.kwargs["trigger"], "registration_approved_student")
         self.assertEqual(send_mock.call_args.kwargs["replacements"]["학생아이디"], "S-SELF-APP")
-        self.assertEqual(send_mock.call_args.kwargs["replacements"]["학생비밀번호"], "변경되지 않음")
+        assert_notice_loginable(self, self.student.user, send_mock.call_args.kwargs["replacements"]["학생비밀번호"])
 
     @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=False)
     def test_student_app_username_change_rolls_back_when_notice_delivery_fails(self, _send_mock):

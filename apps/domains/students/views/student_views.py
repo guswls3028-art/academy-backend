@@ -263,12 +263,14 @@ class StudentViewSet(ModelViewSet):
 
         data = serializer.validated_data
 
-        password = data.pop("initial_password")
+        password = data.pop("initial_password", None) or None
+        parent_password = data.pop("parent_initial_password", None) or None
 
         result = create_student_account(
             tenant=request.tenant,
             student_data=data,
             password=password,
+            parent_password=parent_password,
             must_change_password=True,
         )
         student = result.student
@@ -462,6 +464,7 @@ class StudentViewSet(ModelViewSet):
             password_policy = build_student_import_password_policy(
                 password_mode=password_mode,
                 initial_password=initial_password,
+                tenant=request.tenant,
             )
         except StudentImportPasswordError as exc:
             raise ValidationError({"detail": str(exc)}) from exc
@@ -572,7 +575,7 @@ class StudentViewSet(ModelViewSet):
         )
         serializer.is_valid(raise_exception=True)
 
-        password = serializer.validated_data["initial_password"]
+        password = serializer.validated_data.get("initial_password", "")
         students_data = serializer.validated_data["students"]
 
         if len(students_data) > 200:
@@ -586,6 +589,7 @@ class StudentViewSet(ModelViewSet):
             tenant_id=tenant.id,
             students_data=students_data,
             initial_password=password,
+            password_mode="fixed" if password else "tenant",
         )
         return Response(result, status=201)
 
@@ -603,7 +607,8 @@ class StudentViewSet(ModelViewSet):
         }
         """
         password = request.data.get("initial_password") or ""
-        if len(str(password)) < 4:
+        parent_password = request.data.get("parent_initial_password")
+        if (password and (not isinstance(password, str) or len(password) < 4)) or (parent_password and (not isinstance(parent_password, str) or len(parent_password) < 4)):
             return Response({"detail": "초기 비밀번호는 4자 이상이어야 합니다."}, status=400)
         resolutions = request.data.get("resolutions") or []
         if not isinstance(resolutions, (list, tuple)):
@@ -613,6 +618,7 @@ class StudentViewSet(ModelViewSet):
             tenant=request.tenant,
             resolutions=resolutions,
             initial_password=password,
+            parent_initial_password=parent_password,
         )
         return Response(result, status=200)
 
