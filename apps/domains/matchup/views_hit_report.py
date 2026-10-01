@@ -1773,6 +1773,8 @@ class HitReportBoardPreviewView(View):
                 "id": r.id,
                 "doc_title": (doc.title if doc else "") or "",
                 "doc_category": (doc.category if doc else "") or "",
+                "exam_cycle": doc.exam_cycle if doc else "",
+                "exam_year": doc.exam_year if doc else 0,
                 "hit_count": hit,
                 "total_problems": total,
                 "hit_rate_pct": rate,
@@ -1852,6 +1854,8 @@ class HitReportLandingPublicView(View):
                 "hit_rate_pct": rate,
                 "submitted_at": r.submitted_at.isoformat() if r.submitted_at else None,
                 "created_at": r.created_at.isoformat() if r.created_at else None,
+                "exam_cycle": doc.exam_cycle if doc else "",
+                "exam_year": doc.exam_year if doc else 0,
             })
         # 요청 ID 순서 보존
         order_map = {rid: i for i, rid in enumerate(ids)}

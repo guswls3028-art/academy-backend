@@ -1073,6 +1073,7 @@ def cleanup_matchup_problem_images(document: MatchupDocument) -> int:
             problem_keys.append(public_key)
     # 수동 크롭 모달이 PDF 페이지를 R2에 캐시했다면 함께 정리 — orphan 방지.
     page_cache_keys = list((document.meta or {}).get("page_image_keys") or [])
+    page_cache_keys.extend((document.meta or {}).get("manual_page_image_keys") or [])
     all_keys = list(dict.fromkeys(k for k in (problem_keys + page_cache_keys) if k))
 
     if not delete_object_r2_storage:
@@ -1234,7 +1235,7 @@ def get_page_states(document: MatchupDocument) -> list[dict]:
     from .models import MatchupPageState
 
     meta = document.meta or {}
-    page_keys = meta.get("page_image_keys") or []
+    page_keys = meta.get("page_image_keys") or meta.get("manual_page_image_keys") or []
     page_count = 0
     if isinstance(page_keys, list) and len(page_keys) > 0:
         page_count = len(page_keys)
@@ -1459,7 +1460,7 @@ def auto_recommend_page_states(document: MatchupDocument) -> list[dict]:
     # paper_type_summary 부재 doc 도 학원장 검수 노동 절감.
 
     # PDF 실 페이지 수 산출 (get_page_states 와 동일 우선순위)
-    page_keys = meta.get("page_image_keys") or []
+    page_keys = meta.get("page_image_keys") or meta.get("manual_page_image_keys") or []
     if isinstance(page_keys, list) and len(page_keys) > 0:
         page_count = len(page_keys)
     else:
@@ -1725,6 +1726,8 @@ def promote_inventory_to_matchup(
     category: str = "",
     subject: str = "",
     grade_level: str = "",
+    exam_cycle: str = "",
+    exam_year: int = 0,
     upload_intent: str = "",
     author=None,
 ):
@@ -1771,6 +1774,8 @@ def promote_inventory_to_matchup(
         category=category,
         subject=subject,
         grade_level=grade_level,
+        exam_cycle=exam_cycle,
+        exam_year=exam_year,
         r2_key=inventory_file.r2_key,
         original_name=inventory_file.original_name,
         size_bytes=inventory_file.size_bytes,
@@ -1841,8 +1846,15 @@ def _download_inventory_to_temp(inventory_file) -> str:
     suffix = os.path.splitext(inventory_file.original_name or "")[1] or ".bin"
     fd, path = tempfile.mkstemp(prefix="matchup-manual-", suffix=suffix)
     os.close(fd)
-    urllib.request.urlretrieve(url, path)
-    return path
+    try:
+        import shutil
+
+        with urllib.request.urlopen(url, timeout=30) as response, open(path, "wb") as target:
+            shutil.copyfileobj(response, target)
+        return path
+    except Exception:
+        os.unlink(path)
+        raise
 
 
 def _enqueue_manual_problem_index(problem: MatchupProblem) -> None:
@@ -2491,7 +2503,7 @@ def paste_image_as_problem(
     return problem
 
 
-def ensure_document_page_images(document: MatchupDocument) -> List[dict]:
+def ensure_document_page_images(document: MatchupDocument, *, page_index: int | None = None) -> List[dict]:
     """문서의 페이지별 이미지를 R2에 캐싱하고 presigned URL 반환.
 
     수동 크롭 모달에서 캔버스에 그릴 때 필요. 한 번 캐시되면 doc.meta에 보존돼
@@ -2505,7 +2517,34 @@ def ensure_document_page_images(document: MatchupDocument) -> List[dict]:
     page_keys = meta.get("page_image_keys")
     page_dims = meta.get("page_dimensions") or []  # [(w, h), ...]
 
-    if not page_keys:
+    if page_index is not None and page_index < 0:
+        raise ValueError("페이지 번호가 올바르지 않습니다.")
+
+    if not page_keys and page_index is not None:
+        # 직접 자르기는 선택한 페이지만 준비한다. AI의 전체 페이지 캐시와 분리한다.
+        page_keys = meta.get("manual_page_image_keys") or []
+        page_dims = meta.get("manual_page_dimensions") or []
+        if page_index >= len(page_keys) or not page_keys[page_index]:
+            rendered_keys, rendered_dims = _render_and_upload_pages(document, page_index=page_index)
+            from django.db import transaction
+
+            # 렌더링 중 도착한 AI 결과나 다른 페이지 캐시를 덮어쓰지 않는다.
+            with transaction.atomic():
+                fresh = MatchupDocument.objects.select_for_update().get(
+                    pk=document.pk, tenant_id=document.tenant_id,
+                )
+                fresh_meta = dict(fresh.meta or {})
+                previous_keys = fresh_meta.get("manual_page_image_keys") or []
+                page_keys = [
+                    key or (previous_keys[i] if i < len(previous_keys) else "")
+                    for i, key in enumerate(rendered_keys)
+                ]
+                page_dims = rendered_dims
+                fresh_meta["manual_page_image_keys"] = page_keys
+                fresh_meta["manual_page_dimensions"] = page_dims
+                fresh.meta = fresh_meta
+                fresh.save(update_fields=["meta", "updated_at"])
+    elif not page_keys:
         # 캐시 미스: 원본 다운로드 + 페이지 렌더 + R2 업로드.
         page_keys, page_dims = _render_and_upload_pages(document)
         meta["page_image_keys"] = page_keys
@@ -2513,9 +2552,11 @@ def ensure_document_page_images(document: MatchupDocument) -> List[dict]:
         document.meta = meta
         document.save(update_fields=["meta", "updated_at"])
 
+    if page_index is not None and page_index >= len(page_keys):
+        raise ValueError("페이지 번호가 올바르지 않습니다.")
     pages = []
     for i, key in enumerate(page_keys):
-        url = generate_presigned_get_url_storage(key=key, expires_in=900)
+        url = generate_presigned_get_url_storage(key=key, expires_in=900) if key else ""
         w, h = (page_dims[i] if i < len(page_dims) else (0, 0))
         pages.append({"index": i, "url": url, "width": w, "height": h})
     return pages
@@ -2523,6 +2564,8 @@ def ensure_document_page_images(document: MatchupDocument) -> List[dict]:
 
 def _render_and_upload_pages(
     document: MatchupDocument,
+    *,
+    page_index: int | None = None,
 ) -> Tuple[List[str], List[Tuple[int, int]]]:
     """원본 PDF/이미지를 페이지별 PNG로 잘라 R2 업로드.
 
@@ -2560,7 +2603,14 @@ def _render_and_upload_pages(
             from academy.adapters.tools.pymupdf_renderer import PdfDocument
 
             with PdfDocument(local_path) as doc_pdf:
+                if page_index is not None and page_index >= doc_pdf.page_count():
+                    raise ValueError("페이지 번호가 올바르지 않습니다.")
                 for i in range(doc_pdf.page_count()):
+                    if page_index is not None and i != page_index:
+                        w, h = doc_pdf.page_dimensions(i)
+                        page_keys.append("")
+                        page_dims.append((round(w * 150 / 72), round(h * 150 / 72)))
+                        continue
                     page_img = doc_pdf.render_page(i, dpi=150)  # 캔버스용은 150 충분
                     buf = io.BytesIO()
                     page_img.save(buf, "PNG", optimize=True)
@@ -2572,6 +2622,8 @@ def _render_and_upload_pages(
                     page_keys.append(key)
                     page_dims.append(page_img.size)
         else:
+            if page_index not in (None, 0):
+                raise ValueError("페이지 번호가 올바르지 않습니다.")
             img = Image.open(local_path).convert("RGB")
             buf = io.BytesIO()
             img.save(buf, "PNG", optimize=True)

@@ -43,12 +43,15 @@ class MatchupDocument(TimestampModel):
     category = models.CharField(max_length=100, blank=True, default="", db_index=True)
     subject = models.CharField(max_length=100, blank=True, default="")
     grade_level = models.CharField(max_length=50, blank=True, default="")
-    # 2026-05-12 #15 — 시험 회차 분류. 학원장 입력(선택). 랜딩에서 학교별 grouping
-    # 안에서 중간/기말/모의/기타 cycle 순서로 노출. blank 허용 — 기존 데이터 영향 X.
+    # 학기별 시험 회차. 기존 중간/기말 값은 학기를 추정하지 않고 보존한다.
     EXAM_CYCLE_CHOICES = [
         ("", "미지정"),
-        ("midterm", "중간고사"),
-        ("final", "기말고사"),
+        ("semester1_midterm", "1학기 중간고사"),
+        ("semester1_final", "1학기 기말고사"),
+        ("semester2_midterm", "2학기 중간고사"),
+        ("semester2_final", "2학기 기말고사"),
+        ("midterm", "중간고사 (학기 미지정)"),
+        ("final", "기말고사 (학기 미지정)"),
         ("mock", "모의고사"),
         ("other", "기타"),
     ]

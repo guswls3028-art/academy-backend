@@ -323,6 +323,13 @@ class DocumentUploadView(View):
                 status=400,
             )
 
+        exam_metadata = MatchupDocumentUpdateSerializer(data={
+            field: request.POST[field]
+            for field in ("exam_cycle", "exam_year") if field in request.POST
+        })
+        if not exam_metadata.is_valid():
+            return JsonResponse(exam_metadata.errors, status=400)
+
         tenant = request.tenant
         doc_count = MatchupDocument.objects.filter(tenant=tenant).count()
         if doc_count >= MAX_DOCUMENTS_PER_TENANT:
@@ -398,6 +405,7 @@ class DocumentUploadView(View):
             category=category,
             subject=subject,
             grade_level=grade_level,
+            **exam_metadata.validated_data,
             upload_intent=upload_intent,
             author=getattr(request, "user", None),
         )
@@ -428,6 +436,13 @@ class DocumentPromoteFromInventoryView(View):
         inv_file_id = body.get("inventory_file_id")
         if not inv_file_id:
             return JsonResponse({"detail": "inventory_file_id required"}, status=400)
+
+        exam_metadata = MatchupDocumentUpdateSerializer(data={
+            field: body[field]
+            for field in ("exam_cycle", "exam_year") if field in body
+        })
+        if not exam_metadata.is_valid():
+            return JsonResponse(exam_metadata.errors, status=400)
 
         InventoryFile = get_inventory_file_model()
         try:
@@ -490,6 +505,7 @@ class DocumentPromoteFromInventoryView(View):
                     category=category,
                     subject=subject,
                     grade_level=grade_level,
+                    **exam_metadata.validated_data,
                     upload_intent=upload_intent,
                     author=getattr(request, "user", None),
                 )
@@ -1371,7 +1387,12 @@ class DocumentPagesView(View):
 
         from .services import ensure_document_page_images
         try:
-            pages = ensure_document_page_images(doc)
+            page_index = request.GET.get("page_index")
+            pages = ensure_document_page_images(
+                doc, page_index=int(page_index) if page_index is not None else None,
+            )
+        except ValueError as exc:
+            return JsonResponse({"detail": str(exc)}, status=400)
         except Exception:
             logger.exception("ensure_document_page_images failed (doc=%s)", doc.id)
             return JsonResponse({"detail": "페이지 이미지 준비 실패"}, status=500)
