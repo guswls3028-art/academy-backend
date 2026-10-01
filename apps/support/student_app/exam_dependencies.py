@@ -50,6 +50,7 @@ def student_exam_queryset(student, tenant, *, include_upcoming_days: int = 0):
         enrollment_id__in=enrollment_ids,
         status="ABSENT",
     ).values("session_id")
+    # A different lecture's roster cannot make an unselected exam target actionable.
     eligible_session = (
         SessionEnrollment.objects.filter(
             tenant=tenant,
@@ -58,6 +59,7 @@ def student_exam_queryset(student, tenant, *, include_upcoming_days: int = 0):
             enrollment__status="ACTIVE",
             enrollment__student__deleted_at__isnull=True,
             enrollment__lecture_id=F("session__lecture_id"),
+            enrollment__exam_enrollments__exam_id=OuterRef("pk"),
             session__lecture__tenant=tenant,
             session__exams__id=OuterRef("pk"),
         )
@@ -87,6 +89,7 @@ def student_exam_queryset(student, tenant, *, include_upcoming_days: int = 0):
         enrollment__status="ACTIVE",
         enrollment__student__deleted_at__isnull=True,
         enrollment__lecture_id=F("session__lecture_id"),
+        enrollment__exam_enrollments__exam_id=OuterRef("pk"),
         session__lecture__tenant=tenant,
         session__exams__id=OuterRef("pk"),
         status="ABSENT",

@@ -16,7 +16,7 @@ from apps.core.models import PlatformPushOutbox, Tenant, TenantMembership
 from apps.domains.attendance.models import Attendance
 from apps.domains.attendance.views import AttendanceViewSet
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
-from apps.domains.exams.models import Exam, ExamEnrollment
+from apps.domains.exams.models import AnswerKey, Exam, ExamEnrollment, ExamQuestion, Sheet
 from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.homework.views.homework_assignment_view import (
     HomeworkAssignmentManageView,
@@ -774,6 +774,136 @@ class LearningTodoEligibilityPostgresTests(TransactionTestCase):
         )
         self.assertEqual(resolved_enrollment, enrollment)
         self.assertEqual(tenant, self.tenant)
+
+    def test_missing_attendance_row_keeps_exam_todo_for_exact_roster(self):
+        enrollment = self._enrollment(
+            tenant=self.tenant,
+            lecture=self.lecture,
+            session=self.session,
+            suffix="MISSING-ATTENDANCE",
+        )
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="Missing attendance exam",
+            exam_type=Exam.ExamType.REGULAR,
+            pass_score=60,
+            max_score=100,
+        )
+        exam.sessions.add(self.session)
+        ExamEnrollment.objects.create(exam=exam, enrollment=enrollment)
+
+        self.client.force_authenticate(enrollment.student.user)
+        listed = self.client.get("/api/v1/student/exams/", **self.headers)
+        self.assertEqual(listed.status_code, 200, listed.data)
+        self.assertIn(exam.id, [item["id"] for item in listed.data["items"]])
+        from apps.support.student_app.exam_dependencies import (
+            get_enrollment_for_student_exam,
+        )
+
+        resolved, tenant = get_enrollment_for_student_exam(
+            enrollment.student,
+            exam.id,
+            tenant=self.tenant,
+        )
+        self.assertEqual(resolved, enrollment)
+        self.assertEqual(tenant, self.tenant)
+
+    @patch("apps.domains.student_app.exams.views.dispatch_student_exam_submission")
+    def test_cross_lecture_shared_exam_requires_an_eligible_selected_enrollment(self, dispatch):
+        absent_enrollment = self.enrollments["ABSENT"]
+        other_lecture = Lecture.objects.create(
+            tenant=self.tenant,
+            title="Other selected lecture",
+            name="Other selected lecture",
+            subject="MATH",
+        )
+        online_session = Session.objects.create(
+            lecture=other_lecture,
+            order=1,
+            title="Online session",
+        )
+        online_enrollment = Enrollment.objects.create(
+            tenant=self.tenant,
+            student=absent_enrollment.student,
+            lecture=other_lecture,
+            status="ACTIVE",
+        )
+        SessionEnrollment.objects.create(
+            tenant=self.tenant,
+            session=online_session,
+            enrollment=online_enrollment,
+        )
+        online_attendance = Attendance.objects.create(
+            tenant=self.tenant,
+            session=online_session,
+            enrollment=online_enrollment,
+            status="ONLINE",
+        )
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="Cross-lecture shared exam",
+            exam_type=Exam.ExamType.REGULAR,
+            pass_score=0,
+            max_score=10,
+        )
+        exam.sessions.add(self.session, online_session)
+        ExamEnrollment.objects.create(exam=exam, enrollment=absent_enrollment)
+        sheet = Sheet.objects.create(exam=exam, name="MAIN", total_questions=1)
+        question = ExamQuestion.objects.create(sheet=sheet, number=1, score=10)
+        AnswerKey.objects.create(exam=exam, answers={str(question.id): "1"})
+
+        self.client.force_authenticate(absent_enrollment.student.user)
+        path = f"/api/v1/student/exams/{exam.id}/"
+        submit_path = f"{path}submit/"
+        answer = {"answers": [{"exam_question_id": question.id, "answer": "1"}]}
+
+        # The student is on the B roster, but only absent A is selected for this exam.
+        listed = self.client.get("/api/v1/student/exams/", **self.headers)
+        self.assertEqual(listed.status_code, 200, listed.data)
+        self.assertNotIn(exam.id, [item["id"] for item in listed.data["items"]])
+        self.assertEqual(self.client.get(path, **self.headers).status_code, 404)
+        denied = self.client.post(submit_path, answer, format="json", **self.headers)
+        self.assertEqual(denied.status_code, 404, denied.data)
+        dispatch.assert_not_called()
+
+        # Selecting B makes the same shared exam actionable without changing A.
+        ExamEnrollment.objects.create(exam=exam, enrollment=online_enrollment)
+        listed = self.client.get("/api/v1/student/exams/", **self.headers)
+        self.assertIn(exam.id, [item["id"] for item in listed.data["items"]])
+        self.assertEqual(self.client.get(path, **self.headers).status_code, 200)
+        submitted = self.client.post(submit_path, answer, format="json", **self.headers)
+        self.assertEqual(submitted.status_code, 201, submitted.data)
+        submission = Submission.objects.get(id=submitted.data["submission_id"])
+        self.assertEqual(submission.enrollment_id, online_enrollment.id)
+        dispatch.assert_called_once()
+
+        # Once all selected sessions are absent, authored work stays as history
+        # while no second online submission is allowed.
+        attempt = ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=online_enrollment,
+            submission_id=submission.id,
+            attempt_index=1,
+            status="done",
+        )
+        result = Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=online_enrollment,
+            attempt=attempt,
+            total_score=7,
+            max_score=10,
+        )
+        online_attendance.status = "ABSENT"
+        online_attendance.save(update_fields=["status"])
+        historical = self.client.get("/api/v1/student/exams/", **self.headers)
+        self.assertIn(exam.id, [item["id"] for item in historical.data["items"]])
+        denied = self.client.post(submit_path, answer, format="json", **self.headers)
+        self.assertEqual(denied.status_code, 403, denied.data)
+        self.assertTrue(ExamAttempt.objects.filter(id=attempt.id).exists())
+        self.assertTrue(Result.objects.filter(id=result.id, total_score=7).exists())
+        self.assertEqual(Submission.objects.filter(id=submission.id).count(), 1)
+        dispatch.assert_called_once()
 
     @skipUnless(connection.vendor == "postgresql", "PostgreSQL row-lock contract")
     def test_concurrent_status_patches_leave_projection_at_last_committed_state(self):
