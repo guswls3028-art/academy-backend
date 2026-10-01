@@ -6,6 +6,7 @@ from __future__ import annotations
 import io
 import hashlib
 import logging
+import math
 import os
 from typing import List, Optional, Tuple
 
@@ -2189,6 +2190,33 @@ def _record_layout_fingerprint(
     )
 
 
+_MANUAL_PAGE_MAX_EDGE = 3000
+_MANUAL_PAGE_MAX_PIXELS = 8_000_000
+
+
+def _manual_pdf_render_dpi(pdf, page_index: int, default_dpi: int) -> float:
+    width, height = pdf.page_dimensions(page_index)
+    if not all(math.isfinite(value) and value > 0 for value in (width, height)):
+        raise ValueError("페이지 크기가 올바르지 않습니다.")
+    # PyMuPDF rounds the output up; leave room for the final pixel on each axis.
+    return min(
+        default_dpi,
+        (_MANUAL_PAGE_MAX_EDGE - 2) * 72 / max(width, height),
+        math.sqrt((_MANUAL_PAGE_MAX_PIXELS - 10_000) / (width * height)) * 72,
+    )
+
+
+def _manual_page_cache_fits(dimensions) -> bool:
+    if not isinstance(dimensions, (list, tuple)) or len(dimensions) != 2:
+        return False
+    width, height = dimensions
+    return (
+        all(isinstance(value, (int, float)) and math.isfinite(value) and value > 0 for value in dimensions)
+        and max(width, height) <= _MANUAL_PAGE_MAX_EDGE
+        and width * height <= _MANUAL_PAGE_MAX_PIXELS
+    )
+
+
 def manually_crop_problem(
     document: MatchupDocument,
     *,
@@ -2246,7 +2274,9 @@ def manually_crop_problem(
                         f"page_index {page_index}가 페이지 범위를 벗어납니다 "
                         f"(0~{pdf_page_count - 1})"
                     )
-                page_img = doc_pdf.render_page(page_index, dpi=200)
+                page_img = doc_pdf.render_page(
+                    page_index, dpi=_manual_pdf_render_dpi(doc_pdf, page_index, 200),
+                )
         else:
             if page_index != 0:
                 raise ValueError("이미지 문서는 page_index=0만 가능합니다.")
@@ -2520,11 +2550,20 @@ def ensure_document_page_images(document: MatchupDocument, *, page_index: int | 
     if page_index is not None and page_index < 0:
         raise ValueError("페이지 번호가 올바르지 않습니다.")
 
-    if not page_keys and page_index is not None:
+    if page_index is not None and (
+        not page_keys
+        or (page_index < len(page_keys) and (
+            not page_keys[page_index] or page_index >= len(page_dims)
+            or not _manual_page_cache_fits(page_dims[page_index])
+        ))
+    ):
         # 직접 자르기는 선택한 페이지만 준비한다. AI의 전체 페이지 캐시와 분리한다.
         page_keys = meta.get("manual_page_image_keys") or []
         page_dims = meta.get("manual_page_dimensions") or []
-        if page_index >= len(page_keys) or not page_keys[page_index]:
+        if (
+            page_index >= len(page_keys) or not page_keys[page_index]
+            or page_index >= len(page_dims) or not _manual_page_cache_fits(page_dims[page_index])
+        ):
             rendered_keys, rendered_dims = _render_and_upload_pages(document, page_index=page_index)
             from django.db import transaction
 
@@ -2539,7 +2578,11 @@ def ensure_document_page_images(document: MatchupDocument, *, page_index: int | 
                     key or (previous_keys[i] if i < len(previous_keys) else "")
                     for i, key in enumerate(rendered_keys)
                 ]
-                page_dims = rendered_dims
+                previous_dims = fresh_meta.get("manual_page_dimensions") or []
+                page_dims = [
+                    previous_dims[i] if not rendered_keys[i] and i < len(previous_dims) else dims
+                    for i, dims in enumerate(rendered_dims)
+                ]
                 fresh_meta["manual_page_image_keys"] = page_keys
                 fresh_meta["manual_page_dimensions"] = page_dims
                 fresh.meta = fresh_meta
@@ -2556,8 +2599,9 @@ def ensure_document_page_images(document: MatchupDocument, *, page_index: int | 
         raise ValueError("페이지 번호가 올바르지 않습니다.")
     pages = []
     for i, key in enumerate(page_keys):
-        url = generate_presigned_get_url_storage(key=key, expires_in=900) if key else ""
         w, h = (page_dims[i] if i < len(page_dims) else (0, 0))
+        usable = bool(key) and (page_index is None or _manual_page_cache_fits((w, h)))
+        url = generate_presigned_get_url_storage(key=key, expires_in=900) if usable else ""
         pages.append({"index": i, "url": url, "width": w, "height": h})
     return pages
 
@@ -2609,13 +2653,14 @@ def _render_and_upload_pages(
                     if page_index is not None and i != page_index:
                         w, h = doc_pdf.page_dimensions(i)
                         page_keys.append("")
-                        page_dims.append((round(w * 150 / 72), round(h * 150 / 72)))
+                        dpi = _manual_pdf_render_dpi(doc_pdf, i, 150)
+                        page_dims.append((math.ceil(w * dpi / 72), math.ceil(h * dpi / 72)))
                         continue
-                    page_img = doc_pdf.render_page(i, dpi=150)  # 캔버스용은 150 충분
+                    page_img = doc_pdf.render_page(i, dpi=_manual_pdf_render_dpi(doc_pdf, i, 150))
                     buf = io.BytesIO()
                     page_img.save(buf, "PNG", optimize=True)
                     buf.seek(0)
-                    key = f"tenants/{document.tenant_id}/matchup/{prefix}/pages/{i:03d}.png"
+                    key = f"tenants/{document.tenant_id}/matchup/{prefix}/pages/manual-bounded-v1/{i:03d}.png"
                     upload_fileobj_to_r2_storage(
                         fileobj=buf, key=key, content_type="image/png",
                     )
