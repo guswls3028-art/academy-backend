@@ -1426,14 +1426,21 @@ class DocumentPagesView(View):
             return JsonResponse({"detail": "Storage not configured"}, status=500)
 
         import json
-        from .services import ensure_document_page_images
+        from .services import ensure_document_page_images, get_cached_document_page_images
         try:
             body = json.loads(request.body) if request.body else {}
             if not isinstance(body, dict):
                 raise ValueError("Invalid JSON")
             page_index = body.get("page_index")
             page_index = int(page_index) if page_index is not None else None
-            pages = ensure_document_page_images(doc, page_index=page_index)
+            pages = get_cached_document_page_images(doc)
+            ready = bool(pages) and (
+                all(page["url"] for page in pages) if page_index is None else (
+                    0 <= page_index < len(pages) and bool(pages[page_index]["url"])
+                )
+            )
+            if not ready:
+                pages = ensure_document_page_images(doc, page_index=page_index)
         except (TypeError, ValueError) as exc:
             return JsonResponse({"detail": str(exc)}, status=400)
         except Exception:

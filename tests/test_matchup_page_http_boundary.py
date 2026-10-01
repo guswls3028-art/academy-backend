@@ -48,7 +48,7 @@ def page_http(tmp_path, monkeypatch):
         r2_key=inventory.r2_key, original_name=inventory.original_name,
         content_type=inventory.content_type, status="failed", problem_count=0,
     )
-    downloads, uploads = [], {}
+    downloads, uploads, upload_calls = [], {}, []
 
     def download(_inventory):
         fd, path = tempfile.mkstemp(dir=tmp_path, suffix=".pdf")
@@ -58,6 +58,7 @@ def page_http(tmp_path, monkeypatch):
         return path
 
     def upload(**kwargs):
+        upload_calls.append(kwargs["key"])
         uploads[kwargs["key"]] = kwargs["fileobj"].read()
 
     def presign(**kwargs):
@@ -80,7 +81,7 @@ def page_http(tmp_path, monkeypatch):
     ]):
         yield SimpleNamespace(
             client=Client(raise_request_exception=False), doc=doc, user=user,
-            headers=headers, source=source, downloads=downloads, uploads=uploads,
+            headers=headers, source=source, downloads=downloads, uploads=uploads, upload_calls=upload_calls,
         )
 
 
@@ -120,13 +121,13 @@ def _prepare(case, index=0):
 
 
 def _read(case, index=0):
-    before, uploads, downloads = _rows(), dict(case.uploads), list(case.downloads)
+    before, uploads, downloads = _rows(), list(case.upload_calls), list(case.downloads)
     response = case.client.get(
         f"/api/v1/matchup/documents/{case.doc.id}/pages/",
         {"page_index": index} if index is not None else {}, **case.headers,
     )
     assert _rows() == before
-    assert case.uploads == uploads and case.downloads == downloads
+    assert case.upload_calls == uploads and case.downloads == downloads
     return response
 
 
@@ -164,6 +165,7 @@ def test_prepare_select_crop_and_reopen_persist_real_http(page_http, status):
     assert all(not os.path.exists(path) for path in case.downloads)
     assert _prepare(case, 2).status_code == 200
     assert len(case.uploads) == 3  # Warm prepare is idempotent.
+    assert len(case.upload_calls) == 3
 
 
 def test_oversized_ai_cache_is_preserved_and_manual_http_is_bounded(page_http):
@@ -190,9 +192,9 @@ def test_oversized_ai_cache_is_preserved_and_manual_http_is_bounded(page_http):
         assert case.doc.meta[field] == value
     assert _prepare(case, None).status_code == 200
     assert all(page["url"] for page in _read(case, None).json()["pages"])
-    uploads = dict(case.uploads)
+    uploads = list(case.upload_calls)
     assert _prepare(case, None).status_code == 200
-    assert case.uploads == uploads
+    assert case.upload_calls == uploads
 
 
 @pytest.mark.parametrize("index", [0, None])
@@ -259,9 +261,26 @@ def test_whole_page_prepare_keeps_existing_consumers_working(page_http):
     result = _read(page_http, None)
     assert result.status_code == 200
     assert len(result.json()["pages"]) == 3 and all(page["url"] for page in result.json()["pages"])
-    uploads = dict(page_http.uploads)
+    uploads = list(page_http.upload_calls)
     assert _prepare(page_http, None).status_code == 200
-    assert page_http.uploads == uploads
+    assert page_http.upload_calls == uploads
+
+
+def test_whole_post_after_individual_manual_pages_is_fully_read_only(page_http):
+    case = page_http
+    for index in range(3):
+        assert _prepare(case, index).status_code == 200
+    case.doc.refresh_from_db()
+    assert not case.doc.meta.get("page_image_keys")
+    assert all(case.doc.meta["manual_page_image_keys"])
+    before, uploads, downloads = _rows(), list(case.upload_calls), list(case.downloads)
+    for _ in range(2):
+        response = _prepare(case, None)
+        assert response.status_code == 200
+        assert all(page["url"] for page in response.json()["pages"])
+        assert _rows() == before
+        assert case.upload_calls == uploads and case.downloads == downloads
+        assert _read(case, None).status_code == 200
 
 
 def test_prepare_failure_is_visible_and_can_be_retried(page_http, monkeypatch):
