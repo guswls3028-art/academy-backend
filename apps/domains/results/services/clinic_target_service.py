@@ -33,6 +33,10 @@ from academy.adapters.db.django.repositories_clinic_targets import (
     source_maps_for_clinic_targets,
 )
 from apps.domains.results.models import Result, ResultFact, ExamAttempt
+from apps.support.attendance.learning_todo_eligibility import (
+    actual_absent_learning_todo_pairs,
+    learning_todo_eligible_pairs,
+)
 
 # ✅ 단일 진실 유틸
 from apps.domains.results.utils.clinic import (
@@ -193,6 +197,16 @@ class ClinicTargetService:
                 (link for link in links_list if link.resolved_at is None),
                 tenant=tenant,
             )
+            absent_pairs = actual_absent_learning_todo_pairs(
+                tenant=tenant,
+                enrollment_session_pairs={
+                    (int(link.enrollment_id), int(link.session_id)) for link in current_links
+                },
+            )
+            current_links = [
+                link for link in current_links
+                if (int(link.enrollment_id), int(link.session_id)) not in absent_pairs
+            ]
             links_list = (
                 [link for link in links_list if link.resolved_at is not None]
                 + current_links
@@ -265,6 +279,16 @@ class ClinicTargetService:
             session_ids=session_ids, homework_ids=homework_ids,
         )
         missing_targets = explicit_not_submitted_exam_targets(tenant=tenant, section_id=section_id)
+        eligible_missing_pairs = learning_todo_eligible_pairs(
+            tenant=tenant,
+            enrollment_session_pairs={
+                (int(result.enrollment_id), int(session.id)) for result, session in missing_targets
+            },
+        )
+        missing_targets = [
+            (result, session) for result, session in missing_targets
+            if (int(result.enrollment_id), int(session.id)) in eligible_missing_pairs
+        ]
         cutline_overrides = exam_cutline_overrides_for_targets(
             tenant=tenant,
             exam_ids=exam_ids | {int(result.target_id) for result, _ in missing_targets},

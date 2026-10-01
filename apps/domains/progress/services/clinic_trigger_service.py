@@ -29,6 +29,10 @@ from apps.support.progress.clinic_trigger_dependencies import (
 from apps.support.progress.assessment_correction_dependencies import (
     is_current_teacher_exam_resolution,
 )
+from apps.support.attendance.learning_todo_eligibility import (
+    attendance_status_is_learning_todo_eligible,
+    attendance_status_map,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +189,17 @@ class ClinicTriggerService:
         V1.1.2: 개별 시험 단위로 ClinicLink 생성.
         세션 집계(completed)와 독립적으로, 각 시험의 pass/fail을 개별 판정.
         """
+        tenant_id = _resolve_tenant_id(int(session_progress.enrollment_id))
+        if tenant_id is None or int(session_progress.session.lecture.tenant_id) != tenant_id:
+            return
+        attendance_status = attendance_status_map(
+            tenant=session_progress.session.lecture.tenant,
+            session=session_progress.session,
+            enrollment_ids=[session_progress.enrollment_id],
+        ).get(int(session_progress.enrollment_id))
+        if not attendance_status_is_learning_todo_eligible(attendance_status):
+            return
+
         exam_meta = session_progress.exam_meta or {}
         exam_rows = exam_meta.get("exams", [])
 
