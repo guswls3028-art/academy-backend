@@ -31,6 +31,7 @@ class RegistrationApprovalConcurrencyPostgresTests(TransactionTestCase):
 
     def test_same_identity_approvals_create_exactly_one_account_graph(self):
         tenant = Tenant.objects.create(
+            account_password_policy={"parent_mode": "phone_last4"},
             name="가입 승인 동시성 학원",
             code="registration-approval-race",
             is_active=True,
@@ -129,6 +130,7 @@ class RegistrationApprovalConcurrencyPostgresTests(TransactionTestCase):
 
     def test_parent_ensure_and_existing_student_approval_do_not_deadlock(self):
         tenant = Tenant.objects.create(
+            account_password_policy={"parent_mode": "phone_last4"},
             name="가입 승인 잠금 순서 학원",
             code="registration-approval-lock-order",
             is_active=True,
@@ -216,6 +218,7 @@ class RegistrationApprovalConcurrencyPostgresTests(TransactionTestCase):
 
     def test_same_deleted_resolution_retry_adopts_password_once(self):
         tenant = Tenant.objects.create(
+            account_password_policy={"parent_mode": "phone_last4"},
             name="가입 복구 재시도 학원",
             code="registration-recovery-retry",
             is_active=True,
@@ -297,6 +300,7 @@ class RegistrationApprovalConcurrencyPostgresTests(TransactionTestCase):
 
     def test_parent_ensure_and_deleted_resolution_keep_lock_order(self):
         tenant = Tenant.objects.create(
+            account_password_policy={"parent_mode": "phone_last4"},
             name="가입 복구 잠금 학원",
             code="registration-recovery-lock-order",
             is_active=True,
@@ -377,6 +381,7 @@ class RegistrationApprovalConcurrencyPostgresTests(TransactionTestCase):
 
     def test_ordinary_approval_and_deleted_resolution_serialize_fail_closed(self):
         tenant = Tenant.objects.create(
+            account_password_policy={"parent_mode": "phone_last4"},
             name="가입 복구 승인 경합 학원",
             code="registration-recovery-approval-race",
             is_active=True,

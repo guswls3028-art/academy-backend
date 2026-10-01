@@ -14,7 +14,7 @@ User = get_user_model()
 
 
 def make_tenant(code="identity-convergence"):
-    return Tenant.objects.create(name=f"Tenant {code}", code=code, is_active=True)
+    return Tenant.objects.create(account_password_policy={"parent_mode": "phone_last4"}, name=f"Tenant {code}", code=code, is_active=True)
 
 
 def make_admin(tenant):

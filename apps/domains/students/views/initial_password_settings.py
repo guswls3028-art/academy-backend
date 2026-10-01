@@ -9,8 +9,8 @@ from apps.core.services.initial_password_policy import password_settings, save_p
 
 
 class AccountPasswordSettingsSchema(serializers.Serializer):
-    student_mode = serializers.ChoiceField(choices=("phone_last4", "fixed", "random"), required=False)
-    parent_mode = serializers.ChoiceField(choices=("phone_last4", "fixed", "random"), required=False)
+    student_mode = serializers.ChoiceField(choices=("phone_last4", "fixed", "random"), required=False, allow_null=True)
+    parent_mode = serializers.ChoiceField(choices=("phone_last4", "fixed", "random"), required=False, allow_null=True)
     student_fixed_password = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False)
     parent_fixed_password = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False)
 

@@ -42,7 +42,11 @@ class TeacherOpsConfirmRowSerializer(serializers.Serializer):
         allow_blank=True,
         required=False,
         write_only=True,
+        trim_whitespace=False,
     )
+    initial_password_mode = serializers.ChoiceField(choices=("fixed", "phone_last4", "random"), required=False)
+    parent_initial_password = serializers.CharField(min_length=4, max_length=128, allow_blank=True, required=False, trim_whitespace=False, write_only=True)
+    parent_initial_password_mode = serializers.ChoiceField(choices=("fixed", "phone_last4", "random"), required=False)
     school = serializers.CharField(max_length=255, allow_blank=True, required=False)
     school_type = serializers.ChoiceField(
         choices=[("ELEMENTARY", "초등"), ("MIDDLE", "중등"), ("HIGH", "고등")],

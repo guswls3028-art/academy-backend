@@ -2533,6 +2533,33 @@ def paste_image_as_problem(
     return problem
 
 
+def get_cached_document_page_images(document: MatchupDocument, *, page_index: int | None = None) -> List[dict]:
+    """저장된 페이지 메타데이터만 읽고 URL을 발급한다. 렌더·업로드·DB 쓰기는 없다."""
+    from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
+
+    meta = document.meta or {}
+    ai_keys = meta.get("page_image_keys") or []
+    ai_dims = meta.get("page_dimensions") or []
+    manual_keys = meta.get("manual_page_image_keys") or []
+    manual_dims = meta.get("manual_page_dimensions") or []
+    count = max(len(ai_keys), len(manual_keys))
+    if page_index is not None and (page_index < 0 or (count and page_index >= count)):
+        raise ValueError("페이지 번호가 올바르지 않습니다.")
+    pages = []
+    for index in range(count):
+        key, dimensions = "", (0, 0)
+        for keys, dims in ((ai_keys, ai_dims), (manual_keys, manual_dims)):
+            if index < len(keys) and index < len(dims) and keys[index] and _manual_page_cache_fits(dims[index]):
+                key, dimensions = keys[index], dims[index]
+                break
+        pages.append({
+            "index": index,
+            "url": generate_presigned_get_url_storage(key=key, expires_in=900) if key else "",
+            "width": dimensions[0], "height": dimensions[1],
+        })
+    return pages
+
+
 def ensure_document_page_images(document: MatchupDocument, *, page_index: int | None = None) -> List[dict]:
     """문서의 페이지별 이미지를 R2에 캐싱하고 presigned URL 반환.
 
@@ -2541,32 +2568,35 @@ def ensure_document_page_images(document: MatchupDocument, *, page_index: int | 
 
     Returns: [{index, url, width, height}, ...] (page 순서)
     """
-    from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
+    from django.db import transaction
 
     meta = dict(document.meta or {})
     page_keys = meta.get("page_image_keys")
     page_dims = meta.get("page_dimensions") or []  # [(w, h), ...]
+    cached_pages = get_cached_document_page_images(document)
 
     if page_index is not None and page_index < 0:
         raise ValueError("페이지 번호가 올바르지 않습니다.")
 
-    if page_index is not None and (
+    if (page_index is not None and (
         not page_keys
+        or page_index >= len(page_keys)
         or (page_index < len(page_keys) and (
             not page_keys[page_index] or page_index >= len(page_dims)
             or not _manual_page_cache_fits(page_dims[page_index])
         ))
-    ):
+    )) or (page_index is None and page_keys and any(not page["url"] for page in cached_pages)):
         # 직접 자르기는 선택한 페이지만 준비한다. AI의 전체 페이지 캐시와 분리한다.
         page_keys = meta.get("manual_page_image_keys") or []
         page_dims = meta.get("manual_page_dimensions") or []
         if (
-            page_index >= len(page_keys) or not page_keys[page_index]
-            or page_index >= len(page_dims) or not _manual_page_cache_fits(page_dims[page_index])
+            (page_index is None and any(not page["url"] for page in cached_pages))
+            or (page_index is not None and (
+                page_index >= len(page_keys) or not page_keys[page_index]
+                or page_index >= len(page_dims) or not _manual_page_cache_fits(page_dims[page_index])
+            ))
         ):
             rendered_keys, rendered_dims = _render_and_upload_pages(document, page_index=page_index)
-            from django.db import transaction
-
             # 렌더링 중 도착한 AI 결과나 다른 페이지 캐시를 덮어쓰지 않는다.
             with transaction.atomic():
                 fresh = MatchupDocument.objects.select_for_update().get(
@@ -2587,23 +2617,26 @@ def ensure_document_page_images(document: MatchupDocument, *, page_index: int | 
                 fresh_meta["manual_page_dimensions"] = page_dims
                 fresh.meta = fresh_meta
                 fresh.save(update_fields=["meta", "updated_at"])
+                document.meta = fresh_meta
     elif not page_keys:
         # 캐시 미스: 원본 다운로드 + 페이지 렌더 + R2 업로드.
         page_keys, page_dims = _render_and_upload_pages(document)
-        meta["page_image_keys"] = page_keys
-        meta["page_dimensions"] = page_dims
-        document.meta = meta
-        document.save(update_fields=["meta", "updated_at"])
+        with transaction.atomic():
+            fresh = MatchupDocument.objects.select_for_update().get(
+                pk=document.pk, tenant_id=document.tenant_id,
+            )
+            fresh_meta = dict(fresh.meta or {})
+            # 전체 페이지 준비 중 도착한 AI 캐시도 보존한다.
+            prefix = "manual_" if fresh_meta.get("page_image_keys") else ""
+            fresh_meta[f"{prefix}page_image_keys"] = page_keys
+            fresh_meta[f"{prefix}page_dimensions"] = page_dims
+            fresh.meta = fresh_meta
+            fresh.save(update_fields=["meta", "updated_at"])
+            document.meta = fresh_meta
 
     if page_index is not None and page_index >= len(page_keys):
         raise ValueError("페이지 번호가 올바르지 않습니다.")
-    pages = []
-    for i, key in enumerate(page_keys):
-        w, h = (page_dims[i] if i < len(page_dims) else (0, 0))
-        usable = bool(key) and (page_index is None or _manual_page_cache_fits((w, h)))
-        url = generate_presigned_get_url_storage(key=key, expires_in=900) if usable else ""
-        pages.append({"index": i, "url": url, "width": w, "height": h})
-    return pages
+    return get_cached_document_page_images(document, page_index=page_index)
 
 
 def _render_and_upload_pages(
@@ -2669,7 +2702,13 @@ def _render_and_upload_pages(
         else:
             if page_index not in (None, 0):
                 raise ValueError("페이지 번호가 올바르지 않습니다.")
-            img = Image.open(local_path).convert("RGB")
+            img = Image.open(local_path)
+            scale = min(
+                1, _MANUAL_PAGE_MAX_EDGE / max(img.size),
+                math.sqrt(_MANUAL_PAGE_MAX_PIXELS / (img.width * img.height)),
+            )
+            img.thumbnail((max(1, int(img.width * scale)), max(1, int(img.height * scale))))
+            img = img.convert("RGB")
             buf = io.BytesIO()
             img.save(buf, "PNG", optimize=True)
             buf.seek(0)

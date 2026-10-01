@@ -13,6 +13,7 @@ from django.utils.dateparse import parse_datetime
 
 EXCEL_SECRET_PREFIX = "excel:v1:"
 EXCEL_INITIAL_PASSWORD_SECRET_FIELD = "initial_password_secret"
+EXCEL_PARENT_INITIAL_PASSWORD_SECRET_FIELD = "parent_initial_password_secret"
 EXCEL_CREDENTIALS_ENVELOPE_FIELD = "_student_initial_credentials"
 EXCEL_CREDENTIALS_TTL_SECONDS = 60 * 60
 
@@ -35,8 +36,6 @@ def encrypt_excel_job_secret(value: str) -> str:
     plaintext = str(value or "")
     if not plaintext:
         return ""
-    if plaintext.startswith(EXCEL_SECRET_PREFIX):
-        return plaintext
     token = _fernet().encrypt(plaintext.encode("utf-8")).decode("ascii")
     return f"{EXCEL_SECRET_PREFIX}{token}"
 
@@ -54,20 +53,29 @@ def decrypt_excel_job_secret(value: str) -> str:
         raise ExcelJobSecretError("excel_job_secret_decryption_failed") from exc
 
 
-def protect_excel_initial_password(initial_password: str) -> dict[str, str]:
-    password = str(initial_password or "").strip()
+def _initial_password_secret_field(role: str) -> str:
+    if role == "student":
+        return EXCEL_INITIAL_PASSWORD_SECRET_FIELD
+    if role == "parent":
+        return EXCEL_PARENT_INITIAL_PASSWORD_SECRET_FIELD
+    raise ExcelJobSecretError("excel_job_secret_role_invalid")
+
+
+def protect_excel_initial_password(initial_password: str, *, role: str = "student") -> dict[str, str]:
+    field = _initial_password_secret_field(role)
+    password = str(initial_password or "")
     if not password:
         return {}
     return {
-        EXCEL_INITIAL_PASSWORD_SECRET_FIELD: encrypt_excel_job_secret(password),
+        field: encrypt_excel_job_secret(password),
     }
 
 
-def recover_excel_initial_password(payload: dict[str, Any]) -> str:
-    encrypted = payload.get(EXCEL_INITIAL_PASSWORD_SECRET_FIELD)
+def recover_excel_initial_password(payload: dict[str, Any], *, role: str = "student") -> str:
+    encrypted = payload.get(_initial_password_secret_field(role))
     if not encrypted:
         return ""
-    return decrypt_excel_job_secret(str(encrypted)).strip()
+    return decrypt_excel_job_secret(str(encrypted))
 
 
 def secure_excel_result(
@@ -129,4 +137,6 @@ def scrub_excel_job_payload(payload: dict[str, Any]) -> dict[str, Any]:
     scrubbed = dict(payload or {})
     scrubbed.pop("initial_password", None)
     scrubbed.pop(EXCEL_INITIAL_PASSWORD_SECRET_FIELD, None)
+    scrubbed.pop("parent_initial_password", None)
+    scrubbed.pop(EXCEL_PARENT_INITIAL_PASSWORD_SECRET_FIELD, None)
     return scrubbed

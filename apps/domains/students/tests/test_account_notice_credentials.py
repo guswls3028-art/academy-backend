@@ -9,7 +9,7 @@ from rest_framework.test import APIClient, APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantDomain, TenantMembership, PendingPasswordReset
 from apps.core.services.account_credentials import account_notice_password
-from apps.core.services.initial_password_policy import save_password_settings
+from apps.core.services.initial_password_policy import initial_password, password_settings, save_password_settings
 from apps.core.services.password import change_password, consume_pending_password_reset, create_pending_password_reset, pending_password_reset_matches
 from apps.domains.students.services.creation import create_student_account
 from apps.domains.students.services.account_notice import _decrypt, dispatch_pending_account_notice
@@ -29,6 +29,10 @@ class AccountNoticeCredentialTests(TestCase):
         TenantMembership.ensure_active(tenant=self.tenant, user=self.admin, role="owner")
 
     def create(self, suffix="01", **kwargs):
+        if not any(key in kwargs for key in ("password", "password_mode", "password_hash")) and password_settings(self.tenant)["student_mode"] is None:
+            kwargs["password_mode"] = "random"
+        if not any(key in kwargs for key in ("parent_password", "parent_password_mode")):
+            kwargs["parent_password_mode"] = "random"
         return create_student_account(tenant=self.tenant, student_data={"name": f"학생{suffix}", "ps_number": f"student{suffix}", "phone": f"010778899{suffix}", "parent_phone": "01033445566"}, **kwargs)
 
     def usable(self, user, password):
@@ -37,7 +41,7 @@ class AccountNoticeCredentialTests(TestCase):
         self.assertNotIn(password, ("변경되지 않음", "가입 신청 시 입력한 비밀번호"))
 
     def test_new_student_and_parent_use_their_own_phone_suffix(self):
-        result = self.create()
+        result = self.create(password_mode="phone_last4", parent_password_mode="phone_last4")
         self.assertTrue(result.user.check_password("9901"))
         self.assertTrue(result.parent.user.check_password("5566"))
         self.assertEqual(_decrypt(result.student.pending_account_notice_student_password_ciphertext), "9901")
@@ -55,8 +59,48 @@ class AccountNoticeCredentialTests(TestCase):
         self.assertTrue(student.parent.user.check_password(" parent5678 "))
         self.assertNotIn("account_notice_password_ciphertext", str(response.data))
 
+    def test_missing_choices_fail_without_graph_then_explicit_random_recovers_and_logs_in(self):
+        from apps.domains.students.models import Student
+        from apps.support.students.lifecycle_dependencies import find_parent_account
+        before = (get_user_model().objects.count(), Student.objects.count(), TenantMembership.objects.count())
+        payload = {"name": "선택복구학생", "parent_phone": "01033445566", "school_type": "HIGH", "grade": 1}
+        for choices in ({}, {"initial_password_mode": "phone_last4", "parent_initial_password_mode": "phone_last4"}, {"initial_password_mode": "random"}):
+            request = self.factory.post("/api/v1/students/", {**payload, **choices}, format="json")
+            request.tenant = self.tenant
+            force_authenticate(request, user=self.admin)
+            response = StudentViewSet.as_view({"post": "create"})(request)
+            self.assertEqual(response.status_code, 400, response.data)
+            self.assertEqual((get_user_model().objects.count(), Student.objects.count(), TenantMembership.objects.count()), before)
+            self.assertIsNone(find_parent_account(tenant=self.tenant, parent_phone=payload["parent_phone"]))
+        request = self.factory.post("/api/v1/students/", {**payload, "initial_password_mode": "random", "parent_initial_password_mode": "random"}, format="json")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        response = StudentViewSet.as_view({"post": "create"})(request)
+        self.assertEqual(response.status_code, 201, response.data)
+        student = Student.objects.get(pk=response.data["id"])
+        for user in (student.user, student.parent.user):
+            password = account_notice_password(user)
+            self.assertRegex(password, r"^\d{6}$")
+            self.assertTrue(user.check_password(password))
+            self.client.credentials()
+            login = self.client.post("/api/v1/token/", {"username": user.phone or student.ps_number, "password": password}, format="json")
+            self.assertEqual(login.status_code, 200, login.data)
+            self.client.credentials(HTTP_AUTHORIZATION="Bearer " + login.data["access"])
+            self.assertEqual(self.client.get("/api/v1/core/me/").status_code, 200)
+        self.tenant.refresh_from_db()
+        self.assertEqual(self.tenant.account_password_policy, {})
+
+    def test_existing_parent_is_reused_without_resolving_unset_parent_policy(self):
+        first = self.create(password="first-student", parent_password=" keep parent ")
+        original_hash = first.parent.user.password
+        second = create_student_account(tenant=self.tenant, password="second-student", student_data={"name": "둘째학생", "ps_number": "sibling-no-default", "parent_phone": "01033445566"})
+        self.assertEqual(second.parent.pk, first.parent.pk)
+        first.parent.user.refresh_from_db()
+        self.assertEqual(first.parent.user.password, original_hash)
+        self.assertTrue(first.parent.user.check_password(" keep parent "))
+
     def test_no_student_phone_generates_a_usable_numeric_password(self):
-        result = create_student_account(tenant=self.tenant, student_data={"name": "번호없는학생", "ps_number": "no-phone", "parent_phone": "01033445566"})
+        result = create_student_account(tenant=self.tenant, password_mode="random", parent_password_mode="random", student_data={"name": "번호없는학생", "ps_number": "no-phone", "parent_phone": "01033445566"})
         password = _decrypt(result.student.pending_account_notice_student_password_ciphertext)
         self.assertEqual(len(password), 6)
         self.assertTrue(password.isdigit())
@@ -192,7 +236,7 @@ class AccountNoticeCredentialTests(TestCase):
 class AccountNoticeLockOrderTests(TransactionTestCase):
     def test_parent_notice_preserves_user_before_student_lock_order(self):
         tenant = Tenant.objects.create(name="계정 잠금 QA", code="password-lock-qa")
-        result = create_student_account(tenant=tenant, student_data={
+        result = create_student_account(tenant=tenant, password_mode="random", parent_password_mode="random", student_data={
             "name": "잠금검증", "ps_number": "LOCK-QA", "phone": "01070001111", "parent_phone": "01080002222",
         })
         student_id, user_id = result.student.pk, result.user.pk
@@ -241,3 +285,60 @@ class AccountNoticeLockOrderTests(TransactionTestCase):
         self.assertFalse(first.is_alive() or second.is_alive())
         self.assertEqual(failures, [])
         self.assertEqual(delivered, [True])
+
+
+class InitialPasswordPolicyIsolationTests(TestCase):
+    def test_unconfigured_tenants_do_not_infer_phone_suffix_or_persist_defaults(self):
+        for code in ("movementhui", "unconfigured-password-qa"):
+            with self.subTest(code=code):
+                tenant = Tenant.objects.create(name=code, code=code)
+                self.assertIsNone(password_settings(tenant)["student_mode"])
+                self.assertIsNone(password_settings(tenant)["parent_mode"])
+                with self.assertRaisesRegex(ValueError, "방식을 선택"):
+                    initial_password(tenant, role="student", phone="01077889901")
+                with patch("apps.core.services.initial_password_policy.generate_temp_password", side_effect=["123456", "654321"]):
+                    self.assertEqual(initial_password(tenant, role="student", phone="01077889901", mode="random"), "123456")
+                    self.assertEqual(initial_password(tenant, role="parent", phone="01033445566", mode="random"), "654321")
+                tenant.refresh_from_db()
+                self.assertEqual(tenant.account_password_policy, {})
+
+    def test_explicit_phone_rule_and_supplied_password_override_only_the_target_role(self):
+        tenant = Tenant.objects.create(name="설정 QA", code="explicit-password-qa")
+        save_password_settings(tenant, {"student_mode": "fixed", "student_fixed_password": " student policy ", "parent_mode": "phone_last4"})
+        saved = dict(tenant.account_password_policy)
+        self.assertEqual(initial_password(tenant, role="student", phone="01077889901"), " student policy ")
+        self.assertEqual(initial_password(tenant, role="parent", phone="01033445566"), "5566")
+        self.assertEqual(initial_password(tenant, role="student", phone="01077889901", supplied=" direct value "), " direct value ")
+        tenant.refresh_from_db()
+        self.assertEqual(tenant.account_password_policy, saved)
+
+    def test_partial_update_preserves_other_role_ciphertext_and_stale_writer_cannot_erase_it(self):
+        tenant = Tenant.objects.create(name="부분 설정 QA", code="partial-password-qa")
+        stale = Tenant.objects.get(pk=tenant.pk)
+        save_password_settings(tenant, {"parent_mode": "fixed", "parent_fixed_password": " parent policy "})
+        parent_ciphertext = tenant.account_password_policy["parent_fixed_password"]
+        save_password_settings(stale, {"student_mode": "phone_last4"})
+        tenant.refresh_from_db()
+        policy = password_settings(tenant)
+        self.assertEqual(policy["student_mode"], "phone_last4")
+        self.assertEqual(policy["parent_mode"], "fixed")
+        self.assertEqual(policy["parent_fixed_password"], " parent policy ")
+        self.assertEqual(tenant.account_password_policy["parent_fixed_password"], parent_ciphertext)
+        self.assertEqual(initial_password(tenant, role="parent", phone="01033445566"), " parent policy ")
+
+    def test_setting_one_tenant_keeps_other_policies_and_existing_user_hashes_exact(self):
+        target = Tenant.objects.create(name="대상 설정 QA", code="target-password-qa")
+        other = Tenant.objects.create(name="다른 설정 QA", code="other-policy-qa")
+        untouched = Tenant.objects.create(name="미설정 QA", code="untouched-policy-qa")
+        save_password_settings(other, {"student_mode": "fixed", "student_fixed_password": "other policy", "parent_mode": "random"})
+        other_before = dict(other.account_password_policy)
+        user = get_user_model().objects.create_user(username="kept-policy-user", password="existing password", tenant=other)
+        hash_before = user.password
+        save_password_settings(target, {"student_mode": "phone_last4", "parent_mode": "phone_last4"})
+        other.refresh_from_db()
+        untouched.refresh_from_db()
+        user.refresh_from_db()
+        self.assertEqual(other.account_password_policy, other_before)
+        self.assertEqual(untouched.account_password_policy, {})
+        self.assertEqual(user.password, hash_before)
+        self.assertEqual(initial_password(other, role="student", phone="01077889901"), "other policy")
