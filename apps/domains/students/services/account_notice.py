@@ -32,7 +32,7 @@ def _fernet() -> Fernet:
 
 
 def _encrypt(value: str) -> str:
-    plaintext = str(value or "").strip()
+    plaintext = str(value or "")
     if not plaintext:
         raise AccountNoticeSecretError("account_notice_secret_empty")
     token = _fernet().encrypt(plaintext.encode("utf-8")).decode("ascii")

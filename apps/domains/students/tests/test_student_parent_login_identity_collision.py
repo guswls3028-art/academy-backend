@@ -14,6 +14,7 @@ from apps.domains.students.services.profile import (
 class StudentParentLoginIdentityCollisionTests(TestCase):
     def setUp(self):
         self.tenant = Tenant.objects.create(
+            account_password_policy={"parent_mode": "phone_last4"},
             code="student-parent-login-collision",
             name="학생 학부모 로그인 충돌",
             is_active=True,

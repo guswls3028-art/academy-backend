@@ -22,11 +22,13 @@ def _phone(block: int, index: int) -> str:
 class StudentImportIdentityTests(TestCase):
     def setUp(self):
         self.tenant = Tenant.objects.create(
+            account_password_policy={"parent_mode": "phone_last4"},
             name="학생 등록 식별 테스트",
             code="student-import-identity",
             is_active=True,
         )
         self.other_tenant = Tenant.objects.create(
+            account_password_policy={"parent_mode": "phone_last4"},
             name="다른 학원",
             code="student-import-identity-other",
             is_active=True,

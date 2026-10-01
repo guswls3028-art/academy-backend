@@ -24,6 +24,7 @@ def ensure_parent_account_for_student(
     parent_phone: str,
     student_name: str,
     initial_password: str | None = None,
+    initial_password_mode: str | None = None,
     initial_password_hash: str | None = None,
     initial_password_notice: str | None = None,
 ) -> Any:
@@ -34,6 +35,7 @@ def ensure_parent_account_for_student(
         parent_phone=parent_phone,
         student_name=student_name,
         initial_password=initial_password,
+        initial_password_mode=initial_password_mode,
         initial_password_hash=initial_password_hash,
         initial_password_notice=initial_password_notice,
     )

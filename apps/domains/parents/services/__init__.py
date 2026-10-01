@@ -57,6 +57,7 @@ def ensure_parent_account_for_student(
     initial_password: str | None = None,
     initial_password_hash: str | None = None,
     initial_password_notice: str | None = None,
+    initial_password_mode: str | None = None,
 ) -> ParentAccountEnsureResult:
     """
     학부모 전화번호로 기존 계정을 찾거나 명시적 자격 증명으로 새 계정을 만든다.
@@ -68,9 +69,6 @@ def ensure_parent_account_for_student(
     parent_phone = normalize_parent_phone(parent_phone)
     initial_pw = str(initial_password or "")
     password_hash = str(initial_password_hash or "")
-    if not initial_pw and not password_hash:
-        from apps.core.services.initial_password_policy import initial_password as resolve_initial_password
-        initial_pw = resolve_initial_password(tenant, role="parent", phone=parent_phone)
     password_notice = str(initial_password_notice or initial_pw)
     if initial_pw and password_hash:
         raise ValueError("학부모 초기 비밀번호와 비밀번호 해시는 함께 입력할 수 없습니다.")
@@ -80,6 +78,16 @@ def ensure_parent_account_for_student(
         identify_hasher(password_hash)
         if not password_notice:
             raise ValueError("학부모 계정 안내값이 필요합니다.")
+
+    credentials_resolved = False
+
+    def resolve_new_credentials():
+        nonlocal initial_pw, password_notice, credentials_resolved
+        if not password_hash and not credentials_resolved:
+            from apps.core.services.initial_password_policy import initial_password as resolve_initial_password
+            initial_pw = resolve_initial_password(tenant, role="parent", phone=parent_phone, supplied=initial_pw or None, mode=initial_password_mode)
+            password_notice = str(initial_password_notice or initial_pw)
+            credentials_resolved = True
 
     User = get_user_model()
     # tenant 내 유일한 학부모 식별: username = p_{tenant_id}_{phone}
@@ -106,6 +114,7 @@ def ensure_parent_account_for_student(
                         raise ValueError("비활성화된 학부모 계정입니다. 계정 복구 후 다시 시도해 주세요.")
                     credentials_initialized = False
                     if not parent.user.has_usable_password():
+                        resolve_new_credentials()
                         if not initial_pw and not password_hash:
                             raise ValueError(
                                 "학부모 계정을 사용하려면 초기 비밀번호를 입력해 주세요."
@@ -136,6 +145,7 @@ def ensure_parent_account_for_student(
                     .first()
                 )
                 if user is None:
+                    resolve_new_credentials()
                     if not initial_pw and not password_hash:
                         raise ValueError(
                             "새 학부모 계정을 만들려면 초기 비밀번호를 입력해 주세요."
@@ -164,6 +174,7 @@ def ensure_parent_account_for_student(
                     raise ValueError("비활성화된 학부모 계정입니다. 계정 복구 후 다시 시도해 주세요.")
                 credentials_initialized = False
                 if not user.has_usable_password():
+                    resolve_new_credentials()
                     if not initial_pw and not password_hash:
                         raise ValueError(
                             "학부모 계정을 사용하려면 초기 비밀번호를 입력해 주세요."

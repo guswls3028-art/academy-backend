@@ -26,6 +26,8 @@ class ParentAccountCreationTests(TestCase):
         self.assertEqual(result.parent.user.username, f"p_{self.tenant.id}_01012345678")
 
     def test_new_parent_uses_tenant_policy_when_password_is_omitted(self):
+        from apps.core.services.initial_password_policy import save_password_settings
+        save_password_settings(self.tenant, {"parent_mode": "phone_last4"})
         result = ensure_parent_account_for_student(tenant=self.tenant, parent_phone="01012345678", student_name="학생")
         self.assertTrue(result.parent.user.check_password("5678"))
         self.assertEqual(result.password_for_notice, "5678")

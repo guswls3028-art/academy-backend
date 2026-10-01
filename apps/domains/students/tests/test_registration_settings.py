@@ -20,6 +20,7 @@ class RegistrationSettingsTests(TestCase):
         cache.clear()
         self.factory = APIRequestFactory()
         self.tenant = Tenant.objects.create(
+            account_password_policy={"parent_mode": "phone_last4"},
             name="자동승인 검증학원", code="autoapprove-test", is_active=True,
         )
         self.admin = User.objects.create_user(
@@ -167,7 +168,7 @@ class RegistrationSettingsTests(TestCase):
         self.assertEqual(self._settings()[0].data, {"auto_approve": False})
 
     def test_staff_membership_cannot_read_or_write_another_tenant_setting(self):
-        other = Tenant.objects.create(name="다른 검증학원", code="autoapprove-other", is_active=True)
+        other = Tenant.objects.create(account_password_policy={"parent_mode": "phone_last4"}, name="다른 검증학원", code="autoapprove-other", is_active=True)
         for method in ("get", "patch"):
             with self.subTest(method=method), patch.object(Tenant, "save") as save:
                 response, _ = self._settings(method, {"auto_approve": True}, tenant=other)

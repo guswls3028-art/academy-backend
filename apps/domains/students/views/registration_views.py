@@ -24,6 +24,7 @@ from ..serializers import (
     DeletedRegistrationResolveSerializer,
     RegistrationRequestBulkApproveResponseSerializer,
     RegistrationRequestBulkIdsSerializer,
+    ParentInitialPasswordChoiceSerializer,
     RegistrationRequestBulkRejectResponseSerializer,
     RegistrationRequestCreateSerializer,
     RegistrationRequestDuplicateCheckRequestSerializer,
@@ -75,10 +76,15 @@ def _copy_approval_result_to_instance(reg, result: RegistrationApprovalResult) -
 
 
 def _approve_registration_request_with_result(request, reg):
+    choice = ParentInitialPasswordChoiceSerializer(data=getattr(request, "data", {}))
+    if not choice.is_valid():
+        return Response(choice.errors, status=400), None
     try:
         result = approve_registration_request(
             tenant=request.tenant,
             registration_id=reg.pk,
+            parent_password=choice.validated_data.get("parent_initial_password"),
+            parent_password_mode=choice.validated_data.get("parent_initial_password_mode"),
         )
         _copy_approval_result_to_instance(reg, result)
         return None, result
@@ -89,6 +95,8 @@ def _approve_registration_request_with_result(request, reg):
                 payload["code"] = e.code
             payload.update(e.context)
         return Response(payload, status=e.status_code), None
+    except ValueError as e:
+        return Response({"detail": str(e)}, status=400), None
     except Exception as e:
         logger.exception("_approve_registration_request error: %s", e)
         return Response(
@@ -362,6 +370,8 @@ class RegistrationRequestViewSet(ModelViewSet):
                 initial_password=password,
                 initial_password_plain="",
                 initial_password_ciphertext=protect_password(raw_password, context=f"signup:{tenant.pk}"),
+                parent_initial_password_mode=data.get("parent_initial_password_mode") or ("fixed" if data.get("parent_initial_password") else ""),
+                parent_initial_password_ciphertext=protect_password(data["parent_initial_password"], context=f"signup-parent:{tenant.pk}") if data.get("parent_initial_password") else "",
                 name=data.get("name", ""),
                 username=(data.get("username") or "").strip() or "",
                 parent_phone=data.get("parent_phone", ""),
@@ -516,7 +526,7 @@ class RegistrationRequestViewSet(ModelViewSet):
         return Response({"detail": "Method not allowed."}, status=405)
 
     @extend_schema(
-        request=None,
+        request=ParentInitialPasswordChoiceSerializer,
         parameters=[OpenApiParameter("id", int, OpenApiParameter.PATH)],
         responses={
             200: StudentDetailSerializer,
@@ -564,6 +574,8 @@ class RegistrationRequestViewSet(ModelViewSet):
                 tenant=request.tenant,
                 registration_id=int(pk),
                 student_id=serializer.validated_data["student_id"],
+                parent_password=serializer.validated_data.get("parent_initial_password"),
+                parent_password_mode=serializer.validated_data.get("parent_initial_password_mode"),
             )
         except StudentRegistrationRequest.DoesNotExist:
             return Response({"detail": "가입 신청을 찾을 수 없습니다."}, status=404)
@@ -601,7 +613,9 @@ class RegistrationRequestViewSet(ModelViewSet):
                 )
             reg.status = StudentRegistrationRequest.REJECTED
             reg.initial_password_ciphertext = ""
-            reg.save(update_fields=["status", "initial_password_ciphertext", "updated_at"])
+            reg.parent_initial_password_ciphertext = ""
+            reg.parent_initial_password_mode = ""
+            reg.save(update_fields=["status", "initial_password_ciphertext", "parent_initial_password_ciphertext", "parent_initial_password_mode", "updated_at"])
         return Response({"status": "rejected", "id": reg.id}, status=200)
 
     @extend_schema(
@@ -635,5 +649,5 @@ class RegistrationRequestViewSet(ModelViewSet):
                 tenant=tenant,
                 id__in=ids,
                 status=StudentRegistrationRequest.PENDING,
-            ).update(status=StudentRegistrationRequest.REJECTED, initial_password_ciphertext="")
+            ).update(status=StudentRegistrationRequest.REJECTED, initial_password_ciphertext="", parent_initial_password_ciphertext="", parent_initial_password_mode="")
         return Response({"rejected": updated}, status=200)

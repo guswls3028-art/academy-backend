@@ -474,6 +474,8 @@ class StudentRegistrationRequest(TimestampModel):
         help_text="희망 로그인 아이디 (비어 있으면 승인 시 자동 부여)",
     )
     initial_password_ciphertext = models.TextField(blank=True, default="", db_default="", editable=False)
+    parent_initial_password_mode = models.CharField(max_length=16, blank=True, default="", db_default="", editable=False)
+    parent_initial_password_ciphertext = models.TextField(blank=True, default="", db_default="", editable=False)
     initial_password = models.CharField(max_length=256)  # 해시 저장 후 승인 시 User.password로 직접 이전
     initial_password_plain = models.CharField(
         max_length=128, blank=True, default="",

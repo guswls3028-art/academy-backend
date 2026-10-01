@@ -34,6 +34,7 @@ class RegistrationApprovalIdentityTests(TestCase):
     def setUp(self):
         self.factory = APIRequestFactory()
         self.tenant = Tenant.objects.create(
+            account_password_policy={"parent_mode": "phone_last4"},
             name="가입 식별 학원",
             code="registration-identity",
             is_active=True,
@@ -467,6 +468,7 @@ class RegistrationApprovalIdentityTests(TestCase):
         selected = self._student()
         soft_delete_student(selected, tenant=self.tenant)
         other_tenant = Tenant.objects.create(
+            account_password_policy={"parent_mode": "phone_last4"},
             name="다른 복구 학원",
             code="other-recovery",
             is_active=True,
@@ -543,6 +545,7 @@ class RegistrationApprovalIdentityTests(TestCase):
     def test_deleted_resolution_rejects_cross_tenant_membership_without_mutation(self):
         selected = self._student()
         other_tenant = Tenant.objects.create(
+            account_password_policy={"parent_mode": "phone_last4"},
             name="다른 멤버십 학원",
             code="other-recovery-membership",
             is_active=True,
@@ -589,6 +592,7 @@ class RegistrationApprovalIdentityTests(TestCase):
         soft_delete_student(selected, tenant=self.tenant)
 
         foreign_tenant = Tenant.objects.create(
+            account_password_policy={"parent_mode": "phone_last4"},
             name="오염된 계정 포인터 학원",
             code="drifted-user-pointer",
             is_active=True,
@@ -704,7 +708,7 @@ class RegistrationApprovalIdentityTests(TestCase):
         )
 
     def test_approval_fails_closed_for_cross_tenant_user_link_drift(self):
-        other_tenant = Tenant.objects.create(name="다른 학원", code="other-registration", is_active=True)
+        other_tenant = Tenant.objects.create(account_password_policy={"parent_mode": "phone_last4"}, name="다른 학원", code="other-registration", is_active=True)
         foreign_user = User.objects.create_user(
             username="foreign-student-user",
             password="foreign-password",
@@ -740,7 +744,7 @@ class RegistrationApprovalIdentityTests(TestCase):
         )
 
     def test_cross_tenant_phone_match_is_never_reused(self):
-        other_tenant = Tenant.objects.create(name="다른 학원", code="other-phone", is_active=True)
+        other_tenant = Tenant.objects.create(account_password_policy={"parent_mode": "phone_last4"}, name="다른 학원", code="other-phone", is_active=True)
         original_tenant = self.tenant
         self.tenant = other_tenant
         other_student = self._student()
@@ -912,7 +916,7 @@ class RegistrationApprovalIdentityTests(TestCase):
     def test_disabled_tenants_reject_public_signup_and_pending_approval(self):
         for code in ("godmin", "tchul"):
             with self.subTest(code=code):
-                tenant = Tenant.objects.create(name=code, code=code, is_active=True)
+                tenant = Tenant.objects.create(account_password_policy={"parent_mode": "phone_last4"}, name=code, code=code, is_active=True)
                 duplicate_request = self.factory.post(
                     "/api/v1/students/registration_requests/check_duplicate/",
                     {"phone": "01073334444"},
@@ -957,7 +961,7 @@ class RegistrationApprovalIdentityTests(TestCase):
                 self.assertIsNone(registration.student_id)
 
     def test_disabled_tenant_pending_list_is_policy_history_not_actionable_work(self):
-        tenant = Tenant.objects.create(name="비활성 가입 학원", code="godmin", is_active=True)
+        tenant = Tenant.objects.create(account_password_policy={"parent_mode": "phone_last4"}, name="비활성 가입 학원", code="godmin", is_active=True)
         registration = self._registration(
             tenant=tenant,
             username="historical-pending",
@@ -986,7 +990,7 @@ class RegistrationApprovalIdentityTests(TestCase):
         self.assertEqual(registration.status, StudentRegistrationRequest.PENDING)
 
     def test_disabled_tenant_staff_actions_preserve_pending_history(self):
-        tenant = Tenant.objects.create(name="비활성 가입 학원", code="godmin", is_active=True)
+        tenant = Tenant.objects.create(account_password_policy={"parent_mode": "phone_last4"}, name="비활성 가입 학원", code="godmin", is_active=True)
         staff = User.objects.create_user(
             username="disabled-registration-action-staff",
             password="staff-password",
@@ -1029,8 +1033,9 @@ class RegistrationApprovalIdentityTests(TestCase):
                 self.assertIsNone(registration.student_id)
 
     def test_disabled_tenant_generic_patch_cannot_move_or_resolve_history(self):
-        tenant = Tenant.objects.create(name="비활성 가입 수정 학원", code="godmin", is_active=True)
+        tenant = Tenant.objects.create(account_password_policy={"parent_mode": "phone_last4"}, name="비활성 가입 수정 학원", code="godmin", is_active=True)
         other_tenant = Tenant.objects.create(
+            account_password_policy={"parent_mode": "phone_last4"},
             name="다른 가입 학원",
             code="registration-other-tenant",
             is_active=True,
@@ -1072,7 +1077,7 @@ class RegistrationApprovalIdentityTests(TestCase):
         self.assertIsNone(registration.student_id)
 
     def test_disabled_tenant_generic_delete_preserves_history_row(self):
-        tenant = Tenant.objects.create(name="비활성 가입 삭제 학원", code="godmin", is_active=True)
+        tenant = Tenant.objects.create(account_password_policy={"parent_mode": "phone_last4"}, name="비활성 가입 삭제 학원", code="godmin", is_active=True)
         registration = self._registration(
             tenant=tenant,
             username="historical-delete",
@@ -1106,7 +1111,7 @@ class RegistrationApprovalIdentityTests(TestCase):
         self.assertIsNone(registration.student_id)
 
     def test_disabled_tenant_resolve_deleted_preserves_history_and_deleted_student(self):
-        tenant = Tenant.objects.create(name="비활성 가입 복구 학원", code="godmin", is_active=True)
+        tenant = Tenant.objects.create(account_password_policy={"parent_mode": "phone_last4"}, name="비활성 가입 복구 학원", code="godmin", is_active=True)
         deleted_student = create_student_account(
             tenant=tenant,
             password="teacher-password",
@@ -1163,6 +1168,7 @@ class RegistrationApprovalIdentityTests(TestCase):
     def test_enabled_tenant_generic_mutations_are_read_only(self):
         registration = self._registration(username="enabled-read-only")
         other_tenant = Tenant.objects.create(
+            account_password_policy={"parent_mode": "phone_last4"},
             name="다른 가입 학원",
             code="registration-put-other-tenant",
             is_active=True,

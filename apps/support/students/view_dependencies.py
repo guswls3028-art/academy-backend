@@ -35,12 +35,12 @@ def dispatch_job(**kwargs: Any) -> dict:
     return _dispatch(**kwargs)
 
 
-def protect_excel_initial_password(initial_password: str) -> dict[str, str]:
+def protect_excel_initial_password(initial_password: str, *, role: str = "student") -> dict[str, str]:
     from apps.domains.ai.services.excel_job_secrets import (
         protect_excel_initial_password as _protect,
     )
 
-    return _protect(initial_password)
+    return _protect(initial_password, role=role)
 
 
 def get_excel_parsing_job_status_response(*, job_id: str, tenant_id: str) -> dict | None:

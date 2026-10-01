@@ -265,14 +265,21 @@ class StudentViewSet(ModelViewSet):
 
         password = data.pop("initial_password", None) or None
         parent_password = data.pop("parent_initial_password", None) or None
+        password_mode = data.pop("initial_password_mode", None)
+        parent_password_mode = data.pop("parent_initial_password_mode", None)
 
-        result = create_student_account(
-            tenant=request.tenant,
-            student_data=data,
-            password=password,
-            parent_password=parent_password,
-            must_change_password=True,
-        )
+        try:
+            result = create_student_account(
+                tenant=request.tenant,
+                student_data=data,
+                password=password,
+                parent_password=parent_password,
+                password_mode=password_mode,
+                parent_password_mode=parent_password_mode,
+                must_change_password=True,
+            )
+        except ValueError as exc:
+            return Response(getattr(exc, "detail", {"detail": str(exc)}), status=400)
         student = result.student
 
         output = StudentDetailSerializer(
@@ -456,14 +463,17 @@ class StudentViewSet(ModelViewSet):
                 status=400,
             )
         upload_file = request.FILES.get("file")
-        initial_password = (request.data.get("initial_password") or "").strip()
-        password_mode = (request.data.get("password_mode") or "fixed").strip()
         if not upload_file:
             raise ValidationError({"detail": "file(엑셀)은 필수입니다."})
+        options_serializer = StudentBulkCreateSerializer(
+            data=request.data, partial=True, context={"request": request},
+        )
+        options_serializer.is_valid(raise_exception=True)
+        password_options = options_serializer.validated_data
         try:
             password_policy = build_student_import_password_policy(
-                password_mode=password_mode,
-                initial_password=initial_password,
+                password_mode=password_options.get("password_mode"),
+                initial_password=password_options.get("initial_password"),
                 tenant=request.tenant,
             )
         except StudentImportPasswordError as exc:
@@ -494,6 +504,10 @@ class StudentViewSet(ModelViewSet):
                 "tenant_id": tenant.id,
                 "password_mode": password_policy.mode,
                 **protect_excel_initial_password(password_policy.fixed_password),
+                "parent_initial_password_mode": password_options.get("parent_initial_password_mode"),
+                **protect_excel_initial_password(
+                    password_options.get("parent_initial_password", ""), role="parent",
+                ),
             }
             try:
                 out = dispatch_job(
@@ -589,7 +603,9 @@ class StudentViewSet(ModelViewSet):
             tenant_id=tenant.id,
             students_data=students_data,
             initial_password=password,
-            password_mode="fixed" if password else "tenant",
+            password_mode=serializer.validated_data.get("password_mode"),
+            parent_initial_password=serializer.validated_data.get("parent_initial_password"),
+            parent_initial_password_mode=serializer.validated_data.get("parent_initial_password_mode"),
         )
         return Response(result, status=201)
 
@@ -606,10 +622,11 @@ class StudentViewSet(ModelViewSet):
           "resolutions": [ { "row": 1, "student_id": 123, "action": "restore"|"delete", "student_data": {...} } ]
         }
         """
-        password = request.data.get("initial_password") or ""
-        parent_password = request.data.get("parent_initial_password")
-        if (password and (not isinstance(password, str) or len(password) < 4)) or (parent_password and (not isinstance(parent_password, str) or len(parent_password) < 4)):
-            return Response({"detail": "초기 비밀번호는 4자 이상이어야 합니다."}, status=400)
+        options_serializer = StudentBulkCreateSerializer(
+            data=request.data, partial=True, context={"request": request},
+        )
+        options_serializer.is_valid(raise_exception=True)
+        password_options = options_serializer.validated_data
         resolutions = request.data.get("resolutions") or []
         if not isinstance(resolutions, (list, tuple)):
             return Response({"detail": "resolutions는 배열이어야 합니다."}, status=400)
@@ -617,8 +634,10 @@ class StudentViewSet(ModelViewSet):
         result = resolve_student_import_conflicts(
             tenant=request.tenant,
             resolutions=resolutions,
-            initial_password=password,
-            parent_initial_password=parent_password,
+            initial_password=password_options.get("initial_password", ""),
+            password_mode=password_options.get("password_mode"),
+            parent_initial_password=password_options.get("parent_initial_password"),
+            parent_initial_password_mode=password_options.get("parent_initial_password_mode"),
         )
         return Response(result, status=200)
 
@@ -670,14 +689,11 @@ class StudentViewSet(ModelViewSet):
             return Response({"detail": "복원할 ID가 없습니다."}, status=400)
 
         tenant = request.tenant
-        parent_initial_password = str(
-            request.data.get("parent_initial_password") or ""
-        ).strip()
-        if parent_initial_password and len(parent_initial_password) < 4:
-            return Response(
-                {"parent_initial_password": "학부모 초기 비밀번호는 4자 이상이어야 합니다."},
-                status=400,
-            )
+        options_serializer = StudentBulkCreateSerializer(
+            data=request.data, partial=True, context={"request": request},
+        )
+        options_serializer.is_valid(raise_exception=True)
+        password_options = options_serializer.validated_data
         to_restore = list(student_repo.student_filter_tenant_ids_deleted(tenant, ids))
         restored = []
         skipped = []
@@ -687,7 +703,8 @@ class StudentViewSet(ModelViewSet):
                     result = restore_student(
                         student,
                         tenant=tenant,
-                        parent_initial_password=parent_initial_password,
+                        parent_initial_password=password_options.get("parent_initial_password"),
+                        parent_initial_password_mode=password_options.get("parent_initial_password_mode"),
                     )
                     if result.parent_credentials_initialized:
                         delivered = send_parent_account_credentials_notice(

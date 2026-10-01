@@ -77,6 +77,7 @@ class OMRTenantRealUseFlowTests(TestCase):
         tag = "[E2E-OMR-REALUSE]"
 
         tenant = Tenant.objects.create(
+            account_password_policy={"parent_mode": "phone_last4"},
             name=f"{tag} Tenant",
             code="e2e_omr_realuse_t1",
             is_active=True,
@@ -496,7 +497,7 @@ class OMRMapperReviewPolicyTests(TestCase):
         question_scores: tuple[float, float] = (50, 50),
         extra_answer_key_answers: dict[str, object] | None = None,
     ):
-        tenant = Tenant.objects.create(name="OMR Policy", code="omr_policy", is_active=True)
+        tenant = Tenant.objects.create(account_password_policy={"parent_mode": "phone_last4"}, name="OMR Policy", code="omr_policy", is_active=True)
         staff = User.objects.create_user(
             username="omr_policy_staff",
             password="test1234",
