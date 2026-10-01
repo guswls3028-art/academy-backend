@@ -24,6 +24,7 @@ class OmrCandidateMatchingTests(TestCase):
         omr_code: str = "24681357",
     ):
         tenant = Tenant.objects.create(
+            account_password_policy={"parent_mode": "phone_last4"},
             name="[OMR] Tenant",
             code="omr_candidate_tenant",
             is_active=True,
@@ -182,6 +183,7 @@ class OmrCandidateMatchingTests(TestCase):
 
     def test_same_parent_tail8_candidates_require_manual_matching(self):
         tenant = Tenant.objects.create(
+            account_password_policy={"parent_mode": "phone_last4"},
             name="[OMR] Shared Parent Tenant",
             code="omr_shared_parent_tenant",
             is_active=True,

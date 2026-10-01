@@ -17,6 +17,7 @@ Lecture = apps.get_model("lectures", "Lecture")
 class EnrollmentNotificationOccurrenceTests(TestCase):
     def setUp(self):
         self.tenant = Tenant.objects.create(
+            account_password_policy={"parent_mode": "phone_last4"},
             code="enrollment-occurrence",
             name="Enrollment Occurrence",
             is_active=True,
