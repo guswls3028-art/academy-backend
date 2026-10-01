@@ -1,10 +1,12 @@
 import os
 import shutil
 import tempfile
+import io
 from uuid import uuid4
 
 import fitz
 import pytest
+from PIL import Image
 
 from apps.core.models import Tenant
 from apps.domains.inventory.models import InventoryFile
@@ -121,6 +123,54 @@ def test_out_of_range_page_does_not_cache_or_upload(page_source):
     assert all(not os.path.exists(path) for path in downloads)
     doc.refresh_from_db()
     assert not doc.meta
+
+
+def test_oversized_pdf_preview_crop_reload_and_existing_cache_are_safe(page_source, monkeypatch, tmp_path):
+    doc, downloads, renders, uploaded = page_source
+    source = tmp_path / "photo-exam.pdf"
+    source.unlink()
+    with fitz.open() as pdf:
+        page = pdf.new_page(width=4284, height=5712)
+        page.draw_rect(fitz.Rect(428.4, 571.2, 2570.4, 2284.8), color=None, fill=(1, 0, 0))
+        pdf.new_page(width=4284, height=5712)
+        pdf.save(source)
+    original_meta = {
+        "page_image_keys": ["ai-huge/0.png", "ai-huge/1.png"],
+        "page_dimensions": [[8925, 11900], [8925, 11900]],
+        "ai_result": "preserve",
+    }
+    doc.meta = original_meta
+    doc.save(update_fields=["meta"])
+    monkeypatch.setattr(services, "_enqueue_manual_problem_index", lambda problem: None)
+    pages = services.ensure_document_page_images(doc, page_index=0)
+    assert pages[0]["url"] and not pages[1]["url"]
+    for width, height in [(pages[0]["width"], pages[0]["height"]), Image.open(io.BytesIO(uploaded[0])).size]:
+        assert max(width, height) <= 3000 and width * height <= 8_000_000
+    doc.refresh_from_db()
+    assert doc.meta["page_image_keys"] == original_meta["page_image_keys"]
+    assert doc.meta["page_dimensions"] == original_meta["page_dimensions"]
+    assert doc.meta["ai_result"] == "preserve"
+    assert "manual-bounded-v1" in doc.meta["manual_page_image_keys"][0]
+    before = len(downloads)
+    services.ensure_document_page_images(doc, page_index=0)
+    assert len(downloads) == before
+    problem = services.manually_crop_problem(
+        doc, page_index=0, bbox_norm=(0.1, 0.1, 0.5, 0.3), number=1,
+    )
+    crop = Image.open(io.BytesIO(uploaded[-1]))
+    assert crop.getpixel((crop.width // 2, crop.height // 2)) == (255, 0, 0)
+    assert abs(crop.width / pages[0]["width"] - 0.5) < 0.002
+    assert abs(crop.height / pages[0]["height"] - 0.3) < 0.002
+    saved = MatchupProblem.objects.get(pk=problem.pk, tenant=doc.tenant)
+    assert saved.meta["bbox_norm"] == [0.1, 0.1, 0.5, 0.3]
+    doc.refresh_from_db()
+    first_dimensions = doc.meta["manual_page_dimensions"][0]
+    services.ensure_document_page_images(doc, page_index=1)
+    doc.refresh_from_db()
+    assert doc.meta["manual_page_dimensions"][0] == first_dimensions
+    assert doc.meta["page_image_keys"] == original_meta["page_image_keys"]
+    assert doc.problem_count == 1 and doc.status == "done"
+    assert all(not os.path.exists(path) for path in downloads)
 
 
 def test_download_timeout_removes_partial_file(tmp_path, monkeypatch):
