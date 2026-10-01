@@ -61,8 +61,8 @@ class AccountNoticeCredentialTests(TestCase):
 
     def test_missing_choices_fail_without_graph_then_explicit_random_recovers_and_logs_in(self):
         from apps.domains.students.models import Student
-        from apps.domains.parents.models import Parent
-        before = (get_user_model().objects.count(), Parent.objects.count(), Student.objects.count(), TenantMembership.objects.count())
+        from apps.support.students.lifecycle_dependencies import find_parent_account
+        before = (get_user_model().objects.count(), Student.objects.count(), TenantMembership.objects.count())
         payload = {"name": "선택복구학생", "parent_phone": "01033445566", "school_type": "HIGH", "grade": 1}
         for choices in ({}, {"initial_password_mode": "phone_last4", "parent_initial_password_mode": "phone_last4"}, {"initial_password_mode": "random"}):
             request = self.factory.post("/api/v1/students/", {**payload, **choices}, format="json")
@@ -70,7 +70,8 @@ class AccountNoticeCredentialTests(TestCase):
             force_authenticate(request, user=self.admin)
             response = StudentViewSet.as_view({"post": "create"})(request)
             self.assertEqual(response.status_code, 400, response.data)
-            self.assertEqual((get_user_model().objects.count(), Parent.objects.count(), Student.objects.count(), TenantMembership.objects.count()), before)
+            self.assertEqual((get_user_model().objects.count(), Student.objects.count(), TenantMembership.objects.count()), before)
+            self.assertIsNone(find_parent_account(tenant=self.tenant, parent_phone=payload["parent_phone"]))
         request = self.factory.post("/api/v1/students/", {**payload, "initial_password_mode": "random", "parent_initial_password_mode": "random"}, format="json")
         request.tenant = self.tenant
         force_authenticate(request, user=self.admin)
