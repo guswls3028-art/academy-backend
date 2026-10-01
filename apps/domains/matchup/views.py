@@ -1359,10 +1359,11 @@ class DocumentPasteProblemView(View):
 
 @method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
 class DocumentPagesView(View):
-    """GET /api/v1/matchup/documents/<id>/pages/
+    """GET /api/v1/matchup/documents/<id>/pages/ — 캐시 조회만.
+    POST 같은 경로 — 원본 페이지 준비·캐시 저장.
 
     수동 크롭 모달을 위한 페이지 정보 + 페이지 이미지 presigned URL.
-    동작: PDF면 페이지별 렌더해서 R2 임시 공간에 캐시 후 presign. 단순 이미지는 그대로.
+    캐시가 없으면 GET은 준비가 필요하다는 409를 반환하고 POST로 준비한다.
 
     응답:
     {
@@ -1388,17 +1389,23 @@ class DocumentPagesView(View):
         if not generate_presigned_get_url_storage:
             return JsonResponse({"detail": "Storage not configured"}, status=500)
 
-        from .services import ensure_document_page_images
+        from .services import get_cached_document_page_images
         try:
             page_index = request.GET.get("page_index")
-            pages = ensure_document_page_images(
-                doc, page_index=int(page_index) if page_index is not None else None,
-            )
+            page_index = int(page_index) if page_index is not None else None
+            pages = get_cached_document_page_images(doc, page_index=page_index)
         except ValueError as exc:
             return JsonResponse({"detail": str(exc)}, status=400)
         except Exception:
-            logger.exception("ensure_document_page_images failed (doc=%s)", doc.id)
-            return JsonResponse({"detail": "페이지 이미지 준비 실패"}, status=500)
+            logger.exception("get_cached_document_page_images failed (doc=%s)", doc.id)
+            return JsonResponse({"detail": "페이지 이미지 조회 실패"}, status=500)
+
+        if not pages or not any(page["url"] for page in pages) or (
+            page_index is not None and not pages[page_index]["url"]
+        ):
+            return JsonResponse({
+                "detail": "페이지 이미지를 먼저 준비해 주세요.", "code": "pages_not_prepared",
+            }, status=409)
 
         is_pdf = (doc.content_type or "").lower() == "application/pdf"
         return JsonResponse({
@@ -1406,6 +1413,43 @@ class DocumentPagesView(View):
             "is_pdf": is_pdf,
             "page_count": len(pages),
             "pages": pages,
+        })
+
+    def post(self, request, doc_id):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+        try:
+            doc = MatchupDocument.objects.get(id=doc_id, tenant=request.tenant)
+        except MatchupDocument.DoesNotExist:
+            return JsonResponse({"detail": "Not found"}, status=404)
+        if not generate_presigned_get_url_storage:
+            return JsonResponse({"detail": "Storage not configured"}, status=500)
+
+        import json
+        from .services import ensure_document_page_images, get_cached_document_page_images
+        try:
+            body = json.loads(request.body) if request.body else {}
+            if not isinstance(body, dict):
+                raise ValueError("Invalid JSON")
+            page_index = body.get("page_index")
+            page_index = int(page_index) if page_index is not None else None
+            pages = get_cached_document_page_images(doc)
+            ready = bool(pages) and (
+                all(page["url"] for page in pages) if page_index is None else (
+                    0 <= page_index < len(pages) and bool(pages[page_index]["url"])
+                )
+            )
+            if not ready:
+                pages = ensure_document_page_images(doc, page_index=page_index)
+        except (TypeError, ValueError) as exc:
+            return JsonResponse({"detail": str(exc)}, status=400)
+        except Exception:
+            logger.exception("ensure_document_page_images failed (doc=%s)", doc.id)
+            return JsonResponse({"detail": "페이지 이미지 준비 실패"}, status=500)
+        return JsonResponse({
+            "doc_id": doc.id,
+            "is_pdf": (doc.content_type or "").lower() == "application/pdf",
+            "page_count": len(pages), "pages": pages,
         })
 
 
