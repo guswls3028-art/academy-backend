@@ -663,7 +663,7 @@ class TestStudentUploadLifecycleConcurrencyPostgres(TransactionTestCase):
             {source_file.r2_key, existing_file.r2_key},
         )
 
-    def _assert_score_upload_and_predecessor_delete(self, *, upload_first):
+    def _assert_score_upload_and_predecessor_delete(self, *, upload_first, soft_delete=False):
         from django.utils import timezone
         from apps.domains.inventory import views as inventory_views
 
@@ -692,7 +692,8 @@ class TestStudentUploadLifecycleConcurrencyPostgres(TransactionTestCase):
         deleted_counts = []
         storage_objects = set()
         namespace_lock = inventory_views.lock_student_ps_namespaces
-        tenant_for_update = Tenant.objects.select_for_update
+        reference_manager = User.objects if soft_delete else Tenant.objects
+        tenant_for_update = reference_manager.select_for_update
 
         def observe_namespace(**kwargs):
             result = namespace_lock(**kwargs)
@@ -751,10 +752,14 @@ class TestStudentUploadLifecycleConcurrencyPostgres(TransactionTestCase):
         def delete_worker():
             close_old_connections()
             try:
-                deleted_counts.append(permanently_delete_students(
-                    tenant=self.tenant,
-                    student_ids=[predecessor.pk],
-                ).deleted_count)
+                if soft_delete:
+                    soft_delete_student(self.student, tenant=self.tenant)
+                    deleted_counts.append(1)
+                else:
+                    deleted_counts.append(permanently_delete_students(
+                        tenant=self.tenant,
+                        student_ids=[predecessor.pk],
+                    ).deleted_count)
             except BaseException as exc:
                 errors.append(exc)
             finally:
@@ -766,7 +771,7 @@ class TestStudentUploadLifecycleConcurrencyPostgres(TransactionTestCase):
         upload_thread = threading.Thread(target=upload_worker, name="current-score-upload")
         delete_thread = threading.Thread(target=delete_worker, name="old-predecessor-delete")
         with patch.object(inventory_views, "lock_student_ps_namespaces", side_effect=observe_namespace), patch.object(
-            Tenant.objects, "select_for_update", side_effect=observe_tenant,
+            reference_manager, "select_for_update", side_effect=observe_tenant,
         ), patch(
             "apps.domains.inventory.views.JWTAuthentication.authenticate",
             return_value=(self.student_user, None),
@@ -782,13 +787,13 @@ class TestStudentUploadLifecycleConcurrencyPostgres(TransactionTestCase):
                     self.assertTrue(upload_namespace.wait(timeout=5))
                     delete_thread.start()
                     self.assertFalse(delete_tenant.wait(timeout=1),
-                                     "Delete crossed the uploading tenant gate.")
+                                     "Delete crossed the uploading reference gate.")
                 else:
                     delete_thread.start()
                     self.assertTrue(delete_tenant.wait(timeout=5))
                     upload_thread.start()
                     self.assertFalse(upload_namespace.wait(timeout=1),
-                                     "Upload took namespace before the deleting tenant gate.")
+                                     "Upload took namespace before the deleting reference gate.")
             finally:
                 release_upload.set()
                 release_delete.set()
@@ -801,9 +806,19 @@ class TestStudentUploadLifecycleConcurrencyPostgres(TransactionTestCase):
         self.assertEqual(errors, [])
         self.assertEqual(deleted_counts, [1])
         self.assertEqual(len(responses), 1)
-        self.assertEqual(responses[0].status_code, 200, responses[0].content)
-        self.assertFalse(Student.objects.filter(pk=predecessor.pk).exists())
+        expected_status = 409 if soft_delete and not upload_first else 200
+        self.assertEqual(responses[0].status_code, expected_status, responses[0].content)
+        if not soft_delete:
+            self.assertFalse(Student.objects.filter(pk=predecessor.pk).exists())
         self.assertTrue(Student.objects.filter(pk=self.student.pk).exists())
+        if soft_delete:
+            self.student.refresh_from_db()
+            self.assertIsNotNone(self.student.deleted_at)
+            if not upload_first:
+                self.assertFalse(StudentReportedScore.objects.filter(student_id=self.student.pk).exists())
+                self.assertFalse(InventoryFile.objects.filter(tenant=self.tenant).exists())
+                self.assertEqual(storage_objects, set())
+                return
         score = StudentReportedScore.objects.get(student_id=self.student.pk)
         score.refresh_from_db()
         self.assertEqual(score.evidence_file.student_ps, self.student.ps_number)
@@ -815,3 +830,9 @@ class TestStudentUploadLifecycleConcurrencyPostgres(TransactionTestCase):
 
     def test_predecessor_delete_first_blocks_score_upload_namespace_without_deadlock(self):
         self._assert_score_upload_and_predecessor_delete(upload_first=False)
+
+    def test_score_upload_first_blocks_current_student_soft_delete_without_deadlock(self):
+        self._assert_score_upload_and_predecessor_delete(upload_first=True, soft_delete=True)
+
+    def test_current_student_soft_delete_first_blocks_score_upload_without_deadlock(self):
+        self._assert_score_upload_and_predecessor_delete(upload_first=False, soft_delete=True)

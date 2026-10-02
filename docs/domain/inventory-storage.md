@@ -96,13 +96,18 @@ advisory lock을 사용한다. 학생 번호를 재사용한 현재 학생의 �
 결과를 읽은 뒤 응답한다. 성공 시 기존 `204`/폴더 `200`과 실제 cleaned 수를 유지하고,
 공급자 실패 시 `502 inventory_storage_cleanup_pending`과 목록 재조회/재시도 경로를 유지한다.
 
-성적표 제출도 tenant FK gate → 학생 namespace → 원본 InventoryFile 행 순서로 잠근다.
+성적표 제출은 tenant FK gate → 학생 계정/제출자 계정 FK gate → 학생 행 →
+학생 namespace → 원본 InventoryFile 행 순서로 잠근다. 실제 업로드 API도 원본
+metadata를 만들기 전에 같은 계정·학생 참조를 잠가 soft delete/복원과 순서를 맞춘다.
 제출 시 저장된 원본의 key·소유자와 활성 학생을 다시 확인한다. 이동/삭제가 먼저 끝나
 기존 원본 객체가 낡았으면 새 성적 행을 만들지 않고 재조회 후 제출을 요구한다.
 제출이 먼저 시작되면 동시 이동/덮어쓰기는 commit까지 기다린 뒤 `409`로 원본과
 성적 감사 연결을 보존한다. PostgreSQL의 deferred FK 검사만으로 이 순서를 대신하지 않는다.
 실제 업로드 API와 이전 학생 영구삭제를 양쪽 순서로 실행하는 PostgreSQL 회귀에서
 업로드 성공, 이전 학생 삭제, 현재 학생과 저장된 점수·원본 보존을 함께 확인한다.
+현재 학생 soft delete와 업로드도 양방향으로 확인한다. 업로드가 먼저 끝나면 점수와
+원본을 보존한 채 학생의 삭제 namespace로 이동한다. 삭제가 먼저 끝나면 업로드는
+`409`로 실패하고 성적·metadata를 만들지 않으며 방금 PUT한 exact key만 보상한다.
 
 이전 자료가 새 학생 생성보다 먼저 존재하는 legacy namespace는 학생/학부모 접근을
 `409 student_storage_namespace_conflict`로 중단하고 원본을 보존한다. 소유 확인 후

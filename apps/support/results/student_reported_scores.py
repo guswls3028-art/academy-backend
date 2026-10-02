@@ -9,6 +9,7 @@ from decimal import Decimal, InvalidOperation
 from math import isfinite
 from typing import Any, Mapping
 
+from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
 from django.utils import timezone
 
@@ -17,6 +18,7 @@ from apps.domains.results.models import StudentReportedScore
 from apps.domains.students.models import Student
 from apps.support.students.namespace_lock import (
     lock_student_creation_tenant_reference,
+    lock_student_creation_user_reference,
     lock_student_ps_namespaces,
 )
 
@@ -307,6 +309,49 @@ def _validate_evidence_link(*, evidence_file: Any, validated_rows: list[Mapping[
         raise ValueError("성적표 원본과 학생·학원 정보가 일치하지 않습니다.")
 
 
+def lock_student_score_submission_references(
+    *, validated_rows: list[Mapping[str, Any]],
+) -> Student:
+    if not validated_rows:
+        raise ValueError("제출할 과목 성적이 없습니다.")
+    first = validated_rows[0]
+    tenant = first.get("tenant")
+    student = first.get("student")
+    submitted_by = first.get("submitted_by")
+    if not tenant or not student or not submitted_by or student.tenant_id != tenant.id:
+        raise ValueError("성적표 원본과 학생·학원 정보가 일치하지 않습니다.")
+    if any(
+        row.get("tenant") != tenant or row.get("student") != student
+        or row.get("submitted_by") != submitted_by for row in validated_rows
+    ):
+        raise ValueError("성적표 원본과 학생·학원 정보가 일치하지 않습니다.")
+
+    # Student lifecycle takes its User before Student and namespace. Parent
+    # submitters also need a User FK gate before taking the Student row.
+    try:
+        lock_student_creation_tenant_reference(tenant_id=tenant.id)
+        lock_student_creation_user_reference(user_id=student.user_id)
+        if submitted_by.id != student.user_id:
+            lock_student_creation_user_reference(user_id=submitted_by.id)
+    except ObjectDoesNotExist as exc:
+        raise ValueError("성적표 원본과 학생·학원 정보가 일치하지 않습니다.") from exc
+    current = (
+        Student.objects.select_for_update()
+        .filter(pk=student.pk, tenant_id=tenant.id)
+        .first()
+    )
+    if (
+        current is None or current.deleted_at is not None
+        or current.ps_number != student.ps_number or current.user_id != student.user_id
+        or (
+            current.user_id != submitted_by.id
+            and getattr(current.parent, "user_id", None) != submitted_by.id
+        )
+    ):
+        raise ValueError("성적표 원본과 학생·학원 정보가 일치하지 않습니다.")
+    return current
+
+
 @transaction.atomic
 def create_student_score_submissions(
     *,
@@ -314,7 +359,7 @@ def create_student_score_submissions(
     validated_rows: list[Mapping[str, Any]],
 ) -> list[StudentReportedScore]:
     _validate_evidence_link(evidence_file=evidence_file, validated_rows=validated_rows)
-    lock_student_creation_tenant_reference(tenant_id=evidence_file.tenant_id)
+    lock_student_score_submission_references(validated_rows=validated_rows)
     lock_student_ps_namespaces(
         tenant_id=evidence_file.tenant_id,
         ps_numbers=(evidence_file.student_ps,),

@@ -41,6 +41,7 @@ from apps.support.inventory.matchup_dependencies import (
 )
 from apps.support.results.student_reported_scores import (
     create_student_score_submissions,
+    lock_student_score_submission_references,
     score_submission_map_for_inventory_files,
     serialize_reported_score,
     validate_student_score_submissions,
@@ -316,6 +317,15 @@ def _attach_inventory_upload(
 ):
     with transaction.atomic():
         lock_student_creation_tenant_reference(tenant_id=tenant.id)
+        if validated_scores:
+            try:
+                lock_student_score_submission_references(validated_rows=validated_scores)
+            except ValueError as exc:
+                raise _InventoryUploadFailure(
+                    status=409,
+                    detail="학생 또는 계정 정보가 변경되었습니다. 새로고침 후 다시 제출해 주세요.",
+                    code="student_storage_owner_missing",
+                ) from exc
         lock_student_ps_namespaces(
             tenant_id=tenant.id,
             ps_numbers=(
