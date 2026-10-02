@@ -155,7 +155,7 @@ python scripts/v1/converge_frontend_development_qa.py --frontend-role-plan
 ```
 
 `templates/ssm/frontend_development_qa.json`은 고정 `NonInteractiveCommands`
-Session document다. Action은 Inspect/Setup/Cleanup뿐이고 tenant, release ID,
+Session document다. Action은 Inspect/Setup/Cleanup/AccountProbe로 닫혀 있고 tenant, release ID,
 digest는 shell 문자/경로/SSM 참조를 허용하지 않는 strict pattern으로 제한한다.
 `SyntheticLongVideo`는 `false`가 기본인 명시적 boolean 문자열이다. `true`인
 실행에서만 scenario 명령의 `--synthetic-long-video` 분기를 사용하며 학생을 정확히
@@ -177,6 +177,20 @@ command나 shell 인자를 전달하는 parameter는 없고 기존 고정 parame
 부재를 확인하며 원래 scenario 명령을 reset 없이 사용한다. 생성과 같은 DB transaction에
 `OpsAuditLog(action=development.qa.setup)` 1행으로 exact tenant ID/code와 256-bit
 run capability의 SHA-256 digest를 기록한다. 감사 기록 실패도 전체 생성 rollback이다.
+
+현재 소스의 고정 문서는 scenario `Command`의 native 잔여 확인·정리 helper 계약을
+직접 사용한다. `_owned_database_residue`, `_non_database_residue`,
+`_cleanup_qa_r2_objects`와 계정 후보 probe가 필요한 현재 이미지가 대상이다.
+`select_residue_mode`/`LEGACY_RESIDUE_*` 또는 과거 release/digest 전용 adapter는
+현재 실행 경로에 없다. helper가 없는 과거 이미지에 대해 호환 구현이나 cleanup
+성공을 주장하지 않으며, 오래된 PR의 제안·패치를 현재 동작의 근거로 사용하지 않는다.
+
+release owner는 native helper와 probe를 포함한 동일 immutable 후보의 이미지/개발
+환경·resource-denial gate를 먼저 확인하고, 해당 후보 소스와 일치하는 고정 SSM
+문서를 수렴·readback한 뒤 같은 artifact의 실사용 검증을 실행한다. 완료 조건은
+exact owned fixture/tenant 정리, 고정 Cleanup의 잔여 0, 직후 Inspect의 동일
+release/digest와 잔여 0이다. 소스/오프라인 계약 CI 통과는 이 runtime 수렴·실행·정리의
+증거가 아니며, 확인 전에는 후보 real-use와 운영 조치가 미검증 상태다.
 
 계정·첫 수강 흐름도 운영과 같은 fail-closed 알림톡 계약을 사용한다. 개발 환경은
 외부 발송이 불가능한 `development-mock-pfid`와 `SOLAPI_MOCK=true`를 함께 고정하고,
@@ -502,3 +516,39 @@ definition, 운영 worker env, 운영 R2를 대체재로 사용하지 않는다.
 
 개발 검토 중 실패는 운영 배포 차단 사유다. 개발 게이트를 skipped/success 이외의 상태로
 우회하거나 후보를 운영 인스턴스에서 먼저 시험하지 않는다.
+
+## 초기 계정 등록 개발 후보 검증
+
+고정 SSM `academy-frontend-development-qa`의 `AccountProbe` action은 기존
+개발 env/DB/IAM resource-denial·release/digest·생성 ownership capability 확인 뒤만
+`probe-account-registration-development.py`를 로드한다. 정확한 생성 tenant ID와
+양의 bounded `AccountStudentId`, `AccountProbeMode=verify|snapshot|compare`,
+`AccountProbeKind=fixed|phone_last4|random`만 받으며 임의 URL·명령·비밀번호 인자는 없다.
+일반 Inspect/Setup/Cleanup은 계정 인자를 기본값으로만 허용한다. 제품 인증 API를
+추가하지 않으며 runtime 문서 수렴·SSM 실행은 후보 release gate 이후 release owner가 한다.
+
+대상은 해당 disposable tenant의 `qa-account-registration-{tenant code SHA256 앞12자}-`
+이름 prefix 학생과 연결된 동일 tenant 학생/학부모 User·활성 역할 membership이다.
+현재 안내 암호문을 메모리에서 복호화하고 setter 없는 raw/hash 대조를 거친 뒤
+proxy/redirect를 거부하는 `127.0.0.1:8000` token·core/me·student/me 실제 HTTP 인증을 한다.
+랜덤은 숫자 6자리, 전화 방식은 각 User 자신의 전화 뒤4자리도 확인한다.
+기존 비밀번호를 알 수 없으면 `credential-unrecoverable`로 실패한다. pending 임시암호를
+소비하거나 초기화/재안내 resolver로 값을 새로 만들지 않는다.
+
+snapshot은 정확한 학부모 hash의 keyed commitment를 QA 전용 OpsAuditLog에만 저장한다.
+compare는 동일 scope/학부모와 해시 보존을 대조하고 성공 시 관찰 행을 삭제한다.
+원문·암호문·password hash·commitment·전화·token은 stdout/SSM/로컬 응답에 포함하지 않는다.
+출력은 닫힌 schema의 boolean·count·scope SHA256·고정 mode/kind뿐이다.
+인증의 last_login/token/audit 관찰 쓰기는 허용하지만 대상 Student/Parent/User의
+나머지 persisted field는 인증 전후 동일해야 한다. 전체 개발 cleanup은 기존 provenance와
+resource 경계를 유지하고 자기 scope의 snapshot 잔여도 지운 뒤 인증 관찰/사용자/tenant 0을
+확인한다. foreign snapshot은 삭제하지 않고 cleanup을 실패시킨다.
+
+프론트엔드 `student-parent-registration-realuse.spec.ts` 7건은 실제 저장·reload와
+직접 입력/전화 방식 두 역할 UI 로그인, 랜덤 내부 실제 인증, 기존 Parent 보존,
+번호 없는 학생 오류 복구, 신청 선택 유지·승인을 검증한다. 랜덤 내부 인증은
+브라우저에 랜덤 원문을 직접 입력한 증거와 구분한다. probe 실패/없음/schema 불일치와
+skip은 release 실패다. 운영13건의 기존 허용 조건과 실발송 제한은 변경하지 않는다.
+기존 공식 CI entry인 `python -B -m unittest scripts.v1.test_frontend_development_qa -v`가
+고정 SSM 계약과 별도 probe 안전성 테스트를 함께 실행한다. probe 단독 확인은
+`python -B -m unittest scripts.v1.test_probe_account_registration_development -v`를 사용한다.
