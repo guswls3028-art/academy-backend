@@ -31,6 +31,7 @@ from apps.domains.submissions.services.lifecycle import process_submission_stora
 from apps.domains.results.views.admin_student_performance_view import (
     AdminStudentPerformanceView,
 )
+from apps.support.results.student_reported_scores import create_student_score_submissions
 from apps.domains.results.views.admin_student_reported_score_view import (
     AdminStudentReportedScoreReviewView,
 )
@@ -289,6 +290,51 @@ class StudentReportedScoreTest(TestCase, ClinicTestMixin):
         ):
             listed = InventoryListView.as_view()(list_request)
         self.assertEqual(json.loads(listed.content)["files"][0]["scoreSubmission"]["status"], "pending")
+
+    def test_score_submission_reloads_evidence_ownership_and_source_key(self):
+        evidence = InventoryFile.objects.create(
+            tenant=self.tenant,
+            scope="student",
+            student_ps=self.student.ps_number,
+            display_name="score.jpg",
+            original_name="score.jpg",
+            r2_key=f"tenants/{self.tenant.id}/students/{self.student.ps_number}/inventory/original.jpg",
+        )
+        validated = {
+            "tenant": self.tenant,
+            "student": self.student,
+            "submitted_by": self.student_user,
+            "source": "school_exam",
+            "academic_year": 2026,
+            "semester": 1,
+            "exam_round": "first",
+            "subject": "수학",
+            "score": "88.00",
+            "max_score": "100.00",
+        }
+        cases = (
+            {"r2_key": evidence.r2_key + ".moved"},
+            {"student_ps": "OTHER-STUDENT"},
+        )
+        for changed_fields in cases:
+            with self.subTest(changed_fields=tuple(changed_fields)):
+                InventoryFile.objects.filter(pk=evidence.pk).update(**changed_fields)
+                with self.assertRaises(ValueError):
+                    create_student_score_submissions(
+                        evidence_file=evidence,
+                        validated_rows=[validated],
+                    )
+                self.assertFalse(StudentReportedScore.objects.exists())
+                self.assertTrue(InventoryFile.objects.filter(pk=evidence.pk).exists())
+                InventoryFile.objects.filter(pk=evidence.pk).update(
+                    r2_key=evidence.r2_key,
+                    student_ps=evidence.student_ps,
+                )
+        rows = create_student_score_submissions(evidence_file=evidence, validated_rows=[validated])
+        rows[0].refresh_from_db()
+        self.assertEqual(rows[0].evidence_file_id, evidence.pk)
+        self.assertEqual(rows[0].student_id, self.student.pk)
+        self.assertEqual(rows[0].status, StudentReportedScore.Status.PENDING)
 
     def test_invalid_student_metadata_is_rejected_before_r2_side_effect(self):
         response, upload_r2 = self._student_upload(extra={"score": "120"})
