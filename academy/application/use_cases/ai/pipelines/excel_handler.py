@@ -59,10 +59,31 @@ def _record_progress(
         logger.debug("Redis progress record skip: %s", e)
 
 
+def _cleanup_source_for_claim(job: AIJob, storage, bucket: str, file_key: str, completed: bool) -> bool:
+    """An expired execution must leave the upload available to its new owner."""
+    if completed or job.claim_locked_at is None:
+        storage.delete_object(bucket, file_key)
+        return True
+    from academy.adapters.db.django.uow import DjangoUnitOfWork
+
+    with DjangoUnitOfWork() as uow:
+        current = uow.ai_jobs.get_for_update(job.id)
+        if (
+            current is not None
+            and current.job_type == "excel_parsing"
+            and str(current.tenant_id or "") == str(job.tenant_id or "")
+            and current.status == "RUNNING"
+            and current.locked_at == job.claim_locked_at
+        ):
+            storage.delete_object(bucket, file_key)
+            return True
+    return False
+
+
 def handle_excel_parsing_job(job: AIJob) -> AIResult:
     """
     EXCEL_PARSING 작업: R2에서 Get → ExcelParsingService(비즈니스 핵심) → 수강등록.
-    어떤 상황(성공/예외)에서도 finally에서 R2 원본 객체 삭제 수행.
+    현재 claim의 완료/실패만 R2 입력을 정리하고 다른 claim의 입력은 보존한다.
     """
     payload = job.payload or {}
     file_key = payload.get("file_key")
@@ -93,10 +114,15 @@ def handle_excel_parsing_job(job: AIJob) -> AIResult:
         else:
             _record_progress(job.id, step, percent, tenant_id=tenant_id)
 
+    completed = False
     try:
         service = ExcelParsingService(storage)
         _record_progress(job.id, "parsing", 25, step_index=2, step_percent=0, tenant_id=tenant_id)
-        result = service.run(job.id, payload, on_progress=_on_progress)
+        result = service.run(
+            job.id, payload, on_progress=_on_progress,
+            expected_locked_at=job.claim_locked_at,
+        )
+        completed = True
         _record_progress(job.id, "done", 100, step_index=4, step_percent=100, tenant_id=tenant_id)
         result["processed_by"] = "worker"
         logger.info(
@@ -120,9 +146,11 @@ def handle_excel_parsing_job(job: AIJob) -> AIResult:
         )
         return AIResult.failed(job.id, str(e)[:2000])
     finally:
-        # 더블 체크: 성공/실패/예외와 관계없이 R2 원본 삭제 (로컬 tmp는 ExcelParsingService.run finally에서 정리)
+        # Current-claim cleanup only; the service removes its unique local input.
         try:
-            storage.delete_object(bucket, file_key)
-            logger.debug("EXCEL_PARSING R2 cleanup done bucket=%s key=%s", bucket, file_key)
+            if _cleanup_source_for_claim(job, storage, bucket, file_key, completed):
+                logger.debug("EXCEL_PARSING R2 cleanup done bucket=%s key=%s", bucket, file_key)
+            else:
+                logger.info("EXCEL_PARSING_R2_CLEANUP_DEFERRED | job_id=%s | claim changed", job.id)
         except Exception as e:
             logger.warning("R2 delete_object after EXCEL_PARSING bucket=%s key=%s: %s", bucket, file_key, e)

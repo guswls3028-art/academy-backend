@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from datetime import datetime
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Callable
@@ -744,12 +745,28 @@ class ExcelParsingService:
     def __init__(self, storage: IObjectStorage) -> None:
         self._storage = storage
 
+    @staticmethod
+    def _lock_worker_claim(job_id: str, tenant_id, expected_locked_at) -> None:
+        """Lock the AI job before any student/enrollment rows are changed."""
+        from academy.adapters.db.django.repositories_ai import DjangoAIJobRepository
+
+        job = DjangoAIJobRepository().get_for_update(job_id)
+        if (
+            job is None
+            or job.job_type != "excel_parsing"
+            or str(job.tenant_id or "") != str(tenant_id)
+            or job.status != "RUNNING"
+            or (expected_locked_at is not None and job.locked_at != expected_locked_at)
+        ):
+            raise RuntimeError("excel_job_claim_changed")
+
     def run(
         self,
         job_id: str,
         payload: dict[str, Any],
         *,
         on_progress: Callable[[str, int], None] | None = None,
+        expected_locked_at: datetime | None = None,
     ) -> dict[str, Any]:
         """
         payload:
@@ -790,8 +807,8 @@ class ExcelParsingService:
             parent_initial_password = recover_excel_initial_password(payload, role="parent")
             parent_initial_password_mode = payload.get("parent_initial_password_mode")
 
-        tmp_dir = Path(tempfile.gettempdir())
-        local_path = tmp_dir / f"excel_job_{job_id}.xlsx"
+        with tempfile.NamedTemporaryFile(prefix="excel_job_", suffix=".xlsx", delete=False) as local_file:
+            local_path = Path(local_file.name)
 
         try:
             self._storage.download_to_path(bucket, file_key, str(local_path))
@@ -812,6 +829,7 @@ class ExcelParsingService:
                 if on_progress:
                     on_progress("enrolling", 50)
                 with transaction.atomic():
+                    self._lock_worker_claim(job_id, tenant_id, expected_locked_at)
                     result = lecture_enroll_from_excel_rows(
                         tenant_id=int(tenant_id),
                         lecture_id=int(lecture_id),
@@ -825,6 +843,7 @@ class ExcelParsingService:
                         job_id,
                         timezone.now(),
                         result_payload=result,
+                        expected_locked_at=expected_locked_at,
                     ):
                         raise RuntimeError("excel_job_atomic_completion_failed")
                 if on_progress:
@@ -846,6 +865,7 @@ class ExcelParsingService:
                         on_progress("creating", pct)
 
             with transaction.atomic():
+                self._lock_worker_claim(job_id, tenant_id, expected_locked_at)
                 result = import_students_from_rows(
                     tenant_id=int(tenant_id),
                     students_data=rows,
@@ -875,6 +895,7 @@ class ExcelParsingService:
                     job_id,
                     timezone.now(),
                     result_payload=result,
+                    expected_locked_at=expected_locked_at,
                 ):
                     raise RuntimeError("excel_job_atomic_completion_failed")
             return result
