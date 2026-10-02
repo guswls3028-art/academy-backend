@@ -3,6 +3,7 @@ import json
 
 from django.utils import timezone
 from rest_framework import serializers
+from drf_spectacular.utils import extend_schema_field
 
 from apps.core.models import Tenant
 from apps.domains.messaging.effective_templates import resolve_effective_template_status
@@ -203,8 +204,20 @@ class MessageTemplateSerializer(serializers.ModelSerializer):
         return value
 
 
+@extend_schema_field(
+    {"type": "string", "enum": ["student", "parent"]},
+    component_name="ManualSendRecipientScope",
+)
+class ManualSendRecipientScopeField(serializers.ChoiceField):
+    """Document supported scopes while preserving the legacy staff rejection."""
+
+
 class SendMessageRequestSerializer(serializers.Serializer):
     """알림톡 발송 요청: 학생/학부모 수신자 + 직접 입력 본문 또는 템플릿 ID."""
+    client_request_id = serializers.UUIDField(
+        required=False,
+        help_text="동일 발송 내용의 재시도와 학생/학부모 부분 요청에서 유지하는 UUID.",
+    )
     student_ids = serializers.ListField(
         child=serializers.IntegerField(min_value=1),
         max_length=200,
@@ -221,7 +234,7 @@ class SendMessageRequestSerializer(serializers.Serializer):
         default=list,
         help_text="legacy field. 직원 대상 범용 발송은 비활성화됨.",
     )
-    send_to = serializers.ChoiceField(
+    send_to = ManualSendRecipientScopeField(
         choices=[("student", "학생"), ("parent", "학부모"), ("staff", "직원")],
         default="parent",
         help_text="학생/학부모 번호로 보낼지",
@@ -269,6 +282,8 @@ class SendMessageRequestSerializer(serializers.Serializer):
     )
 
     def validate(self, attrs):
+        if "request_id" in self.initial_data:
+            raise serializers.ValidationError({"request_id": "요청 본문에는 client_request_id를 사용해 주세요."})
         send_to = attrs.get("send_to") or "parent"
         student_ids = attrs.get("student_ids") or []
         if send_to == "staff":
@@ -319,11 +334,48 @@ class SendMessageRequestSerializer(serializers.Serializer):
                     }
                 )
         scheduled_send_at = attrs.get("scheduled_send_at")
-        if scheduled_send_at is not None and scheduled_send_at <= timezone.now():
+        if (
+            scheduled_send_at is not None
+            and scheduled_send_at <= timezone.now()
+            and not self.context.get("allow_elapsed_schedule_for_replay")
+        ):
             raise serializers.ValidationError(
                 {"scheduled_send_at": "예약 발송 시각은 현재 이후여야 합니다."}
             )
         return attrs
+
+
+class SendMessageResponseSerializer(serializers.Serializer):
+    detail = serializers.CharField()
+    request_id = serializers.UUIDField()
+    accepted_count = serializers.IntegerField(min_value=0)
+    enqueued = serializers.IntegerField(min_value=0)
+    scheduled = serializers.IntegerField(min_value=0)
+    enqueue_failed = serializers.IntegerField(min_value=0)
+    cancelled_count = serializers.IntegerField(min_value=0)
+    skipped_no_phone = serializers.IntegerField(min_value=0)
+    replayed = serializers.BooleanField()
+
+
+class ManualSendRequestTraceSerializer(serializers.Serializer):
+    request_id = serializers.UUIDField()
+    accepted_count = serializers.IntegerField(min_value=0)
+    enqueued = serializers.IntegerField(min_value=0)
+    scheduled = serializers.IntegerField(min_value=0)
+    enqueue_failed = serializers.IntegerField(min_value=0)
+    cancelled_count = serializers.IntegerField(min_value=0)
+    skipped_no_phone = serializers.IntegerField(min_value=0)
+    provider_accepted_count = serializers.IntegerField(min_value=0)
+    provider_pending_count = serializers.IntegerField(min_value=0)
+    provider_failed_count = serializers.IntegerField(min_value=0)
+    provider_ambiguous_count = serializers.IntegerField(min_value=0)
+    delivered_count = serializers.IntegerField(min_value=0, allow_null=True)
+
+
+class NotificationLogListResponseSerializer(serializers.Serializer):
+    results = serializers.ListField(child=serializers.DictField())
+    count = serializers.IntegerField(min_value=0)
+    request_trace = ManualSendRequestTraceSerializer(required=False, allow_null=True)
 
 
 class ScheduledNotificationSerializer(serializers.ModelSerializer):

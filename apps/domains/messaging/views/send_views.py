@@ -9,12 +9,15 @@ from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from drf_spectacular.utils import extend_schema
+from django.utils import timezone
 
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.messaging.models import MessageTemplate
 from apps.domains.messaging.permissions import can_send_messages
 from apps.domains.messaging.selectors import HOURLY_SEND_LIMIT, get_hourly_notification_usage
-from apps.domains.messaging.serializers import SendMessageRequestSerializer
+from apps.domains.messaging.serializers import SendMessageRequestSerializer, SendMessageResponseSerializer
+from apps.domains.messaging.services.manual_send_requests import execute_manual_send_request
 from apps.domains.messaging.services.grade_personalization import (
     validate_grade_personalization,
 )
@@ -24,16 +27,17 @@ from apps.domains.messaging.services.recipients import resolve_student_message_r
 CONTENT_PLACEHOLDERS = ("#{공지내용}", "#{내용}", "#{선생님메모}")
 
 
-def _dispatch_or_schedule_message(*, tenant_id: int, trigger: str, payload: dict, scheduled_send_at):
+def _dispatch_or_schedule_message(*, tenant_id: int, trigger: str, payload: dict, scheduled_send_at, admission):
     if scheduled_send_at:
         from apps.domains.messaging.scheduled import schedule_notification_at
 
-        schedule_notification_at(
+        notification = schedule_notification_at(
             tenant_id=tenant_id,
             trigger=trigger,
             send_at=scheduled_send_at,
             payload=payload,
         )
+        admission.outbox_ids.append(notification.pk)
         return "scheduled"
 
     from apps.domains.messaging.models import ScheduledNotification
@@ -44,6 +48,7 @@ def _dispatch_or_schedule_message(*, tenant_id: int, trigger: str, payload: dict
         trigger=trigger,
         payload=payload,
     )
+    admission.outbox_ids.append(notification.pk)
     if notification.status == ScheduledNotification.Status.SENT:
         return "enqueued"
     if notification.status == ScheduledNotification.Status.PENDING:
@@ -58,6 +63,7 @@ class SendMessageView(APIView):
     """
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
+    @extend_schema(request=SendMessageRequestSerializer, responses={200: SendMessageResponseSerializer})
     def post(self, request):
         tenant = request.tenant
         if not can_send_messages(request, tenant):
@@ -80,15 +86,28 @@ class SendMessageView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        ser = SendMessageRequestSerializer(data=request.data)
+        ser = SendMessageRequestSerializer(
+            data=request.data, context={"allow_elapsed_schedule_for_replay": True},
+        )
         ser.is_valid(raise_exception=True)
         data = ser.validated_data
+        return execute_manual_send_request(
+            tenant=tenant, actor_user_id=request.user.pk, data=data,
+            send=lambda admission: self._send(request, data, admission),
+        )
+
+    def _send(self, request, data, admission):
+        tenant = request.tenant
         send_to = data["send_to"]
         message_mode = "alimtalk"
         template_id = data.get("template_id")
         raw_body = (data.get("raw_body") or "").strip()
         raw_subject = (data.get("raw_subject") or "").strip()
         scheduled_send_at = data.get("scheduled_send_at")
+        if scheduled_send_at is not None and scheduled_send_at <= timezone.now():
+            return Response(
+                {"scheduled_send_at": "예약 발송 시각은 현재 이후여야 합니다."}, status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # 공용 알림톡 정책: 발신번호는 owner 설정을 worker가 사용한다.
         sender = ""
@@ -325,6 +344,7 @@ class SendMessageView(APIView):
                     tenant_id=tenant.id,
                     trigger="manual_send",
                     scheduled_send_at=scheduled_send_at,
+                    admission=admission,
                     payload={
                         "tenant_id": tenant.id,
                         "to": phone,
@@ -334,6 +354,7 @@ class SendMessageView(APIView):
                         "template_id": template_id_solapi,
                         "alimtalk_replacements": alimtalk_replacements,
                         "event_type": "manual_send",
+                        **admission.delivery_metadata,
                         "target_type": "student" if send_to != "parent" else "parent",
                         "target_id": recipient.student_id,
                         "target_name": name,
