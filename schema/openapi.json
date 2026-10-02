@@ -6009,6 +6009,88 @@
         ],
         "type": "string"
       },
+      "ManualSendRecipientScope": {
+        "enum": [
+          "student",
+          "parent"
+        ],
+        "type": "string"
+      },
+      "ManualSendRequestTrace": {
+        "properties": {
+          "accepted_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "cancelled_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "delivered_count": {
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "enqueue_failed": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "enqueued": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "provider_accepted_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "provider_ambiguous_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "provider_failed_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "provider_pending_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "request_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "scheduled": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "skipped_no_phone": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "accepted_count",
+          "cancelled_count",
+          "delivered_count",
+          "enqueue_failed",
+          "enqueued",
+          "provider_accepted_count",
+          "provider_ambiguous_count",
+          "provider_failed_count",
+          "provider_pending_count",
+          "request_id",
+          "scheduled",
+          "skipped_no_phone"
+        ],
+        "type": "object"
+      },
+      "MessageModeEnum": {
+        "description": "* `alimtalk` - 알림톡만",
+        "enum": [
+          "alimtalk"
+        ],
+        "type": "string"
+      },
       "MessagingInfo": {
         "description": "GET/PATCH 응답: 테넌트 메시징 정보",
         "properties": {
@@ -6160,6 +6242,34 @@
           "repeat"
         ],
         "type": "string"
+      },
+      "NotificationLogListResponse": {
+        "properties": {
+          "count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "request_trace": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ManualSendRequestTrace"
+              }
+            ],
+            "nullable": true
+          },
+          "results": {
+            "items": {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "count",
+          "results"
+        ],
+        "type": "object"
       },
       "NullEnum": {
         "enum": [
@@ -13980,6 +14090,141 @@
         "required": [
           "code",
           "detail"
+        ],
+        "type": "object"
+      },
+      "SendMessageRequestRequest": {
+        "description": "알림톡 발송 요청: 학생/학부모 수신자 + 직접 입력 본문 또는 템플릿 ID.",
+        "properties": {
+          "alimtalk_extra_vars": {
+            "additionalProperties": {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            "description": "알림톡 추가 치환 변수 (예: {시험명: '수학', 시험성적: '80/100'})",
+            "type": "object"
+          },
+          "alimtalk_extra_vars_per_student": {
+            "additionalProperties": {},
+            "description": "학생별 개별 치환 변수 (key: student_id, value: {변수명: 값})",
+            "type": "object"
+          },
+          "block_category": {
+            "default": "",
+            "description": "frontend 발송 진입점의 블록 카테고리 (grades/attendance/clinic 등). template_id 누락 또는 t.category 매핑 안 될 때 unified 봉투 fallback 매칭에 사용. 학원장 본문 어떻게 수정해도 봉투(검수 양식)는 유지되어 발송 (domain.md §5).",
+            "maxLength": 40,
+            "type": "string"
+          },
+          "client_request_id": {
+            "description": "동일 발송 내용의 재시도와 학생/학부모 부분 요청에서 유지하는 UUID.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "message_mode": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/MessageModeEnum"
+              }
+            ],
+            "default": "alimtalk",
+            "description": "alimtalk\n\n* `alimtalk` - 알림톡만"
+          },
+          "raw_body": {
+            "maxLength": 5000,
+            "type": "string"
+          },
+          "raw_subject": {
+            "default": "",
+            "maxLength": 200,
+            "type": "string"
+          },
+          "scheduled_send_at": {
+            "description": "예약 발송 시각. 비어 있으면 즉시 발송합니다.",
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "send_to": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ManualSendRecipientScope"
+              }
+            ],
+            "default": "parent",
+            "description": "학생/학부모 번호로 보낼지"
+          },
+          "staff_ids": {
+            "description": "legacy field. 직원 대상 범용 발송은 비활성화됨.",
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "maxItems": 200,
+            "type": "array"
+          },
+          "student_ids": {
+            "description": "수신 대상 학생 ID 목록 (send_to가 student/parent일 때 사용)",
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "maxItems": 200,
+            "type": "array"
+          },
+          "template_id": {
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "SendMessageResponse": {
+        "properties": {
+          "accepted_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "cancelled_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "enqueue_failed": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "enqueued": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "replayed": {
+            "type": "boolean"
+          },
+          "request_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "scheduled": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "skipped_no_phone": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "accepted_count",
+          "cancelled_count",
+          "detail",
+          "enqueue_failed",
+          "enqueued",
+          "replayed",
+          "request_id",
+          "scheduled",
+          "skipped_no_phone"
         ],
         "type": "object"
       },
@@ -39421,11 +39666,27 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "description": "동일 테넌트에서 수동 발송 요청 UUID와 정확히 일치하는 기록 및 접수 단계.",
+            "in": "query",
+            "name": "request_id",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "No response body"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationLogListResponse"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [
@@ -39637,9 +39898,35 @@
       "post": {
         "description": "POST: 선택 학생(들)의 학생/학부모 번호로 알림톡 발송 (SQS enqueue → 워커가 Solapi 발송).\n- student_ids + send_to \"student\"|\"parent\": 학생/학부모 전화로 발송",
         "operationId": "messaging_send_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendMessageRequestRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/SendMessageRequestRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/SendMessageRequestRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "No response body"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SendMessageResponse"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [

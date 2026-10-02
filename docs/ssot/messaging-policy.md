@@ -1,4 +1,4 @@
-# 메시징/알림톡 운영 정책 SSOT (2026-09-10 갱신)
+# 메시징/알림톡 운영 정책 SSOT (2026-10-02 갱신)
 
 ## 정책 분류 체계
 
@@ -103,6 +103,62 @@ preview→confirm 경로에서 선생이 명시적으로 확인한 경우에만 
 - `password_reset_*` 또는 `password_find_otp`가 `registration_approved_*` 템플릿으로 대체되는 fallback은 금지한다.
 - 2026-07-08 Solapi 실등록 감사 기준 `notice_payment` SID는 provider에 없으므로 결제 트리거는 논리 매핑을 유지하되 fail-closed다.
 - Community/Q&A 외부 알림톡은 owner의 exact `qna_answered` 고정 문구 템플릿만 사용한다. 학생 이름과 사이트 링크 외 자유문구를 넣지 않으며, provider와 DB가 모두 `APPROVED`가 아니면 발송하지 않는다. 자유양식·출석·성적 봉투로 fallback하지 않고 기존 답변도 소급 발송하지 않는다.
+
+## 수동 발송 요청 식별·재시도와 결과 조회
+
+`POST /api/v1/messaging/send/`는 선택한 학생/학부모 경로의 원본 outbox와
+`ManualSendRequest` 접수 기록을 같은 transaction에 저장한다. 외부 큐 등록은
+커밋 후에만 실행한다. 요청 본문의 `client_request_id`는 UUID이며 응답과
+`GET /api/v1/messaging/log/?request_id=<UUID>`의 `request_id`와 같은 값이다.
+기존 호출자가 UUID를 생략하면 서버가 새 UUID를 발급한다. 본문에 잘못된
+`request_id` 이름을 보내면 자동으로 새 요청을 만들지 않고 400으로 거절한다.
+
+화면은 동일 작성 내용의 학생·학부모 부분 요청과 응답 유실 후 재시도에서
+UUID를 유지한다. 다른 수신 학생, 문구, 양식, 성적 치환값, 예약 시각을 선택하거나
+성공한 발송을 명시적으로 다시 보내면 새 UUID를 사용한다. 업무 Tenant 행 잠금과
+(tenant, UUID, 수신 경로) 유일 제약으로 최초 접수를 직렬화한다. 동일 UUID의
+모든 부분 요청은 최초 요청자와 동일 작성 지문이어야 하며, 다르면 409로 거절한다.
+이미 접수된 경로의 재시도는 최초 outbox ID를 재사용한다. 템플릿이나 전화번호가
+그 뒤 바뀌어도 outbox·참관 사본을 새로 만들거나 현재 데이터로 재구성하지 않는다.
+최초 접수하지 않은 다른 수신 경로는 현재의 권한·승인 봉투·수신자 검증을 거친다.
+
+접수 기록은 요청자 ID, 작성 지문, 원본 outbox ID, 전화번호 제외 건수만 보관하며
+본문·전화번호를 복제하지 않는다. 기존 outbox의 종단 개인정보 제거를 유지한다.
+이전 발송 행을 backfill하거나 현재 승인 채널·템플릿 매핑을 변경하지 않는다.
+
+| 응답/조회 값 | 의미 |
+| --- | --- |
+| `accepted_count` | 원본 outbox가 영속 저장되어 요청을 접수한 건수 |
+| `enqueued` | outbox에 실제 SQS 접수 시각이 기록된 건수 |
+| `scheduled` | 예약 또는 즉시 재시도 대기·큐 등록 중인 건수(기존 필드 유지) |
+| `enqueue_failed`, `cancelled_count` | 저장된 큐 등록 실패·취소 건수 |
+| `provider_accepted_count` | 같은 요청의 실제 `NotificationLog.sent`·성공 기록, 공급사 발송 접수 |
+| `provider_pending_count`, `provider_failed_count`, `provider_ambiguous_count` | 저장된 공급사 처리 중·실패·접수 여부 확인 필요 상태 |
+| `delivered_count` | 요청 집계에서는 `null`; 공급사 접수를 수신 완료로 추정하지 않음 |
+
+정확한 요청 필터의 `request_trace`는 로그가 아직 없어도 영속 접수/대기 상태를
+반환한다. 상태·페이지 필터는 결과 행만 제한하고 요청 전체의 접수 단계는 유지한다.
+owner/admin은 허용된 동일 tenant의 요청을, 그 외 직원·강사는 본인 요청만 조회하며
+기존 로그의 본문·번호·공급사 식별자 마스킹을 유지한다. 존재하지 않거나 접근할 수
+없는 UUID는 동일한 빈 결과와 `request_trace=null`로 반환한다. 다른 tenant로
+넘어가거나 UUID 접두사로 별도 요청을 합치는 fallback은 없다.
+
+발송 가능한 전화번호가 없으면 422로 거절하며 성공 접수를 표시하지 않는다.
+DB 실패·검증 거절·transaction rollback은 receipt/outbox와 커밋 후 큐 호출을 모두
+남기지 않는다. 커밋 후 큐의 일시 실패는 원본 outbox의 재시도 대기 상태를 유지한다.
+확정 큐 등록 실패는 접수 기록과 실패를 함께 반환하므로 동일 UUID 재전송으로
+새 outbox를 만들지 않는다. 이미 접수한 예약 시각이 지나도 원본 기록은 조회·재사용할
+수 있지만 새 요청의 과거 예약은 거절한다. 기존 common owner/검증 채널과 exact
+승인 봉투 gate, 안정 occurrence/business key, provider 호출 전 claim,
+`ambiguous`의 자동 재발송 금지를 모두 유지한다. 확정 미접수 실패의 기존 재시도는
+허용하며 공급사 exactly-once를 보장한다고 표현하지 않는다. 실제 수신 결과의
+개별 조회는 기존 13-A 계약을 따른다.
+
+검증은 정상 요청→원본 접수/큐→공급사 기록→요청 필터 reload, 학생·학부모 부분
+재시도, 응답 유실, 최초 데이터 보존, PostgreSQL 동시 요청, 다른 작성값/요청자
+409, rollback 외부 호출 0, 강사 마스킹/tenant 격리, 중복 SQS의 두 번째 공급사
+호출 0와 `ambiguous` 보존을 포함한다. 프런트엔드 동선은
+[메시징 운영 흐름](https://github.com/guswls3028-art/academy-frontend/blob/main/docs/MESSAGING-OPERATIONS.md)을 따른다.
 
 ## 안전장치 체계
 1. **Tenant.messaging_is_active** — 대표·관리자가 화면에서 직접 제어하는 학원 전체 on/off. 신규·기존 사용 중 학원은 기본 on이며 개인 고객의 선호를 코드나 운영 환경변수에 넣지 않는다.

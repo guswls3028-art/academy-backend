@@ -488,6 +488,30 @@ class MessagingObserver(models.Model):
         ]
 
 
+class ManualSendRequest(models.Model):
+    """Durable admission receipt; recipient content stays in the original outbox."""
+
+    tenant = models.ForeignKey(
+        "core.Tenant", on_delete=models.CASCADE, related_name="manual_send_requests",
+    )
+    request_id = models.UUIDField()
+    recipient_scope = models.CharField(max_length=20, choices=[("student", "학생"), ("parent", "학부모")])
+    actor_user_id = models.PositiveBigIntegerField()
+    payload_fingerprint = models.CharField(max_length=64)
+    outbox_ids = models.JSONField(default=list)
+    skipped_no_phone = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        app_label = "messaging"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "request_id", "recipient_scope"],
+                name="uniq_manual_request_scope",
+            ),
+        ]
+
+
 class ScheduledNotification(models.Model):
     """
     예약/지연 발송 대기열.
