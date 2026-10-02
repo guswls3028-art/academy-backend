@@ -281,6 +281,52 @@ try {
     Assert-True (-not (Test-Path -LiteralPath $patchWorktree)) "Patch-equivalent worktree remains after close."
     Write-Output "SESSION_WORKTREE_CASE_PASS immutable-main-patch-equivalence"
 
+    [void](& $scriptUnderTest -Action Start -Session squash-test -Repository backend `
+        -WorkspaceRoot $fixtureRoot -AllowLowDisk)
+    $squashWorktree = Join-Path $fixtureRoot "_worktrees\sessions\squash-test\backend"
+    $squashBranch = @(Invoke-Git -Root $squashWorktree -Arguments @("branch", "--show-current"))[0]
+    foreach ($part in @("first", "second")) {
+        Set-Content -LiteralPath (Join-Path $squashWorktree "squash-$part.txt") -Value $part -Encoding UTF8
+        [void](Invoke-Git -Root $squashWorktree -Arguments @("add", "squash-$part.txt"))
+        [void](Invoke-Git -Root $squashWorktree -Arguments @("commit", "-m", "fixture squash $part"))
+    }
+    $squashHead = @(Invoke-Git -Root $squashWorktree -Arguments @("rev-parse", "HEAD"))[0]
+    [void](Invoke-Git -Root $squashWorktree -Arguments @("push", "origin", $squashBranch))
+    [void](Invoke-Git -Root $backendRoot -Arguments @("merge", "--squash", $squashBranch))
+    [void](Invoke-Git -Root $backendRoot -Arguments @("commit", "-m", "fixture aggregate squash"))
+    [void](Invoke-Git -Root $backendRoot -Arguments @("push", "origin", "main"))
+    $squashMain = @(Invoke-Git -Root $backendRoot -Arguments @("rev-parse", "HEAD"))[0]
+    $squashCherry = @(Invoke-Git -Root $squashWorktree -Arguments @("cherry", $squashMain, $squashHead))
+    Assert-True (@($squashCherry -match '^\+ ').Count -eq 2) "The fixture must retain both per-commit squash mismatches."
+    $squashTrees = @(Invoke-Git -Root $squashWorktree -Arguments @("rev-parse", "$squashHead^{tree}", "$squashMain^{tree}"))
+    Assert-True ($squashTrees[0] -ceq $squashTrees[1]) "The aggregate squash must preserve the complete tracked tree."
+    [void](& $scriptUnderTest -Action Close -Session squash-test -Repository backend `
+        -WorkspaceRoot $fixtureRoot -WhatIf)
+    Assert-True (Test-Path -LiteralPath $squashWorktree) "Tree-equivalent WhatIf must preserve the worktree."
+    $squashState = @{
+        Root = $backendRoot
+        MainSha = $squashMain
+        PreviousMainSha = @(Invoke-Git -Root $backendRoot -Arguments @("rev-parse", "HEAD^"))[0]
+        Shifted = $false
+    }
+    $squashCloseOutput = @(Invoke-InterceptedClose -Session squash-test -State $squashState -BeforeGit {
+        param($Arguments, $State, $GitExecutable)
+        if ($Arguments[2] -eq "cherry" -and -not $State.Shifted) {
+            & $GitExecutable -C $State.Root update-ref refs/remotes/origin/main $State.PreviousMainSha $State.MainSha
+            if ($LASTEXITCODE -ne 0) { throw "Fixture could not move main before aggregate tree comparison." }
+            $State.Shifted = $true
+        }
+    })
+    Assert-True $squashState.Shifted "Tree equivalence must be checked after the fixture moves the mutable main ref."
+    Assert-True (@($squashCloseOutput -match 'integration=tree-equivalent').Count -eq 1) "Close must recognize an identical aggregate squash tree."
+    Assert-True (@($squashCloseOutput -match "main=$squashMain").Count -eq 1) "Tree comparison must use the checked immutable main."
+    Assert-True (-not (Test-Path -LiteralPath $squashWorktree)) "Tree-equivalent worktree remains after close."
+    Assert-True (@(Invoke-Git -Root $backendRoot -Arguments @("branch", "--list", $squashBranch)).Count -eq 0) "Tree-equivalent local branch remains."
+    $preservedSquashHead = @(Invoke-Git -Root (Join-Path $fixtureRoot "remotes\backend.git") `
+        -Arguments @("rev-parse", "refs/heads/$squashBranch"))[0]
+    Assert-True ($preservedSquashHead -eq $squashHead) "Close must preserve the published original commits."
+    Write-Output "SESSION_WORKTREE_CASE_PASS aggregate-squash-tree-equivalence"
+
     [void](& $scriptUnderTest -Action Start -Session reused-test -Repository backend `
         -WorkspaceRoot $fixtureRoot -AllowLowDisk)
     $reusedWorktree = Join-Path $fixtureRoot "_worktrees\sessions\reused-test\backend"

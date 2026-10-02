@@ -60,8 +60,8 @@ def test_native_security_changes_build_and_run_the_arm64_base_in_pr() -> None:
     native_job = workflow.split("\n  native-security-image:\n", 1)[1].split("\n  static-contract:\n", 1)[0]
     assert "runs-on: ubuntu-24.04-arm" in native_job
     assert "setup-qemu-action" not in native_job
-    assert "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c" in workflow
-    assert "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a" in workflow
+    assert "docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069" in workflow
+    assert "docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc" in workflow
 
 
 def test_runtime_dependencies_precede_frequently_changed_source() -> None:

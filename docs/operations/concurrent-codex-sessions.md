@@ -288,10 +288,10 @@ pwsh C:\academy\backend\scripts\codex\session-worktree.ps1 `
 A task is not complete merely because existing changes were “preserved.” Pick
 one explicit terminal state:
 
-1. **Merged:** branch is contained in `origin/main`, or every remaining ordinary
-   commit is patch-equivalent to `origin/main` and no exclusive merge commit
-   remains; the worktree is clean and the session worktree and local branch are
-   removed.
+1. **Merged:** branch is contained in `origin/main`, or no exclusive merge commit
+   remains and its ordinary commits are patch-equivalent or its complete tracked
+   tree equals the checked main tree; the worktree is clean and the session
+   worktree and local branch are removed.
 2. **Review pending:** clean committed branch/PR, named owner, exact SHA, and a
    stated merge or discard decision. It remains a worktree until resolved.
 3. **Intentional WIP:** a named `wip/` branch with a recovery commit, owner, and
@@ -300,8 +300,12 @@ one explicit terminal state:
 
 For the merged state, the close command performs a full preflight and refuses
 dirty, foreign, or unmerged worktrees before deleting anything. A squash or
-cherry-pick merge is accepted only when `git cherry origin/main HEAD` contains
-no `+` commit and `git rev-list --merges origin/main..HEAD` is empty. `git cherry`
+cherry-pick merge is accepted when `git rev-list --merges origin/main..HEAD` is
+empty and either `git cherry origin/main HEAD` contains no `+` commit or the
+complete tracked trees at the recorded main and HEAD SHAs are identical. The
+latter recognizes multiple ordinary commits squashed into one without resetting
+the branch; published original commits remain on their existing remote ref.
+`git cherry`
 does not prove merge-resolution equivalence, so an exclusive merge preserves
 the branch even when its ordinary commits are equivalent. `Close` binds this
 check to the recorded main and HEAD SHAs, then rechecks the registered path,
