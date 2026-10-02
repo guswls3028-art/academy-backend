@@ -104,7 +104,7 @@ jobs:
             --expected-quality-run-id "$QUALITY_RUN_ID" \
             --expected-quality-run-attempt "$QUALITY_RUN_ATTEMPT"
       - name: Configure existing production ECR OIDC role
-        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
@@ -340,7 +340,7 @@ jobs:
             --expected-quality-run-attempt "$QUALITY_RUN_ATTEMPT"
       - name: Configure existing production ECR OIDC role
         if: (matrix.service != 'base' || needs.validate.outputs.reuse_base != 'true') && (matrix.service != 'messaging' || needs.validate.outputs.reuse_messaging != 'true')
-        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
@@ -432,7 +432,7 @@ jobs:
           merge-multiple: true
           path: published
       - name: Configure existing ECR role with readback-only session policy
-        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
