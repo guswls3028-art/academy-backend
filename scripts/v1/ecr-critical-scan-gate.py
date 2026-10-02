@@ -9,7 +9,7 @@ import re
 import subprocess
 import sys
 import time
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +22,7 @@ REPOSITORIES = {
     "academy-ai-worker-cpu",
     "academy-tools-worker",
 }
+MAX_SCAN_AGE = timedelta(hours=24)
 
 
 class GateError(RuntimeError):
@@ -204,6 +205,24 @@ def _describe_scan(repository: str, digest: str, region: str) -> dict[str, Any]:
     )
 
 
+def _scan_completed_at(findings: dict[str, Any], now: datetime) -> datetime:
+    raw = (findings.get("imageScanFindings") or {}).get("imageScanCompletedAt")
+    try:
+        if isinstance(raw, str):
+            completed_at = datetime.fromisoformat(raw)
+        elif isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            completed_at = datetime.fromtimestamp(raw, timezone.utc)
+        else:
+            completed_at = None
+    except (ValueError, OverflowError, OSError) as exc:
+        raise GateError("ECR COMPLETE scan has invalid imageScanCompletedAt") from exc
+    if completed_at is None or completed_at.utcoffset() is None:
+        raise GateError("ECR COMPLETE scan requires timezone-aware or epoch imageScanCompletedAt")
+    if completed_at > now:
+        raise GateError("ECR COMPLETE scan has future imageScanCompletedAt")
+    return completed_at
+
+
 def wait_for_completed_scan(
     repository: str,
     digest: str,
@@ -214,7 +233,13 @@ def wait_for_completed_scan(
     findings = _describe_scan(repository, digest, region)
     status_block = findings.get("imageScanStatus") or {}
     status = status_block.get("status")
-    if not status:
+    needs_scan = not status
+    if status == "COMPLETE":
+        now = datetime.now(timezone.utc)
+        needs_scan = now - _scan_completed_at(findings, now) >= MAX_SCAN_AGE
+    refresh_not_before = None
+    if needs_scan:
+        requested_at = datetime.now(timezone.utc).replace(microsecond=0)
         try:
             _run_aws_json(
                 [
@@ -228,13 +253,14 @@ def wait_for_completed_scan(
                     region,
                 ]
             )
+            refresh_not_before = requested_at
             print(f"ECR_SCAN_STARTED repo={repository} digest={digest}")
         except GateError as exc:
             if "LimitExceededException" not in str(exc):
                 raise
             print(
                 f"::warning::ECR scan start quota is already consumed for "
-                f"{repository}@{digest}; require the existing scan to complete"
+                f"{repository}@{digest}; require a fresh completed scan"
             )
 
     for attempt in range(1, attempts + 1):
@@ -242,14 +268,19 @@ def wait_for_completed_scan(
         status_block = findings.get("imageScanStatus") or {}
         status = status_block.get("status")
         if status == "COMPLETE":
-            return findings
+            now = datetime.now(timezone.utc)
+            completed_at = _scan_completed_at(findings, now)
+            if now - completed_at < MAX_SCAN_AGE and (
+                refresh_not_before is None or completed_at >= refresh_not_before
+            ):
+                return findings
         if status in {"FAILED", "UNSUPPORTED_IMAGE"}:
             raise GateError(
                 f"ECR scan failed repo={repository} digest={digest} status={status}"
             )
         if attempt < attempts:
             time.sleep(interval_seconds)
-    raise GateError(f"ECR scan did not complete repo={repository} digest={digest}")
+    raise GateError(f"ECR scan did not complete with a fresh result repo={repository} digest={digest}")
 
 
 def critical_finding_keys(
