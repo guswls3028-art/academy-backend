@@ -155,7 +155,7 @@ python scripts/v1/converge_frontend_development_qa.py --frontend-role-plan
 ```
 
 `templates/ssm/frontend_development_qa.json`은 고정 `NonInteractiveCommands`
-Session document다. Action은 Inspect/Setup/Cleanup뿐이고 tenant, release ID,
+Session document다. Action은 Inspect/Setup/Cleanup/AccountProbe로 닫혀 있고 tenant, release ID,
 digest는 shell 문자/경로/SSM 참조를 허용하지 않는 strict pattern으로 제한한다.
 `SyntheticLongVideo`는 `false`가 기본인 명시적 boolean 문자열이다. `true`인
 실행에서만 scenario 명령의 `--synthetic-long-video` 분기를 사용하며 학생을 정확히
@@ -177,6 +177,20 @@ command나 shell 인자를 전달하는 parameter는 없고 기존 고정 parame
 부재를 확인하며 원래 scenario 명령을 reset 없이 사용한다. 생성과 같은 DB transaction에
 `OpsAuditLog(action=development.qa.setup)` 1행으로 exact tenant ID/code와 256-bit
 run capability의 SHA-256 digest를 기록한다. 감사 기록 실패도 전체 생성 rollback이다.
+
+현재 소스의 고정 문서는 scenario `Command`의 native 잔여 확인·정리 helper 계약을
+직접 사용한다. `_owned_database_residue`, `_non_database_residue`,
+`_cleanup_qa_r2_objects`와 계정 후보 probe가 필요한 현재 이미지가 대상이다.
+`select_residue_mode`/`LEGACY_RESIDUE_*` 또는 과거 release/digest 전용 adapter는
+현재 실행 경로에 없다. helper가 없는 과거 이미지에 대해 호환 구현이나 cleanup
+성공을 주장하지 않으며, 오래된 PR의 제안·패치를 현재 동작의 근거로 사용하지 않는다.
+
+release owner는 native helper와 probe를 포함한 동일 immutable 후보의 이미지/개발
+환경·resource-denial gate를 먼저 확인하고, 해당 후보 소스와 일치하는 고정 SSM
+문서를 수렴·readback한 뒤 같은 artifact의 실사용 검증을 실행한다. 완료 조건은
+exact owned fixture/tenant 정리, 고정 Cleanup의 잔여 0, 직후 Inspect의 동일
+release/digest와 잔여 0이다. 소스/오프라인 계약 CI 통과는 이 runtime 수렴·실행·정리의
+증거가 아니며, 확인 전에는 후보 real-use와 운영 조치가 미검증 상태다.
 
 계정·첫 수강 흐름도 운영과 같은 fail-closed 알림톡 계약을 사용한다. 개발 환경은
 외부 발송이 불가능한 `development-mock-pfid`와 `SOLAPI_MOCK=true`를 함께 고정하고,
