@@ -208,11 +208,16 @@ def _describe_scan(repository: str, digest: str, region: str) -> dict[str, Any]:
 def _scan_completed_at(findings: dict[str, Any], now: datetime) -> datetime:
     raw = (findings.get("imageScanFindings") or {}).get("imageScanCompletedAt")
     try:
-        completed_at = datetime.fromisoformat(raw) if isinstance(raw, str) else None
-    except ValueError as exc:
+        if isinstance(raw, str):
+            completed_at = datetime.fromisoformat(raw)
+        elif isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            completed_at = datetime.fromtimestamp(raw, timezone.utc)
+        else:
+            completed_at = None
+    except (ValueError, OverflowError, OSError) as exc:
         raise GateError("ECR COMPLETE scan has invalid imageScanCompletedAt") from exc
     if completed_at is None or completed_at.utcoffset() is None:
-        raise GateError("ECR COMPLETE scan requires timezone-aware imageScanCompletedAt")
+        raise GateError("ECR COMPLETE scan requires timezone-aware or epoch imageScanCompletedAt")
     if completed_at > now:
         raise GateError("ECR COMPLETE scan has future imageScanCompletedAt")
     return completed_at

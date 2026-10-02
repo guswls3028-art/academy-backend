@@ -221,8 +221,10 @@ normal·`XML_MIN_SIZE`의 수정 전 실패 재현과 수정 후 upstream·UTF-1
    repository-scoped `ecr:StartImageScan` 권한으로 scan을 호출한다. 재사용
    digest라는 이유로 scan을 건너뛰지 않는다. ECR이 동일 digest scan quota가
    이미 소비됐다고 응답해도 24시간 미만의 `COMPLETE` readback을 요구한다.
-   `imageScanCompletedAt`은 timezone을 포함한 시각이어야 하며 누락·잘못된 형식·
-   미래 시각은 실패 폐쇄한다. poll마다 UTC 현재 시각으로 유효 시간을 다시
+   `imageScanCompletedAt`은 [AWS CLI 출력 형식](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html#cli-configure-files-settings)의
+   timezone 포함 ISO 8601 또는 유한 UTC epoch 초로 검증하며 누락·잘못된 형식·
+   미래 시각은 실패 폐쇄한다. `wire` 숫자 출력도 같은 UTC 경계를 적용하며
+   Boolean·NaN·무한대·범위 밖 숫자는 허용하지 않는다. poll마다 UTC 현재 시각으로 유효 시간을 다시
    검사한다. 재scan 시작이 성공했으면 요청 UTC 초보다 이른 완료 결과를 새
    결과로 인정하지 않는다. 새 완료 결과가 기한 안에 확인되지 않으면 과거의
    High 0 결과로 대체하지 않는다. AWS의 [기본 scan 제한](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_StartImageScan.html)은

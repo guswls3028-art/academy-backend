@@ -884,7 +884,7 @@ def test_scan_age_boundary_preserves_cached_or_refreshed_zero_high_success(
     assert gate.evaluate_high_budget("academy-base", completed, {"academy-base": 0}, set()) == 0
 
 
-@pytest.mark.parametrize("raw", [None, "not-a-date", "2026-10-02T00:00:00", "2026-10-02T01:00:01Z", 1790900000])
+@pytest.mark.parametrize("raw", [None, "not-a-date", "2026-10-02T00:00:00", "2026-10-02T01:00:01Z", True, float("nan"), float("inf"), 10**100])
 @pytest.mark.parametrize("initially_complete", [True, False])
 def test_invalid_complete_timestamp_fails_closed_before_risk_evaluation(
     monkeypatch: pytest.MonkeyPatch, scan_clock: list[datetime], raw, initially_complete: bool,
@@ -899,6 +899,25 @@ def test_invalid_complete_timestamp_fails_closed_before_risk_evaluation(
     with pytest.raises(gate.GateError, match="imageScanCompletedAt"):
         gate.wait_for_completed_scan("academy-base", "sha256:" + "c" * 64, "ap-northeast-2", 1, 0)
     assert len(starts) == (0 if initially_complete else 1)
+
+
+@pytest.mark.parametrize("format", ["iso-offset", "iso-z", "wire-int", "wire-float"])
+def test_aws_cli_timestamp_formats_preserve_fresh_cached_success(
+    monkeypatch: pytest.MonkeyPatch, scan_clock: list[datetime], format: str,
+) -> None:
+    now = scan_clock[0]
+    formats = {
+        "iso-offset": now.astimezone(timezone(timedelta(hours=9))).isoformat(),
+        "iso-z": now.isoformat().replace("+00:00", "Z"),
+        "wire-int": int(now.timestamp()),
+        "wire-float": now.timestamp(),
+    }
+    fresh = _completed_scan(now)
+    fresh["imageScanFindings"]["imageScanCompletedAt"] = formats[format]
+    monkeypatch.setattr(gate, "_describe_scan", lambda *_: fresh)
+    monkeypatch.setattr(gate, "_run_aws_json", lambda *_args, **_kwargs: pytest.fail("fresh CLI timestamp must not start a scan"))
+
+    assert gate.wait_for_completed_scan("academy-base", "sha256:" + "c" * 64, "ap-northeast-2", 1, 0) is fresh
 
 
 def test_scan_completion_before_successful_start_is_not_a_new_scan(
