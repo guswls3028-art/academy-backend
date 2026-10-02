@@ -94,6 +94,12 @@ R2 업로드 성공, reload, 메타데이터 실패 exact-key 정리 회귀를 �
 결과를 읽은 뒤 응답한다. 성공 시 기존 `204`/폴더 `200`과 실제 cleaned 수를 유지하고,
 공급자 실패 시 `502 inventory_storage_cleanup_pending`과 목록 재조회/재시도 경로를 유지한다.
 
+성적표 제출도 tenant FK gate → 학생 namespace → 원본 InventoryFile 행 순서로 잠근다.
+제출 시 저장된 원본의 key·소유자와 활성 학생을 다시 확인한다. 이동/삭제가 먼저 끝나
+기존 원본 객체가 낡았으면 새 성적 행을 만들지 않고 재조회 후 제출을 요구한다.
+제출이 먼저 시작되면 동시 이동/덮어쓰기는 commit까지 기다린 뒤 `409`로 원본과
+성적 감사 연결을 보존한다. PostgreSQL의 deferred FK 검사만으로 이 순서를 대신하지 않는다.
+
 이전 자료가 새 학생 생성보다 먼저 존재하는 legacy namespace는 학생/학부모 접근을
 `409 student_storage_namespace_conflict`로 중단하고 원본을 보존한다. 소유 확인 후
 복구해야 하며 새 학생의 것으로 자동 이관하지 않는다. 활성 학생이 없는 namespace에

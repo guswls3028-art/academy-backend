@@ -342,7 +342,11 @@ class TestLifecycleTenantGateConcurrencyPostgres(TransactionTestCase):
     ) -> None:
         serializer = SimpleNamespace(
             instance=Student.objects.select_related("user").get(pk=student_id),
-            validated_data={"parent_phone": parent_phone},
+            validated_data={
+                "parent_phone": parent_phone,
+                "parent_initial_password_mode": "fixed",
+                "parent_initial_password": "QaParent1002!",
+            },
         )
         view = StudentViewSet()
         view.request = SimpleNamespace(tenant=Tenant.objects.get(pk=tenant_id))

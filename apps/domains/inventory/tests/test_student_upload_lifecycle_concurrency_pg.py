@@ -17,6 +17,7 @@ from apps.core.models import Tenant, TenantMembership
 from apps.domains.inventory.models import InventoryFile, InventoryFolder
 from apps.domains.inventory.services import move_file, move_folder
 from apps.domains.inventory.views import FileDeleteView, FileUploadView
+from apps.support.results.student_reported_scores import create_student_score_submissions
 from apps.support.students.lifecycle import (
     permanently_delete_students,
     soft_delete_student,
@@ -522,34 +523,38 @@ class TestStudentUploadLifecycleConcurrencyPostgres(TransactionTestCase):
     def test_overwrite_move_waits_for_new_reported_score_and_preserves_evidence(self):
         source_folder = InventoryFolder.objects.create(
             tenant=self.tenant,
-            scope="admin",
+            scope="student",
+            student_ps=self.student.ps_number,
             name="source-evidence",
         )
         target_folder = InventoryFolder.objects.create(
             tenant=self.tenant,
-            scope="admin",
+            scope="student",
+            student_ps=self.student.ps_number,
             name="target-evidence",
         )
         source_file = InventoryFile.objects.create(
             tenant=self.tenant,
-            scope="admin",
+            scope="student",
+            student_ps=self.student.ps_number,
             folder=source_folder,
             display_name="evidence.pdf",
             original_name="evidence.pdf",
             r2_key=(
-                f"tenants/{self.tenant.id}/admin/inventory/"
+                f"tenants/{self.tenant.id}/students/{self.student.ps_number}/inventory/"
                 "source-evidence/source.pdf"
             ),
             content_type="application/pdf",
         )
         existing_file = InventoryFile.objects.create(
             tenant=self.tenant,
-            scope="admin",
+            scope="student",
+            student_ps=self.student.ps_number,
             folder=target_folder,
             display_name="evidence.pdf",
             original_name="evidence.pdf",
             r2_key=(
-                f"tenants/{self.tenant.id}/admin/inventory/"
+                f"tenants/{self.tenant.id}/students/{self.student.ps_number}/inventory/"
                 "target-evidence/existing.pdf"
             ),
             content_type="application/pdf",
@@ -574,18 +579,21 @@ class TestStudentUploadLifecycleConcurrencyPostgres(TransactionTestCase):
             close_old_connections()
             try:
                 with transaction.atomic():
-                    score = StudentReportedScore.objects.create(
-                        tenant=self.tenant,
-                        student_id=self.student.id,
-                        evidence_file_id=existing_file.id,
-                        source="school_exam",
-                        academic_year=2026,
-                        semester=1,
-                        exam_round="first",
-                        subject="수학",
-                        score="95.00",
-                        max_score="100.00",
-                    )
+                    score = create_student_score_submissions(
+                        evidence_file=existing_file,
+                        validated_rows=[{
+                            "tenant": self.tenant,
+                            "student": self.student,
+                            "submitted_by": self.student_user,
+                            "source": "school_exam",
+                            "academic_year": 2026,
+                            "semester": 1,
+                            "exam_round": "first",
+                            "subject": "수학",
+                            "score": "95.00",
+                            "max_score": "100.00",
+                        }],
+                    )[0]
                     score_ids.append(score.id)
                     score_inserted.set()
                     if not release_score.wait(timeout=10):
@@ -601,8 +609,8 @@ class TestStudentUploadLifecycleConcurrencyPostgres(TransactionTestCase):
                 move_results.append(
                     move_file(
                         tenant=self.tenant,
-                        scope="admin",
-                        student_ps="",
+                        scope="student",
+                        student_ps=self.student.ps_number,
                         source_file_id=source_file.id,
                         target_folder_id=target_folder.id,
                         on_duplicate="overwrite",
@@ -628,7 +636,7 @@ class TestStudentUploadLifecycleConcurrencyPostgres(TransactionTestCase):
             move_thread.start()
             self.assertFalse(
                 move_finished.wait(timeout=1),
-                "Overwrite crossed the uncommitted evidence FK insertion.",
+                "Overwrite crossed the uncommitted score submission.",
             )
             release_score.set()
             score_thread.join(timeout=15)

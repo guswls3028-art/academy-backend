@@ -384,6 +384,7 @@ def update_student_profile(
     identity_field: str | None = None,
     strict_school_validation: bool = True,
     ignore_blank_name: bool = False,
+    allow_parent_phone_change: bool = True,
 ) -> StudentProfileUpdateResult:
     """Update one profile under the tenant-first lifecycle lock order."""
     if tenant is None:
@@ -402,4 +403,5 @@ def update_student_profile(
             identity_field=identity_field,
             strict_school_validation=strict_school_validation,
             ignore_blank_name=ignore_blank_name,
+            allow_parent_phone_change=allow_parent_phone_change,
         )

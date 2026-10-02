@@ -15,6 +15,10 @@ from django.utils import timezone
 from apps.domains.inventory.models import InventoryFile
 from apps.domains.results.models import StudentReportedScore
 from apps.domains.students.models import Student
+from apps.support.students.namespace_lock import (
+    lock_student_creation_tenant_reference,
+    lock_student_ps_namespaces,
+)
 
 
 SCHOOL_SOURCES = {StudentReportedScore.Source.SCHOOL_EXAM}
@@ -310,6 +314,26 @@ def create_student_score_submissions(
     validated_rows: list[Mapping[str, Any]],
 ) -> list[StudentReportedScore]:
     _validate_evidence_link(evidence_file=evidence_file, validated_rows=validated_rows)
+    lock_student_creation_tenant_reference(tenant_id=evidence_file.tenant_id)
+    lock_student_ps_namespaces(
+        tenant_id=evidence_file.tenant_id,
+        ps_numbers=(evidence_file.student_ps,),
+    )
+    current_evidence = InventoryFile.objects.select_for_update().filter(
+        pk=evidence_file.pk,
+        tenant_id=evidence_file.tenant_id,
+    ).first()
+    if current_evidence is None or current_evidence.r2_key != evidence_file.r2_key:
+        raise ValueError("성적표 원본 저장정보가 변경되었습니다. 새로고침 후 다시 제출해 주세요.")
+    _validate_evidence_link(evidence_file=current_evidence, validated_rows=validated_rows)
+    if not Student.objects.filter(
+        pk=validated_rows[0]["student"].pk,
+        tenant_id=current_evidence.tenant_id,
+        ps_number=current_evidence.student_ps,
+        deleted_at__isnull=True,
+    ).exists():
+        raise ValueError("성적표 원본과 학생·학원 정보가 일치하지 않습니다.")
+    evidence_file = current_evidence
     return [
         StudentReportedScore.objects.create(evidence_file=evidence_file, **dict(validated))
         for validated in validated_rows
