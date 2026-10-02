@@ -219,6 +219,25 @@ class ExamOMRBatchUploadPdfGuardTests(TestCase):
         self.assertEqual(response.data["total_count"], 22)
         self.assertEqual(response.data["counts"]["pending_admission"], 22)
         self.assertEqual(response.data["pending_admission_ordinals"], list(range(1, 23)))
+        self.assertEqual(
+            [item["ordinal"] for item in response.data["items"]],
+            list(range(1, 23)),
+        )
+        self.assertTrue(all(item["status"] == "pending_admission" for item in response.data["items"]))
+
+    def test_empty_file_is_rejected_without_creating_a_submission(self):
+        batch_id = self._initialize(1).data["id"]
+        response = self._upload_to_batch(
+            batch_id,
+            [SimpleUploadedFile("empty.jpg", b"", content_type="image/jpeg")],
+            [1],
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["created_count"], 0)
+        self.assertEqual(response.data["admission_failed_ordinals"], [1])
+        self.assertEqual(response.data["items"][0]["failure_code"], "empty_file")
+        self.assertFalse(Submission.objects.filter(target_id=self.exam.id).exists())
 
     @patch("apps.domains.submissions.views.exam_omr_batch_upload_view.dispatch_submission")
     @patch("apps.domains.submissions.serializers.submission.upload_fileobj_to_r2")
@@ -311,6 +330,14 @@ class ExamOMRBatchUploadPdfGuardTests(TestCase):
         self.assertEqual(first.data["counts"]["received"], 2)
         self.assertEqual(first.data["counts"]["failed"], 1)
         self.assertEqual(first.data["failed_ordinals"], [2])
+        self.assertEqual(
+            [item["status"] for item in first.data["items"]],
+            ["received", "failed", "received"],
+        )
+        self.assertEqual(
+            [item["ordinal"] for item in first.data["items"]],
+            [1, 2, 3],
+        )
         self.assertNotIn("first.jpg", str(first.data))
         item_one_id = OmrUploadBatchItem.objects.get(batch_id=batch_id, ordinal=1).submission_id
         self.assertEqual(Submission.objects.filter(target_id=self.exam.id).count(), 2)
@@ -321,6 +348,10 @@ class ExamOMRBatchUploadPdfGuardTests(TestCase):
         self.assertEqual(retry.status_code, 201)
         self.assertEqual(retry.data["created_count"], 1)
         self.assertEqual(retry.data["counts"]["received"], 3)
+        self.assertEqual(
+            [item["status"] for item in retry.data["items"]],
+            ["received", "received", "received"],
+        )
         self.assertEqual(Submission.objects.filter(target_id=self.exam.id).count(), 3)
         self.assertEqual(
             OmrUploadBatchItem.objects.get(batch_id=batch_id, ordinal=1).submission_id,
@@ -533,6 +564,10 @@ class ExamOMRBatchUploadPdfGuardTests(TestCase):
         self.assertEqual(response.data["counts"]["needs_identification"], 1)
         self.assertEqual(response.data["counts"]["failed"], 1)
         self.assertEqual(response.data["counts"]["superseded"], 1)
+        self.assertEqual(
+            [item["status"] for item in response.data["items"]],
+            ["received", "processing", "processing", "completed", "needs_identification", "failed", "superseded"],
+        )
         self.assertFalse(response.data["terminal"])
         self.assertIsNone(batch_after.completion_notice_claimed_at)
         self.assertEqual(batch_after.updated_at, batch_before.updated_at)
