@@ -243,10 +243,21 @@ a parallel session registry, memory file, or shared scratch branch.
 ## Start a task
 
 Choose a slug that combines the feature and a short task identifier, for
-example `attendance-019fb78c`. From outside a target worktree run:
+example `attendance-019fb78c`. A dirty or stale canonical checkout must not choose
+the lifecycle implementation: an old helper can miss current session filtering,
+disk and cleanup safeguards even when it fetches a fresh worktree afterward.
+Fetch the current script without modifying that checkout, then run it from an
+owned artifact directory with the explicit workspace root:
 
 ```powershell
-pwsh C:\academy\backend\scripts\codex\session-worktree.ps1 `
+git -C C:\academy\backend fetch origin main
+if ($LASTEXITCODE -ne 0) { throw 'Cannot fetch current lifecycle source' }
+$sessionHelper = 'C:\academy\_artifacts\attendance-019fb78c\session-worktree.ps1'
+$helperSource = git -C C:\academy\backend show origin/main:scripts/codex/session-worktree.ps1
+if ($LASTEXITCODE -ne 0) { throw 'Cannot read current lifecycle source' }
+New-Item -ItemType Directory -Force (Split-Path $sessionHelper) | Out-Null
+[IO.File]::WriteAllText($sessionHelper, ($helperSource -join "`n") + "`n")
+pwsh -NoProfile -File $sessionHelper -WorkspaceRoot C:\academy `
   -Action Start `
   -Session attendance-019fb78c `
   -Repository both
@@ -264,9 +275,13 @@ permits `Start`; keep installs and builds remote and close the worktree afterwar
 Before editing, record the emitted base SHA and confirm the intended paths with:
 
 ```powershell
-pwsh C:\academy\backend\scripts\codex\session-worktree.ps1 `
+pwsh -NoProfile -File $sessionHelper -WorkspaceRoot C:\academy `
   -Action Inspect -Session attendance-019fb78c -Repository both
 ```
+
+After creation, lifecycle commands may use that owned checkout's current helper.
+Keep using `-Session` for inspection; canonical synchronization remains separate
+and must not overwrite foreign changes or run while another task owns release.
 
 ## Work and integration
 

@@ -244,11 +244,14 @@ normal·`XML_MIN_SIZE`의 수정 전 실패 재현과 수정 후 upstream·UTF-1
    `acceptedHighFindings` exact identity를 모두 비교한다. metadata 없는 별도 known
    목록은 허용하지 않는다. 모든 High 항목은 exact Debian tracker, 실제 런타임의
    도달 가능성 근거와 hard expiration을 가져야 하며, 만료 다음 날에는 scan 전에
-   실패한다. 수가 같아도 CVE, package, version 중 하나가 바뀌거나 다른 High가 기존
-   항목을 대체하면 실패한다. 반대로 패키지 제거 또는 vendor 수정으로 기존 항목이
-   사라져도 기준선이 stale하다고 실패하므로, 운영 scan readback을 근거로 identity와
-   상한을 같은 PR에서 내려야 한다. 알 수 없는 항목, 누락된 기존 항목,
-   identity/count 불일치 중 어느 것도 development/preprod로 진행할 수 없다.
+   실패한다. 수가 상한 이하라도 CVE, package, version 중 하나가 바뀌거나 다른 High가
+   기존 항목을 대체하면 실패한다. 상한 초과 진단은 검토된 정책을 초과했다는 뜻이며,
+   운영 이미지 대비 회귀를 판정한 것이 아니다. 관측된 High가 유효한 검토 identity의
+   부분집합이고 severity count와 exact identity 수가 일치하면 통과한다.
+   scan에서 사라진 검토 항목은 exact identity를 notice로 보고하며, 운영 scan readback을
+   근거로 검토 후 identity와 상한을 함께 줄인다. notice는 정책을 자동 변경하거나
+   만료를 면제하지 않는다. 알 수 없는 항목, identity/count 불일치, 잘못된 schema,
+   신선도 미충족 scan 또는 만료된 예외는 development/preprod로 진행할 수 없다.
 
 ### 2026-09-20 후보 정책: 수정 패키지 설치와 예외 제거
 
@@ -270,7 +273,7 @@ SQLite FTS5 생성·쓰기·검색도 실행한다.
 증거가 아니다. 공식 후보 workflow의 여섯 immutable digest 완료 scan에서
 Critical/High 0을 확인해야 development 이후로 진행할 수 있다. 새 finding이
 나오면 후보를 중단하고 패키지 원인을 다시 확인한다.
-이전 만료일·identity 교체·stale 판정 테스트는 `tests/fixtures/security-20260919/`의
+이전 만료일·identity 교체·부분집합 및 사라진 항목 보고 테스트는 `tests/fixtures/security-20260919/`의
 명시적 과거 스냅샷으로 유지한다. 해당 fixture는 배포 허가에 사용하지 않는다.
 
 ### 과거 기준선 증거: 2026-09-12 완료 스캔
