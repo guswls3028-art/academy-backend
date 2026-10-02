@@ -52,6 +52,7 @@ backend/docs/
 
 | 용도 | 경로 |
 |------|------|
+| 공개 매치업·분석자료 게시판 | [domain/public-resource-board.md](domain/public-resource-board.md) |
 | CURRENT 릴리즈 | [releases/README.md](releases/README.md)의 CURRENT 행 |
 | 실행 파라미터 | [ssot/params.yaml](ssot/params.yaml) |
 | 레이어/코드 배치 | [architecture/hexagonal-cutover-policy.md](architecture/hexagonal-cutover-policy.md) |

@@ -15,7 +15,10 @@ from .views import (
 )
 
 
+from .views.resource_views import PublicResourcePostViewSet, PublicResourceUploadView, PublicResourceFileView
+
 router = DefaultRouter()
+router.register("resources", PublicResourcePostViewSet, basename="landing-public-resource")
 router.register("board", PublicBoardPostViewSet, basename="landing-public-board")
 router.register("reviews", PublicReviewViewSet, basename="landing-public-review")
 router.register("replies", PublicPostReplyViewSet, basename="landing-public-reply")
@@ -29,6 +32,8 @@ router.register(
 )
 
 urlpatterns = [
+    path("uploads/resource/", PublicResourceUploadView.as_view(), name="landing-public-resource-upload"),
+    path("resource-files/<uuid:file_id>/", PublicResourceFileView.as_view(), name="landing-public-resource-file"),
     path("", include(router.urls)),
     path("stats/", PublicCommunityStatsView.as_view(), name="landing-public-stats"),
     path("blocks/", PublicUserBlockView.as_view(), name="landing-public-blocks"),
