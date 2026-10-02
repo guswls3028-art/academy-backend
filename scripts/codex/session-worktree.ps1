@@ -139,6 +139,13 @@ function Get-IntegrationState([string]$Root, [string]$MainSha = "", [string]$Hea
     if ($cherry.Count -gt 0 -and $unique.Count -eq 0) {
         return "patch-equivalent"
     }
+    # An aggregate squash can preserve the full tree without matching each patch.
+    $trees = @(Invoke-GitChecked -Root $Root -Arguments @(
+        "rev-parse", "$HeadSha^{tree}", "$MainSha^{tree}"
+    ))
+    if ($trees.Count -eq 2 -and $trees[0] -ceq $trees[1]) {
+        return "tree-equivalent"
+    }
     return "unmerged"
 }
 
