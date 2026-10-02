@@ -19,6 +19,7 @@ from apps.core.models import Tenant, TenantMembership
 from apps.domains.inventory.views import FileUploadView
 from apps.domains.parents.services import ensure_parent_account_for_student
 from apps.domains.students.services import update_student_profile
+from apps.domains.students.services.import_students import import_students_from_rows
 from apps.domains.students.services.account_notice import lock_account_notice_users
 from apps.domains.students.services.lifecycle import restore_student, soft_delete_student
 from apps.support.students.namespace_lock import STUDENT_PS_NAMESPACE_LOCK_VERSION
@@ -139,6 +140,235 @@ class TestStudentScoreProfileConcurrencyPostgres(TransactionTestCase):
         return "pg_advisory_xact_lock" in str(sql) and any(
             str(value).startswith(prefix) for value in (params or ())
         )
+
+    def _batch_rows(self, suffix, parents):
+        return [
+            {"name": f"Batch {suffix}-{index}", "phone": f"0108200{suffix}{index:03d}",
+             "parent_phone": parent.phone}
+            for index, parent in enumerate(parents, start=1)
+        ]
+
+    def _import_batch(self, rows, results, progress=None):
+        # The claimed Excel service holds this transaction over every row.
+        with transaction.atomic():
+            result = import_students_from_rows(
+                tenant_id=self.tenant.pk, students_data=rows,
+                initial_password="Batch-Student-1234", password_mode="fixed",
+                parent_initial_password="Do-not-replace-parent-1234",
+                parent_initial_password_mode="fixed", on_row_progress=progress,
+                source_job_id="batch-profile-lock-regression",
+            )
+        results.append(result)
+
+    def _assert_batch_registered(self, rows, result):
+        self.assertEqual(result["created"], len(rows), result)
+        self.assertEqual(result["failed"], [], result)
+        self.assertEqual(result["duplicates"], [])
+        self.assertEqual([item["name"] for item in result["created_rows"]],
+                         [row["name"] for row in rows])
+        for row, item in zip(rows, result["created_rows"]):
+            student = Student.objects.select_related("user", "parent__user").get(
+                pk=item["student_id"], tenant=self.tenant,
+            )
+            self.assertEqual(student.phone, row["phone"])
+            self.assertEqual(student.parent.phone, row["parent_phone"])
+            self.assertTrue(student.user.check_password("Batch-Student-1234"))
+            self.assertTrue(student.pending_account_notice_student_password_ciphertext)
+            self.assertNotIn("Batch-Student-1234",
+                             student.pending_account_notice_student_password_ciphertext)
+            self.assertEqual(student.pending_account_notice_origin_id,
+                             "batch-profile-lock-regression")
+        self.assertEqual(dict(User.objects.filter(pk__in=self.password_hashes)
+                              .values_list("pk", "password")), self.password_hashes)
+
+    def test_reversed_parent_batch_and_profile_complete_without_deadlock(self):
+        rows = self._batch_rows("4", (self.parent_b, self.parent_a))
+        first_row_done, release_batch = threading.Event(), threading.Event()
+        errors, batches, profiles, pids = [], [], [], {}
+
+        def progress(index, total):
+            if index == 2:
+                first_row_done.set()
+                if not release_batch.wait(timeout=10):
+                    raise TimeoutError("batch second row release timed out")
+
+        batch = self._thread("batch", lambda: self._import_batch(rows, batches, progress), errors, pids)
+        profile = self._thread("profile", lambda: self._profile(profiles), errors, pids)
+        try:
+            batch.start()
+            self.assertTrue(first_row_done.wait(timeout=5))
+            profile.start()
+            self._wait_for_lock(pids, "profile")
+        finally:
+            self._finish((batch, profile), release_batch)
+        self.assertEqual(errors, [])
+        self.assertEqual(len(batches), 1)
+        self._assert_batch_registered(rows, batches[0])
+        self._assert_profile_changed(profiles)
+
+    def test_reversed_parent_batches_complete_without_deadlock(self):
+        first_rows = self._batch_rows("5", (self.parent_b, self.parent_a))
+        second_rows = self._batch_rows("6", (self.parent_a, self.parent_b))
+        first_row_done, release_first = threading.Event(), threading.Event()
+        errors, first_results, second_results, pids = [], [], [], {}
+
+        def progress(index, total):
+            if index == 2:
+                first_row_done.set()
+                if not release_first.wait(timeout=10):
+                    raise TimeoutError("first batch second row release timed out")
+
+        first = self._thread("first", lambda: self._import_batch(first_rows, first_results, progress), errors, pids)
+        second = self._thread("second", lambda: self._import_batch(second_rows, second_results), errors, pids)
+        try:
+            first.start()
+            self.assertTrue(first_row_done.wait(timeout=5))
+            second.start()
+            self._wait_for_lock(pids, "second")
+        finally:
+            self._finish((first, second), release_first)
+        self.assertEqual(errors, [])
+        self.assertEqual(len(first_results), 1)
+        self.assertEqual(len(second_results), 1)
+        self._assert_batch_registered(first_rows, first_results[0])
+        self._assert_batch_registered(second_rows, second_results[0])
+
+    def test_batch_reuses_only_successfully_created_parent_after_row_rollback(self):
+        rows = self._batch_rows("7", (self.parent_a, self.parent_a, self.parent_a))
+        new_parent_phone = "01082008008"
+        for row in rows:
+            row["parent_phone"] = new_parent_phone
+        from academy.adapters.db.django import repositories_students as student_repo
+
+        original = student_repo.student_create
+        failed_parent_ids = []
+
+        def create(**kwargs):
+            if kwargs["name"] == rows[0]["name"]:
+                failed_parent_ids.append(kwargs["parent"].user_id)
+                raise ValueError("one invalid row after parent creation")
+            return original(**kwargs)
+
+        results = []
+        with patch.object(student_repo, "student_create", side_effect=create):
+            self._import_batch(rows, results)
+        result = results[0]
+        self.assertEqual(result["created"], 2, result)
+        self.assertEqual([item["row"] for item in result["failed"]], [1])
+        self.assertFalse(Student.objects.filter(tenant=self.tenant, name=rows[0]["name"]).exists())
+        self.assertFalse(User.objects.filter(pk__in=failed_parent_ids).exists())
+        students = list(Student.objects.filter(tenant=self.tenant, name__in=[row["name"] for row in rows[1:]])
+                        .select_related("parent__user").order_by("name"))
+        self.assertEqual(len(students), 2)
+        self.assertEqual(students[0].parent_id, students[1].parent_id)
+        self.assertTrue(students[0].parent.user.check_password("Do-not-replace-parent-1234"))
+        self.assertEqual([item["name"] for item in result["created_rows"]], [row["name"] for row in rows[1:]])
+        self.assertTrue(all(student.pending_account_notice_student_password_ciphertext for student in students))
+
+    def test_batch_changed_parent_binding_rejects_before_late_user_lock(self):
+        replacement = User.objects.create_user(
+            username="batch-replacement-parent", tenant=self.tenant, password="Replacement-1234",
+        )
+        rows = self._batch_rows("8", (self.parent_a, self.parent_b))
+        errors, pids, results, late_locks = [], {}, [], []
+
+        def change_binding():
+            Parent = apps.get_model("parents", "Parent")
+            Parent.objects.filter(pk=self.parent_a.pk, tenant=self.tenant).update(user_id=replacement.pk)
+
+        def progress(index, total):
+            if index == 1:
+                changer = self._thread("binding", change_binding, errors, pids)
+                changer.start()
+                self._finish((changer,))
+
+        def observe(execute, sql, params, many, context):
+            if User._meta.db_table in str(sql) and "FOR UPDATE" in str(sql).upper() and replacement.pk in (params or ()):
+                late_locks.append(str(sql))
+            return execute(sql, params, many, context)
+
+        with connection.execute_wrapper(observe):
+            self._import_batch(rows, results, progress)
+        self.assertEqual(errors, [])
+        self.assertEqual(late_locks, [])
+        self.assertEqual(results[0]["created"], 1, results)
+        self.assertEqual([item["row"] for item in results[0]["failed"]], [1])
+        self.assertIn("연결이 변경", results[0]["failed"][0]["error"])
+        self.assertFalse(Student.objects.filter(tenant=self.tenant, name=rows[0]["name"]).exists())
+        self.assertTrue(Student.objects.filter(tenant=self.tenant, name=rows[1]["name"]).exists())
+        replacement.refresh_from_db()
+        self.assertTrue(replacement.check_password("Replacement-1234"))
+
+    def test_batch_restore_changed_user_rejects_before_late_user_lock(self):
+        soft_delete_student(self.student, tenant=self.tenant)
+        replacement = User.objects.create_user(
+            username="batch-replacement-student", tenant=self.tenant, password="Replacement-1234",
+        )
+        row = {"name": self.student.name, "parent_phone": self.parent_a.phone}
+        errors, pids, results, late_locks = [], {}, [], []
+
+        def change_binding():
+            Student.objects.filter(pk=self.student.pk, tenant=self.tenant).update(user_id=replacement.pk)
+
+        def progress(index, total):
+            changer = self._thread("binding", change_binding, errors, pids)
+            changer.start()
+            self._finish((changer,))
+
+        def observe(execute, sql, params, many, context):
+            if User._meta.db_table in str(sql) and "FOR UPDATE" in str(sql).upper() and replacement.pk in (params or ()):
+                late_locks.append(str(sql))
+            return execute(sql, params, many, context)
+
+        with connection.execute_wrapper(observe):
+            self._import_batch([row], results, progress)
+        self.assertEqual(errors, [])
+        self.assertEqual(late_locks, [])
+        self.assertEqual(results[0]["created"], 0)
+        self.assertEqual(results[0]["restored"], [])
+        self.assertEqual(len(results[0]["failed"]), 1)
+        self.assertIn("연결이 변경", results[0]["failed"][0]["error"])
+        self.student.refresh_from_db()
+        self.assertIsNotNone(self.student.deleted_at)
+        self.assertEqual(self.student.user_id, replacement.pk)
+        replacement.refresh_from_db()
+        self.assertTrue(replacement.check_password("Replacement-1234"))
+
+    def test_batch_restores_same_student_and_preserves_existing_passwords(self):
+        soft_delete_student(self.student, tenant=self.tenant)
+        results = []
+        self._import_batch([{"name": self.student.name, "parent_phone": self.parent_a.phone}], results)
+        self.assertEqual(results[0]["created"], 0)
+        self.assertEqual(results[0]["failed"], [])
+        self.assertEqual([item["student_id"] for item in results[0]["restored"]], [self.student.pk])
+        self.student.refresh_from_db()
+        self.assertIsNone(self.student.deleted_at)
+        self.assertEqual(self.student.user_id, self.student_user.pk)
+        self.assertEqual(self.student.parent_id, self.parent_a.pk)
+        self.assertTrue(TenantMembership.objects.filter(
+            tenant=self.tenant, user_id=self.student_user.pk, role="student", is_active=True,
+        ).exists())
+        self.assertEqual(dict(User.objects.filter(pk__in=self.password_hashes)
+                              .values_list("pk", "password")), self.password_hashes)
+
+    def test_standalone_import_keeps_completed_row_on_progress_interruption(self):
+        rows = self._batch_rows("9", (self.parent_a, self.parent_b))
+
+        def progress(index, total):
+            if index == 2:
+                raise RuntimeError("caller stopped the import")
+
+        with self.assertRaisesRegex(RuntimeError, "caller stopped"):
+            import_students_from_rows(
+                tenant_id=self.tenant.pk, students_data=rows,
+                initial_password="Batch-Student-1234", password_mode="fixed",
+                parent_initial_password="Do-not-replace-parent-1234", parent_initial_password_mode="fixed",
+                on_row_progress=progress,
+            )
+        student = Student.objects.select_related("user").get(tenant=self.tenant, name=rows[0]["name"])
+        self.assertTrue(student.user.check_password("Batch-Student-1234"))
+        self.assertTrue(student.pending_account_notice_student_password_ciphertext)
+        self.assertFalse(Student.objects.filter(tenant=self.tenant, name=rows[1]["name"]).exists())
 
     def _student_save_hook(self, entered, release=None):
         original = Student.save

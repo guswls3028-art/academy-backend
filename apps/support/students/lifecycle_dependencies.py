@@ -39,7 +39,7 @@ def ensure_parent_account_for_student(
     initial_password_mode: str | None = None,
     initial_password_hash: str | None = None,
     initial_password_notice: str | None = None,
-    locked_user_ids: frozenset[int] | None = None,
+    locked_user_ids: set[int] | frozenset[int] | None = None,
 ) -> Any:
     from apps.domains.parents.services import ensure_parent_account_for_student as _ensure_parent_account
 

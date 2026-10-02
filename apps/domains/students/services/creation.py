@@ -60,6 +60,7 @@ def create_student_account(
     account_notice_parent_password: str | None = None,
     account_notice_origin_type: str = "",
     account_notice_origin_id: str = "",
+    locked_user_ids: set[int] | None = None,
 ) -> StudentAccountCreationResult:
     """
     Create the canonical student account graph for one tenant.
@@ -106,6 +107,7 @@ def create_student_account(
         )
 
     for attempt in range(3):
+        attempt_user_ids = set(locked_user_ids) if locked_user_ids is not None else None
         try:
             with transaction.atomic():
                 lock_student_creation_tenant_reference(tenant_id=tenant.id)
@@ -119,6 +121,7 @@ def create_student_account(
                         student_name=name,
                         initial_password=parent_password,
                         initial_password_mode=parent_password_mode,
+                        locked_user_ids=attempt_user_ids,
                     )
                     parent = parent_result.parent
                     parent_password_for_notice = parent_result.password_for_notice
@@ -179,6 +182,9 @@ def create_student_account(
                 ) from exc
             raise
 
+        if locked_user_ids is not None:
+            attempt_user_ids.add(user.pk)
+            locked_user_ids.update(attempt_user_ids)
         return StudentAccountCreationResult(
             student=student,
             user=user,

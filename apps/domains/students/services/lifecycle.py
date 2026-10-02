@@ -386,6 +386,7 @@ def restore_student(
     profile_data: dict[str, Any] | None = None,
     parent_initial_password: str | None = None,
     parent_initial_password_mode: str | None = None,
+    locked_user_ids: set[int] | None = None,
 ) -> StudentRestoreResult:
     with transaction.atomic():
         if not tenant or student.tenant_id != tenant.id:
@@ -409,6 +410,10 @@ def restore_student(
             raise StudentLifecycleError("parent_account_invalid", str(exc)) from exc
         parent_user_id = getattr(parent_user, "pk", None)
         user_ids = {snapshot["user_id"], snapshot["parent__user_id"], parent_user_id} - {None}
+        if locked_user_ids is not None and not user_ids.issubset(locked_user_ids):
+            raise StudentLifecycleError(
+                "user_changed", "학생 또는 학부모 계정 연결이 변경되었습니다. 다시 시도해 주세요.",
+            )
         locked_users = {
             user.pk: user
             for user in get_user_model().objects.select_for_update().filter(pk__in=user_ids).order_by("pk")
@@ -484,6 +489,7 @@ def restore_student(
             from apps.core.services.tenant_access import reconcile_user_tenant_access
             reconcile_user_tenant_access(student.user)
 
+        restore_user_ids = set(locked_users)
         parent_relinked = False
         parent_credentials_initialized = False
         parent_password_for_notice = ""
@@ -495,7 +501,7 @@ def restore_student(
                     student_name=student.name,
                     initial_password=parent_initial_password,
                     initial_password_mode=parent_initial_password_mode,
-                    locked_user_ids=frozenset(locked_users),
+                    locked_user_ids=restore_user_ids,
                 )
             except ValueError as exc:
                 detail = str(exc)
@@ -528,6 +534,8 @@ def restore_student(
             student=student,
         )
 
+        if locked_user_ids is not None:
+            locked_user_ids.update(restore_user_ids)
         return StudentRestoreResult(
             student=student,
             restored_ps_number=restored_ps_number,

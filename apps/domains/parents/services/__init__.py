@@ -63,7 +63,7 @@ def ensure_parent_account_for_student(
     initial_password_hash: str | None = None,
     initial_password_notice: str | None = None,
     initial_password_mode: str | None = None,
-    locked_user_ids: frozenset[int] | None = None,
+    locked_user_ids: set[int] | frozenset[int] | None = None,
 ) -> ParentAccountEnsureResult:
     """
     학부모 전화번호로 기존 계정을 찾거나 명시적 자격 증명으로 새 계정을 만든다.
@@ -103,6 +103,7 @@ def ensure_parent_account_for_student(
     # transaction commits.  The unique username/parent constraints serialize
     # the collision; retry once after the losing savepoint rolls back.
     for attempt in range(2):
+        created_user_id = None
         try:
             with transaction.atomic():
                 existing_user = find_parent_account_user(
@@ -183,6 +184,7 @@ def ensure_parent_account_for_student(
                         name=user_name,
                         tenant=tenant,
                     )
+                    created_user_id = user.pk
                 elif current_user.tenant_id != tenant.id:
                     raise ValueError("학부모 계정의 테넌트가 일치하지 않습니다.")
                 else:
@@ -229,6 +231,8 @@ def ensure_parent_account_for_student(
                     user=user,
                     role="parent",
                 )
+                if created_user_id is not None and isinstance(locked_user_ids, set):
+                    locked_user_ids.add(created_user_id)
                 return ParentAccountEnsureResult(
                     parent=parent,
                     credentials_initialized=credentials_initialized,
