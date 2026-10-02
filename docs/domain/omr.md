@@ -305,6 +305,7 @@ OMR 답안의 점수 영향 여부를 다시 계산한다. 정확히 일치하�
 | `grading_status` | 최종 채점 완료는 `completed`, 남은 서술형이 있으면 `subjective_pending`, 그 밖은 `pending` |
 | `grading_counts` | DONE 제출을 `completed`, `subjective_pending`, `manual_review_required`, `grading_pending`으로 구분한 개수 |
 | `subjective_pending_ordinals` | 교사가 서술형 점수를 입력해야 하는 batch 내 ordinal 목록 |
+| `items` | 선택 당시 `1..total_count` 각 장의 접수·처리 상태, 안전한 실패 코드와 연결된 제출 ID. 서버 ordinal 순서이며 파일명·원본 키·학생 연락처는 반환하지 않음 |
 
 상태는 tenant·시험·수강·attempt·submission 연결과 legacy FINAL을 함께 검증한다.
 수동 검토 표시, 현재 대표 결과 누락, 다른 시험 연결은 최종 채점 완료가 아니다.
@@ -318,6 +319,10 @@ Batch와 item에는 tenant, 생성 직원, 시험/차시/강의 id, 총수, ordi
 동일 파일 판정용 SHA-256, 안전한 실패 코드만 저장한다. 파일명, 학생 이름·전화번호, R2 raw key는 batch 모델이나
 batch API 응답에 저장·노출하지 않는다. 실제 원본과 학생 매칭은 기존 tenant-scoped
 Submission 계약을 그대로 사용한다.
+시험 제출관리의 장별 원장은 이 `items`를 읽어 전체 선택 수와 각 장의 현재 상태를 보여준다.
+미접수·접수 실패 ordinal만 같은 batch의 재선택 화면으로 보낸다. 목록·상세 조회는
+읽기 전용이고 다른 직원·tenant의 batch는 보이지 않는다. 구버전 응답에 `items`가
+없으면 장별 상태를 추정하지 않고 원장 정보가 준비되지 않았다고 표시한다.
 도입 전 item은 migration에서 tenant/exam scope만 backfill하고 기존 R2 원본을 다시 읽지
 않으므로 hash는 빈 값으로 보존한다. rolling 배포 중 구버전 API가 만드는 item도 새
 scope/hash 열을 모르므로 null일 수 있으며 conditional constraint 대상에서 제외된다. 신규

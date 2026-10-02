@@ -335,6 +335,10 @@ class ManualExamGradingTests(TestCase):
         result = Result.objects.get(target_type="exam", target_id=exam.id)
         self.assertEqual(result.total_score, 90.5)
         self.assertEqual(result.attempt.status, "done")
+        initial = result.attempt.meta["initial_snapshot"]
+        self.assertEqual(initial["total_score"], 90.5)
+        original_submitted_at = initial["submitted_at"]
+        original_source = initial["source"]
         reloaded = request("get")
         saved_row = reloaded.data["rows"][0]
         self.assertEqual(saved_row["cells"][str(first.id)]["score"], 30.5)
@@ -355,6 +359,10 @@ class ManualExamGradingTests(TestCase):
         self.assertEqual(recovered.status_code, 200, recovered.data)
         result.refresh_from_db()
         self.assertEqual(result.total_score, 60)
+        result.attempt.refresh_from_db()
+        self.assertEqual(result.attempt.meta["initial_snapshot"]["total_score"], 60.0)
+        self.assertEqual(result.attempt.meta["initial_snapshot"]["submitted_at"], original_submitted_at)
+        self.assertEqual(result.attempt.meta["initial_snapshot"]["source"], original_source)
         reloaded = request("get")
         self.assertEqual(reloaded.data["rows"][0]["cells"][str(first.id)]["score"], 0)
 

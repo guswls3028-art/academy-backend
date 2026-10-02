@@ -118,6 +118,18 @@ PROCESSING_STATUSES = {
 logger = logging.getLogger(__name__)
 
 
+class OmrUploadBatchItemSummarySerializer(serializers.Serializer):
+    id = serializers.CharField()
+    ordinal = serializers.IntegerField()
+    admission_status = serializers.CharField()
+    status = serializers.CharField()
+    submission_id = serializers.IntegerField(allow_null=True)
+    submission_status = serializers.CharField(allow_null=True)
+    identifier_status = serializers.CharField(allow_null=True)
+    failure_code = serializers.CharField(allow_null=True)
+    failure_message = serializers.CharField(allow_null=True)
+
+
 class OmrUploadBatchSummarySerializer(serializers.Serializer):
     id = serializers.UUIDField()
     exam_id = serializers.IntegerField()
@@ -129,6 +141,7 @@ class OmrUploadBatchSummarySerializer(serializers.Serializer):
     failed_ordinals = serializers.ListField(child=serializers.IntegerField())
     admission_failed_ordinals = serializers.ListField(child=serializers.IntegerField())
     duplicate_ordinals = serializers.ListField(child=serializers.IntegerField())
+    items = OmrUploadBatchItemSummarySerializer(many=True)
     terminal = serializers.BooleanField()
     overall_status = serializers.CharField()
     grading_complete = serializers.BooleanField()
@@ -241,13 +254,58 @@ def _owned_batch(request, batch_id: str | UUID, *, exam_id: int | None = None):
         return None
 
 
+def _batch_item_status(item: OmrUploadBatchItem) -> str:
+    submission = item.submission
+    if item.admission_status == OmrUploadBatchItem.AdmissionStatus.PENDING:
+        return "pending_admission"
+    if item.admission_status == OmrUploadBatchItem.AdmissionStatus.DUPLICATE:
+        return "duplicate"
+    if item.admission_status == OmrUploadBatchItem.AdmissionStatus.FAILED or submission is None:
+        return "failed"
+    if submission.status == Submission.Status.SUBMITTED:
+        return "received"
+    if submission.status in PROCESSING_STATUSES:
+        return "processing"
+    if submission.status == Submission.Status.DONE:
+        return "completed"
+    if submission.status == Submission.Status.NEEDS_IDENTIFICATION:
+        return "needs_identification"
+    if submission.status == Submission.Status.SUPERSEDED:
+        return "superseded"
+    if submission.status == Submission.Status.FAILED:
+        return "failed"
+    return "processing"
+
+
+def _batch_item_summary(batch: OmrUploadBatch, item: OmrUploadBatchItem) -> dict:
+    submission = item.submission
+    if submission is not None and (
+        submission.tenant_id != batch.tenant_id
+        or submission.target_type != Submission.TargetType.EXAM
+        or submission.target_id != batch.exam_id
+    ):
+        submission = None
+    meta = submission.meta if submission and isinstance(submission.meta, dict) else {}
+    return {
+        "id": f"{batch.id}:{int(item.ordinal)}",
+        "ordinal": int(item.ordinal),
+        "admission_status": item.admission_status,
+        "status": _batch_item_status(item) if submission is item.submission else "failed",
+        "submission_id": int(submission.id) if submission else None,
+        "submission_status": submission.status if submission else None,
+        "identifier_status": meta.get("identifier_status") or None,
+        "failure_code": item.failure_code or None,
+        "failure_message": item.failure_message or None,
+    }
+
+
 def _batch_summary(batch: OmrUploadBatch, *, grading_statuses=None) -> dict:
     prefetched_items = getattr(batch, "_prefetched_objects_cache", {}).get("items")
-    items = (
+    items = sorted((
         list(prefetched_items)
         if prefetched_items is not None
         else list(batch.items.select_related("submission").order_by("ordinal"))
-    )
+    ), key=lambda item: int(item.ordinal))
     counts = {
         "pending_admission": 0,
         "received": 0,
@@ -354,6 +412,7 @@ def _batch_summary(batch: OmrUploadBatch, *, grading_statuses=None) -> dict:
         "failed_ordinals": failed_ordinals,
         "admission_failed_ordinals": admission_failed_ordinals,
         "duplicate_ordinals": duplicate_ordinals,
+        "items": [_batch_item_summary(batch, item) for item in items],
         "terminal": terminal,
         "overall_status": overall_status,
         "grading_complete": grading_complete,
@@ -371,6 +430,8 @@ def _batch_summary(batch: OmrUploadBatch, *, grading_statuses=None) -> dict:
 
 
 def _file_validation_error(upload_file) -> tuple[str, str] | None:
+    if upload_file.size <= 0:
+        return "empty_file", "빈 파일은 접수할 수 없습니다."
     if upload_file.size > MAX_FILE_SIZE:
         return "file_too_large", "파일 크기가 10MB를 초과합니다."
     if upload_file.content_type not in ALLOWED_CONTENT_TYPES:
