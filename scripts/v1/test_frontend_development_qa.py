@@ -817,6 +817,31 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
         self.assertEqual(result["residue"]["activity_audits"], 0)
         self.assertEqual(atomic.depth, 0)
 
+        # The actual fixed action invokes the candidate probe only after exact owner readback.
+        probe_env = {**env, "QA_ACTION": "AccountProbe", "QA_TENANT_ID": "72",
+                     "QA_ACCOUNT_STUDENT_ID": "23", "QA_ACCOUNT_PROBE_KIND": "random"}
+        audit = modules["apps.core.models"].OpsAuditLog.objects
+        record = namespace["ownership_payload"](tenant, 72, "a" * 64)
+        audit.filter.return_value.values_list.return_value = [record]
+        self.account_probe.run_probe.return_value = {"sanitized": True}
+        with patch.dict(sys.modules, modules), patch.dict(os.environ, probe_env, clear=True):
+            self.assertEqual(namespace["run"](), {"sanitized": True})
+        self.account_probe.run_probe.assert_called_once_with(existing, 23, "verify", "random")
+        self.account_probe.run_probe.reset_mock()
+        for change in ({"QA_TENANT_ID": "73"}, {"QA_ACCOUNT_STUDENT_ID": "0"},
+                       {"QA_ACCOUNT_STUDENT_ID": "01"}, {"QA_ACCOUNT_STUDENT_ID": str(2**63)},
+                       {"QA_ACCOUNT_PROBE_MODE": "shell"}, {"QA_ACCOUNT_PROBE_KIND": "unknown"},
+                       {"QA_VIDEO_ID": "301"}, {"QA_ACTION": "Inspect"}):
+            with self.subTest(account_probe=change), patch.dict(sys.modules, modules), \
+                    patch.dict(os.environ, {**probe_env, **change}, clear=True), self.assertRaises(AssertionError):
+                namespace["run"]()
+            self.account_probe.run_probe.assert_not_called()
+        audit.filter.return_value.values_list.return_value = [{**record, "owner_sha256": "b" * 64}]
+        with patch.dict(sys.modules, modules), patch.dict(os.environ, probe_env, clear=True), \
+                self.assertRaises(PermissionError):
+            namespace["run"]()
+        self.account_probe.run_probe.assert_not_called()
+
         aggregate = {**command._video_residue_for_code.return_value, "videos": 2}
         scoped = {**aggregate, "videos": 1, "video_accesses": 2, "proctored_video_accesses": 2,
                   "video_progresses": 2, "playback_sessions": 4, "playback_events": 4}
