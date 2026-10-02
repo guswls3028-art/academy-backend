@@ -281,17 +281,18 @@ class TestStudentScoreProfileConcurrencyPostgres(TransactionTestCase):
 
     def test_restore_and_sorted_account_notice_recover_incomplete_parent_without_deadlock(self):
         original_ps = self.student.ps_number
+        notice_student = Student.objects.select_related("parent__user").get(pk=self.student.pk)
         soft_delete_student(self.student, tenant=self.tenant)
         self.student.refresh_from_db()
         self.parent_a.user.set_unusable_password()
         self.parent_a.user.save(update_fields=["password"])
-        user_held, release_restore = threading.Event(), threading.Event()
+        student_held, release_restore = threading.Event(), threading.Event()
         errors, restored, notice_done, pids = [], [], [], {}
 
-        def observe_user(execute, sql, params, many, context):
+        def observe_student(execute, sql, params, many, context):
             result = execute(sql, params, many, context)
-            if User._meta.db_table in str(sql) and "FOR UPDATE" in str(sql).upper() and not user_held.is_set():
-                user_held.set()
+            if Student._meta.db_table in str(sql) and "FOR UPDATE" in str(sql).upper() and not student_held.is_set():
+                student_held.set()
                 if not release_restore.wait(timeout=10):
                     raise TimeoutError("restore account release timed out")
             return result
@@ -304,16 +305,16 @@ class TestStudentScoreProfileConcurrencyPostgres(TransactionTestCase):
 
         def notice():
             with transaction.atomic():
-                student = Student.objects.select_related("parent__user").get(pk=self.student.pk)
-                lock_account_notice_users(student)
-                Student.objects.select_for_update().get(pk=student.pk)
+                # This notice resolved its family before soft delete disconnected Parent.
+                lock_account_notice_users(notice_student)
+                Student.objects.select_for_update().get(pk=notice_student.pk)
             notice_done.append(True)
 
-        recovery = self._thread("restore", restore, errors, pids, observe_user)
+        recovery = self._thread("restore", restore, errors, pids, observe_student)
         sender = self._thread("notice", notice, errors, pids)
         try:
             recovery.start()
-            self.assertTrue(user_held.wait(timeout=5))
+            self.assertTrue(student_held.wait(timeout=5))
             sender.start()
             self._wait_for_lock(pids, "notice")
         finally:
