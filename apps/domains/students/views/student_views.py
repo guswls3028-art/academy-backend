@@ -62,6 +62,7 @@ from ..services import (
     update_student_profile,
 )
 from ..services.account_notifications import send_parent_account_credentials_notice
+from ..services.profile import lock_student_profile_for_update
 from ..serializers import (
     StudentListSerializer,
     StudentDetailSerializer,
@@ -297,10 +298,6 @@ class StudentViewSet(ModelViewSet):
     @transaction.atomic
     def perform_update(self, serializer):
         lock_student_creation_tenant_reference(tenant_id=self.request.tenant.id)
-        student_before = serializer.instance
-        old_phone = student_before.phone or ""
-        old_parent_phone = student_before.parent_phone or ""
-        old_ps_number = student_before.ps_number or ""
         try:
             result = update_student_profile(
                 student=serializer.instance,
@@ -319,15 +316,15 @@ class StudentViewSet(ModelViewSet):
         )
 
         new_phone = student.phone or ""
-        if (student.ps_number or "") != old_ps_number:
+        if "ps_number" in result.changed_fields:
             if not send_student_account_credentials_notice(student=student):
                 raise AccountNoticeDeliveryFailed()
-        elif new_phone and new_phone != old_phone:
+        elif new_phone and "phone" in result.changed_fields:
             if not send_student_account_credentials_notice(student=student, to=new_phone):
                 raise AccountNoticeDeliveryFailed()
 
         if (
-            (student.parent_phone or "") != old_parent_phone
+            "parent_phone" in result.changed_fields
             or result.parent_relinked
             or result.parent_credentials_initialized
         ):
@@ -859,9 +856,6 @@ class StudentViewSet(ModelViewSet):
         # PATCH: 프로필 수정 (아이디 변경, 비밀번호 변경, 기본정보 수정)
         data = request.data
         tenant = request.tenant
-        user = student.user
-        old_phone = student.phone or ""
-        old_parent_phone = student.parent_phone or ""
 
         # --- 기본 정보 필드 유효성 검증 (setattr 전에 수행) ---
         from ..services.school import ALL_SCHOOL_TYPES, get_valid_grades
@@ -917,7 +911,16 @@ class StudentViewSet(ModelViewSet):
                 )
 
         with transaction.atomic():
-            lock_student_creation_tenant_reference(tenant_id=tenant.id)
+            try:
+                student, profile_user_ids = lock_student_profile_for_update(
+                    student=student,
+                    tenant=tenant,
+                    data=dict(data),
+                    allow_parent_phone_change=False,
+                )
+            except StudentProfileUpdateError as e:
+                raise ValidationError(e.detail)
+            user = student.user
             # 아이디 변경
             new_username = (data.get("username") or "").strip()
             if new_username and new_username != user_display_username(user):
@@ -965,6 +968,7 @@ class StudentViewSet(ModelViewSet):
                     data=dict(data),
                     ignore_blank_name=True,
                     allow_parent_phone_change=False,
+                    locked_user_ids=profile_user_ids,
                 )
                 student = result.student
             except StudentProfileUpdateError as e:
@@ -976,15 +980,22 @@ class StudentViewSet(ModelViewSet):
             )
 
             new_phone = student.phone or ""
-            phone_changed = bool(new_phone) and new_phone != old_phone
-            if not password_changed and (username_changed or phone_changed):
+            changed_fields = set(result.changed_fields)
+            if username_changed:
+                changed_fields.add("ps_number")
+            phone_changed = bool(new_phone) and "phone" in changed_fields
+            if not password_changed and ("ps_number" in changed_fields or phone_changed):
                 if not send_student_account_credentials_notice(
                     student=student,
                     to=new_phone if phone_changed else None,
                 ):
                     raise AccountNoticeDeliveryFailed()
 
-            if (student.parent_phone or "") != old_parent_phone:
+            if (
+                "parent_phone" in changed_fields
+                or result.parent_relinked
+                or result.parent_credentials_initialized
+            ):
                 if not send_parent_account_credentials_notice(
                     student=student,
                     parent=getattr(student, "parent", None),

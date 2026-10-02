@@ -17,6 +17,7 @@ from apps.support.students.lifecycle_dependencies import (
     deactivate_enrollments_for_student,
     delete_submission_storage_for_permanent_delete,
     ensure_parent_account_for_student,
+    find_parent_account_user,
     inventory_file_ids_with_cleanup_intents,
     inventory_student_ps_metadata_exists,
     lock_student_ps_namespaces,
@@ -390,12 +391,44 @@ def restore_student(
         if not tenant or student.tenant_id != tenant.id:
             raise StudentLifecycleError("tenant_mismatch", "학생 테넌트가 일치하지 않습니다.")
         lock_student_creation_tenant_reference(tenant_id=tenant.id)
-        if not Student.objects.filter(pk=student.pk, tenant=tenant).exists():
+        snapshot = Student.objects.filter(pk=student.pk, tenant=tenant).values(
+            "user_id", "parent_id", "parent__user_id", "parent_phone", "deleted_at",
+        ).first()
+        if snapshot is None:
             raise StudentLifecycleError("not_found", "삭제된 학생을 찾을 수 없습니다.")
-        locked_user = None
-        if student.user_id:
-            locked_user = get_user_model().objects.select_for_update().get(pk=student.user_id)
+        if snapshot["deleted_at"] is None:
+            raise StudentLifecycleError("not_deleted", "삭제된 학생이 아닙니다.")
+        parent_phone = snapshot["parent_phone"]
+        if profile_data and ("parent_phone" in profile_data or "parentPhone" in profile_data):
+            parent_phone = _valid_parent_phone(
+                profile_data.get("parent_phone") or profile_data.get("parentPhone")
+            ) or parent_phone
+        try:
+            parent_user = find_parent_account_user(tenant=tenant, parent_phone=parent_phone) if parent_phone else None
+        except ValueError as exc:
+            raise StudentLifecycleError("parent_account_invalid", str(exc)) from exc
+        parent_user_id = getattr(parent_user, "pk", None)
+        user_ids = {snapshot["user_id"], snapshot["parent__user_id"], parent_user_id} - {None}
+        locked_users = {
+            user.pk: user
+            for user in get_user_model().objects.select_for_update().filter(pk__in=user_ids).order_by("pk")
+        }
+        if set(locked_users) != user_ids or any(user.tenant_id not in (None, tenant.id) for user in locked_users.values()):
+            raise StudentLifecycleError("user_changed", "학생 또는 학부모 계정 연결이 변경되었습니다.")
+        locked_user = locked_users.get(snapshot["user_id"])
         student = Student.objects.select_for_update().select_related("user").get(pk=student.pk)
+        if (
+            student.user_id != snapshot["user_id"]
+            or student.parent_id != snapshot["parent_id"]
+            or student.parent_phone != snapshot["parent_phone"]
+            or student.deleted_at != snapshot["deleted_at"]
+            or (getattr(student.parent, "user_id", None) if student.parent_id else None) != snapshot["parent__user_id"]
+        ):
+            raise StudentLifecycleError("user_changed", "학생 또는 학부모 계정 연결이 변경되었습니다. 새로고침 후 다시 시도해 주세요.")
+        if parent_phone:
+            current_parent_user = find_parent_account_user(tenant=tenant, parent_phone=parent_phone)
+            if getattr(current_parent_user, "pk", None) != parent_user_id:
+                raise StudentLifecycleError("user_changed", "학부모 계정 연결이 변경되었습니다. 새로고침 후 다시 시도해 주세요.")
         if locked_user is not None:
             if student.user_id != locked_user.id:
                 raise StudentLifecycleError("user_changed", "학생 계정 연결이 변경되었습니다.")
@@ -462,6 +495,7 @@ def restore_student(
                     student_name=student.name,
                     initial_password=parent_initial_password,
                     initial_password_mode=parent_initial_password_mode,
+                    locked_user_ids=frozenset(locked_users),
                 )
             except ValueError as exc:
                 detail = str(exc)

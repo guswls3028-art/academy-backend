@@ -20,6 +20,16 @@ def find_parent_account(
     )
 
 
+def find_parent_account_user(
+    *,
+    tenant: Any,
+    parent_phone: str,
+) -> Any | None:
+    from apps.domains.parents.services import find_parent_account_user as _find_user
+
+    return _find_user(tenant=tenant, parent_phone=parent_phone)
+
+
 def ensure_parent_account_for_student(
     *,
     tenant: Any,
@@ -29,6 +39,7 @@ def ensure_parent_account_for_student(
     initial_password_mode: str | None = None,
     initial_password_hash: str | None = None,
     initial_password_notice: str | None = None,
+    locked_user_ids: frozenset[int] | None = None,
 ) -> Any:
     from apps.domains.parents.services import ensure_parent_account_for_student as _ensure_parent_account
 
@@ -40,6 +51,7 @@ def ensure_parent_account_for_student(
         initial_password_mode=initial_password_mode,
         initial_password_hash=initial_password_hash,
         initial_password_notice=initial_password_notice,
+        locked_user_ids=locked_user_ids,
     )
 
 

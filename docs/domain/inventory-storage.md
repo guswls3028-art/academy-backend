@@ -96,7 +96,7 @@ advisory lock을 사용한다. 학생 번호를 재사용한 현재 학생의 �
 결과를 읽은 뒤 응답한다. 성공 시 기존 `204`/폴더 `200`과 실제 cleaned 수를 유지하고,
 공급자 실패 시 `502 inventory_storage_cleanup_pending`과 목록 재조회/재시도 경로를 유지한다.
 
-성적표 제출은 tenant FK gate → 학생 계정/제출자 계정 FK gate → 학생 행 →
+성적표 제출은 tenant FK gate → 학생·제출자 계정 PK 오름차순 FK gate → 학생 행 →
 학생 namespace → 원본 InventoryFile 행 순서로 잠근다. 실제 업로드 API도 원본
 metadata를 만들기 전에 같은 계정·학생 참조를 잠가 soft delete/복원과 순서를 맞춘다.
 제출 시 저장된 원본의 key·소유자와 활성 학생을 다시 확인한다. 이동/삭제가 먼저 끝나

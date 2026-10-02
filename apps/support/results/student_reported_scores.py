@@ -326,13 +326,11 @@ def lock_student_score_submission_references(
     ):
         raise ValueError("성적표 원본과 학생·학원 정보가 일치하지 않습니다.")
 
-    # Student lifecycle takes its User before Student and namespace. Parent
-    # submitters also need a User FK gate before taking the Student row.
+    # Account notices lock the participating Users in PK order before Student.
     try:
         lock_student_creation_tenant_reference(tenant_id=tenant.id)
-        lock_student_creation_user_reference(user_id=student.user_id)
-        if submitted_by.id != student.user_id:
-            lock_student_creation_user_reference(user_id=submitted_by.id)
+        for user_id in sorted({student.user_id, submitted_by.id}):
+            lock_student_creation_user_reference(user_id=user_id)
     except ObjectDoesNotExist as exc:
         raise ValueError("성적표 원본과 학생·학원 정보가 일치하지 않습니다.") from exc
     current = (
