@@ -65,6 +65,8 @@ class Migration(migrations.Migration):
             ],
             options={
                 "ordering": ["-created_at", "-id"],
+                "indexes": [models.Index(fields=["tenant", "status", "category", "-created_at"], name="resource_public_list")],
+                "constraints": [models.UniqueConstraint(fields=("tenant", "request_id"), name="resource_request_unique")],
             },
         ),
         migrations.CreateModel(
@@ -166,18 +168,5 @@ class Migration(migrations.Migration):
                     )
                 ],
             },
-        ),
-        migrations.AddIndex(
-            model_name="publicresourcepost",
-            index=models.Index(
-                fields=["tenant", "status", "category", "-created_at"],
-                name="resource_public_list",
-            ),
-        ),
-        migrations.AddConstraint(
-            model_name="publicresourcepost",
-            constraint=models.UniqueConstraint(
-                fields=("tenant", "request_id"), name="resource_request_unique"
-            ),
         ),
     ]

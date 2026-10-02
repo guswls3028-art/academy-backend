@@ -7651,6 +7651,37 @@
         ],
         "type": "object"
       },
+      "PaginatedResourcePostList": {
+        "properties": {
+          "count": {
+            "example": 123,
+            "type": "integer"
+          },
+          "next": {
+            "example": "http://api.example.org/accounts/?page=4",
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "previous": {
+            "example": "http://api.example.org/accounts/?page=2",
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/ResourcePost"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "count",
+          "results"
+        ],
+        "type": "object"
+      },
       "PaginatedRiskLogList": {
         "properties": {
           "count": {
@@ -9459,6 +9490,37 @@
         "properties": {
           "auto_approve": {
             "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "PatchedResourceWriteRequest": {
+        "properties": {
+          "category": {
+            "$ref": "#/components/schemas/ResourceWriteCategoryEnum"
+          },
+          "content": {
+            "default": "",
+            "maxLength": 20000,
+            "type": "string"
+          },
+          "file_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 5,
+            "minItems": 1,
+            "type": "array"
+          },
+          "request_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
           }
         },
         "type": "object"
@@ -12888,6 +12950,176 @@
         },
         "required": [
           "auto_approve"
+        ],
+        "type": "object"
+      },
+      "ResourceCapability": {
+        "properties": {
+          "can_publish": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "can_publish"
+        ],
+        "type": "object"
+      },
+      "ResourceDownloadLink": {
+        "properties": {
+          "expires_in": {
+            "type": "integer"
+          },
+          "url": {
+            "format": "uri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expires_in",
+          "url"
+        ],
+        "type": "object"
+      },
+      "ResourceFile": {
+        "properties": {
+          "extension": {
+            "maxLength": 5,
+            "type": "string"
+          },
+          "filename": {
+            "maxLength": 200,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "readOnly": true,
+            "type": "string"
+          },
+          "size": {
+            "format": "int64",
+            "maximum": 9223372036854775807,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "extension",
+          "filename",
+          "id",
+          "size"
+        ],
+        "type": "object"
+      },
+      "ResourcePost": {
+        "properties": {
+          "author_display_name": {
+            "maxLength": 100,
+            "type": "string"
+          },
+          "category": {
+            "$ref": "#/components/schemas/ResourcePostCategoryEnum"
+          },
+          "content": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/ResourceFile"
+            },
+            "readOnly": true,
+            "type": "array"
+          },
+          "id": {
+            "readOnly": true,
+            "type": "integer"
+          },
+          "title": {
+            "maxLength": 200,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "readOnly": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "author_display_name",
+          "category",
+          "created_at",
+          "files",
+          "id",
+          "title",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "ResourcePostCategoryEnum": {
+        "description": "* `matchup` - 매치업\n* `analysis` - 분석자료",
+        "enum": [
+          "matchup",
+          "analysis"
+        ],
+        "type": "string"
+      },
+      "ResourceUploadRequest": {
+        "properties": {
+          "file": {
+            "format": "binary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "type": "object"
+      },
+      "ResourceWriteCategoryEnum": {
+        "description": "* `matchup` - matchup\n* `analysis` - analysis",
+        "enum": [
+          "matchup",
+          "analysis"
+        ],
+        "type": "string"
+      },
+      "ResourceWriteRequest": {
+        "properties": {
+          "category": {
+            "$ref": "#/components/schemas/ResourceWriteCategoryEnum"
+          },
+          "content": {
+            "default": "",
+            "maxLength": 20000,
+            "type": "string"
+          },
+          "file_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 5,
+            "minItems": 1,
+            "type": "array"
+          },
+          "request_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "file_ids",
+          "title"
         ],
         "type": "object"
       },
@@ -32946,6 +33178,310 @@
         ]
       }
     },
+    "/api/v1/landing-public/resource-files/{file_id}/": {
+      "delete": {
+        "operationId": "landing_public_resource_files_destroy",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "file_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "landing-public"
+        ]
+      },
+      "get": {
+        "operationId": "landing_public_resource_files_retrieve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "file_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResourceDownloadLink"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "tags": [
+          "landing-public"
+        ]
+      }
+    },
+    "/api/v1/landing-public/resources/": {
+      "get": {
+        "operationId": "landing_public_resources_list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "category",
+            "schema": {
+              "enum": [
+                "analysis",
+                "matchup"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "페이지네이션된 결과 집합 내의 페이지 번호.",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResourcePostList"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "tags": [
+          "landing-public"
+        ]
+      },
+      "post": {
+        "operationId": "landing_public_resources_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResourceWriteRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/ResourceWriteRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/ResourceWriteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResourcePost"
+                }
+              }
+            },
+            "description": ""
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResourcePost"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "landing-public"
+        ]
+      }
+    },
+    "/api/v1/landing-public/resources/capabilities/": {
+      "get": {
+        "operationId": "landing_public_resources_capabilities_retrieve",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResourceCapability"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "landing-public"
+        ]
+      }
+    },
+    "/api/v1/landing-public/resources/{id}/": {
+      "delete": {
+        "operationId": "landing_public_resources_destroy",
+        "parameters": [
+          {
+            "description": "public resource post을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "landing-public"
+        ]
+      },
+      "get": {
+        "operationId": "landing_public_resources_retrieve",
+        "parameters": [
+          {
+            "description": "public resource post을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResourcePost"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "tags": [
+          "landing-public"
+        ]
+      },
+      "patch": {
+        "operationId": "landing_public_resources_partial_update",
+        "parameters": [
+          {
+            "description": "public resource post을 식별하는 고유한 정수 값.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedResourceWriteRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedResourceWriteRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchedResourceWriteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResourcePost"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "landing-public"
+        ]
+      }
+    },
     "/api/v1/landing-public/reviews/": {
       "get": {
         "description": "공개 수강후기.\n\nlist / retrieve: 비로그인 OK (approved 만)\ncreate: 학생/학부모 로그인 필요 → status=pending 생성\nmoderate (approve/reject/pin/verify): staff only\nlike (toggle): family only",
@@ -33538,6 +34074,49 @@
         "responses": {
           "200": {
             "description": "No response body"
+          }
+        },
+        "security": [
+          {
+            "jwtAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "landing-public"
+        ]
+      }
+    },
+    "/api/v1/landing-public/uploads/resource/": {
+      "post": {
+        "operationId": "landing_public_uploads_resource_create",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/ResourceUploadRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/ResourceUploadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResourceFile"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [

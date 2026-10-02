@@ -3,6 +3,8 @@ import uuid
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.shortcuts import get_object_or_404
+from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_field, inline_serializer
+
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -65,6 +67,7 @@ class ResourceFileSerializer(serializers.ModelSerializer):
 class ResourcePostSerializer(serializers.ModelSerializer):
     files = serializers.SerializerMethodField()
 
+    @extend_schema_field(ResourceFileSerializer(many=True))
     def get_files(self, obj):
         return ResourceFileSerializer([file for file in obj.files.all() if not file.is_removed], many=True).data
 
@@ -97,10 +100,13 @@ class PublicResourcePostViewSet(viewsets.GenericViewSet):
     http_method_names = ["get", "post", "patch", "delete", "head", "options"]
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return PublicResourcePost.objects.none()
         return PublicResourcePost.objects.filter(tenant=self.request.tenant, status="published").prefetch_related(
             "files"
         )
 
+    @extend_schema(auth=[], parameters=[OpenApiParameter("category", enum=["matchup", "analysis"])])
     def list(self, request):
         queryset = self.get_queryset()
         category = request.query_params.get("category")
@@ -113,9 +119,11 @@ class PublicResourcePostViewSet(viewsets.GenericViewSet):
             return self.get_paginated_response(self.get_serializer(page, many=True).data)
         return Response(self.get_serializer(queryset[:100], many=True).data)
 
+    @extend_schema(auth=[])
     def retrieve(self, request, pk=None):
         return Response(self.get_serializer(self.get_object()).data)
 
+    @extend_schema(responses=inline_serializer("ResourceCapability", fields={"can_publish": serializers.BooleanField()}))
     @action(detail=False, methods=["get"])
     def capabilities(self, request):
         return Response({"can_publish": can_publish(request)}, headers={"Cache-Control": "no-store"})
@@ -181,16 +189,19 @@ class PublicResourcePostViewSet(viewsets.GenericViewSet):
         post._prefetched_objects_cache = {}
         return post, created
 
+    @extend_schema(request=ResourceWriteSerializer, responses={201: ResourcePostSerializer, 200: ResourcePostSerializer})
     def create(self, request):
         post, created = self._save(request)
         return Response(
             self.get_serializer(post).data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK
         )
 
+    @extend_schema(request=ResourceWriteSerializer, responses=ResourcePostSerializer)
     def partial_update(self, request, pk=None):
         post, _ = self._save(request, pk)
         return Response(self.get_serializer(post).data)
 
+    @extend_schema(responses={204: None})
     def destroy(self, request, pk=None):
         require_publisher(request)
         with transaction.atomic():
@@ -205,6 +216,7 @@ class PublicResourceUploadView(APIView):
     permission_classes = [TenantResolved]
     parser_classes = [MultiPartParser, FormParser]
 
+    @extend_schema(request=inline_serializer("ResourceUpload", fields={"file": serializers.FileField()}), responses={201: ResourceFileSerializer})
     def post(self, request):
         require_publisher(request)
         upload = request.FILES.get("file")
@@ -248,6 +260,7 @@ class PublicResourceUploadView(APIView):
 class PublicResourceFileView(APIView):
     permission_classes = [TenantResolved]
 
+    @extend_schema(auth=[], responses=inline_serializer("ResourceDownloadLink", fields={"url": serializers.URLField(), "expires_in": serializers.IntegerField()}))
     def get(self, request, file_id):
         file = get_object_or_404(
             PublicResourceFile.objects.select_related("post"),
@@ -268,6 +281,7 @@ class PublicResourceFileView(APIView):
             )
         return Response({"url": url, "expires_in": LINK_TTL}, headers={"Cache-Control": "no-store"})
 
+    @extend_schema(responses={204: None})
     def delete(self, request, file_id):
         require_publisher(request)
         with transaction.atomic():
