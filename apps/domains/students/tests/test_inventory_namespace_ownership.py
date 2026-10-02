@@ -1,9 +1,12 @@
+from django.apps import apps
 from django.test import TestCase
 
-from apps.domains.inventory.models import InventoryFile, InventoryFolder
 from apps.domains.students.services import restore_student, soft_delete_student
 from apps.domains.students.tests.test_identity_lifecycle import _create_student, _create_tenant
 
+
+InventoryFile = apps.get_model("inventory", "InventoryFile")
+InventoryFolder = apps.get_model("inventory", "InventoryFolder")
 
 class StudentInventoryNamespaceOwnershipTests(TestCase):
     def setUp(self):
