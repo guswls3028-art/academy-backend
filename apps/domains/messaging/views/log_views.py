@@ -4,6 +4,7 @@
 """
 
 import re
+from uuid import UUID
 
 from rest_framework import status
 from rest_framework.views import APIView
@@ -13,7 +14,9 @@ from drf_spectacular.utils import OpenApiParameter, OpenApiTypes, extend_schema
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.api.common.query_params import parse_query_int
 from apps.core.services.tenant_access import get_authorized_tenant_role
-from apps.domains.messaging.models import NotificationLog
+from apps.domains.messaging.models import NotificationLog, ManualSendRequest
+from apps.domains.messaging.serializers import NotificationLogListResponseSerializer
+from apps.domains.messaging.services.manual_send_requests import request_trace
 from apps.domains.messaging.policy import CLINIC_NOTIFICATION_TRIGGERS
 from apps.domains.messaging.provider_delivery import get_provider_delivery_status
 from apps.domains.messaging.security import (
@@ -136,7 +139,12 @@ class NotificationLogListView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     @extend_schema(
+        responses=NotificationLogListResponseSerializer,
         parameters=[
+            OpenApiParameter(
+                "request_id", OpenApiTypes.UUID, OpenApiParameter.QUERY,
+                description="동일 테넌트에서 수동 발송 요청 UUID와 정확히 일치하는 기록 및 접수 단계.",
+            ),
             OpenApiParameter(
                 "origin_id_prefix",
                 OpenApiTypes.STR,
@@ -155,6 +163,22 @@ class NotificationLogListView(APIView):
         # status 필터: success / failure / all (기본 all)
         status_filter = (request.query_params.get("status") or "").strip().lower()
         base_qs = _alimtalk_logs_for_business_tenant(request.tenant)
+        trace = None
+        request_id_param = request.query_params.get("request_id")
+        if request_id_param is not None:
+            try:
+                request_id = UUID(request_id_param)
+            except (ValueError, TypeError, AttributeError):
+                return Response({"request_id": "유효한 요청 UUID를 입력해 주세요."}, status=status.HTTP_400_BAD_REQUEST)
+            role = get_authorized_tenant_role(request.user, request.tenant)
+            receipts = ManualSendRequest.objects.filter(tenant=request.tenant, request_id=request_id)
+            if role not in _PRIVILEGED_LOG_ROLES:
+                receipts = receipts.filter(actor_user_id=request.user.pk)
+            receipts = list(receipts)
+            if not receipts:
+                return Response({"results": [], "count": 0, "request_trace": None})
+            base_qs = base_qs.filter(origin_type="manual_send", origin_id=str(request_id))
+            trace = request_trace(receipts, base_qs)
         origin_id_prefix = (request.query_params.get("origin_id_prefix") or "").strip()
         if origin_id_prefix:
             if len(origin_id_prefix) > 128 or not re.fullmatch(
@@ -185,7 +209,10 @@ class NotificationLogListView(APIView):
         role = get_authorized_tenant_role(request.user, request.tenant)
         privileged = role in _PRIVILEGED_LOG_ROLES
         items = [_project_log(r, privileged=privileged, include_body=False) for r in qs]
-        return Response({"results": items, "count": count})
+        response = {"results": items, "count": count}
+        if request_id_param is not None:
+            response["request_trace"] = trace
+        return Response(response)
 
 
 class NotificationLogDetailView(APIView):
