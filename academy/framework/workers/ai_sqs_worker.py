@@ -77,6 +77,13 @@ _shutdown = False
 _current_receipt_handle: Optional[str] = None
 
 
+_WRONG_NOTE_PREFLIGHT_TENANT_ERRORS = frozenset({
+    "missing_tenant_id_in_sqs_message",
+    "tenant_mismatch_in_sqs_message",
+    "payload_tenant_mismatch_in_sqs_message",
+})
+
+
 def _delete_with_ack(queue, message: dict, tier: str) -> bool:
     """Log an exact ACK only after the SQS adapter confirms DeleteMessage."""
     job_id = message["job_id"]
@@ -267,7 +274,25 @@ def _dispatch_terminal_callback_from_message(job_id: str, message: dict, tier_fr
         from apps.domains.ai.models import AIJobModel, AIResultModel
 
         job = AIJobModel.objects.filter(job_id=job_id).first()
-        if not job or job.status not in _TERMINAL_AI_JOB_STATUSES:
+        if not job:
+            return True
+        if job.status not in _TERMINAL_AI_JOB_STATUSES:
+            return False
+
+        # A preflight scope rejection has no trustworthy wrong-note target to
+        # update. Acknowledge that poison envelope without touching any tenant's
+        # PDF row; ordinary terminal jobs still retry their domain callback.
+        if (
+            job.source_domain == "results_wrong_note_pdf"
+            and job.status == "FAILED"
+            and job.error_message == job.last_error
+            and job.error_message in _WRONG_NOTE_PREFLIGHT_TENANT_ERRORS
+        ):
+            logger.warning(
+                "AI_JOB_WRONG_NOTE_PREFLIGHT_SCOPE_REJECTED | job_id=%s | reason=%s",
+                job_id,
+                job.error_message,
+            )
             return True
 
         source_domain = job.source_domain or message.get("source_domain")
@@ -298,6 +323,13 @@ def _dispatch_terminal_callback_from_message(job_id: str, message: dict, tier_fr
     except Exception:
         logger.exception("Terminal domain callback retry failed before dispatch: job_id=%s", job_id)
         return False
+
+
+def _ack_persisted_terminal_message(queue, job_id: str, message: dict, tier: str) -> bool:
+    """Recover a completion already committed inside a handler; never ACK a live claim."""
+    if not _dispatch_terminal_callback_from_message(job_id, message, tier):
+        return False
+    return _delete_with_ack(queue=queue, message=message, tier=tier)
 
 
 def _cleanup_terminal_artifacts(prepared: PreparedJob) -> None:
@@ -357,7 +389,9 @@ def _to_contract_job(prepared: PreparedJob):
         "payload": prepared.payload,
         "created_at": "",
     }
-    return AIJob.from_dict(job_dict)
+    from dataclasses import replace
+
+    return replace(AIJob.from_dict(job_dict), claim_locked_at=prepared.claim_locked_at)
 
 
 def _run_inference(prepared: PreparedJob, inference_handler: InferenceHandler | None = None):
@@ -475,6 +509,7 @@ def run_ai_sqs_worker(
                         job_id,
                         f"unsupported_job_type_for_{worker_kind}_worker:{job_type}",
                         tier_from_msg,
+                        preflight_only=True,
                     )
                     queue.delete(receipt_handle, tier_from_msg)
                     continue
@@ -559,19 +594,19 @@ def run_ai_sqs_worker(
                             "SQS_JOB_TIMEOUT_60MIN | request_id=%s | job_id=%s | hard exit after cleanup",
                             request_id, job_id,
                         )
-                        ok = fail_ai_job(uow_factory(), job_id, "inference_timeout_60min", tier_from_msg)
+                        ok = fail_ai_job(
+                            uow_factory(), job_id, "inference_timeout_60min", tier_from_msg,
+                            expected_locked_at=prepared.claim_locked_at,
+                        )
                         if not ok:
                             logger.error(
                                 "AI_JOB_STATE_TRANSITION_FAILED | step=fail_timeout | job_id=%s | "
-                                "DB still RUNNING — manual cleanup required", job_id,
+                                "state or claim changed; persisted state retained", job_id,
                             )
                         callback_ok = False
                         if ok:
                             _cleanup_terminal_artifacts(prepared)
-                            callback_ok = _dispatch_domain_callback(
-                                prepared, status="FAILED", result_payload=None,
-                                error="inference_timeout_60min",
-                            )
+                            callback_ok = _dispatch_terminal_callback_from_message(job_id, message, tier_from_msg)
                         try:
                             if ok and callback_ok and not _delete_with_ack(queue, message, tier_from_msg):
                                 logger.error(
@@ -588,19 +623,22 @@ def run_ai_sqs_worker(
                     # SQS message는 삭제되지만 DB는 RUNNING으로 남아 운영 알람 대상.
                     result = result_container[0] if result_container else None
                     if result is None:
-                        ok = fail_ai_job(uow_factory(), job_id, "inference_error_no_result", tier_from_msg)
+                        ok = fail_ai_job(
+                            uow_factory(), job_id, "inference_error_no_result", tier_from_msg,
+                            expected_locked_at=prepared.claim_locked_at,
+                        )
                         if not ok:
+                            if _ack_persisted_terminal_message(queue, job_id, message, tier_from_msg):
+                                consecutive_errors = 0
+                                continue
                             logger.error(
                                 "AI_JOB_STATE_TRANSITION_FAILED | step=fail | job_id=%s | "
-                                "DB still RUNNING — manual cleanup required", job_id,
+                                "state or claim changed; persisted state retained", job_id,
                             )
                             consecutive_errors += 1
                             continue
                         _cleanup_terminal_artifacts(prepared)
-                        callback_ok = _dispatch_domain_callback(
-                            prepared, status="FAILED", result_payload=None,
-                            error="inference_error_no_result",
-                        )
+                        callback_ok = _dispatch_terminal_callback_from_message(job_id, message, tier_from_msg)
                         if not callback_ok:
                             logger.error(
                                 "AI_JOB_DOMAIN_CALLBACK_RETRY_DEFERRED | job_id=%s | status=FAILED",
@@ -616,20 +654,22 @@ def run_ai_sqs_worker(
                             )
                         consecutive_errors += 1
                     elif result.status == "DONE":
-                        ok = complete_ai_job(uow_factory(), job_id, result.result)
+                        ok = complete_ai_job(
+                            uow_factory(), job_id, result.result,
+                            expected_locked_at=prepared.claim_locked_at,
+                        )
                         if not ok:
+                            if _ack_persisted_terminal_message(queue, job_id, message, tier_from_msg):
+                                consecutive_errors = 0
+                                continue
                             logger.error(
                                 "AI_JOB_STATE_TRANSITION_FAILED | step=complete | job_id=%s | "
-                                "DB still RUNNING — manual cleanup required", job_id,
+                                "state or claim changed; persisted state retained", job_id,
                             )
                             consecutive_errors += 1
                             continue
                         _cleanup_terminal_artifacts(prepared)
-                        callback_ok = _dispatch_domain_callback(
-                            prepared, status="DONE",
-                            result_payload=result.result if isinstance(result.result, dict) else {},
-                            error=None,
-                        )
+                        callback_ok = _dispatch_terminal_callback_from_message(job_id, message, tier_from_msg)
                         if not callback_ok:
                             logger.error(
                                 "AI_JOB_DOMAIN_CALLBACK_RETRY_DEFERRED | job_id=%s | status=DONE",
@@ -646,19 +686,22 @@ def run_ai_sqs_worker(
                         logger.info("SQS_JOB_COMPLETED | request_id=%s | job_id=%s", request_id, job_id)
                         consecutive_errors = 0
                     else:
-                        ok = fail_ai_job(uow_factory(), job_id, result.error or "failed", tier_from_msg)
+                        ok = fail_ai_job(
+                            uow_factory(), job_id, result.error or "failed", tier_from_msg,
+                            expected_locked_at=prepared.claim_locked_at,
+                        )
                         if not ok:
+                            if _ack_persisted_terminal_message(queue, job_id, message, tier_from_msg):
+                                consecutive_errors = 0
+                                continue
                             logger.error(
                                 "AI_JOB_STATE_TRANSITION_FAILED | step=fail | job_id=%s | "
-                                "DB still RUNNING — manual cleanup required", job_id,
+                                "state or claim changed; persisted state retained", job_id,
                             )
                             consecutive_errors += 1
                             continue
                         _cleanup_terminal_artifacts(prepared)
-                        callback_ok = _dispatch_domain_callback(
-                            prepared, status="FAILED", result_payload=None,
-                            error=result.error or "failed",
-                        )
+                        callback_ok = _dispatch_terminal_callback_from_message(job_id, message, tier_from_msg)
                         if not callback_ok:
                             logger.error(
                                 "AI_JOB_DOMAIN_CALLBACK_RETRY_DEFERRED | job_id=%s | status=FAILED",

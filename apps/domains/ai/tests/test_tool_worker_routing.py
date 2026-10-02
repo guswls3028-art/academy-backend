@@ -166,8 +166,12 @@ class ToolWorkerRoutingTests(TestCase):
         }
 
         repo = DjangoAIJobRepository()
+        claim_time = timezone.now()
+        assert repo.mark_running(job.job_id, "tools-worker", claim_time + timedelta(minutes=30), claim_time)
         with self.captureOnCommitCallbacks(execute=True):
-            assert repo.mark_done(job.job_id, timezone.now(), result)
+            assert repo.mark_done(
+                job.job_id, timezone.now(), result, expected_locked_at=claim_time,
+            )
 
         stored = AIResultModel.objects.get(job=job).payload
         assert stored["created"] == 1

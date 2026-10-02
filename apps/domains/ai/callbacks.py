@@ -37,6 +37,11 @@ from apps.support.ai.callback_dependencies import (
 logger = logging.getLogger(__name__)
 
 
+def _is_failed_terminal(status: str, error: Optional[str]) -> bool:
+    """Interpret DB status and error together without rewriting the status."""
+    return status in {"FAILED", "REJECTED_BAD_INPUT", "FALLBACK_TO_GPU"} or bool(error)
+
+
 def _close_old_connections_if_safe() -> None:
     """Release worker connections without closing an active transaction."""
     if not connection.in_atomic_block:
@@ -255,6 +260,7 @@ def _handle_wrong_note_pdf_result(
 ) -> None:
     """Apply a tools-worker result to the tenant-scoped WrongNotePDF record."""
     from django.db import transaction
+    from django.utils import timezone
 
     from apps.domains.ai.models import AIJobModel
     WrongNotePDF, wrong_note_pdf_storage_key = (
@@ -280,16 +286,19 @@ def _handle_wrong_note_pdf_result(
             .select_related("enrollment__tenant")
             .get(id=pdf_job_id, enrollment__tenant_id=int(ai_job.tenant_id))
         )
-        if pdf_job.status == WrongNotePDF.Status.DONE:
+        if pdf_job.status in {
+            WrongNotePDF.Status.DONE,
+            WrongNotePDF.Status.FAILED,
+        }:
             return
 
         outcome = str(result_payload.get("outcome") or "")
-        if status == "FAILED":
-            pdf_job.status = WrongNotePDF.Status.FAILED
-            pdf_job.error_message = str(
+        if _is_failed_terminal(status, error):
+            next_status = WrongNotePDF.Status.FAILED
+            file_path = ""
+            error_message = str(
                 error or "PDF를 만들지 못했습니다. 잠시 후 다시 시도해 주세요."
             )
-            pdf_job.file_path = ""
         elif outcome == WrongNotePDF.Status.DONE:
             file_path = str(result_payload.get("file_path") or "")
             expected_path = wrong_note_pdf_storage_key(
@@ -298,9 +307,8 @@ def _handle_wrong_note_pdf_result(
             )
             if file_path != expected_path:
                 raise ValueError("Wrong-note PDF callback file path mismatch.")
-            pdf_job.status = WrongNotePDF.Status.DONE
-            pdf_job.file_path = file_path
-            pdf_job.error_message = ""
+            next_status = WrongNotePDF.Status.DONE
+            error_message = ""
         elif outcome == WrongNotePDF.Status.FAILED:
             file_path = str(result_payload.get("file_path") or "")
             if file_path:
@@ -310,18 +318,28 @@ def _handle_wrong_note_pdf_result(
                 )
                 if file_path != expected_path:
                     raise ValueError("Wrong-note PDF failed callback file path mismatch.")
-            pdf_job.status = WrongNotePDF.Status.FAILED
-            pdf_job.file_path = file_path
-            pdf_job.error_message = str(
+            next_status = WrongNotePDF.Status.FAILED
+            error_message = str(
                 result_payload.get("error_message")
                 or "PDF를 만들지 못했습니다. 잠시 후 다시 시도해 주세요."
             )
         else:
             raise ValueError("Wrong-note PDF callback outcome is invalid.")
 
-        pdf_job.save(
-            update_fields=["status", "file_path", "error_message", "updated_at"]
+        WrongNotePDF.objects.filter(
+            id=pdf_job.id,
+            enrollment__tenant_id=int(ai_job.tenant_id),
+            status__in=[
+                WrongNotePDF.Status.PENDING,
+                WrongNotePDF.Status.RUNNING,
+            ],
+        ).update(
+            status=next_status,
+            file_path=file_path,
+            error_message=error_message,
+            updated_at=timezone.now(),
         )
+
 
 
 def _handle_submission_ai_result(
