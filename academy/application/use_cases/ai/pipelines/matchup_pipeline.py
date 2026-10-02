@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import io
 import logging
+import math
 import os
 import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -1665,7 +1666,7 @@ def _is_numberless_scan_page(page: Dict[str, Any], source_type: str) -> bool:
     page_type = (page.get("paper_type") or "").strip().lower()
     if source_type not in ("student_exam_photo", "school_exam_pdf"):
         return False
-    if page_type not in (
+    if source_type != "student_exam_photo" and page_type not in (
         "scan_single", "scan_dual", "quadrant", "student_answer_photo", "unknown",
     ):
         return False
@@ -1675,7 +1676,976 @@ def _is_numberless_scan_page(page: Dict[str, Any], source_type: str) -> bool:
 
 def _is_counter_fallback_question(question: Dict[str, Any]) -> bool:
     meta = question.get("meta_extra") or {}
-    return meta.get("number_source") == "counter_fallback"
+    return (
+        meta.get("number_source") == "counter_fallback"
+        and not meta.get("manual")
+        and not meta.get("manual_owner_pinned")
+    )
+
+
+def _bbox_coverage_of_smaller(a: Any, b: Any) -> float:
+    """Overlap relative to the smaller box, so a merged crop can cover two cuts."""
+    try:
+        ax, ay, aw, ah = [float(v) for v in a]
+        bx, by, bw, bh = [float(v) for v in b]
+    except (TypeError, ValueError):
+        return 0.0
+    if not all(math.isfinite(v) for v in (ax, ay, aw, ah, bx, by, bw, bh)):
+        return 0.0
+    if min(aw, ah, bw, bh) <= 0:
+        return 0.0
+    iw = max(0.0, min(ax + aw, bx + bw) - max(ax, bx))
+    ih = max(0.0, min(ay + ah, by + bh) - max(ay, by))
+    return iw * ih / min(aw * ah, bw * bh)
+
+
+def _photo_vlm_column_boxes(image_path: str, boxes: List[Any]) -> List[Any]:
+    """Finish VLM photo cuts at a visible central divider, if unambiguous.
+
+    Phone perspective tilts the printed divider. VLM can stop both columns
+    near the image midpoint and cut off the last words or answer choices.
+    Only a long, central printed line plus cuts on both sides authorizes this
+    correction; other layouts keep their original VLM boxes.
+    """
+    import cv2
+
+    image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if image is None:
+        return boxes
+    image_h, image_w = image.shape[:2]
+    if image_h < 400 or image_w < 400:
+        return boxes
+    lines = cv2.HoughLinesP(
+        cv2.Canny(image, 80, 180), 1, math.pi / 180,
+        threshold=max(60, round(image_h * 0.06)),
+        minLineLength=round(image_h * 0.22),
+        maxLineGap=round(image_h * 0.035),
+    )
+    if lines is None:
+        return boxes
+
+    candidates = []
+    for line in lines.reshape(-1, 4):
+        x1, y1, x2, y2 = (int(value) for value in line)
+        span = abs(y2 - y1)
+        middle_x = (x1 + x2) / 2
+        if (span >= image_h * 0.45 and abs(x2 - x1) <= image_w * 0.05
+                and image_w * 0.40 <= middle_x <= image_w * 0.62):
+            candidates.append((x1, y1, x2, y2, span))
+    if not any(line[4] >= image_h * 0.70 for line in candidates):
+        return boxes
+    candidates.sort(key=lambda line: line[4], reverse=True)
+    if any(abs((line[0] + line[2] - candidates[0][0] - candidates[0][2]) / 2)
+           > image_w * 0.03 for line in candidates[1:]):
+        return boxes
+    x1, y1, x2, y2, _ = candidates[0]
+    if y1 > y2:
+        x1, y1, x2, y2 = x2, y2, x1, y1
+
+    def divider_x(y: float) -> float:
+        return x1 + (x2 - x1) * (y - y1) / (y2 - y1)
+
+    try:
+        parsed = [[int(value) for value in box] for box in boxes]
+    except (TypeError, ValueError):
+        return boxes
+    if any(len(box) != 4 or min(box[2:]) <= 0
+           or box[2] > image_w * 0.60 for box in parsed):
+        return boxes
+    sides = [
+        (x + w / 2) < divider_x(y + h / 2)
+        for x, y, w, h in parsed
+    ]
+    if not any(sides) or all(sides):
+        return boxes
+    for i, first in enumerate(parsed):
+        for j in range(i + 1, len(parsed)):
+            second = parsed[j]
+            if (sides[i] == sides[j] and first != second
+                    and max(first[1], second[1])
+                    < min(first[1] + first[3], second[1] + second[3])):
+                return boxes
+
+    refined = []
+    for (x, y, w, h), is_left in zip(parsed, sides):
+        prior_bottom = max(
+            (other_y + other_h for (other_x, other_y, other_w, other_h), other_left
+             in zip(parsed, sides)
+             if other_left == is_left and other_y + other_h <= y),
+            default=0,
+        )
+        top_pad = (round(image_h * 0.025) if not prior_bottom
+                   else min(24, max(12, round(h * 0.03))))
+        top = max(prior_bottom + 1 if prior_bottom else 0, y - top_pad)
+        next_top = min(
+            (other_y for (other_x, other_y, other_w, other_h), other_left
+             in zip(parsed, sides)
+             if other_left == is_left and other_y >= y + h),
+            default=image_h + 1,
+        )
+        bottom = min(image_h, next_top - 1,
+                     y + h + min(round(h * 0.03), round(image_h * 0.02)))
+        padded_h = bottom - top
+        if is_left:
+            # A midpoint bound preserves line ends while limiting how far a
+            # rectangular crop reaches past the tilted divider at either end.
+            right = min(image_w, max(x + w, round(divider_x(y + h / 2) - 5)))
+            refined.append((x, top, right - x, padded_h))
+        else:
+            left = max(x, round(divider_x(y) - 5))
+            right = min(image_w, x + w + max(round(image_w * 0.06), round(w * 0.14)))
+            if right <= left:
+                return boxes
+            refined.append((left, top, right - left, padded_h))
+    return refined
+
+
+def _photo_vlm_verified_numbers(
+    image_path: str, boxes: List[Any], numbers: List[int],
+    ocr_blocks: Optional[List[Any]] = None,
+) -> tuple[List[int], bool]:
+    """Correct one contradicted photo label only with independent margin evidence."""
+    from PIL import Image
+
+    if len(boxes) != len(numbers) or len(set(tuple(box) for box in boxes)) != len(boxes):
+        return numbers, True  # Shared-stem boxes cannot be relabeled separately.
+    try:
+        with Image.open(image_path) as image:
+            width, height = image.size
+        parsed = [tuple(int(v) for v in box) for box in boxes]
+    except (OSError, TypeError, ValueError):
+        return numbers, True
+    if min(width, height) < 400 or not (
+        any(x + w/2 < width/2 for x, _, w, _ in parsed)
+        and any(x + w/2 >= width/2 for x, _, w, _ in parsed)
+    ):
+        return numbers, True
+    if ocr_blocks is None:
+        backend = _load_ocr_blocks_backend()
+        if backend is None:
+            return numbers, True
+        try:
+            blocks = backend(image_path)
+        except Exception:
+            logger.warning("MATCHUP_PHOTO_NUMBER_OCR_FAIL", exc_info=True)
+            return numbers, True
+    else:
+        blocks = ocr_blocks
+
+    found: List[tuple[int, bool] | None] = []
+    for x, y, w, h in parsed:
+        candidates = []
+        for block in blocks:
+            match = re.match(
+                r"^\s*(\d{1,3})(?:(\s*[.．](?!\d))|\s+[가-힣])",
+                block.text or "",
+            )
+            if not match or not (
+                x-width*.04 <= block.x0 <= x+width*.08
+                and y-height*.02 <= block.y0 <= y+height*.08
+            ):
+                continue
+            candidates.append((int(match.group(1)), bool(match.group(2)), block.y0))
+        if candidates:
+            first_y = min(candidate[2] for candidate in candidates)
+            candidates = [candidate for candidate in candidates
+                          if candidate[2] <= first_y+height*.025]
+        distinct = {number for number, _, _ in candidates}
+        found.append((next(iter(distinct)), any(strict for _, strict, _ in candidates))
+                     if len(distinct) == 1 else None)
+        if len(distinct) > 1 and any(
+            strict and number not in numbers for number, strict, _ in candidates
+        ):
+            return numbers, False
+
+    contradictions = [i for i, match in enumerate(found)
+                      if match and match[1] and match[0] != numbers[i]]
+    if not contradictions:
+        return numbers, True
+    if len(contradictions) != 1:
+        return numbers, False
+    index = contradictions[0]
+    replacement = found[index][0]
+    supporters = sum(match is not None and match[0] == numbers[i]
+                     for i, match in enumerate(found) if i != index)
+    corrected = list(numbers)
+    corrected[index] = replacement
+    if (replacement in numbers or supporters < 2
+            or len(set(corrected)) != len(corrected)
+            or max(corrected)-min(corrected)+1 != len(corrected)):
+        return numbers, False
+    return corrected, True
+
+
+def _photo_vlm_ocr_geometry(
+    image_path: str, boxes: List[Any], numbers: List[int],
+    ocr_blocks: Optional[List[Any]] = None,
+) -> tuple[List[Any], List[Dict[str, Any] | None]]:
+    """Refine accepted phone-photo proposals using printed OCR labels and a divider.
+
+    All distances below are relative to the source image. An uncertain layout
+    retains the existing VLM/Hough result; OCR never creates or renumbers cuts.
+    """
+    import cv2
+
+    unchanged = lambda: (_photo_vlm_column_boxes(image_path, boxes), [None] * len(boxes))
+    image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if image is None:
+        return unchanged()
+    height, width = image.shape
+    if min(height, width) < 400 or len(boxes) != len(numbers):
+        return unchanged()
+    try:
+        parsed = [tuple(int(v) for v in box) for box in boxes]
+    except (TypeError, ValueError):
+        return unchanged()
+    if any(len(box) != 4 or min(box[2:]) <= 0 or box[2] > width * .60
+           or box[0] < 0 or box[1] < 0 or box[0] + box[2] > width
+           or box[1] + box[3] > height for box in parsed):
+        return unchanged()
+
+    groups: Dict[tuple[int, ...], List[int]] = {}
+    for box, number in zip(parsed, numbers):
+        groups.setdefault(box, []).append(number)
+    if len(groups) < 2:
+        return unchanged()
+    rough_sides = [box[0] + box[2]/2 < width/2 for box in groups]
+    if not any(rough_sides) or all(rough_sides):
+        return unchanged()
+
+    if ocr_blocks is None:
+        backend = _load_ocr_blocks_backend()
+        if backend is None:
+            return unchanged()
+        try:
+            blocks = backend(image_path)
+        except Exception:
+            logger.warning("MATCHUP_PHOTO_ANCHOR_OCR_FAIL", exc_info=True)
+            return unchanged()
+    else:
+        blocks = ocr_blocks
+    if not blocks:
+        return unchanged()
+
+    def anchor(number: int, box: tuple[int, ...], shared: bool):
+        x, y, w, h = box
+        matches = []
+        for block in blocks:
+            if not re.match(
+                rf"^\s*{number}(?:\s*[.．](?!\d)|\s+[가-힣])",
+                block.text or "",
+            ):
+                continue
+            near_y = (y <= block.y0 <= y+h) if shared else (
+                y-height*.083 <= block.y0 <= y+height*.070)
+            if (x-width*.094 <= block.x0 <= x+width*.130 and near_y):
+                matches.append(block)
+        return min(matches, key=lambda block:
+                   abs(block.y0-y) + .3*abs(block.x0-x), default=None)
+
+    edges = cv2.Canny(image, 80, 180)
+    lines = cv2.HoughLinesP(
+        edges, 1, math.pi / 180,
+        threshold=max(60, round(height * .06)),
+        minLineLength=round(height * .22), maxLineGap=round(height * .035),
+    )
+    divider = None
+    if lines is not None:
+        candidates = []
+        for x1, y1, x2, y2 in lines.reshape(-1, 4):
+            span = abs(int(y2) - int(y1))
+            mid = (int(x1) + int(x2)) / 2
+            if (span >= height * .45 and abs(int(x2) - int(x1)) <= width * .05
+                    and width * .40 <= mid <= width * .62):
+                candidates.append((int(x1), int(y1), int(x2), int(y2), span))
+        candidates.sort(key=lambda line: line[4], reverse=True)
+        if candidates and any(
+            abs((line[0] + line[2] - candidates[0][0] - candidates[0][2]) / 2)
+            > width * .03 for line in candidates[1:]
+        ):
+            return unchanged()
+        if candidates:
+            x1, y1, x2, y2, _ = candidates[0]
+            divider = ((x1, y1, x2, y2) if y1 < y2 else (x2, y2, x1, y1))
+
+    if divider is None:
+        # Re-encoding or resizing a phone image can fragment the printed line
+        # below HoughLinesP's minimum segment length. HoughLines votes across
+        # those fragments; printed right-column labels then disambiguate it.
+        right_labels = [
+            match for box, group_numbers in groups.items()
+            if box[0] + box[2]/2 >= width/2
+            for number in group_numbers
+            if (match := anchor(number, box, len(group_numbers) > 1)) is not None
+        ]
+        if len(right_labels) >= 2:
+            raw_lines = cv2.HoughLines(
+                edges, 1, math.pi / 180,
+                threshold=max(80, round(height*.15)),
+            )
+            possible = []
+            dominant_is_flat = None
+            dominant_rank = None
+            if raw_lines is not None:
+                for rank, (rho, theta) in enumerate(raw_lines[:, 0]):
+                    if min(abs(theta), abs(theta-math.pi)) > math.pi/24:
+                        continue
+                    cos_theta, sin_theta = math.cos(theta), math.sin(theta)
+                    top_x = rho/cos_theta
+                    bottom_x = (rho-sin_theta*height)/cos_theta
+                    middle_x = (top_x+bottom_x)/2
+                    if not (width*.40 <= middle_x <= width*.62
+                            and abs(bottom_x-top_x) <= width*.12):
+                        continue
+                    if dominant_is_flat is None:
+                        dominant_is_flat = abs(bottom_x-top_x) < width*.015
+                        dominant_rank = rank
+                    if abs(bottom_x-top_x) >= width*.015:
+                        possible.append((top_x, bottom_x, middle_x))
+            # A weak central line behind many stronger page edges is not
+            # enough evidence to mask a column that may have no divider.
+            if dominant_is_flat or dominant_rank is None or dominant_rank > 15:
+                possible = []
+            if possible:
+                scored = []
+                for top_x, bottom_x, middle_x in possible:
+                    slacks = [
+                        block.x0 - (top_x + (bottom_x-top_x)*block.y0/height)
+                        for block in right_labels
+                    ]
+                    good = [slack for slack in slacks
+                            if width*.005 <= slack <= width*.08]
+                    if len(good) >= 2:
+                        scored.append((len(good),
+                                       -abs(sum(good)/len(good)-width*.012),
+                                       top_x, bottom_x, middle_x))
+                if scored:
+                    best = max(scored, key=lambda item: item[:2])
+                    peers = [item for item in scored if item[0] == best[0]
+                             and abs(item[1]-best[1]) < width*.01]
+                    if not any(abs(item[4]-best[4]) > width*.03 for item in peers):
+                        supported = []
+                        for band in range(10):
+                            first_y = round(height*band/10)
+                            last_y = round(height*(band+1)/10)
+                            sampled = range(first_y, last_y,
+                                            max(1, round(height/500)))
+                            hits = 0
+                            count = 0
+                            for row_y in sampled:
+                                line_x = round(best[2] + (best[3]-best[2])*row_y/height)
+                                count += 1
+                                if (0 <= line_x < width and edges[
+                                    max(0, row_y-1):min(height, row_y+2),
+                                    max(0, line_x-5):min(width, line_x+6),
+                                ].any()):
+                                    hits += 1
+                            if count and hits/count >= .25:
+                                supported.append(band)
+                        if (len(supported) >= 5
+                                and supported[-1]-supported[0] >= 4):
+                            divider = (round(best[2]), 0, round(best[3]), height)
+
+    def boundary(y: float) -> float:
+        x1, y1, x2, y2 = divider
+        return x1 + (x2 - x1) * (y - y1) / (y2 - y1)
+
+    side_by_box = {
+        box: (box[0] + box[2] / 2 <
+              (boundary(box[1] + box[3] / 2) if divider else width / 2))
+        for box in groups
+    }
+    if not any(side_by_box.values()) or all(side_by_box.values()):
+        return unchanged()
+    # The VLM must have separated questions vertically within each column.
+    for first in groups:
+        for second in groups:
+            if first == second or side_by_box[first] != side_by_box[second]:
+                continue
+            if max(first[1], second[1]) < min(first[1]+first[3], second[1]+second[3]):
+                return unchanged()
+
+    corrected: Dict[tuple[int, ...], List[int]] = {}
+    starts: Dict[tuple[int, ...], tuple[float, float] | None] = {}
+    for box, group_numbers in groups.items():
+        x, y, w, h = box
+        x2, y2 = x+w, y+h
+        found = [anchor(number, box, len(group_numbers) > 1)
+                 for number in group_numbers]
+        found = [block for block in found if block is not None]
+        top_match = min(found, key=lambda block: block.y0) if (
+            len(group_numbers) == 1 and found) else None
+        if top_match:
+            y = max(0, round(top_match.y0 - height*.008))
+            x = max(0, round(top_match.x0 - width*.013))
+        elif found:
+            x = max(0, round(min(block.x0 for block in found) - width*.013))
+        if found:
+            x2 = max(x2, round(max(block.x1 for block in found) + width*.010))
+        left = side_by_box[box]
+        if not found and not left and y < height*.10:
+            y = max(0, y-round(height*.04))
+        if divider:
+            if left:
+                x2 = max(x2, round(max(boundary(y), boundary(y2))-width*.003))
+            else:
+                x = min(x, round(min(boundary(y), boundary(y2))+width*.003))
+        if not left:
+            x2 = width
+        corrected[box] = [x, y, min(width, x2), y2]
+        starts[box] = (top_match.x0, top_match.y0) if top_match else None
+
+    # A marked-up printed number can disappear from OCR even when its following
+    # question stem is read. Recover that start only after the preceding
+    # question's final ①–⑤ row, a clear gap, and ink in the new stem's margin.
+    for box, rect in corrected.items():
+        if starts[box] or len(groups[box]) != 1:
+            continue
+        previous = [other for other in groups if other != box
+                    and side_by_box[other] == side_by_box[box]
+                    and corrected[other][1] < rect[1]]
+        if not previous:
+            continue
+        previous_box = max(previous, key=lambda other: corrected[other][1])
+        if rect[1] - corrected[previous_box][1] < height*.25:
+            continue
+
+        def same_column(block: Any) -> bool:
+            middle = (block.x0 + block.x1) / 2
+            return (middle < (boundary(block.y0) if divider else width/2)) == side_by_box[box]
+
+        choice_blocks = [block for block in blocks
+                         if block.y0 >= max(corrected[previous_box][1], rect[1]-height*.20)
+                         and block.y0 < rect[1]-height*.05
+                         and same_column(block)
+                         and re.search(r"[①②③④⑤]", block.text or "")]
+        choice_rows = []
+        for choice in choice_blocks:
+            peers = [block for block in choice_blocks
+                     if abs(block.y0-choice.y0) <= height*.015]
+            symbols = set("".join(block.text or "" for block in peers)) & set("①②③④⑤")
+            if len(symbols) >= 3 and "⑤" in symbols:
+                choice_rows.append(max(block.y1 for block in peers))
+        if not choice_rows:
+            continue
+        row_bottom = max(choice_rows)
+        stems = [block for block in blocks
+                 if row_bottom+height*.012 <= block.y0 <= row_bottom+height*.05
+                 and block.y0 < rect[1]-height*.05
+                 and rect[0]-width*.02 <= block.x0 <= rect[0]+width*.12
+                 and block.x1-block.x0 >= width*.15
+                 and same_column(block)]
+        if not stems:
+            continue
+        stem = min(stems, key=lambda block: block.y0)
+        margin = image[
+            max(0, round(stem.y0-height*.004)):min(height, round(stem.y0+height*.012)),
+            max(0, round(stem.x0-width*.04)):max(0, round(stem.x0-width*.008)),
+        ]
+        if margin.size == 0 or int((margin < 125).sum()) < margin.size*.12:
+            continue
+        rect[1] = max(0, round(stem.y0-height*.008))
+
+    if not divider:
+        # When the printed line is invisible, a nearby right-column label is
+        # the strongest available bound for the left question's line endings.
+        for box, rect in corrected.items():
+            if not side_by_box[box]:
+                continue
+            peers = [other for other in groups if not side_by_box[other]
+                     and starts[other] and
+                     abs(corrected[other][1]-rect[1]) < height*.20]
+            if peers:
+                peer = min(peers, key=lambda other:
+                           abs(corrected[other][1]-rect[1]))
+                right_limit = round(starts[peer][0]-width*.005)
+                if any(
+                    block.x0 < right_limit < block.x1-width*.01
+                    and block.x0 >= rect[0]
+                    and block.y0 < rect[3] and block.y1 > rect[1]
+                    for block in blocks
+                ):
+                    return unchanged()
+                rect[2] = right_limit
+
+    def last_bottom(rect: List[int], left: bool) -> int:
+        x, _, x2, raw_bottom = rect
+        if height-raw_bottom > height*.117:
+            return raw_bottom
+        limit = min(round(height*.97), raw_bottom+round(height*.07))
+        if limit <= raw_bottom:
+            return raw_bottom
+        active = []
+        for row_y in range(raw_bottom, limit):
+            row = image[row_y, x:x2]
+            if divider:
+                offset = round(boundary(row_y))-x
+                row = row[:max(0, offset-round(width*.004))] if left else (
+                    row[min(len(row), offset+round(width*.004)):])
+            active.append(
+                len(row) >= width*.05 and
+                int((row < 125).sum()) >= max(round(width*.0115),
+                                               round(len(row)*.025))
+            )
+        begin = None
+        for offset, yes in enumerate(active + [False]):
+            if yes and begin is None:
+                begin = offset
+            elif not yes and begin is not None:
+                if offset-begin >= round(height*.002) and begin <= height*.047:
+                    return min(limit, raw_bottom+offset+round(height*.008))
+                begin = None
+        return min(limit, raw_bottom+round(height*.008))
+
+    for box, rect in corrected.items():
+        following = [other for other in groups if other != box
+                     and side_by_box[other] == side_by_box[box]
+                     and corrected[other][1] > rect[1]]
+        if following:
+            rect[3] = min(rect[3], min(corrected[other][1] for other in following)-2)
+        else:
+            # Preserve last-row choices. Footer removal needs an explicit
+            # page boundary; a fixed bottom cap cuts real answers on photos.
+            rect[3] = last_bottom(rect, side_by_box[box])
+            if rect[3] > box[1]+box[3]:
+                footer_starts = [
+                    block.y0 for block in blocks
+                    if block.y0 >= max(box[1]+box[3], height*.90)
+                    and block.y0 < rect[3]
+                    and re.search(r"저작권|다음\s*면.{0,8}계속|뒷면.{0,8}계속",
+                                  block.text or "")
+                    and ((block.x0+block.x1)/2 <
+                         (boundary((block.y0+block.y1)/2) if divider else width/2))
+                    == side_by_box[box]
+                ]
+                if footer_starts:
+                    rect[3] = min(rect[3], round(min(footer_starts)-height*.004))
+        if rect[2] <= rect[0] or rect[3] <= rect[1]:
+            return unchanged()
+
+    refined = []
+    masks = []
+    for box in parsed:
+        x, y, x2, y2 = corrected[box]
+        refined.append((x, y, x2-x, y2-y))
+        masks.append({"line": list(divider),
+                      "side": "left" if side_by_box[box] else "right"}
+                     if divider else None)
+    return refined, masks
+
+
+def _replace_numberless_photo_page(
+    page: Dict[str, Any], questions: List[Dict[str, Any]], vlm: Any,
+) -> tuple[int, int]:
+    """Prefer validated VLM cuts that cover every old auto crop."""
+    page_idx = page.get("page_index")
+    old = [q for q in questions if q.get("page_index") == page_idx and q.get("bbox")]
+    if not old:
+        return 0, 0
+    for question in old:
+        meta = question.get("meta_extra")
+        if not isinstance(meta, dict) or not _is_counter_fallback_question(question):
+            return 0, 0
+        public = meta.get("public_cleanup")
+        if (meta.get("confirmation_status") == "confirmed"
+                or (public is not None and not isinstance(public, dict))
+                or (isinstance(public, dict) and public.get("status") == "approved")):
+            return 0, 0
+    old_ids = {id(q) for q in old}
+
+    proposals = list(vlm.problems)
+    if len(proposals) < 2:
+        return 0, 0
+    try:
+        numbers = [p.number for p in proposals]
+        confidences = [float(p.confidence) for p in proposals]
+    except (AttributeError, TypeError, ValueError):
+        return 0, 0
+    reserved_numbers = {q.get("number") for q in questions if id(q) not in old_ids}
+    if (
+        any(
+            not isinstance(n, int) or isinstance(n, bool)
+            or n <= 0 or n in reserved_numbers
+            for n in numbers
+        )
+        or len(set(numbers)) != len(numbers)
+        or any(not math.isfinite(c) or c < 0.80 for c in confidences)
+    ):
+        return 0, 0
+
+    old_boxes = [q["bbox"] for q in old]
+    new_boxes = [p.bbox for p in proposals]
+    if len(proposals) < len(old):
+        # OpenCV can split one photo question into a thin full-column strip and
+        # an adjacent body.  Permit fewer VLM cuts only when the surplus old
+        # cuts have that shape and both pieces belong to the same VLM box.
+        def is_explained_fragment(fragment: Any, neighbor: Any) -> bool:
+            try:
+                fx, fy, fw, fh = [float(v) for v in fragment]
+                nx, ny, nw, nh = [float(v) for v in neighbor]
+            except (TypeError, ValueError):
+                return False
+            if not all(math.isfinite(v) for v in (fx, fy, fw, fh, nx, ny, nw, nh)):
+                return False
+            if min(fw, fh, nw, nh) <= 0 or fh > nh * 0.20:
+                return False
+            if max(abs(fx - nx), abs(fx + fw - nx - nw)) > nw * 0.05:
+                return False
+            if max(0.0, ny - fy - fh, fy - ny - nh) > nh * 0.02:
+                return False
+            return any(
+                _bbox_coverage_of_smaller(fragment, new_box) >= 0.60
+                and _bbox_coverage_of_smaller(neighbor, new_box) >= 0.30
+                for new_box in new_boxes
+            )
+
+        fragments = sum(
+            any(
+                i != j and is_explained_fragment(old_box, other)
+                for j, other in enumerate(old_boxes)
+            )
+            for i, old_box in enumerate(old_boxes)
+        )
+        if fragments < len(old) - len(proposals):
+            return 0, 0
+    if not all(
+        any(_bbox_coverage_of_smaller(old_box, new_box) >= 0.30 for new_box in new_boxes)
+        for old_box in old_boxes
+    ):
+        return 0, 0
+
+    # A question missed by OpenCV has no old crop to overlap. Partial overlap
+    # is ambiguous; a genuinely separate cut needs verified source dimensions.
+    coverages = [
+        max(_bbox_coverage_of_smaller(new_box, old_box) for old_box in old_boxes)
+        for new_box in new_boxes
+    ]
+    if any(0.05 < coverage < 0.50 for coverage in coverages):
+        return 0, 0
+    if any(coverage <= 0.05 for coverage in coverages):
+        from PIL import Image
+
+        try:
+            with Image.open(page["image_path"]) as source_image:
+                page_width, page_height = source_image.size
+        except (KeyError, OSError):
+            return 0, 0
+        for new_box in new_boxes:
+            try:
+                x, y, w, h = [float(v) for v in new_box]
+            except (TypeError, ValueError):
+                return 0, 0
+            if (not all(math.isfinite(v) for v in (x, y, w, h))
+                    or min(w, h) <= 0 or x < 0 or y < 0
+                    or x + w > page_width or y + h > page_height):
+                return 0, 0
+
+    photo_blocks = []
+    backend = _load_ocr_blocks_backend()
+    if backend is not None:
+        try:
+            photo_blocks = backend(page["image_path"])
+        except Exception:
+            logger.warning("MATCHUP_PHOTO_ANCHOR_OCR_FAIL", exc_info=True)
+    original_numbers = numbers
+    numbers, printed_numbers_proven = _photo_vlm_verified_numbers(
+        page["image_path"], new_boxes, numbers, photo_blocks,
+    )
+    if not printed_numbers_proven or any(
+        number in reserved_numbers for number in numbers
+    ) or (numbers != original_numbers and any(
+        prob.shared_with for prob in proposals
+    )):
+        return 0, 0
+
+    # Refine display/embedding cuts only after the source-coverage safety
+    # checks have accepted the original VLM result.
+    new_boxes, photo_boundaries = _photo_vlm_ocr_geometry(
+        page["image_path"], new_boxes, numbers, photo_blocks,
+    )
+    photo_crop_refined = any(photo_boundaries) or any(
+        tuple(before) != tuple(after)
+        for before, after in zip((p.bbox for p in proposals), new_boxes)
+    )
+
+    replacements = [
+        {
+            "number": number,
+            "page_index": page_idx,
+            "image_path": page["image_path"],
+            "bbox": list(box),
+            "meta_extra": {
+                "engine": "vlm",
+                "vlm_reason": "numberless_photo_replacement",
+                "replaced_auto_boxes": len(old),
+                **({"photo_crop_refined": True} if photo_crop_refined else {}),
+                **({"photo_column_boundary": photo_boundary}
+                   if photo_boundary else {}),
+            },
+            **({"shared_with": list(prob.shared_with)} if prob.shared_with else {}),
+        }
+        for number, prob, box, photo_boundary in zip(
+            numbers, proposals, new_boxes, photo_boundaries
+        )
+    ]
+    first = next(i for i, q in enumerate(questions) if q is old[0])
+    questions[:] = (
+        questions[:first] + replacements
+        + [q for q in questions[first:] if id(q) not in old_ids]
+    )
+    page["boxes"] = new_boxes
+    page["numbers"] = numbers
+    page.setdefault("paper_type_debug", {})["vlm_replaced_numberless_photo"] = {
+        "old_boxes": len(old), "new_boxes": len(replacements),
+    }
+    return len(old), len(replacements)
+
+
+def _recover_numberless_photo_from_ocr(
+    page: Dict[str, Any], questions: List[Dict[str, Any]],
+    ocr_blocks: Optional[List[Any]] = None,
+) -> tuple[int, int]:
+    """Recover a two-column photo only when OCR proves each question boundary.
+
+    One obscured first number may be inferred from four consecutive printed
+    labels, its own stem/number fragment, and its own answer row. Ambiguous
+    layouts retain the original review candidate.
+    """
+    import cv2
+
+    page_idx = page.get("page_index")
+    old = [q for q in questions if q.get("page_index") == page_idx and q.get("bbox")]
+    if not old:
+        return 0, 0
+    for q in old:
+        meta = q.get("meta_extra")
+        if not isinstance(meta, dict):
+            return 0, 0
+        public = meta.get("public_cleanup")
+        if (not _is_counter_fallback_question(q) or q.get("shared_with")
+                or meta.get("manual") or meta.get("manual_owner_pinned")
+                or meta.get("confirmation_status") == "confirmed"
+                or (public is not None and not isinstance(public, dict))
+                or (isinstance(public, dict) and public.get("status") == "approved")):
+            return 0, 0
+    try:
+        image = cv2.imread(page["image_path"], cv2.IMREAD_GRAYSCALE)
+    except (KeyError, TypeError, ValueError):
+        return 0, 0
+    if image is None:
+        return 0, 0
+    height, width = image.shape[:2]
+    if min(height, width) < 400:
+        return 0, 0
+    if ocr_blocks is None:
+        backend = _load_ocr_blocks_backend()
+        if backend is None:
+            return 0, 0
+        try:
+            ocr_blocks = backend(page["image_path"])
+        except Exception:
+            logger.warning("MATCHUP_PHOTO_ANCHOR_OCR_FAIL", exc_info=True)
+            return 0, 0
+    if not ocr_blocks:
+        return 0, 0
+
+    numbered = []
+    for block in ocr_blocks:
+        match = re.match(
+            r"^\s*(\d{1,3})(?:(\s*[.．](?!\d))|\s+[가-힣])",
+            block.text or "",
+        )
+        if not match or len(block.text or "") < 20 or block.x1-block.x0 < width*.15:
+            continue
+        side = "left" if block.x0 < width*.40 else (
+            "right" if width*.52 <= block.x0 <= width*.65 else None
+        )
+        if side:
+            numbered.append((int(match.group(1)), bool(match.group(2)), side, block))
+    left = sorted(
+        (row for row in numbered if row[1] and row[2] == "left"
+         and row[3].y0 > height*.05),
+        key=lambda row: row[3].y0,
+    )
+    if len(left) != 2 or left[0][0] <= 1 or left[1][0] != left[0][0]+1:
+        return 0, 0
+    right = []
+    for number in (left[1][0]+1, left[1][0]+2):
+        matches = [row for row in numbered if row[0] == number and row[2] == "right"]
+        if len(matches) != 1:
+            return 0, 0
+        right.append(matches[0])
+    if not (right[0][3].y0 < right[1][3].y0 and right[1][1]):
+        return 0, 0
+    numbers = [left[0][0]-1, left[0][0], left[1][0], right[0][0], right[1][0]]
+    old_ids = {id(q) for q in old}
+    reserved = {
+        int(q["number"]) for q in questions if id(q) not in old_ids
+        and str(q.get("number", "")).isdigit()
+    }
+    if any(number in reserved for number in numbers):
+        return 0, 0
+
+    # Extra 1., 2. lines after the final right-column question may be numbered
+    # experiment steps. They are safe only without a choice-row boundary before
+    # them and while the final question still has its own choices below.
+    selected = {id(row[3]) for row in (*left, *right)}
+    extras = sorted(
+        (row for row in numbered if id(row[3]) not in selected),
+        key=lambda row: row[3].y0,
+    )
+    if extras and (
+        any(row[2] != "right" or row[3].y0 <= right[1][3].y0
+            or row[0] != index or row[0] >= numbers[0]
+            for index, row in enumerate(extras, 1))
+        or any(
+            re.search(r"[①②③④⑤]", block.text or "")
+            and right[1][3].y0 < block.y0 < extras[-1][3].y0
+            and block.x0 >= width*.52
+            for block in ocr_blocks
+        )
+    ):
+        return 0, 0
+
+    stems = [
+        block for block in ocr_blocks
+        if height*.05 < block.y0 < left[0][3].y0-height*.15
+        and width*.15 < block.x0 < width*.50
+        and block.x1-block.x0 > width*.25
+        and len(block.text or "") >= 20
+    ]
+    if not stems:
+        return 0, 0
+    stem = min(stems, key=lambda block: block.y0)
+    fragments = [
+        block for block in ocr_blocks
+        if abs(block.y0-stem.y0) < height*.01
+        and stem.x0-width*.05 < block.x0 < stem.x0-10
+        and block.x1 < stem.x0-5 and len((block.text or "").strip()) <= 3
+    ]
+    if len(fragments) != 1:
+        return 0, 0
+    fragment = fragments[0]
+    mark = image[max(0, round(fragment.y0)):min(height, round(fragment.y1)),
+                 max(0, round(fragment.x0)):min(width, round(fragment.x1))]
+    if mark.size == 0 or int((mark < 125).sum()) < mark.size*.03:
+        return 0, 0
+
+    footer = [
+        block for block in ocr_blocks
+        if block.y0 > height*.85 and block.x0 < width/2 < block.x1
+        and len(block.text or "") >= 20 and re.search(
+            r"저작권|다음\s*면.{0,8}계속|뒷면.{0,8}계속", block.text or ""
+        )
+    ]
+    if not footer:
+        return 0, 0
+    footer_top = min(block.y0 for block in footer)
+    if footer_top <= max(left[1][3].y0, right[1][3].y0):
+        return 0, 0
+    anchors = [fragment, left[0][3], left[1][3], right[0][3], right[1][3]]
+    starts = [max(0, round(block.y0-height*.008)) for block in anchors]
+    bottoms = [starts[1]-2, starts[2]-2,
+               round(footer_top-height*.004), starts[4]-2,
+               round(footer_top-height*.004)]
+    if any(bottom <= start for start, bottom in zip(starts, bottoms)):
+        return 0, 0
+
+    choice_rows = []
+    for index, (start, bottom) in enumerate(zip(starts, bottoms)):
+        side = index < 3
+        choices = [
+            block for block in ocr_blocks
+            if start < block.y0 < bottom and
+            ((block.x0+block.x1)/2 < width/2) == side
+            and re.search(r"[①②③④⑤]", block.text or "")
+        ]
+        if not choices:
+            return 0, 0
+        last = max(choices, key=lambda block: block.y1)
+        if not (last.y1+height*.004 < bottom
+                and bottom-last.y1 < height*.10):
+            return 0, 0
+        choice_rows.append(choices)
+    first_choices = choice_rows[0]
+    if (len(set("".join(block.text or "" for block in first_choices))
+            & set("①②③④⑤")) < 2
+            or max(block.x0 for block in first_choices)
+            - min(block.x0 for block in first_choices) < width*.15):
+        return 0, 0
+
+    left_blocks = [
+        block for block in ocr_blocks
+        if starts[0] <= block.y0 < footer_top
+        and (block.x0+block.x1)/2 < width/2
+    ]
+    right_blocks = [
+        block for block in ocr_blocks
+        if starts[3] <= block.y0 < footer_top
+        and (block.x0+block.x1)/2 >= width/2
+    ]
+    if not left_blocks or not right_blocks:
+        return 0, 0
+    left_x = max(0, round(min(block.x0 for block in left_blocks)-width*.008))
+    left_x2 = min(width, round(max(block.x1 for block in left_blocks)+width*.005))
+    right_x = max(0, round(min(row[3].x0 for row in right)-width*.008))
+    right_x2 = min(width, round(max(block.x1 for block in right_blocks)+width*.005))
+    if left_x2 >= right_x+width*.015 or right_x2 <= right_x:
+        return 0, 0
+    boxes = [
+        (left_x if index < 3 else right_x, starts[index],
+         (left_x2-left_x) if index < 3 else (right_x2-right_x),
+         bottoms[index]-starts[index])
+        for index in range(5)
+    ]
+    refined, boundaries = _photo_vlm_ocr_geometry(
+        page["image_path"], boxes, numbers, ocr_blocks,
+    )
+    if len(boundaries) != 5 or not all(boundaries):
+        return 0, 0
+    final = []
+    for index, box in enumerate(refined):
+        x, y, w, h = map(int, box)
+        end = min(y+h, bottoms[index]) if index in (2, 4) else y+h
+        if min(w, end-y) <= 0 or x < 0 or x+w > width or end > height:
+            return 0, 0
+        if max(block.y1 for block in choice_rows[index]) >= end-height*.004:
+            return 0, 0
+        final.append([x, y, w, end-y])
+
+    # Printed anchors prove the five new cuts, but not that an extra automatic
+    # crop was redundant. Preserve the review candidates when one is unexplained.
+    page_boxes = page.get("boxes") or []
+    old_boxes = [q["bbox"] for q in old] + list(page_boxes)
+    if max(len(old), len(page_boxes)) > len(final) or not all(
+        any(_bbox_coverage_of_smaller(old_box, box) >= 0.30 for box in final)
+        for old_box in old_boxes
+    ):
+        return 0, 0
+
+    replacements = [
+        {
+            "number": number, "page_index": page_idx,
+            "image_path": page["image_path"], "bbox": box,
+            "meta_extra": {
+                "engine": "ocr_anchor", "photo_crop_refined": True,
+                "photo_column_boundary": boundary,
+                "ocr_anchor_recovered": True,
+            },
+        }
+        for number, box, boundary in zip(numbers, final, boundaries)
+    ]
+    first = next(i for i, q in enumerate(questions) if q is old[0])
+    questions[:] = (
+        questions[:first] + replacements
+        + [q for q in questions[first:] if id(q) not in old_ids]
+    )
+    page["boxes"] = final
+    page["numbers"] = numbers
+    page.setdefault("paper_type_debug", {})["ocr_anchor_replaced_numberless_photo"] = {
+        "old_boxes": len(old), "new_boxes": len(replacements),
+    }
+    return len(old), len(replacements)
 
 
 def _augment_questions_with_vlm_for_underfilled_pages(
@@ -1689,8 +2659,8 @@ def _augment_questions_with_vlm_for_underfilled_pages(
     """스캔/학생촬영 페이지가 일부만 잘린 경우 Gemini bbox로 누락 문항을 보강한다.
 
     Empty-page 보강만으로는 운영 T1 학생 촬영 시험지처럼 Q4/Q6/Q8만 잡히고
-    Q1/Q2/Q3/Q5/Q7이 빠지는 under-cut을 복구할 수 없다. 이 경로는 기존 box를
-    지우지 않고 VLM이 찾은 missing number만 추가한다.
+    Q1/Q2/Q3/Q5/Q7이 빠지는 under-cut을 복구할 수 없다. 번호 없는 사진의
+    자동 후보가 병합된 경우 검증된 VLM 컷으로 교체하고, 그 외에는 누락만 추가한다.
     """
     if not _env_flag("MATCHUP_VLM_AUTO_SPLIT", True):
         return None
@@ -1753,6 +2723,10 @@ def _augment_questions_with_vlm_for_underfilled_pages(
     relabeled_overlaps = 0
     pages_used = 0
     paper_type_updates = 0
+    replaced_auto = 0
+    replacement_pages = 0
+    ocr_anchor_replaced_auto = 0
+    ocr_anchor_questions = 0
 
     def _next_free_number() -> int:
         nonlocal next_number
@@ -1775,10 +2749,46 @@ def _augment_questions_with_vlm_for_underfilled_pages(
             }
             paper_type_updates += 1
         if vlm is None:
+            if source_type == "student_exam_photo" and candidate_reasons.get(
+                int(page.get("page_index") or 0)
+            ) == "numberless_scan_page":
+                recovered, count = _recover_numberless_photo_from_ocr(page, questions)
+                ocr_anchor_replaced_auto += recovered
+                ocr_anchor_questions += count
+                if recovered:
+                    used_numbers = {
+                        int(q["number"]) for q in questions
+                        if str(q.get("number", "")).isdigit()
+                    }
             continue
 
         page_idx = page.get("page_index")
         page_reason = candidate_reasons.get(int(page_idx or 0), "underfilled_page")
+        if source_type == "student_exam_photo" and page_reason == "numberless_scan_page":
+            replaced, replacement_count = _replace_numberless_photo_page(
+                page, questions, vlm,
+            )
+            if replaced:
+                used_numbers = {
+                    int(q["number"]) for q in questions
+                    if str(q.get("number", "")).lstrip("-").isdigit()
+                }
+                replaced_auto += replaced
+                replacement_pages += 1
+                added += replacement_count
+                pages_used += 1
+                continue
+            recovered, count = _recover_numberless_photo_from_ocr(page, questions)
+            if recovered:
+                used_numbers = {
+                    int(q["number"]) for q in questions
+                    if str(q.get("number", "")).isdigit()
+                }
+                ocr_anchor_replaced_auto += recovered
+                ocr_anchor_questions += count
+            # A rejected photo replacement cannot be partially reapplied by the
+            # generic overlap path. OCR recovery is the independent alternative.
+            continue
         existing_page_questions = [
             q for q in questions
             if q.get("page_index") == page_idx and q.get("bbox")
@@ -1852,6 +2862,10 @@ def _augment_questions_with_vlm_for_underfilled_pages(
         "overlap_skips": overlap_skips,
         "relabeled_overlaps": relabeled_overlaps,
         "paper_type_updates": paper_type_updates,
+        "replaced_auto": replaced_auto,
+        "replacement_pages": replacement_pages,
+        "ocr_anchor_replaced_auto": ocr_anchor_replaced_auto,
+        "ocr_anchor_questions": ocr_anchor_questions,
     }
 
 
@@ -2145,6 +3159,19 @@ def _pages_via_vlm(
     }
 
 
+def _photo_block_within_column(block: Any, boundary: Dict[str, Any]) -> bool:
+    """Use the same tilted separator as the saved photo crop."""
+    x1, y1, x2, y2 = boundary["line"]
+    middle_y = (block.y0 + block.y1) / 2
+    split_x = x1 + (x2-x1) * (middle_y-y1) / (y2-y1)
+    block_width = max(1.0, block.x1-block.x0)
+    if boundary["side"] == "left":
+        fraction = (min(block.x1, split_x)-block.x0) / block_width
+    else:
+        fraction = (block.x1-max(block.x0, split_x)) / block_width
+    return fraction >= .80
+
+
 def _extract_texts(questions: List[Dict], job_id: str) -> None:
     """
     bbox 기반 OCR 블록 매칭으로 문항별 텍스트 추출.
@@ -2202,9 +3229,12 @@ def _extract_texts(questions: List[Dict], job_id: str) -> None:
 
         bx, by, bw, bh = bbox
         bx1, by1 = bx + bw, by + bh
+        photo_boundary = (q.get("meta_extra") or {}).get("photo_column_boundary")
 
         relevant: List[Tuple[float, float, str]] = []
         for blk in blocks:
+            if photo_boundary and not _photo_block_within_column(blk, photo_boundary):
+                continue
             ox = max(0.0, min(float(bx1), blk.x1) - max(float(bx), blk.x0))
             oy = max(0.0, min(float(by1), blk.y1) - max(float(by), blk.y0))
             overlap = ox * oy
@@ -2218,6 +3248,11 @@ def _extract_texts(questions: List[Dict], job_id: str) -> None:
     # 여전히 텍스트가 없는 문항은 페이지 전체 텍스트로 폴백
     for q in questions:
         if q.get("text"):
+            continue
+        photo_meta = q.get("meta_extra") or {}
+        if photo_meta.get("photo_crop_refined") or photo_meta.get("photo_column_boundary"):
+            # A full-page fallback would mix both photographed columns.
+            q.setdefault("meta_extra", {})["photo_ocr_empty"] = True
             continue
         pi = q.get("page_index", 0)
         blocks = page_blocks_cache.get(pi, [])
@@ -2847,7 +3882,10 @@ def _upload_cropped_images(
                 # 사용자 directive: '작게 잘라 손상 = 실패. 조금 크게 잘라 여백/출처 = 허용'.
                 # 추가 directive: '2분할 / 4분할 자료에서 다른 문항 침범 X'.
                 # ENV flag default off → T1 점진 → T2.
-                if os.environ.get("MATCHUP_OVER_CROP_PADDING", "0") == "1":
+                photo_meta = q.get("meta_extra") or {}
+                photo_boundary = photo_meta.get("photo_column_boundary")
+                if (not photo_boundary and not photo_meta.get("photo_crop_refined") and
+                        os.environ.get("MATCHUP_OVER_CROP_PADDING", "0") == "1"):
                     # 자가 검수 (2026-05-10 doc 615 num=1 보기 ㄴ 잘림) 결과 padding
                     # 부족 발견. pad_y_bottom h*7%→15% min 12→30px (~1줄) 강화.
                     # auto-merge 가 fragment 합치기 + padding 이 마지막 줄 안전망.
@@ -2891,6 +3929,19 @@ def _upload_cropped_images(
                 x2, y2 = min(img_w, x + int(w)), min(img_h, y + int(h))
                 if x2 > x and y2 > y:
                     img = img[y:y2, x:x2]
+                    if photo_boundary:
+                        import numpy as np
+
+                        lx1, ly1, lx2, ly2 = photo_boundary["line"]
+                        rows = np.arange(y, y2, dtype=np.float32)
+                        columns = np.arange(x, x2, dtype=np.float32)
+                        divider_x = lx1 + (lx2-lx1)*(rows-ly1)/(ly2-ly1)
+                        margin = max(2, round(img_w*.003))
+                        if photo_boundary["side"] == "left":
+                            outside = columns[None, :] >= divider_x[:, None]-margin
+                        else:
+                            outside = columns[None, :] <= divider_x[:, None]+margin
+                        img[outside] = 255
 
             success, buf = cv2.imencode(
                 ".png", img, [cv2.IMWRITE_PNG_COMPRESSION, 6]
