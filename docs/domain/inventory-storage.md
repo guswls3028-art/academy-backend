@@ -33,8 +33,8 @@ storage key 기록을 **같은 DB 트랜잭션**에서 수행한다. DB 삭제�
 정리 대상은 선택한 파일·매치업 문서 원본과 연결된 매치업 문제/분리 제안 이미지,
 `public_cleanup.public_image_key`, 문서의 `page_image_keys`뿐이다. 버킷 prefix를
 열거하지 않는다. 기존 global key도 정확한 소유 metadata가 있으면 처리하되,
-명시적인 `tenants/<다른 tenant>/` key는 거부한다. 새 namespace로 이동하거나
-학생 영구삭제·이동·업로드 경로를 함께 변경하지 않는다.
+명시적인 `tenants/<다른 tenant>/` key는 거부한다. 학생 번호 변경은 metadata 소유 namespace만
+옮기며 원본 key/내용은 유지한다. 일반 삭제와 학생 영구삭제는 동일 outbox 경계를 공유한다.
 
 외부 DELETE는 바깥 commit 이후 기존 outbox processor가 수행한다. intent는
 tenant·bucket·exact key로 중복을 막고, 기존 scalar/매치업 JSON 참조를 모든 tenant에서
@@ -80,3 +80,32 @@ R2 업로드 성공, reload, 메타데이터 실패 exact-key 정리 회귀를 �
 응답, DB/intent 롤백, 연결 이미지 exact-key, global/shared/타tenant 보호, 실패 후 재시도와
 목록 재조회, 기존 학생 영구삭제 outbox 회귀를 함께 실행한다. 공급자 호출은 mock으로
 격리하며 SQLite 통과를 PostgreSQL 잠금 동시성이나 실제 R2/화면 검증으로 간주하지 않는다.
+
+## 학생 번호 재사용·업로드·이동 동시성
+
+학생 삭제 시 폴더·파일은 같은 학생의 삭제용 번호로 이동하고 복원 시 돌아온다.
+학생 번호를 바꿔도 원본 R2 key를 일괄 rename하지 않는다. 같은 번호의 새 학생에게
+기존 자료가 노출되지 않는다. 자세한 계정/복구 계약은
+[학생 생명주기](student-lifecycle.md)를 따른다.
+
+업로드·파일/폴더 이동은 원본 쓰기 전후에 소유자·폴더·namespace를 검증한다.
+모든 metadata mutation은 tenant와 scope별 같은 advisory lock을 사용한다. 일반
+삭제는 이 잠금을 metadata/outbox transaction 안에서 잡고, 바깥 commit의 cleanup
+결과를 읽은 뒤 응답한다. 성공 시 기존 `204`/폴더 `200`과 실제 cleaned 수를 유지하고,
+공급자 실패 시 `502 inventory_storage_cleanup_pending`과 목록 재조회/재시도 경로를 유지한다.
+
+이전 자료가 새 학생 생성보다 먼저 존재하는 legacy namespace는 학생/학부모 접근을
+`409 student_storage_namespace_conflict`로 중단하고 원본을 보존한다. 소유 확인 후
+복구해야 하며 새 학생의 것으로 자동 이관하지 않는다. 활성 학생이 없는 namespace에
+새 mutation을 시도하면 `409 student_storage_owner_missing`이다.
+
+원본 PUT/copy의 결과가 불명확하거나 metadata 저장이 실패하면 이번 요청의 exact
+임시 key만 보상한다. 공유 key는 보존하고 DELETE 실패·늦은 PUT 가능성은 durable
+intent로 남긴다. 불확실한 쓰기는 기존 cleanup processor가 최소 5분 후 다시 확인하며,
+새 owner attachment는 pending cleanup key를 재사용하지 않는다. prefix 열거·기존
+파일/사용자 작성 자료 삭제는 보상 범위에 포함하지 않는다.
+
+`tests/test_inventory_delete_durability.py`는 관리자·학생 namespace 모두에서 실제
+commit 이후 성공/공급자 실패/부분 정리/재시도/reload 응답을 확인한다.
+`apps/domains/inventory/tests/test_student_upload_lifecycle_concurrency_pg.py`는
+학생 삭제·번호 변경과 진행 중 업로드/이동/metadata 변경의 경계를 검증한다.

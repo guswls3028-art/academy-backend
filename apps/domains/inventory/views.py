@@ -954,7 +954,6 @@ class FolderDeleteView(View):
 
     @method_decorator(_tenant_required)
     @method_decorator(_jwt_required)
-    @method_decorator(_inventory_namespace_mutation)
     def delete(self, request, folder_id):
         tenant = request.tenant
         scope = (request.GET.get("scope") or "admin").lower()
@@ -1026,7 +1025,6 @@ class FileDeleteView(View):
 
     @method_decorator(_tenant_required)
     @method_decorator(_jwt_required)
-    @method_decorator(_inventory_namespace_mutation)
     def delete(self, request, file_id):
         tenant = request.tenant
         scope = (request.GET.get("scope") or "admin").lower()

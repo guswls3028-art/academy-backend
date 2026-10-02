@@ -316,3 +316,46 @@ class InventoryDeleteCommittedResponseTests(InventoryDeleteFixtures, Transaction
         self.assertEqual(payload["storage_cleanup"], {"pending": 0, "failed": 1, "cleaned": 1})
         self.assertEqual(self._listed_files(), [])
         self.assertFalse(InventoryFolder.objects.filter(pk=folder.id).exists())
+
+
+class StudentInventoryDeleteCommittedResponseTests(InventoryDeleteCommittedResponseTests):
+    def setUp(self):
+        super().setUp()
+        from apps.domains.students.tests.test_identity_lifecycle import _create_student
+
+        self.student = _create_student(self.tenant, "DELETE-OWNER", parent_phone="")
+
+    def _file(self, name="file.pdf", *, folder=None):
+        if folder:
+            folder.scope = "student"
+            folder.student_ps = self.student.ps_number
+            folder.save(update_fields=["scope", "student_ps"])
+        file = super()._file(name, folder=folder)
+        file.scope = "student"
+        file.student_ps = self.student.ps_number
+        file.r2_key = f"tenants/{self.tenant.id}/students/{self.student.ps_number}/inventory/{name}"
+        file.save(update_fields=["scope", "student_ps", "r2_key"])
+        return file
+
+    def _delete_file(self, file_id):
+        request = self.factory.delete(
+            f"/storage/inventory/files/{file_id}/?scope=student&student_ps={self.student.ps_number}",
+        )
+        request.tenant = self.tenant
+        return FileDeleteView.as_view()(request, file_id=file_id)
+
+    def _delete_folder(self, folder_id):
+        request = self.factory.delete(
+            f"/storage/inventory/folders/{folder_id}/?scope=student&student_ps={self.student.ps_number}&recursive=true",
+        )
+        request.tenant = self.tenant
+        return FolderDeleteView.as_view()(request, folder_id=folder_id)
+
+    def _listed_files(self):
+        request = self.factory.get(
+            f"/storage/inventory/?scope=student&student_ps={self.student.ps_number}",
+        )
+        request.tenant = self.tenant
+        response = InventoryListView.as_view()(request)
+        self.assertEqual(response.status_code, 200)
+        return json.loads(response.content)["files"]

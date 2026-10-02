@@ -12,10 +12,29 @@ from apps.support.results.student_reported_scores import (
     inventory_file_has_reported_score,
     inventory_files_have_any_reported_score,
 )
+from apps.support.inventory.student_dependencies import active_student_id_for_storage
+from apps.support.students.namespace_lock import lock_student_ps_namespaces
 
 
 class InventoryDeleteScopeError(ValueError):
     """The exact cascade or object namespace cannot be safely identified."""
+
+
+def _lock_delete_namespace(*, tenant, scope, student_ps):
+    from . import inventory_move_lock_token
+
+    lock_student_ps_namespaces(
+        tenant_id=tenant.id,
+        ps_numbers=(inventory_move_lock_token(scope=scope, student_ps=student_ps),),
+    )
+    if scope == "student" and active_student_id_for_storage(
+        tenant_id=tenant.id, ps_number=student_ps,
+    ) is None:
+        return {
+            "ok": False, "status": 409, "code": "student_storage_owner_missing",
+            "detail": "활성 학생 저장소를 확인할 수 없습니다.",
+        }
+    return None
 
 
 def _same_scope(row, *, tenant, scope, student_ps):
@@ -70,6 +89,9 @@ def _result(*, tenant, intent_ids, folders, files, matchup_docs):
 
 def delete_file(*, tenant, file_id, scope, student_ps):
     with transaction.atomic():
+        owner_error = _lock_delete_namespace(tenant=tenant, scope=scope, student_ps=student_ps)
+        if owner_error:
+            return owner_error
         file = InventoryFile.objects.select_for_update().filter(tenant=tenant, id=file_id).first()
         if file is None:
             return {"ok": False, "status": 404, "detail": "Not found"}
@@ -85,6 +107,9 @@ def delete_file(*, tenant, file_id, scope, student_ps):
 
 def delete_folder_recursive(*, tenant, folder, scope, student_ps, recursive=True):
     with transaction.atomic():
+        owner_error = _lock_delete_namespace(tenant=tenant, scope=scope, student_ps=student_ps)
+        if owner_error:
+            return owner_error
         root = InventoryFolder.objects.select_for_update().filter(tenant=tenant, id=folder.id).first()
         if root is None:
             return {"ok": False, "status": 404, "detail": "Not found"}

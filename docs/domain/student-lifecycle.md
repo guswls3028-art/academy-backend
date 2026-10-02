@@ -1,7 +1,7 @@
 # 학생 생명주기 SSOT
 
 **상태:** Active
-**최종 점검:** 2026-09-10
+**최종 점검:** 2026-10-02
 **코드 기준:** `apps/domains/students/services/lifecycle.py`, `apps/domains/enrollment/services/lifecycle.py`, `apps/domains/students/views/student_views.py`
 
 ## 1. 상태
@@ -30,6 +30,12 @@ HTTP와 운영 명령은 생명주기 서비스를 호출하는 compatibility fa
 SSOT: `soft_delete_student(student, tenant=...)`
 
 - `deleted_at`을 기록하고 `ps_number`를 `_del_{student.id}_{old}`로 보존한다.
+- 같은 학생의 Inventory 폴더·파일 `student_ps`도 삭제용 번호로 함께 옮긴다.
+  원본 R2 key/내용은 바꾸지 않는다. 원래 번호를 새 학생이 사용해도 이전 자료를
+  조회하거나 자기 자료로 가져갈 수 없으며, 복원하면 원래 학생의 metadata만 되돌린다.
+  기존 번호에 소유자를 확인할 수 없는 자료가 남아 있으면 신규 생성·복원은
+  `student_storage_namespace_conflict` 또는 아이디 필드 오류로 중단한다. 기존 행을
+  새 학생에게 자동 배정하거나 삭제하지 않는다.
 - `Parent` 직접 연결을 끊는다.
 - 순수 학생 계정이면 해당 테넌트의 `student` 멤버십을 비활성화하고, 남은 활성 멤버십이 없을 때만 `User.is_active=False`로 둔다.
 - 같은 사용자에게 다른 테넌트 멤버십이나 같은 테넌트의 staff/teacher/admin/owner/parent 역할이 남아 있으면 전역 계정을 잠그지 않는다.
@@ -48,7 +54,8 @@ SSOT: `soft_delete_student(student, tenant=...)`
 SSOT: `restore_student(student, tenant=..., profile_data=None, parent_initial_password=None)`
 
 - `_del_` 접두사에서 원래 `ps_number`를 복원한다.
-- 같은 테넌트 활성 학생과 아이디 충돌이 있으면 실패한다.
+- 같은 테넌트 활성 학생과 아이디 충돌이 있으면 실패한다. 이미 사용 중인 번호 오류를
+  먼저 반환하며, 학부모 계정 복구나 자료 이동은 수행하지 않는다.
 - `User.is_active`, 학생 전화번호, 테넌트 멤버십, Parent 연결을 복원한다.
 - `status_before_student_deletion`이 있는 enrollment만 삭제 전 상태로 복원하고 marker를
   비운다. 원래 `INACTIVE`였던 수강은 계속 `INACTIVE`, 원래 `PENDING`은 계속
@@ -118,6 +125,11 @@ SSOT: `permanently_delete_students(tenant=..., student_ids=[...])`
     submission 참조만 `NULL`로 바꾼다.
   - `WrongNotePDF.file_path`도 같은 durable intent에 Storage 버킷 대상으로 기록한다.
     제출 object는 AI 버킷 대상이므로 같은 문자열 key여도 버킷을 혼동하지 않는다.
+- 해당 삭제용 학생 번호에 연결된 Inventory 폴더·파일. 학생 번호를 재사용한
+  활성 학생의 자료와 연결을 추측하지 않는다. Storage 원본은 정확한 file ID와
+  canonical tenant key에 대한 durable cleanup intent를 먼저 기록하고 삭제한다.
+  다른 owner가 살아 있는 공유 key는 보존하며, 유효한 intent가 없는 자료를
+  raw cascade로 제거하지 않는다.
 - 삭제 대상 테넌트의 student 멤버십과 pending password reset
 - 다른 활성 멤버십·Parent·Staff·staff-role 멤버십이 없는 orphan `User`
 
@@ -185,3 +197,23 @@ python manage.py purge_deleted_students
   - `Student`/`Enrollment`/`Submission` reverse FK graph 및 storage owner registry drift
   - corrupt cross-tenant child reference 차단
   - purge/duplicate cleanup command routing
+
+## 5. 학생 자료 소유권과 동시성
+
+학생 생성·아이디 변경·삭제·복원·영구삭제와 Inventory 업로드·이동·삭제는 같은
+tenant/학생 번호의 transaction advisory lock을 사용한다. 여러 번호는 정렬해 잠근다.
+PostgreSQL에서 생성 경로는 Tenant/User FK-compatible reference gate를 먼저 잡아
+학부모·사용자 생성과 학생 번호 변경 사이의 잠금 순서를 유지한다. 최신 초기
+비밀번호 명시선택과 암호화된 첫 계정 안내 정책은 [학생 생성](student-creation.md)을 따른다.
+
+업로드·이동은 원본 쓰기 후 소유자/폴더/namespace가 여전히 같은지 잠금 아래 다시
+검증한다. 변경됐으면 새 metadata를 만들지 않고 이번 요청의 임시 key만 보상 정리한다.
+삭제용 번호와 이전에 남은 자료의 소유권을 추측해 일괄 이관하는 migration은 없다.
+기존 자료의 소유자 확인 후 명시적으로 복구하며 원본을 보존한다.
+
+회귀: `apps/domains/students/tests/test_inventory_namespace_ownership.py`는 삭제 →
+번호 재사용 → 새 학생 번호 변경 → 기존 학생 복구와 타 tenant 자료 보존을 검사한다.
+`test_identity_lifecycle.py`, `test_bulk_permanent_delete_tenant_isolation.py`,
+`test_lifecycle_tenant_gate_concurrency_pg.py` 및 Inventory의
+`test_student_upload_lifecycle_concurrency_pg.py`를 함께 사용한다. SQLite 통과는
+PostgreSQL 잠금 동시성 또는 운영 반영 증거를 대신하지 않는다.
