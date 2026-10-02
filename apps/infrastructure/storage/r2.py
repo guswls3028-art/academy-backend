@@ -394,17 +394,24 @@ def upload_fileobj_to_r2_admin(
     fileobj,
     key: str,
     content_type: str | None = None,
+    content_disposition: str | None = None,
 ) -> None:
     """Django UploadedFile -> R2 Admin 버킷 업로드 (테넌트 로고 등)."""
     s3 = _get_s3_client()
+    extra_args = {"ContentType": content_type or "application/octet-stream"}
+    if content_disposition is not None:
+        extra_args["ContentDisposition"] = content_disposition
     s3.upload_fileobj(
         Fileobj=fileobj,
         Bucket=_admin_bucket(),
         Key=key,
-        ExtraArgs={
-            "ContentType": content_type or "application/octet-stream"
-        },
+        ExtraArgs=extra_args,
     )
+
+
+def delete_object_r2_admin(*, key: str) -> None:
+    """Delete one exact private admin object key; callers own authorization."""
+    _get_s3_client().delete_object(Bucket=_admin_bucket(), Key=key)
 
 
 def get_admin_object_bytes(
