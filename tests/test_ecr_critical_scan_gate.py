@@ -4,7 +4,7 @@ import hashlib
 import importlib.util
 import json
 import sys
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -772,11 +772,59 @@ def test_base_source_builds_use_native_arm64_without_relaxing_deadline() -> None
             assert "Verify fixed package versions and runtime ABI" in section
 
 
-def test_missing_scan_result_is_started_then_polled(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.fixture
+def scan_clock(monkeypatch: pytest.MonkeyPatch) -> list[datetime]:
+    clock = [datetime(2026, 10, 2, 1, 0, 0, 500000, tzinfo=timezone.utc)]
+
+    class ScanClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock[0].astimezone(tz) if tz is not None else clock[0].replace(tzinfo=None)
+
+    monkeypatch.setattr(gate, "datetime", ScanClock)
+    return clock
+
+
+def _completed_scan(completed_at: datetime, *findings: dict) -> dict:
+    scan = _scan(*findings)
+    scan["imageScanStatus"] = {"status": "COMPLETE"}
+    scan["imageScanFindings"]["imageScanCompletedAt"] = completed_at.isoformat()
+    return scan
+
+
+def test_stale_complete_scan_is_refreshed_before_risk_evaluation(
+    monkeypatch: pytest.MonkeyPatch, scan_clock: list[datetime],
+) -> None:
+    now = scan_clock[0]
+    stale = _completed_scan(now - timedelta(days=2))
+    refreshed = _completed_scan(now, _finding("CVE-2099-9999", "demo", "1", "HIGH"))
+    descriptions = iter([stale, stale, refreshed])
+    starts: list[list[str]] = []
+    monkeypatch.setattr(gate, "_describe_scan", lambda *_args: next(descriptions))
+    monkeypatch.setattr(
+        gate, "_run_aws_json", lambda arguments, **_kwargs: starts.append(arguments) or {}
+    )
+
+    completed = gate.wait_for_completed_scan(
+        "academy-base", "sha256:" + "c" * 64, "ap-northeast-2", 2, 0
+    )
+
+    assert completed is refreshed
+    assert len(starts) == 1 and starts[0][:2] == ["ecr", "start-image-scan"]
+    with pytest.raises(gate.GateError, match="High"):
+        gate.evaluate_high_budget(
+            "academy-base", completed, {"academy-base": 0}, set()
+        )
+
+
+def test_missing_scan_result_is_started_then_polled(
+    monkeypatch: pytest.MonkeyPatch, scan_clock: list[datetime],
+) -> None:
     descriptions = iter(
         [
             {"imageScanStatus": None, "imageScanFindings": None},
-            {"imageScanStatus": {"status": "COMPLETE"}, "imageScanFindings": {}},
+            {"imageScanStatus": {"status": "IN_PROGRESS"}},
+            _completed_scan(scan_clock[0]),
         ]
     )
     starts: list[list[str]] = []
@@ -796,12 +844,12 @@ def test_missing_scan_result_is_started_then_polled(monkeypatch: pytest.MonkeyPa
 
 
 def test_scan_start_quota_still_requires_completed_readback(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, scan_clock: list[datetime],
 ) -> None:
     descriptions = iter(
         [
             {"imageScanStatus": None, "imageScanFindings": None},
-            {"imageScanStatus": {"status": "COMPLETE"}, "imageScanFindings": {}},
+            _completed_scan(scan_clock[0] - timedelta(hours=1)),
         ]
     )
     monkeypatch.setattr(gate, "_describe_scan", lambda *_args: next(descriptions))
@@ -816,6 +864,103 @@ def test_scan_start_quota_still_requires_completed_readback(
     )
 
     assert completed["imageScanStatus"]["status"] == "COMPLETE"
+
+
+@pytest.mark.parametrize("age", [timedelta(0), timedelta(hours=24) - timedelta(seconds=1), timedelta(hours=24)])
+def test_scan_age_boundary_preserves_cached_or_refreshed_zero_high_success(
+    monkeypatch: pytest.MonkeyPatch, scan_clock: list[datetime], age: timedelta,
+) -> None:
+    cached = _completed_scan(scan_clock[0] - age)
+    refreshed = _completed_scan(scan_clock[0])
+    descriptions = iter([cached, refreshed if age == timedelta(hours=24) else cached])
+    starts: list[list[str]] = []
+    monkeypatch.setattr(gate, "_describe_scan", lambda *_: next(descriptions))
+    monkeypatch.setattr(gate, "_run_aws_json", lambda args, **_: starts.append(args) or {})
+
+    completed = gate.wait_for_completed_scan("academy-base", "sha256:" + "c" * 64, "ap-northeast-2", 1, 0)
+
+    assert completed is (refreshed if age == timedelta(hours=24) else cached)
+    assert len(starts) == (1 if age == timedelta(hours=24) else 0)
+    assert gate.evaluate_high_budget("academy-base", completed, {"academy-base": 0}, set()) == 0
+
+
+@pytest.mark.parametrize("raw", [None, "not-a-date", "2026-10-02T00:00:00", "2026-10-02T01:00:01Z", 1790900000])
+@pytest.mark.parametrize("initially_complete", [True, False])
+def test_invalid_complete_timestamp_fails_closed_before_risk_evaluation(
+    monkeypatch: pytest.MonkeyPatch, scan_clock: list[datetime], raw, initially_complete: bool,
+) -> None:
+    invalid = _completed_scan(scan_clock[0])
+    invalid["imageScanFindings"]["imageScanCompletedAt"] = raw
+    descriptions = iter([invalid if initially_complete else {}, invalid])
+    starts: list[list[str]] = []
+    monkeypatch.setattr(gate, "_describe_scan", lambda *_: next(descriptions))
+    monkeypatch.setattr(gate, "_run_aws_json", lambda args, **_: starts.append(args) or {})
+
+    with pytest.raises(gate.GateError, match="imageScanCompletedAt"):
+        gate.wait_for_completed_scan("academy-base", "sha256:" + "c" * 64, "ap-northeast-2", 1, 0)
+    assert len(starts) == (0 if initially_complete else 1)
+
+
+def test_scan_completion_before_successful_start_is_not_a_new_scan(
+    monkeypatch: pytest.MonkeyPatch, scan_clock: list[datetime],
+) -> None:
+    previous = _completed_scan(scan_clock[0] - timedelta(seconds=1))
+    refreshed = _completed_scan(scan_clock[0])
+    descriptions = iter([{}, previous, refreshed])
+    monkeypatch.setattr(gate, "_describe_scan", lambda *_: next(descriptions))
+    monkeypatch.setattr(gate, "_run_aws_json", lambda *_args, **_kwargs: {})
+
+    assert gate.wait_for_completed_scan("academy-base", "sha256:" + "c" * 64, "ap-northeast-2", 2, 0) is refreshed
+
+
+@pytest.mark.parametrize("quota", [False, True])
+def test_stale_green_poll_never_passes_even_when_scan_start_quota_is_used(
+    monkeypatch: pytest.MonkeyPatch, scan_clock: list[datetime], quota: bool,
+) -> None:
+    stale = _completed_scan(scan_clock[0] - timedelta(days=2))
+    starts: list[list[str]] = []
+    monkeypatch.setattr(gate, "_describe_scan", lambda *_: stale)
+
+    def start(args, **_kwargs):
+        starts.append(args)
+        if quota:
+            raise gate.GateError("AWS ECR command failed: LimitExceededException")
+        return {}
+
+    monkeypatch.setattr(gate, "_run_aws_json", start)
+    with pytest.raises(gate.GateError, match="fresh result"):
+        gate.wait_for_completed_scan("academy-base", "sha256:" + "c" * 64, "ap-northeast-2", 2, 0)
+    assert len(starts) == 1
+
+
+def test_scan_age_is_rechecked_after_poll_crosses_expiry(
+    monkeypatch: pytest.MonkeyPatch, scan_clock: list[datetime],
+) -> None:
+    cached = _completed_scan(scan_clock[0] - timedelta(hours=24) + timedelta(seconds=1))
+    calls = 0
+
+    def describe(*_args):
+        nonlocal calls
+        if calls:
+            scan_clock[0] += timedelta(seconds=2)
+        calls += 1
+        return cached
+
+    monkeypatch.setattr(gate, "_describe_scan", describe)
+    monkeypatch.setattr(gate, "_run_aws_json", lambda *_args, **_kwargs: pytest.fail("fresh cached result must not start a scan"))
+    with pytest.raises(gate.GateError, match="fresh result"):
+        gate.wait_for_completed_scan("academy-base", "sha256:" + "c" * 64, "ap-northeast-2", 2, 0)
+
+
+def test_existing_in_progress_scan_does_not_need_completion_timestamp_until_complete(
+    monkeypatch: pytest.MonkeyPatch, scan_clock: list[datetime],
+) -> None:
+    refreshed = _completed_scan(scan_clock[0])
+    descriptions = iter([{"imageScanStatus": {"status": "IN_PROGRESS"}}, {"imageScanStatus": {"status": "IN_PROGRESS"}}, refreshed])
+    monkeypatch.setattr(gate, "_describe_scan", lambda *_: next(descriptions))
+    monkeypatch.setattr(gate, "_run_aws_json", lambda *_args, **_kwargs: pytest.fail("existing running scan must not be started again"))
+
+    assert gate.wait_for_completed_scan("academy-base", "sha256:" + "c" * 64, "ap-northeast-2", 2, 0) is refreshed
 
 
 def _invoke_candidate_gate(tmp_path, monkeypatch, images):

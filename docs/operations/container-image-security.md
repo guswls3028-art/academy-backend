@@ -217,10 +217,16 @@ normal·`XML_MIN_SIZE`의 수정 전 실패 재현과 수정 후 upstream·UTF-1
 
 1. 후보 manifest의 여섯 digest 모두(`source=built`와 `source=prior-success`)에
    같은 완료 scan/현재 정책 판정을 적용한다. 알 수 없는 source는 실패한다.
-   각 digest의 scan 결과가 없으면 CI가
+   각 digest의 scan 결과가 없거나 완료 시각이 24시간 이상 지난 경우 CI가
    repository-scoped `ecr:StartImageScan` 권한으로 scan을 호출한다. 재사용
    digest라는 이유로 scan을 건너뛰지 않는다. ECR이 동일 digest scan quota가
-   이미 소비됐다고 응답해도 기존 scan의 `COMPLETE` readback은 끝까지 요구한다.
+   이미 소비됐다고 응답해도 24시간 미만의 `COMPLETE` readback을 요구한다.
+   `imageScanCompletedAt`은 timezone을 포함한 시각이어야 하며 누락·잘못된 형식·
+   미래 시각은 실패 폐쇄한다. poll마다 UTC 현재 시각으로 유효 시간을 다시
+   검사한다. 재scan 시작이 성공했으면 요청 UTC 초보다 이른 완료 결과를 새
+   결과로 인정하지 않는다. 새 완료 결과가 기한 안에 확인되지 않으면 과거의
+   High 0 결과로 대체하지 않는다. AWS의 [기본 scan 제한](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_StartImageScan.html)은
+   이미지별 24시간에 한 번이며 이 제한을 통과 조건 완화로 사용하지 않는다.
 2. scan이 `COMPLETE`가 아니거나 Critical/High finding identity(CVE, package,
    version)가 불완전하면 실패 폐쇄한다. ECR severity count와 중복 제거한 exact
    identity 수가 다를 때도 결과를 신뢰하지 않는다.
