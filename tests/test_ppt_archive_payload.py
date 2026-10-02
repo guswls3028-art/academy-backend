@@ -213,7 +213,7 @@ def test_ppt_worker_accepts_single_image_archive(monkeypatch, tmp_path):
             captured["total_count"] = total_count
             if on_progress:
                 on_progress(100, "PPT 생성 중")
-            return SimpleNamespace(pptx_bytes=b"PK fake pptx", slide_count=len(captured["images"]))
+            return SimpleNamespace(pptx_bytes=b"PK fake pptx", slide_count=len(captured["images"]), narrow_slide_numbers=[1])
 
     def fake_upload_fileobj_to_r2_storage(*, fileobj, key: str, content_type: str):
         captured["upload"] = (key, content_type, fileobj.read())
@@ -260,6 +260,7 @@ def test_ppt_worker_accepts_single_image_archive(monkeypatch, tmp_path):
     assert captured["total_count"] == 2
     assert captured["upload"][1] == "application/vnd.openxmlformats-officedocument.presentationml.presentation"
     assert result.result["slide_count"] == 2
+    assert result.result["readability_warning"] == {"narrow_slide_count": 1, "slide_numbers": [1]}
     assert result.result["r2_key"] == captured["upload"][0]
 
 
@@ -278,7 +279,7 @@ def test_ppt_worker_removes_output_when_download_link_fails(monkeypatch, tmp_pat
 
     class FakeGeneratePptFromPdfUseCase:
         def execute(self, *_args, **_kwargs):
-            return SimpleNamespace(pptx_bytes=b"PK fake pptx", slide_count=1, mode="page")
+            return SimpleNamespace(pptx_bytes=b"PK fake pptx", slide_count=1, mode="page", narrow_slide_numbers=[])
 
     monkeypatch.setattr(
         "academy.application.use_cases.tools.generate_ppt.GeneratePptFromPdfUseCase",

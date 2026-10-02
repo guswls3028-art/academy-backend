@@ -37,6 +37,7 @@ class PptComposer:
         )
         self._prs = create_presentation(dims[0], dims[1])
         self._slide_count = 0
+        self._narrow_slide_numbers: List[int] = []
 
     def add_slide(self, image_bytes: bytes) -> None:
         """Add a single slide with the given image.
@@ -46,17 +47,23 @@ class PptComposer:
         """
         from academy.adapters.tools.pptx_writer import add_slide
 
-        add_slide(
+        display_width_ratio = add_slide(
             self._prs,
             image_bytes,
             background_color=self._config.background,
             fit_mode=self._config.fit_mode,
         )
         self._slide_count += 1
+        if self._config.fit_mode == "contain" and display_width_ratio < 0.375:
+            self._narrow_slide_numbers.append(self._slide_count)
 
     @property
     def slide_count(self) -> int:
         return self._slide_count
+
+    @property
+    def narrow_slide_numbers(self) -> List[int]:
+        return list(self._narrow_slide_numbers)
 
     def finalize(self) -> bytes:
         """Finalize and return PPTX file bytes.
