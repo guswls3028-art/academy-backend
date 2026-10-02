@@ -39,6 +39,9 @@ from apps.support.students.view_dependencies import (
     protect_excel_initial_password,
     send_event_notification,
 )
+from apps.support.students.namespace_lock import (
+    lock_student_creation_tenant_reference,
+)
 
 from academy.adapters.db.django import repositories_students as student_repo
 from ..models import Student
@@ -293,6 +296,7 @@ class StudentViewSet(ModelViewSet):
     # ------------------------------
     @transaction.atomic
     def perform_update(self, serializer):
+        lock_student_creation_tenant_reference(tenant_id=self.request.tenant.id)
         student_before = serializer.instance
         old_phone = student_before.phone or ""
         old_parent_phone = student_before.parent_phone or ""
@@ -913,6 +917,7 @@ class StudentViewSet(ModelViewSet):
                 )
 
         with transaction.atomic():
+            lock_student_creation_tenant_reference(tenant_id=tenant.id)
             # 아이디 변경
             new_username = (data.get("username") or "").strip()
             if new_username and new_username != user_display_username(user):
