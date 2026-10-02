@@ -20,7 +20,10 @@ from apps.support.inventory.storage_cleanup_dependencies import (
 )
 from apps.support.inventory.student_dependencies import active_student_id_for_storage
 from apps.support.results.student_reported_scores import inventory_files_have_any_reported_score
-from apps.support.students.namespace_lock import lock_student_ps_namespaces
+from apps.support.students.namespace_lock import (
+    lock_student_creation_tenant_reference,
+    lock_student_ps_namespaces,
+)
 
 try:
     from apps.infrastructure.storage.r2 import (
@@ -288,6 +291,7 @@ def move_file(
 
     try:
         with transaction.atomic():
+            lock_student_creation_tenant_reference(tenant_id=tenant.id)
             lock_student_ps_namespaces(
                 tenant_id=tenant.id,
                 ps_numbers=(
@@ -584,6 +588,7 @@ def move_folder(
 
     try:
         with transaction.atomic():
+            lock_student_creation_tenant_reference(tenant_id=tenant.id)
             lock_student_ps_namespaces(
                 tenant_id=tenant.id,
                 ps_numbers=(

@@ -13,7 +13,10 @@ from apps.support.results.student_reported_scores import (
     inventory_files_have_any_reported_score,
 )
 from apps.support.inventory.student_dependencies import active_student_id_for_storage
-from apps.support.students.namespace_lock import lock_student_ps_namespaces
+from apps.support.students.namespace_lock import (
+    lock_student_creation_tenant_reference,
+    lock_student_ps_namespaces,
+)
 
 
 class InventoryDeleteScopeError(ValueError):
@@ -23,6 +26,7 @@ class InventoryDeleteScopeError(ValueError):
 def _lock_delete_namespace(*, tenant, scope, student_ps):
     from . import inventory_move_lock_token
 
+    lock_student_creation_tenant_reference(tenant_id=tenant.id)
     lock_student_ps_namespaces(
         tenant_id=tenant.id,
         ps_numbers=(inventory_move_lock_token(scope=scope, student_ps=student_ps),),

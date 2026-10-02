@@ -22,7 +22,10 @@ from apps.support.inventory.student_dependencies import (
     active_student_id_for_storage,
     student_storage_namespace_has_legacy_conflict,
 )
-from apps.support.students.namespace_lock import lock_student_ps_namespaces
+from apps.support.students.namespace_lock import (
+    lock_student_creation_tenant_reference,
+    lock_student_ps_namespaces,
+)
 from .r2_path import build_r2_key, safe_filename, folder_path_string
 from academy.adapters.db.django import repositories_inventory as inv_repo
 from .services import (
@@ -110,6 +113,7 @@ def _inventory_namespace_mutation(view_func):
         if scope == "student" and not student_ps:
             return view_func(request, *args, **kwargs)
         with transaction.atomic():
+            lock_student_creation_tenant_reference(tenant_id=request.tenant.id)
             lock_student_ps_namespaces(
                 tenant_id=request.tenant.id,
                 ps_numbers=(
@@ -311,6 +315,7 @@ def _attach_inventory_upload(
     validated_scores,
 ):
     with transaction.atomic():
+        lock_student_creation_tenant_reference(tenant_id=tenant.id)
         lock_student_ps_namespaces(
             tenant_id=tenant.id,
             ps_numbers=(
@@ -670,6 +675,7 @@ class FolderCreateView(View):
 
         try:
             with transaction.atomic():
+                lock_student_creation_tenant_reference(tenant_id=tenant.id)
                 lock_student_ps_namespaces(
                     tenant_id=tenant.id,
                     ps_numbers=(

@@ -89,7 +89,9 @@ R2 업로드 성공, reload, 메타데이터 실패 exact-key 정리 회귀를 �
 [학생 생명주기](student-lifecycle.md)를 따른다.
 
 업로드·파일/폴더 이동은 원본 쓰기 전후에 소유자·폴더·namespace를 검증한다.
-모든 metadata mutation은 tenant와 scope별 같은 advisory lock을 사용한다. 일반
+모든 metadata mutation은 tenant FK gate를 먼저 확보한 뒤 tenant와 scope별 같은
+advisory lock을 사용한다. 학생 번호를 재사용한 현재 학생의 성적표 업로드와 이전
+삭제 학생의 영구삭제도 이 순서를 공유하여 tenant/namespace 잠금 역전을 막는다. 일반
 삭제는 이 잠금을 metadata/outbox transaction 안에서 잡고, 바깥 commit의 cleanup
 결과를 읽은 뒤 응답한다. 성공 시 기존 `204`/폴더 `200`과 실제 cleaned 수를 유지하고,
 공급자 실패 시 `502 inventory_storage_cleanup_pending`과 목록 재조회/재시도 경로를 유지한다.
@@ -99,6 +101,8 @@ R2 업로드 성공, reload, 메타데이터 실패 exact-key 정리 회귀를 �
 기존 원본 객체가 낡았으면 새 성적 행을 만들지 않고 재조회 후 제출을 요구한다.
 제출이 먼저 시작되면 동시 이동/덮어쓰기는 commit까지 기다린 뒤 `409`로 원본과
 성적 감사 연결을 보존한다. PostgreSQL의 deferred FK 검사만으로 이 순서를 대신하지 않는다.
+실제 업로드 API와 이전 학생 영구삭제를 양쪽 순서로 실행하는 PostgreSQL 회귀에서
+업로드 성공, 이전 학생 삭제, 현재 학생과 저장된 점수·원본 보존을 함께 확인한다.
 
 이전 자료가 새 학생 생성보다 먼저 존재하는 legacy namespace는 학생/학부모 접근을
 `409 student_storage_namespace_conflict`로 중단하고 원본을 보존한다. 소유 확인 후

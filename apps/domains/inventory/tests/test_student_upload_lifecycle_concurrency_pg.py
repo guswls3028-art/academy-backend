@@ -662,3 +662,157 @@ class TestStudentUploadLifecycleConcurrencyPostgres(TransactionTestCase):
             storage_objects,
             {source_file.r2_key, existing_file.r2_key},
         )
+
+    def _assert_score_upload_and_predecessor_delete(self, *, upload_first):
+        from django.utils import timezone
+        from apps.domains.inventory import views as inventory_views
+        from apps.domains.students.services import lifecycle as student_lifecycle
+
+        predecessor_user = User.objects.create_user(
+            username="inventory-upload-race-predecessor",
+            password="test1234",
+            tenant=self.tenant,
+        )
+        predecessor = Student.objects.create(
+            tenant=self.tenant,
+            user=predecessor_user,
+            name="Deleted predecessor",
+            ps_number="DELETED-PREDECESSOR",
+            deleted_at=timezone.now(),
+            omr_code="93000002",
+        )
+        Student.objects.filter(pk=predecessor.pk).update(
+            ps_number=f"_del_{predecessor.pk}_{self.student.ps_number}",
+        )
+        upload_namespace = threading.Event()
+        release_upload = threading.Event()
+        delete_tenant = threading.Event()
+        release_delete = threading.Event()
+        errors = []
+        responses = []
+        deleted_counts = []
+        storage_objects = set()
+        namespace_lock = inventory_views.lock_student_ps_namespaces
+        tenant_for_update = student_lifecycle.Tenant.objects.select_for_update
+
+        def observe_namespace(**kwargs):
+            result = namespace_lock(**kwargs)
+            if threading.current_thread().name == "current-score-upload":
+                upload_namespace.set()
+                if upload_first and not release_upload.wait(timeout=10):
+                    raise TimeoutError("upload namespace release timed out")
+            return result
+
+        def observe_tenant(*args, **kwargs):
+            query = tenant_for_update(*args, **kwargs)
+            original_get = query.get
+
+            def observed_get(*get_args, **get_kwargs):
+                result = original_get(*get_args, **get_kwargs)
+                if threading.current_thread().name == "old-predecessor-delete":
+                    delete_tenant.set()
+                    if not upload_first and not release_delete.wait(timeout=10):
+                        raise TimeoutError("delete tenant release timed out")
+                return result
+
+            query.get = observed_get
+            return query
+
+        def upload_worker():
+            close_old_connections()
+            try:
+                request = self.factory.post(
+                    "/storage/inventory/upload/",
+                    data={
+                        "scope": "student",
+                        "student_ps": self.student.ps_number,
+                        "score_submission": "true",
+                        "score_source": "school_exam",
+                        "academic_year": "2026",
+                        "semester": "1",
+                        "exam_round": "first",
+                        "exam_date": "2026-10-02",
+                        "subject": "math",
+                        "score": "88",
+                        "max_score": "100",
+                        "file": SimpleUploadedFile(
+                            "score.jpg", b"\xff\xd8\xff\xe0score-image",
+                            content_type="image/jpeg",
+                        ),
+                    },
+                    format="multipart",
+                )
+                request.tenant = self.tenant
+                responses.append(FileUploadView.as_view()(request))
+            except BaseException as exc:
+                errors.append(exc)
+            finally:
+                close_old_connections()
+
+        def delete_worker():
+            close_old_connections()
+            try:
+                deleted_counts.append(permanently_delete_students(
+                    tenant=self.tenant,
+                    student_ids=[predecessor.pk],
+                ).deleted_count)
+            except BaseException as exc:
+                errors.append(exc)
+            finally:
+                close_old_connections()
+
+        def fake_upload(*, key, **kwargs):
+            storage_objects.add(key)
+
+        upload_thread = threading.Thread(target=upload_worker, name="current-score-upload")
+        delete_thread = threading.Thread(target=delete_worker, name="old-predecessor-delete")
+        with patch.object(inventory_views, "lock_student_ps_namespaces", side_effect=observe_namespace), patch.object(
+            student_lifecycle.Tenant.objects, "select_for_update", side_effect=observe_tenant,
+        ), patch(
+            "apps.domains.inventory.views.JWTAuthentication.authenticate",
+            return_value=(self.student_user, None),
+        ), patch(
+            "apps.domains.inventory.views.upload_fileobj_to_r2_storage", side_effect=fake_upload,
+        ), patch(
+            "apps.infrastructure.storage.r2.delete_object_r2_storage",
+            side_effect=lambda *, key: storage_objects.discard(key),
+        ):
+            try:
+                if upload_first:
+                    upload_thread.start()
+                    self.assertTrue(upload_namespace.wait(timeout=5))
+                    delete_thread.start()
+                    self.assertFalse(delete_tenant.wait(timeout=1),
+                                     "Delete crossed the uploading tenant gate.")
+                else:
+                    delete_thread.start()
+                    self.assertTrue(delete_tenant.wait(timeout=5))
+                    upload_thread.start()
+                    self.assertFalse(upload_namespace.wait(timeout=1),
+                                     "Upload took namespace before the deleting tenant gate.")
+            finally:
+                release_upload.set()
+                release_delete.set()
+                for thread in (upload_thread, delete_thread):
+                    if thread.ident is not None:
+                        thread.join(timeout=15)
+
+        self.assertFalse(upload_thread.is_alive())
+        self.assertFalse(delete_thread.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(deleted_counts, [1])
+        self.assertEqual(len(responses), 1)
+        self.assertEqual(responses[0].status_code, 200, responses[0].content)
+        self.assertFalse(Student.objects.filter(pk=predecessor.pk).exists())
+        self.assertTrue(Student.objects.filter(pk=self.student.pk).exists())
+        score = StudentReportedScore.objects.get(student_id=self.student.pk)
+        score.refresh_from_db()
+        self.assertEqual(score.evidence_file.student_ps, self.student.ps_number)
+        self.assertEqual(score.score, 88)
+        self.assertEqual(storage_objects, {score.evidence_file.r2_key})
+
+    def test_score_upload_first_blocks_predecessor_delete_tenant_without_deadlock(self):
+        self._assert_score_upload_and_predecessor_delete(upload_first=True)
+
+    def test_predecessor_delete_first_blocks_score_upload_namespace_without_deadlock(self):
+        self._assert_score_upload_and_predecessor_delete(upload_first=False)
