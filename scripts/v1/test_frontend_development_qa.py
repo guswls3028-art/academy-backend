@@ -879,6 +879,21 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
             namespace["run"]()
         command._synthetic_long_video_state.assert_not_called()
 
+    def test_account_failure_reports_only_fixed_recovery_codes_without_exception_body(self):
+        document = json.loads((ROOT / "scripts/v1/templates/ssm/frontend_development_qa.json").read_text())
+        shell = shlex.split(document["properties"]["linux"]["commands"], posix=True)[2]
+        source = shell.split("<<'ACADEMY_QA_PY'\n", 1)[1].rsplit("ACADEMY_QA_PY", 1)[0]
+        functions = [node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)
+                     and node.name in {"empty_residue", "failure_payload"}]
+        namespace = {}
+        exec(compile(ast.Module(body=functions, type_ignores=[]), "account-failure", "exec"), namespace)
+        for message, expected in [("credential-unrecoverable", "credential-unrecoverable"),
+                                  ("parent-hash-changed", "parent-hash-changed"),
+                                  ("private-password private-token", "probe-failed")]:
+            payload = namespace["failure_payload"](RuntimeError(message), {"stage": "account_probe"})
+            self.assertEqual(payload["account_probe_failure"], expected)
+            self.assertNotIn("private-", json.dumps(payload))
+
     def test_fixed_video_state_contract_is_numeric_and_contains_no_identity_fields(self):
         session = json.loads(
             (ROOT / "scripts/v1/templates/ssm/frontend_development_qa.json").read_text()
@@ -1370,7 +1385,7 @@ class DevelopmentParameterBoundaryTests(unittest.TestCase):
                          "187f6ac218435d3b3f938d903153c5785db3529ace89f4e79ea9b6e1bde8ddb6")
         for path, expected in (
             ("iam/trust_frontend_development_qa.json", "aa2c1a60b63ad287c2e8caba7257beaafe5d602df66659c3093f917ad670713a"),
-            ("ssm/frontend_development_qa.json", "67446cc610e64d33189287e6322e73c3464563c13b691d40a7e57ab2059028d4"),
+            ("ssm/frontend_development_qa.json", "7b31c01380611d7fac46e94001641eb3bff48e0135f64a0bdd9d31b46392d8fc"),
             ("ssm/frontend_development_api_port.json", "373e62348d13b81b5c83b7a1fb78b674902d86c11402793b6facdf0a56f1f516"),
         ):
             with self.subTest(path=path):
