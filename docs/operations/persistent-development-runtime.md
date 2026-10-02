@@ -535,5 +535,6 @@ resource 경계를 유지하고 자기 scope의 snapshot 잔여도 지운 뒤 �
 번호 없는 학생 오류 복구, 신청 선택 유지·승인을 검증한다. 랜덤 내부 인증은
 브라우저에 랜덤 원문을 직접 입력한 증거와 구분한다. probe 실패/없음/schema 불일치와
 skip은 release 실패다. 운영13건의 기존 허용 조건과 실발송 제한은 변경하지 않는다.
-오프라인 필수 계약은 `python -B -m unittest scripts.v1.test_frontend_development_qa
-scripts.v1.test_probe_account_registration_development -v`로 확인한다.
+기존 공식 CI entry인 `python -B -m unittest scripts.v1.test_frontend_development_qa -v`가
+고정 SSM 계약과 별도 probe 안전성 테스트를 함께 실행한다. probe 단독 확인은
+`python -B -m unittest scripts.v1.test_probe_account_registration_development -v`를 사용한다.

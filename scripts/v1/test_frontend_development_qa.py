@@ -18,6 +18,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, MagicMock, patch
 
+# The existing official SSM CI entry also runs the candidate credential safety suite.
+from scripts.v1.test_probe_account_registration_development import AccountProbeTests as CandidateAccountProbeTests
+
 
 ROOT = Path(__file__).resolve().parents[2]
 BOUNDARY = ROOT / "scripts/v1/templates/iam/policy_api_development_parameter_boundary.json"
