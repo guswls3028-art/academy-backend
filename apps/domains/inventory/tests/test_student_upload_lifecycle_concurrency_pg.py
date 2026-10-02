@@ -666,7 +666,6 @@ class TestStudentUploadLifecycleConcurrencyPostgres(TransactionTestCase):
     def _assert_score_upload_and_predecessor_delete(self, *, upload_first):
         from django.utils import timezone
         from apps.domains.inventory import views as inventory_views
-        from apps.domains.students.services import lifecycle as student_lifecycle
 
         predecessor_user = User.objects.create_user(
             username="inventory-upload-race-predecessor",
@@ -693,7 +692,7 @@ class TestStudentUploadLifecycleConcurrencyPostgres(TransactionTestCase):
         deleted_counts = []
         storage_objects = set()
         namespace_lock = inventory_views.lock_student_ps_namespaces
-        tenant_for_update = student_lifecycle.Tenant.objects.select_for_update
+        tenant_for_update = Tenant.objects.select_for_update
 
         def observe_namespace(**kwargs):
             result = namespace_lock(**kwargs)
@@ -767,7 +766,7 @@ class TestStudentUploadLifecycleConcurrencyPostgres(TransactionTestCase):
         upload_thread = threading.Thread(target=upload_worker, name="current-score-upload")
         delete_thread = threading.Thread(target=delete_worker, name="old-predecessor-delete")
         with patch.object(inventory_views, "lock_student_ps_namespaces", side_effect=observe_namespace), patch.object(
-            student_lifecycle.Tenant.objects, "select_for_update", side_effect=observe_tenant,
+            Tenant.objects, "select_for_update", side_effect=observe_tenant,
         ), patch(
             "apps.domains.inventory.views.JWTAuthentication.authenticate",
             return_value=(self.student_user, None),
